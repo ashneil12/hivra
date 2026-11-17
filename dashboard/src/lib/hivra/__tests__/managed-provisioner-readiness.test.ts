@@ -187,7 +187,15 @@ describe("managed readiness per runtime", () => {
     return [...script.slice(start, script.indexOf("\nesac", start)).matchAll(/'(\d{4}\.\d\d\.\d\d\.\d+)'/g)].map(m => m[1]);
   };
 
-  it.each(["aeon", "openclaw", "agent-zero"])("excludes releases before agent-app-versions.json for %s", (runtime) => {
+  it("places Agent Zero only on 2026.11.17.3, whose installer writes the settings file current images read", () => {
+    const versions = versionsIn(managedHivraHostReadinessScript("default", "provision", false, "agent-zero"));
+    expect(versions).not.toContain("2026.11.17.2");
+    expect(versions).not.toContain("2026.10.20.2");
+    expect(versions).toContain("2026.11.17.3");
+    expect(versions).toContain(PORTABLE_HIVRA_PROVISIONER_VERSION);
+  });
+
+  it.each(["aeon", "openclaw"])("excludes releases before agent-app-versions.json for %s", (runtime) => {
     const versions = versionsIn(managedHivraHostReadinessScript("default", "provision", false, runtime));
     expect(versions).not.toContain("2026.10.20.1");
     expect(versions).not.toContain("2026.09.24.4");
@@ -198,13 +206,13 @@ describe("managed readiness per runtime", () => {
   it("lets only hosts on the release that ships linux-server take it, and keeps Linux Desktop on older hosts", () => {
     for (const purpose of ["provision", "runtime-update"] as const) {
       expect(versionsIn(managedHivraHostReadinessScript("default", purpose, false, "linux-server"))).toEqual(
-        purpose === "provision" ? ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
+        purpose === "provision" ? ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
       // DeepSeek Harness needs the release that seeds its launch-time model.
       expect(versionsIn(managedHivraHostReadinessScript("default", purpose, false, "deepseek-harness"))).toEqual(
-        purpose === "provision" ? ["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
+        purpose === "provision" ? ["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
     }
-    // Hermes is placed only on the release that lets Hivra set its own model.
-    expect(versionsIn(managedHivraHostReadinessScript("default", "provision", false, "hermes"))).toEqual([PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    // Hermes is placed only from the release that lets Hivra set its own model (2026.11.12.1) on.
+    expect(versionsIn(managedHivraHostReadinessScript("default", "provision", false, "hermes"))).toEqual(["2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", PORTABLE_HIVRA_PROVISIONER_VERSION]);
     const desktop = versionsIn(managedHivraHostReadinessScript("default", "provision", false, "linux-desktop"));
     expect(desktop).toContain("2026.11.10.3");
     expect(desktop).toContain(PORTABLE_HIVRA_PROVISIONER_VERSION);
@@ -217,8 +225,12 @@ describe("managed readiness per runtime", () => {
     }
   });
 
-  it("requires the app version files only for the runtimes that read them", () => {
-    expect(managedHivraHostReadinessScript("default", "provision", false, "agent-zero")).toContain('need_file "$PROVISIONER_DIR/agent-app-versions.json"');
+  it("requires the app updater only for the runtimes that use it", () => {
+    // The 2026.11.17.1 bundle dropped the pin file; requiring it blocked every
+    // Aeon, OpenClaw, Agent Zero and Hermes launch on a current host.
+    for (const runtime of ["aeon", "openclaw", "agent-zero", "hermes"]) {
+      expect(managedHivraHostReadinessScript("canary", "provision", false, runtime)).not.toContain("agent-app-versions.json");
+    }
     expect(managedHivraHostReadinessScript("default", "provision", false, "agent-zero")).toContain('need_file "$PROVISIONER_DIR/hivra-agent-app-update.sh"');
     expect(managedHivraHostReadinessScript("default", "provision", false, "claude-code")).not.toContain("agent-app-versions.json");
     expect(managedHivraHostReadinessScript("default", "provision")).not.toContain("agent-app-versions.json");

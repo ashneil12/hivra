@@ -20,6 +20,7 @@ import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
 import { runAfterResponse } from "@/lib/hivra/after-response";
 import { findAgentByKey, loadOwnedRow } from "@/lib/agent-links/store";
 import { readRequestForAgent, submitRequest } from "@/lib/local-bridge/service";
+import { loadComputers } from "@/lib/local-bridge/store";
 import { GET, POST } from "../route";
 
 const OWNER = "user_owner";
@@ -48,6 +49,14 @@ describe("/api/agent-bridge", () => {
     expect((await POST(request("POST", { computer: COMPUTER, argv: ["uname"] }))).status).toBe(404);
     expect(findAgentByKey).not.toHaveBeenCalled();
     expect(submitRequest).not.toHaveBeenCalled();
+  });
+
+  it("lists only the computers that are not revoked", async () => {
+    jest.mocked(loadComputers).mockResolvedValueOnce([
+      { id: COMPUTER, label: "Mac", revoked_at: null }, { id: "22222222-2222-4222-8222-222222222222", label: "Old", revoked_at: "2026-11-01T00:00:00Z" },
+    ] as never);
+    const body = await (await GET(request("GET"))).json();
+    expect(body.data.computers).toEqual([{ id: COMPUTER, name: "Mac" }]);
   });
 
   it("refuses a missing or unknown key", async () => {

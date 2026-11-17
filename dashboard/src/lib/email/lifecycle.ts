@@ -95,7 +95,7 @@ const BILLING_URL = `${SITE_URL}/dashboard/billing`;
 /** The entry paid plan's prices, from the same table checkout reads. */
 const ENTRY_PRICE_LINE = `${formatPrice(PLANS.operator.price)}/mo, or ${formatPrice(PLANS.operator.yearlyPrice)}/yr`;
 
-function greeting(firstName?: string | null): string {
+export function greeting(firstName?: string | null): string {
   return firstName?.trim() ? `Hey ${firstName.trim()},` : "Hey,";
 }
 
@@ -163,7 +163,7 @@ function oneLine(value: string, maxLen = 140): string {
 }
 
 /** Minimal HTML escaping for user-supplied text dropped into email markup. */
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -176,7 +176,7 @@ const PARAGRAPH_STYLE = "margin:0 0 20px;font-size:16px;line-height:1.6;color:#1
 const LIST_STYLE = "margin:0 0 20px;padding-left:20px;font-size:16px;line-height:1.6;color:#1a1a1a;";
 const LIST_ITEM_STYLE = "margin:0 0 12px;";
 
-function htmlParagraph(content: string): string {
+export function htmlParagraph(content: string): string {
   return `<p style="${PARAGRAPH_STYLE}">${content}</p>`;
 }
 
@@ -186,12 +186,12 @@ function htmlList(items: string[]): string {
 }
 
 /** The greeting as HTML. The first name is user-typed, so it is escaped (F106). */
-function htmlGreeting(firstName?: string | null): string {
+export function htmlGreeting(firstName?: string | null): string {
   return htmlParagraph(escapeHtml(greeting(firstName)));
 }
 
 /** Same shell as the other customer emails (see cold-storage.ts). */
-function shellHtml(opts: {
+export function shellHtml(opts: {
   preheader: string;
   eyebrow: string;
   title: string;

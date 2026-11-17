@@ -61,6 +61,22 @@ const choices = () => screen.getByRole("group", { name: "Model access" });
 const choice = (name: RegExp) => within(choices()).getByRole("button", { name });
 
 describe("ModelAccessControl", () => {
+  it("explains Venice on Hivra credits and offers a setup call", () => {
+    render(<Harness profileId="hermes" />);
+    fireEvent.click(choice(/^Hivra credits/));
+    expect(screen.getByText(/Models come from Venice through Hivra, so you don't need a Venice account/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Book a setup call" }).getAttribute("href")).toMatch(/^mailto:.*Codex\+1/);
+  });
+
+  it("links to Venice's key page when a Venice key is pasted, and hides the setup call for other providers", () => {
+    render(<Harness profileId="codex" />);
+    fireEvent.click(choice(/^Use my own API key/));
+    expect(screen.getByRole("link", { name: /Create one in your Venice settings/ })).toHaveAttribute("href", "https://venice.ai/settings/api");
+    expect(screen.getByRole("link", { name: "Book a setup call" })).toBeInTheDocument();
+    fireEvent.click(choice(/^Sign in with my existing account/));
+    expect(screen.queryByRole("link", { name: "Book a setup call" })).not.toBeInTheDocument();
+  });
+
   it("shows every choice as a one-click button with no disclosure step first", () => {
     render(<Harness profileId="codex" />);
     const group = within(choices());
@@ -71,18 +87,18 @@ describe("ModelAccessControl", () => {
 
   it("defaults Codex to signing in inside it, with a key and Hivra credits as the other choices", () => {
     render(<Harness profileId="codex" />);
-    expect(choice(/^Sign in inside Codex after it opens/)).toHaveAttribute("aria-pressed", "true");
-    expect(choice(/^Use my API key/)).toHaveAttribute("aria-pressed", "false");
+    expect(choice(/^Sign in with my existing account/)).toHaveAttribute("aria-pressed", "true");
+    expect(choice(/^Use my own API key/)).toHaveAttribute("aria-pressed", "false");
     expect(choice(/^Hivra credits/)).toHaveTextContent("$4.25 available");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
   it("offers Claude Code its own sign-in or Hivra credits with a Claude model, never an API key", () => {
     render(<Harness profileId="claude-code" />);
-    expect(choice(/^Sign in inside Claude Code after it opens/)).toHaveAttribute("aria-pressed", "true");
-    expect(choice(/^Use my API key/)).toBeDisabled();
-    expect(choice(/^Use my API key/)).toHaveAttribute("aria-pressed", "false");
-    expect(choice(/^Use my API key/)).toHaveTextContent("Not available for Claude Code. Use Hivra credits");
+    expect(choice(/^Sign in with my existing account/)).toHaveAttribute("aria-pressed", "true");
+    expect(choice(/^Use my own API key/)).toBeDisabled();
+    expect(choice(/^Use my own API key/)).toHaveAttribute("aria-pressed", "false");
+    expect(choice(/^Use my own API key/)).toHaveTextContent("Not available for Claude Code. Use Hivra credits");
     expect(choice(/^Hivra credits/)).toBeEnabled();
     fireEvent.click(choice(/^Hivra credits/));
     expect(latest.access.mode).toBe("credits");
@@ -93,7 +109,7 @@ describe("ModelAccessControl", () => {
 
   it("offers the saved Vault key first and sends it only after the per-launch consent", () => {
     render(<Harness profileId="codex" savedKeys={[VENICE_KEY]} />);
-    fireEvent.click(choice(/^Use my API key/));
+    fireEvent.click(choice(/^Use my own API key/));
 
     expect(screen.getByRole("button", { name: "Use my saved key ••3f2a" })).toHaveAttribute("aria-pressed", "true");
     const consent = screen.getByRole("checkbox", { name: /Send this key to Codex 1's computer/ });
@@ -108,7 +124,7 @@ describe("ModelAccessControl", () => {
 
   it("takes a pasted key into the page's memory only, and drops it on another choice", () => {
     render(<Harness profileId="codex" savedKeys={[VENICE_KEY]} />);
-    fireEvent.click(choice(/^Use my API key/));
+    fireEvent.click(choice(/^Use my own API key/));
     fireEvent.click(screen.getByRole("button", { name: "Paste a new key" }));
     const input = screen.getByLabelText("Venice AI API key");
     expect(input).toHaveAttribute("type", "password");
@@ -128,7 +144,7 @@ describe("ModelAccessControl", () => {
 
   it("offers to save a pasted key without mentioning a replacement when none is saved", () => {
     render(<Harness profileId="codex" savedKeys={[]} />);
-    fireEvent.click(choice(/^Use my API key/));
+    fireEvent.click(choice(/^Use my own API key/));
     const save = screen.getByRole("checkbox", { name: "Save it in my Vault for next time" });
     expect(save).not.toBeChecked();
   });

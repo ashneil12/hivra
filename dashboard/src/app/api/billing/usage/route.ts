@@ -6,7 +6,6 @@ import { getPlan } from "@/lib/subscription";
 import {
   CREDIT_UNIT_LABEL,
   getCreditSummary,
-  getPlanMonthlyCreditGrant,
 } from "@/lib/billing/credits";
 import { isBillingV2ServerEnabled } from "@/lib/billing/billing-v2-availability";
 import { readPlanOnHold, resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
@@ -107,7 +106,6 @@ export async function GET() {
       ? await getCreditSummary(userId, sub?.plan ?? null)
       : {
           balance: 0,
-          monthlyGrant: getPlanMonthlyCreditGrant(sub?.plan ?? null),
           unit: CREDIT_UNIT_LABEL,
         };
 

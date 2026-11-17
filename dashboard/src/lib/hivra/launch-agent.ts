@@ -8,6 +8,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
+import { isOpenBotAgentEnabled } from "@/lib/hivra/openbot-flag";
 import { posthogClient } from "@/lib/posthog";
 import { getManagedVeniceAnthropicBaseUrl, getManagedVeniceProxyBaseUrl } from "@/lib/venice/managed-endpoints";
 import {
@@ -24,6 +25,7 @@ import { getOrCreatePoolId } from "@/lib/pools/pool-service";
 import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
 import { recommendedResourceEnvelope, validateResourceEnvelope } from "@/lib/launch/resource-envelope";
 import { checkHostWakeCapacity } from "@/lib/proxmox/wake-admission";
+import { selectAvoidingCriticalHosts } from "@/lib/hivra/capacity/placement";
 import { GOALS } from "@/lib/hivra/agent-identity";
 import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
@@ -127,7 +129,7 @@ const emittedBoxCreatedAgentIds = new Set<string>();
 // Catalog agent ids this route can provision as a Hivra box. claude-code/codex
 // run the bux image; aeon + openclaw host a web dashboard/Control UI. The box
 // selects its runtime from agentKind. Hermes is a separate lane (/api/instances).
-const LAUNCHABLE_BOX_TYPES: ReadonlySet<string> = new Set(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "deepseek-harness", "linux-desktop"]);
+const LAUNCHABLE_BOX_TYPES: ReadonlySet<string> = new Set(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes", "deepseek-harness", "linux-desktop"]);
 
 // Printed by phase 1 only after it wrote the reporter credential into the
 // handoff file for a host bundle that consumes it (the start path uses the
@@ -1030,7 +1032,7 @@ export async function launchHivraAgentForUser(
     // or not-yet-available agent can't provision a box. Hermes launches here only
     // while the Hermes computer lane is on for this deployment (Canary first);
     // otherwise it stays on its own lane, /api/instances, as it always was.
-    if (!def || !def.available || !LAUNCHABLE_BOX_TYPES.has(type)) {
+    if (!def || !def.available || !LAUNCHABLE_BOX_TYPES.has(type) || (type === "openbot" && !isOpenBotAgentEnabled())) {
       return apiError("That agent isn't launchable yet", 400);
     }
     // DeepSeek Harness has acceptance only on Hivra's managed Proxmox hosts, with
@@ -1048,7 +1050,7 @@ export async function launchHivraAgentForUser(
     // The runtime the box provisions: the chat CLI for claude-code/codex, or the
     // dashboard host kind for aeon/openclaw (no cliKind). Passed to the host script.
     const agentKind = headless ? "linux-server" : def.provisionKind ?? def.cliKind ?? (type === "aeon" ? "aeon" : type === "openclaw" ? "openclaw"
-      : type === "agent-zero" ? "agent-zero" : type === "hermes" ? "hermes" : type === "deepseek-harness" ? "deepseek-harness" : "claude");
+      : type === "agent-zero" ? "agent-zero" : type === "openbot" ? "openbot" : type === "nuphos" ? "nuphos" : type === "hermes" ? "hermes" : type === "deepseek-harness" ? "deepseek-harness" : "claude");
     // A Linux computer without a desktop is a new provisioner kind and placement
     // key, so a host bundle that predates it cannot run it by accident.
     const compatibilityRuntimeId = headless ? "linux-server" : type;
@@ -1318,7 +1320,9 @@ export async function launchHivraAgentForUser(
       explicitClaudeHost = LAUNCHABLE_BOX_TYPES.has(type) ? resolveHivraClaudeCodeProxmoxHost(process.env) : null;
       stickyHost = explicitClaudeHost ? null : await resolveStickyHivraProxmoxHost(userId);
       const forceTargetId = explicitClaudeHost ?? stickyHost;
-      const placement = await selectAvailableProxmoxProvisionTarget({
+      // With HIVRA_HOST_CAPACITY_ALERTS on, a host whose latest capacity reading
+      // is critical is tried only when no other host can take the launch.
+      const placement = await selectAvoidingCriticalHosts(excludeTargetIds => selectAvailableProxmoxProvisionTarget({
         supabase: supabaseAdmin,
         env: process.env,
         hostConfig: null,
@@ -1327,6 +1331,7 @@ export async function launchHivraAgentForUser(
         neededRamMb: ram * 1024,
         neededDiskGb: HIVRA_AGENT_VM_DISK_GB,
         forceTargetId,
+        ...(excludeTargetIds ? { excludeTargetIds } : {}),
         skipTemplateAvailabilityCheck: true,
         // Managed-model agents (def.managedVenice) get HIVRA_MODEL_* at launch,
         // so their host must carry model-settings support as well as the
@@ -1342,7 +1347,7 @@ export async function launchHivraAgentForUser(
             ? { requireModelSettings: true }
             : {}),
         }),
-      });
+      }), { forced: Boolean(forceTargetId) });
       if (!placement.ok) {
         // error, not warn: a blocked launch is customer-visible and only error
         // level reaches ops_events. The reason (which host, which prerequisite)

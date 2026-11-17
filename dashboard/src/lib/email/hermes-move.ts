@@ -56,7 +56,7 @@ export function buildHermesMoveNoticeEmail(p: { agentName: string; moveAfter: st
     `Your agent ${name} moves to the official Hermes after ${date}.`,
     "Every Hermes agent on Hivra is moving so it can keep getting updates straight from Hermes. Your chats, memory, skills, settings, scheduled tasks, chat channels and files come with it.",
     "It is offline for about 15 minutes while it moves. You don't need to do anything.",
-    "Your current computer is kept for 7 days, so the move can be undone from the agent's page.",
+    "Your current computer is kept for 7 days, so the move can be undone from the agent's Settings.",
   ];
   const text = ["Hi,", "", ...lines.flatMap((l) => [l, ""]), "Hivra"].join("\n");
   const html = wrapHtml(subject, [
@@ -77,13 +77,13 @@ export function buildHermesMovedEmail(p: { agentName: string; agentId: string; u
   const subject = `${name} has moved to the official Hermes`;
   const l0 = `Your agent ${name} now runs the official Hermes. Everything came with it.`;
   const l1 = "You can update it whenever you like: open its terminal and run `hermes update`.";
-  const l2 = `If anything looks wrong, you can undo the move from the agent's page until ${date}.`;
+  const l2 = `If anything looks wrong, you can undo the move from the agent's Settings until ${date}.`;
   const text = ["Hi,", "", l0, "", l1, "", l2, "", `Agent page: ${url}`, "", "Hivra"].join("\n");
   const html = wrapHtml(subject, [
     "Hi,",
     `Your agent <strong>${escapeHtml(name)}</strong> now runs the official Hermes. Everything came with it.`,
     "You can update it whenever you like: open its terminal and run <code>hermes update</code>.",
-    `If anything looks wrong, you can undo the move from the agent's page until ${escapeHtml(date)}.`,
+    `If anything looks wrong, you can undo the move from the agent's Settings until ${escapeHtml(date)}.`,
     `<a href="${escapeHtml(url)}">Open the agent's page</a>`,
     "Hivra",
   ]);

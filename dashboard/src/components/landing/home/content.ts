@@ -1,45 +1,28 @@
 // Homepage copy, in one place so the visible page, the FAQPage JSON-LD and the
 // copy tests all read the same strings.
 //
-// The page is short on purpose (Ash, 10 Nov 2026): say what Hivra does in the
-// first screen, show the agents, three steps, the prices, a few answers and one
-// closing ask. The long story (the shared-machine argument, the comparison
-// table, the open-source essay) lives on /why-hivra, /compare and /security,
-// not here.
-//
-// Rules this file keeps (tested in __tests__/home-copy.test.ts):
+// The wording is Ash's final homepage and onboarding copy (12 Nov 2026), used
+// word for word. Rules that copy keeps (tested in __tests__/home-copy.test.ts):
 // - Prices, sizes and the guarantee come from lib/blog/plan-facts.ts and
-//   app/pricing/pricing-content.ts, so they move with checkout.
-// - Keep-running claims use the approved wording: a paid computer stays on and
-//   is not paused for inactivity; only tmux runs (or Telegram on Claude Code)
-//   are promised to carry on (lib/blog/runtime-facts.ts, verbatim).
-// - No em or en dashes, no plan names (Starter, Pro, Power), no annual prices,
-//   no trial, and no "preview" labels. Omarchy and Windows are not named on
-//   this page; where they are named elsewhere they carry their conditions.
-// - Hivra runs no free computer (owner decision, 21 Oct 2026). Every computer
-//   Hivra Cloud runs is paid, whichever agent it carries, and a free account
-//   works with a computer or server the person connects. The page says so in
-//   the canonical words wherever a visitor chooses what to start (the agents
-//   section, the pricing offers and the closing). No agent card singles out
-//   one agent as the paid one.
+//   app/pricing/pricing-content.ts, so they move with checkout. The guarantee
+//   is always "7-day money-back guarantee on card payments".
+// - "Free" never means free compute: the free account runs on a server the
+//   person provides and pays for. Every Hivra Cloud computer needs a paid plan.
 // - A promised login always carries "subject to the provider's terms".
-// - Anything that names a token, the migration, the snapshot or the litepaper
-//   is not in this file's always-on copy. The one token sentence is added by
-//   homepageFaq() only when the token surfaces are visible to the viewer.
+// - No unlimited or counted agents, no speed promises, no complete-security
+//   claim, no public open-source release until it is verified, and no starter
+//   credit until it is active.
+// - Agents keep their own interfaces; nothing promises a generic chat.
 
 import {
   ENTRY_PLAN_PRICE,
   ENTRY_PLAN_SIZE,
-  FREE_ACCOUNT_SENTENCE,
-  HOSTED_COMPUTE_NEEDS_PLAN,
-  HOSTED_COMPUTE_NEEDS_PLAN_SHORT,
   LARGER_PLAN_PRICE,
   LARGER_PLAN_SIZE,
   MONEY_BACK_GUARANTEE,
   PLAN_DISPLAY,
 } from "@/lib/blog/plan-facts";
 import { HOSTED_SIZES, SELF_HOST_SOURCE_URL } from "@/app/pricing/pricing-content";
-import { CLI_RUN_LIFETIME, SERVER_SIDE_AGENTS_KEEP_WORKING } from "@/lib/blog/runtime-facts";
 import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
 
@@ -57,17 +40,36 @@ export const GUARANTEE_LINE = `${MONEY_BACK_GUARANTEE}.`;
 /** The approved stays-on wording (no full stop, so a sentence can carry on from it). */
 export const STAYS_ON = "A paid Hivra Cloud computer stays on and is not paused for inactivity";
 
-/** The first screen: what it is, one sentence on how, one button. */
+/**
+ * The homepage and onboarding wording is Ash's final copy of 12 Nov 2026,
+ * used word for word. Change it only with Ash's sign-off.
+ */
+
+/** The first screen. */
 export const HERO = {
-  titleLead: "Launch an AI",
-  titleWord: "agent.",
-  titleTail: "On a computer of its own.",
+  titleLead: "Give your",
+  titleWord: "AI agent",
+  titleTail: "a computer of its own.",
   subhead:
-    "Pick Claude Code, Codex, Hermes or another agent. Hivra gives it a private cloud computer you open from any browser, away from your own files and accounts.",
+    "Run Claude Code, Codex, Hermes and other AI agents on computers separate from your own. Keep your work running when your laptop is closed, access it from anywhere, and give your agents the tools they need without putting your personal computer at risk.",
   primary: "Launch an agent",
-  secondary: "See pricing",
-  /** Three short facts under the buttons, in this order (one icon each in Hero.tsx). */
-  proof: ["Free to start", "Bring your own AI key", "Open source"],
+  secondary: "See how Hivra works",
+  secondaryHref: "#how",
+  /** Three short trust points under the buttons, in this order (one icon each in Hero.tsx). */
+  proof: ["Your agent's own computer", "Bring your own AI key", "Run on Hivra Cloud or your own infrastructure"],
+} as const;
+
+/** Straight under the hero: why the agent gets a computer of its own. */
+export const SEPARATE = {
+  title: "Your agent needs computer access.",
+  titleTail: "It doesn't need your computer.",
+  paragraphs: [
+    "AI agents can browse the web, run commands, install software, access files and make changes on your behalf.",
+    "That's what makes them useful. It's also why you should think carefully about where they run.",
+    "Your personal computer holds far more than the work you've asked an agent to do. It holds your files, browser sessions, credentials and access to other systems.",
+    "Hivra gives your agent a separate computer for its work. Your own computer stays separate, while you can still access the agent, see what it's doing and take control when needed.",
+    "You shouldn't have to choose between giving an agent the tools it needs and keeping your own computer separate.",
+  ],
 } as const;
 
 /**
@@ -88,61 +90,66 @@ export interface HomeAgent {
   name: string;
   role: string;
   line: string;
+  /** A second paragraph under the line, such as how the agent signs in. */
+  detail?: string;
   /** A limit worth seeing before the click, shown in italics under the description. */
   note?: string;
+  /** A short label on the card's top edge. Only the one agent most people should start with carries it. */
+  badge?: string;
   href: string;
   /** Illustrative activity for the card's small screen. */
   screen: string[];
 }
 
 export const AGENTS_SECTION = {
-  title: "Pick an agent.",
+  title: "Choose your agent.",
   titleTail: "We'll give it a computer.",
-  /** One line for every card below: the cost belongs to the computer, not to one agent. */
-  paid: HOSTED_COMPUTE_NEEDS_PLAN,
+  intro: "Different agents are good at different things. Pick the one that works best for you, and Hivra gives it a computer to run on.",
   compare: "Compare agents",
   screensNote: "Card screens are illustrations.",
 } as const;
 
 export const HOME_AGENTS: HomeAgent[] = [
   {
+    id: "hermes",
+    name: "Hermes Agent",
+    role: "Research and automation",
+    line: "Research topics, browse the web, work with tools, write, automate recurring tasks and remember useful context across conversations.",
+    badge: "Recommended",
+    href: buildLaunchHref({ start: true, profile: "hermes" }),
+    screen: ["hermes › compare these pages", "reading the sources", "✓ Saved notes/pricing.md"],
+  },
+  {
     id: "claude-code",
     name: "Claude Code",
-    role: "Coding",
-    line: "Write, fix and test software. Sign in with your own Claude account, subject to the provider's terms.",
+    role: "Coding with Claude",
+    line: "Build applications, work with existing projects, fix bugs, run tests and make changes to code without running Claude Code directly on your personal computer.",
+    detail: "Sign in with your Claude account, subject to the provider's terms, or use Hivra credits where supported.",
     href: buildLaunchHref({ start: true, profile: "claude-code" }),
     screen: ["> fix the flaky auth test", "● Editing src/auth.ts", "✓ Tests pass"],
   },
   {
     id: "codex",
-    name: "Codex",
-    role: "Coding",
-    line: "OpenAI's coding agent, with your own ChatGPT login, subject to the provider's terms.",
+    name: "OpenAI Codex",
+    role: "Coding with Codex",
+    line: "Write, review, debug and test code in a dedicated environment. Work on software projects without giving the agent direct access to your personal computer.",
+    detail: "Sign in with your ChatGPT account, subject to the provider's terms, or use a supported API key.",
     href: buildLaunchHref({ start: true, profile: "codex" }),
     screen: ["› add rate limiting", "• Writing middleware/limit.ts", "✓ Ready for review"],
   },
   {
-    id: "hermes",
-    name: "Hermes",
-    role: "Research and automation",
-    line: "Browsing, research, tools and repeat jobs, in one place that remembers.",
-    note: "Hermes runs on Hivra Cloud only.",
-    href: buildLaunchHref({ start: true, profile: "hermes" }),
-    screen: ["hermes › compare these pages", "reading the sources", "✓ Saved notes/pricing.md"],
-  },
-  {
     id: "openclaw",
     name: "OpenClaw",
-    role: "Chat-based agent",
-    line: "An agent you can reach from the messaging apps you already use.",
+    role: "Your agent in your messaging apps",
+    line: "Run an AI agent you can communicate with through supported messaging platforms, while its work happens on a separate computer.",
     href: buildLaunchHref({ start: true, profile: "openclaw" }),
     screen: ["openclaw › sort today's messages", "drafting replies", "✓ Waiting for you"],
   },
   {
     id: "agent-zero",
     name: "Agent Zero",
-    role: "General-purpose agent",
-    line: "Give it a task, follow its steps and check its work.",
+    role: "For more involved tasks",
+    line: "Give it a complex task and let it work through the steps using its available tools. Follow its progress and inspect the results.",
     href: buildLaunchHref({ start: true, profile: "agent-zero" }),
     screen: ["a0 › write the weekly report", "planning 3 steps", "✓ Report ready"],
   },
@@ -155,29 +162,30 @@ export const COMPUTERS = {
   href: computerLaunchHref("ubuntu-desktop"),
 } as const;
 
-/**
- * Three steps from sign-up to a working agent. The model step lists the ways to
- * pay for AI today; add a managed inference option here when it ships, so the
- * page names it in the same sentence as the others.
- */
+/** How it works: four steps, with where it runs as its own step. */
 export const STEPS = {
-  title: "Three steps.",
-  titleTail: "Then just talk to it.",
+  title: "Your agent's computer,",
+  titleTail: "without the complicated setup.",
   steps: [
     {
       n: "1",
-      title: "Pick an agent",
-      body: "Claude Code, Codex, Hermes and more. Each one gets its own computer, with its own files and settings.",
+      title: "Choose your agent",
+      body: "Pick Hermes, Claude Code, Codex or another supported agent. Each gets its own computer, files and working environment.",
     },
     {
       n: "2",
-      title: "Connect a model",
-      body: "Sign in with your Claude or ChatGPT account where the agent supports it, subject to the provider's terms. Or paste an API key, or pay with Hivra credits.",
+      title: "Connect its AI",
+      body: "Use Hivra credits or connect a supported API key. Some agents also let you sign in with your existing Claude or ChatGPT account, subject to the provider's terms.",
     },
     {
       n: "3",
-      title: "Chat from anywhere",
-      body: `Open it in your browser to chat, watch its screen or take over. ${STAYS_ON}.`,
+      title: "Choose where it runs",
+      body: "Use Hivra Cloud and we'll handle the infrastructure, or connect a supported server you already manage.",
+    },
+    {
+      n: "4",
+      title: "Launch and get to work",
+      body: "Open your agent from your browser and use its supported interface. Your work and environment remain on the agent's computer, even when you close your laptop.",
     },
   ],
 } as const;
@@ -185,41 +193,50 @@ export const STEPS = {
 const [ENTRY_SIZE, LARGER_SIZE] = HOSTED_SIZES;
 
 export const PRICING = {
-  title: "Free to start.",
-  titleTail: `Hosted from ${ENTRY_PLAN_PRICE} a month.`,
-  free: {
-    name: "Free",
-    price: "$0",
-    per: "account",
-    size: "Your own server, or self-host",
-    body: `${FREE_ACCOUNT_SENTENCE} Or run the open-source platform yourself.`,
-    cta: "Sign up free",
-    href: PUBLIC_START_HREF,
-    selfHost: { label: "Self-host from GitHub", href: SELF_HOST_SOURCE_URL },
-  },
+  title: "Your agent's computer.",
+  titleTail: "Your choice of where it runs.",
+  lead: ["Run it on Hivra Cloud, or use infrastructure you already control.", `Hivra Cloud starts at ${ENTRY_PLAN_PRICE}/month.`],
   cloud: {
     name: PLAN_DISPLAY.entry,
+    tagline: `Managed hosting | From ${ENTRY_PLAN_PRICE}/month`,
     price: ENTRY_PLAN_PRICE,
     per: "/month",
     size: ENTRY_PLAN_SIZE,
-    body: "We run the computer for you. It stays on, with browser access and nothing to maintain.",
-    cta: "Get started",
+    body: [
+      "We provide and maintain the computer for you.",
+      "Your agent gets a dedicated working environment that stays available when your laptop is closed. Access it from your browser without managing the underlying server.",
+    ],
+    cta: "Get started with Hivra Cloud",
     href: ENTRY_SIZE.href,
+    note: `${MONEY_BACK_GUARANTEE}.`,
   },
   larger: {
     name: PLAN_DISPLAY.larger,
+    tagline: "Additional computing resources",
     price: LARGER_PLAN_PRICE,
     per: "/month",
     size: LARGER_PLAN_SIZE,
-    body: "For bigger projects and heavier workloads.",
-    cta: "Choose this size",
-    href: LARGER_SIZE.href,
+    body: [
+      "For agents and workloads that need more processing power, memory or storage.",
+      "Choose a larger computer as your requirements grow.",
+    ],
+    cta: "Compare plans",
+    href: "/pricing",
   },
-  /** The paragraph under the offers. The guarantee sentence ends with a link to the terms. */
-  aiUsage:
-    "The plan does not include AI usage. Bring your own account or key where the agent supports it, or pay with Hivra credits. Charges from your AI provider are separate.",
-  guarantee: { lead: `Hosted plans carry a ${MONEY_BACK_GUARANTEE}, subject to the`, link: "terms", href: "/terms" },
-  full: { label: "Full pricing", href: "/pricing" },
+  free: {
+    name: "Your own server",
+    tagline: "No Hivra hosting charge",
+    body: [
+      "Already have a server? Connect a supported Proxmox VE environment and run compatible agents using infrastructure you control.",
+      "You provide and maintain the server. Hivra doesn't charge you for hosting it.",
+      "You can also self-host the open-source platform independently, once using a supported public release.",
+      "Hermes currently requires Hivra Cloud through the hosted service.",
+    ],
+    cta: "Connect your server",
+    href: PUBLIC_START_HREF,
+  },
+  /** Kept for the larger size's checkout link, which the pricing page uses. */
+  largerCheckoutHref: LARGER_SIZE.href,
 } as const;
 
 /** From FOUNDER_EXCERPTS and LITEPAPER.md. Not shown while SHOW_FOUNDER_SECTION is false. */
@@ -243,58 +260,89 @@ export const FOUNDER = {
  */
 export const SHOW_FOUNDER_SECTION = false;
 
-export const FAQ_TITLE = "Questions.";
+export const FAQ_TITLE = "Frequently asked questions";
 
-/** The one sentence about tokens on the page. It renders, and enters the FAQPage JSON-LD, only when the token surfaces are visible. */
+/** Kept for callers that still pass it; no homepage question mentions a token any more. */
 export const TOKEN_FAQ_SENTENCE = "Token-related access and future plans are explained separately.";
 
 /**
- * The six questions. `showTokenSentence` is `tokenSurfacesVisible(view)` from
- * lib/compliance/token-surface-view.ts: with the surfaces off (the production
- * default) or the viewer geo-blocked, the token question ends after its first
- * two sentences and no other sentence on the page mentions one.
+ * The questions, in order. An answer's paragraphs are separated by a blank
+ * line; the page shows each as its own paragraph. `showTokenSentence` is
+ * accepted for compatibility and changes nothing.
  */
-export function homepageFaq(showTokenSentence: boolean): { q: string; a: string }[] {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function homepageFaq(_showTokenSentence = false): { q: string; a: string }[] {
   return [
     {
-      q: "What exactly is Hivra?",
-      a: "Software for giving AI agents their own computers, hosted by Hivra or deployed on infrastructure you control. You can also use those computers yourself without an agent.",
+      q: "Is Hivra free?",
+      a: [
+        "Creating a Hivra account is free.",
+        "You can connect supported infrastructure you own without paying Hivra for hosting. You'll still be responsible for the cost and maintenance of that infrastructure.",
+        `Hivra Cloud is our managed option, starting at ${ENTRY_PLAN_PRICE} per month. Every Hivra Cloud computer requires a paid plan.`,
+        "Some agents, including Hermes, currently require Hivra Cloud through the hosted service.",
+      ].join("\n\n"),
     },
     {
-      q: "Can I keep using Claude Code or Codex?",
-      a: "Yes. These are supported agent options. Where supported, you sign in with your own account, subject to the provider's terms. The plan does not include AI usage. Claude Code uses your own Claude or Anthropic account, or Hivra credits. For Codex, bring your own account or key, or pay with Hivra credits.",
+      q: "Do I need my own server?",
+      a: [
+        "No. Hivra Cloud provides the computer and handles the infrastructure for you.",
+        "If you already have compatible infrastructure, you can connect that instead.",
+      ].join("\n\n"),
     },
     {
-      q: "What happens when I close my laptop?",
-      a: `${CLI_RUN_LIFETIME} ${SERVER_SIDE_AGENTS_KEEP_WORKING} You can return to the same environment through your browser.`,
+      q: "Do I need an API key?",
+      a: [
+        "Not necessarily.",
+        "You can use Hivra credits, connect a supported model provider's API key, or sign in with an eligible Claude or ChatGPT account where the agent supports it, subject to the provider's terms.",
+      ].join("\n\n"),
     },
     {
-      q: "Does a separate computer make the agent perfectly safe?",
-      a: "No. It gives you an important boundary, but connected services, account permissions, networking and configuration still matter.",
+      q: "Will my agent keep running if I close my laptop?",
+      a: [
+        "Yes, provided its computer remains running.",
+        "The agent's files and environment stay on its computer rather than your laptop. Scheduled and background work depends on the agent's capabilities and configuration.",
+      ].join("\n\n"),
     },
     {
-      q: "Do I have to use Hivra Cloud?",
-      a: `No. Hivra is open source: you can connect your own server or self-host the whole platform. Some managed agents and capabilities are Hivra Cloud-specific. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
+      q: "Is my agent completely isolated and secure?",
+      a: [
+        "Hivra gives agents separate computing environments so they don't need to run directly on your personal computer.",
+        "This reduces direct exposure to your local files and accounts, but no environment can guarantee complete security. What an agent can access also depends on the credentials, networking, permissions and integrations you give it.",
+      ].join("\n\n"),
     },
     {
-      q: "Do I need a token?",
-      a: showTokenSentence
-        ? `No. You can use card-paid hosting or self-host without one. ${TOKEN_FAQ_SENTENCE}`
-        : "No. You can use card-paid hosting or self-host without one.",
+      q: "Can I use my own Claude or ChatGPT subscription?",
+      a: [
+        "Where the selected agent supports account sign-in, you can use an eligible provider account, subject to that provider's terms.",
+        "You can also use supported API keys or Hivra credits, depending on the agent.",
+      ].join("\n\n"),
+    },
+    {
+      q: "Is Hivra open source?",
+      a: [
+        "Hivra is being developed as an open-source platform, with the aim of letting people operate the functional platform on infrastructure they control.",
+        "The public repository and supported self-hosting instructions will be provided when the release is ready.",
+      ].join("\n\n"),
     },
   ];
 }
 
-/** The questions with the token sentence left out: what every viewer sees by default. */
+/** What every viewer sees. */
 export const HOMEPAGE_FAQ = homepageFaq(false);
 
 export const CLOSING = {
-  title: "Launch your first agent.",
-  paid: "Sign up free and connect a computer or server you already have, or launch on Hivra Cloud with a paid plan.",
+  title: "Your agent doesn't need to run on your computer.",
+  paragraphs: [
+    "Give it a computer of its own, keep your work separate, and access it wherever you are.",
+    `Launch on Hivra Cloud from ${ENTRY_PLAN_PRICE}/month, with a ${MONEY_BACK_GUARANTEE}.`,
+    "Or connect supported infrastructure you already control.",
+  ],
   primary: "Launch an agent",
+  secondary: "Use my own server",
+  secondaryHref: PUBLIC_START_HREF,
 } as const;
 
 export const STICKY = {
   cta: "Launch an agent",
-  note: "Free to start",
+  note: `Hivra Cloud from ${ENTRY_PLAN_PRICE}/month`,
 } as const;

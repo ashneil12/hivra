@@ -11,8 +11,8 @@
 #   LAST_OCTET  guest IP last octet on the prepared Hivra /24
 #   CORES       vCPUs (default 4)        <- the dashboard "Advanced" CPU choice
 #   MEM_MB      RAM in MB (default 8192) <- the dashboard "Advanced" RAM choice
-#   AGENT_KIND  claude | codex | aeon | openclaw | agent-zero | hermes | deepseek-harness | linux-desktop | linux-server (default claude) <- which runtime the box runs
-#               (aeon + openclaw + agent-zero + hermes host a web dashboard/Control UI instead of a chat CLI)
+#   AGENT_KIND  claude | codex | aeon | openclaw | agent-zero | hermes | openbot | nuphos | deepseek-harness | linux-desktop | linux-server (default claude) <- which runtime the box runs
+#               (aeon + openclaw + agent-zero + hermes + openbot + nuphos host a web dashboard/Control UI instead of a chat CLI)
 #
 # Result (stdout, last line):
 #   {"vmid":1098,"ip":"10.250.20.241","cores":4,"mem_mb":8192,"agent_kind":"claude","chat_url":"https://x.trycloudflare.com","ready":true}
@@ -27,7 +27,7 @@ CORES="${3:-4}"
 MEM_MB="${4:-8192}"
 AGENT_KIND="${5:-claude}"
 CPU_LIMIT="${6:-$CORES}"
-case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|hermes|deepseek-harness|linux-desktop|linux-server) ;; *)
+case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|deepseek-harness|linux-desktop|linux-server) ;; *)
   echo "[hivra-prov] unsupported agent kind" >&2
   exit 1
 ;; esac
@@ -290,7 +290,9 @@ qm set "$VMID" --boot order=scsi0 --ciuser ubuntu --sshkeys "$CIKEYS" >/dev/null
 qm set "$VMID" --ipconfig0 "ip=${IP}/24,gw=${GW}" >/dev/null
 qm set "$VMID" --cicustom "vendor=${CLOUD_INIT_SNIPPET_STORAGE}:snippets/$(basename "$CLOUD_INIT_SNIPPET")" >/dev/null
 qm set "$VMID" --nameserver "$NAMESERVERS" >/dev/null
-qm start "$VMID" >/dev/null
+# qm forks a long-lived kvm child; without 8>&- it would inherit the
+# allocation-lock fd and pin the lock open for the whole VM lifetime.
+qm start "$VMID" 8>&- >/dev/null
 # Keep capacity, VMID, and IP allocation serialized until the new guest is an
 # active member of the inventory. Guest setup continues concurrently afterward.
 release_allocation_lock

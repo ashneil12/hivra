@@ -1,6 +1,5 @@
 import { manageCapabilitiesFor, type ManageCapabilitiesRow } from "../manage-capabilities";
 import { manageAwaitsOperation } from "../manage-sections";
-import { AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 
 // The Manage capability map for every kind of computer and agent: its
 // sections, each control's state and reason, and that it never carries a
@@ -330,11 +329,11 @@ describe("manageCapabilitiesFor", () => {
   });
 
   describe("updates", () => {
-    it("names the agent software and the version Hivra tested for Claude Code and Codex", () => {
-      expect(map("codex").agentCli).toEqual({ name: "codex", vetted: AGENT_CLI_VERSIONS.codex });
-      expect(map("claude").agentCli).toEqual({ name: "claude-code", vetted: AGENT_CLI_VERSIONS["claude-code"] });
+    it("names the agent software for Claude Code and Codex, with no pinned version", () => {
+      expect(map("codex").agentCli).toEqual({ name: "codex", vetted: null });
+      expect(map("claude").agentCli).toEqual({ name: "claude-code", vetted: null });
       expect(map("aeon").agentCli).toBeNull();
-      expect(map("codexMyCloud").agentCli).toEqual({ name: "codex", vetted: AGENT_CLI_VERSIONS.codex });
+      expect(map("codexMyCloud").agentCli).toEqual({ name: "codex", vetted: null });
       expect(map("hetznerUbuntu").agentCli).toBeNull();
       const myCloudApp = manageCapabilitiesFor({ ...rows.codexMyCloud, type: "openclaw" }, { preparedMatch: true });
       expect(myCloudApp.agentApp).toMatchObject({ name: "openclaw" });
@@ -450,6 +449,15 @@ describe("manageCapabilitiesFor", () => {
     expect(manageCapabilitiesFor({ ...rows.codex, status: "stopped" }, { preparedMatch: true }).export).toMatchObject({ state: "blocked" });
     expect(map("ubuntu").export).toBeNull();
     expect(map("digitalocean").export).toBeNull();
+  });
+
+  it("offers Move an agent for importable agent kinds only, once running", () => {
+    expect(map("codex").agentImport).toEqual({ state: "available" });
+    expect(map("claude").agentImport).toEqual({ state: "available" });
+    expect(manageCapabilitiesFor({ ...rows.codex, status: "stopped" }, { preparedMatch: true }).agentImport).toMatchObject({ state: "blocked" });
+    expect(map("aeon").agentImport).toBeNull();
+    expect(map("ubuntu").agentImport).toBeNull();
+    expect(map("digitalocean").agentImport).toBeNull();
   });
 
   it("keeps folder recovery to enrolled Ubuntu desktops", () => {

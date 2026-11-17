@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { manageCard } from '@/components/hivra/manage/manage-styles';
 
 interface MovedFrom {
   instanceId: string;
@@ -24,14 +25,14 @@ const shortDate = (iso: string) => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 };
 
-/** A quiet line on the new agent: where it moved from, and a way back until the old computer is removed. */
+/**
+ * A quiet card in the moved agent's Settings (Overview): where it moved from,
+ * and a way back until the old computer is removed. It stays off the agent's
+ * own page, which is for working with the agent.
+ */
 export function MovedFromNotice({ agentId, enabled }: Props) {
-  const router = useRouter();
   const [movedFrom, setMovedFrom] = useState<MovedFrom | null>(null);
   const [canUndo, setCanUndo] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
@@ -56,6 +57,15 @@ export function MovedFromNotice({ agentId, enabled }: Props) {
   }, [agentId, enabled]);
 
   if (!enabled || !movedFrom) return null;
+  return <MovedFromCard agentId={agentId} movedFrom={movedFrom} canUndo={canUndo} />;
+}
+
+// Only a moved agent mounts the router, so Settings renders anywhere it is used.
+function MovedFromCard({ agentId, movedFrom, canUndo }: { agentId: string; movedFrom: MovedFrom; canUndo: boolean }) {
+  const router = useRouter();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const undo = async () => {
     setBusy(true);
@@ -80,7 +90,7 @@ export function MovedFromNotice({ agentId, enabled }: Props) {
     <div
       role="status"
       data-testid="moved-from-notice"
-      style={{ padding: '8px 16px', borderBottom: '1px solid var(--etched-border)', fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)' }}
+      style={{ ...manageCard, padding: '12px 14px', fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)' }}
     >
       <span>
         Moved from {movedFrom.name} on {shortDate(movedFrom.at)}. The old computer is kept until {shortDate(movedFrom.undoUntil)}.

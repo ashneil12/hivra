@@ -12,6 +12,9 @@ jest.mock("@/app/api/infrastructure/connections/request-security", () => ({
 }));
 jest.mock("@/app/api/hivra/managed-sessions/route-support", () => ({ noStore: (response: Response) => response }));
 jest.mock("@/lib/agent-links/store", () => ({ loadOwnedRows: jest.fn(async () => [{ id: "a1", name: "Claude" }]) }));
+jest.mock("@/lib/agent-links/kit-delivery", () => ({
+  agentLinkEndpoint: (origin: string) => `${origin}/api/agent-link`, resyncOwnerKitsForBridge: jest.fn(async () => undefined),
+}));
 jest.mock("@/lib/local-bridge/store", () => ({
   loadComputers: jest.fn(async () => []), listRequests: jest.fn(async () => []), listAllowances: jest.fn(async () => []),
   purgeOldResults: jest.fn(async () => undefined),
@@ -29,7 +32,8 @@ jest.mock("@/lib/api-response", () => ({
 import { auth } from "@clerk/nextjs/server";
 import { isLocalBridgeEnabled } from "@/lib/local-bridge/flag";
 import { runAfterResponse } from "@/lib/hivra/after-response";
-import { decideRequest, readResultForOwner, revokeComputer } from "@/lib/local-bridge/service";
+import { resyncOwnerKitsForBridge } from "@/lib/agent-links/kit-delivery";
+import { decideRequest, enrollComputer, readResultForOwner, revokeComputer } from "@/lib/local-bridge/service";
 import { purgeOldResults } from "@/lib/local-bridge/store";
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
 import { GET, POST } from "../route";
@@ -100,6 +104,29 @@ describe("/api/hivra/bridge", () => {
     jest.mocked(decideRequest).mockResolvedValue({ ok: true, value: { request: { id: REQUEST_ID } as never, dispatchNow: true } });
     await POST(post({ action: "decide", requestId: REQUEST_ID, decision: "allow_hour" }));
     expect(runAfterResponse).toHaveBeenCalledTimes(1);
+  });
+
+  it("set up returns the one command and its expiry, never the settings", async () => {
+    jest.mocked(enrollComputer).mockResolvedValue({
+      ok: true, value: { computer: { id: "c1", label: "Mac" } as never, command: "curl -fsSL https://x.test/api/hivra/bridge/install | bash -s -- hvb_x", expiresAt: "2026-11-12T10:15:00Z" },
+    } as never);
+    const response = await POST(post({ action: "enroll", label: "Mac" }));
+    const data = (await response.json()).data;
+    expect(data).toEqual({ computer: { id: "c1", name: "Mac" }, command: expect.stringContaining("hvb_"), expiresAt: "2026-11-12T10:15:00Z" });
+    expect(JSON.stringify(data)).not.toMatch(/bridgeKey|secret|config/);
+  });
+
+  it("re-syncs every agent's kit after an enroll and after a revoke", async () => {
+    jest.mocked(enrollComputer).mockResolvedValue({ ok: true, value: { computer: { id: REQUEST_ID, label: "Mac" } as never, command: "x", expiresAt: "2026-11-12T10:15:00Z" } });
+    jest.mocked(revokeComputer).mockResolvedValue({ ok: true, value: { generation: 2 } });
+    for (const body of [{ action: "enroll", label: "Mac" }, { action: "revoke", computerId: REQUEST_ID }]) {
+      jest.mocked(runAfterResponse).mockClear();
+      jest.mocked(resyncOwnerKitsForBridge).mockClear();
+      expect((await POST(post(body))).status).toBe(200);
+      expect(runAfterResponse).toHaveBeenCalledTimes(1);
+      await jest.mocked(runAfterResponse).mock.calls[0][0]();
+      expect(resyncOwnerKitsForBridge).toHaveBeenCalledWith("user_owner", "https://canary.hermesos.cloud/api/agent-link");
+    }
   });
 
   it("has no allow-forever decision", async () => {

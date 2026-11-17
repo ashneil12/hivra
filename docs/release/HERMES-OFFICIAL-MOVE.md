@@ -20,8 +20,9 @@ runs the official Hermes; update it with `hermes update`; undo until <date>").
 Progress shows real steps only: setting up the new computer, packing your data, copying it, unpacking
 and checking it, done. It ends in one of three states:
 
-- **Moved.** The old page sends the owner to the new agent. The new agent shows "Moved from <name> on
-  <date>. The old computer is kept until <date>." with **Undo move**.
+- **Moved.** The old page sends the owner to the new agent. The new agent's Settings (Overview) shows
+  "Moved from <name> on <date>. The old computer is kept until <date>." with **Undo move**. The agent's
+  own page shows nothing about the move.
 - **Not moved, nothing lost.** Something did not check out. The old agent was started again as it was,
   and the new computer was removed. The card says what failed.
 - **Needs attention.** The old agent could not be started again. An operator is alerted.
@@ -116,7 +117,7 @@ lets the slot and CPU/RAM checks leave out the instance being replaced.
 
 ## Undo
 
-Within 7 days, **Undo move** on the new agent: stop the new computer, start the old VM and its
+Within 7 days, **Undo move** in the new agent's Settings: stop the new computer, start the old VM and its
 containers (`restart-old`), set the old row back to `running` and clear its deletion date, relink the
 wallet back, delete the new computer, `state = undone`. Anything done on the new computer since the
 move is lost, and the button says so.

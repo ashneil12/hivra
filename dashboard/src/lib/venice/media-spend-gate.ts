@@ -47,6 +47,10 @@ import {
   ManagedVeniceSpendCapError,
   assertManagedVeniceWithinSpendCap,
 } from "@/lib/billing/managed-venice-spend-caps";
+import {
+  assertManagedVeniceAgentWithinSpendCap,
+  managedVeniceSpendCapMessage,
+} from "@/lib/billing/managed-venice-agent-spend-caps";
 import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -227,6 +231,7 @@ export async function holdManagedVeniceMediaSpend(
 
   try {
     await assertManagedVeniceWithinSpendCap({ userId: key.userId, addMicroUsd: heldMicroUsd }, db);
+    await assertManagedVeniceAgentWithinSpendCap({ userId: key.userId, proxyKeyId: key.id, addMicroUsd: heldMicroUsd }, db);
     await createManagedVeniceReservation(
       {
         userId: key.userId,
@@ -269,7 +274,7 @@ export async function holdManagedVeniceMediaSpend(
       };
     }
     if (error instanceof ManagedVeniceSpendCapError) {
-      log.warn("Managed Venice media request blocked by monthly spend cap", {
+      log.warn("Managed Venice media request blocked by a spend cap", {
         ...logContext,
         failureType: "managed_venice_spend_cap_reached",
         capMicroUsd: error.capMicroUsd,
@@ -280,7 +285,7 @@ export async function holdManagedVeniceMediaSpend(
         response: billingError(
           402,
           "managed_venice_spend_cap_reached",
-          `Monthly managed Venice spend cap reached. Manage your limit in Hivra: ${managedVeniceTopUpUrl(walletType)}`
+          managedVeniceSpendCapMessage(error, managedVeniceTopUpUrl(walletType))
         ),
       };
     }

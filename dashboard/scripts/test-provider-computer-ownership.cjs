@@ -331,6 +331,300 @@ async function main() {
     });
     await db.exec(HERMES_MODEL_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedHermesModel, "re-applying the 2026.11.12.1 admission changes nothing");
+    // 2026.11.12.2 anchors on the 2026.11.12.1 entry; idempotent too.
+    const GIT_GUARD_ADMISSION = migration("20261112180000_provider_release_admission_2026_11_12_2.sql");
+    await db.exec(GIT_GUARD_ADMISSION);
+    const admittedGitGuard = await admissionDefinitions();
+    admittedGitGuard.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(GIT_GUARD_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedGitGuard, "re-applying the 2026.11.12.2 admission changes nothing");
+    // 2026.11.12.3 anchors on the 2026.11.12.2 entry; idempotent too.
+    const RESTORE_POINTS_ADMISSION = migration("20261112190000_provider_release_admission_2026_11_12_3.sql");
+    await db.exec(RESTORE_POINTS_ADMISSION);
+    const admittedRestorePoints = await admissionDefinitions();
+    admittedRestorePoints.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(RESTORE_POINTS_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedRestorePoints, "re-applying the 2026.11.12.3 admission changes nothing");
+    // 2026.11.12.4 anchors on the 2026.11.12.3 entry; idempotent too.
+    const OPENBOT_ADMISSION = migration("20261112210000_provider_release_admission_2026_11_12_4.sql");
+    await db.exec(OPENBOT_ADMISSION);
+    const admittedOpenBot = await admissionDefinitions();
+    admittedOpenBot.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(OPENBOT_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedOpenBot, "re-applying the 2026.11.12.4 admission changes nothing");
+    // 2026.11.12.5 anchors on the 2026.11.12.4 entry; idempotent too.
+    const NUPHOS_ADMISSION = migration("20261113091000_provider_release_admission_2026_11_12_5.sql");
+    await db.exec(NUPHOS_ADMISSION);
+    const admittedNuphos = await admissionDefinitions();
+    admittedNuphos.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(NUPHOS_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedNuphos, "re-applying the 2026.11.12.5 admission changes nothing");
+    // 2026.11.13.1 anchors on the 2026.11.12.5 entry; idempotent too.
+    const WAKE_PROXY_ADMISSION = migration("20261113103000_provider_release_admission_2026_11_13_1.sql");
+    await db.exec(WAKE_PROXY_ADMISSION);
+    const admittedWakeProxy = await admissionDefinitions();
+    admittedWakeProxy.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(WAKE_PROXY_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedWakeProxy, "re-applying the 2026.11.13.1 admission changes nothing");
+    // 2026.11.13.2 anchors on the 2026.11.13.1 entry; idempotent too.
+    const HOST_INGRESS_START_ADMISSION = migration("20261113111000_provider_release_admission_2026_11_13_2.sql");
+    await db.exec(HOST_INGRESS_START_ADMISSION);
+    const admittedHostIngressStart = await admissionDefinitions();
+    admittedHostIngressStart.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(HOST_INGRESS_START_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedHostIngressStart, "re-applying the 2026.11.13.2 admission changes nothing");
+    // 2026.11.13.3 anchors on the 2026.11.13.2 entry; idempotent too.
+    const HOST_CREDENTIAL_ADMISSION = migration("20261113121000_provider_release_admission_2026_11_13_3.sql");
+    await db.exec(HOST_CREDENTIAL_ADMISSION);
+    const admittedHostCredential = await admissionDefinitions();
+    admittedHostCredential.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(HOST_CREDENTIAL_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedHostCredential, "re-applying the 2026.11.13.3 admission changes nothing");
+    // 2026.11.13.4 anchors on the 2026.11.13.3 entry; idempotent too.
+    const CLIENT_WAKE_ADMISSION = migration("20261113130000_provider_release_admission_2026_11_13_4.sql");
+    await db.exec(CLIENT_WAKE_ADMISSION);
+    const admittedClientWake = await admissionDefinitions();
+    admittedClientWake.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(CLIENT_WAKE_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedClientWake, "re-applying the 2026.11.13.4 admission changes nothing");
+    // 2026.11.13.5 anchors on the 2026.11.13.4 entry; idempotent too.
+    const DISCORD_DOORBELL_ADMISSION = migration("20261113140000_provider_release_admission_2026_11_13_5.sql");
+    await db.exec(DISCORD_DOORBELL_ADMISSION);
+    const admittedDiscordDoorbell = await admissionDefinitions();
+    admittedDiscordDoorbell.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(DISCORD_DOORBELL_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedDiscordDoorbell, "re-applying the 2026.11.13.5 admission changes nothing");
+    // 2026.11.13.6 anchors on the 2026.11.13.5 entry; idempotent too.
+    const INGRESS_REVIEW_ADMISSION = migration("20261113150000_provider_release_admission_2026_11_13_6.sql");
+    await db.exec(INGRESS_REVIEW_ADMISSION);
+    const admittedIngressReview = await admissionDefinitions();
+    admittedIngressReview.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(INGRESS_REVIEW_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedIngressReview, "re-applying the 2026.11.13.6 admission changes nothing");
+    // 2026.11.14.1 anchors on the 2026.11.13.6 entry; idempotent too.
+    const CONNECT_GRANTS_ADMISSION = migration("20261114120000_provider_release_admission_2026_11_14_1.sql");
+    await db.exec(CONNECT_GRANTS_ADMISSION);
+    const admittedConnectGrants = await admissionDefinitions();
+    admittedConnectGrants.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(CONNECT_GRANTS_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedConnectGrants, "re-applying the 2026.11.14.1 admission changes nothing");
+    // 2026.11.15.1 anchors on the 2026.11.14.1 entry; idempotent too.
+    const A0_ENTRY_ADMISSION = migration("20261115120000_provider_release_admission_2026_11_15_1.sql");
+    await db.exec(A0_ENTRY_ADMISSION);
+    const admittedA0Entry = await admissionDefinitions();
+    admittedA0Entry.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(A0_ENTRY_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedA0Entry, "re-applying the 2026.11.15.1 admission changes nothing");
+    // 2026.11.15.2 anchors on the 2026.11.15.1 entry; idempotent too.
+    const STATE_IMPORT_ADMISSION = migration("20261115130000_provider_release_admission_2026_11_15_2.sql");
+    await db.exec(STATE_IMPORT_ADMISSION);
+    const admittedStateImport = await admissionDefinitions();
+    admittedStateImport.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(STATE_IMPORT_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedStateImport, "re-applying the 2026.11.15.2 admission changes nothing");
+    // 2026.11.15.3 anchors on the 2026.11.15.2 entry; idempotent too.
+    const RESILIENCE_ADMISSION = migration("20261115140000_provider_release_admission_2026_11_15_3.sql");
+    await db.exec(RESILIENCE_ADMISSION);
+    const admittedResilience = await admissionDefinitions();
+    admittedResilience.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(RESILIENCE_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedResilience, "re-applying the 2026.11.15.3 admission changes nothing");
+    // 2026.11.15.5 anchors on the 2026.11.15.3 entry; idempotent too.
+    const LOCKFD_ADMISSION = migration("20261115150000_provider_release_admission_2026_11_15_5.sql");
+    await db.exec(LOCKFD_ADMISSION);
+    const admittedLockFd = await admissionDefinitions();
+    admittedLockFd.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(LOCKFD_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedLockFd, "re-applying the 2026.11.15.5 admission changes nothing");
+    // 2026.11.15.6 anchors on the 2026.11.15.5 entry; idempotent too.
+    const WATCHDOG_ADMISSION = migration("20261116010000_provider_release_admission_2026_11_15_6.sql");
+    await db.exec(WATCHDOG_ADMISSION);
+    const admittedWatchdog = await admissionDefinitions();
+    admittedWatchdog.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(WATCHDOG_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedWatchdog, "re-applying the 2026.11.15.6 admission changes nothing");
+    // 2026.11.15.7 anchors on the 2026.11.15.6 entry; idempotent too.
+    const USR_PLUGINS_ADMISSION = migration("20261116020000_provider_release_admission_2026_11_15_7.sql");
+    await db.exec(USR_PLUGINS_ADMISSION);
+    const admittedUsrPlugins = await admissionDefinitions();
+    admittedUsrPlugins.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+    });
+    await db.exec(USR_PLUGINS_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedUsrPlugins, "re-applying the 2026.11.15.7 admission changes nothing");
+    // The resealed 2026.11.15.7 admission rewrites the .7 clause digest in
+    // place; the version list is unchanged. Idempotent too.
+    const RESEALED_ADMISSION = migration("20261116030000_provider_release_admission_2026_11_15_7_resealed.sql");
+    await db.exec(RESEALED_ADMISSION);
+    const admittedResealed = await admissionDefinitions();
+    admittedResealed.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, "7531d349e21783765e52b6d33c507a35568b0c8830f23faab1245f26bed48869"), 1,
+          `${admissionFunctions[index]} admits the resealed .7 digest once`);
+        assert.equal(occurrences(definition, "874c0d9df653f12acb2a0d765333f0c0aa95943e73ff437f8c6fe8df86a8d4d3"), 0,
+          `${admissionFunctions[index]} drops the superseded .7 digest`);
+      }
+    });
+    await db.exec(RESEALED_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedResealed, "re-applying the resealed 2026.11.15.7 admission changes nothing");
+    // The second reseal rewrites the .7 clause digest again for the watchdog
+    // hardening review fixes; the version list is unchanged. Idempotent too.
+    const RESEALED_2_ADMISSION = migration("20261116040000_provider_release_admission_2026_11_15_7_resealed_2.sql");
+    await db.exec(RESEALED_2_ADMISSION);
+    const admittedResealed2 = await admissionDefinitions();
+    admittedResealed2.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, "28ae48475970fd17617292ae3a3b9823769ed3c9c8fc9d9a6774d32199a510ff"), 1,
+          `${admissionFunctions[index]} admits the final .7 digest once`);
+        for (const superseded of ["874c0d9df653f12acb2a0d765333f0c0aa95943e73ff437f8c6fe8df86a8d4d3",
+          "7531d349e21783765e52b6d33c507a35568b0c8830f23faab1245f26bed48869"]) {
+          assert.equal(occurrences(definition, superseded), 0,
+            `${admissionFunctions[index]} drops the superseded .7 digest`);
+        }
+      }
+    });
+    await db.exec(RESEALED_2_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedResealed2, "re-applying the second resealed 2026.11.15.7 admission changes nothing");
+    // 2026.11.17.1 anchors on the final 2026.11.15.7 entry; idempotent too.
+    const LATEST_AGENTS_ADMISSION = migration("20261117120000_provider_release_admission_2026_11_17_1.sql");
+    await db.exec(LATEST_AGENTS_ADMISSION);
+    const admittedLatestAgents = await admissionDefinitions();
+    admittedLatestAgents.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, "992ed8cd0bbfda5a5d2774394000339c0a7245f1ce15775c74f6d9424238493e"), 1,
+          `${admissionFunctions[index]} admits the 2026.11.17.1 digest once`);
+        assert.equal(occurrences(definition, "28ae48475970fd17617292ae3a3b9823769ed3c9c8fc9d9a6774d32199a510ff"), 1,
+          `${admissionFunctions[index]} keeps the final .7 digest`);
+      }
+    });
+    await db.exec(LATEST_AGENTS_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedLatestAgents, "re-applying the 2026.11.17.1 admission changes nothing");
+    // 2026.11.17.2 anchors on the 2026.11.17.1 entry; idempotent too.
+    const BACKGROUND_READS_ADMISSION = migration("20261117130000_provider_release_admission_2026_11_17_2.sql");
+    await db.exec(BACKGROUND_READS_ADMISSION);
+    const admittedBackgroundReads = await admissionDefinitions();
+    admittedBackgroundReads.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", "2026.11.17.2"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, "9010b4c2b0abf9863fc70b3e8482fc500ecb4cfa8ced51f3776006e2066ebb02"), 1,
+          `${admissionFunctions[index]} admits the 2026.11.17.2 digest once`);
+        assert.equal(occurrences(definition, "992ed8cd0bbfda5a5d2774394000339c0a7245f1ce15775c74f6d9424238493e"), 1,
+          `${admissionFunctions[index]} keeps the 2026.11.17.1 digest`);
+      }
+    });
+    await db.exec(BACKGROUND_READS_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedBackgroundReads, "re-applying the 2026.11.17.2 admission changes nothing");
+    // 2026.11.17.3 anchors on the 2026.11.17.2 entry; idempotent too.
+    const AGENT_ZERO_SETTINGS_ADMISSION = migration("20261117140000_provider_release_admission_2026_11_17_3.sql");
+    await db.exec(AGENT_ZERO_SETTINGS_ADMISSION);
+    const admittedAgentZeroSettings = await admissionDefinitions();
+    admittedAgentZeroSettings.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, "1346e7abf511d196a889b87231c098b7c6c9694690177db57a28ae2e8c368485"), 1,
+          `${admissionFunctions[index]} admits the 2026.11.17.3 digest once`);
+        assert.equal(occurrences(definition, "9010b4c2b0abf9863fc70b3e8482fc500ecb4cfa8ced51f3776006e2066ebb02"), 1,
+          `${admissionFunctions[index]} keeps the 2026.11.17.2 digest`);
+      }
+    });
+    await db.exec(AGENT_ZERO_SETTINGS_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedAgentZeroSettings, "re-applying the 2026.11.17.3 admission changes nothing");
+    // 2026.11.17.4 anchors on the 2026.11.17.3 entry; idempotent too.
+    const OPENCLAW_AEON_ADMISSION = migration("20261117160000_provider_release_admission_2026_11_17_4.sql");
+    await db.exec(OPENCLAW_AEON_ADMISSION);
+    const admittedOpenclawAeon = await admissionDefinitions();
+    admittedOpenclawAeon.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, "001acfd88189bb756f0fee77209ade989f990d1eaae7b5bc992604cea514cbdf"), 1,
+          `${admissionFunctions[index]} admits the 2026.11.17.4 digest once`);
+        assert.equal(occurrences(definition, "1346e7abf511d196a889b87231c098b7c6c9694690177db57a28ae2e8c368485"), 1,
+          `${admissionFunctions[index]} keeps the 2026.11.17.3 digest`);
+      }
+    });
+    await db.exec(OPENCLAW_AEON_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedOpenclawAeon, "re-applying the 2026.11.17.4 admission changes nothing");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
     const attempt = "33333333-3333-4333-8333-333333333333";

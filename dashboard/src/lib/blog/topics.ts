@@ -22,6 +22,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "run-codex-24-7-in-the-cloud",
       "claude-code-vs-codex-24-7",
       "cursor-vs-claude-code",
+      "best-llm-for-coding",
       "ai-agent-dies-terminal-closes-fixes",
       "run-ai-agents-24-7",
       "control-claude-code-from-telegram",
@@ -44,8 +45,10 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "claude-max-vs-pro-for-claude-code",
       "codex-pricing-by-chatgpt-plan",
       "cursor-cloud-agents",
+      "run-managed-agents-on-your-own-computer",
       "ai-agent-api-cost-optimization",
       "byo-api-key-explained",
+      "openrouter-free-models",
     ],
   },
   {
@@ -54,6 +57,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
     blurb: "What Hermes Agent is, how to run it yourself, and how to use its memory, skills, schedules and chat apps.",
     articles: [
       "what-is-hermes-agent",
+      "hermes-agent-cloud",
       "how-to-self-host-hermes-agent",
       "self-hosting-hermes-guide",
       "what-can-hermes-agent-actually-do",
@@ -75,6 +79,19 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "openclaw-broken-after-update",
       "agent-zero-vs-openclaw-hosting",
       "hermes-vs-openclaw",
+    ],
+  },
+  {
+    slug: "meet-the-agents",
+    title: "Meet the agents",
+    blurb: "One article for each agent and computer you can run on Hivra: what it is, what it needs, and how it is set up. Previews are marked as previews.",
+    articles: [
+      "what-is-agent-zero",
+      "what-is-aeon-agent",
+      "deepseek-harness-coding-agent",
+      "openbot-ai-coworkers",
+      "nuphos-claude-code-team-chat",
+      "ubuntu-desktop-in-the-cloud",
     ],
   },
   {

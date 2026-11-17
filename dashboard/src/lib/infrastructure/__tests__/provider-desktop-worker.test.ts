@@ -56,6 +56,28 @@ describe("staged private desktop provider controller", () => {
     expect(plan.script).not.toContain("2e60747237245c7e71912851a11992b7768ef7c99986d2bb52f35360cf1c6711");
     expect(() => buildProviderDesktopWorkerPlan({ ...request, identity: prior }, { ...clock, boottimeMs: Number.MAX_SAFE_INTEGER - 480_000 })).toThrow();
   });
+  it.each([
+    ["2026.11.15.2", "49a8f66e3fca1577e7932a2338de16e9c04d77bc9eb130ae81ccb7ac3a692cef", "3554ebbcc4a6e92eac4b5850937ba1179c590db300e4071156922d52aa6a6fbb"],
+    ["2026.11.15.1", "4729a8faca0ab45d854ad48423ee6d87bfb94e818ce27599817998fdf2ababd8", "48b7c4637d228f9bff6e909dfa996f0822172e560194e78bf79be21d9f6fd635"],
+    ["2026.11.14.1", "03f424cd434b5142c8f482c67ad5b2a61787a5404a2cb8ec6a2ecd4fec72fd04", "1187804561d2293138eda8162f23f4ce4f35e5fa86c9171c1b35a6f3254d789a"],
+    ["2026.11.13.6", "e402a4a3b2359852034c43354eac986014db92f354f204ea13728edcbf073f25", "2e3996e3ce750eb2be92b7ae2f168b94c2951db333b913fcb3f99d6a830c6ab1"],
+    ["2026.11.13.5", "c7c400fdd3009867c86ed21610c765f077b03e038f1ddcbec75966304ac5bd9f", "dac65199affccaf5ed37a46a4ac8651384cffe04b15a4901acd697b17cb30b10"],
+    ["2026.11.13.4", "b5266ae6dc98bef2f4134be25ac540703d3a8e641e8129ddd02caaaa747e3716", "b16aec8710cb07252e0e20919a3c71273664f7f983acb9d1bf7921ce3829d66f"],
+    ["2026.11.13.3", "f0e86fbe69ab3a44378010da7058df2bcdfe4375ad49cd7921325c2602c7b6c3", "4c8558bea03db55790d1d4bfc086f52bf39ba2eed07425a2b183a57776c58954"],
+    ["2026.11.13.2", "c89d66209b3f2019a1f0fab017b8e8631c2e6426ec1bd66c22ada361ea8bc72b", "5f3df66045f47cbf8fc303f7ae094f8403615d78657a888028c8faa31cc87a37"],
+    ["2026.11.13.1", "19696e4692b2139538a76b2f2fbc5b78b15e83a8fa11cb271299183f9e9ca25d", "3177774e1a7a6ea88f95362ba4f7a167f53636525ef03beb96c105a2d55eb052"],
+    ["2026.11.12.5", "2732136b7f6a94d42356c295f5414c90127e35d0608ee8bc2f74c2e3f4188f71", "6900bb616ab7449874567c8ed33f780dc8a6fce571786f1fd5cd468d29899a92"],
+    ["2026.11.12.4", "65e603d9fa6930b1625be3bc89396286fa511f00df539eb99bc1a51554ffbba9", "ed590be9e1dde134bdba172cea0f182f2c1ab0b6e0681cd8e128257878b4024a"],
+    ["2026.11.12.3", "12ea5f0465a901a5b27a6b780fa3f497bf26006346209f7a7028d2b413d1e1a9", "ccd68eccf4a4a25c88f67d88c9688244ae4b8adf0f6fa31b737436944954af94"],
+    ["2026.11.12.2", "b42e5c39bbc4f7ce155816e8db4944a951a8040b1c4b80238df00ff575cd6737", "279c849b8ee4720a70d3509c453984f7098e6504cf2ac333f055201bfee9cf61"],
+    ["2026.11.12.1", "d79a91eccf3d7aacc65efe2fdbe55e00f564caabc24f0ff4c0a5a324985d8e1c", "9abab12289cd7978348324e16278019d4668e521405d1e180d7c4dd3011427cf"],
+    ["2026.11.11.7", "880754711e2f8bd3d57eaa11b8dc1be47780de107214f610d2fbbe261d32eb0e", "ee41d3606f887223a35a8c3845c5560cabd486372cb4e7717f63d384ef0c48b2"],
+    ["2026.11.11.6", "f2148144fee2ab681d36c584d882198c8bded295c3f6375780919e113ad0ef86", "b053788bb30f0faaab1543510683987fbb2628f775436f311ec588e3235779af"],
+    ["2026.11.11.5", "e4c439b7e1590de448c204232543a1a9e2b0ca695efd652d79f934e38e97c5cf", "a0c9fee41a68a6a73b3282c882673fe34fd3902da6cedb90febb3adfaa58d242"],
+  ])("retains %s's exact worker for recovery", (provisionerVersion, bundleSha256, workerSha256) => {
+    const request = recovery(), prior = parseProviderDesktopWorkerIdentity({ ...request.identity, bundle: { ...request.identity.bundle, provisionerVersion, bundleSha256 } });
+    expect(buildProviderDesktopWorkerPlan({ ...request, identity: prior }, clock).script).toContain(workerSha256);
+  });
   it("retains .05.10's exact worker and cold-start deadline without adopting editor-release bytes", () => {
     const request = recovery(), prior = parseProviderDesktopWorkerIdentity({ ...request.identity, bundle: { ...request.identity.bundle,
       provisionerVersion: "2026.09.05.10", bundleSha256: "c48b6f0df47743e4fd4978b3a886e1fb68ee5cc163d51781cd8c7a4a539b7860" } });
@@ -89,7 +111,7 @@ describe("staged private desktop provider controller", () => {
   });
   it("keeps .05.7 recovery pinned while admitting the bounded cold-start release", () => {
     const request = recovery();
-    expect(request.identity.bundle.provisionerVersion).toBe("2026.11.12.1");
+    expect(request.identity.bundle.provisionerVersion).toBe("2026.11.17.4");
     const prior = parseProviderDesktopWorkerIdentity({ ...request.identity, bundle: { ...request.identity.bundle,
       provisionerVersion: "2026.09.05.7", bundleSha256: "d3631ea66b7d74084e1f29e7795f2459e6e215c4f97a6e231ccf480f3cb9ba9b" } });
     const oldClock = { ...clock, boottimeMs: Number.MAX_SAFE_INTEGER - 480_000 };

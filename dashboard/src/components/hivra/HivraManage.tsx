@@ -19,6 +19,7 @@ import { CookieImportModal } from "@/components/instances/CookieImportModal";
 import { ToolInstallPicker } from "./ToolInstallPicker";
 import { AgentModelSettings } from "./AgentModelSettings";
 import { HermesModelSettings } from "./HermesModelSettings";
+import { HermesRestorePoints, restorePointsEnabled } from "./HermesRestorePoints";
 import { ProviderResizePanel } from "./ProviderResizePanel";
 import { HivraPrivateAccessPanel } from "./HivraPrivateAccessPanel";
 import { GvisorComputerManage } from "./GvisorComputerManage";
@@ -37,6 +38,8 @@ import { HivraGitHubConnect } from "./HivraGitHubConnect";
 import { AgentSoftwareChip } from "./AgentSoftwareChip";
 import { followAgentSoftware } from "./useAgentSoftware";
 import { ManageUsageCard } from "./manage/ManageUsageCard";
+import { HivraImportPanel } from "./manage/HivraImportPanel";
+import { MovedFromNotice } from "@/components/instances/MovedFromNotice";
 import {
   ManageReachabilityNotice, ManageReachabilityProvider, ReportUnreachable, UNREACHABLE_CARD_LINE,
 } from "./manage/ManageReachability";
@@ -71,6 +74,8 @@ import {
 } from "@/lib/hivra/manage-sections";
 import type { ChatReadiness } from "@/lib/hivra/chat-readiness";
 import { hasSafeHttpAccessUrl } from "@/lib/safe-http-url";
+import { agentSleepUiEnabled, agentSleepView } from "@/lib/hivra/agent-sleep-ui";
+import { ManageSleepSettings } from "./manage/ManageSleepSettings";
 
 // The server's resource-gate denial for browser-on-free (403 from launch/resize)
 // and the client-side pre-check below both funnel into the same paywall modal.
@@ -125,7 +130,7 @@ const LIFECYCLE_PROGRESS: Record<string, { title: string; detail: string; sectio
   // Update in Manage › Updates' agent software card: the same in-place update.
   "cli-update": {
     title: "Updating the connection service…",
-    detail: "Hivra is updating it in place, then moves the agent to its tested version once no reply is being written. The computer keeps running, and this page reconnects to it when the update finishes.",
+    detail: "Hivra is updating it in place, then updates the agent to its newest release once no reply is being written. The computer keeps running, and this page reconnects to it when the update finishes.",
     section: "updates",
   },
 };
@@ -219,7 +224,7 @@ function computerHostingDisclaimer(template: ComputerTemplateDefinition): string
 type ErrorSlot = "header" | "power" | "force" | "updates" | "restore" | "browser" | "model" | "permissions" | "tools" | "resources" | "danger";
 const ERROR_SLOT: Record<string, ErrorSlot> = {
   rename: "header", start: "power", stop: "power", restart: "power", force_stop: "force", force_restart: "force", "runtime-update": "updates",
-  snapshot: "restore", restore: "restore", browser: "browser", model: "model", restrict: "permissions",
+  snapshot: "restore", restore: "restore", browser: "browser", model: "model", restrict: "permissions", "ask-first": "permissions",
   mcp: "tools", resize: "resources", destroy: "danger",
 };
 const SLOT_SECTION: Record<ErrorSlot, ManageSectionId | null> = {
@@ -389,6 +394,34 @@ function HivraManageContent({
     return () => { alive = false; };
   }, [isChatCli, agent.chat_url, agent.api_token]);
 
+  // "Ask me first" (Claude Code only): wait for the owner's answer in Needs you
+  // before shell commands and file changes. The route answers available:false
+  // while Needs you answers are off or for other agents, which hides it.
+  const [askFirst, setAskFirst] = useState<{ available: boolean; enabled: boolean } | null>(null);
+  useEffect(() => {
+    if (def?.cliKind !== "claude" || agent.type !== "claude-code") return;
+    let alive = true;
+    void fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/ask-first`, { cache: "no-store" })
+      .then(async (res) => (res.ok ? ((await res.json()) as { data?: { available?: boolean; enabled?: boolean } }).data : null))
+      .then((data) => { if (alive && data) setAskFirst({ available: Boolean(data.available), enabled: Boolean(data.enabled) }); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [def?.cliKind, agent.type, agent.id]);
+
+  const applyAskFirst = useCallback(async (next: boolean) => {
+    if (acting) return;
+    setActing("ask-first"); setErr(null);
+    try {
+      const res = await fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/ask-first`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: next }),
+      });
+      const body = (await res.json().catch(() => null)) as { data?: { available?: boolean; enabled?: boolean }; error?: string; message?: string } | null;
+      if (!res.ok) throw new Error(body?.error || body?.message || "Couldn't change Ask me first");
+      setAskFirst({ available: true, enabled: Boolean(body?.data?.enabled) });
+    } catch (e) { setErr({ slot: "permissions", message: (e as Error).message }); }
+    finally { setActing(null); }
+  }, [agent.id, acting]);
+
   // MCP servers — list + add form state. Tools (curated bundles) install MCP
   // servers too, so the picker refreshes this same list on change.
   const [mcp, setMcp] = useState<McpServer[] | null>(null);
@@ -554,7 +587,7 @@ function HivraManageContent({
   // The update restarts only the computer's gateway, which drops the embedded
   // surfaces' sign-ins, so the page signs them in again once it is back. An
   // unverified outcome (502) may also have restarted it, or rolled it back.
-  // For Claude Code and Codex it also reports the move to Hivra's tested version.
+  // For Claude Code and Codex it also reports the update to the newest release.
   const updateConnectionService = useCallback(async () => {
     let result: Awaited<ReturnType<typeof updateAgentRuntime>> | undefined;
     try {
@@ -899,7 +932,12 @@ function HivraManageContent({
   );
 
   const productName = computerTemplate?.name || def?.name || "the agent";
-  const statusLabel = lifecyclePending ? agentActivityPresentation(agent, productName).label : agent.status;
+  // A running agent that is not awake reads "Asleep" (or "Waking up"), with a calm dot.
+  const sleepView = agentSleepView(agent);
+  const statusKey = lifecyclePending || sleepView === "awake" ? agent.status : sleepView;
+  const statusLabel = lifecyclePending
+    ? agentActivityPresentation(agent, productName).label
+    : sleepView === "asleep" ? "Asleep" : sleepView === "waking" ? "Waking up" : agent.status;
   const subtitle = isComputerOnly
     ? `${computerTemplate?.name ?? def?.name ?? "Computer"} · ${placementLabel}`
     : `${def?.name ?? agent.type} · ${agentComputerPairLabel(agent)}`;
@@ -944,7 +982,7 @@ function HivraManageContent({
         <ManageHeader
           eyebrow={isComputerOnly ? "Computer settings" : "Agent settings"}
           name={agent.name}
-          status={agent.status}
+          status={statusKey}
           statusLabel={statusLabel}
           subtitle={subtitle}
           renaming={acting === "rename"}
@@ -968,6 +1006,8 @@ function HivraManageContent({
       {/* OVERVIEW — what this is, its size and where it runs, and power. */}
       <ManagePanel id="overview" selected={selected}>
         <div style={{ display: "grid", gap: 20 }}>
+          {/* A Hermes agent moved to the official setup can go back for 7 days. */}
+          <MovedFromNotice agentId={agent.id} enabled={agent.type === "hermes" && !isComputerOnly} />
           {/* Error lands here, not on a surface: say why and what to do next
               where the owner actually is, not only under Advanced. */}
           {agent.status === "error" && agent.error && !missingOnHost ? (
@@ -1073,6 +1113,11 @@ function HivraManageContent({
               >{providerPowerMessage(agent.power_stage)}</p> : null}
             </div>
           </div>}
+
+          {/* When this agent may sleep. Dark unless the sleep screens are switched on. */}
+          {agentSleepUiEnabled() && !isComputerOnly && agent.status === "running" && agent.deployment_mode !== "self-managed"
+            && (!agent.computer_substrate || agent.computer_substrate === "proxmox-kvm")
+            ? <ManageSleepSettings agent={agent} onChanged={onChanged} /> : null}
 
           {/* The agent and its computer as one pair (ATT-11), and what the agent
               knows about it. A computer's agents live in its Agents section. */}
@@ -1240,6 +1285,12 @@ function HivraManageContent({
                   <HermesModelSettings chatUrl={agent.chat_url!} apiToken={agent.api_token} agentName={def?.name || "Hermes"}
                     running={agent.status === "running" && !agent.activity} disabled={busy} />
                 </div>
+                {restorePointsEnabled() ? (
+                  <div style={card}>
+                    <HermesRestorePoints chatUrl={agent.chat_url!} apiToken={agent.api_token} agentName={def?.name || "Hermes"}
+                      running={agent.status === "running" && !agent.activity} disabled={busy} />
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -1299,6 +1350,41 @@ function HivraManageContent({
                         ? (def?.cliKind === "codex" ? "Sandboxed to its workspace — can edit project files but not the wider system." : "Shell commands are off; file reads and edits still work.")
                         : "The agent runs autonomously with full access to its own computer (it's single-tenant, yours alone)."}
                   </div>
+                  {askFirst?.available && restrict !== "readonly" ? (
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, borderTop: "1px solid var(--etched-border)", paddingTop: 10 }}>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={askFirst.enabled}
+                        aria-label="Ask me first"
+                        disabled={busy || agent.status !== "running"}
+                        onClick={() => void applyAskFirst(!askFirst.enabled)}
+                        style={{
+                          flex: "none", width: 38, height: 22, borderRadius: 11, padding: 2, marginTop: 1,
+                          border: "1px solid " + (askFirst.enabled ? "var(--ink-black)" : "var(--etched-border)"),
+                          background: askFirst.enabled ? "var(--ink-black)" : "transparent",
+                          cursor: busy || agent.status !== "running" ? "default" : "pointer",
+                        }}
+                      >
+                        <span style={{
+                          display: "block", width: 16, height: 16, borderRadius: 8,
+                          background: askFirst.enabled ? "var(--bg-surface)" : "var(--text-muted)",
+                          transform: askFirst.enabled ? "translateX(16px)" : "none", transition: "transform 120ms ease",
+                        }} />
+                      </button>
+                      <div style={{ display: "grid", gap: 2 }}>
+                        <div style={{ fontSize: 12.5, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: 6 }}>
+                          Ask me first
+                          {acting === "ask-first" ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite", color: "var(--text-muted)" }} /> : null}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                          {askFirst.enabled
+                            ? "Before each command or file change, Claude Code waits for your answer in Needs you. No answer in 9 minutes means no."
+                            : "Off: Claude Code works on its own. Turn on to approve each command or file change from Needs you."}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -1696,9 +1782,8 @@ function HivraManageContent({
                           : isComputerOnly
                           ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so apps, files, and local logins stay as they are. The desktop stream disconnects briefly; terminals open on this page reconnect when it finishes."
                           : "Update connection service brings Hivra’s connection service up to date without restarting the computer, so your agent login, chats, model credentials, and files stay as they are. Terminals open on this page reconnect when it finishes."}
-                        {manage?.agentCli ? ` It also moves ${def?.name ?? "the agent"} to version ${manage.agentCli.vetted}, the version Hivra has tested, once no reply is being written.` : ""}
-                        {manage?.agentApp?.vetted ? ` It also moves ${def?.name ?? "the agent"} to ${manage.agentApp.vetted}, the version Hivra has tested, once nobody is using it.` : ""}
-                        {manage?.agentApp && !manage.agentApp.vetted ? " It also runs Hermes’s own update (hermes update) once nobody is using Hermes." : ""}
+                        {manage?.agentCli ? ` It also updates ${def?.name ?? "the agent"} to its newest release, once no reply is being written.` : ""}
+                        {manage?.agentApp ? ` It also updates ${def?.name ?? "the agent"} to its newest release, once nobody is using it.` : ""}
                       </div>
                     </>
                   )}
@@ -1802,6 +1887,16 @@ function HivraManageContent({
                 ? <div><a href={`/api/hivra/agents/${encodeURIComponent(agent.id)}/export`} style={{ ...btnGhost, textDecoration: "none" }}>Export data</a></div>
                 : <CapReasonLine cap={manage.export} />}
             </div>
+          ) : null}
+
+          {manage?.agentImport && agent.chat_url ? (
+            <HivraImportPanel
+              cap={manage.agentImport}
+              boxUrl={agent.chat_url}
+              token={agent.api_token ?? null}
+              agentType={String(agent.type ?? "")}
+              agentName={def?.name ?? agent.name}
+            />
           ) : null}
 
           <ManageNotAvailable items={manage?.notAvailable ?? []} />

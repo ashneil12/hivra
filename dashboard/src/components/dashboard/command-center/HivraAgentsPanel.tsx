@@ -18,6 +18,7 @@ import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { pollWhenVisible } from "@/lib/poll-when-visible";
 import { listAgentsResult, type HivraAgent } from "@/lib/hivra/agent-api";
 import {
+  isRunningState,
   unifiedStateLabel,
   unifyAll,
   type UnifiedAgent,
@@ -25,7 +26,6 @@ import {
 } from "@/lib/hivra/unified-agent";
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
 import type { AgentSoftwareBadge, AgentSoftwareSummary } from "@/lib/hivra/agent-cli-status";
-import { agentSoftwareVersionName } from "@/lib/hivra/agent-software-names";
 import styles from "../../agents/AgentsPage.module.css";
 
 export type { HermesInstanceLite };
@@ -49,6 +49,8 @@ export function matchesInventoryFilter(
   if (filter === "all") return true;
   if (filter === "starting")
     return state === "provisioning" || state === "updating";
+  // An agent asleep or waking up is still a running agent.
+  if (filter === "running") return isRunningState(state);
   return state === filter;
 }
 
@@ -259,7 +261,7 @@ export function HivraAgentsPanel({
             }
             onTools={
               agent.kind === "hivra" &&
-              agent.state === "running" &&
+              isRunningState(agent.state) &&
               TOOL_CAPABLE_TYPES.has(agent.agentType || "")
                 ? () =>
                     go(
@@ -303,15 +305,12 @@ const SOFTWARE_TAG: Record<AgentSoftwareBadge, string> = {
   update_failed: "Update didn't finish",
 };
 
-/** The tag's longer explanation: behind Hivra's tested version, never "latest". */
+/** The tag's longer explanation. */
 function softwareTitle(software: AgentSoftwareSummary, name: string): string {
   if (software.badge === "update_available") {
-    const v = agentSoftwareVersionName;
-    if (software.installed && software.tested) return `${name} ${v(software.installed)} is installed and Hivra has tested ${v(software.tested)}. Open the agent, then Updates.`;
-    if (software.app && software.tested) return `Hivra has tested ${name} ${v(software.tested)}. Open the agent, then Updates.`;
-    return "An update is available for this agent's connection service. Open the agent, then Updates.";
+    return "An update is waiting for this agent. Open the agent, then Updates.";
   }
-  if (software.badge === "updating") return `${name} is being updated to the version Hivra has tested.`;
+  if (software.badge === "updating") return `${name} is being updated to its newest release.`;
   return `The last ${name} update didn't finish. Open the agent, then Updates.`;
 }
 

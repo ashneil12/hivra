@@ -133,7 +133,6 @@ export interface BillingUsageData {
   } | null;
   credits: {
     balance: number;
-    monthlyGrant: number;
     unit: string;
   };
   /**

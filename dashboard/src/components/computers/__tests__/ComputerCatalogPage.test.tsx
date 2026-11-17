@@ -48,8 +48,37 @@ describe("ComputerCatalogPage", () => {
           json: async () => ({ success: true, data: { agents: [] } }),
         } as Response;
       }
+      // The local bridge is off unless a test turns it on (404 = not offered).
+      if (url.includes("/api/hivra/bridge")) {
+        return { ok: false, status: 404, json: async () => ({}) } as Response;
+      }
       throw new Error(`Unexpected request: ${url}`);
     });
+  });
+
+  it("offers setting up your own computer on the Computers page when the bridge is on", async () => {
+    const agentsFetch = global.fetch as jest.Mock;
+    const fallback = agentsFetch.getMockImplementation()!;
+    agentsFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/hivra/bridge")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, data: { computers: [], agents: [], requests: [], allowances: [] } }),
+        } as Response;
+      }
+      return fallback(input);
+    });
+    renderCatalog();
+
+    const heading = await screen.findByRole("heading", { name: /run commands on your own computer/i });
+    expect(heading.closest("#your-own-computer")).not.toBeNull();
+  });
+
+  it("shows nothing about your own computer while the bridge is off", async () => {
+    renderCatalog();
+    await screen.findByText("No computers yet");
+    expect(screen.queryByRole("heading", { name: /run commands on your own computer/i })).toBeNull();
   });
 
   it("routes both computer launch actions through the unified journey", async () => {

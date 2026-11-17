@@ -131,6 +131,9 @@ describe("Claude Code, OpenClaw, Agent Zero and Aeon launch through the agent AP
     ["openclaw", "credits", false, TOKEN_ONLY, true],
     ["agent-zero", "credits", false, FUNDED, true],
     ["agent-zero", "native", false, FUNDED, false],
+    ["openbot", "credits", false, FUNDED, true],
+    ["openbot", "native", false, FUNDED, false],
+    ["nuphos", "native", false, FUNDED, false],
     ["aeon", "credits", false, TOKEN_ONLY, true],
     ["aeon", "native", false, FUNDED, false],
   ] as const)("sends %s with %s model access exactly as its form did", async (profileId, mode, browser, balance, wantManaged) => {
@@ -163,6 +166,10 @@ describe("Claude Code, OpenClaw, Agent Zero and Aeon launch through the agent AP
     expect(PROFILE_DETAILS.openclaw.recommended).toMatchObject({ cpu: 1, ram: 2 });
     expect(PROFILE_DETAILS.aeon.recommended).toMatchObject({ cpu: 0.5, ram: 1 });
     expect(PROFILE_DETAILS["agent-zero"].recommended).toMatchObject({ cpu: 2, ram: 4 });
+    expect(PROFILE_DETAILS.openbot.recommended).toMatchObject({ cpu: 2, ram: 4 });
+    expect(PROFILE_DETAILS.openbot).toMatchObject({ runtimeId: "openbot", placementRuntimeId: "openbot", lane: "hivra-agent" });
+    expect(PROFILE_DETAILS.nuphos.recommended).toMatchObject({ cpu: 2, ram: 4 });
+    expect(PROFILE_DETAILS.nuphos).toMatchObject({ runtimeId: "nuphos", placementRuntimeId: "nuphos", lane: "hivra-agent" });
   });
 });
 
@@ -210,7 +217,7 @@ describe("a launch without a receipt is only ever looked for again, never resent
     jest.mocked(findHivraLaunchReceipt).mockResolvedValue({ state: "accepted", phase: "accepted", agent: created("codex") });
     await expect(reconcileLaunchDraft(draftFor("codex"))).resolves.toMatchObject({ id: AGENT_ID });
     expect(launchResumeMode("codex")).toBe("resend");
-    for (const profileId of ["claude-code", "hermes", "openclaw", "agent-zero", "aeon", "deepseek-harness"] as const) {
+    for (const profileId of ["claude-code", "hermes", "openclaw", "agent-zero", "openbot", "nuphos", "aeon", "deepseek-harness"] as const) {
       expect(launchResumeMode(profileId)).toBe("observe");
     }
   });
@@ -499,7 +506,7 @@ describe("Hermes on a Hivra computer launches the generic agent type `hermes`", 
 describe("a launch started from a saved template", () => {
   const TEMPLATE = { id: "77777777-7777-4777-8777-777777777777", name: "Research Bot" };
 
-  it.each(["claude-code", "codex", "openclaw", "agent-zero", "aeon"] as const)(
+  it.each(["claude-code", "codex", "openclaw", "agent-zero", "openbot", "nuphos", "aeon"] as const)(
     "names the template in the %s launch so the server forks it", async (profileId) => {
       jest.mocked(createAgent).mockResolvedValue(created(PROFILE_DETAILS[profileId].runtimeId));
       await submitLaunchDraft(draftFor(profileId, { template: TEMPLATE }), MANAGED);
@@ -531,6 +538,8 @@ describe("each runtime opens its own surface", () => {
     ["codex", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=manage&section=model#model-settings`],
     ["openclaw", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["agent-zero", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
+    ["openbot", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
+    ["nuphos", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["aeon", "native", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["deepseek-harness", "credits", `/dashboard/agent/${AGENT_ID}?welcome=1&tab=aeon`],
     ["hermes", "native", `/dashboard/instances/${AGENT_ID}?surface=chat&welcome=1`],
@@ -544,9 +553,12 @@ describe("each runtime opens its own surface", () => {
       .toBe(`/dashboard/instances/${AGENT_ID}?focus=nous-tool-gateway&surface=chat&welcome=1`);
   });
 
-  it("keeps Hermes in the journey until its workspace answers", () => {
+  it("keeps every agent in the journey until it can answer, and opens computers straight away", () => {
     expect(opensOnAcceptance("hermes")).toBe(false);
-    expect(opensOnAcceptance("claude-code")).toBe(true);
+    expect(opensOnAcceptance("claude-code")).toBe(false);
+    expect(opensOnAcceptance("codex")).toBe(false);
+    expect(opensOnAcceptance("openclaw")).toBe(false);
+    expect(opensOnAcceptance("ubuntu-desktop")).toBe(true);
   });
 });
 

@@ -128,6 +128,16 @@ function retireAgent(socket: WebSocket, code: 4000 | 4001, reason: "replaced" | 
   }
 }
 
+/** The id given to a control socket when it was accepted (survives hibernation). */
+function socketId(socket: WebSocket): string | null {
+  try {
+    const attachment = socket.deserializeAttachment() as { socketId?: unknown } | null;
+    return typeof attachment?.socketId === "string" ? attachment.socketId : null;
+  } catch {
+    return null;
+  }
+}
+
 function frameSize(data: string | ArrayBuffer): number {
   return typeof data === "string" ? encoder.encode(data).byteLength : data.byteLength;
 }
@@ -135,12 +145,22 @@ function frameSize(data: string | ArrayBuffer): number {
 export class HostRelay extends DurableObject<Env> {
   private streams = new Map<string, StreamEntry>();
   /** The one local-bridge command in flight for this connection, if any. */
-  private exec: { id: string; settle: (reply: Record<string, unknown> | null) => void } | null = null;
+  private exec: { id: string; socketId: string | null; settle: (reply: Record<string, unknown> | null) => void } | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     // Keepalive pings are answered by the runtime without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
+  }
+
+  /**
+   * The machine's current control socket. A replaced socket can stay listed
+   * (closing) for a while after its replacement connected, so pick the newest
+   * one that is still open.
+   */
+  private liveAgent(): WebSocket | undefined {
+    const open = this.ctx.getWebSockets("agent").filter((socket) => socket.readyState === WebSocket.OPEN);
+    return open[open.length - 1];
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -209,7 +229,7 @@ export class HostRelay extends DurableObject<Env> {
     if (!sameString(request.headers.get("authorization") ?? "", `Bearer ${await adminToken(master)}`)) {
       return json(401, { error: "unauthorized" });
     }
-    const agent = this.ctx.getWebSockets("agent")[0];
+    const agent = this.liveAgent();
     const generation = agent ? Number(this.ctx.getTags(agent).find((tag) => tag.startsWith("gen:"))?.slice(4)) : null;
     return json(200, {
       online: Boolean(agent),
@@ -240,7 +260,7 @@ export class HostRelay extends DurableObject<Env> {
     if (typeof body.ticket !== "string" || body.ticket.length > 2048 || typeof body.request !== "object" || body.request === null) {
       return json(400, { error: "invalid_request" });
     }
-    const agent = this.ctx.getWebSockets("agent")[0];
+    const agent = this.liveAgent();
     if (!agent) return json(503, { error: "host_offline" });
     if (this.exec) return json(429, { error: "bridge_busy" });
     const timeoutSeconds = typeof body.request.timeoutSeconds === "number" ? body.request.timeoutSeconds : 30;
@@ -253,14 +273,17 @@ export class HostRelay extends DurableObject<Env> {
         resolve(value);
       };
       const timer = setTimeout(() => settle(null), waitMs);
-      this.exec = { id, settle };
+      this.exec = { id, socketId: socketId(agent), settle };
       try {
         agent.send(JSON.stringify({ type: "exec", id, ticket: body.ticket, request: body.request }));
       } catch {
         settle(null);
       }
     });
-    if (!reply) return json(504, { error: "no_answer" });
+    if (!reply) {
+      console.log(JSON.stringify({ event: "bridge_exec_no_answer", agents: this.ctx.getWebSockets("agent").length }));
+      return json(504, { error: "no_answer" });
+    }
     return json(200, reply);
   }
 
@@ -271,6 +294,7 @@ export class HostRelay extends DurableObject<Env> {
     for (const socket of this.ctx.getWebSockets("agent")) retireAgent(socket, 4000, "replaced");
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1], ["agent", `gen:${generation}`]);
+    pair[1].serializeAttachment({ socketId: randomToken() });
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -305,7 +329,7 @@ export class HostRelay extends DurableObject<Env> {
     });
     if (replayed) return json(401, { error: "unauthorized" });
 
-    const agent = this.ctx.getWebSockets("agent")[0];
+    const agent = this.liveAgent();
     if (!agent) return json(503, { error: "host_offline" });
     if (this.streams.size >= MAX_STREAMS) return json(429, { error: "too_many_streams" });
 
@@ -411,7 +435,8 @@ export class HostRelay extends DurableObject<Env> {
   }
 
   async webSocketClose(socket: WebSocket, code: number, reason: string) {
-    this.exec?.settle(null);
+    // Only the socket the command went to ends it: a replaced socket's late close must not.
+    if (this.exec && this.exec.socketId === socketId(socket)) this.exec.settle(null);
     try {
       socket.close(code === 1005 ? 1000 : code, reason);
     } catch {

@@ -1,23 +1,30 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// "Update available" beside the agent's name in the title bar. On a phone its
-// words were hidden, leaving an unlabelled icon, so the bar keeps a short word.
-describe("the software chip in the agent page's title bar", () => {
+// "Update available" beside the agent's name now sits in the floating pill's
+// dropdown header, which is wide enough for the chip's full words, so the old
+// short-word rule for a narrow title bar is gone and must not come back unused.
+describe("the software chip in the agent page's floating pill", () => {
   const root = join(__dirname, "..", "..", "..", "..", "..", "components", "hivra");
-  const css = readFileSync(join(root, "agent-shell", "AgentTitleBar.module.css"), "utf8");
-  const chipCss = readFileSync(join(root, "AgentSoftwareChip.module.css"), "utf8");
+  const pill = readFileSync(join(root, "agent-shell", "AgentPill.tsx"), "utf8");
+  const pillCss = readFileSync(join(root, "agent-shell", "AgentPill.module.css"), "utf8");
+  const shell = readFileSync(join(root, "agent-shell", "AgentShell.tsx"), "utf8");
 
-  it("keeps a short word next to the icon in a narrow title bar", () => {
-    const narrow = css.slice(css.indexOf("The \"Update available\" chip"));
-    expect(narrow).toContain(".bar [data-chip-text] { display: none; }");
-    expect(narrow).toContain(".bar [data-chip-short] { display: inline; }");
-    // Hidden everywhere else by the chip's own stylesheet, which the narrow rule outranks.
-    expect(chipCss).toMatch(/^\.short \{ display: none; \}$/m);
+  it("draws the chip in the dropdown header, beside the status", () => {
+    expect(pill).toContain("styles.head");
+    expect(pill).toContain("{extras ? (");
+    expect(pill).toContain("className={styles.extras}");
+    expect(shell).toContain("extras={titleExtras}");
   });
 
-  it("measures the title bar's own width, not the page's, so an open sidebar does not trip it early", () => {
-    expect(css).toMatch(/@container \(max-width: 640px\)/);
-    expect(readFileSync(join(root, "agent-shell", "AgentShell.module.css"), "utf8")).toMatch(/\.column \{[^}]*container-type: inline-size/);
+  it("lets the chip keep its full words: the dropdown never hides them", () => {
+    expect(pillCss).not.toContain("data-chip-text");
+    expect(pillCss).not.toContain("data-chip-short");
+  });
+
+  it("keeps the column a size container, and a positioning box for the pill and its dropdown", () => {
+    const column = readFileSync(join(root, "agent-shell", "AgentShell.module.css"), "utf8");
+    expect(column).toMatch(/\.column \{[^}]*container-type: inline-size/);
+    expect(column).toMatch(/\.column \{[^}]*position: relative/);
   });
 });

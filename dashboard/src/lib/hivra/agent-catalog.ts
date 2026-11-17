@@ -5,8 +5,10 @@
 // Slot counts come from the authoritative source (subscription/agent-slots, pure data).
 
 import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
+import { isNuphosAgentEnabled } from "./nuphos-flag";
+import { isOpenBotAgentEnabled } from "./openbot-flag";
 
-export type AgentId = "hermes" | "claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero" | "deepseek-harness" | "linux-desktop" | "linux-terminal";
+export type AgentId = "hermes" | "claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero" | "openbot" | "nuphos" | "deepseek-harness" | "linux-desktop" | "linux-terminal";
 export type PlanTier = "free" | "pro" | "power";
 
 export interface AgentDef {
@@ -91,7 +93,7 @@ export const MAX_RAM = 24;
 export const BASE_FLOOR = { cpu: 0.5, ram: 1 };
 export const BROWSER_ADD = { cpu: 1, ram: 2 };
 
-const ALL_AGENTS: AgentDef[] = [
+export const ALL_AGENTS: AgentDef[] = [
   {
     id: "hermes",
     name: "Hermes",
@@ -248,6 +250,55 @@ const ALL_AGENTS: AgentDef[] = [
     // connect step); the user can still change providers inside Agent Zero's Settings.
     managedVenice: true,
     llm: { wire: "openai", providers: ["venice"] },
+  },
+  {
+    id: "openbot",
+    name: "OpenBot",
+    vendor: "CopilotKit",
+    tagline: "CopilotKit's open-source AI coworkers, each with its own browser and files, in OpenBot's own workspace.",
+    // Runs OpenBot's official Docker image on the box (not pool-exempt).
+    minPlan: "pro",
+    weight: 2,
+    // OpenBot brings its own browser; the box's CDP Chrome stack is not wired.
+    browser: false,
+    badge: "Coworkers",
+    accent: "#6e56cf",
+    // Off until NEXT_PUBLIC_HIVRA_OPENBOT_AGENT is set.
+    available: isOpenBotAgentEnabled(),
+    // OpenBot's web UI listens on box loopback :3101 and is served by the
+    // gateway at the box origin root; /openbot/ is its entry path. No chat-CLI
+    // surface and no vendor login on Hivra's side.
+    surface: "dashboard",
+    floor: { cpu: 1, ram: 3 },
+    dashboardPort: 3101,
+    // Inference: managed-Venice key minted at LAUNCH over the generic
+    // HIVRA_MODEL_* env, written into OpenBot's env by the box.
+    managedVenice: true,
+    llm: { wire: "openai", providers: ["venice"] },
+  },
+  {
+    id: "nuphos",
+    name: "Nuphos",
+    vendor: "Nuphos",
+    tagline: "Claude Code your team chats with from the Nuphos app",
+    // Runs Nuphos's official runtime image (ghcr.io/nuphos/runtime:latest-claude-code,
+    // Apache-2.0) on the box (not pool-exempt).
+    minPlan: "pro",
+    weight: 2,
+    // No browser stack on Hivra's side.
+    browser: false,
+    badge: "Coworkers",
+    accent: "#0ea5e9",
+    // Off until NEXT_PUBLIC_HIVRA_NUPHOS_AGENT is set.
+    available: isNuphosAgentEnabled(),
+    // Nuphos's console listens on box loopback :3102 and is served by the
+    // gateway at the box origin root; /nuphos/ is its entry path. No chat-CLI
+    // surface and no vendor login on Hivra's side.
+    surface: "dashboard",
+    floor: { cpu: 1, ram: 3 },
+    dashboardPort: 3102,
+    // No Hivra inference: no managed Venice, no credits, no model picker. The
+    // agent signs in to the owner's own Claude account inside Nuphos.
   },
   {
     id: "linux-desktop",
@@ -411,6 +462,12 @@ export function hostingDisclaimer(def?: AgentDef, deploymentMode: "hivra-managed
   }
   if (def.id === "deepseek-harness") {
     return `This runs ${def.name}, ${def.vendor}'s coding agent, on the agent's private virtual machine. Its own interface is reached through Hivra's authenticated gateway. It runs on DeepSeek V4.1 Flash through Hivra credits, or your own Venice API key. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by ${def.vendor}.`;
+  }
+  if (def.id === "openbot") {
+    return `This installs the official OpenBot image from CopilotKit on the agent's private virtual machine and opens OpenBot's own workspace through Hivra's authenticated gateway. OpenBot needs a CopilotKit Intelligence key (CopilotKit has a free plan); you paste it once when you first open it. Models run through Venice on your Hivra credits by default. Update it with the Update button. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by CopilotKit.`;
+  }
+  if (def.id === "nuphos") {
+    return `This runs Nuphos's official runtime image (Apache-2.0) from ${def.vendor} on the agent's private virtual machine, unmodified, and opens Nuphos's own console through Hivra's authenticated gateway. Set a password there, then click "Connect to Nuphos" and chat from the Nuphos app (Mac, iPhone or Android) with your own Nuphos account and your own Claude subscription. Hivra provides no models or credits for it. Update it with the Update button. ${credentialNotice} Nuphos is a separate product by its makers; Hivra is an independent hosting service and isn't affiliated with or endorsed by ${def.vendor}.`;
   }
   if (def.id === "agent-zero") {
     return `This hosts Agent Zero in a container on the agent's private virtual machine. Its dashboard is bound to localhost and reached through Hivra's authenticated gateway. Configure your own model provider in Agent Zero's Settings, or use a supported managed model option. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by the Agent Zero project.`;

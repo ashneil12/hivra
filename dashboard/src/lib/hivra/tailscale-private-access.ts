@@ -43,6 +43,7 @@ export type HivraPrivateAccessAgentRow = HivraAgentInfrastructureBinding & {
   vmid: number | null;
   ip: string | null;
   managed_provisioner_channel?: unknown;
+  sleep_state?: string | null;
 };
 
 export type HivraTailscaleReceipt = {
@@ -70,11 +71,24 @@ export type HivraTailscaleReceipt = {
   failureCode?: string;
 };
 
+/**
+ * Wakes a napping or hibernated computer before a private-network change, which
+ * needs its guest to answer. Awake computers pass at once. Connecting is a user
+ * action, so it wakes the computer; reading its status never does.
+ */
+export async function wakeHivraPrivateAccessComputer(agentId: string): Promise<{ ok: boolean }> {
+  const { wakeAgentForUserAction } = await import("./sleep-aware");
+  const result = await wakeAgentForUserAction(agentId);
+  return { ok: result.ok };
+}
+
 type Dependencies = {
   resolveContext: typeof resolveHivraAgentExecutionContext;
   runHostScript: typeof runProxmoxHostScript;
   runHostScriptWithStdin: typeof runProxmoxHostScriptWithStdin;
   now: () => Date;
+  /** Wakes a sleeping computer. `ok` is false when it is still asleep. */
+  wake: (agentId: string) => Promise<{ ok: boolean }>;
 };
 
 const defaults: Dependencies = {
@@ -82,6 +96,7 @@ const defaults: Dependencies = {
   runHostScript: runProxmoxHostScript,
   runHostScriptWithStdin: runProxmoxHostScriptWithStdin,
   now: () => new Date(),
+  wake: wakeHivraPrivateAccessComputer,
 };
 
 const IPV4 = /^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
@@ -189,6 +204,8 @@ GUEST_IP=${shellQuote(input.guestIp)}
 VM_KEY=${shellQuote(input.vmKeyPath)}
 EXPECTED_BINDING_TAG=${shellQuote(input.bindingTag)}
 [ "$(qm status "$VMID" 2>/dev/null | awk '{print $2}')" = running ]
+# A napping computer reads as running but its guest cannot answer: stop here instead of waiting on SSH.
+[ "$(qm status "$VMID" --verbose 2>/dev/null | awk '$1=="qmpstatus:"{print $2;exit}')" != paused ] || { echo "the computer is asleep" >&2; exit 1; }
 VM_CONFIG="$(qm config "$VMID")"
 printf '%s\n' "$VM_CONFIG" | sed -n 's/^tags:[[:space:]]*//p' | tr ';' '\n' | grep -Fxq "$EXPECTED_BINDING_TAG"
 printf '%s\n' "$VM_CONFIG" | sed -n 's/^ipconfig0:[[:space:]]*//p' | tr ',' '\n' | grep -Fxq "ip=$GUEST_IP/24"
@@ -401,7 +418,8 @@ EXPECTED_BINDING_TAG=${shellQuote(context.infrastructureBindingTag)}
 VM_CONFIG="$(qm config "$VMID")"
 printf '%s\\n' "$VM_CONFIG" | sed -n 's/^tags:[[:space:]]*//p' | tr ';' '\\n' | grep -Fxq "$EXPECTED_BINDING_TAG"
 printf '%s\\n' "$VM_CONFIG" | sed -n 's/^ipconfig0:[[:space:]]*//p' | tr ',' '\\n' | grep -Fxq "ip=$GUEST_IP/24"
-if [ "$(qm status "$VMID" | awk '{print $2}')" != running ]; then
+if [ "$(qm status "$VMID" | awk '{print $2}')" != running ] \\
+  || [ "$(qm status "$VMID" --verbose 2>/dev/null | awk '$1=="qmpstatus:"{print $2;exit}')" = paused ]; then
   printf '${DELETE_SKIPPED_MARKER}guest_stopped\\n'
   exit 0
 fi
@@ -468,6 +486,7 @@ export async function connectHivraTailscale(
   dependencies: Partial<Dependencies> = {},
 ): Promise<{ ok: boolean; receipt: HivraTailscaleReceipt }> {
   const deps = { ...defaults, ...dependencies };
+  if (!(await deps.wake(String(agent.id))).ok) throw new Error("computer_asleep");
   const target = await execution(agent, deps);
   // Refuse to replace a connection that was not enrolled through this owner-bound surface.
   const before = await observeHivraTailscale(agent, loginServer, deps);
@@ -743,6 +762,7 @@ export async function connectHivraNetbird(
   dependencies: Partial<Dependencies> = {},
 ): Promise<{ ok: boolean; receipt: HivraTailscaleReceipt }> {
   const deps = { ...defaults, ...dependencies };
+  if (!(await deps.wake(String(agent.id))).ok) throw new Error("computer_asleep");
   const target = await execution(agent, deps);
   // Same rule as Tailscale: never replace a connection that Hivra did not make.
   const tailscaleBefore = await observeHivraTailscale(agent, DEFAULT_TAILSCALE_LOGIN_SERVER, deps);

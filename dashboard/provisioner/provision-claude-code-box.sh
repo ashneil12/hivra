@@ -64,14 +64,14 @@ NODE_VERSION="${NODE_VERSION:-22.23.2}"
 NODE_LINUX_X64_SHA256="${NODE_LINUX_X64_SHA256:-d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307}"
 TTYD_VERSION="${TTYD_VERSION:-1.7.7}"
 TTYD_LINUX_X64_SHA256="${TTYD_LINUX_X64_SHA256:-8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55}"
-AGENT_ZERO_IMAGE_DIGEST="${AGENT_ZERO_IMAGE_DIGEST:-}"  # default: agent-app-versions.json
+AGENT_ZERO_IMAGE_DIGEST="${AGENT_ZERO_IMAGE_DIGEST:-}"  # default: the image's latest tag at launch
 CDP_PORT="${CDP_PORT:-9222}"                    # local Chrome remote-debugging port
 PROFILE_DIR="${PROFILE_DIR:-/home/${AGENT_USER}/.browser-profile}"  # NON-default Chrome profile (Chrome 136+ gotcha)
 HIVRA_CHAT_PORT="${HIVRA_CHAT_PORT:-8080}"      # Hivra chat HTTP port
 DUMMY_BU_KEY="${DUMMY_BU_KEY:-local}"           # installer hard-requires a key; we self-host so it's a dummy
 AGENT_KIND="${HIVRA_AGENT_KIND:-claude}"        # catalog runtime or Linux computer profile
 case "$AGENT_KIND" in
-  claude|codex|aeon|openclaw|agent-zero|hermes|linux-desktop|linux-server) ;;
+  claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|linux-desktop|linux-server) ;;
   deepseek-harness)
     [ "${HIVRA_NATIVE_PREPARE_ONLY:-}" = 1 ] || { printf '%s\n' 'DeepSeek requires the shared typed guest installer' >&2; exit 1; }
     ;;
@@ -121,6 +121,10 @@ else WANT_BROWSER=0; [ "$AGENT_KIND" = "claude" ] && WANT_BROWSER=1; fi
 [ "$AGENT_KIND" = "agent-zero" ] && WANT_BROWSER=0
 # Hermes is installed with --skip-browser; it never gets the box CDP stack.
 [ "$AGENT_KIND" = "hermes" ] && WANT_BROWSER=0
+# OpenBot ships its OWN browser inside its container — never the box CDP stack.
+[ "$AGENT_KIND" = "openbot" ] && WANT_BROWSER=0
+# Nuphos runs its agent inside its own runtime container, with no box browser.
+[ "$AGENT_KIND" = "nuphos" ] && WANT_BROWSER=0
 # Linux Desktop's remote-computer profile owns its desktop/browser stack.
 [ "$AGENT_KIND" = "linux-desktop" ] && WANT_BROWSER=0
 # The desktop-free Linux server has no browser stack either.
@@ -142,38 +146,6 @@ ok()   { printf '%s  ok%s %s\n' "$c_green" "$c_reset" "$*"; }
 warn() { printf '%s  ! %s %s\n' "$c_red" "$c_reset" "$*" >&2; }
 die()  { warn "$*"; exit 1; }
 
-# The vetted Claude Code / Codex versions ship with the bundle as data, so the
-# runtime updater and the dashboard read the same pins this installer uses.
-read_agent_cli_pin() {
-  python3 -I -c 'import json, re, sys
-value = json.load(open(sys.argv[1])).get(sys.argv[2])
-if not isinstance(value, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value): sys.exit(1)
-print(value)' "$SRC_DIR/agent-cli-versions.json" "$1" 2>/dev/null
-}
-if [ -z "${CLAUDE_CODE_VERSION:-}" ]; then
-  CLAUDE_CODE_VERSION="$(read_agent_cli_pin claude-code)" || die "agent-cli-versions.json has no valid claude-code pin"
-fi
-if [ -z "${CODEX_CLI_VERSION:-}" ]; then
-  CODEX_CLI_VERSION="$(read_agent_cli_pin codex)" || die "agent-cli-versions.json has no valid codex pin"
-fi
-# The tested Aeon commit, OpenClaw version and Agent Zero image ship the same
-# way (agent-app-versions.json), so the app updater (hivra-agent-app-update.sh)
-# and the dashboard read the pins this installer uses.
-read_agent_app_pin() {
-  python3 -I -c 'import json, re, sys
-pins = {"aeon": r"[0-9a-f]{40}", "openclaw": r"[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}", "agent-zero": r"sha256:[0-9a-f]{64}"}
-entry = json.load(open(sys.argv[1])).get(sys.argv[2])
-value = entry.get("version") if isinstance(entry, dict) else None
-if not isinstance(value, str) or not re.fullmatch(pins[sys.argv[2]], value): sys.exit(1)
-print(value)' "$SRC_DIR/agent-app-versions.json" "$1" 2>/dev/null
-}
-case "$AGENT_KIND" in
-  aeon) [ -n "${AEON_REF:-}" ] || AEON_REF="$(read_agent_app_pin aeon)" || die "agent-app-versions.json has no valid aeon pin" ;;
-  openclaw) [ -n "${OPENCLAW_VERSION:-}" ] || OPENCLAW_VERSION="$(read_agent_app_pin openclaw)" || die "agent-app-versions.json has no valid openclaw pin" ;;
-esac
-if [ -z "$AGENT_ZERO_IMAGE_DIGEST" ]; then
-  AGENT_ZERO_IMAGE_DIGEST="$(read_agent_app_pin agent-zero)" || die "agent-app-versions.json has no valid agent-zero pin"
-fi
 # The pinned Google Chrome build ships as data too (chrome-pin.json), so this
 # installer and the runtime updater (hivra-guest-runtime-update.sh), which moves
 # an existing computer to the pin, read the same file.
@@ -216,7 +188,7 @@ fi
 [[ "$GH_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid GitHub CLI checksum"
 [[ "$NODE_LINUX_X64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid Node.js checksum"
 [[ "$TTYD_LINUX_X64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid ttyd checksum"
-[[ "$AGENT_ZERO_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "invalid Agent Zero image digest"
+[ -z "$AGENT_ZERO_IMAGE_DIGEST" ] || [[ "$AGENT_ZERO_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "invalid Agent Zero image digest"
 [[ "$CDP_PORT" =~ ^[0-9]+$ ]] && [ "$CDP_PORT" -ge 1 ] && [ "$CDP_PORT" -le 65535 ] \
   || die "CDP_PORT must be an integer from 1 to 65535"
 if [ -n "$ACCESS_HOSTNAME" ]; then
@@ -233,11 +205,12 @@ fi
 say "agent kind: ${c_bold}${AGENT_KIND}${c_reset} (browser overlay: $([ "$WANT_BROWSER" = 1 ] && echo yes || echo no))"
 
 # Chat + prompt artifacts are always required; browser artifacts only for claude.
-for f in VERSION bux-hivra-chat.service system-prompt.md hivra-agent-shell agent-cli-versions.json hivra-codex-config-pin.py \
-         agent-app-versions.json hivra-agent-app-update.sh \
+for f in VERSION bux-hivra-chat.service system-prompt.md hivra-agent-shell hivra-codex-config-pin.py \
+         hivra-agent-app-update.sh \
+         hivra-surface-watchdog.py hivra-surface-watchdog.service \
          bux-ttyd-base-path.conf bux-box-ttyd.service \
          hivra-runtime-receipt.py \
-         hivra-chat/server.js hivra-chat/llm-application.js hivra-chat/guarded-files.cjs hivra-chat/agent-zero-editor.cjs hivra-chat/chat-runs.cjs hivra-chat/index.html hivra-chat/app.js; do
+         hivra-chat/server.js hivra-chat/llm-application.js hivra-chat/guarded-files.cjs hivra-chat/agent-zero-editor.cjs hivra-chat/import-state.cjs hivra-chat/chat-runs.cjs hivra-chat/index.html hivra-chat/app.js; do
   [ -f "$SRC_DIR/$f" ] || die "missing artifact next to script: $f"
 done
 if [ "$AGENT_KIND" = "linux-desktop" ]; then
@@ -288,12 +261,48 @@ with_retries() {
 apt_get update -y || die "apt-get update failed after retries"
 apt_get install -y curl ca-certificates git wget gnupg tmux sudo xz-utils \
   || die "base package installation failed after retries"
+
 if [ "$COMPUTER_SUBSTRATE" = "proxmox-kvm" ]; then
   apt_get install -y qemu-guest-agent || die "qemu-guest-agent installation failed after retries"
   systemctl enable --now qemu-guest-agent \
     || die "qemu-guest-agent failed to start"
 fi
 ok "base packages present"
+
+# Hivra pins no agent version: each launch installs the newest release its
+# upstream publishes at this moment. After launch Hivra never changes it on its
+# own; the owner updates it (the Update button, or the agent's own command).
+# An operator can still pass an exact version through the environment.
+npm_latest_version() {
+  curl -fsSL --max-time 30 "https://registry.npmjs.org/$1/latest" 2>/dev/null \
+    | python3 -I -c 'import json, re, sys
+value = json.load(sys.stdin).get("version")
+if not isinstance(value, str) or not re.fullmatch(r"[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}", value): sys.exit(1)
+print(value)'
+}
+latest_or_die() {
+  local value
+  value="$(with_retries npm_latest_version "$1")" || die "could not find the newest $1 release on npm"
+  printf '%s\n' "$value"
+}
+if [ -z "${CLAUDE_CODE_VERSION:-}" ]; then CLAUDE_CODE_VERSION="$(latest_or_die @anthropic-ai/claude-code)"; fi
+if [ -z "${CODEX_CLI_VERSION:-}" ]; then CODEX_CLI_VERSION="$(latest_or_die @openai/codex)"; fi
+[[ "$CLAUDE_CODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "CLAUDE_CODE_VERSION must be an x.y.z version"
+[[ "$CODEX_CLI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "CODEX_CLI_VERSION must be an x.y.z version"
+ok "newest releases: Claude Code ${CLAUDE_CODE_VERSION}, Codex ${CODEX_CLI_VERSION}"
+case "$AGENT_KIND" in
+  openclaw)
+    if [ -z "${OPENCLAW_VERSION:-}" ]; then OPENCLAW_VERSION="$(latest_or_die openclaw)"; fi
+    ok "newest OpenClaw release: ${OPENCLAW_VERSION}"
+    ;;
+  aeon)
+    if [ -z "${AEON_REF:-}" ]; then
+      AEON_REF="$(with_retries git ls-remote "${AEON_REPO_URL:-https://github.com/aaronjmars/aeon.git}" HEAD | awk 'NR == 1 { print $1 }')" \
+        || die "could not find Aeon's newest commit"
+    fi
+    ok "newest Aeon commit: ${AEON_REF}"
+    ;;
+esac
 
 if [ -z "$ACCESS_HOSTNAME" ] && { ! command -v cloudflared >/dev/null 2>&1 || ! cloudflared --version 2>/dev/null | grep -Fq "$CLOUDFLARED_VERSION"; }; then
   say "installing verified cloudflared ${CLOUDFLARED_VERSION}"
@@ -480,7 +489,8 @@ else
   [ "$BUX_CHECKOUT_CREATED" = 1 ] \
     || die "existing bux base is incomplete; trusted base repair is required"
   # Only the checkout created by this invocation is eligible for root execution.
-  # Pin its two CLI downloads before running the reviewed upstream installer.
+  # Point its two CLI downloads at the newest releases found above, so the
+  # version installed is the one Hivra records.
   sed -i -E \
     "s#npm install -g @anthropic-ai/claude-code(@[^[:space:]\\]+)?#npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}#" \
     "${BUX_DIR}/install.sh"
@@ -508,7 +518,7 @@ ensure_bux_installed
 
 if ! claude --version 2>/dev/null | grep -Fq "$CLAUDE_CODE_VERSION"; then
   with_retries run_public_bootstrap npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-    || die "failed to install pinned Claude Code ${CLAUDE_CODE_VERSION}"
+    || die "failed to install Claude Code ${CLAUDE_CODE_VERSION}"
 fi
 
 # Sanity: the installer should have produced these. Fail loud if not.
@@ -557,7 +567,7 @@ if [ "$AGENT_KIND" = "codex" ]; then
     || die "Codex CLI version does not match ${CODEX_CLI_VERSION}"
   sudo -u "${AGENT_USER}" env HOME="${AGENT_HOME}" python3 -I - < "$SRC_DIR/hivra-codex-config-pin.py" >/dev/null \
     || die "could not turn off the Codex startup update check"
-  ok "codex stays on the vetted ${CODEX_CLI_VERSION} (startup update check off)"
+  ok "codex ${CODEX_CLI_VERSION} installed (startup update check off; the owner updates it)"
 fi
 install -d -o root -g root -m 0755 /var/log/bux
 
@@ -615,18 +625,22 @@ fi
 # ===========================================================================
 say "4/7  self-hosted browser overlay (replaces the BU Cloud keeper) — browser-enabled boxes"
 # ===========================================================================
+# Disable + remove the cloud keeper unit the base image enabled regardless of
+# WANT_BROWSER: browser-enabled boxes use bux-local-browser.service instead, and
+# browserless kinds (agent-zero, codex, aeon, openclaw, hermes, ...) must not
+# leave the cloud keeper crash-looping in the background. On a fresh box it is a
+# SYMLINK at /etc/systemd/system/bux-browser-keeper.service ->
+# /opt/bux/agent/bux-browser-keeper.service; disabling drops the symlink.
+if systemctl list-unit-files 2>/dev/null | grep -q '^bux-browser-keeper\.service' \
+   || [ -e /etc/systemd/system/bux-browser-keeper.service ]; then
+  systemctl disable --now bux-browser-keeper.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/bux-browser-keeper.service
+  ok "cloud keeper (bux-browser-keeper.service) disabled + unit link removed"
+else
+  ok "cloud keeper already absent"
+fi
+
 if [ "$WANT_BROWSER" = 1 ]; then
-  # Disable + remove the cloud keeper unit the installer enabled. On a fresh box
-  # it is a SYMLINK at /etc/systemd/system/bux-browser-keeper.service ->
-  # /opt/bux/agent/bux-browser-keeper.service; disabling drops the symlink.
-  if systemctl list-unit-files 2>/dev/null | grep -q '^bux-browser-keeper\.service' \
-     || [ -e /etc/systemd/system/bux-browser-keeper.service ]; then
-    systemctl disable --now bux-browser-keeper.service >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/bux-browser-keeper.service
-    ok "cloud keeper (bux-browser-keeper.service) disabled + unit link removed"
-  else
-    ok "cloud keeper already absent"
-  fi
 
   # Drop in the local keeper script (current working copy from box 1099).
   install -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0755 \
@@ -710,7 +724,7 @@ say "5/7  Hivra authenticated access gateway (${AGENT_KIND})"
 # ===========================================================================
 if [ "$AGENT_KIND" != "deepseek-harness" ]; then
 install -d -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0755 "${BUX_DIR}/hivra-chat"
-for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js; do
+for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs import-state.cjs chat-runs.cjs index.html app.js; do
   install -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0644 \
     "$SRC_DIR/hivra-chat/$f" "${BUX_DIR}/hivra-chat/$f"
 done
@@ -722,7 +736,7 @@ if [ "$PROVIDER_DESKTOP_PREPARE_ONLY" = 1 ]; then
   done
   chown root:root "${BUX_DIR}" "${BUX_DIR}/hivra-chat"
   chmod 0755 "${BUX_DIR}" "${BUX_DIR}/hivra-chat"
-  for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js; do
+  for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs import-state.cjs chat-runs.cjs index.html app.js; do
     chown root:root "${BUX_DIR}/hivra-chat/$f"
   done
 fi
@@ -811,6 +825,22 @@ if [ ! -s "${AGENT_HOME}/.hivra/api-token" ]; then
 fi
 ok "box API token ready: ${AGENT_HOME}/.hivra/api-token"
 
+# The surface watchdog's shared proof it is the box's own monitor (the gateway
+# exempts only a loopback probe carrying it — proxied remote callers can never
+# know it). Owner-only like the api-token.
+if [ -L "${AGENT_HOME}/.hivra/surface-watchdog-key" ] || [ ! -f "${AGENT_HOME}/.hivra/surface-watchdog-key" ] || [ ! -s "${AGENT_HOME}/.hivra/surface-watchdog-key" ]; then
+  # Stage inside a root-owned sibling directory (same filesystem, so the
+  # publish rename is atomic): the agent user owns .hivra and could plant a
+  # symlink at any predictable sibling path.
+  install -d -o root -g root -m 0700 "${AGENT_HOME}/.hivra/.watchdog-key-stage"
+  KEY_STAGE=$(mktemp "${AGENT_HOME}/.hivra/.watchdog-key-stage/key.XXXXXX")
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$KEY_STAGE"
+  chown "${AGENT_USER}:${AGENT_USER}" "$KEY_STAGE"
+  chmod 600 "$KEY_STAGE"
+  mv -f -- "$KEY_STAGE" "${AGENT_HOME}/.hivra/surface-watchdog-key"
+  rmdir "${AGENT_HOME}/.hivra/.watchdog-key-stage" 2>/dev/null || true
+fi
+
 # Install the chat unit, templated with the chosen port + agent user/home/kind.
 if [ "$AGENT_KIND" != "deepseek-harness" ] && [ "$PROVIDER_DESKTOP_PREPARE_ONLY" != 1 ]; then
 NODE_BIN="$(command -v node)"
@@ -852,6 +882,16 @@ case "$AGENT_KIND" in
     fi
     ;;
 esac
+
+# The surface watchdog probes each agent app's real user path through the
+# gateway (for Agent Zero: login -> entry -> CSRF contract), restarts the
+# owning service when the surface stays down past a bounded window, and records
+# crash-looping units. It honours the same managed-update lock the gateway's
+# hold page uses, so it never fights a legitimate app update.
+install -d -o root -g "${AGENT_USER}" -m 0750 /var/lib/hivra/surface-watchdog
+install -o root -g root -m 0755 "$SRC_DIR/hivra-surface-watchdog.py" /var/lib/hivra/hivra-surface-watchdog.py
+install -o root -g root -m 0644 "$SRC_DIR/hivra-surface-watchdog.service" /etc/systemd/system/hivra-surface-watchdog.service
+ok "surface watchdog installed (probes the real user path, restarts wedged app units)"
 
 # Narrow root helper so the chat server (runs as ${AGENT_USER}, no general sudo)
 # can (de)activate the bux Telegram bot via a SCOPED NOPASSWD sudoers rule.
@@ -940,27 +980,45 @@ if [ ! -d "${AEON_DIR}/.git" ]; then
   sudo -u "${AGENT_USER}" git -C "${AEON_DIR}" init -q
   sudo -u "${AGENT_USER}" git -C "${AEON_DIR}" remote add origin "${AEON_REPO_URL}"
   sudo -u "${AGENT_USER}" git -C "${AEON_DIR}" fetch --depth 1 origin "${AEON_REF}" \
-    || die "failed to fetch pinned aeon commit"
+    || die "failed to fetch aeon commit ${AEON_REF}"
   sudo -u "${AGENT_USER}" git -C "${AEON_DIR}" checkout -q --detach FETCH_HEAD
 else
+  # A re-run keeps the checkout it made at launch: only its owner moves it.
   AEON_HEAD="$(sudo -u "${AGENT_USER}" git -C "${AEON_DIR}" rev-parse HEAD 2>/dev/null || true)"
-  [ "$AEON_HEAD" = "$AEON_REF" ] \
-    || die "existing aeon checkout is ${AEON_HEAD:-unknown}; expected ${AEON_REF}"
+  [[ "$AEON_HEAD" =~ ^[0-9a-f]{40}$ ]] || die "existing aeon checkout has no readable commit"
+  AEON_REF="$AEON_HEAD"
 fi
 ok "verified aeon checkout at ${AEON_REF} -> ${AEON_DIR}"
 
 # Serve under basePath=/aeon so the box's token-proxy can mount the dashboard —
 # its absolute asset + /api paths then resolve under /aeon and route back through
-# the gate. Upstream ships an empty next.config.ts, so replace it with an
-# env-driven one (basePath read from AEON_BASE_PATH at build + runtime).
+# the gate. Aeon's own next.config.ts carries settings its build needs (since
+# Nov 2026 a bundler root that reaches the repo's harness-adapter files), so it
+# is kept as next.config.hivra-upstream.ts and the new next.config.ts only adds
+# the mount (basePath read from AEON_BASE_PATH at build + runtime). A re-run
+# leaves an existing wrapper alone. The kept copy stays out of the owner's git.
+AEON_NEXT_UPSTREAM="${AEON_DASH}/next.config.hivra-upstream.ts"
+if [ ! -e "${AEON_NEXT_UPSTREAM}" ]; then
+  if [ -f "${AEON_DASH}/next.config.ts" ] && [ ! -L "${AEON_DASH}/next.config.ts" ]; then
+    mv -- "${AEON_DASH}/next.config.ts" "${AEON_NEXT_UPSTREAM}"
+  else
+    printf '%s\n' "import type { NextConfig } from 'next'" "const nextConfig: NextConfig = {}" "export default nextConfig" > "${AEON_NEXT_UPSTREAM}"
+  fi
+  chown "${AGENT_USER}:${AGENT_USER}" "${AEON_NEXT_UPSTREAM}"
+fi
 cat > "${AEON_DASH}/next.config.ts" <<'NEXTCFG'
 import type { NextConfig } from 'next'
-// Hivra hosts this dashboard behind a token-proxy mounted at /aeon.
+import upstream from './next.config.hivra-upstream'
+// Hivra hosts this dashboard behind a token-proxy mounted at /aeon. Aeon's own
+// config (next.config.hivra-upstream.ts) is kept as is; only the mount is added.
 const basePath = process.env.AEON_BASE_PATH || undefined
-const nextConfig: NextConfig = basePath ? { basePath, assetPrefix: basePath } : {}
+const nextConfig: NextConfig = basePath ? { ...upstream, basePath, assetPrefix: basePath } : upstream
 export default nextConfig
 NEXTCFG
 chown "${AGENT_USER}:${AGENT_USER}" "${AEON_DASH}/next.config.ts"
+AEON_EXCLUDE="${AEON_DIR}/.git/info/exclude"
+grep -qxF '/apps/dashboard/next.config.hivra-upstream.ts' "${AEON_EXCLUDE}" 2>/dev/null \
+  || printf '%s\n' '/apps/dashboard/next.config.hivra-upstream.ts' | sudo -u "${AGENT_USER}" tee -a "${AEON_EXCLUDE}" >/dev/null
 ok "aeon dashboard pinned to basePath=/aeon"
 
 # Install deps + a PRODUCTION build (lighter + more stable than `next dev` for a
@@ -1040,10 +1098,8 @@ fi
 
 # OpenClaw needs Node 24 (or >=22.19) — the bux installer already builds Node 24 at
 # /usr/bin/node, so the npm global install + gateway shebang resolve the right node.
-# PINNED version (not @latest) for fleet reproducibility — OpenClaw ships often and
-# config-schema/auth-mode semantics drift between releases (e.g. auth.mode=none is
-# accepted on 2026.6.10, the version validated live on a spike box 2026-06-24). Bump
-# deliberately + re-validate on a spike box before raising this.
+# The newest OpenClaw release found at launch (resolved above), installed as an
+# exact version so the recorded version is the one that runs.
 [[ "$OPENCLAW_VERSION" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] || die "OPENCLAW_VERSION must be an x.y.z version"
 say "installing openclaw@${OPENCLAW_VERSION} for ${AGENT_USER} (Node $(/usr/bin/node -v 2>/dev/null || echo '?'))"
 sudo -iu "${AGENT_USER}" bash -lc "npm i -g openclaw@${OPENCLAW_VERSION}" \
@@ -1194,9 +1250,10 @@ say "5d/7  Agent Zero (autonomous agent + web dashboard, Dockerized)"
 # in-container browser), so this box carries a real footprint (2 vCPU / 4 GB).
 A0_PORT="${AGENT_ZERO_PORT:-50080}"         # container :80 -> loopback host :A0_PORT (8080 is the hivra-chat gate)
 A0_ROOT="/opt/a0"                           # persisted state + env live here
-# Immutable multi-architecture OCI digest (v2.2 at review time). Tags are
-# intentionally not accepted: a mutable tag cannot be a release contract.
-A0_IMAGE="agent0ai/agent-zero@${AGENT_ZERO_IMAGE_DIGEST}"
+# The image runs by digest, never by tag, so it can't move under the unit. The
+# digest is whatever upstream's latest tag points at during this launch (set
+# below once Docker is up), unless an operator passes AGENT_ZERO_IMAGE_DIGEST.
+A0_REPO="agent0ai/agent-zero"
 
 # --- Docker engine (boxes are full VMs — no LXC-nesting problem here) ---
 if ! command -v docker >/dev/null 2>&1; then
@@ -1206,6 +1263,15 @@ fi
 systemctl enable --now docker >/dev/null 2>&1 || die "Docker service did not start"
 systemctl is-active --quiet docker || die "Docker service is not active"
 ok "docker present ($(docker --version 2>/dev/null | head -1 || echo '?'))"
+if [ -z "$AGENT_ZERO_IMAGE_DIGEST" ]; then
+  with_retries docker pull "${A0_REPO}:latest" >/tmp/az-pull.log 2>&1 \
+    || die "Agent Zero image pull failed (see /tmp/az-pull.log)"
+  AGENT_ZERO_IMAGE_DIGEST="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${A0_REPO}:latest" 2>/dev/null \
+    | sed -n "s#^${A0_REPO}@\(sha256:[0-9a-f]\{64\}\)\$#\1#p" | head -n 1)"
+  [[ "$AGENT_ZERO_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "could not read the Agent Zero image digest"
+fi
+A0_IMAGE="${A0_REPO}@${AGENT_ZERO_IMAGE_DIGEST}"
+ok "Agent Zero image ${A0_IMAGE}"
 
 # --- Persisted state + basic-auth + (optional) managed model -> /opt/a0/.env ---
 install -d -m 0755 "${A0_ROOT}"
@@ -1253,13 +1319,55 @@ fi
   fi
 } > "${A0_ROOT}/.env"
 chmod 600 "${A0_ROOT}/.env"
+# Agent Zero reads its settings only from /a0/usr/.env. Older images copied the
+# mounted /a0/.env there on first start; current images (v2.15 and later) do
+# not, so they started with no login, refused the gateway's CSRF handshake and
+# never had the managed model. Merge the managed keys into the persisted file,
+# keeping every other line (its runtime id, root password, the owner's own keys).
+A0_USR_ENV="${A0_ROOT}/usr/.env"
+[ ! -L "$A0_USR_ENV" ] || die "Agent Zero settings file must not be a symlink"
+python3 -I -B - "${A0_ROOT}/.env" "$A0_USR_ENV" <<'PY' || die "could not seed Agent Zero's settings file"
+import os, re, sys
+src, dst = sys.argv[1], sys.argv[2]
+managed = {}
+with open(src, encoding="utf-8") as f:
+    for line in f:
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line.rstrip("\n"))
+        if m:
+            managed[m.group(1)] = m.group(2)
+lines = []
+if os.path.exists(dst):
+    with open(dst, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+out, seen = [], set()
+for line in lines:
+    m = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
+    if m and m.group(1) in managed:
+        if m.group(1) in seen:
+            continue
+        seen.add(m.group(1))
+        out.append(m.group(1) + "=" + managed[m.group(1)])
+    else:
+        out.append(line)
+out += [k + "=" + v for k, v in managed.items() if k not in seen]
+# Stage beside the root-owned source, never in the world-writable usr/ dir,
+# where another local account could pre-create the staging file.
+tmp = os.path.join(os.path.dirname(src), ".usr-env.hivra-tmp")
+if os.path.lexists(tmp):
+    os.unlink(tmp)
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    f.write("\n".join(out) + "\n")
+os.replace(tmp, dst)
+PY
+chmod 600 "$A0_USR_ENV"
 if [ -n "${HIVRA_MODEL_KEY:-}" ] && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$'; then
   ok "managed-Venice seeded into Agent Zero /opt/a0/.env (model ${HIVRA_HERMES_MODEL:-deepseek-v4-pro})"
 else
   warn "no managed-Venice key at launch — Agent Zero starts unconfigured; set a model in its Settings UI"
 fi
 
-# Pre-pull the pinned image so the unit's first `docker run` starts fast.
+# Pull the image by digest so the unit's first `docker run` starts fast.
 docker pull "${A0_IMAGE}" >/tmp/az-pull.log 2>&1 \
   || die "Agent Zero image pull failed (see /tmp/az-pull.log)"
 docker image inspect "${A0_IMAGE}" >/dev/null 2>&1 \
@@ -1307,6 +1415,239 @@ printf '%s ALL=(root) NOPASSWD: /usr/local/bin/hivra-agent-zero-apply\n' "${AGEN
 chmod 0440 /etc/sudoers.d/hivra-agent-zero
 if ! visudo -cf /etc/sudoers.d/hivra-agent-zero >/dev/null 2>&1; then warn "hivra-agent-zero sudoers invalid; removing"; rm -f /etc/sudoers.d/hivra-agent-zero; fi
 ok "Agent Zero service + restart helper installed (container :80 -> 127.0.0.1:${A0_PORT})"
+fi
+
+if [ "$AGENT_KIND" = "openbot" ]; then
+say "5f/7  OpenBot by CopilotKit (official image, its own web UI)"
+# ===========================================================================
+# OpenBot (github.com/CopilotKit/openbot, MIT) is a workspace of AI coworkers
+# whose OWN web UI is the product. It ships as one official image carrying the
+# app, its API, its own Chromium and an embedded PostgreSQL. Hivra installs the
+# latest release unmodified and runs it on host networking bound to loopback
+# :OB_PORT, in single-user mode (it trusts only loopback callers addressed to
+# loopback). The box gateway serves it at the ROOT of the box origin (OpenBot
+# has no base path) behind the token gate, presenting OpenBot's own loopback
+# Host and Origin. OpenBot refuses to start without a CopilotKit Intelligence
+# key, which the owner pastes once on the gateway's /openbot/ setup page; until
+# then the service waits for it. Owners update with the Update button (the app
+# updater pulls upstream's latest release).
+OB_PORT="${OPENBOT_PORT:-3101}"
+OB_ROOT="/opt/openbot"
+OB_REPO="ghcr.io/copilotkit/openbot"
+
+if ! command -v docker >/dev/null 2>&1; then
+  say "installing Docker from Ubuntu's signed package repository"
+  apt_get install -y docker.io || die "docker.io package installation failed"
+fi
+systemctl enable --now docker >/dev/null 2>&1 || die "Docker service did not start"
+systemctl is-active --quiet docker || die "Docker service is not active"
+ok "docker present ($(docker --version 2>/dev/null | head -1 || echo '?'))"
+
+install -d -o root -g root -m 0700 "${OB_ROOT}"
+# OpenBot's credential vault key: made once, kept across re-runs (losing it
+# loses every credential OpenBot stored).
+if [ ! -s "${OB_ROOT}/encryption-key" ]; then
+  (umask 077; head -c 32 /dev/urandom | base64 -w0 > "${OB_ROOT}/encryption-key")
+fi
+OB_ENC_KEY="$(tr -d '\r\n' < "${OB_ROOT}/encryption-key")"
+[[ "$OB_ENC_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]] || die "invalid OpenBot encryption key in ${OB_ROOT}/encryption-key"
+# NOTE: this block's stdout IS the env file — emit ONLY env lines here.
+{
+  printf 'PORT=%s\nSERVER_PORT=%s\n' "$OB_PORT" "$OB_PORT"
+  printf 'NODE_ENV=production\nEMBEDDED_POSTGRES=on\nOPENBOT_SINGLE_USER=true\n'
+  printf 'TRUSTED_ORIGINS=http://127.0.0.1:%s\n' "$OB_PORT"
+  printf 'KEY_ENCRYPTION_KEY=%s\n' "$OB_ENC_KEY"
+  printf 'INTELLIGENCE_API_URL=https://api.intelligence.copilotkit.ai\n'
+  printf 'INTELLIGENCE_GATEWAY_WS_URL=wss://realtime.intelligence.copilotkit.ai\n'
+  printf 'COPILOTKIT_TELEMETRY_DISABLED=true\n'
+  if [ -n "${HIVRA_MODEL_KEY:-}" ] && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$'; then
+    OB_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-pro}"
+    OB_BASEURL="${HIVRA_MODEL_BASE_URL:-https://hivra.cloud/api/managed-venice/v1}"
+    printf '%s' "$OB_MODEL" | grep -qE '^[A-Za-z0-9_.:/-]+$' || OB_MODEL="deepseek-v4-pro"
+    printf '%s' "$OB_BASEURL" | grep -qE '^https://[A-Za-z0-9.:/_-]+$' \
+      || OB_BASEURL="https://hivra.cloud/api/managed-venice/v1"
+    # Venice speaks OpenAI Chat Completions, not the Responses API.
+    printf 'OPENAI_API_KEY=%s\nOPENAI_BASE_URL=%s\n' "${HIVRA_MODEL_KEY}" "$OB_BASEURL"
+    printf 'COPILOTKIT_OPENAI_API=chat\nBOT_MODEL=%s\nROUTER_MODEL=%s\n' "$OB_MODEL" "$OB_MODEL"
+  fi
+} > "${OB_ROOT}/openbot.env"
+chmod 600 "${OB_ROOT}/openbot.env"
+if grep -q '^OPENAI_API_KEY=' "${OB_ROOT}/openbot.env"; then
+  ok "managed Venice set as OpenBot's model provider (model ${HIVRA_HERMES_MODEL:-deepseek-v4-pro})"
+else
+  warn "no managed model at launch; set a model provider in OpenBot's own settings"
+fi
+
+# The latest upstream release, run by its digest so a restart never changes version.
+docker pull "${OB_REPO}:latest" >/tmp/openbot-pull.log 2>&1 \
+  || die "OpenBot image pull failed (see /tmp/openbot-pull.log)"
+OB_IMAGE="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${OB_REPO}:latest" 2>/dev/null \
+  | grep -m1 -E "^${OB_REPO}@sha256:[0-9a-f]{64}$" || true)"
+[ -n "$OB_IMAGE" ] || die "OpenBot image digest is unavailable after pull"
+OB_VERSION="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$OB_IMAGE" 2>/dev/null \
+  | sed -n 's/^OPENBOT_BUILD_VERSION=v\{0,1\}\([0-9]\{1,6\}\.[0-9]\{1,6\}\.[0-9]\{1,6\}\)$/\1/p' | head -n 1)"
+[ -n "$OB_VERSION" ] || die "OpenBot image names no release version"
+printf '%s\n' "$OB_IMAGE" > "${OB_ROOT}/image.next"
+chmod 0600 "${OB_ROOT}/image.next"
+mv -f -- "${OB_ROOT}/image.next" "${OB_ROOT}/image"
+record_agent_app openbot "$OB_VERSION"
+ok "OpenBot ${OB_VERSION} pulled (${OB_IMAGE})"
+
+# Starts the pulled image once the owner has given the Intelligence key. The
+# key file is the agent's own (the gateway writes it): never follow a link to
+# it, and pass it to Docker in a root-only env file, never on a command line.
+install -d -o root -g root -m 0755 /usr/local/sbin
+cat > /usr/local/sbin/hivra-openbot-run <<'RUNNER'
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+ROOT=/opt/openbot
+KEY_FILE=/home/bux/.hivra/openbot-intelligence-key
+read_key() {
+  python3 -I -c '
+import os, re, stat, sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+except OSError:
+    sys.exit(1)
+try:
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        sys.exit(1)
+    raw = os.read(fd, 600)
+finally:
+    os.close(fd)
+key = raw.decode("ascii", "ignore").strip()
+if not re.fullmatch(r"[A-Za-z0-9_.-]{8,512}", key):
+    sys.exit(1)
+print(key)
+' "$KEY_FILE"
+}
+until key="$(read_key)"; do sleep 3; done
+printf 'CPK_INTELLIGENCE_API_KEY=%s\n' "$key" > "$ROOT/intelligence.env.next"
+mv -f -- "$ROOT/intelligence.env.next" "$ROOT/intelligence.env"
+image="$(head -n 1 "$ROOT/image")"
+[[ "$image" =~ ^ghcr\.io/copilotkit/openbot@sha256:[0-9a-f]{64}$ ]] || { echo "invalid OpenBot image" >&2; exit 1; }
+/usr/bin/docker rm -f hivra-openbot >/dev/null 2>&1 || true
+exec /usr/bin/docker run --rm --name hivra-openbot --network host \
+  --env-file "$ROOT/openbot.env" --env-file "$ROOT/intelligence.env" \
+  -v hivra-openbot-data:/var/lib/postgresql -v hivra-openbot-workspace:/workspace "$image"
+RUNNER
+chmod 0755 /usr/local/sbin/hivra-openbot-run
+
+# Same stop budget as Agent Zero: 25 s grace inside the 40 s host shutdown.
+cat > /etc/systemd/system/hivra-openbot.service <<UNIT
+[Unit]
+Description=Hivra OpenBot (CopilotKit OpenBot on 127.0.0.1:${OB_PORT}, served at the box root)
+After=network-online.target docker.service
+Requires=docker.service
+[Service]
+TimeoutStartSec=0
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+ExecStart=/usr/local/sbin/hivra-openbot-run
+ExecStop=-/usr/bin/docker stop -t 25 hivra-openbot
+[Install]
+WantedBy=multi-user.target
+UNIT
+chmod 0644 /etc/systemd/system/hivra-openbot.service
+
+# Scoped restart helper (the box user has no general sudo): the gateway runs it
+# after the owner saves a new Intelligence key.
+cat > /usr/local/bin/hivra-openbot-apply <<'HELPER'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  restart) systemctl restart hivra-openbot.service ;;
+  *) echo "usage: hivra-openbot-apply restart" >&2; exit 2 ;;
+esac
+HELPER
+chmod 0755 /usr/local/bin/hivra-openbot-apply
+printf '%s ALL=(root) NOPASSWD: /usr/local/bin/hivra-openbot-apply\n' "${AGENT_USER}" > /etc/sudoers.d/hivra-openbot
+chmod 0440 /etc/sudoers.d/hivra-openbot
+if ! visudo -cf /etc/sudoers.d/hivra-openbot >/dev/null 2>&1; then warn "hivra-openbot sudoers invalid; removing"; rm -f /etc/sudoers.d/hivra-openbot; fi
+ok "OpenBot service + restart helper installed (127.0.0.1:${OB_PORT}, served at the box root)"
+fi
+
+if [ "$AGENT_KIND" = "nuphos" ]; then
+say "5g/7  Nuphos (official runtime image, its own console)"
+# ===========================================================================
+# Nuphos (github.com/nuphos/nuphos, Apache-2.0) is a team chat for coding
+# agents: people chat from the Nuphos apps with their own Nuphos account, and
+# the agent runs on a "runtime" they connect. Nuphos publishes that runtime as
+# one official image (Claude Code variant here). Hivra pulls the latest release
+# unmodified and runs it on host networking bound to loopback :NU_PORT. The box
+# gateway serves the runtime's own console at the ROOT of the box origin behind
+# the token gate (the owner sets its password there and presses "Connect to
+# Nuphos"), and passes WebSocket upgrades of /acp straight through, because
+# Nuphos's servers connect there with a team key the runtime checks itself.
+# Owners update with the Update button (the app updater pulls the latest image).
+NU_PORT="${NUPHOS_PORT:-3102}"
+NU_ROOT="/opt/nuphos"
+NU_REPO="ghcr.io/nuphos/runtime"
+NU_TAG="latest-claude-code"
+
+if ! command -v docker >/dev/null 2>&1; then
+  say "installing Docker from Ubuntu's signed package repository"
+  apt_get install -y docker.io || die "docker.io package installation failed"
+fi
+systemctl enable --now docker >/dev/null 2>&1 || die "Docker service did not start"
+systemctl is-active --quiet docker || die "Docker service is not active"
+ok "docker present ($(docker --version 2>/dev/null | head -1 || echo '?'))"
+
+install -d -o root -g root -m 0700 "${NU_ROOT}"
+# The latest upstream release, run by its digest so a restart never changes version.
+docker pull "${NU_REPO}:${NU_TAG}" >/tmp/nuphos-pull.log 2>&1 \
+  || die "Nuphos runtime image pull failed (see /tmp/nuphos-pull.log)"
+NU_IMAGE="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${NU_REPO}:${NU_TAG}" 2>/dev/null \
+  | grep -m1 -E "^${NU_REPO}@sha256:[0-9a-f]{64}$" || true)"
+[ -n "$NU_IMAGE" ] || die "Nuphos runtime image digest is unavailable after pull"
+NU_VERSION="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$NU_IMAGE" 2>/dev/null \
+  | sed -n 's/^OPENAB_RUNTIME_VERSION=v\{0,1\}\([0-9]\{1,6\}\.[0-9]\{1,6\}\.[0-9]\{1,6\}\)$/\1/p' | head -n 1)"
+[ -n "$NU_VERSION" ] || die "Nuphos runtime image names no release version"
+printf '%s\n' "$NU_IMAGE" > "${NU_ROOT}/image.next"
+chmod 0600 "${NU_ROOT}/image.next"
+mv -f -- "${NU_ROOT}/image.next" "${NU_ROOT}/image"
+record_agent_app nuphos "$NU_VERSION"
+ok "Nuphos runtime ${NU_VERSION} pulled (${NU_IMAGE})"
+
+install -d -o root -g root -m 0755 /usr/local/sbin
+cat > /usr/local/sbin/hivra-nuphos-run <<'RUNNER'
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT=/opt/nuphos
+PORT="${NUPHOS_PORT:-3102}"
+[[ "$PORT" =~ ^[0-9]{2,5}$ ]] || { echo "invalid Nuphos port" >&2; exit 1; }
+image="$(head -n 1 "$ROOT/image")"
+[[ "$image" =~ ^ghcr\.io/nuphos/runtime@sha256:[0-9a-f]{64}$ ]] || { echo "invalid Nuphos image" >&2; exit 1; }
+/usr/bin/docker rm -f hivra-nuphos >/dev/null 2>&1 || true
+# The runtime keeps its console password, team bindings and the agent's
+# sign-in under /home/node, so that volume must persist.
+exec /usr/bin/docker run --rm --name hivra-nuphos --network host \
+  --cap-drop ALL --security-opt no-new-privileges \
+  -e GATEWAY_LISTEN="127.0.0.1:${PORT}" \
+  -v hivra-nuphos-home:/home/node -v hivra-nuphos-workspace:/workspace "$image"
+RUNNER
+chmod 0755 /usr/local/sbin/hivra-nuphos-run
+
+cat > /etc/systemd/system/hivra-nuphos.service <<UNIT
+[Unit]
+Description=Hivra Nuphos (Nuphos runtime on 127.0.0.1:${NU_PORT}, console at the box root)
+After=network-online.target docker.service
+Requires=docker.service
+[Service]
+Environment=NUPHOS_PORT=${NU_PORT}
+TimeoutStartSec=0
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+ExecStart=/usr/local/sbin/hivra-nuphos-run
+ExecStop=-/usr/bin/docker stop -t 25 hivra-nuphos
+[Install]
+WantedBy=multi-user.target
+UNIT
+chmod 0644 /etc/systemd/system/hivra-nuphos.service
+ok "Nuphos service installed (127.0.0.1:${NU_PORT}, console at the box root)"
 fi
 
 # ===========================================================================
@@ -1490,7 +1831,7 @@ if [ "$AGENT_KIND" = "deepseek-harness" ]; then
   # Fresh base only (the typed caller rejects pre-existing bases). Do not
   # replace the upstream DeepSeek persona or uninstall other agent packages.
   ok "native DeepSeek profile owns its instructions; leaving base packages intact"
-elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && [ "$AGENT_KIND" != "hermes" ] && ! is_linux_computer; then
+elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && [ "$AGENT_KIND" != "hermes" ] && [ "$AGENT_KIND" != "openbot" ] && [ "$AGENT_KIND" != "nuphos" ] && ! is_linux_computer; then
 say "6/7  Hivra system prompt (clean assistant persona)"
 # ===========================================================================
 # bux's installer wrote /home/bux/system-prompt.md (Telegram/agency persona) and
@@ -1557,6 +1898,61 @@ start_native_terminals() {
 }
 install_native_terminals
 
+# Keep Claude Code's per-project approvals out of commits. "Yes, and don't ask
+# again" saves the approved command, passwords and tokens included, to
+# .claude/settings.local.json. Claude Code adds that path to the global git
+# ignore the first time it writes the file, but not for a file created another
+# way or one a repository already tracks, and a fresh computer starts with no
+# ignore at all. Two layers, both box-wide and both inert for other files:
+#  1. the agent user's default git ignore (~/.config/git/ignore, the file
+#     Claude Code itself appends to) lists the path, so `git add -A` skips it;
+#  2. every repository created or cloned on the computer gets a pre-commit hook
+#     (system init.templateDir, a copy of git's stock template plus the hook)
+#     that refuses a commit staging that file. Deleting it is still allowed.
+# A repository that sets its own core.hooksPath runs its own hooks instead.
+install_git_secret_guard() {
+  local template=/usr/local/share/hivra/git-template ignore_dir="${AGENT_HOME}/.config/git"
+  local ignore="$ignore_dir/ignore" pattern='**/.claude/settings.local.json'
+  install -d -o root -g root -m 0755 /usr/local/share/hivra
+  rm -rf "$template"
+  if [ -d /usr/share/git-core/templates ]; then
+    cp -a /usr/share/git-core/templates "$template"
+  else
+    install -d -o root -g root -m 0755 "$template"
+  fi
+  install -d -o root -g root -m 0755 "$template/hooks"
+  cat >"$template/hooks/pre-commit" <<'HOOK'
+#!/bin/sh
+# Hivra: refuse to commit Claude Code's local approvals file. "Don't ask again"
+# saves approved commands there, passwords and tokens included.
+blocked="$(git diff --cached --name-only --diff-filter=ACMR -z \
+  | tr '\0' '\n' | grep -E '(^|/)\.claude/settings\.local\.json$')"
+[ -z "$blocked" ] && exit 0
+{
+  echo "Hivra: commit blocked. These files hold Claude Code's saved approvals,"
+  echo "which can include passwords and tokens, and must not be committed:"
+  printf '%s\n' "$blocked" | sed 's/^/  /'
+  echo "Unstage them with: git rm --cached <path>"
+  echo "Then add '.claude/settings.local.json' to .gitignore."
+} >&2
+exit 1
+HOOK
+  chown root:root "$template/hooks/pre-commit"
+  chmod 0755 "$template/hooks/pre-commit"
+  git config --system init.templateDir "$template"
+  local dir
+  for dir in "${AGENT_HOME}/.config" "$ignore_dir"; do
+    [ -d "$dir" ] || install -d -o "${AGENT_USER}" -g "${AGENT_USER}" -m 0700 "$dir"
+  done
+  if ! { [ -f "$ignore" ] && grep -qxF "$pattern" "$ignore"; }; then
+    printf '%s\n' "$pattern" >>"$ignore"
+  fi
+  chown "${AGENT_USER}:${AGENT_USER}" "$ignore"
+  chmod 0644 "$ignore"
+}
+install_git_secret_guard
+ok "git guard: .claude/settings.local.json is ignored and refused at commit"
+
 # ===========================================================================
 say "7/7  enable + start the services"
 # ===========================================================================
@@ -1574,6 +1970,10 @@ if [ "$AGENT_KIND" != "deepseek-harness" ] && [ "$PROVIDER_DESKTOP_PREPARE_ONLY"
   systemctl enable --now bux-hivra-chat.service
   ok "bux-hivra-chat enabled and started"
 fi
+if [ "$PROVIDER_DESKTOP_PREPARE_ONLY" != 1 ]; then
+  systemctl enable --now hivra-surface-watchdog.service >/dev/null 2>&1 \
+    || warn "surface watchdog did not start; surfaces keep their own retries but box-side autoheal is off"
+fi
 if [ "$AGENT_KIND" = "aeon" ]; then
   systemctl enable --now bux-aeon.service >/dev/null 2>&1 \
     || die "Aeon service did not start"
@@ -1589,6 +1989,18 @@ if [ "$AGENT_KIND" = "agent-zero" ]; then
   systemctl enable --now hivra-agent-zero.service >/dev/null 2>&1 \
     || die "Agent Zero service did not start"
   ok "hivra-agent-zero enabled + started (dashboard on 127.0.0.1:${AGENT_ZERO_PORT:-50080}, mounted at /agent-zero)"
+fi
+
+if [ "$AGENT_KIND" = "openbot" ]; then
+  systemctl enable --now hivra-openbot.service >/dev/null 2>&1 \
+    || die "OpenBot service did not start"
+  ok "hivra-openbot enabled + started (waits for the owner's CopilotKit Intelligence key)"
+fi
+
+if [ "$AGENT_KIND" = "nuphos" ]; then
+  systemctl enable --now hivra-nuphos.service >/dev/null 2>&1 \
+    || die "Nuphos service did not start"
+  ok "hivra-nuphos enabled + started (console on 127.0.0.1:${NUPHOS_PORT:-3102})"
 fi
 
 if [ "$AGENT_KIND" = "hermes" ]; then
@@ -1667,6 +2079,31 @@ sys.exit(0 if t.get("terminal") == "socket" and t.get("boxTerminal") == "socket"
       return 0
     fi
     sleep 2
+  done
+  rm -f -- "$header"
+  return 1
+}
+# The real user path to Agent Zero runs through the gateway: bearer auth, the
+# app's own sign-in, the pinned entry document and the native CSRF contract.
+# /healthz alone says nothing about it — a container that has stopped serving
+# still leaves healthz green. Gate readiness on the same request the owner
+# makes, not on the app's bare port.
+wait_for_agent_zero_gateway() {
+  local header
+  header="$(mktemp /run/hivra-agent-zero-check.XXXXXX)"
+  chmod 0600 "$header"
+  printf 'Authorization: Bearer %s\n' "$(cat "${AGENT_HOME}/.hivra/api-token")" > "$header"
+  local tries="${1:-75}"
+  for _ in $(seq 1 "$tries"); do
+    curl -fsS --max-time 5 -H @"$header" "http://127.0.0.1:${HIVRA_CHAT_PORT}/agent-zero/api/csrf_token" 2>/dev/null \
+      | python3 -I -c 'import json, sys
+try:
+  d = json.load(sys.stdin)
+except Exception:
+  sys.exit(1)
+sys.exit(0 if d.get("ok") is True and len(str(d.get("token") or "")) == 43 and len(str(d.get("runtime_id") or "")) == 16 else 1)' \
+      && { rm -f -- "$header"; return 0; }
+    sleep 4
   done
   rm -f -- "$header"
   return 1
@@ -1756,7 +2193,21 @@ elif [ "$AGENT_KIND" = "agent-zero" ]; then
   wait_for_http "http://127.0.0.1:${A0_PORT}/" 150 || die "Agent Zero dashboard did not become ready within 5 minutes"
   docker inspect -f '{{.State.Running}}' hivra-agent-zero 2>/dev/null | grep -Fxq true \
     || die "Agent Zero container is not running"
-  ok "Agent Zero passed runtime-specific readiness"
+  if ! wait_for_agent_zero_gateway 75; then
+    journalctl -u bux-hivra-chat.service -u hivra-agent-zero.service -n 50 --no-pager >&2 2>/dev/null || true
+    die "Agent Zero did not pass its gateway path (login + entry + CSRF) within 5 minutes"
+  fi
+  ok "Agent Zero passed runtime-specific readiness (real path through the gateway)"
+elif [ "$AGENT_KIND" = "openbot" ]; then
+  systemctl is-active --quiet hivra-openbot.service || die "OpenBot service is not active"
+  # OpenBot starts only once the owner gives its Intelligence key, so before
+  # then the gateway's setup page is the readiness gate.
+  wait_for_http "http://127.0.0.1:${HIVRA_CHAT_PORT}/healthz" || die "Hivra gateway did not become ready"
+  ok "OpenBot passed runtime-specific readiness (waiting for its Intelligence key)"
+elif [ "$AGENT_KIND" = "nuphos" ]; then
+  systemctl is-active --quiet hivra-nuphos.service || die "Nuphos service is not active"
+  wait_for_http "http://127.0.0.1:${NUPHOS_PORT:-3102}/" 90 || die "Nuphos runtime console did not become ready within 3 minutes"
+  ok "Nuphos passed runtime-specific readiness"
 elif [ "$AGENT_KIND" = "hermes" ]; then
   systemctl is-active --quiet bux-hermes.service || die "Hermes service is not active"
   # The first start loads Hermes's Python environment; allow up to 3 minutes.
@@ -1787,6 +2238,10 @@ RECEIPT_ARGS=(
 )
 if [ "$AGENT_KIND" = "agent-zero" ]; then
   RECEIPT_ARGS+=(--agent-zero-image "$A0_IMAGE")
+elif [ "$AGENT_KIND" = "openbot" ]; then
+  RECEIPT_ARGS+=(--agent-zero-image "$OB_IMAGE")
+elif [ "$AGENT_KIND" = "nuphos" ]; then
+  RECEIPT_ARGS+=(--agent-zero-image "$NU_IMAGE")
 fi
 RECEIPT_RESULT="$(python3 "$SRC_DIR/hivra-runtime-receipt.py" "${RECEIPT_ARGS[@]}")" \
   || die "installed runtime receipt generation failed"
@@ -1807,6 +2262,12 @@ elif [ "$AGENT_KIND" = "openclaw" ]; then
 elif [ "$AGENT_KIND" = "hermes" ]; then
   LOGIN_HINT="open the Hermes web UI (/hermes); a managed model is pre-seeded. Scheduled tasks and chat channels run in the Hermes gateway (user service). Update with: sudo -iu ${AGENT_USER} hermes update"
   STATUS_HINT="systemctl status bux-hermes --no-pager; sudo -iu ${AGENT_USER} hermes gateway status; curl -fsS http://127.0.0.1:${HERMES_PORT:-9119}/ -o /dev/null -w '%{http_code}\n'"
+elif [ "$AGENT_KIND" = "openbot" ]; then
+  LOGIN_HINT="open the agent page (/openbot/) and paste a CopilotKit Intelligence key once; a managed model is pre-seeded"
+  STATUS_HINT="systemctl status hivra-openbot --no-pager; docker logs --tail 40 hivra-openbot 2>&1 | tail -40; curl -fsS http://127.0.0.1:${OPENBOT_PORT:-3101}/ -o /dev/null -w '%{http_code}\n'"
+elif [ "$AGENT_KIND" = "nuphos" ]; then
+  LOGIN_HINT="open the agent page (/nuphos/), set the runtime console password, then press Connect to Nuphos and sign in to Claude from the Nuphos app"
+  STATUS_HINT="systemctl status hivra-nuphos --no-pager; docker logs --tail 40 hivra-nuphos 2>&1 | tail -40; curl -fsS http://127.0.0.1:${NUPHOS_PORT:-3102}/ -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   LOGIN_HINT="open the dashboard (/agent-zero) — a managed model is pre-seeded; change it in Agent Zero's Settings if you prefer your own"
   STATUS_HINT="systemctl status hivra-agent-zero --no-pager; docker logs --tail 40 hivra-agent-zero 2>&1 | tail -40; curl -fsS http://127.0.0.1:${AGENT_ZERO_PORT:-50080}/ -o /dev/null -w '%{http_code}\n'"

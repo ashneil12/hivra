@@ -1,24 +1,22 @@
 // The agent software Hivra updates on Hivra agents (the Claude Code and Codex
-// CLIs, and the Aeon dashboard, OpenClaw and Agent Zero apps): what the
-// agent's computer reports, which version Hivra has tested, and what that means
-// for its owner.
+// CLIs, and the Aeon dashboard, OpenClaw, Agent Zero, Hermes, OpenBot and
+// Nuphos apps): what the agent's computer reports and what that means for its
+// owner.
 //
 // One interpretation for every surface: the owner API and the agents list
-// (server), the automatic-update sweep (cron), and the agent header, list tag
-// and Manage › Updates (client). Pure and client-safe: no I/O, no clock of its
-// own, and no user copy (copy lives in the .tsx files so the vocabulary
-// ratchet reads it).
+// (server), and the agent header, list tag and Manage › Updates (client). Pure
+// and client-safe: no I/O, no clock of its own, and no user copy (copy lives in
+// the .tsx files so the vocabulary ratchet reads it).
 //
-// "Behind" always means behind Hivra's tested version (AGENT_CLI_VERSIONS and
-// AGENT_APP_VERSIONS in the release), never behind the vendor's newest release.
-// The exception is Hermes: it is the official Hermes Agent, installed by its own
-// installer and updated by its own `hermes update`, so Hivra pins no version for
-// it. Its owner updates it (the button runs `hermes update --yes`); there is no
+// Hivra pins no version of any agent. A launch installs the newest release its
+// upstream publishes at that moment, and after that only the owner changes it:
+// the Update button (which installs upstream's newest release, the literal
+// update target `latest`), or the agent's own update command. There is no
 // tested version, no "behind", and no automatic update.
 
 export const AGENT_CLI_NAMES = ["claude-code", "codex"] as const;
 export type AgentCliName = (typeof AGENT_CLI_NAMES)[number];
-export const AGENT_APP_NAMES = ["aeon", "openclaw", "agent-zero", "hermes"] as const;
+export const AGENT_APP_NAMES = ["aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos"] as const;
 export type AgentAppName = (typeof AGENT_APP_NAMES)[number];
 /** What Hivra updates on the agent: its CLI or its hosted app. */
 export type AgentSoftwareName = AgentCliName | AgentAppName;
@@ -37,18 +35,21 @@ const SOFTWARE_VERSION: Readonly<Record<AgentSoftwareName, RegExp>> = {
   "agent-zero": /^sha256:[0-9a-f]{64}$/,
   // Hermes Agent's release, as `hermes --version` prints it (vX.Y.Z).
   hermes: CLI_VERSION,
+  // OpenBot's release (x.y.z).
+  openbot: CLI_VERSION,
+  // Nuphos runtime release (x.y.z).
+  nuphos: CLI_VERSION,
 };
 
 /**
- * What an update of Hermes aims at: Hivra pins no Hermes version, so its updater
- * (`hermes update`) reports the literal target `latest`: the newest stable
- * release Hermes itself finds.
+ * What every update aims at: Hivra pins no version, so the updater resolves
+ * the literal target `latest` to the newest release upstream publishes.
  */
-export const HERMES_UPDATE_TARGET = "latest";
+export const AGENT_UPDATE_TARGET = "latest";
 
-/** A version in this software's own form; for Hermes only the literal update target `latest`, since Hivra pins no Hermes version. */
-export function isAgentSoftwareTarget(name: AgentSoftwareName, value: unknown): value is string {
-  return name === "hermes" ? value === HERMES_UPDATE_TARGET : isAgentSoftwareVersion(name, value);
+/** An update target: only the literal `latest`, since Hivra pins no version. */
+export function isAgentSoftwareTarget(_name: AgentSoftwareName, value: unknown): value is string {
+  return value === AGENT_UPDATE_TARGET;
 }
 
 /** A version in the form this software names its versions. */
@@ -56,35 +57,12 @@ export function isAgentSoftwareVersion(name: AgentSoftwareName, value: unknown):
   return typeof value === "string" && SOFTWARE_VERSION[name].test(value);
 }
 
-/**
- * Where `installed` stands against `tested`: negative when older, 0 when the
- * same, positive when newer, null when Hivra can't tell. x.y.z versions are
- * ordered by number; a commit or an image digest is older only when it is one
- * of the tested versions Hivra moved off (`previous`).
- */
-export function compareSoftwareVersions(installed: string, tested: string, previous: readonly string[] = []): number | null {
-  if (installed === tested) return 0;
-  if (CLI_VERSION.test(installed) && CLI_VERSION.test(tested)) return compareCliVersions(installed, tested);
-  return previous.includes(installed) ? -1 : null;
-}
-
-/** Numeric x.y.z order: negative when a is older than b, 0 when equal. */
-export function compareCliVersions(a: string, b: string): number {
-  const left = a.split(".").map(Number);
-  const right = b.split(".").map(Number);
-  for (let index = 0; index < 3; index += 1) {
-    const difference = (left[index] ?? 0) - (right[index] ?? 0);
-    if (difference !== 0) return difference < 0 ? -1 : 1;
-  }
-  return 0;
-}
-
 // ── The update_runtime host report ─────────────────────────────────────────
 
 /**
  * The runtime updater's host-validated agent CLI line (Claude Code / Codex
- * computers): the installed version, this release's tested version
- * (AGENT_CLI_VERSIONS) and whether a background swap was scheduled. The swap
+ * computers): the installed version, the update target (always `latest`) and
+ * whether a background swap was scheduled. The swap
  * itself runs on the computer after the request; GET /api/meta agentCli.update
  * reports its progress. Not to be confused with that progress's own states.
  */
@@ -104,7 +82,7 @@ export type AgentAppUpdateReport = {
 };
 export type AgentSoftwareUpdateReport = AgentCliUpdateReport | AgentAppUpdateReport;
 
-export const AGENT_CLI_LINE = /^HIVRA_AGENT_CLI name=(claude-code|codex) version=(\d{1,6}\.\d{1,6}\.\d{1,6}|unknown) target=(\d{1,6}\.\d{1,6}\.\d{1,6}) state=(current|scheduled|running|failed)$/;
+export const AGENT_CLI_LINE = /^HIVRA_AGENT_CLI name=(claude-code|codex) version=(\d{1,6}\.\d{1,6}\.\d{1,6}|unknown) target=(latest) state=(current|scheduled|running|failed)$/;
 
 export function parseAgentCliReport(stdout: string): AgentCliUpdateReport | null {
   for (const line of stdout.split(/\r?\n/)) {
@@ -121,7 +99,7 @@ export function parseAgentCliReport(stdout: string): AgentCliUpdateReport | null
   return null;
 }
 
-export const AGENT_APP_LINE = /^HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes) version=(\S{1,80}) target=(\S{1,80}) state=(current|scheduled|running|failed)$/;
+export const AGENT_APP_LINE = /^HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes|openbot|nuphos) version=(\S{1,80}) target=(\S{1,80}) state=(current|scheduled|running|failed)$/;
 
 /** The runtime updater's host-validated agent app line, each version in its app's own form. */
 export function parseAgentAppReport(stdout: string): AgentAppUpdateReport | null {
@@ -203,7 +181,7 @@ export function parseAgentCliMeta(value: unknown, expected: AgentSoftwareName): 
  * update is refused), computers and every other kind of computer are not
  * covered.
  */
-export const AGENT_SOFTWARE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes"] as const;
+export const AGENT_SOFTWARE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos"] as const;
 export type AgentSoftwareType = (typeof AGENT_SOFTWARE_TYPES)[number];
 
 /** The agentKind each covered agent's connection service reports on /api/meta. */
@@ -214,16 +192,9 @@ const GATEWAY_KIND: Record<AgentSoftwareType, string> = {
   openclaw: "openclaw",
   "agent-zero": "agent-zero",
   hermes: "hermes",
+  openbot: "openbot",
+  nuphos: "nuphos",
 };
-
-/**
- * Whether Hivra's automatic updates can ever apply to this agent. A My cloud
- * computer updates when its owner presses Update; the automatic sweep and its
- * switch are for Proxmox computers only.
- */
-export function agentSoftwareAutoUpdates(row: { computer_substrate?: unknown }): boolean {
-  return row.computer_substrate !== "provider-vm";
-}
 
 export interface AgentSoftwareSubject {
   type: AgentSoftwareType;
@@ -250,7 +221,7 @@ export function agentSoftwareSubject(row: {
   if (!(AGENT_SOFTWARE_TYPES as readonly unknown[]).includes(row.type)) return null;
   const type = row.type as AgentSoftwareType;
   const cli = type === "claude-code" || type === "codex" ? type : null;
-  const app = type === "aeon" || type === "openclaw" || type === "agent-zero" || type === "hermes" ? type : null;
+  const app = type === "aeon" || type === "openclaw" || type === "agent-zero" || type === "hermes" || type === "openbot" || type === "nuphos" ? type : null;
   return {
     type,
     cli,
@@ -321,13 +292,6 @@ export type AgentSoftwareView =
   | { kind: "not_reported" }
   | { kind: "version_unreadable" }
   | { kind: "current"; installed: string }
-  | { kind: "behind"; installed: string }
-  /** Newer than tested, and not a version Hivra put there: the owner's own. */
-  | { kind: "ahead_custom"; installed: string }
-  /** Newer than tested because Hivra lowered its tested version after installing it. */
-  | { kind: "ahead_hivra"; installed: string }
-  /** An app version Hivra can't place against the tested one (not a version it tested). */
-  | { kind: "other_version"; installed: string }
   | { kind: "updating"; phase: AgentSoftwareUpdatePhase; target: string; installed: string | null }
   | { kind: "update_done"; target: string; installed: string }
   | { kind: "update_deferred"; target: string; installed: string | null }
@@ -336,8 +300,6 @@ export type AgentSoftwareView =
 
 /** A request newer than this with no progress yet reads as "starting". */
 export const AGENT_CLI_PENDING_REQUEST_MS = 10 * 60_000;
-/** A done swap whose new version isn't read yet reads as "finishing" this long. */
-export const AGENT_CLI_FINISHING_MS = 2 * 60_000;
 /** A finished update is shown as just finished for this long. */
 export const AGENT_CLI_DONE_RECENT_MS = 6 * 60 * 60_000;
 /** Box and server clocks may disagree by this much. */
@@ -364,9 +326,6 @@ export const AGENT_APP_PHASE_LIMIT_MS: Readonly<Record<"downloading" | "waiting"
   waiting: 6 * 60 * 60_000 + 15 * 60_000,
   installing: 60 * 60_000,
 };
-/** Request results after which the computer may have changed. */
-const REQUEST_MAY_HAVE_RUN = new Set(["scheduled", "running", "unverified"]);
-
 function time(value: string | null | undefined): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
@@ -377,33 +336,19 @@ export interface DeriveAgentSoftwareInput {
   subject: AgentSoftwareSubject;
   /** hivra_agents.status */
   status: string;
-  /** Hivra's tested version (AGENT_CLI_VERSIONS / AGENT_APP_VERSIONS); null for agents without one. */
-  tested: string | null;
-  /** Tested versions Hivra moved off (apps whose versions aren't numbered). */
-  previous?: readonly string[];
   record: AgentSoftwareRecord | null;
   now: number;
 }
 
-function versionView(installed: string | null, tested: string, hivraInstalled: string | null, previous: readonly string[]): AgentSoftwareView {
-  if (installed === null) return { kind: "version_unreadable" };
-  const order = compareSoftwareVersions(installed, tested, previous);
-  if (order === null) return { kind: "other_version", installed };
-  if (order === 0) return { kind: "current", installed };
-  if (order < 0) return { kind: "behind", installed };
-  return installed === hivraInstalled ? { kind: "ahead_hivra", installed } : { kind: "ahead_custom", installed };
-}
-
-/** A Hermes update that failed is shown this long, unless a newer one replaces it. */
-export const HERMES_FAILURE_SHOWN_MS = 24 * 60 * 60_000;
+/** An update that stopped is shown this long, unless a newer one replaces it. */
+export const AGENT_UPDATE_FAILURE_SHOWN_MS = 24 * 60 * 60_000;
 
 /**
- * What the owner should see about Hermes. Hivra pins no Hermes version (the
- * owner updates it with `hermes update`, or the button that runs it), so there
- * is no tested version to be behind: it is the installed version, an update in
- * progress, or what the last update did.
+ * What the owner should see about this agent's software right now. Hivra pins
+ * no version, so there is nothing to be behind: it is the installed version,
+ * an update in progress, or what the last update did.
  */
-function deriveHermesSoftware(input: DeriveAgentSoftwareInput): AgentSoftwareView {
+export function deriveAgentSoftware(input: DeriveAgentSoftwareInput): AgentSoftwareView {
   const { subject, status, record, now } = input;
   if (status !== "running") return { kind: "not_running" };
   const observation = record?.observation ?? null;
@@ -417,13 +362,14 @@ function deriveHermesSoftware(input: DeriveAgentSoftwareInput): AgentSoftwareVie
   const updateAt = time(record?.update_updated_at);
   const state = (AGENT_CLI_UPDATE_STATES as readonly string[]).includes(String(record?.update_state))
     ? record?.update_state as AgentCliUpdateState : null;
-  const target = isAgentSoftwareTarget(subject.software, record?.update_target) ? record.update_target : HERMES_UPDATE_TARGET;
+  const target = AGENT_UPDATE_TARGET;
   const requestedAt = time(record?.requested_at);
   const observedAt = time(record?.observed_at);
-  const hasUpdate = state !== null && (updateAt === null || requestedAt === null || updateAt >= requestedAt - CLOCK_SKEW_MS);
+  const hasUpdate = state !== null && isAgentSoftwareTarget(subject.software, record?.update_target)
+    && (updateAt === null || requestedAt === null || updateAt >= requestedAt - CLOCK_SKEW_MS);
 
   // An update the owner asked for that the computer hasn't started reporting yet.
-  if (requestedAt !== null && record?.requested_target === HERMES_UPDATE_TARGET
+  if (requestedAt !== null && record?.requested_target === AGENT_UPDATE_TARGET
     && now - requestedAt >= -CLOCK_SKEW_MS && now - requestedAt < AGENT_CLI_PENDING_REQUEST_MS && !hasUpdate) {
     if (record.request_result === "failed") return { kind: "update_failed", reason: "could_not_start", target, installed };
     if (record.request_result == null || record.request_result === "scheduled" || record.request_result === "running") {
@@ -435,7 +381,7 @@ function deriveHermesSoftware(input: DeriveAgentSoftwareInput): AgentSoftwareVie
       case "downloading":
       case "waiting":
       case "installing": {
-        const limit = AGENT_APP_PHASE_LIMIT_MS[state] + CLOCK_SKEW_MS;
+        const limit = (subject.app ? AGENT_APP_PHASE_LIMIT_MS : AGENT_CLI_PHASE_LIMIT_MS)[state] + CLOCK_SKEW_MS;
         const since = updateAt ?? observedAt;
         if (since === null || now - since <= limit) return { kind: "updating", phase: state, target, installed };
         break;
@@ -446,10 +392,13 @@ function deriveHermesSoftware(input: DeriveAgentSoftwareInput): AgentSoftwareVie
         }
         break;
       case "deferred":
-        if (updateAt !== null && now - updateAt < HERMES_FAILURE_SHOWN_MS) return { kind: "update_deferred", target, installed };
+        if (updateAt !== null && now - updateAt < AGENT_UPDATE_FAILURE_SHOWN_MS) return { kind: "update_deferred", target, installed };
+        break;
+      case "rolled_back":
+        if (updateAt !== null && now - updateAt < AGENT_UPDATE_FAILURE_SHOWN_MS) return { kind: "update_rolled_back", target, installed };
         break;
       case "failed":
-        if (updateAt !== null && now - updateAt < HERMES_FAILURE_SHOWN_MS) {
+        if (updateAt !== null && now - updateAt < AGENT_UPDATE_FAILURE_SHOWN_MS) {
           const reason: AgentSoftwareFailure = record?.update_reason === "local_changes" ? "local_changes"
             : record?.update_reason === "no_space" ? "no_space"
             : record?.update_reason === "download_failed" ? "download_failed"
@@ -465,127 +414,19 @@ function deriveHermesSoftware(input: DeriveAgentSoftwareInput): AgentSoftwareVie
   return installed === null ? { kind: "version_unreadable" } : { kind: "current", installed };
 }
 
-/** What the owner should see about this agent's software right now. */
-export function deriveAgentSoftware(input: DeriveAgentSoftwareInput): AgentSoftwareView {
-  if (input.subject.app === "hermes") return deriveHermesSoftware(input);
-  const { subject, status, tested, record, now } = input;
-  const previous = input.previous ?? [];
-  if (status !== "running") return { kind: "not_running" };
-  const observation = record?.observation ?? null;
-  if (!observation) return { kind: "checking" };
-  if (observation === "unreachable") return { kind: "unreachable" };
-  if (observation === "older_connection_service") return { kind: "older_connection_service" };
-  if (observation === "not_reported") return { kind: "not_reported" };
-  if (!tested) return { kind: "checking" };
-  if (observation !== "reported" && observation !== "version_unreadable") return { kind: "checking" };
-  const versionOrNull = (value: unknown): string | null => isAgentSoftwareVersion(subject.software, value) ? value : null;
-  const order = (installed: string, target: string) => compareSoftwareVersions(installed, target, previous);
-
-  const installed = observation === "reported" ? versionOrNull(record?.installed_version) : null;
-  const updateAt = time(record?.update_updated_at);
-  const update = record?.update_target === tested && (AGENT_CLI_UPDATE_STATES as readonly string[]).includes(String(record?.update_state))
-    ? { state: record?.update_state as AgentCliUpdateState, target: tested, at: updateAt, reason: record?.update_reason ?? null }
-    : null;
-
-  // An update Hivra asked for that the computer hasn't started reporting yet.
-  const requestedAt = time(record?.requested_at);
-  const observedAt = time(record?.observed_at);
-  const pending = record?.requested_target === tested && requestedAt !== null
-    && now - requestedAt >= -CLOCK_SKEW_MS && now - requestedAt < AGENT_CLI_PENDING_REQUEST_MS
-    && (!update || update.at === null || update.at < requestedAt - CLOCK_SKEW_MS);
-  if (pending) {
-    if (record?.request_result === "failed") return { kind: "update_failed", reason: "could_not_start", target: tested, installed };
-    // No result yet: an automatic update Hivra claimed and is still sending.
-    if (record?.request_result == null || record.request_result === "scheduled" || record.request_result === "running") {
-      return { kind: "updating", phase: "starting", target: tested, installed };
-    }
-  }
-  if (
-    record?.requested_target === tested && requestedAt !== null
-    && (record.request_result == null || REQUEST_MAY_HAVE_RUN.has(record.request_result))
-    && (observedAt === null || observedAt < requestedAt)
-  ) {
-    // An update was sent and the computer hasn't been read since: what it
-    // has now is unknown until it is read again (the last reading is older
-    // than the update, so it can't say "behind").
-    return { kind: "checking" };
-  }
-
-  if (update) {
-    const reachedTarget = installed === update.target;
-    // A deferred, rolled-back or failed update only still applies while the
-    // computer has an older version (or none it can read). Once it reports
-    // a newer one, the owner installed it after the update stopped: the
-    // version decides, so automatic updates never move it back down.
-    const placed = installed === null ? null : order(installed, update.target);
-    const stillBelowTarget = installed === null || placed === null || placed < 0;
-    switch (update.state) {
-      case "downloading":
-      case "waiting":
-      case "installing": {
-        const limit = (subject.app ? AGENT_APP_PHASE_LIMIT_MS : AGENT_CLI_PHASE_LIMIT_MS)[update.state] + CLOCK_SKEW_MS;
-        const since = update.at ?? observedAt;
-        if (since === null || now - since <= limit) {
-          return { kind: "updating", phase: update.state, target: update.target, installed };
-        }
-        // This step has run past its limit. If the computer still reported it
-        // after it should have ended, its updater stopped: say what it has.
-        // Otherwise it may have finished since that reading: unknown until
-        // the computer is read again.
-        if (update.at !== null && observedAt !== null && observedAt - update.at > limit) break;
-        return { kind: "checking" };
-      }
-      case "done":
-        if (reachedTarget) {
-          if (update.at !== null && now - update.at < AGENT_CLI_DONE_RECENT_MS) return { kind: "update_done", target: update.target, installed: update.target };
-          break;
-        }
-        // The computer reads its new version a moment after the swap.
-        if (update.at !== null && now - update.at < AGENT_CLI_FINISHING_MS) {
-          return { kind: "updating", phase: "finishing", target: update.target, installed };
-        }
-        if (installed === null) return { kind: "checking" };
-        break;
-      case "deferred":
-        if (stillBelowTarget) return { kind: "update_deferred", target: update.target, installed };
-        break;
-      case "rolled_back":
-        if (stillBelowTarget) return { kind: "update_rolled_back", target: update.target, installed };
-        break;
-      case "failed":
-        if (stillBelowTarget) {
-          // An app update can also stop before changing anything: no disk
-          // space for the new version, or no app service to update.
-          const reason: AgentSoftwareFailure = update.reason === "download_failed" ? "download_failed"
-            : update.reason === "no_space" ? "no_space"
-            : update.reason === "not_installed" ? "could_not_start"
-            : "install_failed";
-          return { kind: "update_failed", reason, target: update.target, installed };
-        }
-        break;
-    }
-  }
-  return versionView(installed, tested, versionOrNull(record?.hivra_installed_version), previous);
-}
-
 export type AgentSoftwareBadge = "update_available" | "updating" | "update_failed";
 
 /**
- * The one-word attention state the agent header and the agents list show. An
- * app on a version Hivra can't place is offered the tested version too (only
- * Hivra changes it). One whose version Hivra never recorded (an Aeon computer
- * from before the record existed, most likely already on the tested build)
- * gets no badge: Manage › Updates still offers the update.
+ * The one-word attention state the agent header and the agents list show.
+ * Hivra doesn't know when upstream has a newer release than the one installed,
+ * so "update available" only means an older connection service or an update
+ * that is still waiting to run.
  */
-export function agentSoftwareBadge(view: AgentSoftwareView, app = false): AgentSoftwareBadge | null {
+export function agentSoftwareBadge(view: AgentSoftwareView): AgentSoftwareBadge | null {
   switch (view.kind) {
-    case "behind":
-    case "ahead_hivra":
     case "older_connection_service":
     case "update_deferred":
       return "update_available";
-    case "other_version":
-      return app ? "update_available" : null;
     case "updating":
       return "updating";
     case "update_rolled_back":
@@ -602,75 +443,9 @@ export interface AgentSoftwareSummary {
   cli: AgentCliName | null;
   app: AgentAppName | null;
   installed: string | null;
-  tested: string | null;
 }
 
-export function summarizeAgentSoftware(view: AgentSoftwareView, subject: AgentSoftwareSubject, tested: string | null): AgentSoftwareSummary {
+export function summarizeAgentSoftware(view: AgentSoftwareView, subject: AgentSoftwareSubject): AgentSoftwareSummary {
   const installed = "installed" in view ? view.installed : null;
-  return { badge: agentSoftwareBadge(view, subject.app !== null), cli: subject.cli, app: subject.app, installed, tested };
-}
-
-// ── Automatic updates ──────────────────────────────────────────────────────
-
-/**
- * HIVRA_AGENT_CLI_AUTO_UPDATE, the rollout switch: off (the default, also
- * when unset or unknown) does nothing; preview only reports what it would
- * update; on updates.
- */
-export type AgentCliAutoUpdateMode = "off" | "preview" | "on";
-
-export function agentCliAutoUpdateMode(raw: string | undefined | null): AgentCliAutoUpdateMode {
-  const value = (raw ?? "").trim().toLowerCase();
-  return value === "on" || value === "preview" ? value : "off";
-}
-
-/**
- * The owner's choice, or Hivra's default when they haven't made one: on for
- * agents on Hivra Cloud, off on the owner's own server.
- */
-export function effectiveAgentCliAutoUpdate(record: AgentSoftwareRecord | null, deploymentMode: unknown): {
-  enabled: boolean;
-  source: "default" | "owner";
-} {
-  if (typeof record?.auto_update === "boolean") return { enabled: record.auto_update, source: "owner" };
-  return { enabled: deploymentMode !== "self-managed", source: "default" };
-}
-
-export type AgentCliAutoSkip =
-  | "not_reported"
-  | "not_behind"
-  | "owner_version"
-  | "updating"
-  | "paused";
-
-/**
- * Whether automatic updates may move this agent to the tested version, from
- * what the computer last reported. Only a reported version counts (an older
- * connection service waits for its owner's first update), an owner's own
- * newer install is never touched, and a target that failed before stays
- * paused until the owner updates. Idle and cooldown checks come after this.
- */
-export function agentCliAutoUpdateGate(view: AgentSoftwareView, record: AgentSoftwareRecord | null, tested: string):
-  { ok: true } | { ok: false; skip: AgentCliAutoSkip } {
-  if (record?.auto_paused_target === tested) return { ok: false, skip: "paused" };
-  switch (view.kind) {
-    case "behind":
-    case "ahead_hivra":
-    case "update_deferred":
-      return { ok: true };
-    case "ahead_custom":
-      return { ok: false, skip: "owner_version" };
-    case "updating":
-      return { ok: false, skip: "updating" };
-    case "update_rolled_back":
-    case "update_failed":
-      return { ok: false, skip: "paused" };
-    case "current":
-    case "update_done":
-      return { ok: false, skip: "not_behind" };
-    case "other_version":
-      return { ok: false, skip: "owner_version" };
-    default:
-      return { ok: false, skip: "not_reported" };
-  }
+  return { badge: agentSoftwareBadge(view), cli: subject.cli, app: subject.app, installed };
 }

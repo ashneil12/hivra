@@ -51,7 +51,6 @@ jest.mock("@/lib/posthog", () => ({
 
 jest.mock("@/lib/billing/credits", () => ({
   grantStripeTopUpCredits: jest.fn().mockResolvedValue({ inserted: true, balance: 1000 }),
-  grantSubscriptionCycleCredits: jest.fn().mockResolvedValue({ inserted: true, balance: 2090 }),
   isTopUpPackageCredits: jest.fn((credits: number) =>
     [500, 1000, 2500, 5000].includes(credits)
   ),
@@ -142,7 +141,6 @@ import {
 import { posthogClient } from "@/lib/posthog";
 import {
   grantStripeTopUpCredits,
-  grantSubscriptionCycleCredits,
 } from "@/lib/billing/credits";
 import { grantManagedVeniceCardTopUpCredit } from "@/lib/billing/managed-venice-wallets";
 import { maybeSendPaymentFailedRecoveryEmail } from "@/lib/billing/dunning";
@@ -776,13 +774,6 @@ describe("StripeWebhookService", () => {
           plan: "operator",
           status: "active"
       });
-      expect(grantSubscriptionCycleCredits).toHaveBeenCalledWith({
-        userId: "user_1",
-        planKey: "operator",
-        subscriptionId: "sub_1",
-        periodStart: 1000,
-        periodEnd: 2000,
-      });
     });
 
     it("accepts a configured yearly Stripe price for the matching plan", async () => {
@@ -838,13 +829,6 @@ describe("StripeWebhookService", () => {
           expect.anything(),
           expect.anything()
         );
-        expect(grantSubscriptionCycleCredits).toHaveBeenCalledWith({
-          userId: "user_1",
-          planKey: "operator",
-          subscriptionId: "sub_yearly",
-          periodStart: 1000,
-          periodEnd: 2000,
-        });
       } finally {
         operatorPlan.stripePriceId = originalMonthlyPriceId;
         operatorPlan.stripeYearlyPriceId = originalYearlyPriceId;
@@ -943,7 +927,6 @@ describe("StripeWebhookService", () => {
         } as unknown as Stripe.Subscription);
 
         expect(supabaseAdmin!.from).not.toHaveBeenCalled();
-        expect(grantSubscriptionCycleCredits).not.toHaveBeenCalled();
         expect(log.error).toHaveBeenCalledWith(
           "subscription plan/price mismatch — refusing to apply",
           expect.anything(),
@@ -1268,7 +1251,6 @@ describe("StripeWebhookService", () => {
       expect(stringifiedContext).not.toContain("subscription-upsert-secret-leak");
       expect(stringifiedContext).not.toContain("subscription-upsert-details-leak");
       expect(stringifiedContext).not.toContain("subscription-upsert-hint-leak");
-      expect(grantSubscriptionCycleCredits).not.toHaveBeenCalled();
     });
   });
 
@@ -2122,7 +2104,6 @@ describe("StripeWebhookService", () => {
       } as unknown as Stripe.Invoice);
 
       expect(subscriptionUpdates).toHaveLength(0);
-      expect(grantSubscriptionCycleCredits).not.toHaveBeenCalled();
       expect(log.error).toHaveBeenCalledWith(
         expect.stringContaining("invoice.paid for a canceled subscription"),
         expect.anything(),
@@ -2370,7 +2351,6 @@ describe("StripeWebhookService", () => {
 
           expect(db.to("hermes_subscriptions")).toEqual([]);
           expect(db.to("hermes_instances")).toEqual([]);
-          expect(grantSubscriptionCycleCredits).not.toHaveBeenCalled();
           // The payment still lands on the lane's own row.
           expect(db.to("workspace_cloud_subscriptions")).toEqual([
             expect.objectContaining({
@@ -2538,9 +2518,6 @@ describe("StripeWebhookService", () => {
             })
           );
           // The Operator cycle was paid, so its credits are still granted.
-          expect(grantSubscriptionCycleCredits).toHaveBeenCalledWith(
-            expect.objectContaining({ userId: USER, planKey: "operator", subscriptionId: "sub_hivra" })
-          );
         }
       );
 
@@ -2558,7 +2535,6 @@ describe("StripeWebhookService", () => {
 
         expect(db.row()).toMatchObject({ status: "past_due" });
         expect(db.to("hermes_instances")).toEqual([]);
-        expect(grantSubscriptionCycleCredits).not.toHaveBeenCalled();
       });
 
       it("invoice.paid activates only the row bound to that exact subscription", async () => {
@@ -2583,9 +2559,6 @@ describe("StripeWebhookService", () => {
         expect(
           db.to("hermes_instances").find((w) => w.payload.entitlement_state === "ok")
         ).toBeTruthy();
-        expect(grantSubscriptionCycleCredits).toHaveBeenCalledWith(
-          expect.objectContaining({ userId: USER, planKey: "operator", subscriptionId: "sub_hivra" })
-        );
         expect(db.to("workspace_cloud_subscriptions")).toEqual([]);
       });
 

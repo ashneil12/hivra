@@ -60,7 +60,7 @@ export function parseDashboardResources(value: unknown, source: DashboardResourc
       const desktopQuery = kind !== "computer" ? ""
         : profile?.id === "windows" ? "?tab=desktop&open=fast"
           : "?tab=desktop";
-      resources.push({ uid: `x-${id}`, id, source, kind, name, status, attention: resourceAttention(status),
+      resources.push({ uid: `x-${id}`, id, source, kind, name, status, attention: resourceAttention(status, row.inbox_prompt),
         description: kind === "computer" ? profile?.name ?? "Desktop computer" : definition?.name ?? type,
         href: `/dashboard/agent/${encodeURIComponent(id)}${desktopQuery}` });
     }

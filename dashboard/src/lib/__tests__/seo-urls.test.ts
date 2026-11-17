@@ -1,4 +1,5 @@
 import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
+import { PRODUCT_FACTS_CHECKED } from "@/lib/compare/products/checked";
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
 import { AGENT_PAGES_LAST_MODIFIED } from "@/lib/hivra/agent-seo-catalog";
 import { PRICES_AS_OF } from "@/app/pricing/pricing-content";
@@ -124,21 +125,34 @@ describe("seo urls", () => {
     }
   });
 
-  it("dates the /features and /compare pages from the registry, and the host comparisons from the day their competitor numbers were read", () => {
+  it("dates the /features and /compare pages from the registry, and the host and product comparisons from the day their figures were read", () => {
     const urls = getSiteUrls();
     const rewritten = urls.filter((u) => /\/(features|compare)(\/|$)/.test(u.url));
-    // 2 hubs + 6 feature pages + 9 comparison pages.
+    // 2 hubs + 6 feature pages + 22 comparison pages.
     expect(rewritten.map((u) => u.url.slice(SITE_URL.length)).sort()).toEqual(
       [
         "/compare",
         "/compare/ai-agent-hosting-alternatives",
         "/compare/openclaw-to-hermes",
         "/compare/vs-agent-37",
+        "/compare/vs-claude-code-on-the-web",
+        "/compare/vs-construct-computer",
+        "/compare/vs-cubicles",
+        "/compare/vs-cursor-cloud-agents",
+        "/compare/vs-e2b",
+        "/compare/vs-fly-sprites",
+        "/compare/vs-github-codespaces",
         "/compare/vs-hostinger",
+        "/compare/vs-kiloclaw",
+        "/compare/vs-lobsterland",
+        "/compare/vs-machine0",
         "/compare/vs-nous-hermes-cloud",
+        "/compare/vs-openai-codex-cloud",
+        "/compare/vs-orgo",
         "/compare/vs-railway",
         "/compare/vs-render",
         "/compare/vs-self-hosted",
+        "/compare/vs-simular-box",
         "/compare/vs-xcloud",
         "/features",
         "/features/browser-automation",
@@ -154,10 +168,26 @@ describe("seo urls", () => {
     // text changed with the copy overhaul; everything else follows the registry's
     // hub and detail dates (lib/seo-lastmod.ts).
     const factsPages = new Set(["/compare/vs-agent-37", "/compare/vs-hostinger", "/compare/vs-xcloud", "/compare/vs-nous-hermes-cloud"]);
+    const productPages = new Set([
+      "/compare/vs-claude-code-on-the-web",
+      "/compare/vs-openai-codex-cloud",
+      "/compare/vs-cursor-cloud-agents",
+      "/compare/vs-github-codespaces",
+      "/compare/vs-fly-sprites",
+      "/compare/vs-e2b",
+      "/compare/vs-lobsterland",
+      "/compare/vs-kiloclaw",
+      "/compare/vs-construct-computer",
+      "/compare/vs-orgo",
+      "/compare/vs-machine0",
+      "/compare/vs-simular-box",
+      "/compare/vs-cubicles",
+    ]);
     for (const entry of rewritten) {
       const path = entry.url.slice(SITE_URL.length);
       const registryDay =
         path === "/features" ? PAGE_LAST_MODIFIED.featuresHub
+        : productPages.has(path) ? (PRODUCT_FACTS_CHECKED > PAGE_LAST_MODIFIED.compareDetail ? PRODUCT_FACTS_CHECKED : PAGE_LAST_MODIFIED.compareDetail)
         : path === "/compare" ? PAGE_LAST_MODIFIED.compareHub
         : factsPages.has(path) ? (COMPETITOR_FACTS_CHECKED > PAGE_LAST_MODIFIED.compareDetail ? COMPETITOR_FACTS_CHECKED : PAGE_LAST_MODIFIED.compareDetail)
         : path.startsWith("/features/") ? PAGE_LAST_MODIFIED.featureDetail

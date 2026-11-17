@@ -234,17 +234,19 @@ inferring them from a live host.
   `https://cli.github.com/packages/pool/main/g/gh/gh_2.98.0_amd64.deb`
   - package version: `2.98.0`
   - SHA-256: `f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6`
-- Anthropic Claude Code npm package: `@anthropic-ai/claude-code@2.1.292`
+- Anthropic Claude Code npm package: `@anthropic-ai/claude-code`, upstream's newest
+  release at install time (npm `latest`); no Hivra pin
 - Anthropic Claude desktop app for Linux (optional, owner-initiated):
   `https://downloads.claude.ai/claude-desktop/apt/stable/pool/main/c/claude-desktop/claude-desktop_2.26454.0_amd64.deb`
   - package version: `2.26454.0`
   - SHA-256: `6d3e4973dcb11511ddd962040b3073b435d1592b3174a82ef52e50377a75a63f`
   - size: 180809792 bytes
   - proprietary Anthropic software, downloaded from Anthropic's repository and never bundled or redistributed by Hivra
-- OpenAI Codex CLI npm package: `@openai/codex@0.149.1`
-- OpenClaw npm package: `openclaw@2026.6.10`
-- Agent Zero OCI image:
-  `agent0ai/agent-zero@sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0`
+- OpenAI Codex CLI npm package: `@openai/codex`, npm `latest` at install time; no Hivra pin
+- OpenClaw npm package: `openclaw`, npm `latest` at install time; no Hivra pin
+- Agent Zero OCI image: `agent0ai/agent-zero:latest`, recorded by the digest it
+  resolved to at install time; no Hivra pin
+- Aeon: the upstream repository's `HEAD` commit at install time; no Hivra pin
 - Selkies X11 desktop OCI image:
   `ghcr.io/selkies-project/selkies-egl-desktop@sha256:6ee5ddc3aa50ec9b3f22d2090ee1b0d2161e7be5acd9f385717e7c3603f6b3aa`
   - observed source commit: `dbc97872dbeae49e7f1e4491c3dee54f437f364d`
@@ -543,6 +545,313 @@ shutdown budget; the DeepSeek native broker renews its upstream session without
 a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
+
+
+Release `2026.11.17.4` builds on `2026.11.17.3` and fixes two launches broken
+by their newest upstream releases. OpenClaw 2026.11.5 refuses a loopback
+request that carries forwarded-client headers unless `gateway.trustedProxies`
+names the proxy (`proxy_attribution_required`), so its Control UI never
+loaded; the box gateway now drops the tunnel's forwarded headers on `/openclaw`
+HTTP and WebSocket traffic, as it already does for Hermes. Aeon's own
+`apps/dashboard/next.config.ts` now sets a bundler root its build needs, and
+Hivra's basePath file replaced it, so every Aeon build failed; the provisioner
+and the Update path keep Aeon's file as `next.config.hivra-upstream.ts` and
+only add the `/aeon` mount on top. A guest paused by Hivra's sleep (`qm
+suspend`) made the host capacity check refuse every launch on that host
+(`invalid QEMU status`); it now counts a paused guest as active. A failed
+guest install now also names its fixed reason (Hivra's own install error code,
+or which step exited with which status) in the host log, never launch data.
+Changed: `hivra-chat/server.js`, `provision-claude-code-box.sh`,
+`hivra-agent-app-update.sh`, `hivra-host-capacity-admission`,
+`hivra-install-agent.py`, plus the
+documents, the version and the provider worker's release labels. This source
+release does not deploy, install, enable or start anything on a host or
+computer.
+
+Release `2026.11.17.3` builds on `2026.11.17.2` and fixes Agent Zero launches
+on current images. Agent Zero reads its settings only from `/a0/usr/.env`;
+older images copied the mounted `/a0/.env` there on first start, but v2.15 and
+later do not, so a new box started with no login, its CSRF endpoint refused
+the gateway (`ok: false`), and the launch failed its readiness check after five
+minutes. The provisioner now merges the managed keys (login, and the managed
+model when one is given) into `/opt/a0/usr/.env`, keeping every other line.
+Changed: `provision-claude-code-box.sh`, plus the documents, the version and the
+provider worker's release labels. This source release does not deploy,
+install, enable or start anything on a host or computer.
+
+Release `2026.11.17.2` builds on `2026.11.17.1` and stops Hivra's own
+background reads from keeping a computer awake: the wake proxy treats a request
+carrying `X-Hivra-Background: 1` as carrying no proof, so it never moves the
+idle signal (`last_authed_at`) and never wakes a napped or hibernated VM (a
+napped VM answers it as asleep); a running guest still serves it. The header
+only takes away, so sending it cannot wake or keep awake anyone's computer.
+Changed: `hivra-wake-proxy.py`, `test_hivra_wake_proxy.py`, plus the documents,
+the version and the provider worker's release labels. This source release does
+not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.17.1` builds on `2026.11.15.7` and removes Hivra's agent
+version pins (`agent-cli-versions.json` and `agent-app-versions.json` leave the
+bundle). A new computer installs upstream's newest release of its agent at
+launch: Claude Code, Codex and OpenClaw from their npm `latest` tag, Agent Zero
+from `agent0ai/agent-zero:latest` (recorded by digest), and Aeon from its
+repository's `HEAD` commit. Hivra no longer updates an agent by itself. When the
+owner presses Update, the runtime update reports `target=latest` and
+`hivra-agent-cli-update.sh` / `hivra-agent-app-update.sh` resolve upstream's
+newest release at that moment, end at once when it is installed already, and
+otherwise swap and roll back exactly as before. Changed:
+`provision-claude-code-box.sh`, `hivra-update-guest-runtime.sh`,
+`hivra-guest-runtime-update.sh`, `hivra-agent-cli-update.sh`,
+`hivra-agent-app-update.sh`, `hivra-chat/server.js`,
+`hivra-codex-config-pin.py` (comments only), plus the documents, the version
+and the provider worker's release labels. This source release does not
+deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.15.7` builds on `2026.11.15.6` and lets Agent Zero plugin web
+interfaces load: the gateway's no-Referer static-import allowlist now also covers
+module imports under `/usr/plugins/<plugin>/webui/` (for example the Tailscale
+manager's dynamic imports), which previously answered 404 and surfaced as
+"Failed to fetch dynamically imported module". The release also moves the pinned
+Agent Zero image to `agent0ai/agent-zero@sha256:05d6ab347bd7db4b6bd5a7d902c9965281ff852ff23f29fffcc1c8919e628bd8`
+(`v2.15`), keeping the reviewed `v2.2` image in the pin's `previous` list; new
+computers install `v2.15` and existing computers move to it through the managed
+runtime/app update, which keeps the previous image for rollback.
+The release also repairs the managed update's idle gate: the surface watchdog's
+authenticated probe counted as app use, so a box with the watchdog never looked
+idle and every scheduled app update deferred until it gave up. The watchdog now
+marks its probe with `X-Hivra-Surface-Watchdog` carrying a box-local shared key
+(`~/.hivra/surface-watchdog-key`, owner-only like the api-token — created at
+provision and by the guest runtime update); the gateway exempts that request
+from use-tracking only when a loopback peer presents the key, so proxied remote
+traffic can never claim it, and the direct-access Caddy site strips the marker
+header outright. The guest runtime update also restarts an already-installed
+watchdog so the new probe takes effect. It also repairs the receipts endpoint:
+the watchdog (root) wrote its state under a root-only directory the bux gateway
+could never read, so `GET /api/surface-watchdog` always answered not_installed;
+receipt files now land group-readable for the agent user and the state
+directory is installed root:agent 0750 at provision and runtime update.
+Two review findings on the key itself are also fixed: because the agent user
+owns `~/.hivra`, a predictable staging path there could be replaced with a
+symlink a root-run writer would follow — the key is instead staged inside a
+root-owned sibling directory and published by atomic rename; and boxes whose
+generated direct-access Caddyfile predates the marker strip are migrated in
+place atomically instead of failing re-enrollment with explicit repair
+required.
+Changed: `hivra-chat/server.js`, `hivra-surface-watchdog.py`,
+`hivra-guest-runtime-update.sh`, `hivra-install-agent.py`,
+`provision-claude-code-box.sh`, `test_hivra_surface_watchdog.py`,
+`agent-app-versions.json`, plus the documents, the version and the provider
+worker's release labels. This source release does not deploy, install, enable or
+start anything on a host or computer.
+
+Release `2026.11.15.6` builds on `2026.11.15.5` and protects agent surfaces that go
+wedged without failing: a root `hivra-surface-watchdog` service polls each registered
+agent surface through the same gateway path the dashboard uses (Agent Zero's real
+`/agent-zero/api/csrf_token` login path, not only `/healthz`), reports a bounded receipt
+at `GET /api/surface-watchdog`, and restarts only the owning app unit after a continuous
+failure window with cooldown and a per-episode restart cap. The watchdog honours the
+managed update lock so a legitimate self-update reads as updating, not down, and it
+sweeps failed `bux-`/`hivra-` units into ops events instead of silently restarting
+them. Both `provision-claude-code-box.sh` and `hivra-guest-runtime-update.sh` also
+disable and remove the legacy `bux-browser-keeper.service` unit on browserless kinds so
+it does not crash-loop silently. Provisioning installs and enables the watchdog service,
+and the guest runtime update scripts add it with backup/rollback. The dashboard suppresses
+stale surface errors on running rows and names the responsible surface in warnings.
+Changed: `hivra-chat/server.js`, `hivra-guest-runtime-update.sh`,
+`hivra-update-guest-runtime.sh`, `provision-claude-code-box.sh`, new
+`hivra-surface-watchdog.py` and `hivra-surface-watchdog.service`, plus the documents,
+the version and the provider worker's release labels. This source release does not
+deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.15.5` builds on `2026.11.15.3` and stops `qm start` from
+leaking the shared allocation/lifecycle lock file descriptor into the KVM
+child it forks. Both start paths held `/run/lock/hivra-allocation.lock` on
+fd 8 across `qm start`, so the VM's kvm process inherited the fd and pinned
+the advisory lock open for the VM's whole lifetime — every host-side
+mutation against that box (resize, shutdown, delete, bundle sync) then
+timed out taking the lock. Closing fd 8 in the `qm` invocation keeps the
+serialization the lock provides while leaving the child lock-free.
+Changed: `hivra-start-on-host.sh`, `hivra-provision-on-host.sh`, plus the
+documents, the version and the provider worker's release labels; no file is
+added. This source release does not deploy, install, enable or start
+anything on a host or computer. (`2026.11.15.4` was skipped.)
+
+Release `2026.11.15.3` builds on `2026.11.15.2` and keeps every agent-app surface reachable
+while the app updates itself outside the managed updater: a proxied agent-app port that
+refuses a connection — a self-update restart, a crash window, a slow boot — now answers
+the same "being updated" hold page with `Retry-After` that the managed update lock serves,
+instead of a dead 502. The behaviour keys off the gateway's `AGENT_APP` table, so present
+and future agent kinds registered there inherit it. Agent Zero's entry-document fallback
+also gains `/ui/index` as a canonical candidate, and when no candidate satisfies the
+pinned index.js/initFw.js transform a browser fetch gets a retrying 503 page explaining
+the connection layer does not recognise the updated layout rather than a bare 502.
+Changed: `hivra-chat/server.js`, plus the documents, the version and the provider
+worker's release labels; no file is added. This source release does not deploy, install,
+enable or start anything on a host or computer.
+
+Release `2026.11.15.2` builds on `2026.11.15.1` and lets the owner move an existing local
+agent onto a running computer: the box gateway gains `POST /api/import/token` (single-use,
+15-minute `hit_` transfer tokens stored only as sha256 digests, valid for `/api/import`
+alone), `POST /api/import` (a streamed tar.gz state bundle, at most 256 MiB, staged and
+validated before it merges into per-kind state roots — Claude `~/.claude`/`~/.claude.json`,
+Codex `~/.codex`/`~/.agents`, OpenClaw state, Agent Zero `/opt/a0/usr` around a container
+stop/start) and `GET /api/import/status`. Extraction refuses absolute and traversal member
+names, drops links escaping the staging tree and non-regular members, and never restores
+`~/.hivra`, `~/.ssh` or other protected roots; `work/` members land at the agent's home.
+Changed: `hivra-chat/server.js`, new `hivra-chat/import-state.cjs`, plus the documents, the
+version and the provider worker's release labels.
+This source release does not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.15.1` builds on `2026.11.14.1` and keeps the Agent Zero surface working when
+the container self-updates: upstream `v2.15`+ serves a splash bootstrap at `/` that installs the
+real document from `/ui/index`, so the box gateway (`a0Proxy`) now falls back from `/` to the
+canonical `/index.html` document and still serves only documents that satisfy the pinned
+index.js/initFw.js entry transform — never the splash, whose root-scope service worker would
+control the whole box origin. A direct hit on `/agent-zero/ui/index` redirects to the mount root
+because the document's relative assets would resolve under `/ui/`. Changed:
+`hivra-chat/server.js`, plus the documents, the version and the provider worker's release
+labels; no file is added. This source release does not deploy, install, enable or start anything
+on a host or computer.
+
+Release `2026.11.14.1` builds on `2026.11.13.6` and lets the owner sign an external app into a
+computer's dashboard surface: the dashboard's Connect app action asks the box for a connect
+grant (`POST /connect/grant`, management bearer only), which keeps only the
+`sha256("user:pass")` digest, the expiry and the destination in
+`~/.hivra/connect-grants.json` (owner-only, atomically replaced, bounded, bound to the API
+token so rotation revokes every link). A grant redeems as `GET /connect/<user>:<pass>` or as
+Agent Zero's own `POST /login` (`{username, password, next}`), so the A0 desktop app's remote
+instance flow signs in exactly as it would to a self-hosted install; both hand out the ordinary
+surface cookie. `DELETE /connect/grant` revokes them all. Changed: `hivra-chat/server.js`,
+plus the documents, the version and the provider worker's release labels; no file is added.
+This source release does not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.13.6` builds on `2026.11.13.5` and hardens the host wake proxy, the doorbell and their units
+after review. Changed: `hivra-wake-proxy.py`, `hivra-wake-doorbell.py`, `hivra-wake-proxy.service`,
+`hivra-wake-helper.service`, `hivra-cf-template.service`, `hivra-wake-doorbell.service`, plus the documents, the
+version and the provider worker's release labels; no file is added (the bundle is at the worker's file cap). The helper reports a computer
+napped only when its marker is valid and QEMU says paused (a computer resumed some other way has its marker removed
+under the per-VM lock), and the forwarder may no longer ask Hivra for a wake (`request`) at all. Bad owner proofs
+count per VM and per client address, so one client's junk cannot lock the owner out. A new `apply-pins` command, run at
+boot by the `hivra-ingress-pins.service` oneshot that the wake-proxy install step writes, puts every host-ingress
+computer's ARP/IP pin back before the proxy and the host connectors start. The doorbell connects only to a mail server with a globally routable address (resolved and
+connected to by that address), and a ring that never reached Hivra no longer gives up after `FIRE_MAX`: it keeps
+asking every `FIRE_SLOW` seconds until Hivra says the computer is awake or a wake disarms it. Every new daemon unit
+sets `StartLimitIntervalSec=0`, so it never stays failed; the doorbell may run 64 tasks. Nothing is installed by
+bundle sync; the units take effect on the next wake-proxy or doorbell install step. No guest asset changes. This
+source release does not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.13.5` builds on `2026.11.13.4` and teaches the host wake doorbell Discord. Only
+`hivra-wake-doorbell.py` changes, plus the documents, the version and the provider worker's release labels.
+Before a Discord-covered computer sleeps, Hivra's arm host script reads the bot token and Hermes's Discord reply
+settings inside the computer through the vmid-bound guest exec and pipes them to the doorbell's root-only control
+socket, as for email; the token lives in the doorbell's memory only. The doorbell checks the bot's login budget
+(`GET /gateway/bot`, `session_start_limit`), opens its own gateway session (a small standard-library RFC 6455
+client, intents GUILDS, GUILD_MESSAGES and DIRECT_MESSAGES only, never MESSAGE_CONTENT) and answers armed only
+after READY. A DM, a mention, a reply to the bot, or a message in a free-response channel (or a thread under one,
+or a thread the bot owns) from someone other than a bot asks the wake proxy's helper for a wake-request, then sends
+one typing indicator to that channel; it never posts a message. After the disarm it stays connected for about 90
+seconds, then closes. Dropped sessions resume; fresh logins are capped per arm and need budget left; a session
+that cannot be kept, a refused token or a spent budget rings instead. Email behaviour is unchanged. Nothing is
+installed by bundle sync. No guest asset changes. This source release does not deploy, install, enable or start
+anything on a host or computer.
+
+Release `2026.11.13.4` builds on `2026.11.13.3` and teaches the host wake proxy client wakes.
+A per-host level, set with `ctl client-wake ticket|auth` (default `ticket`, kept in
+`/run/hivra-ingress-state`), decides what may resume a napped computer: at `ticket` only a server
+ticket; at `auth` also a request whose `Authorization: Bearer`, or `POST /auth/bootstrap` form token
+(body at most 16 KB), hashes to the route's optional `bearer_sha256`. The root helper checks the
+proof; the forwarder never sees the hash. A cookie or a webhook signature header never wakes a
+computer and never moves the idle signal (`last_authed_at`), which now moves only on a verified
+ticket, bearer or bootstrap. A browser asking for a napped computer is redirected to the route's
+optional `wake_url`. A nap that says `server-disarm` makes client wakes go to Hivra as a
+`wake-request` instead of a local resume. Routes without the new fields behave exactly as before.
+
+The same release adds the host wake doorbell:
+`hivra-wake-doorbell.py` (Python standard library) and `hivra-wake-doorbell.service`, which runs it as its
+own unprivileged user. Before an email-covered computer sleeps, Hivra's arm host script reads the mail
+settings inside the computer through the vmid-bound guest exec and pipes them to the doorbell's root-only
+control socket; they live in the doorbell's memory only and never reach Hivra. The doorbell takes the
+INBOX baseline with STATUS, watches read-only (EXAMINE, IDLE or NOOP, UID FETCH of BODY.PEEK header
+fields; SELECT, STORE and every other mailbox-changing command are refused before they are sent), and for
+a sender Hermes would answer asks the wake proxy's helper for a wake-request. `hivra-wake-proxy.py` lets
+the doorbell's user send only `request` (always as "doorbell") and `health` on the helper's socket.
+Nothing is installed by bundle sync: the doorbell's own install step (HIVRA_WAKE_DOORBELLS) does that.
+`hivra-provider-worker.py` advances its release labels. No guest asset changes. This source release does
+not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.13.3` builds on `2026.11.13.2` and lets the host wake proxy call Hivra with a
+host credential: after it resumes a napped computer it reports the wake (`wake-report`), and for a
+valid ticket to a computer that is not running (a hibernated one) it asks Hivra to wake it
+(`wake-request`). The root helper reads the credential from `/etc/hivra/ingress/host-credential.json`
+(written root only by the flag-gated install step) and signs each call; it still has no network of its
+own, so the unprivileged forwarder sends the finished, single-use signed request and never holds the
+credential. Without that file the proxy calls nothing, exactly as before. A browser asking for a
+computer that is starting now gets a self-refreshing "waking up" page. `hivra-provider-worker.py`
+advances its release labels. No guest asset changes. This source release does not deploy, install,
+enable or start anything on a host or computer.
+
+Release `2026.11.13.2` builds on `2026.11.13.1` and teaches `hivra-start-on-host.sh` about host
+ingress: when `/etc/hivra/ingress/routes/<vmid>.json` names the computer's own hostname, a start
+puts the host's ARP/IP pin back, starts `hivra-cf@<vmid>` and reports the unchanged stable URL
+instead of restarting a guest connector (the guest's connector is off and has no token in that
+mode). Without such a route file the script behaves exactly as before. No guest asset changes.
+`hivra-provider-worker.py` advances its release labels. This source release does not deploy,
+install, enable or start anything on a host or computer.
+
+Release `2026.11.13.1` builds on `2026.11.12.5` and adds the host wake proxy as inert bundle
+files: `hivra-wake-proxy.py` (Python standard library only), `hivra-wake-helper.service`,
+`hivra-wake-proxy.service`, `hivra-cf-template.service` (installed as `hivra-cf@.service`) and
+`hivra-ingress.tmpfiles.conf`. No guest asset changes. The host connector unit runs a pinned
+cloudflared that a separate install step downloads and verifies; the bundle carries no
+cloudflared binary. `hivra-provider-worker.py` advances its release labels. This source release
+does not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.12.5` builds on `2026.11.12.4` and adds Nuphos as an agent kind. The guest
+installer (`provision-claude-code-box.sh`) installs Docker, pulls Nuphos's official runtime image
+(`ghcr.io/nuphos/runtime:latest-claude-code`) and records it by digest, and runs it on the
+computer's loopback (port 3102) with all capabilities dropped under `hivra-nuphos.service`. The
+box gateway (`hivra-chat/server.js`) serves the runtime's own console at the root of the
+computer's address behind the Hivra sign-in, presenting the computer's host as HTTPS, and passes
+the WebSocket upgrade of exactly `/acp` through without the Hivra gate (stripping Hivra's
+credentials), because Nuphos's servers connect there with a team key the runtime checks itself.
+`hivra-agent-app-update.sh` updates it to the latest runtime, copying the runtime's home aside
+first and putting the previous image and home back if the new one does not start. The typed
+installer, host provisioner, guest runtime update, receipt and agent shell learn the kind.
+`hivra-provider-worker.py` advances its release labels. This source release does not deploy,
+install, or update any existing computer.
+
+Release `2026.11.12.4` builds on `2026.11.12.3` and adds OpenBot by CopilotKit as an agent
+kind. The guest installer (`provision-claude-code-box.sh`) installs Docker, pulls CopilotKit's
+official `ghcr.io/copilotkit/openbot` image at its latest release and records it by digest, and
+runs it on the computer's loopback (port 3101) in OpenBot's single-user mode under
+`hivra-openbot.service`. OpenBot will not start without a CopilotKit Intelligence key, so the box
+gateway (`hivra-chat/server.js`) shows a one-step page at `/openbot/` to paste it, keeps it on the
+computer at `~/.hivra/openbot-intelligence-key` (0600), and then serves OpenBot's own workspace at
+the root of the computer's address behind the Hivra sign-in. `hivra-agent-app-update.sh` updates
+it to upstream's latest image, backing up its database first and putting the previous image and
+data back if the new one does not start. The typed installer, host provisioner, guest runtime
+update, receipt and agent shell learn the kind. `hivra-provider-worker.py` advances its release
+labels. This source release does not deploy, install, or update any existing computer.
+
+Release `2026.11.12.3` builds on `2026.11.12.2` and lets the owner turn on Hermes's own
+restore points (checkpoints) from Hivra's Manage page. Before Hermes changes files in a turn,
+it snapshots the project into its own shadow git store (`~/.hermes/checkpoints`), and the owner
+goes back with `/rollback` or `/undo` in a Hermes chat. Hermes keeps the store, its size cap and
+its pruning. The box gateway (`hivra-chat/server.js`) adds `/api/restore-points`, which reads and
+sets Hermes's `checkpoints.enabled` through `hermes config get`/`hermes config set` as the agent
+user, refuses while Hermes is being updated, and answers 404 on other agents.
+`hivra-provider-worker.py` advances its release labels. This source release does not deploy,
+install, or update any existing computer.
+
+Release `2026.11.12.2` builds on `2026.11.12.1` and keeps Claude Code's per-project
+approvals file, `.claude/settings.local.json`, out of commits made on a computer. "Yes, and
+don't ask again" saves the approved command there, passwords and tokens included. The guest
+installer now adds `**/.claude/settings.local.json` to the agent user's default git ignore
+(`~/.config/git/ignore`), and sets the system `init.templateDir` to a copy of git's stock
+template with a `pre-commit` hook, so every repository created or cloned on the computer
+refuses a commit that stages that file (removing it is still allowed). A repository with
+its own `core.hooksPath` runs its own hooks instead. `hivra-provider-worker.py` advances
+its release labels. This source release does not deploy, install, or update any existing
+computer.
 
 Release `2026.11.12.1` builds on `2026.11.11.7` and lets the owner choose a Hermes
 computer's model from Hivra's Manage page. Hermes keeps its model in its own config

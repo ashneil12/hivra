@@ -149,6 +149,8 @@ describe("OpenClaw, Agent Zero and Aeon request parity with their welcome form",
     ["openclaw", true, 0, 5_000_000],
     ["agent-zero", true, 0, 0],
     ["agent-zero", false, 1, 1],
+    ["openbot", true, 0, 0],
+    ["openbot", false, 1, 1],
     ["aeon", true, 5_000_000, 5_000_000],
     ["aeon", false, 0, 0],
   ] as const)("sends %s with credits %s (card %d, token %d) exactly as the form did", (type, credits, card, token) => {
@@ -162,6 +164,14 @@ describe("OpenClaw, Agent Zero and Aeon request parity with their welcome form",
       agentId: type, agentName: "Agent 1", resolvedCpu: 1, resolvedRam: 2, effectiveBrowser: type === "openclaw",
       wantManaged: credits, cardMicro: card, hermesosMicro: token, deployment: MANAGED,
     }));
+  });
+
+  it("sends Nuphos with no Hivra model, even when credits are passed", () => {
+    for (const credits of [null, { walletType: "card" as const }]) {
+      const request = dashboardAgentRequest({ type: "nuphos", name: "Nuphos 1", cpu: 1, ram: 3, browser: false, credits, deployment: MANAGED });
+      expect(request).toMatchObject({ type: "nuphos", managedVenice: false });
+      expect(request).not.toHaveProperty("llm");
+    }
   });
 
   it("mints OpenClaw and Agent Zero credits at launch, but leaves Aeon's to its GitHub connect step", () => {

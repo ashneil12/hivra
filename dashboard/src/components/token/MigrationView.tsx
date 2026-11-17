@@ -1,3 +1,4 @@
+import { LITEPAPER_HREF } from "@/components/public-site/PublicLink";
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 
@@ -266,7 +267,7 @@ export default function MigrationView({ state }: { state: MigrationViewState }) 
           </ul>
           <div style={{ margin: "0 0 1rem" }}>
             <p style={LINK_LINE}><Link href="/token">Verify official contracts</Link></p>
-            <p style={LINK_LINE}><a href="/docs/litepaper">Read the Hivra Litepaper</a></p>
+            <p style={LINK_LINE}><a href={LITEPAPER_HREF}>Read the Hivra Litepaper</a></p>
           </div>
         </Section>
       </>}

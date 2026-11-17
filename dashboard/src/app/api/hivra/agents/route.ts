@@ -16,6 +16,7 @@ import { auth } from "@clerk/nextjs/server";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
+import { openPromptsFor } from "@/lib/agent-inbox/prompts";
 import { isActiveComputeStatus } from "@/lib/hivra/resource-gate";
 import { sanitizeHivraAgentRow } from "@/lib/hivra/agent-llm";
 import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
@@ -98,8 +99,11 @@ export async function GET() {
     const covered = new Set(rows.filter((row) => agentSoftwareSubject(row) !== null).map((row) => String(row.id)));
     const software = await readAgentSoftwareRecords(userId, [...covered]);
     const now = Date.now();
+    // What each agent is waiting on its owner for (empty while the inbox switch is off).
+    const prompts = await openPromptsFor(rows.map((row) => String(row.id)));
     const agents = rows.map((row) => {
-      const agent = sanitizeHivraAgentRow(row);
+      const prompt = prompts[String(row.id)];
+      const agent = prompt ? { ...sanitizeHivraAgentRow(row), inbox_prompt: prompt } : sanitizeHivraAgentRow(row);
       // Only what Hivra has read: an agent never read yet gets no summary.
       const record = covered.has(String(row.id)) ? software.get(String(row.id)) : undefined;
       if (!record) return agent;

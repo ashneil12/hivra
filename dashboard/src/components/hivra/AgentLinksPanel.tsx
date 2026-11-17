@@ -12,6 +12,7 @@ import { Bot, Link2, Loader2, Monitor, RefreshCw, Trash2 } from "lucide-react";
 
 import { addLink, fetchLinks, removeLink, resendKit, type KitState, type LinksLoad, type LinksViewData } from "@/lib/agent-links/client";
 import { formatContractTime } from "@/components/hivra/ComputerContractPanel";
+import { agentSleepView } from "@/lib/hivra/agent-sleep-ui";
 
 import styles from "./ComputerAgentsPanel.module.css";
 
@@ -31,11 +32,20 @@ type Candidate = LinksViewData["candidates"][number];
 
 const STATUS_WORD: Record<string, string> = { running: "running", stopped: "stopped", provisioning: "starting", error: "needs attention" };
 
+/** A running choice that is not awake says so (behind the sleep switch): "asleep", or "waking up". */
+function statusWord(candidate: Candidate): string | null {
+  if (!candidate.status) return null;
+  const sleep = agentSleepView({ status: candidate.status, sleep_state: candidate.sleepState });
+  if (sleep === "asleep") return "asleep";
+  if (sleep === "waking") return "waking up";
+  return STATUS_WORD[candidate.status] ?? candidate.status;
+}
+
 /** Two choices with one name also show whether each is running and the start of its id. */
 export function optionLabel(candidate: Candidate, choices: Candidate[]): string {
   const shared = choices.filter((choice) => choice.name === candidate.name).length > 1;
   if (!shared) return `${candidate.name} (${candidate.kind})`;
-  const status = candidate.status ? STATUS_WORD[candidate.status] ?? candidate.status : null;
+  const status = statusWord(candidate);
   return `${candidate.name} (${[candidate.kind, status, candidate.id.slice(0, 8)].filter(Boolean).join(", ")})`;
 }
 

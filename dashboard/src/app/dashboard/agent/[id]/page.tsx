@@ -1,7 +1,7 @@
 "use client";
 
 // Hivra per-agent view — Chat (<Agent> session) · Computer (Desktop,
-// Browser, Files, Terminal) · Settings, in the agent sidebar and one title bar. Server-backed: polls the agent until provisioning finishes, then the
+// Browser, Files, Terminal) · Settings, in the agent sidebar and one floating pill. Server-backed: polls the agent until provisioning finishes, then the
 // Chat tab connects to its runtime. Styled in the Command Center vocabulary
 // (serif names, mono labels, theme-aware tokens). Flag-gated.
 
@@ -28,10 +28,12 @@ import {
 } from "@/lib/agent-computers/agent-surfaces";
 import { getAgent, browserStatus, browserToggle, fetchPlanStrict, type HivraAgent, type PlanInfo } from "@/lib/hivra/agent-api";
 import { nextAgentStatusPollMs } from "@/lib/hivra/agent-status-poll";
+import { agentSleepUiEnabled, agentSleepView, sleepGenerationOf } from "@/lib/hivra/agent-sleep-ui";
+import { useAgentWake } from "@/components/hivra/useAgentWake";
+import { AgentWakePanel, WokeUpNote } from "@/components/hivra/AgentWakePanel";
 import { linkNamesManageSection } from "@/components/hivra/useManageSection";
 import { useChatReadiness } from "@/components/hivra/useChatReadiness";
 import { createSurfaceMetadataCache, surfaceEndpoints, useSurfaceBootstrap, type SurfaceMetadataCache } from "@/components/hivra/useSurfaceBootstrap";
-import { MovedFromNotice } from "@/components/instances/MovedFromNotice";
 import { providerReadinessMessage } from "@/lib/hivra/provider-readiness-contract";
 import { providerPowerMessage } from "@/lib/hivra/provider-power-contract";
 import { ResourceSurfaceNavigation } from "@/components/hivra/ResourceSurfaceNavigation";
@@ -43,10 +45,10 @@ import { AgentDesktopEntry } from "@/components/hivra/AgentDesktopEntry";
 import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
 import { HivraProviderWorkspace } from "@/components/hivra/HivraProviderWorkspace";
 import { AgentSoftwareChip } from "@/components/hivra/AgentSoftwareChip";
-import { CommandPanelDock } from "@/components/hivra/command-panel/CommandPanel";
 import type { ManageSectionId } from "@/lib/hivra/manage-sections";
 import { ResourceSwitcher } from "@/components/hivra/ResourceSwitcher";
 import { AgentShell } from "@/components/hivra/agent-shell/AgentShell";
+import { AgentQuickSettings } from "@/components/hivra/agent-shell/quick-settings";
 import { computerHasDesktop, resolveResourceLanding } from "@/lib/hivra/resource-landing";
 import { refreshDesktopCapability } from "@/lib/remote-computers/desktop-session-lane";
 import {
@@ -335,8 +337,11 @@ function AuthenticatedSurface({
   permissions,
   onManage,
   surfaceId,
+  surface = "computer-surface",
+  expected = true,
   active = true,
   onAccessReady,
+  connectName,
 }: {
   url: string;
   token: string;
@@ -346,9 +351,16 @@ function AuthenticatedSurface({
   onManage: () => void;
   /** Slot this surface publishes under, and whether it is the visible one. */
   surfaceId?: string;
+  /** Which surface this is, for the metadata check's diagnostics. */
+  surface?: string;
+  /** False when this agent may legitimately not ship this surface. */
+  expected?: boolean;
   active?: boolean;
   /** Called once the runtime is verified and the surface is being opened. */
   onAccessReady?: () => void;
+  /** When set, this surface can be handed to an external app (e.g. Agent Zero's
+      desktop app "Add remote Instance") via a connect link or its sign-in form. */
+  connectName?: string;
 }) {
   const frameName = `hivra-surface-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
   const signInEpoch = useContext(SurfaceSignInEpoch);
@@ -368,7 +380,7 @@ function AuthenticatedSurface({
     destination,
     formRef,
     retry,
-  } = useSurfaceBootstrap({ url, token, active, recheck: signInEpoch, metadataCache });
+  } = useSurfaceBootstrap({ url, token, active, recheck: signInEpoch, metadataCache, surface, expected });
   const missingToken = !token;
   // With no src attribute, bare feature names target the initial document's
   // origin, not the guest reached by POST. Scope each permission to the same
@@ -390,6 +402,65 @@ function AuthenticatedSurface({
     form.requestSubmit();
   }, [accessStatus, bootstrapUrl, destination, token]);
 
+  // "Connect app": mints a username+password grant on the box (the digest is
+  // all it keeps) and shows the URL/credentials an external app can sign in
+  // with — e.g. Agent Zero's desktop "Add remote Instance". The same pair also
+  // forms a one-click connect link for browsers.
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [connectBusy, setConnectBusy] = useState<"mint" | "revoke" | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [connectCopied, setConnectCopied] = useState<string | null>(null);
+  const [connectPair, setConnectPair] = useState<{ url: string; username: string; password: string } | null>(null);
+  const mintConnect = useCallback(async () => {
+    if (!surfaceOrigin || !destination || !token) return;
+    setConnectBusy("mint");
+    setConnectError(null);
+    try {
+      const username = "hivra";
+      const password = Array.from(crypto.getRandomValues(new Uint8Array(32))).map((b) => b.toString(16).padStart(2, "0")).join("");
+      const answer = await fetch(`${surfaceOrigin}/connect/grant`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ username, password, ttlMs: 30 * 24 * 60 * 60 * 1000, destination }),
+        cache: "no-store",
+      });
+      if (!answer.ok) throw new Error(String(answer.status));
+      setConnectPair({
+        url: `${surfaceOrigin}${destination}`,
+        username,
+        password,
+      });
+    } catch {
+      setConnectError("This computer’s connection service can’t create connect links yet. Open Manage and choose Update connection service, then try again.");
+    } finally {
+      setConnectBusy(null);
+    }
+  }, [surfaceOrigin, destination, token]);
+  const revokeConnect = useCallback(async () => {
+    if (!surfaceOrigin || !token) return;
+    setConnectBusy("revoke");
+    try {
+      await fetch(`${surfaceOrigin}/connect/grant`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+      setConnectPair(null);
+    } finally {
+      setConnectBusy(null);
+    }
+  }, [surfaceOrigin, token]);
+  const copyConnect = useCallback(async (field: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setConnectCopied(field);
+      window.setTimeout(() => setConnectCopied((now) => (now === field ? null : now)), 2000);
+    } catch { setConnectCopied(null); }
+  }, []);
+  const connectLink = connectPair ? `${surfaceOrigin}/connect/${encodeURIComponent(connectPair.username)}:${encodeURIComponent(connectPair.password)}` : null;
+  useEffect(() => {
+    if (!connectOpen) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setConnectOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [connectOpen]);
+
   // "Open in new tab" is the everyday action of this surface, so it belongs in
   // the title bar with the rest of the chrome. The button below still drives
   // the same hidden form — the behaviour does not move, only where it is drawn.
@@ -404,8 +475,20 @@ function AuthenticatedSurface({
         onSelect: openInNewTab,
         disabled: accessStatus !== "ready",
       },
+      ...(connectName
+        ? [{
+            id: "connect-app",
+            label: "Connect app",
+            icon: "link" as const,
+            onSelect: () => {
+              setConnectOpen(true);
+              if (!connectPair && connectBusy !== "mint") void mintConnect();
+            },
+            disabled: accessStatus !== "ready",
+          }]
+        : []),
     ],
-    [openInNewTab, accessStatus],
+    [openInNewTab, accessStatus, connectName, connectPair, connectBusy, mintConnect],
   );
   const { published: actionsLifted } = useSurfaceAction(
     surfaceId,
@@ -415,6 +498,76 @@ function AuthenticatedSurface({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, position: "relative" }}>
+      {connectName && connectOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Connect app"
+          onClick={(event) => { if (event.target === event.currentTarget) setConnectOpen(false); }}
+          style={{ position: "absolute", inset: 0, zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(12,12,12,0.5)", padding: 20 }}
+        >
+          <div style={{ background: "var(--bg-surface)", border: "1px solid var(--etched-border)", boxShadow: "0 18px 50px rgba(0,0,0,0.35)", maxWidth: 520, width: "100%", padding: "22px 24px", color: "var(--ink-black)" }}>
+            <div className="serif" style={{ fontSize: 20, marginBottom: 4 }}>Connect the {connectName} app</div>
+            {connectPair ? (
+              <>
+                <ol className="mono" style={{ fontSize: 12, lineHeight: 1.7, margin: "8px 0 14px", paddingLeft: 18, color: "var(--ink-soft)" }}>
+                  <li>Open the {connectName} app on your computer.</li>
+                  <li>{connectName === "Agent Zero" ? "Choose “Add remote”." : "Open its remote settings."}</li>
+                  <li>Paste these:</li>
+                </ol>
+                {([
+                  ["URL", connectPair.url],
+                  ["Username", connectPair.username],
+                  ["Password", connectPair.password],
+                ] as const).map(([field, value]) => (
+                  <div key={field} className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 8 }}>
+                    <span style={{ width: 76, color: "var(--ink-soft)" }}>{field}</span>
+                    <code style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "var(--bg-page)", padding: "6px 8px", border: "1px solid var(--etched-border)" }}>{value}</code>
+                    <button type="button" className="mono" onClick={() => void copyConnect(field, value)} style={{ minWidth: 68, border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "6px 10px", cursor: "pointer" }}>
+                      {connectCopied === field ? "Copied ✓" : "Copy"}
+                    </button>
+                  </div>
+                ))}
+                {connectLink ? (
+                  <>
+                    <p className="mono" style={{ fontSize: 12, margin: "14px 0 8px", color: "var(--ink-soft)" }}>
+                      Or open it straight in a browser — this link signs you in:
+                    </p>
+                    <div className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                      <code style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "var(--bg-page)", padding: "6px 8px", border: "1px solid var(--etched-border)" }}>{connectLink}</code>
+                      <button type="button" className="mono" onClick={() => void copyConnect("link", connectLink)} style={{ minWidth: 68, border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "6px 10px", cursor: "pointer" }}>
+                        {connectCopied === "link" ? "Copied ✓" : "Copy"}
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+                <p style={{ fontSize: 12, lineHeight: 1.6, margin: "14px 0 0", color: "var(--ink-soft)" }}>
+                  Anyone with the password or the link can open your dashboard — keep them private. They stop working after 30 days or when you Disconnect.
+                </p>
+              </>
+            ) : connectError ? (
+              <p style={{ fontSize: 13, lineHeight: 1.6, margin: "8px 0 0" }}>{connectError}</p>
+            ) : (
+              <p style={{ fontSize: 13, lineHeight: 1.6, margin: "8px 0 0" }}>{connectBusy === "revoke" ? "Disconnecting…" : "Creating your sign-in…"}</p>
+            )}
+            <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+              {connectPair ? (
+                <button type="button" className="mono" onClick={() => void mintConnect()} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                  New link
+                </button>
+              ) : null}
+              {connectPair ? (
+                <button type="button" className="mono" onClick={() => void revokeConnect()} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                  Disconnect
+                </button>
+              ) : null}
+              <button type="button" className="mono" onClick={() => setConnectOpen(false)} style={{ marginLeft: "auto", border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {accessStatus === "ready" ? (
         <>
           <form ref={formRef} action={bootstrapUrl} method="POST" target={frameName} style={{ display: "none" }}>
@@ -477,7 +630,7 @@ function AuthenticatedSurface({
 }
 
 function TerminalView({ url, token, label, onManage, surfaceId, active = true, onAccessReady }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean; onAccessReady?: () => void }) {
-  return <AuthenticatedSurface url={url} token={token} label={label} background="#000" onManage={onManage} surfaceId={surfaceId} active={active} onAccessReady={onAccessReady} />;
+  return <AuthenticatedSurface url={url} token={token} label={label} background="#000" onManage={onManage} surfaceId={surfaceId} surface="terminal" active={active} onAccessReady={onAccessReady} />;
 }
 
 // Each terminal tab is one persistent session on the computer: the tab's slot
@@ -614,8 +767,8 @@ function RetainedTerminal({ active, surfaceId, label, sessionName, ...surface }:
 // Embedded web dashboard (Aeon) — the box hosts a Next.js app on a loopback
 // port; the box's token-gated proxy fronts it under /aeon. Rendered in an iframe
 // just like the terminal/browser surfaces.
-function DashboardView({ url, token, label, onManage, surfaceId, active = true }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean }) {
-  return <AuthenticatedSurface url={url} token={token} label={label} background="var(--bg-surface)" permissions={["clipboard-read", "clipboard-write"]} onManage={onManage} surfaceId={surfaceId} active={active} />;
+function DashboardView({ url, token, label, onManage, surfaceId, active = true, connectName }: { url: string; token: string; label: string; onManage: () => void; surfaceId?: string; active?: boolean; connectName?: string }) {
+  return <AuthenticatedSurface url={url} token={token} label={label} background="var(--bg-surface)" permissions={["clipboard-read", "clipboard-write"]} onManage={onManage} surfaceId={surfaceId} surface="agent-runtime" active={active} connectName={connectName} />;
 }
 
 // Live browser — the agent's real Chrome (headful on the box's Xvfb), streamed
@@ -624,7 +777,7 @@ function DashboardView({ url, token, label, onManage, surfaceId, active = true }
 // agent has paused or that conflict-free takeover is available. The title bar
 // says "View only" beside the status.
 function BrowserView({ url, token, onManage, surfaceId, active = true }: { url: string; token: string; onManage: () => void; surfaceId?: string; active?: boolean }) {
-  return <AuthenticatedSurface url={url} token={token} label="Live browser" background="#000" permissions={["fullscreen"]} onManage={onManage} surfaceId={surfaceId} active={active} />;
+  return <AuthenticatedSurface url={url} token={token} label="Live browser" background="#000" permissions={["fullscreen"]} onManage={onManage} surfaceId={surfaceId} surface="browser" active={active} />;
 }
 
 function BrowserDisabledView({
@@ -886,7 +1039,16 @@ export default function AgentPage() {
   const browserProbeRef = useRef<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [surfaceSignInEpoch, setSurfaceSignInEpoch] = useState(0);
-  const chatReadiness = useChatReadiness(id, agent?.id === id ? agent.status : undefined, agent?.chat_url, agent?.type, agent?.api_token, reloadKey);
+  // Asleep, an agent's computer cannot answer: wake it once, show a short wait
+  // instead of the surfaces, and hold every call to it until it is awake. With
+  // the sleep switch off, every agent reads as awake and none of this runs.
+  const sleepView = agent?.id === id ? agentSleepView(agent) : "awake";
+  const awake = sleepView === "awake";
+  const wake = useAgentWake(id, sleepView, agent?.id === id ? agent.sleep_state : undefined, () => setReloadKey((k) => k + 1), agent?.id === id);
+  // The surfaces start fresh after every wake: their connections died with the sleep.
+  const wakeEpoch = agentSleepUiEnabled() && agent?.id === id ? sleepGenerationOf(agent) : 0;
+  const surfaceEpoch = wakeEpoch ? `:g${wakeEpoch}` : "";
+  const chatReadiness = useChatReadiness(id, agent?.id === id && awake ? agent.status : undefined, agent?.chat_url, agent?.type, agent?.api_token, reloadKey);
   const loggedIn = chatReadiness === null ? null : chatReadiness === "native_connected" || chatReadiness === "provider_configured";
   // A second look at a failed connection check. While it runs, the failure
   // panel stays put with its button showing "Checking…" (for at least a beat,
@@ -935,7 +1097,7 @@ export default function AgentPage() {
   // For browser-capable agents, learn the box's live browser-automation state
   // (drives the Browser tab visibility + the Manage toggle + the resize floor).
   useEffect(() => {
-    if (agent?.status === "running" && agent.chat_url && catalogAgent(agent.type)?.browser && browserOn === null) {
+    if (awake && agent?.status === "running" && agent.chat_url && catalogAgent(agent.type)?.browser && browserOn === null) {
       // One probe per agent at a time: browserOn stays null until this resolves,
       // and each poll that changes the agent object re-runs this effect.
       if (browserProbeRef.current === agent.id) return;
@@ -955,7 +1117,7 @@ export default function AgentPage() {
         setBrowserOn(s.enabled);
       });
     }
-  }, [agent, browserOn]);
+  }, [agent, browserOn, awake]);
 
   useEffect(() => {
     if (agent?.status !== "error") return;
@@ -1074,7 +1236,7 @@ export default function AgentPage() {
     setManageSectionRequest((current) => ({ section: "updates", id: (current?.id ?? 0) + 1 }));
     selectTab("manage");
   }, [selectTab]);
-  // The command panel's Model and Computer size open their Manage section.
+  // The pill's quick settings (Model, Computer size, Updates) open their Manage section.
   const openManageSection = useCallback((section: ManageSectionId) => {
     const nextURL = new URL(window.location.href);
     nextURL.searchParams.set("section", section);
@@ -1114,7 +1276,7 @@ export default function AgentPage() {
   // first. Nothing aborts it, since the desktop may be waiting on it.
   // Never prepare — Omarchy autoPrepare stays prepare=1 only.
   useEffect(() => {
-    if (!agent || agent.status !== "running" || agent.id !== id) return;
+    if (!agent || agent.status !== "running" || agent.id !== id || !awake) return;
     if (catalogAgent(agent.type)?.surface !== "computer") return;
     if (agent.computer_substrate === "gvisor") return;
     // No desktop, so no desktop capability to read.
@@ -1122,12 +1284,12 @@ export default function AgentPage() {
     if (capabilityPrefetchRef.current === agent.id) return;
     capabilityPrefetchRef.current = agent.id;
     void refreshDesktopCapability(agent.id).catch(() => {});
-  }, [agent, id]);
+  }, [agent, id, awake]);
 
   // Check the computer's connection service as soon as its address is known,
   // so opening a terminal or another session tab doesn't wait for it. Windows
   // computers and provider desktops have no surface that uses it.
-  const checksSurfaceAccess = agent?.id === id && agent.status === "running" && agent.computer_profile !== "windows"
+  const checksSurfaceAccess = agent?.id === id && awake && agent.status === "running" && agent.computer_profile !== "windows"
     && !(agent.computer_substrate === "provider-vm" && agent.type === "linux-desktop");
   const surfaceCheckUrl = checksSurfaceAccess ? agent.chat_url : null;
   const surfaceCheckToken = checksSurfaceAccess ? agent.api_token : null;
@@ -1288,17 +1450,16 @@ export default function AgentPage() {
     </SurfaceCodeBoundary>
   );
 
-  // The page's own rows under the title bar: the channel nudge, then the work
+  // The page's own rows under the floating pill: the channel nudge, then the work
   // pane that holds every surface (mounted and retained exactly as before).
   const content = (
     <>
-      <MovedFromNotice agentId={agent.id} enabled={agent.type === "hermes" && !isComputer} />
       {/* Post-deploy channel nudge: fresh welcome landings with no Telegram
           connected get a one-line pointer to the Telegram tab (the component
           gates itself on this visit's welcome + probe + per-box dismiss).
           Hidden while already on the Telegram tab and for dashboard-surface
           agents (no Telegram tab to point at). */}
-      {agent.status === "running" && agent.chat_url && !isDashboard && !isComputer && effectiveTab !== "telegram" ? (
+      {awake && agent.status === "running" && agent.chat_url && !isDashboard && !isComputer && effectiveTab !== "telegram" ? (
         <ChannelConnectNudge
           welcome={launchWelcome}
           boxUrl={agent.chat_url}
@@ -1308,33 +1469,27 @@ export default function AgentPage() {
         />
       ) : null}
 
-      <CommandPanelDock
-        agent={agent}
-        surfaces={tabs.map((t) => t.id)}
-        activeSurface={effectiveTab}
-        onOpenSurface={selectTab}
-        onOpenManageSection={openManageSection}
-        onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
-        onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)}
-      >
+      {wake.wokeMs !== null && awake ? <WokeUpNote ms={wake.wokeMs} /> : null}
+
       <div id={WORK_PANE_ID} className={styles.workPane} style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {/* A desktop session is expensive to establish and is revoked when this
             page closes, so keep it mounted (hidden) while the owner switches
             among local surfaces. Only computers have a desktop. */}
         <DesktopTabOpen.Provider value={effectiveTab === "desktop"}>
         <SurfaceCodeBoundary visible={effectiveTab === "desktop"}>
-        {isComputer && agent.status === "running" ? (
+        {isComputer && agent.status === "running" && awake ? (
           agent.computer_profile === "omarchy" ? (
-            <HivraOmarchyDesktop computerId={agent.id} name={agent.name}
+            <HivraOmarchyDesktop key={`omarchy${surfaceEpoch}`} computerId={agent.id} name={agent.name}
               active={effectiveTab === "desktop"}
               autoPrepare={isComputer && searchParams?.get("prepare") === "1"}
               handoffWarmOrigin={(() => { try { return agent.chat_url ? new URL(agent.chat_url).origin : null; } catch { return null; } })()} />
           ) : agent.computer_profile === "windows" ? (
-            <HivraConsoleDesktop computerId={agent.id} name={agent.name}
+            <HivraConsoleDesktop key={`console${surfaceEpoch}`} computerId={agent.id} name={agent.name}
               profile={agent.computer_profile} active={effectiveTab === "desktop"}
               autoOpenFast={landing.desktopAutoOpen || searchParams?.get("open") === "fast"} />
           ) : landing.desktopTransport === "remote" ? (
             <HivraRemoteDesktop
+              key={`remote${surfaceEpoch}`}
               computerId={agent.id}
               name={agent.name}
               active={effectiveTab === "desktop"}
@@ -1352,16 +1507,16 @@ export default function AgentPage() {
         ) : null}
         </SurfaceCodeBoundary>
         </DesktopTabOpen.Provider>
-        {chatOpened && chatSurfaceReady && agent.chat_url ? (
+        {chatOpened && chatSurfaceReady && awake && agent.chat_url ? (
           <div hidden={effectiveTab !== "chat"} inert={effectiveTab !== "chat"} style={{ height: "100%", minHeight: 0 }}>
-            <HivraChat key={`${agent.id}:${agent.chat_url}:chat`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} computerId={agent.id} onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)} />
+            <HivraChat key={`${agent.id}:${agent.chat_url}:chat${surfaceEpoch}`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} computerId={agent.id} onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)} />
           </div>
         ) : null}
-        {agent.status === "running" && agent.chat_url && agent.computer_profile !== "windows" ? (
+        {awake && agent.status === "running" && agent.chat_url && agent.computer_profile !== "windows" ? (
           <>
             {!isDashboard && !isComputer ? (
               <RetainedTerminal
-                key={`${agent.id}:${agent.chat_url}:terminal`}
+                key={`${agent.id}:${agent.chat_url}:terminal${surfaceEpoch}`}
                 active={effectiveTab === "terminal"}
                 surfaceId="terminal"
                 url={`${agent.chat_url.replace(/\/$/, "")}/terminal/`}
@@ -1372,12 +1527,12 @@ export default function AgentPage() {
               />
             ) : null}
             {providerWorkspace ? <>
-              <HivraProviderWorkspace key={`${agent.id}:${agent.chat_url}:workspace-box`} computerId={agent.id}
+              <HivraProviderWorkspace key={`${agent.id}:${agent.chat_url}:workspace-box${surfaceEpoch}`} computerId={agent.id}
                 boxOrigin={agent.chat_url} surface="box-terminal" active={effectiveTab === "box"} />
-              <HivraProviderWorkspace key={`${agent.id}:${agent.chat_url}:workspace-files`} computerId={agent.id}
+              <HivraProviderWorkspace key={`${agent.id}:${agent.chat_url}:workspace-files${surfaceEpoch}`} computerId={agent.id}
                 boxOrigin={agent.chat_url} surface="files" active={effectiveTab === "files"} />
             </> : <RetainedTerminal
-              key={`${agent.id}:${agent.chat_url}:box`}
+              key={`${agent.id}:${agent.chat_url}:box${surfaceEpoch}`}
               active={effectiveTab === "box"}
               surfaceId="box"
               url={`${agent.chat_url.replace(/\/$/, "")}/box-terminal/`}
@@ -1396,7 +1551,9 @@ export default function AgentPage() {
             {managePanel}
           </div>
         ) : null}
-        {showManage ? null : provisioning && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
+        {showManage ? null : !awake ? (
+          <AgentWakePanel name={agent.name} failure={wake.failure} onRetry={wake.retry} resting={wake.resting} />
+        ) : provisioning && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
           <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
             <div role="status" aria-live="polite">
               <div className="serif" style={{ fontSize: 24, color: "var(--ink-black)", marginBottom: 10 }}>Finish Windows setup on your Proxmox host</div>
@@ -1461,8 +1618,8 @@ export default function AgentPage() {
             // sees HivraGitHubConnect, whose "your Aeon fork" copy is Aeon-specific.
             <DashboardView url={def?.id === "deepseek-harness"
               ? `${agent.chat_url.replace(/\/$/, "")}/`
-              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "hermes" ? "hermes" : "aeon"}/`}
-              token={tok} label={`${def?.name || "Agent"} · dashboard`} surfaceId="aeon" active={effectiveTab === "aeon"} onManage={() => selectTab("manage")} />
+              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "openbot" ? "openbot" : def?.id === "nuphos" ? "nuphos" : def?.id === "hermes" ? "hermes" : "aeon"}/`}
+              token={tok} label={`${def?.name || "Agent"} · dashboard`} surfaceId="aeon" active={effectiveTab === "aeon"} onManage={() => selectTab("manage")} connectName={def?.name} />
           ) : (
             <HivraGitHubConnect boxUrl={agent.chat_url} boxId={agent.id} onDone={() => setReloadKey(k => k + 1)} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} defaultManagedCredits={Boolean(agent.managed_venice)} />
           )
@@ -1555,7 +1712,6 @@ export default function AgentPage() {
           )
         ) : null}
       </div>
-      </CommandPanelDock>
     </>
   );
 
@@ -1575,29 +1731,45 @@ export default function AgentPage() {
             surfaces={tabs}
             active={effectiveTab}
             onSelect={selectTab}
-            exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
+            exportHref={agent.status === "running" && awake && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
           />
           {content}
         </>
       ) : (
-        <AgentShell
-          name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`}
-          status={provisioning ? activity.label : agent.status}
-          nameTitle={isComputer ? undefined : computerNote}
-          switcher={<ResourceSwitcher variant="sidebar" showKind={false} currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} />}
-          titleExtras={isComputer ? null : <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />}
-          surfaces={tabs}
-          groups={surfaceGroups}
-          active={effectiveTab}
-          onSelect={selectTab}
-          chatSurface="chat"
-          panelId={WORK_PANE_ID}
-          exportHref={agent.status === "running" && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
-          surfaceNote={{ browser: "View only" }}
-          homeLabel={isDashboard ? def?.name : undefined}
+        <AgentQuickSettings
+          key={agent.id}
+          agent={agent}
+          surfaces={tabs.map((t) => t.id)}
+          enabled={!isComputer && agent.status === "running" && awake}
+          onOpenSurface={selectTab}
+          onOpenManageSection={openManageSection}
+          onChanged={() => { listChanged(); setReloadKey((k) => k + 1); }}
+          onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)}
         >
-          {content}
-        </AgentShell>
+          {({ settings, busy, suggestion }) => (
+          <AgentShell
+            name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`}
+            status={provisioning ? activity.label : sleepView === "asleep" ? "asleep" : sleepView === "waking" ? "waking up" : agent.status}
+            nameTitle={isComputer ? undefined : computerNote}
+            switcher={<ResourceSwitcher variant="sidebar" showKind={false} currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} />}
+            titleExtras={isComputer ? null : <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />}
+            surfaces={tabs}
+            groups={surfaceGroups}
+            active={effectiveTab}
+            onSelect={selectTab}
+            chatSurface="chat"
+            panelId={WORK_PANE_ID}
+            exportHref={agent.status === "running" && awake && !isComputer ? `/api/hivra/agents/${agent.id}/export` : undefined}
+            surfaceNote={{ browser: "View only" }}
+            homeLabel={isDashboard ? def?.name : undefined}
+            quickSettings={settings}
+            busy={busy}
+            suggestion={suggestion}
+          >
+            {content}
+          </AgentShell>
+          )}
+        </AgentQuickSettings>
       )}
 
       {paywallOpen ? (

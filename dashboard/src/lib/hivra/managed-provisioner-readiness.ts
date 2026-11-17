@@ -46,12 +46,13 @@ export function managedHivraHostReadinessScript(
       : runtimeVersions;
   const modelCapabilities = requireModelSettings ? `need_file "$PROVISIONER_DIR/hivra-chat/llm-application.js"
 need_file "$PROVISIONER_DIR/hivra-chat/server.js"` : "";
-  // Only runtimes whose installer reads the pinned app versions need these
-  // files; a host legitimately running other agents is not held to them.
+  // Only runtimes that install through the agent-app updater need it; a host
+  // legitimately running other agents is not held to it. Since 2026.11.17.1 the
+  // bundle has no agent-app-versions.json (launches install upstream's newest),
+  // so readiness must not require that file.
   const agentAppFiles = runtimeId && runtimeId in PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS
     && (purpose === "provision" || purpose === "runtime-update")
-    ? `need_file "$PROVISIONER_DIR/agent-app-versions.json"
-need_file "$PROVISIONER_DIR/hivra-agent-app-update.sh"`
+    ? `need_file "$PROVISIONER_DIR/hivra-agent-app-update.sh"`
     : "";
   const provisionPrerequisites = purpose === "provision"
     ? `need_file "$PROVISION_SCRIPT"

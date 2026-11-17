@@ -10,8 +10,8 @@ Design and data flow: `docs/release/HERMES-OFFICIAL-MOVE.md`. Code: `dashboard/s
 the two computers).
 
 Every old agent must move; owners have no button. The wave moves a few a day, emails each owner the
-day before and after, and keeps the old computer switched off for 7 days as the backup (Undo on the
-new agent's page). A failed move puts the old agent back as it was.
+day before and after, and keeps the old computer switched off for 7 days as the backup (Undo in the
+new agent's Settings). A failed move puts the old agent back as it was.
 
 ## Ground rules
 

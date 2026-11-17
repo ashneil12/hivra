@@ -32,7 +32,7 @@ beforeEach(() => {
     const reply = (code: number, body: unknown) => ({ status: code, ok: code >= 200 && code < 300, json: async () => body }) as Response;
     if (init?.method === "POST") {
       const body = JSON.parse(String(init.body));
-      if (body.action === "enroll") return reply(200, { success: true, data: { computer: { id: MAC, name: "Ash's Mac" }, config: { connectionId: MAC, bridgeKey: "k".repeat(64) } } });
+      if (body.action === "enroll") return reply(200, { success: true, data: { computer: { id: MAC, name: "Ash's Mac" }, command: "curl -fsSL https://canary.example.test/api/hivra/bridge/install | bash -s -- hvb_" + "x".repeat(32), expiresAt: "2999-01-01T00:15:00Z" } });
       return reply(200, { success: true, data: {} });
     }
     return status === 404 ? reply(404, {}) : reply(200, { success: true, data: view });
@@ -126,16 +126,30 @@ describe("LocalBridgePanel", () => {
     await waitFor(() => expect(posted()).toContainEqual({ action: "revoke", computerId: MAC }));
   });
 
-  it("sets up a computer and shows its settings once, with the run command", async () => {
+  it("sets up a computer and shows one command to paste, with Copy, and no settings or secrets", async () => {
     view = bridgeView({ requests: [], allowances: [] });
+    const write = jest.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: write }, configurable: true });
     render(<LocalBridgePanel />);
     fireEvent.change(await screen.findByLabelText("Computer name"), { target: { value: "Studio Mac" } });
     fireEvent.click(screen.getByRole("button", { name: "Set up a computer" }));
-    const region = await screen.findByRole("region", { name: "Bridge settings" });
+    const region = await screen.findByRole("region", { name: "Set up this computer" });
     expect(posted()).toContainEqual({ action: "enroll", label: "Studio Mac" });
-    expect(region).toHaveTextContent("python3 hivra_bridge.py run --config ~/.config/hivra-bridge/config.json");
-    expect(region).toHaveTextContent("k".repeat(64));
-    fireEvent.click(screen.getByRole("button", { name: "I saved them" }));
-    expect(screen.queryByRole("region", { name: "Bridge settings" })).toBeNull();
+    const command = `curl -fsSL https://canary.example.test/api/hivra/bridge/install | bash -s -- hvb_${"x".repeat(32)}`;
+    expect(region).toHaveTextContent(command);
+    expect(region).toHaveTextContent(/not with sudo|do not run it with sudo/i);
+    expect(region).not.toHaveTextContent(/bridgeKey|config\.json/);
+    fireEvent.click(screen.getByRole("button", { name: /Copy/ }));
+    await waitFor(() => expect(write).toHaveBeenCalledWith(command));
+    expect(await screen.findByText("Copied")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("region", { name: "Set up this computer" })).toBeNull();
+  });
+
+  it("New settings for a computer gives a fresh command the same way", async () => {
+    render(<LocalBridgePanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "New settings for Ash's Mac" }));
+    expect(await screen.findByRole("region", { name: "Set up this computer" })).toBeInTheDocument();
+    expect(posted()).toContainEqual({ action: "enroll", computerId: MAC });
   });
 });

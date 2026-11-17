@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Bot, ChevronDown, Plus } from "lucide-react";
+import { ArrowRight, Bot, ChevronDown, Cloud, Plus } from "lucide-react";
 
 import {
   HivraAgentsPanel,
   type HermesInstanceLite,
 } from "@/components/dashboard/command-center/HivraAgentsPanel";
 import { AGENTS } from "@/lib/hivra/agent-catalog";
+import { isFreeCloudAgentEnabled } from "@/lib/lite-agents/flag";
 import { buildLaunchHref, launchProfileForAgentType } from "@/lib/hivra/launch-navigation";
 import { AttachedAgentsList } from "./AttachedAgentsList";
 import styles from "./AgentsPage.module.css";
@@ -97,13 +98,21 @@ export function AgentsPage() {
           <h1>Agents</h1>
           <p>Find your agent and return to its work.</p>
         </div>
-        <Link
-          className={styles.primaryButton}
-          href="/dashboard/launch?kind=agent&start=1"
-        >
-          <Plus size={14} aria-hidden />
-          Launch agent
-        </Link>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {isFreeCloudAgentEnabled() ? (
+            <Link className={styles.primaryButton} href="/dashboard/free-agent">
+              <Cloud size={14} aria-hidden />
+              Free cloud agent
+            </Link>
+          ) : null}
+          <Link
+            className={styles.primaryButton}
+            href="/dashboard/launch?kind=agent&start=1"
+          >
+            <Plus size={14} aria-hidden />
+            Launch agent
+          </Link>
+        </div>
       </header>
       <HivraAgentsPanel
         hermesInstances={hermesInstances}

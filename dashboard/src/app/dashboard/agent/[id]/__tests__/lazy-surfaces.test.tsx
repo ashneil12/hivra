@@ -101,6 +101,9 @@ beforeEach(() => {
   mockUnavailable.clear();
   mockAgentLoad = async () => mockAgent;
   window.localStorage.clear();
+  // A page with no Hivra chat starts with the sidebar hidden; these tests reach surfaces through its rows.
+  window.localStorage.setItem("hivra:agent-sidebar-collapsed:no-chat", "false");
+  window.localStorage.setItem("hivra:agent-pill-intro-seen", "1");
   global.fetch = jest.fn().mockResolvedValue({
     ok: true,
     json: async () => ({ agentKind: "codex", surfaceAuth: "post-cookie-v1" }),

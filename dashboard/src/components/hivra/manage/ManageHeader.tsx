@@ -6,7 +6,7 @@ import { manageButtonGhost, manageLabel, manageSpin } from "./manage-styles";
 import { StatusText } from "@/components/ui/StatusText";
 
 const STATUS_COLOR: Record<string, string> = {
-  running: "var(--hg-ok)", ready: "var(--hg-ok)", provisioning: "var(--yellow)", stopped: "var(--text-muted)", paused: "var(--text-muted)",
+  running: "var(--hg-ok)", asleep: "#7c8fc7", waking: "#60a5fa", ready: "var(--hg-ok)", provisioning: "var(--yellow)", stopped: "var(--text-muted)", paused: "var(--text-muted)",
   error: "var(--hg-bad)", deleted: "var(--hg-bad)",
 };
 

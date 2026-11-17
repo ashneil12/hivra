@@ -191,7 +191,7 @@ describe.each(Object.entries(PHASES))("launched /token (%s)", (_phase, entries) 
       ["View on BaseScan", `https://basescan.org/address/${SENDER}`],
       ["Open Billing", "/dashboard/billing"],
       ["Explore the Hivra ecosystem", "/ecosystem"],
-      ["Read the Litepaper", "/docs/litepaper"],
+      ["Read the Litepaper", "/docs/litepaper/index.html"],
       ["Read the tokenomics", "/tokenomics"],
       ["@HivraOS", "https://x.com/HivraOS"],
       ["discord.gg/tDQZq8479F", "https://discord.gg/tDQZq8479F"],

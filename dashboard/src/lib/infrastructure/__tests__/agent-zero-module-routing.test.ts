@@ -260,7 +260,7 @@ describe("Agent Zero mounted module graph", () => {
         if (name === "path") return path;
         if (name === "net") return net;
         if (name === "crypto") return crypto;
-        if (["./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs"].includes(name)) return realRequire(name);
+        if (["./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./import-state.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected dependency ${name}`);
       },
       process: { env: { HIVRA_CHAT_PORT: "0", HIVRA_AGENT_KIND: "agent-zero",
@@ -351,9 +351,14 @@ describe("Agent Zero mounted module graph", () => {
     expect(dispatched.slice(before)).toEqual([expect.objectContaining({ method: "POST", path: "/settings_set", body: '{"fixture":true}' })]);
   });
 
-  it.each(["components", "plugins", "vendor", "js", "extensions/webui"])("routes authenticated %s imports from blob modules without a Referer", async namespace => {
+  it.each(["components", "plugins", "vendor", "js", "usr/plugins", "extensions/webui"])("routes authenticated %s imports from blob modules without a Referer", async namespace => {
     expect(await request(`/${namespace}/fixture.js`)).toMatchObject({ status: 200, location: undefined });
     expect(await request(`/${namespace}/fixture.js`, { auth: false })).toMatchObject({ status: 401, location: undefined });
+  });
+
+  it("keeps the rest of the persisted volume out of the no-Referer static route", async () => {
+    for (const url of ["/usr", "/usr/", "/usr/memory/fixture.txt", "/usr/projects/fixture.js"])
+      expect(await request(url)).toMatchObject({ status: 404 });
   });
 
   it("limits extensions to the webui static namespace and GET/HEAD without a Referer", async () => {

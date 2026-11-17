@@ -1,5 +1,6 @@
 "use client";
 
+import { LITEPAPER_HREF } from "@/components/public-site/PublicLink";
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import styles from "./TokenFacts.module.css";
@@ -150,7 +151,7 @@ export default function TokenLaunchedView({
         <p>Longer-term ideas such as Missions and Interchange explore how agents might pay for approved work within budgets set by a responsible person. An agent shouldn&apos;t gain more spending authority by handing a task to another agent.</p>
         <div style={{ margin: "0 0 1rem" }}>
           <p style={LINK_LINE}><Link href="/ecosystem">Explore the Hivra ecosystem</Link></p>
-          <p style={LINK_LINE}><a href="/docs/litepaper">Read the Litepaper</a></p>
+          <p style={LINK_LINE}><a href={LITEPAPER_HREF}>Read the Litepaper</a></p>
           <p style={LINK_LINE}><Link href="/tokenomics">Read the tokenomics</Link></p>
         </div>
       </section>

@@ -11,7 +11,6 @@ import { log } from "@/lib/logger";
 import { posthogClient } from "@/lib/posthog";
 import {
   grantStripeTopUpCredits,
-  grantSubscriptionCycleCredits,
   isTopUpPackageCredits,
 } from "@/lib/billing/credits";
 import { tryGrantTopupBonus } from "@/lib/venice/promo/service";
@@ -1167,14 +1166,6 @@ export class StripeWebhookService {
     });
 
     if (subscription.status === "active" || subscription.status === "trialing") {
-      await grantSubscriptionCycleCredits({
-        userId,
-        planKey,
-        subscriptionId: subscription.id,
-        periodStart,
-        periodEnd,
-      });
-
       // Bump every running instance to the new tier (DB tier_key + live VM
       // resize for Proxmox VMs). Webhook continues even if any individual
       // resize fails — the DB write is the source of truth, and warden's
@@ -1830,19 +1821,6 @@ export class StripeWebhookService {
         await this.restoreScheduledDeletions(userId);
         await this.resumeBillingSuspendedInstances(userId);
       }
-    }
-
-    // Cycle credits follow the paid Hivra subscription itself (idempotent per
-    // subscription + period), not the row: a paid cycle whose binding lands
-    // later via checkout/subscription events is still credited exactly once.
-    if (subscriptionPlan) {
-      await grantSubscriptionCycleCredits({
-        userId,
-        planKey: subscriptionPlan,
-        subscriptionId,
-        periodStart,
-        periodEnd,
-      });
     }
   }
 

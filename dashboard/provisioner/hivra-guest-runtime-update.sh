@@ -32,7 +32,12 @@ DROPIN="$DROPIN_DIR/10-hivra-detached-runs.conf"
 # session slot and leave those sessions alone when ttyd restarts.
 AGENT_TTYD_CONF=/etc/systemd/system/bux-ttyd.service.d/base-path.conf
 BOX_TTYD_UNIT=/etc/systemd/system/bux-box-ttyd.service
-ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)
+# The box-side watchdog ships through the same update channel as the rest of
+# the runtime, so boxes provisioned before it existed get it on their next
+# managed update instead of waiting for a rebuild.
+WATCHDOG_PY=/var/lib/hivra/hivra-surface-watchdog.py
+WATCHDOG_UNIT=/etc/systemd/system/hivra-surface-watchdog.service
+ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs import-state.cjs chat-runs.cjs index.html app.js)
 
 # A DeepSeek computer runs its own gateway generation and pinned package under
 # its own service checks, so its owned updater replaces those instead of the
@@ -120,15 +125,15 @@ if [ -f "$TG_APPLY" ] && [ ! -L "$TG_APPLY" ]; then install -o root -g root -m 0
 else : > "$BACKUP/hivra-tg-apply.absent"; fi
 if [ -f "$DROPIN" ] && [ ! -L "$DROPIN" ]; then install -o root -g root -m 0600 "$DROPIN" "$BACKUP/detached-runs.conf"
 else : > "$BACKUP/detached-runs.conf.absent"; fi
-for asset in bux-ttyd-base-path.conf bux-box-ttyd.service agent-cli-versions.json hivra-agent-cli-update.sh hivra-codex-config-pin.py; do
+for asset in bux-ttyd-base-path.conf bux-box-ttyd.service hivra-agent-cli-update.sh hivra-codex-config-pin.py; do
   [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
     || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
 done
-for asset in hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json agent-app-versions.json hivra-agent-app-update.sh; do
+for asset in hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json hivra-agent-app-update.sh; do
   [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
     || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
 done
-for asset in local-browser-keeper.py; do
+for asset in local-browser-keeper.py hivra-surface-watchdog.py hivra-surface-watchdog.service; do
   [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
     || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
 done
@@ -147,6 +152,10 @@ if [ -f "$AGENT_TTYD_CONF" ] && [ ! -L "$AGENT_TTYD_CONF" ]; then install -o roo
 else : > "$BACKUP/bux-ttyd-base-path.conf.absent"; fi
 if [ -f "$BOX_TTYD_UNIT" ] && [ ! -L "$BOX_TTYD_UNIT" ]; then install -o root -g root -m 0600 "$BOX_TTYD_UNIT" "$BACKUP/bux-box-ttyd.service"
 else : > "$BACKUP/bux-box-ttyd.service.absent"; fi
+if [ -f "$WATCHDOG_PY" ] && [ ! -L "$WATCHDOG_PY" ]; then install -o root -g root -m 0600 "$WATCHDOG_PY" "$BACKUP/hivra-surface-watchdog.py"
+else : > "$BACKUP/hivra-surface-watchdog.py.absent"; fi
+if [ -f "$WATCHDOG_UNIT" ] && [ ! -L "$WATCHDOG_UNIT" ]; then install -o root -g root -m 0600 "$WATCHDOG_UNIT" "$BACKUP/hivra-surface-watchdog.service"
+else : > "$BACKUP/hivra-surface-watchdog.service.absent"; fi
 # A ttyd restart ends every plain shell it serves, so restart a terminal only
 # when nobody is connected to it; otherwise its new settings apply on its next
 # start. Decide before the gateway restart below drops proxied connections.
@@ -172,6 +181,7 @@ node --check "$WORK/server.js" >/dev/null
 node --check "$WORK/llm-application.js" >/dev/null
 node --check "$WORK/guarded-files.cjs" >/dev/null
 node --check "$WORK/agent-zero-editor.cjs" >/dev/null
+node --check "$WORK/import-state.cjs" >/dev/null
 node --check "$WORK/chat-runs.cjs" >/dev/null
 bash -n "$WORK/hivra-agent-shell"
 bash -n "$WORK/hivra-agent-cli-update.sh"
@@ -180,6 +190,7 @@ bash -n "$WORK/hivra-tg-apply"
 python3 -I -B -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$WORK/hivra-claude-app.py"
 python3 -I -B -c 'import json, sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$WORK/claude-desktop-pin.json"
 python3 -I -B -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$WORK/local-browser-keeper.py"
+python3 -I -B -c 'import ast, sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$WORK/hivra-surface-watchdog.py"
 node --check "$WORK/app.js" >/dev/null
 
 rollback() {
@@ -212,6 +223,11 @@ rollback() {
   elif [ -f "$BACKUP/bux-ttyd-base-path.conf.absent" ]; then rm -f -- "$AGENT_TTYD_CONF"; fi
   if [ -f "$BACKUP/bux-box-ttyd.service" ]; then install -o root -g root -m 0644 "$BACKUP/bux-box-ttyd.service" "$BOX_TTYD_UNIT"
   elif [ -f "$BACKUP/bux-box-ttyd.service.absent" ]; then rm -f -- "$BOX_TTYD_UNIT"; fi
+  rm -f -- "$WATCHDOG_PY.next" "$WATCHDOG_UNIT.next"
+  if [ -f "$BACKUP/hivra-surface-watchdog.py" ]; then install -o root -g root -m 0755 "$BACKUP/hivra-surface-watchdog.py" "$WATCHDOG_PY"
+  elif [ -f "$BACKUP/hivra-surface-watchdog.py.absent" ]; then rm -f -- "$WATCHDOG_PY"; fi
+  if [ -f "$BACKUP/hivra-surface-watchdog.service" ]; then install -o root -g root -m 0644 "$BACKUP/hivra-surface-watchdog.service" "$WATCHDOG_UNIT"
+  elif [ -f "$BACKUP/hivra-surface-watchdog.service.absent" ]; then rm -f -- "$WATCHDOG_UNIT"; systemctl disable --now hivra-surface-watchdog.service >/dev/null 2>&1 || true; fi
   systemctl daemon-reload >/dev/null 2>&1 || true
   if [ "$TTYD_RESTARTED" = 1 ]; then systemctl try-restart bux-ttyd.service bux-box-ttyd.service >/dev/null 2>&1 || true; fi
   systemctl restart bux-hivra-chat.service >/dev/null 2>&1 || true
@@ -253,9 +269,50 @@ esac
 install -d -o root -g root -m 0755 "$(dirname "$AGENT_TTYD_CONF")"
 install -o root -g root -m 0644 "$WORK/bux-ttyd-base-path.conf" "$AGENT_TTYD_CONF.next"
 install -o root -g root -m 0644 "$WORK/bux-box-ttyd.service" "$BOX_TTYD_UNIT.next"
+install -d -o root -g root -m 0700 /var/lib/hivra/surface-watchdog
+install -o root -g root -m 0755 "$WORK/hivra-surface-watchdog.py" "$WATCHDOG_PY.next"
+install -o root -g root -m 0644 "$WORK/hivra-surface-watchdog.service" "$WATCHDOG_UNIT.next"
 mv -f -- "$AGENT_TTYD_CONF.next" "$AGENT_TTYD_CONF"
 mv -f -- "$BOX_TTYD_UNIT.next" "$BOX_TTYD_UNIT"
+mv -f -- "$WATCHDOG_PY.next" "$WATCHDOG_PY"
+mv -f -- "$WATCHDOG_UNIT.next" "$WATCHDOG_UNIT"
 if ! systemctl daemon-reload; then rollback; exit 1; fi
+# The watchdog is additive: a box that cannot start it keeps its runtime
+# update, and the receipt line says so instead of hiding it. A box that
+# already runs it is moved onto the new code (restart also starts an enabled
+# but inactive unit).
+WATCHDOG_STATE=failed
+if systemctl is-enabled --quiet hivra-surface-watchdog.service; then
+  systemctl restart hivra-surface-watchdog.service >/dev/null 2>&1 || true
+else
+  systemctl enable --now hivra-surface-watchdog.service >/dev/null 2>&1 || true
+fi
+if systemctl is-active --quiet hivra-surface-watchdog.service; then
+  WATCHDOG_STATE=active
+fi
+printf 'HIVRA_SURFACE_WATCHDOG state=%s\n' "$WATCHDOG_STATE"
+
+# Receipts stay owner-only but the gateway runs as bux: the dir must let the
+# agent group read them or GET /api/surface-watchdog answers not_installed.
+install -d -o root -g bux -m 0750 /var/lib/hivra/surface-watchdog
+
+# The watchdog's proof it is the box's own monitor: a shared secret only the
+# agent user (the gateway runs as bux) and root (the watchdog) can read.
+# Proxied remote traffic also arrives on loopback, so the marker must carry
+# it. Created once; the gateway reads it lazily on every check.
+WATCHDOG_KEY=/home/bux/.hivra/surface-watchdog-key
+# bux owns ~/.hivra and could plant a symlink at any predictable sibling name,
+# so the key is staged inside a root-owned sibling directory (same filesystem,
+# so the publish rename stays atomic) rather than a ${WATCHDOG_KEY}.next path.
+if [ -L "$WATCHDOG_KEY" ] || [ ! -f "$WATCHDOG_KEY" ] || [ ! -s "$WATCHDOG_KEY" ]; then
+  install -d -o root -g root -m 0700 /home/bux/.hivra/.watchdog-key-stage
+  KEY_STAGE=$(mktemp /home/bux/.hivra/.watchdog-key-stage/key.XXXXXX)
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$KEY_STAGE"
+  chown bux:bux "$KEY_STAGE"
+  chmod 600 "$KEY_STAGE"
+  mv -f -- "$KEY_STAGE" "$WATCHDOG_KEY"
+  rmdir /home/bux/.hivra/.watchdog-key-stage 2>/dev/null || true
+fi
 
 if ! systemctl restart bux-hivra-chat.service; then rollback; exit 1; fi
 READY=0
@@ -338,11 +395,12 @@ rm -rf -- "$BACKUP_ROOT/previous"
 mv -- "$BACKUP" "$BACKUP_ROOT/previous"
 COMMITTED=1
 
-# Agent CLI (Claude Code / Codex computers). Vendor self-updaters stay off, so
-# Hivra moves the CLI to this release's vetted version (agent-cli-versions.json):
-# hivra-agent-cli-update.sh runs as a transient unit that downloads, waits for
-# in-flight chat runs to finish, swaps and verifies, so a slow download never
-# holds this request. Nothing here can fail the committed update above.
+# Agent CLI (Claude Code / Codex computers). This update runs only when the
+# owner presses Update, and it moves the CLI to the newest release on npm
+# (Hivra pins no version): hivra-agent-cli-update.sh runs as a transient unit
+# that resolves "latest", downloads, waits for in-flight chat runs to finish,
+# swaps and verifies, so a slow download never holds this request. Nothing
+# here can fail the committed update above.
 AGENT_CLI_HELPER=/usr/local/sbin/hivra-agent-cli-update
 agent_cli_report() {
   local name bin target version state
@@ -355,10 +413,7 @@ agent_cli_report() {
     runuser -u bux -- env -i HOME=/home/bux PATH=/usr/bin:/bin python3 -I - <"$WORK/hivra-codex-config-pin.py" >/dev/null 2>&1 \
       || echo "the Codex startup update check could not be turned off" >&2
   fi
-  target="$(python3 -I -c 'import json, re, sys
-value = json.load(open(sys.argv[1])).get(sys.argv[2])
-if not isinstance(value, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value): sys.exit(1)
-print(value)' "$WORK/agent-cli-versions.json" "$name")" || return 0
+  target=latest
   install -o root -g root -m 0700 "$WORK/hivra-agent-cli-update.sh" "$AGENT_CLI_HELPER"
   version="$(runuser -u bux -- env -i HOME=/home/bux PATH=/home/bux/.npm-global/bin:/usr/local/bin:/usr/bin:/bin DISABLE_AUTOUPDATER=1 \
     timeout -k 5 30 "$bin" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)" || version=""
@@ -380,28 +435,19 @@ print(value)' "$WORK/agent-cli-versions.json" "$name")" || return 0
 }
 agent_cli_report || true
 
-# Agent app (Aeon dashboard, OpenClaw, Agent Zero, Hermes computers). Hivra moves the
-# app to this release's tested version (agent-app-versions.json) the same way:
-# hivra-agent-app-update.sh runs as a transient unit that prepares the new
-# version next to the running one, waits until nobody is using the app, swaps,
-# checks it and puts the previous version back on failure. Hermes has no Hivra
-# pin: its target is the word "latest" and the helper runs Hermes's own
-# `hermes update --yes`. Nothing here can fail the committed update above.
+# Agent app (Aeon dashboard, OpenClaw, Agent Zero, Hermes, OpenBot, Nuphos
+# computers), the same way: Hivra pins no app version, so the target is always
+# the word "latest" and hivra-agent-app-update.sh resolves it to upstream's
+# newest release, prepares it next to the running one, waits until nobody is
+# using the app, swaps, checks it and puts the previous version back on
+# failure (for Hermes it runs Hermes's own `hermes update --yes`). Nothing here
+# can fail the committed update above.
 AGENT_APP_HELPER=/usr/local/sbin/hivra-agent-app-update
 AGENT_APP_RECORD=/var/lib/hivra/agent-app.json
 agent_app_report() {
   local name="$KIND_BEFORE" target version state
-  case "$name" in aeon|openclaw|agent-zero|hermes) ;; *) return 0 ;; esac
-  if [ "$name" = hermes ]; then
-    target=latest
-  else
-  target="$(python3 -I -c 'import json, re, sys
-pins = {"aeon": r"[0-9a-f]{40}", "openclaw": r"[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}", "agent-zero": r"sha256:[0-9a-f]{64}"}
-entry = json.load(open(sys.argv[1])).get(sys.argv[2])
-value = entry.get("version") if isinstance(entry, dict) else None
-if not isinstance(value, str) or not re.fullmatch(pins[sys.argv[2]], value): sys.exit(1)
-print(value)' "$WORK/agent-app-versions.json" "$name")" || return 0
-  fi
+  case "$name" in aeon|openclaw|agent-zero|hermes|openbot|nuphos) ;; *) return 0 ;; esac
+  target=latest
   install -o root -g root -m 0700 "$WORK/hivra-agent-app-update.sh" "$AGENT_APP_HELPER"
   case "$name" in
     openclaw)
@@ -411,6 +457,14 @@ print(value)' "$WORK/agent-app-versions.json" "$name")" || return 0
     hermes)
       version="$(runuser -u bux -- env -i HOME=/home/bux PATH=/home/bux/.local/bin:/usr/local/bin:/usr/bin:/bin \
         timeout -k 5 30 /home/bux/.local/bin/hermes --version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)" || version=""
+      ;;
+    openbot)
+      version="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$(head -n 1 /opt/openbot/image 2>/dev/null)" 2>/dev/null \
+        | sed -n 's/^OPENBOT_BUILD_VERSION=v\{0,1\}\([0-9]\{1,6\}\.[0-9]\{1,6\}\.[0-9]\{1,6\}\)$/\1/p' | head -n 1)" || version=""
+      ;;
+    nuphos)
+      version="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$(head -n 1 /opt/nuphos/image 2>/dev/null)" 2>/dev/null \
+        | sed -n 's/^OPENAB_RUNTIME_VERSION=v\{0,1\}\([0-9]\{1,6\}\.[0-9]\{1,6\}\.[0-9]\{1,6\}\)$/\1/p' | head -n 1)" || version=""
       ;;
     agent-zero)
       version="$(docker inspect --format '{{.Config.Image}}' hivra-agent-zero 2>/dev/null | grep -oE 'sha256:[0-9a-f]{64}' | head -n 1)" || version=""
@@ -431,7 +485,7 @@ print(value)' "$AGENT_APP_RECORD" 2>/dev/null)" || version=""
   # can't ask Docker itself) and the next update agree: computers provisioned
   # before the record existed, and any swap that ended without recording.
   if [ -n "$version" ] && ! systemctl is-active --quiet hivra-agent-app-update.service \
-    && { [ "$name" = agent-zero ] || [ "$name" = hermes ] || [ -f /etc/systemd/system/bux-aeon.service.d/20-hivra-dashboard.conf ]; }; then
+    && { [ "$name" = agent-zero ] || [ "$name" = hermes ] || [ "$name" = openbot ] || [ "$name" = nuphos ] || [ -f /etc/systemd/system/bux-aeon.service.d/20-hivra-dashboard.conf ]; }; then
     install -d -o root -g root -m 0755 /var/lib/hivra
     printf '{"name":"%s","version":"%s"}\n' "$name" "$version" > "$AGENT_APP_RECORD.next"
     chmod 0644 "$AGENT_APP_RECORD.next"
@@ -708,4 +762,8 @@ agent_browser_refresh() {
   printf 'HIVRA_AGENT_BROWSER state=%s\n' "$state"
 }
 agent_browser_refresh || true
+if [ "${KIND_BEFORE:-}" != claude ] && { systemctl list-unit-files 2>/dev/null | grep -q '^bux-browser-keeper\.service' || [ -e /etc/systemd/system/bux-browser-keeper.service ]; }; then
+  systemctl disable --now bux-browser-keeper.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/bux-browser-keeper.service
+fi
 printf 'HIVRA_GUEST_RUNTIME_UPDATED\n'

@@ -14,6 +14,7 @@ const crypto = require("crypto");
 const { PROTOCOL: LLM_APPLICATION_PROTOCOL, createLlmApplicationStore, LlmApplicationError } = require("./llm-application.js");
 const { createGuardedFiles } = require("./guarded-files.cjs");
 const { SOURCES: A0_EDITOR_SOURCES, rewriteNativeEditorAsset } = require("./agent-zero-editor.cjs");
+const IMPORTER = require("./import-state.cjs");
 
 const PORT = process.env.HIVRA_CHAT_PORT || 8080;
 const HOME = process.env.HOME || "/home/bux";
@@ -52,6 +53,23 @@ const AGENT_ZERO_PORT = Number(process.env.AGENT_ZERO_PORT) || 50080;
 // Host/Origin and peer, so this gateway presents exactly that and is the only way in.
 const HERMES_PORT = Number(process.env.HERMES_DASHBOARD_PORT) || 9119;
 const HERMES_WEBAPP_PORT = Number(process.env.HERMES_WEBAPP_PORT) || 9120;
+// OpenBot by CopilotKit, official and unmodified, on loopback OPENBOT_PORT. It
+// has no base path, so on an OpenBot computer it is served at the ROOT of this
+// origin: every path this gateway does not own goes to OpenBot, behind the same
+// token gate. It runs single-user and trusts only loopback callers addressed to
+// loopback, so the gateway presents OpenBot's own Host and Origin. /openbot/ is
+// the entry the agent page opens: a one-time setup page for the CopilotKit
+// Intelligence key OpenBot needs before it starts, then a redirect to /.
+const OPENBOT_PORT = Number(process.env.OPENBOT_PORT) || 3101;
+// Nuphos's official runtime, unmodified, on loopback NUPHOS_PORT. Its own
+// console (password setup, "Connect to Nuphos", provider sign-in) is served at
+// the ROOT of this origin behind the token gate, with this origin's own Host so
+// the runtime tells Nuphos the right public address. People then chat from the
+// Nuphos apps: Nuphos's servers open /acp, a WebSocket the runtime guards with
+// each connected team's key, so that one upgrade passes through without the
+// Hivra gate (and never carries Hivra's credentials). /nuphos/ is the entry the
+// agent page opens.
+const NUPHOS_PORT = Number(process.env.NUPHOS_PORT) || 3102;
 // Attached mode (design 5.4): the same gateway code runs as an attached agent's
 // own sandboxed instance on a computer its owner already has. Its root-written
 // unit sets these; nothing in the agent's writable HOME can change them.
@@ -87,6 +105,8 @@ const AGENT_KIND = _agentKindRaw === "codex" ? "codex"
   : _agentKindRaw === "openclaw" ? "openclaw"
   : _agentKindRaw === "agent-zero" ? "agent-zero"
   : _agentKindRaw === "hermes" ? "hermes"
+  : _agentKindRaw === "openbot" ? "openbot"
+  : _agentKindRaw === "nuphos" ? "nuphos"
   : _agentKindRaw === "deepseek-harness" ? "deepseek-harness"
   : _agentKindRaw === "linux-desktop" ? "linux-desktop"
   : _agentKindRaw === "linux-server" ? "linux-server"
@@ -103,8 +123,9 @@ const AGENT_ENV = Object.assign({}, process.env, {
   // desktop owner's home directories.
   PATH: ATTACHED ? String(process.env.PATH || "/usr/bin:/bin") : "/usr/local/bin:/home/bux/.bun/bin:/home/bux/.npm-global/bin:/home/bux/.local/bin:/usr/bin:/bin",
   HOME: HOME,
-  // Hivra installs and updates the vetted CLI versions (agent-cli-versions.json);
-  // a vendor self-update would swap the binary under the gateway mid-life.
+  // The CLI changes version only when its owner updates it (Hivra's Update
+  // button); a silent vendor self-update would swap the binary under the
+  // gateway mid-life.
   DISABLE_AUTOUPDATER: "1",
 });
 // Where new agent sessions start. For an attached agent this is its root-owned,
@@ -125,7 +146,7 @@ if (ATTACHED) {
 const CLAUDE_ENV = AGENT_ENV; // back-compat alias used by the claude login handlers
 
 // The installed agent CLI version, reported on /api/meta so the dashboard can
-// compare it with the release's vetted pin (agent-cli-versions.json). Probed at
+// show it to the owner (Hivra pins no CLI version). Probed at
 // start and again whenever the binary changes on disk (hivra-agent-cli-update
 // swaps it in place); the field is omitted until the first probe finishes and
 // the version is null when it failed. The updater's progress rides along. Only
@@ -170,7 +191,7 @@ function agentCliReport() {
   try {
     const status = JSON.parse(fs.readFileSync(AGENT_CLI_STATUS, "utf8"));
     if (status && status.name === AGENT_CLI.name && AGENT_CLI_UPDATE_STATES.has(status.state)
-      && typeof status.to === "string" && /^\d+\.\d+\.\d+$/.test(status.to)) {
+      && status.to === "latest") {
       report.update = { state: status.state, target: status.to, updatedAt: typeof status.updatedAt === "string" ? status.updatedAt : null,
         ...(typeof status.reason === "string" && /^[a-z_]{1,40}$/.test(status.reason) ? { reason: status.reason } : {}) };
     }
@@ -192,8 +213,9 @@ function agentCliUpdateRefusal() {
 
 // The hosted agent app (the Aeon dashboard, OpenClaw, Agent Zero) and the
 // version of it this computer runs, reported on /api/meta (authenticated
-// callers only) so the dashboard can compare it with the release's tested pin
-// (agent-app-versions.json). hivra-agent-app-update moves it to that pin; it
+// callers only) so the dashboard can show it to the owner. Hivra pins no app
+// version: hivra-agent-app-update moves it to upstream's newest release when
+// the owner presses Update; it
 // reads `activity` (when the app was last used through this gateway and how
 // many of its WebSockets are open) to wait until nobody is using it, and while
 // it swaps the app it holds the app's surface here with the lock file. OpenClaw
@@ -203,16 +225,18 @@ function agentCliUpdateRefusal() {
 const AGENT_APP = AGENT_KIND === "aeon" ? { name: "aeon", label: "Aeon", ports: [AEON_PORT] }
   : AGENT_KIND === "openclaw" ? { name: "openclaw", label: "OpenClaw", ports: [OPENCLAW_PORT] }
   : AGENT_KIND === "agent-zero" ? { name: "agent-zero", label: "Agent Zero", ports: [AGENT_ZERO_PORT] }
-  : AGENT_KIND === "hermes" ? { name: "hermes", label: "Hermes", ports: [HERMES_PORT, HERMES_WEBAPP_PORT] } : null;
+  : AGENT_KIND === "hermes" ? { name: "hermes", label: "Hermes", ports: [HERMES_PORT, HERMES_WEBAPP_PORT] }
+  : AGENT_KIND === "openbot" ? { name: "openbot", label: "OpenBot", ports: [OPENBOT_PORT] }
+  : AGENT_KIND === "nuphos" ? { name: "nuphos", label: "Nuphos", ports: [NUPHOS_PORT] } : null;
 const AGENT_APP_RECORD = process.env.HIVRA_AGENT_APP_RECORD || "/var/lib/hivra/agent-app.json";
 const AGENT_APP_STATUS = process.env.HIVRA_AGENT_APP_STATUS || "/var/lib/hivra/agent-app-update.json";
 const AGENT_APP_LOCK = process.env.HIVRA_AGENT_APP_LOCK || "/run/hivra-agent-app-update.lock";
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/bux/.npm-global/bin/openclaw";
 const HERMES_BIN = process.env.HERMES_BIN || "/home/bux/.local/bin/hermes";
-const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
-// What an update status may name as its target. Hermes has no Hivra pin: its
-// update is always to whatever Hermes itself publishes as latest.
-const AGENT_APP_TARGET = { ...AGENT_APP_VERSION, hermes: /^latest$/ };
+const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, openbot: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, nuphos: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
+// What an update status may name as its target: always the word "latest",
+// since every update goes to whatever upstream publishes as newest.
+const AGENT_APP_TARGET = /^latest$/;
 // A gateway start counts as use: nothing is known about the minutes before it.
 let agentAppLastUsedAt = Date.now();
 let agentAppOpenConnections = 0;
@@ -285,7 +309,7 @@ function readSmallJson(file) {
 function agentAppReport() {
   if (!AGENT_APP) return null;
   const pattern = AGENT_APP_VERSION[AGENT_APP.name];
-  const targetPattern = AGENT_APP_TARGET[AGENT_APP.name];
+  const targetPattern = AGENT_APP_TARGET;
   let version = null;
   const activity = { lastUsedAt: new Date(agentAppLastUsedAt).toISOString(), openConnections: agentAppOpenConnections };
   if (AGENT_APP.name === "openclaw") {
@@ -310,6 +334,50 @@ function agentAppReport() {
   }
   return report;
 }
+// The surface watchdog's receipts, served at GET /api/surface-watchdog for the
+// dashboard sweep. It answers what the box-side watchdog probed through the
+// real user path, which service it restarted and which units keep failing —
+// allow-listed fields only, never log lines or command output.
+const SURFACE_WATCHDOG_DIR = process.env.HIVRA_SURFACE_WATCHDOG_DIR || "/var/lib/hivra/surface-watchdog";
+function surfaceWatchdogReport() {
+  const state = readSmallJson(path.join(SURFACE_WATCHDOG_DIR, "state.json"));
+  if (!state || typeof state !== "object") return null;
+  const events = [];
+  try {
+    const fd = fs.openSync(path.join(SURFACE_WATCHDOG_DIR, "events.jsonl"), fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+      const buffer = Buffer.alloc(65536);
+      const size = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      for (const line of buffer.subarray(0, size).toString("utf8").split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const e = JSON.parse(line);
+          if (e && typeof e === "object" && typeof e.id === "string" && /^e\d+-\d{1,12}$/.test(e.id)
+            && typeof e.type === "string" && /^[a-z_]{1,40}$/.test(e.type)) {
+            events.push({ id: e.id, at: typeof e.at === "string" ? e.at.slice(0, 40) : null, type: e.type,
+              ...(typeof e.unit === "string" ? { unit: e.unit.slice(0, 128) } : {}),
+              ...(typeof e.kind === "string" ? { kind: e.kind.slice(0, 40) } : {}),
+              ...(typeof e.reason === "string" ? { reason: e.reason.slice(0, 200) } : {}),
+              ...(typeof e.ok === "boolean" ? { ok: e.ok } : {}),
+              ...(Number.isInteger(e.downForS) ? { downForS: e.downForS } : {}),
+              ...(Number.isInteger(e.nRestarts) ? { nRestarts: e.nRestarts } : {}),
+              ...(Number.isInteger(e.attempt) ? { attempt: e.attempt } : {}),
+              ...(Number.isInteger(e.restarts) ? { restarts: e.restarts } : {}) });
+          }
+        } catch {}
+        if (events.length >= 50) break;
+      }
+    } finally { fs.closeSync(fd); }
+  } catch {}
+  const surface = state.surface && typeof state.surface === "object" ? state.surface : {};
+  return { ok: true, agentKind: typeof state.agentKind === "string" ? state.agentKind : null,
+    updatedAt: typeof state.updatedAt === "string" ? state.updatedAt : null,
+    surface: { status: typeof surface.status === "string" ? surface.status.slice(0, 32) : null,
+      reason: typeof surface.reason === "string" ? surface.reason.slice(0, 200) : null,
+      restarts: Number.isInteger(surface.restarts) ? surface.restarts : 0 },
+    events };
+}
+
 // While hivra-agent-app-update swaps the app it holds the app's surface (a
 // request mid-swap would reach a stopped or half-started app). A lock left by
 // a crashed updater stops counting after 30 minutes.
@@ -319,18 +387,42 @@ function agentAppUpdating() {
 function isAgentAppPort(port) {
   return Boolean(AGENT_APP && AGENT_APP.ports.includes(port));
 }
-// Counts an authenticated request to the app as use (a refused one too: the
-// updater then backs off) and answers it while the app is being swapped.
-// Returns true when it answered.
-function agentAppHold(req, res) {
-  agentAppLastUsedAt = Date.now();
-  if (!agentAppUpdating()) return false;
+function agentAppHoldPage(req, res) {
   const accept = String(req.headers.accept || "");
   res.writeHead(503, { "Content-Type": accept.includes("text/html") ? "text/html; charset=utf-8" : "text/plain; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "15" });
   const message = AGENT_APP.label + " is being updated. It will be back in a minute.";
   res.end(accept.includes("text/html")
     ? "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"15\"><title>Updating</title><p style=\"font:15px system-ui;margin:2em\">" + message + "</p>"
     : message);
+}
+// The box's own surface watchdog probes the app through this gate on every
+// tick. Counting it as use keeps the app "in use" forever, so a managed
+// update would never reach its idle window. The proof it is the watchdog and
+// not proxied remote traffic (which also arrives on loopback) is a shared
+// secret in the agent home: only root (the watchdog) and bux (this gateway)
+// can read it. Absent key file -> no request is ever exempted.
+let surfaceWatchdogSecret;
+function surfaceWatchdogKey() {
+  if (surfaceWatchdogSecret === undefined || surfaceWatchdogSecret === null) {
+    try { surfaceWatchdogSecret = fs.readFileSync(path.join(HOME, ".hivra", "surface-watchdog-key"), "utf8").trim() || null; }
+    catch { surfaceWatchdogSecret = null; }
+  }
+  return surfaceWatchdogSecret;
+}
+function surfaceWatchdogProbe(req) {
+  const key = surfaceWatchdogKey();
+  const remote = String((req.socket && req.socket.remoteAddress) || "");
+  if (!key || (remote !== "127.0.0.1" && remote !== "::1" && remote !== "::ffff:127.0.0.1")) return false;
+  const sent = Buffer.from(String(req.headers["x-hivra-surface-watchdog"] || ""));
+  return sent.length === Buffer.byteLength(key) && crypto.timingSafeEqual(sent, Buffer.from(key));
+}
+// Counts an authenticated request to the app as use (a refused one too: the
+// updater then backs off) and answers it while the app is being swapped.
+// Returns true when it answered.
+function agentAppHold(req, res) {
+  if (!surfaceWatchdogProbe(req)) agentAppLastUsedAt = Date.now();
+  if (!agentAppUpdating()) return false;
+  agentAppHoldPage(req, res);
   return true;
 }
 
@@ -647,6 +739,198 @@ function handleAuthBootstrap(req, res) {
     // Opening Hermes goes through the Webapp's own sign-in (hermesSignIn).
     res.writeHead(303, { Location: hermesEntry(destination) ? HERMES_SIGN_IN : destination });
     res.end();
+  });
+}
+
+// ---- Connect links ----
+// POST /connect/grant (management bearer only, minted by the dashboard's
+// "Connect app" action) registers a username+password pair whose
+// sha256("user:pass") digest is kept, with its expiry and the surface it opens,
+// in ~/.hivra/connect-grants.json: owner-only 0600, replaced atomically, bound
+// to this computer's API token like the session store (a token rotation
+// revokes every link). Neither half of a pair reaches disk, the map is pruned
+// and bounded, and entries outliving the maximum lifetime make the file
+// untrusted rather than quietly eternal.
+// A grant redeems two ways, both minting the same ordinary surface cookie:
+//   GET  /connect/<user>:<pass>          — a link an external client can open
+//   POST /login  {username,password,next} — Agent Zero's own sign-in form, so a
+//        remote-Instance client (the A0 desktop app) authenticates exactly as
+//        it would against a self-hosted Agent Zero.
+// The link/credentials are themselves the credential until their expiry:
+// DELETE /connect/grant wipes them all.
+const CONNECT_GRANT_FILE = path.join(HOME, ".hivra", "connect-grants.json");
+const CONNECT_GRANT_VERSION = 1;
+const CONNECT_GRANT_MAX = 16;
+const CONNECT_GRANT_MAX_BYTES = 16 * 1024;
+const CONNECT_GRANT_MAX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const CONNECT_GRANT_MIN_TTL_MS = 60 * 1000;
+const CONNECT_GRANT_PASSWORD = /^[a-f0-9]{64}$/;
+const CONNECT_GRANT_USERNAME = /^[A-Za-z0-9_-]{1,64}$/;
+// sha256("user:pass") -> {e: expiry ms, d: destination}. Only digests persist.
+const CONNECT_GRANTS = new Map();
+function connectGrantDigest(username, password) {
+  return crypto.createHash("sha256").update(String(username) + ":" + String(password)).digest("hex");
+}
+function readConnectGrants(now) {
+  if (!authStoreDirectoryTrusted()) return null;
+  let fd = null;
+  try {
+    fd = fs.openSync(CONNECT_GRANT_FILE, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0 || stat.size > CONNECT_GRANT_MAX_BYTES) {
+      authStoreWarn("connect links: the saved file is not a private regular file of this user, or is too large");
+      return null;
+    }
+    const raw = fs.readFileSync(fd);
+    if (raw.length > CONNECT_GRANT_MAX_BYTES) throw new Error("connect grant file too large");
+    const doc = JSON.parse(raw.toString("utf8"));
+    if (!doc || typeof doc !== "object" || doc.v !== CONNECT_GRANT_VERSION
+      || !Array.isArray(doc.grants) || doc.grants.length > CONNECT_GRANT_MAX) {
+      throw new Error("unrecognised connect grant store");
+    }
+    // Written for another API token: every link in it is revoked.
+    if (typeof doc.binding !== "string" || !safeEq(doc.binding, AUTH_STORE_BINDING)) {
+      authStoreWarn("connect links: the API token changed, so every saved link is revoked");
+      return null;
+    }
+    const grants = new Map();
+    for (const entry of doc.grants) {
+      const digest = entry && entry.h, expiresAt = entry && entry.e, destination = entry && entry.d;
+      if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest) || grants.has(digest)
+        || !Number.isSafeInteger(expiresAt) || expiresAt > now + CONNECT_GRANT_MAX_TTL_MS + 5 * 60 * 1000
+        || !safeBootstrapDestination(destination)) {
+        throw new Error("invalid connect grant entry");
+      }
+      if (expiresAt > now) grants.set(digest, { e: expiresAt, d: destination });
+    }
+    return grants;
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") authStoreWarn("connect links: " + ((error && (error.code || error.message)) || "unreadable"));
+    return null;
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+function writeConnectGrants() {
+  if (!authStoreDirectoryTrusted()) return false;
+  const directory = path.dirname(CONNECT_GRANT_FILE);
+  const temp = path.join(directory, ".connect-grants." + crypto.randomBytes(8).toString("hex") + ".tmp");
+  let fd = null;
+  try {
+    const grants = [];
+    for (const [h, g] of CONNECT_GRANTS) grants.push({ h, e: g.e, d: g.d });
+    const body = JSON.stringify({ v: CONNECT_GRANT_VERSION, binding: AUTH_STORE_BINDING, grants });
+    fd = fs.openSync(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, body);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(temp, CONNECT_GRANT_FILE);
+    return true;
+  } catch (error) {
+    authStoreWarn("connect links: cannot save: " + ((error && (error.code || error.message)) || "write failed"));
+    if (fd !== null) { try { fs.closeSync(fd); } catch {} }
+    try { fs.unlinkSync(temp); } catch {}
+    return false;
+  }
+}
+(function loadConnectGrants() {
+  const loaded = readConnectGrants(Date.now());
+  if (loaded) for (const [digest, g] of loaded) CONNECT_GRANTS.set(digest, g);
+  if (loaded && loaded.size) writeConnectGrants();
+})();
+function pruneConnectGrants(now) {
+  for (const [digest, g] of CONNECT_GRANTS) if (g.e <= now) CONNECT_GRANTS.delete(digest);
+}
+function createConnectGrant(username, password, ttlMs, destination) {
+  const now = Date.now();
+  pruneConnectGrants(now);
+  while (CONNECT_GRANTS.size >= CONNECT_GRANT_MAX) {
+    let oldest = null;
+    for (const [digest, g] of CONNECT_GRANTS) {
+      if (oldest === null || g.e < CONNECT_GRANTS.get(oldest).e) oldest = digest;
+    }
+    CONNECT_GRANTS.delete(oldest);
+  }
+  const expiresAt = now + ttlMs;
+  CONNECT_GRANTS.set(connectGrantDigest(username, password), { e: expiresAt, d: destination });
+  writeConnectGrants();
+  return expiresAt;
+}
+// The redeeming value is a valid surface cookie for the stored destination, or
+// null. Both redemption paths run through this, so expiry and the token binding
+// apply identically to a shared link and to a sign-in form.
+function redeemConnectGrant(username, password) {
+  if (!CONNECT_GRANT_USERNAME.test(username) || !CONNECT_GRANT_PASSWORD.test(password)) return null;
+  const grant = CONNECT_GRANTS.get(connectGrantDigest(username, password));
+  if (!grant || grant.e <= Date.now()) return null;
+  return grant.d;
+}
+function answerConnectSession(res, destination) {
+  const session = createAuthSession();
+  res.setHeader("Set-Cookie", AUTH_COOKIE + "=" + session + "; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=" + Math.floor(AUTH_SESSION_TTL_MS / 1000));
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Content-Security-Policy", "default-src 'none'");
+  res.writeHead(303, { Location: destination });
+  res.end();
+}
+function handleConnectGrantCreate(req, res) {
+  readBody(req, (body) => {
+    let parsed = null;
+    try { parsed = JSON.parse(body); } catch {}
+    const username = parsed && typeof parsed.username === "string" ? parsed.username : "";
+    const password = parsed && typeof parsed.password === "string" ? parsed.password : "";
+    if (!CONNECT_GRANT_USERNAME.test(username) || !CONNECT_GRANT_PASSWORD.test(password)) {
+      return jsonRes(res, 400, { error: "username must be 1-64 [A-Za-z0-9_-] and password 64 lowercase hex" });
+    }
+    const destination = safeBootstrapDestination(parsed && parsed.destination);
+    if (!destination) return jsonRes(res, 400, { error: "unsafe destination" });
+    const requested = parsed && Number(parsed.ttlMs);
+    const ttlMs = Number.isSafeInteger(requested)
+      ? Math.min(Math.max(requested, CONNECT_GRANT_MIN_TTL_MS), CONNECT_GRANT_MAX_TTL_MS)
+      : CONNECT_GRANT_MAX_TTL_MS;
+    const expiresAt = createConnectGrant(username, password, ttlMs, destination);
+    return jsonRes(res, 200, { ok: true, expiresAt });
+  });
+}
+function handleConnectGrantRevoke(res) {
+  CONNECT_GRANTS.clear();
+  writeConnectGrants();
+  return jsonRes(res, 200, { ok: true });
+}
+// GET /connect/<user>:<pass> — the shareable form of a grant. The URL itself is
+// the credential, so treat one like a password until it expires or is revoked.
+function handleConnectRedeem(req, res, rawCode) {
+  let code = "";
+  try { code = decodeURIComponent(rawCode); } catch { return denyHtml(res); }
+  const separator = code.indexOf(":");
+  const destination = separator > 0 ? redeemConnectGrant(code.slice(0, separator), code.slice(separator + 1)) : null;
+  if (!destination) return denyHtml(res);
+  return answerConnectSession(res, destination);
+}
+// POST /login — Agent Zero's own sign-in form. A remote-Instance client (the
+// A0 desktop app) POSTs {username, password, next} exactly as it would to a
+// self-hosted Agent Zero; here the pair is checked against this box's connect
+// grants instead of Agent Zero's own login, which the /agent-zero proxy logs
+// into upstream already.
+function handleConnectLogin(req, res) {
+  let body = ""; let tooBig = false;
+  req.on("data", (chunk) => {
+    body += chunk;
+    if (body.length > 16 * 1024) { tooBig = true; req.destroy(); }
+  });
+  req.on("end", () => {
+    if (tooBig) return;
+    const form = new URLSearchParams(body);
+    const granted = redeemConnectGrant(String(form.get("username") || "").trim(), String(form.get("password") || ""));
+    if (!granted) return denyHtml(res);
+    // Agent Zero's own semantics: honour the form's `next` when it points at a
+    // real path on this box; its default "/" (what a self-hosted A0 root would
+    // be) means the surface the grant was minted for.
+    const next = safeBootstrapDestination(form.get("next"));
+    return answerConnectSession(res, next && next !== "/" ? next : granted);
   });
 }
 
@@ -1404,6 +1688,86 @@ function handleUpload(req, res) {
   });
 }
 
+// ---- Move-an-agent imports --------------------------------------------------
+// The owner pushes a .tar.gz state bundle to /api/import, either with the box
+// token (dashboard upload) or with a single-use transfer token minted by
+// POST /api/import/token — that token goes inside the copy-paste prompt the
+// owner's LOCAL agent follows to pack and send itself. The restore runs in
+// the background; GET /api/import/status reports each phase.
+const IMPORT_TOKENS = new Map(); // sha256(raw token) -> expiry ms
+const IMPORT_TOKEN_TTL_MS = 15 * 60 * 1000;
+const IMPORT_MAX = 256 * 1024 * 1024; // compressed bytes
+const IMPORT_SPEC = IMPORTER.specFor(AGENT_KIND, HOME, process.env);
+const importStatus = { state: "idle", detail: "", restored: [], skipped: [], files: 0, error: null, updatedAt: Date.now(), finishedAt: null };
+const IMPORT_BUSY = new Set(["unpacking", "restoring", "restarting"]);
+
+function importTokenDigest(raw) { return crypto.createHash("sha256").update(raw).digest("hex"); }
+function mintImportToken() {
+  const raw = "hit_" + crypto.randomBytes(24).toString("hex");
+  const now = Date.now();
+  for (const [h, exp] of IMPORT_TOKENS) if (exp <= now) IMPORT_TOKENS.delete(h);
+  IMPORT_TOKENS.set(importTokenDigest(raw), now + IMPORT_TOKEN_TTL_MS);
+  return raw;
+}
+// A transfer token is Bearer hit_<48 hex>, good for one upload before it
+// expires. It unlocks /api/import only — never the rest of the gateway.
+function importTokenOk(req) {
+  const m = String(req.headers["authorization"] || "").match(/^Bearer\s+(hit_[a-f0-9]{48})$/i);
+  if (!m) return false;
+  const h = importTokenDigest(m[1]);
+  const exp = IMPORT_TOKENS.get(h);
+  if (!exp || exp <= Date.now()) return false;
+  IMPORT_TOKENS.delete(h);
+  return true;
+}
+function handleImportTokenMint(res) {
+  if (!IMPORT_SPEC) return jsonRes(res, 409, { error: "This agent has no movable state to import." });
+  jsonRes(res, 200, { token: mintImportToken(), expiresAt: new Date(Date.now() + IMPORT_TOKEN_TTL_MS).toISOString() });
+}
+function handleImportStatus(res) {
+  jsonRes(res, 200, { supported: IMPORT_SPEC !== null, ...importStatus });
+}
+function handleImportUpload(req, res) {
+  if (!IMPORT_SPEC) return jsonRes(res, 409, { error: "This agent has no movable state to import." });
+  if (IMPORT_BUSY.has(importStatus.state)) return jsonRes(res, 409, { error: "An import is already running." });
+  const archive = path.join(HOME, ".hivra", "import-" + crypto.randomBytes(6).toString("hex") + ".tar.gz");
+  fs.mkdirSync(path.dirname(archive), { recursive: true });
+  const out = fs.createWriteStream(archive);
+  let size = 0, over = false, failed = false;
+  const fail = (status, error) => { if (!failed) { failed = true; out.destroy(); fs.rmSync(archive, { force: true }); jsonRes(res, status, { error }); } };
+  req.on("data", (chunk) => {
+    size += chunk.length;
+    if (size > IMPORT_MAX && !over) { over = true; fail(413, "bundle too large (>256MB)"); req.destroy(); }
+  });
+  req.on("aborted", () => fail(400, "upload aborted"));
+  req.on("error", () => fail(400, "upload failed"));
+  out.on("error", () => fail(500, "could not store the bundle"));
+  out.on("finish", () => {
+    if (failed) return;
+    jsonRes(res, 202, { ok: true, received: size });
+    Object.assign(importStatus, { state: "unpacking", detail: "Checking the bundle", restored: [], skipped: [], files: 0, error: null, finishedAt: null, updatedAt: Date.now() });
+    setImmediate(async () => {
+      try {
+        const result = await IMPORTER.runImport({
+          archive,
+          spec: IMPORT_SPEC,
+          stagingParent: path.join(HOME, ".hivra"),
+          onPhase: (name, detail) => Object.assign(importStatus, { state: name, detail, updatedAt: Date.now() }),
+        });
+        Object.assign(importStatus, {
+          state: "done", detail: "", restored: result.restored, skipped: result.skipped,
+          files: result.files, removedUnsafe: result.removedUnsafe, error: null,
+          finishedAt: Date.now(), updatedAt: Date.now(),
+        });
+      } catch (e) {
+        Object.assign(importStatus, { state: "error", detail: "", error: String((e && e.message) || e), finishedAt: Date.now(), updatedAt: Date.now() });
+        console.error("hivra-chat: import failed: " + ((e && e.stack) || e));
+      }
+    });
+  });
+  req.pipe(out);
+}
+
 // ---- MCP server management ----------------------------------------------------
 // claude: drive the official `claude mcp` CLI (user scope) and read the result
 // back from ~/.claude.json. codex: prefer `codex mcp`; fall back to editing
@@ -1599,6 +1963,39 @@ function handleHermesModelSet(res, body) {
       jsonRes(res, 200, { ok: true, model });
     });
   }, () => { hermesModelWriting = false; jsonRes(res, 503, { ok: false, error: "Hermes did not report its model" }); });
+}
+
+// ---- Hermes restore points (Manage → Restore points) ---------------------------
+// Hermes's own checkpoints: before it changes files in a turn, Hermes snapshots
+// the project into its shadow git store (~/.hermes/checkpoints), and the owner
+// rolls back from any Hermes chat with /rollback (or /undo). Hivra only flips
+// Hermes's own checkpoints.enabled through Hermes's CLI; Hermes keeps the store,
+// its size cap and its pruning. The gateway picks the change up on the next turn.
+function hermesRestorePointsState() {
+  return hermesConfigGet("checkpoints.enabled").then((value) => {
+    const v = String(value || "").trim().toLowerCase();
+    return { enabled: v === "true" || v === "1" || v === "yes" || v === "on" };
+  });
+}
+function handleHermesRestorePointsGet(res) {
+  if (AGENT_KIND !== "hermes") return jsonRes(res, 404, { error: "restore points are a Hermes setting" });
+  hermesRestorePointsState().then((state) => jsonRes(res, 200, { agentKind: AGENT_KIND, hermesConfig: true, ...state }),
+    () => jsonRes(res, 503, { error: "Hermes did not report its restore point setting" }));
+}
+let hermesRestorePointsWriting = false;
+function handleHermesRestorePointsSet(res, body) {
+  if (AGENT_KIND !== "hermes") return jsonRes(res, 404, { ok: false, error: "restore points are a Hermes setting" });
+  let enabled = null;
+  try { const j = JSON.parse(body || "{}"); if (typeof j.enabled === "boolean") enabled = j.enabled; } catch {}
+  if (enabled === null) return jsonRes(res, 400, { ok: false, error: "Say whether restore points should be on or off." });
+  if (hermesRestorePointsWriting) return jsonRes(res, 409, { ok: false, error: "Hermes is already changing this setting. Try again in a moment." });
+  if (agentAppUpdating()) return jsonRes(res, 409, { ok: false, error: "Hermes is being updated. Try again when the update finishes." });
+  hermesRestorePointsWriting = true;
+  execFile(HERMES_BIN, ["config", "set", "checkpoints.enabled", enabled ? "true" : "false"], { env: AGENT_ENV, cwd: HOME, timeout: 30000, maxBuffer: 64 * 1024 }, (err) => {
+    hermesRestorePointsWriting = false;
+    if (err) return jsonRes(res, 500, { ok: false, error: "Hermes could not save the setting. Nothing changed." });
+    jsonRes(res, 200, { ok: true, enabled });
+  });
 }
 
 // ---- alternative LLM provider (Venice byok / managed gateway) ----------------
@@ -1842,8 +2239,8 @@ function chatEffortAdvertised() {
 // `effort` is a level already checked by chatEffortLevel(), or null.
 function resolveChatSpawn(message, sessionId, images, effort) {
   if (COMPUTER_PROFILE) return { error: "this computer has no agent chat surface" };
-  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes") {
-    // Aeon + OpenClaw + Agent Zero + Hermes are hosted dashboards, not chat-CLI agents — no
+  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos") {
+    // Aeon + OpenClaw + Agent Zero + Hermes + OpenBot + Nuphos are hosted dashboards, not chat-CLI agents — no
     // /api/chat surface; the user works in the agent's own web UI behind the gate.
     return { error: "this agent has no chat surface" };
   }
@@ -2129,7 +2526,14 @@ function proxyHttp(req, res, port, strip, preserveAuthority = false, setHeaders 
     res.writeHead(pr.statusCode || 502, h);
     pr.pipe(res);
   });
-  p.on("error", () => { try { res.writeHead(502); res.end("backend unavailable"); } catch (e) {} });
+  p.on("error", () => { try {
+    // An agent app's own update mechanism (a built-in self-updater, a crash
+    // restart) never writes the managed updater's lock, so it does not trip
+    // agentAppHold. Its restart window still answers as "being updated"
+    // rather than a dead 502 — the page keeps retrying until the app is back.
+    if (isAgentAppPort(target.port) && !res.destroyed && !res.writableEnded) return agentAppHoldPage(req, res);
+    res.writeHead(502); res.end("backend unavailable");
+  } catch (e) {} });
   req.pipe(p);
 }
 
@@ -2218,6 +2622,14 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
   if (!authed(req)) return denyHtml(res);
   if (!retried && isAgentAppPort(AGENT_ZERO_PORT) && agentAppHold(req, res)) return;
   let apath = req.url.slice("/agent-zero".length); if (!apath.startsWith("/")) apath = "/" + apath;
+  // Newer Agent Zero serves a splash bootstrap at / that installs the real
+  // document fetched from /ui/index. This gateway serves the pinned app
+  // document itself at the mount root; a direct hit on the bootstrap path
+  // would resolve the document's relative assets under /ui/, so send it back.
+  if ((req.method === "GET" || req.method === "HEAD") && ["/ui/index", "/ui/index.html"].includes(apath.split("?")[0])) {
+    res.writeHead(302, { Location: "/agent-zero/", "Cache-Control": "no-store" });
+    return res.end();
+  }
   const editorPath = apath.split("?")[0];
   const editorAsset = (req.method === "GET" || req.method === "HEAD") && Object.hasOwn(A0_EDITOR_SOURCES, editorPath);
   const editor = editorContext || (editorAsset ? { done: false, cancel: null, timer: null } : null);
@@ -2280,6 +2692,31 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     const headers = Object.assign({}, req.headers, { host: "127.0.0.1:" + AGENT_ZERO_PORT });
     const requestSessionRevision = _a0SessionRevision;
     const entryDocument = (req.method === "GET" || req.method === "HEAD") && ["/", "/index.html"].includes(apath.split("?")[0]);
+    // Newer Agent Zero serves a splash bootstrap at / and the pinned app
+    // document at /index.html (and /ui/index). Older serves the document at /
+    // directly. Try the requested path first, then each remaining canonical
+    // document path newer versions expose; only documents satisfying the
+    // pinned entry transform are served — a splash or unknown layout never is.
+    const entryQuery = apath.includes("?") ? apath.slice(apath.indexOf("?")) : "";
+    const entryCandidates = entryDocument
+      ? [apath].concat(["/index.html", "/ui/index"].filter((p) => p !== apath.split("?")[0]).map((p) => p + entryQuery))
+      : [apath];
+    let entryCandidateIndex = 0;
+    // Every canonical path failed the pinned contract: the app updated to an
+    // entry layout this gateway does not recognise (or serves something
+    // entirely different). The app itself may be healthy, so a document fetch
+    // gets a retrying page — an unpinned document is never served.
+    const entryUnavailable = () => {
+      if (req.method === "GET" && String(req.headers.accept || "").includes("text/html")) {
+        res.writeHead(503, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "30" });
+        return res.end("<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"30\"><title>Updating</title>"
+          + "<p style=\"font:15px system-ui;margin:2em\">" + (AGENT_APP ? AGENT_APP.label : "The agent app")
+          + " has updated to a version this box's connection layer does not recognise yet."
+          + " Run Update connection service from the box's Manage tab if this keeps showing.</p>");
+      }
+      res.writeHead(502, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
+      res.end("native entry document unavailable");
+    };
     if (entryDocument || editorAsset || csrfResponse) {
       headers["accept-encoding"] = "identity";
       // The transformed representation has different validators/length. Always
@@ -2294,7 +2731,8 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     if (nativeCookie) headers.cookie = nativeCookie; else delete headers.cookie;
     // HEAD still validates the exact upstream body before describing the
     // transformed representation. Neither path may bypass source pinning.
-    const p = http.request({ host: "127.0.0.1", port: AGENT_ZERO_PORT, method: editorAsset ? "GET" : req.method, path: apath, headers }, (pr) => {
+    const issue = (upstreamPath) => {
+    const p = http.request({ host: "127.0.0.1", port: AGENT_ZERO_PORT, method: editorAsset ? "GET" : req.method, path: upstreamPath, headers }, (pr) => {
       if (editor && editor.done) { pr.destroy(); return; }
       if (csrf && csrf.done) { pr.destroy(); return; }
       if (csrfResponse) pr.once("error", () => rejectCsrf("upstream-error"));
@@ -2403,6 +2841,7 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
           if (done) return;
           done = true; clearTimeout(timer); pr.destroy();
           console.warn("Agent Zero native entry document rejected:", reason);
+          if (reason === "entry-contract") return entryUnavailable();
           res.writeHead(502, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
           res.end("native entry document unavailable");
         };
@@ -2422,12 +2861,31 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
         pr.once("end", () => {
           if (done) return;
           const html = a0CanonicalEntryHtml(Buffer.concat(chunks).toString("utf8"));
-          if (html === null) return fail("entry-contract");
+          if (html === null) {
+            // The splash bootstrap is not the app document; try each remaining
+            // canonical document path newer versions expose.
+            if (++entryCandidateIndex < entryCandidates.length) {
+              done = true; clearTimeout(timer); pr.destroy();
+              return issue(entryCandidates[entryCandidateIndex]);
+            }
+            return fail("entry-contract");
+          }
           done = true; clearTimeout(timer);
           h["content-length"] = Buffer.byteLength(html);
           res.writeHead(200, h); res.end(html);
         });
         return;
+      }
+      if (entryDocument && entryCandidateIndex > 0) {
+        // A fallback candidate that answers non-HTML or non-200 can never
+        // satisfy the pinned transform; try the next canonical path rather
+        // than proxying it through.
+        if (++entryCandidateIndex < entryCandidates.length) {
+          pr.resume();
+          return issue(entryCandidates[entryCandidateIndex]);
+        }
+        console.warn("Agent Zero native entry document rejected:", "entry-contract");
+        return entryUnavailable();
       }
       res.writeHead(pr.statusCode || 502, h);
       pr.pipe(res);
@@ -2435,6 +2893,9 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     p.on("error", () => { try {
       if (editor) return editor.settle("upstream-error");
       if (csrfResponse) return rejectCsrf("upstream-error");
+      // Agent Zero's built-in self-updater restarts the container without the
+      // managed updater's lock; the restart window answers as updating.
+      if (isAgentAppPort(AGENT_ZERO_PORT) && !res.destroyed && !res.writableEnded) return agentAppHoldPage(req, res);
       if (!res.destroyed && !res.writableEnded) {
         res.writeHead(502, { "Cache-Control": "no-store" }); res.end("backend unavailable");
       }
@@ -2442,6 +2903,8 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     if (csrf) csrf.cancel = () => p.destroy();
     if (editor) editor.cancel = () => p.destroy();
     if (req.method === "GET" || req.method === "HEAD") p.end(); else req.pipe(p);
+    };
+    issue(apath);
   };
   if (_a0Cookie) doProxy(); else loginThen(doProxy);
 }
@@ -2452,7 +2915,17 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
 function gateProxy(req, res, port, strip) {
   if (!authed(req)) return denyHtml(res);
   if (isAgentAppPort(port) && agentAppHold(req, res)) return;
-  return proxyHttp(req, res, port, strip);
+  return proxyHttp(req, res, port, strip, false, openclawPort(port) ? OPENCLAW_SET_HEADERS : null);
+}
+// OpenClaw's gateway (2026.11.5 and newer) refuses a loopback request that
+// carries forwarded-client headers unless gateway.trustedProxies names the
+// proxy (proxy_attribution_required). This gate is the only way in and has
+// already authenticated the owner, so OpenClaw sees it as what it is: a local
+// caller. Forwarded headers the tunnel added are dropped, as for Hermes.
+const OPENCLAW_SET_HEADERS = { forwarded: null, "x-forwarded-for": null, "x-forwarded-host": null,
+  "x-forwarded-proto": null, "x-forwarded-port": null, "x-forwarded-prefix": null, "x-real-ip": null };
+function openclawPort(port) {
+  return AGENT_KIND === "openclaw" && port === OPENCLAW_PORT;
 }
 // Hermes's web UI behind the same gate. It checks that Host and Origin are its
 // own loopback address and that the peer is loopback, and it builds its links
@@ -2538,6 +3011,185 @@ function hermesProxy(req, res) {
   if (agentAppHold(req, res)) return;
   const port = hermesPort();
   return proxyHttp(req, res, port, HERMES_MOUNT, false, hermesHeaders(Boolean(req.headers.origin), port));
+}
+
+// ---- OpenBot (CopilotKit) at the box root --------------------------------
+const OPENBOT_ENTRY = "/openbot";
+const OPENBOT_SETUP = "/openbot/setup";
+const OPENBOT_KEY_FILE = path.join(HOME, ".hivra", "openbot-intelligence-key");
+const OPENBOT_KEY_RE = /^[A-Za-z0-9_.-]{8,512}$/;
+// Paths this gateway answers itself on an OpenBot computer; every other path
+// is OpenBot's. None of them is an OpenBot route (its API lives under other
+// /api names and /api/auth), and /api/browser is OpenBot's here: an OpenBot
+// computer has no box browser stack.
+const OPENBOT_GATEWAY_PATHS = ["/healthz", "/auth/bootstrap", "/api/meta", "/api/llm", "/api/model", "/api/restrict",
+  "/api/sessions", "/api/mcp", "/api/file", "/api/files", "/api/upload", "/api/terminal", "/api/telegram", "/api/skills",
+  "/api/login", "/api/git", "/api/cookies", "/api/claude-app", "/api/chat", "/terminal", "/box-terminal", "/vnc",
+  "/desktop", "/workspace", OPENBOT_ENTRY];
+function openbotGatewayPath(u) {
+  return OPENBOT_GATEWAY_PATHS.some((prefix) => u === prefix || u.startsWith(prefix + "/"));
+}
+function openbotKeySaved() {
+  try {
+    const fd = fs.openSync(OPENBOT_KEY_FILE, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+      if (!fs.fstatSync(fd).isFile()) return false;
+      const buffer = Buffer.alloc(600);
+      const size = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      return OPENBOT_KEY_RE.test(buffer.subarray(0, size).toString("ascii").trim());
+    } finally { fs.closeSync(fd); }
+  } catch { return false; }
+}
+// OpenBot accepts a browser request only from its own origin, addressed to its
+// own loopback name. The gate has already authenticated the owner (and checked
+// that a cookie mutation or WebSocket comes from this box's own HTTPS origin),
+// so a request from this origin presents OpenBot's; any other Origin is passed
+// on as it came and OpenBot refuses it.
+const OPENBOT_DROPPED_HEADERS = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port", "x-real-ip"];
+function openbotHeaders(req) {
+  const set = {};
+  for (const name of OPENBOT_DROPPED_HEADERS) set[name] = null;
+  if (req.headers.origin !== undefined) {
+    let own = false;
+    try { own = new URL(String(req.headers.origin)).host.toLowerCase() === String(req.headers.host || "").trim().toLowerCase(); } catch {}
+    if (own) set.origin = "http://127.0.0.1:" + OPENBOT_PORT;
+  }
+  return set;
+}
+function openbotAnswers(done) {
+  let settled = false;
+  const finish = (up) => { if (!settled) { settled = true; done(up); } };
+  const probe = http.request({ host: "127.0.0.1", port: OPENBOT_PORT, method: "GET", path: "/",
+    headers: { host: "127.0.0.1:" + OPENBOT_PORT, accept: "text/html" }, timeout: 3000 }, (pr) => {
+    pr.resume();
+    finish(pr.statusCode === 200);
+  });
+  probe.on("timeout", () => probe.destroy());
+  probe.on("error", () => finish(false));
+  probe.end();
+}
+function openbotPage(res, status, title, body, refreshSeconds, entry = OPENBOT_ENTRY) {
+  // same-origin, not no-referrer: a form post under no-referrer carries
+  // Origin: null, which the gate (rightly) refuses as a cookie mutation.
+  res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "same-origin",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'" });
+  res.end("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+    + (refreshSeconds ? "<meta http-equiv=\"refresh\" content=\"" + refreshSeconds + ";url=" + entry + "/\">" : "")
+    + "<title>" + title + "</title><style>"
+    + ":root{color-scheme:light dark;--bg:#fafafa;--fg:#161616;--muted:#6b6b6b;--line:#e2e2e2;--accent:#6e56cf}"
+    + "@media (prefers-color-scheme:dark){:root{--bg:#111;--fg:#ededed;--muted:#9a9a9a;--line:#2a2a2a;--accent:#9e8cfc}}"
+    + "body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;box-sizing:border-box}"
+    + "main{max-width:440px;width:100%}h1{font-size:20px;margin:0 0 8px}p{color:var(--muted);margin:0 0 16px}a{color:var(--accent)}"
+    + "input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:transparent;color:var(--fg);font:inherit}"
+    + "button{margin-top:12px;width:100%;padding:10px 12px;border:0;border-radius:10px;background:var(--accent);color:#fff;font:inherit;font-weight:600;cursor:pointer}"
+    + ".err{color:#d4423b}</style></head><body><main>" + body + "</main></body></html>");
+}
+function openbotSetupForm(res, error) {
+  return openbotPage(res, error ? 400 : 200, "Set up OpenBot",
+    "<h1>One step before OpenBot starts</h1>"
+    + "<p>OpenBot keeps its conversations and memory in CopilotKit Intelligence, so it needs a key from your CopilotKit project. CopilotKit has a free plan.</p>"
+    + "<p>Sign in at <a href=\"https://intelligence.copilotkit.ai\" target=\"_blank\" rel=\"noopener noreferrer\">intelligence.copilotkit.ai</a>, open your project's API Keys and copy the key that starts with <code>cpk-</code>.</p>"
+    + (error ? "<p class=\"err\">" + error + "</p>" : "")
+    + "<form method=\"post\" action=\"" + OPENBOT_SETUP + "\"><input name=\"key\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"cpk-…\" aria-label=\"CopilotKit Intelligence key\" required>"
+    + "<button type=\"submit\">Start OpenBot</button></form>");
+}
+// GET /openbot/: the setup form until a key is saved, a short wait while
+// OpenBot starts, then OpenBot itself at /. GET /openbot/setup always shows the
+// form (to replace the key).
+function openbotEntry(req, res, u) {
+  if (!authed(req)) return denyHtml(res);
+  if (req.method !== "GET" && req.method !== "HEAD") return jsonRes(res, 405, { error: "method not allowed" });
+  if (u === OPENBOT_SETUP || u === OPENBOT_SETUP + "/" || !openbotKeySaved()) return openbotSetupForm(res, null);
+  if (agentAppHold(req, res)) return;
+  openbotAnswers((up) => {
+    if (up) { res.writeHead(303, { Location: "/", "Cache-Control": "no-store" }); return res.end(); }
+    return openbotPage(res, 200, "Starting OpenBot", "<h1>Starting OpenBot…</h1><p>The first start sets up its database and takes about a minute. This page opens OpenBot when it is ready.</p>", 5);
+  });
+}
+function openbotSaveKey(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  let body = ""; let tooBig = false;
+  req.on("data", (chunk) => { body += chunk; if (body.length > 4096) { tooBig = true; req.destroy(); } });
+  req.on("end", () => {
+    if (tooBig) return;
+    const key = String(new URLSearchParams(body).get("key") || "").trim();
+    if (!OPENBOT_KEY_RE.test(key)) return openbotSetupForm(res, "That doesn't look like a CopilotKit key. Copy it again from your project's API Keys.");
+    try {
+      fs.mkdirSync(path.join(HOME, ".hivra"), { recursive: true, mode: 0o700 });
+      const staged = OPENBOT_KEY_FILE + ".next";
+      fs.rmSync(staged, { force: true });
+      fs.writeFileSync(staged, key + "\n", { mode: 0o600, flag: "wx" });
+      fs.renameSync(staged, OPENBOT_KEY_FILE);
+    } catch (error) {
+      console.warn("hivra-chat: could not save the OpenBot key: " + ((error && error.code) || error));
+      return openbotSetupForm(res, "The key could not be saved. Try again.");
+    }
+    // A waiting service picks the key up within seconds; a running one is
+    // restarted so a replaced key takes effect.
+    execFile("sudo", ["-n", "/usr/local/bin/hivra-openbot-apply", "restart"], { env: AGENT_ENV, timeout: 60000 }, (err) => {
+      if (err) console.warn("hivra-chat: hivra-openbot-apply restart failed: " + (err.code || err.message));
+    });
+    res.writeHead(303, { Location: OPENBOT_ENTRY + "/", "Cache-Control": "no-store" });
+    res.end();
+  });
+}
+function openbotProxy(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  // Before the key is saved OpenBot is not running: a page load goes to setup.
+  if ((req.method === "GET" || req.method === "HEAD") && String(req.headers.accept || "").includes("text/html") && !openbotKeySaved()) {
+    res.writeHead(303, { Location: OPENBOT_ENTRY + "/", "Cache-Control": "no-store" });
+    return res.end();
+  }
+  if (agentAppHold(req, res)) return;
+  return proxyHttp(req, res, OPENBOT_PORT, null, false, openbotHeaders(req));
+}
+
+// ---- Nuphos runtime console at the box root --------------------------------
+const NUPHOS_ENTRY = "/nuphos";
+const NUPHOS_ACP = "/acp";
+// Paths this gateway answers itself on a Nuphos computer; every other path is
+// the runtime's (its console lives under / and /_openab/, its ACP at /acp).
+const NUPHOS_GATEWAY_PATHS = OPENBOT_GATEWAY_PATHS.filter((p) => p !== OPENBOT_ENTRY).concat([NUPHOS_ENTRY]);
+function nuphosGatewayPath(u) {
+  return NUPHOS_GATEWAY_PATHS.some((prefix) => u === prefix || u.startsWith(prefix + "/"));
+}
+// The runtime builds the address it gives Nuphos, its same-origin check and
+// its Secure console cookie from the host and X-Forwarded-Proto it sees:
+// present this origin as HTTPS (cloudflared terminates TLS in front of us),
+// name the Host the browser used (proxyHttp addresses the loopback port) and
+// drop any other forwarding claim the client sent.
+const NUPHOS_SET_HEADERS = { forwarded: null, "x-forwarded-for": null, "x-forwarded-host": null, "x-forwarded-port": null,
+  "x-real-ip": null, "x-forwarded-proto": "https" };
+function nuphosHeaders(req) {
+  const host = String(req.headers.host || "").trim();
+  return { ...NUPHOS_SET_HEADERS, "x-forwarded-host": /^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$/.test(host) ? host : null };
+}
+function nuphosAnswers(done) {
+  let settled = false;
+  const finish = (up) => { if (!settled) { settled = true; done(up); } };
+  const probe = http.request({ host: "127.0.0.1", port: NUPHOS_PORT, method: "GET", path: "/",
+    headers: { host: "127.0.0.1:" + NUPHOS_PORT, accept: "text/html" }, timeout: 3000 }, (pr) => {
+    pr.resume();
+    finish(pr.statusCode === 200);
+  });
+  probe.on("timeout", () => probe.destroy());
+  probe.on("error", () => finish(false));
+  probe.end();
+}
+// GET /nuphos/: the runtime's console at / once it answers, a short wait before.
+function nuphosEntry(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  if (agentAppHold(req, res)) return;
+  nuphosAnswers((up) => {
+    if (up) { res.writeHead(303, { Location: "/", "Cache-Control": "no-store" }); return res.end(); }
+    return openbotPage(res, 200, "Starting Nuphos", "<h1>Starting Nuphos…</h1><p>The Nuphos runtime is starting. This page opens its console when it is ready.</p>",
+      5, NUPHOS_ENTRY);
+  });
+}
+function nuphosProxy(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  if (agentAppHold(req, res)) return;
+  return proxyHttp(req, res, NUPHOS_PORT, null, false, nuphosHeaders(req));
 }
 
 // ---- terminals on owner-only unix sockets -----------------------------------
@@ -2720,7 +3372,7 @@ function handleLoginStatus(res) {
   // so report logged-in to avoid gating the chat behind a login it doesn't have.
   // OpenClaw manages its own model credentials inside its Control UI, so there is
   // no box-managed login to gate on — report connected like a generic agent.
-  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
+  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
   if (AGENT_KIND === "aeon") {
     // "Connected" = gh is authenticated (the dashboard can drive the user's repo
     // + Actions). Runs as the box user, so no sudo. gh prints to stderr.
@@ -3117,9 +3769,11 @@ const AEON_SYNC_REBASE_MARKER = path.join(HOME, ".hivra", "aeon-sync-rebase.json
 // test keeps them together); used only when no durable copy exists yet.
 const AEON_HIVRA_NEXT_CONFIG = [
   "import type { NextConfig } from 'next'",
-  "// Hivra hosts this dashboard behind a token-proxy mounted at /aeon.",
+  "import upstream from './next.config.hivra-upstream'",
+  "// Hivra hosts this dashboard behind a token-proxy mounted at /aeon. Aeon's own",
+  "// config (next.config.hivra-upstream.ts) is kept as is; only the mount is added.",
   "const basePath = process.env.AEON_BASE_PATH || undefined",
-  "const nextConfig: NextConfig = basePath ? { basePath, assetPrefix: basePath } : {}",
+  "const nextConfig: NextConfig = basePath ? { ...upstream, basePath, assetPrefix: basePath } : upstream",
   "export default nextConfig",
   "",
 ].join("\n");
@@ -3303,6 +3957,23 @@ async function ensureAeonNextConfig(gitDir) {
     console.error("hivra-chat: aeon dashboard folder is missing; " + AEON_NEXT_CONFIG + " could not be restored");
     return;
   }
+  // The wrapper imports Aeon's own config, kept beside it; an empty one stands
+  // in if that copy is gone, so the next build still resolves the import.
+  const kept = path.join(path.dirname(file), "next.config.hivra-upstream.ts");
+  if (text.includes("./next.config.hivra-upstream") && !fs.existsSync(kept)) {
+    writeFileDurably(kept, "import type { NextConfig } from 'next'\nconst nextConfig: NextConfig = {}\nexport default nextConfig\n", 0o644);
+  }
+  // That kept copy is this computer's, never a change for the owner's git.
+  const exclude = path.join(gitDir, "info", "exclude");
+  const excluded = "/" + path.posix.join(path.posix.dirname(AEON_NEXT_CONFIG), "next.config.hivra-upstream.ts");
+  try {
+    let lines = "";
+    try { lines = fs.readFileSync(exclude, "utf8"); } catch {}
+    if (!lines.split("\n").includes(excluded)) {
+      fs.mkdirSync(path.dirname(exclude), { recursive: true });
+      fs.appendFileSync(exclude, (lines && !lines.endsWith("\n") ? "\n" : "") + excluded + "\n");
+    }
+  } catch {}
   if (writeFileDurably(file, text, 0o644)) {
     const what = current !== null && current.includes(AEON_NEXT_CONFIG_MARKER) ? "was damaged in " : "was missing from ";
     console.error("hivra-chat: aeon dashboard basePath config " + what + AEON_NEXT_CONFIG + " and has been restored");
@@ -3865,6 +4536,22 @@ const server = http.createServer((req, res) => {
     res.writeHead(ready ? 200 : 503); return res.end(ready ? "ok" : "native runtime not ready");
   }
   if (req.method === "POST" && u === "/auth/bootstrap") return handleAuthBootstrap(req, res);
+  // Connect links: minted/revoked with the bearer only (the dashboard's
+  // "Connect app" action); redeemed without one — the pair in the URL or the
+  // sign-in form is the credential until its expiry.
+  if (req.method === "POST" && u === "/connect/grant") return bearerAuthed(req) ? handleConnectGrantCreate(req, res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "DELETE" && u === "/connect/grant") return bearerAuthed(req) ? handleConnectGrantRevoke(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "GET" && u.startsWith("/connect/")) return handleConnectRedeem(req, res, u.slice("/connect/".length));
+  if (req.method === "POST" && u === "/login") return handleConnectLogin(req, res);
+  if (AGENT_KIND === "openbot" && !ATTACHED) {
+    if (req.method === "POST" && u === OPENBOT_SETUP) return openbotSaveKey(req, res);
+    if (u === OPENBOT_ENTRY || u.startsWith(OPENBOT_ENTRY + "/")) return openbotEntry(req, res, u);
+    if (!openbotGatewayPath(u)) return openbotProxy(req, res);
+  }
+  if (AGENT_KIND === "nuphos" && !ATTACHED) {
+    if (u === NUPHOS_ENTRY || u.startsWith(NUPHOS_ENTRY + "/")) return nuphosEntry(req, res);
+    if (!nuphosGatewayPath(u)) return nuphosProxy(req, res);
+  }
   // Aeon dashboard client code issues root-absolute requests (fetch("/api/strategy"),
   // <img src="/...">): Next's basePath only rewrites URLs the router/asset pipeline
   // controls, so these land on the box root — this chat server — and die as 404s.
@@ -3910,9 +4597,11 @@ const server = http.createServer((req, res) => {
     // Agent Zero's component loader creates blob modules. Their static imports
     // intentionally arrive without Referer; only these explicit static asset
     // namespaces and their exact shared /index.js entry may use that route,
-    // never arbitrary root files, management APIs or writes.
+    // never arbitrary root files, management APIs or writes. Plugin web UIs
+    // (e.g. tailscale_manager) import their modules from the persisted
+    // /usr/plugins/<plugin>/webui/ tree the same way.
     const nativeStatic = (req.method === "GET" || req.method === "HEAD")
-      && (u === "/index.js" || /^\/(components|plugins|vendor|js|extensions\/webui)\//.test(u));
+      && (u === "/index.js" || /^\/(components|plugins|vendor|js|usr\/plugins|extensions\/webui)\//.test(u));
     if (nativeStatic) {
       // Native component/blob loaders resolve imports against location.origin.
       // Keep their URL identity at root, matching the two HTML entry scripts.
@@ -3939,9 +4628,19 @@ const server = http.createServer((req, res) => {
     res.setHeader("Cache-Control", "no-store");
     return jsonRes(res, 200, { agentKind: AGENT_KIND, model: readAgentModel() || null, surfaceAuth: "post-cookie-v1", bootId: authStoreEpoch, ...(!ATTACHED && bearerAuthed(req) ? { terminals: terminalTransports() } : {}), ...(COMPUTER_PROFILE ? { resourceKind: "computer", chatAvailable: false, loginAvailable: false, workspace: "Hivra", attachedAgents: ATTACHED_AGENTS_PROTOCOL, gitRoutes: false, ...(claudeAppAvailable() ? { claudeApp: CLAUDE_APP_PROTOCOL } : {}) } : {}), ...(ATTACHED ? { attachment: { installationId: ATTACHED_INSTALLATION_ID } } : {}), ...(DEEPSEEK_BROKER ? { nativeSurface: "/", nativeReady: DEEPSEEK_BROKER.ready() } : {}), ...(AGENT_KIND === "codex" ? { llmApplication: LLM_APPLICATION_PROTOCOL } : {}), ...((levels) => levels ? { chatEffort: levels } : {})(chatEffortAdvertised()), ...(authed(req) ? ((cli) => cli ? { agentCli: cli } : {})(agentCliReport()) : {}), ...(authed(req) ? ((app) => app ? { agentApp: app } : {})(agentAppReport()) : {}) });
   }
+  if (req.method === "GET" && u === "/api/surface-watchdog") {
+    // Bearer only: the dashboard sweep reads this server to server. 404 is the
+    // honest answer on a box whose watchdog is not installed yet.
+    if (!bearerAuthed(req)) return jsonRes(res, 401, { error: "unauthorized" });
+    res.setHeader("Cache-Control", "no-store");
+    const watchdog = surfaceWatchdogReport();
+    return watchdog ? jsonRes(res, 200, watchdog) : jsonRes(res, 404, { error: "not_installed" });
+  }
   // Per-box model override (Manage tab) — token-gated like everything stateful.
   if (req.method === "GET" && u === "/api/model") return authed(req) ? (AGENT_KIND === "hermes" ? handleHermesModelGet(res) : handleModelGet(res)) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/model") return authed(req) ? readBody(req, (b) => AGENT_KIND === "hermes" ? handleHermesModelSet(res, b) : handleModelSet(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "GET" && u === "/api/restore-points") return authed(req) ? handleHermesRestorePointsGet(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/restore-points") return authed(req) ? readBody(req, (b) => handleHermesRestorePointsSet(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   // Alternative LLM provider (Manage tab) — token-gated; GET never echoes the key.
   if (u === "/api/llm" || u === "/api/llm/application") res.setHeader("Cache-Control", "no-store");
   if (u === "/api/llm/application") return handleLlmApplication(req, res);
@@ -3957,6 +4656,12 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && u === "/api/git/checkout") return authed(req) ? readBody(req, (b) => handleGitCheckout(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   // Uploads (chat attachments).
   if (req.method === "POST" && u === "/api/upload") return authed(req) ? handleUpload(req, res) : jsonRes(res, 401, { error: "unauthorized" });
+  // Moving an existing agent here: mint a one-time transfer token (the prompt
+  // the owner's local agent follows), accept the state bundle, and report the
+  // restore's progress. /api/import also honors single-use hit_ tokens.
+  if (req.method === "POST" && u === "/api/import/token") return authed(req) ? handleImportTokenMint(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "GET" && u === "/api/import/status") return authed(req) ? handleImportStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/import") return (authed(req) || importTokenOk(req)) ? handleImportUpload(req, res) : jsonRes(res, 401, { error: "unauthorized" });
   // MCP server management (Manage tab).
   if (req.method === "GET" && u === "/api/mcp") return authed(req) ? handleMcpList(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/mcp") return authed(req) ? readBody(req, (b) => handleMcpAdd(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
@@ -3982,8 +4687,8 @@ const server = http.createServer((req, res) => {
     }
   }
   if (req.method === "GET" && u === "/api/login/status") return authed(req) ? handleLoginStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "POST" && u === "/api/login/start") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes") ? jsonRes(res, 400, { error: "login not required for this agent" }) : AGENT_KIND === "aeon" ? jsonRes(res, 400, { error: "GitHub connect has no start step" }) : AGENT_KIND === "codex" ? handleLoginStartCodex(res) : handleLoginStart(res)) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "POST" && u === "/api/login/complete") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes") ? jsonRes(res, 200, { ok: true }) : AGENT_KIND === "aeon" ? readBody(req, (b) => handleLoginCompleteAeon(res, b)) : AGENT_KIND === "codex" ? handleLoginCompleteCodex(res) : readBody(req, (b) => handleLoginComplete(res, b))) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/login/start") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") ? jsonRes(res, 400, { error: "login not required for this agent" }) : AGENT_KIND === "aeon" ? jsonRes(res, 400, { error: "GitHub connect has no start step" }) : AGENT_KIND === "codex" ? handleLoginStartCodex(res) : handleLoginStart(res)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/login/complete") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") ? jsonRes(res, 200, { ok: true }) : AGENT_KIND === "aeon" ? readBody(req, (b) => handleLoginCompleteAeon(res, b)) : AGENT_KIND === "codex" ? handleLoginCompleteCodex(res) : readBody(req, (b) => handleLoginComplete(res, b))) : jsonRes(res, 401, { error: "unauthorized" });
   // Introspection endpoints (token-gated): chat history, file browser, skills.
   if (req.method === "GET" && (u === "/api/sessions" || u.startsWith("/api/sessions/"))) {
     if (!authed(req)) return jsonRes(res, 401, { error: "unauthorized" });
@@ -4046,13 +4751,18 @@ server.on("upgrade", (req, socket, head) => {
     if (!DEEPSEEK_POLICY.surfaceOriginAllowed(req, DEEPSEEK_CONFIG.publicOrigin)) { socket.destroy(); return; }
   }
   const u = req.url.split("?")[0];
+  // Nuphos's servers connect to the runtime's /acp with a team key the runtime
+  // checks itself (it refuses every upgrade before the owner sets it up). It is
+  // the one WebSocket that passes without the Hivra gate, and it never counts
+  // as use of the app through Hivra.
+  const nuphosAcp = AGENT_KIND === "nuphos" && u === NUPHOS_ACP;
   const remoteDesktopUpgrade = u.startsWith("/desktop/");
   // The ttyd/noVNC websockets carry the actual terminal/VNC I/O — gate them too.
   // The browser sends the hivra_auth cookie (set on the iframe's first load) on
   // the upgrade handshake automatically.
   // /desktop has a separate short-lived session cookie and must never accept
   // the management bearer/cookie as equivalent authority.
-  if (!remoteDesktopUpgrade && !authed(req)) { try { socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); } catch (e) {} socket.destroy(); return; }
+  if (!remoteDesktopUpgrade && !nuphosAcp && !authed(req)) { try { socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); } catch (e) {} socket.destroy(); return; }
   let port = null, strip = null;
   if (remoteDesktopUpgrade) port = REMOTE_DESKTOP_BROKER_PORT;
   else if (u.startsWith("/terminal")) port = 7681;
@@ -4063,9 +4773,11 @@ server.on("upgrade", (req, socket, head) => {
   else if (u.startsWith("/agent-zero")) { port = AGENT_ZERO_PORT; strip = "/agent-zero"; } // Agent Zero WS (served at root)
   else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
   else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)
+  else if (AGENT_KIND === "openbot" && !openbotGatewayPath(u)) port = OPENBOT_PORT; // OpenBot's WebSockets (served at the root)
+  else if (AGENT_KIND === "nuphos" && !nuphosGatewayPath(u)) port = NUPHOS_PORT; // the runtime's /acp and console sockets
   if (!port) { socket.destroy(); return; }
   // The app's WebSockets count as use for as long as they stay open.
-  if (isAgentAppPort(port)) {
+  if (isAgentAppPort(port) && !nuphosAcp) {
     agentAppLastUsedAt = Date.now();
     if (agentAppUpdating()) {
       try { socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 15\r\n\r\n"); } catch (e) {}
@@ -4092,6 +4804,11 @@ server.on("upgrade", (req, socket, head) => {
   // none) and reads its path prefix from X-Forwarded-Prefix.
   const hermesWs = hermesMounted(u);
   const hermesSet = hermesWs ? hermesHeaders(Boolean(req.headers.origin), port) : null;
+  // OpenBot's live sockets present its own loopback Host and (from this origin) Origin.
+  const openbotWs = AGENT_KIND === "openbot" && port === OPENBOT_PORT;
+  const openbotSet = openbotWs ? openbotHeaders(req) : null;
+  const nuphosWs = AGENT_KIND === "nuphos" && port === NUPHOS_PORT;
+  const openclawWs = openclawPort(port);
   // Terminals from the socket release listen on an owner-only unix socket; older
   // ones on the loopback port. Keep the positional connect for a port.
   const terminalUp = (port === 7681 || port === 7682) ? terminalUpstream(port) : null;
@@ -4107,6 +4824,9 @@ server.on("upgrade", (req, socket, head) => {
       const key = k.toLowerCase();
       if (a0Ws && key === "cookie") continue;
       if (hermesWs && (key === "host" || key in hermesSet)) continue;
+      if (openbotWs && (key === "host" || key in openbotSet)) continue;
+      if (nuphosWs && key in NUPHOS_SET_HEADERS) continue;
+      if (openclawWs && key in OPENCLAW_SET_HEADERS) continue;
       if (key === "authorization") {
         const bearer = String(raw || "").match(/^Bearer\s+(.+)$/i);
         if (bearer && safeEq(bearer[1], API_TOKEN)) continue;
@@ -4121,6 +4841,13 @@ server.on("upgrade", (req, socket, head) => {
     if (hermesWs) {
       hdr += "host: 127.0.0.1:" + port + "\r\n";
       for (const [name, value] of Object.entries(hermesSet)) if (value !== null) hdr += name + ": " + value + "\r\n";
+    }
+    if (openbotWs) {
+      hdr += "host: 127.0.0.1:" + port + "\r\n";
+      for (const [name, value] of Object.entries(openbotSet)) if (value !== null) hdr += name + ": " + value + "\r\n";
+    }
+    if (nuphosWs) {
+      for (const [name, value] of Object.entries(NUPHOS_SET_HEADERS)) if (value !== null) hdr += name + ": " + value + "\r\n";
     }
     const nativeCookie = a0Ws ? a0UpstreamCookie() : null;
     if (nativeCookie) hdr += "cookie: " + nativeCookie + "\r\n";

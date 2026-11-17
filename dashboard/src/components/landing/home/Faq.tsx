@@ -21,7 +21,7 @@ export default function Faq({ items = HOMEPAGE_FAQ }: { items?: readonly { q: st
               <h3>{q}</h3>
               <Plus size={20} aria-hidden="true" />
             </summary>
-            <p>{glossify(a)}</p>
+            {a.split("\n\n").map(paragraph => <p key={paragraph}>{glossify(paragraph)}</p>)}
           </details>
         ))}
       </div>

@@ -32,6 +32,8 @@
  * alone for the next sweep so a slow-but-healthy provision is never killed.
  */
 
+import { randomUUID } from "node:crypto";
+
 import { reconcileBankrEnvAfterHivraBoot } from "@/lib/agent-wallets/hivra-lane";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { captureHivraAgentComputerReady } from "@/lib/hivra/agent-ready-telemetry";
@@ -61,6 +63,7 @@ import {
   failHivraAgentSnapshotRestore,
   persistHivraAgentProvisionIdentity,
   releaseHivraAgentOperation,
+  requestHivraAgentDelete,
 } from "@/lib/hivra/agent-operation-store";
 import {
   prepareHivraTailscaleForDelete,
@@ -90,6 +93,7 @@ import {
 import { deleteBoxTunnel } from "@/lib/services/cloudflare-tunnel";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
+import { markAgentAwake } from "./sleep-aware";
 import { PREPARED_OMARCHY_REFRESH_STAGE } from "./prepared-omarchy-refresh-contract";
 
 const LOG_SOURCE = "hivra/recover-stuck-provisioning";
@@ -126,6 +130,7 @@ const MAX_CANDIDATES_PER_RUN = 12;
  */
 export const STALE_DESKTOP_PREPARE_THRESHOLD_MS = 30 * 60 * 1000;
 const MAX_DESKTOP_PREPARE_CANDIDATES_PER_RUN = 4;
+const MAX_ORPHANED_DELETE_CANDIDATES_PER_RUN = 4;
 
 const HEALTHZ_TIMEOUT_MS = 8_000;
 // Reconciliation may wait up to 60s for the shared FD8 mutation lock and, for
@@ -833,6 +838,51 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
   if (row.operation_payload?.stage === PREPARED_OMARCHY_REFRESH_STAGE) {
     return { ...base, action: "skipped", reason: "prepared Omarchy refresh owns this reservation" };
   }
+  // A provider operation released after a delete request leaves the delete
+  // intent without any lease, and lifecycle claims all refuse deleted intent:
+  // the row would wait on nothing forever. The intent is still authoritative,
+  // so re-claim the delete lease here and let the stale-delete teardown below
+  // finish it. The fresh lease is already this reconciler's, so it must not
+  // pass through the stale-lease recovery CAS (which refuses leases younger
+  // than the staleness threshold).
+  let ownsFreshDeleteLease = false;
+  if (!row.operation_id || !row.operation_started_at) {
+    if (row.desired_state !== "deleted" || row.status === "deleted") {
+      return { ...base, action: "skipped", reason: "durable operation recovery evidence is missing" };
+    }
+    const reclaimOperationId = randomUUID();
+    const disposition = await requestHivraAgentDelete({
+      userId: row.user_id,
+      agentId: row.id,
+      operationId: reclaimOperationId,
+    });
+    if (disposition === "deleted") {
+      return { ...base, action: "cancelled_delete", reason: "orphaned delete intent was already terminal" };
+    }
+    if (disposition !== "claimed") {
+      return { ...base, action: "skipped", reason: `orphaned delete lease reclaim refused (${disposition})` };
+    }
+    if (!supabaseAdmin) {
+      return { ...base, action: "skipped", reason: "database unavailable for reclaimed delete verification" };
+    }
+    const { data: reclaimed } = await supabaseAdmin
+      .from("hivra_agents")
+      .select(STUCK_AGENT_COLUMNS)
+      .eq("id", row.id)
+      .eq("user_id", row.user_id)
+      .single();
+    if (
+      !reclaimed ||
+      reclaimed.operation_id !== reclaimOperationId ||
+      reclaimed.operation_kind !== "delete" ||
+      reclaimed.desired_state !== "deleted" ||
+      !reclaimed.operation_started_at
+    ) {
+      return { ...base, action: "skipped", reason: "reclaimed delete lease could not be verified" };
+    }
+    row = reclaimed as StuckAgentRow;
+    ownsFreshDeleteLease = true;
+  }
   if (!row.operation_id || !row.operation_started_at) {
     return { ...base, action: "skipped", reason: "durable operation recovery evidence is missing" };
   }
@@ -884,7 +934,7 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
     }
   }
 
-  const recoveryClaimed = await claimHivraAgentOperationRecovery({
+  const recoveryClaimed = ownsFreshDeleteLease || await claimHivraAgentOperationRecovery({
     userId: row.user_id,
     agentId: row.id,
     operationId: row.operation_id,
@@ -1325,6 +1375,12 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
         expectedDesiredState: "stopped",
         status: vmStatus,
       });
+      // A stop that converged here never reached the route's own reset: a computer that was
+      // napping or hibernated when it was switched off must not keep a sleep record, or
+      // Start would refuse it as asleep. Best effort; the sweep also clears these.
+      if (completed && vmStatus === "stopped") {
+        try { await markAgentAwake(row.id); } catch { /* the stop stands */ }
+      }
       return completed
         ? {
             ...base,
@@ -1723,8 +1779,10 @@ export async function runRecoverStuckHivraProvisioningSweep(
     // Desktop preparation has its own evidence rules and candidate cap below,
     // and an attached agent's steps end only through the attach worker's own
     // receipts; their long-lived leases must not be cleared by, or starve,
-    // this limited lifecycle sweep.
-    .not("operation_kind", "in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach)")
+    // this limited lifecycle sweep. A sleep or wake lease is the sleep sweep's
+    // to settle from the host's observed state: this sweep reads the start log,
+    // which a sleep never writes, and could end such a lease as an error.
+    .not("operation_kind", "in", "(desktop_prepare,agent_attach,agent_access_change,agent_detach,sleep,wake)")
     .lt("operation_started_at", cutoffIso)
     // Folder transfers have a dedicated encrypted-artifact resume path. Their
     // intentionally retained leases must not fill the oldest-12 snapshot/
@@ -1757,12 +1815,32 @@ export async function runRecoverStuckHivraProvisioningSweep(
     throw new Error(`stale desktop preparation candidate query failed: ${prepareError.message}`);
   }
   const prepareRows = (Array.isArray(prepareData) ? prepareData : []) as StuckAgentRow[];
-  summary.scanned = rows.length + prepareRows.length;
+  // A delete requested while another provider op held the lease survives that
+  // op's release as desired_state='deleted' with no operation at all. No
+  // staleness threshold applies — there is no lease timestamp to age — and the
+  // intent still has to be driven to completion, so each pass picks a bounded
+  // batch and lets the normal delete teardown run under a fresh lease.
+  let orphanQuery = supabaseAdmin
+    .from("hivra_agents")
+    .select(STUCK_AGENT_COLUMNS)
+    .is("operation_id", null)
+    .eq("desired_state", "deleted")
+    .neq("status", "deleted")
+    .order("created_at", { ascending: true })
+    .limit(MAX_ORPHANED_DELETE_CANDIDATES_PER_RUN);
+  if (options.agentId) orphanQuery = orphanQuery.eq("id", options.agentId);
+  const { data: orphanData, error: orphanError } = await orphanQuery;
+  if (orphanError) {
+    throw new Error(`orphaned delete candidate query failed: ${orphanError.message}`);
+  }
+  const orphanRows = (Array.isArray(orphanData) ? orphanData : []) as StuckAgentRow[];
+  summary.scanned = rows.length + prepareRows.length + orphanRows.length;
 
   // Sequential on purpose: each probe is an SSH session against a prod Proxmox
   // host; a stampede of parallel sessions is worse than a slightly longer cron.
   const candidates = [
     ...rows.map(row => ({ row, recover: recoverOne })),
+    ...orphanRows.map(row => ({ row, recover: recoverOne })),
     ...prepareRows.map(row => ({ row, recover: recoverStaleDesktopPreparation })),
   ];
   for (const { row, recover } of candidates) {

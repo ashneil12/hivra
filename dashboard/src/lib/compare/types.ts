@@ -84,6 +84,8 @@ export type CompareSources = {
   /** Defaults to "Where these numbers come from". */
   heading?: string;
   intro: InlineMarkup;
+  /** The day the figures were collected (YYYY-MM-DD), for the <time> element. Defaults to COMPETITOR_FACTS_CHECKED. */
+  checked?: string;
   /** Facts from the vendor's pages that the copy above does not already state. */
   notes?: InlineMarkup[];
   links: Array<{ label: string; href: string }>;

@@ -11,13 +11,13 @@
 // permissions, tools and CLI version) is still detected by the page.
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
+import { IMPORTABLE_TYPES } from "@/lib/hivra/agent-import";
 import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
 import { getComputerTemplate } from "@/lib/hivra/computer-catalog";
 import {
   COMPUTER_PLACEMENT_LABEL,
   computerPlacementFor,
 } from "@/lib/agent-computers/agent-surfaces";
-import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 import {
   errorKeepsComputer,
   folderRecoveryEligible,
@@ -310,18 +310,19 @@ function softwareUpdatesHere(row: ManageCapabilitiesRow, variant: ManageVariant,
 
 function agentCliFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["agentCli"] {
   if (!softwareUpdatesHere(row, variant, "chat-agent")) return null;
-  if (row.type === "claude-code") return { name: "claude-code", vetted: AGENT_CLI_VERSIONS["claude-code"] };
-  if (row.type === "codex") return { name: "codex", vetted: AGENT_CLI_VERSIONS.codex };
+  // Hivra pins no CLI version: the owner updates to the vendor's newest release.
+  if (row.type === "claude-code") return { name: "claude-code", vetted: null };
+  if (row.type === "codex") return { name: "codex", vetted: null };
   return null;
 }
 
 function agentAppFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["agentApp"] {
   if (!softwareUpdatesHere(row, variant, "dashboard-agent")) return null;
-  if (row.type === "aeon" || row.type === "openclaw" || row.type === "agent-zero") {
-    return { name: row.type, vetted: AGENT_APP_VERSIONS[row.type].label };
+  // Hivra pins no app version: every update goes to upstream's newest release.
+  if (row.type === "aeon" || row.type === "openclaw" || row.type === "agent-zero"
+    || row.type === "hermes" || row.type === "openbot" || row.type === "nuphos") {
+    return { name: row.type, vetted: null };
   }
-  // Official Hermes, updated by its own `hermes update`: nothing Hivra vetted.
-  if (row.type === "hermes") return { name: "hermes", vetted: null };
   return null;
 }
 
@@ -450,6 +451,13 @@ export function manageCapabilitiesFor(row: ManageCapabilitiesRow, ctx: ManageCap
     contract: kind === "agent",
     export: kind === "agent" && variant !== "digitalocean"
       ? row.status === "running" ? available : blocked("not_running", "Start this agent to export its data.")
+      : null,
+    // Moving the owner's existing agent onto the box needs a running box and a
+    // kind whose runtime knows what to restore (claude/codex/openclaw dotdirs,
+    // Agent Zero's /a0/usr). The box itself reports "unsupported" on older
+    // runtimes, which the panel passes through.
+    agentImport: kind === "agent" && variant !== "digitalocean" && IMPORTABLE_TYPES.has(String(row.type))
+      ? row.status === "running" ? available : blocked("not_running", "Start this agent to move data onto it.")
       : null,
     // Deleting is always possible, including while a computer is being set up.
     destroy: { cap: available, extraWarning: row.computer_substrate === "provider-vm" ? "provider-resources" : null },

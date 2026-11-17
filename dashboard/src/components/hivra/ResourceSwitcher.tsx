@@ -60,7 +60,7 @@ export function statusTone(status: string): "ok" | "busy" | "off" | "error" {
   const value = status.trim().toLowerCase();
   if (value === "running") return "ok";
   if (value === "error" || value === "failed") return "error";
-  if (value === "stopped" || value === "suspended" || value === "paused") return "off";
+  if (value === "stopped" || value === "suspended" || value === "paused" || value === "asleep") return "off";
   return "busy";
 }
 

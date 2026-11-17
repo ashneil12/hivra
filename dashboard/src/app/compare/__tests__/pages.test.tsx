@@ -7,6 +7,10 @@ import ComparePage, { metadata as compareMetadata } from "../page";
 import ComparisonPage, { generateMetadata, generateStaticParams } from "../[slug]/page";
 import { COMPARE_DIRECTORY } from "@/lib/compare/directory";
 import { COMPETITOR_FACTS, COMPETITOR_FACTS_CHECKED, formatCheckedMonth } from "@/lib/compare/competitor-facts";
+import { PRODUCT_COMPARISON_SLUGS } from "@/lib/compare/product-comparisons";
+import { PRODUCT_FACTS_CHECKED } from "@/lib/compare/products/checked";
+import { AGENT_SEO_SLUGS } from "@/lib/hivra/agent-seo-catalog";
+import { DOCS } from "@/lib/docs/registry";
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
 import { STAYS_ON } from "@/lib/compare/shared-copy";
 
@@ -46,12 +50,17 @@ const END = ["Common questions", "Ready to give your agent a computer?", "Relate
 const STAMP = `Prices as of ${formatCheckedMonth()}.`;
 const ENTRY = "$9.99 a month for 2 vCPU and 4 GB of RAM";
 
+// The six agent product and sandbox pages share one section order.
+const PRODUCT_HEADINGS = [...STANDARD, "At a glance", "Who should pick which", "How to try both", "What survives, and for how long", TAIL[1], SOURCES, ...END];
+// The slugs of the six pages added in November 2026; every one gets the extra checks below.
+const PRODUCT_SLUGS = ["vs-claude-code-on-the-web", "vs-openai-codex-cloud", "vs-cursor-cloud-agents", "vs-github-codespaces", "vs-fly-sprites", "vs-e2b", "vs-lobsterland", "vs-construct-computer", "vs-orgo", "vs-machine0", "vs-kiloclaw", "vs-simular-box", "vs-cubicles"];
+
 const PAGES: Record<string, { title: string; h1: string; description: string; headings: string[] }> = {
   "ai-agent-hosting-alternatives": {
     title: "AI agent hosting in 2026: choose the kind of computer first | Hivra",
     h1: "AI agent hosting in 2026: choose the kind of computer first",
-    description: `Fly Sprites, E2B, Railway, DigitalOcean, Cloudways, Orgo, a VPS or Hivra: which kind of computer suits an AI agent. ${STAMP}`,
-    headings: [...STANDARD, "Other categories worth comparing", ...TAIL, SOURCES, ...END],
+    description: `Fly Sprites, E2B, Railway, Orgo, Cloudways, a VPS or Hivra: which kind of computer suits an AI agent, with prices. ${STAMP}`,
+    headings: [...STANDARD, "At a glance", "Who should pick which", "How to try both", "What survives, and for how long", TAIL[1], SOURCES, ...END],
   },
   "openclaw-to-hermes": {
     title: "Moving from OpenClaw to Hermes on Hivra | Hivra",
@@ -60,9 +69,12 @@ const PAGES: Record<string, { title: string; h1: string; description: string; he
       "Hivra can host OpenClaw or Hermes on a paid computer. Hermes has its own command to move an OpenClaw setup. What carries over and what you rebuild.",
     headings: [
       ...STANDARD,
+      "At a glance",
+      "Who should pick which",
       "A migration that does not lose your working setup",
       "What will not transfer automatically",
-      ...TAIL,
+      "What survives, and for how long",
+      TAIL[1],
       "Where these facts come from",
       ...END,
     ],
@@ -70,50 +82,89 @@ const PAGES: Record<string, { title: string; h1: string; description: string; he
   "vs-agent-37": {
     title: "Agent 37 vs Hivra: a meter or a monthly computer? | Hivra",
     h1: "Agent 37 vs Hivra: a meter or a monthly computer?",
-    description: `Hivra is ${ENTRY}. Agent 37 meters the same size at $4.76 a month, always on. Where each wins. ${STAMP}`,
-    headings: [...STANDARD, ...DECISION, ...TAIL, SOURCES, ...END],
+    description: `Hivra is ${ENTRY}. Agent 37 lists $4.76 a month, always on. Where each wins. ${STAMP}`,
+    headings: [...STANDARD, "At a glance", "Who should pick which", "How to try both", "What survives, and for how long", TAIL[1], SOURCES, ...END],
   },
   "vs-hostinger": {
     title: "Hostinger vs Hivra: prepaid savings or managed agent computers | Hivra",
     h1: "Hostinger vs Hivra: prepaid savings or managed agent computers",
     description: `Hostinger's prepaid 24-month sale price against Hivra at ${ENTRY}, and when its VPS wins. ${STAMP}`,
-    headings: [...STANDARD, ...DECISION, ...TAIL, SOURCES, ...END],
+    headings: [...STANDARD, "At a glance", "Who should pick which", "How to try both", "What survives, and for how long", TAIL[1], SOURCES, ...END],
   },
   "vs-nous-hermes-cloud": {
     title: "Nous Hermes Cloud vs Hivra: official cloud or multi-agent home | Hivra",
     h1: "Nous Hermes Cloud vs Hivra: the official cloud or a multi-agent home",
-    description: `Nous Hermes Cloud meters Hermes by the second; Hivra is ${ENTRY}. Not affiliated with Nous. ${STAMP}`,
-    headings: [...STANDARD, ...DECISION, ...TAIL, SOURCES, ...END],
+    description: `Nous Hermes Cloud bills by usage or plan; Hivra is ${ENTRY}. Not affiliated with Nous. ${STAMP}`,
+    headings: [...STANDARD, "At a glance", "Who should pick which", "How to try both", "What survives, and for how long", TAIL[1], SOURCES, ...END],
   },
   "vs-railway": {
     title: "Railway vs Hivra: a platform for apps or a home for an agent | Hivra",
     h1: "Railway vs Hivra: a platform for apps or a home for an agent",
     description: `Railway deploys apps; Hivra hosts a persistent agent from ${ENTRY}. How the two differ. ${STAMP}`,
-    headings: [...STANDARD, ...DECISION, ...TAIL, SOURCES, ...END],
+    headings: [...STANDARD, "At a glance", "Who should pick which", "How to try both", "What survives, and for how long", TAIL[1], SOURCES, ...END],
   },
   "vs-render": {
     title: "Running Hermes on Render or on Hivra | Hivra",
     h1: "Running Hermes on Render or on Hivra",
-    description: `Render's $25 Standard Hermes template: its README warns of no default login. Hivra is ${ENTRY}. ${STAMP}`,
-    headings: [...STANDARD, ...DECISION, ...TAIL, SOURCES, ...END],
+    description: `Render's Hermes template runs on a $25 web service plus a disk; Hivra is ${ENTRY}. ${STAMP}`,
+    headings: [...STANDARD, "At a glance", "Who should pick which", "How to try both", "What survives, and for how long", TAIL[1], SOURCES, ...END],
   },
   "vs-self-hosted": {
     title: "Self-hosting Hermes or using Hivra: control has a cost | Hivra",
     h1: "Self-hosting Hermes or using Hivra: control has a cost",
-    description: `Hetzner costs less each month; Hivra is ${ENTRY} and handles upkeep. When self-hosting wins. ${STAMP}`,
-    headings: [...STANDARD, ...DECISION, ...TAIL, SOURCES, ...END],
+    description: `Hetzner can cost less if in stock; Hivra is ${ENTRY} and does upkeep. Where self-hosting wins. ${STAMP}`,
+    headings: [...STANDARD, "At a glance", "Who should pick which", "How to try both", "What survives, and for how long", TAIL[1], SOURCES, ...END],
+  },
+  "vs-claude-code-on-the-web": {
+    title: "Claude Code on the web vs Hivra: a session or a computer? | Hivra",
+    h1: "Claude Code on the web vs Hivra: a session or a computer?",
+    description: `Hivra is ${ENTRY}; Claude Code on the web comes with a Claude subscription. When each fits. ${STAMP}`,
+    headings: PRODUCT_HEADINGS,
+  },
+  "vs-openai-codex-cloud": {
+    title: "OpenAI Codex cloud vs Hivra: tasks or a computer | Hivra",
+    h1: "OpenAI Codex cloud vs Hivra: tasks in a sandbox or a computer that stays on",
+    description: `Codex cloud runs tasks in OpenAI sandboxes; Hivra runs Codex CLI on its own computer, ${ENTRY}. ${STAMP}`,
+    headings: PRODUCT_HEADINGS,
+  },
+  "vs-cursor-cloud-agents": {
+    title: "Cursor cloud agents vs Hivra: a Cursor run or a computer | Hivra",
+    h1: "Cursor cloud agents vs Hivra: a Cursor run in the cloud or a computer of its own",
+    description: `Cursor cloud agents need a plan from $30 a month; Hivra is ${ENTRY}, AI separate on both. ${STAMP}`,
+    headings: PRODUCT_HEADINGS,
+  },
+  "vs-github-codespaces": {
+    title: "GitHub Codespaces vs Hivra: a workspace or a computer? | Hivra",
+    h1: "GitHub Codespaces vs Hivra: a workspace or a computer?",
+    description: `Codespaces stops when idle; Hivra is ${ENTRY} and stays on. When each fits. ${STAMP}`,
+    headings: PRODUCT_HEADINGS,
+  },
+  "vs-fly-sprites": {
+    title: "Fly.io Sprites vs Hivra: sandboxes you program or a computer | Hivra",
+    h1: "Fly.io Sprites vs Hivra: programmable sandboxes or a ready agent computer",
+    description: `Sprites bills compute by the hour of use; Hivra is ${ENTRY}. Where each fits an agent. ${STAMP}`,
+    headings: PRODUCT_HEADINGS,
+  },
+  "vs-e2b": {
+    title: "E2B sandboxes vs Hivra: a sandbox API or a computer to open | Hivra",
+    h1: "E2B sandboxes vs Hivra: an API for sandboxes or a computer to open",
+    description: `E2B is a sandbox API from $150 a month plus usage; Hivra is ${ENTRY}. Where each fits. ${STAMP}`,
+    headings: PRODUCT_HEADINGS,
   },
   "vs-xcloud": {
-    title: "xCloud vs Hivra: look beyond the promotional hardware | Hivra",
-    h1: "xCloud vs Hivra: look beyond the promotional hardware",
-    description: `xCloud's $9.99 promotion is 4 vCPU and 6 GB of RAM; Hivra is ${ENTRY}. Renewal and beta terms. ${STAMP}`,
-    headings: [...STANDARD, ...DECISION, ...TAIL, SOURCES, ...END],
+    title: "xCloud vs Hivra: a managed server or a computer you open | Hivra",
+    h1: "xCloud vs Hivra: a managed server or a computer you open",
+    description: `xCloud lists 4 vCPU and 6 GB at $24.99 a month; Hivra is ${ENTRY}. Where each wins. ${STAMP}`,
+    headings: [...STANDARD, "At a glance", "Who should pick which", "How to try both", "What survives, and for how long", TAIL[1], SOURCES, ...END],
   },
 };
 
 const DIRECTORY_HEADINGS = [
   ...STANDARD,
-  "Compare the providers",
+  "Hosts for the same agents",
+  "Agent products from the model makers",
+  "Sandboxes and developer environments",
+  "Do it yourself, or change agent",
   "What does each host cost?",
   "Things a comparison chart cannot tell you",
   "Common questions",
@@ -123,7 +174,14 @@ const DIRECTORY_HEADINGS = [
 const SLUGS = generateStaticParams().map(({ slug }) => slug);
 const BLOG_SLUGS = new Set(BLOG_ARTICLES_LIST.map((article) => article.slug));
 const FEATURE_SLUGS = new Set(["openclaw-alternative", "persistent-memory"]);
+const AGENT_SLUGS = new Set<string>(AGENT_SEO_SLUGS);
+const DOC_SLUGS = new Set(Object.keys(DOCS));
 const SITE_ROUTES = new Set(["/pricing", "/agents", "/features", "/compare", "/terms", "/tools/ai-agent-hosting-cost-calculator"]);
+
+/** The month a page's vendor figures were collected: the product pages have their own check day. */
+function checkedFor(slug: string): string {
+  return PRODUCT_SLUGS.includes(slug) ? PRODUCT_FACTS_CHECKED : COMPETITOR_FACTS_CHECKED;
+}
 
 async function renderComparison(slug: string) {
   return render(await ComparisonPage({ params: Promise.resolve({ slug }) }));
@@ -143,8 +201,10 @@ function faqSchema(container: HTMLElement): { name: string; text: string }[] {
 describe("comparison pages follow the supplied copy", () => {
   afterEach(cleanup);
 
-  it("covers exactly the nine detail pages the copy supplies", () => {
-    expect([...SLUGS].sort()).toEqual(Object.keys(PAGES).sort());
+  it("covers exactly the twenty-two detail pages: nine host and general pages and thirteen agent product and sandbox pages", () => {
+    expect([...SLUGS].sort()).toEqual([...new Set([...Object.keys(PAGES), ...PRODUCT_SLUGS])].sort());
+    expect(SLUGS).toHaveLength(22);
+    expect([...PRODUCT_COMPARISON_SLUGS].sort()).toEqual([...PRODUCT_SLUGS].sort());
   });
 
   it.each(Object.entries(PAGES))("/compare/%s has the copy's title, h1 and section order", async (slug, expected) => {
@@ -168,26 +228,42 @@ describe("comparison pages follow the supplied copy", () => {
     expect(compareMetadata.title).toEqual({ absolute: COMPARE_DIRECTORY.browserTitle });
     expect(compareMetadata.description).toBe(COMPARE_DIRECTORY.metaDescription);
     expect(compareMetadata.description).toBe(
-      `Hivra compared with Agent 37, Hostinger, xCloud, Nous Hermes Cloud, self-hosting, Railway and Render, with a dated price table. ${STAMP}`,
+      `Hivra compared with agent hosts, Claude Code, Codex, Cursor, Codespaces, Sprites, E2B and a VPS, with a dated price table. ${STAMP}`,
     );
     expect(container.querySelector("h1")?.textContent).toBe("Hivra compared with the alternatives");
     expect(h2s(container)).toEqual(DIRECTORY_HEADINGS);
   });
 
-  it("lists the nine comparison pages on /compare, in the copy's order, each name a real link", () => {
+  it("lists all twenty-two comparison pages on /compare, in four groups, each name a real link", () => {
     const { container } = render(<ComparePage />);
     const links = [...container.querySelectorAll("ol li > p > a")].map((a) => [a.textContent, a.getAttribute("href")]);
     expect(links).toEqual([
       ["Agent 37", "/compare/vs-agent-37"],
+      ["Lobsterland", "/compare/vs-lobsterland"],
+      ["KiloClaw", "/compare/vs-kiloclaw"],
+      ["Construct Computer", "/compare/vs-construct-computer"],
       ["Hostinger", "/compare/vs-hostinger"],
       ["xCloud", "/compare/vs-xcloud"],
       ["Nous Hermes Cloud", "/compare/vs-nous-hermes-cloud"],
-      ["Self-hosted VPS", "/compare/vs-self-hosted"],
       ["Railway", "/compare/vs-railway"],
       ["Render", "/compare/vs-render"],
+      ["Claude Code on the web", "/compare/vs-claude-code-on-the-web"],
+      ["OpenAI Codex cloud", "/compare/vs-openai-codex-cloud"],
+      ["Cursor cloud agents", "/compare/vs-cursor-cloud-agents"],
+      ["E2B sandboxes", "/compare/vs-e2b"],
+      ["Orgo", "/compare/vs-orgo"],
+      ["machine0", "/compare/vs-machine0"],
+      ["Simular box", "/compare/vs-simular-box"],
+      ["Cubicles", "/compare/vs-cubicles"],
+      ["Fly.io Sprites", "/compare/vs-fly-sprites"],
+      ["GitHub Codespaces", "/compare/vs-github-codespaces"],
+      ["Self-hosted VPS", "/compare/vs-self-hosted"],
       ["OpenClaw to Hermes", "/compare/openclaw-to-hermes"],
       ["Broader hosting choices", "/compare/ai-agent-hosting-alternatives"],
     ]);
+    // Every page in the registry is listed exactly once.
+    const listed = [...container.querySelectorAll("ol li > p > a")].map((a) => (a.getAttribute("href") ?? "").replace("/compare/", ""));
+    expect([...listed].sort()).toEqual([...SLUGS].sort());
   });
 
   it("keeps the dated price table on /compare as a real table with a source link per row", () => {
@@ -227,7 +303,8 @@ describe("comparison pages follow the supplied copy", () => {
   it.each(SLUGS)("/compare/%s: FAQPage JSON-LD mirrors the visible questions and answers exactly", async (slug) => {
     const { container } = await renderComparison(slug);
     const schema = faqSchema(container);
-    expect(schema).toHaveLength(2);
+    expect(schema.length).toBeGreaterThanOrEqual(2);
+    expect(schema.length).toBeLessThanOrEqual(12);
     const visible = [...container.querySelectorAll("details")].map((details) => ({
       name: details.querySelector("summary")?.childNodes[0]?.textContent ?? "",
       text: details.querySelector("p")?.textContent ?? "",
@@ -242,7 +319,18 @@ describe("comparison pages follow the supplied copy", () => {
       text: details.querySelector("p")?.textContent ?? "",
     }));
     expect(faqSchema(container)).toEqual(visible);
-    expect(visible.map((item) => item.name)).toEqual(["What does Hivra charge?", "Is self-hosting a legitimate alternative?"]);
+    expect(visible.map((item) => item.name)).toEqual([
+      "What does Hivra charge?",
+      "Is self-hosting a legitimate alternative?",
+      "Which comparison should I read first?",
+      "Is Hivra affiliated with the products it is compared with?",
+      "How current are the prices on these pages?",
+      "Is Hivra the cheapest option?",
+      "Can I use Hivra together with one of these?",
+    ]);
+    expect(visible.length).toBeGreaterThan(2);
+    // Plain text: the answer in the page and in the JSON-LD is one string with no markup.
+    for (const item of visible) expect(item.text).not.toMatch(/\*\*|`|\]\(/);
   });
 
   it.each(SLUGS)("/compare/%s: breadcrumb is Home / Compare and every link goes to a real page", async (slug) => {
@@ -258,6 +346,8 @@ describe("comparison pages follow the supplied copy", () => {
         SITE_ROUTES.has(href) ||
         (href.startsWith("/compare/") && SLUGS.includes(href.slice("/compare/".length))) ||
         (href.startsWith("/blog/") && BLOG_SLUGS.has(href.slice("/blog/".length))) ||
+        (href.startsWith("/agents/") && AGENT_SLUGS.has(href.slice("/agents/".length))) ||
+        (href.startsWith("/docs/") && DOC_SLUGS.has(href.slice("/docs/".length))) ||
         (href.startsWith("/features/") && FEATURE_SLUGS.has(href.slice("/features/".length)));
       if (!known) unknown.push(href);
     }
@@ -286,11 +376,11 @@ describe("comparison pages follow the supplied copy", () => {
   });
 
   it("dates the freshness stamp with a machine readable time element", async () => {
-    for (const slug of Object.keys(COMPETITOR_FACTS)) {
+    for (const slug of [...Object.keys(COMPETITOR_FACTS), ...PRODUCT_SLUGS]) {
       const { container } = await renderComparison(slug);
       const time = container.querySelector("#fact-sources time");
-      expect(time?.getAttribute("datetime")).toBe(COMPETITOR_FACTS_CHECKED);
-      expect(time?.textContent).toBe(formatCheckedMonth());
+      expect(time?.getAttribute("datetime")).toBe(checkedFor(slug));
+      expect(time?.textContent).toBe(formatCheckedMonth(checkedFor(slug)));
       cleanup();
     }
   });
@@ -299,7 +389,7 @@ describe("comparison pages follow the supplied copy", () => {
     for (const slug of SLUGS) {
       const { container } = await renderComparison(slug);
       const note = [...container.querySelectorAll("section")].find((s) => s.querySelector("h2")?.textContent === "Things a comparison chart cannot tell you");
-      expect(note?.textContent).toContain(`in ${formatCheckedMonth()}.`);
+      expect(note?.textContent).toContain(`in ${formatCheckedMonth(checkedFor(slug))}.`);
       expect(note?.textContent).toContain("before you buy");
       cleanup();
     }
@@ -335,8 +425,9 @@ describe("comparison pages follow the supplied copy", () => {
   it("shows Hostinger's re-read sale prices and Nous's last published price in the /compare price table", () => {
     const { container } = render(<ComparePage />);
     const table = (container.querySelector('table[aria-label="Price table"]') as HTMLElement).textContent ?? "";
-    expect(table).toContain("$4.99/mo, size not published");
-    expect(table).toContain("$119.76, our arithmetic");
+    expect(table).toContain("$4.99/mo for 1 vCPU, 4 GB RAM and 25 GB NVMe (APP 1)");
+    expect(table).toContain("Renews at $9.99/mo");
+    expect(table).toContain("$119.76, as Hostinger's page shows");
     expect(table).toContain("$8.79/mo for 2 vCPU and 8 GB RAM");
     expect(table).toContain("Last published: $0.56/day running for 4 vCPU and 2 GB RAM");
     expect(table).toContain("only after you sign in to its Portal");
@@ -353,7 +444,7 @@ describe("comparison pages follow the supplied copy", () => {
   it("names the vendor pages the Railway and self-hosting figures come from, each a real https link", async () => {
     const expected: Record<string, RegExp[]> = {
       "vs-railway": [/^https:\/\/railway\.com\/pricing$/, /^https:\/\/docs\.railway\.com\//],
-      "vs-self-hosted": [/^https:\/\/docs\.hetzner\.com\//, /^https:\/\/www\.hetzner\.com\//],
+      "vs-self-hosted": [/^https:\/\/www\.hetzner\.com\//, /^https:\/\/www\.digitalocean\.com\//],
     };
     for (const [slug, patterns] of Object.entries(expected)) {
       const { container } = await renderComparison(slug);
@@ -372,13 +463,14 @@ describe("comparison pages follow the supplied copy", () => {
     const first = container.querySelector("ol li > p") as HTMLElement;
     expect(first.textContent).toMatch(/^Agent 37: metered raw compute, a free tier/);
     // The row's arrow is the straight one: every target is a page on this site.
-    expect(container.querySelectorAll("ol li > svg").length).toBe(9);
+    expect(container.querySelectorAll("ol li > svg").length).toBe(22);
   });
 
   it("opens the table of contents on every section a reader can jump to", async () => {
     const { container } = await renderComparison("vs-agent-37");
     const nav = within(container.querySelector('nav[aria-label="Article contents"]') as HTMLElement);
-    for (const heading of [...STANDARD, ...DECISION, ...TAIL, SOURCES, "Common questions"]) {
+    // The rewritten page's own section list, up to and including its questions.
+    for (const heading of PAGES["vs-agent-37"].headings.slice(0, PAGES["vs-agent-37"].headings.indexOf("Common questions") + 1)) {
       const link = nav.getByText(heading);
       const target = container.querySelector(link.getAttribute("href") as string);
       expect(target).not.toBeNull();

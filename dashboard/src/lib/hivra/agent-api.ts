@@ -6,6 +6,7 @@
 
 import type { ProviderRuntimeUpdateStage } from "./provider-runtime-update-contract";
 import type { AgentId } from "./agent-catalog";
+import type { InboxPrompt } from "@/lib/agent-inbox/types";
 import type { ComputerTemplateId } from "./computer-catalog";
 import { readHttpsAuthorizationUrl } from "@/lib/safe-http-url";
 import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
@@ -31,6 +32,7 @@ import {
 import { z } from "zod";
 import { readJson } from "@/lib/client/read-json";
 
+export type AgentSleepPolicy = "off" | "t1" | "t3" | "full";
 export type AgentStatus = "provisioning" | "running" | "stopped" | "error" | "deleted";
 
 export interface HivraAgent {
@@ -70,6 +72,8 @@ export interface HivraAgent {
   provisioned_at?: string | null;
   /** Bearer token for the box's introspection endpoints (sessions/files/skills). */
   api_token?: string | null;
+  /** The newest approval or question this agent is waiting on (Needs you). */
+  inbox_prompt?: InboxPrompt | null;
   /** Onboarding + identity (the bootstrap system). All optional. */
   goal?: string | null;
   context?: string | null;
@@ -93,6 +97,16 @@ export interface HivraAgent {
   /** The agents list's stored summary of this agent's software (Claude Code /
    *  Codex version against Hivra's tested one). Absent where not covered. */
   agent_software?: AgentSoftwareSummary | null;
+  /** Sleep: awake, draining, napping, hibernating, hibernated, waking or
+   *  wake_failed. `status` stays `running` while the agent sleeps. Absent from
+   *  an older server, which reads as awake. */
+  sleep_state?: string | null;
+  /** Bumped on every sleep or wake change (a bigint, so a number or a string). */
+  sleep_generation?: number | string | null;
+  /** "Sleep when idle": `full` lets it nap, `off` keeps it awake. */
+  sleep_policy?: AgentSleepPolicy | null;
+  /** "Keep awake": this agent never sleeps. */
+  always_on?: boolean | null;
 }
 
 export interface HivraAgentSnapshot {
@@ -627,6 +641,99 @@ export const restoreAgentSnapshot = async (id: string, snapshotId: string): Prom
   await agentAction(id, "restore", { snapshotId });
 };
 
+/** How a wake request ended: up, still waking (ask again), or not possible. */
+export type WakeAgentResult =
+  | { state: "awake"; wakeMs: number | null }
+  | { state: "waking" }
+  | { state: "failed"; message: string };
+
+/**
+ * Wake a sleeping agent. The server waits up to 45 seconds: 200 means it is up,
+ * 202 means still waking. A network failure or any other answer is "failed",
+ * never a throw, so the page can show a plain message and a button to try again.
+ */
+export async function wakeAgent(id: string, signal?: AbortSignal): Promise<WakeAgentResult> {
+  try {
+    const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/wake`, {
+      method: "POST", cache: "no-store", signal,
+    });
+    const j = await readJson(r);
+    const data = j?.success === true && j.data && typeof j.data === "object" ? j.data as Record<string, unknown> : null;
+    if (r.ok && data) {
+      if (r.status === 202 || data.state === "waking") return { state: "waking" };
+      const wakeMs = Number(data.wakeMs);
+      return { state: "awake", wakeMs: Number.isFinite(wakeMs) && wakeMs >= 0 ? wakeMs : null };
+    }
+    return { state: "failed", message: typeof j?.error === "string" && j.error ? j.error : "Your agent could not be woken up. Try again in a moment." };
+  } catch {
+    return { state: "failed", message: "Could not reach Hivra to wake your agent. Check your connection and try again." };
+  }
+}
+
+/** The manual test sleep. Throws an Error with a plain message when it cannot. */
+export async function sleepAgentNow(id: string, tier: "nap" | "hibernate"): Promise<{ outcome: string; reason: string | null }> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/sleep`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tier }),
+  });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) throw new Error(typeof j?.error === "string" && j.error ? j.error : "Could not put your agent to sleep.");
+  const data = j.data && typeof j.data === "object" ? j.data as Record<string, unknown> : {};
+  return { outcome: typeof data.outcome === "string" ? data.outcome : "unknown", reason: typeof data.reason === "string" ? data.reason : null };
+}
+
+/** Save "Sleep when idle" (sleep_policy) and/or "Keep awake" (always_on). */
+export async function saveAgentSleepSettings(
+  id: string,
+  patch: { sleep_policy?: "off" | "full"; always_on?: boolean },
+): Promise<{ sleep_policy: AgentSleepPolicy | null; always_on: boolean }> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/sleep-settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) throw new Error(typeof j?.error === "string" && j.error ? j.error : "Could not save this setting.");
+  const data = j.data && typeof j.data === "object" ? j.data as Record<string, unknown> : {};
+  return {
+    sleep_policy: ["off", "t1", "t3", "full"].includes(String(data.sleep_policy)) ? data.sleep_policy as AgentSleepPolicy : null,
+    always_on: data.always_on === true,
+  };
+}
+
+export interface TelegramWakeSetting {
+  /** The switch applies to this agent. */
+  available: boolean;
+  enabled: boolean;
+  /** A message would wake the agent right now. */
+  armed: boolean;
+}
+
+function telegramWakeSetting(data: unknown): TelegramWakeSetting {
+  const d = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  return { available: d.available === true, enabled: d.enabled === true, armed: d.armed === true };
+}
+
+/** Whether "Wake on Telegram messages" applies to this agent, and whether it is on. */
+export async function getTelegramWakeSetting(id: string): Promise<TelegramWakeSetting> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/telegram-wake`, { cache: "no-store" });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) return { available: false, enabled: false, armed: false };
+  return telegramWakeSetting(j.data);
+}
+
+export async function saveTelegramWakeSetting(id: string, enabled: boolean): Promise<TelegramWakeSetting> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/telegram-wake`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) throw new Error(typeof j?.error === "string" && j.error ? j.error : "Could not save this setting.");
+  return telegramWakeSetting(j.data);
+}
+
 const ProviderResizeViewResponseSchema = z.object({
   operation: ProviderResizeOperationViewSchema.nullable(),
   catalog: ProviderResizeCatalogSchema.nullable(),
@@ -968,6 +1075,46 @@ export async function writeBoxFile(boxUrl: string, file: string, content: string
     return { ok: true, error: null };
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
+// ---- Moving an existing agent onto this box --------------------------------
+// The Manage "Move an agent from your device" flow: mint a single-use transfer
+// token for the prompt the owner pastes into their local agent, track the
+// restore, or push a bundle the owner already has. Everything goes
+// browser-to-box direct — the bundle never passes through Vercel.
+export interface BoxImportStatus {
+  supported: boolean;
+  state: "idle" | "unpacking" | "restoring" | "restarting" | "done" | "error";
+  detail?: string;
+  restored?: string[];
+  skipped?: string[];
+  files?: number;
+  error?: string | null;
+  finishedAt?: number;
+}
+export async function boxImportToken(boxUrl: string, token?: string | null): Promise<{ token: string; expiresAt: string }> {
+  const r = await fetch(`${boxBase(boxUrl)}/api/import/token`, { method: "POST", headers: boxHeaders(token) });
+  const j = (await r.json().catch(() => ({}))) as { token?: string; expiresAt?: string; error?: string };
+  if (!r.ok || !j.token || !j.expiresAt) throw new Error(j.error || `HTTP ${r.status}`);
+  return { token: j.token, expiresAt: j.expiresAt };
+}
+export async function boxImportStatus(boxUrl: string, token?: string | null): Promise<BoxImportStatus | null> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/import/status`, { cache: "no-store", headers: boxHeaders(token) });
+    if (!r.ok) return null;
+    return (await r.json()) as BoxImportStatus;
+  } catch { return null; }
+}
+export async function boxImportPush(boxUrl: string, data: Blob, token?: string | null): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream", ...boxHeaders(token) },
+      body: data,
+    });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
 export async function listBoxSkills(boxUrl: string, token?: string | null): Promise<BoxSkill[]> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/skills`, { cache: "no-store", headers: boxHeaders(token) });
@@ -1214,6 +1361,27 @@ export async function setBoxModel(boxUrl: string, model: string | null, token?: 
     const j = (await r.json().catch(() => ({}))) as { ok?: boolean; model?: string | null; error?: string };
     if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
     return { ok: true, model: j.model ?? null, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+
+// ---- Hermes restore points (Manage → Restore points) ---------------------------
+// Hermes's own checkpoints.enabled. An older connection service answers 404, so
+// `supported` is false and Manage asks for the update instead.
+export async function getBoxRestorePoints(boxUrl: string, token?: string | null): Promise<{ enabled: boolean; supported: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/restore-points`, { cache: "no-store", headers: boxHeaders(token) });
+    const j = (await r.json().catch(() => ({}))) as { enabled?: boolean; hermesConfig?: boolean; error?: string };
+    if (r.status === 404) return { enabled: false, supported: false, error: null };
+    if (!r.ok) return { enabled: false, supported: false, error: j.error || `HTTP ${r.status}` };
+    return { enabled: j.enabled === true, supported: j.hermesConfig === true, error: null };
+  } catch (e) { return { enabled: false, supported: false, error: (e as Error).message }; }
+}
+export async function setBoxRestorePoints(boxUrl: string, enabled: boolean, token?: string | null): Promise<{ ok: boolean; enabled?: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/restore-points`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ enabled }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; enabled?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, enabled: j.enabled === true, error: null };
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 

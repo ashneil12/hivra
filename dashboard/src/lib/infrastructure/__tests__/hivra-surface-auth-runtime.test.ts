@@ -57,7 +57,7 @@ describe("Hivra guest surface authentication runtime", () => {
   // ~/.hivra), so sign-ins live in each evaluation only: the fallback a real
   // gateway uses when its store cannot be saved. Restarts with a saved store
   // run real processes in hivra-surface-session-store.test.ts.
-  async function evaluateGuest(): Promise<http.Server> {
+  async function evaluateGuest(env: Record<string, string> = {}): Promise<http.Server> {
     const serverPath = path.join(process.cwd(), "provisioner/hivra-chat/server.js");
     const source = readFileSync(serverPath, "utf8");
     const fixtureFs = {
@@ -89,7 +89,8 @@ describe("Hivra guest surface authentication runtime", () => {
           case "./guarded-files.cjs":
           case "./agent-zero-editor.cjs":
           // Loaded for chat runtimes; it touches the disk only when a run starts.
-          case "./chat-runs.cjs": return createRequire(serverPath)(name);
+          case "./chat-runs.cjs":
+          case "./import-state.cjs": return createRequire(serverPath)(name);
           default: throw new Error(`Unexpected guest dependency: ${name}`);
         }
       },
@@ -98,6 +99,7 @@ describe("Hivra guest surface authentication runtime", () => {
           HIVRA_CHAT_PORT: "0",
           HIVRA_AGENT_KIND: "generic",
           AEON_DASHBOARD_PORT: String(upstreamPort),
+          ...env,
         },
       },
       __dirname: path.dirname(serverPath),
@@ -383,6 +385,170 @@ describe("Hivra guest surface authentication runtime", () => {
     expect(upstreamUpgradeCount).toBe(before + 1);
   });
 
+  it("mints a connect grant only for the management bearer, never for a surface cookie", async () => {
+    const cookie = await sessionCookie();
+    const body = JSON.stringify({ username: "hivra", password: "b".repeat(64), destination: "/aeon/" });
+    const headers = { "Content-Type": "application/json" };
+    expect((await request("/connect/grant", { method: "POST", headers, body })).status).toBe(401);
+    expect((await request("/connect/grant", { method: "POST", headers: { ...headers, Cookie: cookie }, body })).status).toBe(401);
+    const granted = await request("/connect/grant", {
+      method: "POST",
+      headers: { ...headers, Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body,
+    });
+    expect(granted.status).toBe(200);
+    const parsed = JSON.parse(granted.body);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.expiresAt).toBeGreaterThan(Date.now());
+    expect(JSON.stringify(granted.headers)).not.toContain("b".repeat(64));
+  });
+
+  it.each([
+    { username: "hivra", password: "not-hex", destination: "/aeon/" },
+    { username: "bad user!", password: "b".repeat(64), destination: "/aeon/" },
+    { username: "hivra", password: "b".repeat(64), destination: "https://attacker.example/" },
+    { username: "hivra", password: "b".repeat(64), destination: "//attacker.example/" },
+    { username: "hivra", password: "b".repeat(64), destination: "/aeon/\r\nX-Injected: yes" },
+  ])("rejects a malformed or unsafe connect grant %j", async (payload) => {
+    const result = await request("/connect/grant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body: JSON.stringify(payload),
+    });
+    expect(result.status).toBe(400);
+  });
+
+  it("clamps a connect grant's lifetime into its bounds", async () => {
+    const granted = await request("/connect/grant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body: JSON.stringify({ username: "hivra", password: "c".repeat(64), destination: "/aeon/", ttlMs: 1 }),
+    });
+    expect(granted.status).toBe(200);
+    const expiresAt = JSON.parse(granted.body).expiresAt;
+    expect(expiresAt).toBeGreaterThanOrEqual(Date.now() + 59_000);
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + 61_000);
+  });
+
+  it("redeems a connect link into the same surface cookie the dashboard bootstrap mints", async () => {
+    const username = "hivra";
+    const password = "d".repeat(64);
+    const granted = await request("/connect/grant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body: JSON.stringify({ username, password, destination: "/aeon/" }),
+    });
+    expect(granted.status).toBe(200);
+
+    const redeem = await request(`/connect/${username}:${password}`);
+    expect(redeem.status).toBe(303);
+    expect(redeem.headers.location).toBe("/aeon/");
+    const cookie = redeem.headers["set-cookie"]?.[0] ?? "";
+    expect(cookie).toMatch(new RegExp(`^${AUTH_COOKIE}=[a-f0-9]{64};`));
+    expect(cookie).toContain("; HttpOnly");
+    expect(cookie).toContain("; Secure");
+    expect(cookie).toContain("; SameSite=None");
+    expect(cookie).toContain("; Partitioned");
+
+    const surface = await request("/aeon/", { headers: { Cookie: cookie.split(";")[0] } });
+    expect(surface.status).toBe(200);
+    expect(surface.body).toBe("fixture surface reached");
+  });
+
+  it.each([
+    "/connect/hivra:wrong-password",
+    "/connect/hivra:not-hex-at-all",
+    "/connect/unknown-user:" + "e".repeat(64),
+    "/connect/no-separator",
+    "/connect/",
+  ])("denies an unredeemable connect link %j without a cookie or redirect", async (pathname) => {
+    const result = await request(pathname);
+    expect(result.status).toBe(401);
+    expect(result.headers["set-cookie"]).toBeUndefined();
+    expect(result.headers.location).toBeUndefined();
+  });
+
+  it("redeems Agent Zero's native sign-in form against the same grant", async () => {
+    const username = "hivra";
+    const password = "f".repeat(64);
+    await request("/connect/grant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body: JSON.stringify({ username, password, destination: "/agent-zero/" }),
+    });
+
+    // The A0 desktop app's remote-instance client POSTs exactly this shape.
+    const login = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username, password, next: "/agent-zero" }).toString(),
+    });
+    expect(login.status).toBe(303);
+    expect(login.headers.location).toBe("/agent-zero");
+    const cookie = login.headers["set-cookie"]?.[0] ?? "";
+    expect(cookie).toMatch(new RegExp(`^${AUTH_COOKIE}=[a-f0-9]{64};`));
+
+    // A0's default next="/" means "the surface the grant was minted for".
+    const defaulted = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username, password, next: "/" }).toString(),
+    });
+    expect(defaulted.status).toBe(303);
+    expect(defaulted.headers.location).toBe("/agent-zero/");
+  });
+
+  it("rejects a sign-in form with the wrong password or an unsafe next", async () => {
+    const username = "hivra";
+    const password = "0".repeat(64);
+    await request("/connect/grant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body: JSON.stringify({ username, password, destination: "/aeon/" }),
+    });
+    const wrong = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username, password: "9".repeat(64), next: "/aeon/" }).toString(),
+    });
+    expect(wrong.status).toBe(401);
+    expect(wrong.headers["set-cookie"]).toBeUndefined();
+    // next is never trusted over the box's own path rules.
+    const unsafe = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username, password, next: "https://attacker.example/" }).toString(),
+    });
+    expect(unsafe.status).toBe(303);
+    expect(unsafe.headers.location).toBe("/aeon/");
+  });
+
+  it("revokes every connect grant on DELETE /connect/grant", async () => {
+    const username = "hivra";
+    const password = "1".repeat(64);
+    await request("/connect/grant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${FIXTURE_TOKEN}` },
+      body: JSON.stringify({ username, password, destination: "/aeon/" }),
+    });
+    expect((await request(`/connect/${username}:${password}`)).status).toBe(303);
+
+    // Revocation itself needs the management bearer.
+    expect((await request("/connect/grant", { method: "DELETE" })).status).toBe(401);
+    const revoked = await request("/connect/grant", {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${FIXTURE_TOKEN}` },
+    });
+    expect(revoked.status).toBe(200);
+    expect((await request(`/connect/${username}:${password}`)).status).toBe(401);
+    const login = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username, password, next: "/aeon/" }).toString(),
+    });
+    expect(login.status).toBe(401);
+  });
+
   it("does not expose Agent Zero root extension or Socket.IO aliases on another runtime", async () => {
     const headers = { Authorization: `Bearer ${FIXTURE_TOKEN}` };
     for (const [pathname, method] of [["/extensions/webui/fixture.js", "GET"], ["/socket.io/?EIO=4&transport=polling", "GET"], ["/socket.io/?EIO=4&transport=polling", "POST"]]) {
@@ -391,5 +557,190 @@ describe("Hivra guest surface authentication runtime", () => {
     const before = upstreamUpgradeCount;
     await expect(upgrade("/socket.io/?EIO=4&transport=websocket", headers)).rejects.toMatchObject({ code: "ECONNRESET" });
     expect(upstreamUpgradeCount).toBe(before);
+  });
+
+  // Agent Zero changed its / document from the app shell (v2.2) to a splash
+  // bootstrap that installs the real document from /ui/index (v2.15+). The
+  // gateway must keep serving the pinned app document on both layouts.
+  const A0_APP_DOC = [
+    "<!doctype html><html><body>",
+    '<script type="module" src="index.js"></script>',
+    '<script type="module" src="js/initFw.js"></script>',
+    "</body></html>",
+  ].join("");
+  const A0_SPLASH_DOC =
+    '<!doctype html><html><body><script>const APP_DOCUMENT_PATH = "/ui/index"</script></body></html>';
+
+  function a0Upstream(layout: "splash" | "direct", seen: string[]) {
+    return http.createServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      if (req.method === "POST" && req.url === "/login") {
+        res.writeHead(303, { "Set-Cookie": "session=a0-session", Location: "/" });
+        return res.end();
+      }
+      if (req.method === "GET" && (req.url === "/index.html" || (layout === "direct" && req.url === "/"))) {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        return res.end(A0_APP_DOC);
+      }
+      if (req.method === "GET" && req.url === "/") {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        return res.end(A0_SPLASH_DOC);
+      }
+      res.writeHead(404);
+      res.end();
+    });
+  }
+
+  async function agentZeroGateway(layout: "splash" | "direct", seen: string[]) {
+    const a0 = a0Upstream(layout, seen);
+    trackSockets(a0);
+    const a0Port = await listen(a0);
+    const a0Gateway = await evaluateGuest({
+      HIVRA_AGENT_KIND: "agent-zero",
+      AGENT_ZERO_PORT: String(a0Port),
+    });
+    extraGateways.push(a0Gateway);
+    const port = (a0Gateway.address() as AddressInfo).port;
+    const signin = await bootstrap("/agent-zero/", FIXTURE_TOKEN, port);
+    expect(signin.status).toBe(303);
+    const cookie = signin.headers["set-cookie"]![0].split(";")[0];
+    return { a0, port, cookie };
+  }
+
+  it("serves the pinned Agent Zero document through the newer splash layout", async () => {
+    const seen: string[] = [];
+    const { a0, port, cookie } = await agentZeroGateway("splash", seen);
+    const result = await request("/agent-zero/", { port, headers: { Cookie: cookie } });
+    expect(result.status).toBe(200);
+    expect(result.body).toContain('src="/index.js"');
+    expect(result.body).toContain('src="/js/initFw.js"');
+    expect(result.body).not.toContain("APP_DOCUMENT_PATH");
+    // The splash at / failed the pinned contract, so the canonical document
+    // path was fetched instead.
+    expect(seen).toContain("GET /index.html");
+    await close(a0);
+  });
+
+  it("still serves the pinned Agent Zero document directly on the older layout", async () => {
+    const seen: string[] = [];
+    const { a0, port, cookie } = await agentZeroGateway("direct", seen);
+    const result = await request("/agent-zero/", { port, headers: { Cookie: cookie } });
+    expect(result.status).toBe(200);
+    expect(result.body).toContain('src="/index.js"');
+    expect(result.body).toContain('src="/js/initFw.js"');
+    // The document at / satisfied the contract; no fallback fetch happened.
+    expect(seen).not.toContain("GET /index.html");
+    await close(a0);
+  });
+
+  it("rejects the Agent Zero document when no entry path satisfies the contract", async () => {
+    const seen: string[] = [];
+    const a0 = http.createServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end("<!doctype html><html><body>unrecognized</body></html>");
+    });
+    trackSockets(a0);
+    const a0Port = await listen(a0);
+    const a0Gateway = await evaluateGuest({
+      HIVRA_AGENT_KIND: "agent-zero",
+      AGENT_ZERO_PORT: String(a0Port),
+    });
+    extraGateways.push(a0Gateway);
+    const port = (a0Gateway.address() as AddressInfo).port;
+    const signin = await bootstrap("/agent-zero/", FIXTURE_TOKEN, port);
+    const cookie = signin.headers["set-cookie"]![0].split(";")[0];
+    // Every canonical path is tried before the contract failure is answered.
+    const result = await request("/agent-zero/", { port, headers: { Cookie: cookie } });
+    expect(result.status).toBe(502);
+    expect(result.body).toBe("native entry document unavailable");
+    for (const candidate of ["GET /", "GET /index.html", "GET /ui/index"]) {
+      expect(seen).toContain(candidate);
+    }
+    // A document fetch with a browser Accept header gets a retrying page
+    // instead: the app may be healthy under an unrecognised layout.
+    const page = await request("/agent-zero/", { port, headers: { Cookie: cookie, Accept: "text/html" } });
+    expect(page.status).toBe(503);
+    expect(page.body).toContain("does not recognise");
+    await close(a0);
+  });
+
+  it("serves the pinned Agent Zero document from the third entry candidate", async () => {
+    const seen: string[] = [];
+    const a0 = http.createServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      if (req.method === "GET" && req.url === "/ui/index") {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        return res.end(A0_APP_DOC);
+      }
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(A0_SPLASH_DOC);
+    });
+    trackSockets(a0);
+    const a0Port = await listen(a0);
+    const a0Gateway = await evaluateGuest({
+      HIVRA_AGENT_KIND: "agent-zero",
+      AGENT_ZERO_PORT: String(a0Port),
+    });
+    extraGateways.push(a0Gateway);
+    const port = (a0Gateway.address() as AddressInfo).port;
+    const signin = await bootstrap("/agent-zero/", FIXTURE_TOKEN, port);
+    const cookie = signin.headers["set-cookie"]![0].split(";")[0];
+    const result = await request("/agent-zero/", { port, headers: { Cookie: cookie } });
+    expect(result.status).toBe(200);
+    expect(result.body).toContain('src="/index.js"');
+    expect(result.body).toContain('src="/js/initFw.js"');
+    expect(result.body).not.toContain("APP_DOCUMENT_PATH");
+    for (const candidate of ["GET /", "GET /index.html", "GET /ui/index"]) {
+      expect(seen).toContain(candidate);
+    }
+    await close(a0);
+  });
+
+  it("answers an agent-app upstream failure as updating, not a dead 502", async () => {
+    // No upstream at all: the port is closed, as during an app's own
+    // self-update restart (which never writes the managed updater's lock).
+    const closed = http.createServer((_req, res) => res.end());
+    const deadPort = await listen(closed);
+    await close(closed);
+    const a0Gateway = await evaluateGuest({
+      HIVRA_AGENT_KIND: "agent-zero",
+      AGENT_ZERO_PORT: String(deadPort),
+    });
+    extraGateways.push(a0Gateway);
+    const port = (a0Gateway.address() as AddressInfo).port;
+    const signin = await bootstrap("/agent-zero/", FIXTURE_TOKEN, port);
+    const cookie = signin.headers["set-cookie"]![0].split(";")[0];
+    const result = await request("/agent-zero/", { port, headers: { Cookie: cookie, Accept: "text/html" } });
+    expect(result.status).toBe(503);
+    expect(result.body).toContain("being updated");
+    expect(result.headers["retry-after"]).toBe("15");
+    const plain = await request("/agent-zero/", { port, headers: { Cookie: cookie } });
+    expect(plain.status).toBe(503);
+    expect(plain.body).toContain("being updated");
+    // The same hold covers every agent-app mount, not just Agent Zero: an
+    // Aeon surface whose dashboard port is down answers the same way.
+    const aeonGateway = await evaluateGuest({
+      HIVRA_AGENT_KIND: "aeon",
+      AEON_DASHBOARD_PORT: String(deadPort),
+    });
+    extraGateways.push(aeonGateway);
+    const aeonPort = (aeonGateway.address() as AddressInfo).port;
+    const aeonSignin = await bootstrap("/aeon/", FIXTURE_TOKEN, aeonPort);
+    const aeonCookie = aeonSignin.headers["set-cookie"]![0].split(";")[0];
+    const aeon = await request("/aeon/", { port: aeonPort, headers: { Cookie: aeonCookie, Accept: "text/html" } });
+    expect(aeon.status).toBe(503);
+    expect(aeon.body).toContain("Aeon is being updated");
+  });
+
+  it("redirects a direct hit on the newer bootstrap document path back to the mount root", async () => {
+    const seen: string[] = [];
+    const { a0, port, cookie } = await agentZeroGateway("splash", seen);
+    const result = await request("/agent-zero/ui/index", { port, headers: { Cookie: cookie } });
+    expect(result.status).toBe(302);
+    expect(result.headers.location).toBe("/agent-zero/");
+    // Nothing was forwarded upstream for the redirected request.
+    expect(seen.filter((entry) => entry === "GET /ui/index")).toHaveLength(0);
+    await close(a0);
   });
 });

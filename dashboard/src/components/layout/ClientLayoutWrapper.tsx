@@ -16,6 +16,7 @@ import { accountCode } from '@/lib/account-code';
 import { WorkspaceOwnerContext } from '@/components/workspace/useWorkspaceAgents';
 import { useDesktopShell } from './useDesktopShell';
 import { AppShellContext } from './AppShellContext';
+import { PendingBridgeCard } from '@/components/hivra/PendingBridgeCard';
 
 interface ClientLayoutWrapperProps {
   children: React.ReactNode;
@@ -26,6 +27,8 @@ interface ClientLayoutWrapperProps {
 }
 
 const AGENT_VIEW_ROUTE_PATTERN = /^\/dashboard\/agent\/[^/]+\/?$/;
+// Where a command an agent is waiting to run on your computer is shown, so it is never missed.
+const BRIDGE_CARD_ROUTE_PATTERN = /^\/dashboard\/?$|^\/dashboard\/agent\/[^/]+\/?$/;
 const FULLSCREEN_TUI_ROUTE_PATTERN = /^\/dashboard\/instances\/[^/]+\/tui(?:\/|$)/;
 
 function NativeAccountHeader({ userName }: { userName: string }) {
@@ -170,6 +173,7 @@ export function ClientLayoutWrapper({
             </div>
           )}
           {desktopShell && pathname === '/dashboard/settings' && <NativeAccountHeader userName={userName} />}
+          {BRIDGE_CARD_ROUTE_PATTERN.test(pathname ?? '') && <PendingBridgeCard />}
           {children}
         </main>
 

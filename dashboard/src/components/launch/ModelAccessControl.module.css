@@ -208,3 +208,11 @@
   line-height: 1.45;
   resize: vertical;
 }
+.question { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--hg-text, inherit); }
+
+.note a,
+.field small a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

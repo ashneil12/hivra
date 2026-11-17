@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
       if (!read.ok) return refuse(read.message, read.status, "agent_bridge_not_found");
       return noStore(apiSuccess({ request: publicRequest(read.value) }));
     }
-    const computers = (await loadComputers(who.userId)).map((row) => ({ id: row.id, name: row.label }));
+    const computers = (await loadComputers(who.userId)).filter((row) => !row.revoked_at).map((row) => ({ id: row.id, name: row.label }));
     return noStore(apiSuccess({ computers }));
   } catch {
     return refuse("Hivra couldn't read the bridge right now.", 503, "agent_bridge_read_unavailable");

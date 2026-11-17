@@ -285,7 +285,7 @@ describe("Aeon fork sync in the Hivra guest gateway", () => {
             },
           };
         }
-        if (["fs", "path", "net", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs"].includes(name)) {
+        if (["fs", "path", "net", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./import-state.cjs"].includes(name)) {
           return realRequire(name);
         }
         throw new Error(`Unexpected guest dependency: ${name}`);

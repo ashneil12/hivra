@@ -307,6 +307,13 @@ export default async function OpsPage(props: {
             >
               Releases
             </Link>
+            <Link
+              href="/dashboard/ops/margins"
+              className="action-button"
+              style={{ padding: '10px 20px', fontSize: 10, letterSpacing: '0.1em', textDecoration: 'none' }}
+            >
+              Usage and margins
+            </Link>
           </div>
         </div>
 

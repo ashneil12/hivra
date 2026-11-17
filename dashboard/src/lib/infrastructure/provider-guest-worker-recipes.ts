@@ -420,6 +420,111 @@ const recipes = Object.freeze({
     workerSha256: "9abab12289cd7978348324e16278019d4668e521405d1e180d7c4dd3011427cf",
     workerSize: 45195,
   }),
+  "2026.11.12.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the guest git guard that keeps Claude Code's local approvals file out of commits (the guest installer changes). The worker only advances its release labels.
+    workerSha256: "279c849b8ee4720a70d3509c453984f7098e6504cf2ac333f055201bfee9cf61",
+    workerSize: 45195,
+  }),
+  "2026.11.12.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds Hermes restore points to the box gateway (/api/restore-points). The worker only advances its release labels.
+    workerSha256: "ccd68eccf4a4a25c88f67d88c9688244ae4b8adf0f6fa31b737436944954af94",
+    workerSize: 45195,
+  }),
+  "2026.11.12.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds OpenBot (CopilotKit) as an agent kind. The worker accepts the kind and advances its release labels.
+    workerSha256: "ed590be9e1dde134bdba172cea0f182f2c1ab0b6e0681cd8e128257878b4024a",
+    workerSize: 45206,
+  }),
+  "2026.11.12.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds Nuphos as an agent kind. The worker accepts the kind and advances its release labels.
+    workerSha256: "6900bb616ab7449874567c8ed33f780dc8a6fce571786f1fd5cd468d29899a92",
+    workerSize: 45216,
+  }),
+  "2026.11.13.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release ships the host wake proxy as inert host files. The worker only advances its release labels.
+    workerSha256: "3177774e1a7a6ea88f95362ba4f7a167f53636525ef03beb96c105a2d55eb052",
+    workerSize: 45216,
+  }),
+  "2026.11.13.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release teaches the start helper about host ingress. The worker only advances its release labels.
+    workerSha256: "5f3df66045f47cbf8fc303f7ae094f8403615d78657a888028c8faa31cc87a37",
+    workerSize: 45216,
+  }),
+  "2026.11.13.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release lets the host wake proxy call Hivra with a host credential. The worker only advances its release labels.
+    workerSha256: "4c8558bea03db55790d1d4bfc086f52bf39ba2eed07425a2b183a57776c58954",
+    workerSize: 45216,
+  }),
+  "2026.11.13.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release teaches the host wake proxy client wakes and ships the host wake doorbell as inert host files. The worker only advances its release labels.
+    workerSha256: "b16aec8710cb07252e0e20919a3c71273664f7f983acb9d1bf7921ce3829d66f",
+    workerSize: 45216,
+  }),
+  "2026.11.13.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release teaches the host wake doorbell Discord. The worker only advances its release labels.
+    workerSha256: "dac65199affccaf5ed37a46a4ac8651384cffe04b15a4901acd697b17cb30b10",
+    workerSize: 45216,
+  }),
+  "2026.11.13.6": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release hardens the host wake proxy, the doorbell and their units. The worker only advances its release labels.
+    workerSha256: "2e3996e3ce750eb2be92b7ae2f168b94c2951db333b913fcb3f99d6a830c6ab1",
+    workerSize: 45216,
+  }),
+  "2026.11.14.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release ships box connect grants for external app sign-in. The worker only advances its release labels.
+    workerSha256: "1187804561d2293138eda8162f23f4ce4f35e5fa86c9171c1b35a6f3254d789a",
+    workerSize: 45216,
+  }),
+  "2026.11.15.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release serves Agent Zero's pinned app document through the newer splash layout. The worker only advances its release labels.
+    workerSha256: "48b7c4637d228f9bff6e909dfa996f0822172e560194e78bf79be21d9f6fd635",
+    workerSize: 45216,
+  }),
+  "2026.11.15.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the box state-import routes (import-state.cjs) and raises the manifest cap one file for it.
+    workerSha256: "3554ebbcc4a6e92eac4b5850937ba1179c590db300e4071156922d52aa6a6fbb",
+    workerSize: 45216,
+  }),
+  "2026.11.15.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release holds agent-app surfaces as updating when their own self-updater or a crash window drops the port. The worker only advances its release labels.
+    workerSha256: "15f088a03b0101a20d1bf283f6eecf77076267c9da9af7a7e44fc6ad0075039d",
+    workerSize: 45216,
+  }),
+  "2026.11.15.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release stops qm start inheriting the allocation and lifecycle lock fds into the kvm child. The worker only advances its release labels.
+    workerSha256: "b33ef4105e8f50a52f74f490e59484e22d006d2acd7aab7c6b05ff8fdde46196",
+    workerSize: 45216,
+  }),
+  "2026.11.15.6": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the box-side surface watchdog (and disables legacy bux-browser-keeper on browserless kinds) and raises the manifest cap two files for it and the service unit. The worker only advances its release labels.
+    workerSha256: "977d88f7fdcd9d03c9814c5facaf13511e0bc43f0e81642990d4d0d5fb86a2eb",
+    workerSize: 45216,
+  }),
+  "2026.11.15.7": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release serves Agent Zero plugin web UI module imports under /usr/plugins and moves the pinned Agent Zero image to v2.15. The worker only advances its release labels.
+    workerSha256: "e58572e0b21dc0d1a80dab7fa550a970da6d6d480460c89b6e068493b6cfcbd5",
+    workerSize: 45216,
+  }),
+  "2026.11.17.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release drops Hivra's agent version pins (a launch installs upstream's newest release and only the owner's Update moves it). The worker only advances its release labels.
+    workerSha256: "7e7628ffc80574698f0f322c5ac7d6039cd05f65332512513ac0dfc6bc6a0142",
+    workerSize: 45216,
+  }),
+  "2026.11.17.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release stops Hivra's background reads (X-Hivra-Background: 1) from counting as use or waking a napped computer in the wake proxy. The worker only advances its release labels.
+    workerSha256: "e3462616c9faff5c9abe3675dc87132bb5e3ccfa9c124e027b71a8b1be4aeb1d",
+    workerSize: 45216,
+  }),
+  "2026.11.17.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release seeds Agent Zero's login and managed model into the settings file current images read (/a0/usr/.env). The worker only advances its release labels.
+    workerSha256: "fb33441ca6bf84fc44b02deed696d00be20aed89818522125fa5f9713659ad74",
+    workerSize: 45216,
+  }),
+  "2026.11.17.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release lets OpenClaw 2026.11.5+ and current Aeon launch (the gateway drops forwarded headers on /openclaw; Aeon keeps its own Next config). The worker only advances its release labels.
+    workerSha256: "99ca7ca23efc42959b52b1fc68b79356b64b4339891984c1832bb5553c8b0b7d",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

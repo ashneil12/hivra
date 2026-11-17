@@ -132,7 +132,7 @@ describe("launched /tokenomics", () => {
       ["Read how the migration works", "/token/migration"],
       ["Verify official token contracts", "/token"],
       ["View migration fees and on-chain records", "/token/migration"],
-      ["Read the Litepaper", "/docs/litepaper"],
+      ["Read the Litepaper", "/docs/litepaper/index.html"],
       ["Read the tokenomics document", "/TOKENOMICS.md"],
       ["Verify the token contracts", "/token"],
     ]);

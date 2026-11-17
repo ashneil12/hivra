@@ -32,6 +32,12 @@ import { article as claudeCodeVsCodex247 } from "./blog/articles/claude-code-vs-
 import { article as aiAgentVps } from "./blog/articles/ai-agent-vps";
 import { article as managedVsSelfHostedAiAgents } from "./blog/articles/managed-vs-self-hosted-ai-agents";
 import { article as agentZeroVsOpenclawHosting } from "./blog/articles/agent-zero-vs-openclaw-hosting";
+import { article as deepseekHarnessCodingAgent } from "./blog/articles/deepseek-harness-coding-agent";
+import { article as openbotAiCoworkers } from "./blog/articles/openbot-ai-coworkers";
+import { article as nuphosClaudeCodeTeamChat } from "./blog/articles/nuphos-claude-code-team-chat";
+import { article as whatIsAeonAgent } from "./blog/articles/what-is-aeon-agent";
+import { article as whatIsAgentZero } from "./blog/articles/what-is-agent-zero";
+import { article as ubuntuDesktopInTheCloud } from "./blog/articles/ubuntu-desktop-in-the-cloud";
 import { article as openclawBrokenAfterUpdate } from "./blog/articles/openclaw-broken-after-update";
 import { article as unattendedAgentSafety } from "./blog/articles/is-it-safe-to-leave-an-ai-agent-running-unattended";
 import { article as aiAgentGpuRequirements } from "./blog/articles/do-you-need-a-gpu-to-run-an-ai-agent";
@@ -44,6 +50,10 @@ import { article as codexResumeSession } from "./blog/articles/codex-resume-sess
 import { article as cursorCloudAgents } from "./blog/articles/cursor-cloud-agents";
 import { article as cursorVsClaudeCode } from "./blog/articles/cursor-vs-claude-code";
 import { article as isOpenclawFree } from "./blog/articles/is-openclaw-free-what-it-costs-to-run";
+import { article as runManagedAgentsOnYourOwnComputer } from "./blog/articles/run-managed-agents-on-your-own-computer";
+import { article as hermesAgentCloud } from "./blog/articles/hermes-agent-cloud";
+import { article as openrouterFreeModels } from "./blog/articles/openrouter-free-models";
+import { article as bestLlmForCoding } from "./blog/articles/best-llm-for-coding";
 
 // SCRIPTURE_ANCHOR: blog-store | Psalm 78:4 | Verse: We will tell the generation to come the praises of Yahweh, his strength, and his wondrous works.
 export const BLOG_ARTICLES: Record<string, BlogArticle> = {
@@ -92,6 +102,16 @@ export const BLOG_ARTICLES: Record<string, BlogArticle> = {
   "cursor-cloud-agents": cursorCloudAgents,
   "cursor-vs-claude-code": cursorVsClaudeCode,
   "is-openclaw-free-what-it-costs-to-run": isOpenclawFree,
+  "run-managed-agents-on-your-own-computer": runManagedAgentsOnYourOwnComputer,
+  "deepseek-harness-coding-agent": deepseekHarnessCodingAgent,
+  "openbot-ai-coworkers": openbotAiCoworkers,
+  "nuphos-claude-code-team-chat": nuphosClaudeCodeTeamChat,
+  "what-is-aeon-agent": whatIsAeonAgent,
+  "what-is-agent-zero": whatIsAgentZero,
+  "ubuntu-desktop-in-the-cloud": ubuntuDesktopInTheCloud,
+  "hermes-agent-cloud": hermesAgentCloud,
+  "openrouter-free-models": openrouterFreeModels,
+  "best-llm-for-coding": bestLlmForCoding,
 };
 
 export const BLOG_ARTICLES_LIST: BlogArticle[] = Object.values(BLOG_ARTICLES).sort(

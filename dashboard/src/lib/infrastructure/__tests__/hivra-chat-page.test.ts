@@ -1294,7 +1294,7 @@ describe("the computer's own chat page against the real gateway", () => {
             },
           };
         }
-        if (["fs", "path", "child_process", "net", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs"].includes(name)) return realRequire(name);
+        if (["fs", "path", "child_process", "net", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs", "./import-state.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected guest dependency: ${name}`);
       },
       process: { env: { HOME: home, HIVRA_CHAT_PORT: "0", CLAUDE_BIN: path.join(home, "fake-claude"), FAKE_AGENT_DIR: path.join(home, "fake") }, once: () => undefined },

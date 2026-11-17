@@ -16,7 +16,7 @@ import posthog from "posthog-js";
 import { CHAT_MARKDOWN_COMPONENTS, HivraChat } from "../HivraChat";
 import { EFFORT_POLL_MS } from "../chat/useBoxChatControls";
 import { AgentChatListSlotContext } from "../agent-shell/AgentChatListSlot";
-import { getBoxChatMeta, getBoxModel, getBoxRestrict, listBoxChatRuns, listBoxSessions, readBoxSession, setBoxModel, setBoxRestrict, stampAgentFirstUsage, updateAgentRuntime, AgentActionError, stopBoxChatRun, uploadBoxFile } from "@/lib/hivra/agent-api";
+import { getBoxChatMeta, getBoxModel, getBoxRestrict, listBoxChatRuns, listBoxSessions, readBoxSession, setBoxModel, setBoxRestrict, stampAgentFirstUsage, updateAgentRuntime, AgentActionError, stopBoxChatRun, uploadBoxFile, wakeAgent } from "@/lib/hivra/agent-api";
 import { startAgentWelcomeRun } from "@/lib/hivra/agent-welcome";
 import { clientLog } from "@/lib/client/logger";
 import { captureClient } from "@/lib/telemetry/posthog-client";
@@ -74,6 +74,7 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   getBoxRestrict: jest.fn(),
   setBoxRestrict: jest.fn(),
   updateAgentRuntime: jest.fn(),
+  wakeAgent: jest.fn(),
   AgentActionError: jest.requireActual("@/lib/hivra/agent-api").AgentActionError,
   boxChatRunEventsUrl: (boxUrl: string, runId: string) => `${boxUrl}/api/chat/runs/${runId}/events`,
 }));
@@ -753,6 +754,83 @@ describe("HivraChat", () => {
       for (let i = 0; i < 12; i += 1) await act(async () => { jest.advanceTimersByTime(20_000); });
       expect(await screen.findByText(/being updated to a new version/)).toBeInTheDocument();
       expect(fetchMock).toHaveBeenCalledTimes(11);
+    });
+  });
+
+  // A computer that was asleep when the message went out: wake it, send again once.
+  describe("when the agent was asleep", () => {
+    const previousFlag = process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP;
+    const goodReply = () => jest.fn().mockResolvedValueOnce(eventChunk({ type: "_run", runId: "x", detached: true },
+      { type: "item.completed", item: { id: "item_1", type: "agent_message", text: "Back from my nap." } },
+      { type: "turn.completed", usage: {} }, { type: "_done", code: 0 })).mockResolvedValue({ done: true, value: undefined });
+    beforeEach(() => {
+      process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP = "1";
+      (wakeAgent as jest.Mock).mockReset();
+    });
+    afterEach(() => {
+      if (previousFlag === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP;
+      else process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP = previousFlag;
+    });
+
+    it("wakes it after a network failure and sends the same message again", async () => {
+      window.localStorage.setItem("hivra:first-welcome:napcodex", "1");
+      (wakeAgent as jest.Mock).mockResolvedValue({ state: "awake", wakeMs: 1200 });
+      let posts = 0;
+      const fetchMock = jest.fn((url: string) => {
+        if (!String(url).endsWith("/api/chat")) return Promise.reject(new TypeError("Failed to fetch"));
+        posts += 1;
+        return posts === 1 ? Promise.reject(new TypeError("Failed to fetch")) : Promise.resolve(chatResponse(goodReply()));
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="nap-codex" agentName="Atlas" agentKind="codex" instanceId="agent-1" />);
+      await sendMessage("hello");
+      expect(await screen.findByText(/Back from my nap\./)).toBeInTheDocument();
+      expect(wakeAgent).toHaveBeenCalledTimes(1);
+      expect(wakeAgent).toHaveBeenCalledWith("agent-1");
+      const bodies = fetchMock.mock.calls
+        .filter(([url]) => String(url).endsWith("/api/chat"))
+        .map((call) => JSON.parse(String(((call as unknown[])[1] as RequestInit).body)));
+      expect(bodies).toHaveLength(2);
+      expect(new Set(bodies.map((body) => body.runId)).size).toBe(1);
+      expect(bodies.every((body) => body.message === "hello")).toBe(true);
+      expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+    });
+
+    it("wakes it after a 503 that is not an update, and tries once only", async () => {
+      window.localStorage.setItem("hivra:first-welcome:napclaude", "1");
+      (wakeAgent as jest.Mock).mockResolvedValue({ state: "awake", wakeMs: 900 });
+      const unavailable = { ok: false, status: 503, body: null, json: async () => ({ error: "Service unavailable" }) };
+      const fetchMock = jest.fn().mockResolvedValueOnce(unavailable).mockResolvedValue(unavailable);
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="nap-claude" agentName="Atlas" agentKind="claude" computerId="agent-2" />);
+      await sendMessage("hello");
+      expect(await screen.findByText(/Service unavailable/)).toBeInTheDocument();
+      expect(wakeAgent).toHaveBeenCalledTimes(1);
+      expect(wakeAgent).toHaveBeenCalledWith("agent-2");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("sends nothing again when the wake did not work", async () => {
+      window.localStorage.setItem("hivra:first-welcome:napfail", "1");
+      (wakeAgent as jest.Mock).mockResolvedValue({ state: "failed", message: "Could not wake." });
+      const fetchMock = jest.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="nap-fail" agentName="Atlas" agentKind="codex" instanceId="agent-3" />);
+      await sendMessage("hello");
+      expect(await screen.findByText(/Couldn't reach your agent/, {}, { timeout: 4000 })).toBeInTheDocument();
+      expect(wakeAgent).toHaveBeenCalledTimes(1);
+      expect(screen.queryByLabelText("Waiting for the agent update")).not.toBeInTheDocument();
+    });
+
+    it("does not wake anything when sleep is switched off", async () => {
+      delete process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP;
+      window.localStorage.setItem("hivra:first-welcome:napoff", "1");
+      const fetchMock = jest.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="nap-off" agentName="Atlas" agentKind="codex" instanceId="agent-4" />);
+      await sendMessage("hello");
+      expect(await screen.findByText(/Couldn't reach your agent/, {}, { timeout: 4000 })).toBeInTheDocument();
+      expect(wakeAgent).not.toHaveBeenCalled();
     });
   });
 
@@ -1554,6 +1632,46 @@ describe("HivraChat", () => {
     expect(await screen.findByText("Hi, I'm Atlas.")).toBeInTheDocument();
     expect(window.localStorage.getItem("hivra:first-welcome:welcomerefused")).toBeNull();
     expect(screen.queryByLabelText("Response failed")).not.toBeInTheDocument();
+  });
+
+  it("offers three starters for the agent and fills the composer without sending", async () => {
+    (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve({ ok: false, status: 502, body: null }));
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="starters-fill" token="box-token" agentName="Atlas" agentKind="claude" goal="grow" />);
+    await waitFor(() => expect(startAgentWelcomeRun).toHaveBeenCalled());
+    await waitFor(() => expect(clientLog.warn).toHaveBeenCalledWith("agent first message generation failed", expect.anything()));
+
+    const starter = await screen.findByRole("button", { name: "Clone a GitHub repo and give me a tour of it" });
+    expect(screen.getByRole("button", { name: "Build a small web app and show me it running" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "What can you do on this computer?" })).toBeInTheDocument();
+
+    fireEvent.click(starter);
+
+    expect(screen.getByLabelText("Message Atlas")).toHaveValue("Clone a GitHub repo and give me a tour of it");
+    expect(screen.getByRole("button", { name: "Clone a GitHub repo and give me a tour of it" })).toBeInTheDocument();
+    // Nothing was sent: the conversation is still empty.
+    expect(screen.getByText("Hi, I'm Atlas.")).toBeInTheDocument();
+  });
+
+  it("keeps the starters under the agent's welcome until the owner writes, and a tap only fills the box", async () => {
+    (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve(welcomeResponse()));
+    const fetchMock = mockChatFetchOk();
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="starters-after-welcome" token="box-token" agentName="Atlas" agentKind="claude" />);
+    await screen.findByText(WELCOME_TEXT);
+    const group = await screen.findByTestId("chat-welcome-starters");
+    fireEvent.click(within(group).getByRole("button", { name: "Clone a GitHub repo and give me a tour of it" }));
+    expect(screen.getByRole("textbox", { name: "Message Atlas" })).toHaveValue("Clone a GitHub repo and give me a tour of it");
+    expect(fetchMock).not.toHaveBeenCalled();
+    // A message in the box hides them; the owner's own wording comes first.
+    expect(screen.queryByTestId("chat-welcome-starters")).not.toBeInTheDocument();
+  });
+
+  it("uses Codex's own starters for a Codex chat and hides them once there is a message", async () => {
+    (startAgentWelcomeRun as jest.Mock).mockImplementation(() => Promise.resolve({ ok: false, status: 502, body: null }));
+    render(<HivraChat boxUrl="https://box.example.com" storageKey="starters-codex" token="box-token" agentName="Atlas" agentKind="codex" />);
+    await waitFor(() => expect(startAgentWelcomeRun).toHaveBeenCalled());
+    await waitFor(() => expect(clientLog.warn).toHaveBeenCalledWith("agent first message generation failed", expect.anything()));
+    expect(await screen.findByRole("button", { name: "Write a small script that tidies a folder, and run it" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Build a small web app and show me it running" })).not.toBeInTheDocument();
   });
 
   it("starts the welcome again after a reload when its request never reached the computer", async () => {
