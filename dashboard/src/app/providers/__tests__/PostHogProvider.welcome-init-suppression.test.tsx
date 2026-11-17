@@ -163,7 +163,7 @@ describe("PostHogProvider — /dashboard/welcome sensitive-route suppression (#3
     it("suppresses recording when the visitor is on a sensitive route at INIT time even though import happened on a safe route", async () => {
       installDeferredIdleCallback();
       // Import while on a safe route: module-load-time path is non-sensitive.
-      setLocation("hermesos.cloud", "/dashboard");
+      setLocation("hermesos.cloud", "/pricing");
       await import("../PostHogProvider");
       expect(deferredInit).toBeDefined();
       // init() has NOT run yet (deferred). Before it fires, the visitor is on a
@@ -193,7 +193,7 @@ describe("PostHogProvider — /dashboard/welcome sensitive-route suppression (#3
       await import("../PostHogProvider");
       expect(deferredInit).toBeDefined();
 
-      setLocation("hermesos.cloud", "/dashboard");
+      setLocation("hermesos.cloud", "/pricing");
       deferredInit!();
 
       expect(mockPosthog.init).toHaveBeenCalledWith(
