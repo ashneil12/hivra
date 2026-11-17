@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
     body?: unknown;
     referenceId?: unknown;
     acceptsBodyPatch?: unknown;
+    clientAddress?: unknown;
   };
   let payload: AuthorizePayload;
   try {
@@ -68,6 +69,9 @@ export async function POST(req: NextRequest) {
     body,
     referenceId,
     allowBodyRewrite: payload.acceptsBodyPatch === true,
+    // The Worker forwards the address it saw; an older Worker sends none, which
+    // the key binding counts as unknown.
+    caller: { address: typeof payload.clientAddress === "string" ? payload.clientAddress : null, via: "worker" },
   });
   if (!auth.ok) return auth.response;
 

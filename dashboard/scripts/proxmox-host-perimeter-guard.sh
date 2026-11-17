@@ -45,6 +45,14 @@ NFT_TARGET=""
 SSHD_TARGET=""
 CLOUDFLARE_ONLY="${PERIMETER_GUARD_CLOUDFLARE_ONLY:-0}"
 CADDY_CONFIG_DIR="${PERIMETER_GUARD_CADDY_DIR:-/etc/caddy}"
+# /etc/nftables.conf begins with `flush ruleset`, so `--apply`'s `nft -f` wipes
+# every table not defined in that file — including the out-of-band guest-security
+# tables maintained by their own systemd units. These two are restored (and
+# verified back) right after the apply so the host is never left without them.
+# `bridge hermes_vm_antispoof` is rebuilt by hivra-vm-antispoof.service and
+# `bridge hivra_ingress_pin` by hivra-ingress-pins.service.
+ANTISPOOF_UNIT="${PERIMETER_GUARD_ANTISPOOF_UNIT:-hivra-vm-antispoof.service}"
+INGRESS_PIN_UNIT="${PERIMETER_GUARD_INGRESS_PIN_UNIT:-hivra-ingress-pins.service}"
 
 SSHD_DIRECTIVES=(
   "PasswordAuthentication no"
@@ -671,6 +679,24 @@ nft_runtime_is_hardened() {
   ! nft_ruleset_has_open_wan_rules "$input"
 }
 
+# True when the live kernel ruleset currently has table `$1 $2` (family, name).
+nft_table_present() { nft list table "$1" "$2" >/dev/null 2>&1; }
+
+# Restore an out-of-band table that `nft -f` (via `flush ruleset`) just wiped.
+# $1 family, $2 name, $3 systemd unit that rebuilds it, $4 whether it was
+# present before the apply (yes/no). A table that was not there before is left
+# alone. One that was there must come back, or the host is now missing a guest
+# protection, so refuse to report success.
+restore_flushed_table() {
+  local family="$1" name="$2" unit="$3" before="$4"
+  [ "$before" = "yes" ] || return 0
+  nft_table_present "$family" "$name" && return 0
+  log "flush ruleset removed table $family $name; restoring it via $unit"
+  systemctl start "$unit" >/dev/null 2>&1 || true
+  nft_table_present "$family" "$name" \
+    || fatal "table $family $name was present before --apply but is missing after restoring via $unit; this host now lacks that guest protection — restore it before leaving"
+}
+
 if [ "$MODE" = "apply" ]; then
   for cmd in sshd systemctl nft install; do
     require_command "$cmd"
@@ -700,6 +726,11 @@ if [ "$MODE" = "apply" ]; then
   fi
   reload_sshd
 
+  # Note which out-of-band guest-security tables are live now, so the flush
+  # that the reload performs can be undone immediately below.
+  ANTISPOOF_BEFORE="no"; nft_table_present bridge hermes_vm_antispoof && ANTISPOOF_BEFORE="yes"
+  INGRESS_PIN_BEFORE="no"; nft_table_present bridge hivra_ingress_pin && INGRESS_PIN_BEFORE="yes"
+
   log "applying perimeter nftables guard"
   NFT_BACKUP="$NFT_CONF.bak-hermes-perimeter-$STAMP"
   cp -p "$NFT_CONF" "$NFT_BACKUP"
@@ -709,6 +740,13 @@ if [ "$MODE" = "apply" ]; then
     nft -f "$NFT_CONF" || log "WARNING: restoring the previous ruleset also failed; check nftables now"
     fatal "applied ruleset failed or lacked required rules; restored $NFT_CONF from $NFT_BACKUP"
   fi
+
+  # `nft -f` ran `flush ruleset`, which drops the antispoof and ingress-pin
+  # tables that live outside /etc/nftables.conf. Their own units would rebuild
+  # them within a minute (antispoof) or only at next boot (ingress pins), so
+  # rebuild them now and confirm they are back before reporting success.
+  restore_flushed_table bridge hermes_vm_antispoof "$ANTISPOOF_UNIT" "$ANTISPOOF_BEFORE"
+  restore_flushed_table bridge hivra_ingress_pin "$INGRESS_PIN_UNIT" "$INGRESS_PIN_BEFORE"
 else
   require_command sshd
   require_command nft

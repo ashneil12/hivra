@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 
+import { runInboxPromptRetention, type InboxPromptRetentionSummary } from "@/lib/agent-inbox/retention";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { log } from "@/lib/logger";
@@ -15,6 +16,10 @@ import { supabaseAdmin } from "@/lib/supabase";
  *
  * OFF unless ACTIVITY_RETENTION_ENABLED=true: until then every run is a dry run
  * that reports counts and deletes nothing. Force a preview with ?dryRun=1.
+ *
+ * The same run also clears closed Needs you requests (agent_inbox_prompts) a
+ * week after they close. That step has no switch of its own; only ?dryRun=1
+ * turns it into a count. See src/lib/agent-inbox/retention.ts.
  *
  * Schedule: daily via vercel.json.
  */
@@ -76,7 +81,24 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return apiSuccess(summary);
+    let inboxPrompts: InboxPromptRetentionSummary;
+    try {
+      inboxPrompts = await runInboxPromptRetention(supabaseAdmin, { dryRun: forceDryRun });
+    } catch (error) {
+      // The activity prune above is done and logged; report this step on its own.
+      log.error("agent inbox retention failed", error instanceof Error ? error : new Error(String(error)), {
+        source: "prune-hivra-activity",
+        route: "/api/cron/prune-hivra-activity",
+        method: "GET",
+        failureType: "agent_inbox_retention_failed",
+      });
+      return apiError("Agent inbox retention failed", 500);
+    }
+    if (inboxPrompts.deleted > 0) {
+      log.info("agent inbox retention run", { source: "prune-hivra-activity", ...inboxPrompts });
+    }
+
+    return apiSuccess({ ...summary, inboxPrompts });
   } catch (error) {
     log.error("prune-hivra-activity failed", error instanceof Error ? error : new Error(String(error)), {
       source: "prune-hivra-activity",

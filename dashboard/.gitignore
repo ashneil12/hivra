@@ -92,6 +92,7 @@ docker-compose.override.yml
 # first-run audit verdicts (per-run JSON, uploaded as CI artifacts)
 e2e/.first-run-audit/
 e2e/.remote-desktop-audit/
+e2e/.launch-sweep/
 
 # Generated from the approved root litepaper source by predev/prebuild. The
 # three papers are no longer public files (their route handlers serve them by

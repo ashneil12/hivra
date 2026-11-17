@@ -316,6 +316,12 @@ export async function verifyManagedVeniceProxyKey(
     plaintextKey: string;
     now?: Date;
     env?: Record<string, string | undefined>;
+    /**
+     * Who is calling, for the key-to-computer binding (key-binding.ts). Omitted,
+     * the current route's own caller is read. The inference Worker passes the
+     * address it saw.
+     */
+    caller?: import("./key-binding").KeyBindingCaller;
   },
   db: SupabaseLike | null | undefined = supabaseAdmin
 ) {
@@ -335,6 +341,18 @@ export async function verifyManagedVeniceProxyKey(
   if (!data) return null;
   const row = data as ProxyKeyRow;
   if (row.status !== "active") return null;
+
+  // Off by default; loaded only when the switch is set.
+  const bindingMode = (params.env ?? process.env).HIVRA_MANAGED_KEY_BINDING?.trim().toLowerCase();
+  if (bindingMode === "observe" || bindingMode === "enforce") {
+    const binding = await import("./key-binding");
+    const caller = params.caller ?? await binding.currentDirectCaller(params.env);
+    const decision = await binding.checkKeyBinding(
+      { keyId: row.id, userId: row.user_id ?? null, metadata: row.metadata ?? null, caller },
+      { env: params.env },
+    );
+    if (!decision.allowed) return null;
+  }
 
   const now = params.now ?? new Date();
   const { data: updated, error: updateError } = await table(
