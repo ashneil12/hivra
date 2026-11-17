@@ -84,6 +84,8 @@
     "test:e2e:update": "playwright test --update-snapshots",
     "test:e2e:report": "playwright show-report",
     "audit:first-run": "FIRST_RUN_AUDIT=1 playwright test --project=first-run-audit",
+    "test:launch-sweep": "LAUNCH_SWEEP=1 playwright test --project=launch-sweep --workers=${LAUNCH_SWEEP_WORKERS:-1}",
+    "test:launch-sweep:summary": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/launch-sweep-summary.ts",
     "audit:first-run:cleanup": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/first-run-audit-cleanup.ts",
     "audit:first-run:tally": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/first-run-audit-tally.ts",
     "test:watch": "node scripts/jest-smart-run.cjs --watch",
