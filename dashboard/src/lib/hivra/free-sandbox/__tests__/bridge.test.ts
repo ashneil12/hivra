@@ -224,6 +224,53 @@ describe("free sandbox bridge", () => {
     expect((await t.bridge.tick()).placed).toBe(0);
   });
 
+  it("makes the computer row and its limits before any place or sandbox, even with no room", async () => {
+    const t = setup();
+    t.store.pool = [];
+    t.app.addWorkspace("org-1", "a@example.com");
+    const sum = await t.bridge.tick();
+    expect(sum.waitlisted).toBe(1);
+    const order = t.app.calls.filter((c) => c.path.startsWith("/orgs/org-1")).map((c) => `${c.method} ${c.path}`);
+    expect(order.slice(0, 3)).toEqual([
+      "PUT /orgs/org-1/plan-limits",
+      "POST /orgs/org-1/machines",
+      "PUT /orgs/org-1/provisioning",
+    ]);
+    // The row is there: a message sent now waits for the computer instead of finding no AI.
+    expect(t.app.org("org-1").machine).not.toBeNull();
+    expect(t.host.calls).toEqual([]);
+    // Still waiting next pass: no second code is asked for while there is no place.
+    await t.bridge.tick();
+    expect(t.app.calls.filter((c) => c.method === "POST" && c.path === "/orgs/org-1/machines")).toHaveLength(1);
+  });
+
+  it("asks for a fresh code for the same computer when the held one has expired", async () => {
+    const t = setup();
+    t.store.pool = [];
+    t.app.codeExpiresAt = new Date(t.now().getTime() + 5 * MIN).toISOString();
+    t.app.addWorkspace("org-1", "a@example.com");
+    await t.bridge.tick();
+    const firstId = t.app.org("org-1").machine!.id;
+    t.advance(20 * MIN);
+    t.app.codeExpiresAt = null;
+    t.store.pool = [{ id: "pool-1", cpus: 4, paidReserveIntact: true, paidWaiting: false }];
+    const sum = await t.bridge.tick();
+    expect(sum.placed).toBe(1);
+    expect(t.app.calls.filter((c) => c.method === "POST" && c.path === "/orgs/org-1/machines")).toHaveLength(2);
+    expect(t.app.org("org-1").machine!.id).toBe(firstId);
+    const posts = t.app.calls.findIndex(
+      (c, i) =>
+        i > 0 &&
+        c.method === "POST" &&
+        c.path === "/orgs/org-1/machines" &&
+        t.app.calls.slice(0, i).some((p) => p.method === "POST" && p.path === c.path),
+    );
+    const reserving = t.app.calls.findIndex((c) => (c.body as { step?: string } | undefined)?.step === "reserving");
+    expect(reserving).toBeGreaterThan(-1);
+    expect(posts).toBeGreaterThan(reserving); // the fresh code comes once the sandbox exists
+    expect(t.app.org("org-1").machine!.online).toBe(true);
+  });
+
   it("leaves a paying owner's workspace alone, and places nothing while the plan read fails", async () => {
     const t = setup({ "paid@example.com": "paid", "flaky@example.com": "unknown" });
     t.app.addWorkspace("org-paid", "paid@example.com");

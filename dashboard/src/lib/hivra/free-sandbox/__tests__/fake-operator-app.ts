@@ -35,6 +35,8 @@ export class FakeOperatorApp {
   calls: { method: string; path: string; body: unknown }[] = [];
   /** Off: the app hasn't the storage and capacity routes yet (404). */
   hasStorageRoutes = false;
+  /** When set, every issued code expires then (to test an expired held code). */
+  codeExpiresAt: string | null = null;
   storage: { orgId: string; machineId: string; state: unknown }[] = [];
   capacity: unknown[] = [];
   private serial = 0;
@@ -186,7 +188,7 @@ export class FakeOperatorApp {
       return json(200, {
         machineId: org.machine.id,
         enrollCode: code,
-        expiresAt: new Date(Date.now() + 600_000).toISOString(),
+        expiresAt: this.codeExpiresAt ?? new Date(Date.now() + 600_000).toISOString(),
       });
     }
     if (method === "GET" && rest === "machines") {

@@ -11,7 +11,14 @@
  * is never stopped under it, but being busy never moves the clock: a scheduled job can delay a stop, not a pack.
  */
 import { createHash, randomUUID } from "node:crypto";
-import type { AppProvisioningApi, MachineRequest, OperatorEvent, OperatorMember, PlanLimits } from "./operator-api";
+import type {
+  AppProvisioningApi,
+  IssuedMachine,
+  MachineRequest,
+  OperatorEvent,
+  OperatorMember,
+  PlanLimits,
+} from "./operator-api";
 import { freePlacementAdmission, freeWakeAdmission, openPlaces, refusedShare } from "./placement";
 import type { SandboxTier } from "./plan";
 import { decideFreeSandbox } from "./policy";
@@ -34,6 +41,8 @@ const CAPACITY_TIER = "free";
 const RESTORE_ESTIMATE_MS = 60_000;
 /** How long a new sandbox is expected to take, for the same. */
 const CREATE_ESTIMATE_MS = 90_000;
+/** A held enroll code is used only with at least this long left. */
+const CODE_MARGIN_MS = 60_000;
 /** Pages of the events feed read in one pass, so a long backlog never holds a pass for ever. */
 const EVENT_PAGES_PER_TICK = 20;
 
@@ -116,6 +125,8 @@ const AWAKE = new Set(["placing", "awake"]);
 export class FreeSandboxBridge {
   private readonly now: () => Date;
   private readonly log: NonNullable<BridgeDeps["log"]>;
+  /** Enroll codes issued and not used yet, by workspace: in memory only, never stored or logged. */
+  private readonly codes = new Map<string, IssuedMachine>();
 
   constructor(private readonly deps: BridgeDeps) {
     if (!/^https:\/\/[^/?#@\s]+$/.test(deps.appUrl)) throw new Error("The agent app address must be https");
@@ -331,6 +342,20 @@ export class FreeSandboxBridge {
     }
   }
 
+  /** Makes (or keeps) the workspace's computer row and holds its new code in memory. */
+  private async issueCode(orgId: string): Promise<IssuedMachine> {
+    const issued = await this.deps.app.issueMachine(orgId);
+    this.codes.set(orgId, issued);
+    return issued;
+  }
+
+  /** The held code while it has a minute or more left, else a new one for the same computer (the old one stops). */
+  private async freshCode(orgId: string): Promise<IssuedMachine> {
+    const held = this.codes.get(orgId);
+    if (held && Date.parse(held.expiresAt) - this.now().getTime() >= CODE_MARGIN_MS) return held;
+    return this.issueCode(orgId);
+  }
+
   /** Free, paid or not known yet: by the owner's address, and only when the app says it is verified. */
   private async tierOfRequest(request: MachineRequest): Promise<SandboxTier["tier"]> {
     if (!request.owner) return "unknown";
@@ -351,13 +376,14 @@ export class FreeSandboxBridge {
       return;
     }
     if (tier !== "free") return;
+    // The workspace's computer row and its limits come first, before any place or sandbox: with the row there, a
+    // message sent early waits for the computer's first hello instead of being refused for having no AI.
     if (!(await app.setPlanLimits(request.orgId, freePlanLimits(settings)))) return;
+    const waiting = (await store.waitlist()).includes(request.orgId);
+    if (!waiting && !this.codes.has(request.orgId)) await this.issueCode(request.orgId);
     const server = await this.serverForNewPlace();
     if (!server) {
-      await app.reportProvisioning(request.orgId, {
-        state: "waiting",
-        reason: "capacity",
-      });
+      await app.reportProvisioning(request.orgId, { state: "waiting", reason: "capacity" });
       await store.setWaitlisted(request.orgId, true);
       sum.waitlisted++;
       return;
@@ -365,11 +391,7 @@ export class FreeSandboxBridge {
     const now = this.now();
     const placement: Placement = {
       orgId: request.orgId,
-      sandbox: {
-        sandboxId: randomUUID(),
-        computerId: randomUUID(),
-        ownerHash: ownerHashOf(request.orgId),
-      },
+      sandbox: { sandboxId: randomUUID(), computerId: randomUUID(), ownerHash: ownerHashOf(request.orgId) },
       machineId: null,
       serverId: server.id,
       state: "placing",
@@ -382,26 +404,18 @@ export class FreeSandboxBridge {
     await store.setWaitlisted(request.orgId, false);
     const eta = new Date(now.getTime() + CREATE_ESTIMATE_MS).toISOString();
     try {
-      await app.reportProvisioning(request.orgId, {
-        state: "preparing",
-        step: "reserving",
-        expectedReadyAt: eta,
-      });
+      await app.reportProvisioning(request.orgId, { state: "preparing", step: "reserving", expectedReadyAt: eta });
       await this.deps.host.create(server.id, placement.sandbox, specOf(settings));
-      await app.reportProvisioning(request.orgId, {
-        state: "preparing",
-        step: "starting",
-        expectedReadyAt: eta,
-      });
-      const issued = await app.issueMachine(request.orgId);
+      await app.reportProvisioning(request.orgId, { state: "preparing", step: "starting", expectedReadyAt: eta });
+      const issued = await this.freshCode(request.orgId);
       placement.machineId = issued.machineId;
       await store.save(placement);
-      await app.reportProvisioning(request.orgId, {
-        state: "preparing",
-        step: "connecting",
-        expectedReadyAt: eta,
-      });
-      await this.deps.host.enroll(server.id, placement.sandbox, issued.enrollCode, this.deps.appUrl);
+      await app.reportProvisioning(request.orgId, { state: "preparing", step: "connecting", expectedReadyAt: eta });
+      try {
+        await this.deps.host.enroll(server.id, placement.sandbox, issued.enrollCode, this.deps.appUrl);
+      } finally {
+        this.codes.delete(request.orgId); // single use, tried or not
+      }
     } catch (err) {
       this.problem("place", placement, err);
       sum.failed++;
