@@ -22,6 +22,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "run-codex-24-7-in-the-cloud",
       "claude-code-vs-codex-24-7",
       "cursor-vs-claude-code",
+      "best-llm-for-coding",
       "ai-agent-dies-terminal-closes-fixes",
       "run-ai-agents-24-7",
       "control-claude-code-from-telegram",
@@ -47,6 +48,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "run-managed-agents-on-your-own-computer",
       "ai-agent-api-cost-optimization",
       "byo-api-key-explained",
+      "openrouter-free-models",
     ],
   },
   {
@@ -55,6 +57,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
     blurb: "What Hermes Agent is, how to run it yourself, and how to use its memory, skills, schedules and chat apps.",
     articles: [
       "what-is-hermes-agent",
+      "hermes-agent-cloud",
       "how-to-self-host-hermes-agent",
       "self-hosting-hermes-guide",
       "what-can-hermes-agent-actually-do",

@@ -92,6 +92,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "best-llm-for-coding", title: "Best LLM for coding in November 2026: which model for which job" },
     { slug: "codex-pricing-by-chatgpt-plan", title: "Codex pricing by ChatGPT plan: Plus, Pro 100/200/500 and API keys" },
     { slug: "cursor-vs-claude-code", title: "Cursor vs Claude Code: which keeps going when you walk away?" },
     { slug: "cursor-cloud-agents", title: "Cursor Cloud Agents: what they cost, and what happens when you close your laptop" },

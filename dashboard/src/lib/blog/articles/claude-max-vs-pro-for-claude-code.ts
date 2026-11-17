@@ -82,6 +82,7 @@ export const article: BlogArticle = {
       heading: `Claude Code pricing by plan, as of ${AS_OF}`,
       paragraphs: [
         `Claude Code is included in every paid Claude plan: Pro, Max, Team and Enterprise. Here's what ${link(S.pricing, "Anthropic's pricing page")}, ${link(S.maxPlan, "the Max article")} and ${link(S.proPlan, "the Pro article")} say.`,
+        "If you're not set on Claude, [best LLM for coding](/blog/best-llm-for-coding) compares it with OpenAI, Google, DeepSeek and open-weight models on price and benchmarks.",
         [
           `- **Pro:** ${usd(PRO.priceUsd)} a month, or ${usd(PRO.annualMonthlyUsd)} a month on the annual plan (${usd(PRO.annualUpfrontUsd)} billed up front). The baseline that the Max multiples are measured against.`,
           `- **Max 5x:** ${usd(MAX5.priceUsd)} a month, monthly only. ${MAX5.multiplier}x Pro's usage per five-hour session.`,
@@ -259,6 +260,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "best-llm-for-coding", title: "Best LLM for coding in November 2026: which model for which job" },
     { slug: "keep-claude-code-running-24-7", title: "Will Claude Code keep running if you close your laptop? (And how to run it 24/7)" },
     { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent in 2026" },
     { slug: "claude-code-vs-codex-24-7", title: "Claude Code vs Codex for 24/7 autonomous work: which should you host?" },

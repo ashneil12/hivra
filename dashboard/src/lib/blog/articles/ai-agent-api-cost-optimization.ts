@@ -22,6 +22,7 @@ export const article: BlogArticle = {
       heading: "What does an autonomous agent cost per month?",
       paragraphs: [
         "Between $1 and $108 a month for the same workload, depending on the model. This is a worked example, not something we measured, so here are the assumptions to swap for your own: 20 runs a day for 30 days, which is 600 runs. Each run reads about 8,000 tokens and writes about 2,000. That adds up to 4.8 million input tokens and 1.2 million output tokens a month. GPT-4 is legacy now, so the rows use current models.",
+        "For the cheapest possible easy steps, [OpenRouter's free models](/blog/openrouter-free-models) cost nothing per token, with a daily request cap and weaker privacy terms.",
         `Prices are per million tokens (input/output), from [Anthropic's pricing page](https://platform.claude.com/docs/en/about-claude/pricing) and [OpenAI's API pricing page](https://developers.openai.com/api/docs/pricing) (Standard, short context). Haiku 5.5 is priced by prompt length: the rates below are for prompts up to 100,000 tokens, and a run of 8,000 input tokens is well inside that.\n\n| Model | Vendor rate (in/out) | Worked monthly API cost |\n|---|---|---|\n| Claude Haiku 5.5 | $0.10 / $0.50 | 4.8×$0.10 + 1.2×$0.50 = **$1.08** |\n| Claude Haiku 5.5 via Batch API | $0.05 / $0.25 | half of Haiku = **$0.54** |\n| Claude Sonnet 5.5 | $2 / $10 | 4.8×$2 + 1.2×$10 = **$21.60** |\n| Claude Opus 5.5 | $4 / $20 | 4.8×$4 + 1.2×$20 = **$43.20** |\n| OpenAI gpt-6-luna | $0.10 / $0.50 | 4.8×$0.10 + 1.2×$0.50 = **$1.08** |\n| OpenAI gpt-6.1-sol | $2 / $10 | 4.8×$2 + 1.2×$10 = **$21.60** |\n| OpenAI gpt-6-astra | $10 / $50 | 4.8×$10 + 1.2×$50 = **$108.00** |\n\nDouble the runs, or double the tokens per run, and the bill doubles. A browser-heavy agent that sends screenshots each step burns more input than this table assumes. Hosting sits on top: on Hivra that starts at ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}. Compare DIY versus managed with the [AI agent hosting cost calculator](/tools/ai-agent-hosting-cost-calculator), and see how a [bring-your-own API key](/blog/byo-api-key-explained) keeps the token line on your own invoice with no Hivra markup on that key.`,
       ],
     },
@@ -85,6 +86,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "openrouter-free-models", title: "OpenRouter free models: the current list, real limits and how to use them" },
     { slug: "cost-of-running-ai-agent", title: "The real cost of running a persistent AI agent" },
     { slug: "byo-api-key-explained", title: "BYO API key: what it means and why it matters" },
     { slug: "self-hosting-hermes-guide", title: "How to self-host Hermes Agent" },

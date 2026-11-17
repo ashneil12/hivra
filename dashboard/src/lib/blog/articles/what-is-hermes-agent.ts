@@ -86,6 +86,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "hermes-agent-cloud", title: "How to run Hermes Agent in the cloud: VPS, Docker, Nous Hermes Cloud or a computer of its own" },
     { slug: "ai-agent-vs-chatbot", title: "AI agents vs chatbots: the difference that actually matters" },
     { slug: "persistent-memory-explained", title: "How persistent memory works in AI agents" },
     { slug: "self-hosting-hermes-guide", title: "How to self-host Hermes Agent (and why most people bail)" },
