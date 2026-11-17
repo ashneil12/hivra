@@ -31,8 +31,9 @@ export const BANNED_ANYWHERE: Array<[string, RegExp]> = [
   // you close the tab" (false on computers with the 2026.09.24.1 runtime) and
   // "the browser chat keeps going" (false on computers without it).
   ...CLI_RUN_FALSE_CLAIMS.map(({ label, pattern }): [string, RegExp] => [label, pattern]),
-  // Hivra's chat bypasses the CLIs' permission prompts by default, and Hermes
-  // runs from Hivra's own build.
+  // Hivra's chat bypasses the CLIs' permission prompts by default. (Hermes on a
+  // Hivra computer is the official upstream install, see docs/STATUS.md; this
+  // rule is about the CLI agents.)
   [
     "unmodified-runtime claim",
     /behave exactly as they would|not a fork or a wrapper|official unmodified runtimes|assumes the managed platform runs the same software/i,
