@@ -692,7 +692,10 @@ restore_flushed_table() {
   [ "$before" = "yes" ] || return 0
   nft_table_present "$family" "$name" && return 0
   log "flush ruleset removed table $family $name; restoring it via $unit"
-  systemctl start "$unit" >/dev/null 2>&1 || true
+  # restart, not start: the rebuild units are Type=oneshot RemainAfterExit=yes,
+  # so once one has run it stays "active" and a later `start` is a no-op that
+  # would leave the table missing. restart re-runs ExecStart whatever the state.
+  systemctl restart "$unit" >/dev/null 2>&1 || true
   nft_table_present "$family" "$name" \
     || fatal "table $family $name was present before --apply but is missing after restoring via $unit; this host now lacks that guest protection — restore it before leaving"
 }

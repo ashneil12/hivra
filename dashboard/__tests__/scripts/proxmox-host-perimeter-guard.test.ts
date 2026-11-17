@@ -533,15 +533,19 @@ fi
       };
       stub("id", "#!/usr/bin/env bash\necho 0\n");
       stub("sshd", '#!/usr/bin/env bash\n[ "$1" = "-t" ] && exit "${SSHD_T_EXIT:-0}"\nexit 0\n');
-      // systemctl: `start <unit>` of an out-of-band table's unit re-adds that
-      // table to the present-tables file (modelling the unit rebuilding it),
-      // unless ${UNIT}_RESTORE_FAIL=1 tells it to stay broken. All else is a
-      // no-op (e.g. the sshd reload).
+      // systemctl: the rebuild units are Type=oneshot RemainAfterExit=yes, so a
+      // real host that has already run them reports them "active" and a bare
+      // `start` is a no-op — only `restart` re-runs ExecStart. The stub models
+      // that: `restart <unit>` re-adds the out-of-band table to present-tables
+      // (modelling the unit rebuilding it), while a bare `start` does nothing.
+      // ${UNIT}_RESTORE_FAIL=1 tells the unit to stay broken. All else (e.g. the
+      // sshd reload) is a no-op. This way, reverting the guard to `start` would
+      // fail the restore tests below.
       stub(
         "systemctl",
         `#!/usr/bin/env bash
 echo "$*" >> "${dir}/systemctl.log"
-if [ "\${1:-}" = "start" ]; then
+if [ "\${1:-}" = "restart" ]; then
   case "\${2:-}" in
     hivra-vm-antispoof.service) [ "\${ANTISPOOF_RESTORE_FAIL:-0}" = "1" ] || echo "bridge hermes_vm_antispoof" >> "${dir}/present-tables" ;;
     hivra-ingress-pins.service) [ "\${INGRESS_RESTORE_FAIL:-0}" = "1" ] || echo "bridge hivra_ingress_pin" >> "${dir}/present-tables" ;;
@@ -682,8 +686,8 @@ esac
       const output = apply();
       expect(readFileSync(nftConf, "utf8")).toContain(VMBR1_NEW_DROP);
       const systemctlLog = readFileSync(path.join(dir, "systemctl.log"), "utf8");
-      expect(systemctlLog).toContain("start hivra-vm-antispoof.service");
-      expect(systemctlLog).toContain("start hivra-ingress-pins.service");
+      expect(systemctlLog).toContain("restart hivra-vm-antispoof.service");
+      expect(systemctlLog).toContain("restart hivra-ingress-pins.service");
       // Both tables are back after the apply reports success.
       const presentAfter = readFileSync(path.join(dir, "present-tables"), "utf8");
       expect(presentAfter).toContain("bridge hermes_vm_antispoof");
@@ -713,8 +717,8 @@ esac
       apply();
       expect(readFileSync(nftConf, "utf8")).toContain(VMBR1_NEW_DROP);
       const systemctlLog = readFileSync(path.join(dir, "systemctl.log"), "utf8");
-      expect(systemctlLog).not.toContain("start hivra-vm-antispoof.service");
-      expect(systemctlLog).not.toContain("start hivra-ingress-pins.service");
+      expect(systemctlLog).not.toContain("restart hivra-vm-antispoof.service");
+      expect(systemctlLog).not.toContain("restart hivra-ingress-pins.service");
     });
   });
 });
