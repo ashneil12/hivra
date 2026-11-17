@@ -547,6 +547,24 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.17.3` builds on `2026.11.17.2` and hardens `hivra-tg-apply`
+against symlink redirection of its one root-authored write. The chat gateway
+runs the helper as root (scoped NOPASSWD) to write the Telegram bot's env file
+into `/etc/bux`, a directory that is group-writable by the agent user so the
+gateway and bot can keep their own state files there. That writability let the
+agent user replace the `tg.env` entry with a symlink, and the old
+`cat > "$TG_ENV_DIR/tg.env"` followed by `chgrp`/`chmod` would then follow the
+symlink and turn a root-authored write into an arbitrary-path root write. The
+helper now stages the file in the root-only parent directory (`/etc`, where the
+agent user cannot write, so the perms steps can never be raced onto a symlink)
+and moves it into place on the same filesystem; `rename(2)` replaces the
+directory entry atomically and never follows a symlink sitting at the
+destination. Behaviour for the agent user is unchanged — it still only reads
+`tg.env` and writes its own state files. Changed: `hivra-tg-apply` and its
+regression test, plus the version and the provider worker's release labels.
+This source release does not deploy, install, enable or start anything on a
+host or computer.
+
 Release `2026.11.17.2` builds on `2026.11.17.1` and stops Hivra's own
 background reads from keeping a computer awake: the wake proxy treats a request
 carrying `X-Hivra-Background: 1` as carrying no proof, so it never moves the
