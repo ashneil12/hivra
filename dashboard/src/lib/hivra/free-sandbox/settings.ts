@@ -33,7 +33,7 @@ export interface FreeSandboxSettings {
   /** Scheduled jobs a free workspace may have, and the least hours between one job's runs. */
   scheduledJobs: number;
   scheduledJobMinHours: number;
-  /** Places opened per server so far: Free opens in steps, up to `freePlacesPerServer`. */
+  /** Places opened per server so far: Free opens in steps, up to `freePlacesPerServer`; 0 places nobody new. */
   placesOpenPerServer: number;
   /** Above this share of a server's free replies today refused by the free AI's limit, nobody new is placed there. */
   refusedShareStop: number;
@@ -104,8 +104,8 @@ export function freeSandboxSettings(ladder: Ladder | null, freeKey = "free"): Fr
     !wholePositive(s.agents) ||
     !wholeOrZero(s.scheduledJobs) ||
     !positive(s.scheduledJobMinHours) ||
-    !wholePositive(s.placesOpenPerServer) ||
-    !(typeof s.refusedShareStop === "number" && s.refusedShareStop > 0 && s.refusedShareStop <= 1) ||
+    !wholeOrZero(s.placesOpenPerServer) ||
+    !(typeof s.refusedShareStop === "number" && s.refusedShareStop >= 0 && s.refusedShareStop <= 1) ||
     !wholeOrZero(s.refusedShareMinReplies) ||
     !wholeOrZero(s.paidReserveComputers) ||
     !positive(s.cpuOvercommit) ||
