@@ -110,6 +110,15 @@ export const PlanLadderConfigSchema = z.object({
       /** Idle test ceilings an agent kind must pass to be offered on Free. */
       idleMbMax: z.number().int().min(0).max(65_536).optional(),
       imageAddMbMax: z.number().int().min(0).max(65_536).optional(),
+      /** Separate count for heavier free agents (e.g. Hermes). */
+      hermesPlacesPerServer: z.number().int().min(0).max(10_000).optional(),
+      /** Model IDs Free is pinned to. */
+      freeModels: z.array(z.string().trim().min(1).max(120)).max(20).optional(),
+      storageMb: z.number().int().min(0).max(1_048_576).optional(),
+      paidReserveComputers: z.number().int().min(0).max(10_000).optional(),
+      cpuOvercommit: z.number().min(1).max(64).optional(),
+      maxConcurrentTurns: z.number().int().min(0).max(10_000).optional(),
+      dailyReplySecondsCap: z.number().int().min(0).max(86_400).optional(),
     })
     .optional(),
 });
