@@ -46,6 +46,11 @@ const KINDS = ['fact', 'preference', 'decision', 'project', 'note'];
 const PROFILE_MAX = 2000;
 /** Older memories at least this close to a new one are shown to the caller, who decides if they are out of date. */
 const SIMILAR_ABOVE = 0.72;
+/** One line of the memory view, and of a summary. */
+const LINE_MAX = 280;
+const WAKE_LINES = 96;
+const UPKEEP =
+  'Memory upkeep, before your next action: for each item in "merges", write ONE line (at most 280 characters) that keeps what will still matter from both "a" and "b", and call summarize with that range and your line.';
 const encoder = new TextEncoder();
 
 // ---------------------------------------------------------------- helpers
@@ -206,6 +211,15 @@ export class MemoryStore extends DurableObject<Env> {
   }
 
   private prepare(): void {
+    // Objects made before the log existed get its column; their memories join the log in the order they were saved.
+    const columns = this.sql.exec<{ name: string }>("SELECT name FROM pragma_table_info('memories')").toArray();
+    if (columns.length && !columns.some((column) => column.name === 'seq')) {
+      this.sql.exec('ALTER TABLE memories ADD COLUMN seq INTEGER NOT NULL DEFAULT -1');
+      this.sql.exec('UPDATE memories SET seq = (SELECT COUNT(*) FROM memories older WHERE older.rowid < memories.rowid)');
+      this.sql.exec(
+        "INSERT INTO counters (name, value) SELECT 'log_length', COUNT(*) FROM memories WHERE true ON CONFLICT (name) DO UPDATE SET value = excluded.value",
+      );
+    }
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS memories (
         id TEXT PRIMARY KEY,
@@ -217,8 +231,15 @@ export class MemoryStore extends DurableObject<Env> {
         valid_to INTEGER,
         replaced_by TEXT,
         vec BLOB,
-        digest TEXT NOT NULL DEFAULT ''
+        digest TEXT NOT NULL DEFAULT '',
+        -- Position in the person's log: 0 for the first memory ever saved, never reused.
+        seq INTEGER NOT NULL DEFAULT -1
       );
+      CREATE INDEX IF NOT EXISTS memories_seq ON memories (seq);
+      -- One-line summaries over aligned runs of the log (0-1, 2-3, 0-3, ...), written by the agents themselves.
+      CREATE TABLE IF NOT EXISTS tree (lo INTEGER NOT NULL, hi INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY (lo, hi)) WITHOUT ROWID;
+      -- Summaries that can be written now because both halves are ready.
+      CREATE TABLE IF NOT EXISTS todo (lo INTEGER NOT NULL, hi INTEGER NOT NULL, PRIMARY KEY (lo, hi)) WITHOUT ROWID;
       CREATE INDEX IF NOT EXISTS memories_active ON memories (valid_to, project);
       CREATE INDEX IF NOT EXISTS memories_digest ON memories (digest);
       -- Keyed by the memory's rowid, so removing one entry does not scan the index.
@@ -369,17 +390,20 @@ export class MemoryStore extends DurableObject<Env> {
       if (vectors) this.count('embed_tokens', cleaned.reduce((sum, item) => sum + tokens(item.text), 0));
       const replaceAbove = Number(this.env.MEMORY_REPLACE_ABOVE) || 0.97;
       const now = Date.now();
-      const saved: { id: string; replaced?: string[]; duplicate?: boolean; similar?: { id: string; text: string }[] }[] = [];
+      let next = this.logLength();
+      const saved: { id: string; replaced?: string[]; duplicate?: boolean; similar?: { n: number; id: string; text: string }[] }[] = [];
       // The caller named what is out of date; only memories this key may touch are retired.
       const retireNamed = (ids: string[], project: string, by: string): string[] =>
-        ids.filter((old) => {
-          if (old === by) return false;
+        ids.flatMap((named) => {
+          // Either a memory's id, or its number in the view ("#2" or "2").
+          const number = /^#?(\d+)$/.exec(named.trim());
           const [row] = this.run<{ id: string }>(
-            `SELECT id FROM memories WHERE id = ? AND valid_to IS NULL ${key.project ? 'AND project = ?' : ''}`,
-            ...(key.project ? [old, project] : [old]),
+            `SELECT id FROM memories WHERE ${number ? 'seq' : 'id'} = ? AND valid_to IS NULL ${key.project ? 'AND project = ?' : ''}`,
+            ...(key.project ? [number ? Number(number[1]) : named, project] : [number ? Number(number[1]) : named]),
           );
-          if (row) this.retire(old, now, by);
-          return Boolean(row);
+          if (!row || row.id === by) return [];
+          this.retire(row.id, now, by);
+          return [row.id];
         });
 
       const digests = await Promise.all(
@@ -406,11 +430,11 @@ export class MemoryStore extends DurableObject<Env> {
             const score = cosine(mine, asInt8(other.vec));
             // Only a near word-for-word restatement is replaced without asking.
             if (score >= replaceAbove) replaced.push(other.id);
-            else if (score >= SIMILAR_ABOVE && !item.replaces.includes(other.id)) close.push({ id: other.id, score });
+            else if (score >= SIMILAR_ABOVE) close.push({ id: other.id, score });
           }
         }
         this.run(
-          'INSERT INTO memories (id, text, kind, project, agent, created_at, vec, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO memories (id, text, kind, project, agent, created_at, vec, digest, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
           id,
           item.text,
           item.kind,
@@ -419,19 +443,30 @@ export class MemoryStore extends DurableObject<Env> {
           now,
           vec,
           digests[index],
+          next,
         );
+        // Every second memory completes a pair that can now be summarised.
+        if (next % 2 === 1) this.run('INSERT OR IGNORE INTO todo (lo, hi) VALUES (?, ?)', next - 1, next);
+        next += 1;
+        this.count('log_length', 1);
         this.count('active', 1);
         this.run('INSERT INTO memories_fts (rowid, text) SELECT rowid, text FROM memories WHERE id = ?', id);
         for (const old of replaced) this.retire(old, now, id);
         replaced.push(...retireNamed(item.replaces, item.project, id));
         const entry: (typeof saved)[number] = replaced.length ? { id, replaced } : { id };
-        if (close.length) {
-          const top = close.sort((a, b) => b.score - a.score).slice(0, 3);
-          const texts = this.run<{ id: string; text: string }>(
-            `SELECT id, text FROM memories WHERE id IN (${top.map(() => '?').join(',')})`,
+        const top = close
+          .filter((row) => !replaced.includes(row.id))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 3);
+        if (top.length) {
+          const texts = this.run<{ id: string; text: string; seq: number }>(
+            `SELECT id, text, seq FROM memories WHERE id IN (${top.map(() => '?').join(',')})`,
             ...top.map((row) => row.id),
           );
-          entry.similar = top.map((row) => ({ id: row.id, text: texts.find((t) => t.id === row.id)?.text.slice(0, 300) ?? '' }));
+          entry.similar = top.map((row) => {
+            const found = texts.find((t) => t.id === row.id);
+            return { n: found?.seq ?? -1, id: row.id, text: found?.text.slice(0, 300) ?? '' };
+          });
         }
         saved.push(entry);
       });
@@ -439,9 +474,10 @@ export class MemoryStore extends DurableObject<Env> {
       this.count('saves', cleaned.length);
       this.note(key.label, 'remember', `${cleaned.length} saved`);
       const hint = saved.some((entry) => entry.similar)
-        ? 'Some older memories look similar. If the new one makes any of them out of date, call remember again with the same text and "replaces" set to their ids. If they are simply different facts, do nothing.'
+        ? 'Nothing was replaced. Some older memories look similar (see "similar"). If the new one makes any of them out of date, call remember again with the same text and "replaces" set to their numbers ("n"). If they are simply different facts, do nothing.'
         : undefined;
-      return { ok: true, saved, meaningSearch: Boolean(vectors), hint };
+      const merges = key.project ? [] : this.dueMerges(next, 2);
+      return { ok: true, saved, meaningSearch: Boolean(vectors), hint, ...(merges.length ? { merges, upkeep: UPKEEP } : {}) };
     } catch (error) {
       return refusalBody(error);
     } finally {
@@ -450,10 +486,212 @@ export class MemoryStore extends DurableObject<Env> {
   }
 
   private retire(id: string, at: number, replacedBy: string | null): void {
+    this.unsummarise(id);
     this.run('DELETE FROM memories_fts WHERE rowid = (SELECT rowid FROM memories WHERE id = ?)', id);
     this.run('UPDATE memories SET valid_to = ?, replaced_by = ?, vec = NULL WHERE id = ? AND valid_to IS NULL', at, replacedBy, id);
     this.count('active', -1);
     this.count('replaced', 1);
+  }
+
+  // -- the log and its tree of summaries
+  //
+  // Memories sit in the order they were saved. Neighbours are summarised in
+  // pairs into one line, pairs of those into one line, and so on. The calling
+  // agent writes each summary, so no model runs here. `wake` reads the whole
+  // memory in a fixed number of lines: recent memories as they are, older
+  // ones as broader summaries. `zoom` opens a summary into its two halves.
+
+  private logLength(): number {
+    return this.run<{ value: number }>("SELECT value FROM counters WHERE name = 'log_length'")[0]?.value ?? 0;
+  }
+
+  /** The line for a run of the log: a memory, a stored summary, '' when nothing is left there, undefined when not written yet. */
+  private line(lo: number, hi: number): string | undefined {
+    if (lo === hi) {
+      const [row] = this.run<{ text: string; kind: string }>('SELECT text, kind FROM memories WHERE seq = ? AND valid_to IS NULL', lo);
+      return row ? `[${row.kind}] ${row.text.replace(/\s+/g, ' ').slice(0, LINE_MAX)}` : '';
+    }
+    return this.run<{ text: string }>('SELECT text FROM tree WHERE lo = ? AND hi = ?', lo, hi)[0]?.text;
+  }
+
+  private queueParent(lo: number, hi: number, length: number): void {
+    const span = (hi - lo + 1) * 2;
+    const parentLo = lo - (lo % span);
+    if (parentLo + span - 1 < length) this.run('INSERT OR IGNORE INTO todo (lo, hi) VALUES (?, ?)', parentLo, parentLo + span - 1);
+  }
+
+  /** Settles what needs no judgement and returns the summaries an agent has to write. */
+  private dueMerges(length: number, limit: number): { range: string; a: string; b: string }[] {
+    const merges: { range: string; a: string; b: string }[] = [];
+    const seen = new Set<string>();
+    for (let guard = 0; guard < 64 && merges.length < limit; guard += 1) {
+      const rows = this.run<{ lo: number; hi: number }>('SELECT lo, hi FROM todo ORDER BY hi - lo, lo LIMIT 8');
+      const row = rows.find((candidate) => !seen.has(`${candidate.lo}-${candidate.hi}`));
+      if (!row) break;
+      seen.add(`${row.lo}-${row.hi}`);
+      const mid = row.lo + (row.hi - row.lo + 1) / 2 - 1;
+      const a = this.line(row.lo, mid);
+      const b = this.line(mid + 1, row.hi);
+      if (a === undefined || b === undefined) {
+        // A half is not written yet; it queues this run again when it is.
+        this.run('DELETE FROM todo WHERE lo = ? AND hi = ?', row.lo, row.hi);
+      } else if (a && b) {
+        merges.push({ range: `${row.lo}-${row.hi}`, a, b });
+      } else {
+        // Nothing to weigh: one half is empty, so the other stands for both.
+        this.run('INSERT OR REPLACE INTO tree (lo, hi, text) VALUES (?, ?, ?)', row.lo, row.hi, a || b);
+        this.run('DELETE FROM todo WHERE lo = ? AND hi = ?', row.lo, row.hi);
+        this.queueParent(row.lo, row.hi, length);
+      }
+    }
+    return merges;
+  }
+
+  /** A memory changed or went away: summaries that covered it are dropped and written again later. */
+  private unsummarise(id: string): void {
+    const [row] = this.run<{ seq: number }>('SELECT seq FROM memories WHERE id = ? AND valid_to IS NULL', id);
+    if (!row || row.seq < 0) return;
+    this.run('DELETE FROM tree WHERE lo <= ? AND hi >= ?', row.seq, row.seq);
+    this.run('DELETE FROM todo WHERE lo <= ? AND hi >= ?', row.seq, row.seq);
+    const lo = row.seq - (row.seq % 2);
+    if (lo + 1 < this.logLength() + (this.tally.log_length ?? 0)) this.run('INSERT OR IGNORE INTO todo (lo, hi) VALUES (?, ?)', lo, lo + 1);
+  }
+
+  private wholeMemoryOnly(key: { project: string }): void {
+    if (key.project) throw new Refusal(403, 'project_key', 'A key tied to one project can search with recall, but cannot read the whole memory.');
+  }
+
+  async summarize(caller: Caller, input: { range?: string; text?: string }): Promise<unknown> {
+    try {
+      const key = this.admit(caller, true);
+      this.wholeMemoryOnly(key);
+      const match = /^(\d+)-(\d+)$/.exec(String(input?.range ?? ''));
+      const text = scrubSecrets(String(input?.text ?? '').replace(/\s+/g, ' ').trim());
+      if (!match || !text) throw new Refusal(400, 'bad_request', 'Send the range you were given and one line of text.');
+      if (text.length > LINE_MAX) throw new Refusal(400, 'too_long', `A summary is one line of at most ${LINE_MAX} characters.`);
+      const lo = Number(match[1]);
+      const hi = Number(match[2]);
+      const [due] = this.run('SELECT lo FROM todo WHERE lo = ? AND hi = ?', lo, hi);
+      if (!due) throw new Refusal(409, 'not_due', 'That summary is not needed (already written, or the memories changed).');
+      const length = this.logLength();
+      this.run('INSERT OR REPLACE INTO tree (lo, hi, text) VALUES (?, ?, ?)', lo, hi, text);
+      this.run('DELETE FROM todo WHERE lo = ? AND hi = ?', lo, hi);
+      this.queueParent(lo, hi, length);
+      this.count('summaries', 1);
+      const merges = this.dueMerges(length, 2);
+      return { ok: true, ...(merges.length ? { merges, upkeep: UPKEEP } : {}) };
+    } catch (error) {
+      return refusalBody(error);
+    } finally {
+      this.settle();
+    }
+  }
+
+  /** The whole memory in at most `lines` lines: detail for what is recent, broader summaries for what is old. */
+  async wake(caller: Caller, input: { lines?: number }): Promise<unknown> {
+    try {
+      const key = this.admit(caller, false);
+      this.wholeMemoryOnly(key);
+      const budget = Math.max(8, Math.min(400, Math.floor(Number(input?.lines) || WAKE_LINES)));
+      const length = this.logLength();
+      const cache = new Map<string, string | undefined>();
+      const line = (lo: number, hi: number) => {
+        const name = `${lo}-${hi}`;
+        if (!cache.has(name)) cache.set(name, this.line(lo, hi));
+        return cache.get(name);
+      };
+      // Start from the fewest aligned runs that cover the log, opening any whose summary is not written yet.
+      let cover: [number, number][] = [];
+      const place = (lo: number, hi: number) => {
+        if (lo !== hi && line(lo, hi) === undefined) {
+          const mid = lo + (hi - lo + 1) / 2 - 1;
+          place(lo, mid);
+          place(mid + 1, hi);
+        } else cover.push([lo, hi]);
+      };
+      for (let lo = 0, span = 2 ** Math.floor(Math.log2(Math.max(1, length))); lo < length && span >= 1; span /= 2) {
+        if (lo + span <= length) {
+          place(lo, lo + span - 1);
+          lo += span;
+        }
+      }
+      // Open the run that is widest for its age, until the budget is used.
+      for (;;) {
+        cover = cover.filter(([lo, hi]) => line(lo, hi) !== '');
+        if (cover.length >= budget) break;
+        let best = -1;
+        let bestScore = 0;
+        cover.forEach(([lo, hi], index) => {
+          const score = lo === hi ? 0 : (hi - lo + 1) / (length - hi);
+          if (score > bestScore) {
+            best = index;
+            bestScore = score;
+          }
+        });
+        if (best < 0) break;
+        const [lo, hi] = cover[best];
+        const mid = lo + (hi - lo + 1) / 2 - 1;
+        const halves: [number, number][] = [];
+        const before = cover;
+        cover = halves;
+        place(lo, mid);
+        place(mid + 1, hi);
+        cover = [...before.slice(0, best), ...halves, ...before.slice(best + 1)];
+      }
+      const view = cover.map(([lo, hi]) => `#${lo === hi ? lo : `${lo}-${hi}`} ${line(lo, hi)}`);
+      const [profile] = this.run<{ value: string }>("SELECT value FROM settings WHERE name = 'profile'");
+      const merges = this.dueMerges(length, 2);
+      this.count('wakes', 1);
+      this.note(key.label, 'wake', `${view.length} lines`);
+      return { ok: true, profile: profile?.value ?? '', memories: length, view, ...(merges.length ? { merges, upkeep: UPKEEP } : {}) };
+    } catch (error) {
+      return refusalBody(error);
+    } finally {
+      this.settle();
+    }
+  }
+
+  /** Opens a summary into the two lines it was made from, down to the memories themselves. */
+  async zoom(caller: Caller, input: { range?: string }): Promise<unknown> {
+    try {
+      const key = this.admit(caller, false);
+      this.wholeMemoryOnly(key);
+      const match = /^(\d+)(?:-(\d+))?$/.exec(String(input?.range ?? ''));
+      if (!match) throw new Refusal(400, 'bad_request', 'Name a range from the view, like 0-7.');
+      const lo = Number(match[1]);
+      const hi = Number(match[2] ?? match[1]);
+      const span = hi - lo + 1;
+      if (hi < lo || (span & (span - 1)) !== 0 || lo % span !== 0 || hi >= this.logLength()) {
+        throw new Refusal(400, 'bad_request', 'That is not a range from the view.');
+      }
+      if (span <= 2) {
+        // Down at the memories themselves: full text and ids, so they can be replaced or forgotten.
+        const rows = this.run<{ id: string; seq: number; text: string; kind: string; project: string; agent: string; created_at: number }>(
+          'SELECT id, seq, text, kind, project, agent, created_at FROM memories WHERE seq BETWEEN ? AND ? AND valid_to IS NULL ORDER BY seq',
+          lo,
+          hi,
+        );
+        return {
+          ok: true,
+          memories: rows.map((row) => ({
+            n: row.seq,
+            id: row.id,
+            text: row.text,
+            kind: row.kind,
+            project: row.project || undefined,
+            savedBy: row.agent,
+            savedAt: new Date(row.created_at).toISOString().slice(0, 10),
+          })),
+        };
+      }
+      const mid = lo + span / 2 - 1;
+      const half = (a: number, b: number) => ({ range: `${a}-${b}`, line: this.line(a, b) ?? '(not summarised yet: zoom in)' });
+      return { ok: true, halves: [half(lo, mid), half(mid + 1, hi)] };
+    } catch (error) {
+      return refusalBody(error);
+    } finally {
+      this.settle();
+    }
   }
 
   async recall(caller: Caller, input: RecallInput): Promise<unknown> {
@@ -580,6 +818,7 @@ export class MemoryStore extends DurableObject<Env> {
       }
       // Forgetting removes the words, not just the listing.
       for (const id of ids) {
+        this.unsummarise(id);
         this.run('DELETE FROM memories_fts WHERE rowid = (SELECT rowid FROM memories WHERE id = ?)', id);
         this.run('DELETE FROM memories WHERE id = ?', id);
         this.count('active', -1);
@@ -649,10 +888,11 @@ function refusalBody(error: unknown): { ok: false; status: number; code: string;
 
 // ---------------------------------------------------------------- MCP
 
-const INSTRUCTIONS = `This is the person's own long-term memory, shared by every agent they use.
-At the start of a task, call "profile" once, then "recall" with what the task is about.
-Call "remember" when you learn something that will still matter in a later session: a preference, a decision and its reason, a fact about the person or their project, or how something was solved. Save one clear, self-contained sentence or two per memory. Do not save secrets, passwords or keys, and do not save things that only matter right now.
-When something saved has changed, save the new version with "replaces" naming the old memory's id (recall shows ids). If the person asks you to forget something, call "forget", which deletes it for good.`;
+const INSTRUCTIONS = `This is the person's own long-term memory. It outlives every session, model and agent, and every agent they use shares it. Without it you do not know who they are or what was already decided and tried.
+At the start of every session, before any other work, call "wake" and read what it returns: the person's profile, then their whole memory, recent things in detail and older things as one-line summaries. Call "zoom" on a summary's range to open it. Call "recall" to search by meaning or keyword.
+Call "remember" whenever you learn something that will still matter in a later session: a preference, a decision and its reason, a fact about the person or their project, how something was solved. One clear, self-contained memory per call. Do not save secrets, and do not save things that only matter right now.
+When a reply contains "merges", do that upkeep before your next action: it is how the memory stays readable.
+When something saved has changed, save the new version with "replaces" naming the old memory by its number in the view (#2 is "2"). Nothing is replaced unless you name it. If the person asks you to forget something, call "forget", which deletes it for good.`;
 
 const TOOLS = [
   {
@@ -665,9 +905,33 @@ const TOOLS = [
         text: { type: 'string', description: 'The memory, written so it makes sense on its own.' },
         kind: { type: 'string', enum: KINDS },
         project: { type: 'string', description: 'Optional project name, e.g. the repository name.' },
-        replaces: { type: 'array', items: { type: 'string' }, description: 'Ids of older memories this one makes out of date.' },
+        replaces: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'The older memories this one makes out of date: their numbers from the view (like "2") or their ids. Nothing is replaced unless you name it here.',
+        },
       },
       required: ['text'],
+    },
+  },
+  {
+    name: 'wake',
+    description:
+      "Read the person's profile and their whole memory in one view: recent memories as saved, older ones as one-line summaries (#a-b). Call this first in every session.",
+    inputSchema: { type: 'object', properties: { lines: { type: 'number', description: 'How many lines to read (default 96, about 8k tokens).' } } },
+  },
+  {
+    name: 'zoom',
+    description: 'Open a summary line from the view (#a-b) into the two lines it was made from, down to the memories themselves with their ids.',
+    inputSchema: { type: 'object', properties: { range: { type: 'string', description: 'A range from the view, like 0-7.' } }, required: ['range'] },
+  },
+  {
+    name: 'summarize',
+    description: 'Memory upkeep: hand back the one-line summary you were asked for in "merges". Only call it for a range a reply gave you.',
+    inputSchema: {
+      type: 'object',
+      properties: { range: { type: 'string' }, text: { type: 'string', description: 'One line, at most 280 characters.' } },
+      required: ['range', 'text'],
     },
   },
   {
@@ -707,6 +971,12 @@ async function callTool(store: DurableObjectStub<MemoryStore>, caller: Caller, n
       return store.remember(caller, [
         { text: String(args.text ?? ''), kind: args.kind as string, project: args.project as string, replaces: args.replaces as string[] },
       ]);
+    case 'wake':
+      return store.wake(caller, { lines: args.lines as number });
+    case 'zoom':
+      return store.zoom(caller, { range: String(args.range ?? '') });
+    case 'summarize':
+      return store.summarize(caller, { range: String(args.range ?? ''), text: String(args.text ?? '') });
     case 'recall':
       return store.recall(caller, { query: String(args.query ?? ''), project: args.project as string, limit: args.limit as number });
     case 'profile':
@@ -718,6 +988,20 @@ async function callTool(store: DurableObjectStub<MemoryStore>, caller: Caller, n
     default:
       return { ok: false, status: 404, code: 'unknown_tool', message: `There is no tool called ${name}.` };
   }
+}
+
+/** The memory view as plain lines, which models read more easily than nested JSON. */
+function readable(outcome: Record<string, unknown>): string {
+  const { ok: _ok, view, profile, memories, ...rest } = outcome as {
+    ok: boolean;
+    view?: string[];
+    profile?: string;
+    memories?: unknown;
+  } & Record<string, unknown>;
+  if (!Array.isArray(view)) return JSON.stringify({ ...rest, ...(profile !== undefined ? { profile } : {}), ...(memories !== undefined ? { memories } : {}) });
+  const lines = ['# About the person', profile || '(empty: ask them, then save it with the profile tool)', '', `# Their memory (${memories} saved, oldest first)`, ...(view.length ? view : ['(nothing saved yet)'])];
+  if (Object.keys(rest).length) lines.push('', JSON.stringify(rest));
+  return lines.join('\n');
 }
 
 async function mcp(request: Request, store: DurableObjectStub<MemoryStore>, caller: Caller): Promise<Response> {
@@ -751,7 +1035,7 @@ async function mcp(request: Request, store: DurableObjectStub<MemoryStore>, call
         message?: string;
         markdown?: string;
       };
-      const text = outcome.ok ? (outcome.markdown ?? JSON.stringify({ ...outcome, ok: undefined })) : (outcome.message ?? 'That did not work.');
+      const text = outcome.ok ? (outcome.markdown ?? readable(outcome)) : (outcome.message ?? 'That did not work.');
       return reply({ content: [{ type: 'text', text }], isError: !outcome.ok });
     }
     default:
@@ -826,6 +1110,9 @@ export default {
         const items = Array.isArray(body.items) ? (body.items as RememberInput[]) : [body as unknown as RememberInput];
         return respond(await store.remember(caller, items));
       }
+      if (path === '/v1/wake' && request.method === 'GET') return respond(await store.wake(caller, { lines: Number(url.searchParams.get('lines')) }));
+      if (path === '/v1/zoom' && request.method === 'POST') return respond(await store.zoom(caller, body));
+      if (path === '/v1/summarize' && request.method === 'POST') return respond(await store.summarize(caller, body));
       if (path === '/v1/recall' && request.method === 'POST') return respond(await store.recall(caller, body as unknown as RecallInput));
       if (path === '/v1/profile' && request.method === 'GET') return respond(await store.profile(caller));
       if (path === '/v1/profile' && request.method === 'PUT') return respond(await store.profile(caller, String(body.profile ?? '')));

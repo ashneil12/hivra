@@ -231,10 +231,10 @@ test('MCP: an agent can initialise, list tools, save, recall and read the profil
   const key = await newKey('ash', { label: 'codex' });
   const hello = await rpc(key, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } });
   assert.equal(hello.result.serverInfo.name, 'hivra-memory');
-  assert.match(hello.result.instructions, /recall/);
+  assert.match(hello.result.instructions, /wake/);
   assert.equal((await call(key, 'POST', '/mcp', { jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202);
   const listed = await rpc(key, 'tools/list', {});
-  assert.deepEqual(listed.result.tools.map((tool) => tool.name), ['remember', 'recall', 'profile', 'forget', 'export']);
+  assert.deepEqual(listed.result.tools.map((tool) => tool.name), ['remember', 'wake', 'zoom', 'summarize', 'recall', 'profile', 'forget', 'export']);
 
   await rpc(key, 'tools/call', { name: 'profile', arguments: { set: 'Ash builds Hivra. Prefers short answers.' } });
   await rpc(key, 'tools/call', { name: 'remember', arguments: { text: 'Tests run with node --test, never jest', kind: 'decision', project: 'hivra' } });
@@ -259,4 +259,97 @@ test('the meter counts what Cloudflare bills on', async (t) => {
   assert.equal(stats.saves, 1);
   assert.equal(stats.recalls, 1);
   assert.ok(stats.rows_read > 0 && stats.rows_written > 0 && stats.embed_tokens > 0 && stats.storedBytes > 0);
+});
+
+test('the memory view: agents write the summaries, old memories fade into them, zoom opens them', async (t) => {
+  const { newKey, call, rpc, admin } = await worker(t, { embeddings: false, bindings: { MEMORY_MAX_ITEMS: '100' } });
+  const key = await newKey('ash', { label: 'claude-code' });
+  const facts = ['pnpm not npm', 'staging in Frankfurt', 'production in Dublin', 'queue on Postgres', 'tests use node test', 'deploys on Thursdays', 'office wifi is Hive', 'logo is orange'];
+  const ids = [];
+  // Answer every merge the way an agent would: one line for the two it was shown.
+  const upkeep = async (reply) => {
+    let merges = reply.merges ?? [];
+    let asked = 0;
+    while (merges.length) {
+      const [merge] = merges;
+      asked += 1;
+      assert.match(reply.upkeep ?? 'x', /./);
+      const done = await (await call(key, 'POST', '/v1/summarize', { range: merge.range, text: `sum(${merge.range})` })).json();
+      assert.equal(done.ok, true);
+      merges = [...merges.slice(1).filter((m) => m.range !== merge.range), ...(done.merges ?? [])].filter(
+        (m, i, all) => all.findIndex((o) => o.range === m.range) === i,
+      );
+    }
+    return asked;
+  };
+  let asked = 0;
+  for (const text of facts) {
+    const reply = await (await call(key, 'POST', '/v1/remember', { text, kind: 'fact' })).json();
+    ids.push(reply.saved[0].id);
+    asked += await upkeep(reply);
+  }
+  // Eight memories make seven summaries: 0-1, 2-3, 4-5, 6-7, 0-3, 4-7, 0-7.
+  assert.equal(asked, 7);
+
+  const whole = await (await call(key, 'GET', '/v1/wake?lines=96')).json();
+  assert.equal(whole.memories, 8);
+  assert.deepEqual(whole.view.map((line) => line.split(' ')[0]), ['#0', '#1', '#2', '#3', '#4', '#5', '#6', '#7']);
+  // On a tight budget the old half stays one line and the newest memories stay whole.
+  const tight = await (await call(key, 'GET', '/v1/wake?lines=8')).json();
+  assert.equal(tight.view.length, 8);
+  const small = await (await call(key, 'POST', '/v1/zoom', { range: '0-7' })).json();
+  assert.deepEqual(small.halves.map((half) => half.line), ['sum(0-3)', 'sum(4-7)']);
+  const leaves = await (await call(key, 'POST', '/v1/zoom', { range: '2-3' })).json();
+  assert.deepEqual(leaves.memories.map((memory) => memory.text), ['production in Dublin', 'queue on Postgres']);
+  assert.equal((await call(key, 'POST', '/v1/zoom', { range: '1-2' })).status, 400);
+
+  // An agent can name what a new memory replaces by its number in the view.
+  const moved = await (await call(key, 'POST', '/v1/remember', { text: 'logo is teal', replaces: ['#7'] })).json();
+  assert.deepEqual(moved.saved[0].replaced, [ids[7]]);
+  assert.ok(!(await (await call(key, 'GET', '/v1/wake')).json()).view.some((line) => /orange/.test(line)));
+
+  // Forgetting a memory drops every summary that covered it; they come due again without the forgotten words.
+  await call(key, 'POST', '/v1/forget', { id: ids[1] });
+  const after = await (await call(key, 'GET', '/v1/wake')).json();
+  assert.ok(!after.view.some((line) => /Frankfurt|sum\(0-/.test(line)));
+  // With one half gone, 0-1 needs no agent: the remaining memory stands for the pair. 0-3 comes due.
+  assert.deepEqual(after.merges.map((merge) => merge.range).sort(), ['0-3', '4-7']);
+  after.merges.sort((x, y) => x.range.localeCompare(y.range));
+  assert.match(after.merges[0].a, /pnpm/);
+  assert.equal((await call(key, 'POST', '/v1/summarize', { range: '8-9', text: 'again' })).status, 409);
+
+  // Over MCP the view reads as plain lines.
+  const text = (await rpc(key, 'tools/call', { name: 'wake', arguments: {} })).result.content[0].text;
+  assert.match(text, /# About the person/);
+  assert.match(text, /#0 \[fact\] pnpm not npm/);
+
+  // A key tied to one project searches, but never reads the whole memory.
+  const scoped = await newKey('ash', { project: 'shop' });
+  assert.equal((await call(scoped, 'GET', '/v1/wake')).status, 403);
+  assert.equal((await (await admin('ash', 'GET', '/admin/stats')).json()).summaries, 7);
+});
+
+test('a long memory fades: 40 memories read in 12 lines, newest in full', async (t) => {
+  const { newKey, call } = await worker(t, { embeddings: false, bindings: { MEMORY_MAX_ITEMS: '100' } });
+  const key = await newKey('ash');
+  for (let i = 0; i < 40; i += 1) {
+    let reply = await (await call(key, 'POST', '/v1/remember', { text: `memory number ${i} about topic ${i % 7}` })).json();
+    let merges = reply.merges ?? [];
+    while (merges.length) {
+      reply = await (await call(key, 'POST', '/v1/summarize', { range: merges[0].range, text: `sum ${merges[0].range}` })).json();
+      merges = [...merges.slice(1), ...(reply.merges ?? [])].filter((m, n, all) => all.findIndex((o) => o.range === m.range) === n);
+    }
+  }
+  const { view } = await (await call(key, 'GET', '/v1/wake?lines=12')).json();
+  assert.ok(view.length <= 13 && view.length >= 10, `got ${view.length} lines`);
+  assert.match(view[0], /^#0-(7|15|31) sum/);
+  assert.match(view.at(-1), /^#39 \[note\] memory number 39/);
+  // Every memory is covered exactly once, in order.
+  let next = 0;
+  for (const line of view) {
+    const [, lo, hi] = /^#(\d+)(?:-(\d+))?/.exec(line);
+    assert.equal(Number(lo), next);
+    next = Number(hi ?? lo) + 1;
+  }
+  assert.equal(next, 40);
 });
