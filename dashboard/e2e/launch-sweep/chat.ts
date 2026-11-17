@@ -12,6 +12,7 @@
 import type { Frame, Locator, Page } from '@playwright/test';
 
 import { sleep } from '../first-run-audit/instances';
+import { answerCookieBanner } from './journey';
 import { SweepFailure } from './result';
 import { SWEEP_CHAT_ANSWER, SWEEP_CHAT_PROMPT, type SweepTarget } from './targets';
 
@@ -137,27 +138,33 @@ export async function proveChat(
     if (still) throw new SweepFailure('chat', 'product', `${surface} loaded but says "${still[0]}", so nothing can be sent.`);
   }
   // Hivra's agent menu can be left open over the page after Open; close it.
+  // The cookie banner, once answered, stays away for the rest of the run.
   await page.keyboard.press('Escape').catch(() => undefined);
-  await composer.click({ timeout: 15_000 }).catch(async () => {
-    await page.keyboard.press('Escape').catch(() => undefined);
-    await composer.click({ force: true });
-  });
-  const editable = await composer.evaluate((el) => (el as HTMLElement).isContentEditable).catch(() => false);
-  if (editable) await page.keyboard.type(SWEEP_CHAT_PROMPT, { delay: 5 });
-  else await composer.fill(SWEEP_CHAT_PROMPT);
-  const sentAt = Date.now();
-  await composer.press('Enter');
+  await answerCookieBanner(page);
 
-  // Some UIs send on Ctrl/Cmd+Enter or only from a button. If the question is
-  // still sitting in the composer a few seconds later, press Send.
-  await sleep(4_000);
-  const stillTyped = editable
-    ? ((await composer.innerText().catch(() => '')) || '').includes('389')
-    : ((await composer.inputValue().catch(() => '')) || '').includes('389');
-  if (stillTyped) {
-    const send = frame.getByRole('button', { name: /^(send|submit|send message)$/i }).last();
-    if (await send.isVisible().catch(() => false)) await send.click().catch(() => undefined);
-    else await composer.press('Control+Enter').catch(() => undefined);
+  // An agent that has only just booted can take the first message without
+  // passing it on (Hermes while "Waking up"). A customer who sees their
+  // question never appear sends it again; so does the sweep, up to 3 times.
+  const asked = SWEEP_CHAT_PROMPT.slice(0, 24);
+  const askedBefore = occurrences(await bodyText(frame), asked);
+  let sentAt = Date.now();
+  let shown = false;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    sentAt = await sendQuestion(page, frame, composer);
+    const shownBy = Date.now() + 20_000;
+    while (Date.now() < shownBy) {
+      const text = await bodyText(frame);
+      // A contenteditable composer shows the typed question itself; it only
+      // counts once the composer has been emptied by sending.
+      const inComposer = ((await composer.innerText().catch(() => '')) || (await composer.inputValue().catch(() => '')) || '').includes('389');
+      if ((!inComposer && occurrences(text, asked) > askedBefore) || occurrences(text, SWEEP_CHAT_ANSWER) > before) {
+        shown = true;
+        break;
+      }
+      await sleep(2_000);
+    }
+    if (shown) break;
+    if (attempt < 3) await sleep(15_000);
   }
 
   const end = sentAt + options.replyTimeoutMs;
@@ -177,8 +184,36 @@ export async function proveChat(
     'product',
     `${surface}: no answer within ${Math.round(options.replyTimeoutMs / 60_000)} min` +
       (blocked ? ' (it is asking for a sign-in or key)' : '') +
+      (shown ? '' : ' (the question never appeared in the chat after 3 tries)') +
       `. End of screen: "${tail}"`,
   );
+}
+
+/** Type the question into the composer and send it, the way a customer would. */
+async function sendQuestion(page: Page, frame: Frame, composer: Locator): Promise<number> {
+  await composer.click({ timeout: 15_000 }).catch(async () => {
+    await page.keyboard.press('Escape').catch(() => undefined);
+    await answerCookieBanner(page);
+    await composer.click({ force: true });
+  });
+  const editable = await composer.evaluate((el) => (el as HTMLElement).isContentEditable).catch(() => false);
+  if (editable) await page.keyboard.type(SWEEP_CHAT_PROMPT, { delay: 5 });
+  else await composer.fill(SWEEP_CHAT_PROMPT);
+  const sentAt = Date.now();
+  await composer.press('Enter');
+
+  // Some UIs send on Ctrl/Cmd+Enter or only from a button. If the question is
+  // still sitting in the composer a few seconds later, press Send.
+  await sleep(4_000);
+  const stillTyped = editable
+    ? ((await composer.innerText().catch(() => '')) || '').includes('389')
+    : ((await composer.inputValue().catch(() => '')) || '').includes('389');
+  if (stillTyped) {
+    const send = frame.getByRole('button', { name: /^(send|submit|send message)$/i }).last();
+    if (await send.isVisible().catch(() => false)) await send.click().catch(() => undefined);
+    else await composer.press('Control+Enter').catch(() => undefined);
+  }
+  return sentAt;
 }
 
 /**

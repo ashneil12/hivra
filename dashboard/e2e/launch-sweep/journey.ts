@@ -37,6 +37,17 @@ export async function offeredTileNames(page: Page): Promise<string[]> {
   return [...new Set(names.map((name) => name.trim()).filter(Boolean))];
 }
 
+/**
+ * Hivra's cookie banner sits over the page until a choice is stored, and it
+ * swallows clicks meant for whatever is under it. A customer answers it first.
+ */
+export async function answerCookieBanner(page: Page): Promise<void> {
+  const banner = page.getByRole('dialog', { name: 'Cookie consent' });
+  if (!(await banner.isVisible().catch(() => false))) return;
+  await banner.getByRole('button', { name: 'Reject non-essential cookies' }).first().click({ timeout: 5_000 }).catch(() => undefined);
+  await banner.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => undefined);
+}
+
 export async function openChoose(page: Page): Promise<void> {
   const response = await page.goto('/dashboard/launch', { waitUntil: 'domcontentloaded' });
   if (!response || response.status() >= 400) {
@@ -47,6 +58,7 @@ export async function openChoose(page: Page): Promise<void> {
   } catch {
     throw new SweepFailure('choose', 'product', 'Launch never showed "What do you want to launch?"');
   }
+  await answerCookieBanner(page);
   // Tiles render before the plan and capacity checks land; their fit badges
   // say "Checking fit…" until then. Wait for those to settle.
   await page
