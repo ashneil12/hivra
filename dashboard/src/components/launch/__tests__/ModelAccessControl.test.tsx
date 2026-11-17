@@ -61,6 +61,22 @@ const choices = () => screen.getByRole("group", { name: "Model access" });
 const choice = (name: RegExp) => within(choices()).getByRole("button", { name });
 
 describe("ModelAccessControl", () => {
+  it("explains Venice on Hivra credits and offers a setup call", () => {
+    render(<Harness profileId="hermes" />);
+    fireEvent.click(choice(/^Hivra credits/));
+    expect(screen.getByText(/Models come from Venice through Hivra, so you don't need a Venice account/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Book a setup call" }).getAttribute("href")).toMatch(/^mailto:.*Codex\+1/);
+  });
+
+  it("links to Venice's key page when a Venice key is pasted, and hides the setup call for other providers", () => {
+    render(<Harness profileId="codex" />);
+    fireEvent.click(choice(/^Use my own API key/));
+    expect(screen.getByRole("link", { name: /Create one in your Venice settings/ })).toHaveAttribute("href", "https://venice.ai/settings/api");
+    expect(screen.getByRole("link", { name: "Book a setup call" })).toBeInTheDocument();
+    fireEvent.click(choice(/^Sign in with my existing account/));
+    expect(screen.queryByRole("link", { name: "Book a setup call" })).not.toBeInTheDocument();
+  });
+
   it("shows every choice as a one-click button with no disclosure step first", () => {
     render(<Harness profileId="codex" />);
     const group = within(choices());

@@ -10,6 +10,7 @@ import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { buildVeniceLaunchHref } from "@/lib/venice/launch-link";
+import { SUPPORT_DISCORD_URL, VENICE_API_KEYS_URL, VENICE_DOCS_URL, veniceSetupCallLink } from "@/lib/venice/onboarding";
 import styles from "./venice.module.css";
 
 const TITLE = "Run your Venice agent 24/7 | Hivra";
@@ -37,6 +38,7 @@ const STEPS = [
 ] as const;
 
 export default function VenicePage() {
+  const setupCall = veniceSetupCallLink();
   return (
     <PublicSite className={editorial.page} data-page="venice" tokenSurfaces={false}>
       <VeniceAttributionCapture />
@@ -69,12 +71,26 @@ export default function VenicePage() {
           <div className={styles.options}>
             <div className={styles.option}>
               <h3>Use Hivra credits</h3>
-              <p>Venice, nothing to set up.</p>
+              <p className={styles.optionTag}>Easiest. No Venice account needed.</p>
+              <ol className={styles.optionSteps}>
+                <li>Pick an agent and choose <strong>Hivra credits</strong> when it asks how to connect to AI.</li>
+                <li>Add credit if your balance is $0. Pick a Venice model, or keep the default.</li>
+                <li>Launch. Model usage comes out of your credits at Venice&apos;s rates.</li>
+              </ol>
+              <ActionLinks items={[{ label: "Launch with Hivra credits", href: buildVeniceLaunchHref("hermes", "venice"), kind: "primary", cta: "venice-credits" }]} />
             </div>
             <div className={styles.option}>
               <h3>Bring your Venice API key</h3>
-              <p>Use your own Venice account.</p>
-              <ActionLinks items={[{ label: "Launch with my key", href: buildVeniceLaunchHref("hermes", "venice-key"), kind: "secondary", cta: "venice-own-key" }]} />
+              <p className={styles.optionTag}>Use the Venice account you already have.</p>
+              <ol className={styles.optionSteps}>
+                <li>Create an API key in your Venice settings.</li>
+                <li>Paste it when Launch asks how to connect to AI. Hivra checks it and lists the models it can use.</li>
+                <li>Launch. Venice bills your usage directly.</li>
+              </ol>
+              <ActionLinks items={[
+                { label: "Launch with my key", href: buildVeniceLaunchHref("hermes", "venice-key"), kind: "secondary", cta: "venice-own-key" },
+                { label: "Get a Venice API key", href: VENICE_API_KEYS_URL, kind: "secondary", cta: "venice-get-key" },
+              ]} />
             </div>
           </div>
         </section>
@@ -86,6 +102,18 @@ export default function VenicePage() {
               <li key={step.title}><strong>{step.title}</strong>{step.body}</li>
             ))}
           </ol>
+        </section>
+
+        <section className={styles.section} aria-labelledby="venice-help">
+          <h2 id="venice-help">Want a hand getting set up?</h2>
+          <p className={styles.helpLead}>Book a short call and we&apos;ll get your agent running on Venice with you, or ask in our Discord.</p>
+          <ActionLinks items={[
+            { label: "Book a setup call", href: setupCall.href, kind: "primary", cta: "venice-setup-call" },
+            { label: "Ask in Discord", href: SUPPORT_DISCORD_URL, kind: "secondary", cta: "venice-discord" },
+          ]} />
+          <p className={styles.helpNote}>
+            Questions about your Venice account, its keys or its billing? <a href={VENICE_DOCS_URL} rel="noopener noreferrer" target="_blank">Venice&apos;s docs</a> cover those.
+          </p>
         </section>
 
         <p className={styles.price}>Plans from {ENTRY_PLAN_PRICE}/month.</p>
