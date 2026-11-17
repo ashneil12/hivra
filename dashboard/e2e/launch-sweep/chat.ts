@@ -129,7 +129,19 @@ export async function proveChat(
   const { frame, composer, surface } = await findComposer(page, target, options.composerTimeoutMs);
 
   const before = occurrences(await bodyText(frame), SWEEP_CHAT_ANSWER);
-  await composer.click();
+  // An agent UI that loaded but can't reach its own backend can't be typed to.
+  const offline = (await bodyText(frame)).match(/Backend offline|Reconnecting to [^\n.]+|Disconnected from [^\n.]+/i);
+  if (offline) {
+    await sleep(60_000);
+    const still = (await bodyText(frame)).match(/Backend offline|Reconnecting to [^\n.]+|Disconnected from [^\n.]+/i);
+    if (still) throw new SweepFailure('chat', 'product', `${surface} loaded but says "${still[0]}", so nothing can be sent.`);
+  }
+  // Hivra's agent menu can be left open over the page after Open; close it.
+  await page.keyboard.press('Escape').catch(() => undefined);
+  await composer.click({ timeout: 15_000 }).catch(async () => {
+    await page.keyboard.press('Escape').catch(() => undefined);
+    await composer.click({ force: true });
+  });
   const editable = await composer.evaluate((el) => (el as HTMLElement).isContentEditable).catch(() => false);
   if (editable) await page.keyboard.type(SWEEP_CHAT_PROMPT, { delay: 5 });
   else await composer.fill(SWEEP_CHAT_PROMPT);
