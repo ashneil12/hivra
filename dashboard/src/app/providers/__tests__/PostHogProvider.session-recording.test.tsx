@@ -69,27 +69,35 @@ function setLocation(hostname: string, pathname: string) {
 }
 
 // The routes #128 intended to keep out of session replays.
+// Every signed-in page is on this list as well: replay never runs once a person
+// is signed in.
 const SENSITIVE_PATHS = [
   "/sign-in",
   "/sign-up",
+  "/dashboard",
+  "/dashboard/instances",
+  "/dashboard/instances/abc123",
+  "/dashboard/insights",
   "/dashboard/billing",
   "/dashboard/wallet",
   "/dashboard/settings",
   "/dashboard/chat",
   "/dashboard/instances/abc123/console",
+  "/workspace-cloud",
+  "/workspace-cloud/connect",
   "/token",
   "/get-started/activate",
+  "/checkout/canceled",
+  "/wake/abc123",
 ];
 
-// Routes that look similar but must keep recording (no over-suppression).
+// Public pages that look similar but must keep recording (no over-suppression).
 const SAFE_PATHS = [
   "/",
-  "/dashboard",
-  "/dashboard/instances",
-  "/dashboard/instances/abc123",
-  "/dashboard/insights",
+  "/pricing",
   "/get-started",
   "/stats",
+  "/blog/a-dashboard-for-your-agents",
 ];
 
 describe("PostHog init() session-replay suppression (direct landing)", () => {
@@ -195,7 +203,7 @@ describe("PostHog init() session-replay suppression (direct landing)", () => {
 
   describe("localhost", () => {
     it("disables recording at init and never force-starts it, even on a safe route", async () => {
-      setLocation("localhost", "/dashboard");
+      setLocation("localhost", "/pricing");
       await import("../PostHogProvider");
 
       expect(mockPosthog.init).toHaveBeenCalledWith(
