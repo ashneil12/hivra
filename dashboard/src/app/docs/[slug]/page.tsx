@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import PublicSite from "@/components/public-site/PublicSite";
-import { Breadcrumbs, EditorialCTA, EditorialRelated } from "@/components/public-editorial/Editorial";
+import { Breadcrumbs, EditorialCTA, EditorialQuestions, EditorialRelated } from "@/components/public-editorial/Editorial";
 import ArticleNavigation from "@/components/public-editorial/ArticleNavigation.client";
 import { articleMarkdownComponents } from "@/components/public-editorial/article-markdown";
 import styles from "../../../components/public-editorial/secondary-site.module.css";
@@ -81,6 +81,9 @@ export default async function DocPage({ params }: DocPageParams) {
           { "@type": "ListItem", position: 3, name: doc.title, item: url },
         ],
       },
+      ...(doc.faqs?.length
+        ? [{ "@type": "FAQPage", mainEntity: doc.faqs.map(({ q, a }) => ({ "@type": "Question", name: q, acceptedAnswer: { "@type": "Answer", text: a } })) }]
+        : []),
     ],
   };
 
@@ -116,6 +119,7 @@ export default async function DocPage({ params }: DocPageParams) {
                 </section>
               ))}
             </article>
+            {doc.faqs?.length ? <EditorialQuestions questions={doc.faqs} /> : null}
             <nav className={docStyles.pager} aria-label="More docs">
               {previous ? <Link href={`/docs/${previous.slug}`}><span>Previous</span><strong>{previous.title}</strong></Link> : null}
               {next ? <Link href={`/docs/${next.slug}`} className={docStyles.pagerNext}><span>Next</span><strong>{next.title}</strong></Link> : null}

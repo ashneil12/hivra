@@ -10,7 +10,10 @@ export type DocStatus = "available" | "alpha" | "preview" | "condition";
 
 export type DocBlock = {
   heading: string;
-  /** Markdown paragraphs. Lists, tables, code fences and links are allowed. */
+  /**
+   * Markdown paragraphs. Lists, tables, code fences, links and images are allowed. Images live in
+   * public/images/docs/ and are written `![what it shows](/images/docs/name.webp "Caption")`.
+   */
   paragraphs: string[];
 };
 
@@ -29,6 +32,8 @@ export type DocPage = {
   /** For agent and computer docs: the label from docs/STATUS.md. */
   status?: DocStatus;
   blocks: DocBlock[];
+  /** Plain-text questions and answers shown at the end of the page. No links or markdown: they are the same text a reader sees. */
+  faqs?: Array<{ q: string; a: string }>;
   /** Blog articles that go deeper, by slug. */
   articles?: string[];
   /** Other docs worth reading next, by slug. */

@@ -6,7 +6,7 @@ export const DOC_SECTIONS: readonly DocSection[] = [
     id: "start",
     title: "Get started",
     blurb: "Make an account, launch your first agent and decide where it runs.",
-    docs: ["getting-started", "connect-your-own-server", "plans-and-billing"],
+    docs: ["getting-started", "dashboard-tour", "connect-your-own-server", "plans-and-billing", "glossary"],
   },
   {
     id: "models",
@@ -30,6 +30,6 @@ export const DOC_SECTIONS: readonly DocSection[] = [
     id: "run",
     title: "Run and update",
     blurb: "Day to day: opening an agent, keeping it current and who can reach it.",
-    docs: ["open-an-agent", "update-an-agent", "security-and-access"],
+    docs: ["open-an-agent", "telegram", "update-an-agent", "security-and-access", "troubleshooting"],
   },
 ];
