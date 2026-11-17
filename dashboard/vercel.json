@@ -307,6 +307,10 @@
     {
       "path": "/api/cron/hivra-memory-floors",
       "schedule": "23 4 * * *"
+    },
+    {
+      "path": "/api/cron/collect-computer-access",
+      "schedule": "*/10 * * * *"
     }
   ]
 }

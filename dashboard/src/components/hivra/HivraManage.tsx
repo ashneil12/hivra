@@ -20,6 +20,8 @@ import { ToolInstallPicker } from "./ToolInstallPicker";
 import { AgentModelSettings } from "./AgentModelSettings";
 import { HermesModelSettings } from "./HermesModelSettings";
 import { HermesRestorePoints, restorePointsEnabled } from "./HermesRestorePoints";
+import { AgentAllowedSites } from "./AgentAllowedSites";
+import { AgentAccessLog } from "./AgentAccessLog";
 import { ProviderResizePanel } from "./ProviderResizePanel";
 import { HivraPrivateAccessPanel } from "./HivraPrivateAccessPanel";
 import { GvisorComputerManage } from "./GvisorComputerManage";
@@ -1874,6 +1876,15 @@ function HivraManageContent({
                 {errorFor("force")}
                 {progressFor("advanced")}
               </div>
+            </div>
+          ) : null}
+
+          {/* PRIVACY — unreleased, each behind its own switch (off by default). */}
+          {process.env.NEXT_PUBLIC_HIVRA_ALLOWED_SITES === "true" || process.env.NEXT_PUBLIC_HIVRA_ACCESS_LOG === "true" ? (
+            <div style={{ display: "grid", gap: 10 }} data-testid="manage-privacy">
+              <div className="mono" style={label}>Privacy</div>
+              {process.env.NEXT_PUBLIC_HIVRA_ACCESS_LOG === "true" ? <div style={card}><AgentAccessLog agentId={agent.id} /></div> : null}
+              {process.env.NEXT_PUBLIC_HIVRA_ALLOWED_SITES === "true" ? <div style={card}><AgentAllowedSites agentId={agent.id} /></div> : null}
             </div>
           ) : null}
 
