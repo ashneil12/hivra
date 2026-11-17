@@ -1138,8 +1138,12 @@ function coversTelegram(coverage: ScriptCoverage | null): boolean {
   return coverage.kind === "telegram" || Object.prototype.hasOwnProperty.call(coverage.coverage.fingerprints, "telegram");
 }
 
-/** After the guest drops its file cache, the host waits this long for the freed pages to come back to it. */
-export const TRIM_SETTLE_SECONDS = 4;
+/**
+ * After the guest drops its file cache, the host waits this long for the freed
+ * pages to come back to it. Measured: the host sees them about 4 s after each
+ * guest step, and compaction can briefly raise the figure first.
+ */
+export const TRIM_SETTLE_SECONDS = 6;
 /**
  * What the guest runs before a sleep with trimMemory: write dirty pages out,
  * drop the clean file cache (pages a running program maps are kept) and pack
