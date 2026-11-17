@@ -1,0 +1,100 @@
+/**
+ * Free sandbox settings. Every number comes from the plan ladder config (`HIVRA_PLAN_LADDER_CONFIG`, owned by the
+ * plans work): nothing here has a default, so a missing or malformed setting turns the feature off rather than
+ * guessing. Plan names and counts stay out of code.
+ */
+
+/** What a free sandbox may use and when it changes state. */
+export interface FreeSandboxSettings {
+  /** Stop an awake sandbox after this many minutes with no person activity. */
+  sleepAfterIdleMinutes: number;
+  /** Pack a sandbox into storage after this many hours with no person activity. */
+  storeAfterIdleHours: number;
+  memoryMb: number;
+  cpus: number;
+  /** The workspace's file quota. */
+  storageMb: number;
+  /** Places on one server: people placed there (awake or stopped). Packed people hold none. */
+  freePlacesPerServer: number;
+  /** Room kept on every server for this many more paid computers before Free takes any. */
+  paidReserveComputers: number;
+  /** CPU promised to awake free sandboxes, as a multiple of the pool's cores (idle sandboxes use almost none). */
+  cpuOvercommit: number;
+  /** Turns running at once on one pool; the rest wait in line, paid first. */
+  maxConcurrentTurns: number;
+  /** A person's reply time per day, in seconds; null turns the cap off. */
+  dailyReplySecondsCap: number | null;
+}
+
+/** The two clocks every plan has. */
+export interface LifecycleSettings {
+  sleepAfterIdleMinutes: number;
+  storeAfterIdleHours: number;
+}
+
+type Ladder = Record<string, unknown>;
+
+/** The plan ladder config as JSON, or null when it is unset or unreadable. */
+export function readPlanLadder(env: Record<string, string | undefined> = process.env): Ladder | null {
+  const raw = env.HIVRA_PLAN_LADDER_CONFIG;
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Ladder) : null;
+  } catch {
+    return null;
+  }
+}
+
+const positive = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
+const wholePositive = (value: unknown): value is number => positive(value) && Number.isInteger(value);
+const wholeOrZero = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0;
+
+function section(ladder: Ladder | null, key: string): Record<string, unknown> | null {
+  const value = ladder?.[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+/** The clocks of one plan's section (the free section, or a paid plan's), or null when either is missing. */
+export function lifecycleSettings(ladder: Ladder | null, plan: string): LifecycleSettings | null {
+  const s = section(ladder, plan);
+  if (!s || !positive(s.sleepAfterIdleMinutes) || !positive(s.storeAfterIdleHours)) return null;
+  return { sleepAfterIdleMinutes: s.sleepAfterIdleMinutes, storeAfterIdleHours: s.storeAfterIdleHours };
+}
+
+/** The free section, checked whole; null when any setting is missing or out of shape. */
+export function freeSandboxSettings(ladder: Ladder | null, freeKey = "free"): FreeSandboxSettings | null {
+  const s = section(ladder, freeKey);
+  const clocks = lifecycleSettings(ladder, freeKey);
+  if (!s || !clocks) return null;
+  const cap = s.dailyReplySecondsCap;
+  if (
+    !wholePositive(s.memoryMb) ||
+    !positive(s.cpus) ||
+    !wholePositive(s.storageMb) ||
+    !wholePositive(s.freePlacesPerServer) ||
+    !wholeOrZero(s.paidReserveComputers) ||
+    !positive(s.cpuOvercommit) ||
+    !wholePositive(s.maxConcurrentTurns) ||
+    !(cap === null || cap === undefined || wholePositive(cap))
+  ) {
+    return null;
+  }
+  return {
+    ...clocks,
+    memoryMb: s.memoryMb,
+    cpus: s.cpus,
+    storageMb: s.storageMb,
+    freePlacesPerServer: s.freePlacesPerServer,
+    paidReserveComputers: s.paidReserveComputers,
+    cpuOvercommit: s.cpuOvercommit,
+    maxConcurrentTurns: s.maxConcurrentTurns,
+    dailyReplySecondsCap: cap ?? null,
+  };
+}
+
+/** The feature's one switch, off unless set to exactly "true". */
+export function freeSandboxEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.FREE_SANDBOX_ENABLED === "true";
+}
