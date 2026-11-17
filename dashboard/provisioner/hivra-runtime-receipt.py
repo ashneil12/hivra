@@ -275,7 +275,7 @@ def artifact_records(root: Path) -> list[dict[str, object]]:
         "/opt/hivra/deepseek-runtime/package-lock.json",
         "/opt/hivra/deepseek-runtime/.hivra-native-install.json",
         *["/opt/hivra/deepseek-gateway/" + name for name in
-          ("server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "index.html", "app.js",
+          ("server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "import-state.cjs", "index.html", "app.js",
            "deepseek-harness/native-broker.cjs", "deepseek-harness/gateway-policy.cjs", "deepseek-harness/runtime-process.cjs")],
     ]
     records = []

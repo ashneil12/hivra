@@ -547,6 +547,25 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.17.6` builds on `2026.11.17.5` and gives a managed-Venice
+Agent Zero launch a working model again. Current Agent Zero images choose their
+models from presets (`usr/plugins/_model_config/presets.yaml`, the file its
+own Settings writes) and ignore the `A0_SET_*` model defaults Hivra seeds, so a
+launch with Hivra credits opened with no model connected and never answered.
+On a fresh box with a managed model key, the provisioner now writes Agent
+Zero's Default preset with the same model and gateway (chat and utility; the
+embedding stays Agent Zero's own local default); an existing presets file is
+the owner's and is left alone, and older images ignore the file. It also
+lets DeepSeek Harness start again: since `2026.11.15.2` the gateway's
+`server.js` requires `import-state.cjs` at start, but the DeepSeek installer
+copied only its own list of gateway files into `/opt/hivra/deepseek-gateway`,
+so the gateway exited on start and every launch hit the native readiness
+deadline. The installer, the runtime receipt and the provider-VM runtime probe
+now include that file. Changed: `provision-claude-code-box.sh`,
+`deepseek-harness/install-guest.py`, `hivra-runtime-receipt.py`, plus the
+documents, the version and the provider worker's release labels. This source release does not deploy,
+install, enable or start anything on a host or computer.
+
 Release `2026.11.17.5` builds on `2026.11.17.4` and hardens `hivra-tg-apply`
 against symlink redirection of its one root-authored write. The chat gateway
 runs the helper as root (scoped NOPASSWD) to write the Telegram bot's env file

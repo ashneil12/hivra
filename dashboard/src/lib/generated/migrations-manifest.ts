@@ -474,4 +474,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261117213000", name: "hivra_computer_backups" },
   { version: "20261117220000", name: "hivra_status_incidents" },
   { version: "20261117221000", name: "agent_inbox_allow_rules" },
+  { version: "20261117230000", name: "provider_release_admission_2026_11_17_6" },
 ];
