@@ -256,7 +256,7 @@ describeIfAge("restore-vm-cold.sh decrypt path", () => {
       writeFileSync(path.join(dir, name), PAYLOAD);
     }
     writeFileSync(path.join(env.store, "meta", INSTANCE, `${TS}.json`), JSON.stringify(manifest));
-    const args = [INSTANCE, `free/${INSTANCE}/${name}`, storedSha, "555", "10.0.0.5", "10.0.0.1", "9000"];
+    const args = [INSTANCE, `free/${INSTANCE}/${name}`, storedSha, "555", "192.0.2.5", "192.0.2.1", "9000"];
     return { env, idFile, args, name, storedSha };
   }
   const restoreRun = (env: Env, args: string[], extra: Record<string, string> = {}) =>
