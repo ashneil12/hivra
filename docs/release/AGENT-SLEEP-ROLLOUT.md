@@ -203,6 +203,119 @@ Without an entry, the probe evaluates every known profile together (as for
 every type) and keeps no wake source: nothing of it is covered, any chat connection keeps it awake,
 and so does any busy agent process.
 
+## WhatsApp Cloud wake
+
+Not built, and there is no switch for it. A Hermes agent with a live WhatsApp
+Business Cloud API channel (`hermes:whatsapp_cloud`, any `WHATSAPP_CLOUD_` key
+in `~/.hermes/.env`) has no wake adapter, so it never sleeps. Listing
+`whatsapp_cloud` in `HIVRA_CHANNEL_WAKE_CHANNELS` changes nothing.
+
+The plan was: while the agent sleeps, point the phone number's callback
+override at Hivra (`POST /<phone number id>` with
+`webhook_configuration.override_callback_uri`), answer 503 so Meta redelivers,
+wake the agent, and remove the override before the resume. Checked on
+2026-11-17 against Meta's webhook pages and Hermes's `whatsapp_cloud` plugin:
+
+- Confirmed: the override can be set, read and removed per phone number with
+  the agent's own access token; a delivery that does not get a 200 is retried
+  "with decreasing frequency" for up to 7 days; Hermes takes a redelivery as a
+  normal message and drops duplicates by message id.
+- Not documented, and it decides whether a message is lost: whether a retry
+  goes to the callback that is current when it runs, or stays with the address
+  that failed. If it stays, the message that woke the agent never reaches it.
+- Not documented: when the retries come. Meta says "immediately", then a few
+  more over 7 days. The immediate one lands while the agent is still waking, so
+  the reply could be minutes or hours late.
+- Hivra sets up WhatsApp through the QR bridge only (`WHATSAPP_ENABLED`). The
+  Cloud API needs a public https address for port 8090 in the computer, which
+  Hivra does not provide; only an owner who runs their own tunnel has one.
+- Removing the override runs while the computer is still asleep, so the server
+  would have to keep the access token (encrypted, as Telegram wake does). The
+  channel wake table keeps fingerprints only.
+
+To build it: a test Meta app and number to measure both undocumented points,
+then an encrypted credential store and an owner switch.
+
+## Host capacity alerts
+
+With sleeping agents a host holds more agents than fit in its memory at once.
+The `hivra-host-capacity` cron (every 5 minutes) reads each active host with
+one read-only script and raises an ops event when a host, or every host, is
+close to full. It never changes an agent or a host.
+
+| Switch | Where | Values |
+|---|---|---|
+| `HIVRA_HOST_CAPACITY_ALERTS` | server env | `off` (default), `on` |
+| `HIVRA_HOST_CAPACITY_DISK_WARN_PERCENT` | server env | default 80 |
+| `HIVRA_HOST_CAPACITY_DISK_CRITICAL_PERCENT` | server env | default 90 |
+| `HIVRA_HOST_CAPACITY_RAM_MARGIN_MB` | server env | default 2048 |
+| `HIVRA_HOST_CAPACITY_STANDARD_AGENT_RAM_MB` | server env | default 8192 |
+| `proxmox_hosts.wake_headroom_ram_mb` | database, per host | memory kept free for wakes (default 8192) |
+
+Migration: `20261117150000_proxmox_hosts_capacity_reading`. Apply it before
+turning the switch on.
+
+A reading is the host's total and available memory, the size and fill of the
+disk pool (the thin pool holding the VM disks and the saved memory of
+hibernated agents, else the largest active `pvesm` image storage), the
+running, paused and stopped VM counts, and from the database the memory of
+every Hivra-managed agent on the host (what is needed if all of them woke)
+and of the hibernated ones. It is stored in `proxmox_hosts.capacity_reading`.
+
+| Reason | Warn | Critical |
+|---|---|---|
+| `ram_available_low` | available memory below wake headroom plus the margin | below the wake headroom |
+| `disk_pool_high` | pool at 80% | pool at 90% |
+| `wake_would_not_fit` | | the largest hibernated agent needs more memory than is available |
+
+`oversubscriptionRatio` is the agents' memory over the host's total; above 1
+the host relies on agents being asleep. Other VMs on the host are not in it.
+
+The paused count comes from `qm list --full 1`; the short listing shows a
+paused VM as running and is used only when the full one prints nothing. Not
+yet confirmed on a real host: check one reading's `vms` against the host
+before relying on that number. The verdict does not use it.
+
+Ops events (sources). Only `fatal` pages an admin, once per fingerprint.
+
+| Source | Severity | When |
+|---|---|---|
+| `hivra.host_capacity` | `warn` | a host is at warn; repeats update the one event, the numbers are in its metadata |
+| `hivra.host_capacity` | `fatal` | a host is critical; pages once per host per day while it lasts |
+| `hivra.host_capacity_unread` | `error` | a host could not be read and its last reading is over 15 minutes old (or it has none) |
+| `hivra.fleet_capacity` | `fatal` | no host with a reading has room for a standard agent above its wake headroom |
+| `hivra.host_capacity_recovered`, `hivra.fleet_capacity_recovered` | `info` | once when it clears |
+
+The fleet check counts each host's reading from this run, or its stored one
+when the host missed a run and the reading is under 15 minutes old. A host
+unread for longer does not hold the alert back; it is listed in the event's
+`unread_hosts`. With no host read in a run there is no fleet alert, only the
+unread events. The fleet event pages again once a day while it lasts, and
+again when the fleet fills after having had room (at most once an hour).
+
+One host gets 45 seconds, and no host is started after the first minute of a
+run; a host not started counts as unread. If the cron cannot load its hosts
+or agents (for example the migration is missing) it answers 500.
+
+Placement: with the switch on, a new Hivra-managed agent is not placed on a
+host whose reading is critical and less than 15 minutes old, as long as
+another host takes it. No reading, an old reading, every host critical, or no
+other host able to take the launch: placement behaves as it did before. A
+user's existing host (their other agents live there) and a pinned host are
+not skipped.
+
+```sql
+select id, capacity_reading_at, capacity_reading->>'level' as level,
+       capacity_reading->'reasons' as reasons,
+       capacity_reading->>'memAvailableMb' as available_mb,
+       capacity_reading->'pool'->>'usedPercent' as pool_percent,
+       capacity_reading->>'oversubscriptionRatio' as oversubscription
+  from public.proxmox_hosts order by id;
+```
+
+Rollback: set `HIVRA_HOST_CAPACITY_ALERTS=off`. The cron does nothing and
+placement stops reading the column; stored readings can stay.
+
 ## Rollback
 
 Set `HIVRA_SLEEP_MODE=off`, or the host's `sleep_mode` to `off`. Nothing new
