@@ -1889,6 +1889,14 @@ function HivraManageContent({
             </div>
           ) : null}
 
+          {process.env.NEXT_PUBLIC_HIVRA_COMPUTER_EXPORT === "true" && agent.computer_substrate === "proxmox-kvm" ? (
+            <div style={card}>
+              <div className="serif" style={{ fontSize: 16, color: "var(--ink-black)" }}>Export the whole computer</div>
+              <div style={manageMuted}>One encrypted file with your home folders and every agent&apos;s data and settings, to keep or to move elsewhere.</div>
+              <div><a href={`/dashboard/computers/export?source=${encodeURIComponent(agent.id)}`} style={{ ...btnGhost, textDecoration: "none" }}>Export computer</a></div>
+            </div>
+          ) : null}
+
           {manage?.agentImport && agent.chat_url ? (
             <HivraImportPanel
               cap={manage.agentImport}
