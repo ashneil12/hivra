@@ -992,16 +992,33 @@ ok "verified aeon checkout at ${AEON_REF} -> ${AEON_DIR}"
 
 # Serve under basePath=/aeon so the box's token-proxy can mount the dashboard —
 # its absolute asset + /api paths then resolve under /aeon and route back through
-# the gate. Upstream ships an empty next.config.ts, so replace it with an
-# env-driven one (basePath read from AEON_BASE_PATH at build + runtime).
+# the gate. Aeon's own next.config.ts carries settings its build needs (since
+# Nov 2026 a bundler root that reaches the repo's harness-adapter files), so it
+# is kept as next.config.hivra-upstream.ts and the new next.config.ts only adds
+# the mount (basePath read from AEON_BASE_PATH at build + runtime). A re-run
+# leaves an existing wrapper alone. The kept copy stays out of the owner's git.
+AEON_NEXT_UPSTREAM="${AEON_DASH}/next.config.hivra-upstream.ts"
+if [ ! -e "${AEON_NEXT_UPSTREAM}" ]; then
+  if [ -f "${AEON_DASH}/next.config.ts" ] && [ ! -L "${AEON_DASH}/next.config.ts" ]; then
+    mv -- "${AEON_DASH}/next.config.ts" "${AEON_NEXT_UPSTREAM}"
+  else
+    printf '%s\n' "import type { NextConfig } from 'next'" "const nextConfig: NextConfig = {}" "export default nextConfig" > "${AEON_NEXT_UPSTREAM}"
+  fi
+  chown "${AGENT_USER}:${AGENT_USER}" "${AEON_NEXT_UPSTREAM}"
+fi
 cat > "${AEON_DASH}/next.config.ts" <<'NEXTCFG'
 import type { NextConfig } from 'next'
-// Hivra hosts this dashboard behind a token-proxy mounted at /aeon.
+import upstream from './next.config.hivra-upstream'
+// Hivra hosts this dashboard behind a token-proxy mounted at /aeon. Aeon's own
+// config (next.config.hivra-upstream.ts) is kept as is; only the mount is added.
 const basePath = process.env.AEON_BASE_PATH || undefined
-const nextConfig: NextConfig = basePath ? { basePath, assetPrefix: basePath } : {}
+const nextConfig: NextConfig = basePath ? { ...upstream, basePath, assetPrefix: basePath } : upstream
 export default nextConfig
 NEXTCFG
 chown "${AGENT_USER}:${AGENT_USER}" "${AEON_DASH}/next.config.ts"
+AEON_EXCLUDE="${AEON_DIR}/.git/info/exclude"
+grep -qxF '/apps/dashboard/next.config.hivra-upstream.ts' "${AEON_EXCLUDE}" 2>/dev/null \
+  || printf '%s\n' '/apps/dashboard/next.config.hivra-upstream.ts' | sudo -u "${AGENT_USER}" tee -a "${AEON_EXCLUDE}" >/dev/null
 ok "aeon dashboard pinned to basePath=/aeon"
 
 # Install deps + a PRODUCTION build (lighter + more stable than `next dev` for a
@@ -1302,6 +1319,48 @@ fi
   fi
 } > "${A0_ROOT}/.env"
 chmod 600 "${A0_ROOT}/.env"
+# Agent Zero reads its settings only from /a0/usr/.env. Older images copied the
+# mounted /a0/.env there on first start; current images (v2.15 and later) do
+# not, so they started with no login, refused the gateway's CSRF handshake and
+# never had the managed model. Merge the managed keys into the persisted file,
+# keeping every other line (its runtime id, root password, the owner's own keys).
+A0_USR_ENV="${A0_ROOT}/usr/.env"
+[ ! -L "$A0_USR_ENV" ] || die "Agent Zero settings file must not be a symlink"
+python3 -I -B - "${A0_ROOT}/.env" "$A0_USR_ENV" <<'PY' || die "could not seed Agent Zero's settings file"
+import os, re, sys
+src, dst = sys.argv[1], sys.argv[2]
+managed = {}
+with open(src, encoding="utf-8") as f:
+    for line in f:
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line.rstrip("\n"))
+        if m:
+            managed[m.group(1)] = m.group(2)
+lines = []
+if os.path.exists(dst):
+    with open(dst, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+out, seen = [], set()
+for line in lines:
+    m = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
+    if m and m.group(1) in managed:
+        if m.group(1) in seen:
+            continue
+        seen.add(m.group(1))
+        out.append(m.group(1) + "=" + managed[m.group(1)])
+    else:
+        out.append(line)
+out += [k + "=" + v for k, v in managed.items() if k not in seen]
+# Stage beside the root-owned source, never in the world-writable usr/ dir,
+# where another local account could pre-create the staging file.
+tmp = os.path.join(os.path.dirname(src), ".usr-env.hivra-tmp")
+if os.path.lexists(tmp):
+    os.unlink(tmp)
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    f.write("\n".join(out) + "\n")
+os.replace(tmp, dst)
+PY
+chmod 600 "$A0_USR_ENV"
 if [ -n "${HIVRA_MODEL_KEY:-}" ] && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$'; then
   ok "managed-Venice seeded into Agent Zero /opt/a0/.env (model ${HIVRA_HERMES_MODEL:-deepseek-v4-pro})"
 else
