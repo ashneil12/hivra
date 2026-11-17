@@ -5,6 +5,8 @@ import { dayToDate, PAGE_LAST_MODIFIED, TOOL_PAGE_LAST_MODIFIED } from "@/lib/se
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 import { HOST_COMPARISON_SLUGS } from "@/lib/compare/host-comparisons";
 import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
+import { PRODUCT_COMPARISON_SLUGS } from "@/lib/compare/product-comparisons";
+import { PRODUCT_FACTS_CHECKED } from "@/lib/compare/products/checked";
 import { DOCS, docsLastModified } from "@/lib/docs/registry";
 
 // SCRIPTURE_ANCHOR: seo-paths | Jeremiah 6:16 | Verse: Stand in the ways and see, and ask for the old paths.
@@ -200,6 +202,16 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
       url: `${SITE_URL}/compare/${slug}`,
       lastModified: cutoverPage(
         COMPETITOR_FACTS_CHECKED > PAGE_LAST_MODIFIED.compareDetail ? COMPETITOR_FACTS_CHECKED : PAGE_LAST_MODIFIED.compareDetail,
+      ),
+      changeFrequency: "monthly" as const,
+      priority: 0.75,
+    })),
+    // The agent product and sandbox comparisons carry the day their vendor figures were
+    // collected (lib/compare/products/checked.ts), or the day their text last changed when that is later.
+    ...PRODUCT_COMPARISON_SLUGS.map((slug) => ({
+      url: `${SITE_URL}/compare/${slug}`,
+      lastModified: cutoverPage(
+        PRODUCT_FACTS_CHECKED > PAGE_LAST_MODIFIED.compareDetail ? PRODUCT_FACTS_CHECKED : PAGE_LAST_MODIFIED.compareDetail,
       ),
       changeFrequency: "monthly" as const,
       priority: 0.75,

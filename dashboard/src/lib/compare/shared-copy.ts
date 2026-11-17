@@ -33,7 +33,7 @@ export const STAYS_ON = "A paid Hivra Cloud computer stays on and is not paused 
  * Aeon is listed as hosted, but Hivra only hosts its dashboard: its scheduled work runs
  * on the owner's own GitHub Actions (lib/launch/contracts.ts).
  */
-export const HIVRA_AGENTS_CELL = "Hermes, OpenClaw, Agent Zero, Claude Code, Codex, Aeon (dashboard only)";
+export const HIVRA_AGENTS_CELL = "Hermes, OpenClaw, Agent Zero, Claude Code, Codex, Aeon (dashboard only), DeepSeek Harness (alpha)";
 
 /**
  * Ends every meta description that quotes a price ("Prices as of October 2026."), in the same month the
@@ -81,6 +81,7 @@ export function priceSources(links: CompareSources["links"], notes?: string[], p
   const who = plural ? "the other providers come from their" : "the other provider come from its";
   return {
     intro: `Prices and terms for ${who} own pages, as of ${formatCheckedMonth(checked)}. Vendors change prices, so check the source before you pay.`,
+    ...(checked ? { checked } : {}),
     notes,
     links,
   };
@@ -123,6 +124,28 @@ export const BLOG_LABELS: Record<string, string> = {
   "what-is-hermes-agent": "What is Hermes Agent?",
 };
 
+/** Labels for the /agents pages that the comparison pages link to. */
+export const AGENT_LABELS: Record<string, string> = {
+  hermes: "Hermes on Hivra",
+  openclaw: "OpenClaw on Hivra",
+  "claude-code": "Claude Code on Hivra",
+  codex: "Codex on Hivra",
+};
+
+/** Labels for the /docs pages that the comparison pages link to. */
+export const DOC_LABELS: Record<string, string> = {
+  "plans-and-billing": "What you pay for",
+  "connect-your-own-server": "Run agents on your own server",
+  "linux-computer": "Linux computer",
+  "linux-sandbox": "Linux Sandbox",
+  hermes: "Hermes",
+  openclaw: "OpenClaw",
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  "security-and-access": "Security and access",
+  "models-and-credits": "Models and credits",
+};
+
 export const HOSTING_COST_CALCULATOR_HREF = "/tools/ai-agent-hosting-cost-calculator";
 
 /** Related links under the closing row: other comparisons, then blog posts, then anything extra. */
@@ -130,12 +153,21 @@ export function relatedLinks(input: {
   comparisons: string[];
   blog?: string[];
   features?: Array<{ slug: string; label: string }>;
+  /** /agents/[slug] pages, by slug. */
+  agents?: string[];
+  /** /docs/[slug] pages, by slug. */
+  docs?: string[];
+  /** Adds a link to /pricing. */
+  pricing?: boolean;
   extra?: Array<{ label: string; href: string }>;
 }): Array<{ label: string; href: string }> {
   return [
     ...input.comparisons.map((slug) => ({ label: COMPARISON_LABELS[slug], href: `/compare/${slug}` })),
     ...(input.blog ?? []).map((slug) => ({ label: `Blog: ${BLOG_LABELS[slug]}`, href: `/blog/${slug}` })),
     ...(input.features ?? []).map(({ slug, label }) => ({ label: `Feature: ${label}`, href: `/features/${slug}` })),
+    ...(input.agents ?? []).map((slug) => ({ label: `Agent: ${AGENT_LABELS[slug]}`, href: `/agents/${slug}` })),
+    ...(input.docs ?? []).map((slug) => ({ label: `Docs: ${DOC_LABELS[slug]}`, href: `/docs/${slug}` })),
+    ...(input.pricing ? [{ label: "Hivra pricing", href: "/pricing" }] : []),
     ...(input.extra ?? []),
   ];
 }

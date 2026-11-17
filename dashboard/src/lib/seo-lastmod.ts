@@ -22,7 +22,9 @@
 //    index follows the newest of them.
 //  - The agent pages carry theirs in AGENT_PAGES_LAST_MODIFIED (lib/hivra).
 //  - The four host comparisons carry the later of COMPETITOR_FACTS_CHECKED
-//    (lib/compare) and the compareDetail entry below.
+//    (lib/compare) and the compareDetail entry below. The six agent product and
+//    sandbox comparisons carry the later of PRODUCT_FACTS_CHECKED
+//    (lib/compare/products/checked.ts) and the same entry.
 //
 // seo-urls.ts applies CUTOVER_LAST_MODIFIED as a floor to the pages the cutover
 // rewrote; everything else keeps the date below.
@@ -38,14 +40,17 @@ export const PAGE_LAST_MODIFIED = {
   pricing: "2026-10-20",
   // Hubs were rewritten for the copy overhaul, 2026-10-20 (before: 2026-09-30).
   featuresHub: "2026-10-20",
-  // The /compare price table changed on 2026-10-21 (Hostinger, Agent 37 and Nous
-  // figures re-read; lib/compare/competitor-facts.ts). Before: 2026-10-20.
-  compareHub: "2026-10-21",
+  // The /compare price table changed on 2026-11-17 (Hostinger, xCloud, Agent 37 and Nous
+  // re-read; lib/compare/competitor-facts.ts), and the same day the directory grew to fifteen
+  // pages in four groups with new FAQs. Before: 2026-10-21.
+  compareHub: "2026-11-17",
   // The detail pages share one template and were rewritten in the copy overhaul,
   // 2026-10-20 (before: 2026-09-24, the truth pass that removed speed, backup,
   // import and price claims).
   featureDetail: "2026-10-20",
-  compareDetail: "2026-10-20",
+  // 2026-11-17: nine pages deepened and six new product comparisons added (the new pages are dated
+  // by PRODUCT_FACTS_CHECKED in seo-urls.ts).
+  compareDetail: "2026-11-17",
   // The /tools hub lists every tool; it and each tool page were rewritten in the
   // copy overhaul, 2026-10-20 (before: 2026-09-30). Each tool page has its own
   // date in TOOL_PAGE_LAST_MODIFIED below.

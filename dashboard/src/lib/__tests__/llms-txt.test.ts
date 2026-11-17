@@ -143,6 +143,14 @@ describe("buildLlmsTxt", () => {
     }
   });
 
+  it("describes /compare as fifteen comparisons including the agent product and sandbox pages", () => {
+    const txt = buildLlmsTxt({ siteUrl: SITE });
+    const line = txt.split("\n").find((l) => l.includes(`(${SITE}/compare)`)) ?? "";
+    for (const name of ["Fifteen comparisons", "Claude Code on the web", "OpenAI Codex cloud", "Cursor cloud agents", "GitHub Codespaces", "Fly.io Sprites", "E2B", "dated price table"]) {
+      expect([name, line.includes(name)]).toEqual([name, true]);
+    }
+  });
+
   it("says what is coming next in the ecosystem page's own words, so the two cannot disagree", () => {
     const txt = buildLlmsTxt({ siteUrl: SITE });
     // The four products the page puts under "Next", read from the same module.

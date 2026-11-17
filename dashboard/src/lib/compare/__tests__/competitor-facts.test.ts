@@ -58,8 +58,8 @@ describe("competitor facts", () => {
     expect(formatCheckedMonth("2026-09-30")).toBe("September 2026");
   });
 
-  it("is not older than the day the Hostinger, Agent 37, xCloud and Nous figures were last re-read (2026-10-21)", () => {
-    expect(COMPETITOR_FACTS_CHECKED >= "2026-10-21").toBe(true);
+  it("is not older than the day the Hostinger, Agent 37, xCloud and Nous figures were last re-read (2026-11-17)", () => {
+    expect(COMPETITOR_FACTS_CHECKED >= "2026-11-17").toBe(true);
   });
 
   it("gives every host comparison a fact record, sources over https and a page that quotes the key figures", () => {
@@ -97,18 +97,22 @@ describe("competitor facts", () => {
     expect(text).not.toMatch(/\bMax plan\b/);
   });
 
-  it("quotes Hostinger's current sale prices, not the superseded ones (re-read 2026-10-21)", () => {
+  it("quotes Hostinger's current sale prices and renewals, not the superseded ones (re-read 2026-11-17)", () => {
     const text = pageText(HOST_COMPARISONS["vs-hostinger"]);
     const table = PRICE_TABLE.map((row) => `${row.provider}\n${row.price}\n${row.terms}`).join("\n");
-    expect(COMPETITOR_FACTS["vs-hostinger"].keyFigures).toEqual(["$4.99", "$11.99", "$8.79", "$119.76"]);
-    expect(text).toMatch(/promotion is \$4\.99 a month on a 24-month commitment, renewing at \$11\.99/);
-    expect(text).toMatch(/\$119\.76 for 24 months, our arithmetic/);
+    expect(COMPETITOR_FACTS["vs-hostinger"].keyFigures).toEqual(["$4.99", "$9.99", "$8.79", "$119.76"]);
+    expect(text).toMatch(/promotion is \$4\.99 a month on a 24-month commitment, renewing at \$9\.99/);
+    expect(text).toMatch(/\$119\.76 for 24 months, as Hostinger's page shows/);
     expect(text).toMatch(/KVM 2 at \$8\.79\/mo/);
-    expect(table).toContain("$4.99/mo, size not published");
-    expect(table).toContain("$119.76, our arithmetic");
+    expect(table).toContain("$4.99/mo for 1 vCPU, 4 GB RAM and 25 GB NVMe (APP 1)");
+    expect(table).toContain("Renews at $9.99/mo");
+    expect(table).not.toContain("size not published");
+    expect(table).toContain("$119.76, as Hostinger's page shows");
     expect(table).toContain("$8.79/mo for 2 vCPU and 8 GB RAM");
     // The sale label is what the page says; it must not claim the old prices or a live check.
     expect(text).toMatch(/Hostinger shows both the managed plan and the KVM 2 VPS at sale prices/);
+    // $11.99 is the APP 4 sale price now, not any plan's renewal for the $4.99 plan.
+    expect(table).not.toContain("Renews at $11.99");
     for (const stale of ["$5.99", "$143.76", "$8.99"]) {
       expect([stale, text.includes(stale), table.includes(stale)]).toEqual([stale, false, false]);
     }
@@ -120,20 +124,58 @@ describe("competitor facts", () => {
     expect(COMPETITOR_FACTS["vs-xcloud"].sources.map((s) => s.href)).toContain("https://xcloud.host/paperclip-hosting/");
   });
 
-  it("calls every Nous per-size figure the last published one in the page and the price table", () => {
+  it("prices xCloud at its published $24.99 with no promotion or renewal figure (re-read 2026-11-17)", () => {
+    const row = PRICE_TABLE.find((r) => r.provider === "xCloud AI agent VPS");
+    expect(row?.price).toBe("$24.99/mo for 4 vCPU, 6 GB RAM and 100 GB NVMe");
+    expect(row?.terms).toMatch(/No promotional or renewal price is shown/);
+    for (const stale of ["$9.99", "$19.99", "promotional for"]) {
+      expect([stale, `${row?.price} ${row?.terms}`.includes(stale)]).toEqual([stale, false]);
+    }
+    expect(COMPETITOR_FACTS["vs-xcloud"].keyFigures).toEqual(["$24.99", "100 GB", "4 vCPU", "10%"]);
+    expect(COMPETITOR_FACTS["vs-xcloud"].notPublished.join(" ")).not.toMatch(/how long the promotional price lasts/);
+    // Rows run by monthly cost for an always-on agent, so xCloud's $24.99 sits after DigitalOcean's $24.
+    const names = PRICE_TABLE.map((r) => r.provider);
+    expect(names.indexOf("xCloud AI agent VPS")).toBeGreaterThan(names.indexOf("DigitalOcean Droplet"));
+  });
+
+  it("states Hostinger's managed size, its renewal and the KVM 2 source it was re-read on (2026-11-17)", () => {
+    const managed = PRICE_TABLE.find((r) => r.provider === "Hostinger managed AI apps");
+    expect(managed?.terms).toMatch(/Black Friday sale price/);
+    const kvm = PRICE_TABLE.find((r) => r.provider === "Hostinger KVM 2 VPS");
+    expect(kvm?.terms).toContain("Renews at $14.99/mo");
+    expect(kvm?.source.href).toBe("https://www.hostinger.com/vps-hosting");
+    const notPublished = COMPETITOR_FACTS["vs-hostinger"].notPublished.join(" ");
+    expect(notPublished).not.toMatch(/vCPU, RAM or disk/);
+  });
+
+  it("says Agent 37's $4.76 includes 4 GB of disk and that a sleeping instance still pays for it (re-read 2026-11-17)", () => {
+    const row = PRICE_TABLE.find((r) => r.provider === "Agent 37 metered Cloud API");
+    expect(row?.terms).toMatch(/includes 4 GB of persistent disk/);
+    expect(row?.terms).toMatch(/still pays for its disk/);
+    expect(COMPETITOR_FACTS["vs-agent-37"].keyFigures).toEqual(expect.arrayContaining(["$4.76", "$9.34"]));
+  });
+
+  it("mentions Nous's monthly plans in the price row without pricing the row from them (re-read 2026-11-17)", () => {
+    const row = PRICE_TABLE.find((r) => r.provider === "Nous Hermes Cloud");
+    expect(row?.terms).toMatch(/monthly plans at \$20, \$100 and \$200/);
+    expect(row?.price).toMatch(/^Last published: /);
+  });
+
+  it("quotes no Nous per-size daily price as a page fact, and keeps the price table's figure labelled last published", () => {
     const text = pageText(HOST_COMPARISONS["vs-nous-hermes-cloud"]);
     const row = PRICE_TABLE.find((r) => r.provider === "Nous Hermes Cloud");
     expect(row?.price).toMatch(/^Last published: /);
     expect(row?.terms).toMatch(/only after you sign in to its Portal/);
     // The row links to a page that no longer lists the price, and the table says so.
     expect(row?.terms).toMatch(/linked page no longer lists per-size prices/);
-    expect(text).toMatch(/at its last published rate for 4 vCPU and 2 GB RAM/);
+    // The page itself says the per-size prices are in the Portal deploy screen and quotes no daily rate.
+    expect(text).toMatch(/only in the Portal deploy screen/);
+    expect(text).toMatch(/this page quotes no daily figure/);
+    expect(text).not.toMatch(/\$\d+(?:\.\d+)? (?:a|per) day|\$\d+(?:\.\d+)?\/day/);
     // "Entry size" would claim the 4 vCPU and 2 GB instance is Nous's smallest, which only a rival's blog says.
     expect(text).not.toMatch(/entry size/i);
     expect(text).toMatch(/Always-on cost, smaller size/);
-    expect(text).toMatch(/8 vCPU and 4 GB RAM at \$1\.09\/day, as last published/);
-    expect(text).toMatch(/Nous Hermes Cloud's last published price for its 4 vCPU and 2 GB instance/);
-    // "Largest" would claim Nous lists its sizes; only two tiers are known and they are behind a sign-in.
+    // "Largest" would claim Nous lists its sizes; only the plans are public and per-size prices are behind a sign-in.
     expect(text).not.toMatch(/\bLargest\b/);
     expect(COMPETITOR_FACTS["vs-nous-hermes-cloud"].notPublished[0]).toMatch(/Portal sign-in/);
   });
@@ -173,9 +215,9 @@ describe("competitor facts", () => {
       ]),
     ];
 
-    it("covers all ten pages, each with its own description of 155 characters or fewer", () => {
-      expect(descriptions).toHaveLength(10);
-      expect(new Set(descriptions.map(([, description]) => description)).size).toBe(10);
+    it("covers /compare and all fifteen detail pages, each with its own description of 155 characters or fewer", () => {
+      expect(descriptions).toHaveLength(16);
+      expect(new Set(descriptions.map(([, description]) => description)).size).toBe(16);
       for (const [path, description] of descriptions) {
         expect([path, description.length <= MAX_META_DESCRIPTION_LENGTH]).toEqual([path, true]);
         expect([path, description.length >= 100]).toEqual([path, true]);
@@ -212,9 +254,9 @@ describe("competitor facts", () => {
     });
 
     it("says what a metered or templated price assumes and who says it", () => {
-      // Agent 37's $4.76 is the always-on figure; Render's missing login is what its README warns, not our finding.
+      // Agent 37's $4.76 is the always-on figure; Render's $25 is its listed 1 CPU, 2 GB tier, not a quote.
       expect(HOST_COMPARISONS["vs-agent-37"].metaDescription).toMatch(/\$4\.76 a month, always on/);
-      expect(COMPARE_PAGES["vs-render"].metaDescription).toMatch(/its README warns of no default login/);
+      expect(COMPARE_PAGES["vs-render"].metaDescription).toMatch(/runs on a \$25 web service plus a disk/);
     });
   });
 
@@ -238,7 +280,7 @@ describe("competitor facts", () => {
     const where: Record<(typeof HOST_COMPARISON_SLUGS)[number], RegExp> = {
       "vs-agent-37": /a meter helps when the machine is mostly idle/,
       "vs-hostinger": /Hostinger can be a very sensible choice/,
-      "vs-xcloud": /Choose xCloud if its larger promotional server fits/,
+      "vs-xcloud": /Choose xCloud if its [^.]*server fits/,
       "vs-nous-hermes-cloud": /Use Nous if its native tooling/,
     };
     for (const slug of HOST_COMPARISON_SLUGS) {
@@ -258,7 +300,7 @@ describe("competitor facts", () => {
     // Nous moved its per-size prices behind a Portal sign-in (audit 2026-10-20), so the page says so and
     // calls the repo's figures the last published ones.
     const text = pageText(HOST_COMPARISONS["vs-nous-hermes-cloud"]);
-    expect(text).toMatch(/last published/);
+    expect(text).toMatch(/Portal deploy screen/);
     expect(text).not.toMatch(/\bMedium\b/);
   });
 
