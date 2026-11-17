@@ -26,3 +26,11 @@
   .tiles, .options, .steps { grid-template-columns: minmax(0, 1fr); }
   .tiles li + li, .option + .option { border-left: 0; border-top: 1px solid var(--etched-border); }
 }
+.optionTag { margin: 0 0 16px !important; color: var(--ink-black); }
+.optionSteps { margin: 0 0 20px; padding-left: 20px; list-style: decimal; display: grid; gap: 8px; }
+.optionSteps strong { color: var(--ink-black); font-weight: 550; }
+.option { display: flex; flex-direction: column; }
+.option > [data-action-links] { margin-top: auto; }
+.helpLead { margin: 0 0 20px; max-width: 62ch; color: var(--text-secondary); font-size: 15px; line-height: 1.7; }
+.helpNote { margin: 20px 0 0; max-width: 62ch; color: var(--text-muted); font-size: 13px; line-height: 1.7; }
+.helpNote a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }

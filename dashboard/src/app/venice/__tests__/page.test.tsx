@@ -43,6 +43,19 @@ describe("/venice", () => {
     expect(document.body.textContent).not.toMatch(/end-to-end/i);
   });
 
+  it("walks through both ways step by step and offers a setup call", () => {
+    render(<VenicePage />);
+    expect(screen.getByRole("link", { name: /Launch with Hivra credits/ })).toHaveAttribute(
+      "href",
+      "/dashboard/launch?agent=hermes&inference=venice&ref=venice",
+    );
+    expect(screen.getByRole("link", { name: /Get a Venice API key/ })).toHaveAttribute("href", "https://venice.ai/settings/api");
+    expect(screen.getByText(/No Venice account needed/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Want a hand getting set up?" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Book a setup call/ }).getAttribute("href")).toMatch(/^mailto:/);
+    expect(screen.getByRole("link", { name: /Ask in Discord/ })).toBeInTheDocument();
+  });
+
   it("has metadata for the canonical path", () => {
     expect(String(metadata.description)).toContain(ENTRY_PLAN_PRICE);
     expect(metadata.openGraph).toBeDefined();
