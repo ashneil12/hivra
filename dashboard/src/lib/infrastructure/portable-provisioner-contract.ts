@@ -8,7 +8,7 @@
 import agentCliVersions from "../../../provisioner/agent-cli-versions.json";
 import agentAppVersions from "../../../provisioner/agent-app-versions.json";
 
-export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.11.15.7";
+export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.11.15.8";
 /** Exact reviewed releases with the same Proxmox lifecycle/runtime ABI. An
  * installed computer retains its observed version; accepting this predecessor
  * does not install, upgrade, or advertise the new provider-VM option there.
@@ -100,6 +100,7 @@ export const PORTABLE_HIVRA_COMPATIBLE_PROXMOX_VERSIONS = [
   "2026.11.15.3",
   "2026.11.15.5",
   "2026.11.15.6",
+  "2026.11.15.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function isCompatibleProxmoxProvisionerVersion(version: unknown): version is string {
@@ -123,7 +124,11 @@ export function isCompatibleProxmoxProvisionerVersion(version: unknown): version
 export const PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS: Readonly<Record<string, string>> = {
   aeon: "2026.10.20.2",
   openclaw: "2026.10.20.2",
-  "agent-zero": "2026.10.20.2",
+  // Agent Zero: 2026.11.15.7 pins v2.15, which reads its settings only from
+  // /a0/usr/.env; that release's installer wrote them elsewhere, so every launch
+  // failed readiness. 2026.11.15.8 seeds the file v2.15 reads, so place Agent
+  // Zero only there (a host still on .7 is skipped until its bundle syncs).
+  "agent-zero": "2026.11.15.8",
   // Hermes: the guest installer runs Hermes's own official installer and serves
   // its web UI from 2026.11.11.4 on (an older host rejects the kind in the guest),
   // but only 2026.11.11.6 adds the libatomic1 the installer's Node.js needs on the
@@ -270,6 +275,7 @@ const PORTABLE_HIVRA_LINUX_DESKTOP_VERSIONS = [
   "2026.11.15.3",
   "2026.11.15.5",
   "2026.11.15.6",
+  "2026.11.15.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 
@@ -323,6 +329,7 @@ const PORTABLE_HIVRA_WINDOWS_INSTALLER_VERSIONS = [
   "2026.11.15.3",
   "2026.11.15.5",
   "2026.11.15.6",
+  "2026.11.15.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsWindowsInstaller(version: unknown): boolean {
@@ -376,6 +383,7 @@ const PORTABLE_HIVRA_HOST_CAPACITY_ADMISSION_VERSIONS = [
   "2026.11.15.3",
   "2026.11.15.5",
   "2026.11.15.6",
+  "2026.11.15.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsHostCapacityAdmission(version: unknown): boolean {
@@ -399,6 +407,7 @@ export const PORTABLE_HIVRA_WAKE_PROXY_VERSIONS = [
   "2026.11.15.3",
   "2026.11.15.5",
   "2026.11.15.6",
+  "2026.11.15.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsWakeProxy(version: unknown): boolean {
@@ -419,6 +428,7 @@ export const PORTABLE_HIVRA_HOST_CREDENTIAL_VERSIONS = [
   "2026.11.15.3",
   "2026.11.15.5",
   "2026.11.15.6",
+  "2026.11.15.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsHostCredential(version: unknown): boolean {
@@ -439,6 +449,7 @@ export const PORTABLE_HIVRA_WAKE_DOORBELL_VERSIONS = [
   "2026.11.15.3",
   "2026.11.15.5",
   "2026.11.15.6",
+  "2026.11.15.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsWakeDoorbell(version: unknown): boolean {
@@ -473,12 +484,12 @@ export function providerProvisionerSupportsCatalogRuntime(version: unknown, runt
     ? version === PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION
     : (PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS as readonly string[]).includes(runtime));
 }
-export const PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS = ["2026.08.28.1", "2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION] as const;
+export const PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS = ["2026.08.28.1", "2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION] as const;
 
 /** Native launch compatibility is not model-key delivery capability. Only the
  * reviewed atomic model-settings release can opt into launch-time custody.
  * Actual guest capability and receipt checks still run before key delivery. */
-export const PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS = ["2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.30.2", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", PORTABLE_HIVRA_PROVISIONER_VERSION] as const;
+export const PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS = ["2026.08.28.2", "2026.08.28.3", "2026.08.28.4", "2026.08.29.1", "2026.08.29.2", "2026.08.29.3", "2026.08.29.4", "2026.08.29.5", "2026.08.30.1", "2026.08.30.2", "2026.08.31.1", "2026.08.31.4", "2026.09.01.1", "2026.09.01.2", "2026.09.01.6", "2026.09.01.7", "2026.09.01.8", "2026.09.01.9", "2026.09.04.2", "2026.09.04.3", "2026.09.04.4", "2026.09.05.1", "2026.09.05.3", "2026.09.05.4", "2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", PORTABLE_HIVRA_PROVISIONER_VERSION] as const;
 export function supportsModelSettingsProvisionerVersion(version: unknown): version is string {
   return (PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS as readonly unknown[]).includes(version);
 }
@@ -486,7 +497,7 @@ export function supportsModelSettingsProvisionerVersion(version: unknown): versi
 /** Releases whose host script and guest installer carry the agent-run
  * reporter (launch document v4). A predecessor ignores the credential, so the
  * control plane does not issue one to a host known to run an older bundle. */
-export const PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS = ["2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7"] as const;
+export const PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS = ["2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8"] as const;
 export function provisionerSupportsActivityTelemetry(version: unknown): version is string {
   return (PORTABLE_HIVRA_ACTIVITY_TELEMETRY_VERSIONS as readonly unknown[]).includes(version);
 }

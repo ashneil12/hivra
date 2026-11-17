@@ -505,6 +505,11 @@ const recipes = Object.freeze({
     workerSha256: "e58572e0b21dc0d1a80dab7fa550a970da6d6d480460c89b6e068493b6cfcbd5",
     workerSize: 45216,
   }),
+  "2026.11.15.8": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release seeds Agent Zero's login and managed model into the settings file current images read (/a0/usr/.env). The worker only advances its release labels.
+    workerSha256: "061138439c1b4ce7f4730c3baa92125dd92973a827c5acbc9a9b6604aab4cd89",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

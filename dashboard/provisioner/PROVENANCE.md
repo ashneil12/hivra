@@ -546,6 +546,17 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.15.8` builds on `2026.11.15.7` and fixes Agent Zero launches
+on the pinned v2.15 image. Agent Zero reads its settings only from
+`/a0/usr/.env`; the v2.2 image copied the mounted `/a0/.env` there on first
+start, but v2.15 does not, so a new box started with no login, its CSRF
+endpoint refused the gateway (`ok: false`), and the launch failed its readiness
+check after five minutes. The provisioner now merges the managed keys (login,
+and the managed model when one is given) into `/opt/a0/usr/.env`, keeping
+every other line. Changed: `provision-claude-code-box.sh`, plus the documents,
+the version and the provider worker's release labels. This source release does
+not deploy, install, enable or start anything on a host or computer.
+
 Release `2026.11.15.7` builds on `2026.11.15.6` and lets Agent Zero plugin web
 interfaces load: the gateway's no-Referer static-import allowlist now also covers
 module imports under `/usr/plugins/<plugin>/webui/` (for example the Tailscale

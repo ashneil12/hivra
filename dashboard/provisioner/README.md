@@ -574,6 +574,12 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **Agent Zero settings land where v2.15 reads them (`2026.11.15.8`).** Agent
+  Zero v2.15 reads only `/a0/usr/.env` and no longer copies the mounted
+  `/a0/.env` into it, so the seeded login and managed model were ignored and
+  every new Agent Zero launch failed its gateway readiness check. The
+  provisioner merges those keys into `/opt/a0/usr/.env` as well.
+
 - **Agent Zero plugin web UI imports and the v2.15 pin (`2026.11.15.7`).** The
   gateway now serves no-Referer static module imports under
   `/usr/plugins/<plugin>/webui/` (the Tailscale manager and other plugin web
