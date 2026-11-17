@@ -34,7 +34,7 @@ const REMOTE_DESKTOP_AUDIT_ENABLED = process.env.REMOTE_DESKTOP_AUDIT === '1';
  * Launch page (e2e/launch-sweep.spec.ts). Real infrastructure, so it is gated
  * the same way as the first-run audit: the project only exists with
  * LAUNCH_SWEEP=1. Each target runs in its own throwaway account; workers
- * decide how many launch at once (Canary has one host: keep it at 2 or 3).
+ * decide how many launch at once (Canary has one host: keep it at 1).
  */
 const LAUNCH_SWEEP_ENABLED = process.env.LAUNCH_SWEEP === '1';
 // One run id shared by every worker (they inherit this process's env).

@@ -247,8 +247,8 @@ Hivra Cloud, in its own throwaway Canary account, it:
 A separate test reads the live Launch page and fails if it offers a tile that
 `launch-sweep/targets.ts` doesn't list, so a new agent can't ship untested.
 
-**Cost cap.** One small Canary VM per target for ~10 minutes, at most two at
-once, and model use limited by the account's starter credit. Never retried.
+**Cost cap.** One small Canary VM per target for ~10 minutes, one at a time
+(two launches at once on Canary's single host have failed at kickoff), and model use limited by the account's starter credit. Never retried.
 
 **Where it runs.** Not from this repository's Actions: the public-tree rules keep
 workflows bound to live infrastructure out of the public tree, and public run logs
@@ -259,7 +259,7 @@ the Canary test credentials.
 
 ```bash
 CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \
-  npm run test:launch-sweep                         # everything, 2 at a time
+  npm run test:launch-sweep                         # everything, one at a time
 LAUNCH_SWEEP_ONLY=agent-zero,openclaw npm run test:launch-sweep   # a few
 LAUNCH_SWEEP_KEEP_FAILED=1 …                         # keep a failed computer to read its logs
 npm run test:launch-sweep:summary                    # Markdown table; exits 1 if a launch is broken
