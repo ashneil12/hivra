@@ -992,16 +992,33 @@ ok "verified aeon checkout at ${AEON_REF} -> ${AEON_DIR}"
 
 # Serve under basePath=/aeon so the box's token-proxy can mount the dashboard —
 # its absolute asset + /api paths then resolve under /aeon and route back through
-# the gate. Upstream ships an empty next.config.ts, so replace it with an
-# env-driven one (basePath read from AEON_BASE_PATH at build + runtime).
+# the gate. Aeon's own next.config.ts carries settings its build needs (since
+# Nov 2026 a bundler root that reaches the repo's harness-adapter files), so it
+# is kept as next.config.hivra-upstream.ts and the new next.config.ts only adds
+# the mount (basePath read from AEON_BASE_PATH at build + runtime). A re-run
+# leaves an existing wrapper alone. The kept copy stays out of the owner's git.
+AEON_NEXT_UPSTREAM="${AEON_DASH}/next.config.hivra-upstream.ts"
+if [ ! -e "${AEON_NEXT_UPSTREAM}" ]; then
+  if [ -f "${AEON_DASH}/next.config.ts" ] && [ ! -L "${AEON_DASH}/next.config.ts" ]; then
+    mv -- "${AEON_DASH}/next.config.ts" "${AEON_NEXT_UPSTREAM}"
+  else
+    printf '%s\n' "import type { NextConfig } from 'next'" "const nextConfig: NextConfig = {}" "export default nextConfig" > "${AEON_NEXT_UPSTREAM}"
+  fi
+  chown "${AGENT_USER}:${AGENT_USER}" "${AEON_NEXT_UPSTREAM}"
+fi
 cat > "${AEON_DASH}/next.config.ts" <<'NEXTCFG'
 import type { NextConfig } from 'next'
-// Hivra hosts this dashboard behind a token-proxy mounted at /aeon.
+import upstream from './next.config.hivra-upstream'
+// Hivra hosts this dashboard behind a token-proxy mounted at /aeon. Aeon's own
+// config (next.config.hivra-upstream.ts) is kept as is; only the mount is added.
 const basePath = process.env.AEON_BASE_PATH || undefined
-const nextConfig: NextConfig = basePath ? { basePath, assetPrefix: basePath } : {}
+const nextConfig: NextConfig = basePath ? { ...upstream, basePath, assetPrefix: basePath } : upstream
 export default nextConfig
 NEXTCFG
 chown "${AGENT_USER}:${AGENT_USER}" "${AEON_DASH}/next.config.ts"
+AEON_EXCLUDE="${AEON_DIR}/.git/info/exclude"
+grep -qxF '/apps/dashboard/next.config.hivra-upstream.ts' "${AEON_EXCLUDE}" 2>/dev/null \
+  || printf '%s\n' '/apps/dashboard/next.config.hivra-upstream.ts' | sudo -u "${AGENT_USER}" tee -a "${AEON_EXCLUDE}" >/dev/null
 ok "aeon dashboard pinned to basePath=/aeon"
 
 # Install deps + a PRODUCTION build (lighter + more stable than `next dev` for a
