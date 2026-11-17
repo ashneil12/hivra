@@ -35,6 +35,9 @@ QUOTA_DIR = STATE_DIR / "quota"
 MOUNT_DIR = STATE_DIR / "mnt"
 ARCHIVE_DIR = STATE_DIR / "archives"
 ENROLL_SHIM = "/opt/hivra/enroll-shim"
+# The free sandbox image (the runner, Bun, OpenCode and the enroll shim), pinned by digest like IMAGE once it is built.
+# Empty: no free image is admitted yet, so `enroll` refuses every sandbox.
+FREE_IMAGE = ""
 TAR = "/usr/bin/tar"
 ZSTD = "/usr/bin/zstd"
 ENROLL_CODE = re.compile(r"^[A-Za-z0-9_-]{8,256}$")
@@ -590,11 +593,17 @@ def create_quota_volume(request, volume, storage_mb, label_args):
     if image.exists():
         fail("The gVisor computer has an orphaned workspace image")
     QUOTA_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    run(["/usr/bin/truncate", "-s", f"{storage_mb}M", str(image)])
-    run(["/usr/sbin/mkfs.ext4", "-q", "-F", "-m", "0", "-E", f"root_owner={SANDBOX_UID}:{SANDBOX_UID}", str(image)])
-    ensure_quota_mounted(request)
-    docker("volume", "create", *label_args, "--label", f"{LABEL}.quota-mb={storage_mb}", "--driver", "local",
-           "--opt", "type=none", "--opt", "o=bind", "--opt", f"device={mountpoint}", volume)
+    try:
+        run(["/usr/bin/truncate", "-s", f"{storage_mb}M", str(image)])
+        run(["/usr/sbin/mkfs.ext4", "-q", "-F", "-m", "0", "-E", f"root_owner={SANDBOX_UID}:{SANDBOX_UID}",
+             str(image)])
+        ensure_quota_mounted(request)
+        docker("volume", "create", *label_args, "--label", f"{LABEL}.quota-mb={storage_mb}", "--driver", "local",
+               "--opt", "type=none", "--opt", "o=bind", "--opt", f"device={mountpoint}", volume)
+    except BaseException:
+        # Nothing of this half-made quota may outlive the failure, or every retry would meet it as an orphan.
+        remove_quota(request)
+        raise
 
 
 def remove_quota(request):
@@ -616,6 +625,33 @@ def workspace_source(request):
         return Path(json.loads(docker("volume", "inspect", volume).stdout)[0]["Mountpoint"])
     except (KeyError, IndexError, TypeError, json.JSONDecodeError):
         fail("The gVisor workspace could not be located")
+
+
+def quota_bytes(request):
+    """The workspace's quota from its volume's label, or None for a workspace without one."""
+    _, volume, _ = names(request)
+    try:
+        labels = json.loads(docker("volume", "inspect", volume).stdout)[0].get("Labels") or {}
+        quota = labels.get(f"{LABEL}.quota-mb")
+        return int(quota) * 1024 * 1024 if quota else None
+    except (IndexError, TypeError, ValueError, json.JSONDecodeError):
+        fail("The gVisor workspace could not be located")
+
+
+def logical_size(root):
+    """The bytes a restore would write: regular files at their full size (a sparse file counts whole), each inode once."""
+    seen = set()
+    total = 0
+    for directory, _, files in os.walk(root, followlinks=False):
+        for name in files:
+            info = os.lstat(os.path.join(directory, name))
+            if not os.path.isfile(os.path.join(directory, name)) or os.path.islink(os.path.join(directory, name)):
+                continue
+            if (info.st_dev, info.st_ino) in seen:
+                continue
+            seen.add((info.st_dev, info.st_ino))
+            total += info.st_size
+    return total
 
 
 def archive_paths(request):
@@ -671,11 +707,15 @@ def pack(request):
     if item["State"].get("Running"):
         fail("Stop this gVisor computer before packing it")
     source = workspace_source(request)
+    limit = quota_bytes(request)
+    if limit is not None and logical_size(source) > limit:
+        fail("The gVisor workspace holds more than its storage can restore")
     ARCHIVE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     archive, manifest = archive_paths(request)
     partial = archive.with_name(archive.name + ".partial")
     with open(partial, "wb") as out:
-        tar = subprocess.Popen([TAR, "--numeric-owner", "--exclude=./lost+found", "-C", str(source), "-cf", "-", "."],
+        tar = subprocess.Popen([TAR, "--numeric-owner", "--exclude=./lost+found",
+                                "--exclude=./.agentes-runner/enroll.*", "-C", str(source), "-cf", "-", "."],
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         zstd = subprocess.run([ZSTD, "-q", "-T0", "-c"], stdin=tar.stdout, stdout=out,
                               stderr=subprocess.DEVNULL, timeout=3600, check=False)
@@ -743,10 +783,12 @@ def ensure_parents(dest, target, uid):
             os.lchown(current, uid, uid)
 
 
-def extract_tar_stream(stream, dest, uid=SANDBOX_UID):
+def extract_tar_stream(stream, dest, uid=SANDBOX_UID, max_bytes=None):
     """Unpack an untrusted tar stream into `dest` as `uid`: no absolute or parent paths, nothing written through a
-    link, no device or special files, no set-id bits. Returns how many members were skipped."""
+    link, no device or special files, no set-id bits, and no more than `max_bytes` of file content. A hard link
+    becomes a link to a file this archive already unpacked. Returns how many members were skipped."""
     skipped = 0
+    written = 0
     with tarfile.open(fileobj=stream, mode="r|") as archive:
         for member in archive:
             target = safe_member_path(dest, member.name)
@@ -761,6 +803,9 @@ def extract_tar_stream(stream, dest, uid=SANDBOX_UID):
                 os.chmod(target, member.mode & 0o777)
                 os.lchown(target, uid, uid)
             elif member.isreg():
+                written += member.size
+                if max_bytes is not None and written > max_bytes:
+                    fail("The gVisor archive is larger than this computer's storage")
                 source = archive.extractfile(member)
                 fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
                 try:
@@ -773,6 +818,11 @@ def extract_tar_stream(stream, dest, uid=SANDBOX_UID):
             elif member.issym():
                 os.symlink(member.linkname, target)
                 os.lchown(target, uid, uid)
+            elif member.islnk():
+                linked = safe_member_path(dest, member.linkname)
+                if linked is None or linked.is_symlink() or not linked.is_file():
+                    fail("The gVisor archive holds an unsafe link")
+                os.link(linked, target, follow_symlinks=False)
             else:
                 skipped += 1
     return skipped
@@ -784,33 +834,48 @@ def restore(request):
     name, volume, network = names(request)
     archive = verified_archive(request, request["archiveSha256"])
     require_helper_absent(request)
+    image, mountpoint = quota_paths(request)
     if (inspect_container(name, request, required=False) is not None
-            or inspect_resource("volume", volume, request) or inspect_resource("network", network, request)):
+            or inspect_resource("volume", volume, request) or inspect_resource("network", network, request)
+            or image.exists() or mountpoint.exists()):
         fail("The gVisor computer is already on this host")
     cpu, memory = float(request["cpu"]), int(request["memoryMb"])
     admit(name, cpu, memory, int(request["hostMemoryReserveMb"]), overcommit_of(request))
     labels = expected_labels(request)
     label_args = [value for pair in labels.items() for value in ("--label", f"{pair[0]}={pair[1]}")]
+    limit = int(request["storageMb"]) * 1024 * 1024 if "storageMb" in request else None
+    created_volume = created_network = False
     try:
         docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
         if "storageMb" in request:
             create_quota_volume(request, volume, int(request["storageMb"]), label_args)
         else:
             docker("volume", "create", *label_args, volume)
+        created_volume = True
         docker("network", "create", "--driver", "bridge", *label_args, network)
+        created_network = True
         initialize_workspace(request, volume)
         dest = workspace_source(request)
         unpack = subprocess.Popen([ZSTD, "-q", "-d", "-c", str(archive)], stdin=subprocess.DEVNULL,
                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         try:
-            extract_tar_stream(unpack.stdout, dest)
+            extract_tar_stream(unpack.stdout, dest, max_bytes=limit)
         finally:
             unpack.stdout.close()
         if unpack.wait(timeout=60) != 0:
             fail("The gVisor archive could not be unpacked")
         create_container(request, cpu, memory)
     except BaseException:
-        delete(request)
+        # Undo only what this restore made: never a workspace that was here before it.
+        if inspect_helper(request, required=False) is not None:
+            docker("rm", "-f", helper_name(request), check=False)
+        if inspect_container(name, request, required=False) is not None:
+            docker("rm", "-f", name, check=False)
+        if created_network:
+            docker("network", "rm", network, check=False)
+        if created_volume:
+            docker("volume", "rm", volume, check=False)
+            remove_quota(request)
         raise
     archive.unlink()
     archive_paths(request)[1].unlink()
@@ -824,6 +889,8 @@ def enroll(request):
     name, _, _ = names(request)
     require_helper_absent(request)
     item = inspect_container(name, request)
+    if not FREE_IMAGE or item["Config"].get("Image") != FREE_IMAGE:
+        fail("This gVisor computer does not run the free sandbox image")
     if not item["State"].get("Running"):
         fail("Start this gVisor computer before enrolling it")
     result = subprocess.run(

@@ -22,6 +22,8 @@ if [ -e "$state/config.json" ]; then
   exit 65
 fi
 mkdir -p "$state"
+# A code left by a shim that was killed before it finished is never used again.
+rm -f "$state"/enroll.*
 
 IFS= read -r code || true
 case "$code" in

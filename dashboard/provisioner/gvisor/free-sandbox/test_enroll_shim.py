@@ -60,6 +60,14 @@ class EnrollShimTests(unittest.TestCase):
         self.assertTrue((state / "config.json").exists())
         self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o700)
 
+    def test_removes_a_code_a_killed_shim_left_behind(self):
+        state = self.home / ".agentes-runner"
+        state.mkdir(mode=0o700)
+        stale = state / "enroll.OLD123"
+        stale.write_text("an old code")
+        self.assertEqual(self.shim("https://agents.example", "enrollsecret_ABC123\n").returncode, 0)
+        self.assertFalse(stale.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

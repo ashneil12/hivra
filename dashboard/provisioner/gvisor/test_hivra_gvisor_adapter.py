@@ -556,6 +556,7 @@ class PackReleaseRestoreTests(unittest.TestCase):
             mock.patch.object(adapter, "ZSTD", zstd),
             mock.patch.object(adapter, "require_helper_absent", lambda request: None),
             mock.patch.object(adapter, "workspace_source", lambda request: self.source),
+            mock.patch.object(adapter, "quota_bytes", lambda request: None),
             mock.patch.object(adapter, "inspect_container",
                               lambda name, request, required=True: {"State": {"Running": False}}),
         ]
@@ -642,8 +643,10 @@ class EnrollTests(unittest.TestCase):
 
         req = request("enroll") | {"enrollCode": "secretCODE_123", "serverUrl": "https://agents.example"}
         with mock.patch.object(adapter, "require_helper_absent", lambda request: None), \
+                mock.patch.object(adapter, "FREE_IMAGE", "free@sha256:" + "e" * 64), \
                 mock.patch.object(adapter, "inspect_container",
-                                  lambda name, request, required=True: {"State": {"Running": True}}), \
+                                  lambda name, request, required=True: {"State": {"Running": True},
+                                                                        "Config": {"Image": "free@sha256:" + "e" * 64}}), \
                 mock.patch.object(adapter.subprocess, "run", fake_run), redirect_stdout(io.StringIO()) as out:
             adapter.enroll(req)
         self.assertNotIn("secretCODE_123", " ".join(seen["argv"]))
@@ -655,7 +658,107 @@ class EnrollTests(unittest.TestCase):
     def test_refuses_a_stopped_sandbox(self):
         req = request("enroll") | {"enrollCode": "secretCODE_123", "serverUrl": "https://agents.example"}
         with mock.patch.object(adapter, "require_helper_absent", lambda request: None), \
+                mock.patch.object(adapter, "FREE_IMAGE", "free@sha256:" + "e" * 64), \
                 mock.patch.object(adapter, "inspect_container",
-                                  lambda name, request, required=True: {"State": {"Running": False}}), \
+                                  lambda name, request, required=True: {"State": {"Running": False},
+                                                                        "Config": {"Image": "free@sha256:" + "e" * 64}}), \
                 redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             adapter.enroll(req)
+
+    def test_refuses_every_sandbox_until_a_free_image_is_pinned(self):
+        req = request("enroll") | {"enrollCode": "secretCODE_123", "serverUrl": "https://agents.example"}
+        run = mock.Mock()
+        with mock.patch.object(adapter, "require_helper_absent", lambda request: None), \
+                mock.patch.object(adapter, "inspect_container",
+                                  lambda name, request, required=True: {"State": {"Running": True},
+                                                                        "Config": {"Image": adapter.IMAGE}}), \
+                mock.patch.object(adapter.subprocess, "run", run), \
+                redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            adapter.enroll(req)
+        run.assert_not_called()
+
+
+class ReviewFixTests(unittest.TestCase):
+    """What the adversarial review found: half-made quotas, restore cleanup, sparse files, hard links."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        root = Path(self.dir.name)
+        self.patches = [
+            mock.patch.object(adapter, "QUOTA_DIR", root / "quota"),
+            mock.patch.object(adapter, "MOUNT_DIR", root / "mnt"),
+            mock.patch.object(adapter, "ARCHIVE_DIR", root / "archives"),
+            mock.patch.object(adapter, "is_mounted", lambda path: False),
+            mock.patch.multiple(adapter.os, lchown=mock.DEFAULT, fchown=mock.DEFAULT),
+        ]
+        for patch in self.patches:
+            patch.start()
+
+    def tearDown(self):
+        for patch in self.patches:
+            patch.stop()
+        self.dir.cleanup()
+
+    def test_a_quota_that_fails_half_way_leaves_nothing_behind(self):
+        def run(argv, **kwargs):
+            if "mkfs.ext4" in argv[0]:
+                raise subprocess.CalledProcessError(1, argv)
+            if "truncate" in argv[0]:
+                Path(argv[-1]).write_bytes(b"x")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        with mock.patch.object(adapter, "run", run), self.assertRaises(subprocess.CalledProcessError):
+            adapter.create_quota_volume(request("create"), "vol", 1024, [])
+        image, mountpoint = adapter.quota_paths(request())
+        self.assertFalse(image.exists() or mountpoint.exists())
+
+    def test_restore_refuses_where_a_workspace_image_is_already_on_the_host(self):
+        image, _ = adapter.quota_paths(request())
+        image.parent.mkdir(parents=True)
+        image.write_bytes(b"newer workspace")
+        req = request("restore") | {"archiveSha256": "f" * 64, "cpu": 0.5, "memoryMb": 512, "hostMemoryReserveMb": 512}
+        docker = mock.Mock()
+        with mock.patch.object(adapter, "verified_archive", lambda request, sha: Path("/nonexistent")), \
+                mock.patch.object(adapter, "require_helper_absent", lambda request: None), \
+                mock.patch.object(adapter, "inspect_container", lambda name, request, required=True: None), \
+                mock.patch.object(adapter, "inspect_resource", lambda kind, name, request, required=False: False), \
+                mock.patch.object(adapter, "docker", docker), \
+                redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            adapter.restore(req)
+        docker.assert_not_called()
+        self.assertEqual(image.read_bytes(), b"newer workspace")
+
+    def test_unpacking_stops_at_the_storage_limit(self):
+        dest = Path(self.dir.name, "dest")
+        dest.mkdir()
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            adapter.extract_tar_stream(tar_bytes([({"name": "./a"}, b"x" * 60), ({"name": "./b"}, b"y" * 60)]),
+                                       dest, max_bytes=100)
+
+    def test_hard_links_point_only_at_files_this_archive_unpacked(self):
+        dest = Path(self.dir.name, "dest")
+        dest.mkdir()
+        adapter.extract_tar_stream(tar_bytes([
+            ({"name": "./a.txt"}, b"same"),
+            ({"name": "./b.txt", "type": adapter.tarfile.LNKTYPE, "linkname": "./a.txt"}, None),
+        ]), dest)
+        self.assertEqual((dest / "b.txt").read_bytes(), b"same")
+        self.assertEqual((dest / "a.txt").stat().st_ino, (dest / "b.txt").stat().st_ino)
+        for linkname in ("../outside", "/etc/passwd", "./missing"):
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                adapter.extract_tar_stream(tar_bytes([
+                    ({"name": "./c.txt", "type": adapter.tarfile.LNKTYPE, "linkname": linkname}, None),
+                ]), dest)
+
+    def test_pack_refuses_a_workspace_whose_files_would_not_fit_back(self):
+        source = Path(self.dir.name, "workspace")
+        source.mkdir()
+        with open(source / "sparse", "wb") as stream:
+            stream.truncate(10 * 1024 * 1024)
+        with mock.patch.object(adapter, "require_helper_absent", lambda request: None), \
+                mock.patch.object(adapter, "inspect_container",
+                                  lambda name, request, required=True: {"State": {"Running": False}}), \
+                mock.patch.object(adapter, "workspace_source", lambda request: source), \
+                mock.patch.object(adapter, "quota_bytes", lambda request: 1024 * 1024), \
+                redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            adapter.pack(request("pack"))
+        self.assertFalse(adapter.ARCHIVE_DIR.exists())
