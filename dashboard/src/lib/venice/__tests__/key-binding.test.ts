@@ -47,6 +47,13 @@ describe("managed AI key binding", () => {
     expect(await checkKeyBinding({ ...base, caller: { address: "::ffff:203.0.113.12", via: "worker" } }, { db: db(managed), env })).toEqual({ allowed: true, outcome: "match" });
   });
 
+  it("accepts a CIDR range such as a host's IPv6 /64", async () => {
+    const env = { HIVRA_MANAGED_KEY_BINDING: "enforce", HIVRA_MANAGED_KEY_BINDING_EXTRA_ADDRESSES: "2001:db8:6a:48a9::/64" };
+    expect(await checkKeyBinding({ ...base, caller: { address: "2001:db8:6a:48a9::1234", via: "direct" } }, { db: db(managed), env })).toEqual({ allowed: true, outcome: "match" });
+    resetKeyBindingCache();
+    expect(await checkKeyBinding({ ...base, caller: { address: "2001:db8:6a:48aa::1", via: "direct" } }, { db: db(managed), env })).toEqual({ allowed: false, outcome: "mismatch" });
+  });
+
   it("leaves keys without a computer, and self-managed computers, unbound", async () => {
     const env = { HIVRA_MANAGED_KEY_BINDING: "enforce" };
     const away = { address: "198.51.100.7", via: "direct" as const };

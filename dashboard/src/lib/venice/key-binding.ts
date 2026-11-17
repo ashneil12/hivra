@@ -19,8 +19,9 @@ import { trustedClientAddress } from "@/lib/infrastructure/trusted-client-addres
  * records mismatches but lets every request through; `enforce` refuses a bound
  * key used from anywhere else. Run `observe` first: a host with a second
  * outbound address shows up there before it can break anyone.
- * HIVRA_MANAGED_KEY_BINDING_EXTRA_ADDRESSES: more allowed addresses, comma
- * separated, for every bound key (a host's second outbound address).
+ * HIVRA_MANAGED_KEY_BINDING_EXTRA_ADDRESSES: more allowed addresses or CIDR
+ * ranges, comma separated, for every bound key (a host's IPv6 /64, a second
+ * outbound address).
  */
 
 type EnvLike = Record<string, string | undefined>;
@@ -48,6 +49,31 @@ function normalizeAddress(value: string | null | undefined): string | null {
   const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(address);
   if (mapped) address = mapped[1];
   return net.isIP(address) ? address : null;
+}
+
+/** An address, or a CIDR range such as a host's IPv6 /64. */
+function normalizeEntry(value: string): string | null {
+  const [raw, bits, ...rest] = value.trim().split("/");
+  if (rest.length) return null;
+  const address = normalizeAddress(raw);
+  if (!address) return null;
+  if (bits === undefined) return address;
+  const n = Number(bits);
+  const max = net.isIP(address) === 4 ? 32 : 128;
+  return /^\d+$/.test(bits) && n >= 8 && n <= max ? `${address}/${n}` : null;
+}
+
+function addressAllowed(address: string, allowed: string[]): boolean {
+  const family = net.isIP(address) === 4 ? "ipv4" : "ipv6";
+  for (const entry of allowed) {
+    if (!entry.includes("/")) { if (entry === address) return true; continue; }
+    const [base, bits] = entry.split("/");
+    if ((net.isIP(base) === 4 ? "ipv4" : "ipv6") !== family) continue;
+    const list = new net.BlockList();
+    list.addSubnet(base, Number(bits), family);
+    if (list.check(address, family)) return true;
+  }
+  return false;
 }
 
 const CACHE_MS = 5 * 60_000;
@@ -78,7 +104,7 @@ export async function allowedAddressesForAgent(agentId: string, deps: { db?: Db;
       hostAddress = null;
     }
     if (!hostAddress) return "unknown_host";
-    const extra = (env.HIVRA_MANAGED_KEY_BINDING_EXTRA_ADDRESSES ?? "").split(",").map((a) => normalizeAddress(a)).filter((a): a is string => Boolean(a));
+    const extra = (env.HIVRA_MANAGED_KEY_BINDING_EXTRA_ADDRESSES ?? "").split(",").map((a) => normalizeEntry(a)).filter((a): a is string => Boolean(a));
     addresses = [...new Set([hostAddress, ...extra])];
   }
   allowedCache.set(agentId, { at: now(), addresses });
@@ -128,7 +154,7 @@ export async function checkKeyBinding(input: {
   if (allowed === "unknown_host") outcome = "unknown_host";
   else {
     const address = normalizeAddress(input.caller?.address ?? null);
-    outcome = !address ? "unknown_address" : allowed.includes(address) ? "match" : "mismatch";
+    outcome = !address ? "unknown_address" : addressAllowed(address, allowed) ? "match" : "mismatch";
   }
   if (outcome === "match") return { allowed: true, outcome };
   // A host whose address Hivra cannot read is never refused for it: that is Hivra's gap, not the caller's.
