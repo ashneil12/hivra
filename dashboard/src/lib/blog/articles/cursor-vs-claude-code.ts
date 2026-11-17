@@ -37,6 +37,7 @@ export const article: BlogArticle = {
       heading: "What's the actual difference?",
       paragraphs: [
         "Cursor is a code editor built around AI agents. You sit in the editor, and the agent edits files, runs commands and opens PRs right there in front of you. Need it to keep going without your laptop? Cursor sends that work to [Cloud Agents](/blog/cursor-cloud-agents) (they used to be called Background Agents), which run on Cursor's own servers.",
+        "The tool matters less than the model behind it for hard work. [Best LLM for coding](/blog/best-llm-for-coding) compares the current models by job, price and benchmark.",
         `Claude Code is Anthropic's coding agent. According to Anthropic's [overview](${CLAUDE_OVERVIEW}), it runs in the terminal, in IDE extensions, in a desktop app and in the browser. The terminal version is the one that suits a computer that stays on. Install it, sign in, start it inside tmux, walk off.`,
         "Same kind of work. Different homes. Cursor wants you in the editor, and Claude Code is perfectly happy in a terminal window.",
       ],

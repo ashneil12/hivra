@@ -30,6 +30,7 @@ export const article: BlogArticle = {
       heading: "Docker container, or Hermes on its own computer?",
       paragraphs: [
         "Nous's [Docker guide](https://hermes-agent.nousresearch.com/docs/user-guide/docker) splits Docker into two jobs. Running Hermes in Docker puts the whole agent inside `nousresearch/hermes-agent`, with your config and keys on a host folder mounted at `/opt/data`. Docker as a terminal backend leaves Hermes on the host and only sandboxes the shell commands the agent runs. Same word, different blast radius.",
+        "Still deciding where Hermes should live? [Every way to run Hermes Agent in the cloud](/blog/hermes-agent-cloud) compares a VPS, Docker, Nous Hermes Cloud and a managed computer side by side.",
         [
           "| Route | What stays isolated | What you maintain | Pick it when |",
           "|---|---|---|---|",

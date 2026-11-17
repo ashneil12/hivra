@@ -21,6 +21,7 @@ export const article: BlogArticle = {
       heading: "How is a BYO key different from a bundled AI subscription?",
       paragraphs: [
         "Who sends you the bill. Most AI SaaS products buy tokens in bulk, add a markup and fold the AI usage into your subscription. Handy. But you pay the markup, and you rarely see how much you're actually using.",
+        "If you want to try an agent before paying per token, [OpenRouter's free models](/blog/openrouter-free-models) work with your own OpenRouter key, within tight daily limits.",
         `With your own key, you open a developer account straight with the provider (Anthropic, OpenAI, Google, Mistral, or OpenRouter if you want many models in one place), create a key and paste it in. The provider bills you for usage. The product only charges for the platform. That's how Hivra works when you bring your own key or login: you pay Hivra for managed hosting and the dashboard, from ${ENTRY_PLAN_PRICE}/month for ${ENTRY_PLAN_SIZE}, and the requests your agent makes with that key or login go straight to the provider. Hivra never touches that token bill. Would you rather not bring a key? Hivra also sells managed Venice credits, and those requests do pass through Hivra.`,
       ],
     },

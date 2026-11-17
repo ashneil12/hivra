@@ -49,7 +49,8 @@ export const article: BlogArticle = {
       heading: "The short version, as of November 2026",
       paragraphs: [
         "If you want one model for hard, multi-file work in an agent like Claude Code or Codex, start with Claude Opus 5.5. If you want most of that for half the price, use Claude Sonnet 5.5 or OpenAI's GPT-6.1 Sol. If you are running thousands of small jobs, DeepSeek V4.1 Flash costs a fraction of any of them. If the code cannot leave your machine, Qwen3.8-27B is the open-weight model that fits on one computer.",
-        "That is the whole answer. The rest of this guide shows the numbers behind it, where the benchmarks mislead, and how to pick for your own repo. All prices are US dollars per million tokens, input then output, from each vendor's own pages in November 2026. Prices and rankings move. Check the vendor page before you commit a budget.",
+        "That is the whole answer. The rest of this guide shows the numbers behind it, where the benchmarks mislead, and how to pick for your own repo. All prices are US dollars per million tokens, input then output, from each vendor's own pages in November 2026. Prices and rankings move. Check the vendor page before you commit a budget: [Anthropic](https://platform.claude.com/docs/en/about-claude/models/overview), [OpenAI](https://developers.openai.com/api/docs/models), [Google](https://ai.google.dev/gemini-api/docs/pricing) and [DeepSeek](https://api-docs.deepseek.com/quick_start/pricing) list theirs.",
+        "Whichever model you pick, it does its best work in an agent that can keep going without you. You can run [Claude Code](/agents/claude-code) or [Codex](/agents/codex) on a computer of its own on Hivra, signed in with your own subscription or key.",
       ],
     },
     {
@@ -194,7 +195,7 @@ export const article: BlogArticle = {
     {
       heading: "Running these agents without tying up your laptop",
       paragraphs: [
-        "Long agent runs are where the model choice gets expensive and where a closed laptop stops the work. On Hivra you can run Claude Code or Codex on a private cloud computer, signed in with your own subscription login or your own API key, so the session keeps going when your machine is off. Hivra is not affiliated with Anthropic or OpenAI. It does not change which model you get or what the vendor charges. That stays between you and the vendor.",
+        "Long agent runs are where the model choice gets expensive and where a closed laptop stops the work. On Hivra you can run Claude Code or Codex on a private cloud computer, signed in with your own subscription login or your own API key, so the session keeps going when your machine is off. Hivra is not affiliated with Anthropic or OpenAI. It does not change which model you get or what the vendor charges. That stays between you and the vendor. If you're weighing that against your own server, see [Hivra vs a self-hosted VPS](/compare/vs-self-hosted).",
       ],
     },
   ],

@@ -14,12 +14,23 @@ produce a guide that passes the fact check ships nothing and says so.
   06:10 UTC, about 3 days behind). Use the last 28 days for `sc-domain:hivra.cloud`:
 
 ```sql
-select query, sum(impressions) imps, sum(clicks) clicks,
-       round((sum(position*impressions)/nullif(sum(impressions),0))::numeric,1) pos,
-       (array_agg(page order by impressions desc))[1] top_page
-from seo_gsc_daily
-where site = 'sc-domain:hivra.cloud' and date >= current_date - 31
-group by query having sum(impressions) >= 5
+-- Freshness first: stop and report if the newest day is older than current_date - 4 or there are no rows.
+select max(date) from seo_gsc_daily where site = 'sc-domain:hivra.cloud';
+
+-- Gap candidates: criteria applied before the limit; top page by total impressions over the window.
+with qp as (
+  select query, page, sum(impressions) imps, sum(clicks) clicks, sum(position * impressions) pos_w
+  from seo_gsc_daily
+  where site = 'sc-domain:hivra.cloud' and date >= current_date - 31
+  group by query, page
+), q as (
+  select query, sum(imps) imps, sum(clicks) clicks,
+         round((sum(pos_w) / nullif(sum(imps), 0))::numeric, 1) pos,
+         (array_agg(page order by imps desc))[1] top_page
+  from qp group by query
+)
+select * from q
+where imps >= 5 and clicks::numeric / imps < 0.02 and pos > 15
 order by imps desc limit 200;
 ```
 
