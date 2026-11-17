@@ -592,7 +592,7 @@ async function main() {
     await db.exec(BACKGROUND_READS_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedBackgroundReads, "re-applying the 2026.11.17.2 admission changes nothing");
     // 2026.11.17.3 anchors on the 2026.11.17.2 entry; idempotent too.
-    const TG_APPLY_HARDENING_ADMISSION = migration("20261117180000_provider_release_admission_2026_11_17_3.sql");
+    const TG_APPLY_HARDENING_ADMISSION = migration("20261117190000_provider_release_admission_2026_11_17_3.sql");
     await db.exec(TG_APPLY_HARDENING_ADMISSION);
     const admittedTgApplyHardening = await admissionDefinitions();
     admittedTgApplyHardening.forEach((definition, index) => {
