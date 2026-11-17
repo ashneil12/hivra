@@ -8,6 +8,8 @@ const settings: FreeSandboxSettings = {
   cpus: 0.5,
   storageMb: 900,
   freePlacesPerServer: 3,
+  hermesPlacesPerServer: 0,
+  freeModels: ["prov/model-a"],
   paidReserveComputers: 1,
   cpuOvercommit: 2,
   maxConcurrentTurns: 2,

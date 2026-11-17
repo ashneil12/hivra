@@ -16,13 +16,17 @@ export interface FreeSandboxSettings {
   storageMb: number;
   /** Places on one server: people placed there (awake or stopped). Packed people hold none. */
   freePlacesPerServer: number;
+  /** A second class of place for heavier free agents, counted apart; missing means none. */
+  hermesPlacesPerServer: number;
+  /** The models Free thinks with, in order of preference: the first is pinned, the rest are fallbacks. */
+  freeModels: string[];
   /** Room kept on every server for this many more paid computers before Free takes any. */
   paidReserveComputers: number;
   /** CPU promised to awake free sandboxes, as a multiple of the pool's cores (idle sandboxes use almost none). */
   cpuOvercommit: number;
   /** Turns running at once on one pool; the rest wait in line, paid first. */
   maxConcurrentTurns: number;
-  /** A person's reply time per day, in seconds; null turns the cap off. */
+  /** A person's reply time per day, in seconds; null (the key left out) turns the cap off. */
   dailyReplySecondsCap: number | null;
 }
 
@@ -50,6 +54,10 @@ const positive = (value: unknown): value is number => typeof value === "number" 
 const wholePositive = (value: unknown): value is number => positive(value) && Number.isInteger(value);
 const wholeOrZero = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0;
+/** A provider-qualified model id such as `provider/model`, nothing a shell or config could misread. */
+const MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+const modelList = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.length > 0 && value.every((m) => typeof m === "string" && MODEL_ID.test(m));
 
 function section(ladder: Ladder | null, key: string): Record<string, unknown> | null {
   const value = ladder?.[key];
@@ -68,12 +76,17 @@ export function freeSandboxSettings(ladder: Ladder | null, freeKey = "free"): Fr
   const s = section(ladder, freeKey);
   const clocks = lifecycleSettings(ladder, freeKey);
   if (!s || !clocks) return null;
+  // The ladder's schema takes the cap as a number or leaves it out (it refuses null): left out means the cap is off,
+  // never that the feature is off. A second class of place left out means none.
   const cap = s.dailyReplySecondsCap;
+  const hermesPlaces = s.hermesPlacesPerServer ?? 0;
   if (
     !wholePositive(s.memoryMb) ||
     !positive(s.cpus) ||
     !wholePositive(s.storageMb) ||
     !wholePositive(s.freePlacesPerServer) ||
+    !wholeOrZero(hermesPlaces) ||
+    !modelList(s.freeModels) ||
     !wholeOrZero(s.paidReserveComputers) ||
     !positive(s.cpuOvercommit) ||
     !wholePositive(s.maxConcurrentTurns) ||
@@ -87,6 +100,8 @@ export function freeSandboxSettings(ladder: Ladder | null, freeKey = "free"): Fr
     cpus: s.cpus,
     storageMb: s.storageMb,
     freePlacesPerServer: s.freePlacesPerServer,
+    hermesPlacesPerServer: hermesPlaces,
+    freeModels: [...s.freeModels],
     paidReserveComputers: s.paidReserveComputers,
     cpuOvercommit: s.cpuOvercommit,
     maxConcurrentTurns: s.maxConcurrentTurns,
