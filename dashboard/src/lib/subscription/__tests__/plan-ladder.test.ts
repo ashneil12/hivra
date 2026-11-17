@@ -116,4 +116,14 @@ describe("free section", () => {
     const bad = env({ HIVRA_PLAN_LADDER_CONFIG: JSON.stringify({ ...CONFIG, free: { linePriority: "vip" } }) });
     expect(readPlanLadderConfig(bad)).toBeNull();
   });
+
+  it("keeps the failed-reply burst keys and checks their range", () => {
+    const free = { failedBurstWorkspaces: 5, failedBurstMinutes: 10 };
+    const withBurst = env({ HIVRA_PLAN_LADDER_CONFIG: JSON.stringify({ ...CONFIG, free }) });
+    expect(readPlanLadderConfig(withBurst)!.free).toEqual(free);
+    const tooLong = env({ HIVRA_PLAN_LADDER_CONFIG: JSON.stringify({ ...CONFIG, free: { ...free, failedBurstMinutes: 1441 } }) });
+    expect(readPlanLadderConfig(tooLong)).toBeNull();
+    const notWhole = env({ HIVRA_PLAN_LADDER_CONFIG: JSON.stringify({ ...CONFIG, free: { ...free, failedBurstWorkspaces: 2.5 } }) });
+    expect(readPlanLadderConfig(notWhole)).toBeNull();
+  });
 });
