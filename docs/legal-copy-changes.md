@@ -244,6 +244,19 @@ Retention statements that no code enforces were replaced with what is done. Evid
 - Evidence (canary tree): `lib/hivra/vmid-bound-guest-ssh.ts` and `lib/hivra/folder-recovery-guest.ts` (the host reaches into the guest); `lib/services/proxmox-instance-service.ts:1906` (`runProxmoxHostScript`); `scripts/ops/backup-vm-daily.sh:12` (snapshot-mode vzdump of the whole computer). "Can contain" because `scripts/ops/backup-vm-restic.sh` backs up only data volumes for Hermes. Nothing is promised about when operators look.
 - Solicitor: whether the disclosure needs a lawful-basis statement or an access policy.
 
+### P11. Sections 2 and 9, session replay limited to public pages (proposed 17 November 2026, NOT applied to the page)
+
+- Status: wording only proposed here. `dashboard/src/app/privacy/page.tsx` is unchanged. Apply it after solicitor review and Ash's approval, like every entry above. The page's current wording stays true in the meantime, because the code now does more than it promises.
+- Section 2, before: `Session Replay & Product Analytics: We use product analytics and session replay tooling to understand navigation, UI friction, and bugs. Input fields are masked by the analytics provider by default, but non-input page content may be visible in replay unless specifically masked or blocked.`
+- Section 2, proposed: `Session Replay & Product Analytics: We use product analytics to understand navigation, UI friction, and bugs. Session replay runs only on public pages such as the homepage and pricing. It never runs once you are signed in, so it cannot capture your agents, chats, computers, or settings. On public pages, input fields are masked by the analytics provider by default.`
+- Section 9, before: `Session replay masks input fields by default and is disabled on sensitive pages, including sign-in, billing, wallet, settings, and your agent chat.`
+- Section 9, proposed: `Session replay runs only on public pages and never once you are signed in. It is also disabled on the sign-in, sign-up, and payment pages, and it masks input fields by default.`
+- Section 3, proposed: `reviewing diagnostic logs and session replays` becomes `reviewing diagnostic logs and public-page session replays`.
+- Why: the old rule listed pages one by one, so a new signed-in page was recorded until someone remembered to add it. The rule now follows the sign-in check itself.
+- Evidence (canary tree): `isSensitiveRecordingPath` in `dashboard/src/app/providers/PostHogProvider.tsx` returns true for every path `isProtectedPath` (`dashboard/src/lib/protected-routes.ts`) protects, which is all of `/dashboard` and `/workspace-cloud`, and for the public sign-in, sign-up, activation, checkout, wake and token routes. Tests: `PostHogProvider.session-recording.test.tsx` and `PostHogProvider.session-recording-gate.test.tsx`. Replay stays behind the analytics consent gate as before.
+- Not claimed: "no session replay" without the qualifier. Replay still runs on public pages for visitors whose consent is stored. Product analytics events still fire in the signed-in app.
+- Solicitor: whether the cookie banner's "product analytics and session replay" line should say that replay is limited to public pages.
+
 ## Earlier changes already on the branch (before this pass)
 
 Listed so the whole difference from the live pages is in one place. These came from the first overhaul pass (see `ledgers/legal.json` and `legal-fix.json`) and were not touched here except where marked above.

@@ -109,7 +109,7 @@ describe("PostHog navigation session-replay suppression", () => {
   });
 
   it("stops replay when navigating into a sensitive route", () => {
-    const { rerender } = mountAt("/dashboard"); // safe baseline (resumes if needed)
+    const { rerender } = mountAt("/pricing"); // safe baseline (resumes if needed)
     mockPosthog.stopSessionRecording.mockClear();
     mockPosthog.startSessionRecording.mockClear();
 
@@ -123,19 +123,44 @@ describe("PostHog navigation session-replay suppression", () => {
     mockPosthog.stopSessionRecording.mockClear();
     mockPosthog.startSessionRecording.mockClear();
 
-    navigate(rerender, "/dashboard"); // leaving → resume what we stopped
+    navigate(rerender, "/pricing"); // leaving → resume what we stopped
     expect(mockPosthog.startSessionRecording).toHaveBeenCalled();
     expect(mockPosthog.stopSessionRecording).not.toHaveBeenCalled();
   });
 
   it("does not start replay it never stopped (safe route, never suppressed)", () => {
-    const { rerender } = mountAt("/dashboard"); // ensure unsuppressed baseline
+    const { rerender } = mountAt("/pricing"); // ensure unsuppressed baseline
     mockPosthog.stopSessionRecording.mockClear();
     mockPosthog.startSessionRecording.mockClear();
 
     navigate(rerender, "/stats"); // safe → posthog's own decision is respected
     expect(mockPosthog.startSessionRecording).not.toHaveBeenCalled();
     expect(mockPosthog.stopSessionRecording).not.toHaveBeenCalled();
+  });
+
+  // Replay never runs once a person is signed in: every page that needs an
+  // account is covered, not only the ones that handle payments or chats.
+  it.each(["/dashboard", "/dashboard/instances", "/dashboard/instances/abc123", "/workspace-cloud"])(
+    "stops replay on signed-in page %s",
+    (pathname) => {
+      const { rerender } = mountAt("/pricing"); // public baseline
+      mockPosthog.stopSessionRecording.mockClear();
+      mockPosthog.startSessionRecording.mockClear();
+
+      navigate(rerender, pathname);
+      expect(mockPosthog.stopSessionRecording).toHaveBeenCalled();
+      expect(mockPosthog.startSessionRecording).not.toHaveBeenCalled();
+    }
+  );
+
+  it("keeps recording a public page whose address only mentions the dashboard", () => {
+    const { rerender } = mountAt("/pricing"); // public baseline
+    mockPosthog.stopSessionRecording.mockClear();
+    mockPosthog.startSessionRecording.mockClear();
+
+    navigate(rerender, "/blog/a-dashboard-for-your-agents");
+    expect(mockPosthog.stopSessionRecording).not.toHaveBeenCalled();
+    expect(mockPosthog.startSessionRecording).not.toHaveBeenCalled();
   });
 
   it("stays suppressed when moving between two sensitive routes", () => {
@@ -163,7 +188,7 @@ describe("PostHog navigation session-replay suppression", () => {
   // already happened inside set_config) and keep its suppression state sound.
   describe("recorder script loaded without registering (loader throws)", () => {
     it("swallows the throw on stop and still resumes after leaving the sensitive route", () => {
-      const { rerender } = mountAt("/dashboard"); // safe baseline
+      const { rerender } = mountAt("/pricing"); // safe baseline
       mockPosthog.stopSessionRecording.mockClear();
       mockPosthog.startSessionRecording.mockClear();
       mockPosthog.stopSessionRecording.mockImplementationOnce(() => {
@@ -174,7 +199,7 @@ describe("PostHog navigation session-replay suppression", () => {
       expect(mockPosthog.stopSessionRecording).toHaveBeenCalled();
 
       // The suppression was still registered, so leaving resumes as usual.
-      navigate(rerender, "/dashboard");
+      navigate(rerender, "/pricing");
       expect(mockPosthog.startSessionRecording).toHaveBeenCalledTimes(1);
     });
 
@@ -186,7 +211,7 @@ describe("PostHog navigation session-replay suppression", () => {
         throw new Error("Called on script loaded before session recording is available");
       });
 
-      expect(() => navigate(rerender, "/dashboard")).not.toThrow();
+      expect(() => navigate(rerender, "/pricing")).not.toThrow();
       expect(mockPosthog.startSessionRecording).toHaveBeenCalledTimes(1);
 
       // Flag cleared despite the throw (set_config applied the flip before
@@ -206,7 +231,7 @@ describe("PostHog navigation session-replay suppression", () => {
     });
 
     it("re-asserts the stop when recording comes back while still on the sensitive route", () => {
-      const { rerender } = mountAt("/dashboard"); // safe baseline
+      const { rerender } = mountAt("/pricing"); // safe baseline
       jest.useFakeTimers();
       mockPosthog.stopSessionRecording.mockClear();
 
@@ -220,13 +245,13 @@ describe("PostHog navigation session-replay suppression", () => {
     });
 
     it("does not re-assert after leaving the sensitive route (resume clears the timers)", () => {
-      const { rerender } = mountAt("/dashboard"); // safe baseline
+      const { rerender } = mountAt("/pricing"); // safe baseline
       jest.useFakeTimers();
       mockPosthog.stopSessionRecording.mockClear();
       mockPosthog.startSessionRecording.mockClear();
 
       navigate(rerender, "/dashboard/billing");
-      navigate(rerender, "/dashboard"); // resume before any timer fires
+      navigate(rerender, "/pricing"); // resume before any timer fires
 
       mockPosthog.sessionRecordingStarted.mockReturnValue(true);
       jest.advanceTimersByTime(10_000);

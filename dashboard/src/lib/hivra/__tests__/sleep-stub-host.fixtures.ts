@@ -29,6 +29,7 @@ export interface HostState {
   startFail?: boolean;
   startNoop?: boolean;
   setFail?: boolean;
+  unlockFail?: boolean;
   pingFail?: boolean;
   /** qm config fails, as for a VM this host does not have. */
   configFail?: boolean;
@@ -102,7 +103,11 @@ elif a[0] == "start":
 elif a[0] == "set":
     if s.get("setFail"): sys.exit(1)
     if "--onboot" in a: s["onboot"] = int(a[a.index("--onboot") + 1])
+    if "--delete" in a and "vmstate" in a[a.index("--delete") + 1]: s["vmstate"] = False
     save()
+elif a[0] == "unlock":
+    if s.get("unlockFail"): sys.exit(1)
+    s["lock"] = ""; save()
 elif a[0] == "guest" and a[1] == "cmd":
     sys.exit(1 if s.get("pingFail") else 0)
 elif a[0] == "guest" and a[1] == "exec":
@@ -247,6 +252,10 @@ exec "$@"
 `;
 
 const SLEEP = "#!/usr/bin/env bash\nexit 0\n";
+const PVESM = `#!/usr/bin/env bash
+echo "pvesm $*" >> "$STUB_DIR/calls.log"
+exit 0
+`;
 
 const ADMISSION = `#!/usr/bin/env bash
 echo "admission $*" >> "$STUB_DIR/calls.log"
@@ -290,6 +299,7 @@ export function makeHostHarness(): HostHarness {
   put(path.join(bin, "flock"), FLOCK);
   put(path.join(bin, "systemd-run"), SYSTEMD_RUN);
   put(path.join(bin, "sleep"), SLEEP);
+  put(path.join(bin, "pvesm"), PVESM);
   put(path.join(provisionerDir, "hivra-host-capacity-admission"), ADMISSION);
   return {
     dir,
