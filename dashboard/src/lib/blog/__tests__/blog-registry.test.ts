@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 
 import { BLOG_ARTICLES, BLOG_ARTICLES_LIST } from "@/lib/blog-data";
+import { DOCS } from "@/lib/docs/registry";
 import { generateStaticParams as featureParams } from "@/app/features/[slug]/page";
 import { generateStaticParams as compareParams } from "@/app/compare/[slug]/page";
 
@@ -39,6 +40,8 @@ function resolvesInternally(href: string, featureSlugs: Set<string>, compareSlug
   if (segments[0] === "compare" && segments.length === 2) return compareSlugs.has(segments[1]);
   if (segments[0] === "agents" && segments.length === 2) return PORTED_AGENT_SLUGS.includes(segments[1]);
   if (segments[0] === "tools" && segments.length === 2) return PORTED_TOOL_SLUGS.includes(segments[1]);
+  if (segments[0] === "docs" && segments.length === 1) return true;
+  if (segments[0] === "docs" && segments.length === 2) return segments[1] in DOCS;
   if (pathname === "/pricing") return true;
   return staticRouteExists(pathname);
 }

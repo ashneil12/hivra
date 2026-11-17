@@ -110,6 +110,7 @@ export function llmsTxtSections(
     {
       heading: "Updates",
       links: [
+        { label: "Docs", path: "/docs", note: "How to launch, open and update an agent, with a page for every supported agent and computer" },
         { label: "Blog", path: "/blog", note: "Guides and explainers on AI agents, hosting, and memory" },
         { label: "Changelog", path: "/changelog", note: "A dated shipping history of notable changes: new features, fixes, upstream syncs and infrastructure work. Not a promise of future features" },
         { label: "Changelog RSS feed", path: "/changelog/rss.xml", note: "Subscribe to product ships" },
