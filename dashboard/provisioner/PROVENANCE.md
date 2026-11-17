@@ -547,6 +547,21 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.17.4` builds on `2026.11.17.3` and fixes two launches broken
+by their newest upstream releases. OpenClaw 2026.11.5 refuses a loopback
+request that carries forwarded-client headers unless `gateway.trustedProxies`
+names the proxy (`proxy_attribution_required`), so its Control UI never
+loaded; the box gateway now drops the tunnel's forwarded headers on `/openclaw`
+HTTP and WebSocket traffic, as it already does for Hermes. Aeon's own
+`apps/dashboard/next.config.ts` now sets a bundler root its build needs, and
+Hivra's basePath file replaced it, so every Aeon build failed; the provisioner
+and the Update path keep Aeon's file as `next.config.hivra-upstream.ts` and
+only add the `/aeon` mount on top. Changed: `hivra-chat/server.js`,
+`provision-claude-code-box.sh`, `hivra-agent-app-update.sh`, plus the
+documents, the version and the provider worker's release labels. This source
+release does not deploy, install, enable or start anything on a host or
+computer.
+
 Release `2026.11.17.3` builds on `2026.11.17.2` and fixes Agent Zero launches
 on current images. Agent Zero reads its settings only from `/a0/usr/.env`;
 older images copied the mounted `/a0/.env` there on first start, but v2.15 and

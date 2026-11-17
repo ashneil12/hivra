@@ -608,6 +608,23 @@ async function main() {
     });
     await db.exec(AGENT_ZERO_SETTINGS_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedAgentZeroSettings, "re-applying the 2026.11.17.3 admission changes nothing");
+    // 2026.11.17.4 anchors on the 2026.11.17.3 entry; idempotent too.
+    const OPENCLAW_AEON_ADMISSION = migration("20261117160000_provider_release_admission_2026_11_17_4.sql");
+    await db.exec(OPENCLAW_AEON_ADMISSION);
+    const admittedOpenclawAeon = await admissionDefinitions();
+    admittedOpenclawAeon.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, "a6a7274f1ac28127de3d103d5665f585f31c21d0c035e8d16f8e1d88643470dc"), 1,
+          `${admissionFunctions[index]} admits the 2026.11.17.4 digest once`);
+        assert.equal(occurrences(definition, "1346e7abf511d196a889b87231c098b7c6c9694690177db57a28ae2e8c368485"), 1,
+          `${admissionFunctions[index]} keeps the 2026.11.17.3 digest`);
+      }
+    });
+    await db.exec(OPENCLAW_AEON_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedOpenclawAeon, "re-applying the 2026.11.17.4 admission changes nothing");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
     const attempt = "33333333-3333-4333-8333-333333333333";

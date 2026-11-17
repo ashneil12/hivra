@@ -579,6 +579,13 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **OpenClaw and Aeon launch on their newest releases (`2026.11.17.4`).**
+  The box gateway drops forwarded-client headers on `/openclaw`, which
+  OpenClaw 2026.11.5 and later otherwise refuse from a loopback proxy
+  (`proxy_attribution_required`). Aeon keeps its own `next.config.ts` (as
+  `next.config.hivra-upstream.ts`) with only the `/aeon` mount added, since
+  its build now needs the bundler root that file sets.
+
 - **Agent Zero settings land where current images read them (`2026.11.17.3`).**
   Agent Zero v2.15 and later read only `/a0/usr/.env` and no longer copy the
   mounted `/a0/.env` into it, so the seeded login and managed model were
