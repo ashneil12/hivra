@@ -11,6 +11,10 @@ import {
 import { ManagedVeniceSpendCapError } from "@/lib/billing/managed-venice-spend-caps";
 import { managedVeniceSpendCapMessage } from "@/lib/billing/managed-venice-agent-spend-caps";
 import {
+  checkManagedVeniceAgentPrivateOnly,
+  managedVenicePrivateOnlyResponse,
+} from "@/lib/venice/agent-private-only";
+import {
   UnsupportedVeniceModelError,
   checkVeniceChatPricingCatalogStaleness,
 } from "@/lib/venice/pricing";
@@ -269,6 +273,21 @@ export async function authorizeManagedVeniceChat(params: {
       };
     }
     throw error;
+  }
+
+  // "Private models only": an agent whose owner turned it on may call only
+  // models Venice marks private. Checked here, after the model is known to be
+  // a real one and before any hold, so chat, Responses and the off-Vercel
+  // Worker (which authorizes through this function) are all covered. A no-op
+  // while MANAGED_VENICE_AGENT_PRIVATE_ONLY_ENABLED is off.
+  const privateOnly = await checkManagedVeniceAgentPrivateOnly({
+    key: verifiedKey,
+    model: body.model,
+    endpoint,
+    source: "managed-venice-chat",
+  });
+  if (!privateOnly.allowed) {
+    return { ok: false, response: managedVenicePrivateOnlyResponse(privateOnly) };
   }
 
   // Catalog staleness check. We don't fail closed — Venice may have re-priced

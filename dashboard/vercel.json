@@ -277,6 +277,10 @@
       "schedule": "35 * * * *"
     },
     {
+      "path": "/api/cron/plan-ai-allowance",
+      "schedule": "47 * * * *"
+    },
+    {
       "path": "/api/cron/purge-bridge-results",
       "schedule": "17 3 * * *"
     },

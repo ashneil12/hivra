@@ -16,6 +16,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { ensureHivraAgentAwake } from "@/lib/hivra/agent-wake";
 import { parseSleepMode } from "@/lib/hivra/agent-sleep-policy";
+import {
+  alwaysOnLimitMessage,
+  countAlwaysOnAgents,
+  loadLadderEntitlement,
+} from "@/lib/billing/plan-ladder-entitlement";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -45,6 +50,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       patch.sleep_policy = body.sleep_policy;
     }
     if (Object.keys(patch).length === 0) return apiError("Send the settings to change.", 400);
+
+    // Plans bought on the plan ladder include a set number of agents kept
+    // awake. Plans from before the ladder have no such limit.
+    if (patch.always_on === true) {
+      const ladder = await loadLadderEntitlement(userId);
+      if (ladder) {
+        const awake = await countAlwaysOnAgents(userId, id);
+        if (awake >= ladder.alwaysOnLimit) {
+          return apiError(alwaysOnLimitMessage(ladder.name, ladder.alwaysOnLimit), 403, undefined, {
+            reason: "always_on_limit",
+            alwaysOnLimit: ladder.alwaysOnLimit,
+          });
+        }
+      }
+    }
 
     const { data, error } = await supabaseAdmin
       .from("hivra_agents")
