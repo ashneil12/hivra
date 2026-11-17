@@ -1,0 +1,123 @@
+/* /status board. The masthead scale comes from .liveContent in public-editorial/secondary-site.module.css. */
+.board {
+  max-width: 760px;
+}
+
+.head h1 {
+  margin: 0 0 22px;
+}
+
+.lead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 8px;
+  font-size: clamp(20px, 2.4vw, 26px);
+  letter-spacing: -0.03em;
+  color: var(--ink-black);
+}
+
+.updated {
+  margin: 0 0 40px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+[data-state="operational"] .dot,
+.lead[data-state="operational"] .dot {
+  background: #16a34a;
+}
+[data-state="degraded"] .dot,
+.lead[data-state="degraded"] .dot {
+  background: #d97706;
+}
+[data-state="down"] .dot,
+.lead[data-state="down"] .dot {
+  background: #dc2626;
+}
+
+.list {
+  list-style: none;
+  margin: 0 0 56px;
+  padding: 0;
+  border: 1px solid var(--etched-border);
+  border-radius: 16px;
+  background: var(--hg-glass);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  font-size: 17px;
+  color: var(--ink-black);
+}
+
+.row + .row {
+  border-top: 1px solid var(--etched-border);
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  color: var(--text-secondary);
+}
+
+.incidents h2 {
+  margin: 0 0 20px;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.incidents ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.empty {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.incident {
+  padding: 18px 0;
+  border-top: 1px solid var(--etched-border);
+}
+
+.incident h3 {
+  margin: 4px 0 6px;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.incident p {
+  margin: 0;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+.incidentMeta {
+  font-size: 13px;
+  color: var(--text-muted) !important;
+}
+
+@media (max-width: 800px) {
+  .row {
+    padding: 16px 18px;
+  }
+}
