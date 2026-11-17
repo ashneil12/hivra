@@ -217,8 +217,12 @@ describe("managed readiness per runtime", () => {
     }
   });
 
-  it("requires the app version files only for the runtimes that read them", () => {
-    expect(managedHivraHostReadinessScript("default", "provision", false, "agent-zero")).toContain('need_file "$PROVISIONER_DIR/agent-app-versions.json"');
+  it("requires the app updater only for the runtimes that use it", () => {
+    // The 2026.11.17.1 bundle dropped the pin file; requiring it blocked every
+    // Aeon, OpenClaw, Agent Zero and Hermes launch on a current host.
+    for (const runtime of ["aeon", "openclaw", "agent-zero", "hermes"]) {
+      expect(managedHivraHostReadinessScript("canary", "provision", false, runtime)).not.toContain("agent-app-versions.json");
+    }
     expect(managedHivraHostReadinessScript("default", "provision", false, "agent-zero")).toContain('need_file "$PROVISIONER_DIR/hivra-agent-app-update.sh"');
     expect(managedHivraHostReadinessScript("default", "provision", false, "claude-code")).not.toContain("agent-app-versions.json");
     expect(managedHivraHostReadinessScript("default", "provision")).not.toContain("agent-app-versions.json");
