@@ -3,10 +3,16 @@ import * as dotenv from "dotenv";
 import * as fs from "fs";
 import * as path from "path";
 
-dotenv.config({ path: path.resolve(__dirname, "../.env.local") });
+import {
+  DEFAULT_SEGMENT_NAME,
+  DEFAULT_TOPIC_NAME,
+} from "../src/lib/email/announcement-audience";
+import {
+  renderBroadcastHtml as renderHtml,
+  renderBroadcastText as renderText,
+} from "../src/lib/email/broadcast-body";
 
-const DEFAULT_SEGMENT_NAME = "Hermes OS customers";
-const DEFAULT_TOPIC_NAME = "Product updates";
+dotenv.config({ path: path.resolve(__dirname, "../.env.local") });
 
 type Options = {
   apply: boolean;
@@ -57,43 +63,6 @@ function requireEnv(name: string) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing ${name}`);
   return value;
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function renderHtml(body: string) {
-  const paragraphs = body
-    .trim()
-    .split(/\n{2,}/)
-    .map((paragraph) => `<p>${escapeHtml(paragraph).replaceAll("\n", "<br>")}</p>`)
-    .join("\n");
-
-  return `<!doctype html>
-<html>
-  <body style="margin:0;padding:0;background:#ffffff;color:#111111;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.55;">
-    <div style="max-width:640px;margin:0 auto;padding:32px 20px;">
-      ${paragraphs}
-      <p style="margin-top:32px;color:#666666;font-size:13px;line-height:1.5;">
-        You are receiving this because you signed up for Hermes OS.
-        <a href="{{{RESEND_UNSUBSCRIBE_URL}}}" style="color:#111111;text-decoration:underline;">Unsubscribe from product updates</a>.
-      </p>
-    </div>
-  </body>
-</html>`;
-}
-
-function renderText(body: string) {
-  return `${body.trim()}
-
---
-You are receiving this because you signed up for Hermes OS.
-Unsubscribe from product updates: {{{RESEND_UNSUBSCRIBE_URL}}}`;
 }
 
 async function findSegmentId(resend: Resend, name: string) {
