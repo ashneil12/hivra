@@ -104,6 +104,12 @@ export const PlanLadderConfigSchema = z.object({
       aiUsdPerDay: z.number().min(0).max(100).optional(),
       linePriority: z.enum(["low", "normal", "high"]).optional(),
       headStartDays: z.number().int().min(0).max(90).optional(),
+      /** Agent kinds Free may start, in the order offered. */
+      agentKinds: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+      freePlacesPerServer: z.number().int().min(0).max(10_000).optional(),
+      /** Idle test ceilings an agent kind must pass to be offered on Free. */
+      idleMbMax: z.number().int().min(0).max(65_536).optional(),
+      imageAddMbMax: z.number().int().min(0).max(65_536).optional(),
     })
     .optional(),
 });
