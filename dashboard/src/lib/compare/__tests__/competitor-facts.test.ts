@@ -215,9 +215,9 @@ describe("competitor facts", () => {
       ]),
     ];
 
-    it("covers /compare and all fifteen detail pages, each with its own description of 155 characters or fewer", () => {
-      expect(descriptions).toHaveLength(16);
-      expect(new Set(descriptions.map(([, description]) => description)).size).toBe(16);
+    it("covers /compare and all twenty-two detail pages, each with its own description of 155 characters or fewer", () => {
+      expect(descriptions).toHaveLength(23);
+      expect(new Set(descriptions.map(([, description]) => description)).size).toBe(23);
       for (const [path, description] of descriptions) {
         expect([path, description.length <= MAX_META_DESCRIPTION_LENGTH]).toEqual([path, true]);
         expect([path, description.length >= 100]).toEqual([path, true]);

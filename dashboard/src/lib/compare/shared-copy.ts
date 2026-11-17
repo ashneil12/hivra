@@ -114,6 +114,13 @@ export const COMPARISON_LABELS: Record<string, string> = {
   "vs-github-codespaces": "Hivra vs GitHub Codespaces",
   "vs-fly-sprites": "Hivra vs Fly.io Sprites",
   "vs-e2b": "Hivra vs E2B sandboxes",
+  "vs-lobsterland": "Hivra vs Lobsterland",
+  "vs-construct-computer": "Hivra vs Construct Computer",
+  "vs-orgo": "Hivra vs Orgo",
+  "vs-machine0": "Hivra vs machine0",
+  "vs-kiloclaw": "Hivra vs KiloClaw",
+  "vs-simular-box": "Hivra vs Simular box",
+  "vs-cubicles": "Hivra vs Cubicles",
 };
 
 export const BLOG_LABELS: Record<string, string> = {
