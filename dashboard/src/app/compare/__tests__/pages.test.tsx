@@ -53,7 +53,7 @@ const ENTRY = "$9.99 a month for 2 vCPU and 4 GB of RAM";
 // The six agent product and sandbox pages share one section order.
 const PRODUCT_HEADINGS = [...STANDARD, "At a glance", "Who should pick which", "How to try both", "What survives, and for how long", TAIL[1], SOURCES, ...END];
 // The slugs of the six pages added in November 2026; every one gets the extra checks below.
-const PRODUCT_SLUGS = ["vs-claude-code-on-the-web", "vs-openai-codex-cloud", "vs-cursor-cloud-agents", "vs-github-codespaces", "vs-fly-sprites", "vs-e2b"];
+const PRODUCT_SLUGS = ["vs-claude-code-on-the-web", "vs-openai-codex-cloud", "vs-cursor-cloud-agents", "vs-github-codespaces", "vs-fly-sprites", "vs-e2b", "vs-lobsterland", "vs-construct-computer", "vs-orgo", "vs-machine0", "vs-kiloclaw", "vs-simular-box", "vs-cubicles"];
 
 const PAGES: Record<string, { title: string; h1: string; description: string; headings: string[] }> = {
   "ai-agent-hosting-alternatives": {
@@ -201,9 +201,9 @@ function faqSchema(container: HTMLElement): { name: string; text: string }[] {
 describe("comparison pages follow the supplied copy", () => {
   afterEach(cleanup);
 
-  it("covers exactly the fifteen detail pages: nine host and general pages and six agent product and sandbox pages", () => {
-    expect([...SLUGS].sort()).toEqual(Object.keys(PAGES).sort());
-    expect(SLUGS).toHaveLength(15);
+  it("covers exactly the twenty-two detail pages: nine host and general pages and thirteen agent product and sandbox pages", () => {
+    expect([...SLUGS].sort()).toEqual([...new Set([...Object.keys(PAGES), ...PRODUCT_SLUGS])].sort());
+    expect(SLUGS).toHaveLength(22);
     expect([...PRODUCT_COMPARISON_SLUGS].sort()).toEqual([...PRODUCT_SLUGS].sort());
   });
 
@@ -234,11 +234,14 @@ describe("comparison pages follow the supplied copy", () => {
     expect(h2s(container)).toEqual(DIRECTORY_HEADINGS);
   });
 
-  it("lists all fifteen comparison pages on /compare, in four groups, each name a real link", () => {
+  it("lists all twenty-two comparison pages on /compare, in four groups, each name a real link", () => {
     const { container } = render(<ComparePage />);
     const links = [...container.querySelectorAll("ol li > p > a")].map((a) => [a.textContent, a.getAttribute("href")]);
     expect(links).toEqual([
       ["Agent 37", "/compare/vs-agent-37"],
+      ["Lobsterland", "/compare/vs-lobsterland"],
+      ["KiloClaw", "/compare/vs-kiloclaw"],
+      ["Construct Computer", "/compare/vs-construct-computer"],
       ["Hostinger", "/compare/vs-hostinger"],
       ["xCloud", "/compare/vs-xcloud"],
       ["Nous Hermes Cloud", "/compare/vs-nous-hermes-cloud"],
@@ -248,6 +251,10 @@ describe("comparison pages follow the supplied copy", () => {
       ["OpenAI Codex cloud", "/compare/vs-openai-codex-cloud"],
       ["Cursor cloud agents", "/compare/vs-cursor-cloud-agents"],
       ["E2B sandboxes", "/compare/vs-e2b"],
+      ["Orgo", "/compare/vs-orgo"],
+      ["machine0", "/compare/vs-machine0"],
+      ["Simular box", "/compare/vs-simular-box"],
+      ["Cubicles", "/compare/vs-cubicles"],
       ["Fly.io Sprites", "/compare/vs-fly-sprites"],
       ["GitHub Codespaces", "/compare/vs-github-codespaces"],
       ["Self-hosted VPS", "/compare/vs-self-hosted"],
@@ -297,7 +304,7 @@ describe("comparison pages follow the supplied copy", () => {
     const { container } = await renderComparison(slug);
     const schema = faqSchema(container);
     expect(schema.length).toBeGreaterThanOrEqual(2);
-    expect(schema.length).toBeLessThanOrEqual(9);
+    expect(schema.length).toBeLessThanOrEqual(12);
     const visible = [...container.querySelectorAll("details")].map((details) => ({
       name: details.querySelector("summary")?.childNodes[0]?.textContent ?? "",
       text: details.querySelector("p")?.textContent ?? "",
@@ -456,7 +463,7 @@ describe("comparison pages follow the supplied copy", () => {
     const first = container.querySelector("ol li > p") as HTMLElement;
     expect(first.textContent).toMatch(/^Agent 37: metered raw compute, a free tier/);
     // The row's arrow is the straight one: every target is a page on this site.
-    expect(container.querySelectorAll("ol li > svg").length).toBe(15);
+    expect(container.querySelectorAll("ol li > svg").length).toBe(22);
   });
 
   it("opens the table of contents on every section a reader can jump to", async () => {
