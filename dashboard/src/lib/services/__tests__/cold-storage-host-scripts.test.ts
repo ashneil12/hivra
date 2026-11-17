@@ -30,6 +30,7 @@ describe("cold-storage host script self-install", () => {
   const scripts: ColdStorageHostScript[] = [
     "archive-vm-cold.sh",
     "restore-vm-cold.sh",
+    "reencrypt-cold-archive.sh",
   ];
 
   // The whole point of the generated module: hosts must never run a stale copy.
