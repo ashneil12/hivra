@@ -188,6 +188,12 @@ select_scratch_root() {
     avail="${avail:-0}"
     fs="${fs:-unknown}"
     echo "SCRATCH_CANDIDATE root=$root fs=$fs avail_mb=$avail required_mb=$MIN_SCRATCH_MB"
+    # A RAM-backed /tmp would hold the whole archive (twice, when encrypting)
+    # in host memory that guests need. Only use one when named explicitly.
+    if [ -z "${HERMES_DAILY_BACKUP_SCRATCH_ROOTS:-}" ] && { [ "$fs" = tmpfs ] || [ "$fs" = ramfs ]; }; then
+      echo "SCRATCH_CANDIDATE root=$root skipped=memory_backed"
+      continue
+    fi
     if [[ "$avail" =~ ^[0-9]+$ ]] && [ "$avail" -ge "$MIN_SCRATCH_MB" ] && [ "$avail" -gt "$best_avail" ]; then
       best="$root"
       best_avail="$avail"
