@@ -88,6 +88,8 @@ export const PAGE_LAST_MODIFIED = {
   terms: "2026-10-20",
   // New page, 2026-11-10: the Venice landing page.
   venice: "2026-11-10",
+  // New page, 2026-11-17: set up Hivra from a coding agent (/setup and /setup.md).
+  setup: "2026-11-17",
 } as const;
 
 export type PageLastModifiedKey = keyof typeof PAGE_LAST_MODIFIED;
