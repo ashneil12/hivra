@@ -137,7 +137,7 @@ export default defineConfig({
           {
             name: 'launch-sweep',
             testMatch: /launch-sweep\.spec\.ts/,
-            timeout: 50 * 60_000,
+            timeout: 65 * 60_000,
             // NEVER retry: a retry launches and bills a second computer, and
             // hides exactly the flakiness customers would hit.
             retries: 0,

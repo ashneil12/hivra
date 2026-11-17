@@ -10,7 +10,9 @@
  *   3. wait on the after-launch screen until it says ready, press Open;
  *   4. ask the agent "What is 389 + 448?" in the box a customer types into
  *      and wait for 837 on screen (computers: their desktop or terminal opens);
- *   5. delete everything through the app's own delete route, then the account.
+ *   5. close the tab and read what it uses idle for a few minutes, from the
+ *      owner's own usage view (LAUNCH_SWEEP_IDLE_MINUTES, default 10, 0 skips);
+ *   6. delete everything through the app's own delete route, then the account.
  *
  * Real infrastructure, real money (a Canary VM per target for ~10 min, and a
  * few cents of model use, capped by the account's $2 credit). Double-gated like
@@ -29,6 +31,7 @@ import { createAuditUser, deleteAuditUser, mintSignInTicket } from './first-run-
 import { destroyAllHivraAgents, destroyAllInstances, listHivraAgents, listInstances } from './first-run-audit/instances';
 import { establishAuditSession } from './first-run-audit/session';
 import { proveChat, proveComputerOpen } from './launch-sweep/chat';
+import { measureIdle } from './launch-sweep/idle';
 import { launchFromTile, offeredTileNames, openFromLaunch, waitForReady } from './launch-sweep/journey';
 import { agentEvidence, grantSweepPlan, removeSweepPlan } from './launch-sweep/plan';
 import { SweepFailure, SweepRecorder } from './launch-sweep/result';
@@ -39,6 +42,13 @@ const ENABLED = process.env.LAUNCH_SWEEP === '1';
 function envInt(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function envMinutes(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 interface SweepEnv {
@@ -52,6 +62,7 @@ interface SweepEnv {
   composerTimeoutMs: number;
   replyTimeoutMs: number;
   keepFailed: boolean;
+  idleMinutes: number;
 }
 
 function sweepEnv(): SweepEnv {
@@ -80,6 +91,8 @@ function sweepEnv(): SweepEnv {
     // Keep a failed launch's computer and account so its logs can be read.
     // The cleanup script reaps it later (npm run audit:first-run:cleanup).
     keepFailed: process.env.LAUNCH_SWEEP_KEEP_FAILED === '1',
+    // How long to watch each working agent sit idle (0 skips).
+    idleMinutes: envMinutes('LAUNCH_SWEEP_IDLE_MINUTES', 10),
   };
 }
 
@@ -154,7 +167,7 @@ test.describe('launch sweep', () => {
 
   for (const target of selectedTargets()) {
     test(`${target.tile} launches and answers`, async ({ browser }, testInfo) => {
-      testInfo.setTimeout(envInt('LAUNCH_SWEEP_TEST_TIMEOUT_MS', 45 * 60_000));
+      testInfo.setTimeout(envInt('LAUNCH_SWEEP_TEST_TIMEOUT_MS', 60 * 60_000));
       const env = sweepEnv();
       await runTarget(browser, env, target);
     });
@@ -204,6 +217,19 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
     recorder.done('chat');
     recorder.result.passed = true;
     await screenshot(page, recorder, env.outDir, 'pass');
+
+    if (env.idleMinutes > 0) {
+      stage = 'idle';
+      // Walk away like a customer: nothing left open on the agent.
+      await page.goto('about:blank').catch(() => undefined);
+      const idleId = recorder.result.agentId
+        ?? (await listHivraAgents(context.request, env.baseUrl).catch(() => []))[0]?.id
+        ?? null;
+      if (idleId) {
+        recorder.result.idle = await measureIdle(context.request, env.baseUrl, idleId, env.idleMinutes);
+      }
+      recorder.done('idle');
+    }
   } catch (err) {
     recorder.fail(err, stage);
     await screenshot(page, recorder, env.outDir, 'fail');

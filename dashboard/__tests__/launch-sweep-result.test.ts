@@ -63,4 +63,22 @@ describe("launch sweep targets", () => {
     expect(selectedTargets("agent-zero, OpenClaw").map(target => target.profileId)).toEqual(["openclaw", "agent-zero"]);
     expect(selectedTargets("")).toHaveLength(SWEEP_TARGETS.length);
   });
+
+  it("lists idle use per agent, lightest first, and names agents it couldn't read", () => {
+    const base = { minutes: 10, cpuPercentMax: 3, vcpus: 2, memoryMbMax: 900, memoryMbSize: 4096, memoryIncludesCache: true, diskUsedGb: 6.2, diskAllocatedGb: 40 };
+    const heavy = recorder("openclaw", "OpenClaw");
+    heavy.result.passed = true;
+    heavy.result.idle = { ...base, samples: 16, cpuPercentMedian: 2.1, memoryMbMedian: 1300 };
+    const light = recorder("ubuntu-server", "Linux computer");
+    light.result.passed = true;
+    light.result.idle = { ...base, samples: 16, cpuPercentMedian: 0.4, memoryMbMedian: 310 };
+    const unread = recorder("omarchy", "Omarchy");
+    unread.result.passed = true;
+    unread.result.idle = { ...base, samples: 0, cpuPercentMedian: null, memoryMbMedian: null, note: "usage answered HTTP 404" };
+
+    const markdown = sweepMarkdown([heavy.result, light.result, unread.result]);
+    expect(markdown).toContain("### Idle use (10 min");
+    expect(markdown.indexOf("| Linux computer | 310 MB")).toBeLessThan(markdown.indexOf("| OpenClaw | 1300 MB"));
+    expect(markdown).toContain("No idle reading: Omarchy (usage answered HTTP 404).");
+  });
 });

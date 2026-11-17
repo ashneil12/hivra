@@ -4,10 +4,12 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import type { IdleUsage } from './idle';
+
 export const SWEEP_SCHEMA = 'hivra.launch-sweep.v1';
 
 /** Where a launch got to, in the order a customer meets them. */
-export const SWEEP_STAGES = ['account', 'choose', 'review', 'launch', 'ready', 'open', 'chat', 'teardown'] as const;
+export const SWEEP_STAGES = ['account', 'choose', 'review', 'launch', 'ready', 'open', 'chat', 'idle', 'teardown'] as const;
 export type SweepStage = (typeof SWEEP_STAGES)[number];
 
 /**
@@ -45,6 +47,8 @@ export interface SweepResult {
   failure?: { stage: SweepStage; category: SweepFailureCategory; reason: string };
   agentId?: string | null;
   chat?: { surface: string; replySeconds?: number };
+  /** What it used while nobody talked to it, after it worked. */
+  idle?: IdleUsage;
   teardown?: { agentsLeft: number; instancesLeft: number; accountDeleted: boolean; error?: string };
   screenshots: string[];
   /** On failure: the agent's recent lifecycle events with detail, read before teardown. */
@@ -157,6 +161,27 @@ export function sweepMarkdown(results: SweepResult[]): string {
       .replace(/\s+/g, ' ')
       .slice(0, 220);
     lines.push(`| ${row.tile} | ${result} | ${row.reached ?? 'nothing'} | ${minutes(row)} | ${why} |`);
+  }
+  const idleRows = rows.filter((row) => row.idle && row.idle.samples > 0);
+  if (idleRows.length) {
+    const fmt = (value: number | null | undefined, unit: string) => (value == null ? '?' : `${value}${unit}`);
+    lines.push(
+      '',
+      `### Idle use (${idleRows[0].idle!.minutes} min with nobody using it, as Manage › Overview reads it)`,
+      '',
+      'RAM includes the computer\'s file cache, so it is an upper bound. The Linux computer row is the bare computer every agent runs on.',
+      '',
+      '| Launch | RAM (median / peak) | CPU (median / peak) | Disk used | Computer size |',
+      '| --- | --- | --- | --- | --- |',
+    );
+    for (const row of [...idleRows].sort((a, b) => (a.idle!.memoryMbMedian ?? 0) - (b.idle!.memoryMbMedian ?? 0))) {
+      const idle = row.idle!;
+      lines.push(
+        `| ${row.tile} | ${fmt(idle.memoryMbMedian, ' MB')} / ${fmt(idle.memoryMbMax, ' MB')} | ${fmt(idle.cpuPercentMedian, '%')} / ${fmt(idle.cpuPercentMax, '%')} | ${fmt(idle.diskUsedGb, ' GB')} | ${fmt(idle.vcpus, ' vCPU')}, ${fmt(idle.memoryMbSize, ' MB')}, ${fmt(idle.diskAllocatedGb, ' GB')} disk |`,
+      );
+    }
+    const unread = rows.filter((row) => row.idle && row.idle.samples === 0);
+    if (unread.length) lines.push('', `No idle reading: ${unread.map((row) => `${row.tile} (${row.idle!.note ?? 'no samples'})`).join(', ')}.`);
   }
   if (verdict.leaked.length) {
     lines.push('', `Left running after teardown: ${verdict.leaked.map((row) => row.tile).join(', ')}. Run \`npm run audit:first-run:cleanup\`.`);

@@ -242,18 +242,23 @@ Hivra Cloud, in its own throwaway Canary account, it:
    types into (Hivra's chat for Claude Code and Codex, the agent's own web UI
    for the rest) and waits for `837` on screen. Computers pass when their page
    shows the desktop or terminal;
-5. deletes everything through the app's own delete routes, then the account.
+5. closes the agent's tab and, for `LAUNCH_SWEEP_IDLE_MINUTES` (default 10, `0`
+   skips), reads what it uses idle every 30 s from the owner's own usage view
+   (Manage › Overview): RAM, CPU and disk. The summary adds an **Idle use** table,
+   lightest first, next to the bare Linux computer. RAM includes the guest's file
+   cache, so it is an upper bound. This is what decides whether an agent can be
+   offered on Free or only on Pro;
+6. deletes everything through the app's own delete routes, then the account.
 
 A separate test reads the live Launch page and fails if it offers a tile that
 `launch-sweep/targets.ts` doesn't list, so a new agent can't ship untested.
 
-**Cost cap.** One small Canary VM per target for ~10 minutes, one at a time
+**Cost cap.** One small Canary VM per target for ~20 minutes (10 of them idle), one at a time
 (two launches at once on Canary's single host have failed at kickoff), and model use limited by the account's starter credit. Never retried.
 
 **Where it runs.** Not from this repository's Actions: the public-tree rules keep
 workflows bound to live infrastructure out of the public tree, and public run logs
-would show Canary's internals. The schedule (daily, after each provisioner release
-reaches Canary, and before every release into `main`) runs from a private
+would show Canary's internals. The schedule (weekly, and before every release into `main`) runs from a private
 operations runner that checks out this repository and runs the commands below with
 the Canary test credentials.
 
@@ -270,3 +275,7 @@ Results land in `e2e/.launch-sweep/` (one JSON per target, plus a screenshot).
 A failure says the stage (`choose`, `review`, `launch`, `ready`, `open`, `chat`)
 and what the screen or the agent record said. Targets marked `knownBroken` are
 reported but don't fail the run.
+
+**Adding an agent to Launch** follows `.codex/skills/hivra-add-launch-agent/SKILL.md`:
+add it to `targets.ts`, launch it with the sweep, and record its idle use before
+deciding Free or Pro.
