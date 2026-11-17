@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { buildProviderDesktopRuntimeProbe, parseProviderDesktopRuntimeReceipt, buildProviderDesktopPowerProbe, parseProviderDesktopPowerReceipt,
   buildProviderWorkspaceRuntimeProbe, parseProviderWorkspaceRuntimeReceipt } from "../provider-desktop-runtime";
 // The fixture identity is bound to the current release, so install its gateway files.
-import workspaceRelease from "../../../../provisioner-releases/2026.11.15.7.json";
+import workspaceRelease from "../../../../provisioner-releases/2026.11.15.8.json";
 import { desktopInstallFixture } from "@/lib/hivra/__tests__/provider-desktop-install.fixtures";
 import { REMOTE_DESKTOP_BUNDLE_REVISION } from "@/lib/remote-computers/capability-inspection";
 import { parseProviderDesktopWorkerIdentity } from "../provider-desktop-worker";
