@@ -79,7 +79,7 @@ jest.mock("../telegram-wake/sweep", () => ({
 }));
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -1018,6 +1018,20 @@ describe("buildSleepStateHostScript", () => {
       const run = exec(state);
       expect(run.status).toBe(0);
       expect(run.receipt).toMatchObject({ ok: true, observed, unitActive: false });
+    });
+
+    it("reads a stopped long sleeper as still asleep only with a mark written for it", () => {
+      const markDir = path.join(h.dir, "var-lib-hivra-sleep");
+      const mark = path.join(markDir, `cold-${VMID}`);
+      mkdirSync(markDir, { recursive: true });
+      writeFileSync(mark, `${TAG}\n`);
+      expect(exec(COLD).receipt).toMatchObject({ ok: true, observed: "hibernated" });
+      // A running computer is what it is, whatever mark was left behind.
+      expect(exec(AWAKE).receipt).toMatchObject({ ok: true, observed: "awake" });
+      writeFileSync(mark, "hivra-bind-other\n");
+      expect(exec(COLD).receipt).toMatchObject({ ok: true, observed: "cold" });
+      rmSync(mark, { force: true });
+      expect(exec(COLD).receipt).toMatchObject({ ok: true, observed: "cold" });
     });
 
     it("never changes the computer", () => {
