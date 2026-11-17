@@ -2,7 +2,8 @@ import "server-only";
 
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
-import { parseSleepMode, type SleepMode } from "./agent-sleep-policy";
+import { parseSleepMode, sleepMemoryDropAfterDays, type SleepMode } from "./agent-sleep-policy";
+import { resetSleepMemoryDropCooldowns, runSleepMemoryDrops, type MemoryDropCounts } from "./sleep-memory-drop";
 import { resolveHivraProxmoxHost } from "./proxmox-target";
 import {
   SCHEDULED_WAKE_LEAD_SECONDS,
@@ -148,6 +149,7 @@ export function resetSleepSweepCooldowns(): void {
   ingressCooldowns.clear();
   leaseCooldowns.clear();
   driftCooldowns.clear();
+  resetSleepMemoryDropCooldowns();
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +179,8 @@ export interface SleepIdleSweepSummary {
   drift: { checked: number; settled: number; consistent: number; left: number; woke: number };
   hibernate: SweepStepCounts;
   nap: SweepStepCounts;
+  /** Long sleepers whose saved memory was dropped (disk kept). Only when that is switched on. */
+  memoryDrops?: MemoryDropCounts;
   /** Telegram wake webhooks set and taken down. Only when that feature is configured. */
   telegram?: TelegramSweepCounts;
   /** Other channels' wake arms, and deferred channel wakes. Only when channel wake is configured. */
@@ -741,6 +745,23 @@ async function resetStoppedSleepRecords(ctx: Context): Promise<void> {
   }
 }
 
+// --- Long sleepers: drop the saved memory, keep the disk ----------------------
+
+async function runMemoryDrops(ctx: Context): Promise<void> {
+  const hosts = await loadHosts(ctx);
+  if (!hosts) return;
+  const result = await runSleepMemoryDrops({
+    db: ctx.db,
+    env: ctx.env,
+    now: ctx.now,
+    deadline: ctx.deadline,
+    hostActs: (host) => hostActs(hosts.get(host)),
+  });
+  if (!result) return;
+  ctx.summary.memoryDrops = result.counts;
+  ctx.summary.errors += result.errors;
+}
+
 // --- Steps 3 and 4: hibernate and nap -----------------------------------------
 
 async function loadHosts(ctx: Context): Promise<Map<string, HostInfo> | null> {
@@ -1068,6 +1089,9 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
       ? ([["host ingress", runHostIngress]] as Array<[string, (c: Context) => Promise<void>]>)
       : []),
     ...(actsOnSleep ? ([["hibernate and nap", runSleepSteps]] as Array<[string, (c: Context) => Promise<void>]>) : []),
+    ...(actsOnSleep && sleepMemoryDropAfterDays(env.HIVRA_SLEEP_DROP_MEMORY_AFTER_DAYS) !== null
+      ? ([["memory drops", runMemoryDrops]] as Array<[string, (c: Context) => Promise<void>]>)
+      : []),
   ];
   for (const [name, step] of steps) {
     if (remaining(ctx) <= 0) {

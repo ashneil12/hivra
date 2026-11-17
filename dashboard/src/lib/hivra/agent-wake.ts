@@ -8,7 +8,7 @@ import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { resolveProxmoxHostCapacityPolicy } from "@/lib/infrastructure/host-capacity-policy";
 import { acquireHostWakeSlot, normalizeWakeRamMb, releaseHostWakeSlot } from "@/lib/proxmox/wake-admission";
 import { resolveHivraLifecycleTarget, type HivraLifecycleTarget } from "./agent-lifecycle-host";
-import { STALE_SLEEP_LEASE_MS } from "./agent-sleep-policy";
+import { sleepMemoryDropAfterDays, STALE_SLEEP_LEASE_MS } from "./agent-sleep-policy";
 import { isStartBlockedForLapse } from "./lapse-gate";
 import {
   claimAgentWake,
@@ -57,6 +57,9 @@ const HEALTHZ_FAST_WINDOW_MS = 3_000;
 /** The host script's own bounds: up to 15 s for a sleep that holds the computer, 8 s of guest-agent wait, and for a restore the start itself. A nap wake normally takes about one second. */
 const WAKE_SCRIPT_TIMEOUT_MS = 60_000;
 const RESTORE_SCRIPT_TIMEOUT_MS = 120_000;
+/** A computer booted from its disk (its saved memory was dropped): the script may wait longer for the guest, and so does the health check. */
+const COLD_START_SCRIPT_TIMEOUT_MS = 170_000;
+export const COLD_START_HEALTHZ_BUDGET_MS = 120_000;
 const DEFAULT_POLL_MS = 1_000;
 
 /** States an operation is still moving through. The row settles by itself. */
@@ -165,6 +168,8 @@ export async function runWakeHostScript(
   options: { restore: boolean; killStaleSockets?: boolean; hostIngress?: boolean },
 ): Promise<WakeScriptRun> {
   const startedAt = Date.now();
+  // With memory drops switched on, a restore may meet a computer whose saved memory was dropped. The host's mark decides.
+  const coldStart = options.restore && sleepMemoryDropAfterDays() !== null;
   let script: string;
   try {
     script = buildWakeHostScript({
@@ -176,13 +181,14 @@ export async function runWakeHostScript(
       ...(options.killStaleSockets === true ? { killStaleSockets: true } : {}),
       // The host runs this computer's public connector: drop the proxy's nap marker, and never touch the guest's tunnel.
       ...(options.hostIngress === true ? { hostIngress: true } : {}),
+      ...(coldStart ? { coldStart: true } : {}),
     });
   } catch {
     return { receipt: null, runError: "script_invalid", ms: Date.now() - startedAt };
   }
   try {
     const result = await runProxmoxHostScript(script, target.env, {
-      timeoutMs: options.restore ? RESTORE_SCRIPT_TIMEOUT_MS : WAKE_SCRIPT_TIMEOUT_MS,
+      timeoutMs: coldStart ? COLD_START_SCRIPT_TIMEOUT_MS : options.restore ? RESTORE_SCRIPT_TIMEOUT_MS : WAKE_SCRIPT_TIMEOUT_MS,
       // The receipt is the script's last word, so the answer can come back as
       // soon as its line is complete, without waiting for the session to close.
       ...(isFastWakeEnabled("early_finish") ? { earlyFinishMarker: WAKE_RESULT_PREFIX.trim(), earlyFinishOnLine: true } : {}),
@@ -377,7 +383,11 @@ async function performWakeSteps(
     }
     if (!run.receipt.ok) return failed(run.receipt.reason);
 
-    const health = await pollPublicHealthz(row.cf_hostname, isFastWakeEnabled("fast_healthz") ? { fastStart: true } : {});
+    const health = await pollPublicHealthz(row.cf_hostname, {
+      ...(isFastWakeEnabled("fast_healthz") ? { fastStart: true } : {}),
+      // A boot from disk brings the agent's own services up from nothing.
+      ...(run.receipt.reason === "cold_started" ? { budgetMs: COLD_START_HEALTHZ_BUDGET_MS } : {}),
+    });
     detail.healthz_ms = health.ms;
     detail.healthz_attempts = health.attempts;
     if (!health.up) return failed("public_healthz_timeout");
