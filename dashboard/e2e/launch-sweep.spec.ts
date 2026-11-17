@@ -30,7 +30,7 @@ import { destroyAllHivraAgents, destroyAllInstances, listHivraAgents, listInstan
 import { establishAuditSession } from './first-run-audit/session';
 import { proveChat, proveComputerOpen } from './launch-sweep/chat';
 import { launchFromTile, offeredTileNames, openFromLaunch, waitForReady } from './launch-sweep/journey';
-import { grantSweepPlan, removeSweepPlan } from './launch-sweep/plan';
+import { agentEvidence, grantSweepPlan, removeSweepPlan } from './launch-sweep/plan';
 import { SweepFailure, SweepRecorder } from './launch-sweep/result';
 import { OWN_SERVER_ONLY_TILES, SWEEP_TARGETS, selectedTargets, type SweepTarget } from './launch-sweep/targets';
 
@@ -212,6 +212,9 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
       recorder.result.agentId = (await listHivraAgents(context.request, env.baseUrl).catch(() => []))[0]?.id
         ?? (await listInstances(context.request, env.baseUrl).catch(() => []))[0]?.id
         ?? null;
+    }
+    if (!recorder.result.passed && recorder.result.agentId) {
+      recorder.result.evidence = await agentEvidence(env.supabaseUrl, env.serviceRoleKey, recorder.result.agentId);
     }
     const keep = env.keepFailed && !recorder.result.passed && recorder.result.failure?.category === 'product';
     if (userId && !keep) {

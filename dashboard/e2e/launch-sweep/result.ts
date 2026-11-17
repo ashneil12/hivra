@@ -47,6 +47,8 @@ export interface SweepResult {
   chat?: { surface: string; replySeconds?: number };
   teardown?: { agentsLeft: number; instancesLeft: number; accountDeleted: boolean; error?: string };
   screenshots: string[];
+  /** On failure: the agent's recent lifecycle events with detail, read before teardown. */
+  evidence?: Array<Record<string, unknown>>;
 }
 
 export class SweepRecorder {

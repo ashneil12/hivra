@@ -57,3 +57,26 @@ export async function removeSweepPlan(supabaseUrl: string, serviceRoleKey: strin
     { method: 'DELETE', headers: headers(serviceRoleKey) },
   ).catch(() => undefined);
 }
+
+/**
+ * The agent's own lifecycle events, with their stored detail, read before
+ * teardown deletes the agent (and its host log with it). Kept in the local
+ * result file only; failure details can carry host names.
+ */
+export async function agentEvidence(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  agentId: string,
+): Promise<Array<Record<string, unknown>>> {
+  try {
+    const res = await fetch(
+      `${supabaseUrl.replace(/\/$/, '')}/rest/v1/hivra_agent_events?agent_id=eq.${encodeURIComponent(agentId)}&select=event,detail,created_at&order=created_at.desc&limit=15`,
+      { headers: headers(serviceRoleKey) },
+    );
+    if (!res.ok) return [{ error: `events HTTP ${res.status}` }];
+    const rows = (await res.json()) as unknown;
+    return Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : [];
+  } catch (err) {
+    return [{ error: err instanceof Error ? err.message : String(err) }];
+  }
+}
