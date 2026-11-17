@@ -4,7 +4,10 @@
  * After an agent has answered (or a computer has opened), the sweep closes the
  * agent's tab, the way a customer walks away, and reads the agent's own usage
  * every 30 s for a few minutes from the same place its owner sees it: Manage ›
- * Overview (GET /api/hivra/agents/:id/usage). That is the number Free vs Pro
+ * Overview (GET /api/hivra/agents/:id/usage). The read is made from a Hivra
+ * page that stays open (the dashboard home), because Clerk's session token
+ * lives about a minute and only a live page keeps refreshing it; a detached
+ * request gets 401 once the agent's tab is gone. That is the number Free vs Pro
  * decisions are made on: how much RAM, CPU and disk one idle agent holds.
  *
  * Memory comes from the host's balloon driver and includes the guest's file
@@ -12,7 +15,7 @@
  * which is the bare computer every agent runs on. Never fails a launch: a
  * missing reading is recorded with the reason.
  */
-import type { APIRequestContext } from '@playwright/test';
+import type { Page } from '@playwright/test';
 
 import { sleep } from '../first-run-audit/instances';
 
@@ -56,20 +59,22 @@ function median(values: number[]): number | null {
 const round = (value: number | null, places = 0): number | null =>
   value === null ? null : Math.round(value * 10 ** places) / 10 ** places;
 
-async function readUsage(request: APIRequestContext, baseUrl: string, agentId: string): Promise<UsageView | string> {
+async function readUsage(page: Page, agentId: string): Promise<UsageView | string> {
   try {
-    const res = await request.get(`${baseUrl}/api/hivra/agents/${encodeURIComponent(agentId)}/usage`, { timeout: 40_000 });
-    if (!res.ok()) return `usage answered HTTP ${res.status()}`;
-    const body = (await res.json()) as { data?: UsageView };
-    return body.data ?? 'usage answered without data';
+    const result = await page.evaluate(async (id) => {
+      const res = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/usage`, { credentials: 'same-origin', cache: 'no-store' });
+      return { status: res.status, body: res.ok ? await res.json() : null };
+    }, agentId);
+    if (result.status !== 200) return `usage answered HTTP ${result.status}`;
+    const body = result.body as { data?: UsageView } | null;
+    return body?.data ?? 'usage answered without data';
   } catch (err) {
-    return `usage unreadable: ${err instanceof Error ? err.message : String(err)}`;
+    return `usage unreadable: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`;
   }
 }
 
 export async function measureIdle(
-  request: APIRequestContext,
-  baseUrl: string,
+  page: Page,
   agentId: string,
   minutes: number,
 ): Promise<IdleUsage> {
@@ -81,7 +86,7 @@ export async function measureIdle(
   // Let whatever the chat started settle before the first reading counts.
   await sleep(Math.min(60_000, minutes * 60_000 / 4));
   while (Date.now() < end) {
-    const view = await readUsage(request, baseUrl, agentId);
+    const view = await readUsage(page, agentId);
     if (typeof view === 'string') {
       problem = view;
     } else if (view.supported === false) {

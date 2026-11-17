@@ -267,6 +267,7 @@ CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE
   npm run test:launch-sweep                         # everything, one at a time
 LAUNCH_SWEEP_ONLY=agent-zero,openclaw npm run test:launch-sweep   # a few
 LAUNCH_SWEEP_KEEP_FAILED=1 …                         # keep a failed computer to read its logs
+LAUNCH_SWEEP_KEEP_PASSED=claude-code,codex …         # keep these after a pass, to read inside them
 npm run test:launch-sweep:summary                    # Markdown table; exits 1 if a launch is broken
 npm run audit:first-run:cleanup                      # reaps any leftover sweep accounts too
 ```
