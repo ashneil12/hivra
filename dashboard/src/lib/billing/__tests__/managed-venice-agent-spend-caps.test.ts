@@ -15,7 +15,8 @@ jest.mock("@/lib/logger", () => ({ log: { warn: jest.fn(), info: jest.fn(), erro
 type Row = Record<string, unknown>;
 
 // A tiny in-memory stand-in for the supabase query builder: eq/gte filters,
-// maybeSingle, and update().eq() writes.
+// maybeSingle, and update().eq().select() writes that answer with the rows
+// they changed, like the real table.
 function fakeDb(tables: Record<string, Row[]>) {
   const updates: Array<{ table: string; patch: Row }> = [];
   function from(table: string) {
@@ -30,16 +31,17 @@ function fakeDb(tables: Record<string, Row[]>) {
       maybeSingle: async () => ({ data: rows()[0] ?? null, error: null }),
       then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
         if (patch) {
-          for (const r of rows()) Object.assign(r, patch);
+          const changed = rows();
+          for (const r of changed) Object.assign(r, patch);
           updates.push({ table, patch });
-          return Promise.resolve({ data: null, error: null }).then(resolve, reject);
+          return Promise.resolve({ data: changed.map(r => ({ id: r.id })), error: null }).then(resolve, reject);
         }
         return Promise.resolve({ data: rows(), error: null }).then(resolve, reject);
       },
     };
     return chain;
   }
-  return { from, updates };
+  return { from, updates, tables };
 }
 
 const ON = { MANAGED_VENICE_AGENT_SPEND_CAPS_ENABLED: "true" };
@@ -119,6 +121,22 @@ describe("setManagedVeniceAgentDailySpendCap", () => {
     expect(db.updates[0].patch.metadata).toEqual({ defaultWalletType: "card", spendCap: { dailyMicroUsd: 3_500_000 } });
     const cleared = await setManagedVeniceAgentDailySpendCap({ userId: "u1", proxyKeyId: KEY, dailyUsd: null }, db);
     expect(cleared.dailyMicroUsd).toBeNull();
+  });
+  it("keeps the owner's other settings on the key when it saves or stamps", async () => {
+    const db = world({ capMicroUsd: 1_000_000, spentToday: 900_000 });
+    const key = db.tables.managed_venice_proxy_keys[0];
+    key.metadata = { ...(key.metadata as Row), privateOnly: { enabled: true, updatedAt: "2026-11-12T08:00:00.000Z" } };
+    // The request-path stamp, then the owner's own save.
+    await expect(assertManagedVeniceAgentWithinSpendCap({ userId: "u1", proxyKeyId: KEY, addMicroUsd: 200_000, now: NOW }, db, ON)).rejects.toThrow();
+    await setManagedVeniceAgentDailySpendCap({ userId: "u1", proxyKeyId: KEY, dailyUsd: 2 }, db);
+    expect(key.metadata).toEqual({
+      defaultWalletType: "card",
+      privateOnly: { enabled: true, updatedAt: "2026-11-12T08:00:00.000Z" },
+      spendCap: { dailyMicroUsd: 2_000_000, lastReachedAt: NOW.toISOString() },
+    });
+  });
+  it("says so when the key is not this owner's", async () => {
+    await expect(setManagedVeniceAgentDailySpendCap({ userId: "u2", proxyKeyId: KEY, dailyUsd: 2 }, world())).rejects.toThrow("no managed inference key");
   });
   it("rejects nonsense limits", async () => {
     await expect(setManagedVeniceAgentDailySpendCap({ userId: "u1", proxyKeyId: KEY, dailyUsd: 0 }, world())).rejects.toBeInstanceOf(RangeError);
