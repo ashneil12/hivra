@@ -86,6 +86,8 @@ function sweepEnv(): SweepEnv {
 async function screenshot(page: Page | null, recorder: SweepRecorder, outDir: string, label: string): Promise<void> {
   if (!page || page.isClosed()) return;
   const file = path.join(outDir, `${recorder.result.runId}-${recorder.result.profileId}-${label}.png`);
+  // Bring the first visible problem on screen, so the picture shows why.
+  await page.locator('[role="alert"]').first().scrollIntoViewIfNeeded({ timeout: 2_000 }).catch(() => undefined);
   await page.screenshot({ path: file, fullPage: false }).then(
     () => recorder.result.screenshots.push(path.basename(file)),
     () => undefined,

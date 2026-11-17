@@ -77,9 +77,12 @@ export class SweepRecorder {
     if (err instanceof SweepFailure) {
       this.result.failure = { stage: err.stage, category: err.category, reason: err.message };
     } else {
+      const message = err instanceof Error ? err.message : String(err);
+      // A Playwright locator error is the test's own bug, not the product's.
+      const harness = /strict mode violation|locator\.|Target page, context or browser has been closed/.test(message);
       this.result.failure = {
         stage: fallbackStage,
-        category: 'product',
+        category: harness ? 'harness_bug' : 'product',
         reason: (err instanceof Error ? err.message : String(err)).split('\n')[0].slice(0, 600),
       };
     }

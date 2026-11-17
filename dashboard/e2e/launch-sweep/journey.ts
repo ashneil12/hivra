@@ -141,7 +141,8 @@ export async function launchFromTile(page: Page, target: SweepTarget): Promise<v
 async function chooseHivraCredits(page: Page): Promise<void> {
   const group = page.getByRole('group', { name: 'Model access' });
   if (!(await group.isVisible().catch(() => false))) return;
-  const credits = group.getByRole('button', { name: /Hivra credits/ });
+  // The choice card itself, by its title; "Add credit" sits beside it.
+  const credits = group.locator('button').filter({ has: page.locator('strong', { hasText: /^Hivra credits$/ }) }).first();
   if ((await credits.count()) === 0) return;
   // The balance loads after Review opens; the button stays disabled until then.
   await page
