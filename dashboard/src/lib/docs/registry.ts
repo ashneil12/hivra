@@ -21,6 +21,10 @@ import { doc as windows } from "./pages/windows";
 import { doc as openAnAgent } from "./pages/open-an-agent";
 import { doc as updateAnAgent } from "./pages/update-an-agent";
 import { doc as securityAndAccess } from "./pages/security-and-access";
+import { doc as dashboardTour } from "./pages/dashboard-tour";
+import { doc as glossary } from "./pages/glossary";
+import { doc as telegram } from "./pages/telegram";
+import { doc as troubleshooting } from "./pages/troubleshooting";
 
 const ALL: DocPage[] = [
   gettingStarted,
@@ -44,6 +48,10 @@ const ALL: DocPage[] = [
   openAnAgent,
   updateAnAgent,
   securityAndAccess,
+  dashboardTour,
+  glossary,
+  telegram,
+  troubleshooting,
 ];
 
 export const DOCS: Record<string, DocPage> = Object.fromEntries(ALL.map((doc) => [doc.slug, doc]));
