@@ -121,17 +121,25 @@ export const PlanLadderConfigSchema = z.object({
       dailyReplySecondsCap: z.number().int().min(0).max(86_400).optional(),
       /** Free places a server offers now; the ceiling stays freePlacesPerServer. */
       placesOpenPerServer: z.number().int().min(0).max(10_000).optional(),
-      /** Share (0 to 1) of free-AI replies refused today above which a server takes no new free people. */
+      /**
+       * Share (0 to 1) of free-AI replies refused today above which a server
+       * takes no new free people. 0, or the key left out, switches the check
+       * off. Count only refusals that say something about the server: one that
+       * is about a single person's own account or allowance never counts.
+       */
       refusedShareStop: z.number().min(0).max(1).optional(),
       /** Replies a server needs in a day before its refused share counts. */
       refusedShareMinReplies: z.number().int().min(0).max(100_000).optional(),
       /**
-       * A sudden run of failed (not refused) replies on one server is treated
-       * like a refusal: this many different workspaces failing inside
-       * failedBurstMinutes.
+       * A sudden run of failed (not refused) work on one server stops it
+       * taking new free people: this many different workspaces failing inside
+       * failedBurstMinutes. 0, or either key left out, switches the check off.
+       * Count failures of work on the computer only. A reply that failed at
+       * the AI provider (a refused key, no credit, the provider down) says
+       * nothing about the server and is left out.
        */
       failedBurstWorkspaces: z.number().int().min(0).max(10_000).optional(),
-      /** The window for failedBurstWorkspaces, in minutes. */
+      /** The window for failedBurstWorkspaces, in minutes. 0 switches the check off. */
       failedBurstMinutes: z.number().int().min(0).max(1440).optional(),
     })
     .optional(),
