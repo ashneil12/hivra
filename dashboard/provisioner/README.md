@@ -579,6 +579,12 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **Agent Zero settings land where current images read them (`2026.11.17.3`).**
+  Agent Zero v2.15 and later read only `/a0/usr/.env` and no longer copy the
+  mounted `/a0/.env` into it, so the seeded login and managed model were
+  ignored and every new Agent Zero launch failed its gateway readiness check.
+  The provisioner merges those keys into `/opt/a0/usr/.env` as well.
+
 - **Background reads never wake a napped computer (`2026.11.17.2`).** The
   wake proxy treats a request carrying `X-Hivra-Background: 1` (Hivra's own
   cron watchdogs, samplers and probes) as no proof: it never moves

@@ -547,6 +547,17 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.17.3` builds on `2026.11.17.2` and fixes Agent Zero launches
+on current images. Agent Zero reads its settings only from `/a0/usr/.env`;
+older images copied the mounted `/a0/.env` there on first start, but v2.15 and
+later do not, so a new box started with no login, its CSRF endpoint refused
+the gateway (`ok: false`), and the launch failed its readiness check after five
+minutes. The provisioner now merges the managed keys (login, and the managed
+model when one is given) into `/opt/a0/usr/.env`, keeping every other line.
+Changed: `provision-claude-code-box.sh`, plus the documents, the version and the
+provider worker's release labels. This source release does not deploy,
+install, enable or start anything on a host or computer.
+
 Release `2026.11.17.2` builds on `2026.11.17.1` and stops Hivra's own
 background reads from keeping a computer awake: the wake proxy treats a request
 carrying `X-Hivra-Background: 1` as carrying no proof, so it never moves the
