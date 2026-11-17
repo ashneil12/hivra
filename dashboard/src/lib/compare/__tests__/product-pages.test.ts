@@ -10,7 +10,7 @@ import { AGENT_SEO_SLUGS } from "@/lib/hivra/agent-seo-catalog";
 import { DOCS } from "@/lib/docs/registry";
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
 
-const NEW_SLUGS = ["vs-claude-code-on-the-web", "vs-openai-codex-cloud", "vs-cursor-cloud-agents", "vs-github-codespaces", "vs-fly-sprites", "vs-e2b"];
+const NEW_SLUGS = ["vs-claude-code-on-the-web", "vs-openai-codex-cloud", "vs-cursor-cloud-agents", "vs-github-codespaces", "vs-fly-sprites", "vs-e2b", "vs-lobsterland", "vs-construct-computer", "vs-orgo", "vs-machine0", "vs-kiloclaw", "vs-simular-box", "vs-cubicles"];
 const MONTH = formatCheckedMonth(PRODUCT_FACTS_CHECKED);
 
 function blocks(page: ComparePage): CompareBlock[] {
@@ -36,10 +36,10 @@ function plainText(page: ComparePage): string {
   return parts.join("\n");
 }
 
-describe("the fifteen comparison pages", () => {
+describe("the twenty-two comparison pages", () => {
   it("registers the six agent product and sandbox pages beside the nine others", () => {
     expect([...PRODUCT_COMPARISON_SLUGS].sort()).toEqual([...NEW_SLUGS].sort());
-    expect(COMPARE_PAGE_SLUGS).toHaveLength(15);
+    expect(COMPARE_PAGE_SLUGS).toHaveLength(22);
     for (const slug of NEW_SLUGS) {
       expect(COMPARE_PAGES[slug]).toBe(PRODUCT_COMPARISONS[slug]);
       expect(COMPARE_PAGES[slug].slug).toBe(slug);
@@ -79,7 +79,7 @@ describe("the fifteen comparison pages", () => {
 
     it("has at least 7 FAQs, each with an answer in plain text", () => {
       expect(page.faqs.length).toBeGreaterThanOrEqual(7);
-      expect(page.faqs.length).toBeLessThanOrEqual(9);
+      expect(page.faqs.length).toBeLessThanOrEqual(12);
       for (const faq of page.faqs) {
         expect(faq.q.trim()).toBeTruthy();
         expect(faq.a.trim()).toBeTruthy();
