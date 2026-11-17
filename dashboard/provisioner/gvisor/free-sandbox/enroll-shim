@@ -1,0 +1,36 @@
+#!/bin/sh
+# Joins a free sandbox's runner to the agent app, run by the gVisor adapter's `enroll` as the sandbox user, with the
+# single-use code on stdin. Installed in the free sandbox image at /opt/hivra/enroll-shim.
+#
+# The code is never put on a command line, in the environment or in a log: it goes to a 0600 file the runner reads
+# and removes (`agentes-runner pair --enroll-file`). The runner's state lives under /workspace, so it is packed and
+# restored with the workspace. Enrolling happens right after the sandbox is created, before any agent runs in it;
+# a sandbox that is already enrolled is refused rather than paired again.
+set -eu
+umask 077
+
+server="${1:-}"
+case "$server" in
+  https://*) ;;
+  *) echo "enroll-shim: the server address must be https" >&2; exit 64 ;;
+esac
+
+export HOME="${HIVRA_RUNNER_HOME:-/workspace}"
+state="$HOME/.agentes-runner"
+if [ -e "$state/config.json" ]; then
+  echo "enroll-shim: this sandbox is already enrolled" >&2
+  exit 65
+fi
+mkdir -p "$state"
+
+IFS= read -r code || true
+case "$code" in
+  ""|*[!A-Za-z0-9_-]*) echo "enroll-shim: the enroll code is malformed" >&2; exit 65 ;;
+esac
+
+code_file="$(mktemp "$state/enroll.XXXXXX")"
+trap 'rm -f "$code_file"' EXIT
+printf '%s' "$code" > "$code_file"
+unset code
+
+"${AGENTES_RUNNER:-agentes-runner}" pair --server "$server" --enroll-file "$code_file"

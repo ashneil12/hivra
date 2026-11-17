@@ -3,6 +3,7 @@ import copy
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -409,3 +410,252 @@ class SandboxUpdateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FreeSandboxInputTests(unittest.TestCase):
+    """Free sandboxes: pack, release, restore and enroll, a CPU overcommit and a file quota, all checked on input."""
+
+    def check(self, document):
+        with redirect_stderr(io.StringIO()):
+            return adapter.valid_input(document)
+
+    def refused(self, document):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            adapter.valid_input(document)
+
+    def test_new_operations_and_their_fields(self):
+        sha = "b" * 64
+        self.check(request("pack"))
+        self.check(request("release") | {"archiveSha256": sha})
+        self.check(request("restore") | {"archiveSha256": sha, "cpu": 0.5, "memoryMb": 512,
+                                         "hostMemoryReserveMb": 512, "storageMb": 1024, "cpuOvercommit": 4})
+        self.check(request("enroll") | {"enrollCode": "abcDEF_123-x", "serverUrl": "https://agents.example:8443"})
+        self.check(request("create") | {"cpu": 0.5, "memoryMb": 512, "hostMemoryReserveMb": 512,
+                                        "storageMb": 1024, "cpuOvercommit": 2.5})
+
+    def test_refuses_what_does_not_fit(self):
+        sha = "b" * 64
+        self.refused(request("release"))
+        self.refused(request("release") | {"archiveSha256": "B" * 64})
+        self.refused(request("pack") | {"archiveSha256": sha})
+        self.refused(request("restore") | {"archiveSha256": sha, "hostMemoryReserveMb": 512})
+        self.refused(request("enroll") | {"enrollCode": "short", "serverUrl": "https://a.example"})
+        self.refused(request("enroll") | {"enrollCode": "abcDEF_123-x", "serverUrl": "http://a.example"})
+        self.refused(request("enroll") | {"enrollCode": "abc DEF;rm -rf", "serverUrl": "https://a.example"})
+        self.refused(request("status") | {"enrollCode": "abcDEF_123-x"})
+        base = request("create") | {"cpu": 0.5, "memoryMb": 512, "hostMemoryReserveMb": 512}
+        self.refused(base | {"cpuOvercommit": 9})
+        self.refused(base | {"cpuOvercommit": 0.5})
+        self.refused(base | {"cpuOvercommit": True})
+        self.refused(base | {"storageMb": 100})
+        self.refused(request("stop") | {"storageMb": 1024})
+
+
+class CpuOvercommitTests(unittest.TestCase):
+    def admit(self, cpu, overcommit):
+        with mock.patch.object(adapter, "host_capacity", return_value=(4, 16384, 16000, 4.0, 1024)), \
+                redirect_stderr(io.StringIO()):
+            adapter.admit("x", cpu, 512, 1024, overcommit)
+
+    def test_cpu_past_the_cores_only_when_the_caller_asks(self):
+        with self.assertRaises(SystemExit):
+            self.admit(0.5, 1.0)
+        self.admit(0.5, 2.0)
+        with self.assertRaises(SystemExit):
+            self.admit(4.5, 2.0)
+
+    def test_memory_is_never_overcommitted(self):
+        with mock.patch.object(adapter, "host_capacity", return_value=(4, 4096, 4000, 0.0, 3072)), \
+                redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            adapter.admit("x", 0.5, 512, 1024, 8.0)
+
+
+def tar_bytes(members):
+    """A tar stream built from (TarInfo kwargs, payload) pairs."""
+    buffer = io.BytesIO()
+    with adapter.tarfile.open(fileobj=buffer, mode="w") as archive:
+        for fields, payload in members:
+            info = adapter.tarfile.TarInfo(fields.pop("name"))
+            for key, value in fields.items():
+                setattr(info, key, value)
+            if payload is not None:
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+            else:
+                archive.addfile(info)
+    buffer.seek(0)
+    return buffer
+
+
+class SafeExtractTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.dest = Path(self.dir.name, "workspace")
+        self.dest.mkdir()
+        self.owners = mock.patch.multiple(adapter.os, lchown=mock.DEFAULT, fchown=mock.DEFAULT)
+        self.owners.start()
+
+    def tearDown(self):
+        self.owners.stop()
+        self.dir.cleanup()
+
+    def extract(self, members):
+        with redirect_stderr(io.StringIO()):
+            return adapter.extract_tar_stream(tar_bytes(members), self.dest)
+
+    def test_unpacks_files_folders_and_links_without_set_id_bits(self):
+        skipped = self.extract([
+            ({"name": "./", "type": adapter.tarfile.DIRTYPE, "mode": 0o755}, None),
+            ({"name": "./notes", "type": adapter.tarfile.DIRTYPE, "mode": 0o755}, None),
+            ({"name": "./notes/a.txt", "mode": 0o4755}, b"hello"),
+            ({"name": "./notes/link", "type": adapter.tarfile.SYMTYPE, "linkname": "a.txt"}, None),
+            ({"name": "./dev", "type": adapter.tarfile.CHRTYPE, "devmajor": 1, "devminor": 3}, None),
+        ])
+        self.assertEqual((self.dest / "notes" / "a.txt").read_bytes(), b"hello")
+        self.assertEqual((self.dest / "notes" / "a.txt").stat().st_mode & 0o7777, 0o755)
+        self.assertEqual(os.readlink(self.dest / "notes" / "link"), "a.txt")
+        self.assertFalse((self.dest / "dev").exists())
+        self.assertEqual(skipped, 1)
+
+    def test_refuses_absolute_and_parent_paths(self):
+        for name in ("/etc/passwd", "../outside", "./a/../../outside"):
+            with self.assertRaises(SystemExit):
+                self.extract([({"name": name}, b"x")])
+        self.assertFalse(Path(self.dir.name, "outside").exists())
+
+    def test_never_writes_through_a_link_an_earlier_member_made(self):
+        outside = Path(self.dir.name, "outside")
+        outside.mkdir()
+        with self.assertRaises(SystemExit):
+            self.extract([
+                ({"name": "./escape", "type": adapter.tarfile.SYMTYPE, "linkname": str(outside)}, None),
+                ({"name": "./escape/owned.txt"}, b"x"),
+            ])
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_never_replaces_an_existing_file_or_follows_a_link_at_the_target(self):
+        target = Path(self.dir.name, "victim")
+        target.write_text("keep")
+        os.symlink(target, self.dest / "same")
+        with self.assertRaises(OSError):
+            self.extract([({"name": "./same"}, b"overwrite")])
+        self.assertEqual(target.read_text(), "keep")
+
+
+@unittest.skipUnless(Path("/opt/homebrew/bin/zstd").exists() or Path("/usr/bin/zstd").exists(), "needs zstd")
+class PackReleaseRestoreTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        root = Path(self.dir.name)
+        self.source = root / "workspace"
+        (self.source / "chats").mkdir(parents=True)
+        (self.source / "chats" / "today.md").write_text("a memory worth keeping")
+        zstd = "/opt/homebrew/bin/zstd" if Path("/opt/homebrew/bin/zstd").exists() else "/usr/bin/zstd"
+        self.patches = [
+            mock.patch.object(adapter, "ARCHIVE_DIR", root / "archives"),
+            mock.patch.object(adapter, "ZSTD", zstd),
+            mock.patch.object(adapter, "require_helper_absent", lambda request: None),
+            mock.patch.object(adapter, "workspace_source", lambda request: self.source),
+            mock.patch.object(adapter, "inspect_container",
+                              lambda name, request, required=True: {"State": {"Running": False}}),
+        ]
+        for patch in self.patches:
+            patch.start()
+
+    def tearDown(self):
+        for patch in self.patches:
+            patch.stop()
+        self.dir.cleanup()
+
+    def pack(self):
+        with redirect_stdout(io.StringIO()):
+            return adapter.pack(request("pack"))
+
+    def test_pack_writes_a_verified_archive_and_its_manifest_last(self):
+        receipt = self.pack()
+        archive, manifest = adapter.archive_paths(request("pack"))
+        self.assertEqual(adapter.file_sha256(archive), receipt["sha256"])
+        document = json.loads(manifest.read_text())
+        self.assertEqual(document["sha256"], receipt["sha256"])
+        self.assertEqual(document["sandboxId"], request()["sandboxId"])
+        self.assertTrue((self.source / "chats" / "today.md").exists())
+
+    def test_pack_refuses_a_running_sandbox(self):
+        with mock.patch.object(adapter, "inspect_container",
+                               lambda name, request, required=True: {"State": {"Running": True}}), \
+                redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            self.pack()
+
+    def test_release_only_after_the_local_copy_reads_back_to_the_named_digest(self):
+        receipt = self.pack()
+        delete = mock.Mock()
+        with mock.patch.object(adapter, "delete", delete), redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit):
+            adapter.release(request("release") | {"archiveSha256": "c" * 64})
+        delete.assert_not_called()
+        archive, _ = adapter.archive_paths(request())
+        with open(archive, "ab") as stream:
+            stream.write(b"tampered")
+        with mock.patch.object(adapter, "delete", delete), redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit):
+            adapter.release(request("release") | {"archiveSha256": receipt["sha256"]})
+        delete.assert_not_called()
+
+    def test_release_removes_the_sandbox_and_local_copy_once_verified(self):
+        receipt = self.pack()
+        delete = mock.Mock()
+        with mock.patch.object(adapter, "delete", delete), redirect_stdout(io.StringIO()):
+            adapter.release(request("release") | {"archiveSha256": receipt["sha256"]})
+        delete.assert_called_once()
+        archive, manifest = adapter.archive_paths(request())
+        self.assertFalse(archive.exists() or manifest.exists())
+
+    def test_restore_refuses_an_archive_that_does_not_match_before_touching_docker(self):
+        self.pack()
+        docker = mock.Mock()
+        with mock.patch.object(adapter, "docker", docker), redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit):
+            adapter.restore(request("restore") | {"archiveSha256": "d" * 64, "cpu": 0.5, "memoryMb": 512,
+                                                  "hostMemoryReserveMb": 512})
+        docker.assert_not_called()
+
+    def test_an_archive_round_trips_through_the_safe_unpacker(self):
+        self.pack()
+        archive, _ = adapter.archive_paths(request())
+        dest = Path(self.dir.name, "restored")
+        dest.mkdir()
+        unpack = subprocess.Popen([adapter.ZSTD, "-q", "-d", "-c", str(archive)], stdout=subprocess.PIPE)
+        with mock.patch.multiple(adapter.os, lchown=mock.DEFAULT, fchown=mock.DEFAULT):
+            adapter.extract_tar_stream(unpack.stdout, dest)
+        unpack.stdout.close()
+        self.assertEqual(unpack.wait(), 0)
+        self.assertEqual((dest / "chats" / "today.md").read_text(), "a memory worth keeping")
+
+
+class EnrollTests(unittest.TestCase):
+    def test_the_code_goes_to_the_shim_on_stdin_only(self):
+        seen = {}
+
+        def fake_run(argv, **kwargs):
+            seen["argv"], seen["input"] = argv, kwargs.get("input")
+            return subprocess.CompletedProcess(argv, 0, None, None)
+
+        req = request("enroll") | {"enrollCode": "secretCODE_123", "serverUrl": "https://agents.example"}
+        with mock.patch.object(adapter, "require_helper_absent", lambda request: None), \
+                mock.patch.object(adapter, "inspect_container",
+                                  lambda name, request, required=True: {"State": {"Running": True}}), \
+                mock.patch.object(adapter.subprocess, "run", fake_run), redirect_stdout(io.StringIO()) as out:
+            adapter.enroll(req)
+        self.assertNotIn("secretCODE_123", " ".join(seen["argv"]))
+        self.assertEqual(seen["input"], "secretCODE_123\n")
+        self.assertIn(adapter.ENROLL_SHIM, seen["argv"])
+        self.assertIn("--user", seen["argv"])
+        self.assertNotIn("secretCODE_123", out.getvalue())
+
+    def test_refuses_a_stopped_sandbox(self):
+        req = request("enroll") | {"enrollCode": "secretCODE_123", "serverUrl": "https://agents.example"}
+        with mock.patch.object(adapter, "require_helper_absent", lambda request: None), \
+                mock.patch.object(adapter, "inspect_container",
+                                  lambda name, request, required=True: {"State": {"Running": False}}), \
+                redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            adapter.enroll(req)

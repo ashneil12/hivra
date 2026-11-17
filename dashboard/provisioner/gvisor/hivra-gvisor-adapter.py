@@ -3,6 +3,7 @@
 
 import base64
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -10,20 +11,34 @@ import selectors
 import signal
 import subprocess
 import sys
+import tarfile
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-VERSION = "2026.10.20.1"
+VERSION = "2026.11.17.1"
 IMAGE = "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285"
 # Sandboxes this adapter manages, by the adapter release that created each
 # resource (a volume or network keeps the label it was created with) and the
 # image its container runs. Update moves a container to this release's IMAGE.
-ADMITTED_VERSIONS = ("2026.09.15.1", VERSION)
+ADMITTED_VERSIONS = ("2026.09.15.1", "2026.10.20.1", VERSION)
 ADMITTED_IMAGES = (IMAGE,)
 PREFIX = "hivra-gvisor-"
 LABEL = "cloud.hivra"
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
+SANDBOX_UID = 65534
+# Free sandboxes (the agent app's runner in a gVisor container): a workspace with a file quota, packed into a
+# verified archive when it has not been used, and restored from one. The archive's own copy lives in storage; the
+# controller moves it, and calls `release` only once that copy is verified, so nothing is lost on the way.
+STATE_DIR = Path("/var/lib/hivra-gvisor")
+QUOTA_DIR = STATE_DIR / "quota"
+MOUNT_DIR = STATE_DIR / "mnt"
+ARCHIVE_DIR = STATE_DIR / "archives"
+ENROLL_SHIM = "/opt/hivra/enroll-shim"
+TAR = "/usr/bin/tar"
+ZSTD = "/usr/bin/zstd"
+ENROLL_CODE = re.compile(r"^[A-Za-z0-9_-]{8,256}$")
+SERVER_URL = re.compile(r"^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$")
 EXEC_OUTPUT_LIMIT = 65536
 EXEC_ENVELOPE_LIMIT = 192 * 1024
 GUEST_EXEC_WRAPPER = r'''import base64,json,os,selectors,signal,subprocess,sys,time
@@ -140,11 +155,13 @@ def docker(*args, check=True, timeout=120, capture_limit=None):
 
 def valid_input(document):
     if not isinstance(document, dict) or set(document) - {
-        "operation", "ownerHash", "computerId", "sandboxId", "cpu", "memoryMb", "hostMemoryReserveMb", "argv"
+        "operation", "ownerHash", "computerId", "sandboxId", "cpu", "memoryMb", "hostMemoryReserveMb", "argv",
+        "cpuOvercommit", "storageMb", "archiveSha256", "enrollCode", "serverUrl",
     }:
         fail("Invalid gVisor computer request")
     operation = document.get("operation")
-    if operation not in {"create", "status", "start", "stop", "resize", "exec", "delete", "update"}:
+    if operation not in {"create", "status", "start", "stop", "resize", "exec", "delete", "update",
+                         "pack", "release", "restore", "enroll"}:
         fail("Invalid gVisor computer operation")
     for key in ("computerId", "sandboxId"):
         if not isinstance(document.get(key), str) or not UUID.fullmatch(document[key]):
@@ -158,10 +175,39 @@ def valid_input(document):
             fail("Invalid gVisor CPU limit")
         if not isinstance(memory, int) or isinstance(memory, bool) or memory < 512 or memory > 131072:
             fail("Invalid gVisor memory limit")
-    if operation in {"create", "start", "resize", "update"}:
+    if operation in {"create", "start", "resize", "update", "restore"}:
         reserve = document.get("hostMemoryReserveMb")
         if not isinstance(reserve, int) or isinstance(reserve, bool) or reserve < 512 or reserve > 1048576:
             fail("Invalid gVisor host memory reserve")
+    if "cpuOvercommit" in document:
+        overcommit = document["cpuOvercommit"]
+        if (operation not in {"create", "start", "resize", "update", "restore"} or not isinstance(overcommit, (int, float))
+                or isinstance(overcommit, bool) or overcommit < 1 or overcommit > 8):
+            fail("Invalid gVisor CPU overcommit")
+    if "storageMb" in document:
+        storage = document["storageMb"]
+        if (operation not in {"create", "restore"} or not isinstance(storage, int) or isinstance(storage, bool)
+                or storage < 256 or storage > 65536):
+            fail("Invalid gVisor storage quota")
+    if operation == "restore":
+        cpu = document.get("cpu")
+        memory = document.get("memoryMb")
+        if not isinstance(cpu, (int, float)) or isinstance(cpu, bool) or cpu < 0.5 or cpu > 32:
+            fail("Invalid gVisor CPU limit")
+        if not isinstance(memory, int) or isinstance(memory, bool) or memory < 512 or memory > 131072:
+            fail("Invalid gVisor memory limit")
+    if operation in {"release", "restore"}:
+        if not isinstance(document.get("archiveSha256"), str) or not DIGEST.fullmatch(document["archiveSha256"]):
+            fail("Invalid gVisor archive digest")
+    elif "archiveSha256" in document:
+        fail("Invalid gVisor computer request")
+    if operation == "enroll":
+        if not isinstance(document.get("enrollCode"), str) or not ENROLL_CODE.fullmatch(document["enrollCode"]):
+            fail("Invalid gVisor enroll code")
+        if not isinstance(document.get("serverUrl"), str) or not SERVER_URL.fullmatch(document["serverUrl"]):
+            fail("Invalid gVisor server address")
+    elif "enrollCode" in document or "serverUrl" in document:
+        fail("Invalid gVisor computer request")
     if operation == "exec":
         argv = document.get("argv")
         if (not isinstance(argv, list) or not argv or len(argv) > 32
@@ -370,13 +416,15 @@ def host_capacity(exclude_name=None):
     return cpu_total, memory_total, memory_available, committed_cpu, committed_memory
 
 
-def admit(name, cpu, memory, host_memory_reserve):
+def admit(name, cpu, memory, host_memory_reserve, cpu_overcommit=1.0):
     total_cpu, total_memory, available_memory, used_cpu, used_memory = host_capacity(name)
-    # Every reservation equals its enforced ceiling. Keep host capacity for the
-    # kernel, Docker and the adapter rather than promising balloon-style floors.
+    # Every memory reservation equals its enforced ceiling. Keep host capacity for
+    # the kernel, Docker and the adapter rather than promising balloon-style floors.
+    # CPU may be promised past the cores only where the caller says so (a free
+    # pool, whose idle sandboxes use almost none); memory never is.
     allowed_memory = max(0, total_memory - host_memory_reserve)
     live_memory_headroom = max(0, available_memory - host_memory_reserve)
-    if (used_cpu + cpu > total_cpu or used_memory + memory > allowed_memory
+    if (used_cpu + cpu > total_cpu * cpu_overcommit or used_memory + memory > allowed_memory
             or memory > live_memory_headroom):
         fail("The connected host does not have enough uncommitted capacity")
 
@@ -445,7 +493,7 @@ def update(request):
     cpu = float(item["HostConfig"]["NanoCpus"]) / 1_000_000_000
     memory = int(item["HostConfig"]["Memory"]) // (1024 * 1024)
     if running:
-        admit(name, cpu, memory, int(request["hostMemoryReserveMb"]))
+        admit(name, cpu, memory, int(request["hostMemoryReserveMb"]), overcommit_of(request))
     docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
     if running:
         docker("stop", "--time", "20", name)
@@ -474,7 +522,7 @@ def create(request):
         docker("rm", "-f", helper_name(request))
         require_helper_absent(request)
     cpu, memory = float(request["cpu"]), int(request["memoryMb"])
-    admit(name, cpu, memory, int(request["hostMemoryReserveMb"]))
+    admit(name, cpu, memory, int(request["hostMemoryReserveMb"]), overcommit_of(request))
     labels = expected_labels(request)
     label_args = [value for pair in labels.items() for value in ("--label", f"{pair[0]}={pair[1]}")]
     created_volume = False
@@ -482,7 +530,10 @@ def create(request):
     try:
         docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
         if not inspect_resource("volume", volume, request):
-            docker("volume", "create", *label_args, volume)
+            if "storageMb" in request:
+                create_quota_volume(request, volume, int(request["storageMb"]), label_args)
+            else:
+                docker("volume", "create", *label_args, volume)
             created_volume = True
         if not inspect_resource("network", network, request):
             docker("network", "create", "--driver", "bridge", *label_args, network)
@@ -502,7 +553,289 @@ def create(request):
             docker("network", "rm", network, check=False)
         if created_volume:
             docker("volume", "rm", volume, check=False)
+            remove_quota(request)
         raise
+
+
+def overcommit_of(request):
+    return float(request.get("cpuOvercommit", 1))
+
+
+def quota_paths(request):
+    sandbox = request["sandboxId"]
+    return QUOTA_DIR / f"{sandbox}.ext4", MOUNT_DIR / sandbox
+
+
+def is_mounted(path):
+    target = str(path)
+    with open("/proc/self/mounts", encoding="utf-8") as mounts:
+        return any(line.split()[1] == target for line in mounts if len(line.split()) > 1)
+
+
+def ensure_quota_mounted(request):
+    """A quota workspace's file system, mounted where its volume binds (after a reboot it is not)."""
+    image, mountpoint = quota_paths(request)
+    if not image.exists():
+        return False
+    mountpoint.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not is_mounted(mountpoint):
+        run(["/usr/bin/mount", "-o", "loop,nosuid,nodev", str(image), str(mountpoint)])
+    return True
+
+
+def create_quota_volume(request, volume, storage_mb, label_args):
+    """A workspace that can hold no more than `storage_mb`: its own ext4 file system in an image file, bound into the
+    volume, so writing past it fails with ENOSPC inside the sandbox."""
+    image, mountpoint = quota_paths(request)
+    if image.exists():
+        fail("The gVisor computer has an orphaned workspace image")
+    QUOTA_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    run(["/usr/bin/truncate", "-s", f"{storage_mb}M", str(image)])
+    run(["/usr/sbin/mkfs.ext4", "-q", "-F", "-m", "0", "-E", f"root_owner={SANDBOX_UID}:{SANDBOX_UID}", str(image)])
+    ensure_quota_mounted(request)
+    docker("volume", "create", *label_args, "--label", f"{LABEL}.quota-mb={storage_mb}", "--driver", "local",
+           "--opt", "type=none", "--opt", "o=bind", "--opt", f"device={mountpoint}", volume)
+
+
+def remove_quota(request):
+    image, mountpoint = quota_paths(request)
+    if mountpoint.exists() and is_mounted(mountpoint):
+        run(["/usr/bin/umount", str(mountpoint)])
+    if image.exists():
+        image.unlink()
+    if mountpoint.exists():
+        mountpoint.rmdir()
+
+
+def workspace_source(request):
+    """Where the workspace's files are on this host while no container uses them."""
+    if ensure_quota_mounted(request):
+        return quota_paths(request)[1]
+    _, volume, _ = names(request)
+    try:
+        return Path(json.loads(docker("volume", "inspect", volume).stdout)[0]["Mountpoint"])
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+        fail("The gVisor workspace could not be located")
+
+
+def archive_paths(request):
+    sandbox = request["sandboxId"]
+    return ARCHIVE_DIR / f"{sandbox}.tar.zst", ARCHIVE_DIR / f"{sandbox}.json"
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_atomically(path, data):
+    partial = path.with_name(path.name + ".partial")
+    with open(partial, "wb") as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(partial, path)
+
+
+def read_manifest(request):
+    _, manifest = archive_paths(request)
+    try:
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        fail("The gVisor archive manifest is missing or invalid")
+    if (not isinstance(document, dict) or document.get("sandboxId") != request["sandboxId"]
+            or document.get("computerId") != request["computerId"] or document.get("ownerHash") != request["ownerHash"]
+            or not isinstance(document.get("sha256"), str) or not DIGEST.fullmatch(document["sha256"])):
+        fail("The gVisor archive manifest did not match this computer")
+    return document
+
+
+def verified_archive(request, expected_sha):
+    """The local archive, read back in full: its digest must be the one the caller and the manifest name."""
+    archive, _ = archive_paths(request)
+    manifest = read_manifest(request)
+    if manifest["sha256"] != expected_sha or not archive.is_file() or file_sha256(archive) != expected_sha:
+        fail("The gVisor archive did not verify")
+    return archive
+
+
+def pack(request):
+    """A stopped sandbox's workspace as a zstd tar, read back and checked before its manifest (written last) says it
+    is complete. The workspace itself is left as it is: `release` removes it once storage holds a verified copy."""
+    name, _, _ = names(request)
+    require_helper_absent(request)
+    item = inspect_container(name, request)
+    if item["State"].get("Running"):
+        fail("Stop this gVisor computer before packing it")
+    source = workspace_source(request)
+    ARCHIVE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    archive, manifest = archive_paths(request)
+    partial = archive.with_name(archive.name + ".partial")
+    with open(partial, "wb") as out:
+        tar = subprocess.Popen([TAR, "--numeric-owner", "--exclude=./lost+found", "-C", str(source), "-cf", "-", "."],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        zstd = subprocess.run([ZSTD, "-q", "-T0", "-c"], stdin=tar.stdout, stdout=out,
+                              stderr=subprocess.DEVNULL, timeout=3600, check=False)
+        tar.stdout.close()
+        if tar.wait(timeout=60) != 0 or zstd.returncode != 0:
+            partial.unlink(missing_ok=True)
+            fail("The gVisor workspace could not be packed")
+        out.flush()
+        os.fsync(out.fileno())
+    if run([ZSTD, "-q", "-t", str(partial)], check=False).returncode != 0:
+        partial.unlink(missing_ok=True)
+        fail("The gVisor archive did not verify")
+    sha = file_sha256(partial)
+    os.replace(partial, archive)
+    if file_sha256(archive) != sha:
+        fail("The gVisor archive did not verify")
+    document = {"version": 1, "adapterVersion": VERSION, "sandboxId": request["sandboxId"],
+                "computerId": request["computerId"], "ownerHash": request["ownerHash"],
+                "sha256": sha, "bytes": archive.stat().st_size, "packedAt": int(time.time())}
+    write_atomically(manifest, json.dumps(document, sort_keys=True).encode())
+    receipt = {"version": 1, "sandboxId": request["sandboxId"], "computerId": request["computerId"],
+               "sha256": sha, "bytes": document["bytes"], "archive": archive.name}
+    print("HIVRA_GVISOR_PACK_V1 " + json.dumps(receipt, sort_keys=True, separators=(",", ":")), flush=True)
+    return receipt
+
+
+def release(request):
+    """Remove a packed sandbox from this host. The caller has verified storage's copy against `archiveSha256`; the
+    local archive must still read back to the same digest, so a release can never follow a broken pack."""
+    name, _, _ = names(request)
+    item = inspect_container(name, request, required=False)
+    if item is not None and item["State"].get("Running"):
+        fail("A running gVisor computer cannot be released")
+    archive = verified_archive(request, request["archiveSha256"])
+    delete(request)
+    archive.unlink()
+    archive_paths(request)[1].unlink()
+    receipt = {"version": 1, "sandboxId": request["sandboxId"], "computerId": request["computerId"],
+               "state": "released", "sha256": request["archiveSha256"]}
+    print("HIVRA_GVISOR_RELEASE_V1 " + json.dumps(receipt, sort_keys=True, separators=(",", ":")), flush=True)
+    return receipt
+
+
+def safe_member_path(dest, name):
+    parts = PurePosixPath(name).parts
+    if name.startswith("/") or any(part in {"..", ""} for part in parts):
+        fail("The gVisor archive holds an unsafe path")
+    parts = tuple(part for part in parts if part != ".")
+    if not parts:
+        return None
+    current = dest
+    for part in parts[:-1]:
+        current = current / part
+        if current.is_symlink() or (current.exists() and not current.is_dir()):
+            fail("The gVisor archive holds an unsafe path")
+    return dest.joinpath(*parts)
+
+
+def ensure_parents(dest, target, uid):
+    current = dest
+    for part in target.relative_to(dest).parts[:-1]:
+        current = current / part
+        if not current.exists():
+            os.mkdir(current, 0o755)
+            os.lchown(current, uid, uid)
+
+
+def extract_tar_stream(stream, dest, uid=SANDBOX_UID):
+    """Unpack an untrusted tar stream into `dest` as `uid`: no absolute or parent paths, nothing written through a
+    link, no device or special files, no set-id bits. Returns how many members were skipped."""
+    skipped = 0
+    with tarfile.open(fileobj=stream, mode="r|") as archive:
+        for member in archive:
+            target = safe_member_path(dest, member.name)
+            if target is None:
+                continue
+            ensure_parents(dest, target, uid)
+            if member.isdir():
+                if target.is_symlink() or (target.exists() and not target.is_dir()):
+                    fail("The gVisor archive holds an unsafe path")
+                if not target.exists():
+                    os.mkdir(target, 0o700)
+                os.chmod(target, member.mode & 0o777)
+                os.lchown(target, uid, uid)
+            elif member.isreg():
+                source = archive.extractfile(member)
+                fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                try:
+                    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                        os.write(fd, chunk)
+                    os.fchown(fd, uid, uid)
+                    os.fchmod(fd, member.mode & 0o777)
+                finally:
+                    os.close(fd)
+            elif member.issym():
+                os.symlink(member.linkname, target)
+                os.lchown(target, uid, uid)
+            else:
+                skipped += 1
+    return skipped
+
+
+def restore(request):
+    """A packed sandbox back on this host from the archive the controller fetched, checked against `archiveSha256`
+    before anything is unpacked. It comes back stopped; `start` wakes it."""
+    name, volume, network = names(request)
+    archive = verified_archive(request, request["archiveSha256"])
+    require_helper_absent(request)
+    if (inspect_container(name, request, required=False) is not None
+            or inspect_resource("volume", volume, request) or inspect_resource("network", network, request)):
+        fail("The gVisor computer is already on this host")
+    cpu, memory = float(request["cpu"]), int(request["memoryMb"])
+    admit(name, cpu, memory, int(request["hostMemoryReserveMb"]), overcommit_of(request))
+    labels = expected_labels(request)
+    label_args = [value for pair in labels.items() for value in ("--label", f"{pair[0]}={pair[1]}")]
+    try:
+        docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
+        if "storageMb" in request:
+            create_quota_volume(request, volume, int(request["storageMb"]), label_args)
+        else:
+            docker("volume", "create", *label_args, volume)
+        docker("network", "create", "--driver", "bridge", *label_args, network)
+        initialize_workspace(request, volume)
+        dest = workspace_source(request)
+        unpack = subprocess.Popen([ZSTD, "-q", "-d", "-c", str(archive)], stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            extract_tar_stream(unpack.stdout, dest)
+        finally:
+            unpack.stdout.close()
+        if unpack.wait(timeout=60) != 0:
+            fail("The gVisor archive could not be unpacked")
+        create_container(request, cpu, memory)
+    except BaseException:
+        delete(request)
+        raise
+    archive.unlink()
+    archive_paths(request)[1].unlink()
+    return status(request)
+
+
+def enroll(request):
+    """Join the sandbox's runner to the agent app with a single-use code. The code goes to the image's enroll shim on
+    stdin, never on a command line, in an environment or in a log; the shim keeps the runner's state on the workspace,
+    so it comes back with a restore."""
+    name, _, _ = names(request)
+    require_helper_absent(request)
+    item = inspect_container(name, request)
+    if not item["State"].get("Running"):
+        fail("Start this gVisor computer before enrolling it")
+    result = subprocess.run(
+        ["/usr/bin/docker", "exec", "-i", "--user", f"{SANDBOX_UID}:{SANDBOX_UID}", "--workdir", "/workspace",
+         name, ENROLL_SHIM, request["serverUrl"]],
+        input=request["enrollCode"] + "\n", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        text=True, timeout=120, check=False)
+    if result.returncode != 0:
+        fail("The gVisor computer could not be enrolled")
+    receipt = {"version": 1, "sandboxId": request["sandboxId"], "computerId": request["computerId"], "enrolled": True}
+    print("HIVRA_GVISOR_ENROLL_V1 " + json.dumps(receipt, sort_keys=True, separators=(",", ":")), flush=True)
+    return receipt
 
 
 def status(request):
@@ -587,6 +920,7 @@ def delete(request):
         docker("network", "rm", network)
     if volume_exists:
         docker("volume", "rm", volume)
+    remove_quota(request)
     if (inspect_container(name, request, required=False)
             or inspect_helper(request, required=False)
             or inspect_resource("network", network, request)
@@ -610,7 +944,7 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX)
         name, volume, network = names(request)
         operation = request["operation"]
-        if operation != "delete":
+        if operation not in {"delete", "restore"}:
             recover_update(request)
         if operation == "create":
             create(request)
@@ -620,7 +954,9 @@ def main():
             require_helper_absent(request)
             item = inspect_container(name, request)
             admit(name, float(item["HostConfig"]["NanoCpus"]) / 1_000_000_000,
-                  int(item["HostConfig"]["Memory"]) // (1024 * 1024), int(request["hostMemoryReserveMb"]))
+                  int(item["HostConfig"]["Memory"]) // (1024 * 1024), int(request["hostMemoryReserveMb"]),
+                  overcommit_of(request))
+            ensure_quota_mounted(request)
             docker("start", name); status(request)
         elif operation == "stop":
             require_helper_absent(request)
@@ -629,7 +965,7 @@ def main():
             require_helper_absent(request)
             inspect_container(name, request)
             cpu, memory = float(request["cpu"]), int(request["memoryMb"])
-            admit(name, cpu, memory, int(request["hostMemoryReserveMb"]))
+            admit(name, cpu, memory, int(request["hostMemoryReserveMb"]), overcommit_of(request))
             docker("update", "--cpus", str(cpu), "--memory", f"{memory}m", "--memory-swap", f"{memory}m", name)
             status(request)
         elif operation == "exec":
@@ -638,6 +974,14 @@ def main():
             delete(request)
         elif operation == "update":
             update(request)
+        elif operation == "pack":
+            pack(request)
+        elif operation == "release":
+            release(request)
+        elif operation == "restore":
+            restore(request)
+        elif operation == "enroll":
+            enroll(request)
 
 
 if __name__ == "__main__":

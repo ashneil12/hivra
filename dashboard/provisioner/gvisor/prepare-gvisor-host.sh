@@ -46,11 +46,11 @@ PREVIOUS_ADAPTER_SHA256S="${HIVRA_GVISOR_PREVIOUS_ADAPTER_SHA256S:-}"
 prepare_stage="prerequisites"
 if ! command -v docker >/dev/null 2>&1; then
   apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends docker.io python3 ca-certificates curl bzip2
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends docker.io python3 ca-certificates curl bzip2 zstd
 elif ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 \
-  || ! command -v bzip2 >/dev/null 2>&1 || [ ! -r /etc/ssl/certs/ca-certificates.crt ]; then
+  || ! command -v bzip2 >/dev/null 2>&1 || ! command -v zstd >/dev/null 2>&1 || [ ! -r /etc/ssl/certs/ca-certificates.crt ]; then
   apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 ca-certificates curl bzip2
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 ca-certificates curl bzip2 zstd
 fi
 systemctl enable --now docker
 
