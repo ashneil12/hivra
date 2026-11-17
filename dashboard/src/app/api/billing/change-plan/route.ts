@@ -20,6 +20,14 @@ import { applyTierChange } from "@/lib/services/tier-change-service";
 import { tierFromPlanKey } from "@/lib/services/tier-specs";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { log } from "@/lib/logger";
+import { loadPlanLadderTag } from "@/lib/billing/plan-ladder-entitlement";
+import {
+  PLAN_LADDER_ID,
+  ladderPriceId,
+  ladderSubscriptionColumns,
+  readLadderSubscription,
+  readPlanLadderConfig,
+} from "@/lib/subscription/plan-ladder";
 
 /**
  * Self-serve plan DOWNGRADE (e.g. Power → Pro) is gated behind this flag so
@@ -93,6 +101,7 @@ export async function POST(req: NextRequest) {
     const { newPlan } = parsed.data;
 
     // ── 1. Load current subscription ────────────────────────────────────────
+    const ladderConfig = readPlanLadderConfig();
     const { data: sub } = await supabaseAdmin
       .from("hermes_subscriptions")
       .select(
@@ -237,10 +246,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const subscriptionItemId = stripeSubscription.items.data[0]?.id;
+    // A plan bought on the ladder moves within the ladder: its plan item is
+    // found by price (an always-on extra may sit beside it) and it keeps the
+    // ladder's prices and limits. Older plans keep the code's prices.
+    const ladder = readLadderSubscription(ladderConfig, stripeSubscription);
+    const onLadder = ladder.isLadder || (await loadPlanLadderTag(clerkUserId)) === PLAN_LADDER_ID;
+    if (onLadder && (!ladderConfig || !ladder.planItem?.id)) {
+      log.error("change-plan blocked: ladder plan cannot be resolved", new Error("plan ladder unresolved"), {
+        source: "billing-change-plan",
+        route: "/api/billing/change-plan",
+        method: "POST",
+        failureType: !ladderConfig ? "plan_ladder_config_missing" : "plan_ladder_item_missing",
+        userId: clerkUserId,
+        subscriptionId: sub.stripe_subscription_id,
+      });
+      return apiError("Plan changes are paused for a moment. Please try again shortly.", 503);
+    }
+
+    const subscriptionItemId = onLadder ? ladder.planItem?.id : stripeSubscription.items.data[0]?.id;
     if (!subscriptionItemId) {
       return apiError("Stripe subscription item not found. Please contact support.", 500);
     }
+    const targetPriceId =
+      onLadder && ladderConfig ? ladderPriceId(ladderConfig, newPlan, "monthly") : targetPlan.stripePriceId;
+    if (!targetPriceId) {
+      return apiError("This plan is not available right now.", 400);
+    }
+    const targetName = onLadder && ladderConfig ? ladderConfig.plans[newPlan].name : targetPlan.name;
+    const ladderColumns =
+      onLadder && ladderConfig ? ladderSubscriptionColumns(ladderConfig, newPlan, ladder.alwaysOnExtras) : null;
 
     const updatedSubscription = await stripe.subscriptions.update(
       sub.stripe_subscription_id,
@@ -248,7 +282,7 @@ export async function POST(req: NextRequest) {
         items: [
           {
             id: subscriptionItemId,
-            price: targetPlan.stripePriceId,
+            price: targetPriceId,
           },
         ],
         proration_behavior: "create_prorations",
@@ -257,6 +291,7 @@ export async function POST(req: NextRequest) {
           plan: newPlan,
           previous_plan: currentPlan,
           changed_at: new Date().toISOString(),
+          ...(onLadder ? { plan_ladder: PLAN_LADDER_ID } : {}),
         },
       }
     );
@@ -283,6 +318,7 @@ export async function POST(req: NextRequest) {
       instance_limit: targetPlan.maxAgents,
       total_cpu_budget: targetPlan.totalCpu,
       total_ram_budget: targetPlan.totalRam,
+      ...(ladderColumns ?? {}),
       excess_resources: false,
       updated_at: new Date().toISOString(),
       // Conversion stamp (write-once): only a free->paid transition counts
@@ -393,8 +429,8 @@ export async function POST(req: NextRequest) {
       direction: isUpgrade ? "upgraded" : "downgraded",
       skippedTiers: Math.abs(toIndex - fromIndex) - 1,
       message: isUpgrade
-        ? `Successfully upgraded to ${targetPlan.name}. Prorated charge applied.`
-        : `Switched to ${targetPlan.name}. You'll get account credit for the unused time on your previous plan.`,
+        ? `Successfully upgraded to ${targetName}. Prorated charge applied.`
+        : `Switched to ${targetName}. You'll get account credit for the unused time on your previous plan.`,
       // Only present when the local row could not be written after Stripe
       // accepted the change; the webhook is expected to bring the row in line.
       ...(dbSyncFailure
