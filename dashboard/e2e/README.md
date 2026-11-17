@@ -250,10 +250,12 @@ A separate test reads the live Launch page and fails if it offers a tile that
 **Cost cap.** One small Canary VM per target for ~10 minutes, at most two at
 once, and model use limited by the account's starter credit. Never retried.
 
-**When it runs** (`.github/workflows/launch-sweep.yml`): daily at 06:00 UTC,
-after a provisioner release reaches Canary, on every release PR into `main`,
-and by hand. It needs three repository secrets: `CANARY_CLERK_SECRET_KEY`
-(`sk_test_…` only), `CANARY_SUPABASE_URL`, `CANARY_SUPABASE_SERVICE_ROLE_KEY`.
+**Where it runs.** Not from this repository's Actions: the public-tree rules keep
+workflows bound to live infrastructure out of the public tree, and public run logs
+would show Canary's internals. The schedule (daily, after each provisioner release
+reaches Canary, and before every release into `main`) runs from a private
+operations runner that checks out this repository and runs the commands below with
+the Canary test credentials.
 
 ```bash
 CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \
