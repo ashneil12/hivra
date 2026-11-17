@@ -89,7 +89,13 @@ case "$STATUS/\${QMP:-none}/\${LOCK:-none}" in
   running/running/none) emit true awake observed "$UNIT" ;;
   running/paused/none) emit true napping observed "$UNIT" ;;
   stopped/*/suspended) emit true hibernated observed "$UNIT" ;;
-  stopped/*/none) emit true cold observed "$UNIT" ;;
+  stopped/*/none)
+    # A long sleeper whose saved memory was dropped is off on purpose and still asleep: the host's mark,
+    # written for exactly this computer, says so. The wake boots it from its disk.
+    if [ "$(cat "/var/lib/hivra-sleep/cold-$VMID" 2>/dev/null || true)" = "$EXPECTED_BINDING_TAG" ]; then
+      emit true hibernated observed "$UNIT"
+    fi
+    emit true cold observed "$UNIT" ;;
   *) emit false unknown unexpected_state "$UNIT" ;;
 esac
 `;
