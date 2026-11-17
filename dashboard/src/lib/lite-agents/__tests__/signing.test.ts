@@ -3,8 +3,8 @@ import crypto from "node:crypto";
 import { isFreeCloudAgentEnabled } from "../flag";
 import { isAllowedLiteRoute, liteSignatureHeaders, liteSignedMessage } from "../signing";
 
-const AGENT = "11111111-2222-4333-8444-555555555555";
-const SESSION = "66666666-7777-4888-9999-aaaaaaaaaaaa";
+const AGENT = "00000000-0000-4000-8000-000000000001";
+const SESSION = "00000000-0000-4000-8000-000000000002";
 
 describe("free cloud agent flag", () => {
   it("is off unless set to 1 or true", () => {
