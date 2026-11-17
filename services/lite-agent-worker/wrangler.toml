@@ -1,0 +1,38 @@
+# Lite cloud agents: Cloudflare Worker + Durable Objects (CANARY, behind
+# NEXT_PUBLIC_HIVRA_FREE_CLOUD_AGENT on the dashboard).
+#
+# One LiteAgent object per agent (its own SQLite: sessions, messages, memory
+# notes) and one LiteAccount object per Hivra account (its agent list and the
+# day's free message allowance). Idle objects cost nothing.
+#
+# Only Hivra's server calls this Worker; every request is signed with
+# LITE_AGENT_SECRET. Browsers never reach it directly.
+#
+# Deploy:  CLOUDFLARE_API_TOKEN=<workers-scoped-token> npx wrangler deploy
+# Secrets: npx wrangler secret put LITE_AGENT_SECRET   (>= 32 chars; must match
+#          HIVRA_LITE_AGENT_SECRET on the Vercel project)
+#          npx wrangler secret put <each keySecret named in LITE_MODELS>
+name = "lite-agent-canary"
+main = "src/index.ts"
+compatibility_date = "2024-11-06"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "LITE_AGENT"
+class_name = "LiteAgent"
+
+[[durable_objects.bindings]]
+name = "LITE_ACCOUNT"
+class_name = "LiteAccount"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LiteAgent", "LiteAccount"]
+
+[vars]
+# Ordered model list. The first that answers wins; the rest are fallbacks.
+# keySecret names a Worker secret holding that provider's API key.
+LITE_MODELS = '[]'
+LITE_MAX_AGENTS = "1"
+LITE_MAX_SESSIONS = "256"
+LITE_DAILY_MESSAGES = "20"
