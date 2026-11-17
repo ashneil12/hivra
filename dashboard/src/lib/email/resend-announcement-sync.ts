@@ -2,6 +2,11 @@ import { Resend } from "resend";
 import { log } from "@/lib/logger";
 
 import { pickVerifiedEmail } from "./clerk-verified-email";
+import {
+  DEFAULT_SEGMENT_NAME,
+  DEFAULT_TOPIC_DESCRIPTION,
+  DEFAULT_TOPIC_NAME,
+} from "./announcement-audience";
 import { isInternalNonReceivingRecipient } from "./welcome";
 
 const LOG_SOURCE = "resend-announcement-sync";
@@ -13,11 +18,6 @@ const ANNOUNCEMENT_SETUP_TTL_MS = 5 * 60_000;
 const CONTACT_SYNC_DELAY_MS = 800;
 const RATE_LIMIT_RETRY_MS = 1_500;
 const MAX_RATE_LIMIT_RETRIES = 5;
-const DEFAULT_SEGMENT_NAME = "Hivra customers";
-const DEFAULT_TOPIC_NAME = "Product updates";
-const DEFAULT_TOPIC_DESCRIPTION =
-  "Product announcements, launch notes, customer updates, and other Hivra news.";
-
 const CONTACT_PROPERTIES = [
   { key: "clerk_user_id", type: "string" as const },
   { key: "clerk_created_at", type: "string" as const },

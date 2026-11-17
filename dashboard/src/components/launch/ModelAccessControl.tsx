@@ -22,6 +22,8 @@ import {
   type SavedModelKey,
 } from "@/lib/launch/model-access";
 
+import { VENICE_API_KEYS_URL, veniceSetupCallLink } from "@/lib/venice/onboarding";
+
 import type { VeniceKeyCheckResult } from "@/app/api/launch/venice-key-check/route";
 
 import styles from "./ModelAccessControl.module.css";
@@ -118,6 +120,8 @@ export function ModelAccessControl({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the list first arrives.
   }, [needsLiveModel, firstLive]);
   const customModel = model !== "" && !models.some(choice => choice.value === model);
+  const usesVenice = access.mode === "credits" || (access.mode === "api-key" && provider === "venice");
+  const setupCall = veniceSetupCallLink(agentName.trim() || null);
 
   const chooseMode = (mode: LaunchModelAccess["mode"]) => {
     if (mode === access.mode) return;
@@ -301,6 +305,11 @@ export function ModelAccessControl({
                 onChange={event => onPastedKeyChange(event.target.value)}
               />
               <small>Sent only to {name}&apos;s computer. It isn&apos;t kept in this browser.</small>
+              {provider === "venice" ? (
+                <small>
+                  No key yet? <a href={VENICE_API_KEYS_URL} target="_blank" rel="noopener noreferrer">Create one in your Venice settings</a>, then paste it here.
+                </small>
+              ) : null}
               {provider === "venice" && keyCheck.state !== "idle" ? (
                 <small aria-live="polite">
                   {keyCheck.state === "checking" ? "Checking your key…"
@@ -361,16 +370,32 @@ export function ModelAccessControl({
               </select>
             </div>
           ) : null}
+          <p className={styles.note}>
+            Models come from Venice through Hivra, so you don&apos;t need a Venice account. Usage comes out of your Hivra credits. Models marked Private don&apos;t keep your prompts.
+          </p>
           {profileId === "aeon" ? (
             <p className={styles.note}>Aeon adds the credits to its model settings when you connect GitHub. You can change this choice there.</p>
           ) : profileId === "openclaw" || profileId === "agent-zero" || profileId === "openbot" || profileId === "hermes-computer" ? (
-            <p className={styles.note}>Hivra sets {name} up with Venice models paid from your credits. You can change its provider later in its own settings.</p>
+            <p className={styles.note}>You can change its provider later in its own settings.</p>
           ) : null}
           {modelPicker}
         </div>
       ) : null}
 
       {problem ? <p className={styles.problem} role="status">{problem}</p> : null}
+
+      {usesVenice ? (
+        <p className={styles.note}>
+          Want a hand connecting Venice?{" "}
+          <a
+            href={setupCall.href}
+            data-cta="launch-venice-setup-call"
+            {...(setupCall.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+          >
+            Book a setup call
+          </a>
+        </p>
+      ) : null}
     </div>
   );
 }

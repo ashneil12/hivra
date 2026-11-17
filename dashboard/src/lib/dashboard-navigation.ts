@@ -63,6 +63,7 @@ export const DASHBOARD_PRIMARY_NAVIGATION: readonly DashboardNavigationItem[] = 
     icon: Bot,
     routePrefixes: [
       "/dashboard/agents",
+      "/dashboard/free-agent",
       "/dashboard/agent",
       "/dashboard/instances",
       "/dashboard/chat",
