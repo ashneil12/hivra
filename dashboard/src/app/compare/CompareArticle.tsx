@@ -117,14 +117,14 @@ function sectionClass(section: CompareSection): string | undefined {
 }
 
 /** The month in the sources paragraph is wrapped in a machine readable <time>. */
-function SourcesIntro({ text }: { text: string }) {
-  const month = formatCheckedMonth();
+function SourcesIntro({ text, checked = COMPETITOR_FACTS_CHECKED }: { text: string; checked?: string }) {
+  const month = formatCheckedMonth(checked);
   const at = text.indexOf(month);
   if (at < 0) return <Inline text={text} />;
   return (
     <>
       <Inline text={text.slice(0, at)} />
-      <time dateTime={COMPETITOR_FACTS_CHECKED}>{month}</time>
+      <time dateTime={checked}>{month}</time>
       <Inline text={text.slice(at + month.length)} />
     </>
   );
@@ -135,7 +135,7 @@ function Sources({ sources }: { sources: CompareSources }) {
     <section id="fact-sources" aria-labelledby="fact-sources-heading">
       <h2 id="fact-sources-heading">{sources.heading ?? "Where these numbers come from"}</h2>
       <p>
-        <SourcesIntro text={sources.intro} />
+        <SourcesIntro text={sources.intro} checked={sources.checked} />
       </p>
       {sources.notes?.map((note) => (
         <p key={note}>
