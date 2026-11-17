@@ -54,16 +54,16 @@ describe("parseAccessDrainOutput", () => {
 
 describe("agentAt", () => {
   const candidates: AgentCandidate[] = [
-    { id: "old", user_id: "u1", vmid: 2104, proxmox_host: "pve11", status: "deleted", created_at: "2026-01-01T00:00:00Z" },
-    { id: "new", user_id: "u2", vmid: 2104, proxmox_host: "pve11", status: "running", created_at: "2026-11-17T00:00:00Z" },
-    { id: "other-host", user_id: "u3", vmid: 2104, proxmox_host: "pve12", status: "running", created_at: "2026-11-10T00:00:00Z" },
+    { id: "old", user_id: "u1", vmid: 2104, proxmox_host: "host-a", status: "deleted", created_at: "2026-01-01T00:00:00Z" },
+    { id: "new", user_id: "u2", vmid: 2104, proxmox_host: "host-a", status: "running", created_at: "2026-11-17T00:00:00Z" },
+    { id: "other-host", user_id: "u3", vmid: 2104, proxmox_host: "host-b", status: "running", created_at: "2026-11-10T00:00:00Z" },
   ];
 
   it("picks the computer that held this VMID on this host at that moment", () => {
-    expect(agentAt(candidates, "pve11", 2104, Date.parse("2026-11-18T00:00:00Z") / 1000)?.id).toBe("new");
-    expect(agentAt(candidates, "pve11", 2104, Date.parse("2026-06-01T00:00:00Z") / 1000)?.id).toBe("old");
-    expect(agentAt(candidates, "PVE12", 2104, Date.parse("2026-11-18T00:00:00Z") / 1000)?.id).toBe("other-host");
-    expect(agentAt(candidates, "pve13", 2104, Date.parse("2026-11-18T00:00:00Z") / 1000)).toBeNull();
+    expect(agentAt(candidates, "host-a", 2104, Date.parse("2026-11-18T00:00:00Z") / 1000)?.id).toBe("new");
+    expect(agentAt(candidates, "host-a", 2104, Date.parse("2026-06-01T00:00:00Z") / 1000)?.id).toBe("old");
+    expect(agentAt(candidates, "HOST-B", 2104, Date.parse("2026-11-18T00:00:00Z") / 1000)?.id).toBe("other-host");
+    expect(agentAt(candidates, "host-c", 2104, Date.parse("2026-11-18T00:00:00Z") / 1000)).toBeNull();
   });
 });
 
@@ -73,8 +73,8 @@ describe("bucketAccessEvents", () => {
       [event(1), event(2, { program: "cat" }), event(3, { at: 1795000000 + 3600 }), event(4, { actor_class: "staff", actor_label: "Hivra staff", channel: "ssh", program: null })],
       { installed: true, last_seq: 4 },
     ))!;
-    const buckets = bucketAccessEvents("pve11", parsed.events, [
-      { id: "a1", user_id: "u1", vmid: 2104, proxmox_host: "pve11", status: "running", created_at: "2026-01-01T00:00:00Z" },
+    const buckets = bucketAccessEvents("host-a", parsed.events, [
+      { id: "a1", user_id: "u1", vmid: 2104, proxmox_host: "host-a", status: "running", created_at: "2026-01-01T00:00:00Z" },
     ]);
     expect(buckets).toHaveLength(3);
     expect(buckets[0]).toMatchObject({ agent_id: "a1", user_id: "u1", count: 2, programs: ["bash", "cat"], channel: "command", actor_class: "system" });
@@ -89,9 +89,9 @@ describe("runAccessLogCollection", () => {
     const chain = (table: string) => {
       const q: Record<string, unknown> = {};
       const result = () => {
-        if (table === "proxmox_hosts") return { data: [{ id: "pve11" }], error: null };
+        if (table === "proxmox_hosts") return { data: [{ id: "host-a" }], error: null };
         if (table === "hivra_access_log_cursors") return { data: cursor === null ? null : { last_seq: cursor }, error: null };
-        if (table === "hivra_agents") return { data: [{ id: "a1", user_id: "u1", vmid: 2104, proxmox_host: "pve11", status: "running", created_at: "2026-01-01T00:00:00Z" }], error: null };
+        if (table === "hivra_agents") return { data: [{ id: "a1", user_id: "u1", vmid: 2104, proxmox_host: "host-a", status: "running", created_at: "2026-01-01T00:00:00Z" }], error: null };
         return { data: null, error: null, count: 0 };
       };
       for (const m of ["select", "eq", "in", "lt", "order", "limit", "gte"]) q[m] = () => q;
@@ -131,7 +131,7 @@ describe("runAccessLogCollection", () => {
     const fake = fakeDb(null);
     const runHostScript = jest.fn(async () => ({ ok: true, stdout: 'HIVRA_ACCESS_END {"installed":false}', stderr: "" }));
     const summary = await runAccessLogCollection({ env: { HIVRA_ACCESS_LOG_COLLECTION: "on" }, db: fake.db, runHostScript: runHostScript as never });
-    expect(summary.notInstalled).toEqual(["pve11"]);
+    expect(summary.notInstalled).toEqual(["host-a"]);
     expect(fake.calls.filter((c) => c.table === "hivra_access_log_cursors")).toEqual([]);
   });
 });

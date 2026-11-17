@@ -32,9 +32,9 @@ describe("parseSite", () => {
 
   it.each([
     ["*.example.com", "wildcards"],
-    ["10.0.0.1", "private"],
+    ["10.250.0.1", "private"],
     ["192.168.1.0/24", "private"],
-    ["1.2.3.0/4", "range"],
+    ["1.1.1.1/4", "range"],
     ["localhost", "site address"],
     ["not a host", "site address"],
     ["ftp://", "web address"],
@@ -56,7 +56,7 @@ describe("normalizeSites", () => {
 
 describe("requiredSites", () => {
   it("always keeps this deployment, Cloudflare Tunnel and any extras reachable", () => {
-    expect(requiredSites({ NEXT_PUBLIC_APP_URL: "https://canary.example.cloud", HIVRA_EGRESS_REQUIRED_EXTRA: "pypi.org, 10.0.0.1 ,files.pythonhosted.org" }))
+    expect(requiredSites({ NEXT_PUBLIC_APP_URL: "https://canary.example.cloud", HIVRA_EGRESS_REQUIRED_EXTRA: "pypi.org, 10.250.0.1 ,files.pythonhosted.org" }))
       .toEqual(["canary.example.cloud", "198.41.192.0/24", "198.41.200.0/24", "pypi.org", "files.pythonhosted.org"]);
   });
 

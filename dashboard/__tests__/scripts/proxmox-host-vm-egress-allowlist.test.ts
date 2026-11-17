@@ -28,7 +28,7 @@ function fixture() {
   writeFileSync(path.join(qemu, "2105.conf"), `name: x\ntags: ${TAG_A}\nipconfig0: ip=10.250.20.52/24\n`);
   writeFileSync(path.join(policies, "2104.json"), JSON.stringify({
     version: 1, vmid: 2104, binding_tag: TAG_A,
-    sites: ["github.com", "api.example.com", "10.0.0.0/8", "bad host", "*.wild.com", "8.8.4.0/24"],
+    sites: ["github.com", "api.example.com", "10.250.0.0/16", "bad host", "*.wild.com", "104.16.0.0/13"],
     required: ["hivra.cloud", "198.41.192.0/24"],
   }));
   writeFileSync(path.join(policies, "2105.json"), JSON.stringify({ version: 1, vmid: 2105, binding_tag: TAG_B, sites: ["x.com"], required: [] }));
@@ -36,9 +36,9 @@ function fixture() {
   writeFileSync(path.join(policies, "notes.txt"), "ignored");
   const resolve = path.join(root, "resolve.json");
   writeFileSync(resolve, JSON.stringify({
-    "github.com": ["140.82.112.3", "140.82.112.4"],
+    "github.com": ["1.1.1.1", "1.0.0.1"],
     "hivra.cloud": ["76.76.21.21"],
-    "api.example.com": ["10.1.2.3"],
+    "api.example.com": ["10.250.1.3"],
   }));
   return { root, qemu, policies, resolve };
 }
@@ -68,8 +68,8 @@ describe("proxmox-host-vm-egress-allowlist --render", () => {
 
   it("allows the resolved sites plus Hivra's required ones, and only public addresses", () => {
     const set = out.split("\n").find((line) => line.includes("elements ="));
-    expect(set).toBe("\t\telements = { 8.8.4.0/24, 76.76.21.21/32, 140.82.112.3/32, 140.82.112.4/32, 198.41.192.0/24 }");
-    expect(out).toContain("# note: vm 2104: 10.0.0.0/8 is not a public address; ignored");
+    expect(set).toBe("\t\telements = { 1.0.0.1/32, 1.1.1.1/32, 76.76.21.21/32, 104.16.0.0/13, 198.41.192.0/24 }");
+    expect(out).toContain("# note: vm 2104: 10.250.0.0/16 is not a public address; ignored");
     expect(out).toContain("# note: vm 2104: 'bad host' is not a host name; ignored");
     expect(out).toContain("# note: vm 2104: '*.wild.com' is not a host name; ignored");
     expect(out).toContain("# note: vm 2104: api.example.com did not resolve; nothing allowed for it this run");

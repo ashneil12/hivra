@@ -57,7 +57,7 @@ describe("/api/hivra/agents/[id]/allowed-sites", () => {
     mockAuth.mockResolvedValue({ userId: "u1" });
     tables.hivra_agents = [{ id: AGENT, user_id: "u1", status: "running", vmid: 2104, computer_substrate: "proxmox-kvm" }];
     tables.hivra_agent_allowed_sites = [];
-    mockResolve.mockReset().mockResolvedValue({ ok: true, target: { vmid: 2104, bindingTag: TAG, env: { HOST: "pve11" } } });
+    mockResolve.mockReset().mockResolvedValue({ ok: true, target: { vmid: 2104, bindingTag: TAG, env: { HOST: "host-a" } } });
     mockRun.mockReset().mockResolvedValue({ ok: true, stdout: 'HIVRA_EGRESS_RESULT {"ok":true,"vmid":2104,"reason":"applied"}\n', stderr: "" });
   });
   afterAll(() => { process.env.NEXT_PUBLIC_HIVRA_ALLOWED_SITES = env; });
@@ -89,7 +89,7 @@ describe("/api/hivra/agents/[id]/allowed-sites", () => {
   });
 
   it("refuses entries it can't enforce, and saves nothing", async () => {
-    const res = await PUT(put({ enabled: true, sites: ["*.example.com", "10.0.0.1"] }) as never, ctx);
+    const res = await PUT(put({ enabled: true, sites: ["*.example.com", "10.250.0.1"] }) as never, ctx);
     expect(res.status).toBe(400);
     expect(tables.hivra_agent_allowed_sites).toEqual([]);
     expect(mockRun).not.toHaveBeenCalled();

@@ -48,7 +48,7 @@
 #   sudo proxmox-host-vm-egress-allowlist.sh --uninstall  rollback: stop the timer, delete the table
 #
 # Environment (tests): QEMU_CONF_DIR, EGRESS_POLICY_DIR, NFT_BIN, EGRESS_LOCK,
-# EGRESS_TMPDIR, EGRESS_RESOLVE_FIXTURE (a JSON file {"name": ["1.2.3.4"]}
+# EGRESS_TMPDIR, EGRESS_RESOLVE_FIXTURE (a JSON file {"name": ["192.0.2.4"]}
 # used instead of DNS).
 # Read-only except --apply, --install and --uninstall. Bash 3.2 compatible.
 
