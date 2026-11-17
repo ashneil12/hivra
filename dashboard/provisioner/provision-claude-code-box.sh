@@ -64,7 +64,7 @@ NODE_VERSION="${NODE_VERSION:-22.23.2}"
 NODE_LINUX_X64_SHA256="${NODE_LINUX_X64_SHA256:-d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307}"
 TTYD_VERSION="${TTYD_VERSION:-1.7.7}"
 TTYD_LINUX_X64_SHA256="${TTYD_LINUX_X64_SHA256:-8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55}"
-AGENT_ZERO_IMAGE_DIGEST="${AGENT_ZERO_IMAGE_DIGEST:-}"  # default: agent-app-versions.json
+AGENT_ZERO_IMAGE_DIGEST="${AGENT_ZERO_IMAGE_DIGEST:-}"  # default: the image's latest tag at launch
 CDP_PORT="${CDP_PORT:-9222}"                    # local Chrome remote-debugging port
 PROFILE_DIR="${PROFILE_DIR:-/home/${AGENT_USER}/.browser-profile}"  # NON-default Chrome profile (Chrome 136+ gotcha)
 HIVRA_CHAT_PORT="${HIVRA_CHAT_PORT:-8080}"      # Hivra chat HTTP port
@@ -146,38 +146,6 @@ ok()   { printf '%s  ok%s %s\n' "$c_green" "$c_reset" "$*"; }
 warn() { printf '%s  ! %s %s\n' "$c_red" "$c_reset" "$*" >&2; }
 die()  { warn "$*"; exit 1; }
 
-# The vetted Claude Code / Codex versions ship with the bundle as data, so the
-# runtime updater and the dashboard read the same pins this installer uses.
-read_agent_cli_pin() {
-  python3 -I -c 'import json, re, sys
-value = json.load(open(sys.argv[1])).get(sys.argv[2])
-if not isinstance(value, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value): sys.exit(1)
-print(value)' "$SRC_DIR/agent-cli-versions.json" "$1" 2>/dev/null
-}
-if [ -z "${CLAUDE_CODE_VERSION:-}" ]; then
-  CLAUDE_CODE_VERSION="$(read_agent_cli_pin claude-code)" || die "agent-cli-versions.json has no valid claude-code pin"
-fi
-if [ -z "${CODEX_CLI_VERSION:-}" ]; then
-  CODEX_CLI_VERSION="$(read_agent_cli_pin codex)" || die "agent-cli-versions.json has no valid codex pin"
-fi
-# The tested Aeon commit, OpenClaw version and Agent Zero image ship the same
-# way (agent-app-versions.json), so the app updater (hivra-agent-app-update.sh)
-# and the dashboard read the pins this installer uses.
-read_agent_app_pin() {
-  python3 -I -c 'import json, re, sys
-pins = {"aeon": r"[0-9a-f]{40}", "openclaw": r"[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}", "agent-zero": r"sha256:[0-9a-f]{64}"}
-entry = json.load(open(sys.argv[1])).get(sys.argv[2])
-value = entry.get("version") if isinstance(entry, dict) else None
-if not isinstance(value, str) or not re.fullmatch(pins[sys.argv[2]], value): sys.exit(1)
-print(value)' "$SRC_DIR/agent-app-versions.json" "$1" 2>/dev/null
-}
-case "$AGENT_KIND" in
-  aeon) [ -n "${AEON_REF:-}" ] || AEON_REF="$(read_agent_app_pin aeon)" || die "agent-app-versions.json has no valid aeon pin" ;;
-  openclaw) [ -n "${OPENCLAW_VERSION:-}" ] || OPENCLAW_VERSION="$(read_agent_app_pin openclaw)" || die "agent-app-versions.json has no valid openclaw pin" ;;
-esac
-if [ -z "$AGENT_ZERO_IMAGE_DIGEST" ]; then
-  AGENT_ZERO_IMAGE_DIGEST="$(read_agent_app_pin agent-zero)" || die "agent-app-versions.json has no valid agent-zero pin"
-fi
 # The pinned Google Chrome build ships as data too (chrome-pin.json), so this
 # installer and the runtime updater (hivra-guest-runtime-update.sh), which moves
 # an existing computer to the pin, read the same file.
@@ -220,7 +188,7 @@ fi
 [[ "$GH_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid GitHub CLI checksum"
 [[ "$NODE_LINUX_X64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid Node.js checksum"
 [[ "$TTYD_LINUX_X64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid ttyd checksum"
-[[ "$AGENT_ZERO_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "invalid Agent Zero image digest"
+[ -z "$AGENT_ZERO_IMAGE_DIGEST" ] || [[ "$AGENT_ZERO_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "invalid Agent Zero image digest"
 [[ "$CDP_PORT" =~ ^[0-9]+$ ]] && [ "$CDP_PORT" -ge 1 ] && [ "$CDP_PORT" -le 65535 ] \
   || die "CDP_PORT must be an integer from 1 to 65535"
 if [ -n "$ACCESS_HOSTNAME" ]; then
@@ -237,8 +205,8 @@ fi
 say "agent kind: ${c_bold}${AGENT_KIND}${c_reset} (browser overlay: $([ "$WANT_BROWSER" = 1 ] && echo yes || echo no))"
 
 # Chat + prompt artifacts are always required; browser artifacts only for claude.
-for f in VERSION bux-hivra-chat.service system-prompt.md hivra-agent-shell agent-cli-versions.json hivra-codex-config-pin.py \
-         agent-app-versions.json hivra-agent-app-update.sh \
+for f in VERSION bux-hivra-chat.service system-prompt.md hivra-agent-shell hivra-codex-config-pin.py \
+         hivra-agent-app-update.sh \
          hivra-surface-watchdog.py hivra-surface-watchdog.service \
          bux-ttyd-base-path.conf bux-box-ttyd.service \
          hivra-runtime-receipt.py \
@@ -293,12 +261,48 @@ with_retries() {
 apt_get update -y || die "apt-get update failed after retries"
 apt_get install -y curl ca-certificates git wget gnupg tmux sudo xz-utils \
   || die "base package installation failed after retries"
+
 if [ "$COMPUTER_SUBSTRATE" = "proxmox-kvm" ]; then
   apt_get install -y qemu-guest-agent || die "qemu-guest-agent installation failed after retries"
   systemctl enable --now qemu-guest-agent \
     || die "qemu-guest-agent failed to start"
 fi
 ok "base packages present"
+
+# Hivra pins no agent version: each launch installs the newest release its
+# upstream publishes at this moment. After launch Hivra never changes it on its
+# own; the owner updates it (the Update button, or the agent's own command).
+# An operator can still pass an exact version through the environment.
+npm_latest_version() {
+  curl -fsSL --max-time 30 "https://registry.npmjs.org/$1/latest" 2>/dev/null \
+    | python3 -I -c 'import json, re, sys
+value = json.load(sys.stdin).get("version")
+if not isinstance(value, str) or not re.fullmatch(r"[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}", value): sys.exit(1)
+print(value)'
+}
+latest_or_die() {
+  local value
+  value="$(with_retries npm_latest_version "$1")" || die "could not find the newest $1 release on npm"
+  printf '%s\n' "$value"
+}
+if [ -z "${CLAUDE_CODE_VERSION:-}" ]; then CLAUDE_CODE_VERSION="$(latest_or_die @anthropic-ai/claude-code)"; fi
+if [ -z "${CODEX_CLI_VERSION:-}" ]; then CODEX_CLI_VERSION="$(latest_or_die @openai/codex)"; fi
+[[ "$CLAUDE_CODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "CLAUDE_CODE_VERSION must be an x.y.z version"
+[[ "$CODEX_CLI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "CODEX_CLI_VERSION must be an x.y.z version"
+ok "newest releases: Claude Code ${CLAUDE_CODE_VERSION}, Codex ${CODEX_CLI_VERSION}"
+case "$AGENT_KIND" in
+  openclaw)
+    if [ -z "${OPENCLAW_VERSION:-}" ]; then OPENCLAW_VERSION="$(latest_or_die openclaw)"; fi
+    ok "newest OpenClaw release: ${OPENCLAW_VERSION}"
+    ;;
+  aeon)
+    if [ -z "${AEON_REF:-}" ]; then
+      AEON_REF="$(with_retries git ls-remote "${AEON_REPO_URL:-https://github.com/aaronjmars/aeon.git}" HEAD | awk 'NR == 1 { print $1 }')" \
+        || die "could not find Aeon's newest commit"
+    fi
+    ok "newest Aeon commit: ${AEON_REF}"
+    ;;
+esac
 
 if [ -z "$ACCESS_HOSTNAME" ] && { ! command -v cloudflared >/dev/null 2>&1 || ! cloudflared --version 2>/dev/null | grep -Fq "$CLOUDFLARED_VERSION"; }; then
   say "installing verified cloudflared ${CLOUDFLARED_VERSION}"
@@ -485,7 +489,8 @@ else
   [ "$BUX_CHECKOUT_CREATED" = 1 ] \
     || die "existing bux base is incomplete; trusted base repair is required"
   # Only the checkout created by this invocation is eligible for root execution.
-  # Pin its two CLI downloads before running the reviewed upstream installer.
+  # Point its two CLI downloads at the newest releases found above, so the
+  # version installed is the one Hivra records.
   sed -i -E \
     "s#npm install -g @anthropic-ai/claude-code(@[^[:space:]\\]+)?#npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}#" \
     "${BUX_DIR}/install.sh"
@@ -513,7 +518,7 @@ ensure_bux_installed
 
 if ! claude --version 2>/dev/null | grep -Fq "$CLAUDE_CODE_VERSION"; then
   with_retries run_public_bootstrap npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-    || die "failed to install pinned Claude Code ${CLAUDE_CODE_VERSION}"
+    || die "failed to install Claude Code ${CLAUDE_CODE_VERSION}"
 fi
 
 # Sanity: the installer should have produced these. Fail loud if not.
@@ -562,7 +567,7 @@ if [ "$AGENT_KIND" = "codex" ]; then
     || die "Codex CLI version does not match ${CODEX_CLI_VERSION}"
   sudo -u "${AGENT_USER}" env HOME="${AGENT_HOME}" python3 -I - < "$SRC_DIR/hivra-codex-config-pin.py" >/dev/null \
     || die "could not turn off the Codex startup update check"
-  ok "codex stays on the vetted ${CODEX_CLI_VERSION} (startup update check off)"
+  ok "codex ${CODEX_CLI_VERSION} installed (startup update check off; the owner updates it)"
 fi
 install -d -o root -g root -m 0755 /var/log/bux
 
@@ -975,12 +980,13 @@ if [ ! -d "${AEON_DIR}/.git" ]; then
   sudo -u "${AGENT_USER}" git -C "${AEON_DIR}" init -q
   sudo -u "${AGENT_USER}" git -C "${AEON_DIR}" remote add origin "${AEON_REPO_URL}"
   sudo -u "${AGENT_USER}" git -C "${AEON_DIR}" fetch --depth 1 origin "${AEON_REF}" \
-    || die "failed to fetch pinned aeon commit"
+    || die "failed to fetch aeon commit ${AEON_REF}"
   sudo -u "${AGENT_USER}" git -C "${AEON_DIR}" checkout -q --detach FETCH_HEAD
 else
+  # A re-run keeps the checkout it made at launch: only its owner moves it.
   AEON_HEAD="$(sudo -u "${AGENT_USER}" git -C "${AEON_DIR}" rev-parse HEAD 2>/dev/null || true)"
-  [ "$AEON_HEAD" = "$AEON_REF" ] \
-    || die "existing aeon checkout is ${AEON_HEAD:-unknown}; expected ${AEON_REF}"
+  [[ "$AEON_HEAD" =~ ^[0-9a-f]{40}$ ]] || die "existing aeon checkout has no readable commit"
+  AEON_REF="$AEON_HEAD"
 fi
 ok "verified aeon checkout at ${AEON_REF} -> ${AEON_DIR}"
 
@@ -1075,10 +1081,8 @@ fi
 
 # OpenClaw needs Node 24 (or >=22.19) — the bux installer already builds Node 24 at
 # /usr/bin/node, so the npm global install + gateway shebang resolve the right node.
-# PINNED version (not @latest) for fleet reproducibility — OpenClaw ships often and
-# config-schema/auth-mode semantics drift between releases (e.g. auth.mode=none is
-# accepted on 2026.6.10, the version validated live on a spike box 2026-06-24). Bump
-# deliberately + re-validate on a spike box before raising this.
+# The newest OpenClaw release found at launch (resolved above), installed as an
+# exact version so the recorded version is the one that runs.
 [[ "$OPENCLAW_VERSION" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] || die "OPENCLAW_VERSION must be an x.y.z version"
 say "installing openclaw@${OPENCLAW_VERSION} for ${AGENT_USER} (Node $(/usr/bin/node -v 2>/dev/null || echo '?'))"
 sudo -iu "${AGENT_USER}" bash -lc "npm i -g openclaw@${OPENCLAW_VERSION}" \
@@ -1229,9 +1233,10 @@ say "5d/7  Agent Zero (autonomous agent + web dashboard, Dockerized)"
 # in-container browser), so this box carries a real footprint (2 vCPU / 4 GB).
 A0_PORT="${AGENT_ZERO_PORT:-50080}"         # container :80 -> loopback host :A0_PORT (8080 is the hivra-chat gate)
 A0_ROOT="/opt/a0"                           # persisted state + env live here
-# Immutable multi-architecture OCI digest (v2.2 at review time). Tags are
-# intentionally not accepted: a mutable tag cannot be a release contract.
-A0_IMAGE="agent0ai/agent-zero@${AGENT_ZERO_IMAGE_DIGEST}"
+# The image runs by digest, never by tag, so it can't move under the unit. The
+# digest is whatever upstream's latest tag points at during this launch (set
+# below once Docker is up), unless an operator passes AGENT_ZERO_IMAGE_DIGEST.
+A0_REPO="agent0ai/agent-zero"
 
 # --- Docker engine (boxes are full VMs — no LXC-nesting problem here) ---
 if ! command -v docker >/dev/null 2>&1; then
@@ -1241,6 +1246,15 @@ fi
 systemctl enable --now docker >/dev/null 2>&1 || die "Docker service did not start"
 systemctl is-active --quiet docker || die "Docker service is not active"
 ok "docker present ($(docker --version 2>/dev/null | head -1 || echo '?'))"
+if [ -z "$AGENT_ZERO_IMAGE_DIGEST" ]; then
+  with_retries docker pull "${A0_REPO}:latest" >/tmp/az-pull.log 2>&1 \
+    || die "Agent Zero image pull failed (see /tmp/az-pull.log)"
+  AGENT_ZERO_IMAGE_DIGEST="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${A0_REPO}:latest" 2>/dev/null \
+    | sed -n "s#^${A0_REPO}@\(sha256:[0-9a-f]\{64\}\)\$#\1#p" | head -n 1)"
+  [[ "$AGENT_ZERO_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "could not read the Agent Zero image digest"
+fi
+A0_IMAGE="${A0_REPO}@${AGENT_ZERO_IMAGE_DIGEST}"
+ok "Agent Zero image ${A0_IMAGE}"
 
 # --- Persisted state + basic-auth + (optional) managed model -> /opt/a0/.env ---
 install -d -m 0755 "${A0_ROOT}"
@@ -1294,7 +1308,7 @@ else
   warn "no managed-Venice key at launch — Agent Zero starts unconfigured; set a model in its Settings UI"
 fi
 
-# Pre-pull the pinned image so the unit's first `docker run` starts fast.
+# Pull the image by digest so the unit's first `docker run` starts fast.
 docker pull "${A0_IMAGE}" >/tmp/az-pull.log 2>&1 \
   || die "Agent Zero image pull failed (see /tmp/az-pull.log)"
 docker image inspect "${A0_IMAGE}" >/dev/null 2>&1 \

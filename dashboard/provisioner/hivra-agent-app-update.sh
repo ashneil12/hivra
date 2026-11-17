@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Move this computer's agent app (the Aeon dashboard, OpenClaw or Agent Zero)
-# to the release's tested version (agent-app-versions.json). Their own
-# self-updaters are not how Hivra computers change version, so after
-# provisioning this is the only way Hivra changes it.
+# Move this computer's agent app (the Aeon dashboard, OpenClaw, Agent Zero,
+# Hermes, OpenBot or Nuphos) to the newest release its upstream publishes.
+# Hivra pins no app version and never runs this by itself: it runs when the
+# computer's owner presses Update.
 #
-#   hivra-agent-app-update.sh aeon <40-hex commit>
-#   hivra-agent-app-update.sh openclaw <x.y.z>
-#   hivra-agent-app-update.sh agent-zero sha256:<64 hex>
-#   hivra-agent-app-update.sh hermes latest
-#   hivra-agent-app-update.sh openbot latest
-#   hivra-agent-app-update.sh nuphos latest
+#   hivra-agent-app-update.sh aeon|openclaw|agent-zero|hermes|openbot|nuphos latest
+#
+# "latest" is resolved here, at the moment of the update: Aeon's newest commit
+# on its default branch, OpenClaw's newest npm release, and the digest Agent
+# Zero's latest image tag points at.
 #
 # Hermes is the exception: it has no Hivra pin and is never rebuilt or
 # rolled back by Hivra. "hermes latest" waits for the same idle moment, holds
@@ -48,14 +47,15 @@ umask 022
 NAME="${1:-}"
 TARGET="${2:-}"
 case "$NAME" in
-  aeon) [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid Aeon commit" >&2; exit 64; } ;;
-  openclaw) [[ "$TARGET" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] || { echo "invalid OpenClaw version" >&2; exit 64; } ;;
-  agent-zero) [[ "$TARGET" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid Agent Zero image digest" >&2; exit 64; } ;;
-  hermes) [ "$TARGET" = latest ] || { echo "Hermes updates to latest only" >&2; exit 64; } ;;
-  openbot) [ "$TARGET" = latest ] || { echo "OpenBot updates to latest only" >&2; exit 64; } ;;
-  nuphos) [ "$TARGET" = latest ] || { echo "Nuphos updates to latest only" >&2; exit 64; } ;;
-  *) echo "usage: hivra-agent-app-update.sh aeon|openclaw|agent-zero VERSION | hermes|openbot|nuphos latest" >&2; exit 64 ;;
+  aeon|openclaw|agent-zero|hermes|openbot|nuphos) ;;
+  *) echo "usage: hivra-agent-app-update.sh aeon|openclaw|agent-zero|hermes|openbot|nuphos latest" >&2; exit 64 ;;
 esac
+# Hivra pins no app version: every update goes to the newest release upstream
+# publishes at that moment, and only when the owner asks for it. The status
+# file names the request ("latest"); TARGET becomes the concrete version
+# (Aeon commit, OpenClaw release, Agent Zero image digest) once it is resolved.
+[ "$TARGET" = latest ] || { echo "apps update to latest only" >&2; exit 64; }
+REQUESTED="$TARGET"
 
 # Fixed guest paths; the overrides exist only for the offline test fixture.
 AGENT_USER=bux
@@ -175,7 +175,7 @@ with open(staged, "w", encoding="utf-8") as handle:
     json.dump(doc, handle)
 os.chmod(staged, 0o644)
 os.replace(staged, path)
-' "$STATUS" "$NAME" "$state" "$FROM" "$TARGET" "$reason"
+' "$STATUS" "$NAME" "$state" "$FROM" "$REQUESTED" "$reason"
 }
 # The installed version, as Hivra last put it there (the gateway reports it).
 write_record() {
@@ -374,6 +374,34 @@ sys.exit(0 if any(isinstance(t, dict) and t.get("state") == "running" for t in t
   esac
 }
 in_use() { used_through_hivra || app_working; }
+
+# ── per app: the newest upstream release, right now ────────────────────────
+
+# Sets TARGET to the newest release in the app's own version form.
+resolve_latest() {
+  local found=""
+  case "$NAME" in
+    openclaw)
+      found="$(bounded 120 runuser -u "$AGENT_USER" -- env -i PATH="$AGENT_PATH" HOME="$AGENT_HOME" LANG=C.UTF-8 \
+        npm --prefix "$PREFIX" view openclaw@latest version 2>/dev/null </dev/null | tail -n 1 | tr -d '[:space:]')" || return 1
+      [[ "$found" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] || return 1
+      ;;
+    agent-zero)
+      # The image's latest tag, pinned to the digest it points at now, so the
+      # unit never runs a tag that can move under it.
+      bounded 3600 docker pull "$IMAGE_REPO:latest" >/dev/null 2>&1 </dev/null || return 1
+      found="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$IMAGE_REPO:latest" 2>/dev/null \
+        | sed -n "s#^$IMAGE_REPO@\(sha256:[0-9a-f]\{64\}\)\$#\1#p" | head -n 1)" || return 1
+      [[ "$found" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+      ;;
+    aeon)
+      found="$(bounded 120 git ls-remote "$AEON_REPO_URL" HEAD 2>/dev/null </dev/null | awk 'NR == 1 { print $1 }')" || return 1
+      [[ "$found" =~ ^[0-9a-f]{40}$ ]] || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  TARGET="$found"
+}
 
 # ── per app: prepare the new version next to the running one ───────────────
 
@@ -906,20 +934,23 @@ fi
 
 [ -f "$UNIT_FILE" ] || { write_status failed not_installed; exit 1; }
 FROM="$(installed_version || true)"
-if [ "$FROM" = "$TARGET" ]; then
-  write_record "$TARGET"
-  write_status done
-  exit 0
-fi
 if [ "$(free_mb "$STATE_DIR")" -lt "$NEED_FREE_MB" ] \
   || { [ "$NAME" = agent-zero ] && [ "$(free_mb "$A0_ROOT")" -lt "$NEED_FREE_MB" ]; }; then
   write_status failed no_space
   exit 1
 fi
-
+write_status downloading
+if ! resolve_latest; then
+  write_status failed download_failed
+  exit 1
+fi
+if [ "$FROM" = "$TARGET" ]; then
+  write_record "$TARGET"
+  write_status done
+  exit 0
+fi
 # Prepare while the app keeps working; the swap below then takes seconds
 # (OpenClaw, Aeon) or about a minute (Agent Zero starting its container).
-write_status downloading
 if ! prepare; then
   write_status failed download_failed
   exit 1

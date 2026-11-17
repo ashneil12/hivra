@@ -1,9 +1,9 @@
 """Turn off Codex's startup update check for the computer owner.
 
 Codex's TUI checks for, and offers to install, a new release on every start
-(config key check_for_update_on_startup, default true). Hivra installs the
-vetted version from agent-cli-versions.json instead, so a self-update must not
-swap the binary the chat gateway runs. Runs as the owner (never root) with the
+(config key check_for_update_on_startup, default true). On a Hivra computer the
+owner updates Codex with the agent's Update button instead, which waits for
+chat runs to finish, so a swap never lands under a reply being written. Runs as the owner (never root) with the
 script on stdin. Only an absent top-level key is set, so an owner's explicit
 choice stays; the rest of the file is kept byte for byte.
 """
@@ -33,7 +33,7 @@ for line in text.splitlines():
 descriptor, staged = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".config.toml.")
 try:
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write("# Hivra installs the vetted Codex version (agent-cli-versions.json).\n")
+        handle.write("# Update Codex with the Update button on this agent in Hivra.\n")
         handle.write(KEY + " = false\n")
         handle.write(text)
     os.chmod(staged, mode)

@@ -18,7 +18,7 @@ script only says where to look.
 
 | Role | Meaning | What "taking an update" means |
 | --- | --- | --- |
-| `agent-runtime` | Agents Hivra installs from their official upstream | Bump the default pin for new computers. Owners update their own agents. A pin under `dashboard/provisioner/` needs a provisioner release. |
+| `agent-runtime` | Agents Hivra installs from their official upstream | Nothing to bump: a launch installs upstream's newest release and owners update their own agents (Update button or the agent's own command). Look only for breaking changes to how Hivra installs, starts or reads the agent. |
 | `ported-code` | Code adapted into this repository | Re-port the changed upstream files, keep the attribution line. |
 | `library` | Packages Hivra depends on directly | Bump the package version. |
 | `desktop-stack` | Desktop computer pieces (Omarchy, streaming) | Re-pin after a test on a staging computer. |

@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 
 // hivra-agent-app-update.sh moves a computer's hosted agent app (the Aeon
-// dashboard, OpenClaw, Agent Zero) to the release's tested version. These
+// dashboard, OpenClaw, Agent Zero) to upstream's newest release when its
+// owner presses Update; FAKE_LATEST is what upstream calls newest. These
 // tests run the real helper (bash, python and the file system are real) with
 // systemctl, docker, npm, git, curl, df, runuser, timeout and install replaced
 // by fakes that keep their state in files beside them. The helper runs some
@@ -96,7 +97,7 @@ exit 0
 echo "docker $* lock=$([ -e "$FAKE_LOCK" ] && echo held || echo free)" >> "$FAKE_LOG"
 case "$1 $2" in
   "inspect --format") cat "$FAKE_DIR/container" 2>/dev/null ;;
-  "image inspect") exit 0 ;;
+  "image inspect") [ "$3" = --format ] && printf 'agent0ai/agent-zero@%s\\n' "$FAKE_LATEST"; exit 0 ;;
   "image rm") exit 0 ;;
   pull*) exit "\${FAKE_PULL_EXIT:-0}" ;;
 esac
@@ -105,6 +106,7 @@ esac
 . "\${0%/*}/fake.env"
 if [ "$1" = --prefix ]; then
   prefix="$2"; shift 2
+  if [ "$1" = view ]; then echo "$FAKE_LATEST"; exit 0; fi
   spec=""; for arg in "$@"; do spec="$arg"; done
   echo "npm $1 $spec lock=$([ -e "$FAKE_LOCK" ] && echo held || echo free)" >> "$FAKE_LOG"
   case "$1" in
@@ -128,6 +130,7 @@ exit 95
 . "\${0%/*}/fake.env"
 case "$1" in
   init|remote) exit 0 ;;
+  ls-remote) [ -z "$FAKE_GIT_FAIL" ] || exit 1; printf '%s\\tHEAD\\n' "$FAKE_LATEST" ;;
   fetch) sha=""; for arg in "$@"; do sha="$arg"; done; echo "git fetch $sha" >> "$FAKE_LOG"; [ -z "$FAKE_GIT_FAIL" ] || exit 1; echo "$sha" > .fake-head ;;
   checkout) mkdir -p apps/dashboard ;;
   rev-parse) cat .fake-head ;;
@@ -217,10 +220,14 @@ esac
   };
 }
 
-function run(f: Fixture, app: App, target: string, settings: Record<string, string> = {}) {
+/** Runs the helper as the owner's Update does (`latest`), with `newest` as upstream's newest release. */
+function run(f: Fixture, app: App, newest: string, settings: Record<string, string> = {}) {
+  return runWith(f, app, "latest", { FAKE_LATEST: newest, ...settings });
+}
+function runWith(f: Fixture, app: App, target: string, settings: Record<string, string> = {}) {
   const all = {
     FAKE_LOG: f.log, FAKE_LOCK: f.lock, FAKE_DIR: f.fakes, FAKE_APP: app, FAKE_UNIT_FILE: f.unit, FAKE_DROPIN: f.dropin,
-    FAKE_HOME: f.home, FAKE_DATA: path.join(f.a0, "usr"), FAKE_OLD: OLD_DIGEST, FAKE_BAD_VERSION: "", ...settings,
+    FAKE_HOME: f.home, FAKE_DATA: path.join(f.a0, "usr"), FAKE_OLD: OLD_DIGEST, FAKE_BAD_VERSION: "", FAKE_LATEST: "", ...settings,
   };
   fs.writeFileSync(path.join(f.fakes, "fake.env"), Object.entries(all).map(([key, value]) => `${key}='${value}'\n`).join(""));
   const result = spawnSync("/bin/bash", [HELPER, app, target], { encoding: "utf8", timeout: 30_000, env: f.env });
@@ -239,11 +246,20 @@ describe("hivra-agent-app-update.sh", () => {
   const make = (app: App) => { const f = fixture(app); made.push(f); return f; };
   afterEach(() => { for (const f of made.splice(0)) fs.rmSync(f.root, { recursive: true, force: true }); });
 
-  it("refuses a version not in the app's own form", () => {
+  it("accepts only latest as a target for every app", () => {
     const f = make("openclaw");
-    expect(run(f, "openclaw", "latest").status).toBe(64);
-    expect(run(f, "agent-zero" as App, "v2.14").status).toBe(64);
-    expect(run(f, "aeon" as App, "main").status).toBe(64);
+    expect(runWith(f, "openclaw", "2026.9.33").status).toBe(64);
+    expect(runWith(f, "agent-zero" as App, NEW_DIGEST).status).toBe(64);
+    expect(runWith(f, "aeon" as App, NEW_COMMIT).status).toBe(64);
+    expect(runWith(f, "aeon" as App, "main").status).toBe(64);
+  });
+
+  it("stops before anything else when upstream's newest release can't be read", () => {
+    const f = make("openclaw");
+    const result = run(f, "openclaw", "not-a-version");
+    expect(result.status).toBe(1);
+    expect(result.doc).toMatchObject({ state: "failed", reason: "download_failed", to: "latest" });
+    expect(openclawVersion(f)).toBe("OpenClaw 2026.6.10");
   });
 
   describe("Hermes", () => {
@@ -252,8 +268,8 @@ describe("hivra-agent-app-update.sh", () => {
 
     it("accepts only latest as a target", () => {
       const f = make("hermes");
-      expect(run(f, "hermes", "0.24.0").status).toBe(64);
-      expect(run(f, "hermes", NEW_DIGEST).status).toBe(64);
+      expect(runWith(f, "hermes", "0.24.0").status).toBe(64);
+      expect(runWith(f, "hermes", NEW_DIGEST).status).toBe(64);
     });
 
     it("runs Hermes's own updater as the agent's user under the lock, then reports the new version", () => {
@@ -353,12 +369,12 @@ describe("hivra-agent-app-update.sh", () => {
     });
   });
 
-  it("moves an idle OpenClaw computer to the tested version as its owner, restarting only under the lock", () => {
+  it("moves an idle OpenClaw computer to the newest release as its owner, restarting only under the lock", () => {
     const f = make("openclaw");
     const result = run(f, "openclaw", "2026.9.33");
     expect(result.status).toBe(0);
     expect(openclawVersion(f)).toBe("OpenClaw 2026.9.33");
-    expect(result.doc).toMatchObject({ name: "openclaw", state: "done", from: "2026.6.10", to: "2026.9.33" });
+    expect(result.doc).toMatchObject({ name: "openclaw", state: "done", from: "2026.6.10", to: "latest" });
     expect(result.record).toMatchObject({ name: "openclaw", version: "2026.9.33" });
     // Downloaded first with the lock free, then installed and restarted under it.
     expect(result.log.filter((line) => line.startsWith("npm ") || line.startsWith("systemctl restart"))).toEqual([
@@ -378,7 +394,7 @@ describe("hivra-agent-app-update.sh", () => {
     const result = run(f, "openclaw", "2026.9.33", { FAKE_BAD_VERSION: "OpenClaw 2026.9.33" });
     expect(result.status).toBe(1);
     expect(openclawVersion(f)).toBe("OpenClaw 2026.6.10");
-    expect(result.doc).toMatchObject({ state: "rolled_back", reason: "install_failed", from: "2026.6.10", to: "2026.9.33" });
+    expect(result.doc).toMatchObject({ state: "rolled_back", reason: "install_failed", from: "2026.6.10", to: "latest" });
     expect(result.record).toMatchObject({ version: "2026.6.10" });
     expect(fs.existsSync(f.lock)).toBe(false);
   });
@@ -389,10 +405,11 @@ describe("hivra-agent-app-update.sh", () => {
     expect(result.status).toBe(0);
     expect(fs.readFileSync(f.unit, "utf8")).toContain(`agent0ai/agent-zero@${NEW_DIGEST}`);
     expect(fs.readFileSync(f.unit, "utf8")).not.toContain(OLD_DIGEST);
-    expect(result.doc).toMatchObject({ name: "agent-zero", state: "done", from: OLD_DIGEST, to: NEW_DIGEST });
+    expect(result.doc).toMatchObject({ name: "agent-zero", state: "done", from: OLD_DIGEST, to: "latest" });
     expect(result.record).toMatchObject({ name: "agent-zero", version: NEW_DIGEST });
     const steps = result.log.filter((line) => /^(docker (pull|image rm)|systemctl (stop|start))/.test(line));
     expect(steps).toEqual([
+      "docker pull agent0ai/agent-zero:latest lock=free",
       `docker pull agent0ai/agent-zero@${NEW_DIGEST} lock=free`,
       "systemctl stop hivra-agent-zero.service lock=held",
       "systemctl start hivra-agent-zero.service lock=held",
@@ -416,7 +433,7 @@ describe("hivra-agent-app-update.sh", () => {
     expect(result.record).toMatchObject({ version: OLD_DIGEST });
   });
 
-  it("builds the Aeon dashboard at the tested commit beside the clone and points the service at it", () => {
+  it("builds the Aeon dashboard at upstream's newest commit beside the clone and points the service at it", () => {
     const f = make("aeon");
     const result = run(f, "aeon", NEW_COMMIT);
     expect(result.status).toBe(0);
@@ -426,7 +443,7 @@ describe("hivra-agent-app-update.sh", () => {
     expect(fs.readFileSync(f.dropin, "utf8")).toBe(
       `[Service]\nWorkingDirectory=${build}/apps/dashboard\nEnvironment=AEON_REPO_ROOT=${path.join(f.home, "aeon")}\n`,
     );
-    expect(result.doc).toMatchObject({ name: "aeon", state: "done", from: OLD_COMMIT, to: NEW_COMMIT });
+    expect(result.doc).toMatchObject({ name: "aeon", state: "done", from: OLD_COMMIT, to: "latest" });
     expect(result.record).toMatchObject({ name: "aeon", version: NEW_COMMIT });
     expect(result.log).toEqual(expect.arrayContaining([
       `git fetch ${NEW_COMMIT}`,
@@ -496,13 +513,14 @@ describe("hivra-agent-app-update.sh", () => {
     expect(fs.existsSync(f.dropin)).toBe(false);
   });
 
-  it("only reports when the computer already runs the tested version", () => {
+  it("only reports when the computer already runs the newest release", () => {
     const f = make("agent-zero");
     const result = run(f, "agent-zero", OLD_DIGEST);
     expect(result.status).toBe(0);
-    expect(result.doc).toMatchObject({ state: "done", from: OLD_DIGEST, to: OLD_DIGEST });
+    expect(result.doc).toMatchObject({ state: "done", from: OLD_DIGEST, to: "latest" });
     expect(result.record).toMatchObject({ version: OLD_DIGEST });
-    expect(result.log.some((line) => line.startsWith("docker pull"))).toBe(false);
+    expect(result.log.some((line) => line.startsWith("docker pull agent0ai/agent-zero@"))).toBe(false);
+    expect(result.log.some((line) => line.startsWith("systemctl stop"))).toBe(false);
   });
 
   it("stops before downloading when the disk can't hold the new version", () => {
@@ -546,7 +564,7 @@ describe("hivra-agent-app-update.sh", () => {
     expect(fs.existsSync(path.join(f.a0, "usr.hivra-update-backup"))).toBe(false);
     expect(fs.existsSync(journal)).toBe(false);
     expect(result.record).toMatchObject({ version: NEW_DIGEST });
-    expect(result.doc).toMatchObject({ state: "done", to: NEW_DIGEST });
+    expect(result.doc).toMatchObject({ state: "done", to: "latest" });
   });
 
   it("undoes a swap cut short when the new version doesn't answer, moving what it wrote aside rather than deleting it", () => {
@@ -561,7 +579,7 @@ describe("hivra-agent-app-update.sh", () => {
     expect(aside).toHaveLength(1);
     expect(fs.readFileSync(path.join(f.a0, aside[0], "written-since"), "utf8")).toBe("a chat the owner had since");
     expect(fs.existsSync(journal)).toBe(false);
-    expect(result.doc).toMatchObject({ state: "done", to: OLD_DIGEST });
+    expect(result.doc).toMatchObject({ state: "done", to: "latest" });
   });
 
   it("never holds the app while someone is using it, and reads the token only as the agent's user", () => {
