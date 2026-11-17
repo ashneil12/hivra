@@ -19,6 +19,7 @@ import { requireDb } from "@/lib/billing/db-utils";
 import { ManagedVeniceSpendCapError } from "@/lib/billing/managed-venice-spend-caps";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
+import { updateManagedVeniceProxyKeyMetadata } from "@/lib/venice/proxy-key-metadata";
 
 type QueryError = { code?: string; message?: string } | null;
 
@@ -26,7 +27,6 @@ type DbChain = {
   select: (...args: unknown[]) => DbChain;
   eq: (...args: unknown[]) => DbChain;
   gte: (...args: unknown[]) => DbChain;
-  update: (...args: unknown[]) => DbChain;
   maybeSingle: () => Promise<{ data: unknown; error: QueryError }>;
   then: Promise<{ data?: unknown; error: QueryError }>["then"];
 };
@@ -93,6 +93,11 @@ export function readAgentSpendCap(metadata: unknown): AgentSpendCapSetting {
     dailyMicroUsd: typeof daily === "number" && Number.isInteger(daily) && daily > 0 ? daily : null,
     lastReachedAt: typeof raw.lastReachedAt === "string" ? raw.lastReachedAt : null,
   };
+}
+
+function spendCapObject(metadata: Record<string, unknown>): Record<string, unknown> {
+  const raw = metadata.spendCap;
+  return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
 }
 
 /** The limit that applies to a key: its own, else the platform default. */
@@ -184,12 +189,13 @@ export async function assertManagedVeniceAgentWithinSpendCap(
   // effort: the refusal stands even if this write fails.
   if (!setting.lastReachedAt || setting.lastReachedAt < dayStartIso(now)) {
     try {
-      const meta = metadata as Record<string, unknown>;
-      const spendCap = meta.spendCap && typeof meta.spendCap === "object" ? (meta.spendCap as Record<string, unknown>) : {};
-      await (client.from("managed_venice_proxy_keys") as DbChain)
-        .update({ metadata: { ...meta, spendCap: { ...spendCap, lastReachedAt: now.toISOString() } } })
-        .eq("id", params.proxyKeyId)
-        .eq("user_id", params.userId);
+      // Through the shared writer, so this stamp cannot undo another setting
+      // (the owner's limit, "private models only") saved a moment earlier.
+      await updateManagedVeniceProxyKeyMetadata(
+        client,
+        { userId: params.userId, proxyKeyId: params.proxyKeyId },
+        (meta) => ({ ...meta, spendCap: { ...spendCapObject(meta), lastReachedAt: now.toISOString() } })
+      );
     } catch (error) {
       log.warn("Could not record that an agent reached its spend limit", {
         source: "managed-venice-agent-spend-cap",
@@ -218,16 +224,12 @@ export async function setManagedVeniceAgentDailySpendCap(
     throw new RangeError(`Daily limit must be between $0.01 and $${MAX_AGENT_DAILY_SPEND_CAP_USD}`);
   }
   const client = requireDb(db) as SupabaseLike;
-  const metadata = await readKeyMetadata(client, params.userId, params.proxyKeyId);
-  if (metadata === null) throw new AgentSpendCapKeyNotFoundError();
-  const meta = metadata as Record<string, unknown>;
-  const current = meta.spendCap && typeof meta.spendCap === "object" ? (meta.spendCap as Record<string, unknown>) : {};
   const dailyMicroUsd = dailyUsd === null ? null : Math.round(dailyUsd * 1_000_000);
-  const nextSpendCap = { ...current, dailyMicroUsd };
-  const { error } = await (client.from("managed_venice_proxy_keys") as DbChain)
-    .update({ metadata: { ...meta, spendCap: nextSpendCap }, updated_at: new Date().toISOString() })
-    .eq("id", params.proxyKeyId)
-    .eq("user_id", params.userId);
-  if (error) throw new Error(error.message || "Failed to save the agent's daily limit");
-  return readAgentSpendCap({ spendCap: nextSpendCap });
+  const stored = await updateManagedVeniceProxyKeyMetadata(
+    client,
+    { userId: params.userId, proxyKeyId: params.proxyKeyId },
+    (meta) => ({ ...meta, spendCap: { ...spendCapObject(meta), dailyMicroUsd } })
+  );
+  if (stored === null) throw new AgentSpendCapKeyNotFoundError();
+  return readAgentSpendCap(stored);
 }
