@@ -28,7 +28,7 @@ export interface AgentSoftwareSnapshot {
 }
 
 /** Views after which an update just asked for has nothing more to show. */
-const SETTLED = new Set(["current", "update_done", "ahead_custom", "not_running", "not_reported"]);
+const SETTLED = new Set(["current", "update_done", "not_running", "not_reported"]);
 /** How long an update just asked for is looked for before the computer reports it. */
 const REPORT_GRACE_MS = 60_000;
 

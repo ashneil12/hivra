@@ -422,19 +422,20 @@ copyright, source-offer and exact image-layer review remain open.
 | Claude Code | Download npm package into the guest | `@anthropic-ai/claude-code@2.1.292` |
 | Claude desktop app | Download Debian package from Anthropic's repository into the VM cache, verify size and SHA-256, unpack inside the desktop container as its unprivileged user, only on the owner's request | `claude-desktop_2.26454.0_amd64.deb` (`6d3e4973dcb11511ddd962040b3073b435d1592b3174a82ef52e50377a75a63f`) |
 | Codex | Download npm package into the guest | `@openai/codex@0.149.1` |
-| Aeon | Fetch Git checkout, modify dashboard configuration, install dependencies and build | `8b8d719715ec9bb68fb858a1e334d23209047d82` |
-| OpenClaw | Download npm package into the guest | `openclaw@2026.6.10` |
-| Agent Zero | Pull an OCI image by digest | `sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0` |
+| Aeon | Fetch Git checkout, modify dashboard configuration, install dependencies and build | Upstream `HEAD` commit at launch (recorded on the computer) |
+| OpenClaw | Download npm package into the guest | npm `latest` at launch (recorded on the computer) |
+| Agent Zero | Pull an OCI image by digest | Digest behind `:latest` at launch (recorded on the computer) |
 | cloudflared | Download and SHA-256 verify Linux executable | `2026.8.2` |
 | Google Chrome | Download and SHA-256 verify Debian package | `157.0.8103.50-1` |
 | GitHub CLI | Download and SHA-256 verify Debian package | `2.98.0` |
 | Proxmox guest base | Download and SHA-256 verify dated Ubuntu image | Jammy `release-20260807` |
 | Guest system packages | Install from Ubuntu package repositories | Installed package/version receipt still required |
 
-The Aeon, OpenClaw and Agent Zero identities are read from
-`dashboard/provisioner/agent-app-versions.json` by the installer and by
-`hivra-agent-app-update.sh`, which moves an existing computer to them with the
-same download, pull or build.
+Hivra pins no Aeon, OpenClaw or Agent Zero version (release 2026.11.17.1). The
+installer resolves upstream's newest at launch and records the exact commit,
+version or digest it installed; `hivra-agent-app-update.sh` resolves the newest
+again only when the owner presses Update, with the same download, pull or
+build.
 
 Important coverage limits:
 

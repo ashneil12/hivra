@@ -505,6 +505,16 @@ const recipes = Object.freeze({
     workerSha256: "e58572e0b21dc0d1a80dab7fa550a970da6d6d480460c89b6e068493b6cfcbd5",
     workerSize: 45216,
   }),
+  "2026.11.17.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release drops Hivra's agent version pins (a launch installs upstream's newest release and only the owner's Update moves it). The worker only advances its release labels.
+    workerSha256: "7e7628ffc80574698f0f322c5ac7d6039cd05f65332512513ac0dfc6bc6a0142",
+    workerSize: 45216,
+  }),
+  "2026.11.17.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release stops Hivra's background reads (X-Hivra-Background: 1) from counting as use or waking a napped computer in the wake proxy. The worker only advances its release labels.
+    workerSha256: "e3462616c9faff5c9abe3675dc87132bb5e3ccfa9c124e027b71a8b1be4aeb1d",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

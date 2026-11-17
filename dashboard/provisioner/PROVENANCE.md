@@ -234,18 +234,19 @@ inferring them from a live host.
   `https://cli.github.com/packages/pool/main/g/gh/gh_2.98.0_amd64.deb`
   - package version: `2.98.0`
   - SHA-256: `f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6`
-- Anthropic Claude Code npm package: `@anthropic-ai/claude-code@2.1.292`
+- Anthropic Claude Code npm package: `@anthropic-ai/claude-code`, upstream's newest
+  release at install time (npm `latest`); no Hivra pin
 - Anthropic Claude desktop app for Linux (optional, owner-initiated):
   `https://downloads.claude.ai/claude-desktop/apt/stable/pool/main/c/claude-desktop/claude-desktop_2.26454.0_amd64.deb`
   - package version: `2.26454.0`
   - SHA-256: `6d3e4973dcb11511ddd962040b3073b435d1592b3174a82ef52e50377a75a63f`
   - size: 180809792 bytes
   - proprietary Anthropic software, downloaded from Anthropic's repository and never bundled or redistributed by Hivra
-- OpenAI Codex CLI npm package: `@openai/codex@0.149.1`
-- OpenClaw npm package: `openclaw@2026.6.10`
-- Agent Zero OCI image:
-  `agent0ai/agent-zero@sha256:05d6ab347bd7db4b6bd5a7d902c9965281ff852ff23f29fffcc1c8919e628bd8` (`v2.15`)
-  - previous reviewed image: `agent0ai/agent-zero@sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0` (`v2.2`)
+- OpenAI Codex CLI npm package: `@openai/codex`, npm `latest` at install time; no Hivra pin
+- OpenClaw npm package: `openclaw`, npm `latest` at install time; no Hivra pin
+- Agent Zero OCI image: `agent0ai/agent-zero:latest`, recorded by the digest it
+  resolved to at install time; no Hivra pin
+- Aeon: the upstream repository's `HEAD` commit at install time; no Hivra pin
 - Selkies X11 desktop OCI image:
   `ghcr.io/selkies-project/selkies-egl-desktop@sha256:6ee5ddc3aa50ec9b3f22d2090ee1b0d2161e7be5acd9f385717e7c3603f6b3aa`
   - observed source commit: `dbc97872dbeae49e7f1e4491c3dee54f437f364d`
@@ -545,6 +546,33 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+
+Release `2026.11.17.2` builds on `2026.11.17.1` and stops Hivra's own
+background reads from keeping a computer awake: the wake proxy treats a request
+carrying `X-Hivra-Background: 1` as carrying no proof, so it never moves the
+idle signal (`last_authed_at`) and never wakes a napped or hibernated VM (a
+napped VM answers it as asleep); a running guest still serves it. The header
+only takes away, so sending it cannot wake or keep awake anyone's computer.
+Changed: `hivra-wake-proxy.py`, `test_hivra_wake_proxy.py`, plus the documents,
+the version and the provider worker's release labels. This source release does
+not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.17.1` builds on `2026.11.15.7` and removes Hivra's agent
+version pins (`agent-cli-versions.json` and `agent-app-versions.json` leave the
+bundle). A new computer installs upstream's newest release of its agent at
+launch: Claude Code, Codex and OpenClaw from their npm `latest` tag, Agent Zero
+from `agent0ai/agent-zero:latest` (recorded by digest), and Aeon from its
+repository's `HEAD` commit. Hivra no longer updates an agent by itself. When the
+owner presses Update, the runtime update reports `target=latest` and
+`hivra-agent-cli-update.sh` / `hivra-agent-app-update.sh` resolve upstream's
+newest release at that moment, end at once when it is installed already, and
+otherwise swap and roll back exactly as before. Changed:
+`provision-claude-code-box.sh`, `hivra-update-guest-runtime.sh`,
+`hivra-guest-runtime-update.sh`, `hivra-agent-cli-update.sh`,
+`hivra-agent-app-update.sh`, `hivra-chat/server.js`,
+`hivra-codex-config-pin.py` (comments only), plus the documents, the version
+and the provider worker's release labels. This source release does not
+deploy, install, enable or start anything on a host or computer.
 
 Release `2026.11.15.7` builds on `2026.11.15.6` and lets Agent Zero plugin web
 interfaces load: the gateway's no-Referer static-import allowlist now also covers

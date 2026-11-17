@@ -24,14 +24,13 @@ jest.mock("@/lib/hivra/agent-api", () => {
 const mockSoftware = jest.fn();
 jest.mock("@/lib/hivra/agent-software-api", () => ({
   getAgentSoftware: (...args: unknown[]) => mockSoftware(...args),
-  setAgentSoftwareAutoUpdate: jest.fn(),
 }));
 jest.mock("../HermesModelSettings", () => ({ HermesModelSettings: ({ agentName }: { agentName: string }) => <p>Hermes model picker for {agentName}</p> }));
 
-const TESTED = "2026.6.10";
+const TARGET = "latest";
 function softwareState(view: AgentSoftwareView): AgentSoftwareState {
   return {
-    supported: true, cli: null, app: "openclaw", view, tested: TESTED, observedAt: "2026-09-25T11:58:00.000Z", update: null, lastRequest: null, autoUpdate: null,
+    supported: true, cli: null, app: "openclaw", view, observedAt: "2026-09-25T11:58:00.000Z", update: null, lastRequest: null,
   };
 }
 
@@ -64,7 +63,7 @@ beforeEach(() => {
   window.localStorage.clear();
   window.localStorage.setItem("hivra:agent-pill-intro-seen", "1");
   resetAgentSoftwareForTests();
-  mockSoftware.mockResolvedValue(softwareState({ kind: "behind", installed: "2026.5.1" } as AgentSoftwareView));
+  mockSoftware.mockResolvedValue(softwareState({ kind: "older_connection_service" }));
   mockUpdate.mockResolvedValue({ status: "running" });
   mockRestart.mockResolvedValue({ switchedOff: false, waitedSeconds: null });
 });
@@ -134,7 +133,7 @@ describe("AgentQuickSettings update", () => {
     expect(screen.getByRole("button", { name: "Update now" })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Show controls$/ })).toHaveTextContent("Updating");
 
-    mockSoftware.mockResolvedValue(softwareState({ kind: "updating", phase: "installing", target: TESTED } as AgentSoftwareView));
+    mockSoftware.mockResolvedValue(softwareState({ kind: "updating", phase: "installing", target: TARGET } as AgentSoftwareView));
     await act(async () => { resolveUpdate({ status: "running" }); });
     expect(onConnectionServiceRestarted).toHaveBeenCalled();
     expect(onChanged).toHaveBeenCalled();

@@ -123,8 +123,9 @@ const AGENT_ENV = Object.assign({}, process.env, {
   // desktop owner's home directories.
   PATH: ATTACHED ? String(process.env.PATH || "/usr/bin:/bin") : "/usr/local/bin:/home/bux/.bun/bin:/home/bux/.npm-global/bin:/home/bux/.local/bin:/usr/bin:/bin",
   HOME: HOME,
-  // Hivra installs and updates the vetted CLI versions (agent-cli-versions.json);
-  // a vendor self-update would swap the binary under the gateway mid-life.
+  // The CLI changes version only when its owner updates it (Hivra's Update
+  // button); a silent vendor self-update would swap the binary under the
+  // gateway mid-life.
   DISABLE_AUTOUPDATER: "1",
 });
 // Where new agent sessions start. For an attached agent this is its root-owned,
@@ -145,7 +146,7 @@ if (ATTACHED) {
 const CLAUDE_ENV = AGENT_ENV; // back-compat alias used by the claude login handlers
 
 // The installed agent CLI version, reported on /api/meta so the dashboard can
-// compare it with the release's vetted pin (agent-cli-versions.json). Probed at
+// show it to the owner (Hivra pins no CLI version). Probed at
 // start and again whenever the binary changes on disk (hivra-agent-cli-update
 // swaps it in place); the field is omitted until the first probe finishes and
 // the version is null when it failed. The updater's progress rides along. Only
@@ -190,7 +191,7 @@ function agentCliReport() {
   try {
     const status = JSON.parse(fs.readFileSync(AGENT_CLI_STATUS, "utf8"));
     if (status && status.name === AGENT_CLI.name && AGENT_CLI_UPDATE_STATES.has(status.state)
-      && typeof status.to === "string" && /^\d+\.\d+\.\d+$/.test(status.to)) {
+      && status.to === "latest") {
       report.update = { state: status.state, target: status.to, updatedAt: typeof status.updatedAt === "string" ? status.updatedAt : null,
         ...(typeof status.reason === "string" && /^[a-z_]{1,40}$/.test(status.reason) ? { reason: status.reason } : {}) };
     }
@@ -212,8 +213,9 @@ function agentCliUpdateRefusal() {
 
 // The hosted agent app (the Aeon dashboard, OpenClaw, Agent Zero) and the
 // version of it this computer runs, reported on /api/meta (authenticated
-// callers only) so the dashboard can compare it with the release's tested pin
-// (agent-app-versions.json). hivra-agent-app-update moves it to that pin; it
+// callers only) so the dashboard can show it to the owner. Hivra pins no app
+// version: hivra-agent-app-update moves it to upstream's newest release when
+// the owner presses Update; it
 // reads `activity` (when the app was last used through this gateway and how
 // many of its WebSockets are open) to wait until nobody is using it, and while
 // it swaps the app it holds the app's surface here with the lock file. OpenClaw
@@ -232,9 +234,9 @@ const AGENT_APP_LOCK = process.env.HIVRA_AGENT_APP_LOCK || "/run/hivra-agent-app
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/bux/.npm-global/bin/openclaw";
 const HERMES_BIN = process.env.HERMES_BIN || "/home/bux/.local/bin/hermes";
 const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, openbot: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, nuphos: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
-// What an update status may name as its target. Hermes, OpenBot and Nuphos have no
-// Hivra pin: their update is always to whatever upstream publishes as latest.
-const AGENT_APP_TARGET = { ...AGENT_APP_VERSION, hermes: /^latest$/, openbot: /^latest$/, nuphos: /^latest$/ };
+// What an update status may name as its target: always the word "latest",
+// since every update goes to whatever upstream publishes as newest.
+const AGENT_APP_TARGET = /^latest$/;
 // A gateway start counts as use: nothing is known about the minutes before it.
 let agentAppLastUsedAt = Date.now();
 let agentAppOpenConnections = 0;
@@ -307,7 +309,7 @@ function readSmallJson(file) {
 function agentAppReport() {
   if (!AGENT_APP) return null;
   const pattern = AGENT_APP_VERSION[AGENT_APP.name];
-  const targetPattern = AGENT_APP_TARGET[AGENT_APP.name];
+  const targetPattern = AGENT_APP_TARGET;
   let version = null;
   const activity = { lastUsedAt: new Date(agentAppLastUsedAt).toISOString(), openConnections: agentAppOpenConnections };
   if (AGENT_APP.name === "openclaw") {

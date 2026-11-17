@@ -60,6 +60,14 @@ describe("readSurfaceWatchdogFromBox", () => {
     expect(JSON.stringify(reading)).not.toContain(TOKEN);
   });
 
+  it("marks every request as a Hivra background read, so the host wake proxy never counts it as use", async () => {
+    const fetcher = jest.fn<Promise<Response>, [string, RequestInit?]>(async (url: string) =>
+      url.endsWith("/api/meta") ? json(CURRENT_META) : json(reportBody([])));
+    expect((await readSurfaceWatchdogFromBox(watchdogTarget, fetcher)).observation).toBe("reported");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetcher.mock.calls) expect(new Headers(init?.headers).get("x-hivra-background")).toBe("1");
+  });
+
   it("reads a 404 as not_installed — a gateway that predates the endpoint", async () => {
     const fetcher = jest.fn(async (url: string, init?: RequestInit) => {
       if (url === `${ORIGIN}/api/meta`) return json(CURRENT_META);
