@@ -1,12 +1,14 @@
 import { NextRequest } from "next/server";
 
 import { GET } from "../route";
+import { runInboxPromptRetention } from "@/lib/agent-inbox/retention";
 import { runActivityRetention } from "@/lib/ops/activity-retention";
 import { reportOpsEvent } from "@/lib/ops-events";
 
 jest.mock("@/lib/ops/activity-retention", () => ({
   runActivityRetention: jest.fn(),
 }));
+jest.mock("@/lib/agent-inbox/retention", () => ({ runInboxPromptRetention: jest.fn() }));
 jest.mock("@/lib/ops-events", () => ({ reportOpsEvent: jest.fn() }));
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { rpc: jest.fn() } }));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
@@ -23,14 +25,23 @@ const summary = (overrides: Record<string, unknown> = {}) => ({
   complete: true,
   ...overrides,
 });
+const inboxSummary = (overrides: Record<string, unknown> = {}) => ({
+  dryRun: false,
+  retentionDays: 7,
+  cutoff: "2026-11-10T00:00:00.000Z",
+  deleted: 0,
+  ...overrides,
+});
 
 describe("GET /api/cron/prune-hivra-activity", () => {
   const originalEnv = process.env;
   const mockedRun = runActivityRetention as jest.MockedFunction<typeof runActivityRetention>;
   const mockedReport = reportOpsEvent as jest.MockedFunction<typeof reportOpsEvent>;
+  const mockedInbox = runInboxPromptRetention as jest.MockedFunction<typeof runInboxPromptRetention>;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedInbox.mockResolvedValue(inboxSummary());
     process.env = { ...originalEnv, CRON_SECRET: "expected-secret" };
   });
 
@@ -60,9 +71,32 @@ describe("GET /api/cron/prune-hivra-activity", () => {
     mockedRun.mockResolvedValue(summary());
     const res = await GET(makeRequest("Bearer expected-secret"));
     expect(res.status).toBe(200);
-    expect((await res.json()).data).toEqual(summary());
+    expect((await res.json()).data).toEqual({ ...summary(), inboxPrompts: inboxSummary() });
     expect(mockedRun).toHaveBeenCalledWith(expect.anything(), { forceDryRun: false });
     expect(mockedReport).not.toHaveBeenCalled();
+  });
+
+  it("clears closed Needs you requests in the same run, whatever the activity switch says", async () => {
+    mockedRun.mockResolvedValue(summary());
+    mockedInbox.mockResolvedValue(inboxSummary({ deleted: 3 }));
+    const res = await GET(makeRequest("Bearer expected-secret"));
+    expect(res.status).toBe(200);
+    expect(mockedInbox).toHaveBeenCalledWith(expect.anything(), { dryRun: false });
+    expect((await res.json()).data.inboxPrompts).toEqual(inboxSummary({ deleted: 3 }));
+  });
+
+  it("only counts closed Needs you requests with ?dryRun=1", async () => {
+    mockedRun.mockResolvedValue(summary());
+    await GET(makeRequest("Bearer expected-secret", "?dryRun=1"));
+    expect(mockedInbox).toHaveBeenCalledWith(expect.anything(), { dryRun: true });
+  });
+
+  it("answers 500 when the Needs you step fails, after the activity prune ran", async () => {
+    mockedRun.mockResolvedValue(summary());
+    mockedInbox.mockRejectedValue(new Error("boom"));
+    const res = await GET(makeRequest("Bearer expected-secret"));
+    expect(res.status).toBe(500);
+    expect(mockedRun).toHaveBeenCalled();
   });
 
   it("forces a dry run with ?dryRun=1", async () => {

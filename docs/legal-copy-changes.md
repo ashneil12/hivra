@@ -257,6 +257,17 @@ Retention statements that no code enforces were replaced with what is done. Evid
 - Not claimed: "no session replay" without the qualifier. Replay still runs on public pages for visitors whose consent is stored. Product analytics events still fire in the signed-in app.
 - Solicitor: whether the cookie banner's "product analytics and session replay" line should say that replay is limited to public pages.
 
+### P12. Sections 2 and 7, approval requests shown in Needs you (proposed 17 November 2026, NOT applied to the page)
+
+- Status: wording only proposed here. `dashboard/src/app/privacy/page.tsx` is unchanged. Apply it after solicitor review and Ash's approval, like every entry above. It matters only where the Needs you inbox is on (`HIVRA_INBOX_ANSWERS`); the table was empty on Canary and production when this was written.
+- Section 2, proposed new item after "Agent Data": `Approval Requests: if your agent stops to ask your permission and you answer from Needs you, the request is sent to Hivra so that the dashboard can show it. It holds a short summary, the command the agent wants to run, and any reason you type when you refuse.`
+- Section 7, proposed new row: `Approval requests: deleted 7 days after the request closes.`
+- Why: the Privacy Policy says activity records "never contain your prompts, commands, or file contents". That stays true of activity records, but these requests are a second record and they do hold a command. The page did not mention them, and nothing deleted them.
+- Evidence (canary tree): `dashboard/src/lib/agent-inbox/prompts.ts` stores `summary`, `command` and `answer_text` in `agent_inbox_prompts`; a request is open for at most 24 hours (`MAX_TTL_SECONDS`). `dashboard/src/lib/agent-inbox/retention.ts` deletes a row once `expires_at` is 7 days past, whatever the answer was. It runs daily inside `/api/cron/prune-hivra-activity` and has no switch of its own. An "Allow for this chat" answer is read back from this table (`recordPending`), and each request it lets through is stored as the same answer, so a chat in use keeps its permission and a chat quiet for longer than the window is asked once more.
+- Not claimed: that secrets are always removed from the command. For Hermes the `hivra-inbox` plugin passes the text through Hermes's own redactor before it leaves the computer (`dashboard/provisioner/hermes-plugins/hivra-inbox/__init__.py`, `_redact`). The same was not traced for the Claude Code "Ask me first" hook.
+- Deleted computers and closed accounts: `agent_inbox_prompts` is not in `ACCOUNT_DELETION_TABLES` (`dashboard/src/lib/ops/account-deletion.ts`). A deleted computer keeps its `hivra_agents` row with status `deleted`, so the table's `on delete cascade` does not remove these rows; the 7-day rule does, within about 8 days of the last request.
+- Solicitor: whether 7 days needs a stated reason, and whether the item belongs under "Agent Data" or on its own.
+
 ## Earlier changes already on the branch (before this pass)
 
 Listed so the whole difference from the live pages is in one place. These came from the first overhaul pass (see `ledgers/legal.json` and `legal-fix.json`) and were not touched here except where marked above.
