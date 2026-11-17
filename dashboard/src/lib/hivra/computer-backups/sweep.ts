@@ -41,6 +41,7 @@ type EnvLike = Record<string, string | undefined>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the admin client is untyped here, as in the other sweeps
 type Db = any;
 
+const PURGE_WAIT_REASON = "deleted_waiting";
 const LOG_SOURCE = "hivra-computer-backups";
 const RUN_BUDGET_MS = 100_000;
 const SCRIPT_TIMEOUT_MS = 90_000;
@@ -116,7 +117,6 @@ type AgentRow = Record<string, unknown> & {
   proxmox_host: string | null;
   status: string | null;
   sleep_state: string | null;
-  updated_at?: string | null;
 };
 
 export type ComputerBackupSweepSummary = {
@@ -300,6 +300,8 @@ export async function runComputerBackupSweep(deps: ComputerBackupSweepDeps = {})
   const lastBackup = new Map<string, BackupRow>();
   const lastDrill = new Map<string, BackupRow>();
   const purgedAgents = new Set<string>();
+  // When each deleted computer was first seen gone: hivra_agents keeps no deletion time.
+  const goneSince = new Map<string, number>();
   const backedUpAgents = new Map<string, BackupRow>();
   for (const job of jobs) {
     if (job.kind === "backup" && job.status === "succeeded") {
@@ -308,20 +310,40 @@ export async function runComputerBackupSweep(deps: ComputerBackupSweepDeps = {})
     }
     if (job.kind === "drill" && job.status !== "running" && !lastDrill.has(job.agent_id)) lastDrill.set(job.agent_id, job);
     if (job.kind === "purge" && job.status === "succeeded") purgedAgents.add(job.agent_id);
+    if (job.kind === "purge" && job.status === "skipped" && job.reason === PURGE_WAIT_REASON) {
+      const at = Date.parse(job.started_at);
+      const prior = goneSince.get(job.agent_id);
+      if (!prior || at < prior) goneSince.set(job.agent_id, at);
+    }
   }
 
   // 2. Purge repositories of deleted computers.
   const orphanIds = [...backedUpAgents.keys()].filter((id) => !agentById.has(id) && !purgedAgents.has(id));
   if (orphanIds.length && !outOfTime()) {
-    const { data: goneData } = await db.from("hivra_agents").select("id, status, updated_at").in("id", orphanIds.slice(0, 200));
-    const gone = new Map(((goneData ?? []) as AgentRow[]).map((a) => [a.id, a]));
-    for (const agentId of orphanIds.slice(0, 200)) {
+    const { data: goneData, error: goneError } = await db.from("hivra_agents").select("id, status").in("id", orphanIds.slice(0, 200));
+    // Without a clear answer from the database nothing is removed.
+    const gone = goneError ? null : new Map(((goneData ?? []) as AgentRow[]).map((a) => [a.id, a]));
+    if (!gone) summary.errors += 1;
+    for (const agentId of gone ? orphanIds.slice(0, 200) : []) {
       if (outOfTime()) break;
-      const row = gone.get(agentId);
+      const row = gone!.get(agentId);
       if (row && row.status !== "deleted") continue; // alive but filtered out (another host or mode)
-      const deletedAt = row?.updated_at ? Date.parse(row.updated_at) : 0;
-      if (row && now() - deletedAt < settings.purgeAfterHours * 3_600_000) continue;
       const source = backedUpAgents.get(agentId)!;
+      const lastCopyAt = Date.parse(source.finished_at ?? source.started_at);
+      // A note older than the last copy belongs to an earlier deletion that was undone.
+      const noted = goneSince.get(agentId);
+      const since = noted !== undefined && noted >= lastCopyAt ? noted : undefined;
+      if (since === undefined) {
+        // First time seen gone: note it, and remove the copies only once the grace period has passed.
+        const iso = new Date(now()).toISOString();
+        await db.from("hivra_computer_backups").insert({
+          id: newId(), agent_id: agentId, user_id: source.user_id, kind: "purge", status: "skipped",
+          proxmox_host: source.proxmox_host, vmid: source.vmid, reason: PURGE_WAIT_REASON, started_at: iso, finished_at: iso,
+        });
+        count(summary.refused, "purge_waiting");
+        continue;
+      }
+      if (now() - since < settings.purgeAfterHours * 3_600_000) { count(summary.refused, "purge_waiting"); continue; }
       const hostEnvValue = await envForHost(source.proxmox_host);
       if (!hostEnvValue) { count(summary.refused, "purge_host_unreachable"); continue; }
       if (mode === "dry") { count(summary.refused, "purge_dry"); continue; }

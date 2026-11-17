@@ -112,4 +112,88 @@ describe("computer backup sweep", () => {
     // The fresh copy is next checked by a drill, never copied a second time.
     expect(inserts).toEqual([expect.objectContaining({ kind: "drill", source_backup_id: jobId })]);
   });
+
+  describe("removing a deleted computer's copies", () => {
+    const goneId = "00000000-0000-4000-8000-0000000000d1";
+    const env = { HIVRA_COMPUTER_BACKUPS: "on", HIVRA_COMPUTER_BACKUP_KEY: "k".repeat(32), HIVRA_COMPUTER_BACKUPS_HOSTS: "alpha" };
+    // Each read of a table takes the next answer from its queue.
+    const fakeDb = (answers: Record<string, Array<{ data: unknown; error: unknown }>>) => {
+      const inserts: Array<Record<string, unknown>> = [];
+      const db = {
+        from(table: string) {
+          const builder: Record<string, unknown> = {};
+          for (const m of ["select", "eq", "is", "neq", "not", "in", "order", "limit"]) builder[m] = () => builder;
+          builder.then = (resolve: (v: unknown) => unknown) => resolve(answers[table]?.shift() ?? { data: [], error: null });
+          builder.insert = async (value: Record<string, unknown>) => { inserts.push(value); return { error: null }; };
+          builder.update = () => builder;
+          return builder;
+        },
+      };
+      return { db, inserts };
+    };
+    const run = (db: unknown, runHostScript = jest.fn(async () => ({ stdout: "" }))) => runComputerBackupSweep({
+      env, db, now: () => NOW, runHostScript, runHostScriptWithStdin: jest.fn(),
+      resolveTarget: jest.fn(async () => ({ ok: true, target: { env: {}, vmid: 1100, bindingTag: `hivra-bind-${"c".repeat(32)}` } })),
+      newId: () => "00000000-0000-4000-8000-0000000000e1",
+    } as never);
+    const copy = { ...row(goneId, "backup", 30), id: "00000000-0000-4000-8000-0000000000c1" };
+
+    it("removes nothing when the database cannot say whether the computer is gone", async () => {
+      const { db, inserts } = fakeDb({
+        hivra_agents: [{ data: [], error: null }, { data: null, error: { message: "column does not exist" } }],
+        hivra_computer_backups: [{ data: [copy], error: null }],
+      });
+      const hostScript = jest.fn(async () => ({ stdout: "" }));
+      const summary = await run(db, hostScript);
+      expect(hostScript).not.toHaveBeenCalled();
+      expect(inserts).toHaveLength(0);
+      expect(summary.errors).toBe(1);
+    });
+
+    it("first notes a deleted computer, and waits out the grace period before removing its copies", async () => {
+      const { db, inserts } = fakeDb({
+        hivra_agents: [{ data: [], error: null }, { data: [{ id: goneId, status: "deleted" }], error: null }],
+        hivra_computer_backups: [{ data: [copy], error: null }],
+      });
+      const hostScript = jest.fn(async () => ({ stdout: "" }));
+      const summary = await run(db, hostScript);
+      expect(hostScript).not.toHaveBeenCalled();
+      expect(inserts).toEqual([expect.objectContaining({ kind: "purge", status: "skipped", reason: "deleted_waiting" })]);
+      expect(summary.refused).toMatchObject({ purge_waiting: 1 });
+
+      const note = { ...row(goneId, "purge", 2), status: "skipped" as const, reason: "deleted_waiting" };
+      const second = fakeDb({
+        hivra_agents: [{ data: [], error: null }, { data: [{ id: goneId, status: "deleted" }], error: null }],
+        hivra_computer_backups: [{ data: [note, copy], error: null }],
+      });
+      await run(second.db, hostScript);
+      expect(hostScript).not.toHaveBeenCalled();
+      expect(second.inserts).toHaveLength(0);
+    });
+
+    it("removes the copies once the computer has been gone past the grace period", async () => {
+      const note = { ...row(goneId, "purge", 25), status: "skipped" as const, reason: "deleted_waiting" };
+      // A live computer on the same host, freshly copied, is how the sweep reaches the host.
+      const liveId = "00000000-0000-4000-8000-0000000000a2";
+      const { db, inserts } = fakeDb({
+        hivra_agents: [{ data: [agent(liveId)], error: null }, { data: [{ id: goneId, status: "deleted" }], error: null }],
+        hivra_computer_backups: [{ data: [note, copy, row(liveId, "backup", 1), row(liveId, "drill", 1)], error: null }],
+      });
+      const hostScript = jest.fn(async () => ({ stdout: 'HIVRA_BACKUP_PURGE {"ok":true,"reason":"removed"}\n' }));
+      await run(db, hostScript);
+      expect(hostScript).toHaveBeenCalledTimes(1);
+      expect(inserts).toEqual([expect.objectContaining({ kind: "purge" })]);
+    });
+
+    it("leaves a computer that is alive but on another host alone", async () => {
+      const { db, inserts } = fakeDb({
+        hivra_agents: [{ data: [], error: null }, { data: [{ id: goneId, status: "running" }], error: null }],
+        hivra_computer_backups: [{ data: [copy], error: null }],
+      });
+      const hostScript = jest.fn(async () => ({ stdout: "" }));
+      await run(db, hostScript);
+      expect(hostScript).not.toHaveBeenCalled();
+      expect(inserts).toHaveLength(0);
+    });
+  });
 });
