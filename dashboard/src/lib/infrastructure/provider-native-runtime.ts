@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.11.17.4.json";
+import currentRelease from "../../../provisioner-releases/2026.11.17.5.json";
+import launchFixesRelease from "../../../provisioner-releases/2026.11.17.4.json";
 import agentZeroUsrEnvRelease from "../../../provisioner-releases/2026.11.17.3.json";
 import agentZeroSettingsRelease from "../../../provisioner-releases/2026.11.17.2.json";
 import latestAgentsRelease from "../../../provisioner-releases/2026.11.17.1.json";
@@ -121,8 +122,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.11.17.4"
+  const release = identity.bundle.provisionerVersion === "2026.11.17.5"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.17.4"
+    ? launchFixesRelease
     : identity.bundle.provisionerVersion === "2026.11.17.3"
     ? agentZeroUsrEnvRelease
     : identity.bundle.provisionerVersion === "2026.11.17.2"
