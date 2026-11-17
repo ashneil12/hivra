@@ -18,10 +18,12 @@ produce a guide that passes the fact check ships nothing and says so.
 select max(date) from seo_gsc_daily where site = 'sc-domain:hivra.cloud';
 
 -- Gap candidates: criteria applied before the limit; top page by total impressions over the window.
-with qp as (
+with latest as (
+  select max(date) d from seo_gsc_daily where site = 'sc-domain:hivra.cloud'
+), qp as (
   select query, page, sum(impressions) imps, sum(clicks) clicks, sum(position * impressions) pos_w
-  from seo_gsc_daily
-  where site = 'sc-domain:hivra.cloud' and date >= current_date - 31
+  from seo_gsc_daily, latest
+  where site = 'sc-domain:hivra.cloud' and date between latest.d - 27 and latest.d
   group by query, page
 ), q as (
   select query, sum(imps) imps, sum(clicks) clicks,
