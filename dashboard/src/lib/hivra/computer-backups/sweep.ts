@@ -271,6 +271,11 @@ export async function runComputerBackupSweep(deps: ComputerBackupSweepDeps = {})
           finished_at: seen.finishedAt ?? new Date(now()).toISOString(),
         }).eq("id", job.id).eq("status", "running");
         if (error) summary.errors += 1;
+        // Keep this run's view in step with the row, so the job just finished counts below.
+        Object.assign(job, {
+          status: seen.status, reason: seen.reason, disks: seen.disks,
+          finished_at: seen.finishedAt ?? new Date(now()).toISOString(),
+        });
         count(summary.finished, `${job.kind}_${seen.status}`);
         if (seen.status === "failed") {
           log.warn("computer backup job failed", { source: LOG_SOURCE, failureType: `computer_backup_${seen.reason}`, instanceId: job.agent_id });
@@ -283,6 +288,7 @@ export async function runComputerBackupSweep(deps: ComputerBackupSweepDeps = {})
         await db.from("hivra_computer_backups").update({
           status: "failed", reason: seen?.state === "missing" ? "job_lost" : "timed_out", finished_at: new Date(now()).toISOString(),
         }).eq("id", job.id).eq("status", "running");
+        Object.assign(job, { status: "failed", finished_at: new Date(now()).toISOString() });
         count(summary.finished, `${job.kind}_failed`);
         continue;
       }
