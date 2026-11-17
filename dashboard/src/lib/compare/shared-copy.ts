@@ -65,22 +65,22 @@ export const DECISION_SECTION: CompareSection = {
  * "verified" on the page: vendors have moved prices since (Hostinger's sale price) and Nous
  * now shows its per-size prices only after sign-in, so the page cannot claim live checking.
  */
-export function cautionSection(): CompareSection {
+export function cautionSection(checked?: string): CompareSection {
   return {
     heading: "Things a comparison chart cannot tell you",
     tone: "note",
     blocks: paragraphs(
-      `Prices, feature availability, introductory offers and refund policies can all change. The vendor figures and documentation on this page were collected from each provider's published pages in ${formatCheckedMonth()}. Some of them may have changed since, so confirm any quoted vendor price, hardware size, compliance status or security statement against the provider's current documentation before you buy.`,
+      `Prices, feature availability, introductory offers and refund policies can all change. The vendor figures and documentation on this page were collected from each provider's published pages in ${formatCheckedMonth(checked)}. Some of them may have changed since, so confirm any quoted vendor price, hardware size, compliance status or security statement against the provider's current documentation before you buy.`,
       "Security claims also need context. A managed host can take infrastructure upkeep off your hands, but it cannot make an unrestricted AI agent safe. Review secrets, account permissions, approvals and backups wherever you run it.",
     ),
   };
 }
 
 /** "Where these numbers come from" for a page that quotes a competitor's prices or terms. */
-export function priceSources(links: CompareSources["links"], notes?: string[], plural = false): CompareSources {
+export function priceSources(links: CompareSources["links"], notes?: string[], plural = false, checked?: string): CompareSources {
   const who = plural ? "the other providers come from their" : "the other provider come from its";
   return {
-    intro: `Prices and terms for ${who} own pages, as of ${formatCheckedMonth()}. Vendors change prices, so check the source before you pay.`,
+    intro: `Prices and terms for ${who} own pages, as of ${formatCheckedMonth(checked)}. Vendors change prices, so check the source before you pay.`,
     notes,
     links,
   };
@@ -107,6 +107,12 @@ export const COMPARISON_LABELS: Record<string, string> = {
   "vs-render": "Hivra vs Render",
   "openclaw-to-hermes": "OpenClaw to Hermes",
   "ai-agent-hosting-alternatives": "AI agent hosting alternatives",
+  "vs-claude-code-on-the-web": "Hivra vs Claude Code on the web",
+  "vs-openai-codex-cloud": "Hivra vs OpenAI Codex cloud",
+  "vs-cursor-cloud-agents": "Hivra vs Cursor cloud agents",
+  "vs-github-codespaces": "Hivra vs GitHub Codespaces",
+  "vs-fly-sprites": "Hivra vs Fly.io Sprites",
+  "vs-e2b": "Hivra vs E2B sandboxes",
 };
 
 export const BLOG_LABELS: Record<string, string> = {
