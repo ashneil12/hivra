@@ -24,9 +24,9 @@ export interface FreeSandboxSettings {
   paidReserveComputers: number;
   /** CPU promised to awake free sandboxes, as a multiple of the pool's cores (idle sandboxes use almost none). */
   cpuOvercommit: number;
-  /** Turns running at once on one pool; the rest wait in line, paid first. */
+  /** Replies running at once on one pool server (its turn gate); the rest wait in line. 0: no limit. */
   maxConcurrentTurns: number;
-  /** A person's reply time per day, in seconds; null (the key left out) turns the cap off. */
+  /** A person's reply time per day, in seconds; null (the key left out, or 0) turns the cap off. */
   dailyReplySecondsCap: number | null;
   /** Agents a free workspace may have. */
   agents: number;
@@ -109,8 +109,8 @@ export function freeSandboxSettings(ladder: Ladder | null, freeKey = "free"): Fr
     !wholeOrZero(s.refusedShareMinReplies) ||
     !wholeOrZero(s.paidReserveComputers) ||
     !positive(s.cpuOvercommit) ||
-    !wholePositive(s.maxConcurrentTurns) ||
-    !(cap === null || cap === undefined || wholePositive(cap))
+    !wholeOrZero(s.maxConcurrentTurns) ||
+    !(cap === null || cap === undefined || wholeOrZero(cap))
   ) {
     return null;
   }
@@ -125,7 +125,7 @@ export function freeSandboxSettings(ladder: Ladder | null, freeKey = "free"): Fr
     paidReserveComputers: s.paidReserveComputers,
     cpuOvercommit: s.cpuOvercommit,
     maxConcurrentTurns: s.maxConcurrentTurns,
-    dailyReplySecondsCap: cap ?? null,
+    dailyReplySecondsCap: cap ? cap : null,
     agents: s.agents,
     scheduledJobs: s.scheduledJobs,
     scheduledJobMinHours: s.scheduledJobMinHours,

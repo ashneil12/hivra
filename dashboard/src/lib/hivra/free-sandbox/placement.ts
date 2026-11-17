@@ -14,8 +14,7 @@ export interface ServerFreeState {
 }
 
 export type PlacementDecision =
-  | { admit: true }
-  | { admit: false; reason: "places_full" | "paid_reserve" | "paid_waiting" | "free_ai_refusing" };
+  { admit: true } | { admit: false; reason: "places_full" | "paid_reserve" | "paid_waiting" | "free_ai_refusing" };
 
 /** A server's free replies today: answered, refused by the free AI's limit, and failed another way (counted apart). */
 export interface FreeAiDay {
@@ -60,34 +59,4 @@ export type WakeDecision = { admit: true } | { admit: false; reason: "running_ca
 /** Whether a stopped free sandbox may start now, or waits in line. */
 export function freeWakeAdmission(awakeFree: number, poolCpus: number, settings: FreeSandboxSettings): WakeDecision {
   return awakeFree < freeRunningCap(poolCpus, settings) ? { admit: true } : { admit: false, reason: "running_cap" };
-}
-
-export interface TurnRequest {
-  id: string;
-  paid: boolean;
-  /** When the person asked (order within the same priority). */
-  queuedAt: Date;
-  /** Reply time the person already used today, in seconds. */
-  replySecondsToday: number;
-}
-
-export interface TurnSelection {
-  /** Turns that may start now, in order. */
-  start: TurnRequest[];
-  /** Free turns refused for today's reply-time cap (only when the cap is on). */
-  overCap: TurnRequest[];
-}
-
-/**
- * The turn line on one pool: paid before free, then oldest first, up to `maxConcurrentTurns` running at once. A free
- * person past the daily reply-time cap (when it is set) is refused rather than queued.
- */
-export function selectTurns(queue: TurnRequest[], running: number, settings: FreeSandboxSettings): TurnSelection {
-  const cap = settings.dailyReplySecondsCap;
-  const overCap = cap === null ? [] : queue.filter((t) => !t.paid && t.replySecondsToday >= cap);
-  const eligible = queue
-    .filter((t) => !overCap.includes(t))
-    .sort((a, b) => Number(b.paid) - Number(a.paid) || a.queuedAt.getTime() - b.queuedAt.getTime());
-  const room = Math.max(0, settings.maxConcurrentTurns - running);
-  return { start: eligible.slice(0, room), overCap };
 }

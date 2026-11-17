@@ -1,11 +1,4 @@
-import {
-  freePlacementAdmission,
-  refusedShare,
-  freeRunningCap,
-  freeWakeAdmission,
-  selectTurns,
-  type TurnRequest,
-} from "../placement";
+import { freePlacementAdmission, refusedShare, freeRunningCap, freeWakeAdmission } from "../placement";
 import type { FreeSandboxSettings } from "../settings";
 
 const settings: FreeSandboxSettings = {
@@ -54,30 +47,6 @@ describe("waking", () => {
     expect(freeRunningCap(0, settings)).toBe(0);
     expect(freeWakeAdmission(15, 4, settings)).toEqual({ admit: true });
     expect(freeWakeAdmission(16, 4, settings)).toEqual({ admit: false, reason: "running_cap" });
-  });
-});
-
-describe("the turn line", () => {
-  const turn = (id: string, paid: boolean, minute: number, used = 0): TurnRequest => ({
-    id,
-    paid,
-    queuedAt: new Date(Date.UTC(2026, 10, 17, 0, minute)),
-    replySecondsToday: used,
-  });
-
-  it("runs paid before free, then oldest first, up to the concurrent cap", () => {
-    const queue = [turn("f1", false, 1), turn("p1", true, 3), turn("f2", false, 2)];
-    expect(selectTurns(queue, 0, settings).start.map((t) => t.id)).toEqual(["p1", "f1"]);
-    expect(selectTurns(queue, 1, settings).start.map((t) => t.id)).toEqual(["p1"]);
-    expect(selectTurns(queue, 2, settings).start).toEqual([]);
-  });
-
-  it("refuses free people over the daily reply-time cap only when the cap is on", () => {
-    const queue = [turn("f1", false, 1, 100), turn("p1", true, 2, 1000)];
-    expect(selectTurns(queue, 0, settings).overCap).toEqual([]);
-    const capped = selectTurns(queue, 0, { ...settings, dailyReplySecondsCap: 60 });
-    expect(capped.overCap.map((t) => t.id)).toEqual(["f1"]);
-    expect(capped.start.map((t) => t.id)).toEqual(["p1"]);
   });
 });
 
