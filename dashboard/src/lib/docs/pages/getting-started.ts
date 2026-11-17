@@ -101,7 +101,6 @@ export const doc: DocPage = {
         "What to do first:\n\n1. **Sign in or finish model setup**, if you chose to sign in or to set up inside the agent. Codex asks you to sign in with ChatGPT after it opens. On the agent's **Settings** page, the Overview section shows the sign-in summary and a **Sign in again** button if you need to redo it.\n2. **Give it a small task** so you see how it works: ask it to read a repository, summarise a folder or run a command. Open **Computer**, then **Files** or **Terminal**, to see what it did on its own machine.\n3. **Check Settings.** The Overview section shows the agent, its size, where it runs and the power controls for stopping and restarting it.",
         "![The Settings page of a sample agent showing its Overview](/images/docs/dash-agent-manage.webp \"The agent's Settings page (Manage), Overview section. Sample data.\")",
         "![The Files view of a sample agent's computer](/images/docs/dash-agent-files.webp \"Computer, then Files: the files on the agent's own machine. Sample data.\")",
-        "The Setting up and Ready screens have no screenshot yet, because they appear only during a real launch.",
       ],
     },
     {
