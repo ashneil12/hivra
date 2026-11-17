@@ -2,7 +2,7 @@ jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
 jest.mock("@/lib/ops-events", () => ({ reportOpsEvent: jest.fn(() => Promise.resolve(null)) }));
 jest.mock("@/lib/logger", () => ({ log: { warn: jest.fn(), info: jest.fn(), error: jest.fn() } }));
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
-  resolveProxmoxHostEnv: (config: { hostId: string }, env: Record<string, string>) => ({ ...env, PROXMOX_PUBLIC_IP: config.hostId === "pve11" ? "203.0.113.11" : "" }),
+  resolveProxmoxHostEnv: (config: { hostId: string }, env: Record<string, string>) => ({ ...env, PROXMOX_PUBLIC_IP: config.hostId === "alpha" ? "203.0.113.11" : "" }),
 }));
 
 import { checkKeyBinding, keyBindingMode, resetKeyBindingCache } from "../key-binding";
@@ -11,7 +11,7 @@ function db(row: Record<string, unknown> | null) {
   const chain = { select: () => chain, eq: () => chain, maybeSingle: async () => ({ data: row, error: null }) };
   return { from: () => chain };
 }
-const managed = { id: "agent-1", proxmox_host: "pve11", deployment_mode: "hivra-managed", deployment_target_id: null, computer_substrate: "proxmox-kvm", status: "running" };
+const managed = { id: "agent-1", proxmox_host: "alpha", deployment_mode: "hivra-managed", deployment_target_id: null, computer_substrate: "proxmox-kvm", status: "running" };
 const base = { keyId: "key-1", userId: "u", metadata: { agentId: "agent-1" } };
 
 describe("managed AI key binding", () => {
@@ -38,7 +38,7 @@ describe("managed AI key binding", () => {
     expect(await checkKeyBinding({ ...base, caller: { address: null, via: "worker" } }, { db: db(managed), env: { HIVRA_MANAGED_KEY_BINDING: "enforce" } }))
       .toEqual({ allowed: false, outcome: "unknown_address" });
     resetKeyBindingCache();
-    expect(await checkKeyBinding({ ...base, caller: { address: "198.51.100.7", via: "direct" } }, { db: db({ ...managed, proxmox_host: "pve99" }), env: { HIVRA_MANAGED_KEY_BINDING: "enforce" } }))
+    expect(await checkKeyBinding({ ...base, caller: { address: "198.51.100.7", via: "direct" } }, { db: db({ ...managed, proxmox_host: "nowhere" }), env: { HIVRA_MANAGED_KEY_BINDING: "enforce" } }))
       .toEqual({ allowed: true, outcome: "unknown_host" });
   });
 

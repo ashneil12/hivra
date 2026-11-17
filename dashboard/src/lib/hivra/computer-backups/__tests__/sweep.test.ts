@@ -15,10 +15,10 @@ import {
 const NOW = Date.parse("2026-11-17T20:00:00Z");
 const settings = computerBackupSettings({});
 const agent = (id: string, extra: Record<string, unknown> = {}) => ({
-  id, user_id: "u", vmid: 1100, proxmox_host: "pve11", status: "running", sleep_state: "awake", ...extra,
+  id, user_id: "u", vmid: 1100, proxmox_host: "alpha", status: "running", sleep_state: "awake", ...extra,
 });
 const row = (agentId: string, kind: BackupRow["kind"], hoursAgo: number, disks = true): BackupRow => ({
-  id: `${agentId}-${kind}-${hoursAgo}`, agent_id: agentId, user_id: "u", kind, status: "succeeded", proxmox_host: "pve11",
+  id: `${agentId}-${kind}-${hoursAgo}`, agent_id: agentId, user_id: "u", kind, status: "succeeded", proxmox_host: "alpha",
   vmid: 1100, reason: null, disks: disks ? [{ key: "scsi0", sha256: "a".repeat(64), bytes: 1, snapshotId: "b".repeat(64) }] : [],
   started_at: new Date(NOW - hoursAgo * 3_600_000).toISOString(), finished_at: new Date(NOW - hoursAgo * 3_600_000).toISOString(),
 });
@@ -36,7 +36,7 @@ describe("computer backup sweep", () => {
     expect(settings.keepWeekly).toBe(4);
     expect(computerBackupSettings({ HIVRA_COMPUTER_BACKUPS_KEEP_DAILY: "14" }).keepDaily).toBe(14);
     expect(computerBackupSettings({ HIVRA_COMPUTER_BACKUPS_KEEP_DAILY: "-1" }).keepDaily).toBe(7);
-    expect(computerBackupSettings({ HIVRA_COMPUTER_BACKUPS_HOSTS: "PVE11, pve12" }).hosts).toEqual(new Set(["pve11", "pve12"]));
+    expect(computerBackupSettings({ HIVRA_COMPUTER_BACKUPS_HOSTS: "ALPHA, beta" }).hosts).toEqual(new Set(["alpha", "beta"]));
   });
 
   it("derives a distinct password per computer, and none without a key", () => {

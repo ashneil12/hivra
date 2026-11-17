@@ -16,8 +16,8 @@ import {
   type BackupStartInput,
 } from "../scripts";
 
-const JOB = "11111111-2222-4333-8444-555555555555";
-const AGENT = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+const JOB = "00000000-0000-4000-8000-000000000001";
+const AGENT = "00000000-0000-4000-8000-0000000000aa";
 const TAG = `hivra-bind-${"a".repeat(32)}`;
 const DISK = { key: "scsi0", sha256: "b".repeat(64), bytes: 34359738368, snapshotId: "c".repeat(64) };
 
@@ -96,7 +96,7 @@ describe("computer backup host scripts", () => {
   it("builds a valid poll script and parses its lines", () => {
     bashSyntax(buildBackupPollScript([JOB]));
     const result = JSON.stringify({ job: JOB, kind: "backup", status: "succeeded", reason: "saved", addedBytes: 1234, disks: [DISK, { key: "bad" }], finishedAt: "2026-11-17T20:00:00Z" });
-    const other = "22222222-2222-4333-8444-555555555555";
+    const other = "00000000-0000-4000-8000-000000000002";
     const polled = parseBackupPoll(`HIVRA_BACKUP_JOB ${JOB} ${result}\nHIVRA_BACKUP_JOB ${other} running\n`);
     expect(polled).toEqual([
       { jobId: JOB, state: "finished", status: "succeeded", reason: "saved", addedBytes: 1234, disks: [DISK], finishedAt: "2026-11-17T20:00:00Z" },
