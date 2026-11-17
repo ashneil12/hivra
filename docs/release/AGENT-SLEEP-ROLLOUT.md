@@ -128,6 +128,17 @@ could not hand the computer a working token) leaves a guest-mode row in phase
 `recovery_failed`, `detach_failed` or `guest_token_stale`. Such an agent is
 kept awake until a rollback finishes it; run the rollback again.
 
+### Order for a host
+
+1. Set the server switches above, then let the branch rebuild: server values
+   also take effect only on a new deployment.
+2. Set the host's `ingress_mode`, check the bundle sync has the wake proxy's
+   release on the host, then run `install-wake-proxy` and `wake-proxy-status`.
+3. Move one agent with the enable route, check `/status`, and time a few naps
+   and wakes from `hivra_agent_sleep_events` before moving the next.
+4. Run the rollback route and the enable route again once, to prove the way
+   back, before leaving any agent on the host.
+
 ## Agent wake profiles
 
 `HIVRA_AGENT_PROFILES` (server env, `off` by default, or `on`). Off, the idle
