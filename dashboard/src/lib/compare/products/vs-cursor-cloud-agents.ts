@@ -178,7 +178,7 @@ export const page: ComparePage = {
   faqs: [
     {
       q: "How much do Cursor cloud agents cost?",
-      a: "As of November 2026, Cursor's help page says cloud agents are not included on Free or Plus. Premium at $30 a month is the lowest current plan for new subscribers; the legacy Start, Pro, Pro+ and Ultra plans also include cloud agents for existing customers, billed differently. Higher plans are listed at $100 and $200 a month, with higher plans at $100 and $200 a month, and Teams from $30 a user a month. Usage draws from a weekly pool, and third-party models are billed at API list price from prepaid credit on Premium and above. Cursor publishes no separate VM charge. Hivra is $9.99 a month for 2 vCPU and 4 GB of RAM, with a larger size at $19.99 a month for 4 vCPU and 8 GB of RAM, and does not include AI usage.",
+      a: "As of November 2026, Cursor's help page says cloud agents are not included on Free or Plus. Premium at $30 a month is the lowest current plan for new subscribers; the legacy Start, Pro, Pro+ and Ultra plans also include cloud agents for existing customers, billed differently. Higher plans are listed at $100 and $200 a month, and Teams from $30 a user a month. Usage draws from a weekly pool, and third-party models are billed at API list price from prepaid credit on Premium and above. Cursor publishes no separate VM charge. Hivra is $9.99 a month for 2 vCPU and 4 GB of RAM, with a larger size at $19.99 a month for 4 vCPU and 8 GB of RAM, and does not include AI usage.",
     },
     {
       q: "Is Hivra a replacement for Cursor cloud agents?",
