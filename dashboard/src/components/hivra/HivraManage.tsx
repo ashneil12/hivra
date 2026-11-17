@@ -409,6 +409,29 @@ function HivraManageContent({
     return () => { alive = false; };
   }, [def?.cliKind, agent.type, agent.id]);
 
+  // "Always allow" rules made from Needs you (empty unless the owner made any).
+  const [allowRules, setAllowRules] = useState<{ id: string; tool: string; command: string | null }[]>([]);
+  useEffect(() => {
+    if (!askFirst?.available) return;
+    let alive = true;
+    void fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/inbox-allow-rules`, { cache: "no-store" })
+      .then(async (res) => (res.ok ? ((await res.json()) as { data?: { rules?: { id: string; tool: string; command: string | null }[] } }).data?.rules : null))
+      .then((rules) => { if (alive && Array.isArray(rules)) setAllowRules(rules); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [askFirst?.available, agent.id]);
+
+  const revokeAllowRule = useCallback(async (ruleId: string) => {
+    if (acting) return;
+    setActing("allow-rule"); setErr(null);
+    try {
+      const res = await fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/inbox-allow-rules?rule=${encodeURIComponent(ruleId)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Couldn't remove that rule");
+      setAllowRules((rules) => rules.filter((rule) => rule.id !== ruleId));
+    } catch (e) { setErr({ slot: "permissions", message: (e as Error).message }); }
+    finally { setActing(null); }
+  }, [agent.id, acting]);
+
   const applyAskFirst = useCallback(async (next: boolean) => {
     if (acting) return;
     setActing("ask-first"); setErr(null);
@@ -1384,6 +1407,22 @@ function HivraManageContent({
                             : "Off: Claude Code works on its own. Turn on to approve each command or file change from Needs you."}
                         </div>
                       </div>
+                    </div>
+                  ) : null}
+                  {askFirst?.available && allowRules.length > 0 ? (
+                    <div style={{ display: "grid", gap: 6, borderTop: "1px solid var(--etched-border)", paddingTop: 10 }}>
+                      <div style={{ fontSize: 12.5, color: "var(--text-primary)" }}>Always allowed</div>
+                      <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                        Claude Code won&apos;t ask again for these exact requests. Remove one to be asked again.
+                      </div>
+                      {allowRules.map((rule) => (
+                        <div key={rule.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <code style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: "var(--text-secondary)", overflowWrap: "anywhere", whiteSpace: "pre-wrap", maxHeight: 60, overflow: "hidden" }}>
+                            {rule.command || rule.tool}
+                          </code>
+                          <button type="button" style={btnGhost} disabled={acting !== null} onClick={() => void revokeAllowRule(rule.id)}>Remove</button>
+                        </div>
+                      ))}
                     </div>
                   ) : null}
                 </div>

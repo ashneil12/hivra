@@ -468,4 +468,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261117170000", name: "hivra_agent_memory_use" },
   { version: "20261117180000", name: "hivra_agent_memory_floor" },
   { version: "20261117213000", name: "hivra_computer_backups" },
+  { version: "20261117220000", name: "hivra_status_incidents" },
+  { version: "20261117221000", name: "agent_inbox_allow_rules" },
 ];

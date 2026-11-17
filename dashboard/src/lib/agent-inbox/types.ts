@@ -17,4 +17,6 @@ export interface InboxPrompt {
   answerable: boolean;
   /** Set once the owner answered and Hermes has not confirmed yet. */
   answeredChoice: ApprovalChoice | null;
+  /** True for Claude Code prompts (Hermes prompts carry no tool): decides where "always" can be undone. */
+  claudeCode?: boolean;
 }
