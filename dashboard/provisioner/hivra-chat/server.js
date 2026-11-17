@@ -3769,9 +3769,11 @@ const AEON_SYNC_REBASE_MARKER = path.join(HOME, ".hivra", "aeon-sync-rebase.json
 // test keeps them together); used only when no durable copy exists yet.
 const AEON_HIVRA_NEXT_CONFIG = [
   "import type { NextConfig } from 'next'",
-  "// Hivra hosts this dashboard behind a token-proxy mounted at /aeon.",
+  "import upstream from './next.config.hivra-upstream'",
+  "// Hivra hosts this dashboard behind a token-proxy mounted at /aeon. Aeon's own",
+  "// config (next.config.hivra-upstream.ts) is kept as is; only the mount is added.",
   "const basePath = process.env.AEON_BASE_PATH || undefined",
-  "const nextConfig: NextConfig = basePath ? { basePath, assetPrefix: basePath } : {}",
+  "const nextConfig: NextConfig = basePath ? { ...upstream, basePath, assetPrefix: basePath } : upstream",
   "export default nextConfig",
   "",
 ].join("\n");
@@ -3955,6 +3957,23 @@ async function ensureAeonNextConfig(gitDir) {
     console.error("hivra-chat: aeon dashboard folder is missing; " + AEON_NEXT_CONFIG + " could not be restored");
     return;
   }
+  // The wrapper imports Aeon's own config, kept beside it; an empty one stands
+  // in if that copy is gone, so the next build still resolves the import.
+  const kept = path.join(path.dirname(file), "next.config.hivra-upstream.ts");
+  if (text.includes("./next.config.hivra-upstream") && !fs.existsSync(kept)) {
+    writeFileDurably(kept, "import type { NextConfig } from 'next'\nconst nextConfig: NextConfig = {}\nexport default nextConfig\n", 0o644);
+  }
+  // That kept copy is this computer's, never a change for the owner's git.
+  const exclude = path.join(gitDir, "info", "exclude");
+  const excluded = "/" + path.posix.join(path.posix.dirname(AEON_NEXT_CONFIG), "next.config.hivra-upstream.ts");
+  try {
+    let lines = "";
+    try { lines = fs.readFileSync(exclude, "utf8"); } catch {}
+    if (!lines.split("\n").includes(excluded)) {
+      fs.mkdirSync(path.dirname(exclude), { recursive: true });
+      fs.appendFileSync(exclude, (lines && !lines.endsWith("\n") ? "\n" : "") + excluded + "\n");
+    }
+  } catch {}
   if (writeFileDurably(file, text, 0o644)) {
     const what = current !== null && current.includes(AEON_NEXT_CONFIG_MARKER) ? "was damaged in " : "was missing from ";
     console.error("hivra-chat: aeon dashboard basePath config " + what + AEON_NEXT_CONFIG + " and has been restored");
