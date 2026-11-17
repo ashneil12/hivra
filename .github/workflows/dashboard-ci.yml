@@ -25,12 +25,16 @@ permissions:
   contents: read
 
 # A newer commit on the same PR makes the older run obsolete, so cancel it.
-# Push, merge-queue and manual runs each verify one exact commit: they get their
-# own group and are never cancelled (a shared group would also drop a queued
-# run whenever a newer one arrived).
+# Pushes to canary work the same way: a newer push verifies a tree that
+# contains every earlier merge, so an older canary run still in progress is
+# cancelled (the same rule Current tree safety already uses). When merges land
+# minutes apart this saves a full run per superseded merge, and the newest
+# canary commit always gets a complete run.
+# Merge-queue and manual runs each verify one exact commit: they get their own
+# group and are never cancelled.
 concurrency:
-  group: dashboard-ci-${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: dashboard-ci-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 # `npm run verify` (lint, typecheck, jest, build) ran as one serial job and hit
 # 20 minutes on 2026-09-24, 16 of them in `jest --runInBand`. The same work now
