@@ -446,12 +446,24 @@ git checkout -q --detach FETCH_HEAD
 rm -rf -- apps/dashboard/outputs
 ln -s -- "$5/apps/dashboard/outputs" apps/dashboard/outputs
 ' hivra-aeon-fetch "$BUILD_ROOT" "$dir" "$AEON_REPO_URL" "$TARGET" "$AEON_DIR" >/dev/null 2>&1 </dev/null || return 1
-      # The same basePath config the provisioner writes, so it serves under /aeon.
-      as_agent sh -c 'cat > "$1"' hivra-aeon-config "$dir.partial/apps/dashboard/next.config.ts" <<'NEXTCFG' || return 1
+      # The same config the provisioner writes: Aeon's own next.config.ts kept
+      # beside it, with only the /aeon mount added on top.
+      as_agent sh -c '
+set -eu
+cd -- "$1/apps/dashboard"
+if [ -f next.config.ts ] && [ ! -L next.config.ts ]; then
+  mv -- next.config.ts next.config.hivra-upstream.ts
+else
+  printf "%s\n" "import type { NextConfig } from '"'"'next'"'"'" "const nextConfig: NextConfig = {}" "export default nextConfig" > next.config.hivra-upstream.ts
+fi
+cat > next.config.ts
+' hivra-aeon-config "$dir.partial" <<'NEXTCFG' || return 1
 import type { NextConfig } from 'next'
-// Hivra hosts this dashboard behind a token-proxy mounted at /aeon.
+import upstream from './next.config.hivra-upstream'
+// Hivra hosts this dashboard behind a token-proxy mounted at /aeon. Aeon's own
+// config (next.config.hivra-upstream.ts) is kept as is; only the mount is added.
 const basePath = process.env.AEON_BASE_PATH || undefined
-const nextConfig: NextConfig = basePath ? { basePath, assetPrefix: basePath } : {}
+const nextConfig: NextConfig = basePath ? { ...upstream, basePath, assetPrefix: basePath } : upstream
 export default nextConfig
 NEXTCFG
       as_agent sh -c '
