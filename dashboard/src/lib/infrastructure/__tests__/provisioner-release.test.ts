@@ -7,6 +7,7 @@ import stateImportRelease from "../../../../provisioner-releases/2026.11.15.2.js
 import resilienceRelease from "../../../../provisioner-releases/2026.11.15.3.json";
 import lockFdRelease from "../../../../provisioner-releases/2026.11.15.5.json";
 import watchdogRelease from "../../../../provisioner-releases/2026.11.15.6.json";
+import latestAgentsRelease from "../../../../provisioner-releases/2026.11.17.1.json";
 import usrPluginsRelease from "../../../../provisioner-releases/2026.11.15.7.json";
 import connectGrantsRelease from "../../../../provisioner-releases/2026.11.14.1.json";
 import wakeHardeningRelease from "../../../../provisioner-releases/2026.11.13.6.json";
@@ -45,7 +46,6 @@ import capacityRelease from "../../../../provisioner-releases/2026.09.15.2.json"
 import omarchyCursorRelease from "../../../../provisioner-releases/2026.09.21.1.json";
 import providerRelease from "../../../../provisioner-releases/2026.09.08.3.json";
 import {
-  AGENT_CLI_VERSIONS,
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
   PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION,
@@ -62,10 +62,10 @@ import {
 } from "../portable-provisioner-contract";
 
 it("binds every reviewed portable provisioner asset to the immutable current release", () => {
-  expect(usrPluginsRelease.schema).toBe(1);
-  expect(usrPluginsRelease.version).toBe(PORTABLE_HIVRA_PROVISIONER_VERSION);
-  expect(usrPluginsRelease.files.map(file => file.path)).toEqual([...PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES]);
-  for (const file of usrPluginsRelease.files) {
+  expect(latestAgentsRelease.schema).toBe(1);
+  expect(latestAgentsRelease.version).toBe(PORTABLE_HIVRA_PROVISIONER_VERSION);
+  expect(latestAgentsRelease.files.map(file => file.path)).toEqual([...PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES]);
+  for (const file of latestAgentsRelease.files) {
     const content = readFileSync(path.join(process.cwd(), "provisioner", file.path));
     expect({ path: file.path, bytes: content.length, sha256: createHash("sha256").update(content).digest("hex") })
       .toEqual(file);
@@ -185,7 +185,6 @@ it("ships the optional Claude app (helper, inert unit, pin) in 2026.10.07.1 with
     const prior = terminalFollowupsRelease.files.find(entry => entry.path === file)!;
     expect(current.sha256).not.toBe(prior.sha256);
   }
-  expect(AGENT_CLI_VERSIONS["claude-code"]).toBe("2.1.292");
   // The pin names Anthropic's own repository and matches the evidence documents.
   const pin = JSON.parse(readFileSync(path.join(process.cwd(), "provisioner/claude-desktop-pin.json"), "utf8")) as { version: string; sha256: string; bytes: number; url: string };
   expect(pin.url).toBe(`https://downloads.claude.ai/claude-desktop/apt/stable/pool/main/c/claude-desktop/claude-desktop_${pin.version}_amd64.deb`);
@@ -232,7 +231,8 @@ it("ships persistent work (terminal sessions, vetted agent CLIs, saved sign-ins)
   const paths = release.files.map(file => file.path);
   for (const file of ["agent-cli-versions.json", "hivra-agent-cli-update.sh", "hivra-codex-config-pin.py"]) {
     expect(paths).toContain(file);
-    expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
+    // The CLI pin file left the bundle in 2026.11.17.1; the helpers stay.
+    if (file !== "agent-cli-versions.json") expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
     expect(detachedRunsRelease.files.map(entry => entry.path)).not.toContain(file);
   }
   expect(detachedRunsRelease.version).toBe("2026.09.24.1");
@@ -263,9 +263,9 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
     "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
     "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql", "20261111200000_provider_release_admission_2026_11_11_2.sql", "20261111220000_provider_release_admission_2026_11_11_3.sql", "20261111233000_provider_release_admission_2026_11_11_4.sql", "20261112100000_provider_release_admission_2026_11_11_5.sql", "20261112120000_provider_release_admission_2026_11_11_6.sql", "20261112160000_provider_release_admission_2026_11_11_7.sql", "20261112170000_provider_release_admission_2026_11_12_1.sql", "20261112180000_provider_release_admission_2026_11_12_2.sql", "20261112190000_provider_release_admission_2026_11_12_3.sql", "20261112210000_provider_release_admission_2026_11_12_4.sql", "20261113091000_provider_release_admission_2026_11_12_5.sql", "20261113103000_provider_release_admission_2026_11_13_1.sql", "20261113111000_provider_release_admission_2026_11_13_2.sql", "20261113121000_provider_release_admission_2026_11_13_3.sql", "20261113130000_provider_release_admission_2026_11_13_4.sql", "20261113140000_provider_release_admission_2026_11_13_5.sql", "20261113150000_provider_release_admission_2026_11_13_6.sql", "20261114120000_provider_release_admission_2026_11_14_1.sql", "20261115120000_provider_release_admission_2026_11_15_1.sql", "20261115130000_provider_release_admission_2026_11_15_2.sql", "20261115140000_provider_release_admission_2026_11_15_3.sql", "20261115150000_provider_release_admission_2026_11_15_5.sql", "20261116010000_provider_release_admission_2026_11_15_6.sql", "20261116020000_provider_release_admission_2026_11_15_7.sql",
-    "20261116030000_provider_release_admission_2026_11_15_7_resealed.sql", "20261116040000_provider_release_admission_2026_11_15_7_resealed_2.sql"]
+    "20261116030000_provider_release_admission_2026_11_15_7_resealed.sql", "20261116040000_provider_release_admission_2026_11_15_7_resealed_2.sql", "20261117120000_provider_release_admission_2026_11_17_1.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])
@@ -282,7 +282,8 @@ it("ships the agent app updater and pins in 2026.10.20.2, keeping 2026.10.20.1 a
   const paths = appUpdateRelease.files.map(file => file.path);
   for (const file of ["agent-app-versions.json", "hivra-agent-app-update.sh"]) {
     expect(paths).toContain(file);
-    expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
+    // The app pin file left the bundle in 2026.11.17.1; the updater stays.
+    if (file !== "agent-app-versions.json") expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(file);
     expect(ownedUpdateRelease.files.map(entry => entry.path)).not.toContain(file);
   }
   // The isolation proof, the remote-desktop bundle revision and the DeepSeek package are preserved.
@@ -1040,12 +1041,39 @@ it("serves Agent Zero plugin web UI imports and pins v2.15 in 2026.11.15.7, keep
   const gateway = readFileSync("provisioner/hivra-chat/server.js", "utf8");
   // Plugin web UI module imports under /usr/plugins pass the no-Referer allowlist.
   expect(gateway).toContain("usr/plugins");
-  const pins = JSON.parse(readFileSync("provisioner/agent-app-versions.json", "utf8"));
-  expect(pins["agent-zero"].version).toBe("sha256:05d6ab347bd7db4b6bd5a7d902c9965281ff852ff23f29fffcc1c8919e628bd8");
-  expect(pins["agent-zero"].label).toBe("v2.15");
-  expect(pins["agent-zero"].previous).toContainEqual({
-    version: "sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0", label: "v2.2" });
+  // The v2.15 pin file itself left the bundle in 2026.11.17.1 (no pins).
   for (const version of ["2026.11.15.6", "2026.11.15.7"]) {
+    expect(provisionerSupportsHostCredential(version)).toBe(true);
+    expect(provisionerSupportsWakeProxy(version)).toBe(true);
+    expect(provisionerSupportsWakeDoorbell(version)).toBe(true);
+    expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
+    expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
+    expect(provisionerSupportsActivityTelemetry(version)).toBe(true);
+    expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);
+    expect(portableProvisionerSupportsCatalogRuntime(version, "nuphos")).toBe(true);
+  }
+});
+
+it("drops the agent version pins in 2026.11.17.1, keeping 2026.11.15.7 admitted", () => {
+  expect(latestAgentsRelease.version).toBe("2026.11.17.1");
+  const paths = latestAgentsRelease.files.map(file => file.path);
+  const removed = usrPluginsRelease.files.map(file => file.path).filter(file => !paths.includes(file));
+  expect(removed).toEqual(["agent-app-versions.json", "agent-cli-versions.json"]);
+  expect(paths.filter(file => !usrPluginsRelease.files.some(entry => entry.path === file))).toEqual([]);
+  const changed = latestAgentsRelease.files.filter(file => file.sha256 !== usrPluginsRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  // Only the installer, the two updaters, the runtime updater on both sides,
+  // the gateway's update report, a comment in the Codex config helper, the
+  // worker's release labels and the release documents change.
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-agent-app-update.sh", "hivra-agent-cli-update.sh",
+    "hivra-chat/server.js", "hivra-codex-config-pin.py", "hivra-guest-runtime-update.sh", "hivra-provider-worker.py",
+    "hivra-update-guest-runtime.sh", "provision-claude-code-box.sh"]);
+  // Remote-desktop assets are untouched, so the desktop bundle revision holds.
+  for (const file of ["remote-desktop/install-guest.py", "remote-desktop/broker.cjs", "remote-desktop/server.cjs"]) {
+    expect(latestAgentsRelease.files.find(entry => entry.path === file)!.sha256)
+      .toBe(usrPluginsRelease.files.find(entry => entry.path === file)!.sha256);
+  }
+  for (const version of ["2026.11.15.7", "2026.11.17.1"]) {
     expect(provisionerSupportsHostCredential(version)).toBe(true);
     expect(provisionerSupportsWakeProxy(version)).toBe(true);
     expect(provisionerSupportsWakeDoorbell(version)).toBe(true);
@@ -1060,7 +1088,7 @@ it("serves Agent Zero plugin web UI imports and pins v2.15 in 2026.11.15.7, keep
 it("keeps each runtime's placement minimum where it was when the browser fix ships", () => {
   // The fix reaches browser-enabled computers through the runtime update, so no runtime needs the new release.
   expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.5", "deepseek-harness")).toBe(true);
-  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
+  for (const version of ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1"]) expect(portableProvisionerSupportsCatalogRuntime(version, "linux-server")).toBe(true);
 });
 
 it("ships the lifecycle lock fd fix in 2026.11.15.5, keeping 2026.11.15.3 admitted", () => {
@@ -1094,6 +1122,6 @@ it("keeps the current bundle inside the file count the provider worker accepts i
   const worker = readFileSync(path.join(process.cwd(), "provisioner/hivra-provider-worker.py"), "utf8");
   const cap = Number(/not 1 <= len\(manifest\) <= ([0-9]+):/.exec(worker)?.[1]);
   expect(cap).toBeGreaterThan(0);
-  expect(usrPluginsRelease.files.length).toBeLessThanOrEqual(cap);
-  expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES.length).toBe(usrPluginsRelease.files.length);
+  expect(latestAgentsRelease.files.length).toBeLessThanOrEqual(cap);
+  expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES.length).toBe(latestAgentsRelease.files.length);
 });

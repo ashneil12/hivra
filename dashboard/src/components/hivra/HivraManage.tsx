@@ -130,7 +130,7 @@ const LIFECYCLE_PROGRESS: Record<string, { title: string; detail: string; sectio
   // Update in Manage › Updates' agent software card: the same in-place update.
   "cli-update": {
     title: "Updating the connection service…",
-    detail: "Hivra is updating it in place, then moves the agent to its tested version once no reply is being written. The computer keeps running, and this page reconnects to it when the update finishes.",
+    detail: "Hivra is updating it in place, then updates the agent to its newest release once no reply is being written. The computer keeps running, and this page reconnects to it when the update finishes.",
     section: "updates",
   },
 };
@@ -587,7 +587,7 @@ function HivraManageContent({
   // The update restarts only the computer's gateway, which drops the embedded
   // surfaces' sign-ins, so the page signs them in again once it is back. An
   // unverified outcome (502) may also have restarted it, or rolled it back.
-  // For Claude Code and Codex it also reports the move to Hivra's tested version.
+  // For Claude Code and Codex it also reports the update to the newest release.
   const updateConnectionService = useCallback(async () => {
     let result: Awaited<ReturnType<typeof updateAgentRuntime>> | undefined;
     try {
@@ -1782,9 +1782,8 @@ function HivraManageContent({
                           : isComputerOnly
                           ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so apps, files, and local logins stay as they are. The desktop stream disconnects briefly; terminals open on this page reconnect when it finishes."
                           : "Update connection service brings Hivra’s connection service up to date without restarting the computer, so your agent login, chats, model credentials, and files stay as they are. Terminals open on this page reconnect when it finishes."}
-                        {manage?.agentCli ? ` It also moves ${def?.name ?? "the agent"} to version ${manage.agentCli.vetted}, the version Hivra has tested, once no reply is being written.` : ""}
-                        {manage?.agentApp?.vetted ? ` It also moves ${def?.name ?? "the agent"} to ${manage.agentApp.vetted}, the version Hivra has tested, once nobody is using it.` : ""}
-                        {manage?.agentApp && !manage.agentApp.vetted ? " It also runs Hermes’s own update (hermes update) once nobody is using Hermes." : ""}
+                        {manage?.agentCli ? ` It also updates ${def?.name ?? "the agent"} to its newest release, once no reply is being written.` : ""}
+                        {manage?.agentApp ? ` It also updates ${def?.name ?? "the agent"} to its newest release, once nobody is using it.` : ""}
                       </div>
                     </>
                   )}

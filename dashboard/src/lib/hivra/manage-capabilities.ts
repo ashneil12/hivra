@@ -18,7 +18,6 @@ import {
   COMPUTER_PLACEMENT_LABEL,
   computerPlacementFor,
 } from "@/lib/agent-computers/agent-surfaces";
-import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 import {
   errorKeepsComputer,
   folderRecoveryEligible,
@@ -311,21 +310,19 @@ function softwareUpdatesHere(row: ManageCapabilitiesRow, variant: ManageVariant,
 
 function agentCliFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["agentCli"] {
   if (!softwareUpdatesHere(row, variant, "chat-agent")) return null;
-  if (row.type === "claude-code") return { name: "claude-code", vetted: AGENT_CLI_VERSIONS["claude-code"] };
-  if (row.type === "codex") return { name: "codex", vetted: AGENT_CLI_VERSIONS.codex };
+  // Hivra pins no CLI version: the owner updates to the vendor's newest release.
+  if (row.type === "claude-code") return { name: "claude-code", vetted: null };
+  if (row.type === "codex") return { name: "codex", vetted: null };
   return null;
 }
 
 function agentAppFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["agentApp"] {
   if (!softwareUpdatesHere(row, variant, "dashboard-agent")) return null;
-  if (row.type === "aeon" || row.type === "openclaw" || row.type === "agent-zero") {
-    return { name: row.type, vetted: AGENT_APP_VERSIONS[row.type].label };
+  // Hivra pins no app version: every update goes to upstream's newest release.
+  if (row.type === "aeon" || row.type === "openclaw" || row.type === "agent-zero"
+    || row.type === "hermes" || row.type === "openbot" || row.type === "nuphos") {
+    return { name: row.type, vetted: null };
   }
-  // Official Hermes, updated by its own `hermes update`: nothing Hivra vetted.
-  if (row.type === "hermes") return { name: "hermes", vetted: null };
-  // OpenBot likewise follows upstream's latest release.
-  if (row.type === "openbot") return { name: "openbot", vetted: null };
-  if (row.type === "nuphos") return { name: "nuphos", vetted: null };
   return null;
 }
 
