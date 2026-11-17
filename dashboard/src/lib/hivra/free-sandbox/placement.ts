@@ -13,15 +13,41 @@ export interface ServerFreeState {
   paidWaiting: boolean;
 }
 
-export type PlacementDecision = { admit: true } | { admit: false; reason: "places_full" | "paid_reserve" | "paid_waiting" };
+export type PlacementDecision =
+  | { admit: true }
+  | { admit: false; reason: "places_full" | "paid_reserve" | "paid_waiting" | "free_ai_refusing" };
+
+/** A server's free replies today: answered, refused by the free AI's limit, and failed another way (counted apart). */
+export interface FreeAiDay {
+  answered: number;
+  refused: number;
+  failed: number;
+}
+
+/** The share of today's replies the free AI refused on a server; null until it has enough replies to say. */
+export function refusedShare(day: FreeAiDay, settings: FreeSandboxSettings): number | null {
+  const replies = day.answered + day.refused;
+  if (replies === 0 || replies < settings.refusedShareMinReplies) return null;
+  return day.refused / replies;
+}
 
 /** Whether one more free person may be placed on this server. Free never pushes paid out and never buys a server. */
-export function freePlacementAdmission(server: ServerFreeState, settings: FreeSandboxSettings): PlacementDecision {
+export function freePlacementAdmission(
+  server: ServerFreeState,
+  settings: FreeSandboxSettings,
+  today?: FreeAiDay,
+): PlacementDecision {
   if (server.paidWaiting) return { admit: false, reason: "paid_waiting" };
   if (!server.paidReserveIntact) return { admit: false, reason: "paid_reserve" };
-  if (server.freePlaced >= settings.freePlacesPerServer) return { admit: false, reason: "places_full" };
+  if (server.freePlaced >= openPlaces(settings)) return { admit: false, reason: "places_full" };
+  const share = today ? refusedShare(today, settings) : null;
+  if (share !== null && share > settings.refusedShareStop) return { admit: false, reason: "free_ai_refusing" };
   return { admit: true };
 }
+
+/** Places open on one server now: the step Free has opened to, never past the ceiling. */
+export const openPlaces = (settings: FreeSandboxSettings) =>
+  Math.min(settings.placesOpenPerServer, settings.freePlacesPerServer);
 
 /** How many free sandboxes may be awake at once on a pool with `poolCpus` cores. */
 export function freeRunningCap(poolCpus: number, settings: FreeSandboxSettings): number {

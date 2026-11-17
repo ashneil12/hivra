@@ -28,6 +28,17 @@ export interface FreeSandboxSettings {
   maxConcurrentTurns: number;
   /** A person's reply time per day, in seconds; null (the key left out) turns the cap off. */
   dailyReplySecondsCap: number | null;
+  /** Agents a free workspace may have. */
+  agents: number;
+  /** Scheduled jobs a free workspace may have, and the least hours between one job's runs. */
+  scheduledJobs: number;
+  scheduledJobMinHours: number;
+  /** Places opened per server so far: Free opens in steps, up to `freePlacesPerServer`. */
+  placesOpenPerServer: number;
+  /** Above this share of a server's free replies today refused by the free AI's limit, nobody new is placed there. */
+  refusedShareStop: number;
+  /** Replies a server needs today before its refused share counts (a few early refusals say little). */
+  refusedShareMinReplies: number;
 }
 
 /** The two clocks every plan has. */
@@ -68,7 +79,10 @@ function section(ladder: Ladder | null, key: string): Record<string, unknown> | 
 export function lifecycleSettings(ladder: Ladder | null, plan: string): LifecycleSettings | null {
   const s = section(ladder, plan);
   if (!s || !positive(s.sleepAfterIdleMinutes) || !positive(s.storeAfterIdleHours)) return null;
-  return { sleepAfterIdleMinutes: s.sleepAfterIdleMinutes, storeAfterIdleHours: s.storeAfterIdleHours };
+  return {
+    sleepAfterIdleMinutes: s.sleepAfterIdleMinutes,
+    storeAfterIdleHours: s.storeAfterIdleHours,
+  };
 }
 
 /** The free section, checked whole; null when any setting is missing or out of shape. */
@@ -87,6 +101,12 @@ export function freeSandboxSettings(ladder: Ladder | null, freeKey = "free"): Fr
     !wholePositive(s.freePlacesPerServer) ||
     !wholeOrZero(hermesPlaces) ||
     !modelList(s.freeModels) ||
+    !wholePositive(s.agents) ||
+    !wholeOrZero(s.scheduledJobs) ||
+    !positive(s.scheduledJobMinHours) ||
+    !wholePositive(s.placesOpenPerServer) ||
+    !(typeof s.refusedShareStop === "number" && s.refusedShareStop > 0 && s.refusedShareStop <= 1) ||
+    !wholeOrZero(s.refusedShareMinReplies) ||
     !wholeOrZero(s.paidReserveComputers) ||
     !positive(s.cpuOvercommit) ||
     !wholePositive(s.maxConcurrentTurns) ||
@@ -106,6 +126,12 @@ export function freeSandboxSettings(ladder: Ladder | null, freeKey = "free"): Fr
     cpuOvercommit: s.cpuOvercommit,
     maxConcurrentTurns: s.maxConcurrentTurns,
     dailyReplySecondsCap: cap ?? null,
+    agents: s.agents,
+    scheduledJobs: s.scheduledJobs,
+    scheduledJobMinHours: s.scheduledJobMinHours,
+    placesOpenPerServer: s.placesOpenPerServer,
+    refusedShareStop: s.refusedShareStop,
+    refusedShareMinReplies: s.refusedShareMinReplies,
   };
 }
 

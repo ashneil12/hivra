@@ -1,4 +1,11 @@
-import { freePlacementAdmission, freeRunningCap, freeWakeAdmission, selectTurns, type TurnRequest } from "../placement";
+import {
+  freePlacementAdmission,
+  refusedShare,
+  freeRunningCap,
+  freeWakeAdmission,
+  selectTurns,
+  type TurnRequest,
+} from "../placement";
 import type { FreeSandboxSettings } from "../settings";
 
 const settings: FreeSandboxSettings = {
@@ -14,6 +21,12 @@ const settings: FreeSandboxSettings = {
   cpuOvercommit: 2,
   maxConcurrentTurns: 2,
   dailyReplySecondsCap: null,
+  agents: 2,
+  scheduledJobs: 3,
+  scheduledJobMinHours: 5,
+  placesOpenPerServer: 50,
+  refusedShareStop: 0.2,
+  refusedShareMinReplies: 10,
 };
 const ok = { freePlaced: 0, paidReserveIntact: true, paidWaiting: false };
 
@@ -24,8 +37,14 @@ describe("free placement", () => {
   });
 
   it("never takes the room kept for paid, and waits while a paid computer waits", () => {
-    expect(freePlacementAdmission({ ...ok, paidReserveIntact: false }, settings)).toEqual({ admit: false, reason: "paid_reserve" });
-    expect(freePlacementAdmission({ ...ok, paidWaiting: true }, settings)).toEqual({ admit: false, reason: "paid_waiting" });
+    expect(freePlacementAdmission({ ...ok, paidReserveIntact: false }, settings)).toEqual({
+      admit: false,
+      reason: "paid_reserve",
+    });
+    expect(freePlacementAdmission({ ...ok, paidWaiting: true }, settings)).toEqual({
+      admit: false,
+      reason: "paid_waiting",
+    });
   });
 });
 
@@ -59,5 +78,22 @@ describe("the turn line", () => {
     const capped = selectTurns(queue, 0, { ...settings, dailyReplySecondsCap: 60 });
     expect(capped.overCap.map((t) => t.id)).toEqual(["f1"]);
     expect(capped.start.map((t) => t.id)).toEqual(["p1"]);
+  });
+});
+
+describe("free AI refusals and steps", () => {
+  it("counts the refused share only once a server has enough replies, and stops placing above it", () => {
+    expect(refusedShare({ answered: 1, refused: 2, failed: 0 }, settings)).toBeNull();
+    expect(refusedShare({ answered: 8, refused: 2, failed: 5 }, settings)).toBe(0.2);
+    expect(freePlacementAdmission(ok, settings, { answered: 8, refused: 2, failed: 0 })).toEqual({ admit: true });
+    expect(freePlacementAdmission(ok, settings, { answered: 7, refused: 3, failed: 0 })).toEqual({
+      admit: false,
+      reason: "free_ai_refusing",
+    });
+  });
+
+  it("opens no more places than the current step", () => {
+    const stepped = { ...settings, placesOpenPerServer: 1 };
+    expect(freePlacementAdmission({ ...ok, freePlaced: 1 }, stepped)).toEqual({ admit: false, reason: "places_full" });
   });
 });

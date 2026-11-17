@@ -13,6 +13,12 @@ const free = {
   cpuOvercommit: 2,
   maxConcurrentTurns: 2,
   dailyReplySecondsCap: null,
+  agents: 2,
+  scheduledJobs: 3,
+  scheduledJobMinHours: 5,
+  placesOpenPerServer: 50,
+  refusedShareStop: 0.2,
+  refusedShareMinReplies: 10,
 };
 const env = (ladder: unknown) => ({ HIVRA_PLAN_LADDER_CONFIG: JSON.stringify(ladder) });
 
@@ -36,12 +42,15 @@ describe("free sandbox settings", () => {
     const withoutCap: Record<string, unknown> = { ...free };
     delete withoutCap.dailyReplySecondsCap;
     expect(freeSandboxSettings(readPlanLadder(env({ free: withoutCap })))?.dailyReplySecondsCap).toBeNull();
-    expect(freeSandboxSettings(readPlanLadder(env({ free: { ...free, dailyReplySecondsCap: 60 } })))?.dailyReplySecondsCap).toBe(60);
+    expect(
+      freeSandboxSettings(readPlanLadder(env({ free: { ...free, dailyReplySecondsCap: 60 } })))?.dailyReplySecondsCap,
+    ).toBe(60);
     expect(freeSandboxSettings(readPlanLadder(env({ free: { ...free, dailyReplySecondsCap: "60" } })))).toBeNull();
   });
 
   it("reads a missing reply-time cap as the cap off, never as the feature off", () => {
-    const { dailyReplySecondsCap: _cap, ...withoutCap } = free;
+    const withoutCap: Record<string, unknown> = { ...free };
+    delete withoutCap.dailyReplySecondsCap;
     const read = freeSandboxSettings(readPlanLadder(env({ free: withoutCap })));
     expect(read).not.toBeNull();
     expect(read?.dailyReplySecondsCap).toBeNull();
@@ -49,12 +58,17 @@ describe("free sandbox settings", () => {
   });
 
   it("reads a missing second class of place as none, and needs at least one well-formed free model", () => {
-    const { hermesPlacesPerServer: _h, ...withoutHermes } = free;
-    expect(freeSandboxSettings(readPlanLadder(env({ free: withoutHermes }))))?.toMatchObject({ hermesPlacesPerServer: 0 });
+    const withoutHermes: Record<string, unknown> = { ...free };
+    delete withoutHermes.hermesPlacesPerServer;
+    expect(freeSandboxSettings(readPlanLadder(env({ free: withoutHermes }))))?.toMatchObject({
+      hermesPlacesPerServer: 0,
+    });
     expect(freeSandboxSettings(readPlanLadder(env({ free: { ...free, hermesPlacesPerServer: -1 } })))).toBeNull();
     expect(freeSandboxSettings(readPlanLadder(env({ free: { ...free, freeModels: [] } })))).toBeNull();
     expect(freeSandboxSettings(readPlanLadder(env({ free: { ...free, freeModels: ["no-provider"] } })))).toBeNull();
-    expect(freeSandboxSettings(readPlanLadder(env({ free: { ...free, freeModels: ["prov/x; rm -rf /"] } })))).toBeNull();
+    expect(
+      freeSandboxSettings(readPlanLadder(env({ free: { ...free, freeModels: ["prov/x; rm -rf /"] } }))),
+    ).toBeNull();
   });
 
   it("reads a paid plan's clocks from its own section", () => {
