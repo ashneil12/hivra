@@ -264,16 +264,19 @@ fi
 # The stock Ubuntu cloud image does not consistently include QEMU Guest Agent.
 # Install it through VMID-owned vendor data so the hypervisor channel can
 # attest the guest SSH key before any network connection carries credentials.
+# apt runs from runcmd, not cloud-config's package_update/packages: on Ubuntu
+# that module also runs `snap refresh`, so an unreachable snap store (its IPv4
+# front ends refusing connections, our guests are IPv4 only) failed cloud-init
+# and with it every launch, though nothing here needs a snap.
 if [ "$PROVISION_MODE" = install ]; then
 install -d -o root -g root -m 0700 "$CLOUD_INIT_SNIPPET_DIR"
 CLOUD_INIT_SNIPPET="$CLOUD_INIT_SNIPPET_DIR/hivra-qga-${VMID}-${OPERATION_ID}.yaml"
 ( set -o noclobber
   cat > "$CLOUD_INIT_SNIPPET" <<'HIVRA_QGA_VENDOR_DATA'
 #cloud-config
-package_update: true
-packages:
-  - qemu-guest-agent
 runcmd:
+  - [env, DEBIAN_FRONTEND=noninteractive, apt-get, -o, Acquire::Retries=3, update]
+  - [env, DEBIAN_FRONTEND=noninteractive, apt-get, -o, Acquire::Retries=3, install, -y, --no-install-recommends, qemu-guest-agent]
   - [systemctl, enable, --now, qemu-guest-agent.service]
 HIVRA_QGA_VENDOR_DATA
 ) 2>/dev/null || fail "could not create operation-scoped QEMU Guest Agent vendor data"
