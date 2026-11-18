@@ -9,7 +9,7 @@ struct HivraBrowserSignInTests {
 
     @Test("the challenge matches the website's (RFC 7636 example)")
     func challengeMatchesRFC() {
-        #expect(HivraBrowserSignIn.challenge(for: "dBjftJeZ4CVP-mJ92K1u3s2Ac3VSnU8qGfo5zPh3K7Q") == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
+        #expect(HivraBrowserSignIn.challenge(for: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
     }
 
     @Test("a fresh request has a long verifier and state")
@@ -23,7 +23,7 @@ struct HivraBrowserSignInTests {
 
     @Test("opens the browser page on the connection's origin")
     func browserURL() throws {
-        let request = HivraBrowserSignIn.Request(verifier: "dBjftJeZ4CVP-mJ92K1u3s2Ac3VSnU8qGfo5zPh3K7Q", state: "state_value_123456")
+        let request = HivraBrowserSignIn.Request(verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk", state: "state_value_123456")
         let url = try #require(request.browserURL(connection: connection, intent: .signUp))
         #expect(url.absoluteString == "https://hivra.cloud/desktop/sign-in?challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&state=state_value_123456&intent=sign-up")
         #expect(request.browserURL(connection: URL(string: "file:///tmp/x")!, intent: .signIn) == nil)
