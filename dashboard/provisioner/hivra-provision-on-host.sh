@@ -27,6 +27,15 @@ CORES="${3:-4}"
 MEM_MB="${4:-8192}"
 AGENT_KIND="${5:-claude}"
 CPU_LIMIT="${6:-$CORES}"
+# empty: make the computer's place on this host (number, address, blank disk,
+# settings) and stop there. Used to bring a stored computer back on a host other
+# than the one it left: its disks are then written from the storage box. No
+# guest is booted and no installer runs.
+PROVISION_MODE="${HIVRA_PROVISION_MODE:-install}"
+case "$PROVISION_MODE" in install|empty) ;; *)
+  echo "[hivra-prov] unsupported provision mode" >&2
+  exit 1
+;; esac
 case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|deepseek-harness|linux-desktop|linux-server) ;; *)
   echo "[hivra-prov] unsupported agent kind" >&2
   exit 1
@@ -219,6 +228,8 @@ validate_named_tunnel_input
 validate_linux_desktop_input() {
   # linux-server is the same computer shape without the desktop: it keeps the
   # named tunnel, computer UUID and control origin of the Linux Desktop launch.
+  # An empty computer takes no launch input: it is filled from the storage box.
+  [ "${PROVISION_MODE:-install}" != empty ] || return 0
   [ "$AGENT_KIND" = "linux-desktop" ] || [ "$AGENT_KIND" = "linux-server" ] || return 0
   [ -n "${HIVRA_TUNNEL_TOKEN:-}" ] && [ -n "${HIVRA_TUNNEL_URL:-}" ] \
     || fail "Linux Desktop requires pre-journaled named HTTPS access"
@@ -242,7 +253,7 @@ for value in values[:2]:
   fi
 }
 validate_linux_desktop_input
-if [ "$AGENT_KIND" = "deepseek-harness" ] && { [ -z "${HIVRA_TUNNEL_TOKEN:-}" ] || [ -z "${HIVRA_TUNNEL_URL:-}" ]; }; then
+if [ "$PROVISION_MODE" != empty ] && [ "$AGENT_KIND" = "deepseek-harness" ] && { [ -z "${HIVRA_TUNNEL_TOKEN:-}" ] || [ -z "${HIVRA_TUNNEL_URL:-}" ]; }; then
   fail "DeepSeek Harness requires pre-journaled named HTTPS access"
 fi
 install -m 0600 "${VM_KEY}.pub" "$CIKEYS"
@@ -253,6 +264,7 @@ fi
 # The stock Ubuntu cloud image does not consistently include QEMU Guest Agent.
 # Install it through VMID-owned vendor data so the hypervisor channel can
 # attest the guest SSH key before any network connection carries credentials.
+if [ "$PROVISION_MODE" = install ]; then
 install -d -o root -g root -m 0700 "$CLOUD_INIT_SNIPPET_DIR"
 CLOUD_INIT_SNIPPET="$CLOUD_INIT_SNIPPET_DIR/hivra-qga-${VMID}-${OPERATION_ID}.yaml"
 ( set -o noclobber
@@ -266,6 +278,7 @@ runcmd:
 HIVRA_QGA_VENDOR_DATA
 ) 2>/dev/null || fail "could not create operation-scoped QEMU Guest Agent vendor data"
 chmod 0600 "$CLOUD_INIT_SNIPPET"
+fi
 
 log "creating VM $VMID (${CORES} vCPU / ${MEM_MB} MB) at $IP"
 qm create "$VMID" --name "hivra-cc-${VMID}" --memory "$MEM_MB" --cores "$CORES" --cpu host \
@@ -283,6 +296,28 @@ install -m 0600 /dev/null "$ALLOCATION_RECEIPT_TMP"
 printf 'operation_id=%s\nbinding_tag=%s\nvmid=%s\n' \
   "$OPERATION_ID" "$BINDING_TAG" "$VMID" > "$ALLOCATION_RECEIPT_TMP"
 mv "$ALLOCATION_RECEIPT_TMP" "$ALLOCATION_RECEIPT_FILE"
+if [ "$PROVISION_MODE" = empty ]; then
+  # A blank disk of the asked size; the storage box fills it. The guest already
+  # carries its agent and guest agent, so no vendor data is attached.
+  qm set "$VMID" --scsi0 "${STORAGE}:${DISK_GB},discard=on,ssd=1" >/dev/null
+  qm set "$VMID" --ide2 "${STORAGE}:cloudinit" >/dev/null
+  qm set "$VMID" --boot order=scsi0 --ciuser ubuntu --sshkeys "$CIKEYS" >/dev/null
+  qm set "$VMID" --ipconfig0 "ip=${IP}/24,gw=${GW}" >/dev/null
+  qm set "$VMID" --nameserver "$NAMESERVERS" >/dev/null
+  # The stored mark goes down before the lock is released: a computer whose disk
+  # is blank must never read as bootable. Bringing it back swaps it for the cold mark.
+  install -d -m 0755 /var/lib/hivra-sleep
+  STORED_MARK_TMP="/var/lib/hivra-sleep/stored-${VMID}.tmp.$$"
+  printf '%s\n' "$BINDING_TAG" > "$STORED_MARK_TMP"
+  mv "$STORED_MARK_TMP" "/var/lib/hivra-sleep/stored-${VMID}"
+  rm -f -- "/var/lib/hivra-sleep/cold-${VMID}"
+  release_allocation_lock
+  log "done: vmid=$VMID ip=$IP kind=$AGENT_KIND mode=empty"
+  printf '{"vmid":%s,"ip":"%s","cores":%s,"mem_mb":%s,"agent_kind":"%s","disk_gb":%s,"empty":true,"ready":false}\n' \
+    "$VMID" "$IP" "$CORES" "$MEM_MB" "$AGENT_KIND" "$DISK_GB"
+  CREATED=0
+  exit 0
+fi
 qm set "$VMID" --scsi0 "${STORAGE}:0,import-from=${IMG},discard=on,ssd=1" >/dev/null
 qm disk resize "$VMID" scsi0 "${DISK_GB}G" >/dev/null
 qm set "$VMID" --ide2 "${STORAGE}:cloudinit" >/dev/null
