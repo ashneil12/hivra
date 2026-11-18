@@ -19,6 +19,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
     articles: [
       "keep-claude-code-running-24-7",
       "claude-code-remote-control",
+      "claude-code-on-your-phone",
       "run-codex-24-7-in-the-cloud",
       "claude-code-vs-codex-24-7",
       "cursor-vs-claude-code",
@@ -29,6 +30,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "is-it-safe-to-leave-an-ai-agent-running-unattended",
       "claude-code-dangerously-skip-permissions",
       "codex-resume-session",
+      "codex-mobile",
     ],
   },
   {
@@ -78,6 +80,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "is-openclaw-free-what-it-costs-to-run",
       "openclaw-broken-after-update",
       "agent-zero-vs-openclaw-hosting",
+      "how-to-self-host-agent-zero",
       "hermes-vs-openclaw",
     ],
   },
