@@ -31,7 +31,7 @@ import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
-import { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DIRECT_BASE_URL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
+import { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, OPENCLAW_DEFAULT_MODEL, VENICE_DIRECT_BASE_URL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
 import { resolveLaunchLlmVaultKey } from "@/lib/hivra/launch-llm-vault-key";
 import { getTemplateForLaunch, type TemplateIdentity } from "@/lib/hivra/agent-templates";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
@@ -1532,7 +1532,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         const anthropicWire = def.llm?.wire === "anthropic";
         llmBaseUrl = anthropicWire ? getManagedVeniceAnthropicBaseUrl() : getManagedVeniceProxyBaseUrl();
         llmModel = resolvedLlmInput.model
-          ?? (anthropicWire ? MANAGED_CLAUDE_CODE_DEFAULT_MODEL : type === "deepseek-harness" ? DEEPSEEK_HARNESS_DEFAULT_MODEL : type === "hermes" ? HERMES_DEFAULT_MODEL : "deepseek-v4-pro");
+          ?? (anthropicWire ? MANAGED_CLAUDE_CODE_DEFAULT_MODEL : type === "deepseek-harness" ? DEEPSEEK_HARNESS_DEFAULT_MODEL : type === "hermes" ? HERMES_DEFAULT_MODEL : type === "openclaw" ? OPENCLAW_DEFAULT_MODEL : "deepseek-v4-pro");
       } else {
         llmConfig = {
           provider: "venice",
