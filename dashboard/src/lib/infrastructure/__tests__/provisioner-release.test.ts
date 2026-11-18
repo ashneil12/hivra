@@ -14,6 +14,7 @@ import openclawBasePathRelease from "../../../../provisioner-releases/2026.11.17
 import openclawReadinessRelease from "../../../../provisioner-releases/2026.11.17.8.json";
 import installReasonRelease from "../../../../provisioner-releases/2026.11.17.9.json";
 import veniceChatRelease from "../../../../provisioner-releases/2026.11.18.1.json";
+import emptyModeRelease from "../../../../provisioner-releases/2026.11.18.2.json";
 import agentZeroSettingsRelease from "../../../../provisioner-releases/2026.11.17.3.json";
 import backgroundReadsRelease from "../../../../provisioner-releases/2026.11.17.2.json";
 import latestAgentsRelease from "../../../../provisioner-releases/2026.11.17.1.json";
@@ -71,10 +72,10 @@ import {
 } from "../portable-provisioner-contract";
 
 it("binds every reviewed portable provisioner asset to the immutable current release", () => {
-  expect(veniceChatRelease.schema).toBe(1);
-  expect(veniceChatRelease.version).toBe(PORTABLE_HIVRA_PROVISIONER_VERSION);
-  expect(veniceChatRelease.files.map(file => file.path)).toEqual([...PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES]);
-  for (const file of veniceChatRelease.files) {
+  expect(emptyModeRelease.schema).toBe(1);
+  expect(emptyModeRelease.version).toBe(PORTABLE_HIVRA_PROVISIONER_VERSION);
+  expect(emptyModeRelease.files.map(file => file.path)).toEqual([...PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES]);
+  for (const file of emptyModeRelease.files) {
     const content = readFileSync(path.join(process.cwd(), "provisioner", file.path));
     expect({ path: file.path, bytes: content.length, sha256: createHash("sha256").update(content).digest("hex") })
       .toEqual(file);
@@ -272,7 +273,7 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
     "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
     "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql", "20261111200000_provider_release_admission_2026_11_11_2.sql", "20261111220000_provider_release_admission_2026_11_11_3.sql", "20261111233000_provider_release_admission_2026_11_11_4.sql", "20261112100000_provider_release_admission_2026_11_11_5.sql", "20261112120000_provider_release_admission_2026_11_11_6.sql", "20261112160000_provider_release_admission_2026_11_11_7.sql", "20261112170000_provider_release_admission_2026_11_12_1.sql", "20261112180000_provider_release_admission_2026_11_12_2.sql", "20261112190000_provider_release_admission_2026_11_12_3.sql", "20261112210000_provider_release_admission_2026_11_12_4.sql", "20261113091000_provider_release_admission_2026_11_12_5.sql", "20261113103000_provider_release_admission_2026_11_13_1.sql", "20261113111000_provider_release_admission_2026_11_13_2.sql", "20261113121000_provider_release_admission_2026_11_13_3.sql", "20261113130000_provider_release_admission_2026_11_13_4.sql", "20261113140000_provider_release_admission_2026_11_13_5.sql", "20261113150000_provider_release_admission_2026_11_13_6.sql", "20261114120000_provider_release_admission_2026_11_14_1.sql", "20261115120000_provider_release_admission_2026_11_15_1.sql", "20261115130000_provider_release_admission_2026_11_15_2.sql", "20261115140000_provider_release_admission_2026_11_15_3.sql", "20261115150000_provider_release_admission_2026_11_15_5.sql", "20261116010000_provider_release_admission_2026_11_15_6.sql", "20261116020000_provider_release_admission_2026_11_15_7.sql",
-    "20261116030000_provider_release_admission_2026_11_15_7_resealed.sql", "20261116040000_provider_release_admission_2026_11_15_7_resealed_2.sql", "20261117120000_provider_release_admission_2026_11_17_1.sql", "20261117130000_provider_release_admission_2026_11_17_2.sql", "20261117140000_provider_release_admission_2026_11_17_3.sql", "20261117160000_provider_release_admission_2026_11_17_4.sql", "20261117200000_provider_release_admission_2026_11_17_5.sql", "20261117230000_provider_release_admission_2026_11_17_6.sql", "20261118060000_provider_release_admission_2026_11_17_7.sql", "20261118070000_provider_release_admission_2026_11_17_8.sql", "20261118080000_provider_release_admission_2026_11_17_9.sql", "20261118090000_provider_release_admission_2026_11_18_1.sql"]
+    "20261116030000_provider_release_admission_2026_11_15_7_resealed.sql", "20261116040000_provider_release_admission_2026_11_15_7_resealed_2.sql", "20261117120000_provider_release_admission_2026_11_17_1.sql", "20261117130000_provider_release_admission_2026_11_17_2.sql", "20261117140000_provider_release_admission_2026_11_17_3.sql", "20261117160000_provider_release_admission_2026_11_17_4.sql", "20261117200000_provider_release_admission_2026_11_17_5.sql", "20261117230000_provider_release_admission_2026_11_17_6.sql", "20261118060000_provider_release_admission_2026_11_17_7.sql", "20261118070000_provider_release_admission_2026_11_17_8.sql", "20261118080000_provider_release_admission_2026_11_17_9.sql", "20261118090000_provider_release_admission_2026_11_18_1.sql", "20261118150000_provider_release_admission_2026_11_18_2.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
   for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
@@ -1361,6 +1362,26 @@ it("keeps OpenClaw's Venice requests in Venice's schema and Aeon's newer gh in 2
   const server = readFileSync("provisioner/hivra-chat/server.js", "utf8");
   expect(server).toContain('block.models[0].compat = { thinkingFormat: "openai" }');
   for (const version of ["2026.11.17.9", "2026.11.18.1"]) {
+    expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
+    expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
+    expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);
+    expect(portableProvisionerSupportsCatalogRuntime(version, "aeon")).toBe(true);
+  }
+});
+
+it("adds the empty-computer mode, keeps cloud-init details on the host and seeds OpenClaw on Flash in 2026.11.18.2, keeping 2026.11.18.1 admitted", () => {
+  expect(emptyModeRelease.version).toBe("2026.11.18.2");
+  const paths = emptyModeRelease.files.map(file => file.path);
+  expect(veniceChatRelease.files.map(file => file.path)).toEqual(paths);
+  const changed = emptyModeRelease.files.filter(file => file.sha256 !== veniceChatRelease.files.find(entry => entry.path === file.path)!.sha256)
+    .map(file => file.path).sort();
+  expect(changed).toEqual(["PROVENANCE.md", "README.md", "VERSION", "hivra-provider-worker.py", "hivra-provision-on-host.sh", "provision-claude-code-box.sh"]);
+  const host = readFileSync("provisioner/hivra-provision-on-host.sh", "utf8");
+  expect(host).toContain('HIVRA_PROVISION_MODE');
+  expect(host).toContain('hivra-prov-${VMID}.cloud-init.txt');
+  const script = readFileSync("provisioner/provision-claude-code-box.sh", "utf8");
+  expect(script).toContain('OC_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-1-flash}"');
+  for (const version of ["2026.11.18.1", "2026.11.18.2"]) {
     expect(isCompatibleProxmoxProvisionerVersion(version)).toBe(true);
     expect(isCompatibleProviderVmProvisionerVersion(version)).toBe(true);
     expect(supportsModelSettingsProvisionerVersion(version)).toBe(true);

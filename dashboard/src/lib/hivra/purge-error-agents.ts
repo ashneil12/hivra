@@ -111,7 +111,7 @@ if qm status "$VMID" >/dev/null 2>&1; then
   qm stop "$VMID" --timeout 30 2>/dev/null || true
   qm destroy "$VMID" --purge 1 --destroy-unreferenced-disks 1
 fi
-rm -f "/root/hivra-prov-$VMID.log" "/root/hivra-start-$VMID.log"
+rm -f "/root/hivra-prov-$VMID.log" "/root/hivra-prov-$VMID.cloud-init.txt" "/root/hivra-start-$VMID.log"
 if qm status "$VMID" >/dev/null 2>&1; then
   echo "VMID $VMID still exists after destroy" >&2
   exit 1
