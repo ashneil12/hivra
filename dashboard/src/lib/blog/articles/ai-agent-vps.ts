@@ -21,6 +21,7 @@ export const article: BlogArticle = {
       heading: "What an AI agent actually needs from a server",
       paragraphs: [
         "One split decides everything else. Agent workloads come in two kinds, and they need very different hardware:\n\n- **API-orchestrator agents.** Claude Code, Codex, Hermes, OpenClaw, and most agent frameworks. The model runs in Anthropic's or OpenAI's datacenter. Your server runs a loop: send context, receive a tool call, execute it, repeat. That loop is cheap. 1 vCPU and 1-2GB of RAM covers many agent processes, though Anthropic lists 4GB for Claude Code.\n- **Local-model agents.** You run the weights on your own hardware with Ollama or similar. Now RAM is what matters. A quantized 8B model wants 8GB+ just for weights and context. A 70B model wants 48GB+ and serious cores, and CPU inference is still slow. GPU boxes that do this well run $200-500/month.",
+        "Agent Zero is a good example of a self-hosted agent with its own sandbox, and our [Agent Zero VPS guide](/blog/how-to-self-host-agent-zero) shows the full setup.",
         "Almost everyone reading this is in the first group, and the spec worth buying sits a step above the bare minimum. Size the server for what the agent does:\n\n- **Terminal-only agent, external API:** 1 vCPU, 2GB RAM, 20GB disk. Works, but swapping starts fast if anything else runs.\n- **Comfortable single agent:** 2 vCPU, 4GB RAM, 40GB SSD. Room for Docker, a gateway process, and log growth. This is the spec to actually buy.\n- **Agent + browser automation:** 4GB minimum, 8GB comfortable. A headless Chrome instance is heavier than the agent driving it, and an uncapped Chrome will eat every gigabyte you give it.\n- **Local models:** 8GB+ for small models, and check the token speed you'll actually get before you commit.",
         "Disk fills slower than you fear but faster than zero. Session databases, JSONL logs, and files the agent downloads all accumulate. 40GB buys years for a single agent. 20GB buys months if browser downloads are involved.",
       ],
@@ -94,6 +95,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "how-to-self-host-agent-zero", title: "How to self-host Agent Zero on a VPS with Docker (2026 guide)" },
     {
       slug: "ai-agent-memory-systems",
       title: "AI agent memory systems in 2026: Zep, Mem0, Letta, and dual-layer architectures",

@@ -21,6 +21,7 @@ export const article: BlogArticle = {
       heading: "What each model actually means",
       paragraphs: [
         "**Self-hosted** means you rent a VPS (or repurpose a home server), install the agent runtime yourself, wire up API keys or account logins, configure a reverse proxy if you want web access, and keep all of it patched and running. You have root. You own every decision and every failure.",
+        "To see what the self-hosted path involves for one agent, step by step, read our [Agent Zero self-hosting guide](/blog/how-to-self-host-agent-zero).",
         "**Managed** means a platform provisions the machine, installs the agent, runs the server, and hands you a working interface. On [Hivra](/), that's a private virtual machine per agent, running the agent you picked, with chat, terminal, and file access in the browser. You still sign in with your own accounts (your Anthropic login for Claude Code, your ChatGPT login for Codex), and on your own logins there is no Hivra markup on AI usage. Hivra is independent and is not affiliated with Anthropic or OpenAI. The platform owns the server. You own the agent's brain and its data.",
         "On any managed platform, check which build of the agent it runs and with which settings, because you inherit the platform's choices for both. On Hivra, Claude Code and Codex are the vendors' official CLIs, which Hivra's chat runs with permission prompts bypassed by default inside the agent's own VM (the Permissions setting on the agent's Manage tab narrows that to Limited or Read-only). Hermes runs from Hivra's maintained build of the open-source agent, so Hermes updates arrive on Hivra's tested rollout rather than the day Nous Research ships them.",
       ],
@@ -110,6 +111,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "how-to-self-host-agent-zero", title: "How to self-host Agent Zero on a VPS with Docker (2026 guide)" },
     {
       slug: "what-is-an-ai-agent",
       title: "What is an AI agent? A clear, technical explanation for 2026",
