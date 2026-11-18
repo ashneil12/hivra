@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.11.17.8.json";
+import currentRelease from "../../../provisioner-releases/2026.11.17.9.json";
+import readinessRelease from "../../../provisioner-releases/2026.11.17.8.json";
 import basePathRelease from "../../../provisioner-releases/2026.11.17.7.json";
 import presetRelease from "../../../provisioner-releases/2026.11.17.6.json";
 import tgApplyRelease from "../../../provisioner-releases/2026.11.17.5.json";
@@ -105,7 +106,7 @@ const gatewayTargets = new Map<string, string>([
   ...["server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "index.html", "app.js"].map(name => [`hivra-chat/${name}`, name] as const),
   ...["native-broker.cjs", "gateway-policy.cjs", "runtime-process.cjs"].map(name => [`deepseek-harness/${name}`, `deepseek-harness/${name}`] as const),
 ]);
-const DEEPSEEK_IMPORT_STATE_VERSIONS = ["2026.11.17.6", "2026.11.17.7", "2026.11.17.8"] as const;
+const DEEPSEEK_IMPORT_STATE_VERSIONS = ["2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9"] as const;
 function releaseRows(release: typeof currentRelease) {
   const rows = release.files.filter(file => closure.has(file.path)).map(file => [file.path, file.sha256, file.bytes,
     file.path.endsWith(".sh") ? 0o700 : 0o600] as const).sort((a, b) => a[0].localeCompare(b[0]));
@@ -131,8 +132,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.11.17.8"
+  const release = identity.bundle.provisionerVersion === "2026.11.17.9"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.17.8"
+    ? readinessRelease
     : identity.bundle.provisionerVersion === "2026.11.17.7"
     ? basePathRelease
     : identity.bundle.provisionerVersion === "2026.11.17.6"

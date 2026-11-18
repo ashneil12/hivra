@@ -708,6 +708,23 @@ async function main() {
     });
     await db.exec(OPENCLAW_READINESS_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedOpenclawReadiness, "re-applying the 2026.11.17.8 admission changes nothing");
+    // 2026.11.17.9 anchors on the 2026.11.17.8 entry; idempotent too.
+    const INSTALL_REASON_ADMISSION = migration("20261118080000_provider_release_admission_2026_11_17_9.sql");
+    await db.exec(INSTALL_REASON_ADMISSION);
+    const admittedInstallReason = await admissionDefinitions();
+    admittedInstallReason.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, "1b4ba16a649580df24e25cd4c8c24e999756286a29bd117e24c0addc4f099d8f"), 1,
+          `${admissionFunctions[index]} admits the 2026.11.17.9 digest once`);
+        assert.equal(occurrences(definition, "35e68e27defa35a87bc1534c2ac8892bf1bbcdb4247486bc6bd098ee71261790"), 1,
+          `${admissionFunctions[index]} keeps the 2026.11.17.8 digest`);
+      }
+    });
+    await db.exec(INSTALL_REASON_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedInstallReason, "re-applying the 2026.11.17.9 admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

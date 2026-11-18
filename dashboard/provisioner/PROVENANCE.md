@@ -547,6 +547,17 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.17.9` builds on `2026.11.17.8` and makes a failed launch
+name the step that stopped it. A failed guest is removed with its logs, so the
+host log only said "step provision-claude-code-box.sh exited with status 1".
+The step's `die()` now also writes its own message (Hivra's fixed text) to the
+root-only `/run/hivra-install-failure-reason`, which the installer clears before
+the step runs and appends to its "Hivra guest installation failure" line when it
+is at most 200 plain characters. Changed: `provision-claude-code-box.sh`,
+`hivra-install-agent.py`, plus the documents, the version and the provider
+worker's release labels. This source release does not deploy, install, enable
+or start anything on a host or computer.
+
 Release `2026.11.17.8` builds on `2026.11.17.7` and lets a new OpenClaw
 launch finish installing again. With `gateway.controlUi.basePath` set to
 `/openclaw`, OpenClaw's gateway answers 503 at its root, and the installer's
