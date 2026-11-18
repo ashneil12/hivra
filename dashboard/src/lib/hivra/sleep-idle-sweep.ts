@@ -1174,9 +1174,15 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
   // Finish what is still running before answering (see Context.pending). No new work starts here.
   if (ctx.pending.length > 0) {
     const hardLimit = startedAt + HIBERNATE_HARD_LIMIT_MS;
-    const drained = hardLimit > now()
-      ? await untilDeadline(ctx, Promise.allSettled(ctx.pending), hardLimit)
-      : { timedOut: true as const };
+    // Work that is still running may add more (the storage re-check starts a wake once an agent's
+    // disks are back), so wait again until a pass finds nothing new. Answering with a wake still in
+    // flight would freeze it holding its lease, with the computer never started.
+    let drained: { timedOut: boolean } = { timedOut: hardLimit <= now() };
+    for (let waited = 0; !drained.timedOut && waited < ctx.pending.length;) {
+      const batch = ctx.pending.slice();
+      waited = batch.length;
+      drained = await untilDeadline(ctx, Promise.allSettled(batch), hardLimit);
+    }
     if (drained.timedOut) {
       log.warn("sleep sweep work still running at the hard limit; its leases are settled later", {
         source: LOG_SOURCE,

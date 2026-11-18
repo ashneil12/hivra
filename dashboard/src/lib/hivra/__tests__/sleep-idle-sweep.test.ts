@@ -979,6 +979,23 @@ describe("storage: an agent on its way back", () => {
     expect(summary.storage).toMatchObject({ tracked: 1, unstoreStarted: 1, unstored: 1 });
   });
 
+  it("does not answer while a wake that a later look started is still running", async () => {
+    // Seen on Canary: the wake began after the run had started waiting for its other work, the run
+    // answered, and the wake froze holding its lease with the computer never started.
+    const { runSleepStorage } = jest.requireMock("../sleep-storage") as { runSleepStorage: jest.Mock };
+    let woke = false;
+    mockEnsure.mockImplementationOnce(() => new Promise((resolve) => setTimeout(() => { woke = true; resolve({ state: "awake" }); }, 60)));
+    runSleepStorage
+      .mockResolvedValueOnce({ counts: { ...zero, tracked: 1, unstoreStarted: 1 }, errors: 0, returning: 1 })
+      .mockImplementationOnce(async (input: { wake: (id: string) => Promise<unknown> }) => {
+        await input.wake("agent-back");
+        return { counts: { ...zero, tracked: 1, unstored: 1 }, errors: 0, returning: 0 };
+      });
+    await run({ HIVRA_SLEEP_MODE: "off" }, { storageRecheckMs: 5 });
+    expect(mockEnsure).toHaveBeenCalledWith("agent-back", expect.objectContaining({ trigger: "schedule" }));
+    expect(woke).toBe(true);
+  });
+
   it("looks once when nothing is on its way back, and stops looking when the budget is nearly spent", async () => {
     const { runSleepStorage } = jest.requireMock("../sleep-storage") as { runSleepStorage: jest.Mock };
     await run({ HIVRA_SLEEP_MODE: "off" }, { storageRecheckMs: 5 });
