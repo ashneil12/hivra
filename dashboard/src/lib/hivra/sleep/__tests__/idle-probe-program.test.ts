@@ -125,6 +125,17 @@ run("idle probe program, run for real against fixture files", () => {
     const channels = probe().liveChannels;
     expect(channels).toContain("openclaw:whatsapp");
     expect(channels).not.toContain("openclaw:slack");
+    expect(channels).toContain("hermes:discord:down");
+    expect(channels).not.toContain("hermes:matrix:down");
+  });
+
+  it("does not take a Hermes safety switch for a chat channel", () => {
+    // A fresh Hermes config has gateway.bot_loop_guard.enabled: true. Read as a channel, it kept the computer awake for good.
+    put("home/.hermes/config.yaml", "model:\n  default: x\ngateway:\n  bot_loop_guard:\n    enabled: true\n    window: 60\n\n  other_guard:\n    enabled: true\ndiscord:\n  missed_message_backfill:\n    enabled: true\n");
+    expect(probe().liveChannels).toEqual([]);
+    // A platform named outside the platforms section still counts, and so does an unknown name inside it.
+    put("home/.hermes/config.yaml", "gateway:\n  telegram:\n    enabled: true\nplatforms:\n  newchat:\n    token: x\n    enabled: true\n  api_server:\n    enabled: true\n");
+    expect(probe().liveChannels.sort()).toEqual(["hermes:newchat:down", "hermes:telegram:down"]);
   });
 
   it("calls a scheduler file that is there but unreadable an error, never an empty schedule", () => {

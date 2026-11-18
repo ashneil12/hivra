@@ -271,7 +271,15 @@ for k, name in (("TELEGRAM_BOT_TOKEN", "telegram"), ("DISCORD_BOT_TOKEN", "disco
                 ("PHOTON_PROJECT_ID", "photon"), ("RAFT_PROFILE", "raft"), ("BUZZ_RELAY_URL", "buzz")):
     if re.search(r"^%s\w*=\S" % k, env, re.M): hermes_ch(name)
 cfg = rd(HOME + "/.hermes/config.yaml", 262144) or ""
-for name in re.findall(r"^  (\w+):\s*\n(?:    .*\n)*?    enabled:\s*true", cfg, re.M): hermes_ch(name)
+# Only a platform counts: a block under the top-level "platforms:", or one named like a known platform
+# wherever it sits. Other switches with "enabled: true" (gateway.bot_loop_guard is one) are not channels.
+KNOWN_PLATFORMS = ("telegram", "discord", "slack", "whatsapp", "whatsapp_cloud", "signal", "matrix", "mattermost",
+                   "email", "sms", "bluebubbles", "dingtalk", "feishu", "qqbot", "wecom", "wecom_callback", "weixin",
+                   "google_chat", "irc", "line", "teams", "simplex", "ntfy", "photon", "raft", "buzz", "imessage",
+                   "homeassistant", "webhook")
+for top, block in re.findall(r"^(\w+):[^\n]*\n((?:(?:[ \t]+[^\n]*)?\n)*)", cfg + "\n", re.M):
+    for name in re.findall(r"^  (\w+):\s*\n(?:    .*\n)*?    enabled:\s*true", block, re.M):
+        if name not in NOT_CHANNELS and (top == "platforms" or name in KNOWN_PLATFORMS): hermes_ch(name)
 # Per-channel facts for the wake adapters. Modes and host names only, never a secret.
 def env_on(key): return (env_value(env, key) or "").lower() in ("true", "1", "yes", "on")
 def host_of(url):
