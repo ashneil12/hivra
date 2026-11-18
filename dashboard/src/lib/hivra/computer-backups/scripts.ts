@@ -35,7 +35,12 @@ export const BACKUP_PURGE_PREFIX = "HIVRA_BACKUP_PURGE ";
 /** Every Hivra computer repository lives under this folder on the storage box. */
 export const BACKUP_REPO_FOLDER = "hivra-computers";
 
-export type BackupJobKind = "backup" | "drill" | "restore";
+/**
+ * `store` packs a long sleeper into the storage box and frees its disks on the
+ * host; `unstore` writes them back. Both belong to the sleep ladder
+ * (src/lib/hivra/sleep-storage.ts), not to the backup cron.
+ */
+export type BackupJobKind = "backup" | "drill" | "restore" | "store" | "unstore";
 
 export interface BackupDisk {
   key: string;
@@ -262,15 +267,15 @@ restic check --quiet >/dev/null 2>>"$JOBDIR/restic.err" || done_with failed repo
 done_with succeeded verified
 `;
 
-const RESTORE_BODY = String.raw`# A restore writes each backed-up disk over the same disk of the stopped
-# computer. The computer stays stopped; whoever asked for the restore starts it.
-exec 9>/run/lock/hivra-vm-$VMID.lock
+const RESTORE_CHECKS = String.raw`exec 9>/run/lock/hivra-vm-$VMID.lock
 flock -x -w 60 9 || done_with failed vm_busy
 read_config || done_with failed unreachable
 has_binding || done_with failed binding_mismatch
 [ -z "$(field lock)" ] || done_with failed locked
 [ "$(qm status "$VMID" 2>/dev/null | awk '{print $2}')" = stopped ] || done_with failed not_stopped
-restic cat config >/dev/null 2>&1 || done_with failed repo_unreadable
+`;
+
+const RESTORE_WRITE = String.raw`restic cat config >/dev/null 2>&1 || done_with failed repo_unreadable
 while read -r key sum bytes snap_id; do
   [ -n "$key" ] || continue
   volid="$(printf '%s\n' "$CONFIG" | awk -F': ' -v k="$key" '$1==k {split($2,p,","); print p[1]; exit}')"
@@ -295,6 +300,123 @@ while read -r key sum bytes snap_id; do
   [ "$got" = "$sum" ] || done_with failed hash_mismatch
   add_disk_json "$key" "$sum" "$bytes" "$snap_id"
 done < "$JOBDIR/disks"
+`;
+
+const RESTORE_BODY = String.raw`# A restore writes each backed-up disk over the same disk of the stopped
+# computer. The computer stays stopped; whoever asked for the restore starts it.
+` + RESTORE_CHECKS + RESTORE_WRITE + "done_with succeeded restored\n";
+
+/** The marks the sleep scripts read: `cold-` lets a wake boot the computer from its disk, `stored-` says its disks are in the storage box. */
+const STORE_MARKS = String.raw`MARK_DIR=/var/lib/hivra-sleep
+COLD_MARK="$MARK_DIR/cold-$VMID"
+STORED_MARK="$MARK_DIR/stored-$VMID"
+mark_is() { [ "$(cat "$1" 2>/dev/null || true)" = "$EXPECTED_BINDING_TAG" ]; }
+is_off() { [ "$(qm status "$VMID" 2>/dev/null | awk '$1=="status:" {print $2; exit}')" = stopped ]; }
+has_snapshots() { printf '%s\n' "$CONFIG" | grep -q '^\['; }
+`;
+
+const STORE_BODY = STORE_MARKS + String.raw`# Packs a long sleeper into the storage box and frees its disks on this host.
+# Only a computer that is off, with its saved memory already dropped (the cold
+# mark). The disks are read without holding the computer, so its owner can wake
+# it at any moment; then nothing is freed and this ends as an ordinary copy.
+# The disks are freed only after every byte was read back from the storage box
+# and the disks on the host still hash to exactly what was uploaded.
+ACTIVE_LVS=""
+cleanup() {
+  local lv
+  for lv in $ACTIVE_LVS; do lvchange -an "$lv" >/dev/null 2>&1 || true; done
+  ACTIVE_LVS=""
+}
+check_storable() {
+  read_config || done_with failed unreachable
+  has_binding || done_with failed binding_mismatch
+  [ -z "$(field lock)" ] || done_with skipped locked
+  is_off || done_with skipped not_stopped
+  mark_is "$COLD_MARK" || done_with skipped not_dropped
+  has_snapshots && done_with skipped has_snapshots
+  return 0
+}
+exec 9>/run/lock/hivra-vm-$VMID.lock
+flock -x -w 30 9 || done_with skipped vm_busy
+check_storable
+DISK_LINES="$(disk_lines "$CONFIG")"
+while read -r key volid; do
+  [ -n "$key" ] || continue
+  [ "$(storage_type "$#{volid%%:*}")" = lvmthin ] || done_with skipped unsupported_storage
+done <<< "$DISK_LINES"
+printf '%s\n' "$CONFIG" > "$JOBDIR/vm.conf"
+flock -u 9
+exec 9>&-
+if ! restic cat config >/dev/null 2>&1; then
+  ssh -o BatchMode=yes cold mkdir -p "$REPO_FOLDER" >/dev/null 2>&1 || true
+  restic init >/dev/null 2>&1 || done_with failed repo_init
+fi
+restic unlock >/dev/null 2>&1 || true
+BACKUP_ARGS=(--host "hivra-$AGENT_ID" --tag hivra-computer --tag hivra-stored --tag "job-$JOB_ID" --json --quiet)
+[ "$UPLOAD_LIMIT_KIB" -gt 0 ] && BACKUP_ARGS+=(--limit-upload "$UPLOAD_LIMIT_KIB")
+restic backup "$#{BACKUP_ARGS[@]}" --stdin-from-command --stdin-filename vm.conf -- cat "$JOBDIR/vm.conf" \
+  > "$JOBDIR/conf.json" 2>"$JOBDIR/restic.err" || done_with failed upload_failed
+COUNT=0
+: > "$JOBDIR/stored-disks"
+while read -r key volid; do
+  [ -n "$key" ] || continue
+  COUNT=$((COUNT + 1))
+  dev="$(pvesm path "$volid" 2>/dev/null)" || done_with failed disk_path
+  lv="$(basename "$(dirname "$dev")")/$(basename "$dev")"
+  lvchange -ay "$lv" >/dev/null 2>&1 || true
+  ACTIVE_LVS="$ACTIVE_LVS $lv"
+  bytes="$(blockdev --getsize64 "$dev" 2>/dev/null)" || done_with failed disk_size
+  ionice -c3 nice -n 10 restic backup "$#{BACKUP_ARGS[@]}" --stdin-from-command --stdin-filename "$key.raw" \
+    -- /bin/bash "$JOBDIR/read-disk.sh" "$dev" "$JOBDIR/$key.sha256" \
+    > "$JOBDIR/$key.json" 2>>"$JOBDIR/restic.err" || done_with failed upload_failed
+  sum="$(cat "$JOBDIR/$key.sha256" 2>/dev/null)"
+  snap_id="$(restic_json_field snapshot_id < "$JOBDIR/$key.json")"
+  added="$(restic_json_field data_added < "$JOBDIR/$key.json")"
+  [[ "$sum" =~ ^[0-9a-f]{64}$ ]] || done_with failed hash_missing
+  [[ "$snap_id" =~ ^[0-9a-f]{64}$ ]] || done_with failed snapshot_id_missing
+  [[ "$added" =~ ^[0-9]+$ ]] || added=0
+  ADDED=$((ADDED + added))
+  add_disk_json "$key" "$sum" "$bytes" "$snap_id"
+  printf '%s %s %s %s\n' "$key" "$sum" "$snap_id" "$dev" >> "$JOBDIR/stored-disks"
+done <<< "$DISK_LINES"
+[ "$COUNT" -gt 0 ] || done_with failed no_disks
+# Read every disk back from the storage box before anything is freed.
+while read -r key sum snap_id dev; do
+  [ -n "$key" ] || continue
+  got="$(restic dump --quiet "$snap_id" "/$key.raw" 2>>"$JOBDIR/restic.err" | sha256sum | awk '{print $1}'; exit "$#{PIPESTATUS[0]}")" \
+    || done_with failed download_failed
+  [ "$got" = "$sum" ] || done_with failed hash_mismatch
+done < "$JOBDIR/stored-disks"
+# From here the computer is held: a wake waits, then finds it stored.
+exec 9>/run/lock/hivra-vm-$VMID.lock
+flock -x -w 60 9 || done_with skipped vm_busy_late
+check_storable
+[ "$(disk_lines "$CONFIG")" = "$DISK_LINES" ] || done_with skipped changed_meanwhile
+while read -r key sum snap_id dev; do
+  [ -n "$key" ] || continue
+  now_sum="$(dd if="$dev" bs=4M iflag=direct status=none | sha256sum | awk '{print $1}'; exit "$#{PIPESTATUS[0]}")" \
+    || done_with failed reread_failed
+  [ "$now_sum" = "$sum" ] || done_with skipped changed_meanwhile
+done < "$JOBDIR/stored-disks"
+# The stored mark goes down first: a computer whose disks are being freed must never read as bootable.
+install -d -m 0700 "$MARK_DIR" || done_with failed mark_failed
+printf '%s\n' "$EXPECTED_BINDING_TAG" > "$STORED_MARK" || done_with failed mark_failed
+rm -f "$COLD_MARK" || { rm -f "$STORED_MARK"; done_with failed mark_failed; }
+FREE_FAILED=0
+while read -r key sum snap_id dev; do
+  [ -n "$key" ] || continue
+  blkdiscard "$dev" >/dev/null 2>&1 || FREE_FAILED=1
+done < "$JOBDIR/stored-disks"
+# A disk that could not be freed is half empty at worst: the copy in the storage box is the computer now.
+[ "$FREE_FAILED" = 0 ] || done_with succeeded stored_free_partial
+done_with succeeded stored
+`;
+
+const UNSTORE_BODY = STORE_MARKS + String.raw`# Brings a stored computer back: writes each disk from the storage box over the
+# freed disk, then swaps the stored mark for the cold mark, so the wake boots it.
+` + RESTORE_CHECKS + String.raw`mark_is "$STORED_MARK" || done_with failed not_stored
+` + RESTORE_WRITE + String.raw`printf '%s\n' "$EXPECTED_BINDING_TAG" > "$COLD_MARK" || done_with failed mark_failed
+rm -f "$STORED_MARK"
 done_with succeeded restored
 `;
 
@@ -317,12 +439,23 @@ export interface BackupStartInput {
 }
 
 function body(kind: BackupJobKind): string {
-  return kind === "backup" ? BACKUP_BODY : kind === "drill" ? DRILL_BODY : RESTORE_BODY;
+  switch (kind) {
+    case "backup": return BACKUP_BODY;
+    case "drill": return DRILL_BODY;
+    case "restore": return RESTORE_BODY;
+    case "store": return STORE_BODY;
+    case "unstore": return UNSTORE_BODY;
+  }
 }
 
 /** The bodies spell shell's dollar-brace as `$#{` so the template literal leaves it alone. */
 function shellText(text: string): string {
   return text.replaceAll("$#{", "$" + "{");
+}
+
+/** The two files a job runs from, as the start script writes them. For tests that run a job against a fake host. */
+export function backupJobFiles(kind: BackupJobKind): { run: string; readDisk: string } {
+  return { run: `${shellText(JOB_COMMON)}\n${shellText(body(kind))}`, readDisk: shellText(READ_DISK) };
 }
 
 /**
@@ -331,7 +464,9 @@ function shellText(text: string): string {
  */
 export function buildBackupStartScript(input: BackupStartInput): string {
   const kind = input.kind;
-  if (kind !== "backup" && kind !== "drill" && kind !== "restore") throw new Error("Invalid backup job kind");
+  if (kind !== "backup" && kind !== "drill" && kind !== "restore" && kind !== "store" && kind !== "unstore") {
+    throw new Error("Invalid backup job kind");
+  }
   const jobId = checkedUuid(input.jobId, "job id");
   const agentId = checkedUuid(input.agentId, "agent id");
   const vmid = checkedVmid(input.vmid);
@@ -340,7 +475,8 @@ export function buildBackupStartScript(input: BackupStartInput): string {
   const keepWeekly = checkedInt(input.keepWeekly, 0, 52, "weekly retention");
   const limit = checkedInt(input.uploadLimitKiB, 0, 10_000_000, "upload limit");
   const maxHours = checkedInt(input.maxHours, 1, 24, "job time limit");
-  const disks = kind === "backup" ? [] : checkedDisks(input.disks ?? []);
+  const disks = kind === "backup" || kind === "store" ? [] : checkedDisks(input.disks ?? []);
+  if (kind === "unstore" && disks.length === 0) throw new Error("A stored computer needs its disk list to come back");
   if (typeof input.coldStorageInstall !== "string" || input.coldStorageInstall.length < 1) {
     throw new Error("Cold storage install script missing");
   }

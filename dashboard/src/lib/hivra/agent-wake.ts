@@ -20,6 +20,7 @@ import {
 } from "./agent-sleep-store";
 import { buildWakeHostScript, parseWakeReceipt, WAKE_RESULT_PREFIX, type WakeAdmission, type WakeReceipt } from "./agent-sleep-scripts";
 import { isFastWakeEnabled } from "./fast-wake-flags";
+import { isAgentStored, requestAgentUnstore } from "./sleep-storage-state";
 import {
   disarmChannelsForWake,
   rearmChannelsAfterFailedWake,
@@ -377,6 +378,11 @@ async function performWakeSteps(
     // The host's own time, so the rest of script_ms reads as transport.
     if (isFastWakeEnabled("timing")) detail.host_ms = run.receipt.ms;
 
+    if (run.receipt.reason === "stored") {
+      // Its disks are in the storage box (the record had not caught up). Ask for it back; the sweep wakes it then.
+      if (supabaseAdmin) await requestAgentUnstore(supabaseAdmin, agentId).catch(() => false);
+      return failed("stored");
+    }
     if (run.receipt.to === "cold") {
       // Nothing saved and the computer is off. The normal start path owns that.
       return { result: "awake", reason: "cold", cold: true, detail };
@@ -505,6 +511,13 @@ export async function ensureHivraAgentAwake(
   // A lapsed owner is never woken: the lapse sweep owns that computer now.
   if (await isStartBlockedForLapse(row as { user_id?: unknown }, "start")) {
     return { state: "failed", reason: "lapsed" };
+  }
+
+  // Packed into the storage box: its disks come back first, which takes minutes.
+  // The request is noted and the sleep sweep does the rest, then wakes it.
+  if (isAgentStored(row)) {
+    if (supabaseAdmin) await requestAgentUnstore(supabaseAdmin, agentId).catch(() => false);
+    return { state: "waking", reason: "restoring_from_storage" };
   }
 
   let operationId = "";

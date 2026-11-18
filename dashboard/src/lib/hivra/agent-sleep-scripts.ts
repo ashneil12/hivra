@@ -1470,6 +1470,8 @@ case "$ST/$QMP/$LOCK" in
 ${coldStart ? `    EXPECT=hibernated
     if [ "$LOCK" = none ]; then
       # Off with nothing saved. Only a computer whose saved memory this system dropped is booted here.
+      # Packed into the storage box: its disks here are empty. It is never started; the caller brings it back first.
+      [ "$(cat "$ONBOOT_MARK_DIR/stored-$VMID" 2>/dev/null || true)" != "$EXPECTED_BINDING_TAG" ] || { TO=cold; finish false stored cold; }
       # The mark names the computer it was written for, so a reused number never inherits one.
       [ "$(cat "${COLD_MARK_SHELL}" 2>/dev/null || true)" = "$EXPECTED_BINDING_TAG" ] || { TO=cold; finish false cold cold; }
       WOKE_REASON=cold_started

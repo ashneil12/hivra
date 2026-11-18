@@ -700,6 +700,19 @@ host("wake script against a stub host", () => {
     writeFileSync(coldMark, `${TAG}\n`);
     expect(receipt(h.run(wake(), COLD))).toMatchObject({ ok: false, reason: "cold" });
     rmSync(coldMark, { force: true });
+    // Its disks are in storage: never started, even if a cold mark is also there.
+    const storedMark = path.join(h.dir, "var-lib-hivra-sleep", `stored-${VMID}`);
+    writeFileSync(storedMark, `${TAG}\n`);
+    writeFileSync(coldMark, `${TAG}\n`);
+    const stored = h.run(coldWake, COLD);
+    expect(receipt(stored)).toMatchObject({ ok: false, from: "cold", to: "cold", reason: "stored" });
+    expect(stored.calls.some((c) => c.startsWith(`qm start`))).toBe(false);
+    expect(existsSync(storedMark)).toBe(true);
+    // A stored mark written for another computer counts as none.
+    writeFileSync(storedMark, "hivra-bind-other\n");
+    expect(receipt(h.run(coldWake, COLD))).toMatchObject({ ok: true, reason: "cold_started" });
+    rmSync(storedMark, { force: true });
+    rmSync(coldMark, { force: true });
   });
 
   it("drops the saved memory of a hibernated computer, marks it, and then a cold start wakes it", () => {

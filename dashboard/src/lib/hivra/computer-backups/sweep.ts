@@ -308,6 +308,8 @@ export async function runComputerBackupSweep(deps: ComputerBackupSweepDeps = {})
       if (!lastBackup.has(job.agent_id)) lastBackup.set(job.agent_id, job);
       if (!backedUpAgents.has(job.agent_id)) backedUpAgents.set(job.agent_id, job);
     }
+    // A computer packed into storage (sleep ladder) has a repository too, to remove once it is deleted.
+    if (job.kind === "store" && job.status === "succeeded" && !backedUpAgents.has(job.agent_id)) backedUpAgents.set(job.agent_id, job);
     if (job.kind === "drill" && job.status !== "running" && !lastDrill.has(job.agent_id)) lastDrill.set(job.agent_id, job);
     if (job.kind === "purge" && job.status === "succeeded") purgedAgents.add(job.agent_id);
     if (job.kind === "purge" && job.status === "skipped" && job.reason === PURGE_WAIT_REASON) {

@@ -4,6 +4,7 @@ import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import { parseSleepMode, sleepMemoryDropAfterDays, type SleepMode } from "./agent-sleep-policy";
 import { resetSleepMemoryDropCooldowns, runSleepMemoryDrops, type MemoryDropCounts } from "./sleep-memory-drop";
+import { resetSleepStorageState, runSleepStorage, type SleepStorageCounts } from "./sleep-storage";
 import { resolveHivraProxmoxHost } from "./proxmox-target";
 import {
   SCHEDULED_WAKE_LEAD_SECONDS,
@@ -150,6 +151,7 @@ export function resetSleepSweepCooldowns(): void {
   leaseCooldowns.clear();
   driftCooldowns.clear();
   resetSleepMemoryDropCooldowns();
+  resetSleepStorageState();
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +183,8 @@ export interface SleepIdleSweepSummary {
   nap: SweepStepCounts;
   /** Long sleepers whose saved memory was dropped (disk kept). Only when that is switched on. */
   memoryDrops?: MemoryDropCounts;
+  /** Agents packed into the storage box and brought back. Only when there was such work. */
+  storage?: SleepStorageCounts;
   /** Telegram wake webhooks set and taken down. Only when that feature is configured. */
   telegram?: TelegramSweepCounts;
   /** Other channels' wake arms, and deferred channel wakes. Only when channel wake is configured. */
@@ -762,6 +766,33 @@ async function runMemoryDrops(ctx: Context): Promise<void> {
   ctx.summary.errors += result.errors;
 }
 
+// --- Storage: pack long sleepers, bring back the ones asked for ---------------
+
+async function runStorage(ctx: Context): Promise<void> {
+  // The hosts are read only if something may be packed.
+  let hosts: Map<string, HostInfo> | null | undefined;
+  const result = await runSleepStorage({
+    db: ctx.db,
+    env: ctx.env,
+    now: ctx.now,
+    deadline: ctx.deadline,
+    hostActs: async (host) => {
+      if (hosts === undefined) hosts = await loadHosts(ctx);
+      return !!hosts && hostActs(hosts.get(host));
+    },
+    resolveTarget: resolveSleepTarget,
+    // Its disks are back: the normal wake boots it. The run waits for it like any other wake it starts.
+    wake: async (agentId) => {
+      ctx.pending.push(ensureHivraAgentAwake(agentId, { trigger: "schedule", waitMs: 120_000 }).catch(() => undefined));
+    },
+  });
+  const c = result.counts;
+  if (c.tracked + c.stored + c.storeStarted + c.storeEnded + c.unstoreStarted + c.unstored + c.unstoreFailed + c.refused > 0) {
+    ctx.summary.storage = c;
+  }
+  ctx.summary.errors += result.errors;
+}
+
 // --- Steps 3 and 4: hibernate and nap -----------------------------------------
 
 async function loadHosts(ctx: Context): Promise<Map<string, HostInfo> | null> {
@@ -1088,6 +1119,8 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
     ...(hostIngressConfigured(env)
       ? ([["host ingress", runHostIngress]] as Array<[string, (c: Context) => Promise<void>]>)
       : []),
+    // Bringing a stored agent back never waits for the sleep switch: with it off, nothing new is packed.
+    ["storage", runStorage],
     ...(actsOnSleep ? ([["hibernate and nap", runSleepSteps]] as Array<[string, (c: Context) => Promise<void>]>) : []),
     ...(actsOnSleep && sleepMemoryDropAfterDays(env.HIVRA_SLEEP_DROP_MEMORY_AFTER_DAYS) !== null
       ? ([["memory drops", runMemoryDrops]] as Array<[string, (c: Context) => Promise<void>]>)
