@@ -565,6 +565,11 @@ const recipes = Object.freeze({
     workerSha256: "aa2d51d05feb79c1c6b8ef1d022ac96eea01e1d6e5eeaf1d5c28b3c48272a6fb",
     workerSize: 45216,
   }),
+  "2026.11.18.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release installs the guest agent without cloud-init's package module, so a launch no longer depends on the snap store. The worker only advances its release labels.
+    workerSha256: "cb246d7154d6266bb49ab9b2f5e1ec626de58f73579e942814f889ba6feaec43",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

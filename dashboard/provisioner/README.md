@@ -579,6 +579,13 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **Launches no longer depend on the snap store (`2026.11.18.3`).**
+  The guest's QEMU Guest Agent is installed by apt from the vendor data's
+  runcmd instead of cloud-config's `package_update`/`packages`. On Ubuntu that
+  module also runs `snap refresh`, so when the snap store's IPv4 front ends
+  refused connections every launch failed cloud-init, though nothing in a
+  launch needs a snap.
+
 - **Empty computers, kept cloud-init details, OpenClaw on Flash (`2026.11.18.2`).**
   `HIVRA_PROVISION_MODE=empty` makes a computer's place (number, address,
   ownership tags and receipt under the same lock as a launch, and a blank disk
