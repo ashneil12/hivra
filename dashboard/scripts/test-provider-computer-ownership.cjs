@@ -793,6 +793,23 @@ async function main() {
     });
     await db.exec(NO_BOOT_UPGRADE_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedNoBootUpgrade, "re-applying the 2026.11.18.4 admission changes nothing");
+    // 2026.11.18.5 anchors on the 2026.11.18.4 entry; idempotent too.
+    const CLI_CONNECTOR_ADMISSION = migration("20261118230000_provider_release_admission_2026_11_18_5.sql");
+    await db.exec(CLI_CONNECTOR_ADMISSION);
+    const admittedCliConnector = await admissionDefinitions();
+    admittedCliConnector.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, "7728d82d75d26e95ab4b9ed61ae5f267bed89825618d252b6699701f0819de6c"), 1,
+          `${admissionFunctions[index]} admits the 2026.11.18.5 digest once`);
+        assert.equal(occurrences(definition, "4eff220ba9a6b103e0a7892204aeccced297674749d0a269916f71736810b6d3"), 1,
+          `${admissionFunctions[index]} keeps the 2026.11.18.4 digest`);
+      }
+    });
+    await db.exec(CLI_CONNECTOR_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedCliConnector, "re-applying the 2026.11.18.5 admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

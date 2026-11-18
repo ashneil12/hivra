@@ -2605,6 +2605,27 @@ function a0Login(cb, isCurrent) {
   r.write(body); r.end();
   return r;
 }
+// The A0 CLI (agent0ai/a0-connector) talks to the host's ROOT, not to a mount:
+// POST /api/plugins/_a0_connector/v1/*, GET /api/csrf_token, the file/upload
+// helpers it uses, and /socket.io. It signs in once through POST /login with a
+// Connect app grant, then holds the ordinary surface cookie. A non-browser
+// client does not send an Origin header on those calls, which the cookie gate
+// for mutations requires, so this narrow path set accepts the same cookie
+// without one. A browser always sends Origin (and Sec-Fetch-Site) on a write, so
+// a page on another site still cannot ride the cookie. The capability probe is
+// A0's own public discovery endpoint and needs no sign-in.
+const A0_CONNECTOR_REQS = new WeakSet();
+const A0_CONNECTOR_PROBE = "/api/plugins/_a0_connector/v1/capabilities";
+const A0_CONNECTOR_CORE_API = new Set(["/api/csrf_token", "/api/image_get", "/api/download_work_dir_file", "/api/chat_files_path_get", "/api/get_work_dir_files"]);
+function a0ConnectorRootPath(req, u) {
+  if (u.startsWith("/api/plugins/") || A0_CONNECTOR_CORE_API.has(u)) return true;
+  // The gateway's own /api/upload takes the management bearer; the CLI sends the web session and a CSRF header.
+  return u === "/api/upload" && Boolean(req.headers["x-csrf-token"]) && !bearerAuthed(req);
+}
+function a0ConnectorRootAuthed(req) {
+  if (authed(req)) return true;
+  return validAuthSession(cookieVal(req, AUTH_COOKIE)) && !req.headers["origin"] && !req.headers["sec-fetch-site"];
+}
 // Proxy to Agent Zero with the login session injected. On a cache miss — or when
 // the container rotates the session and 302s back to /login — (re)log in and retry
 // the (GET) request once, so the owner never sees Agent Zero's own login screen.
@@ -2622,7 +2643,7 @@ function a0CanonicalEntryHtml(html) {
   return seen["index.js"] === 1 && seen["js/initFw.js"] === 1 ? rewritten : null;
 }
 function a0Proxy(req, res, retried, csrfContext, editorContext) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req) && !A0_CONNECTOR_REQS.has(req)) return denyHtml(res);
   if (!retried && isAgentAppPort(AGENT_ZERO_PORT) && agentAppHold(req, res)) return;
   let apath = req.url.slice("/agent-zero".length); if (!apath.startsWith("/")) apath = "/" + apath;
   // Newer Agent Zero serves a splash bootstrap at / that installs the real
@@ -4638,6 +4659,12 @@ const server = http.createServer((req, res) => {
         res.writeHead(307, { Location: "/agent-zero" + req.url, "Cache-Control": "no-store" });
         return res.end();
       }
+      req.url = "/agent-zero" + req.url;
+      return a0Proxy(req, res);
+    }
+    if (a0ConnectorRootPath(req, u)) {
+      if (!(req.method === "POST" && u === A0_CONNECTOR_PROBE) && !a0ConnectorRootAuthed(req)) return jsonRes(res, 401, { error: "unauthorized" });
+      A0_CONNECTOR_REQS.add(req);
       req.url = "/agent-zero" + req.url;
       return a0Proxy(req, res);
     }
