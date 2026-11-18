@@ -42,7 +42,7 @@ describe("isServersFullPlacementError", () => {
   // Imported lazily: launch-agent pulls in server-only modules.
   const { isServersFullPlacementError } = jest.requireActual("@/lib/hivra/launch-agent") as typeof import("@/lib/hivra/launch-agent");
   it("is true only when a server was left out for lack of room", () => {
-    expect(isServersFullPlacementError({ code: "PROXMOX_NO_PLACEMENT_TARGET", capacityFullHostIds: ["pve11"] })).toBe(true);
+    expect(isServersFullPlacementError({ code: "PROXMOX_NO_PLACEMENT_TARGET", capacityFullHostIds: ["host-a"] })).toBe(true);
     expect(isServersFullPlacementError({ code: "PROXMOX_NO_PLACEMENT_TARGET", capacityFullHostIds: [] })).toBe(false);
     expect(isServersFullPlacementError({ code: "PROXMOX_HOST_NOT_READY" })).toBe(false);
     expect(isServersFullPlacementError(undefined)).toBe(false);
@@ -53,7 +53,7 @@ describe("measuredFreeDiskGb", () => {
   const { measuredFreeDiskGb, MEASURED_DISK_RESERVE_GB } = jest.requireActual("@/lib/services/instance-service") as typeof import("@/lib/services/instance-service");
   const now = Date.parse("2026-11-18T13:00:00Z");
   const reading = (usedPercent: number, at = "2026-11-18T12:55:00Z") => ({
-    v: 1, at, pool: { name: "pve/data", sizeMb: 830 * 1024, usedPercent },
+    v: 1, at, pool: { name: "pool-a", sizeMb: 830 * 1024, usedPercent },
   });
 
   it("uses the pool's real use up to 85%", () => {
