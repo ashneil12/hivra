@@ -2795,7 +2795,9 @@ describe("POST /api/hivra/agents", () => {
     expect(provisionScript).toContain("HIVRA_MODEL_BASE_URL_B64=");
     expect(provisionScript).toContain("write_secret_b64 'https://hivra.cloud/api/managed-venice/v1'");
     expect(provisionScript).toContain("HIVRA_HERMES_MODEL_B64=");
-    expect(provisionScript).toContain("write_secret_b64 'deepseek-v4-pro'");
+    // OpenClaw starts on Flash: Venice's deepseek-v4-pro stalled on its prompt.
+    expect(provisionScript).toContain("write_secret_b64 'deepseek-v4-1-flash'");
+    expect(provisionScript).not.toContain("write_secret_b64 'deepseek-v4-pro'");
     const openClawExec = provisionScript.split("\n").find((line) => line.trimStart().startsWith("exec env ")) ?? "";
     expect(openClawExec).not.toContain("hven_live_TESTKEY123");
     expect(mockAgentInsert).toHaveBeenCalledWith(

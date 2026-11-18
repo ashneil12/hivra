@@ -1,5 +1,6 @@
 /** @jest-environment jsdom */
-import { sendGaEvent } from "../ga-client";
+import { sendGaEvent, sendGaSignUpFromServer } from "../ga-client";
+import { writeStoredConsent } from "@/lib/consent/cookie-consent";
 
 type WindowWithGtag = Window & { gtag?: jest.Mock };
 
@@ -37,5 +38,34 @@ describe("sendGaEvent", () => {
     (window as WindowWithGtag).gtag = gtag;
     jest.advanceTimersByTime(5_000);
     expect(gtag).not.toHaveBeenCalled();
+  });
+});
+
+describe("sendGaSignUpFromServer", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+    window.localStorage.clear();
+    document.cookie = "hh_cookie_consent=; Max-Age=0; Path=/";
+  });
+
+  it("asks the server to send the sign-up when analytics was accepted", () => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    writeStoredConsent("accepted");
+    sendGaSignUpFromServer();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/telemetry/ga-sign-up",
+      expect.objectContaining({ method: "POST", credentials: "same-origin", keepalive: true, body: "{}" })
+    );
+  });
+
+  it("does nothing without consent", () => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    sendGaSignUpFromServer();
+    writeStoredConsent("rejected");
+    sendGaSignUpFromServer();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

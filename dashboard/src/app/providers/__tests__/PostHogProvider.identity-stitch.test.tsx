@@ -33,8 +33,10 @@ const mockGetDistinctId = jest.fn(() => "anon-device-id");
 const mockIsIdentified = jest.fn(() => false);
 
 const mockSendGaEvent = jest.fn();
+const mockSendGaSignUpFromServer = jest.fn();
 jest.mock("@/lib/telemetry/ga-client", () => ({
   sendGaEvent: (...args: unknown[]) => mockSendGaEvent(...args),
+  sendGaSignUpFromServer: () => mockSendGaSignUpFromServer(),
 }));
 
 jest.mock("posthog-js", () => ({
@@ -245,6 +247,25 @@ describe("PostHogIdentify identity stitching", () => {
     expect(mockSendGaEvent.mock.calls.filter(([event]) => event === "sign_up")).toEqual([
       ["sign_up", { method: "google", heard_about: "other" }],
     ]);
+  });
+
+  it("asks the server to send GA4's sign_up when Google Analytics stays off signed-in pages", () => {
+    const previous = process.env.NEXT_PUBLIC_HIVRA_GA_PUBLIC_PAGES_ONLY;
+    process.env.NEXT_PUBLIC_HIVRA_GA_PUBLIC_PAGES_ONLY = "true";
+    try {
+      const createdAt = new Date(Date.now() - 60 * 1000);
+      const user = makeUser({ id: "user_ga_public_only", createdAt, lastSignInAt: createdAt });
+      mockUseUser.mockReturnValue({ isLoaded: true, isSignedIn: true, user });
+
+      render(<PostHogIdentify />);
+
+      // PostHog still records the sign-up; GA's copy goes through the server.
+      expect(mockCapture.mock.calls.filter(([event]) => event === "signup_completed")).toHaveLength(1);
+      expect(mockSendGaSignUpFromServer).toHaveBeenCalledTimes(1);
+      expect(mockSendGaEvent).not.toHaveBeenCalledWith("sign_up", expect.anything());
+    } finally {
+      process.env.NEXT_PUBLIC_HIVRA_GA_PUBLIC_PAGES_ONLY = previous;
+    }
   });
 
   it("ignores an unknown sign-up answer written straight into unsafe metadata", () => {
