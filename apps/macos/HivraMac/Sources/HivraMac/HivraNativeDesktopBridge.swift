@@ -6,7 +6,7 @@ import WebKit
 
 @MainActor
 final class HivraNativeDesktopBridge: NSObject, WKScriptMessageHandlerWithReply {
-    private static let logger = Logger(subsystem: "cloud.hivra.mac.alpha", category: "native-desktop")
+    private static let logger = Logger(subsystem: "cloud.hivra.mac", category: "native-desktop")
     private static let maximumPreparedProfiles = 4
     private let trustedOrigin: HivraTrustedWebOrigin?
     private var profiles: [UUID: HivraMoonlightProfile] = [:]

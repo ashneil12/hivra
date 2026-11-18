@@ -2927,6 +2927,23 @@ const OPENCLAW_SET_HEADERS = { forwarded: null, "x-forwarded-for": null, "x-forw
 function openclawPort(port) {
   return AGENT_KIND === "openclaw" && port === OPENCLAW_PORT;
 }
+// OpenClaw serves its Control UI below gateway.controlUi.basePath, its own
+// setting for a reverse-proxy path prefix. A computer whose openclaw.json names
+// /openclaw gets the path unchanged; an older one is served at the root, with
+// the prefix stripped and its root-absolute assets re-homed by Referer (which
+// OpenClaw 2026.11.5 and newer no longer send: Referrer-Policy no-referrer).
+let openclawMount = { mtime: -1, strip: "/openclaw" };
+function openclawStrip() {
+  try {
+    const stat = fs.statSync(OC_CFG());
+    if (stat.mtimeMs !== openclawMount.mtime) {
+      const j = JSON.parse(fs.readFileSync(OC_CFG(), "utf8"));
+      const basePath = j && j.gateway && j.gateway.controlUi && j.gateway.controlUi.basePath;
+      openclawMount = { mtime: stat.mtimeMs, strip: basePath === "/openclaw" ? "" : "/openclaw" };
+    }
+  } catch { openclawMount = { mtime: -1, strip: "/openclaw" }; }
+  return openclawMount.strip;
+}
 // Hermes's web UI behind the same gate. It checks that Host and Origin are its
 // own loopback address and that the peer is loopback, and it builds its links
 // from X-Forwarded-Prefix. The gate has already authenticated the owner, so
@@ -4577,7 +4594,7 @@ const server = http.createServer((req, res) => {
     try { refPath = new URL(String(req.headers["referer"] || "")).pathname; } catch {}
     if (refPath === "/openclaw" || refPath.startsWith("/openclaw/")) {
       req.url = "/openclaw" + req.url;
-      return gateProxy(req, res, OPENCLAW_PORT, "/openclaw");
+      return gateProxy(req, res, OPENCLAW_PORT, openclawStrip());
     }
   }
   // Agent Zero's web UI serves at root (no basePath), so its root-absolute assets/
@@ -4730,10 +4747,11 @@ const server = http.createServer((req, res) => {
   // through this same gate. The dashboard has no auth of its own, so the gate is
   // the access boundary — same as the terminals.
   if (u === "/aeon" || u.startsWith("/aeon/")) return gateProxy(req, res, AEON_PORT);
-  // OpenClaw gateway Control UI. STRIP /openclaw: the gateway serves at root, so we
-  // peel the mount prefix before forwarding; root-absolute sub-resources are caught
-  // by the re-home block above. Same gate-as-access-boundary model as Aeon.
-  if (u === "/openclaw" || u.startsWith("/openclaw/")) return gateProxy(req, res, OPENCLAW_PORT, "/openclaw");
+  // OpenClaw gateway Control UI. With basePath=/openclaw in openclaw.json the path
+  // goes through unchanged; an older computer serves at root, so the mount prefix is
+  // peeled and root-absolute sub-resources are caught by the re-home block above.
+  // Same gate-as-access-boundary model as Aeon.
+  if (u === "/openclaw" || u.startsWith("/openclaw/")) return gateProxy(req, res, OPENCLAW_PORT, openclawStrip());
   if (u === "/agent-zero" || u.startsWith("/agent-zero/")) return a0Proxy(req, res);
   // Hermes's own web UI (the official one, unmodified), prefix stripped.
   if (AGENT_KIND === "hermes" && req.method === "GET" && u === HERMES_SIGN_IN) return hermesSignIn(req, res);
@@ -4769,7 +4787,7 @@ server.on("upgrade", (req, socket, head) => {
   else if (u.startsWith("/box-terminal")) port = 7682;
   else if (u.startsWith("/vnc")) { port = 6080; strip = "/vnc"; }
   else if (u.startsWith("/aeon")) port = AEON_PORT; // Next.js HMR ws (dev); no strip (basePath=/aeon)
-  else if (u.startsWith("/openclaw")) { port = OPENCLAW_PORT; strip = "/openclaw"; } // gateway WS control/RPC (served at root)
+  else if (u.startsWith("/openclaw")) { port = OPENCLAW_PORT; strip = openclawStrip(); } // gateway WS control/RPC (at its basePath, or at root on an older computer)
   else if (u.startsWith("/agent-zero")) { port = AGENT_ZERO_PORT; strip = "/agent-zero"; } // Agent Zero WS (served at root)
   else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
   else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)

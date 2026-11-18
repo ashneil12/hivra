@@ -50,11 +50,70 @@ cd apps/macos/HivraMac
 ./scripts/build-app.sh
 ```
 
-Open `dist/Hivra.app`. The build also creates `dist/Hivra-Mac-Alpha.zip`.
-The alpha is ad-hoc signed for local use. Set `HIVRA_MAC_CODESIGN_IDENTITY` to a
-stable Apple signing identity when testing Keychain persistence across rebuilds;
-ad-hoc builds may require the local operator sign-in again after a binary change.
-Public distribution still requires Developer ID signing and notarization.
+Open `dist/Hivra.app`. This internal build is ad-hoc signed, built for this
+Mac's architecture, shows developer connections (Local Hivra, Canary, Custom)
+and has no updater. Set `HIVRA_MAC_CODESIGN_IDENTITY` to a stable Apple signing
+identity when testing Keychain persistence across rebuilds.
+
+### Public builds
+
+```bash
+HIVRA_MAC_CHANNEL=release \
+HIVRA_MAC_CODESIGN_IDENTITY="Developer ID Application: …" \
+HIVRA_MAC_NOTARY_PROFILE=hivra-notary \
+HIVRA_SPARKLE_PUBLIC_KEY=… \
+./scripts/build-app.sh
+./scripts/publish-release.sh   # only once the release is approved
+```
+
+A release build is universal (Apple silicon and Intel), shows only the Hivra
+connection, is signed with the Developer ID identity under the hardened runtime,
+notarised and stapled, and packed as `dist/Hivra.dmg` plus the update archive
+`dist/Hivra-<version>.zip`. `HIVRA_MAC_NOTARY_PROFILE` names credentials saved
+with `xcrun notarytool store-credentials`. The Sparkle EdDSA key pair is made
+once with Sparkle's `generate_keys --account hivra` (the private key stays in the
+Mac's Keychain, under its own account so no other app's update key can sign
+Hivra updates); the public key goes in `HIVRA_SPARKLE_PUBLIC_KEY`, and
+`publish-release.sh` signs with that account (`HIVRA_SPARKLE_KEY_ACCOUNT`).
+
+`publish-release.sh` uploads the DMG and update archive to the GitHub release
+`mac-v<version>` and the signed `appcast.xml` to the `mac-updates` release,
+which is the feed (`SUFeedURL`) installed copies check. The website's download
+button reads `NEXT_PUBLIC_HIVRA_MAC_DOWNLOAD_URL`; until that is set it says
+"coming soon".
+
+### Updates
+
+Sparkle checks the feed in the background and offers new versions; **Check for
+Updates…** is in the Hivra menu. Builds without a feed address and public key
+(every internal build) have no updater at all.
+
+### Signing in
+
+Google and other sign-in providers refuse to run inside an app's web view, so
+when the Hivra connection lands on the website's sign-in page and the website
+has `HIVRA_DESKTOP_BROWSER_SIGNIN` on, the app shows its own welcome screen
+instead: **Get started free** or **I already have an account** opens the
+person's browser at `/desktop/sign-in`, and after they sign in there the browser
+sends them back through `hivra://auth/callback`. The app trades that one-time
+code, together with a secret verifier only it holds, for a single-use ticket and
+finishes the sign-in in its own web view. **Sign in with email in this window
+instead** keeps the embedded page. Websites without the switch keep the
+embedded page as before. The server side is
+`dashboard/src/lib/desktop/browser-sign-in.ts`.
+
+## Look
+
+The native views follow Hivra Glass (`docs/brand/HIVRA-GLASS.md`), the design
+language shared with the website and MonoCode Hub: one ink over one base,
+frosted panels over a soft haze, hairline strokes, system fonts and rounded
+corners. The tokens and shared controls are in `HivraDesign.swift`. The window
+uses the system's own translucency and, on macOS 26, Liquid Glass for panels
+(materials on earlier versions). Hivra red appears only in the mark and for
+errors and destructive actions; status uses green, amber and red; focus rings
+are system blue. Loading and waiting show a dotted thinking orb
+(`HivraThinkingOrb`, a port of the website's), which holds still under Reduce
+Motion.
 
 ## Workspaces and controls
 
@@ -105,7 +164,8 @@ rules. Focus mode hides the sidebar and resource tab strip.
 | Command [ / ] | Back / Forward within a web pane |
 | Command , | App settings |
 
-App settings contains Appearance, Connections, and Local Hivra. System, Dark,
+App settings contains Appearance, and, with **Show developer connections** on
+(Appearance → Advanced, or any internal build), Connections and Local Hivra. System, Dark,
 and Light control the native shell's appearance. Embedded runtime interfaces
 retain their own theme controls.
 
@@ -169,6 +229,8 @@ web view; release builds do not.
 
 ## Connections
 
+- **Hivra** opens `https://hivra.cloud/dashboard`. It is the first connection and
+  the only one a public build shows.
 - **Local Hivra** opens `http://127.0.0.1:3000/dashboard`. Local runtime controls
   expose checkout selection, setup, start, stop, and the actual launcher output.
   Setup credentials are passed to the self-host launcher through its environment,

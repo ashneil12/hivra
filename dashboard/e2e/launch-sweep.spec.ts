@@ -10,6 +10,9 @@
  *   3. wait on the after-launch screen until it says ready, press Open;
  *   4. ask the agent "What is 389 + 448?" in the box a customer types into
  *      and wait for 837 on screen (computers: their desktop or terminal opens);
+ *   4b. on an agent using Hivra credits, turn on "private models only" the way
+ *      its owner does and ask a second question, which must still be answered
+ *      (LAUNCH_SWEEP_PRIVATE_ONLY=0 skips; not offered where the switch is off);
  *   5. close the tab and read what it uses idle for a few minutes, from the
  *      owner's own usage view (LAUNCH_SWEEP_IDLE_MINUTES, default 10, 0 skips);
  *   6. delete everything through the app's own delete route, then the account.
@@ -32,6 +35,7 @@ import { destroyAllHivraAgents, destroyAllInstances, listHivraAgents, listInstan
 import { establishAuditSession } from './first-run-audit/session';
 import { proveChat, proveComputerOpen } from './launch-sweep/chat';
 import { measureIdle } from './launch-sweep/idle';
+import { checkPrivateOnly, privateOnlyCheckEnabled } from './launch-sweep/private-only';
 import { launchFromTile, offeredTileNames, openFromLaunch, waitForReady } from './launch-sweep/journey';
 import { agentEvidence, agentsStillOnRecord, grantSweepPlan, removeSweepPlan } from './launch-sweep/plan';
 import { SweepFailure, SweepRecorder } from './launch-sweep/result';
@@ -237,6 +241,16 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
     recorder.result.passed = true;
     await screenshot(page, recorder, env.outDir, 'pass');
 
+    if (target.proof !== 'computer-open' && privateOnlyCheckEnabled() && recorder.result.agentId) {
+      stage = 'private';
+      // Its own result: the launch above has already passed either way.
+      recorder.result.privateOnly = await checkPrivateOnly(page, context.request, env.baseUrl, recorder.result.agentId, target, {
+        composerTimeoutMs: env.composerTimeoutMs,
+        replyTimeoutMs: env.replyTimeoutMs,
+      }).catch((err: unknown) => ({ state: 'failed' as const, reason: err instanceof Error ? err.message : String(err) }));
+      recorder.done('private');
+    }
+
     if (env.idleMinutes > 0) {
       stage = 'idle';
       // Walk away like a customer: leave the agent for the dashboard home,
@@ -271,7 +285,7 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
     await context?.close().catch(() => undefined);
     const file = recorder.write(env.outDir);
     // eslint-disable-next-line no-console -- the run's one line per target
-    console.log(`[launch-sweep] ${target.tile}: ${recorder.result.passed ? 'PASS' : `FAIL at ${recorder.result.failure?.stage}: ${recorder.result.failure?.reason}`} (${file})`);
+    console.log(`[launch-sweep] ${target.tile}: ${recorder.result.passed ? 'PASS' : `FAIL at ${recorder.result.failure?.stage}: ${recorder.result.failure?.reason}`}${recorder.result.privateOnly ? `; private models only: ${recorder.result.privateOnly.state}` : ''} (${file})`);
   }
 
   const { failure, teardown: torn } = recorder.result;
@@ -284,4 +298,8 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
     return;
   }
   if (failure) throw new Error(`${target.tile} failed at "${failure.stage}" (${failure.category}): ${failure.reason}`);
+  const privateOnly = recorder.result.privateOnly;
+  if (privateOnly?.state === 'failed') {
+    test.info().annotations.push({ type: 'private models only failed', description: privateOnly.reason });
+  }
 }

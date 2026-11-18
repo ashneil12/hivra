@@ -579,6 +579,16 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **OpenClaw's Control UI starts again (`2026.11.17.7`).**
+  OpenClaw 2026.11.5 sends `Referrer-Policy: no-referrer`, so the box gateway
+  could no longer tell which root-absolute requests (`/assets/*`, `/fonts/*`,
+  `/chat/*`) came from the Control UI it mounts at `/openclaw`, and the UI
+  never started ("Control UI did not start"). A new launch sets OpenClaw's own
+  `gateway.controlUi.basePath` to `/openclaw`, and the box gateway forwards
+  `/openclaw` unchanged whenever `openclaw.json` names that base path. A
+  computer whose config has no base path keeps the previous strip and Referer
+  re-home.
+
 - **Agent Zero has a model on a managed launch (`2026.11.17.6`).**
   Current Agent Zero picks models from presets and ignores the `A0_SET_*`
   model defaults, so a fresh box with a managed model key also gets Agent
