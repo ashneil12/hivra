@@ -547,6 +547,15 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.18.2` builds on `2026.11.18.1`. `hivra-provision-on-host.sh`
+gains `HIVRA_PROVISION_MODE=empty` (allocate and tag a computer with a blank
+disk, no boot, no installer) and, when a guest's cloud-init fails, keeps its
+status and output tail in a root-only host file before cleanup.
+`provision-claude-code-box.sh` seeds DeepSeek V4.1 Flash for an OpenClaw
+launched without a model. Changed: those two scripts, plus the documents, the
+version and the provider worker's release labels. This source release does not
+deploy, install, enable or start anything on a host or computer.
+
 Release `2026.11.18.1` builds on `2026.11.17.9`. A new OpenClaw's Venice model,
 and a Venice model set from the dashboard, carry OpenClaw's own
 `compat.thinkingFormat: "openai"`, so OpenClaw no longer adds DeepSeek's

@@ -394,6 +394,7 @@ GSCP=(scp -i "$VM_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
 wait_for_guest_cloud_init() {
   local started now deadline remaining probe_budget pause attempt output exit_code
   local last_state="SSH unavailable"
+  rm -f -- "${CLOUD_INIT_KEEP_DIR:-/root}/hivra-prov-${VMID}.cloud-init.txt"
   started="$(guest_boot_uptime)" || fail "guest boot clock is unavailable"
   deadline=$((started + 600))
   # SSH and cloud-init are expected to be unavailable/running during first
@@ -424,7 +425,8 @@ wait_for_guest_cloud_init() {
         ;;
       255) last_state="SSH unavailable" ;;
       124|137) last_state="SSH probe timed out" ;;
-      *) fail "guest cloud-init check failed (exit ${exit_code}); inspect cloud-init status and logs before retrying" ;;
+      *) log_guest_cloud_init_failure
+         fail "guest cloud-init check failed (exit ${exit_code}); inspect cloud-init status and logs before retrying" ;;
     esac
     # Guest diagnostics can contain user-data. Log only the classified reason,
     # not command output. The caller's existing EXIT trap owns VM cleanup.
@@ -433,6 +435,23 @@ wait_for_guest_cloud_init() {
     sleep "$pause"
   done
   fail "guest boot timed out (${last_state}); runtime installation was not started"
+}
+
+# The failed guest is removed by the EXIT trap, taking its logs with it. Keep
+# cloud-init's own account of why it stopped in a root-only file on this host
+# (never in the host log, which carries only the classified reason): the
+# status summary and the tail of its output, capped. Overwritten on VMID reuse.
+log_guest_cloud_init_failure() {
+  local keep="${CLOUD_INIT_KEEP_DIR:-/root}/hivra-prov-${VMID}.cloud-init.txt"
+  if ( umask 077; timeout --kill-after=2s 20s "${GSSH[@]}" \
+      -o BatchMode=yes -o ConnectionAttempts=1 -n "ubuntu@${IP}" \
+      'LC_ALL=C sudo -n cloud-init status --long 2>&1 | head -n 40; LC_ALL=C sudo -n tail -n 40 /var/log/cloud-init-output.log 2>&1 || true' \
+      2>/dev/null | head -c 16384 > "$keep" ) && [ -s "$keep" ]; then
+    log "guest cloud-init details kept in ${keep} (root only) before cleanup"
+  else
+    rm -f -- "$keep"
+    log "guest cloud-init details could not be read before cleanup"
+  fi
 }
 
 log "waiting for guest ssh + cloud-init"
