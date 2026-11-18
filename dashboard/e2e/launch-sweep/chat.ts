@@ -89,6 +89,20 @@ async function completeConsolePassword(frame: Frame): Promise<boolean> {
   return true;
 }
 
+/**
+ * A notice an agent shows over its own UI on first open (DeepSeek Harness:
+ * "Internal Testing Notice … Continue"). A customer reads it and presses the
+ * button that lets them carry on; so does the sweep.
+ */
+async function acknowledgeNotice(frame: Frame): Promise<boolean> {
+  const dialog = frame.locator('[role="dialog"], [role="alertdialog"], [aria-modal="true"]').first();
+  if (!(await dialog.isVisible().catch(() => false))) return false;
+  const proceed = dialog.getByRole('button', { name: /^\s*(continue|got it|i understand|accept|ok|okay|start|get started)\s*$/i }).first();
+  if (!(await proceed.isVisible().catch(() => false))) return false;
+  await proceed.click().catch(() => undefined);
+  return true;
+}
+
 /** Wait for the place to type, in Hivra's chat or inside the agent's own UI. */
 async function findComposer(
   page: Page,
@@ -99,6 +113,7 @@ async function findComposer(
   const navigateAt = Date.now() + 45_000;
   let navigated = false;
   let passwordAttempts = 0;
+  let noticeAttempts = 0;
   let lastSeen = '';
   while (Date.now() < end) {
     // Opening can land on another tab (Codex opened on Settings). A customer
@@ -125,6 +140,11 @@ async function findComposer(
       }
     } else {
       for (const frame of await agentFrames(page)) {
+        if (noticeAttempts < 3 && await acknowledgeNotice(frame)) {
+          noticeAttempts++;
+          await sleep(2_000);
+          continue;
+        }
         if (passwordAttempts < 3 && await completeConsolePassword(frame)) {
           passwordAttempts++;
           await sleep(5_000);
