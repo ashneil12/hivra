@@ -72,7 +72,7 @@ describe("/venice", () => {
     off.unmount();
     process.env[FLAG] = "true";
     render(<VenicePromo />);
-    expect(screen.getByText(/Get \$10 of Venice inference with code/)).toBeInTheDocument();
+    expect(screen.getByText(/get \$10 of Venice AI on us/)).toBeInTheDocument();
     expect(screen.getByText("VENICE")).toBeInTheDocument();
   });
 });

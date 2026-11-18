@@ -8,7 +8,7 @@ export default function VenicePromo() {
   if (!isVenicePromoEnabled()) return null;
   return (
     <p className={styles.promo} data-venice-promo="">
-      New to Hivra? Get $10 of Venice inference with code <strong>{VENICE_PROMO_CODE}</strong>
+      New to Hivra? Start a plan and get $10 of Venice AI on us. It&apos;s added when you launch your first agent with Hivra credits. Code <strong>{VENICE_PROMO_CODE}</strong>, or just start from this page.
     </p>
   );
 }
