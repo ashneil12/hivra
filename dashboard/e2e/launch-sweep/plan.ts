@@ -80,3 +80,27 @@ export async function agentEvidence(
     return [{ error: err instanceof Error ? err.message : String(err) }];
   }
 }
+
+/**
+ * What Canary's own records still hold for this account, read with the
+ * service role. The app's list can come back empty for reasons that have
+ * nothing to do with deletion (an expired sign-in answers 401), so teardown
+ * never trusts an empty list alone before deleting the account.
+ */
+export async function agentsStillOnRecord(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  userId: string,
+): Promise<Array<{ id: string; status: string; vmid: number | null }> | null> {
+  try {
+    const res = await fetch(
+      `${supabaseUrl.replace(/\/$/, '')}/rest/v1/hivra_agents?user_id=eq.${encodeURIComponent(userId)}&status=neq.deleted&select=id,status,vmid`,
+      { headers: headers(serviceRoleKey) },
+    );
+    if (!res.ok) return null;
+    const rows = (await res.json()) as unknown;
+    return Array.isArray(rows) ? (rows as Array<{ id: string; status: string; vmid: number | null }>) : null;
+  } catch {
+    return null;
+  }
+}

@@ -33,7 +33,7 @@ import { establishAuditSession } from './first-run-audit/session';
 import { proveChat, proveComputerOpen } from './launch-sweep/chat';
 import { measureIdle } from './launch-sweep/idle';
 import { launchFromTile, offeredTileNames, openFromLaunch, waitForReady } from './launch-sweep/journey';
-import { agentEvidence, grantSweepPlan, removeSweepPlan } from './launch-sweep/plan';
+import { agentEvidence, agentsStillOnRecord, grantSweepPlan, removeSweepPlan } from './launch-sweep/plan';
 import { SweepFailure, SweepRecorder } from './launch-sweep/result';
 import { OWN_SERVER_ONLY_TILES, SWEEP_TARGETS, selectedTargets, type SweepTarget } from './launch-sweep/targets';
 
@@ -120,6 +120,7 @@ async function signedInContext(browser: Browser, env: SweepEnv, userId: string):
 /** Delete everything the account owns, then the account. Never throws. */
 async function teardown(
   context: BrowserContext | null,
+  page: Page | null,
   env: SweepEnv,
   userId: string,
   recorder: SweepRecorder,
@@ -127,10 +128,25 @@ async function teardown(
   const record = { agentsLeft: 0, instancesLeft: 0, accountDeleted: false, error: undefined as string | undefined };
   try {
     if (context) {
+      // Clerk's session token lasts about a minute and only a live page
+      // renews it. After a long idle, open a Hivra page first so the delete
+      // calls are signed in (an expired one reads as "nothing to delete").
+      await page?.goto('/dashboard', { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+      await page?.waitForTimeout(3_000).catch(() => undefined);
       const agents = await destroyAllHivraAgents(context.request, env.baseUrl, 30, 15_000);
       const instances = await destroyAllInstances(context.request, env.baseUrl, `launch sweep ${env.runId}`);
       record.agentsLeft = agents.survived.length;
       record.instancesLeft = instances.survived.length;
+    }
+    // Trust Canary's records over the app's list: anything not deleted there
+    // is still a computer someone pays for.
+    const onRecord = await agentsStillOnRecord(env.supabaseUrl, env.serviceRoleKey, userId);
+    if (onRecord === null) {
+      record.error = 'could not read the agent records to confirm the delete';
+      record.agentsLeft = Math.max(record.agentsLeft, 1);
+    } else if (onRecord.length > 0) {
+      record.agentsLeft = Math.max(record.agentsLeft, onRecord.length);
+      record.error = `still on record: ${onRecord.map((row) => `${row.id} (${row.status}, VM ${row.vmid ?? '?'})`).join(', ')}`;
     }
     await removeSweepPlan(env.supabaseUrl, env.serviceRoleKey, userId);
     // Keep the account if anything survived: without it nothing can sign in
@@ -249,7 +265,7 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
     const keep = (env.keepFailed && !recorder.result.passed && recorder.result.failure?.category === 'product')
       || (recorder.result.passed && env.keepPassed.includes(target.profileId));
     if (userId && !keep) {
-      await teardown(context, env, userId, recorder);
+      await teardown(context, page, env, userId, recorder);
       recorder.done('teardown');
     }
     await context?.close().catch(() => undefined);
