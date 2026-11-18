@@ -114,7 +114,8 @@ host("store and unstore jobs against a fake host", () => {
     mkdirSync(jobDir);
     const local = (text: string) => text.replaceAll("/var/lib/hivra/restic-cache", path.join(h.dir, "restic-cache"));
     writeFileSync(path.join(jobDir, "run.sh"), local(files.run));
-    writeFileSync(path.join(jobDir, "read-disk.sh"), files.readDisk);
+    // The reader makes its pipe under /run, which only root can write: keep it in the temp folder.
+    writeFileSync(path.join(jobDir, "read-disk.sh"), files.readDisk.replaceAll("/run/", `${jobDir}/`));
     writeFileSync(path.join(jobDir, "params"), [
       `JOB_ID='${JOB}'`, `KIND='${kind}'`, `AGENT_ID='${AGENT}'`, `VMID=${VMID}`, `EXPECTED_BINDING_TAG='${TAG}'`,
       "KEEP_DAILY=7", "KEEP_WEEKLY=4", "UPLOAD_LIMIT_KIB=0", "REPO_FOLDER='hivra-computers'",
