@@ -123,6 +123,27 @@ async function acknowledgeNotice(frame: Frame): Promise<boolean> {
  * or makes a new one; so does the sweep.
  */
 async function chooseWorkspace(frame: Frame): Promise<boolean> {
+  // The picker can open a folder chooser ("Select Workspace Directory",
+  // starting at Home, with New folder / Cancel / Open). A customer presses
+  // Open to use the folder it is showing.
+  const chooser = frame.locator('[role="dialog"], [aria-modal="true"]').filter({ hasText: /workspace (directory|folder)|select (a )?(directory|folder)/i }).first();
+  if (await chooser.isVisible().catch(() => false)) {
+    const open = chooser.getByRole('button', { name: /^\s*(open|select|choose|use this folder)\s*$/i }).last();
+    if (await open.isVisible().catch(() => false)) {
+      await open.click().catch(() => undefined);
+      return true;
+    }
+  }
+  if (/select workspace directory/i.test(await bodyText(frame))) {
+    const open = frame.getByRole('button', { name: /^\s*open\s*$/i });
+    const count = await open.count().catch(() => 0);
+    for (let index = count - 1; index >= 0; index--) {
+      if (await open.nth(index).isVisible().catch(() => false)) {
+        await open.nth(index).click().catch(() => undefined);
+        return true;
+      }
+    }
+  }
   if (!/choose a workspace|select a workspace|no workspace/i.test(await bodyText(frame))) return false;
   const picker = frame.getByRole('button', { name: /(choose|select|open) (a )?workspace/i })
     .or(frame.getByRole('combobox', { name: /workspace/i }))
@@ -325,6 +346,20 @@ async function sendQuestion(page: Page, frame: Frame, composer: Locator, questio
   return sentAt;
 }
 
+/** Press the first match that is on screen; false when none is. */
+async function clickFirstVisible(matches: Locator): Promise<boolean> {
+  const count = await matches.count().catch(() => 0);
+  for (let index = 0; index < count; index++) {
+    const match = matches.nth(index);
+    if (!(await match.isVisible().catch(() => false))) continue;
+    // An overlay (the cookie banner) can sit over the control; press it
+    // anyway rather than waiting the whole run on a click that never lands.
+    await match.click({ timeout: 10_000 }).catch(() => match.click({ force: true, timeout: 5_000 }).catch(() => undefined));
+    return true;
+  }
+  return false;
+}
+
 /**
  * A computer is proven when its own page shows it running with its working
  * surface: the desktop or terminal iframe, with no error panel.
@@ -333,29 +368,28 @@ export async function proveComputerOpen(page: Page, timeoutMs: number): Promise<
   const start = Date.now();
   const end = start + timeoutMs;
   let nextNavigation = start + 30_000;
-  let navigations = 0;
   while (Date.now() < end) {
     // A computer can open on its settings page; a customer then presses
     // Desktop (or Terminal for one without a desktop). A Linux computer has no
     // Desktop and lists Terminal / Files / Settings in its controls menu, so
     // menu items count too, and the sweep tries again if the first press
     // landed nowhere.
-    if (navigations < 4 && Date.now() > nextNavigation) {
-      navigations++;
+    // A computer can take minutes to finish setting up before its Terminal
+    // tile does anything, so keep pressing every 20 s until a surface shows,
+    // not only during the first minute or two.
+    if (Date.now() > nextNavigation) {
       nextNavigation = Date.now() + 20_000;
+      await answerCookieBanner(page);
       for (const name of [/^\s*desktop\s*$/i, /^\s*terminal\s*$/i]) {
-        const item = page.getByRole('link', { name })
+        // The same name can also sit on a hidden copy (a collapsed rail or
+        // menu), so press the first one that is actually on screen.
+        const byRole = page.getByRole('link', { name })
           .or(page.getByRole('button', { name }))
           .or(page.getByRole('tab', { name }))
           .or(page.getByRole('menuitem', { name }))
-          .or(page.getByRole('menuitemradio', { name }))
-          .first();
-        const byText = page.locator('a, button, [role="menuitem"], [role="option"], [role="tab"]').filter({ hasText: name }).first();
-        const target = (await item.isVisible().catch(() => false)) ? item : byText;
-        if (await target.isVisible().catch(() => false)) {
-          await target.click().catch(() => undefined);
-          break;
-        }
+          .or(page.getByRole('menuitemradio', { name }));
+        const byText = page.locator('a, button, [role="menuitem"], [role="option"], [role="tab"]').filter({ hasText: name });
+        if (await clickFirstVisible(byRole) || await clickFirstVisible(byText)) break;
       }
     }
     const failed = page.getByText(/Provisioning failed|Computer isn.t ready|Couldn.t verify secure access/).first();
