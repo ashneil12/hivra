@@ -368,15 +368,16 @@ export async function proveComputerOpen(page: Page, timeoutMs: number): Promise<
   const start = Date.now();
   const end = start + timeoutMs;
   let nextNavigation = start + 30_000;
-  let navigations = 0;
   while (Date.now() < end) {
     // A computer can open on its settings page; a customer then presses
     // Desktop (or Terminal for one without a desktop). A Linux computer has no
     // Desktop and lists Terminal / Files / Settings in its controls menu, so
     // menu items count too, and the sweep tries again if the first press
     // landed nowhere.
-    if (navigations < 4 && Date.now() > nextNavigation) {
-      navigations++;
+    // A computer can take minutes to finish setting up before its Terminal
+    // tile does anything, so keep pressing every 20 s until a surface shows,
+    // not only during the first minute or two.
+    if (Date.now() > nextNavigation) {
       nextNavigation = Date.now() + 20_000;
       await answerCookieBanner(page);
       for (const name of [/^\s*desktop\s*$/i, /^\s*terminal\s*$/i]) {
