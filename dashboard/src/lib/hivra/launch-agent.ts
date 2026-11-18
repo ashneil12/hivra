@@ -784,6 +784,18 @@ async function resolveStickyHivraProxmoxHost(userId: string): Promise<string | n
 // arriving together failed (stress test 2026-11-18). Waiting longer lets
 // launches queue; the budgets still fit the launch route's 420 s limit
 // (150 + ~60 identity wait + 120 + the rest).
+/** Code a launch answers with when every server in rotation is out of room. */
+export const HIVRA_LAUNCH_SERVERS_FULL_CODE = "servers_full";
+
+export function isServersFullPlacementError(error: unknown): boolean {
+  return Boolean(
+    error && typeof error === "object" &&
+    (error as { code?: unknown }).code === "PROXMOX_NO_PLACEMENT_TARGET" &&
+    Array.isArray((error as { capacityFullHostIds?: unknown }).capacityFullHostIds) &&
+    ((error as { capacityFullHostIds: unknown[] }).capacityFullHostIds.length > 0),
+  );
+}
+
 export const HIVRA_LAUNCH_ALLOCATION_LOCK_WAIT_SECONDS = 150;
 export const HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS = 120;
 
@@ -1328,10 +1340,9 @@ export async function launchHivraAgentForUser(
 
       explicitClaudeHost = LAUNCHABLE_BOX_TYPES.has(type) ? resolveHivraClaudeCodeProxmoxHost(process.env) : null;
       stickyHost = explicitClaudeHost ? null : await resolveStickyHivraProxmoxHost(userId);
-      const forceTargetId = explicitClaudeHost ?? stickyHost;
       // With HIVRA_HOST_CAPACITY_ALERTS on, a host whose latest capacity reading
       // is critical is tried only when no other host can take the launch.
-      const placement = await selectAvoidingCriticalHosts(excludeTargetIds => selectAvailableProxmoxProvisionTarget({
+      const placeOn = (forceTargetId: string | null) => selectAvoidingCriticalHosts(excludeTargetIds => selectAvailableProxmoxProvisionTarget({
         supabase: supabaseAdmin,
         env: process.env,
         hostConfig: null,
@@ -1357,14 +1368,30 @@ export async function launchHivraAgentForUser(
             : {}),
         }),
       }), { forced: Boolean(forceTargetId) });
+      let placement = await placeOn(explicitClaudeHost ?? stickyHost);
+      // The owner's usual server is a preference, not a rule: when it cannot
+      // take this launch (full, or not ready), the launch moves to any other
+      // server in rotation instead of failing.
+      if (!placement.ok && stickyHost && !explicitClaudeHost) {
+        log.warn("hivra sticky host could not take the launch; trying the other servers", {
+          source: "hivra/agents",
+          failureType: "hivra_agent_sticky_host_spillover",
+          userId,
+          stickyHost,
+          placementStatus: placement.status,
+          placementMessage: placement.message,
+        });
+        placement = await placeOn(null);
+      }
       if (!placement.ok) {
+        const serversFull = isServersFullPlacementError(placement.error);
         // error, not warn: a blocked launch is customer-visible and only error
         // level reaches ops_events. The reason (which host, which prerequisite)
         // is the difference between a self-describing incident and an hour of
         // hand probing.
         log.error("hivra launch blocked: no Proxmox placement target available", new Error(placement.message), {
           source: "hivra/agents",
-          failureType: "hivra_agent_no_proxmox_placement_target",
+          failureType: serversFull ? "hivra_fleet_full" : "hivra_agent_no_proxmox_placement_target",
           userId,
           agentType: type,
           requestedCpu: cpu,
@@ -1375,7 +1402,11 @@ export async function launchHivraAgentForUser(
         });
         // Refused before anything was created: the launch can be tried again
         // as it is, and the client must not treat it as possibly created.
-        return apiError(placement.message, placement.status, undefined, { code: "placement_unavailable" });
+        // "servers_full": every server in rotation is out of room. The launch
+        // page keeps the request and sends it again until room frees up.
+        return apiError(placement.message, placement.status, undefined, {
+          code: serversFull ? HIVRA_LAUNCH_SERVERS_FULL_CODE : "placement_unavailable",
+        });
       }
       env = placement.env;
       host = placement.targetId ?? env.PROXMOX_NODE ?? resolveHivraProxmoxHost();

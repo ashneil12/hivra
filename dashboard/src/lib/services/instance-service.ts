@@ -550,6 +550,8 @@ type ProxmoxHostRegistryRow = {
   cpu_overcommit_ratio?: number | string | null;
   /** Per-host: deep-sleeping agents hold no CPU/RAM in placement. */
   placement_skip_deep_sleep?: boolean | null;
+  /** Latest capacity sweep reading (hivra/capacity/sweep), when the host is swept. */
+  capacity_reading?: unknown;
 };
 
 // The one `proxmox_hosts.status` value that means "in rotation". Everything
@@ -779,6 +781,37 @@ type RankedProxmoxHost = {
   diskSizeGb: number;
 };
 
+// Disk by measurement (stress test 2026-11-18): agents really use 7-17 GB of
+// the thin pool, but placement counted a flat HIVRA_AGENT_VM_DISK_GB each, so a
+// server full of sleeping agents looked out of disk while it had room. When a
+// host has a fresh capacity reading with its pool, placement uses the pool's
+// real use instead: room up to MEASURED_POOL_FILL_LIMIT, with
+// MEASURED_DISK_RESERVE_GB kept for the new agent and for each launch still
+// in progress (they are not in the reading yet).
+export const MEASURED_POOL_FILL_LIMIT = 0.85;
+export const MEASURED_DISK_RESERVE_GB = 20;
+const MEASURED_POOL_READING_MAX_AGE_MS = 15 * 60 * 1000;
+
+export function measuredFreeDiskGb(
+  reading: unknown,
+  launchesInProgress: number,
+  nowMs: number,
+): number | null {
+  if (!reading || typeof reading !== "object") return null;
+  const r = reading as { v?: unknown; at?: unknown; pool?: unknown };
+  if (r.v !== 1 || typeof r.at !== "string") return null;
+  const age = nowMs - Date.parse(r.at);
+  if (!Number.isFinite(age) || age < 0 || age > MEASURED_POOL_READING_MAX_AGE_MS) return null;
+  const pool = r.pool as { sizeMb?: unknown; usedPercent?: unknown } | null | undefined;
+  if (!pool || typeof pool !== "object") return null;
+  const sizeMb = Number(pool.sizeMb);
+  const usedPercent = Number(pool.usedPercent);
+  if (!Number.isFinite(sizeMb) || sizeMb <= 0 || !Number.isFinite(usedPercent) || usedPercent < 0) return null;
+  const sizeGb = sizeMb / 1024;
+  const usedGb = (sizeGb * usedPercent) / 100;
+  return sizeGb * MEASURED_POOL_FILL_LIMIT - usedGb - Math.max(0, launchesInProgress) * MEASURED_DISK_RESERVE_GB;
+}
+
 async function rankProxmoxHostsForPlacement(params: {
   supabase: NonNullable<typeof supabaseAdmin>;
   env: NodeJS.ProcessEnv;
@@ -828,6 +861,7 @@ async function rankProxmoxHostsForPlacement(params: {
   }
 
   const allocByHost = new Map<string, { cpu: number; ram: number; disk: number }>();
+  const launchesInProgressByHost = new Map<string, number>();
   for (const row of rows ?? []) {
     const node = (row as { proxmox_node?: string | null }).proxmox_node;
     if (!node) continue;
@@ -863,6 +897,9 @@ async function rankProxmoxHostsForPlacement(params: {
     // and an errored one may have allocated before it failed.
     const ownsVm = powered || (vmid !== null && vmid !== undefined);
     if (!ownsVm) continue;
+    if (status === "provisioning") {
+      launchesInProgressByHost.set(node, (launchesInProgressByHost.get(node) ?? 0) + 1);
+    }
     const acc = allocByHost.get(node) ?? { cpu: 0, ram: 0, disk: 0 };
     if (holdsCpuAndRam) {
       acc.cpu += Number((row as { cpu?: number | null }).cpu ?? 0);
@@ -900,7 +937,16 @@ async function rankProxmoxHostsForPlacement(params: {
       thinpoolSizeGb !== null && thinpoolSizeGb !== undefined
         ? thinpoolSizeGb * overcommitRatio
         : null;
-    const freeDiskGb = diskBudgetGb !== null ? diskBudgetGb - alloc.disk : null;
+    const measuredDiskGb = measuredFreeDiskGb(
+      host.capacity_reading,
+      launchesInProgressByHost.get(host.id) ?? 0,
+      Date.now()
+    );
+    const diskMeasured = measuredDiskGb !== null;
+    const freeDiskGb = diskMeasured
+      ? measuredDiskGb
+      : diskBudgetGb !== null ? diskBudgetGb - alloc.disk : null;
+    const neededDiskForCheckGb = diskMeasured ? MEASURED_DISK_RESERVE_GB : diskSizeGb;
 
     placementDiagnostics.push({
       hostId: host.id,
@@ -922,13 +968,14 @@ async function rankProxmoxHostsForPlacement(params: {
       diskBudgetGb,
       allocatedDiskGb: alloc.disk,
       freeDiskGb,
-      neededDiskGb: diskSizeGb,
+      diskMeasured,
+      neededDiskGb: neededDiskForCheckGb,
     });
 
     if (
       freeCpu < params.neededCpu ||
       freeRamMb < params.neededRamMb ||
-      (freeDiskGb !== null && freeDiskGb < diskSizeGb)
+      (freeDiskGb !== null && freeDiskGb < neededDiskForCheckGb)
     ) {
       params.onCapacityFull?.(host.id);
       continue;
