@@ -180,11 +180,12 @@ describe("reconcileAgentSleep: a stale lease", () => {
     const interrupted = stateLine("unknown", { reason: "interrupted_save" });
     mockRunScript
       .mockResolvedValueOnce(interrupted)
-      .mockResolvedValueOnce({ ok: true, stdout: `HIVRA_SAVE_RECOVERY {"ok":true,"vmid":${VMID},"reason":"unlocked"}\n` })
+      .mockResolvedValueOnce({ ok: true, stdout: `HIVRA_SAVE_RECOVERY {"ok":true,"vmid":${VMID},"reason":"recovered"}\n` })
       .mockResolvedValueOnce(stateLine("awake"));
     const outcome = await reconcile(lease("sleep", "hibernating"));
     expect(outcome).toMatchObject({ outcome: "settled", to: "awake", why: "stale_lease", hostState: "awake" });
-    expect(String(mockRunScript.mock.calls[1][0])).toContain("recover_interrupted_save");
+    // The recovery is told when this save began, so it can trust saved state only from this save.
+    expect(String(mockRunScript.mock.calls[1][0])).toContain(`recover_interrupted_save '${Math.floor((NOW - 15 * MIN) / 1000) - 1}'`);
     expect(mockRunScript).toHaveBeenCalledTimes(3);
   });
 

@@ -338,30 +338,42 @@ const ADMISSION_FAST_QM_SHELL = `# The admission helper reads every VM with qm c
 ${FAST_QM_FUNCTIONS}`;
 
 /**
- * Recovers a computer whose save to disk was interrupted. When a save fails, Proxmox removes the
- * partial saved state but leaves its "suspending" lock on the computer on purpose, and every later
- * state read then sees a state it does not know: the computer could not sleep, wake or be deleted
- * until someone unlocked it by hand (seen on Canary under load).
+ * Recovers a computer whose save to disk did not end cleanly and left Proxmox's "suspending" lock
+ * on it. Every later state read then sees a state it does not know: the computer could not sleep,
+ * wake or be deleted until someone unlocked it by hand. Two cases, both seen in Proxmox's own code
+ * and one of them on Canary under load:
  *
- * This acts only on exactly that case: the lock is "suspending", no saved state is recorded, and no
- * save is still running. It takes the lock off and, if the save left the computer paused, lets it
- * run again. A computer whose QEMU died is left off; the caller reads the state afterwards. The
- * caller holds the per-computer lock. Uses the caller's qm.
+ *  - The save finished and only the last step failed (the QEMU "quit" timed out while many saves
+ *    wrote at once). The computer is off and its saved state is complete and recorded. Proof is the
+ *    save's own "State saved, quitting" line in the journal since this save began. It is then marked
+ *    as saved, exactly as Proxmox would have, and wakes later like any deep sleeper.
+ *  - The save failed. Proxmox removed the partial state and kept the lock on purpose. The lock is
+ *    taken off, and a computer the save left paused runs again; one whose QEMU died is left off.
+ *
+ * Saved state that is recorded without that proof may be partial and is never touched. Nothing is
+ * done while a save is still running. The caller holds the per-computer lock and reads the state
+ * afterwards. $1 is the second (epoch) this save began, or empty when unknown. Uses the caller's qm.
  */
 export const INTERRUPTED_SAVE_SHELL = String.raw`recover_interrupted_save() {
-  local conf
+  local conf since="\${1:-}"
   if systemctl is-active --quiet "hivra-sleep-$VMID" 2>/dev/null; then return 1; fi
   conf="$(qm config "$VMID" 2>/dev/null)" || return 1
   [ "$(printf '%s
 ' "$conf" | awk '$1=="lock:" {print $2; exit}')" = suspending ] || return 1
   if printf '%s
-' "$conf" | grep '^vmstate:' >/dev/null; then return 1; fi
+' "$conf" | grep '^vmstate:' >/dev/null; then
+    case "$since" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$(qm status "$VMID" 2>/dev/null | awk '$1=="status:" {print $2; exit}')" = stopped ] || return 1
+    journalctl -u "hivra-sleep-$VMID.service" --since "@$since" -o cat --no-pager 2>/dev/null       | grep -Fx 'State saved, quitting' >/dev/null || return 1
+    qm set "$VMID" --skiplock 1 --lock suspended >/dev/null 2>&1 || return 1
+    return 0
+  fi
   qm unlock "$VMID" >/dev/null 2>&1 || return 1
   if [ "$(qm status "$VMID" --verbose 2>/dev/null | awk '$1=="qmpstatus:" {print $2; exit}')" = paused ]; then
     qm resume "$VMID" >/dev/null 2>&1 || true
   fi
   return 0
-}`;
+}`.replaceAll("\\${", "${");
 
 function stateShell(fastConfig: boolean): string {
   return `# One config read serves the binding check and the first state read.
@@ -1317,10 +1329,11 @@ if [ "$FROM" = awake ]; then
 fi
 ` : ""}STEP="$(now_ms)"
 RC=0
+SAVE_SINCE="$(( $(date +%s) - 1 ))"
 command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} systemd-run --unit="hivra-sleep-$VMID" --collect --wait --quiet qm suspend "$VMID" --todisk 1 </dev/null >/dev/null 2>&1 || RC=$?
 observe
-# A save that failed leaves the computer locked; take that off so it is not stuck in a state nothing reads.
-if [ "$RC" != 0 ] && [ "$OBS" = unknown ] && recover_interrupted_save; then CONFIG_FRESH=0; observe; fi
+# A save that did not end cleanly leaves the computer locked, in a state nothing reads: settle it here.
+if [ "$RC" != 0 ] && [ "$OBS" = unknown ] && recover_interrupted_save "$SAVE_SINCE"; then CONFIG_FRESH=0; observe; fi
 mark hibernate "$STEP"
 ${hostIngress ? `# Only a computer that is still paused keeps its nap marker; the proxy never resumes any other.
 [ "$OBS" = napping ] || ingress_unmark
