@@ -482,5 +482,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261118060000", name: "provider_release_admission_2026_11_17_7" },
   { version: "20261118070000", name: "provider_release_admission_2026_11_17_8" },
   { version: "20261118080000", name: "provider_release_admission_2026_11_17_9" },
+  { version: "20261118090000", name: "provider_release_admission_2026_11_18_1" },
   { version: "20261118120000", name: "proxmox_hosts_placement_settings" },
 ];

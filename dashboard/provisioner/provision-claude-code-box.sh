@@ -941,7 +941,15 @@ if [ "$AGENT_KIND" = "aeon" ]; then
 say "5b/7  Aeon dashboard (hosted Next.js; tasks run on the user's own GitHub Actions)"
 # ===========================================================================
 # GitHub CLI — Aeon shells out to `gh` for auth + every GitHub API call.
-if ! dpkg-query -W -f='${Version}' gh 2>/dev/null | grep -Fxq "$GH_VERSION"; then
+# The image may already carry a newer gh (installing the pinned .deb over it
+# is a downgrade apt refuses under -y). Any installed gh at or above the pin
+# is kept as is.
+gh_at_least_pin() {
+  local installed
+  installed="$(dpkg-query -W -f='${Version}' gh 2>/dev/null || true)"
+  [ -n "$installed" ] && dpkg --compare-versions "$installed" ge "$GH_VERSION"
+}
+if ! gh_at_least_pin; then
   GH_TMP="$(mktemp /tmp/github-cli.XXXXXX.deb)"
   trap 'rm -f -- "${GH_TMP:-}"' EXIT
   curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
@@ -953,9 +961,8 @@ if ! dpkg-query -W -f='${Version}' gh 2>/dev/null | grep -Fxq "$GH_VERSION"; the
   rm -f -- "$GH_TMP"
   trap - EXIT
 fi
-dpkg-query -W -f='${Version}' gh 2>/dev/null | grep -Fxq "$GH_VERSION" \
-  || die "GitHub CLI version does not match ${GH_VERSION}"
-ok "verified gh ${GH_VERSION}"
+gh_at_least_pin || die "GitHub CLI is older than ${GH_VERSION}"
+ok "verified gh $(dpkg-query -W -f='${Version}' gh) (at least ${GH_VERSION})"
 
 # The dashboard's RUNTIME footprint is tiny (~200 MB), but a one-time `next build`
 # peaks much higher. Ensure a swapfile exists so the build can spill instead of
@@ -1176,7 +1183,10 @@ if [ ! -s "${OPENCLAW_CFG_DIR}/openclaw.json" ]; then
      && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$' \
      && printf '%s' "${OC_MODEL}" | grep -qE '^[A-Za-z0-9_.-]+$'; then
     OC_BASEURL="${HIVRA_MODEL_BASE_URL:-https://hivra.cloud/api/managed-venice/v1}"
-    OC_VENICE_JSON=", \"agents\": { \"defaults\": { \"model\": { \"primary\": \"venice/${OC_MODEL}\" }, \"models\": { \"venice/${OC_MODEL}\": {} } } }, \"models\": { \"mode\": \"merge\", \"providers\": { \"venice\": { \"baseUrl\": \"${OC_BASEURL}\", \"api\": \"openai-completions\", \"apiKey\": \"${HIVRA_MODEL_KEY}\", \"models\": [ { \"id\": \"${OC_MODEL}\", \"name\": \"${OC_MODEL} (Venice)\", \"contextWindow\": 128000, \"maxTokens\": 4096, \"input\": [\"text\"], \"cost\": { \"input\": 0, \"output\": 0, \"cacheRead\": 0, \"cacheWrite\": 0 }, \"reasoning\": false } ] } } }"
+    # compat.thinkingFormat "openai": OpenClaw otherwise adds DeepSeek's native
+    # top-level `thinking` field to deepseek-v4 models, and Venice's strict
+    # chat schema rejects it ("Invalid request parameters").
+    OC_VENICE_JSON=", \"agents\": { \"defaults\": { \"model\": { \"primary\": \"venice/${OC_MODEL}\" }, \"models\": { \"venice/${OC_MODEL}\": {} } } }, \"models\": { \"mode\": \"merge\", \"providers\": { \"venice\": { \"baseUrl\": \"${OC_BASEURL}\", \"api\": \"openai-completions\", \"apiKey\": \"${HIVRA_MODEL_KEY}\", \"models\": [ { \"id\": \"${OC_MODEL}\", \"name\": \"${OC_MODEL} (Venice)\", \"contextWindow\": 128000, \"maxTokens\": 4096, \"input\": [\"text\"], \"cost\": { \"input\": 0, \"output\": 0, \"cacheRead\": 0, \"cacheWrite\": 0 }, \"reasoning\": false, \"compat\": { \"thinkingFormat\": \"openai\" } } ] } } }"
     ok "managed-Venice billing wired into openclaw.json (model venice/${OC_MODEL})"
   elif [ -n "${HIVRA_MODEL_KEY:-}" ]; then
     warn "managed-Venice key/model has unexpected characters — skipping billing wiring (won't write corrupt config)"
