@@ -15,16 +15,13 @@ import { LOCALE_COOKIE_NAME, localeToHtmlLang, resolveRequestLocale } from "@/li
 import { SITE_URL } from "@/lib/seo-urls";
 import { OG_IMAGE } from "@/lib/og-meta";
 import { isLocalAuthMode } from "@/lib/self-host/config";
+import { GOOGLE_ANALYTICS_ID, isGaPublicPagesOnly } from "@/lib/telemetry/ga-config";
 import "./globals.css";
 
 // Hivra uses the system faces (SF Pro / Segoe UI / Roboto and the system
 // monospace), as the native apps do. globals.css names them in --font-sans,
 // --font-display and --font-mono, so no web font is downloaded at all.
 
-const GOOGLE_ANALYTICS_ID =
-  process.env.NEXT_PUBLIC_GOOGLE_ANALYTICS_ID ||
-  process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID ||
-  "G-ML3NFRHMYF";
 const CLIENT_RELEASE_FINGERPRINT =
   process.env.VERCEL_DEPLOYMENT_ID || process.env.VERCEL_GIT_COMMIT_SHA || undefined;
 
@@ -171,7 +168,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </PostHogProvider>
           )}
         </ThemeProvider>
-        {!selfHosted ? <DeferredGTM gtmId="GTM-T6GPHP4N" gaId={GOOGLE_ANALYTICS_ID} /> : null}
+        {!selfHosted ? <DeferredGTM gtmId="GTM-T6GPHP4N" gaId={GOOGLE_ANALYTICS_ID} publicPagesOnly={isGaPublicPagesOnly()} /> : null}
       </body>
     </html>
   );
