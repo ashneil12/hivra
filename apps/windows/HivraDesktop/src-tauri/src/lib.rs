@@ -25,7 +25,7 @@ const DEFAULT_CONNECTION: &str = "https://hivra.cloud/dashboard";
 /// (dashboard/src/lib/desktop-shell.ts). WebView2's own user agent is Edge's.
 const USER_AGENT: &str = concat!(
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ",
-    "Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0 HivraDesktop/",
+    "Chrome/142 Safari/537.36 Edg/142 HivraDesktop/",
     env!("CARGO_PKG_VERSION")
 );
 
