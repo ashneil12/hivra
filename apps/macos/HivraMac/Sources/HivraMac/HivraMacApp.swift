@@ -15,7 +15,10 @@ struct HivraMacApp: App {
             HivraRootView(localRuntime: localRuntime)
                 .environmentObject(profileStore)
                 .environmentObject(signIn)
-                .onAppear { appDelegate.onOpenURL { [weak signIn] in signIn?.handle($0) } }
+                .onAppear {
+                    let coordinator = signIn
+                    appDelegate.onOpenURL { [weak coordinator] in coordinator?.handle($0) }
+                }
                 .preferredColorScheme(HivraAppearance(rawValue: appearance)?.colorScheme)
                 .frame(minWidth: 900, minHeight: 600)
         }

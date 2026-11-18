@@ -13,6 +13,8 @@
 #   HIVRA_MAC_NOTARY_PROFILE      a `xcrun notarytool store-credentials` profile name.
 #   HIVRA_SPARKLE_PUBLIC_KEY      Sparkle EdDSA public key; turns the updater on. Required for release.
 set -euo pipefail
+# Globs that match nothing (no earlier zip or DMG) expand to nothing instead of failing.
+setopt null_glob
 
 script_dir="${0:A:h}"
 app_root="${script_dir:h}"
@@ -71,9 +73,12 @@ if ! otool -l "${app_bundle}/Contents/MacOS/HivraMac" | grep -q "@executable_pat
 fi
 
 # Sign inside out: Sparkle's helpers, the framework, then the app (Sparkle's
-# documented order for Developer ID builds). Hardened runtime throughout.
-sign_flags=(--force --options runtime --sign "${codesign_identity}")
-if [[ "${codesign_identity}" != "-" ]]; then sign_flags+=(--timestamp); fi
+# documented order for Developer ID builds). A real identity gets the hardened
+# runtime and a timestamp throughout. An ad-hoc build cannot use the hardened
+# runtime: its library validation refuses the ad-hoc Sparkle.framework (no Team
+# ID to match) and the app would crash at launch even though codesign verifies.
+sign_flags=(--force --sign "${codesign_identity}")
+if [[ "${codesign_identity}" != "-" ]]; then sign_flags+=(--options runtime --timestamp); fi
 sparkle="${app_bundle}/Contents/Frameworks/Sparkle.framework"
 codesign ${sign_flags[@]} "${sparkle}/Versions/B/XPCServices/Installer.xpc"
 codesign ${sign_flags[@]} --preserve-metadata=entitlements "${sparkle}/Versions/B/XPCServices/Downloader.xpc"
