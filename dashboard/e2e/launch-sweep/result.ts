@@ -5,11 +5,12 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { IdleUsage } from './idle';
+import type { PrivateOnlyCheck } from './private-only';
 
 export const SWEEP_SCHEMA = 'hivra.launch-sweep.v1';
 
 /** Where a launch got to, in the order a customer meets them. */
-export const SWEEP_STAGES = ['account', 'choose', 'review', 'launch', 'ready', 'open', 'chat', 'idle', 'teardown'] as const;
+export const SWEEP_STAGES = ['account', 'choose', 'review', 'launch', 'ready', 'open', 'chat', 'private', 'idle', 'teardown'] as const;
 export type SweepStage = (typeof SWEEP_STAGES)[number];
 
 /**
@@ -47,6 +48,8 @@ export interface SweepResult {
   failure?: { stage: SweepStage; category: SweepFailureCategory; reason: string };
   agentId?: string | null;
   chat?: { surface: string; replySeconds?: number };
+  /** "Private models only" turned on after the agent answered, then asked again. */
+  privateOnly?: PrivateOnlyCheck;
   /** What it used while nobody talked to it, after it worked. */
   idle?: IdleUsage;
   teardown?: { agentsLeft: number; instancesLeft: number; accountDeleted: boolean; error?: string };
@@ -127,21 +130,27 @@ function minutes(result: SweepResult): string {
 }
 
 /** The verdict for a whole run: did anything customers use break? */
-export function sweepVerdict(results: SweepResult[]): { ok: boolean; broken: SweepResult[]; leaked: SweepResult[] } {
+export function sweepVerdict(results: SweepResult[]): {
+  ok: boolean;
+  broken: SweepResult[];
+  leaked: SweepResult[];
+  privateOnlyFailed: SweepResult[];
+} {
   const broken = results.filter(
     (row) => !row.passed && row.failure?.category === 'product' && !row.knownBroken,
   );
   const leaked = results.filter(
     (row) => row.teardown && (row.teardown.agentsLeft > 0 || row.teardown.instancesLeft > 0),
   );
-  return { ok: broken.length === 0 && leaked.length === 0, broken, leaked };
+  const privateOnlyFailed = results.filter((row) => row.privateOnly?.state === 'failed' && !row.knownBroken);
+  return { ok: broken.length === 0 && leaked.length === 0 && privateOnlyFailed.length === 0, broken, leaked, privateOnlyFailed };
 }
 
 export function sweepMarkdown(results: SweepResult[]): string {
   const rows = [...results].sort((a, b) => a.tile.localeCompare(b.tile));
   const verdict = sweepVerdict(rows);
   const lines = [
-    `## Launch sweep: ${verdict.ok ? 'every launch works' : `${verdict.broken.length} broken`}${verdict.leaked.length ? `, ${verdict.leaked.length} left running` : ''}`,
+    `## Launch sweep: ${verdict.broken.length === 0 ? 'every launch works' : `${verdict.broken.length} broken`}${verdict.leaked.length ? `, ${verdict.leaked.length} left running` : ''}${verdict.privateOnlyFailed.length ? `, private models only failed on ${verdict.privateOnlyFailed.length}` : ''}`,
     '',
     rows[0] ? `Target ${rows[0].baseUrl}, run ${rows[0].runId}.` : 'No results.',
     '',
@@ -161,6 +170,29 @@ export function sweepMarkdown(results: SweepResult[]): string {
       .replace(/\s+/g, ' ')
       .slice(0, 220);
     lines.push(`| ${row.tile} | ${result} | ${row.reached ?? 'nothing'} | ${minutes(row)} | ${why} |`);
+  }
+  const privateRows = rows.filter((row) => row.privateOnly);
+  if (privateRows.length) {
+    lines.push(
+      '',
+      '### Private models only',
+      '',
+      'After each agent answered, its owner turned on "private models only" (Manage › Inference) and asked a second question.',
+      '',
+      '| Launch | Result | Detail |',
+      '| --- | --- | --- |',
+    );
+    for (const row of privateRows) {
+      const check = row.privateOnly!;
+      const result = check.state === 'passed' ? 'Pass' : check.state === 'not_offered' ? 'Not offered' : row.knownBroken ? 'Fail (known)' : '**Fail**';
+      const detail = (check.state === 'passed'
+        ? `Still answered in ${check.replySeconds}s on ${check.savedModel}`
+        : check.reason)
+        .replace(/\|/g, '/')
+        .replace(/\s+/g, ' ')
+        .slice(0, 220);
+      lines.push(`| ${row.tile} | ${result} | ${detail} |`);
+    }
   }
   const idleRows = rows.filter((row) => row.idle && row.idle.samples > 0);
   if (idleRows.length) {

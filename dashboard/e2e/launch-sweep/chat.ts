@@ -31,6 +31,19 @@ export interface ChatProof {
   replySeconds: number;
 }
 
+/** A question with one short, checkable answer. */
+export interface SweepQuestion {
+  prompt: string;
+  answer: string;
+}
+
+const DEFAULT_QUESTION: SweepQuestion = { prompt: SWEEP_CHAT_PROMPT, answer: SWEEP_CHAT_ANSWER };
+
+/** The first number in the question: still in the composer means it was not sent. */
+function typedMarker(question: SweepQuestion): string {
+  return question.prompt.match(/\d+/)?.[0] ?? question.prompt.slice(0, 12);
+}
+
 /** Every frame under the agent's dashboard iframe, outermost first. */
 async function agentFrames(page: Page): Promise<Frame[]> {
   const iframe = page.locator('iframe[title$="· dashboard"]').first();
@@ -173,11 +186,13 @@ async function findComposer(
 export async function proveChat(
   page: Page,
   target: SweepTarget,
-  options: { composerTimeoutMs: number; replyTimeoutMs: number },
+  options: { composerTimeoutMs: number; replyTimeoutMs: number; question?: SweepQuestion },
 ): Promise<ChatProof> {
+  const question = options.question ?? DEFAULT_QUESTION;
+  const marker = typedMarker(question);
   const { frame, composer, surface } = await findComposer(page, target, options.composerTimeoutMs);
 
-  const before = occurrences(await bodyText(frame), SWEEP_CHAT_ANSWER);
+  const before = occurrences(await bodyText(frame), question.answer);
   // An agent UI that loaded but can't reach its own backend can't be typed to.
   const offline = (await bodyText(frame)).match(/Backend offline|Reconnecting to [^\n.]+|Disconnected from [^\n.]+/i);
   if (offline) {
@@ -193,19 +208,19 @@ export async function proveChat(
   // An agent that has only just booted can take the first message without
   // passing it on (Hermes while "Waking up"). A customer who sees their
   // question never appear sends it again; so does the sweep, up to 3 times.
-  const asked = SWEEP_CHAT_PROMPT.slice(0, 24);
+  const asked = question.prompt.slice(0, 24);
   const askedBefore = occurrences(await bodyText(frame), asked);
   let sentAt = Date.now();
   let shown = false;
   for (let attempt = 1; attempt <= 3; attempt++) {
-    sentAt = await sendQuestion(page, frame, composer);
+    sentAt = await sendQuestion(page, frame, composer, question);
     const shownBy = Date.now() + 20_000;
     while (Date.now() < shownBy) {
       const text = await bodyText(frame);
       // A contenteditable composer shows the typed question itself; it only
       // counts once the composer has been emptied by sending.
-      const inComposer = ((await composer.innerText().catch(() => '')) || (await composer.inputValue().catch(() => '')) || '').includes('389');
-      if ((!inComposer && occurrences(text, asked) > askedBefore) || occurrences(text, SWEEP_CHAT_ANSWER) > before) {
+      const inComposer = ((await composer.innerText().catch(() => '')) || (await composer.inputValue().catch(() => '')) || '').includes(marker);
+      if ((!inComposer && occurrences(text, asked) > askedBefore) || occurrences(text, question.answer) > before) {
         shown = true;
         break;
       }
@@ -219,7 +234,7 @@ export async function proveChat(
   let text = '';
   while (Date.now() < end) {
     text = await bodyText(frame);
-    if (occurrences(text, SWEEP_CHAT_ANSWER) > before) {
+    if (occurrences(text, question.answer) > before) {
       return { surface, replySeconds: Math.round((Date.now() - sentAt) / 1000) };
     }
     await sleep(2_000);
@@ -238,15 +253,16 @@ export async function proveChat(
 }
 
 /** Type the question into the composer and send it, the way a customer would. */
-async function sendQuestion(page: Page, frame: Frame, composer: Locator): Promise<number> {
+async function sendQuestion(page: Page, frame: Frame, composer: Locator, question: SweepQuestion): Promise<number> {
+  const marker = typedMarker(question);
   await composer.click({ timeout: 15_000 }).catch(async () => {
     await page.keyboard.press('Escape').catch(() => undefined);
     await answerCookieBanner(page);
     await composer.click({ force: true });
   });
   const editable = await composer.evaluate((el) => (el as HTMLElement).isContentEditable).catch(() => false);
-  if (editable) await page.keyboard.type(SWEEP_CHAT_PROMPT, { delay: 5 });
-  else await composer.fill(SWEEP_CHAT_PROMPT);
+  if (editable) await page.keyboard.type(question.prompt, { delay: 5 });
+  else await composer.fill(question.prompt);
   const sentAt = Date.now();
   await composer.press('Enter');
 
@@ -254,8 +270,8 @@ async function sendQuestion(page: Page, frame: Frame, composer: Locator): Promis
   // still sitting in the composer a few seconds later, press Send.
   await sleep(4_000);
   const stillTyped = editable
-    ? ((await composer.innerText().catch(() => '')) || '').includes('389')
-    : ((await composer.inputValue().catch(() => '')) || '').includes('389');
+    ? ((await composer.innerText().catch(() => '')) || '').includes(marker)
+    : ((await composer.inputValue().catch(() => '')) || '').includes(marker);
   if (stillTyped) {
     const send = frame.getByRole('button', { name: /^(send|submit|send message)$/i }).last();
     if (await send.isVisible().catch(() => false)) await send.click().catch(() => undefined);
