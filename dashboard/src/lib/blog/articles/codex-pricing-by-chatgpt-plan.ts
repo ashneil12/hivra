@@ -42,6 +42,7 @@ export const article: BlogArticle = {
       heading: `What does Codex cost on each ChatGPT plan?`,
       paragraphs: [
         `OpenAI's [pricing page](${PRICING}) says ChatGPT Work and Codex are included in Free, Go, Plus, Pro, Business, Edu or Enterprise, and that Work and Codex share the same pricing, credits and usage limits. Prices as of ${AS_OF}, from that page and OpenAI's [Pro tiers help article](${PRO_TIERS}):`,
+        "Codex in the ChatGPT mobile app follows the same plans, and our [Codex on mobile guide](/blog/codex-mobile) explains what you can do from a phone.",
         [
           "| Plan | Price a month (USD) | What OpenAI lists for Codex |",
           "|---|---|---|",
@@ -171,6 +172,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "codex-mobile", title: "Codex on mobile: how to use OpenAI Codex from your phone" },
     { slug: "run-codex-24-7-in-the-cloud", title: "How to run Codex 24/7 in the cloud (Codex CLI hosting explained)" },
     { slug: "claude-code-vs-codex-24-7", title: "Claude Code vs Codex for 24/7 autonomous work: which should you host?" },
     { slug: "claude-max-vs-pro-for-claude-code", title: "Claude Code pricing: Pro vs Max, and when API billing is cheaper" },
