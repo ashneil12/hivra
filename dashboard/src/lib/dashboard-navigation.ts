@@ -64,6 +64,7 @@ export const DASHBOARD_PRIMARY_NAVIGATION: readonly DashboardNavigationItem[] = 
     routePrefixes: [
       "/dashboard/agents",
       "/dashboard/free-agent",
+      "/dashboard/memory",
       "/dashboard/agent",
       "/dashboard/instances",
       "/dashboard/chat",

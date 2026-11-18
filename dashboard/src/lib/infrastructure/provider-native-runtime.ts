@@ -2,12 +2,14 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.11.17.5.json";
+import currentRelease from "../../../provisioner-releases/2026.11.17.6.json";
+import tgApplyRelease from "../../../provisioner-releases/2026.11.17.5.json";
 import launchFixesRelease from "../../../provisioner-releases/2026.11.17.4.json";
 import agentZeroUsrEnvRelease from "../../../provisioner-releases/2026.11.17.3.json";
 import agentZeroSettingsRelease from "../../../provisioner-releases/2026.11.17.2.json";
 import latestAgentsRelease from "../../../provisioner-releases/2026.11.17.1.json";
 import usrPluginsRelease from "../../../provisioner-releases/2026.11.15.7.json";
+import productionAgentZeroHotfixRelease from "../../../provisioner-releases/2026.11.15.8.json";
 import watchdogRelease from "../../../provisioner-releases/2026.11.15.6.json";
 import lockFdRelease from "../../../provisioner-releases/2026.11.15.5.json";
 import resilienceRelease from "../../../provisioner-releases/2026.11.15.3.json";
@@ -101,11 +103,16 @@ const gatewayTargets = new Map<string, string>([
   ...["server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "index.html", "app.js"].map(name => [`hivra-chat/${name}`, name] as const),
   ...["native-broker.cjs", "gateway-policy.cjs", "runtime-process.cjs"].map(name => [`deepseek-harness/${name}`, `deepseek-harness/${name}`] as const),
 ]);
+const DEEPSEEK_IMPORT_STATE_VERSIONS = ["2026.11.17.6"] as const;
 function releaseRows(release: typeof currentRelease) {
   const rows = release.files.filter(file => closure.has(file.path)).map(file => [file.path, file.sha256, file.bytes,
     file.path.endsWith(".sh") ? 0o700 : 0o600] as const).sort((a, b) => a[0].localeCompare(b[0]));
-  const gatewayRows = release.files.filter(file => gatewayTargets.has(file.path))
-    .map(file => [gatewayTargets.get(file.path)!, file.sha256, file.bytes, 0o644] as const)
+  // server.js has required import-state.cjs at start since 2026.11.15.2, but the
+  // DeepSeek gateway only installs it from 2026.11.17.6 (older gateways never started).
+  const targets = (DEEPSEEK_IMPORT_STATE_VERSIONS as readonly string[]).includes(release.version)
+    ? new Map([...gatewayTargets, ["hivra-chat/import-state.cjs", "import-state.cjs"]]) : gatewayTargets;
+  const gatewayRows = release.files.filter(file => targets.has(file.path))
+    .map(file => [targets.get(file.path)!, file.sha256, file.bytes, 0o644] as const)
     .sort((a, b) => a[0].localeCompare(b[0]));
   return { rows, gatewayRows };
 }
@@ -122,8 +129,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.11.17.5"
+  const release = identity.bundle.provisionerVersion === "2026.11.17.6"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.17.5"
+    ? tgApplyRelease
     : identity.bundle.provisionerVersion === "2026.11.17.4"
     ? launchFixesRelease
     : identity.bundle.provisionerVersion === "2026.11.17.3"
@@ -132,6 +141,8 @@ function checked(input: ProviderNativeRuntimeProbe) {
     ? agentZeroSettingsRelease
     : identity.bundle.provisionerVersion === "2026.11.17.1"
     ? latestAgentsRelease
+    : identity.bundle.provisionerVersion === "2026.11.15.8"
+    ? productionAgentZeroHotfixRelease
     : identity.bundle.provisionerVersion === "2026.11.15.7"
     ? usrPluginsRelease
     : identity.bundle.provisionerVersion === "2026.11.15.6"

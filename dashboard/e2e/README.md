@@ -225,3 +225,58 @@ Two rules keep the number honest:
 - `harness_environment` / `harness_bug` failures are **excluded** from the denominator.
 - Any run that **leaked** infrastructure marks the whole campaign `NOT CERTIFIED`,
   regardless of its pass/fail verdict.
+
+---
+
+# LAUNCH SWEEP — every agent, launched like a customer
+
+`launch-sweep.spec.ts` + `launch-sweep/`. For **every tile on Launch** that runs on
+Hivra Cloud, in its own throwaway Canary account, it:
+
+1. creates a Clerk test user and gives it the Pro plan (the one shortcut: the
+   subscription row is written instead of paying through Stripe);
+2. signs in, opens `/dashboard/launch`, clicks the tile, Review, picks **Hivra
+   credits** (the starter credit every new paid account gets) and presses Launch;
+3. waits on the after-launch screen until it says ready, then presses Open;
+4. asks "What is 389 + 448? Reply with only the number." in the box a customer
+   types into (Hivra's chat for Claude Code and Codex, the agent's own web UI
+   for the rest) and waits for `837` on screen. Computers pass when their page
+   shows the desktop or terminal;
+5. closes the agent's tab and, for `LAUNCH_SWEEP_IDLE_MINUTES` (default 10, `0`
+   skips), reads what it uses idle every 30 s from the owner's own usage view
+   (Manage › Overview): RAM, CPU and disk. The summary adds an **Idle use** table,
+   lightest first, next to the bare Linux computer. RAM includes the guest's file
+   cache, so it is an upper bound. This is what decides whether an agent can be
+   offered on Free or only on Pro;
+6. deletes everything through the app's own delete routes, then the account.
+
+A separate test reads the live Launch page and fails if it offers a tile that
+`launch-sweep/targets.ts` doesn't list, so a new agent can't ship untested.
+
+**Cost cap.** One small Canary VM per target for ~20 minutes (10 of them idle), one at a time
+(two launches at once on Canary's single host have failed at kickoff), and model use limited by the account's starter credit. Never retried.
+
+**Where it runs.** Not from this repository's Actions: the public-tree rules keep
+workflows bound to live infrastructure out of the public tree, and public run logs
+would show Canary's internals. The schedule (weekly, and before every release into `main`) runs from a private
+operations runner that checks out this repository and runs the commands below with
+the Canary test credentials.
+
+```bash
+CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \
+  npm run test:launch-sweep                         # everything, one at a time
+LAUNCH_SWEEP_ONLY=agent-zero,openclaw npm run test:launch-sweep   # a few
+LAUNCH_SWEEP_KEEP_FAILED=1 …                         # keep a failed computer to read its logs
+LAUNCH_SWEEP_KEEP_PASSED=claude-code,codex …         # keep these after a pass, to read inside them
+npm run test:launch-sweep:summary                    # Markdown table; exits 1 if a launch is broken
+npm run audit:first-run:cleanup                      # reaps any leftover sweep accounts too
+```
+
+Results land in `e2e/.launch-sweep/` (one JSON per target, plus a screenshot).
+A failure says the stage (`choose`, `review`, `launch`, `ready`, `open`, `chat`)
+and what the screen or the agent record said. Targets marked `knownBroken` are
+reported but don't fail the run.
+
+**Adding an agent to Launch** follows `.codex/skills/hivra-add-launch-agent/SKILL.md`:
+add it to `targets.ts`, launch it with the sweep, and record its idle use before
+deciding Free or Pro.

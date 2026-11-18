@@ -34,6 +34,7 @@ import { UnsupportedVeniceModelError } from "@/lib/venice/pricing";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
+import { checkManagedVeniceAgentPrivateOnly } from "@/lib/venice/agent-private-only";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import {
   captureManagedVeniceChatUsage,
@@ -134,6 +135,17 @@ export async function POST(req: NextRequest) {
       return anthropicError({ status: 400, type: "invalid_request_error", message: error.message });
     }
     throw error;
+  }
+
+  // "Private models only" (agent-private-only.ts): refused before any hold.
+  const privateOnly = await checkManagedVeniceAgentPrivateOnly({
+    key: verifiedKey,
+    model,
+    endpoint: "/api/v1/chat/completions",
+    source: "managed-venice-anthropic",
+  });
+  if (!privateOnly.allowed) {
+    return anthropicError({ status: 403, type: "permission_error", message: privateOnly.message });
   }
 
   const referenceId = randomUUID();

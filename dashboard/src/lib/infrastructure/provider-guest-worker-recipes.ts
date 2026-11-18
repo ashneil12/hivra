@@ -505,6 +505,11 @@ const recipes = Object.freeze({
     workerSha256: "e58572e0b21dc0d1a80dab7fa550a970da6d6d480460c89b6e068493b6cfcbd5",
     workerSize: 45216,
   }),
+  "2026.11.15.8": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; production's Agent Zero hotfix seeds Agent Zero's login and managed model into /a0/usr/.env (the 2026.11.17.3 fix, cut from 2026.11.15.7). The worker only advances its release labels.
+    workerSha256: "061138439c1b4ce7f4730c3baa92125dd92973a827c5acbc9a9b6604aab4cd89",
+    workerSize: 45216,
+  }),
   "2026.11.17.1": Object.freeze({
     protocol: "v1" as const, // Same worker protocol; the release drops Hivra's agent version pins (a launch installs upstream's newest release and only the owner's Update moves it). The worker only advances its release labels.
     workerSha256: "7e7628ffc80574698f0f322c5ac7d6039cd05f65332512513ac0dfc6bc6a0142",
@@ -528,6 +533,11 @@ const recipes = Object.freeze({
   "2026.11.17.5": Object.freeze({
     protocol: "v1" as const, // Same worker protocol; the release hardens hivra-tg-apply against symlink redirection of its root write (stages in the root-only parent and renames into place). The worker only advances its release labels.
     workerSha256: "f7f00f36160d81d77cd13ba82a4ef7df7fa1858952c2b535a91ea7391b36cd0c",
+    workerSize: 45216,
+  }),
+  "2026.11.17.6": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release seeds current Agent Zero's model preset so a managed-Venice launch has a model. The worker only advances its release labels.
+    workerSha256: "6592f2d22b8662d25ff01156ae3e4416e025833bfd709744eb791fbb165e475f",
     workerSize: 45216,
   }),
 });

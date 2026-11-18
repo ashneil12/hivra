@@ -172,6 +172,9 @@ function isPermittedDocumentationAddress(value) {
       '103.21.244.0', '103.22.200.0', '103.31.4.0', '104.16.0.0', '104.24.0.0',
       '108.162.192.0', '131.0.72.0', '141.101.64.0', '162.158.0.0', '172.64.0.0',
       '173.245.48.0', '188.114.96.0', '190.93.240.0', '197.234.240.0', '198.41.128.0',
+      // Cloudflare Tunnel's published edge ranges (region1/region2.v2.argotunnel.com). An agent
+      // computer's allowed-sites limit always keeps them open so its tunnel stays up.
+      '198.41.192.0', '198.41.200.0',
     ].includes(value);
 }
 
