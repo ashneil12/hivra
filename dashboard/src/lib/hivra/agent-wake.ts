@@ -220,6 +220,35 @@ export interface WakeScriptRun {
   sshReadyMs?: number;
 }
 
+/** How many more times a host call is tried when its SSH connection was never made. */
+export const HOST_CONNECT_RETRIES = 2;
+const HOST_CONNECT_RETRY_MS = 400;
+
+/**
+ * Runs a host script, trying again when the connection itself was refused. A server lets only so
+ * many SSH logins be in progress at once and drops the rest, which a crowd of wakes can reach (seen
+ * on Canary with twelve at once: one wake failed in under a second without reaching the server).
+ * Nothing ran in that case, so asking again is safe; the scripts are also safe to repeat.
+ */
+async function runHostScriptForWake(
+  script: string,
+  env: HivraLifecycleTarget["env"],
+  options?: Parameters<typeof runProxmoxHostScript>[2],
+): ReturnType<typeof runProxmoxHostScript> {
+  for (let attempt = 0; ; attempt += 1) {
+    const result = options === undefined ? await runProxmoxHostScript(script, env) : await runProxmoxHostScript(script, env, options);
+    const refused = !!result && !result.ok && !result.stdout && /^SSH connect/.test(result.error ?? "");
+    if (!refused || attempt >= HOST_CONNECT_RETRIES) return result;
+    log.warn("host connection for a wake was refused; trying again", {
+      source: LOG_SOURCE,
+      failureType: "agent_wake_host_connect_refused",
+      attempt: attempt + 1,
+      reason: (result.error ?? "").slice(0, 160),
+    });
+    await new Promise((resolve) => setTimeout(resolve, HOST_CONNECT_RETRY_MS * (attempt + 1) + Math.floor(Math.random() * HOST_CONNECT_RETRY_MS)));
+  }
+}
+
 /** Runs the wake script once. Never throws: a script that cannot be built or run is a null receipt. */
 export async function runWakeHostScript(
   row: AgentRow,
@@ -246,7 +275,7 @@ export async function runWakeHostScript(
     return { receipt: null, runError: "script_invalid", ms: Date.now() - startedAt };
   }
   try {
-    const result = await runProxmoxHostScript(script, target.env, {
+    const result = await runHostScriptForWake(script, target.env, {
       timeoutMs: coldStart ? COLD_START_SCRIPT_TIMEOUT_MS : options.restore ? RESTORE_SCRIPT_TIMEOUT_MS : WAKE_SCRIPT_TIMEOUT_MS,
       // The receipt is the script's last word, so the answer can come back as
       // soon as its line is complete, without waiting for the session to close.
@@ -371,7 +400,7 @@ async function performWakeSteps(
           neededRamMb: normalizeWakeRamMb(row.ram),
           // Only the limit is read from this; the host call below is the target's own.
           env: { ...process.env, HERMES_WAKE_MAX_CONCURRENT_PER_HOST: wakesAtOncePerHost() },
-          runHostScript: (script) => runProxmoxHostScript(script, target.env),
+          runHostScript: (script) => runHostScriptForWake(script, target.env),
         },
       );
       let decision = await ask();

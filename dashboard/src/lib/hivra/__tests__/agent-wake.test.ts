@@ -242,6 +242,25 @@ describe("ensureHivraAgentAwake", () => {
     }
   });
 
+  it("asks the server again when the connection for the wake was refused, and wakes", async () => {
+    // Seen on Canary: twelve wakes at once, the server dropped one login, and that wake failed in under a second.
+    mockReadRow.mockResolvedValue({ data: row(), error: null });
+    mockRunScript
+      .mockResolvedValueOnce({ ok: false, stdout: "", stderr: "", error: "SSH connection failed: Connection lost before handshake" })
+      .mockResolvedValue({ ok: true, stdout: wakeReceipt(), stderr: "" });
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 20_000, ...fast });
+    expect(result.state).toBe("awake");
+    expect(mockRunScript).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not repeat a host call that ran and failed", async () => {
+    mockReadRow.mockResolvedValue({ data: row(), error: null });
+    mockRunScript.mockResolvedValue({ ok: false, stdout: "partial output", stderr: "", error: "SSH connection failed: read ECONNRESET" });
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 20_000, ...fast });
+    expect(result.state).toBe("failed");
+    expect(mockRunScript).toHaveBeenCalledTimes(1);
+  });
+
   it("starts four deep-sleep wakes at once per server unless a setting says otherwise", () => {
     expect(wakesAtOncePerHost({})).toBe("4");
     expect(wakesAtOncePerHost({ HERMES_WAKE_MAX_CONCURRENT_PER_HOST: "2" })).toBe("2");
