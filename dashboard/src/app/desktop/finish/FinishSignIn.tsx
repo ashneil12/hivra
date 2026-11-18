@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useClerk } from "@clerk/nextjs";
 import styles from "../desktop.module.css";
@@ -39,7 +40,7 @@ export default function FinishSignIn({ ticket }: { ticket: string }) {
           <>
             <h1 className={styles.title}>That sign-in link has expired</h1>
             <p className={styles.body}>Links from the browser only last two minutes. Try signing in again from the app.</p>
-            <a className={styles.button} href="/sign-in">Sign in here instead</a>
+            <Link className={styles.button} href="/sign-in">Sign in here instead</Link>
           </>
         ) : (
           <>
