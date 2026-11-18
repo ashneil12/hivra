@@ -79,7 +79,11 @@ const HERMES: AgentWakeProfile = {
     { kind: "gateway-state", prefix: "hermes", path: "~/.hermes/gateway_state.json", profilesDir: "~/.hermes/profiles",
       profilePath: "/gateway_state.json", ignore: ["api_server", "local"], requiredWhileUp: true, up: HERMES_GATEWAY,
       owner: HERMES_GATEWAY_OWNER },
-    { kind: "yaml-enabled", prefix: "hermes", path: HERMES_CONFIG, up: HERMES_GATEWAY, owner: HERMES_GATEWAY_OWNER },
+    // Only platforms: a fresh config also has safety switches with "enabled: true" (gateway.bot_loop_guard),
+    // and read as a channel one of those kept every new computer awake.
+    { kind: "yaml-enabled", prefix: "hermes", path: HERMES_CONFIG, section: "platforms",
+      known: [...new Set(HERMES_ENV_CHANNELS.map(([, name]) => name))], ignore: ["api_server", "local"],
+      up: HERMES_GATEWAY, owner: HERMES_GATEWAY_OWNER },
   ],
   wake: {
     telegram: {

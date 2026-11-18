@@ -80,7 +80,8 @@ run("profile probe vs the fixed probe, on the same fixture computer", () => {
     ] }));
     put("home/.hermes/profiles/ops/cron/jobs.json", JSON.stringify({ jobs: [{ next_run_at: future(5400) }] }));
     put("home/.hermes/.env", "TELEGRAM_BOT_TOKEN=1:x\nDISCORD_BOT_TOKEN=d\nDISCORD_MISSED_MESSAGE_BACKFILL=true\nEMAIL_ADDRESS=a@example.test\nEMAIL_PASSWORD=p\nEMAIL_IMAP_HOST=imap.example.test\nSIGNAL_ACCOUNT=+15550000000\nMATRIX_HOMESERVER=https://matrix.example.test\nMATRIX_ACCESS_TOKEN=m\n");
-    put("home/.hermes/config.yaml", "platforms:\n  slack:\n    enabled: true\n  irc:\n    enabled: false\n  telegram:\n    token: abc\n");
+    // gateway.bot_loop_guard is a safety switch in every fresh Hermes config, not a chat channel.
+    put("home/.hermes/config.yaml", "gateway:\n  bot_loop_guard:\n    enabled: true\nplatforms:\n  slack:\n    enabled: true\n  irc:\n    enabled: false\n  telegram:\n    token: abc\n");
     put("home/.hermes/gateway_state.json", JSON.stringify({ platforms: { feishu: { state: "connected" }, api_server: { state: "connected" } } }));
     put("home/.hermes/profiles/ops/gateway_state.json", JSON.stringify({ platforms: { line: { state: "fatal" } } }));
     put("home/.openclaw/cron/jobs-state.json", JSON.stringify({ jobs: { x: { state: { nextRunAtMs: Date.now() + 3_000_000 } } } }));
@@ -99,6 +100,9 @@ run("profile probe vs the fixed probe, on the same fixture computer", () => {
     await startGateway();
     const old = exec(legacy(IDLE_PROBE_PROGRAM));
     expect(old.liveChannels).toContain("hermes:feishu");
+    expect(old.liveChannels).toContain("hermes:slack");
+    expect(old.liveChannels.filter((c) => c.includes("bot_loop_guard"))).toEqual([]);
+    expect(profileRun("hermes").liveChannels.filter((c) => c.includes("bot_loop_guard"))).toEqual([]);
     expect(comparable(profileRun("not-a-type"))).toEqual(comparable(old));
   });
 

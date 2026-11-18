@@ -317,7 +317,12 @@ for s in PF["channels"]:
                     gateway_platforms(P(s["profilesDir"]) + "/" + prof + s["profilePath"], False, pre, sfx, s["ignore"])
             except OSError: pass
     elif k == "yaml-enabled":
-        for name in re.findall(r"^  (\w+):\s*\n(?:    .*\n)*?    enabled:\s*true", rdc(s["path"], 262144) or "", re.M): add(pre + ":" + name + sfx)
+        text = rdc(s["path"], 262144) or ""
+        strict = bool(s.get("section") or s.get("known"))
+        for top, block in (re.findall(r"^(\w+):[^\n]*\n((?:(?:[ \t]+[^\n]*)?\n)*)", text + "\n", re.M) if strict else [("", text)]):
+            for name in re.findall(r"^  (\w+):\s*\n(?:    .*\n)*?    enabled:\s*true", block, re.M):
+                if name in (s.get("ignore") or ()): continue
+                if not strict or top == s.get("section") or name in (s.get("known") or ()): add(pre + ":" + name + sfx)
     elif k == "json-channels":
         o = walk(rjc(s["path"], 262144), s["at"])
         if isinstance(o, dict):
