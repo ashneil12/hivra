@@ -185,8 +185,21 @@ function kickStorageReturn(agentId: string): void {
 }
 
 /** How long a wake waits for its turn when the server's concurrent wakes are all taken, and how often it asks again. */
-export const WAKE_TURN_WAIT_MS = 40_000;
+export const WAKE_TURN_WAIT_MS = 75_000;
 export const WAKE_TURN_RETRY_MS = 3_000;
+/**
+ * Deep-sleep wakes a server starts at once. Measured on Canary with two: one wake every 6-7 s and no
+ * strain on the server, so ten together did not all fit the wait. The memory check still guards each
+ * one. HIVRA_WAKE_MAX_CONCURRENT_PER_HOST sets it; the older shared setting is honoured after it.
+ */
+export const DEFAULT_WAKES_AT_ONCE_PER_HOST = 4;
+export function wakesAtOncePerHost(env: Record<string, string | undefined> = process.env): string {
+  for (const raw of [env.HIVRA_WAKE_MAX_CONCURRENT_PER_HOST, env.HERMES_WAKE_MAX_CONCURRENT_PER_HOST]) {
+    const n = Number(raw?.trim());
+    if (raw?.trim() && Number.isInteger(n) && n >= 1 && n <= 32) return String(n);
+  }
+  return String(DEFAULT_WAKES_AT_ONCE_PER_HOST);
+}
 
 export async function resolveSleepTarget(row: AgentRow, source: string) {
   return resolveHivraLifecycleTarget({
@@ -356,6 +369,8 @@ async function performWakeSteps(
         {
           instanceId: agentId,
           neededRamMb: normalizeWakeRamMb(row.ram),
+          // Only the limit is read from this; the host call below is the target's own.
+          env: { ...process.env, HERMES_WAKE_MAX_CONCURRENT_PER_HOST: wakesAtOncePerHost() },
           runHostScript: (script) => runProxmoxHostScript(script, target.env),
         },
       );
