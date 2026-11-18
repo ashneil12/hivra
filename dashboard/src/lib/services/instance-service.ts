@@ -725,6 +725,27 @@ async function loadProxmoxHostRegistry(
 // Hivra agent statuses whose VM holds CPU and RAM on its host.
 const HIVRA_AGENT_POWERED_STATUSES: ReadonlySet<string> = new Set(["provisioning", "running"]);
 
+// Sleep states whose VM is saved to disk and holds no CPU or RAM on its host
+// (status stays "running" while asleep). Wake admission checks the host's real
+// free memory before it starts one again, so placement may give their CPU and
+// RAM to new agents. Opt-in: HIVRA_PLACEMENT_SKIP_DEEP_SLEEP=1.
+const HIVRA_AGENT_DEEP_SLEEP_STATES: ReadonlySet<string> = new Set(["hibernated"]);
+
+export function placementSkipsDeepSleep(env: Record<string, string | undefined>): boolean {
+  const raw = env.HIVRA_PLACEMENT_SKIP_DEEP_SLEEP?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "on";
+}
+
+export function hivraAgentHoldsCpuAndRam(
+  row: { status?: string | null; sleep_state?: string | null },
+  skipDeepSleep: boolean
+): boolean {
+  const status = row.status;
+  if (status === null || status === undefined || !HIVRA_AGENT_POWERED_STATUSES.has(status)) return false;
+  if (skipDeepSleep && row.sleep_state && HIVRA_AGENT_DEEP_SLEEP_STATES.has(row.sleep_state)) return false;
+  return true;
+}
+
 type RankedProxmoxHost = {
   host: ProxmoxHostRegistryRow;
   freeCpu: number;
@@ -756,9 +777,10 @@ async function rankProxmoxHostsForPlacement(params: {
   // disk. CPU/RAM are split out below by status.
   const { data: hivraRows, error: hivraError } = await params.supabase
     .from("hivra_agents")
-    .select("proxmox_host, cpu, ram, status, vmid")
+    .select("proxmox_host, cpu, ram, status, vmid, sleep_state")
     .in("proxmox_host", hostIds)
     .neq("status", "deleted");
+  const skipDeepSleep = placementSkipsDeepSleep(params.env);
 
   if (error || hivraError) {
     const allocationError = error ?? hivraError;
@@ -797,15 +819,20 @@ async function rankProxmoxHostsForPlacement(params: {
   for (const row of hivraRows ?? []) {
     const node = (row as { proxmox_host?: string | null }).proxmox_host;
     if (!node) continue;
-    const { status, vmid } = row as { status?: string | null; vmid?: number | null };
+    const { status, vmid, sleep_state } = row as {
+      status?: string | null;
+      vmid?: number | null;
+      sleep_state?: string | null;
+    };
     const powered = status !== null && status !== undefined && HIVRA_AGENT_POWERED_STATUSES.has(status);
+    const holdsCpuAndRam = hivraAgentHoldsCpuAndRam({ status, sleep_state }, skipDeepSleep);
     // A powered row owns (or is about to own) a VM. Any other non-deleted row
     // owns one only if it recorded a vmid: a stopped computer keeps its disk,
     // and an errored one may have allocated before it failed.
     const ownsVm = powered || (vmid !== null && vmid !== undefined);
     if (!ownsVm) continue;
     const acc = allocByHost.get(node) ?? { cpu: 0, ram: 0, disk: 0 };
-    if (powered) {
+    if (holdsCpuAndRam) {
       acc.cpu += Number((row as { cpu?: number | null }).cpu ?? 0);
       acc.ram += Number((row as { ram?: number | null }).ram ?? 0) * 1024;
     }
