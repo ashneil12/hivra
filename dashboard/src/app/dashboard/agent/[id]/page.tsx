@@ -541,6 +541,11 @@ function AuthenticatedSurface({
                     </div>
                   </>
                 ) : null}
+                {connectName === "Agent Zero" ? (
+                  <p className="mono" style={{ fontSize: 12, lineHeight: 1.6, margin: "14px 0 0", color: "var(--ink-soft)" }}>
+                    Using the A0 CLI? Run <code>a0 --host {surfaceOrigin}</code> and sign in with the username and password above.
+                  </p>
+                ) : null}
                 <p style={{ fontSize: 12, lineHeight: 1.6, margin: "14px 0 0", color: "var(--ink-soft)" }}>
                   Anyone with the password or the link can open your dashboard — keep them private. They stop working after 30 days or when you Disconnect.
                 </p>

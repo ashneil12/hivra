@@ -547,6 +547,15 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.18.5` builds on `2026.11.18.4`. The connection service
+(`hivra-chat/server.js`) of an Agent Zero computer now answers the A0 CLI's
+root-level calls (`/api/plugins/...`, the CSRF and file helpers it uses) for a
+signed-in Connect app session, so `a0 --host <the computer's address>` reaches
+the connector plugin that official Agent Zero already ships. The dashboard's
+Connect app dialog shows that command. Changed: that file, plus the documents,
+the version and the provider worker's release labels. This source release does
+not deploy, install, enable or start anything on a host or computer.
+
 Release `2026.11.18.4` builds on `2026.11.18.3`. `hivra-provision-on-host.sh`
 sets `ciupgrade 0` on every VM it makes, so Proxmox's generated user-data no
 longer asks cloud-init for a first-boot package upgrade (which also refreshes
