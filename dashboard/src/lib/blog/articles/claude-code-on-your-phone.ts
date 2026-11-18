@@ -41,7 +41,7 @@ export const claudeCodeOnYourPhone: BlogArticle = {
   intro:
     "You want to start a task, check on a long run or answer a question from your phone while the real work happens somewhere else. Claude Code can do that, but which route you pick decides what must stay switched on, which plan you need and what you can actually do from a small screen.",
   shortAnswer:
-    "As of November 2026 there are four ways to use Claude Code from a phone: cloud sessions in the Claude app (they run on Anthropic's servers and need a GitHub repo), Remote Control (steers a session on your own computer), channels (Telegram, Discord or iMessage), or SSH into an always-on machine running tmux.",
+    "As of November 2026 there are four ways to use Claude Code from a phone: cloud sessions in the Claude app (they run on Anthropic's servers and need GitHub to clone and push), Remote Control (steers a session on your own computer), channels (Telegram, Discord or iMessage), or SSH into an always-on machine running tmux.",
   sections: [
     {
       heading: "The short version",
@@ -62,7 +62,7 @@ export const claudeCodeOnYourPhone: BlogArticle = {
           "| Channels (Telegram, Discord, iMessage) | Your own computer, in a session you left open | The computer and the open session | Pro and Max users opt in themselves; Team and Enterprise need an admin; Console API keys also work | Research preview; events only arrive while the session is open; iMessage needs macOS and Bun is required |",
           "| SSH + tmux | A server or home machine you run | The machine, and a tmux session on it | Whatever you already use to sign in to Claude Code | You set it up and secure it; typing on a phone keyboard |",
           "| Dispatch | The Claude Desktop app on your computer | The computer awake, with the app open | Pro or Max per the docs; the support article says limited beta and not open to new users | Docs list it as not available on Team or Enterprise; needs the Desktop app |",
-          `| Hivra computer | Official Claude Code CLI on a computer of its own | A paid Hivra plan (from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}) | Your own Anthropic sign-in, or Hivra credits | Terminal in a browser; long runs go in tmux |`,
+          `| Hivra computer | Official Claude Code CLI on a computer of its own | The computer, and the active tmux session on it | A paid Hivra plan (from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}), plus model access through your own Anthropic sign-in or Hivra credits | Terminal in a browser; long runs go in tmux |`,
         ].join("\n"),
         "Plan requirements come from Anthropic's [feature availability table](https://code.claude.com/docs/en/feature-availability), the cloud sessions page and the Remote Control page. Cloud sessions and Remote Control both need a claude.ai account, so they don't work with an Anthropic Console API key or through Amazon Bedrock, Google Cloud's Agent Platform or Microsoft Foundry.",
       ],
@@ -83,7 +83,7 @@ export const claudeCodeOnYourPhone: BlogArticle = {
       paragraphs: [
         "Remote Control connects the Claude app or claude.ai/code to a Claude Code session that keeps running on your own machine. Your filesystem, MCP servers and project settings stay available, and the conversation stays in sync between the terminal and the phone. The catch is in Anthropic's own words: the web and mobile interfaces are a window into that local session, so your computer has to stay on and the `claude` process has to keep running ([Remote Control docs](https://code.claude.com/docs/en/remote-control)).",
         "The quick version:\n\n```\nclaude remote-control\n```\n\nPress the spacebar to show a QR code, scan it, or open the Claude app, tap **Code** and pick the session (a computer icon with a green dot means it's online). Already in a session? Type `/remote-control`. It needs a Pro, Max, Team or Enterprise plan, and Team and Enterprise need an Owner to switch it on first. API keys are not supported.",
-        "Two limits matter on a phone. From the app you can pick Manual, Accept edits, Plan or Auto, but not Bypass permissions. And in server mode, if your machine is awake but loses the network, Claude Code gives up after roughly 10 minutes and the process exits. If you run it on a remote machine, Anthropic's docs say to start it inside tmux or screen so it survives you disconnecting from SSH.",
+        "Two limits matter on a phone. From the app you can pick Manual, Accept edits or Plan, and Auto when auto mode is available to the session, but not Bypass permissions. And in server mode, if your machine is awake but loses the network, Claude Code gives up after roughly 10 minutes and the process exits. If you run it on a remote machine, Anthropic's docs say to start it inside tmux or screen so it survives you disconnecting from SSH.",
         "Everything else, including the \"Can't reach your computer\" errors and how to keep the session alive, is in our full guide: [Claude Code Remote Control](/blog/claude-code-remote-control).",
       ],
     },
@@ -100,10 +100,10 @@ export const claudeCodeOnYourPhone: BlogArticle = {
       heading: "Route 4: SSH from your phone into an always-on machine",
       paragraphs: [
         "This is the do-it-yourself route, and it needs no Anthropic remote feature at all. You run Claude Code in tmux on a machine that stays on, and use a terminal app on your phone to connect. It's the most flexible route, and the one where you do all the work.",
-        "**1. Get a machine that stays on.** A cheap VPS, a home server or a spare desktop. Install Claude Code with Anthropic's installer, then run `claude` once and sign in:\n\n```\ncurl -fsSL https://claude.ai/install.sh | bash\nclaude --version\nclaude\n```\n\nOn first use Claude Code prompts you to log in, and your credentials are stored so you don't repeat it ([quickstart](https://code.claude.com/docs/en/quickstart)).",
+        "**1. Get a machine that stays on.** A cheap VPS, a home server or a spare desktop. Install Claude Code with Anthropic's installer, then run `claude` once and sign in:\n\n```\ncurl -fsSL https://claude.ai/install.sh | bash\nclaude --version\nclaude\n```\n\nStep 2 needs tmux. Check with `tmux -V`, and if it is missing, install it, for example `sudo apt install tmux` on Ubuntu or Debian.\n\nOn first use Claude Code prompts you to log in, and your credentials are stored so you don't repeat it ([quickstart](https://code.claude.com/docs/en/quickstart)).",
         "**2. Run it inside tmux.** tmux keeps the terminal session alive on the machine when your phone drops the connection:\n\n```\ntmux new -s claude\nclaude\n# detach with Ctrl+b then d\ntmux ls\ntmux attach -t claude\n```\n\nThose are the commands from the [tmux wiki](https://github.com/tmux/tmux/wiki/Getting-Started), and our [tmux cheat sheet](/tools/tmux-cheat-sheet) has the rest. Your SSH connection can drop as often as it likes. The agent keeps working, and you reattach to find it where it was.",
         "**3. Install an SSH app on your phone.** [Termius](https://termius.com/) is an SSH client for iOS and Android. [Blink Shell](https://blink.sh/) is an iOS and iPadOS terminal with both SSH and Mosh built in, and its site says connections stay intact after the device sleeps.",
-        "**4. Don't expose the server carelessly.** Use SSH keys and turn off password logins. If you'd rather not open port 22 to the internet, Tailscale can put the machine and your phone on a private network, and `tailscale set --ssh` lets Tailscale handle SSH authentication on a Linux or macOS host ([Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh)).",
+        "**4. Don't expose the server carelessly.** Use SSH keys and turn off password logins. If you'd rather not open port 22 to the internet, Tailscale can put the machine and your phone on a private network, and `tailscale set --ssh` lets Tailscale handle SSH authentication on a Linux host ([Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh)). A Mac can only host Tailscale SSH if it runs the open-source `tailscale` and `tailscaled` command-line variant, not the App Store or standalone app. Otherwise use standard SSH over the tailnet.",
         "**What it's like in practice.** You get the full Claude Code interface, every slash command and every permission mode, because you're simply in the terminal. You also get a phone keyboard and a narrow screen. It suits checking on a run or sending a short instruction better than writing code. Our guide to [keeping Claude Code running 24/7](/blog/keep-claude-code-running-24-7) covers the server side in more depth.",
       ],
     },
@@ -146,7 +146,7 @@ export const claudeCodeOnYourPhone: BlogArticle = {
     },
     {
       q: "Can I use Claude Code on my phone without my computer being on?",
-      a: "Yes, with cloud sessions, which run on Anthropic's infrastructure and need a GitHub repository, or with an always-on machine you reach over SSH. Remote Control, channels and Dispatch drive your own computer, so it has to stay on.",
+      a: "Yes, with cloud sessions, which run on Anthropic's infrastructure and need GitHub for cloning and pushing (a repo elsewhere can be uploaded as a local bundle but can't push back), or with an always-on machine you reach over SSH. Remote Control, channels and Dispatch drive your own computer, so it has to stay on.",
     },
     {
       q: "Which Claude plan do I need for Claude Code on mobile?",

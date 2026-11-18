@@ -39,14 +39,14 @@ export const codexMobile: BlogArticle = {
   intro:
     "There is an official Codex in the ChatGPT mobile app, and it can do more than most people expect. It can also do less than the name suggests. Here is what it does, what it needs, and the other ways to reach Codex from a phone when it isn't the right fit.",
   shortAnswer:
-    "As of November 2026, open Codex in the ChatGPT mobile app on iOS or Android (a preview, on all plans including Free and Go). From there you can start cloud tasks, or steer Codex running on your own Mac or Windows PC. To use the Codex CLI itself, SSH into a machine that stays on.",
+    "As of November 2026, open Codex in the ChatGPT mobile app on iOS or Android (a preview). You can start cloud tasks if your workspace shows an environment, or steer Codex on your own Mac or Windows PC. For the Codex CLI itself, SSH into a machine that stays on.",
   sections: [
     {
       heading: "The short version: Codex on a phone is a remote control, not a phone-sized Codex",
       paragraphs: [
         "Nothing writes code on your phone. Codex always runs somewhere else: on OpenAI's computers (Codex cloud), or on a computer you own. The phone is the screen and the keyboard. That one idea explains every option below and every limit.",
         "As of November 2026 there are four real ways to use Codex from a phone:",
-        "- **The Codex section of the ChatGPT mobile app, pointed at Cloud.** You start a task, Codex runs it on OpenAI's side, and you review the result on your phone.\n- **The same app, pointed at a computer you own.** You pair your phone with the ChatGPT desktop app on a Mac or Windows PC, then watch, approve and steer Codex work happening there.\n- **The Codex CLI on a machine that stays on, reached from your phone** with an SSH app and tmux. This is the do-it-yourself route, and it is the only one that gives you the actual terminal interface.\n- **The Codex CLI on a cloud computer with a terminal in the browser,** which you open in your phone's browser. Hivra works this way.",
+        "- **The Codex section of the ChatGPT mobile app, pointed at Cloud.** You start a task, Codex runs it on OpenAI's side, and you review the result on your phone.\n- **The same app, pointed at a computer you own.** You pair your phone with the ChatGPT desktop app on a Mac or Windows PC, then watch, approve and steer Codex work happening there.\n- **The Codex CLI on a machine that stays on, reached from your phone** with an SSH app and tmux. This is the do-it-yourself route, and the most direct way to get the actual terminal interface.\n- **The Codex CLI on a cloud computer with a terminal in the browser,** which you open in your phone's browser. Hivra works this way.",
               ],
     },
     {
@@ -63,8 +63,8 @@ export const codexMobile: BlogArticle = {
       heading: "Option 1a: tasks in Codex cloud, started from the phone",
       paragraphs: [
         "This is the lowest-effort route. Choose Cloud when you start a task in the app. OpenAI's [cloud docs](https://learn.chatgpt.com/codex/cloud) say each task gets its own workspace and keeps running while your computer is asleep, so a task you start on the train keeps going after the phone locks.",
-        "You can start from the default environment without picking a repository, or pick a published environment, which is a setup someone has already prepared. When it finishes, you review the changed files, ask for follow-ups, then commit or open a pull request.",
-        "The catch is the shape of the work. Cloud tasks suit a self-contained change to a repository Codex can reach through a connected GitHub or GitLab account. They don't give you your own machine's files, tools or half-finished state. OpenAI's pricing page also says cloud tasks may use more of your allowance than local messages, and that the API-key route to Codex excludes cloud features. For which plan includes what, see our [Codex pricing by ChatGPT plan](/blog/codex-pricing-by-chatgpt-plan) guide, and check OpenAI's page for your plan before you rely on cloud tasks, because the Free and Go details were not clear on the pricing page when we checked.",
+        "If the default environment appears in the picker, you can start from it without picking a repository. If it does not, pick a published environment you can access, which is a setup someone has already prepared. Cloud tasks need an environment that your account and workspace make available, so seeing Codex in the mobile app does not by itself mean you can start them. When it finishes, you review the changed files, ask for follow-ups, then commit or open a pull request.",
+        "The catch is the shape of the work. Cloud tasks suit a self-contained change to a repository Codex can reach through a connected GitHub or GitLab account. For GitLab.com, if it shows in the repository picker, create a reusable environment on the web or in the desktop app first (Work in Cloud, Select environment, Create environment, then Publish); the mobile app then uses that environment. They don't give you your own machine's files, tools or half-finished state. OpenAI's pricing page also says cloud tasks may use more of your allowance than local messages, and that the API-key route to Codex excludes cloud features. For which plan includes what, see our [Codex pricing by ChatGPT plan](/blog/codex-pricing-by-chatgpt-plan) guide, and check OpenAI's page for your plan before you rely on cloud tasks, because the Free and Go details were not clear on the pricing page when we checked.",
       ],
     },
     {
@@ -88,7 +88,7 @@ export const codexMobile: BlogArticle = {
         "If you want the real Codex terminal on your phone, this is the oldest route and still the most flexible. The idea: Codex CLI runs inside tmux on a machine that stays on, and your phone connects to it over SSH. If the connection drops, the session carries on, and you reattach when you have signal again.",
         "**On the always-on machine** (a VPS, a home server or a spare computer), install the CLI. OpenAI's [GitHub README](https://github.com/openai/codex) lists these options:\n\n```bash\n# Mac or Linux\ncurl -fsSL https://chatgpt.com/codex/install.sh | sh\n\n# or with npm\nnpm install -g @openai/codex\n```\n\nThe CLI supports macOS (Apple Silicon and Intel) and Linux (x86_64 and arm64).",
         "**Sign in.** Run `codex` and sign in with ChatGPT. OpenAI recommends that with a Plus, Pro, Business, Edu or Enterprise plan. On a server with no browser, OpenAI's CLI reference says `codex login` also supports device auth, so check `codex login --help` for the exact option. See [the 24/7 guide](/blog/run-codex-24-7-in-the-cloud) for running Codex on a server. The other option is an API key, which is billed at API pricing and leaves out cloud features. After signing in, OpenAI's [auth docs](https://learn.chatgpt.com/docs/auth) say Codex caches your login in `~/.codex/auth.json` (or your OS credential store) and tell you to treat that file like a password. Keep it out of backups and screenshots.",
-        "**Start Codex inside tmux** so it outlives your phone connection:\n\n```bash\ntmux new -s codex\ncodex\n\n# Detach and leave it running: Ctrl+b, then d\n# Later, from your phone: tmux attach -t codex\n```\n\nOur [tmux cheat sheet](/tools/tmux-cheat-sheet) lists the keys. If Codex has exited and you want an earlier chat back, see [how to resume a Codex session](/blog/codex-resume-session).",
+        "**Start Codex inside tmux** so it outlives your phone connection. If tmux is missing on the machine, install it first (for example `sudo apt install tmux` on Ubuntu or Debian):\n\n```bash\ntmux new -s codex\ncodex\n\n# Detach and leave it running: Ctrl+b, then d\n# Later, from your phone: tmux attach -t codex\n```\n\nOur [tmux cheat sheet](/tools/tmux-cheat-sheet) lists the keys. If Codex has exited and you want an earlier chat back, see [how to resume a Codex session](/blog/codex-resume-session).",
         "**On the phone,** use an SSH app. [Termius](https://termius.com/) is an SSH client for iOS and Android. [Blink Shell](https://blink.sh/) runs on iOS and iPadOS and supports Mosh, which is built for sessions that carry over as you move between networks. Any SSH app that supports key authentication works the same way. Add your server, use a key rather than a password, connect, and run `tmux attach -t codex`.",
         "**Reaching the machine.** If it's at home, follow OpenAI's remote-connection advice: don't expose services to the internet, use a VPN or mesh networking tool, trusted keys and a least-privilege account.",
         "**The phone keyboard.** Long diffs wrap awkwardly on a narrow screen and typing a long prompt on glass is slow, so write the task elsewhere and paste it in. For one-shot jobs, `codex exec` with a prompt runs and exits.",
@@ -123,7 +123,7 @@ export const codexMobile: BlogArticle = {
     {
       heading: "Which option should you pick?",
       paragraphs: [
-        "**You want to kick off tasks and review diffs from the couch.** Use Cloud in the ChatGPT app. It's the least setup.",
+        "**You want to kick off tasks and review diffs from the couch.** Use Cloud in the ChatGPT app, if your account and workspace show an available environment. It's the least setup.",
         "**You already own an always-on Mac or PC.** Install the ChatGPT desktop app, pair your phone with the QR code, and steer Codex on the machine that has your real projects. Keep it awake, and remember it's a preview.",
         "**You live in the terminal and want Codex's real interface.** Use the CLI in tmux on a machine that stays on, reached with an SSH app or a browser terminal. Pick Hivra if you'd rather not run that machine.",
         "You can also combine them. Many people keep a Hivra computer or a VPS for long jobs, and use the ChatGPT app for quick cloud tasks.",
@@ -141,7 +141,7 @@ export const codexMobile: BlogArticle = {
     },
     {
       q: "Can I run Codex on my iPhone without a computer?",
-      a: "Yes, by using Cloud in the ChatGPT app, where tasks run on OpenAI's side and keep going while your phone is locked. To run the Codex CLI instead, you need a machine somewhere that stays on, which you reach from the phone with an SSH app or a browser terminal.",
+      a: "Yes, by using Cloud in the ChatGPT app when your account and workspace show an available environment, where tasks run on OpenAI's side and keep going while your phone is locked. To run the Codex CLI instead, you need a machine somewhere that stays on, which you reach from the phone with an SSH app or a browser terminal.",
     },
     {
       q: "Can I use the Codex CLI from my phone?",
