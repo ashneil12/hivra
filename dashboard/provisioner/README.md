@@ -579,6 +579,12 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **OpenClaw launches finish installing (`2026.11.17.8`).** With the base
+  path set, OpenClaw's gateway answers 503 at its root, so the install's
+  readiness check (which asked for `/`) failed every new OpenClaw launch on
+  `2026.11.17.7`. The check now asks for `/openclaw/` when `openclaw.json`
+  names that base path, and `/` otherwise.
+
 - **OpenClaw's Control UI starts again (`2026.11.17.7`).**
   OpenClaw 2026.11.5 sends `Referrer-Policy: no-referrer`, so the box gateway
   could no longer tell which root-absolute requests (`/assets/*`, `/fonts/*`,

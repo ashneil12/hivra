@@ -2227,7 +2227,11 @@ if [ "$AGENT_KIND" = "aeon" ]; then
   ok "Aeon dashboard passed runtime-specific readiness"
 elif [ "$AGENT_KIND" = "openclaw" ]; then
   systemctl is-active --quiet bux-openclaw.service || die "OpenClaw service is not active"
-  wait_for_http "http://127.0.0.1:${OPENCLAW_PORT}/" || die "OpenClaw Control UI did not become ready"
+  # The Control UI answers at its basePath (/openclaw on a launch from 2026.11.17.7);
+  # with a basePath set, the gateway's root answers 503.
+  OPENCLAW_UI_PATH="/"
+  if grep -Eq '"basePath": *"/openclaw"' "${OPENCLAW_CFG_DIR}/openclaw.json" 2>/dev/null; then OPENCLAW_UI_PATH="/openclaw/"; fi
+  wait_for_http "http://127.0.0.1:${OPENCLAW_PORT}${OPENCLAW_UI_PATH}" || die "OpenClaw Control UI did not become ready"
   ok "OpenClaw passed runtime-specific readiness"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   systemctl is-active --quiet hivra-agent-zero.service || die "Agent Zero service is not active"
@@ -2301,7 +2305,7 @@ if [ "$AGENT_KIND" = "aeon" ]; then
   STATUS_HINT="sudo -iu ${AGENT_USER} gh auth status"
 elif [ "$AGENT_KIND" = "openclaw" ]; then
   LOGIN_HINT="open the Control UI (/openclaw) and configure model providers + channels there"
-  STATUS_HINT="systemctl status bux-openclaw --no-pager; curl -fsS http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}/ -o /dev/null -w '%{http_code}\n'"
+  STATUS_HINT="systemctl status bux-openclaw --no-pager; curl -fsS http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}${OPENCLAW_UI_PATH:-/} -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "hermes" ]; then
   LOGIN_HINT="open the Hermes web UI (/hermes); a managed model is pre-seeded. Scheduled tasks and chat channels run in the Hermes gateway (user service). Update with: sudo -iu ${AGENT_USER} hermes update"
   STATUS_HINT="systemctl status bux-hermes --no-pager; sudo -iu ${AGENT_USER} hermes gateway status; curl -fsS http://127.0.0.1:${HERMES_PORT:-9119}/ -o /dev/null -w '%{http_code}\n'"

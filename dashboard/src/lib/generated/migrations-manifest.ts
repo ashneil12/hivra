@@ -480,4 +480,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261117233000", name: "managed_venice_agent_daily_cap_guard" },
   { version: "20261118010000", name: "hivra_sleep_storage" },
   { version: "20261118060000", name: "provider_release_admission_2026_11_17_7" },
+  { version: "20261118070000", name: "provider_release_admission_2026_11_17_8" },
 ];
