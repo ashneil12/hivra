@@ -184,6 +184,10 @@ function kickStorageReturn(agentId: string): void {
   }
 }
 
+/** How long a wake waits for its turn when the server's concurrent wakes are all taken, and how often it asks again. */
+export const WAKE_TURN_WAIT_MS = 40_000;
+export const WAKE_TURN_RETRY_MS = 3_000;
+
 export async function resolveSleepTarget(row: AgentRow, source: string) {
   return resolveHivraLifecycleTarget({
     userId: String(row.user_id),
@@ -347,7 +351,7 @@ async function performWakeSteps(
     if (restore) {
       // A restore claims host RAM all at once. Take a slot first, so a crowd of
       // wakes cannot start together. A host that cannot be asked admits the wake.
-      const decision = await acquireHostWakeSlot(
+      const ask = () => acquireHostWakeSlot(
         { vmid: target.vmid },
         {
           instanceId: agentId,
@@ -355,7 +359,19 @@ async function performWakeSteps(
           runHostScript: (script) => runProxmoxHostScript(script, target.env),
         },
       );
+      let decision = await ask();
       slotTarget = target;
+      // The server's wakes are all taken: that clears as soon as one of them finishes, so wait
+      // for a turn (the agent keeps showing as waking) instead of telling its owner the wake failed.
+      // A server short of memory does not clear by waiting, and is refused at once.
+      const waitUntil = Date.now() + WAKE_TURN_WAIT_MS;
+      let waited = 0;
+      while (!decision.admitted && decision.reason === "concurrency" && Date.now() + WAKE_TURN_RETRY_MS <= waitUntil) {
+        await new Promise((resolve) => setTimeout(resolve, WAKE_TURN_RETRY_MS));
+        waited += 1;
+        decision = await ask();
+      }
+      if (waited > 0) detail.turn_waits = waited;
       if (!decision.admitted) {
         detail.deferred = decision.reason;
         return failed(`capacity_${decision.reason}`);
