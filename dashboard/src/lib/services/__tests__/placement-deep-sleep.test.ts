@@ -25,3 +25,15 @@ describe("placement and deep-sleeping agents", () => {
     expect(hivraAgentHoldsCpuAndRam({ status: "stopped", sleep_state: "awake" }, false)).toBe(false);
   });
 });
+
+describe("per-host CPU overcommit", () => {
+  const { resolveHostCpuOvercommitRatio } = jest.requireActual("@/lib/services/instance-service");
+  it("uses the host value when sane, else the fallback", () => {
+    expect(resolveHostCpuOvercommitRatio(8, 5)).toBe(8);
+    expect(resolveHostCpuOvercommitRatio("8.0", 5)).toBe(8);
+    expect(resolveHostCpuOvercommitRatio(null, 5)).toBe(5);
+    expect(resolveHostCpuOvercommitRatio(undefined, 5)).toBe(5);
+    expect(resolveHostCpuOvercommitRatio(0, 5)).toBe(5);
+    expect(resolveHostCpuOvercommitRatio(50, 5)).toBe(5);
+  });
+});

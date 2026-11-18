@@ -494,7 +494,7 @@ install -d -m 0700 /var/lib/hivra/provision-operations
 # running, so another launch cannot admit against capacity before this one is
 # active and visible in the host inventory.
 exec 8>/run/lock/hivra-allocation.lock
-flock -w 60 8 || { echo "timed out waiting for the Hivra allocation lock" >&2; exit 1; }
+flock -w ${HIVRA_LAUNCH_ALLOCATION_LOCK_WAIT_SECONDS} 8 || { echo "timed out waiting for the Hivra allocation lock" >&2; exit 1; }
 # Inventory is intentionally captured only after FD 8 is held. A launcher that
 # waited behind another provision must observe the predecessor's committed VM
 # configuration and private IP, rather than allocate from its pre-wait snapshot.
@@ -661,7 +661,7 @@ BINDING_TAG=${shellQuote(infrastructureBindingTag)}
 STORAGE=${shellQuote(storage)}
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
-flock -w 60 8 || { echo "timed out waiting for the Hivra rollback lock" >&2; exit 1; }
+flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8 || { echo "timed out waiting for the Hivra rollback lock" >&2; exit 1; }
 PIDFILE="/run/hivra-provision/$VMID.pid"
 vm_owned_by_operation() {
   tags="$(qm config "$VMID" 2>/dev/null | sed -n 's/^tags:[[:space:]]*//p')" || return 1
@@ -777,6 +777,15 @@ async function resolveStickyHivraProxmoxHost(userId: string): Promise<string | n
   return selectedHost;
 }
 
+
+
+// Every launch on a server holds the server-wide allocation lock for about a
+// minute while its computer is created. A 60 s wait meant a third launch
+// arriving together failed (stress test 2026-11-18). Waiting longer lets
+// launches queue; the budgets still fit the launch route's 420 s limit
+// (150 + ~60 identity wait + 120 + the rest).
+export const HIVRA_LAUNCH_ALLOCATION_LOCK_WAIT_SECONDS = 150;
+export const HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS = 120;
 
 export interface LaunchAgentOptions {
   /**
@@ -1870,7 +1879,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
             allocationStorage,
             infrastructureBindingTag,
           ), env, {
-            timeoutMs: 90_000,
+            timeoutMs: (HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS + 60) * 1000,
           })
         : { ok: true, stdout: "", stderr: "", error: undefined };
       await releaseTunnelForFailedProvision();
@@ -2041,7 +2050,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
           provisionOperationId,
           allocationStorage,
           infrastructureBindingTag,
-        ), env, { timeoutMs: 90_000 });
+        ), env, { timeoutMs: (HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS + 60) * 1000 });
         providerAbsenceVerified = rollback.ok;
         if (rollback.ok) {
           terminalPersisted = await completeHivraAgentDelete({
@@ -2135,7 +2144,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         allocationStorage,
         infrastructureBindingTag,
       ), env, {
-        timeoutMs: 90_000,
+        timeoutMs: (HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS + 60) * 1000,
       });
       const cancelledDelete = rollback.ok
         ? await completeHivraAgentDelete({
@@ -2208,7 +2217,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
 
     const allocationVerificationScript = `set -euo pipefail
 exec 8>/run/lock/hivra-allocation.lock
-flock -w 60 8
+flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8
 TAGS="$(qm config ${vmid} | sed -n 's/^tags:[[:space:]]*//p')"
 printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq ${shellQuote(infrastructureBindingTag)}
 printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq ${shellQuote(`hivra-op-${provisionOperationId.replace(/-/g, "")}`)}
@@ -2230,7 +2239,7 @@ printf 'HIVRA_ALLOCATION_VERIFIED %s\\n' ${vmid}`;
         allocationStorage,
         infrastructureBindingTag,
       ), env, {
-        timeoutMs: 90_000,
+        timeoutMs: (HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS + 60) * 1000,
       });
       const terminalPersisted = rollback.ok
         ? await releaseProvisionOperation(cpuLimitResult.error || "cpu limit apply failed", true)
@@ -2278,7 +2287,7 @@ printf 'HIVRA_ALLOCATION_VERIFIED %s\\n' ${vmid}`;
     const cpuUnitsResult = await runProxmoxHostScript(
       `set -euo pipefail
 exec 8>/run/lock/hivra-allocation.lock
-flock -w 60 8
+flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8
 TAGS="$(qm config ${vmid} | sed -n 's/^tags:[[:space:]]*//p')"
 printf '%s\n' "$TAGS" | tr ';' '\n' | grep -Fxq ${shellQuote(infrastructureBindingTag)}
 printf '%s\n' "$TAGS" | tr ';' '\n' | grep -Fxq ${shellQuote(`hivra-op-${provisionOperationId.replace(/-/g, "")}`)}
