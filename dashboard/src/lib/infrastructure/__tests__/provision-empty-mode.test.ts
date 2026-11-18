@@ -25,7 +25,8 @@ function run(mode: string | null, kind = "hermes") {
     const script = source
       .replaceAll("/run/", `${root}/run/`)
       .replaceAll("/var/lib/hivra", `${root}/var/lib/hivra`)
-      .replaceAll("/etc/pve/", `${root}/etc/pve/`);
+      .replaceAll("/etc/pve/", `${root}/etc/pve/`)
+      .replaceAll("/var/lib/vz/snippets", `${root}/snippets`);
     writeFileSync(join(root, "script.sh"), script);
     writeFileSync(join(root, "img"), "");
     writeFileSync(join(root, "prov/hivra-install-agent.py"), "");
@@ -40,6 +41,15 @@ case "$1" in
   config) echo "tags: ${BINDING};hivra-op-${OPERATION.replaceAll("-", "")}" ;;
 esac
 exit 0
+`, { mode: 0o755 });
+    // CI runs unprivileged: drop install's root ownership flags so the
+    // operation-scoped vendor data still lands in the temp snippet dir.
+    writeFileSync(join(bin, "install"), `#!/usr/bin/env bash
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac
+done
+exec /usr/bin/install "\${args[@]}"
 `, { mode: 0o755 });
     for (const tool of ["ssh", "scp", "curl", "pvesm"]) {
       writeFileSync(join(bin, tool), `#!/usr/bin/env bash\nprintf '%s\\n' "${tool} $*" >> "${root}/remote.log"\nexit 1\n`, { mode: 0o755 });
