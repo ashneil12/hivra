@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { SweepFailure, SweepRecorder, readResults, sweepMarkdown, sweepVerdict } from "../e2e/launch-sweep/result";
 import { SWEEP_CHAT_ANSWER, SWEEP_CHAT_PROMPT, SWEEP_TARGETS, selectedTargets } from "../e2e/launch-sweep/targets";
+import { PRIVATE_ONLY_QUESTION } from "../e2e/launch-sweep/private-only";
 
 function recorder(profileId: string, tile: string, knownBroken?: string) {
   return new SweepRecorder({ runId: "r1", baseUrl: "https://canary.example", profileId, tile, kind: "agent", knownBroken });
@@ -36,6 +37,30 @@ describe("launch sweep results", () => {
     expect(sweepVerdict([row.result]).leaked).toHaveLength(1);
   });
 
+  it("lists the private-models check per agent and fails the run when it broke", () => {
+    const passed = recorder("hermes-computer", "Hermes");
+    passed.result.passed = true;
+    passed.result.privateOnly = { state: "passed", savedModel: "deepseek-v4-1-flash", replySeconds: 12 };
+    const off = recorder("codex", "Codex");
+    off.result.passed = true;
+    off.result.privateOnly = { state: "not_offered", reason: "this agent does not use the managed gateway" };
+    expect(sweepVerdict([passed.result, off.result]).ok).toBe(true);
+
+    const failed = recorder("openclaw", "OpenClaw");
+    failed.result.passed = true;
+    failed.result.privateOnly = { state: "failed", reason: "turning the setting on answered HTTP 403", savedModel: "deepseek-v4-1-flash" };
+    const verdict = sweepVerdict([passed.result, off.result, failed.result]);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.broken).toHaveLength(0);
+    expect(verdict.privateOnlyFailed.map(row => row.tile)).toEqual(["OpenClaw"]);
+
+    const markdown = sweepMarkdown([passed.result, off.result, failed.result]);
+    expect(markdown).toContain("## Launch sweep: every launch works, private models only failed on 1");
+    expect(markdown).toContain("| Hermes | Pass | Still answered in 12s on deepseek-v4-1-flash |");
+    expect(markdown).toContain("| Codex | Not offered | this agent does not use the managed gateway |");
+    expect(markdown).toContain("| OpenClaw | **Fail** | turning the setting on answered HTTP 403 |");
+  });
+
   it("writes and reads results for one run", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "sweep-"));
     try {
@@ -53,8 +78,11 @@ describe("launch sweep results", () => {
 });
 
 describe("launch sweep targets", () => {
-  it("asks a question whose answer is not in the question", () => {
+  it("asks questions whose answers are not in the questions, and not each other's", () => {
     expect(SWEEP_CHAT_PROMPT).not.toContain(SWEEP_CHAT_ANSWER);
+    expect(PRIVATE_ONLY_QUESTION.prompt).not.toContain(PRIVATE_ONLY_QUESTION.answer);
+    expect(PRIVATE_ONLY_QUESTION.answer).not.toBe(SWEEP_CHAT_ANSWER);
+    expect(SWEEP_CHAT_PROMPT).not.toContain(PRIVATE_ONLY_QUESTION.answer);
   });
 
   it("has one entry per profile and filters by id or tile name", () => {
