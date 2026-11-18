@@ -71,8 +71,8 @@ exec /usr/bin/dd "\${args[@]}"
 `;
 const NOOP = `#!/usr/bin/env bash\necho "$(basename "$0") $*" >> "$STUB_DIR/calls.log"\nexit 0\n`;
 
-const JOB = "11111111-2222-4333-8444-555555555555";
-const AGENT = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+const JOB = "00000000-0000-4000-8000-000000000001";
+const AGENT = "00000000-0000-4000-8000-000000000002";
 
 host("store and unstore jobs against a fake host", () => {
   let h: HostHarness;
