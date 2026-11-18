@@ -1174,7 +1174,7 @@ if [ ! -s "${OPENCLAW_CFG_DIR}/openclaw.json" ]; then
   # Generic managed-Venice env (same the dashboard sends every managed agent):
   # HIVRA_MODEL_KEY (hven_ proxy key) / HIVRA_MODEL_BASE_URL (gateway /v1) /
   # HIVRA_HERMES_MODEL (model id).
-  OC_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-pro}"
+  OC_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-1-flash}"
   # Defensive: only embed the key + model if they're safe to interpolate into JSON
   # (no quotes/backslashes/spaces that would corrupt the config). hven_* keys are
   # base64url + the model is dashboard-validated; this guards a future format change

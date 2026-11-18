@@ -579,6 +579,15 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **Empty computers, kept cloud-init details, OpenClaw on Flash (`2026.11.18.2`).**
+  `HIVRA_PROVISION_MODE=empty` makes a computer's place (number, address,
+  ownership tags and receipt under the same lock as a launch, and a blank disk
+  of the asked size) without booting it or running any installer; nothing calls
+  it yet. When a guest's cloud-init fails, its status and the tail of its output
+  are kept in the root-only `/root/hivra-prov-<vmid>.cloud-init.txt` before the
+  guest is removed; the host log still carries only the classified reason. An
+  OpenClaw launched without a model now seeds DeepSeek V4.1 Flash.
+
 - **OpenClaw replies on Venice, and Aeon keeps a newer gh (`2026.11.18.1`).**
   OpenClaw adds DeepSeek's own top-level `thinking` field to deepseek-v4
   models, which Venice's strict chat schema rejects ("Invalid request
