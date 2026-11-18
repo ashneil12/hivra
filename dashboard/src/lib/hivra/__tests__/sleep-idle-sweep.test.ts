@@ -19,7 +19,7 @@ const mockDb: { value: unknown } = {
           return Promise.resolve(mockResolve.fn(call)).then(resolve, reject);
         },
       };
-      for (const op of ["select", "eq", "in", "not", "is", "or", "lt", "lte", "gte", "order", "limit"]) {
+      for (const op of ["select", "eq", "neq", "in", "not", "is", "or", "lt", "lte", "gte", "order", "limit"]) {
         builder[op] = (...args: unknown[]) => {
           call.ops.push([op, args]);
           return builder;
