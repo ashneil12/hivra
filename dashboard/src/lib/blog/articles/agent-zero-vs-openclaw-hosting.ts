@@ -21,6 +21,7 @@ export const article: BlogArticle = {
       heading: "Two different agents, one hosting problem",
       paragraphs: [
         "[Agent Zero](https://github.com/agent0ai/agent-zero) is a general autonomous agent with its own web dashboard. You type a goal, and it plans the steps, writes and runs code, browses with a browser it ships inside its own container, and reports back. The whole stack runs in Docker on your machine.\n\n[OpenClaw](https://github.com/openclaw/openclaw) is an agent you message like a contact. It runs a persistent daemon with a heartbeat scheduler, connects to Telegram, WhatsApp, or Signal, and fires routines on time whether you are online or not. You do not open a dashboard to use it day to day; you text it.",
+        "If you've already chosen Agent Zero, our [step-by-step Agent Zero self-hosting guide](/blog/how-to-self-host-agent-zero) covers Docker, login, HTTPS and updates on a VPS.",
         "Different interaction models, same infrastructure problem. Both only make sense on a machine that stays on. Agent Zero working through a long goal cannot survive your laptop lid closing, and OpenClaw's heartbeat scheduler is pointless on a machine that is off at 3 a.m. Choosing between them means answering two things: which agent fits your work, and where it should run. This article covers both.",
       ],
     },
@@ -105,6 +106,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "how-to-self-host-agent-zero", title: "How to self-host Agent Zero on a VPS with Docker (2026 guide)" },
     {
       slug: "openclaw-broken-after-update",
       title: "OpenClaw broken after an update? Every fix, in the order to try them",

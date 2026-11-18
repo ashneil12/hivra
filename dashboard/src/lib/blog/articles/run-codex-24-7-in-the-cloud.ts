@@ -22,6 +22,7 @@ export const article: BlogArticle = {
       heading: "What is Codex cloud, and what changed on 29 September?",
       paragraphs: [
         "Codex cloud runs coding tasks on computers OpenAI manages. Since OpenAI's DevDay on 29 September 2026 ([TechCrunch's report](https://techcrunch.com/2026/09/29/openai-gives-codex-reusable-cloud-environments-that-work-across-devices/)), you set up an environment once (the repositories, dependencies, tools and access settings a task needs), publish it, and every new task starts from it in its own isolated workspace. OpenAI's [cloud environments docs](https://learn.chatgpt.com/docs/environments/cloud-environments) say you create and publish on desktop or web, then use it from web, mobile or the desktop app.",
+        "If what you really want is to check on Codex or start a task from your phone, our [Codex on mobile guide](/blog/codex-mobile) covers the ChatGPT app, connected computers and SSH.",
         "Every OpenAI fact on this page comes from those docs, OpenAI's [pricing page](https://learn.chatgpt.com/docs/pricing), [authentication](https://learn.chatgpt.com/docs/auth), [remote connections](https://learn.chatgpt.com/docs/remote-connections), [non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode), [agent approvals](https://learn.chatgpt.com/docs/agent-approvals-security) and its [changelog](https://learn.chatgpt.com/docs/changelog). Other OpenAI docs are linked where they come up. There's also an older flow, Codex Cloud (Legacy). Code Review, Security Review and the existing Linear and GitHub integrations still run on it for now, and OpenAI says it plans to retire it.",
         "A quick word on names. OpenAI's docs say Codex Cloud. Its pricing table says Codex cloud. The plan cards on the same page say Codex on the web, and plenty of people just search \"codex web\". It's all one product (we couldn't find any OpenAI page announcing a rename), so we call it Codex cloud here.",
       ],
@@ -124,6 +125,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "codex-mobile", title: "Codex on mobile: how to use OpenAI Codex from your phone" },
     { slug: "codex-pricing-by-chatgpt-plan", title: "Codex pricing by ChatGPT plan: Plus, Pro 100/200/500 and API keys" },
 
     { slug: "claude-code-vs-codex-24-7", title: "Claude Code vs Codex for 24/7 autonomous work: which should you host?" },

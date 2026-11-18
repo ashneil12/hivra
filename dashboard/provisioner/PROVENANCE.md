@@ -547,6 +547,16 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.18.1` builds on `2026.11.17.9`. A new OpenClaw's Venice model,
+and a Venice model set from the dashboard, carry OpenClaw's own
+`compat.thinkingFormat: "openai"`, so OpenClaw no longer adds DeepSeek's
+top-level `thinking` field that Venice's strict chat schema rejects. Aeon's step
+keeps an installed gh at or above the pinned version instead of forcing a
+downgrade apt refuses. Changed: `provision-claude-code-box.sh`,
+`hivra-chat/server.js`, plus the documents, the version and the provider
+worker's release labels. This source release does not deploy, install, enable
+or start anything on a host or computer.
+
 Release `2026.11.17.9` builds on `2026.11.17.8` and makes a failed launch
 name the step that stopped it. A failed guest is removed with its logs, so the
 host log only said "step provision-claude-code-box.sh exited with status 1".

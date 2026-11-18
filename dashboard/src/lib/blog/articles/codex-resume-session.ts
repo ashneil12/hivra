@@ -48,6 +48,7 @@ export const article: BlogArticle = {
       heading: "How do I resume a Codex session?",
       paragraphs: [
         `OpenAI's [CLI reference](${CODEX_REF}) lists \`codex resume\` as the way to continue an interactive session. We also ran \`codex resume --help\` and \`codex exec resume --help\` on Codex CLI ${CODEX_VER} to be sure. Use these:`,
+        "Picking a session back up from your phone is a different problem, and our [Codex on mobile guide](/blog/codex-mobile) walks through every way to do it.",
         [
           "| Command | What it does |",
           "|---|---|",
@@ -168,6 +169,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "codex-mobile", title: "Codex on mobile: how to use OpenAI Codex from your phone" },
     { slug: "run-codex-24-7-in-the-cloud", title: "Codex cloud, or Codex on a computer that stays on?" },
     { slug: "keep-claude-code-running-24-7", title: "Will Claude Code keep running if you close your laptop?" },
     { slug: "claude-code-vs-codex-24-7", title: "Claude Code vs Codex for running 24/7" },

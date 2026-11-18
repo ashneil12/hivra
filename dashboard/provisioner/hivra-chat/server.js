@@ -2070,6 +2070,9 @@ function applyOpenclawLlm(res, j) {
   if (needsBase && !LLM_BASEURL_RE.test(baseUrl)) return jsonRes(res, 400, { ok: false, error: "baseUrl doesn't look right (https URL)" });
   const block = { api, apiKey, models: [{ id: model, name: model, contextWindow: 200000, maxTokens: 8192, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, reasoning: false }] };
   if (needsBase) block.baseUrl = baseUrl;
+  // Venice's chat schema is strict: OpenClaw's DeepSeek-native `thinking` field
+  // (sent for deepseek-v4 ids) is a 400 there, so Venice models speak plain OpenAI.
+  if (provider === "venice" && api === "openai-completions") block.models[0].compat = { thinkingFormat: "openai" };
   const primary = provider + "/" + model;
   // agents.defaults.model = { primary } and agents.defaults.models = { "<primary>": {} }
   // are SIBLINGS under defaults (the runtime loader is lax, but `config patch` is
