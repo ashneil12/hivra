@@ -124,7 +124,11 @@ export type WakePlatform = "telegram" | "matrix" | "email" | "discord";
 export interface AgentWakeProfile {
   /** hivra_agents.type. */
   type: string;
-  /** Processes whose presence means work is running right now (a coding CLI, a job runner). */
+  /**
+   * Processes whose presence means work is running right now (a coding CLI, a job runner).
+   * One left open in the computer's own tmux is a standing session and is not counted:
+   * it is busy only while it prints, which the probe reads from tmux as recent use.
+   */
   busy: readonly ProcessMatch[];
   /** The agent's own long-running processes, checked for CPU use by the safety net. */
   agentProcesses: readonly ProcessMatch[];

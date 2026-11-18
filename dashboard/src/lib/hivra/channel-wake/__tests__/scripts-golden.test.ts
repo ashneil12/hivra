@@ -50,15 +50,15 @@ describe("only Telegram on: byte-identical scripts", () => {
   // safety switches as chat channels; the wake values are the original ones.
   it("keeps every sleep, probe and wake script exactly as before", () => {
     expect(digest(buildSleepHostScript({ ...target, tier: "nap", manual: false, telegramCoverage: TG })))
-      .toBe("3c3317470ae04a2c16baa14534ad7a716caddd11fcbbb0e0a711722ce422736c");
+      .toBe("61e76cc493ecc5c775324cff266973954bf77288831cd3bf3dff7cc9a4d3a8e5");
     expect(digest(buildSleepHostScript({ ...target, tier: "hibernate", manual: true, telegramCoverage: TG, fastConfigRead: true })))
-      .toBe("870ffdf6677887131a623f71aaeb65fd907ad26d87e87b500d2a0c712b6a8f38");
+      .toBe("ec6e57911f65e3c05ea3e48bcb28ef356ca415f7d7bd8e5767fb813c96072566");
     expect(digest(buildSleepHostScript({ ...target, tier: "nap", manual: false })))
-      .toBe("02e8960927c6957277284892c45ef47ede86fcfca28d7f368ccd2a9296beb957");
+      .toBe("4c1360b7e232391ab9939d51b401f55d5b315b51954a2963bbef3c76b874ee08");
     expect(digest(buildIdleProbeHostScript(target, { telegram: true })))
-      .toBe("42ddbfaf607c4755a33c15e4b2f0c525a9e28b5a02c0fe73f8a005160a567e43");
+      .toBe("3e23d92953397537f1595374c879615ba4fd6ceb3404466a2d81adebda2e9d3c");
     expect(digest(buildIdleProbeHostScript(target)))
-      .toBe("03f70e58f75dafcdcf18b0eefc5eb755e6516e65313bfd6c151ab9c6bc043bff");
+      .toBe("249388893e6c0c7f330bfd5383c2a2c51109f87e86d4f34344601897e11d04ba");
     expect(digest(buildWakeHostScript({ ...target, admission, killStaleSockets: true })))
       .toBe("72364b82e417ec2bb0c0804bf4c87cc09cb3bf74ac66336418cf07030d57076e");
     expect(digest(buildWakeHostScript({ ...target, admission })))
