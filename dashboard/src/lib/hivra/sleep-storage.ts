@@ -87,6 +87,8 @@ export interface SleepStorageInput {
   env: EnvLike;
   now: () => number;
   deadline: number;
+  /** No new host call starts after this (the run's budget for starting work). Left out: the deadline alone decides. */
+  startBy?: number;
   /** Whether sleep acts on this host at all. Asked only when something may be packed. */
   hostActs: (host: string) => Promise<boolean>;
   resolveTarget: (row: AgentRow, source: string) => Promise<{ ok: true; target: HivraLifecycleTarget } | { ok: false; code?: string }>;
@@ -132,7 +134,7 @@ export async function runSleepStorage(input: SleepStorageInput): Promise<{ count
       ...(agentId ? { instanceId: agentId } : {}),
     });
   };
-  const outOfTime = () => input.deadline - now() < SCRIPT_TIMEOUT_MS + 5_000;
+  const outOfTime = () => now() >= (input.startBy ?? input.deadline) || input.deadline - now() < SCRIPT_TIMEOUT_MS + 5_000;
   const iso = () => new Date(now()).toISOString();
 
   // Every agent with storage work pending. With none, and packing off, this one query is the whole run.

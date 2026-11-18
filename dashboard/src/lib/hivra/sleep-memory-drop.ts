@@ -45,8 +45,10 @@ export interface SleepMemoryDropInput {
   db: NonNullable<typeof supabaseAdmin>;
   env: Record<string, string | undefined>;
   now: () => number;
-  /** No host call starts unless it can finish before this. */
+  /** No host call starts unless it can finish before this: the run's hard limit, not its budget for starting work. */
   deadline: number;
+  /** No host call starts after this (the run's budget for starting work). Left out: the deadline alone decides. */
+  startBy?: number;
   /** Whether sleep acts on this host at all. */
   hostActs: (host: string) => boolean;
 }
@@ -80,7 +82,7 @@ export async function runSleepMemoryDrops(
   counts.candidates = candidates.length;
 
   for (const agentId of candidates.slice(0, MEMORY_DROP_MAX_PER_RUN)) {
-    if (input.deadline - input.now() < MEMORY_DROP_SCRIPT_TIMEOUT_MS) break;
+    if (input.now() >= (input.startBy ?? input.deadline) || input.deadline - input.now() < MEMORY_DROP_SCRIPT_TIMEOUT_MS) break;
     cooldowns.set(agentId, input.now() + MEMORY_DROP_COOLDOWN_MS);
     try {
       const row = await readHivraAgentRow(agentId);

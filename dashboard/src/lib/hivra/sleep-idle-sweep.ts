@@ -758,7 +758,9 @@ async function runMemoryDrops(ctx: Context): Promise<void> {
     db: ctx.db,
     env: ctx.env,
     now: ctx.now,
-    deadline: ctx.deadline,
+    // A host call may run past the budget for starting work, up to the run's hard limit.
+    startBy: ctx.deadline,
+    deadline: ctx.startedAt + HIBERNATE_HARD_LIMIT_MS,
     hostActs: (host) => hostActs(hosts.get(host)),
   });
   if (!result) return;
@@ -775,7 +777,8 @@ async function runStorage(ctx: Context): Promise<void> {
     db: ctx.db,
     env: ctx.env,
     now: ctx.now,
-    deadline: ctx.deadline,
+    startBy: ctx.deadline,
+    deadline: ctx.startedAt + HIBERNATE_HARD_LIMIT_MS,
     hostActs: async (host) => {
       if (hosts === undefined) hosts = await loadHosts(ctx);
       return !!hosts && hostActs(hosts.get(host));

@@ -139,6 +139,10 @@ describe("runSleepMemoryDrops", () => {
     const result = await runSleepMemoryDrops(input(db, { deadline: NOW + 10_000 }));
     expect(result?.counts).toMatchObject({ candidates: 1, dropped: 0 });
     expect(mockRunScript).not.toHaveBeenCalled();
+    // Past the run's budget for starting work, nothing starts either, however far off the hard limit is.
+    const late = await runSleepMemoryDrops(input(db, { startBy: NOW, deadline: NOW + 250_000 }));
+    expect(late?.counts).toMatchObject({ candidates: 1, dropped: 0 });
+    expect(mockRunScript).not.toHaveBeenCalled();
     const broken = makeDb([], { message: "boom" });
     expect(await runSleepMemoryDrops(input(broken.db))).toEqual({ counts: { candidates: 0, dropped: 0, refused: 0, failed: 0 }, errors: 1 });
   });
