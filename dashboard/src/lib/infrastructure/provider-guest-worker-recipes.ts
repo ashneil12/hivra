@@ -555,6 +555,11 @@ const recipes = Object.freeze({
     workerSha256: "344588e6dda111c31d9dcfe33fc3b54e56c9f60202255c88719bec558f7fac9e",
     workerSize: 45216,
   }),
+  "2026.11.18.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release keeps OpenClaw's Venice chat requests inside Venice's schema and lets Aeon keep a newer gh. The worker only advances its release labels.
+    workerSha256: "80f9d6f5f345e3231a26f987684c50b9045677d2a6c9694548a8de802ed0b4f0",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;
