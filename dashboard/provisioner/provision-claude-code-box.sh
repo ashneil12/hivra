@@ -144,7 +144,10 @@ c_bold=$'\033[1m'; c_dim=$'\033[2m'; c_green=$'\033[32m'; c_red=$'\033[31m'; c_r
 say()  { printf '%s==>%s %s\n' "$c_bold" "$c_reset" "$*"; }
 ok()   { printf '%s  ok%s %s\n' "$c_green" "$c_reset" "$*"; }
 warn() { printf '%s  ! %s %s\n' "$c_red" "$c_reset" "$*" >&2; }
-die()  { warn "$*"; exit 1; }
+# die() also leaves its own message (Hivra's fixed text) for hivra-install-agent.py,
+# which names it in the host log's "Hivra guest installation failure" line; the
+# guest is removed on failure, so this is the only trace of which step stopped.
+die()  { warn "$*"; ( umask 077; printf '%s\n' "$*" > /run/hivra-install-failure-reason ) 2>/dev/null || true; exit 1; }
 
 # The pinned Google Chrome build ships as data too (chrome-pin.json), so this
 # installer and the runtime updater (hivra-guest-runtime-update.sh), which moves

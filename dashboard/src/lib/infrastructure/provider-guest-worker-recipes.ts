@@ -550,6 +550,11 @@ const recipes = Object.freeze({
     workerSha256: "081f86af5dd9f69e3a3460de5482723901ba4bfc28b274a25da32a774d496c48",
     workerSize: 45216,
   }),
+  "2026.11.17.9": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release names the provisioning step's own failure message in the host log. The worker only advances its release labels.
+    workerSha256: "344588e6dda111c31d9dcfe33fc3b54e56c9f60202255c88719bec558f7fac9e",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

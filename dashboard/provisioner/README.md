@@ -579,6 +579,13 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **A failed launch says which step stopped (`2026.11.17.9`).** The guest is
+  removed when provisioning fails, so the host log only read "step
+  provision-claude-code-box.sh exited with status 1". The step's `die()` now
+  leaves its own message (Hivra's fixed text) in a root-only file under `/run`,
+  and the installer adds it to the "Hivra guest installation failure" line when
+  it is short plain text.
+
 - **OpenClaw launches finish installing (`2026.11.17.8`).** With the base
   path set, OpenClaw's gateway answers 503 at its root, so the install's
   readiness check (which asked for `/`) failed every new OpenClaw launch on
