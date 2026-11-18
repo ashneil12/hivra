@@ -561,6 +561,9 @@ function browserCopy(profileId: LaunchProfileId): string {
 
 /** Plain words for the receipt phase a launch in flight last reported. */
 function observedLaunchText(observation: LaunchObservation | null, resend: boolean): string {
+  if (observation?.kind === "waiting-for-room") {
+    return "All our servers are busy right now. Your agent is in line and starts by itself as soon as one has room. Keep this page open.";
+  }
   if (observation?.kind === "checking-host") return "Checking your Linux host is still ready before Hivra starts the sandbox.";
   if (observation?.kind === "receipt") {
     if (observation.phase === "reserved") return "Hivra has recorded the request and is creating the computer.";
