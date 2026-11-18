@@ -102,6 +102,19 @@ instead** keeps the embedded page. Websites without the switch keep the
 embedded page as before. The server side is
 `dashboard/src/lib/desktop/browser-sign-in.ts`.
 
+## Look
+
+The native views follow Hivra Glass (`docs/brand/HIVRA-GLASS.md`), the design
+language shared with the website and MonoCode Hub: one ink over one base,
+frosted panels over a soft haze, hairline strokes, system fonts and rounded
+corners. The tokens and shared controls are in `HivraDesign.swift`. The window
+uses the system's own translucency and, on macOS 26, Liquid Glass for panels
+(materials on earlier versions). Hivra red appears only in the mark and for
+errors and destructive actions; status uses green, amber and red; focus rings
+are system blue. Loading and waiting show a dotted thinking orb
+(`HivraThinkingOrb`, a port of the website's), which holds still under Reduce
+Motion.
+
 ## Workspaces and controls
 
 Choose a connection at the top of the native sidebar. Each connection retains

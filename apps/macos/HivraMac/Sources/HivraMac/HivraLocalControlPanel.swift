@@ -10,21 +10,19 @@ struct HivraLocalControlPanel: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Image(systemName: "desktopcomputer")
-                    .foregroundStyle(HivraDesign.crimson)
-                Text("LOCAL HIVRA")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .tracking(1)
+                    .foregroundStyle(HivraDesign.secondaryText(for: colorScheme))
+                HivraLabel("Local Hivra")
                 Spacer(minLength: 8)
                 Circle().fill(statusColor).frame(width: 7, height: 7)
                     .accessibilityHidden(true)
                 Text(runtime.state.label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(HivraDesign.secondaryText(for: colorScheme))
             }
 
             Text(stateDescription)
-                .font(.system(size: 12))
-                .foregroundStyle(isFailed ? .orange : .secondary)
+                .font(.system(size: 12.5))
+                .foregroundStyle(isFailed ? HivraDesign.bad(for: colorScheme) : HivraDesign.secondaryText(for: colorScheme))
                 .fixedSize(horizontal: false, vertical: true)
 
             if let checkout = runtime.checkoutURL {
@@ -71,14 +69,13 @@ struct HivraLocalControlPanel: View {
                     }
                     .frame(maxHeight: 160)
                     .padding(10)
-                    .background(HivraDesign.background(for: colorScheme))
+                    .background(HivraDesign.background(for: colorScheme), in: RoundedRectangle(cornerRadius: HivraDesign.Radius.card, style: .continuous))
                 }
                 .font(.system(size: 11))
             }
         }
         .padding(16)
-        .background(HivraDesign.surface(for: colorScheme))
-        .overlay { Rectangle().stroke(HivraDesign.border(for: colorScheme), lineWidth: 1) }
+        .hivraCard(cornerRadius: HivraDesign.Radius.panel)
     }
 
     @ViewBuilder
@@ -106,13 +103,13 @@ struct HivraLocalControlPanel: View {
                 .buttonStyle(HivraButtonStyle())
         case .checking, .initializing, .stopping:
             HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+                HivraThinkingOrb(size: 20, label: "Working")
                 Button("Cancel operation", action: runtime.cancelOperation)
                     .buttonStyle(HivraButtonStyle())
             }
         case .starting:
             HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+                HivraThinkingOrb(size: 20, label: "Working")
                 Text("Starting local services…")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -142,10 +139,10 @@ struct HivraLocalControlPanel: View {
 
     private var statusColor: Color {
         switch runtime.state {
-        case .running: .green
-        case .failed: .orange
-        case .checking, .initializing, .starting, .stopping: .yellow
-        default: .secondary
+        case .running: HivraDesign.ok(for: colorScheme)
+        case .failed: HivraDesign.bad(for: colorScheme)
+        case .checking, .initializing, .starting, .stopping: HivraDesign.warn(for: colorScheme)
+        default: HivraDesign.mutedText(for: colorScheme)
         }
     }
 }
