@@ -21,6 +21,35 @@ export function createManagedVeniceSpendWorld() {
   const seed: Record<string, MemoryRow[]> = {};
   for (const name of SPEND_TABLES) seed[name] = [];
   const memory = createManagedVeniceMemoryDb(seed);
+  // The per-agent daily limit guard, as migration 20261117233000 writes it.
+  memory.addInsertGuard("managed_venice_reservations", (row, live) => {
+    if (row.status !== "active") return null;
+    const meta = (row.metadata ?? {}) as Record<string, unknown>;
+    if (typeof meta.agentDailyCapMicroUsd !== "number") return null;
+    const keyOf = (r: MemoryRow) =>
+      (r.proxy_key_id as string | null | undefined) ?? ((r.metadata as Record<string, unknown> | undefined)?.proxyKeyId as string | undefined) ?? null;
+    const key = keyOf(row);
+    if (!key) return null;
+    const holds = live.managed_venice_reservations ?? [];
+    if (holds.some((r) => r.reference_id === row.reference_id)) return null;
+    const now = new Date();
+    const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+    const usage = live.managed_venice_usage_events ?? [];
+    const sameKey = (r: MemoryRow) => r.user_id === row.user_id && keyOf(r) === key;
+    const committed =
+      usage.filter((u) => u.user_id === row.user_id && u.proxy_key_id === key && String(u.created_at) >= day)
+        .reduce((sum, u) => sum + Number(u.charged_micro_usd ?? 0), 0) +
+      holds.filter((r) => sameKey(r) && r.status === "active").reduce((sum, r) => sum + Number(r.reserved_micro_usd), 0) +
+      holds.filter((r) => sameKey(r) && r.status === "captured" && String(r.captured_at) >= day &&
+        !usage.some((u) => u.reference_id === r.reference_id))
+        .reduce((sum, r) => sum + Number(r.captured_micro_usd ?? 0), 0);
+    const requested = Number(row.reserved_micro_usd);
+    if (committed + requested <= meta.agentDailyCapMicroUsd) return null;
+    return {
+      code: "P0001",
+      message: `managed_venice_agent_spend_cap: cap=${meta.agentDailyCapMicroUsd} spent=${committed} requested=${requested}`,
+    };
+  });
 
   return {
     ...memory,

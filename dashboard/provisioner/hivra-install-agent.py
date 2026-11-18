@@ -455,6 +455,10 @@ def install_agent(launch, source, *, provider_desktop=None):
     # The existing enclosing lifecycle worker owns timeout/compensation. This
     # entrypoint is synchronous: no detached worker or unowned retry is created.
     def bootstrap():
+        try:
+            DIE_REASON.unlink()
+        except FileNotFoundError:
+            pass
         subprocess.run(["/bin/bash", str(source / "provision-claude-code-box.sh")],
                        check=True, env=environment, stdin=subprocess.DEVNULL)
     if owned_desktop:
@@ -616,11 +620,58 @@ def main():
         os.close(fd)
 
 
+# Where provision-claude-code-box.sh's die() leaves its own (Hivra-authored) message.
+DIE_REASON = Path("/run/hivra-install-failure-reason")
+
+
+def die_reason():
+    """The provisioning step's own die() message, if it is short, plain text."""
+    try:
+        with open(DIE_REASON, "rb") as handle:
+            raw = handle.read(301)
+    except OSError:
+        return None
+    if len(raw) > 300:
+        return None
+    try:
+        text = raw.decode("ascii").strip()
+    except UnicodeDecodeError:
+        return None
+    return text if re.fullmatch(r"[A-Za-z0-9 .,:;()_/+-]{1,200}", text) else None
+
+
+def install_failure_reason(error):
+    """A fixed, payload-free reason for the host log, or None.
+
+    Only Hivra's own install errors (fixed code strings, never launch data) and
+    the exit status of a failed step are named; any other exception text could
+    carry payload and stays unprinted.
+    """
+    if type(error).__name__ == "InstallError":
+        text = str(error)
+        if re.fullmatch(r"[A-Za-z0-9 .,:;()_/-]{1,200}", text):
+            return text
+        return None
+    if isinstance(error, subprocess.CalledProcessError):
+        argv = error.cmd if isinstance(error.cmd, (list, tuple)) else []
+        names = [os.path.basename(str(part)) for part in argv[:3]]
+        step = next((name for name in names if re.fullmatch(r"[A-Za-z0-9._-]{1,60}\.(?:sh|py)", name)), None)
+        reason = "step %s exited with status %d" % (step or "command", error.returncode)
+        stopped = die_reason() if step == "provision-claude-code-box.sh" else None
+        return reason + ": " + stopped if stopped else reason
+    if isinstance(error, subprocess.TimeoutExpired):
+        return "a step ran past its deadline"
+    return None
+
+
 if __name__ == "__main__":
     try:
         main()
-    except Exception:
+    except Exception as error:
         # Inner package/service diagnostics remain available through the
         # existing private provisioning log; do not print payload/exception data.
         print("Hivra guest installation failed; inspect the private provisioning log.", file=sys.stderr)
+        reason = install_failure_reason(error)
+        if reason:
+            print("Hivra guest installation failure: " + reason, file=sys.stderr)
         sys.exit(1)

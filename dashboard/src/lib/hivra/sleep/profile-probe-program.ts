@@ -181,18 +181,32 @@ for n in names[:500]:
 for a in PF["activity"]:
     t = newest(P(a["path"]), a["depth"], a["budget"])
     if t: last.append(t)
-cli_busy = sum(1 for q in procs if any(match(q, m) for m in PF["busy"]))
+# A coding CLI left open in the computer's own tmux is a standing session, not
+# a run: its mere presence says nothing. It is busy while it prints (the tmux
+# output time below feeds lastUsedAt); the tmux server's own command line,
+# which repeats the CLI's name, is not a CLI either. Anywhere else (a chat run,
+# a cron job, a script) a CLI process is a run in progress.
+def standing(pid):
+    n = 0
+    while pid in procs and n < 64:
+        if procs[pid][0].startswith("tmux"): return True
+        pid = procs[pid][1]; n += 1
+    return False
+cli_busy = sum(1 for q in procs if any(match(q, m) for m in PF["busy"]) and not standing(q))
 # ---- terminals: a ttyd child is one open terminal tab ----
 term = sum(len(children(p)) for p, v in procs.items() if v[0] == "ttyd")
 tmux_att = 0
 for sock in ("hivra-agent", "hivra-box"):
     try:
-        r = subprocess.run(["/usr/sbin/runuser", "-u", "bux", "--", "tmux", "-L", sock, "list-sessions", "-F",
-                            "#{session_attached} #{session_activity}"], capture_output=True, text=True, timeout=2)
+        r = subprocess.run(["/usr/sbin/runuser", "-u", "bux", "--", "tmux", "-L", sock, "list-windows", "-a", "-F",
+                            "#{session_attached} #{session_activity} #{window_activity}"], capture_output=True, text=True, timeout=2)
         for ln in r.stdout.splitlines():
-            a, act = (ln.split() + ["0", "0"])[:2]
+            a, act, out = (ln.split() + ["0", "0", "0"])[:3]
             tmux_att += int(a) > 0
-            if act.isdigit() and int(act) > 0: last.append(float(act))
+            # session_activity is the last key press; window_activity is the last
+            # time anything was printed there, which is how a working CLI shows.
+            for t in (act, out):
+                if t.isdigit() and int(t) > 0: last.append(float(t))
     except Exception: err("tmux")
 # ---- sockets: established connections per local port ----
 def gateway_hex():
@@ -317,7 +331,12 @@ for s in PF["channels"]:
                     gateway_platforms(P(s["profilesDir"]) + "/" + prof + s["profilePath"], False, pre, sfx, s["ignore"])
             except OSError: pass
     elif k == "yaml-enabled":
-        for name in re.findall(r"^  (\w+):\s*\n(?:    .*\n)*?    enabled:\s*true", rdc(s["path"], 262144) or "", re.M): add(pre + ":" + name + sfx)
+        text = rdc(s["path"], 262144) or ""
+        strict = bool(s.get("section") or s.get("known"))
+        for top, block in (re.findall(r"^(\w+):[^\n]*\n((?:(?:[ \t]+[^\n]*)?\n)*)", text + "\n", re.M) if strict else [("", text)]):
+            for name in re.findall(r"^  (\w+):\s*\n(?:    .*\n)*?    enabled:\s*true", block, re.M):
+                if name in (s.get("ignore") or ()): continue
+                if not strict or top == s.get("section") or name in (s.get("known") or ()): add(pre + ":" + name + sfx)
     elif k == "json-channels":
         o = walk(rjc(s["path"], 262144), s["at"])
         if isinstance(o, dict):

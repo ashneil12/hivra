@@ -85,6 +85,19 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
     ],
   },
   {
+    slug: "meet-the-agents",
+    title: "Meet the agents",
+    blurb: "One article for each agent and computer you can run on Hivra: what it is, what it needs, and how it is set up. Previews are marked as previews.",
+    articles: [
+      "what-is-agent-zero",
+      "what-is-aeon-agent",
+      "deepseek-harness-coding-agent",
+      "openbot-ai-coworkers",
+      "nuphos-claude-code-team-chat",
+      "ubuntu-desktop-in-the-cloud",
+    ],
+  },
+  {
     slug: "how-agents-work",
     title: "How AI agents work",
     blurb: "Start here if agents are new to you. What an agent is, how it remembers, what it can automate, and where several agents fit.",

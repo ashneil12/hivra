@@ -142,13 +142,13 @@ describe("gateway agent app reporting and update hold", () => {
 
   it("reports the recorded Agent Zero image and update progress only to the computer's bearer", async () => {
     fs.writeFileSync(paths().record, JSON.stringify({ name: "agent-zero", version: DIGEST }));
-    fs.writeFileSync(paths().status, JSON.stringify({ name: "agent-zero", state: "waiting", from: null, to: DIGEST, updatedAt: "2026-10-20T10:00:00Z" }));
+    fs.writeFileSync(paths().status, JSON.stringify({ name: "agent-zero", state: "waiting", from: null, to: "latest", updatedAt: "2026-10-20T10:00:00Z" }));
     const port = await boot("agent-zero");
     const meta = await get(port, "/api/meta");
     expect(meta.json.agentApp).toMatchObject({
       name: "agent-zero",
       version: DIGEST,
-      update: { state: "waiting", target: DIGEST, updatedAt: "2026-10-20T10:00:00Z" },
+      update: { state: "waiting", target: "latest", updatedAt: "2026-10-20T10:00:00Z" },
       activity: { openConnections: 0 },
     });
     expect(typeof (meta.json.agentApp as { activity: { lastUsedAt: unknown } }).activity.lastUsedAt).toBe("string");
@@ -157,7 +157,7 @@ describe("gateway agent app reporting and update hold", () => {
 
   it("reports no version for a record of another app or in the wrong form", async () => {
     fs.writeFileSync(paths().record, JSON.stringify({ name: "aeon", version: DIGEST }));
-    fs.writeFileSync(paths().status, JSON.stringify({ name: "agent-zero", state: "done", to: "v2.14" }));
+    fs.writeFileSync(paths().status, JSON.stringify({ name: "agent-zero", state: "done", to: DIGEST }));
     const port = await boot("agent-zero");
     const app = (await get(port, "/api/meta")).json.agentApp as Record<string, unknown>;
     expect(app.version).toBeNull();

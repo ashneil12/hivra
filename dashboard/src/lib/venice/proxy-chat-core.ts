@@ -11,6 +11,10 @@ import {
 import { ManagedVeniceSpendCapError } from "@/lib/billing/managed-venice-spend-caps";
 import { managedVeniceSpendCapMessage } from "@/lib/billing/managed-venice-agent-spend-caps";
 import {
+  checkManagedVeniceAgentPrivateOnly,
+  managedVenicePrivateOnlyResponse,
+} from "@/lib/venice/agent-private-only";
+import {
   UnsupportedVeniceModelError,
   checkVeniceChatPricingCatalogStaleness,
 } from "@/lib/venice/pricing";
@@ -153,6 +157,8 @@ export async function authorizeManagedVeniceChat(params: {
    * response never reaches it. Omitted, a reference is generated here.
    */
   referenceId?: string;
+  /** The caller the inference Worker saw, for the key-to-computer binding. Omitted for direct requests. */
+  caller?: import("./key-binding").KeyBindingCaller;
 }): Promise<AuthorizeManagedVeniceChatResult> {
   if (params.referenceId !== undefined && !REFERENCE_ID_PATTERN.test(params.referenceId)) {
     return {
@@ -169,7 +175,7 @@ export async function authorizeManagedVeniceChat(params: {
     return { ok: false, response: apiError("Unauthorized", 401) };
   }
 
-  const verifiedKey = await verifyManagedVeniceProxyKey({ plaintextKey });
+  const verifiedKey = await verifyManagedVeniceProxyKey({ plaintextKey, ...(params.caller ? { caller: params.caller } : {}) });
   if (!verifiedKey) {
     return { ok: false, response: apiError("Unauthorized", 401) };
   }
@@ -269,6 +275,21 @@ export async function authorizeManagedVeniceChat(params: {
       };
     }
     throw error;
+  }
+
+  // "Private models only": an agent whose owner turned it on may call only
+  // models Venice marks private. Checked here, after the model is known to be
+  // a real one and before any hold, so chat, Responses and the off-Vercel
+  // Worker (which authorizes through this function) are all covered. A no-op
+  // while MANAGED_VENICE_AGENT_PRIVATE_ONLY_ENABLED is off.
+  const privateOnly = await checkManagedVeniceAgentPrivateOnly({
+    key: verifiedKey,
+    model: body.model,
+    endpoint,
+    source: "managed-venice-chat",
+  });
+  if (!privateOnly.allowed) {
+    return { ok: false, response: managedVenicePrivateOnlyResponse(privateOnly) };
   }
 
   // Catalog staleness check. We don't fail closed — Venice may have re-priced

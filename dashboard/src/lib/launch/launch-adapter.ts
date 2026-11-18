@@ -70,7 +70,8 @@ const CLOCK_SKEW_MS = 120_000;
 export type LaunchObservation =
   | { kind: "checking-host"; at: number }
   | { kind: "sent"; at: number }
-  | { kind: "receipt"; phase: string; at: number };
+  | { kind: "receipt"; phase: string; at: number }
+  | { kind: "waiting-for-room"; since: number; at: number };
 
 export type LaunchSubmitOptions = {
   /** A key typed into this page for this launch. Never stored. */
@@ -116,6 +117,50 @@ export function launchResumeMode(profileId: LaunchProfileId): "resend" | "observ
     : "resend";
 }
 
+// When every server is out of room the launch is refused before anything is
+// created, so the same request can be sent again safely. The page keeps it
+// in line and sends it again until a server has room, instead of an error.
+export const SERVERS_FULL_RETRY_MS = 30_000;
+export const SERVERS_FULL_WAIT_LIMIT_MS = 30 * 60_000;
+
+export function isServersFullLaunchError(error: unknown): boolean {
+  return error instanceof HivraLaunchCorrectableError && error.code === "servers_full";
+}
+
+export async function waitForRoom<T>(
+  send: () => Promise<T>,
+  onObserved?: LaunchSubmitOptions["onObserved"],
+  timing: { retryMs?: number; limitMs?: number; sleep?: (ms: number) => Promise<void>; now?: () => number } = {},
+): Promise<T> {
+  const now = timing.now ?? Date.now;
+  const sleep = timing.sleep ?? pause;
+  const retryMs = timing.retryMs ?? SERVERS_FULL_RETRY_MS;
+  const limitMs = timing.limitMs ?? SERVERS_FULL_WAIT_LIMIT_MS;
+  let since: number | null = null;
+  for (;;) {
+    try {
+      return await send();
+    } catch (error) {
+      if (!isServersFullLaunchError(error)) throw error;
+      since ??= now();
+      if (now() - since >= limitMs) throw error;
+      onObserved?.({ kind: "waiting-for-room", since, at: now() });
+      await sleep(retryMs);
+    }
+  }
+}
+
+function submitWithReceipt(
+  input: ReceiptBearingCreateInput,
+  onObserved?: LaunchSubmitOptions["onObserved"],
+): Promise<HivraAgent> {
+  return waitForRoom(() => submitWithReceiptOnce(input, onObserved), onObserved);
+}
+
+function submitObserved(input: CreateAgentInput, draft: LaunchDraft, options: LaunchSubmitOptions): Promise<LaunchResult> {
+  return waitForRoom(() => submitObservedOnce(input, draft, options), options.onObserved);
+}
+
 type SubmissionOutcome =
   | { state: "accepted"; agent: HivraAgent }
   | { state: "failed"; error: unknown };
@@ -127,7 +172,7 @@ function pause(milliseconds: number): Promise<void> {
 /** The provisioning POST can keep doing exact host-side confirmation after its
  * durable receipt already names the new computer. Reconcile that receipt in
  * parallel so the launch screen advances as soon as acceptance is known. */
-async function submitWithReceipt(
+async function submitWithReceiptOnce(
   input: ReceiptBearingCreateInput,
   onObserved?: LaunchSubmitOptions["onObserved"],
 ): Promise<HivraAgent> {
@@ -239,7 +284,7 @@ async function findObservedHermes(draft: LaunchDraft): Promise<LaunchResult | nu
 /** Posts a request that carries no receipt. A lost or failed response is
  * followed by one look for the computer it created; the request is never
  * sent again. */
-async function submitObserved(input: CreateAgentInput, draft: LaunchDraft, options: LaunchSubmitOptions): Promise<LaunchResult> {
+async function submitObservedOnce(input: CreateAgentInput, draft: LaunchDraft, options: LaunchSubmitOptions): Promise<LaunchResult> {
   options.onObserved?.({ kind: "sent", at: Date.now() });
   try {
     return await createAgent(input);

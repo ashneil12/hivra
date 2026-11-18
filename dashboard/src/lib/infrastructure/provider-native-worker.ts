@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import release from "../../../provisioner-releases/2026.11.15.8.json";
+import release from "../../../provisioner-releases/2026.11.18.4.json";
+import agentZeroUsrEnvRelease from "../../../provisioner-releases/2026.11.17.3.json";
 import type { PortableProvisionerBundleAsset } from "./connection-preparation";
 import type { FirstBootOperationScope } from "./first-boot-operations";
 import { parseProviderGuestClock, providerGuestBundleManifest, providerGuestBundleReceipt,
@@ -14,7 +15,7 @@ import { providerGuestWorkerRecipe } from "./provider-guest-worker-recipes";
  * cleanup grant BEFORE fresh SSH and record proof against that captured grant.
  * Existing v1 recovery and historical release records deliberately stay intact.
  */
-const VERSION = "2026.11.15.8";
+const VERSION = "2026.11.18.4";
 const PROFILE = "deepseek-owned-service-v1";
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -26,7 +27,7 @@ const rows = release.files.map(file => [file.path, file.sha256, file.bytes,
 const bundleSha256 = hash(JSON.stringify(rows));
 // Python worker.encode adds a newline; the bundle manifest digest does not.
 const closureSha256 = hash(JSON.stringify(rows.filter(row => closurePaths.includes(row[0]))) + "\n");
-function identity(version: "2026.08.31.3" | "2026.08.31.4" | "2026.09.01.1" | "2026.09.01.2" | "2026.09.01.3" | "2026.09.01.4" | "2026.09.01.5" | "2026.09.01.6" | "2026.09.01.7" | "2026.09.01.8" | "2026.09.01.9" | "2026.09.02.1" | "2026.09.02.2" | "2026.09.02.3" | "2026.09.02.4" | "2026.09.02.5" | "2026.09.02.6" | "2026.09.02.7" | "2026.09.02.8" | "2026.09.03.1" | "2026.09.03.2" | "2026.09.04.1" | "2026.09.04.2" | "2026.09.04.3" | "2026.09.04.4" | "2026.09.05.1" | "2026.09.05.2" | "2026.09.05.3" | "2026.09.05.4" | "2026.09.05.5" | "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.21.1" | "2026.09.22.1" | "2026.09.22.2" | "2026.09.24.1" | "2026.09.24.2" | "2026.09.24.3" | "2026.09.24.4" | "2026.10.07.1" | "2026.10.20.1" | "2026.10.20.2" | "2026.11.03.1" | "2026.11.10.1" | "2026.11.10.2" | "2026.11.10.3" | "2026.11.10.4" | "2026.11.10.5" | "2026.11.11.1" | "2026.11.11.2" | "2026.11.11.3" | "2026.11.11.4" | "2026.11.11.5" | "2026.11.11.6" | "2026.11.11.7" | "2026.11.12.1" | "2026.11.12.2" | "2026.11.12.3" | "2026.11.12.4" | "2026.11.12.5" | "2026.11.13.1" | "2026.11.13.2" | "2026.11.13.3" | "2026.11.13.4" | "2026.11.13.5" | "2026.11.13.6" | "2026.11.14.1" | "2026.11.15.1" | "2026.11.15.2" | "2026.11.15.3" | "2026.11.15.5" | "2026.11.15.6" | "2026.11.15.7" | "2026.11.15.8", bundle: string) { return z.object({ version: z.literal(2), agentId: Uuid, operationId: Uuid,
+function identity(version: "2026.08.31.3" | "2026.08.31.4" | "2026.09.01.1" | "2026.09.01.2" | "2026.09.01.3" | "2026.09.01.4" | "2026.09.01.5" | "2026.09.01.6" | "2026.09.01.7" | "2026.09.01.8" | "2026.09.01.9" | "2026.09.02.1" | "2026.09.02.2" | "2026.09.02.3" | "2026.09.02.4" | "2026.09.02.5" | "2026.09.02.6" | "2026.09.02.7" | "2026.09.02.8" | "2026.09.03.1" | "2026.09.03.2" | "2026.09.04.1" | "2026.09.04.2" | "2026.09.04.3" | "2026.09.04.4" | "2026.09.05.1" | "2026.09.05.2" | "2026.09.05.3" | "2026.09.05.4" | "2026.09.05.5" | "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.21.1" | "2026.09.22.1" | "2026.09.22.2" | "2026.09.24.1" | "2026.09.24.2" | "2026.09.24.3" | "2026.09.24.4" | "2026.10.07.1" | "2026.10.20.1" | "2026.10.20.2" | "2026.11.03.1" | "2026.11.10.1" | "2026.11.10.2" | "2026.11.10.3" | "2026.11.10.4" | "2026.11.10.5" | "2026.11.11.1" | "2026.11.11.2" | "2026.11.11.3" | "2026.11.11.4" | "2026.11.11.5" | "2026.11.11.6" | "2026.11.11.7" | "2026.11.12.1" | "2026.11.12.2" | "2026.11.12.3" | "2026.11.12.4" | "2026.11.12.5" | "2026.11.13.1" | "2026.11.13.2" | "2026.11.13.3" | "2026.11.13.4" | "2026.11.13.5" | "2026.11.13.6" | "2026.11.14.1" | "2026.11.15.1" | "2026.11.15.2" | "2026.11.15.3" | "2026.11.15.5" | "2026.11.15.6" | "2026.11.15.7" | "2026.11.15.8" | "2026.11.17.1" | "2026.11.17.2" | "2026.11.17.3" | "2026.11.17.4" | "2026.11.17.5" | "2026.11.17.6" | "2026.11.17.7" | "2026.11.17.8" | "2026.11.17.9" | "2026.11.18.1" | "2026.11.18.2" | "2026.11.18.3" | "2026.11.18.4", bundle: string) { return z.object({ version: z.literal(2), agentId: Uuid, operationId: Uuid,
   bundle: z.object({ version: z.literal(1), state: z.literal("bundle_installed"), scopeSha256: Digest,
     bundleSha256: z.literal(bundle), provisionerVersion: z.literal(version) }).strict(),
   nativeCleanup: z.object({ profile: z.literal(PROFILE), closureSha256: z.literal(closureSha256) }).strict(),
@@ -65,6 +66,19 @@ const Identity = z.union([
   identity("2026.11.15.5", "763ce9f86132cd5051819f3a4fe35cfd296ec2551f68000818a85ad980f22c58"),
   identity("2026.11.15.6", "3063e0f8e3f0fbd3d256d9b6ae635bf02d129c049c99849ae376e03082896973"),
   identity("2026.11.15.7", "28ae48475970fd17617292ae3a3b9823769ed3c9c8fc9d9a6774d32199a510ff"),
+  identity("2026.11.15.8", "697c6313094ef71186f966402e32524d8ae9f49c0f1b86d4d9d918dac8e0d499"),
+  identity("2026.11.17.1", "992ed8cd0bbfda5a5d2774394000339c0a7245f1ce15775c74f6d9424238493e"),
+  identity("2026.11.17.2", "9010b4c2b0abf9863fc70b3e8482fc500ecb4cfa8ced51f3776006e2066ebb02"),
+  identity("2026.11.17.3", "1346e7abf511d196a889b87231c098b7c6c9694690177db57a28ae2e8c368485"),
+  identity("2026.11.17.4", "001acfd88189bb756f0fee77209ade989f990d1eaae7b5bc992604cea514cbdf"),
+  identity("2026.11.17.5", "8c726d7c0c3959256bc42c935cedf9f6223e56941afb5caca16e1a8a2a13259c"),
+  identity("2026.11.17.6", "32f390c60478608464840c4471a10de28ddb8538cad795c63604df97b47c00f7"),
+  identity("2026.11.17.7", "2a7bcbfa2c1f5ee25763ee24c9da67d2adb9b7d7d8f6e8ed67fb4af631a1bda8"),
+  identity("2026.11.17.8", "35e68e27defa35a87bc1534c2ac8892bf1bbcdb4247486bc6bd098ee71261790"),
+  identity("2026.11.17.9", "1b4ba16a649580df24e25cd4c8c24e999756286a29bd117e24c0addc4f099d8f"),
+  identity("2026.11.18.1", "18a96a99165a0266ac83b5807ce14b83aa04b4b6701b19de8314559196dca132"),
+  identity("2026.11.18.2", "fa76708ee68f6e0626eb98dd1909fae215d4fb2e76373df0427287e35cbeabc8"),
+  identity("2026.11.18.3", "87177637f262036044be9d3c72fbbe339b80d19061a45d06d766b2531a701a75"),
   identity("2026.11.11.2", "21d6f9aaed7820ef3c80c5fecc2c237ebe9fdc63bcd7b819dae0b341de81a15f"),
   identity("2026.11.10.5", "152d4137a9f509b4461dd444c43dff214dab3cdf6fc2c6affcf699c77588f993"),
   identity("2026.10.20.2", "e89fbe1b10c5ed4c365a0d300b79c4b8f836a6c4811e7eb8b579defb0cd67f42"),

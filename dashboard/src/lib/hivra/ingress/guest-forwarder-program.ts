@@ -412,7 +412,7 @@ function assertTarget(vmid: number, bindingTag: string | null): string {
  * passes that bridge's own IPv4 addresses to the guest, which must find one of
  * them as its default gateway. Refusals print one HIVRA_INGRESS_FWD_REFUSED
  * line; otherwise the guest's one HIVRA_INGRESS_FWD line is passed through.
- * Run it with runProxmoxHostScript (the script arrives on stdin).
+ * Run it through the ingress runHostScript, which never feeds the script on stdin.
  */
 export function buildGuestForwarderHostScript(
   target: { vmid: number; bindingTag: string | null },

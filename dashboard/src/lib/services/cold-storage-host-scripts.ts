@@ -1,5 +1,6 @@
 import {
   ARCHIVE_VM_COLD_SH_B64,
+  REENCRYPT_COLD_ARCHIVE_SH_B64,
   RESTORE_VM_COLD_SH_B64,
 } from "./cold-storage-host-scripts.generated";
 
@@ -19,11 +20,15 @@ import {
  * `node scripts/generate-cold-storage-host-scripts.cjs` after editing either .sh.
  */
 
-export type ColdStorageHostScript = "archive-vm-cold.sh" | "restore-vm-cold.sh";
+export type ColdStorageHostScript =
+  | "archive-vm-cold.sh"
+  | "restore-vm-cold.sh"
+  | "reencrypt-cold-archive.sh";
 
 const B64_BY_NAME: Record<ColdStorageHostScript, string> = {
   "archive-vm-cold.sh": ARCHIVE_VM_COLD_SH_B64,
   "restore-vm-cold.sh": RESTORE_VM_COLD_SH_B64,
+  "reencrypt-cold-archive.sh": REENCRYPT_COLD_ARCHIVE_SH_B64,
 };
 
 /**

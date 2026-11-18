@@ -1334,7 +1334,7 @@ describe("POST /api/hivra/agents", () => {
     const kickoff = mockRunProxmoxHostScript.mock.calls[0][0] as string;
     expect(kickoff).toContain("claimed_octets=");
     expect(kickoff).toContain('grep -qx "$cand"');
-    const allocationLockedAt = kickoff.indexOf("flock -w 60 8");
+    const allocationLockedAt = kickoff.indexOf("flock -w 150 8");
     const localInventoryAt = kickoff.indexOf('local_vmids="$(qm list');
     const clusterInventoryAt = kickoff.indexOf("pvesh get /cluster/resources --type vm");
     const ipInventoryAt = kickoff.indexOf('claimed_octets="$(');
@@ -2795,7 +2795,9 @@ describe("POST /api/hivra/agents", () => {
     expect(provisionScript).toContain("HIVRA_MODEL_BASE_URL_B64=");
     expect(provisionScript).toContain("write_secret_b64 'https://hivra.cloud/api/managed-venice/v1'");
     expect(provisionScript).toContain("HIVRA_HERMES_MODEL_B64=");
-    expect(provisionScript).toContain("write_secret_b64 'deepseek-v4-pro'");
+    // OpenClaw starts on Flash: Venice's deepseek-v4-pro stalled on its prompt.
+    expect(provisionScript).toContain("write_secret_b64 'deepseek-v4-1-flash'");
+    expect(provisionScript).not.toContain("write_secret_b64 'deepseek-v4-pro'");
     const openClawExec = provisionScript.split("\n").find((line) => line.trimStart().startsWith("exec env ")) ?? "";
     expect(openClawExec).not.toContain("hven_live_TESTKEY123");
     expect(mockAgentInsert).toHaveBeenCalledWith(
@@ -3211,7 +3213,7 @@ describe("POST /api/hivra/agents", () => {
     expect(kickoffScript).toContain("HIVRA_VMID_REFERENCE_PLANE='canaryplanefixture'");
     expect(kickoffScript).toContain("HIVRA_VMID_REFERENCE_LANE=hivra");
     expect(kickoffScript).toContain("HIVRA_VMID_REFERENCES='200\n201'");
-    const lock = kickoffScript.indexOf("flock -w 60 8");
+    const lock = kickoffScript.indexOf("flock -w 150 8");
     const sync = kickoffScript.indexOf("\nhivra_vmid_reference_sync");
     const record = kickoffScript.indexOf('hivra_vmid_reference_record "$VMID"');
     expect(lock).toBeGreaterThan(-1);
@@ -4057,7 +4059,6 @@ describe("GET /api/hivra/agents", () => {
   });
 
   it("tags Claude Code / Codex agents from one read of their stored software observations, never their computers", async () => {
-    const { AGENT_CLI_VERSIONS } = jest.requireActual("@/lib/infrastructure/portable-provisioner-contract") as typeof import("@/lib/infrastructure/portable-provisioner-contract");
     mockExistingAgents = [
       { id: "agent-behind", user_id: "user-free", type: "codex", name: "BEHIND", status: "running", cpu: 2, ram: 4, computer_substrate: "proxmox-kvm", api_token: "box-token" },
       { id: "agent-current", user_id: "user-free", type: "codex", name: "CURRENT", status: "running", cpu: 2, ram: 4, computer_substrate: "proxmox-kvm" },
@@ -4076,7 +4077,7 @@ describe("GET /api/hivra/agents", () => {
           read.in = args;
           return { data: [
             { agent_id: "agent-behind", user_id: "user-free", observation: "reported", installed_version: "0.100.0", observed_at: new Date().toISOString() },
-            { agent_id: "agent-current", user_id: "user-free", observation: "reported", installed_version: AGENT_CLI_VERSIONS.codex, observed_at: new Date().toISOString() },
+            { agent_id: "agent-current", user_id: "user-free", observation: "reported", installed_version: "0.149.1", observed_at: new Date().toISOString() },
           ], error: null };
         },
       };
@@ -4086,8 +4087,8 @@ describe("GET /api/hivra/agents", () => {
 
     const body = await (await GET()).json();
     const byId = Object.fromEntries(body.data.agents.map((agent: { id: string }) => [agent.id, agent]));
-    expect(byId["agent-behind"].agent_software).toEqual({ badge: "update_available", cli: "codex", app: null, installed: "0.100.0", tested: AGENT_CLI_VERSIONS.codex });
-    expect(byId["agent-current"].agent_software).toEqual({ badge: null, cli: "codex", app: null, installed: AGENT_CLI_VERSIONS.codex, tested: AGENT_CLI_VERSIONS.codex });
+    expect(byId["agent-behind"].agent_software).toEqual({ badge: null, cli: "codex", app: null, installed: "0.100.0" });
+    expect(byId["agent-current"].agent_software).toEqual({ badge: null, cli: "codex", app: null, installed: "0.149.1" });
     expect(byId["computer-1"]).not.toHaveProperty("agent_software");
     expect(softwareReads).toEqual([{ eq: [["user_id", "user-free"]], in: ["agent_id", ["agent-behind", "agent-current"]] }]);
     expect(fetchSpy).not.toHaveBeenCalled();

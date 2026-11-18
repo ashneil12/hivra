@@ -31,6 +31,7 @@ const COLUMNS = [
     { label: "GitHub", href: "https://github.com/ashneil12/hivra" },
     { label: "X (@HivraOS)", href: PUBLIC_PROJECT_LINKS.x },
     { label: "Litepaper", href: LITEPAPER_HREF, tokenSurface: true },
+    { label: "Docs", href: "/docs" },
     { label: "Blog", href: "/blog" },
     { label: "Free tools", href: "/tools" },
     { label: DOWNLOAD_LABEL, href: "/download" },

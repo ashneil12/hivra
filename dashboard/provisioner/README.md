@@ -159,22 +159,25 @@ and Chrome install if already present, and re-applies the overlay + prompt).
 | `PROFILE_DIR` | `/home/bux/.browser-profile` | **Must be non-default** (see gotcha #1). |
 | `HIVRA_CHAT_PORT` | `8080` | Hivra chat HTTP port. |
 | `DUMMY_BU_KEY` | `local` | Dummy `BROWSER_USE_API_KEY` (installer requires one; we self-host). |
-| `CLAUDE_CODE_VERSION` / `CODEX_CLI_VERSION` | from `agent-cli-versions.json` | Vetted CLI versions. Leave unset on managed computers so the installer, the runtime updater and the dashboard read the same pins. |
-| `AEON_REF` / `OPENCLAW_VERSION` / `AGENT_ZERO_IMAGE_DIGEST` | from `agent-app-versions.json` | Tested app versions (a full upstream commit, an x.y.z release, an image digest). Leave unset on managed computers for the same reason. |
+| `CLAUDE_CODE_VERSION` / `CODEX_CLI_VERSION` | upstream's newest npm release | Resolved at install time from the npm registry's `latest` tag. Set only to install a specific version. |
+| `AEON_REF` / `OPENCLAW_VERSION` / `AGENT_ZERO_IMAGE_DIGEST` | upstream's newest | Resolved at install time: the Aeon repository's `HEAD` commit, OpenClaw's npm `latest`, the digest behind `agent0ai/agent-zero:latest`. Set only to install a specific version. |
 
 ### Agent CLI versions
 
-Hivra owns the Claude Code and Codex versions on its computers. The vetted
-versions ship as `agent-cli-versions.json` (exported to the dashboard as
-`AGENT_CLI_VERSIONS`); vendor self-updaters are off (`DISABLE_AUTOUPDATER=1`
-for every CLI the gateway starts and on both terminal units, and Codex's
-`check_for_update_on_startup = false`, set by `hivra-codex-config-pin.py` only
-when the owner has not chosen). The agent terminal runs the exact binary the
-chat gateway runs and never falls back to another vendor's CLI.
+Hivra pins no Claude Code or Codex version. A new computer installs each
+CLI's newest npm release, and after that only the owner updates it: the
+Update button (below) or the CLI's own npm command. Hivra never updates a CLI
+by itself, and the vendors' background self-updaters stay off
+(`DISABLE_AUTOUPDATER=1` for every CLI the gateway starts and on both terminal
+units, and Codex's `check_for_update_on_startup = false`, set by
+`hivra-codex-config-pin.py` only when the owner has not chosen), so a CLI never
+swaps itself under a running chat. The agent terminal runs the exact binary
+the chat gateway runs and never falls back to another vendor's CLI.
 
-`hivra-update-guest-runtime.sh` reports the installed and vetted versions
-(`HIVRA_AGENT_CLI` line) and, when they differ, starts
-`hivra-agent-cli-update.sh` as a transient unit: it downloads the package,
+When the owner updates, `hivra-update-guest-runtime.sh` reports the installed
+version (`HIVRA_AGENT_CLI` line, `target=latest`) and starts
+`hivra-agent-cli-update.sh` as a transient unit: it resolves the newest npm
+release (and ends at once when that is installed already), downloads it,
 waits until no chat run is in flight (up to 6 hours), holds new runs back for
 the few seconds of the swap, verifies the new version and restores the previous
 package on failure. The gateway reports the installed version and the swap's
@@ -182,21 +185,23 @@ progress to the dashboard as `agentCli` on authenticated `GET /api/meta`.
 
 ### Agent app versions
 
-Hivra owns the Aeon dashboard, OpenClaw and Agent Zero versions on their
-computers the same way. The tested versions ship as `agent-app-versions.json`
-(exported to the dashboard as `AGENT_APP_VERSIONS`, with each pin's owner-facing
-label and the earlier pins Hivra moved off). The installer records what it put
-on the computer in the root-owned `/var/lib/hivra/agent-app.json`.
+The Aeon dashboard, OpenClaw and Agent Zero work the same way: a new computer
+installs upstream's newest (Aeon's `HEAD` commit, OpenClaw's npm `latest`,
+the image digest behind `agent0ai/agent-zero:latest`), and only the owner's
+Update moves it again. The installer records what it put on the computer in
+the root-owned `/var/lib/hivra/agent-app.json`.
 
-The runtime update reports the installed and tested versions
-(`HIVRA_AGENT_APP` line) and, when they differ, starts
-`hivra-agent-app-update.sh` as a transient unit (`hivra-agent-app-update`):
+When the owner updates, the runtime update reports the installed version
+(`HIVRA_AGENT_APP` line, `target=latest`) and starts
+`hivra-agent-app-update.sh` as a transient unit (`hivra-agent-app-update`). It
+first resolves upstream's newest the same way, ends at once when that is
+installed already, and otherwise:
 
 | App | Prepared while it keeps running | Swap | Put back on failure |
 |---|---|---|---|
-| OpenClaw | `npm cache add openclaw@<version>` as `bux` | `npm install -g` as `bux`, restart `bux-openclaw` | the package copy taken before the swap |
-| Agent Zero | `docker pull agent0ai/agent-zero@<digest>` (needs 12 GB free) | stop, copy `/opt/a0/usr` aside, rewrite the unit's one image digest, start | the previous unit and the data copy; the old image is removed only after success |
-| Aeon | a fresh build of the upstream commit in `~bux/.hivra/aeon-dashboard/<commit>` (never the owner's fork clone) | a `bux-aeon` drop-in setting `WorkingDirectory` and `AEON_REPO_ROOT=~/aeon`, restart | the previous drop-in, or none (the build in the clone) |
+| OpenClaw | `npm cache add openclaw@<newest>` as `bux` | `npm install -g` as `bux`, restart `bux-openclaw` | the package copy taken before the swap |
+| Agent Zero | `docker pull agent0ai/agent-zero:latest`, then its digest (needs 12 GB free) | stop, copy `/opt/a0/usr` aside, rewrite the unit's one image digest, start | the previous unit and the data copy; the old image is removed only after success |
+| Aeon | a fresh build of upstream's `HEAD` commit in `~bux/.hivra/aeon-dashboard/<commit>` (never the owner's fork clone) | a `bux-aeon` drop-in setting `WorkingDirectory` and `AEON_REPO_ROOT=~/aeon`, restart | the previous drop-in, or none (the build in the clone) |
 
 It waits (up to 6 hours, then `deferred`) until nobody has used the app
 through the gateway for 5 minutes and no app WebSocket is open (the gateway's
@@ -574,11 +579,99 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
-- **Agent Zero settings land where v2.15 reads them (`2026.11.15.8`).** Agent
-  Zero v2.15 reads only `/a0/usr/.env` and no longer copies the mounted
-  `/a0/.env` into it, so the seeded login and managed model were ignored and
-  every new Agent Zero launch failed its gateway readiness check. The
-  provisioner merges those keys into `/opt/a0/usr/.env` as well.
+- **No package upgrade at first boot (`2026.11.18.4`).**
+  Every VM gets `ciupgrade 0`. Proxmox otherwise writes `package_upgrade: true`
+  into its generated user-data, and cloud-init then runs a full apt upgrade and,
+  on Ubuntu, `snap refresh` at first boot, so an unreachable snap store still
+  failed launches after `2026.11.18.3`. The guest keeps Ubuntu's daily
+  unattended security upgrades. Hosts without the option behave as before.
+
+- **Launches no longer depend on the snap store (`2026.11.18.3`).**
+  The guest's QEMU Guest Agent is installed by apt from the vendor data's
+  runcmd instead of cloud-config's `package_update`/`packages`. On Ubuntu that
+  module also runs `snap refresh`, so when the snap store's IPv4 front ends
+  refused connections every launch failed cloud-init, though nothing in a
+  launch needs a snap.
+
+- **Empty computers, kept cloud-init details, OpenClaw on Flash (`2026.11.18.2`).**
+  `HIVRA_PROVISION_MODE=empty` makes a computer's place (number, address,
+  ownership tags and receipt under the same lock as a launch, and a blank disk
+  of the asked size) without booting it or running any installer; nothing calls
+  it yet. When a guest's cloud-init fails, its status and the tail of its output
+  are kept in the root-only `/root/hivra-prov-<vmid>.cloud-init.txt` before the
+  guest is removed; the host log still carries only the classified reason. An
+  OpenClaw launched without a model now seeds DeepSeek V4.1 Flash.
+
+- **OpenClaw replies on Venice, and Aeon keeps a newer gh (`2026.11.18.1`).**
+  OpenClaw adds DeepSeek's own top-level `thinking` field to deepseek-v4
+  models, which Venice's strict chat schema rejects ("Invalid request
+  parameters"). The seeded Venice model, and a Venice model set from the
+  dashboard, now carry `compat.thinkingFormat: "openai"`, OpenClaw's own setting
+  for a plain OpenAI-style request. Aeon's step installed the pinned gh .deb even
+  when the image already had a newer gh, which apt refuses as a downgrade; any
+  gh at or above the pin is now kept.
+
+- **A failed launch says which step stopped (`2026.11.17.9`).** The guest is
+  removed when provisioning fails, so the host log only read "step
+  provision-claude-code-box.sh exited with status 1". The step's `die()` now
+  leaves its own message (Hivra's fixed text) in a root-only file under `/run`,
+  and the installer adds it to the "Hivra guest installation failure" line when
+  it is short plain text.
+
+- **OpenClaw launches finish installing (`2026.11.17.8`).** With the base
+  path set, OpenClaw's gateway answers 503 at its root, so the install's
+  readiness check (which asked for `/`) failed every new OpenClaw launch on
+  `2026.11.17.7`. The check now asks for `/openclaw/` when `openclaw.json`
+  names that base path, and `/` otherwise.
+
+- **OpenClaw's Control UI starts again (`2026.11.17.7`).**
+  OpenClaw 2026.11.5 sends `Referrer-Policy: no-referrer`, so the box gateway
+  could no longer tell which root-absolute requests (`/assets/*`, `/fonts/*`,
+  `/chat/*`) came from the Control UI it mounts at `/openclaw`, and the UI
+  never started ("Control UI did not start"). A new launch sets OpenClaw's own
+  `gateway.controlUi.basePath` to `/openclaw`, and the box gateway forwards
+  `/openclaw` unchanged whenever `openclaw.json` names that base path. A
+  computer whose config has no base path keeps the previous strip and Referer
+  re-home.
+
+- **Agent Zero has a model on a managed launch (`2026.11.17.6`).**
+  Current Agent Zero picks models from presets and ignores the `A0_SET_*`
+  model defaults, so a fresh box with a managed model key also gets Agent
+  Zero's Default preset (`usr/plugins/_model_config/presets.yaml`) set to the
+  same model and gateway. An existing presets file is never touched.
+  The same release fixes DeepSeek Harness launches: its gateway folder now
+  gets `import-state.cjs`, which `server.js` has required at start since
+  `2026.11.15.2`.
+
+- **OpenClaw and Aeon launch on their newest releases (`2026.11.17.4`).**
+  The box gateway drops forwarded-client headers on `/openclaw`, which
+  OpenClaw 2026.11.5 and later otherwise refuse from a loopback proxy
+  (`proxy_attribution_required`). Aeon keeps its own `next.config.ts` (as
+  `next.config.hivra-upstream.ts`) with only the `/aeon` mount added, since
+  its build now needs the bundler root that file sets. The host capacity
+  check counts a paused (napping) guest as active instead of refusing every
+  launch on that host with `invalid QEMU status`.
+
+- **Agent Zero settings land where current images read them (`2026.11.17.3`).**
+  Agent Zero v2.15 and later read only `/a0/usr/.env` and no longer copy the
+  mounted `/a0/.env` into it, so the seeded login and managed model were
+  ignored and every new Agent Zero launch failed its gateway readiness check.
+  The provisioner merges those keys into `/opt/a0/usr/.env` as well.
+
+- **Background reads never wake a napped computer (`2026.11.17.2`).** The
+  wake proxy treats a request carrying `X-Hivra-Background: 1` (Hivra's own
+  cron watchdogs, samplers and probes) as no proof: it never moves
+  `last_authed_at` and never wakes a napped or hibernated VM, which answers it
+  as asleep. A running guest still serves it. The dashboard's background
+  readers send the header.
+
+- **Newest agent version at launch, owner-run updates (`2026.11.17.1`).** Hivra
+  pins no agent version any more: `agent-cli-versions.json` and
+  `agent-app-versions.json` are gone. A launch installs upstream's newest
+  release (npm `latest` for Claude Code, Codex and OpenClaw, the
+  `agent0ai/agent-zero:latest` digest, Aeon's `HEAD` commit). Hivra never
+  updates an agent by itself; the owner's Update resolves the newest release
+  at that moment and swaps with the same rollback as before.
 
 - **Agent Zero plugin web UI imports and the v2.15 pin (`2026.11.15.7`).** The
   gateway now serves no-Referer static module imports under

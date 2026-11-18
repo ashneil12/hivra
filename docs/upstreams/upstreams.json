@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "about": "Every outside repository Hivra installs, takes code from, or was inspired by. Checked weekly with scripts/upstreams/check-upstreams.mjs; see docs/upstreams/README.md.",
-  "lastFullCheck": "2026-11-12",
+  "lastFullCheck": "2026-11-17",
   "repos": [
     {
       "id": "monocode",
@@ -41,8 +41,8 @@
       "watch": "tags",
       "tagPattern": "^v0\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "6883919ad90fb11dd9240d8cb1f51b8bbf37c199",
-        "latest": "v0.23.1"
+        "head": "081e8d9b75b2bedae297a89232b04ef9be7b26a0",
+        "latest": "v0.23.2"
       }
     },
     {
@@ -50,14 +50,13 @@
       "repo": "openclaw/openclaw",
       "role": "agent-runtime",
       "licence": "MIT",
-      "use": "OpenClaw agents, installed from upstream releases; owners can update in place.",
-      "pin": "2026.6.10",
-      "pinFile": "dashboard/provisioner/agent-app-versions.json",
+      "use": "OpenClaw agents: a launch installs the newest npm release; owners update in place.",
+      "pin": null,
       "watch": "tags",
       "tagPattern": "^v\\d{4}\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "d30e45c3f48eaa570df1f4528bcc50e7b28e6c77",
-        "latest": "v2026.11.3"
+        "head": "687dc6c99a32714473a646942382ebcd7f5e6552",
+        "latest": "v2026.11.4"
       }
     },
     {
@@ -65,9 +64,8 @@
       "repo": "agent0ai/agent-zero",
       "role": "agent-runtime",
       "licence": "MIT",
-      "use": "Agent Zero agents run the official image, pinned by digest.",
-      "pin": "v2.2",
-      "pinFile": "dashboard/provisioner/agent-app-versions.json",
+      "use": "Agent Zero agents run the official image: a launch pulls :latest and runs it by digest; owners update in place.",
+      "pin": null,
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+$",
       "checked": {
@@ -80,14 +78,13 @@
       "repo": "anthropics/claude-code",
       "role": "agent-runtime",
       "licence": "Anthropic commercial terms",
-      "use": "Claude Code agents (npm @anthropic-ai/claude-code).",
-      "pin": "2.1.292",
-      "pinFile": "dashboard/provisioner/agent-cli-versions.json",
+      "use": "Claude Code agents (npm @anthropic-ai/claude-code): newest release at launch; owners update.",
+      "pin": null,
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "89eb88e3357be13ae7fcf8966144ad32f44def33",
-        "latest": "v2.1.323"
+        "head": "cd8ca4374469b19c8cd5ee494e839e26d022fbec",
+        "latest": "v2.1.326"
       }
     },
     {
@@ -95,14 +92,13 @@
       "repo": "openai/codex",
       "role": "agent-runtime",
       "licence": "Apache-2.0",
-      "use": "Codex agents (npm @openai/codex).",
-      "pin": "0.149.1",
-      "pinFile": "dashboard/provisioner/agent-cli-versions.json",
+      "use": "Codex agents (npm @openai/codex): newest release at launch; owners update.",
+      "pin": null,
       "watch": "tags",
       "tagPattern": "^rust-v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "1f175fa3c4af6a3f2e8d51971c3734b4a0aaca6b",
-        "latest": "rust-v0.168.0"
+        "head": "e3b721754e1e7e1e942db94431dff957c509e67e",
+        "latest": "rust-v0.169.0"
       }
     },
     {
@@ -115,8 +111,8 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "804aa69617cd96628895125c8d7d6bff04fdc8a3",
-        "latest": "v1.0.2"
+        "head": "9c2a1f14fb63149b7a0963ed54834bf08fdb4b38",
+        "latest": "v1.0.3"
       }
     },
     {
@@ -129,8 +125,8 @@
       "watch": "tags",
       "tagPattern": "^runtime-v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "30af6692aada4010134cca0f169a71b00609beba",
-        "latest": "runtime-v0.1.55"
+        "head": "46f8dc648924508a5acc40801c8f3eadc890f9c9",
+        "latest": "runtime-v0.1.62"
       }
     },
     {
@@ -138,12 +134,11 @@
       "repo": "aaronjmars/aeon",
       "role": "agent-runtime",
       "licence": "MIT",
-      "use": "Aeon agents for customers, pinned by commit.",
-      "pin": "8b8d719715ec9bb68fb858a1e334d23209047d82",
-      "pinFile": "dashboard/provisioner/agent-app-versions.json",
+      "use": "Aeon agents for customers: a launch builds the newest commit; owners update.",
+      "pin": null,
       "watch": "head",
       "checked": {
-        "head": "2cfb3e81aaa03bf97cc82401ef975592c12c8f86",
+        "head": "3290794c11689e442812649984c2942b88ae7a99",
         "latest": null
       }
     },
@@ -158,7 +153,7 @@
       "watch": "tags",
       "tagPattern": "^dsh-v",
       "checked": {
-        "head": "e8f7b93a344964de3dca1ace9e72b6e4d6de87cb",
+        "head": "39163dd30f703a79079e2d2446545cff3c453738",
         "latest": "dsh-v0.2.2-rc.2"
       }
     },
@@ -172,7 +167,7 @@
       "pinFile": "docs/release/RUNTIME-DISTRIBUTION.md",
       "watch": "head",
       "checked": {
-        "head": "a314975ce7bf9aa00baebfef874b6e69474a95cf",
+        "head": "97d5a46cc6e024e1c07134b59758c826e0272ba2",
         "latest": "desktop-v0.5.28"
       }
     },
@@ -185,7 +180,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "2ddded109bdabfb88cf2190f5c24d95382e2cbe5",
+        "head": "0cfdbd989ea82c2e93c6a3b0d7c4c54508af797e",
         "latest": null
       }
     },
@@ -213,7 +208,7 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "ac6cb9c712848741f994d7ecbaccdbab90b526e8",
+        "head": "3b36b9e19ea00a6c21492098308a7f44a8091564",
         "latest": "v4.5.0"
       }
     },
@@ -226,7 +221,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "bb1e77ced31c6d6f2c772b3c0d22d647a50486ca",
+        "head": "c6790ac8e6cd8b1e2f5396e7ce1489a8c96d96d8",
         "latest": null
       }
     },
@@ -240,7 +235,7 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "7c1c55b2a76ddb9f6602f8c0886ecf1b899529f9",
+        "head": "d2aca076f2b1938347bb42ed972b01e3e24ce5d3",
         "latest": "v0.16.0"
       }
     },
@@ -254,7 +249,7 @@
       "pinFile": "dashboard/provisioner/remote-desktop/install-omarchy-web.py",
       "watch": "head",
       "checked": {
-        "head": "d33f1a9125638ce040b6a279423649db6adaff78",
+        "head": "de7c2963f2ed293fc6c8235eee408beb32f1db7a",
         "latest": null
       }
     },
@@ -268,8 +263,8 @@
       "watch": "tags",
       "tagPattern": "^v\\d{4}\\.",
       "checked": {
-        "head": "f1868133b2308a1486624fc9d561b9e58cdf8cb4",
-        "latest": "v2026.1112.40957"
+        "head": "7cf6fbdfbbd2bc561fbb299e15d532ef02b7512d",
+        "latest": "v2026.1116.150042"
       }
     },
     {
@@ -281,7 +276,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "b440a49efee0c0b4cab6f6967232657a69810858",
+        "head": "63a0688b3b2a545db6e8291b74047420ef285e29",
         "latest": null
       }
     },
@@ -321,7 +316,7 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "5006e4c5d591effc223d33c0757ccb770f5c62e6",
+        "head": "941c7130b140739781031dfd91b90f8edad371d3",
         "latest": "v0.165.1"
       }
     },
@@ -334,7 +329,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "6decf5af5f374c01b56cfc41b60794c8735028bb",
+        "head": "01e7f5f746b15493d18fe06b24ae06ac08d5ae74",
         "latest": null
       }
     },
@@ -347,7 +342,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "5c7d24b32d275bce38daedbe81feaebc31393587",
+        "head": "7d3a53fd86830e0f9a3df15839748c6496d56db6",
         "latest": null
       }
     },
@@ -360,7 +355,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "752ecbd0beef7b797e6a443a0f371fca77e26233",
+        "head": "ad6da0b724799d6a70934911dbda1cfaafcf39b8",
         "latest": null
       }
     },
@@ -386,7 +381,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "9fff4d82260f74291bff2e2058dafe76e1448411",
+        "head": "840698fc899a5439631c191de6d1ceb4050ff003",
         "latest": null
       }
     },
@@ -399,7 +394,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "66a8639187e9d748ec3dc84675ad3843999b1a01",
+        "head": "02902732e5ae4fe06ce55e5e70b5550c7fdf6d2e",
         "latest": null
       }
     },
@@ -412,8 +407,8 @@
       "pin": null,
       "watch": "tags",
       "checked": {
-        "head": "c392d7e9d1de01337b749c0070929933e9f6f09f",
-        "latest": "schema-v1.31.0"
+        "head": "4aab69b4e6bcb53965ff5b1141d2f04a62a25c6c",
+        "latest": "schema-v1.32.0"
       }
     },
     {
@@ -425,7 +420,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "59761d8d5a4e2e0886284527c8c25881ac313901",
+        "head": "2c7d6493952170ab71d9377c467fbc69d78a75d7",
         "latest": null
       }
     },
@@ -438,7 +433,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "580905910ceba661ac9222431b8d6d73ad6ffa72",
+        "head": "0d6a5fd27cbbba7d52903d65876a82bc3bcd7af7",
         "latest": null
       }
     },
@@ -451,7 +446,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "726c2387608194826411c50429bdd8ebd9c71f25",
+        "head": "391b22443460fb30432da889b44aa413478d5717",
         "latest": null
       }
     },
@@ -465,7 +460,7 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "60694167aaf75be77a72424578e074fa7334b41a",
+        "head": "cc88013eadcf432da1b37d47d445b7e8bcc3046e",
         "latest": "v1.18.0"
       }
     },
@@ -478,7 +473,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "f9ef4d8186e17d2fabc1d0ae929ccafc1dfa4785",
+        "head": "89cacadae21eca4270a8f7c79281d0426d33ac5f",
         "latest": null
       }
     },
@@ -491,7 +486,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "94dbc2e580af57ee0bdf4ce424a805e25e586833",
+        "head": "f671b15c3e92a8abb659e8d30ce14953532eef00",
         "latest": null
       }
     },
@@ -504,7 +499,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "505de5a420307e55c15a07b15356b27901ddf553",
+        "head": "c67cd08246208ebd1c480e866d0cd7304d035ae1",
         "latest": null
       }
     },
@@ -517,7 +512,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "64630c04addb8bb18f3b89cb6eb3d08efe8eecfa",
+        "head": "9460aa995bf5d76a140b762822c8306cdb7f79db",
         "latest": null
       }
     },
@@ -530,7 +525,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "b5d64643894dafc6006f2e810a1ca46c2c0454fc",
+        "head": "64fb1e5713b872910ffa156dca65a621028e1d78",
         "latest": null
       }
     },
@@ -543,7 +538,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "c45f0c88410aefee36a78040e713951a291e9e5b",
+        "head": "ee69bad028247b8c42801e7219b282dd2d7b3282",
         "latest": null
       }
     },
@@ -556,7 +551,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "d3f2b35f69cf283aa566cd0ec3e54a9dcd77be70",
+        "head": "a8ee22d67adb2b5e23fe5e8692e2df8847241a00",
         "latest": null
       }
     },
@@ -569,7 +564,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "2030ff16e8b4e0e815c358e7a5156a9e5bb40191",
+        "head": "07908f93053fee452d649eb6d308952948b3fd53",
         "latest": null
       }
     },
@@ -582,7 +577,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "00f918c5127ffff1d33bc24ad8187c144eadcdd8",
+        "head": "4d6a42e08fad9999602fdc9273b0960976c010d9",
         "latest": null
       }
     }

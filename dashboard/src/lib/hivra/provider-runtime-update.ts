@@ -19,8 +19,7 @@ import { gzipSync } from "node:zlib";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { loadPortableProvisionerBundle, type PortableProvisionerBundleAsset } from "@/lib/infrastructure/connection-preparation";
-import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
-import { AGENT_CLI_LINE, agentSoftwareSubject, HERMES_UPDATE_TARGET, isLatestTargetApp, parseAgentAppReport, parseAgentCliReport } from "./agent-cli-status";
+import { AGENT_CLI_LINE, AGENT_UPDATE_TARGET, agentSoftwareSubject, parseAgentAppReport, parseAgentCliReport } from "./agent-cli-status";
 import { readAgentSoftwareRecord, recordOwnerAgentSoftwareRequest, requestResultOf } from "./agent-cli-store";
 import { PROVIDER_RUNTIME_UPDATE_TYPES } from "./lifecycle-support";
 import { PROVIDER_RUNTIME_UPDATE_FAILED, PROVIDER_RUNTIME_UPDATE_LOST, PROVIDER_RUNTIME_UPDATE_NOT_STARTED,
@@ -34,9 +33,9 @@ export type ProviderRuntimeUpdateOperation = z.infer<typeof Operation>;
 
 /** The gateway assets and terminal files the guest half expects, as the Proxmox host half archives them. */
 const GATEWAY_ASSETS = ["server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "chat-runs.cjs", "index.html", "app.js"] as const;
-const TERMINAL_ASSETS = ["hivra-agent-shell", "bux-ttyd-base-path.conf", "bux-box-ttyd.service", "agent-cli-versions.json",
+const TERMINAL_ASSETS = ["hivra-agent-shell", "bux-ttyd-base-path.conf", "bux-box-ttyd.service",
   "hivra-agent-cli-update.sh", "hivra-codex-config-pin.py", "hivra-tg-apply", "hivra-claude-app.py", "hivra-claude-app.service",
-  "claude-desktop-pin.json", "agent-app-versions.json", "hivra-agent-app-update.sh", "local-browser-keeper.py", "chrome-pin.json",
+  "claude-desktop-pin.json", "hivra-agent-app-update.sh", "local-browser-keeper.py", "chrome-pin.json",
   "hivra-surface-watchdog.py", "hivra-surface-watchdog.service"] as const;
 const GUEST_HALF = "hivra-guest-runtime-update.sh";
 
@@ -172,9 +171,9 @@ export function buildProviderRuntimeUpdateStatusScript(operationId: string): str
     "  code=\"$(head -c 8 \"$DIR/exit\" | tr -cd '0-9')\"",
     "  committed=0; grep -Fxq HIVRA_GUEST_RUNTIME_UPDATED \"$DIR/result\" 2>/dev/null && committed=1",
     "  printf 'HIVRA_PROVIDER_RUNTIME_UPDATE_STATE finished %s %s\\n' \"${code:-255}\" \"$committed\"",
-    "  grep -m1 -xE 'HIVRA_AGENT_CLI name=(claude-code|codex) version=([0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6}|unknown) target=[0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6} state=(current|scheduled|running|failed)' \"$DIR/result\" 2>/dev/null || true",
+    "  grep -m1 -xE 'HIVRA_AGENT_CLI name=(claude-code|codex) version=([0-9]{1,6}\\.[0-9]{1,6}\\.[0-9]{1,6}|unknown) target=latest state=(current|scheduled|running|failed)' \"$DIR/result\" 2>/dev/null || true",
     // An app agent (Aeon, OpenClaw, Agent Zero, Hermes, OpenBot) reports its app line instead.
-    "  grep -m1 -xE 'HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes|openbot|nuphos) version=[^ ]{1,80} target=[^ ]{1,80} state=(current|scheduled|running|failed)' \"$DIR/result\" 2>/dev/null || true",
+    "  grep -m1 -xE 'HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes|openbot|nuphos) version=[^ ]{1,80} target=latest state=(current|scheduled|running|failed)' \"$DIR/result\" 2>/dev/null || true",
     "  exit 0",
     "fi",
     `state="$(systemctl show -p ActiveState --value ${unitName(operationId)}.service 2>/dev/null || true)"`,
@@ -305,11 +304,9 @@ export async function recordProviderSoftwareUpdate(
   const line = subject.cli ? observed.agentCli : observed.agentApp;
   const report = line ? (subject.cli ? parseAgentCliReport(line) : parseAgentAppReport(line)) : null;
   const matching = report && report.name === subject.software ? report : null;
-  const tested = subject.cli ? AGENT_CLI_VERSIONS[subject.cli]
-    : isLatestTargetApp(subject.app) ? HERMES_UPDATE_TARGET : AGENT_APP_VERSIONS[subject.app!].version;
   const ref = { id: agent.id, user_id: agent.user_id, type: subject.type };
   await recordOwnerAgentSoftwareRequest({
-    agent: ref, subject, target: matching?.target ?? tested, requestedAt: new Date(),
+    agent: ref, subject, target: matching?.target ?? AGENT_UPDATE_TARGET, requestedAt: new Date(),
     result: requestResultOf({ ok: true, report: matching }), report: matching,
     previous: await readAgentSoftwareRecord(ref.id, ref.user_id),
   });

@@ -13,6 +13,16 @@
 # Storage Box, writes the manifest last, then removes the local temporary dump.
 #
 # Default is dry-run. Pass --apply as the fourth arg to execute.
+#
+# Optional encryption at rest (off by default; with it off nothing below changes):
+#   HERMES_BACKUP_ENCRYPTION=on  HERMES_BACKUP_AGE_RECIPIENT=age1...
+# The vzdump archive is encrypted with `age` to that PUBLIC recipient before upload and the
+# plaintext is removed from scratch. The remote name gains an ".age" suffix, the manifest
+# gains "encryption": "age" and "plain_sha256", and backup_sha256 / backup_size_bytes describe
+# the uploaded (encrypted) file. No secret key is ever needed on this host. The script never
+# installs age itself.
+# Refusal exit codes (before vzdump runs): 7 age not installed, 8 missing/invalid recipient.
+# Exit 9: age failed after vzdump (nothing uploaded).
 
 set -euo pipefail
 
@@ -36,6 +46,9 @@ if [ "$MODE" != "--apply" ]; then
   echo "would run: vzdump $VMID --mode snapshot --compress zstd --dumpdir <scratch>"
   echo "would upload: daily/$STORAGE_TIER/$INSTANCE_ID/vzdump-qemu-$VMID-<ts>.vma.zst"
   echo "would write manifest last: daily-meta/$INSTANCE_ID/<ts>.json"
+  case "${HERMES_BACKUP_ENCRYPTION:-}" in
+    on|1|true|yes) echo "would encrypt with age before upload; remote name gets an .age suffix" ;;
+  esac
   exit 0
 fi
 
@@ -43,6 +56,28 @@ if ! qm config "$VMID" >/dev/null 2>&1; then
   echo "[$VMID] no such VM on $(hostname)" >&2
   exit 3
 fi
+
+BACKUP_ENCRYPTION=off
+BACKUP_AGE_RECIPIENT=""
+case "${HERMES_BACKUP_ENCRYPTION:-}" in
+  ""|off|0|false|no) ;;
+  on|1|true|yes)
+    BACKUP_ENCRYPTION=on
+    BACKUP_AGE_RECIPIENT="${HERMES_BACKUP_AGE_RECIPIENT:-}"
+    if ! [[ "$BACKUP_AGE_RECIPIENT" =~ ^age1[0-9a-z]{58}$ ]]; then
+      echo "REFUSING_BACKUP_BAD_AGE_RECIPIENT vmid=$VMID: HERMES_BACKUP_ENCRYPTION is on but HERMES_BACKUP_AGE_RECIPIENT is missing or not an age1... public key; nothing was backed up" >&2
+      exit 8
+    fi
+    if ! command -v age >/dev/null 2>&1; then
+      echo "REFUSING_BACKUP_NO_AGE vmid=$VMID: HERMES_BACKUP_ENCRYPTION is on but the age binary is not installed on $(hostname); nothing was backed up" >&2
+      exit 7
+    fi
+    ;;
+  *)
+    echo "REFUSING_BACKUP_BAD_AGE_RECIPIENT vmid=$VMID: unrecognised HERMES_BACKUP_ENCRYPTION value; use on or off; nothing was backed up" >&2
+    exit 8
+    ;;
+esac
 
 MIN_HOST_HEADROOM_MB="${HERMES_DAILY_BACKUP_MIN_HOST_HEADROOM_MB:-8192}"
 MIN_SCRATCH_MB="${HERMES_DAILY_BACKUP_MIN_SCRATCH_MB:-32768}"
@@ -153,6 +188,12 @@ select_scratch_root() {
     avail="${avail:-0}"
     fs="${fs:-unknown}"
     echo "SCRATCH_CANDIDATE root=$root fs=$fs avail_mb=$avail required_mb=$MIN_SCRATCH_MB"
+    # A RAM-backed /tmp would hold the whole archive (twice, when encrypting)
+    # in host memory that guests need. Only use one when named explicitly.
+    if [ -z "${HERMES_DAILY_BACKUP_SCRATCH_ROOTS:-}" ] && { [ "$fs" = tmpfs ] || [ "$fs" = ramfs ]; }; then
+      echo "SCRATCH_CANDIDATE root=$root skipped=memory_backed"
+      continue
+    fi
     if [[ "$avail" =~ ^[0-9]+$ ]] && [ "$avail" -ge "$MIN_SCRATCH_MB" ] && [ "$avail" -gt "$best_avail" ]; then
       best="$root"
       best_avail="$avail"
@@ -202,6 +243,24 @@ fi
 ARCHIVE_SIZE="$(stat -c %s "$ARCHIVE" 2>/dev/null || stat -f %z "$ARCHIVE")"
 ARCHIVE_SHA="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
 
+MANIFEST_ENC_FIELDS=""
+if [ "$BACKUP_ENCRYPTION" = "on" ]; then
+  PLAIN_SHA="$ARCHIVE_SHA"
+  echo "ENCRYPTING vmid=$VMID with age (public recipient)"
+  if ! age -r "$BACKUP_AGE_RECIPIENT" -o "$ARCHIVE.age" "$ARCHIVE" || [ ! -s "$ARCHIVE.age" ]; then
+    echo "age encryption failed for VMID=$VMID; nothing uploaded" >&2
+    rm -f "$ARCHIVE.age"
+    exit 9
+  fi
+  # The plaintext must not outlive the encrypted copy on scratch.
+  rm -f "$ARCHIVE"
+  ARCHIVE="$ARCHIVE.age"
+  REMOTE_ARCHIVE="$REMOTE_ARCHIVE.age"
+  ARCHIVE_SIZE="$(stat -c %s "$ARCHIVE" 2>/dev/null || stat -f %z "$ARCHIVE")"
+  ARCHIVE_SHA="$(sha256sum "$ARCHIVE" | awk '{print $1}')"
+  printf -v MANIFEST_ENC_FIELDS '\n  "encryption": "age",\n  "plain_sha256": "%s",' "$PLAIN_SHA"
+fi
+
 ssh cold "mkdir -p $REMOTE_DIR daily-meta/$INSTANCE_ID" >/dev/null
 rsync -a --inplace --partial -e ssh "$ARCHIVE" "cold:$REMOTE_ARCHIVE"
 
@@ -217,7 +276,7 @@ cat > "$MANIFEST" <<JSON
   "tier": "$STORAGE_TIER",
   "backup_path": "$REMOTE_ARCHIVE",
   "backup_size_bytes": $ARCHIVE_SIZE,
-  "backup_sha256": "$ARCHIVE_SHA",
+  "backup_sha256": "$ARCHIVE_SHA",$MANIFEST_ENC_FIELDS
   "mode": "vzdump_snapshot",
   "source_destroyed": false,
   "retention": {
@@ -251,7 +310,7 @@ except Exception:
 expected=f"daily/paid/{instance_id}/"
 if not backup.startswith(expected):
     sys.exit(0)
-if not re.match(r"^daily/paid/[0-9a-f-]{36}/vzdump-qemu-[0-9]+-[0-9]{8}T[0-9]{6}Z\.vma\.zst$", backup):
+if not re.match(r"^daily/paid/[0-9a-f-]{36}/vzdump-qemu-[0-9]+-[0-9]{8}T[0-9]{6}Z\.vma\.zst(\.age)?$", backup):
     sys.exit(0)
 print(backup)
 PY

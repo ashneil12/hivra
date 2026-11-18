@@ -93,7 +93,7 @@ export const MAX_RAM = 24;
 export const BASE_FLOOR = { cpu: 0.5, ram: 1 };
 export const BROWSER_ADD = { cpu: 1, ram: 2 };
 
-const ALL_AGENTS: AgentDef[] = [
+export const ALL_AGENTS: AgentDef[] = [
   {
     id: "hermes",
     name: "Hermes",

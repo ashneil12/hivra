@@ -1,6 +1,7 @@
 import { requireDb } from "@/lib/billing/db-utils";
 import { supabaseAdmin } from "@/lib/supabase";
 import { appendManagedVeniceFinancialEvent } from "./managed-venice-financial-events";
+import { agentSpendCapErrorFromDb } from "@/lib/billing/managed-venice-agent-spend-caps";
 
 // SCRIPTURE_ANCHOR: venice-wallet | Proverbs 3:9 | Verse: Honor Yahweh with your substance, with the first fruits of all your increase.
 export type ManagedVeniceWalletType = "hermesos" | "card";
@@ -329,6 +330,13 @@ export async function getManagedVeniceWalletSummary(
   };
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function holdProxyKeyId(metadata: Record<string, unknown> | undefined): string | null {
+  const id = metadata?.proxyKeyId;
+  return typeof id === "string" && UUID_RE.test(id) ? id : null;
+}
+
 export async function createManagedVeniceReservation(
   params: {
     userId: string;
@@ -407,6 +415,9 @@ export async function createManagedVeniceReservation(
       endpoint: params.endpoint ?? "/api/v1/chat/completions",
       expires_at: params.expiresAt || null,
       metadata: params.metadata || {},
+      // The key the hold belongs to, as a column, so the per-agent daily limit
+      // guard counts it with an index.
+      proxy_key_id: holdProxyKeyId(params.metadata),
       updated_at: new Date().toISOString(),
     })
     .select("id, status, reserved_micro_usd")
@@ -416,6 +427,8 @@ export async function createManagedVeniceReservation(
     if (isInsufficientBalanceDbError(error)) {
       throw new ManagedVeniceInsufficientBalanceError();
     }
+    const capError = agentSpendCapErrorFromDb(error, holdProxyKeyId(params.metadata));
+    if (capError) throw capError;
     throw new Error(error?.message || "Failed to create managed Venice reservation");
   }
 

@@ -20,6 +20,8 @@ import { ToolInstallPicker } from "./ToolInstallPicker";
 import { AgentModelSettings } from "./AgentModelSettings";
 import { HermesModelSettings } from "./HermesModelSettings";
 import { HermesRestorePoints, restorePointsEnabled } from "./HermesRestorePoints";
+import { AgentAllowedSites } from "./AgentAllowedSites";
+import { AgentAccessLog } from "./AgentAccessLog";
 import { ProviderResizePanel } from "./ProviderResizePanel";
 import { HivraPrivateAccessPanel } from "./HivraPrivateAccessPanel";
 import { GvisorComputerManage } from "./GvisorComputerManage";
@@ -32,6 +34,7 @@ import { useManageSection } from "./useManageSection";
 import { ManageHeader } from "./manage/ManageHeader";
 import { ManageDangerZone } from "./manage/ManageDangerZone";
 import { CopyButton, ManageDetails, ManageFixedSize, ManageHistory, ManageNotAvailable } from "./manage/ManageAdvancedParts";
+import { OffSiteBackupCard } from "./OffSiteBackupCard";
 import { AgentSoftwarePanel, agentSoftwareUpdateError, type AgentSoftwareUpdateOutcome, type SoftwareRecovery } from "./AgentSoftwarePanel";
 import { HivraLogin } from "./HivraLogin";
 import { HivraGitHubConnect } from "./HivraGitHubConnect";
@@ -130,7 +133,7 @@ const LIFECYCLE_PROGRESS: Record<string, { title: string; detail: string; sectio
   // Update in Manage › Updates' agent software card: the same in-place update.
   "cli-update": {
     title: "Updating the connection service…",
-    detail: "Hivra is updating it in place, then moves the agent to its tested version once no reply is being written. The computer keeps running, and this page reconnects to it when the update finishes.",
+    detail: "Hivra is updating it in place, then updates the agent to its newest release once no reply is being written. The computer keeps running, and this page reconnects to it when the update finishes.",
     section: "updates",
   },
 };
@@ -408,6 +411,29 @@ function HivraManageContent({
     return () => { alive = false; };
   }, [def?.cliKind, agent.type, agent.id]);
 
+  // "Always allow" rules made from Needs you (empty unless the owner made any).
+  const [allowRules, setAllowRules] = useState<{ id: string; tool: string; command: string | null }[]>([]);
+  useEffect(() => {
+    if (!askFirst?.available) return;
+    let alive = true;
+    void fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/inbox-allow-rules`, { cache: "no-store" })
+      .then(async (res) => (res.ok ? ((await res.json()) as { data?: { rules?: { id: string; tool: string; command: string | null }[] } }).data?.rules : null))
+      .then((rules) => { if (alive && Array.isArray(rules)) setAllowRules(rules); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [askFirst?.available, agent.id]);
+
+  const revokeAllowRule = useCallback(async (ruleId: string) => {
+    if (acting) return;
+    setActing("allow-rule"); setErr(null);
+    try {
+      const res = await fetch(`/api/hivra/agents/${encodeURIComponent(agent.id)}/inbox-allow-rules?rule=${encodeURIComponent(ruleId)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Couldn't remove that rule");
+      setAllowRules((rules) => rules.filter((rule) => rule.id !== ruleId));
+    } catch (e) { setErr({ slot: "permissions", message: (e as Error).message }); }
+    finally { setActing(null); }
+  }, [agent.id, acting]);
+
   const applyAskFirst = useCallback(async (next: boolean) => {
     if (acting) return;
     setActing("ask-first"); setErr(null);
@@ -587,7 +613,7 @@ function HivraManageContent({
   // The update restarts only the computer's gateway, which drops the embedded
   // surfaces' sign-ins, so the page signs them in again once it is back. An
   // unverified outcome (502) may also have restarted it, or rolled it back.
-  // For Claude Code and Codex it also reports the move to Hivra's tested version.
+  // For Claude Code and Codex it also reports the update to the newest release.
   const updateConnectionService = useCallback(async () => {
     let result: Awaited<ReturnType<typeof updateAgentRuntime>> | undefined;
     try {
@@ -1385,6 +1411,22 @@ function HivraManageContent({
                       </div>
                     </div>
                   ) : null}
+                  {askFirst?.available && allowRules.length > 0 ? (
+                    <div style={{ display: "grid", gap: 6, borderTop: "1px solid var(--etched-border)", paddingTop: 10 }}>
+                      <div style={{ fontSize: 12.5, color: "var(--text-primary)" }}>Always allowed</div>
+                      <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                        Claude Code won&apos;t ask again for these exact requests. Remove one to be asked again.
+                      </div>
+                      {allowRules.map((rule) => (
+                        <div key={rule.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <code style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: "var(--text-secondary)", overflowWrap: "anywhere", whiteSpace: "pre-wrap", maxHeight: 60, overflow: "hidden" }}>
+                            {rule.command || rule.tool}
+                          </code>
+                          <button type="button" style={btnGhost} disabled={acting !== null} onClick={() => void revokeAllowRule(rule.id)}>Remove</button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -1610,6 +1652,7 @@ function HivraManageContent({
       {sections.includes("recovery") ? (
         <ManagePanel id="recovery" selected={selected}>
           <div style={{ display: "grid", gap: 20 }}>
+            <OffSiteBackupCard agentId={agent.id} cardStyle={card} labelStyle={label} />
             {restorePointsListed ? (
               <div style={{ display: "grid", gap: 10 }}>
                 <div className="mono" style={label}>Restore points</div>
@@ -1782,9 +1825,8 @@ function HivraManageContent({
                           : isComputerOnly
                           ? "Update connection service brings Hivra’s connection service up to date without restarting the computer, so apps, files, and local logins stay as they are. The desktop stream disconnects briefly; terminals open on this page reconnect when it finishes."
                           : "Update connection service brings Hivra’s connection service up to date without restarting the computer, so your agent login, chats, model credentials, and files stay as they are. Terminals open on this page reconnect when it finishes."}
-                        {manage?.agentCli ? ` It also moves ${def?.name ?? "the agent"} to version ${manage.agentCli.vetted}, the version Hivra has tested, once no reply is being written.` : ""}
-                        {manage?.agentApp?.vetted ? ` It also moves ${def?.name ?? "the agent"} to ${manage.agentApp.vetted}, the version Hivra has tested, once nobody is using it.` : ""}
-                        {manage?.agentApp && !manage.agentApp.vetted ? " It also runs Hermes’s own update (hermes update) once nobody is using Hermes." : ""}
+                        {manage?.agentCli ? ` It also updates ${def?.name ?? "the agent"} to its newest release, once no reply is being written.` : ""}
+                        {manage?.agentApp ? ` It also updates ${def?.name ?? "the agent"} to its newest release, once nobody is using it.` : ""}
                       </div>
                     </>
                   )}
@@ -1878,6 +1920,15 @@ function HivraManageContent({
             </div>
           ) : null}
 
+          {/* PRIVACY — unreleased, each behind its own switch (off by default). */}
+          {process.env.NEXT_PUBLIC_HIVRA_ALLOWED_SITES === "true" || process.env.NEXT_PUBLIC_HIVRA_ACCESS_LOG === "true" ? (
+            <div style={{ display: "grid", gap: 10 }} data-testid="manage-privacy">
+              <div className="mono" style={label}>Privacy</div>
+              {process.env.NEXT_PUBLIC_HIVRA_ACCESS_LOG === "true" ? <div style={card}><AgentAccessLog agentId={agent.id} /></div> : null}
+              {process.env.NEXT_PUBLIC_HIVRA_ALLOWED_SITES === "true" ? <div style={card}><AgentAllowedSites agentId={agent.id} /></div> : null}
+            </div>
+          ) : null}
+
           <ManageHistory agentId={agent.id} />
 
           {manage?.export ? (
@@ -1887,6 +1938,14 @@ function HivraManageContent({
               {capAvailable(manage.export)
                 ? <div><a href={`/api/hivra/agents/${encodeURIComponent(agent.id)}/export`} style={{ ...btnGhost, textDecoration: "none" }}>Export data</a></div>
                 : <CapReasonLine cap={manage.export} />}
+            </div>
+          ) : null}
+
+          {process.env.NEXT_PUBLIC_HIVRA_COMPUTER_EXPORT === "true" && agent.computer_substrate === "proxmox-kvm" ? (
+            <div style={card}>
+              <div className="serif" style={{ fontSize: 16, color: "var(--ink-black)" }}>Export the whole computer</div>
+              <div style={manageMuted}>One encrypted file with your home folders and every agent&apos;s data and settings, to keep or to move elsewhere.</div>
+              <div><a href={`/dashboard/computers/export?source=${encodeURIComponent(agent.id)}`} style={{ ...btnGhost, textDecoration: "none" }}>Export computer</a></div>
             </div>
           ) : null}
 

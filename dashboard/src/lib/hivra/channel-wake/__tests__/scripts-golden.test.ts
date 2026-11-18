@@ -45,18 +45,20 @@ const SPECS = [EMAIL];
 
 describe("only Telegram on: byte-identical scripts", () => {
   // Taken from the code before the channel framework (merge 215a8f89). The
-  // port must change nothing for a Telegram-only sleep or wake.
+  // port must change nothing for a Telegram-only sleep or wake. The sleep and
+  // probe values were taken again when the idle check stopped reading Hermes
+  // safety switches as chat channels; the wake values are the original ones.
   it("keeps every sleep, probe and wake script exactly as before", () => {
     expect(digest(buildSleepHostScript({ ...target, tier: "nap", manual: false, telegramCoverage: TG })))
-      .toBe("5b4b4e719b15d1208bfbd8ff770ca99b0d55f0387c4a6e620833689468acd7f8");
+      .toBe("61e76cc493ecc5c775324cff266973954bf77288831cd3bf3dff7cc9a4d3a8e5");
     expect(digest(buildSleepHostScript({ ...target, tier: "hibernate", manual: true, telegramCoverage: TG, fastConfigRead: true })))
-      .toBe("4e1c9989332726d19f4d724880a0785e6e4487340adc5ee500f73bd6a65d9e0b");
+      .toBe("2960242b75a607516a43a58f4eb911bdb70edd1477a3e0336273693fc2475805");
     expect(digest(buildSleepHostScript({ ...target, tier: "nap", manual: false })))
-      .toBe("562b92b6720b5ceb687aa73361455f2130082c5e30904e4bb93fb38824d3b597");
+      .toBe("4c1360b7e232391ab9939d51b401f55d5b315b51954a2963bbef3c76b874ee08");
     expect(digest(buildIdleProbeHostScript(target, { telegram: true })))
-      .toBe("86886d9496e7e17f302bf345a1040e9c4cdc63eda579cb95594cc7d3cab4ec6a");
+      .toBe("3e23d92953397537f1595374c879615ba4fd6ceb3404466a2d81adebda2e9d3c");
     expect(digest(buildIdleProbeHostScript(target)))
-      .toBe("07671a589e75878fd433d872687b93f075b642364e9dad7b7655cdf9010c3698");
+      .toBe("249388893e6c0c7f330bfd5383c2a2c51109f87e86d4f34344601897e11d04ba");
     expect(digest(buildWakeHostScript({ ...target, admission, killStaleSockets: true })))
       .toBe("72364b82e417ec2bb0c0804bf4c87cc09cb3bf74ac66336418cf07030d57076e");
     expect(digest(buildWakeHostScript({ ...target, admission })))

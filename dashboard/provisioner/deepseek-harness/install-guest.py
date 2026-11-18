@@ -135,7 +135,7 @@ except BaseException:
     raise
 """
 ASSETS = {
-    **{name: "hivra-chat/" + name for name in ("server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "index.html", "app.js")},
+    **{name: "hivra-chat/" + name for name in ("server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "import-state.cjs", "index.html", "app.js")},
     **{"deepseek-harness/" + name: "deepseek-harness/" + name
        for name in ("native-broker.cjs", "gateway-policy.cjs", "runtime-process.cjs")},
 }

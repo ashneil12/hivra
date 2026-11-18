@@ -5,6 +5,9 @@ import { dayToDate, PAGE_LAST_MODIFIED, TOOL_PAGE_LAST_MODIFIED } from "@/lib/se
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 import { HOST_COMPARISON_SLUGS } from "@/lib/compare/host-comparisons";
 import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
+import { PRODUCT_COMPARISON_SLUGS } from "@/lib/compare/product-comparisons";
+import { PRODUCT_FACTS_CHECKED } from "@/lib/compare/products/checked";
+import { DOCS, docsLastModified } from "@/lib/docs/registry";
 
 // SCRIPTURE_ANCHOR: seo-paths | Jeremiah 6:16 | Verse: Stand in the ways and see, and ask for the old paths.
 export const SITE_URL = "https://hivra.cloud";
@@ -203,6 +206,16 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
       changeFrequency: "monthly" as const,
       priority: 0.75,
     })),
+    // The agent product and sandbox comparisons carry the day their vendor figures were
+    // collected (lib/compare/products/checked.ts), or the day their text last changed when that is later.
+    ...PRODUCT_COMPARISON_SLUGS.map((slug) => ({
+      url: `${SITE_URL}/compare/${slug}`,
+      lastModified: cutoverPage(
+        PRODUCT_FACTS_CHECKED > PAGE_LAST_MODIFIED.compareDetail ? PRODUCT_FACTS_CHECKED : PAGE_LAST_MODIFIED.compareDetail,
+      ),
+      changeFrequency: "monthly" as const,
+      priority: 0.75,
+    })),
   ];
 
   // Blog articles: pulled live from the article registry. Each carries its own
@@ -243,5 +256,16 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
     })),
   ];
 
-  return [...corePages, ...pricingPage, ...agentPages, ...toolPages, ...featurePages, ...comparePages, ...blogPages];
+  // Docs: each page carries the day it was last checked against the product.
+  const docPages: MetadataRoute.Sitemap = [
+    { url: `${SITE_URL}/docs`, lastModified: dayToDate(docsLastModified()), changeFrequency: "weekly", priority: 0.85 },
+    ...Object.values(DOCS).map((doc) => ({
+      url: `${SITE_URL}/docs/${doc.slug}`,
+      lastModified: dayToDate(doc.lastReviewed),
+      changeFrequency: "monthly" as const,
+      priority: 0.8,
+    })),
+  ];
+
+  return [...corePages, ...pricingPage, ...agentPages, ...docPages, ...toolPages, ...featurePages, ...comparePages, ...blogPages];
 }

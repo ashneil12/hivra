@@ -126,9 +126,9 @@ function runHelper(options: {
       chmodSync(path.join(binDir, name), 0o755);
     }
     for (const asset of RUNTIME_ASSETS) copyFileSync(path.join(bundleRoot, "hivra-chat", asset), path.join(bundle, "hivra-chat", asset));
-    for (const file of ["hivra-agent-shell", "bux-ttyd-base-path.conf", "bux-box-ttyd.service", "agent-cli-versions.json",
+    for (const file of ["hivra-agent-shell", "bux-ttyd-base-path.conf", "bux-box-ttyd.service",
       "hivra-agent-cli-update.sh", "hivra-codex-config-pin.py", "hivra-tg-apply", "hivra-claude-app.py", "hivra-claude-app.service", "claude-desktop-pin.json",
-      "agent-app-versions.json", "hivra-agent-app-update.sh", "local-browser-keeper.py", "chrome-pin.json", "hivra-agent-trace.py", "hivra-agent-trace.service",
+      "hivra-agent-app-update.sh", "local-browser-keeper.py", "chrome-pin.json", "hivra-agent-trace.py", "hivra-agent-trace.service",
       "hivra-surface-watchdog.py", "hivra-surface-watchdog.service", "hivra-guest-runtime-update.sh"]) {
       copyFileSync(path.join(bundleRoot, file), path.join(bundle, file));
     }
@@ -256,15 +256,17 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
   });
 
   it("forwards the guest's agent CLI report only in its exact shape", () => {
-    const valid = "HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=scheduled";
+    const valid = "HIVRA_AGENT_CLI name=codex version=0.149.1 target=latest state=scheduled";
     const run = runHelper({ guestStdout: `${valid}\\nHIVRA_GUEST_RUNTIME_UPDATED\\n` });
     expect(run.status).toBe(0);
     expect(run.stdout).toBe(`${valid}\nHIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n`);
     for (const forged of [
-      "HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=done; rm -rf /",
-      "HIVRA_AGENT_CLI name=gemini version=1.0.0 target=1.0.1 state=scheduled",
-      "HIVRA_AGENT_CLI name=codex version=latest target=0.156.1 state=scheduled",
-      " HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=scheduled",
+      "HIVRA_AGENT_CLI name=codex version=0.149.1 target=latest state=done; rm -rf /",
+      "HIVRA_AGENT_CLI name=gemini version=1.0.0 target=latest state=scheduled",
+      "HIVRA_AGENT_CLI name=codex version=latest target=latest state=scheduled",
+      // A pinned target from an older bundle is no longer an update Hivra asks for.
+      "HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=scheduled",
+      " HIVRA_AGENT_CLI name=codex version=0.149.1 target=latest state=scheduled",
     ]) {
       const other = runHelper({ guestStdout: `${forged}\\nHIVRA_GUEST_RUNTIME_UPDATED\\n` });
       expect(other.stdout).toBe("HIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n");
@@ -320,10 +322,10 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
   it("forwards the guest's agent app report only in its exact shape, each version in its app's own form", () => {
     const digest = (c: string) => `sha256:${c.repeat(64)}`;
     for (const valid of [
-      `HIVRA_AGENT_APP name=agent-zero version=${digest("d")} target=${digest("b")} state=scheduled`,
-      `HIVRA_AGENT_APP name=agent-zero version=unknown target=${digest("b")} state=scheduled`,
-      `HIVRA_AGENT_APP name=aeon version=${"8".repeat(40)} target=${"e".repeat(40)} state=running`,
-      "HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=2026.9.33 state=current",
+      `HIVRA_AGENT_APP name=agent-zero version=${digest("d")} target=latest state=scheduled`,
+      "HIVRA_AGENT_APP name=agent-zero version=unknown target=latest state=scheduled",
+      `HIVRA_AGENT_APP name=aeon version=${"8".repeat(40)} target=latest state=running`,
+      "HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=latest state=current",
       "HIVRA_AGENT_APP name=hermes version=0.23.1 target=latest state=scheduled",
       "HIVRA_AGENT_APP name=hermes version=unknown target=latest state=running",
       "HIVRA_AGENT_APP name=openbot version=1.0.2 target=latest state=scheduled",
@@ -334,22 +336,23 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
       expect(run.stdout).toBe(`${valid}\nHIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n`);
     }
     for (const forged of [
-      `HIVRA_AGENT_APP name=aeon version=${digest("d")} target=${digest("b")} state=scheduled`,
-      "HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=latest state=scheduled",
-      `HIVRA_AGENT_APP name=agent-zero version=${digest("d")} target=${digest("b")} state=scheduled; reboot`,
+      `HIVRA_AGENT_APP name=aeon version=${digest("d")} target=latest state=scheduled`,
+      // Pinned targets from an older bundle are no longer updates Hivra asks for.
+      `HIVRA_AGENT_APP name=agent-zero version=${digest("d")} target=${digest("b")} state=scheduled`,
+      "HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=2026.9.33 state=scheduled",
+      `HIVRA_AGENT_APP name=agent-zero version=${digest("d")} target=latest state=scheduled; reboot`,
       `HIVRA_AGENT_APP name=hermes version=1.0.0 target=1.0.1 state=scheduled`,
       "HIVRA_AGENT_APP name=hermes version=0.23.1 target=latest state=scheduled; reboot",
       "HIVRA_AGENT_APP name=hermes version=latest target=latest state=current",
       `HIVRA_AGENT_APP name=openbot version=${digest("d")} target=latest state=scheduled`,
       "HIVRA_AGENT_APP name=nuphos version=0.1.54 target=0.1.55 state=scheduled",
-      "HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=latest state=scheduled",
     ]) {
       const other = runHelper({ guestStdout: `${forged}\\nHIVRA_GUEST_RUNTIME_UPDATED\\n` });
       expect(other.stdout).toBe("HIVRA_GUEST_RUNTIME_UPDATED vmid=1090\n");
     }
   });
 
-  it("ships the agent app pins and helper, and schedules the app swap only after the gateway commit", () => {
+  it("ships the agent app helper, and schedules the app swap only after the gateway commit", () => {
     const run = runHelper();
     const guest = run.sshCall(1).stdin;
     const commit = guest.indexOf("COMMITTED=1");
@@ -359,7 +362,7 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
     expect(guest).toContain('bash -n "$WORK/hivra-agent-app-update.sh"');
   });
 
-  it("ships the agent CLI pins and helpers, and schedules the swap only after the gateway commit", () => {
+  it("ships the agent CLI helpers, and schedules the swap only after the gateway commit", () => {
     const run = runHelper();
     const guest = run.sshCall(1).stdin;
     const commit = guest.indexOf("COMMITTED=1");
@@ -369,7 +372,7 @@ describe("hivra-update-guest-runtime.sh in-place update", () => {
     expect(guest.indexOf("agent_cli_report || true")).toBeLessThan(guest.lastIndexOf("printf 'HIVRA_GUEST_RUNTIME_UPDATED\\n'"));
     // Every terminal unit must keep the vendor self-updater off, or the update rolls back.
     expect(guest).toContain("grep -Fxq DISABLE_AUTOUPDATER=1");
-    expect(UPDATE_SOURCE).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\n\s+agent-cli-versions\.json hivra-agent-cli-update\.sh hivra-codex-config-pin\.py hivra-tg-apply\n\s+hivra-claude-app\.py hivra-claude-app\.service claude-desktop-pin\.json\n\s+agent-app-versions\.json hivra-agent-app-update\.sh local-browser-keeper\.py chrome-pin\.json\n\s+hivra-surface-watchdog\.py hivra-surface-watchdog\.service\)/);
+    expect(UPDATE_SOURCE).toMatch(/TERMINAL_ASSETS=\(hivra-agent-shell bux-ttyd-base-path\.conf bux-box-ttyd\.service\n\s+hivra-agent-cli-update\.sh hivra-codex-config-pin\.py hivra-tg-apply\n\s+hivra-claude-app\.py hivra-claude-app\.service claude-desktop-pin\.json\n\s+hivra-agent-app-update\.sh local-browser-keeper\.py chrome-pin\.json\n\s+hivra-surface-watchdog\.py hivra-surface-watchdog\.service\)/);
   });
 
   // The idle check decides whether a terminal restart could end someone's

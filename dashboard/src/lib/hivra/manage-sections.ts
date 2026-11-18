@@ -103,7 +103,7 @@ export interface ManageCapabilities {
    */
   selfUpdate: { lines: string[]; openDesktop: boolean } | null;
   /** Claude Code or Codex and the version Hivra has tested, for the Updates section. */
-  agentCli: { name: "claude-code" | "codex"; vetted: string } | null;
+  agentCli: { name: "claude-code" | "codex"; vetted: string | null } | null;
   /**
    * The Aeon dashboard, OpenClaw, Agent Zero, Hermes or OpenBot and the name of the
    * version Hivra has tested. Hermes and OpenBot have none: they are updated by Hermes's own

@@ -323,13 +323,13 @@ describe("AgentPage", () => {
     const defaultFetch = (global.fetch as jest.Mock).getMockImplementation();
     (global.fetch as jest.Mock).mockImplementation((url: string, init?: RequestInit) => String(url).includes("/agent-software")
       ? Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: {
-          supported: true, cli: "codex", view: { kind: "behind", installed: "0.140.0" }, tested: "0.149.1", observedAt: null,
-          update: null, lastRequest: null, autoUpdate: { mode: "off", enabled: true, source: "default", pausedFor: null },
+          supported: true, cli: "codex", view: { kind: "older_connection_service" }, observedAt: null,
+          update: null, lastRequest: null,
         } }) })
       : defaultFetch?.(url, init));
     render(<AgentPage />);
     await screen.findByRole("button", { name: /Show controls$/ });
-    const chip = await waitFor(() => openPill().getByRole("button", { name: /^Update available: Codex 0\.140\.0 is installed and Hivra has tested 0\.149\.1\./ }));
+    const chip = await waitFor(() => openPill().getByRole("button", { name: /^Update available: this agent's connection service is older than Hivra's current one\./ }));
     // Asked of Hivra's server, never of the computer itself.
     expect(global.fetch).toHaveBeenCalledWith("/api/hivra/agents/agent_123/agent-software", expect.objectContaining({ credentials: "same-origin" }));
     expect(screen.getByText("Chat panel")).toBeInTheDocument();

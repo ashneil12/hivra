@@ -11,7 +11,7 @@ export const LITEPAPER_HREF = "/docs/litepaper/index.html";
  * navigation before the real page load.
  */
 export function isStaticDocument(href: string): boolean {
-  return href.startsWith("/docs/");
+  return href.startsWith("/docs/litepaper");
 }
 
 interface PublicLinkProps {

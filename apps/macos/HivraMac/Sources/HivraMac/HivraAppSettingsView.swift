@@ -17,15 +17,16 @@ struct HivraAppSettingsView: View {
         TabView {
             appearanceSettings
                 .tabItem { Label("Appearance", systemImage: "circle.lefthalf.filled") }
-            connectionSettings
-                .tabItem { Label("Connections", systemImage: "network") }
-            localSettings
-                .tabItem { Label("Local Hivra", systemImage: "desktopcomputer") }
+            if profileStore.developerConnections {
+                connectionSettings
+                    .tabItem { Label("Connections", systemImage: "network") }
+                localSettings
+                    .tabItem { Label("Local Hivra", systemImage: "desktopcomputer") }
+            }
         }
         .padding(16)
         .frame(minWidth: 600, idealWidth: 660, maxWidth: 800, minHeight: 490, idealHeight: 550, maxHeight: 760)
-        .background(HivraDesign.background(for: colorScheme))
-        .tint(HivraDesign.crimson)
+        .background { HivraWindowBackground(tintStrength: 0.84) }
         .preferredColorScheme(HivraAppearance(rawValue: appearance)?.colorScheme)
         .sheet(isPresented: $showingAddConnection) {
             HivraAddConnectionView()
@@ -59,6 +60,17 @@ struct HivraAppSettingsView: View {
             } footer: {
                 Text("System follows your Mac’s appearance. This preference controls the native app interface.")
             }
+            Section {
+                Toggle("Show developer connections", isOn: Binding(
+                    get: { profileStore.developerConnections },
+                    set: { profileStore.setDeveloperConnections($0) }
+                ))
+                .tint(HivraDesign.foreground(for: colorScheme))
+            } header: {
+                Text("Advanced")
+            } footer: {
+                Text("For self-hosting and testing: connect to Hivra running on this Mac, Canary, or another address.")
+            }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
@@ -68,20 +80,21 @@ struct HivraAppSettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Your workspaces")
-                    .font(.system(size: 25, weight: .regular, design: .serif))
+                    .font(HivraDesign.display(20)).tracking(HivraDesign.displayTracking(20))
                     .accessibilityAddTraits(.isHeader)
                 Text("Select a connection to make it the active workspace.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(HivraDesign.secondaryText(for: colorScheme))
             }
 
             List(selection: selectedConnection) {
                 ForEach(profileStore.profiles) { profile in
                     HStack(spacing: 12) {
                         Image(systemName: iconName(for: profile.kind))
-                            .font(.system(size: 17))
-                            .foregroundStyle(HivraDesign.crimson)
-                            .frame(width: 26)
+                            .font(.system(size: 14))
+                            .foregroundStyle(HivraDesign.secondaryText(for: colorScheme))
+                            .frame(width: 30, height: 30)
+                            .background(HivraDesign.fill(.two, for: colorScheme), in: RoundedRectangle(cornerRadius: HivraDesign.Radius.card, style: .continuous))
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(profile.name)
@@ -89,16 +102,18 @@ struct HivraAppSettingsView: View {
                                 .lineLimit(1)
                                 .help(profile.name)
                             Text(displayAddress(for: profile))
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundStyle(HivraDesign.secondaryText(for: colorScheme))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
                         Spacer(minLength: 8)
                         if profileStore.selectedProfile?.id == profile.id {
                             Text("Active")
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(HivraDesign.secondaryText(for: colorScheme))
+                                .padding(.horizontal, 8).frame(height: 20)
+                                .background(HivraDesign.fill(.two, for: colorScheme), in: Capsule())
                         }
                         Button {
                             removalCandidate = profile
@@ -123,8 +138,8 @@ struct HivraAppSettingsView: View {
             }
             .listStyle(.inset)
             .scrollContentBackground(.hidden)
-            .background(HivraDesign.surface(for: colorScheme))
-            .overlay { Rectangle().stroke(HivraDesign.border(for: colorScheme), lineWidth: 1) }
+            .hivraCard(cornerRadius: HivraDesign.Radius.panel)
+            .clipShape(RoundedRectangle(cornerRadius: HivraDesign.Radius.panel, style: .continuous))
             .accessibilityLabel("Saved workspace connections")
 
             HStack {
@@ -136,8 +151,8 @@ struct HivraAppSettingsView: View {
                 .buttonStyle(HivraButtonStyle())
                 Spacer()
                 Text("\(profileStore.profiles.count) saved")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(HivraDesign.mutedText(for: colorScheme))
             }
         }
         .padding(20)
@@ -151,10 +166,7 @@ struct HivraAppSettingsView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("LOCAL DATA")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .tracking(1)
-                        .foregroundStyle(.secondary)
+                    HivraLabel("Local data")
                     Text(runtime.stateDirectoryURL.path)
                         .font(.system(size: 12, design: .monospaced))
                         .textSelection(.enabled)
@@ -162,7 +174,7 @@ struct HivraAppSettingsView: View {
                 }
 
                 if runtime.hasSavedCredentials {
-                    Divider()
+                    Rectangle().fill(HivraDesign.stroke(.subtle, for: colorScheme)).frame(height: 1)
                     HStack(alignment: .top, spacing: 16) {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("Saved local sign-in")

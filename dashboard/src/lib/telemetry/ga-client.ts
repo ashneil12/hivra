@@ -9,6 +9,8 @@
 //
 // Never pass personal data (email, name, user id) in params.
 
+import { hasAnalyticsConsent } from "@/lib/consent/cookie-consent";
+
 type Gtag = (command: "event", eventName: string, params?: Record<string, unknown>) => void;
 
 const RETRY_INTERVAL_MS = 250;
@@ -36,4 +38,25 @@ export function sendGaEvent(eventName: string, params: Record<string, unknown> =
     attempts += 1;
     if (trySend() || attempts >= maxAttempts) window.clearInterval(timer);
   }, RETRY_INTERVAL_MS);
+}
+
+/**
+ * The sign-up conversion when Google Analytics stays off signed-in pages
+ * (NEXT_PUBLIC_HIVRA_GA_PUBLIC_PAGES_ONLY): asks the server to send it
+ * (/api/telemetry/ga-sign-up). Only with stored analytics consent; the server
+ * checks consent again and adds nothing personal. Best-effort.
+ */
+export function sendGaSignUpFromServer(): void {
+  if (typeof window === "undefined" || typeof fetch !== "function") return;
+  if (!hasAnalyticsConsent()) return;
+  void fetch("/api/telemetry/ga-sign-up", {
+    method: "POST",
+    credentials: "same-origin",
+    keepalive: true,
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  }).catch(() => {
+    // A missed conversion is acceptable; the PostHog signup_completed event
+    // above is the record of the sign-up.
+  });
 }

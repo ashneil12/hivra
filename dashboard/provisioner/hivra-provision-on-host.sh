@@ -27,6 +27,15 @@ CORES="${3:-4}"
 MEM_MB="${4:-8192}"
 AGENT_KIND="${5:-claude}"
 CPU_LIMIT="${6:-$CORES}"
+# empty: make the computer's place on this host (number, address, blank disk,
+# settings) and stop there. Used to bring a stored computer back on a host other
+# than the one it left: its disks are then written from the storage box. No
+# guest is booted and no installer runs.
+PROVISION_MODE="${HIVRA_PROVISION_MODE:-install}"
+case "$PROVISION_MODE" in install|empty) ;; *)
+  echo "[hivra-prov] unsupported provision mode" >&2
+  exit 1
+;; esac
 case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|deepseek-harness|linux-desktop|linux-server) ;; *)
   echo "[hivra-prov] unsupported agent kind" >&2
   exit 1
@@ -219,6 +228,8 @@ validate_named_tunnel_input
 validate_linux_desktop_input() {
   # linux-server is the same computer shape without the desktop: it keeps the
   # named tunnel, computer UUID and control origin of the Linux Desktop launch.
+  # An empty computer takes no launch input: it is filled from the storage box.
+  [ "${PROVISION_MODE:-install}" != empty ] || return 0
   [ "$AGENT_KIND" = "linux-desktop" ] || [ "$AGENT_KIND" = "linux-server" ] || return 0
   [ -n "${HIVRA_TUNNEL_TOKEN:-}" ] && [ -n "${HIVRA_TUNNEL_URL:-}" ] \
     || fail "Linux Desktop requires pre-journaled named HTTPS access"
@@ -242,7 +253,7 @@ for value in values[:2]:
   fi
 }
 validate_linux_desktop_input
-if [ "$AGENT_KIND" = "deepseek-harness" ] && { [ -z "${HIVRA_TUNNEL_TOKEN:-}" ] || [ -z "${HIVRA_TUNNEL_URL:-}" ]; }; then
+if [ "$PROVISION_MODE" != empty ] && [ "$AGENT_KIND" = "deepseek-harness" ] && { [ -z "${HIVRA_TUNNEL_TOKEN:-}" ] || [ -z "${HIVRA_TUNNEL_URL:-}" ]; }; then
   fail "DeepSeek Harness requires pre-journaled named HTTPS access"
 fi
 install -m 0600 "${VM_KEY}.pub" "$CIKEYS"
@@ -253,19 +264,24 @@ fi
 # The stock Ubuntu cloud image does not consistently include QEMU Guest Agent.
 # Install it through VMID-owned vendor data so the hypervisor channel can
 # attest the guest SSH key before any network connection carries credentials.
+# apt runs from runcmd, not cloud-config's package_update/packages: on Ubuntu
+# that module also runs `snap refresh`, so an unreachable snap store (its IPv4
+# front ends refusing connections, our guests are IPv4 only) failed cloud-init
+# and with it every launch, though nothing here needs a snap.
+if [ "$PROVISION_MODE" = install ]; then
 install -d -o root -g root -m 0700 "$CLOUD_INIT_SNIPPET_DIR"
 CLOUD_INIT_SNIPPET="$CLOUD_INIT_SNIPPET_DIR/hivra-qga-${VMID}-${OPERATION_ID}.yaml"
 ( set -o noclobber
   cat > "$CLOUD_INIT_SNIPPET" <<'HIVRA_QGA_VENDOR_DATA'
 #cloud-config
-package_update: true
-packages:
-  - qemu-guest-agent
 runcmd:
+  - [env, DEBIAN_FRONTEND=noninteractive, apt-get, -o, Acquire::Retries=3, update]
+  - [env, DEBIAN_FRONTEND=noninteractive, apt-get, -o, Acquire::Retries=3, install, -y, --no-install-recommends, qemu-guest-agent]
   - [systemctl, enable, --now, qemu-guest-agent.service]
 HIVRA_QGA_VENDOR_DATA
 ) 2>/dev/null || fail "could not create operation-scoped QEMU Guest Agent vendor data"
 chmod 0600 "$CLOUD_INIT_SNIPPET"
+fi
 
 log "creating VM $VMID (${CORES} vCPU / ${MEM_MB} MB) at $IP"
 qm create "$VMID" --name "hivra-cc-${VMID}" --memory "$MEM_MB" --cores "$CORES" --cpu host \
@@ -283,9 +299,39 @@ install -m 0600 /dev/null "$ALLOCATION_RECEIPT_TMP"
 printf 'operation_id=%s\nbinding_tag=%s\nvmid=%s\n' \
   "$OPERATION_ID" "$BINDING_TAG" "$VMID" > "$ALLOCATION_RECEIPT_TMP"
 mv "$ALLOCATION_RECEIPT_TMP" "$ALLOCATION_RECEIPT_FILE"
+if [ "$PROVISION_MODE" = empty ]; then
+  # A blank disk of the asked size; the storage box fills it. The guest already
+  # carries its agent and guest agent, so no vendor data is attached.
+  qm set "$VMID" --scsi0 "${STORAGE}:${DISK_GB},discard=on,ssd=1" >/dev/null
+  qm set "$VMID" --ide2 "${STORAGE}:cloudinit" >/dev/null
+  qm set "$VMID" --ciupgrade 0 >/dev/null 2>&1 || true
+  qm set "$VMID" --boot order=scsi0 --ciuser ubuntu --sshkeys "$CIKEYS" >/dev/null
+  qm set "$VMID" --ipconfig0 "ip=${IP}/24,gw=${GW}" >/dev/null
+  qm set "$VMID" --nameserver "$NAMESERVERS" >/dev/null
+  # The stored mark goes down before the lock is released: a computer whose disk
+  # is blank must never read as bootable. Bringing it back swaps it for the cold mark.
+  install -d -m 0755 /var/lib/hivra-sleep
+  STORED_MARK_TMP="/var/lib/hivra-sleep/stored-${VMID}.tmp.$$"
+  printf '%s\n' "$BINDING_TAG" > "$STORED_MARK_TMP"
+  mv "$STORED_MARK_TMP" "/var/lib/hivra-sleep/stored-${VMID}"
+  rm -f -- "/var/lib/hivra-sleep/cold-${VMID}"
+  release_allocation_lock
+  log "done: vmid=$VMID ip=$IP kind=$AGENT_KIND mode=empty"
+  printf '{"vmid":%s,"ip":"%s","cores":%s,"mem_mb":%s,"agent_kind":"%s","disk_gb":%s,"empty":true,"ready":false}\n' \
+    "$VMID" "$IP" "$CORES" "$MEM_MB" "$AGENT_KIND" "$DISK_GB"
+  CREATED=0
+  exit 0
+fi
 qm set "$VMID" --scsi0 "${STORAGE}:0,import-from=${IMG},discard=on,ssd=1" >/dev/null
 qm disk resize "$VMID" scsi0 "${DISK_GB}G" >/dev/null
 qm set "$VMID" --ide2 "${STORAGE}:cloudinit" >/dev/null
+# Proxmox's generated user-data carries `package_upgrade: true` unless
+# ciupgrade is off. That runs a full apt upgrade and, on Ubuntu, `snap refresh`
+# at first boot: an unreachable snap store then fails cloud-init and the launch.
+# The guest still takes Ubuntu's security updates from its daily
+# unattended-upgrades run. Hosts older than Proxmox VE 8.1 have no ciupgrade
+# option, so a refusal there is ignored and the VM behaves as before.
+qm set "$VMID" --ciupgrade 0 >/dev/null 2>&1 || true
 qm set "$VMID" --boot order=scsi0 --ciuser ubuntu --sshkeys "$CIKEYS" >/dev/null
 qm set "$VMID" --ipconfig0 "ip=${IP}/24,gw=${GW}" >/dev/null
 qm set "$VMID" --cicustom "vendor=${CLOUD_INIT_SNIPPET_STORAGE}:snippets/$(basename "$CLOUD_INIT_SNIPPET")" >/dev/null
@@ -359,6 +405,7 @@ GSCP=(scp -i "$VM_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
 wait_for_guest_cloud_init() {
   local started now deadline remaining probe_budget pause attempt output exit_code
   local last_state="SSH unavailable"
+  rm -f -- "${CLOUD_INIT_KEEP_DIR:-/root}/hivra-prov-${VMID}.cloud-init.txt"
   started="$(guest_boot_uptime)" || fail "guest boot clock is unavailable"
   deadline=$((started + 600))
   # SSH and cloud-init are expected to be unavailable/running during first
@@ -389,7 +436,8 @@ wait_for_guest_cloud_init() {
         ;;
       255) last_state="SSH unavailable" ;;
       124|137) last_state="SSH probe timed out" ;;
-      *) fail "guest cloud-init check failed (exit ${exit_code}); inspect cloud-init status and logs before retrying" ;;
+      *) log_guest_cloud_init_failure
+         fail "guest cloud-init check failed (exit ${exit_code}); inspect cloud-init status and logs before retrying" ;;
     esac
     # Guest diagnostics can contain user-data. Log only the classified reason,
     # not command output. The caller's existing EXIT trap owns VM cleanup.
@@ -398,6 +446,23 @@ wait_for_guest_cloud_init() {
     sleep "$pause"
   done
   fail "guest boot timed out (${last_state}); runtime installation was not started"
+}
+
+# The failed guest is removed by the EXIT trap, taking its logs with it. Keep
+# cloud-init's own account of why it stopped in a root-only file on this host
+# (never in the host log, which carries only the classified reason): the
+# status summary and the tail of its output, capped. Overwritten on VMID reuse.
+log_guest_cloud_init_failure() {
+  local keep="${CLOUD_INIT_KEEP_DIR:-/root}/hivra-prov-${VMID}.cloud-init.txt"
+  if ( umask 077; timeout --kill-after=2s 20s "${GSSH[@]}" \
+      -o BatchMode=yes -o ConnectionAttempts=1 -n "ubuntu@${IP}" \
+      'LC_ALL=C sudo -n cloud-init status --long 2>&1 | head -n 40; LC_ALL=C sudo -n tail -n 40 /var/log/cloud-init-output.log 2>&1 || true' \
+      2>/dev/null | head -c 16384 > "$keep" ) && [ -s "$keep" ]; then
+    log "guest cloud-init details kept in ${keep} (root only) before cleanup"
+  else
+    rm -f -- "$keep"
+    log "guest cloud-init details could not be read before cleanup"
+  fi
 }
 
 log "waiting for guest ssh + cloud-init"

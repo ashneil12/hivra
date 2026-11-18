@@ -1,26 +1,16 @@
 "use client";
 
-// Client for GET/PATCH /api/hivra/agents/[id]/agent-software: an agent's
-// Claude Code / Codex version, or Aeon / OpenClaw / Agent Zero app version,
-// next to Hivra's tested version, its update state, and the owner's
-// automatic-update choice (CLIs only). The server reads the
-// computer; nothing here talks to it directly.
+// Client for GET /api/hivra/agents/[id]/agent-software: an agent's CLI or app
+// version and its update state. The server reads the computer; nothing here
+// talks to it directly.
 
 import type {
   AgentAppName,
-  AgentCliAutoUpdateMode,
   AgentCliName,
   AgentCliRequestResult,
   AgentCliUpdateState,
   AgentSoftwareView,
 } from "./agent-cli-status";
-
-export interface AgentSoftwareAutoUpdate {
-  mode: AgentCliAutoUpdateMode;
-  enabled: boolean;
-  source: "default" | "owner";
-  pausedFor: { target: string; reason: "rolled_back" | "failed" } | null;
-}
 
 export type AgentSoftwareState =
   | { supported: false }
@@ -29,11 +19,9 @@ export type AgentSoftwareState =
       cli: AgentCliName | null;
       app: AgentAppName | null;
       view: AgentSoftwareView;
-      tested: string | null;
       observedAt: string | null;
       update: { state: AgentCliUpdateState; target: string; reason: string | null; updatedAt: string | null } | null;
       lastRequest: { by: "owner" | "auto"; at: string; target: string; result: AgentCliRequestResult | null } | null;
-      autoUpdate: AgentSoftwareAutoUpdate | null;
     };
 
 export class AgentSoftwareApiError extends Error {
@@ -65,17 +53,6 @@ export async function getAgentSoftware(id: string, options: { live?: boolean; si
     cache: "no-store",
     credentials: "same-origin",
     signal: options.signal,
-  });
-  return stateFrom(response);
-}
-
-export async function setAgentSoftwareAutoUpdate(id: string, enabled: boolean): Promise<AgentSoftwareState> {
-  const response = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/agent-software`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ autoUpdate: enabled }),
-    cache: "no-store",
-    credentials: "same-origin",
   });
   return stateFrom(response);
 }

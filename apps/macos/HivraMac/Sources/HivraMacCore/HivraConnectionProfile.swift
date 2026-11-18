@@ -20,6 +20,15 @@ public enum HivraConnectionKind: String, Codable, CaseIterable, Sendable {
 public struct HivraConnectionProfile: Identifiable, Codable, Hashable, Sendable {
     public static let builtInLocalID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     public static let builtInCanaryID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+    public static let builtInHivraID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+
+    /// Hivra itself. The only connection a public build shows.
+    public static let hivra = HivraConnectionProfile(
+        id: builtInHivraID,
+        name: "Hivra",
+        url: URL(string: "https://hivra.cloud/dashboard")!,
+        kind: .hivraCloud
+    )
 
     public enum ValidationError: LocalizedError {
         case emptyAddress
@@ -55,7 +64,21 @@ public struct HivraConnectionProfile: Identifiable, Codable, Hashable, Sendable 
         self.kind = kind
     }
 
-    public static let defaults: [HivraConnectionProfile] = [
+    /// Hivra first. Local and Canary only when developer connections are on
+    /// (an internal build, or the setting in App settings).
+    public static func defaults(includeDeveloper: Bool) -> [HivraConnectionProfile] {
+        includeDeveloper ? [hivra] + developerDefaults : [hivra]
+    }
+
+    /// Kept for existing callers: every built-in connection.
+    public static var defaults: [HivraConnectionProfile] { defaults(includeDeveloper: true) }
+
+    /// Saved connections from an earlier version gain Hivra at the top, once.
+    public static func addingHivra(to saved: [HivraConnectionProfile]) -> [HivraConnectionProfile] {
+        saved.contains(where: { $0.id == builtInHivraID }) ? saved : [hivra] + saved
+    }
+
+    public static let developerDefaults: [HivraConnectionProfile] = [
         HivraConnectionProfile(
             id: builtInLocalID,
             name: "Local Hivra",
@@ -74,6 +97,16 @@ public struct HivraConnectionProfile: Identifiable, Codable, Hashable, Sendable 
         id == Self.builtInLocalID &&
             kind == .local &&
             HivraLocalAuthentication.supportsAutomaticSignIn(to: url)
+    }
+
+    public var isBuiltInHivra: Bool {
+        id == Self.builtInHivraID &&
+            kind == .hivraCloud &&
+            url.scheme?.lowercased() == "https" &&
+            url.host?.lowercased() == "hivra.cloud" &&
+            url.port == nil &&
+            url.user == nil &&
+            url.password == nil
     }
 
     public var isBuiltInCanary: Bool {

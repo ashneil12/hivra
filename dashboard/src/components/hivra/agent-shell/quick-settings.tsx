@@ -6,6 +6,7 @@
 // rows exist comes from command-panel/capabilities.ts. Nothing here is a new
 // backend.
 
+import { agentSoftwareVersionName } from "@/lib/hivra/agent-software-names";
 import { useCallback, useState, type ReactNode } from "react";
 import { ChevronRight, MessageCircle, Power, RefreshCw, Ruler, Sparkles } from "lucide-react";
 import { AgentActionError, restartAgent, updateAgentRuntime, type HivraAgent } from "@/lib/hivra/agent-api";
@@ -51,24 +52,16 @@ function updateLine(view: AgentSoftwareView | null | undefined, name: string): {
 }
 
 /**
- * What the Update row says beside its label. `unpinned` is an agent Hivra pins
- * no version for (Hermes, OpenBot, Nuphos): it shows the version it has, never "available".
+ * What the Update row says beside its label. Hivra pins no agent version, so
+ * it shows the version the agent has, never "behind".
  */
-function updateNote(view: AgentSoftwareView | null | undefined, unpinned: boolean): string {
-  if (unpinned) {
-    switch (view?.kind) {
-      case "updating": return "Updating…";
-      case "current": return `Version ${view.installed}`;
-      case "update_done": return "Up to date";
-      case "update_failed": return view.reason === "local_changes" ? "Not updated: it has changes of your own" : "The last update didn't finish";
-      default: return "";
-    }
-  }
+function updateNote(view: AgentSoftwareView | null | undefined): string {
   switch (view?.kind) {
     case "updating": return "Updating…";
-    case "behind": case "ahead_hivra": case "other_version": case "version_unreadable": return "An update is available";
-    case "current": case "update_done": return "Up to date";
-    case "update_failed": return "The last update didn't finish";
+    case "current": return `Version ${agentSoftwareVersionName(view.installed)}`;
+    case "update_done": return "Up to date";
+    case "older_connection_service": case "update_deferred": return "An update is available";
+    case "update_failed": return view.reason === "local_changes" ? "Not updated: it has changes of your own" : "The last update didn't finish";
     default: return "";
   }
 }
@@ -202,7 +195,7 @@ export function AgentQuickSettings({
           id: "update",
           icon,
           label: action.label,
-          value: softwareBusy ? "Updating…" : updateNote(softwareView, agent.type === "hermes" || agent.type === "openbot" || agent.type === "nuphos") || undefined,
+          value: softwareBusy ? "Updating…" : updateNote(softwareView) || undefined,
           onLeave: () => { if (!updating) { setUpdateMessage(null); setFollowed(false); } },
           render: (ctx) => (
             <>

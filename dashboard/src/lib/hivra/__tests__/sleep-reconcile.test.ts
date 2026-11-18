@@ -175,6 +175,33 @@ describe("reconcileAgentSleep: a stale lease", () => {
     await expect(reconcile(lease("sleep", "draining", { status: "stopped" }))).resolves.toMatchObject({ outcome: "settled" });
   });
 
+  it("unlocks a computer left locked by an interrupted save, then settles the lease from what it is now", async () => {
+    // Seen on Canary: two computers sat for 40 minutes with a lease nothing could settle, and could not be deleted.
+    const interrupted = stateLine("unknown", { reason: "interrupted_save" });
+    mockRunScript
+      .mockResolvedValueOnce(interrupted)
+      .mockResolvedValueOnce({ ok: true, stdout: `HIVRA_SAVE_RECOVERY {"ok":true,"vmid":${VMID},"reason":"recovered"}\n` })
+      .mockResolvedValueOnce(stateLine("awake"));
+    const outcome = await reconcile(lease("sleep", "hibernating"));
+    expect(outcome).toMatchObject({ outcome: "settled", to: "awake", why: "stale_lease", hostState: "awake" });
+    // The recovery is told when this save began, so it can trust saved state only from this save.
+    expect(String(mockRunScript.mock.calls[1][0])).toContain(`recover_interrupted_save '${Math.floor((NOW - 15 * MIN) / 1000) - 1}'`);
+    expect(mockRunScript).toHaveBeenCalledTimes(3);
+  });
+
+  it("leaves it alone when the unlock did not happen, or a save is still running", async () => {
+    mockRunScript
+      .mockResolvedValueOnce(stateLine("unknown", { reason: "interrupted_save" }))
+      .mockResolvedValueOnce({ ok: true, stdout: `HIVRA_SAVE_RECOVERY {"ok":false,"vmid":${VMID},"reason":"busy"}\n` });
+    await expect(reconcile(lease("sleep", "hibernating"))).resolves.toEqual({ outcome: "left", reason: "interrupted_save" });
+    expect(mockRunScript).toHaveBeenCalledTimes(2);
+    mockRunScript.mockReset();
+    mockRunScript.mockResolvedValue(stateLine("unknown", { reason: "interrupted_save", unit_active: true }));
+    await expect(reconcile(lease("sleep", "hibernating"))).resolves.toEqual({ outcome: "left", reason: "unit_active" });
+    expect(mockRunScript).toHaveBeenCalledTimes(1);
+    expect(mockFinishSleep).not.toHaveBeenCalled();
+  });
+
   it("leaves the lease alone when the host is unreadable, unknown, or still working on it", async () => {
     mockRunScript.mockResolvedValue({ ok: false, stdout: "" });
     await expect(reconcile(lease("sleep", "draining"))).resolves.toEqual({ outcome: "left", reason: "state_unreadable" });

@@ -26,6 +26,8 @@ on:
       - 'services/posthog-proxy-worker/**'
       - 'services/venice-proxy-worker/**'
       - 'services/host-relay-worker/**'
+      - 'services/lite-agent-worker/**'
+      - 'services/memory-worker/**'
       - 'services/host-connector/**'
       - 'scripts/release/**'
       - '.github/workflows/worker-builds.yml'
@@ -54,6 +56,8 @@ on:
       - 'services/posthog-proxy-worker/**'
       - 'services/venice-proxy-worker/**'
       - 'services/host-relay-worker/**'
+      - 'services/lite-agent-worker/**'
+      - 'services/memory-worker/**'
       - 'services/host-connector/**'
       - 'scripts/release/**'
       - '.github/workflows/worker-builds.yml'
@@ -69,7 +73,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        worker: [posthog-proxy-worker, venice-proxy-worker, host-relay-worker]
+        worker: [posthog-proxy-worker, venice-proxy-worker, host-relay-worker, lite-agent-worker, memory-worker]
     defaults:
       run:
         working-directory: services/${{ matrix.worker }}

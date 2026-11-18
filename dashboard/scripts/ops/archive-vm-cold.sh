@@ -8,6 +8,15 @@
 #
 # Quiesce: stops the agent containers before tarring, restarts after.
 # Restores VM's original power state (running/stopped) at the end.
+#
+# Optional encryption at rest (off by default; with it off nothing below changes):
+#   HERMES_BACKUP_ENCRYPTION=on  HERMES_BACKUP_AGE_RECIPIENT=age1...
+# The archive is encrypted with `age` to that PUBLIC recipient before upload and the
+# plaintext is removed from scratch. The remote name gains an ".age" suffix, the manifest
+# gains "encryption": "age" and "plain_sha256", and archive_sha256 / archive_size_bytes
+# describe the uploaded (encrypted) file. No secret key is ever needed on this host.
+# Refusal exit codes (before the guest is touched): 7 age not installed, 8 bad recipient.
+# Exit 9: age failed after the archive was built (nothing uploaded).
 
 set -euo pipefail
 
@@ -116,6 +125,28 @@ if ! qm config "$VMID" >/dev/null 2>&1; then
   echo "[$VMID] no such VM on $(hostname)" >&2; exit 1
 fi
 
+BACKUP_ENCRYPTION=off
+BACKUP_AGE_RECIPIENT=""
+case "${HERMES_BACKUP_ENCRYPTION:-}" in
+  ""|off|0|false|no) ;;
+  on|1|true|yes)
+    BACKUP_ENCRYPTION=on
+    BACKUP_AGE_RECIPIENT="${HERMES_BACKUP_AGE_RECIPIENT:-}"
+    if ! [[ "$BACKUP_AGE_RECIPIENT" =~ ^age1[0-9a-z]{58}$ ]]; then
+      echo "REFUSING_BACKUP_BAD_AGE_RECIPIENT vmid=$VMID: HERMES_BACKUP_ENCRYPTION is on but HERMES_BACKUP_AGE_RECIPIENT is missing or not an age1... public key; nothing was archived" >&2
+      exit 8
+    fi
+    if ! command -v age >/dev/null 2>&1; then
+      echo "REFUSING_BACKUP_NO_AGE vmid=$VMID: HERMES_BACKUP_ENCRYPTION is on but the age binary is not installed on $(hostname); nothing was archived" >&2
+      exit 7
+    fi
+    ;;
+  *)
+    echo "REFUSING_BACKUP_BAD_AGE_RECIPIENT vmid=$VMID: unrecognised HERMES_BACKUP_ENCRYPTION value; use on or off; nothing was archived" >&2
+    exit 8
+    ;;
+esac
+
 IP=$(qm config "$VMID" 2>/dev/null | grep -oE 'ip=10\.70\.[0-9]+\.[0-9]+' | head -1 | sed 's/ip=//')
 [ -z "$IP" ] && { echo "[$VMID] no IP in qm config" >&2; exit 1; }
 
@@ -179,7 +210,8 @@ TAR_PATHS="./opt/hermes/instances/$INSTANCE_ID ./var/lib/docker/volumes/agent-${
 echo "  archiving:"
 ssh "${SSH_OPTS[@]}" "hermes@$IP" "sudo du -sh /opt/hermes/instances/$INSTANCE_ID /var/lib/docker/volumes/agent-${INSTANCE_ID}_agent-source /var/lib/docker/volumes/agent-${INSTANCE_ID}_webui-state /var/lib/docker/volumes/agent-${INSTANCE_ID}_webui-workspace 2>/dev/null" | sed 's/^/    /'
 
-SCRATCH=$(mktemp -d /tmp/hermes-archive-$VMID-XXXX)
+# Disk-backed by default: /tmp is RAM on some hosts.
+SCRATCH=$(mktemp -d "${HERMES_ARCHIVE_SCRATCH_ROOT:-/var/tmp}/hermes-archive-$VMID-XXXX")
 LOCAL_ARCHIVE="$SCRATCH/data-$TS.tar.zst"
 
 # ─── stop agent containers, tar+zstd, best-effort restart — one ssh session ───
@@ -204,11 +236,34 @@ LOCAL_SHA=$(sha256sum "$LOCAL_ARCHIVE" | awk '{print $1}')
 TAR_SEC=$(( $(date +%s) - START_TS ))
 echo "    archive: $(numfmt --to=iec "$ARCHIVE_SIZE")  sha256:${LOCAL_SHA:0:16}…  ${TAR_SEC}s"
 
+REMOTE_NAME="data-$TS.tar.zst"
+UPLOAD_FILE="$LOCAL_ARCHIVE"
+MANIFEST_ENC_FIELDS=""
+MANIFEST_ENC_TOKEN=""
+if [ "$BACKUP_ENCRYPTION" = "on" ]; then
+  PLAIN_SHA="$LOCAL_SHA"
+  echo "  encrypting archive with age (public recipient) ..."
+  if ! age -r "$BACKUP_AGE_RECIPIENT" -o "$LOCAL_ARCHIVE.age" "$LOCAL_ARCHIVE" || [ ! -s "$LOCAL_ARCHIVE.age" ]; then
+    echo "  ✗ age encryption failed; nothing uploaded" >&2
+    rm -f "$LOCAL_ARCHIVE.age"
+    exit 9
+  fi
+  # The plaintext must not outlive the encrypted copy on scratch.
+  rm -f "$LOCAL_ARCHIVE"
+  UPLOAD_FILE="$LOCAL_ARCHIVE.age"
+  REMOTE_NAME="$REMOTE_NAME.age"
+  ARCHIVE_SIZE=$(stat -c %s "$UPLOAD_FILE" 2>/dev/null || stat -f %z "$UPLOAD_FILE")
+  LOCAL_SHA=$(sha256sum "$UPLOAD_FILE" | awk '{print $1}')
+  printf -v MANIFEST_ENC_FIELDS '\n  "encryption": "age",\n  "plain_sha256": "%s",' "$PLAIN_SHA"
+  MANIFEST_ENC_TOKEN=" enc=age"
+  echo "    encrypted: $(numfmt --to=iec "$ARCHIVE_SIZE")  sha256:${LOCAL_SHA:0:16}…"
+fi
+
 echo "  uploading PVE → Storage Box ..."
 START_TS=$(date +%s)
 ssh cold "mkdir -p free/$INSTANCE_ID meta/$INSTANCE_ID" >/dev/null
 rsync -a --inplace --partial -e ssh \
-  "$LOCAL_ARCHIVE" "cold:free/$INSTANCE_ID/data-$TS.tar.zst"
+  "$UPLOAD_FILE" "cold:free/$INSTANCE_ID/$REMOTE_NAME"
 UP_SEC=$(( $(date +%s) - START_TS ))
 echo "    uploaded in ${UP_SEC}s"
 
@@ -220,10 +275,10 @@ cat > "$MANIFEST" <<JSON
   "vmid": $VMID,
   "pve_host": "$PVE_HOST",
   "instance_id": "$INSTANCE_ID",
-  "archive_path": "free/$INSTANCE_ID/data-$TS.tar.zst",
+  "archive_path": "free/$INSTANCE_ID/$REMOTE_NAME",
   "archive_size_bytes": $ARCHIVE_SIZE,
   "archive_sha256": "$LOCAL_SHA",
-  "tier": "free",
+  "tier": "free",$MANIFEST_ENC_FIELDS
   "contents": [
     "/opt/hermes/instances/$INSTANCE_ID",
     "/var/lib/docker/volumes/agent-${INSTANCE_ID}_agent-source",
@@ -241,6 +296,6 @@ if [ "$START_STATE" != "running" ]; then
   qm shutdown "$VMID" --timeout 60 >/dev/null 2>&1 || true
 fi
 
-echo "═══ done: $INSTANCE_ID → cold:free/$INSTANCE_ID/data-$TS.tar.zst ═══"
+echo "═══ done: $INSTANCE_ID → cold:free/$INSTANCE_ID/$REMOTE_NAME ═══"
 # Final line is machine-parseable by the orchestrating bash on the laptop.
-echo "MANIFEST sha256=$LOCAL_SHA size=$ARCHIVE_SIZE iid=$INSTANCE_ID ts=$TS vmid=$VMID host=$PVE_HOST"
+echo "MANIFEST sha256=$LOCAL_SHA size=$ARCHIVE_SIZE iid=$INSTANCE_ID ts=$TS vmid=$VMID host=$PVE_HOST$MANIFEST_ENC_TOKEN"
