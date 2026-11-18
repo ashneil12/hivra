@@ -579,6 +579,15 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **OpenClaw replies on Venice, and Aeon keeps a newer gh (`2026.11.18.1`).**
+  OpenClaw adds DeepSeek's own top-level `thinking` field to deepseek-v4
+  models, which Venice's strict chat schema rejects ("Invalid request
+  parameters"). The seeded Venice model, and a Venice model set from the
+  dashboard, now carry `compat.thinkingFormat: "openai"`, OpenClaw's own setting
+  for a plain OpenAI-style request. Aeon's step installed the pinned gh .deb even
+  when the image already had a newer gh, which apt refuses as a downgrade; any
+  gh at or above the pin is now kept.
+
 - **A failed launch says which step stopped (`2026.11.17.9`).** The guest is
   removed when provisioning fails, so the host log only read "step
   provision-claude-code-box.sh exited with status 1". The step's `die()` now
