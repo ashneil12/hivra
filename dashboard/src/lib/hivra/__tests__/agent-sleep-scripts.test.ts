@@ -51,7 +51,7 @@ describe("script construction", () => {
     expect(digest(withoutProbe(buildSleepHostScript({ ...target, tier: "nap", manual: false }))))
       .toBe("30792d3358eeeb69c93e71559494694ca8e8eb4b3e3a6c07fa71fd529f838ff0");
     expect(digest(withoutProbe(buildSleepHostScript({ ...target, tier: "hibernate", manual: false }))))
-      .toBe("ff24aec0040e571da4a5d8acb1d278283b9589bfd9d97c41e04286f59b80c9d6");
+      .toBe("4652b52d99741932b096a97f76d831fce97757ce080aa81f5bedd6568c04bb25");
     expect(digest(buildWakeHostScript({ ...target, admission })))
       .toBe("8ad925ebfdf85c7142ec9936216d1855b53a7e3fd1fff1cadade0835235abd01");
   });

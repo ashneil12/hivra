@@ -337,6 +337,32 @@ const ADMISSION_FAST_QM_SHELL = `# The admission helper reads every VM with qm c
 # hand anything they cannot answer exactly back to the real CLI.
 ${FAST_QM_FUNCTIONS}`;
 
+/**
+ * Recovers a computer whose save to disk was interrupted. When a save fails, Proxmox removes the
+ * partial saved state but leaves its "suspending" lock on the computer on purpose, and every later
+ * state read then sees a state it does not know: the computer could not sleep, wake or be deleted
+ * until someone unlocked it by hand (seen on Canary under load).
+ *
+ * This acts only on exactly that case: the lock is "suspending", no saved state is recorded, and no
+ * save is still running. It takes the lock off and, if the save left the computer paused, lets it
+ * run again. A computer whose QEMU died is left off; the caller reads the state afterwards. The
+ * caller holds the per-computer lock. Uses the caller's qm.
+ */
+export const INTERRUPTED_SAVE_SHELL = String.raw`recover_interrupted_save() {
+  local conf
+  if systemctl is-active --quiet "hivra-sleep-$VMID" 2>/dev/null; then return 1; fi
+  conf="$(qm config "$VMID" 2>/dev/null)" || return 1
+  [ "$(printf '%s
+' "$conf" | awk '$1=="lock:" {print $2; exit}')" = suspending ] || return 1
+  if printf '%s
+' "$conf" | grep '^vmstate:' >/dev/null; then return 1; fi
+  qm unlock "$VMID" >/dev/null 2>&1 || return 1
+  if [ "$(qm status "$VMID" --verbose 2>/dev/null | awk '$1=="qmpstatus:" {print $2; exit}')" = paused ]; then
+    qm resume "$VMID" >/dev/null 2>&1 || true
+  fi
+  return 0
+}`;
+
 function stateShell(fastConfig: boolean): string {
   return `# One config read serves the binding check and the first state read.
 read_state() {
@@ -1293,6 +1319,8 @@ fi
 RC=0
 command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} systemd-run --unit="hivra-sleep-$VMID" --collect --wait --quiet qm suspend "$VMID" --todisk 1 </dev/null >/dev/null 2>&1 || RC=$?
 observe
+# A save that failed leaves the computer locked; take that off so it is not stuck in a state nothing reads.
+if [ "$RC" != 0 ] && [ "$OBS" = unknown ] && recover_interrupted_save; then CONFIG_FRESH=0; observe; fi
 mark hibernate "$STEP"
 ${hostIngress ? `# Only a computer that is still paused keeps its nap marker; the proxy never resumes any other.
 [ "$OBS" = napping ] || ingress_unmark
@@ -1350,7 +1378,8 @@ ${receiptShell("sleep")}
 ${ctlShell()}
 ${input.fastConfigRead === true ? `${FAST_QM_SHELL}
 ` : ""}${stateShell(input.fastConfigRead === true)}
-${probeShell(input.manual === true, coverage, input.profile ?? null)}
+${nap ? "" : `${INTERRUPTED_SAVE_SHELL}
+`}${probeShell(input.manual === true, coverage, input.profile ?? null)}
 ${hostIngress ? `${ingressShell()}
 ` : ""}${trimShell(trimMemory)}install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock

@@ -13,7 +13,7 @@ import {
   type AgentSleepReconcileTarget,
   type AgentWakeFinishResult,
 } from "./agent-sleep-store";
-import { type ObservedSleepState } from "./agent-sleep-scripts";
+import { INTERRUPTED_SAVE_SHELL, type ObservedSleepState } from "./agent-sleep-scripts";
 import { STALE_SLEEP_LEASE_MS } from "./agent-sleep-policy";
 import { ensureHivraAgentAwake, pollPublicHealthz, resolveSleepTarget, type AgentRow } from "./agent-wake";
 
@@ -99,9 +99,54 @@ case "$STATUS/\${QMP:-none}/\${LOCK:-none}" in
       fi
     done
     emit true cold observed "$UNIT" ;;
+  */*/suspending)
+    # A save that failed: Proxmox removed the partial state and left this lock. With saved state still
+    # recorded, a save may only have been cut off mid-way, and that is never touched from here.
+    if printf '%s\\n' "$CONFIG" | grep '^vmstate:' >/dev/null; then emit false unknown unexpected_state "$UNIT"; fi
+    emit false unknown interrupted_save "$UNIT" ;;
   *) emit false unknown unexpected_state "$UNIT" ;;
 esac
 `;
+}
+
+export const SAVE_RECOVERY_PREFIX = "HIVRA_SAVE_RECOVERY ";
+
+/**
+ * Takes the lock off a computer whose save to disk was interrupted (see INTERRUPTED_SAVE_SHELL),
+ * under the per-computer lock, for the exact computer the binding tag names. Prints one
+ * HIVRA_SAVE_RECOVERY line: {"ok":true|false,"vmid":N,"reason":"..."}. The caller reads the state again.
+ */
+export function buildInterruptedSaveRecoveryScript(target: { vmid: number; bindingTag: string | null }): string {
+  // Same checks as the state script.
+  buildSleepStateHostScript(target);
+  return `set -euo pipefail
+VMID=${target.vmid}
+EXPECTED_BINDING_TAG=${shellQuote(target.bindingTag as string)}
+qm() { command timeout -k 5 25 qm "$@" </dev/null; }
+emit() { printf '${SAVE_RECOVERY_PREFIX}{"ok":%s,"vmid":%s,"reason":"%s"}\\n' "$1" "$VMID" "$2"; exit 0; }
+${INTERRUPTED_SAVE_SHELL}
+CONFIG="$(qm config "$VMID" 2>/dev/null)" || emit false unreachable
+printf '%s\\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p' | tr ';' '\\n' | grep -Fx -- "$EXPECTED_BINDING_TAG" >/dev/null \\
+  || emit false binding_mismatch
+install -d -m 0755 /run/lock
+exec 9>"/run/lock/hivra-vm-$VMID.lock"
+flock -x -n 9 || emit false busy
+if recover_interrupted_save; then emit true unlocked; fi
+emit false not_interrupted
+`;
+}
+
+/** True only for the recovery script's own success line for this computer. */
+export function parseSaveRecoveryOk(stdout: unknown, vmid: number): boolean {
+  if (typeof stdout !== "string") return false;
+  const lines = stdout.split("\n").filter((line) => line.startsWith(SAVE_RECOVERY_PREFIX));
+  if (lines.length !== 1) return false;
+  try {
+    const row = JSON.parse(lines[0].slice(SAVE_RECOVERY_PREFIX.length)) as Record<string, unknown>;
+    return row.ok === true && row.vmid === vmid && row.reason === "unlocked";
+  } catch {
+    return false;
+  }
 }
 
 export interface SleepStateReceipt {
@@ -226,12 +271,27 @@ async function readHostState(row: AgentRow): Promise<{ receipt: SleepStateReceip
   if (!resolved.ok) return { left: `target_${resolved.code}` };
   const target = resolved.target;
   if (!target.bindingTag) return { left: "binding_not_enforced" };
-  const run = await runProxmoxHostScript(
+  const read = async () => parseSleepStateReceipt((await runProxmoxHostScript(
     buildSleepStateHostScript({ vmid: target.vmid, bindingTag: target.bindingTag }),
     target.env,
     { timeoutMs: STATE_SCRIPT_TIMEOUT_MS },
-  );
-  const receipt = parseSleepStateReceipt(run?.stdout ?? "", target.vmid);
+  ))?.stdout ?? "", target.vmid);
+  let receipt = await read();
+  if (receipt && !receipt.unitActive && receipt.reason === "interrupted_save") {
+    // A failed save left the computer locked with nothing saved. Unlock it, then read what it is now.
+    const recovery = await runProxmoxHostScript(
+      buildInterruptedSaveRecoveryScript({ vmid: target.vmid, bindingTag: target.bindingTag }),
+      target.env,
+      { timeoutMs: STATE_SCRIPT_TIMEOUT_MS },
+    );
+    const unlocked = parseSaveRecoveryOk(recovery?.stdout ?? "", target.vmid);
+    log.warn("computer left locked by an interrupted save", {
+      source: LOG_SOURCE,
+      failureType: unlocked ? "sleep_interrupted_save_recovered" : "sleep_interrupted_save_not_recovered",
+      instanceId: String(row.id),
+    });
+    if (unlocked) receipt = await read();
+  }
   if (!receipt) return { left: "state_unreadable" };
   // A hibernate unit or another sleep or wake script is still working: not stale, only slow.
   if (receipt.unitActive) return { left: "unit_active" };

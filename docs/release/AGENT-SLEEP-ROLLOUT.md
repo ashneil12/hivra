@@ -328,3 +328,9 @@ placement stops reading the column; stored readings can stay.
 Set `HIVRA_SLEEP_MODE=off`, or the host's `sleep_mode` to `off`. Nothing new
 goes to sleep; sleeping agents still wake when opened. To remove the feature,
 wake every sleeping agent first.
+
+## A deep sleep that fails part-way
+
+When saving a computer to disk fails, Proxmox removes the partial saved state but leaves its `suspending` lock on the computer on purpose. Every state read then saw a state it did not know, so the computer could not sleep, wake or be deleted until someone ran `qm unlock` by hand (seen on Canary under load, 2026-11-18).
+
+Now the deep sleep script takes that lock off itself right after a failed save, and the sweep's recovery does the same for a computer it finds in that state (`interrupted_save`), then settles the record from what the computer is. Both act only when the lock is `suspending`, no saved state is recorded in the config and no save is still running; a computer the save left paused is resumed, one whose QEMU died is left off. With saved state still recorded nothing is touched, and that still needs a person. Logs: `sleep_interrupted_save_recovered`, `sleep_interrupted_save_not_recovered`.
