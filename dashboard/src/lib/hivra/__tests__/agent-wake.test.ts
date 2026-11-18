@@ -50,7 +50,12 @@ jest.mock("../sleep-reconcile", () => ({ reconcileAgentSleep: (...a: unknown[]) 
 const mockSsrfFetch = jest.fn();
 jest.mock("@/lib/ssrf-safe-fetch", () => ({ ssrfSafeFetch: (...a: unknown[]) => mockSsrfFetch(...a) }));
 
-import { ensureHivraAgentAwake, isStuckTransient, pollPublicHealthz } from "../agent-wake";
+const mockAfter = jest.fn();
+jest.mock("../after-response", () => ({ runAfterResponse: (...a: unknown[]) => mockAfter(...a) }));
+const mockRunStorage = jest.fn();
+jest.mock("../sleep-storage", () => ({ runSleepStorage: (...a: unknown[]) => mockRunStorage(...a) }));
+
+import { ensureHivraAgentAwake, isStuckTransient, pollPublicHealthz, resetStorageKicks } from "../agent-wake";
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
 const VMID = 1234;
@@ -125,6 +130,32 @@ describe("ensureHivraAgentAwake", () => {
     await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open" })).resolves.toEqual({ state: "failed", reason: "not_found" });
     mockReadRow.mockResolvedValueOnce({ data: null, error: { code: "XX" } });
     await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open" })).resolves.toEqual({ state: "failed", reason: "agent_unreadable" });
+  });
+
+  it("asks for a stored agent back and starts that work right after the response, without packing anything", async () => {
+    resetStorageKicks();
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated", sleep_stored_at: "2026-11-01T00:00:00Z" }), error: null });
+    mockRunStorage.mockResolvedValue({ counts: {}, errors: 0, returning: 1 });
+    await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open" }))
+      .resolves.toEqual({ state: "waking", reason: "restoring_from_storage" });
+    // It never claims the computer or runs the wake script: its disks are not there yet.
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockRunScript).not.toHaveBeenCalled();
+    expect(mockAfter).toHaveBeenCalledTimes(1);
+    await (mockAfter.mock.calls[0][0] as () => Promise<void>)();
+    expect(mockRunStorage).toHaveBeenCalledTimes(1);
+    const input = mockRunStorage.mock.calls[0][0] as { env: Record<string, unknown>; hostActs: (h: string) => Promise<boolean>; deadline: number; startBy: number };
+    expect(input.env.HIVRA_SLEEP_STORE_AFTER_DAYS).toBeUndefined();
+    await expect(input.hostActs("any")).resolves.toBe(false);
+    expect(input.deadline - input.startBy).toBeGreaterThanOrEqual(65_000);
+    // A page that asks again every few seconds does not start the work every time.
+    await ensureHivraAgentAwake(AGENT_ID, { trigger: "open" });
+    expect(mockAfter).toHaveBeenCalledTimes(1);
+    // Outside a request there is nothing to run after: the answer is the same and the sweep does the work.
+    resetStorageKicks();
+    mockAfter.mockImplementation(() => { throw new Error("outside a request"); });
+    await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "schedule" }))
+      .resolves.toEqual({ state: "waking", reason: "restoring_from_storage" });
   });
 
   it("never wakes a lapsed owner", async () => {

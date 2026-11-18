@@ -21,6 +21,7 @@ import {
 import { buildWakeHostScript, parseWakeReceipt, WAKE_RESULT_PREFIX, type WakeAdmission, type WakeReceipt } from "./agent-sleep-scripts";
 import { isFastWakeEnabled } from "./fast-wake-flags";
 import { isAgentStored, requestAgentUnstore } from "./sleep-storage-state";
+import { runAfterResponse } from "./after-response";
 import {
   disarmChannelsForWake,
   rearmChannelsAfterFailedWake,
@@ -143,6 +144,46 @@ export function buildWakeAdmissionFor(target: HivraLifecycleTarget): WakeAdmissi
  * host's provisioner readiness check, which is right here: these scripts are
  * inline and never call the start helper.
  */
+const STORAGE_KICK_EVERY_MS = 8_000;
+const storageKickAt = new Map<string, number>();
+export function resetStorageKicks(): void {
+  storageKickAt.clear();
+}
+
+/**
+ * Someone is waiting for a stored agent. The sleep sweep would start bringing it
+ * back, and notice when its disks are back, within a minute each; this does the
+ * same piece of work right after the response, so a person watching the page
+ * (which asks again every few seconds) waits for the copy and the boot, not for
+ * the clock. It packs nothing, and every step it takes is the sweep's own,
+ * guarded against running twice.
+ */
+function kickStorageReturn(agentId: string): void {
+  const nowMs = Date.now();
+  if ((storageKickAt.get(agentId) ?? 0) > nowMs) return;
+  storageKickAt.set(agentId, nowMs + STORAGE_KICK_EVERY_MS);
+  if (storageKickAt.size > 500) storageKickAt.clear();
+  try {
+    runAfterResponse(async () => {
+      if (!supabaseAdmin) return;
+      const { runSleepStorage } = await import("./sleep-storage");
+      await runSleepStorage({
+        db: supabaseAdmin,
+        // Bringing back only: with the packing setting left out, nothing new is packed.
+        env: { ...process.env, HIVRA_SLEEP_STORE_AFTER_DAYS: undefined },
+        now: Date.now,
+        startBy: nowMs + 20_000,
+        deadline: nowMs + 100_000,
+        hostActs: async () => false,
+        resolveTarget: resolveSleepTarget,
+        wake: (id) => ensureHivraAgentAwake(id, { trigger: "schedule", waitMs: 120_000 }),
+      });
+    }, { source: LOG_SOURCE, failureType: "sleep_storage_kick_failed", instanceId: agentId });
+  } catch {
+    // Not inside a request (a scheduled run): the sweep itself does this work.
+  }
+}
+
 export async function resolveSleepTarget(row: AgentRow, source: string) {
   return resolveHivraLifecycleTarget({
     userId: String(row.user_id),
@@ -381,6 +422,7 @@ async function performWakeSteps(
     if (run.receipt.reason === "stored") {
       // Its disks are in the storage box (the record had not caught up). Ask for it back; the sweep wakes it then.
       if (supabaseAdmin) await requestAgentUnstore(supabaseAdmin, agentId).catch(() => false);
+      kickStorageReturn(agentId);
       return failed("stored");
     }
     if (run.receipt.to === "cold") {
@@ -517,6 +559,7 @@ export async function ensureHivraAgentAwake(
   // The request is noted and the sleep sweep does the rest, then wakes it.
   if (isAgentStored(row)) {
     if (supabaseAdmin) await requestAgentUnstore(supabaseAdmin, agentId).catch(() => false);
+    kickStorageReturn(agentId);
     return { state: "waking", reason: "restoring_from_storage" };
   }
 

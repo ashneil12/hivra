@@ -229,6 +229,8 @@ describe("runSleepStorage", () => {
     const result = await runSleepStorage(t.input);
     expect(result.counts).toMatchObject({ unstored: 1, unstoreFailed: 0 });
     expect(agents[0]).toMatchObject({ sleep_stored_at: null, sleep_unstore_requested_at: null, sleep_unstore_job_id: null });
+    // Nothing is on its way back any more, so the sweep has no reason to look again within this run.
+    expect(result.returning).toBe(0);
     expect(t.wake).toHaveBeenCalledWith(id(1));
   });
 
@@ -243,6 +245,8 @@ describe("runSleepStorage", () => {
     const result = await runSleepStorage(t.input);
     expect(result.counts).toMatchObject({ unstored: 0, unstoreFailed: 1, unstoreStarted: 0 });
     expect(result.errors).toBe(1);
+    // In its pause it is not "on its way back": looking again every few seconds would do nothing.
+    expect(result.returning).toBe(0);
     expect(t.wake).not.toHaveBeenCalled();
     expect(agents[0].sleep_unstore_job_id).toBeNull();
     expect(agents[0].sleep_unstore_requested_at).not.toBeNull();
@@ -250,6 +254,8 @@ describe("runSleepStorage", () => {
     // After the pause the next run starts it again.
     const later = await runSleepStorage({ ...t.input, now: () => NOW + UNSTORE_RETRY_MS + 1, deadline: NOW + UNSTORE_RETRY_MS + 250_000 });
     expect(later.counts.unstoreStarted).toBe(1);
+    // Its job is running now: worth looking again soon.
+    expect(later.returning).toBe(1);
   });
 
   it("drops a request for an agent that is not stored, and counts a lost job as failed", async () => {

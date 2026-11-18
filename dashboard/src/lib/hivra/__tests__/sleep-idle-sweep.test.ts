@@ -965,6 +965,33 @@ describe("time budget", () => {
   });
 });
 
+describe("storage: an agent on its way back", () => {
+  const zero = { tracked: 0, stored: 0, storeStarted: 0, storeEnded: 0, unstoreStarted: 0, unstored: 0, unstoreFailed: 0, refused: 0 };
+
+  it("looks again within the same run instead of leaving the next move to the next run", async () => {
+    const { runSleepStorage } = jest.requireMock("../sleep-storage") as { runSleepStorage: jest.Mock };
+    runSleepStorage
+      .mockResolvedValueOnce({ counts: { ...zero, tracked: 1, unstoreStarted: 1 }, errors: 0, returning: 1 })
+      .mockResolvedValueOnce({ counts: { ...zero, tracked: 1 }, errors: 0, returning: 1 })
+      .mockResolvedValueOnce({ counts: { ...zero, tracked: 1, unstored: 1 }, errors: 0, returning: 0 });
+    const summary = await run({ HIVRA_SLEEP_MODE: "off" }, { storageRecheckMs: 5 });
+    expect(runSleepStorage).toHaveBeenCalledTimes(3);
+    expect(summary.storage).toMatchObject({ tracked: 1, unstoreStarted: 1, unstored: 1 });
+  });
+
+  it("looks once when nothing is on its way back, and stops looking when the budget is nearly spent", async () => {
+    const { runSleepStorage } = jest.requireMock("../sleep-storage") as { runSleepStorage: jest.Mock };
+    await run({ HIVRA_SLEEP_MODE: "off" }, { storageRecheckMs: 5 });
+    expect(runSleepStorage).toHaveBeenCalledTimes(1);
+    runSleepStorage.mockClear();
+    runSleepStorage.mockResolvedValue({ counts: { ...zero, tracked: 1 }, errors: 0, returning: 1 });
+    await run({ HIVRA_SLEEP_MODE: "off" }, { storageRecheckMs: 5, budgetMs: 3_000 });
+    expect(runSleepStorage).toHaveBeenCalledTimes(1);
+    const { runSleepStorage: actual } = jest.requireActual("../sleep-storage");
+    runSleepStorage.mockImplementation(actual);
+  });
+});
+
 describe("parseSleepStateReceipt", () => {
   const line = (over: Record<string, unknown> = {}) =>
     `HIVRA_SLEEP_STATE ${JSON.stringify({ ok: true, vmid: VMID, observed: "napping", reason: "observed", unit_active: false, ...over })}\n`;

@@ -117,7 +117,14 @@ export function resetSleepStorageState(): void {
 const hostOf = (row: AgentRow): string =>
   resolveHivraProxmoxHost(typeof row.proxmox_host === "string" ? row.proxmox_host : null);
 
-export async function runSleepStorage(input: SleepStorageInput): Promise<{ counts: SleepStorageCounts; errors: number }> {
+export interface SleepStorageResult {
+  counts: SleepStorageCounts;
+  errors: number;
+  /** Agents still on their way back when the run ended (a job running, or a request not yet started and not in a retry pause). */
+  returning: number;
+}
+
+export async function runSleepStorage(input: SleepStorageInput): Promise<SleepStorageResult> {
   const { db, env, now } = input;
   const runHostScript = input.runHostScript ?? runProxmoxHostScript;
   const runWithStdin = input.runHostScriptWithStdin ?? runProxmoxHostScriptWithStdin;
@@ -134,6 +141,13 @@ export async function runSleepStorage(input: SleepStorageInput): Promise<{ count
       ...(agentId ? { instanceId: agentId } : {}),
     });
   };
+  let tracked: AgentRow[] = [];
+  const done = (): SleepStorageResult => ({
+    counts,
+    errors,
+    returning: tracked.filter((row) => row.sleep_unstore_job_id != null
+      || (typeof row.sleep_unstore_requested_at === "string" && (unstoreRetryAt.get(String(row.id)) ?? 0) <= now())).length,
+  });
   const outOfTime = () => now() >= (input.startBy ?? input.deadline) || input.deadline - now() < SCRIPT_TIMEOUT_MS + 5_000;
   const iso = () => new Date(now()).toISOString();
 
@@ -146,9 +160,9 @@ export async function runSleepStorage(input: SleepStorageInput): Promise<{ count
     .limit(200);
   if (trackedError) {
     problem("failed to load agents with storage work", trackedError, "sleep_storage_query_failed");
-    return { counts, errors };
+    return done();
   }
-  const tracked = (trackedData ?? []) as AgentRow[];
+  tracked = (trackedData ?? []) as AgentRow[];
   counts.tracked = tracked.length;
 
   const targets = new Map<string, HivraLifecycleTarget | null>();
@@ -178,7 +192,7 @@ export async function runSleepStorage(input: SleepStorageInput): Promise<{ count
       .in("id", jobIds);
     if (error) {
       problem("failed to load storage jobs", error, "sleep_storage_jobs_query_failed");
-      return { counts, errors };
+      return done();
     }
     for (const job of (data ?? []) as JobRow[]) jobs.set(job.id, job);
   }
@@ -360,6 +374,7 @@ export async function runSleepStorage(input: SleepStorageInput): Promise<{ count
     if (!isAgentStored(row)) {
       // Not stored any more (or never was): the request has nothing to do.
       await db.from("hivra_agents").update({ sleep_unstore_requested_at: null }).eq("id", agentId);
+      row.sleep_unstore_requested_at = null;
       continue;
     }
     reservedHosts.add(host);
@@ -396,7 +411,7 @@ export async function runSleepStorage(input: SleepStorageInput): Promise<{ count
   // --- 3. Pack long sleepers: only with the setting on -------------------------
   const days = sleepStoreAfterDays(env.HIVRA_SLEEP_STORE_AFTER_DAYS);
   if (days === null || outOfTime() || !computerBackupPassword("00000000-0000-0000-0000-000000000000", env)) {
-    return { counts, errors };
+    return done();
   }
   const { data: candidateData, error: candidateError } = await db.rpc("hivra_sleep_store_candidates", {
     p_cutoff: new Date(now() - days * 86_400_000).toISOString(),
@@ -404,7 +419,7 @@ export async function runSleepStorage(input: SleepStorageInput): Promise<{ count
   });
   if (candidateError) {
     problem("failed to load agents to pack into storage", candidateError, "sleep_storage_candidates_failed");
-    return { counts, errors };
+    return done();
   }
   for (const candidate of (candidateData ?? []) as Array<{ id: string; proxmox_host: string | null }>) {
     if (outOfTime()) break;
@@ -422,5 +437,5 @@ export async function runSleepStorage(input: SleepStorageInput): Promise<{ count
       await db.from("hivra_agents").update({ sleep_store_tried_at: iso() }).eq("id", candidate.id);
     }
   }
-  return { counts, errors };
+  return done();
 }
