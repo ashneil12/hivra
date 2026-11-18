@@ -163,6 +163,26 @@ describe("gateway OpenClaw Control UI", () => {
     expect(app.ws[0].headers.origin).toBe("https://box.hivra.test");
   });
 
+  it("keeps the /openclaw prefix when OpenClaw serves its Control UI at basePath /openclaw", async () => {
+    // OpenClaw 2026.11.5 sends Referrer-Policy: no-referrer, so a launch sets
+    // gateway.controlUi.basePath (OpenClaw's own reverse-proxy prefix setting)
+    // and the page, its assets, routes and WebSocket all stay under /openclaw.
+    fs.mkdirSync(path.join(home, ".openclaw"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".openclaw", "openclaw.json"),
+      JSON.stringify({ gateway: { mode: "local", controlUi: { basePath: "/openclaw" } } }));
+    const app = await upstream();
+    const port = await boot("openclaw", { OPENCLAW_GATEWAY_PORT: String(app.port) });
+
+    expect(await request(port, "/openclaw/", FORWARDED)).toBe(200);
+    expect(await request(port, "/openclaw/assets/index.js")).toBe(200);
+    expect(await request(port, "/openclaw/chat/main")).toBe(200);
+    expect(await upgrade(port, "/openclaw", { Origin: "https://box.hivra.test" })).toMatch(/^HTTP\/1\.1 101/);
+
+    expect(app.http.map((seen) => seen.url)).toEqual(["/openclaw/", "/openclaw/assets/index.js", "/openclaw/chat/main"]);
+    expect(app.ws.map((seen) => seen.url)).toEqual(["/openclaw"]);
+    for (const seen of app.http) for (const name of forwardedNames) expect(seen.headers[name]).toBeUndefined();
+  });
+
   it("still refuses /openclaw without the Hivra gate", async () => {
     const app = await upstream();
     const port = await boot("openclaw", { OPENCLAW_GATEWAY_PORT: String(app.port) });

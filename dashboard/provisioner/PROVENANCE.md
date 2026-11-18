@@ -547,6 +547,21 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.17.7` builds on `2026.11.17.6` and lets OpenClaw's Control
+UI start again behind the box gateway. From 2026.11.5 OpenClaw's gateway sends
+`Referrer-Policy: no-referrer`, so the browser stopped sending the Referer the
+box gateway used to re-home the Control UI's root-absolute requests
+(`/assets/*`, `/fonts/*`, `/chat/*`) under `/openclaw`; the app bundle 404ed
+and OpenClaw's boot watchdog showed "Control UI did not start". A new launch
+now seeds OpenClaw's own `gateway.controlUi.basePath` (`/openclaw`), its
+documented setting for a reverse-proxy path prefix, and the box gateway
+forwards `/openclaw` without stripping it whenever `openclaw.json` names that
+base path; a computer whose config has none keeps the previous strip and
+Referer re-home. Changed: `provision-claude-code-box.sh`, `hivra-chat/server.js`,
+plus the documents, the version and the provider worker's release labels. This
+source release does not deploy, install, enable or start anything on a host or
+computer.
+
 Release `2026.11.17.6` builds on `2026.11.17.5` and gives a managed-Venice
 Agent Zero launch a working model again. Current Agent Zero images choose their
 models from presets (`usr/plugins/_model_config/presets.yaml`, the file its

@@ -1135,6 +1135,10 @@ if [ ! -s "${OPENCLAW_CFG_DIR}/openclaw.json" ]; then
   #  - auth.mode=none: the token-proxy already authenticates every user and the
   #    gateway is loopback+firewalled (OpenClaw's documented fronting-proxy
   #    deployment) — so the Control UI must NOT demand a SECOND token from the user.
+  #  - controlUi.basePath=/openclaw: OpenClaw's own setting for serving the Control UI
+  #    below a reverse-proxy prefix, so its assets and routes stay under the box
+  #    gateway's /openclaw mount (2026.11.5 sends no Referer, so the gateway can no
+  #    longer re-home root-absolute requests; without it the UI never starts).
   #  - controlUi.dangerouslyAllowHostHeaderOriginFallback: the Control UI WS arrives
   #    with the public tunnel Origin (not loopback); this accepts it. Safe only
   #    because the gate is the real boundary (same model as Aeon's ALLOW_ANY_HOST).
@@ -1184,7 +1188,7 @@ if [ ! -s "${OPENCLAW_CFG_DIR}/openclaw.json" ]; then
     "bind": "loopback",
     "port": ${OPENCLAW_PORT},
     "auth": { "mode": "none" },
-    "controlUi": { "dangerouslyAllowHostHeaderOriginFallback": true }
+    "controlUi": { "basePath": "/openclaw", "dangerouslyAllowHostHeaderOriginFallback": true }
   }${OC_BROWSER_JSON}${OC_VENICE_JSON}
 }
 JSON
