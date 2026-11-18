@@ -3,6 +3,7 @@ import SwiftUI
 
 struct HivraRootView: View {
     @EnvironmentObject private var profileStore: HivraProfileStore
+    @EnvironmentObject private var signIn: HivraBrowserSignInCoordinator
     @ObservedObject var localRuntime: HivraLocalRuntimeManager
     @StateObject private var workspaces = HivraWorkspaceStore()
     @State private var session: HivraWorkspaceSession?
@@ -10,8 +11,10 @@ struct HivraRootView: View {
     var body: some View {
         Group {
             if let session {
-                HivraWorkspaceView(session: session, localRuntime: localRuntime)
-                    .id(session.id)
+                HivraWelcomeGate(browser: session.connectionBrowser, signIn: signIn, profile: session.profile) {
+                    HivraWorkspaceView(session: session, localRuntime: localRuntime)
+                }
+                .id(session.id)
             } else {
                 ProgressView("Opening workspace…")
             }
@@ -27,6 +30,12 @@ struct HivraRootView: View {
         .onChange(of: profileStore.profiles) { _, profiles in
             workspaces.reconcile(profiles: profiles)
             activateConnection()
+        }
+        .onChange(of: signIn.completion) { _, completion in
+            guard let completion,
+                  let profile = profileStore.profiles.first(where: { $0.id == completion.profileID }) else { return }
+            profileStore.select(profile)
+            workspaces.session(for: profile).connectionBrowser.load(completion.finishURL)
         }
         .onChange(of: localRuntime.readyGeneration) { _, _ in signInLocalConnection() }
         .onChange(of: localRuntime.credentialsGeneration) { _, _ in
@@ -156,7 +165,7 @@ private struct HivraWorkspaceView: View {
             .background(HivraWindowDragRegion(title: windowTitle, onWindow: { session.workspaceWindow = $0 }))
             VStack(alignment: .leading, spacing: 19) {
                 HivraWordmark().foregroundStyle(HivraDesign.foreground(for: scheme))
-                connectionMenu
+                if profileStore.developerConnections { connectionMenu }
                 Button { showingSwitcher = true } label: {
                     HStack {
                         Image(systemName: "magnifyingglass")
@@ -378,8 +387,10 @@ private struct HivraWorkspaceView: View {
             Menu {
                 Button("New agent", systemImage: "sparkle") { session.launch(kind: .agent) }
                 Button("New computer", systemImage: "desktopcomputer") { session.launch(kind: .computer) }
-                Divider()
-                Button("Add connection", systemImage: "plus.rectangle.on.rectangle") { showingAddConnection = true }
+                if profileStore.developerConnections {
+                    Divider()
+                    Button("Add connection", systemImage: "plus.rectangle.on.rectangle") { showingAddConnection = true }
+                }
             } label: {
                 Image(systemName: "plus").font(.system(size: 14)).frame(width: 26, height: 30)
             }

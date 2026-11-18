@@ -11,6 +11,9 @@ let package = Package(
         .library(name: "HivraMacCore", targets: ["HivraMacCore"]),
         .executable(name: "HivraMac", targets: ["HivraMac"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.4"),
+    ],
     targets: [
         .target(
             name: "HivraMacCore",
@@ -18,7 +21,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "HivraMac",
-            dependencies: ["HivraMacCore"]
+            dependencies: [
+                "HivraMacCore",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ]
         ),
         .testTarget(
             name: "HivraMacTests",

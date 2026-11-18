@@ -35,7 +35,7 @@ enum HivraBrowserFailure: Equatable {
 
 @MainActor
 final class HivraBrowserModel: NSObject, ObservableObject {
-    private static let logger = Logger(subsystem: "cloud.hivra.mac.alpha", category: "web-content")
+    private static let logger = Logger(subsystem: "cloud.hivra.mac", category: "web-content")
     private static let downloadNoticeDuration: Duration = .seconds(10)
 
     @Published private(set) var currentURL: URL?

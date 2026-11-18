@@ -33,6 +33,21 @@ export type DesktopRelease =
 
 export type DesktopDownloads = Readonly<Record<DesktopPlatform, DesktopRelease>>;
 
+/**
+ * The Mac download stays "coming soon" until NEXT_PUBLIC_HIVRA_MAC_DOWNLOAD_URL
+ * names the signed, notarised installer (an https address, normally the
+ * GitHub release asset). Anything else keeps the button disabled.
+ */
+export function macDownloadFromEnv(value: string | undefined): DesktopRelease {
+  const href = value?.trim();
+  if (!href || !/^https:\/\/[^\s]+$/.test(href)) return { status: "pending", href: null };
+  return {
+    status: "published",
+    href: href as `https://${string}`,
+    label: "For Apple silicon and Intel Macs, macOS 14 or newer.",
+  };
+}
+
 export const PUBLIC_PROJECT_LINKS: Readonly<{
   repository: PublicRepository;
   desktop: DesktopDownloads;
@@ -42,7 +57,7 @@ export const PUBLIC_PROJECT_LINKS: Readonly<{
 }> = {
   repository: { status: "published", href: "https://github.com/ashneil12/hivra", stars: null },
   desktop: {
-    macos: { status: "pending", href: null },
+    macos: macDownloadFromEnv(process.env.NEXT_PUBLIC_HIVRA_MAC_DOWNLOAD_URL),
   },
   browser: "/dashboard",
   x: "https://x.com/HivraOS",
