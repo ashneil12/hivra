@@ -55,7 +55,7 @@ jest.mock("../after-response", () => ({ runAfterResponse: (...a: unknown[]) => m
 const mockRunStorage = jest.fn();
 jest.mock("../sleep-storage", () => ({ runSleepStorage: (...a: unknown[]) => mockRunStorage(...a) }));
 
-import { ensureHivraAgentAwake, isStuckTransient, pollPublicHealthz, resetStorageKicks, WAKE_TURN_RETRY_MS, WAKE_TURN_WAIT_MS } from "../agent-wake";
+import { ensureHivraAgentAwake, isStuckTransient, pollPublicHealthz, resetStorageKicks, wakesAtOncePerHost, WAKE_TURN_RETRY_MS, WAKE_TURN_WAIT_MS } from "../agent-wake";
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
 const VMID = 1234;
@@ -242,12 +242,20 @@ describe("ensureHivraAgentAwake", () => {
     }
   });
 
+  it("starts four deep-sleep wakes at once per server unless a setting says otherwise", () => {
+    expect(wakesAtOncePerHost({})).toBe("4");
+    expect(wakesAtOncePerHost({ HERMES_WAKE_MAX_CONCURRENT_PER_HOST: "2" })).toBe("2");
+    expect(wakesAtOncePerHost({ HIVRA_WAKE_MAX_CONCURRENT_PER_HOST: "6", HERMES_WAKE_MAX_CONCURRENT_PER_HOST: "2" })).toBe("6");
+    expect(wakesAtOncePerHost({ HIVRA_WAKE_MAX_CONCURRENT_PER_HOST: "many" })).toBe("4");
+    expect(wakesAtOncePerHost({ HIVRA_WAKE_MAX_CONCURRENT_PER_HOST: "0" })).toBe("4");
+  });
+
   it("gives up as wake_failed when no turn comes within the wait", async () => {
     jest.useFakeTimers();
     try {
       mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
       mockAcquire.mockResolvedValue({ admitted: false, reason: "concurrency", freeMb: 9000, activeWakes: 2, cap: 2, retryAfterSeconds: 30 });
-      const pending = ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
+      const pending = ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 120_000, ...fast });
       await jest.advanceTimersByTimeAsync(WAKE_TURN_WAIT_MS + 5_000);
       expect(await pending).toEqual({ state: "failed", reason: "capacity_concurrency" });
       expect(mockRunScript).not.toHaveBeenCalled();
