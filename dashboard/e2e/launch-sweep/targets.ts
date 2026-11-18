@@ -46,7 +46,13 @@ export const SWEEP_TARGETS: readonly SweepTarget[] = [
     proof: 'agent-ui-chat',
     knownBroken: 'By design OpenBot waits for the owner\'s own CopilotKit Intelligence key before it can chat, so a fresh account stops at its setup screen.',
   },
-  { profileId: 'nuphos', tile: 'Nuphos', kind: 'agent', proof: 'agent-ui-chat' },
+  {
+    profileId: 'nuphos',
+    tile: 'Nuphos',
+    kind: 'agent',
+    proof: 'agent-ui-chat',
+    knownBroken: 'After its console password, Nuphos waits for the owner to pair Nuphos Desktop and sign its agent in, so a fresh account has nowhere to chat yet.',
+  },
   { profileId: 'deepseek-harness', tile: 'DeepSeek Harness', kind: 'agent', proof: 'agent-ui-chat' },
   {
     profileId: 'aeon',
