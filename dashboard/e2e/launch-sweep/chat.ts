@@ -116,6 +116,45 @@ async function acknowledgeNotice(frame: Frame): Promise<boolean> {
   return true;
 }
 
+/**
+ * Some agent UIs keep the composer greyed out until a workspace is chosen
+ * (DeepSeek Harness: "Choose a workspace to start" with a "Choose workspace"
+ * picker). A customer opens the picker and takes the first workspace offered,
+ * or makes a new one; so does the sweep.
+ */
+async function chooseWorkspace(frame: Frame): Promise<boolean> {
+  if (!/choose a workspace|select a workspace|no workspace/i.test(await bodyText(frame))) return false;
+  const picker = frame.getByRole('button', { name: /(choose|select|open) (a )?workspace/i })
+    .or(frame.getByRole('combobox', { name: /workspace/i }))
+    .or(frame.getByText(/^\s*choose workspace\s*$/i))
+    .first();
+  if (!(await picker.isVisible().catch(() => false))) return false;
+  await picker.click().catch(() => undefined);
+  await sleep(1_500);
+  const offered = frame.getByRole('option')
+    .or(frame.getByRole('menuitem'))
+    .or(frame.getByRole('menuitemradio'))
+    .first();
+  if (await offered.isVisible().catch(() => false)) {
+    await offered.click().catch(() => undefined);
+    return true;
+  }
+  const create = frame.getByRole('button', { name: /(new|create|add) workspace|^\s*(new|create)\s*$/i }).first();
+  if (await create.isVisible().catch(() => false)) {
+    await create.click().catch(() => undefined);
+    await sleep(1_500);
+    const name = frame.locator('[role="dialog"] input:not([type="hidden"]), input[placeholder*="orkspace" i]').first();
+    if (await name.isVisible().catch(() => false)) {
+      await name.fill(`sweep-${Date.now().toString(36)}`).catch(() => undefined);
+      const confirm = frame.getByRole('button', { name: /^\s*(create|save|ok|done|continue)\s*$/i }).last();
+      if (await confirm.isVisible().catch(() => false)) await confirm.click().catch(() => undefined);
+      else await name.press('Enter').catch(() => undefined);
+    }
+    return true;
+  }
+  return false;
+}
+
 /** Wait for the place to type, in Hivra's chat or inside the agent's own UI. */
 async function findComposer(
   page: Page,
@@ -127,6 +166,7 @@ async function findComposer(
   let navigated = false;
   let passwordAttempts = 0;
   let noticeAttempts = 0;
+  let workspaceAttempts = 0;
   let lastSeen = '';
   while (Date.now() < end) {
     // Opening can land on another tab (Codex opened on Settings). A customer
@@ -161,6 +201,11 @@ async function findComposer(
         if (passwordAttempts < 3 && await completeConsolePassword(frame)) {
           passwordAttempts++;
           await sleep(5_000);
+          continue;
+        }
+        if (workspaceAttempts < 3 && await chooseWorkspace(frame)) {
+          workspaceAttempts++;
+          await sleep(3_000);
           continue;
         }
         const composer = await visibleComposer(frame);
@@ -287,19 +332,28 @@ async function sendQuestion(page: Page, frame: Frame, composer: Locator, questio
 export async function proveComputerOpen(page: Page, timeoutMs: number): Promise<ChatProof> {
   const start = Date.now();
   const end = start + timeoutMs;
-  let navigated = false;
+  let nextNavigation = start + 30_000;
+  let navigations = 0;
   while (Date.now() < end) {
     // A computer can open on its settings page; a customer then presses
-    // Desktop (or Terminal for one without a desktop).
-    if (!navigated && Date.now() > start + 30_000) {
-      navigated = true;
-      for (const name of ['Desktop', 'Terminal']) {
-        const item = page.getByRole('link', { name, exact: true })
-          .or(page.getByRole('button', { name, exact: true }))
-          .or(page.getByRole('tab', { name, exact: true }))
+    // Desktop (or Terminal for one without a desktop). A Linux computer has no
+    // Desktop and lists Terminal / Files / Settings in its controls menu, so
+    // menu items count too, and the sweep tries again if the first press
+    // landed nowhere.
+    if (navigations < 4 && Date.now() > nextNavigation) {
+      navigations++;
+      nextNavigation = Date.now() + 20_000;
+      for (const name of [/^\s*desktop\s*$/i, /^\s*terminal\s*$/i]) {
+        const item = page.getByRole('link', { name })
+          .or(page.getByRole('button', { name }))
+          .or(page.getByRole('tab', { name }))
+          .or(page.getByRole('menuitem', { name }))
+          .or(page.getByRole('menuitemradio', { name }))
           .first();
-        if (await item.isVisible().catch(() => false)) {
-          await item.click().catch(() => undefined);
+        const byText = page.locator('a, button, [role="menuitem"], [role="option"], [role="tab"]').filter({ hasText: name }).first();
+        const target = (await item.isVisible().catch(() => false)) ? item : byText;
+        if (await target.isVisible().catch(() => false)) {
+          await target.click().catch(() => undefined);
           break;
         }
       }
