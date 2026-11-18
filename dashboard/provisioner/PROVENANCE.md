@@ -547,6 +547,16 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.17.8` builds on `2026.11.17.7` and lets a new OpenClaw
+launch finish installing again. With `gateway.controlUi.basePath` set to
+`/openclaw`, OpenClaw's gateway answers 503 at its root, and the installer's
+runtime readiness check asked for `/`, so every OpenClaw launch on
+`2026.11.17.7` stopped with "OpenClaw Control UI did not become ready". The
+check now asks for `/openclaw/` when `openclaw.json` names that base path, and
+`/` otherwise. Changed: `provision-claude-code-box.sh`, plus the documents, the
+version and the provider worker's release labels. This source release does not
+deploy, install, enable or start anything on a host or computer.
+
 Release `2026.11.17.7` builds on `2026.11.17.6` and lets OpenClaw's Control
 UI start again behind the box gateway. From 2026.11.5 OpenClaw's gateway sends
 `Referrer-Policy: no-referrer`, so the browser stopped sending the Referer the
