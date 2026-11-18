@@ -11,76 +11,109 @@ struct HivraWelcomeView: View {
 
     var body: some View {
         ZStack {
-            HivraDesign.background(for: scheme).ignoresSafeArea()
+            HivraWindowBackground(tintStrength: 0.86)
             VStack(spacing: 0) {
-                HivraWordmark().foregroundStyle(HivraDesign.foreground(for: scheme))
-                    .padding(.bottom, 36)
                 switch signIn.phase {
                 case .waitingForBrowser:
                     waiting
                 case .finishing:
-                    ProgressView("Signing you in…").controlSize(.regular)
+                    VStack(spacing: 16) {
+                        HivraThinkingOrb(size: 64, label: "Signing you in")
+                        Text("Signing you in…")
+                            .font(.system(size: 13))
+                            .foregroundStyle(HivraDesign.secondaryText(for: scheme))
+                    }
+                    .padding(.vertical, 24)
                 case .idle, .failed:
                     choices
                 }
             }
-            .frame(maxWidth: 420)
+            .padding(.horizontal, 36)
+            .padding(.vertical, 34)
+            .frame(width: 420)
+            .hivraGlass(cornerRadius: HivraDesign.Radius.dialog, strong: true)
             .padding(32)
+            .animation(HivraDesign.Motion.medium, value: phaseKey)
         }
         .background(HivraWindowDragRegion(title: "Hivra", onWindow: { _ in }))
         .accessibilityIdentifier("native-welcome")
     }
 
+    private var phaseKey: Int {
+        switch signIn.phase {
+        case .idle: 0
+        case .waitingForBrowser: 1
+        case .finishing: 2
+        case .failed: 3
+        }
+    }
+
     private var choices: some View {
-        VStack(spacing: 14) {
-            Text("Give your AI agent a computer of its own.")
-                .font(.system(size: 30, weight: .regular, design: .serif))
+        VStack(spacing: 0) {
+            HivraMark(size: 52)
+                .padding(.bottom, 22)
+            Text("Give your AI agent a computer of its own")
+                .font(HivraDesign.display(24))
+                .tracking(HivraDesign.displayTracking(24))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
+                .padding(.bottom, 10)
             Text("Start free. Launch an agent in a minute, then pick it up from any device.")
                 .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(HivraDesign.secondaryText(for: scheme))
                 .multilineTextAlignment(.center)
-                .padding(.bottom, 18)
-            Button { signIn.start(.signUp, for: profile) } label: {
-                Text("Get started free").frame(maxWidth: .infinity)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 26)
+            VStack(spacing: 10) {
+                Button { signIn.start(.signUp, for: profile) } label: {
+                    Text("Get started free").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(HivraButtonStyle(.primary))
+                .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
+                Button { signIn.start(.signIn, for: profile) } label: {
+                    Text("I already have an account").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(HivraButtonStyle())
             }
-            .buttonStyle(HivraButtonStyle(.primary))
-            .keyboardShortcut(.defaultAction)
-            Button { signIn.start(.signIn, for: profile) } label: {
-                Text("I already have an account").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(HivraButtonStyle())
             if case .failed(let message) = signIn.phase {
-                Text(message)
+                Label(message, systemImage: "exclamationmark.circle")
                     .font(.system(size: 12))
-                    .foregroundStyle(HivraDesign.crimson)
+                    .foregroundStyle(HivraDesign.bad(for: scheme))
                     .multilineTextAlignment(.center)
-                    .padding(.top, 4)
+                    .padding(.top, 14)
             }
             Text("Your browser opens to sign in, then brings you straight back here.")
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 11.5))
+                .foregroundStyle(HivraDesign.mutedText(for: scheme))
                 .multilineTextAlignment(.center)
-                .padding(.top, 10)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 18)
             Button("Sign in with email in this window instead", action: onUseEmbeddedSignIn)
-                .buttonStyle(.link)
-                .font(.system(size: 11))
+                .buttonStyle(.plain)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(HivraDesign.secondaryText(for: scheme))
+                .underline()
+                .padding(.top, 6)
         }
     }
 
     private var waiting: some View {
-        VStack(spacing: 14) {
-            ProgressView().controlSize(.regular)
+        VStack(spacing: 0) {
+            HivraThinkingOrb(size: 64, label: "Waiting for your browser")
+                .padding(.bottom, 22)
             Text("Finish signing in in your browser")
-                .font(.system(size: 22, weight: .regular, design: .serif))
+                .font(HivraDesign.display(20))
+                .tracking(HivraDesign.displayTracking(20))
                 .multilineTextAlignment(.center)
+                .accessibilityAddTraits(.isHeader)
+                .padding(.bottom, 8)
             Text("We'll bring you back here as soon as you're done.")
                 .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(HivraDesign.secondaryText(for: scheme))
                 .multilineTextAlignment(.center)
-                .padding(.bottom, 8)
+                .padding(.bottom, 22)
             HStack(spacing: 10) {
                 Button("Open browser again") { signIn.reopenBrowser() }
                     .buttonStyle(HivraButtonStyle())

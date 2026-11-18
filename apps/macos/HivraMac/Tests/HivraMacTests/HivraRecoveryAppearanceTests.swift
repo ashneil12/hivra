@@ -9,7 +9,8 @@ struct HivraRecoveryAppearanceTests {
         let text = HivraRecoveryAppearance.text
         let card = HivraRecoveryAppearance.card
         #expect(contrast(text, card) >= 7)
-        #expect(contrast(text, HivraRecoveryAppearance.primaryAction) >= 4.5)
+        #expect(contrast(HivraRecoveryAppearance.onPrimaryAction, HivraRecoveryAppearance.primaryAction) >= 4.5)
+        #expect(contrast(HivraRecoveryAppearance.error, card) >= 4.5)
 
         // A conservative dimmed-label approximation guards supporting copy too.
         let secondary: HivraRecoveryAppearance.RGB = (
