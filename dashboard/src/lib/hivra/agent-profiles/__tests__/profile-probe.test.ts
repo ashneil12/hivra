@@ -101,8 +101,9 @@ run("profile probe vs the fixed probe, on the same fixture computer", () => {
     const old = exec(legacy(IDLE_PROBE_PROGRAM));
     expect(old.liveChannels).toContain("hermes:feishu");
     expect(old.liveChannels).toContain("hermes:slack");
-    expect(old.liveChannels.filter((c) => c.includes("bot_loop_guard"))).toEqual([]);
-    expect(profileRun("hermes").liveChannels.filter((c) => c.includes("bot_loop_guard"))).toEqual([]);
+    expect(JSON.stringify(old.liveChannels)).not.toContain("bot_loop_guard");
+    expect(JSON.stringify(profileRun("hermes").liveChannels)).not.toContain("bot_loop_guard");
+    expect(JSON.stringify(profileRun("hermes").liveChannels)).toContain("hermes:slack");
     expect(comparable(profileRun("not-a-type"))).toEqual(comparable(old));
   });
 
