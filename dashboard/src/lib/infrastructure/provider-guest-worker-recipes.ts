@@ -575,6 +575,11 @@ const recipes = Object.freeze({
     workerSha256: "7cd38a8e2709c7d2e65445dbd321f058e8729e9e13a39fa6e83517becd4cc1ad",
     workerSize: 45216,
   }),
+  "2026.11.18.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release lets the A0 CLI reach Agent Zero through the connection service. The worker only advances its release labels.
+    workerSha256: "6ce6eff7b17dcb548fb570d853fb079a877ffd4bc500761afecb9fbcfc524f68",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

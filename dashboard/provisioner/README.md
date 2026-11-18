@@ -579,6 +579,14 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **The A0 CLI reaches Agent Zero (`2026.11.18.5`).**
+  Official Agent Zero ships the connector plugin the A0 CLI needs, but the CLI
+  talks to the host's root (`/api/plugins/_a0_connector/v1/*`, `/api/csrf_token`,
+  `/socket.io`) and the connection service only mounted Agent Zero under
+  `/agent-zero`, so the CLI saw a missing plugin. A signed-in Connect app
+  session, or the public capability probe, now reaches those exact paths.
+  Browser writes from another site still cannot use the session.
+
 - **No package upgrade at first boot (`2026.11.18.4`).**
   Every VM gets `ciupgrade 0`. Proxmox otherwise writes `package_upgrade: true`
   into its generated user-data, and cloud-init then runs a full apt upgrade and,
