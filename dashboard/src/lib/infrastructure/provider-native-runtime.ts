@@ -2,7 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.11.18.3.json";
+import currentRelease from "../../../provisioner-releases/2026.11.18.4.json";
+import snapFreeBootRelease from "../../../provisioner-releases/2026.11.18.3.json";
 import emptyModeRelease from "../../../provisioner-releases/2026.11.18.2.json";
 import veniceChatRelease from "../../../provisioner-releases/2026.11.18.1.json";
 import installReasonRelease from "../../../provisioner-releases/2026.11.17.9.json";
@@ -109,7 +110,7 @@ const gatewayTargets = new Map<string, string>([
   ...["server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "index.html", "app.js"].map(name => [`hivra-chat/${name}`, name] as const),
   ...["native-broker.cjs", "gateway-policy.cjs", "runtime-process.cjs"].map(name => [`deepseek-harness/${name}`, `deepseek-harness/${name}`] as const),
 ]);
-const DEEPSEEK_IMPORT_STATE_VERSIONS = ["2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3"] as const;
+const DEEPSEEK_IMPORT_STATE_VERSIONS = ["2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4"] as const;
 function releaseRows(release: typeof currentRelease) {
   const rows = release.files.filter(file => closure.has(file.path)).map(file => [file.path, file.sha256, file.bytes,
     file.path.endsWith(".sh") ? 0o700 : 0o600] as const).sort((a, b) => a[0].localeCompare(b[0]));
@@ -135,8 +136,10 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.11.18.3"
+  const release = identity.bundle.provisionerVersion === "2026.11.18.4"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.18.3"
+    ? snapFreeBootRelease
     : identity.bundle.provisionerVersion === "2026.11.18.2"
     ? emptyModeRelease
     : identity.bundle.provisionerVersion === "2026.11.18.1"

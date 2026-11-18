@@ -304,6 +304,7 @@ if [ "$PROVISION_MODE" = empty ]; then
   # carries its agent and guest agent, so no vendor data is attached.
   qm set "$VMID" --scsi0 "${STORAGE}:${DISK_GB},discard=on,ssd=1" >/dev/null
   qm set "$VMID" --ide2 "${STORAGE}:cloudinit" >/dev/null
+  qm set "$VMID" --ciupgrade 0 >/dev/null 2>&1 || true
   qm set "$VMID" --boot order=scsi0 --ciuser ubuntu --sshkeys "$CIKEYS" >/dev/null
   qm set "$VMID" --ipconfig0 "ip=${IP}/24,gw=${GW}" >/dev/null
   qm set "$VMID" --nameserver "$NAMESERVERS" >/dev/null
@@ -324,6 +325,13 @@ fi
 qm set "$VMID" --scsi0 "${STORAGE}:0,import-from=${IMG},discard=on,ssd=1" >/dev/null
 qm disk resize "$VMID" scsi0 "${DISK_GB}G" >/dev/null
 qm set "$VMID" --ide2 "${STORAGE}:cloudinit" >/dev/null
+# Proxmox's generated user-data carries `package_upgrade: true` unless
+# ciupgrade is off. That runs a full apt upgrade and, on Ubuntu, `snap refresh`
+# at first boot: an unreachable snap store then fails cloud-init and the launch.
+# The guest still takes Ubuntu's security updates from its daily
+# unattended-upgrades run. Hosts older than Proxmox VE 8.1 have no ciupgrade
+# option, so a refusal there is ignored and the VM behaves as before.
+qm set "$VMID" --ciupgrade 0 >/dev/null 2>&1 || true
 qm set "$VMID" --boot order=scsi0 --ciuser ubuntu --sshkeys "$CIKEYS" >/dev/null
 qm set "$VMID" --ipconfig0 "ip=${IP}/24,gw=${GW}" >/dev/null
 qm set "$VMID" --cicustom "vendor=${CLOUD_INIT_SNIPPET_STORAGE}:snippets/$(basename "$CLOUD_INIT_SNIPPET")" >/dev/null

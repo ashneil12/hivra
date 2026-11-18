@@ -579,6 +579,13 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **No package upgrade at first boot (`2026.11.18.4`).**
+  Every VM gets `ciupgrade 0`. Proxmox otherwise writes `package_upgrade: true`
+  into its generated user-data, and cloud-init then runs a full apt upgrade and,
+  on Ubuntu, `snap refresh` at first boot, so an unreachable snap store still
+  failed launches after `2026.11.18.3`. The guest keeps Ubuntu's daily
+  unattended security upgrades. Hosts without the option behave as before.
+
 - **Launches no longer depend on the snap store (`2026.11.18.3`).**
   The guest's QEMU Guest Agent is installed by apt from the vendor data's
   runcmd instead of cloud-config's `package_update`/`packages`. On Ubuntu that
