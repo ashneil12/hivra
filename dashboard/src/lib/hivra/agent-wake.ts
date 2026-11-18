@@ -22,6 +22,7 @@ import { buildWakeHostScript, parseWakeReceipt, WAKE_RESULT_PREFIX, type WakeAdm
 import { isFastWakeEnabled } from "./fast-wake-flags";
 import { isAgentStored, requestAgentUnstore } from "./sleep-storage-state";
 import { runAfterResponse } from "./after-response";
+import { isWakeMakesRoomEnabled, makeRoomForWake } from "./sleep/wake-make-room";
 import {
   disarmChannelsForWake,
   rearmChannelsAfterFailedWake,
@@ -403,17 +404,34 @@ async function performWakeSteps(
           runHostScript: (script) => runHostScriptForWake(script, target.env),
         },
       );
-      let decision = await ask();
       slotTarget = target;
       // The server's wakes are all taken: that clears as soon as one of them finishes, so wait
       // for a turn (the agent keeps showing as waking) instead of telling its owner the wake failed.
-      // A server short of memory does not clear by waiting, and is refused at once.
       const waitUntil = Date.now() + WAKE_TURN_WAIT_MS;
       let waited = 0;
-      while (!decision.admitted && decision.reason === "concurrency" && Date.now() + WAKE_TURN_RETRY_MS <= waitUntil) {
-        await new Promise((resolve) => setTimeout(resolve, WAKE_TURN_RETRY_MS));
-        waited += 1;
-        decision = await ask();
+      const takeTurn = async () => {
+        let answer = await ask();
+        while (!answer.admitted && answer.reason === "concurrency" && Date.now() + WAKE_TURN_RETRY_MS <= waitUntil) {
+          await new Promise((resolve) => setTimeout(resolve, WAKE_TURN_RETRY_MS));
+          waited += 1;
+          answer = await ask();
+        }
+        return answer;
+      };
+      let decision = await takeTurn();
+      // A server short of memory does not clear by waiting. With making room switched on, its
+      // longest-idle nappers go into deep sleep until this wake fits; otherwise it is refused at once.
+      if (!decision.admitted && decision.reason === "host_ram" && isWakeMakesRoomEnabled()) {
+        const room = await makeRoomForWake({
+          agentId,
+          hostId: String(target.executionContext?.host ?? ""),
+          fits: async () => {
+            decision = await takeTurn();
+            return decision.admitted || decision.reason !== "host_ram";
+          },
+        });
+        detail.room_deepened = room.deepened;
+        detail.room_ms = room.ms;
       }
       if (waited > 0) detail.turn_waits = waited;
       if (!decision.admitted) {
@@ -463,11 +481,26 @@ async function performWakeSteps(
 
     // Any socket-based channel that was armed (Telegram's long poll included)
     // means the guest holds dead sockets: drop them, so it reconnects at once.
-    const run = await runWakeHostScript(row, target, {
+    const runScript = () => runWakeHostScript(row, target, {
       restore,
-      ...(channels.disarm.killStaleSockets ? { killStaleSockets: true } : {}),
+      ...(channels.disarm?.killStaleSockets ? { killStaleSockets: true } : {}),
       ...(hostIngress ? { hostIngress: true } : {}),
     });
+    let run = await runScript();
+    // The server's own capacity check refused the start (it counts what running and napping
+    // computers are promised): make room the same way, and ask the server again after each one.
+    if (restore && run.receipt && !run.receipt.ok && run.receipt.reason === "capacity" && isWakeMakesRoomEnabled()) {
+      const room = await makeRoomForWake({
+        agentId,
+        hostId: String(target.executionContext?.host ?? ""),
+        fits: async () => {
+          run = await runScript();
+          return !(run.receipt && !run.receipt.ok && run.receipt.reason === "capacity");
+        },
+      });
+      detail.room_deepened = Number(detail.room_deepened ?? 0) + room.deepened;
+      detail.room_ms = Number(detail.room_ms ?? 0) + room.ms;
+    }
     if (hostIngress) detail.via = "ssh";
     detail.script_ms = run.ms;
     if (run.sshReadyMs !== undefined) detail.ssh_ready_ms = run.sshReadyMs;
