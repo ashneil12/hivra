@@ -82,6 +82,10 @@ export const SWEEP_BUDGET_MS = 50_000;
  * agent hibernating with no one to finish the lease. The route's maxDuration is 300 s.
  */
 export const HIBERNATE_HARD_LIMIT_MS = 285_000;
+/** While an agent is coming back from storage, the storage step looks again this often within one run. */
+export const STORAGE_RECHECK_MS = 4_000;
+const STORAGE_RECHECK_MARGIN_MS = 6_000;
+const STORAGE_RECHECK_MAX = 12;
 /** Scheduled wakes may use at most this much of the budget, so sleeping still gets a turn. */
 const WAKE_STEP_BUDGET_MS = 22_000;
 /** The Telegram webhook step's own share of the run, so a slow Telegram never starves the sleep step after it. */
@@ -220,6 +224,8 @@ export interface SleepIdleSweepOptions {
   env?: Record<string, string | undefined>;
   now?: () => number;
   budgetMs?: number;
+  /** How often the storage step looks again while an agent is coming back. For tests. */
+  storageRecheckMs?: number;
 }
 
 type Db = NonNullable<typeof supabaseAdmin>;
@@ -241,6 +247,7 @@ interface Context {
   now: () => number;
   startedAt: number;
   deadline: number;
+  storageRecheckMs: number;
   summary: SleepIdleSweepSummary;
   /**
    * Work that outlived its step: wakes past their wait, sleeps cut off at the
@@ -773,7 +780,7 @@ async function runMemoryDrops(ctx: Context): Promise<void> {
 async function runStorage(ctx: Context): Promise<void> {
   // The hosts are read only if something may be packed.
   let hosts: Map<string, HostInfo> | null | undefined;
-  const result = await runSleepStorage({
+  const once = () => runSleepStorage({
     db: ctx.db,
     env: ctx.env,
     now: ctx.now,
@@ -789,11 +796,33 @@ async function runStorage(ctx: Context): Promise<void> {
       ctx.pending.push(ensureHivraAgentAwake(agentId, { trigger: "schedule", waitMs: 120_000 }).catch(() => undefined));
     },
   });
-  const c = result.counts;
-  if (c.tracked + c.stored + c.storeStarted + c.storeEnded + c.unstoreStarted + c.unstored + c.unstoreFailed + c.refused > 0) {
-    ctx.summary.storage = c;
-  }
-  ctx.summary.errors += result.errors;
+  const first = await once();
+  const c = first.counts;
+  const report = () => {
+    if (c.tracked + c.stored + c.storeStarted + c.storeEnded + c.unstoreStarted + c.unstored + c.unstoreFailed + c.refused > 0) {
+      ctx.summary.storage = c;
+    }
+  };
+  report();
+  ctx.summary.errors += first.errors;
+  if (first.returning === 0) return;
+  // Someone is waiting for an agent that is on its way back. Rather than leave the next move to the
+  // next run a minute away, look again every few seconds while this run may still start work. It runs
+  // beside the later steps, so a return never costs the other agents their nap.
+  ctx.pending.push((async () => {
+    let returning = first.returning;
+    for (let i = 0; i < STORAGE_RECHECK_MAX && returning > 0; i += 1) {
+      if (ctx.deadline - ctx.now() <= ctx.storageRecheckMs + STORAGE_RECHECK_MARGIN_MS) break;
+      await new Promise((resolve) => setTimeout(resolve, ctx.storageRecheckMs));
+      const again = await once();
+      for (const key of Object.keys(c) as Array<keyof SleepStorageCounts>) {
+        if (key !== "tracked") c[key] += again.counts[key];
+      }
+      ctx.summary.errors += again.errors;
+      returning = again.returning;
+      report();
+    }
+  })().catch(() => undefined));
 }
 
 // --- Steps 3 and 4: hibernate and nap -----------------------------------------
@@ -1104,6 +1133,7 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
     now,
     startedAt,
     deadline: startedAt + (options.budgetMs ?? SWEEP_BUDGET_MS),
+    storageRecheckMs: options.storageRecheckMs ?? STORAGE_RECHECK_MS,
     summary,
     pending: [],
   };
