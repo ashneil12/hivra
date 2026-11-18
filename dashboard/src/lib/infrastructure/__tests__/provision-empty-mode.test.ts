@@ -56,7 +56,7 @@ exit 0
         HIVRA_PROV_DIR: join(root, "prov"),
         HIVRA_VM_SSH_KEY_PATH: join(root, "keys/vm"),
         HIVRA_DISK_GB: "40",
-        HIVRA_SUBNET_PREFIX: "10.9.20",
+        HIVRA_SUBNET_PREFIX: "10.250.20",
       },
     });
     const read = (name: string) => (existsSync(join(root, name)) ? readFileSync(join(root, name), "utf8") : "");
@@ -80,10 +80,10 @@ describe("hivra-provision-on-host.sh in empty mode", () => {
     expect(out.stderr).toContain("mode=empty");
     expect(out.status).toBe(0);
     const receipt = JSON.parse(out.stdout.trim().split("\n").pop() ?? "{}");
-    expect(receipt).toMatchObject({ vmid: 9500, ip: "10.9.20.50", empty: true, ready: false, disk_gb: 40 });
+    expect(receipt).toMatchObject({ vmid: 9500, ip: "10.250.20.50", empty: true, ready: false, disk_gb: 40 });
     expect(out.qm).toContain(`--tags ${BINDING};hivra-op-`);
     expect(out.qm).toContain("set 9500 --scsi0 local-lvm:40,discard=on,ssd=1");
-    expect(out.qm).toContain("set 9500 --ipconfig0 ip=10.9.20.50/24,gw=10.9.20.1");
+    expect(out.qm).toContain("set 9500 --ipconfig0 ip=10.250.20.50/24,gw=10.250.20.1");
     expect(out.qm).not.toContain("import-from");
     expect(out.qm).not.toContain("cicustom");
     expect(out.qm).not.toMatch(/^start /m);
