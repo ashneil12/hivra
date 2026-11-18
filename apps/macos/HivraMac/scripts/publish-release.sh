@@ -5,8 +5,10 @@
 #   mac-v<version>   Hivra.dmg (the download) and Hivra-<version>.zip (the update)
 #   mac-updates      appcast.xml, the feed installed copies check (SUFeedURL)
 #
-# The appcast is signed with the Sparkle EdDSA key in this Mac's Keychain
-# (made once with Sparkle's generate_keys). Needs the GitHub CLI signed in.
+# The appcast is signed with the Sparkle EdDSA key in this Mac's Keychain under
+# the account HIVRA_SPARKLE_KEY_ACCOUNT (default "hivra"; made once with
+# `generate_keys --account hivra`). Hivra has its own key so another app's
+# update key can never sign Hivra updates. Needs the GitHub CLI signed in.
 # This makes the download public: run it only once the release is approved.
 set -euo pipefail
 
@@ -19,6 +21,7 @@ version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${app
 tag="mac-v${version}"
 dmg="${dist_root}/Hivra.dmg"
 update_zip="${dist_root}/Hivra-${version}.zip"
+key_account="${HIVRA_SPARKLE_KEY_ACCOUNT:-hivra}"
 generate_appcast="$(find "${scratch_root}/swift/artifacts" -path '*Sparkle/bin/generate_appcast' -type f | head -1)"
 
 for file in "${dmg}" "${update_zip}"; do
@@ -30,7 +33,7 @@ xcrun stapler validate "${dmg}"
 updates="${scratch_root}/appcast"
 rm -rf "${updates}" && mkdir -p "${updates}"
 cp "${update_zip}" "${updates}/"
-"${generate_appcast}" --download-url-prefix "https://github.com/${repo}/releases/download/${tag}/" "${updates}"
+"${generate_appcast}" --account "${key_account}" --download-url-prefix "https://github.com/${repo}/releases/download/${tag}/" "${updates}"
 
 gh release create "${tag}" "${dmg}" "${update_zip}" --repo "${repo}" --latest=false \
   --title "Hivra for Mac ${version}" \

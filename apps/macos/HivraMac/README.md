@@ -71,8 +71,10 @@ connection, is signed with the Developer ID identity under the hardened runtime,
 notarised and stapled, and packed as `dist/Hivra.dmg` plus the update archive
 `dist/Hivra-<version>.zip`. `HIVRA_MAC_NOTARY_PROFILE` names credentials saved
 with `xcrun notarytool store-credentials`. The Sparkle EdDSA key pair is made
-once with Sparkle's `generate_keys` (the private key stays in the Mac's
-Keychain); the public key goes in `HIVRA_SPARKLE_PUBLIC_KEY`.
+once with Sparkle's `generate_keys --account hivra` (the private key stays in the
+Mac's Keychain, under its own account so no other app's update key can sign
+Hivra updates); the public key goes in `HIVRA_SPARKLE_PUBLIC_KEY`, and
+`publish-release.sh` signs with that account (`HIVRA_SPARKLE_KEY_ACCOUNT`).
 
 `publish-release.sh` uploads the DMG and update archive to the GitHub release
 `mac-v<version>` and the signed `appcast.xml` to the `mac-updates` release,
