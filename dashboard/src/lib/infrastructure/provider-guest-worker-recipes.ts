@@ -540,6 +540,11 @@ const recipes = Object.freeze({
     workerSha256: "6592f2d22b8662d25ff01156ae3e4416e025833bfd709744eb791fbb165e475f",
     workerSize: 45216,
   }),
+  "2026.11.17.7": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release serves OpenClaw's Control UI at its own basePath /openclaw. The worker only advances its release labels.
+    workerSha256: "3d4ad07770a9a2019744c5237ae7be39dec5dda72e667cd84245b087eabb2928",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;
