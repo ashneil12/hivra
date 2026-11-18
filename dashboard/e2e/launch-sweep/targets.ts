@@ -59,7 +59,7 @@ export const SWEEP_TARGETS: readonly SweepTarget[] = [
     tile: 'Aeon',
     kind: 'agent',
     proof: 'agent-ui-chat',
-    knownBroken: 'Aeon runs its work on the owner\'s GitHub and has failed at the host step since October.',
+    knownBroken: 'Aeon installs and starts (fixed in release 2026.11.18.1), then asks its owner to connect their own Aeon fork with a GitHub token before its dashboard boots, so a fresh account has nowhere to chat yet.',
   },
   { profileId: 'ubuntu-server', tile: 'Linux computer', kind: 'computer', proof: 'computer-open' },
   { profileId: 'ubuntu-desktop', tile: 'Ubuntu Desktop', kind: 'computer', proof: 'computer-open' },
