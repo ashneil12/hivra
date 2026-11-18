@@ -17,10 +17,12 @@ struct HivraAppSettingsView: View {
         TabView {
             appearanceSettings
                 .tabItem { Label("Appearance", systemImage: "circle.lefthalf.filled") }
-            connectionSettings
-                .tabItem { Label("Connections", systemImage: "network") }
-            localSettings
-                .tabItem { Label("Local Hivra", systemImage: "desktopcomputer") }
+            if profileStore.developerConnections {
+                connectionSettings
+                    .tabItem { Label("Connections", systemImage: "network") }
+                localSettings
+                    .tabItem { Label("Local Hivra", systemImage: "desktopcomputer") }
+            }
         }
         .padding(16)
         .frame(minWidth: 600, idealWidth: 660, maxWidth: 800, minHeight: 490, idealHeight: 550, maxHeight: 760)
@@ -58,6 +60,16 @@ struct HivraAppSettingsView: View {
                 Text("Mac app")
             } footer: {
                 Text("System follows your Mac’s appearance. This preference controls the native app interface.")
+            }
+            Section {
+                Toggle("Show developer connections", isOn: Binding(
+                    get: { profileStore.developerConnections },
+                    set: { profileStore.setDeveloperConnections($0) }
+                ))
+            } header: {
+                Text("Advanced")
+            } footer: {
+                Text("For self-hosting and testing: connect to Hivra running on this Mac, Canary, or another address.")
             }
         }
         .formStyle(.grouped)

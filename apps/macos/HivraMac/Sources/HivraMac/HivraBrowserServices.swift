@@ -172,7 +172,7 @@ struct HivraDownloadNotice: Identifiable, Equatable {
 /// originating browser when each one finishes or fails.
 @MainActor
 final class HivraDownloadManager: NSObject, WKDownloadDelegate {
-    private static let logger = Logger(subsystem: "cloud.hivra.mac.alpha", category: "downloads")
+    private static let logger = Logger(subsystem: "cloud.hivra.mac", category: "downloads")
 
     private struct Entry {
         weak var owner: HivraBrowserModel?
