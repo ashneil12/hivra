@@ -280,3 +280,29 @@ reported but don't fail the run.
 **Adding an agent to Launch** follows `.codex/skills/hivra-add-launch-agent/SKILL.md`:
 add it to `targets.ts`, launch it with the sweep, and record its idle use before
 deciding Free or Pro.
+
+# Trial to Pro journey
+
+`e2e/trial-to-pro.spec.ts` checks the paid path a new customer takes, in a real
+browser on Canary with Stripe in test mode:
+
+1. A throwaway account opens **Pricing** and clicks **Start a 7-day free trial**.
+2. It pays at Stripe Checkout with the `4242…` test card and lands back on Billing.
+3. Its subscription is the trial: the entry plan with 1 agent, 1 vCPU and 2 GB,
+   ending in 7 days, and Stripe shows it as `trialing` with `hivra_trial=card_7d`.
+4. The trial is ended early in Stripe, so the card is charged, and the account
+   becomes full Pro (3 agents, 2 vCPU, 4 GB, no trial end date).
+5. A second account using the same card gets no trial: it is charged at once
+   and goes straight to full Pro.
+
+Every account, Stripe subscription and customer, and trial record it made is
+deleted at the end, pass or fail. It launches no computers.
+
+It needs the card trial on Canary (`HIVRA_CARD_TRIAL=on` and its migration) and
+is opt-in: it runs only with `TRIAL_JOURNEY=1`, refuses production and refuses
+live Clerk or Stripe keys. Never retried, because a retry would start a second checkout.
+
+```bash
+CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \
+  TRIAL_JOURNEY_STRIPE_SECRET_KEY=sk_test_… npm run test:trial-journey
+```
