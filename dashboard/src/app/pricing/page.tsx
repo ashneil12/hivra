@@ -36,6 +36,7 @@ import {
   buildPricingOffers,
   formatPricesAsOf,
   visiblePricingFaq,
+  withFreeClosedAnswer,
   type PricingFaqItem,
 } from "./pricing-content";
 
@@ -105,8 +106,8 @@ export default async function PricingPage() {
   const intro = freeClosed ? PRICING_INTRO.filter((paragraph) => !paragraph.startsWith("Sign up free")) : PRICING_INTRO;
 
   return (
-    <PublicSite className={styles.page} data-page="pricing" tokenSurfaces={showToken}>
-      <StructuredData schema={buildPricingSchema(visiblePricingFaq(showToken))} />
+    <PublicSite className={styles.page} data-page="pricing" tokenSurfaces={showToken} freePlanClosed={freeClosed}>
+      <StructuredData schema={buildPricingSchema(visiblePricingFaq(showToken, freeClosed))} />
       <main className={styles.main} id="main-content">
         <Breadcrumbs items={[{ label: "Pricing" }]} />
 
@@ -280,7 +281,8 @@ export default async function PricingPage() {
             {PRICING_FAQ_HEADING}
           </h2>
           <div>
-            {PRICING_FAQ.map((item) => {
+            {PRICING_FAQ.map((faqItem) => {
+              const item = freeClosed ? withFreeClosedAnswer(faqItem) : faqItem;
               const entry = (
                 <details key={item.q} open>
                   <summary>
