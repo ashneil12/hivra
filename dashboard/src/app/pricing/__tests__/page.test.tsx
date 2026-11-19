@@ -10,7 +10,7 @@ jest.mock("@/lib/compliance/token-surface-view", () => ({
   getTokenSurfaceView: jest.fn(),
 }));
 
-import PricingPage, { metadata } from "../page";
+import PricingPage, { generateMetadata } from "../page";
 import {
   HOSTED_SIZES,
   PRICING_ACTIONS,
@@ -50,6 +50,7 @@ jest.mock("next/link", () => {
 const SWITCH_OFF: TokenSurfaceView = { tokenSurfaces: false, geoBlocked: false };
 const SWITCH_ON: TokenSurfaceView = { tokenSurfaces: true, geoBlocked: false };
 const GEO_BLOCKED: TokenSurfaceView = { tokenSurfaces: true, geoBlocked: true };
+const metadata = generateMetadata();
 
 /** The page is an async server component; the production default is the token surfaces OFF. */
 async function renderPricing(view: TokenSurfaceView = SWITCH_OFF) {
@@ -84,10 +85,14 @@ describe("the public card trial", () => {
   afterEach(() => jest.restoreAllMocks());
 
   it("offers the monthly entry trial and discloses its ladder renewal price", async () => {
-    await renderPricing();
+    const { container } = await renderPricing();
     expect(screen.getByRole("link", { name: "Start a 7-day free trial" })).toHaveAttribute("href", "/get-started?plan=operator");
     expect(screen.getByTestId("card-trial-note")).toHaveTextContent(/first-time buyers get 7 days free, then \$12\.99\/month\. A card is needed/);
     expect(screen.getByTestId("card-trial-note")).toHaveTextContent("one agent with 1 vCPU and 2 GB");
+    expect(screen.getByRole("article", { name: "Hivra Cloud" })).toHaveTextContent("$12.99/month");
+    expect(container).not.toHaveTextContent(ENTRY_PLAN_PRICE);
+    expect(jsonLd(container)).toContain('"price":"12.99"');
+    expect(generateMetadata().title).toEqual({ absolute: "Hivra Pricing | Self-host free or cloud from $12.99/month" });
     expect(screen.getByRole("link", { name: PRICING_ACTIONS.chooseLarger.label })).toHaveAttribute("href", PRICING_ACTIONS.chooseLarger.href);
   });
 
