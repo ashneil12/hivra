@@ -23,7 +23,7 @@ export const doc: DocPage = {
     {
       heading: "Before you start",
       paragraphs: [
-        "- **A Hivra account.** It costs nothing. Every computer that Hivra Cloud runs needs a paid plan, and paid plans start at " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + ". A free account works with a server you connect yourself. See [What you pay for](/docs/plans-and-billing).\n- **A way for Claude Code to reach a model.** Either a Claude account you can sign in with inside Claude Code, or Hivra credits. Pasting an API key at launch is not offered for Claude Code.\n- **Where it will run.** Hivra Cloud, or a Proxmox server you connected. Connecting a server is covered in [Run agents on your own server](/docs/connect-your-own-server).",
+        "- **A Hivra account.** Every computer that Hivra Cloud runs needs a paid plan, and paid plans start at " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + ". You can use your own server if your account is eligible to connect it. See [What you pay for](/docs/plans-and-billing).\n- **A way for Claude Code to reach a model.** Either a Claude account you can sign in with inside Claude Code, or Hivra credits. Pasting an API key at launch is not offered for Claude Code.\n- **Where it will run.** Hivra Cloud, or a Proxmox server you connected. Connecting a server is covered in [Run agents on your own server](/docs/connect-your-own-server).",
         "Whether your Claude plan may be used from a remote computer is Anthropic's rule, not Hivra's. Read their terms before relying on it. Hivra describes the sign-in route as available where eligible, subject to the provider's terms.",
       ],
     },
@@ -118,7 +118,7 @@ export const doc: DocPage = {
         "Under **Settings**, **Model & tools**, three cards matter for Claude Code.",
         "| Card | Options | Notes |\n| --- | --- | --- |\n| **Model** | Default, Fable, Opus, Sonnet, Haiku, or a **Custom model id** with **Set** | Applies from the next message. A model your account cannot use fails with a clear error in chat. |\n| **Permissions** | **Full access** (the default), **Limited**, **Read-only** | Full access allows shell, files and web. Limited has no shell commands but can still read and edit files. Read-only is research and answers only. |\n| **Ask me first** | A switch | Before each command or file change, Claude Code waits for your answer in Needs you. No answer in 9 minutes means no. It appears only where the computer supports it. |",
         "Full access is the default and the screen says so, because the computer is yours alone. If you would rather review every action, turn on **Ask me first**, or pick Limited or Read-only.",
-        "**Resources** shows the computer's size, and **Browser automation** is a switch in Model & tools. Turning it on raises the minimum size by 1 CPU and 2 GB (from 0.5 CPU and 1 GB to 1.5 CPU and 3 GB), and on a Free account the switch opens an upgrade prompt because browser automation is a paid feature. Turning it off does not by itself shrink the computer or reduce provider billing.",
+        "**Resources** shows the computer's size, and **Browser automation** is a switch in Model & tools. Turning it on raises the minimum size by 1 CPU and 2 GB (from 0.5 CPU and 1 GB to 1.5 CPU and 3 GB), and the switch opens an upgrade prompt if your plan does not include browser automation. Turning it off does not by itself shrink the computer or reduce provider billing.",
       ],
     },
     {
@@ -134,7 +134,7 @@ export const doc: DocPage = {
       paragraphs: [
         "There are three separate costs and they do not overlap.",
         "| What | Who bills it |\n| --- | --- |\n| The computer on Hivra Cloud | Your Hivra plan, from " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + " |\n| Model usage on Hivra credits | Your Hivra credits (rates are on [Choose how your agent gets its model](/docs/models-and-credits)) |\n| Model usage on your Claude sign-in | Anthropic, under your own plan |",
-        "A Hivra account costs nothing, but a computer that Hivra Cloud runs does. On a server you connect yourself, there is no Hivra hosting charge. Note that Stop does not cancel any of this.",
+        "A computer that Hivra Cloud runs needs a plan. A connected server uses your own capacity. Note that Stop does not cancel any of this.",
       ],
     },
     {

@@ -810,6 +810,17 @@ async function main() {
     });
     await db.exec(CLI_CONNECTOR_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedCliConnector, "re-applying the 2026.11.18.5 admission changes nothing");
+    const xpraBrowserAdmission = migration("20261119151000_provider_release_admission_2026_11_19_1.sql");
+    await db.exec(xpraBrowserAdmission);
+    const admittedXpraBrowser = await admissionDefinitions();
+    admittedXpraBrowser.forEach((definition, index) => {
+      for (const version of ["2026.11.18.5", "2026.11.19.1"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["7728d82d75d26e95ab4b9ed61ae5f267bed89825618d252b6699701f0819de6c", "c8e4bbf72a7e39b1d8c5ddd4f42ee9390fded2925e6c7c1ebb9f61ecde00ba03"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(xpraBrowserAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedXpraBrowser, "re-applying the Xpra browser admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

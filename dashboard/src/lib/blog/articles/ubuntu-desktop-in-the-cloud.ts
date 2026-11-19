@@ -75,7 +75,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Does it need a paid plan?",
-      a: "On Hivra Cloud, yes: every Hivra Cloud computer needs a paid plan. A free Hivra account works with a Proxmox server you connect yourself.",
+      a: "On Hivra Cloud, yes: every Hivra Cloud computer needs a paid plan. You can also launch on your own Proxmox server if your account is eligible to connect it.",
     },
     {
       q: "Can an AI agent use it?",

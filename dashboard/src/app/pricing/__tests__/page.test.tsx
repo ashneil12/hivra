@@ -67,6 +67,28 @@ function titleOf(): string {
   return (metadata.title as { absolute: string }).absolute;
 }
 
+it("stops advertising Free when a scheduled cutoff passes without a module reload", async () => {
+  const env = jest.replaceProperty(process, "env", {
+    ...process.env,
+    HIVRA_FREE_PLAN_CLOSED_AT: "2026-12-01T00:00:00Z",
+  });
+  jest.useFakeTimers();
+  try {
+    jest.setSystemTime(new Date("2026-11-30T23:59:59Z"));
+    const open = await renderPricing();
+    expect(open.container).toHaveTextContent("A free account works");
+    open.unmount();
+
+    jest.setSystemTime(new Date("2026-12-01T00:00:00Z"));
+    const closed = await renderPricing();
+    expect(closed.container).not.toHaveTextContent(/(?:a free (?:Hivra )?account|sign up free)/i);
+    expect(closed.container).toHaveTextContent("To connect your own server to the Hivra dashboard, your account must be eligible.");
+  } finally {
+    jest.useRealTimers();
+    env.restore();
+  }
+});
+
 function faqGraph(container: HTMLElement) {
   const schema = JSON.parse(jsonLd(container));
   return schema["@graph"].find((node: { "@type": string }) => node["@type"] === "FAQPage") as {

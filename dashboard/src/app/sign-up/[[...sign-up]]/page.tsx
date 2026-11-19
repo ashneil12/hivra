@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { FunnelHeader } from "@/components/layout/LandingHeader";
 import { authCardAppearance } from "@/components/auth/auth-card-appearance";
 import funnelStyles from "@/components/public-site/public-site.module.css";
-import { HOSTED_COMPUTE_NEEDS_PLAN } from "@/lib/blog/plan-facts";
+import { isFreePlanClosed } from "@/lib/billing/free-plan-closure";
+import { CONNECTED_SERVER_ELIGIBILITY, HOSTED_COMPUTE_NEEDS_PLAN, HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE } from "@/lib/blog/plan-facts";
 import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
 import { isHivraMemoryEnabled } from "@/lib/memory/flag";
 import { isLocalAuthMode } from "@/lib/self-host/config";
@@ -66,7 +67,7 @@ export default async function SignUpPage({
               Run a supported AI agent on a persistent computer, use a computer without an agent or bring your own
               infrastructure.
             </p>
-            <p>{HOSTED_COMPUTE_NEEDS_PLAN}</p>
+            <p>{isFreePlanClosed() ? `${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY}` : HOSTED_COMPUTE_NEEDS_PLAN}</p>
           </div>
           {/* "How did you hear about Hivra?" sits above the card and rides into Clerk (R8). */}
           <HeardAboutSignUp

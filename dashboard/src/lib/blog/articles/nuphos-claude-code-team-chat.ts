@@ -78,7 +78,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Does it need a paid plan?",
-      a: "Yes. A Hivra account is free, but every Hivra Cloud computer needs a paid plan. Nuphos needs at least 1 vCPU and 3 GB of RAM.",
+      a: "Yes. Every Hivra Cloud computer needs a paid plan. Nuphos needs at least 1 vCPU and 3 GB of RAM.",
     },
     {
       q: "Is Hivra affiliated with Nuphos or Anthropic?",

@@ -37,7 +37,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "Hivra hosts the dashboard. It sets up a small computer for it, puts it behind Hivra's authenticated gateway, and gives you a connection flow for your GitHub account and your Aeon fork. You come back to that dashboard to inspect and change tasks.",
         "Hivra does not take over your fork, and it does not turn your scheduled jobs into Hivra compute. They stay in GitHub, with your repository settings and your task credentials. Hivra cannot exempt them from GitHub's Actions limits or pricing.",
-        "The dashboard computer is small, with a floor of 0.5 vCPU and 1 GB of RAM. Every Hivra Cloud computer needs a paid plan, and the entry plan is " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + ". A free Hivra account works with a server you connect yourself.",
+        "The dashboard computer is small, with a floor of 0.5 vCPU and 1 GB of RAM. Every Hivra Cloud computer needs a paid plan, and the entry plan is " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + ". You can use your own server if your account is eligible to connect it.",
       ],
     },
     {

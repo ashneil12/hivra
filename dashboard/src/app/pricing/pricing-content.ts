@@ -15,8 +15,10 @@
 import {
   ENTRY_PLAN_PRICE,
   ENTRY_PLAN_SIZE,
+  CONNECTED_SERVER_ELIGIBILITY,
   FREE_ACCOUNT_SENTENCE,
   HOSTED_COMPUTE_NEEDS_PLAN,
+  HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
   LARGER_PLAN_PRICE,
   MONEY_BACK_GUARANTEE,
   PLAN_DISPLAY,
@@ -179,11 +181,13 @@ export const CARD_TRIAL_PRICING = {
 } as const;
 
 /** The paragraphs under the headline. */
+const SEPARATE_MODEL_COST = "Prices are per month, in US dollars. Your AI provider's charges are separate, whether you sign in with your own account (where the agent supports it, subject to the provider's terms) or use an API key.";
 export const PRICING_INTRO = [
   "Sign up free and connect your own server, or use Hivra's open-source platform yourself. Or pay us to run the computer for you. No requirement to buy a token.",
   HOSTED_COMPUTE_NEEDS_PLAN,
-  "Prices are per month, in US dollars. Your AI provider's charges are separate, whether you sign in with your own account (where the agent supports it, subject to the provider's terms) or use an API key.",
+  SEPARATE_MODEL_COST,
 ] as const;
+export const PRICING_INTRO_FREE_CLOSED = [HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, SEPARATE_MODEL_COST] as const;
 
 export const PRICING_OPTIONS = {
   heading: "Choose how you want to run it",
@@ -258,7 +262,7 @@ export const PRICING_AGENTS = {
   intro: "What you can run depends on where it runs:",
   items: [
     { name: "On Hivra Cloud:", text: "Every Hivra Cloud computer needs a paid plan, whichever agent you run on it. Hermes runs on Hivra Cloud only." },
-    { name: "On your own computer or server:", text: FREE_ACCOUNT_SENTENCE },
+    { name: "On your own computer or server:", text: FREE_ACCOUNT_SENTENCE, textFreeClosed: CONNECTED_SERVER_ELIGIBILITY },
     { name: "Claude Code and Codex:", text: "Support signing in with your own provider account, subject to the provider's terms." },
     {
       name: "Other supported agents:",
