@@ -349,8 +349,11 @@ test mode:
    (`CUSTOMER_PATH_AGENT`, default `claude-code`), gets a real reply, sleeps and
    wakes it, gets another reply, and deletes it. `CUSTOMER_PATH_AGENT=none`
    skips this part.
-6. A second account using the same card gets no trial: it is charged at once
-   and goes straight to full Pro.
+6. A second account using the same card gets no trial: the webhook cancels
+   that trial without charging, and the account gets no plan.
+7. The second account checks out again from **Pricing**. This time it is paid
+   checkout with no trial: the card is charged at once and the account becomes
+   full Pro.
 
 Every agent, account, Stripe subscription and customer, and trial record it made
 is deleted at the end, pass or fail. It launches one computer.

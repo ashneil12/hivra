@@ -4,7 +4,8 @@
  * pool, and becomes a full Pro account when the trial ends and the card is
  * charged. It then launches one reference agent (CUSTOMER_PATH_AGENT, default
  * claude-code), gets a real reply, sleeps and wakes it, gets another reply and
- * deletes it. A second account with the same card gets no second trial.
+ * deletes it. A second account with the same card gets no second trial: that
+ * trial is canceled without a charge, and the account's retry is paid at once.
  *
  * This is the one full customer path run on every Canary release. Per-agent
  * checks are separate and cheap, so its cost stays flat as the catalog grows.
@@ -26,8 +27,8 @@ import { establishAuditSession } from './first-run-audit/session';
 import { proveChat } from './launch-sweep/chat';
 import { launchFromTile, openFromLaunch, waitForReady } from './launch-sweep/journey';
 import { SWEEP_TARGETS, type SweepTarget } from './launch-sweep/targets';
-import { accountState, trialLengthOk, type SubscriptionRow } from './trial-to-pro/state';
-import { assertTestKey, cancelSubscription, deleteCustomer, endTrialNow, getSubscription } from './trial-to-pro/stripe';
+import { accountState, repeatTrialRejected, trialLengthOk, type SubscriptionRow } from './trial-to-pro/state';
+import { amountPaidCents, assertTestKey, cancelSubscription, deleteCustomer, endTrialNow, getSubscription, listSubscriptions } from './trial-to-pro/stripe';
 
 const ENABLED = process.env.TRIAL_JOURNEY === '1';
 const TEST_CARD = process.env.TRIAL_JOURNEY_CARD?.trim() || '4242424242424242';
@@ -125,8 +126,22 @@ async function waitForState(env: JourneyEnv, userId: string, want: 'trial' | 'pr
   return row!;
 }
 
-/** Pricing → "Start a 7-day free trial" → Stripe Checkout with the test card → back on billing. */
-async function startTrialFromPricing(page: Page, name: string): Promise<void> {
+/** The repeat card's trial is canceled by the webhook, nothing is charged, and the account is neither in a trial nor Pro. */
+async function waitForRejectedTrial(env: JourneyEnv, userId: string, timeoutMs = 120_000): Promise<void> {
+  await expect
+    .poll(async () => {
+      const row = await db(env).subscription(userId);
+      if (!row?.stripe_customer_id) return false;
+      const subs = await listSubscriptions(env.stripeKey, row.stripe_customer_id);
+      return repeatTrialRejected(subs, await amountPaidCents(env.stripeKey, row.stripe_customer_id));
+    }, { message: 'the repeat card trial should be canceled without a charge', timeout: timeoutMs, intervals: [2_000, 5_000] })
+    .toBe(true);
+  const state = accountState(await db(env).subscription(userId));
+  expect(['trial', 'pro'], `a rejected trial grants no plan (state ${state})`).not.toContain(state);
+}
+
+/** Pricing → "Start a 7-day free trial" → Stripe Checkout with the test card → back on billing. Ineligible accounts get paid checkout. */
+async function checkoutFromPricing(page: Page, name: string): Promise<void> {
   await page.goto('/pricing', { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('card-trial-note'), 'the pricing page offers the card trial (HIVRA_CARD_TRIAL=on)').toBeVisible();
   await page.getByRole('link', { name: /Start a 7-day free trial/ }).click();
@@ -170,7 +185,7 @@ test.describe('trial to Pro', () => {
       contexts.push(first.context);
       const page = await first.context.newPage();
       const started = new Date();
-      await test.step('start the trial from the pricing page', () => startTrialFromPricing(page, 'Trial Journey'));
+      await test.step('start the trial from the pricing page', () => checkoutFromPricing(page, 'Trial Journey'));
 
       const trial = await test.step('the account is in the trial, with its small pool', () => waitForState(env, first.user.id, 'trial'));
       expect(trialLengthOk(trial.trial_ends_at!, started), `trial ends in 7 days (${trial.trial_ends_at})`).toBe(true);
@@ -186,13 +201,23 @@ test.describe('trial to Pro', () => {
 
       if (target) await useReferenceAgent(page, first.context, env, target);
 
-      await test.step('a second account with the same card is charged at once, with no trial', async () => {
+      await test.step('a second account with the same card gets no trial and is not charged', async () => {
         const second = await newCustomer(browser, env, 'b');
         users.push(second.user.id);
         contexts.push(second.context);
-        await startTrialFromPricing(await second.context.newPage(), 'Trial Journey Repeat');
-        const row = await waitForState(env, second.user.id, 'pro');
-        expect((await getSubscription(env.stripeKey, row.stripe_subscription_id!)).status).toBe('active');
+        const secondPage = await second.context.newPage();
+        await checkoutFromPricing(secondPage, 'Trial Journey Repeat');
+        await waitForRejectedTrial(env, second.user.id);
+
+        await test.step('its retry is paid checkout, charged at once, and the account becomes full Pro', async () => {
+          await checkoutFromPricing(secondPage, 'Trial Journey Repeat');
+          const row = await waitForState(env, second.user.id, 'pro');
+          const paid = await getSubscription(env.stripeKey, row.stripe_subscription_id!);
+          expect(paid.status).toBe('active');
+          expect(paid.trial_end, 'the retry has no trial').toBeNull();
+          expect(paid.metadata.hivra_trial).toBeUndefined();
+          expect(await amountPaidCents(env.stripeKey, row.stripe_customer_id!), 'the retry is charged').toBeGreaterThan(0);
+        });
       });
     } finally {
       // An account whose agents could not all be deleted is kept, so the

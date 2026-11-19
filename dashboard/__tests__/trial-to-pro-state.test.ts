@@ -1,4 +1,4 @@
-import { accountState, trialLengthOk } from "../e2e/trial-to-pro/state";
+import { accountState, repeatTrialRejected, trialLengthOk } from "../e2e/trial-to-pro/state";
 import { assertTestKey } from "../e2e/trial-to-pro/stripe";
 
 const base = { plan: "operator", status: "active", stripe_subscription_id: "sub_1" };
@@ -19,6 +19,15 @@ describe("trial-to-Pro journey states", () => {
     const start = new Date("2026-11-19T12:00:00Z");
     expect(trialLengthOk("2026-11-26T12:00:00Z", start)).toBe(true);
     expect(trialLengthOk("2026-11-20T12:00:00Z", start)).toBe(false);
+  });
+
+  it("reads a repeat card's trial as rejected only when it was canceled and nothing was charged", () => {
+    const canceledTrial = { status: "canceled", metadata: { hivra_trial: "card_7d" } };
+    expect(repeatTrialRejected([canceledTrial], 0)).toBe(true);
+    expect(repeatTrialRejected([], 0)).toBe(false);
+    expect(repeatTrialRejected([{ ...canceledTrial, status: "trialing" }], 0)).toBe(false);
+    expect(repeatTrialRejected([canceledTrial, { status: "active", metadata: {} }], 0)).toBe(false);
+    expect(repeatTrialRejected([canceledTrial], 2000)).toBe(false);
   });
 
   it("refuses a live Stripe key", () => {
