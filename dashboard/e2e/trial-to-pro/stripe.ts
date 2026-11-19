@@ -57,9 +57,59 @@ export async function amountPaidCents(key: string, customer: string): Promise<nu
 }
 
 export async function cancelSubscription(key: string, id: string): Promise<void> {
-  await stripe(key, 'DELETE', `/subscriptions/${encodeURIComponent(id)}`).catch(() => undefined);
+  const result = await stripeCleanupRequest(key, 'DELETE', 'subscriptions', id);
+  if (result && result.status !== 'canceled') throw new Error('Stripe subscription cancellation not confirmed');
 }
 
 export async function deleteCustomer(key: string, id: string): Promise<void> {
-  await stripe(key, 'DELETE', `/customers/${encodeURIComponent(id)}`).catch(() => undefined);
+  const result = await stripeCleanupRequest(key, 'DELETE', 'customers', id);
+  if (result && result.deleted !== true) throw new Error('Stripe customer deletion not confirmed');
+}
+
+async function stripeCleanupRequest(
+  key: string,
+  method: 'GET' | 'DELETE',
+  resource: 'customers' | 'subscriptions',
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  assertTestKey(key);
+  const label = `Stripe ${method} ${resource}/${id}`;
+  const res = await fetch(`${API}/${resource}/${encodeURIComponent(id)}`, {
+    method,
+    headers: { Authorization: `Bearer ${key}` },
+    redirect: 'error',
+    signal: AbortSignal.timeout(20_000),
+  }).catch(() => { throw new Error(`${label}: request failed`); });
+  const body = await res.json().catch(() => null);
+  if (res.status === 404 && body?.error?.code === 'resource_missing') return null;
+  if (!res.ok) throw new Error(`${label}: HTTP ${res.status}`);
+  if (body?.id !== id) throw new Error(`${label}: resource identity not confirmed`);
+  return body;
+}
+
+export async function removeOwnedStripeBilling(
+  key: string,
+  userId: string,
+  customerId?: string | null,
+  subscriptionId?: string | null,
+): Promise<void> {
+  if (!customerId) {
+    if (subscriptionId) throw new Error('Stripe subscription has no customer reference');
+    return;
+  }
+  const customer = await stripeCleanupRequest(key, 'GET', 'customers', customerId);
+  const customerPresent = customer && customer.deleted !== true;
+  const metadata = customer?.metadata as { clerk_user_id?: string } | undefined;
+  if (customerPresent && metadata?.clerk_user_id !== userId) {
+    throw new Error('Stripe customer ownership not confirmed');
+  }
+  if (subscriptionId) {
+    const subscription = await stripeCleanupRequest(key, 'GET', 'subscriptions', subscriptionId);
+    if (subscription && subscription.customer !== customerId) throw new Error('Stripe subscription ownership not confirmed');
+    if (subscription && subscription.status !== 'canceled') {
+      if (!customerPresent) throw new Error('Stripe subscription is not canceled but its customer is missing');
+      await cancelSubscription(key, subscriptionId);
+    }
+  }
+  if (customerPresent) await deleteCustomer(key, customerId);
 }
