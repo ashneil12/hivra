@@ -355,8 +355,11 @@ test mode:
    checkout with no trial: the card is charged at once and the account becomes
    full Pro.
 
-Every agent, account, Stripe subscription and customer, and trial record it made
-is deleted at the end, pass or fail. It launches one computer.
+It launches one computer and tries to clean up its disposable accounts and
+their resources even if the test fails. Unconfirmed cleanup fails the journey
+and reports the affected account and step. It keeps the account if agent,
+Stripe, or database cleanup cannot be confirmed; do not run the active reaper
+while live audits are paused.
 
 It needs the card trial on Canary (`HIVRA_CARD_TRIAL=on` and its migration) and
 is opt-in: it runs only with `TRIAL_JOURNEY=1`, refuses production and refuses

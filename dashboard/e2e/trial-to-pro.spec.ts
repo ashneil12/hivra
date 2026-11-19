@@ -12,7 +12,7 @@
  *
  * Canary only, Stripe test mode only, and opt-in: TRIAL_JOURNEY=1. Needs the
  * card trial switched on (HIVRA_CARD_TRIAL=on) and its migration on Canary.
- * Every agent, account, subscription and trial record it makes is deleted at the end.
+ * Teardown must confirm cleanup of each disposable account's resources.
  *
  *   TRIAL_JOURNEY=1 CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… \
  *     LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… TRIAL_JOURNEY_STRIPE_SECRET_KEY=sk_test_… \
@@ -21,14 +21,14 @@
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
 import { assertNotProduction, auditEmail, newRunId } from './first-run-audit/config';
-import { createAuditUser, deleteAuditUser, mintSignInTicket } from './first-run-audit/clerk-admin';
-import { destroyAllHivraAgents } from './first-run-audit/instances';
+import { createAuditUser, mintSignInTicket } from './first-run-audit/clerk-admin';
 import { establishAuditSession } from './first-run-audit/session';
 import { proveChat } from './launch-sweep/chat';
 import { launchFromTile, openFromLaunch, waitForReady } from './launch-sweep/journey';
 import { SWEEP_TARGETS, type SweepTarget } from './launch-sweep/targets';
-import { accountState, repeatTrialRejected, trialLengthOk, type SubscriptionRow } from './trial-to-pro/state';
-import { amountPaidCents, assertTestKey, cancelSubscription, deleteCustomer, endTrialNow, getSubscription, listSubscriptions } from './trial-to-pro/stripe';
+import { cleanTrialCustomers, removeTrialAgents, trialDb, type TrialCustomer } from './trial-to-pro/cleanup';
+import { accountState, repeatTrialRejected, trialLengthOk } from './trial-to-pro/state';
+import { amountPaidCents, assertTestKey, endTrialNow, getSubscription, listSubscriptions } from './trial-to-pro/stripe';
 
 const ENABLED = process.env.TRIAL_JOURNEY === '1';
 const TEST_CARD = process.env.TRIAL_JOURNEY_CARD?.trim() || '4242424242424242';
@@ -75,10 +75,7 @@ async function useReferenceAgent(page: Page, context: BrowserContext, env: Journ
     await page.reload({ waitUntil: 'domcontentloaded' });
     await proveChat(page, target, chat);
   });
-  await test.step('it is deleted', async () => {
-    const { survived } = await destroyAllHivraAgents(context.request, env.baseUrl, 30, 15_000);
-    expect(survived, 'every agent the account launched is deleted').toEqual([]);
-  });
+  await test.step('it is deleted', () => removeTrialAgents(context, env.baseUrl));
 }
 
 function journeyEnv() {
@@ -95,29 +92,11 @@ function journeyEnv() {
 }
 type JourneyEnv = ReturnType<typeof journeyEnv>;
 
-function db(env: JourneyEnv) {
-  const headers = { apikey: env.serviceRoleKey, Authorization: `Bearer ${env.serviceRoleKey}` };
-  return {
-    async subscription(userId: string): Promise<(SubscriptionRow & { stripe_customer_id?: string | null }) | null> {
-      const res = await fetch(
-        `${env.supabaseUrl}/rest/v1/hermes_subscriptions?user_id=eq.${encodeURIComponent(userId)}&select=plan,status,stripe_customer_id,stripe_subscription_id,instance_limit,total_cpu_budget,total_ram_budget,trial_ends_at`,
-        { headers },
-      );
-      if (!res.ok) throw new Error(`[trial-journey] subscription read failed: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
-      return ((await res.json()) as SubscriptionRow[])[0] ?? null;
-    },
-    async remove(userId: string): Promise<void> {
-      for (const table of ['hermes_trial_usage', 'hermes_subscriptions']) {
-        await fetch(`${env.supabaseUrl}/rest/v1/${table}?user_id=eq.${encodeURIComponent(userId)}`, { method: 'DELETE', headers }).catch(() => undefined);
-      }
-    },
-  };
-}
-
 async function waitForState(env: JourneyEnv, userId: string, want: 'trial' | 'pro', timeoutMs = 120_000) {
-  let row: Awaited<ReturnType<ReturnType<typeof db>['subscription']>> = null;
+  const db = trialDb(env);
+  let row: Awaited<ReturnType<typeof db.subscription>> = null;
   await expect
-    .poll(async () => accountState((row = await db(env).subscription(userId))), {
+    .poll(async () => accountState((row = await db.subscription(userId))), {
       message: `account should reach "${want}"`,
       timeout: timeoutMs,
       intervals: [2_000, 5_000],
@@ -128,22 +107,24 @@ async function waitForState(env: JourneyEnv, userId: string, want: 'trial' | 'pr
 
 /** The repeat card's trial is canceled by the webhook, nothing is charged, and the account is neither in a trial nor Pro. */
 async function waitForRejectedTrial(env: JourneyEnv, userId: string, timeoutMs = 120_000): Promise<void> {
+  const db = trialDb(env);
   await expect
     .poll(async () => {
-      const row = await db(env).subscription(userId);
+      const row = await db.subscription(userId);
       if (!row?.stripe_customer_id) return false;
       const subs = await listSubscriptions(env.stripeKey, row.stripe_customer_id);
       return repeatTrialRejected(subs, await amountPaidCents(env.stripeKey, row.stripe_customer_id));
     }, { message: 'the repeat card trial should be canceled without a charge', timeout: timeoutMs, intervals: [2_000, 5_000] })
     .toBe(true);
-  const state = accountState(await db(env).subscription(userId));
+  const state = accountState(await db.subscription(userId));
   expect(['trial', 'pro'], `a rejected trial grants no plan (state ${state})`).not.toContain(state);
 }
 
 /** Pricing → "Start a 7-day free trial" → Stripe Checkout with the test card → back on billing. Ineligible accounts get paid checkout. */
-async function checkoutFromPricing(page: Page, name: string): Promise<void> {
+async function checkoutFromPricing(page: Page, name: string, customer: TrialCustomer): Promise<void> {
   await page.goto('/pricing', { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('card-trial-note'), 'the pricing page offers the card trial (HIVRA_CARD_TRIAL=on)').toBeVisible();
+  customer.checkoutAttempted = true;
   await page.getByRole('link', { name: /Start a 7-day free trial/ }).click();
   await page.waitForURL(/checkout\.stripe\.com/, { timeout: 60_000 });
   await page.locator('#cardNumber').fill(TEST_CARD);
@@ -156,18 +137,17 @@ async function checkoutFromPricing(page: Page, name: string): Promise<void> {
   await page.waitForURL(/\/dashboard\/billing\?subscription=success/, { timeout: 90_000 });
 }
 
-async function newCustomer(browser: Browser, env: JourneyEnv, label: string) {
+async function newCustomer(browser: Browser, env: JourneyEnv, label: string, customers: TrialCustomer[]) {
   const user = await createAuditUser(env.clerkSecretKey, auditEmail(`trial-${label}-${env.runId}`, 'hermesos.cloud'));
-  const context = await establishAuditSession(browser, { baseUrl: env.baseUrl, ticket: await mintSignInTicket(env.clerkSecretKey, user.id) });
-  return { user, context };
-}
-
-async function teardown(env: JourneyEnv, userId: string): Promise<void> {
-  const row = await db(env).subscription(userId).catch(() => null);
-  if (row?.stripe_subscription_id) await cancelSubscription(env.stripeKey, row.stripe_subscription_id);
-  if (row?.stripe_customer_id) await deleteCustomer(env.stripeKey, row.stripe_customer_id);
-  await db(env).remove(userId);
-  await deleteAuditUser(env.clerkSecretKey, userId);
+  const customer: TrialCustomer = { userId: user.id };
+  customers.push(customer);
+  const context = await establishAuditSession(browser, {
+    baseUrl: env.baseUrl,
+    ticket: await mintSignInTicket(env.clerkSecretKey, user.id),
+    onContext: (created) => { customer.context = created; },
+  });
+  customer.signedIn = true;
+  return { customer, context };
 }
 
 test.describe('trial to Pro', () => {
@@ -177,17 +157,14 @@ test.describe('trial to Pro', () => {
     test.setTimeout(75 * MINUTE);
     const env = journeyEnv();
     const target = referenceTarget();
-    const users: string[] = [];
-    const contexts: BrowserContext[] = [];
+    const customers: TrialCustomer[] = [];
     try {
-      const first = await newCustomer(browser, env, 'a');
-      users.push(first.user.id);
-      contexts.push(first.context);
+      const first = await newCustomer(browser, env, 'a', customers);
       const page = await first.context.newPage();
       const started = new Date();
-      await test.step('start the trial from the pricing page', () => checkoutFromPricing(page, 'Trial Journey'));
+      await test.step('start the trial from the pricing page', () => checkoutFromPricing(page, 'Trial Journey', first.customer));
 
-      const trial = await test.step('the account is in the trial, with its small pool', () => waitForState(env, first.user.id, 'trial'));
+      const trial = await test.step('the account is in the trial, with its small pool', () => waitForState(env, first.customer.userId, 'trial'));
       expect(trialLengthOk(trial.trial_ends_at!, started), `trial ends in 7 days (${trial.trial_ends_at})`).toBe(true);
       const sub = await getSubscription(env.stripeKey, trial.stripe_subscription_id!);
       expect(sub.status).toBe('trialing');
@@ -195,23 +172,21 @@ test.describe('trial to Pro', () => {
 
       await test.step('the trial ends, the card is charged, and the account becomes full Pro', async () => {
         await endTrialNow(env.stripeKey, sub.id);
-        await waitForState(env, first.user.id, 'pro');
+        await waitForState(env, first.customer.userId, 'pro');
         expect((await getSubscription(env.stripeKey, sub.id)).status).toBe('active');
       });
 
       if (target) await useReferenceAgent(page, first.context, env, target);
 
       await test.step('a second account with the same card gets no trial and is not charged', async () => {
-        const second = await newCustomer(browser, env, 'b');
-        users.push(second.user.id);
-        contexts.push(second.context);
+        const second = await newCustomer(browser, env, 'b', customers);
         const secondPage = await second.context.newPage();
-        await checkoutFromPricing(secondPage, 'Trial Journey Repeat');
-        await waitForRejectedTrial(env, second.user.id);
+        await checkoutFromPricing(secondPage, 'Trial Journey Repeat', second.customer);
+        await waitForRejectedTrial(env, second.customer.userId);
 
         await test.step('its retry is paid checkout, charged at once, and the account becomes full Pro', async () => {
-          await checkoutFromPricing(secondPage, 'Trial Journey Repeat');
-          const row = await waitForState(env, second.user.id, 'pro');
+          await checkoutFromPricing(secondPage, 'Trial Journey Repeat', second.customer);
+          const row = await waitForState(env, second.customer.userId, 'pro');
           const paid = await getSubscription(env.stripeKey, row.stripe_subscription_id!);
           expect(paid.status).toBe('active');
           expect(paid.trial_end, 'the retry has no trial').toBeNull();
@@ -220,20 +195,7 @@ test.describe('trial to Pro', () => {
         });
       });
     } finally {
-      // An account whose agents could not all be deleted is kept, so the
-      // reaper (npm run audit:first-run:cleanup) can still find and delete them.
-      const kept: string[] = [];
-      for (const [i, context] of contexts.entries()) {
-        const left = await destroyAllHivraAgents(context.request, env.baseUrl, 30, 15_000)
-          .then((result) => result.survived.length)
-          .catch(() => 1);
-        if (left > 0) kept.push(users[i]);
-        await context.close().catch(() => undefined);
-      }
-      for (const userId of users) if (!kept.includes(userId)) await teardown(env, userId);
-      if (kept.length) {
-        throw new Error(`[trial-journey] agents survived cleanup; kept account(s) ${kept.join(', ')} for npm run audit:first-run:cleanup.`);
-      }
+      await test.step('verify cleanup of disposable accounts', () => cleanTrialCustomers(env, customers));
     }
   });
 });
