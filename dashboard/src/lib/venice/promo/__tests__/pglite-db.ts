@@ -7,12 +7,15 @@ import { PGlite } from "@electric-sql/pglite";
 
 const MIGRATIONS = path.resolve(__dirname, "../../../../../supabase/migrations");
 const FILES = [
+  "20260328174600_create_hermes_subscriptions.sql",
+  "20260412035500_add_trial_usage.sql",
   "20260512180000_managed_venice_wallets.sql",
   "20260606140100_managed_venice_reservation_balance_guard.sql",
   "20260925201500_managed_venice_atomic_wallet_debits.sql",
   "20260605120000_hivra_agents.sql",
   "20260613170000_commit_hivra_llm_config_drift.sql",
   "20261111143017_venice_promo_campaigns.sql",
+  "20261119150000_card_trial.sql",
 ];
 
 export async function createPromoDb() {
@@ -22,6 +25,7 @@ export async function createPromoDb() {
     alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
     create schema auth;
     create function auth.jwt() returns jsonb language sql stable as $$ select '{}'::jsonb $$;
+    create table public.hermes_instances (id uuid primary key);
     create function public.update_updated_at() returns trigger language plpgsql as $$
       begin new.updated_at = now(); return new; end $$;
   `);
@@ -62,7 +66,9 @@ export async function createPromoDb() {
           (orderBy ? ` order by ${orderBy} ${orderAsc ? "asc" : "desc"}` : "") +
           (lim !== null ? ` limit ${lim}` : "");
         const res = await pg.query(sql, params);
-        const rows = res.rows as Record<string, unknown>[];
+        const rows = (res.rows as Record<string, unknown>[]).map(row => Object.fromEntries(
+          Object.entries(row).map(([key, value]) => [key, value instanceof Date ? value.toISOString() : value]),
+        ));
         return { data: single ? (rows[0] ?? null) : rows, error: null };
       } catch (e) {
         const err = e as { code?: string; message?: string };
