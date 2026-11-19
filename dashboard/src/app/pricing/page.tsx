@@ -30,6 +30,7 @@ import {
   CARD_TRIAL_PRICING,
   PRICING_FAQ_HEADING,
   PRICING_INTRO,
+  PRICING_INTRO_FREE_CLOSED,
   PRICING_OPTIONS,
   PRICING_PAYING,
   PRICING_REFUNDS,
@@ -103,7 +104,7 @@ export default async function PricingPage() {
   const cardTrial = isCardTrialEnabled() && !isPlanLadderEnabled();
   // Once the Free plan is closed to new sign-ups, the page stops offering it.
   const freeClosed = isFreePlanClosed();
-  const intro = freeClosed ? PRICING_INTRO.filter((paragraph) => !paragraph.startsWith("Sign up free")) : PRICING_INTRO;
+  const intro = freeClosed ? PRICING_INTRO_FREE_CLOSED : PRICING_INTRO;
 
   return (
     <PublicSite className={styles.page} data-page="pricing" tokenSurfaces={showToken} freePlanClosed={freeClosed}>
@@ -250,7 +251,7 @@ export default async function PricingPage() {
               {PRICING_AGENTS.items.map((item) => (
                 <li key={item.name}>
                   <strong>{item.name}</strong>{" "}
-                  <span>{"link" in item ? renderLinkedText(item.text, [item.link]) : item.text}</span>
+                  <span>{"link" in item ? renderLinkedText(item.text, [item.link]) : freeClosed && "textFreeClosed" in item ? item.textFreeClosed : item.text}</span>
                 </li>
               ))}
             </ul>

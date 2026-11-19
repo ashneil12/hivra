@@ -13,7 +13,7 @@ describe("public plan copy", () => {
   it("distinguishes grandfathering from the options for new accounts", () => {
     const faq = DOCS["plans-and-billing"].faqs?.find(({ q }) => q.includes("Free is closed"));
 
-    expect(faq?.a).toContain("Existing Free accounts keep their access.");
+    expect(faq?.a).toContain("existing Free accounts keep their access.");
     expect(faq?.a).toContain("New accounts need a plan or an eligible trial");
   });
 });

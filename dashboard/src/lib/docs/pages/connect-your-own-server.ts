@@ -84,7 +84,7 @@ export const doc: DocPage = {
       paragraphs: [
         "If your account is eligible to connect a server, you can inspect it, prepare it and launch supported agents on it. Those agents use your server's capacity. See [what you pay for](/docs/plans-and-billing).",
         "What you still pay for is the server itself, to whoever hosts it, and the AI usage your agent consumes, to whoever provides the model. If you launch an agent on Hivra credits, those are separate from the server. See [Models and credits](/docs/models-and-credits).",
-        "| Thing | Who pays |\n| --- | --- |\n| Connecting and inspecting the server | Nothing |\n| The server or cloud machine | You, to your provider |\n| Agent model usage on your own key or sign-in | You, to the model provider |\n| A computer run by Hivra Cloud | A paid plan |",
+        "| Thing | Who pays |\n| --- | --- |\n| Connecting and inspecting the server | No separate charge for eligible accounts |\n| The server or cloud machine | You, to your provider |\n| Agent model usage on your own key or sign-in | You, to the model provider |\n| A computer run by Hivra Cloud | Your hosting plan or an eligible trial |",
       ],
     },
     {

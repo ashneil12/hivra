@@ -31,7 +31,7 @@ export const doc: DocPage = {
       heading: "Before you start",
       paragraphs: [
         "You need a Hivra account to see any of this. Open **Billing** in the dashboard sidebar (or **Plan and billing** in Settings). The page it opens is titled \"Plan & billing\" and the line under it reads \"Your plan, how you pay, and what you've used.\" A self-hosted installation of Hivra hides Billing.",
-        "- A card, if you want Hivra Cloud to run a computer or you want to top up model credits. Plan and credit payments go through a hosted checkout, so you never type card details into Hivra itself.\n- Nothing at all if you only plan to connect a computer or server of your own. [Run agents on your own server](/docs/connect-your-own-server) covers that route.\n- A decision about the model: Hivra credits, your own key, or an account you already have. [Choose how your agent gets its model](/docs/models-and-credits) lists what each agent supports.",
+        "- A card, if you want Hivra Cloud to run a computer or you want to top up model credits. Plan and credit payments go through a hosted checkout, so you never type card details into Hivra itself.\n- A compatible server and an account eligible to connect it, if you want to [run agents on your own server](/docs/connect-your-own-server).\n- A decision about the model: Hivra credits, your own key, or an account you already have. [Choose how your agent gets its model](/docs/models-and-credits) lists what each agent supports.",
         "By default the page opens on **Overview** if you have a plan (or a plan on hold) and on **Plans** if you do not. Links from Launch or from a paywall open **Plans**.",
       ],
     },
@@ -124,7 +124,7 @@ export const doc: DocPage = {
   faqs: [
     {
       q: "What can I choose if Free is closed to new accounts?",
-      a: "Existing Free accounts keep their access. New accounts need a plan or an eligible trial to launch a computer or connect a server. Check the pricing page for the options currently offered.",
+      a: "When Free is closed, existing Free accounts keep their access. New accounts need a plan or an eligible trial to launch a computer or connect a server. Check the pricing page for the options currently offered.",
     },
     {
       q: "How does the Pro trial work if I am offered one?",

@@ -135,6 +135,20 @@ describe("SignUpPage", () => {
     expect(screen.getByRole("main")).toContainElement(heading);
   });
 
+  it("does not offer a Free plan to a new signup after the cutoff", async () => {
+    const env = jest.replaceProperty(process, "env", {
+      ...process.env,
+      HIVRA_FREE_PLAN_CLOSED_AT: "2000-01-01T00:00:00Z",
+    });
+    try {
+      render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+      expect(screen.queryByText(/a free account works/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/your account must be eligible/i)).toBeInTheDocument();
+    } finally {
+      env.restore();
+    }
+  });
+
   // Owner decision, 21 October 2026: Hivra runs no free computer. Someone who creates an account is told so
   // before the form, instead of meeting a paywall in Launch after sign-up.
   it("says under the introduction that a Hivra Cloud computer is paid and a free account works with your own", async () => {
