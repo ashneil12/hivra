@@ -20,6 +20,7 @@ import {
   accountHadCardTrial,
   cardTrialCheckoutFields,
   checkoutGetsCardTrial,
+  getCardTrialOffer,
 } from "@/lib/billing/card-trial";
 import { FREE_PLAN_CLOSED_MESSAGE, accountNeedsPlanForFree } from "@/lib/billing/free-plan-closure";
 import { safeReturnPath } from "@/lib/safe-return-path";
@@ -366,7 +367,9 @@ export async function POST(req: NextRequest) {
     // The card trial (HIVRA_CARD_TRIAL=on): 7 days of the entry plan, card
     // required, once per account. Off, every checkout is direct payment.
     const trialCandidate =
-      checkoutGetsCardTrial({ planKey, cadence, ladderSale: Boolean(ladderSale), existingSub, hadTrial: false });
+      !hasActivePaidSubscription &&
+      checkoutGetsCardTrial({ planKey, cadence, existingSub, hadTrial: false }) &&
+      getCardTrialOffer() !== null;
     const withTrial = trialCandidate && !(await accountHadCardTrial(clerkUserId));
     const trial = withTrial ? cardTrialCheckoutFields() : null;
 

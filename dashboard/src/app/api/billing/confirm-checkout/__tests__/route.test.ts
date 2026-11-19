@@ -155,6 +155,27 @@ describe("POST /api/billing/confirm-checkout", () => {
     expect(StripeWebhookService.handleSubscriptionChange).not.toHaveBeenCalled();
   });
 
+  it.each(["trialing", "canceled"])("does not confirm a rejected trial when Stripe reports %s", async (status) => {
+    mockSessionsRetrieve.mockResolvedValue({
+      id: "cs_test_123",
+      mode: "subscription",
+      payment_status: "no_payment_required",
+      customer: "cus_123",
+      subscription: { id: "sub_123", status, metadata: { hivra_trial: "card_7d" } },
+    });
+    mockSupabaseQuery.maybeSingle.mockResolvedValue({ data: { stripe_customer_id: "cus_123" }, error: null });
+    if (status === "trialing") {
+      (StripeWebhookService.handleSubscriptionChange as jest.Mock).mockResolvedValueOnce("trial_rejected");
+    } else {
+      mockSupabaseQuery.insert.mockResolvedValueOnce({ error: { code: "23505" } });
+    }
+
+    const res = await POST(createRequest({ sessionId: "cs_test_123" }));
+
+    expect(res.status).toBe(409);
+    expect(StripeWebhookService.captureCheckoutPaymentCompleted).not.toHaveBeenCalled();
+  });
+
   it("does not leak raw Stripe retrieval failures", async () => {
     mockSessionsRetrieve.mockRejectedValueOnce(new Error("checkout-secret-leak"));
 
