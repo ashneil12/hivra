@@ -3,6 +3,8 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
+import { setupLaunchPath } from "@/lib/agent-setup/core";
+import { createLaunchDraft, readLaunchDraft, writeLaunchDraft } from "@/lib/launch/draft-store";
 import { readVeniceAttribution, VENICE_ATTRIBUTION_COOKIE } from "@/lib/venice/attribution";
 import { LaunchJourney } from "../LaunchJourney";
 
@@ -103,6 +105,68 @@ describe("LaunchJourney", () => {
     } as Record<string, string>)[key] ?? null);
     render(<LaunchJourney legacyHermesLane />);
   }
+
+  function openSetupLink(href: string) {
+    window.history.replaceState(null, "", href);
+    searchParamsGetMock.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
+    render(<LaunchJourney />);
+  }
+
+  it("keeps the Venice key from a Hermes setup link on the current Hermes launch profile", async () => {
+    openSetupLink(setupLaunchPath("hermes", "venice-key"));
+
+    await screen.findByRole("heading", { name: "Review and launch Hermes 1" });
+    expect(screen.getByRole("button", { name: /^Use my own API key/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it.each([null, "venice-key"] as const)("restores a legacy Hermes draft into the active profile (inference: %s)", async (inference) => {
+    const draft = createLaunchDraft();
+    writeLaunchDraft({ ...draft, stage: "review", resourceKind: "agent", profileId: "hermes", name: "My saved Hermes" }, "user_123");
+    openSetupLink(setupLaunchPath("hermes", inference));
+
+    if (inference) {
+      fireEvent.click(await screen.findByRole("button", { name: "Continue Hermes launch" }));
+    }
+    await screen.findByRole("heading", { name: "Review and launch My saved Hermes" });
+    expect(readLaunchDraft("user_123")).toMatchObject({ profileId: "hermes-computer", launchRequestId: draft.launchRequestId });
+  });
+
+  function saveCodexDraft() {
+    const draft = createLaunchDraft();
+    writeLaunchDraft({
+      ...draft, stage: "review", resourceKind: "agent", profileId: "codex", name: "My saved Codex",
+      modelAccess: { ...draft.modelAccess, mode: "native", source: "custom" },
+    }, "user_123");
+  }
+
+  it("offers to start with the linked model access instead of silently reusing a conflicting draft", async () => {
+    saveCodexDraft();
+    openSetupLink(setupLaunchPath("codex", "venice-key"));
+
+    await screen.findByRole("heading", { name: "Continue your Codex launch, or start a new one?" });
+    fireEvent.click(screen.getByRole("button", { name: "Start a new Codex launch" }));
+    expect(screen.getByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Use my own API key/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it.each([
+    ["returning to Review", setupLaunchPath("codex", "venice-key") + "&stage=review"],
+    ["opening a link without an inference preset", setupLaunchPath("codex", null)],
+  ])("keeps saved model access when %s", async (_label, href) => {
+    saveCodexDraft();
+    openSetupLink(href);
+
+    await screen.findByRole("heading", { name: "Review and launch My saved Codex" });
+    expect(screen.getByRole("button", { name: /^Sign in with my existing account/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("does not preselect a Venice key for a profile that cannot use it", async () => {
+    openSetupLink(setupLaunchPath("claude-code", "venice-key"));
+
+    await screen.findByRole("heading", { name: "Review and launch Claude Code 1" });
+    expect(screen.getByRole("button", { name: /^Use my own API key/ })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: /^Hivra credits/ })).toHaveAttribute("aria-pressed", "true");
+  });
 
   it.each([
     ["phones and touch tablets", TOUCH_QUERY],

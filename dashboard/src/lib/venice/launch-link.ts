@@ -9,6 +9,7 @@
 
 import { launchProfileForAgentType, LAUNCH_ROUTE } from "@/lib/hivra/launch-navigation";
 import type { LaunchDraft, LaunchProfileId } from "@/lib/launch/contracts";
+import { modelAccessModes } from "@/lib/launch/model-access";
 
 export type VeniceInference = "venice" | "venice-key";
 
@@ -27,11 +28,10 @@ export function buildVeniceLaunchHref(agent: string, inference: VeniceInference 
   return `${LAUNCH_ROUTE}?${query.toString()}`;
 }
 
-/** Applies the inference choice to a fresh draft. Left alone when the agent has no model choice. */
+/** Applies the inference choice when the profile supports it. */
 export function withVeniceInference(draft: LaunchDraft, inference: VeniceInference | null): LaunchDraft {
   if (!inference || !draft.profileId) return draft;
-  const modelAccess = inference === "venice"
-    ? { ...draft.modelAccess, mode: "credits" as const, provider: "venice", source: "custom" as const }
-    : { ...draft.modelAccess, mode: "api-key" as const, provider: "venice", source: "custom" as const };
-  return { ...draft, modelAccess };
+  const mode = inference === "venice" ? "credits" : "api-key";
+  if (!modelAccessModes(draft.profileId).includes(mode)) return draft;
+  return { ...draft, modelAccess: { ...draft.modelAccess, mode, provider: "venice", source: "custom" } };
 }
