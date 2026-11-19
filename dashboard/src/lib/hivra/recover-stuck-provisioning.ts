@@ -95,6 +95,7 @@ import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 import { markAgentAwake } from "./sleep-aware";
 import { PREPARED_OMARCHY_REFRESH_STAGE } from "./prepared-omarchy-refresh-contract";
+import { preparedComputerForDelete, releasePreparedComputerClaim } from "./prepared-canary-computers";
 
 const LOG_SOURCE = "hivra/recover-stuck-provisioning";
 
@@ -965,6 +966,12 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
           ? { ...base, action: "cancelled_delete", reason: "delete had no provider identity" }
           : { ...base, action: "skipped", reason: "delete completion was superseded" };
       }
+      // A prepared computer's slot outlives its claim: recovery releases the
+      // claim's binding exactly as Delete does and never destroys the VM.
+      const prepared = preparedComputerForDelete(row);
+      if (prepared === "unconfigured") {
+        return { ...base, action: "skipped", reason: "prepared computer slot is not configured here" };
+      }
       let teardownContext: HivraAgentExecutionContext;
       try {
         teardownContext = recoveryContext ?? await resolveHivraAgentTeardownExecutionContext(row.user_id, row);
@@ -987,11 +994,13 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
       if (!privateAccessCleanup.ok) {
         return { ...base, action: "skipped", reason: "private-access logout could not be verified" };
       }
-      const cleanup = await runProxmoxHostScript(
-        buildRecoveredDeleteCleanupScript(teardownContext, row),
-        teardownContext.env,
-        { timeoutMs: SSH_TIMEOUT_MS },
-      );
+      const cleanup = prepared
+        ? await releasePreparedComputerClaim(row, prepared)
+        : await runProxmoxHostScript(
+          buildRecoveredDeleteCleanupScript(teardownContext, row),
+          teardownContext.env,
+          { timeoutMs: SSH_TIMEOUT_MS },
+        );
       if (!cleanup.ok) {
         return { ...base, action: "skipped", reason: "delete provider cleanup could not be verified" };
       }

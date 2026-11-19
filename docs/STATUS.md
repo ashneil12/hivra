@@ -92,20 +92,17 @@ The one-command Ubuntu connect gives Linux Sandbox only. The agents above, and U
 | Ubuntu Desktop | Available | Hivra Cloud or a Proxmox server you connected |
 | Linux computer | Available | Hivra Cloud on a paid plan. A headless Ubuntu computer with a terminal and files, no desktop (provisioner release 2026.11.10.4). Attaching an agent to it is not supported yet. |
 | Linux Sandbox | Available | A gVisor-ready server you connected |
-| Omarchy | Available, with a condition | A prepared computer on Hivra Cloud. A launch claims the one prepared Omarchy computer the site holds, so the tile appears only where that computer is configured. Hivra does not yet build a fresh Omarchy computer per customer. |
+| Omarchy | Available, with a condition | Existing claims only; new claims are paused. A retained guest cannot be assigned again until its clean reset or rebuild can be verified. |
 | Windows | Available, with a condition | On a Proxmox server you connected, from your own licensed Windows ISO. Hivra-managed Windows is not offered. |
 | macOS | Not offered | Planned only. |
 
-Pending release: new Omarchy claims will reserve the prepared computer while
-updating to the latest supported official stable v4 release. Desktop stays
-blocked until the exact release, migrations and rebooted kernel are verified;
-existing owner opens do not trigger upgrades. This requires migration
-`20261103010000` and the matching dashboard release. Live rollout is unverified.
+An already-reserved Omarchy refresh continues to require verification of the
+exact release, migrations and rebooted kernel before Desktop opens. Refresh
+is not a guest reset. Existing owner opens do not start a new refresh.
 See [the rollout and recovery notes](release/OMARCHY-PREPARED-REFRESH.md).
 
-Public copy never calls Omarchy or Windows plainly available, and never calls
-them a preview: each always carries its condition, "Omarchy (prepared
-computer)" and "Windows on your own server with your licensed image".
+Public copy says Omarchy (prepared computer) is paused for new claims.
+Windows requires your own server and your licensed image. Neither is a preview.
 
 ## Other surfaces
 
