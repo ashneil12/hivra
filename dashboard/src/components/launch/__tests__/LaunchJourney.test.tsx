@@ -5,6 +5,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 
 import { setupLaunchPath } from "@/lib/agent-setup/core";
 import { createLaunchDraft, readLaunchDraft, writeLaunchDraft } from "@/lib/launch/draft-store";
+import { readVeniceAttribution, VENICE_ATTRIBUTION_COOKIE } from "@/lib/venice/attribution";
 import { LaunchJourney } from "../LaunchJourney";
 
 const routerPushMock = jest.fn();
@@ -72,6 +73,28 @@ describe("LaunchJourney", () => {
 
   afterEach(() => {
     delete (window as { matchMedia?: unknown }).matchMedia;
+    document.cookie = `${VENICE_ATTRIBUTION_COOKIE}=; Max-Age=0; Path=/`;
+  });
+
+  it("opens Hermes with Venice credits and carries the claim code into launch preparation", async () => {
+    const query = new URLSearchParams("agent=hermes&inference=venice&ref=venice&code=VENICE");
+    searchParamsGetMock.mockImplementation(key => query.get(key));
+    const mockFetch = jest.mocked(fetch);
+    const attributionAtPrepare = jest.fn();
+    const originalFetch = mockFetch.getMockImplementation()!;
+    mockFetch.mockImplementation((...args) => {
+      if (args[0] === "/api/billing/venice-promo?prepareLaunch=1") {
+        attributionAtPrepare(readVeniceAttribution());
+      }
+      return originalFetch(...args);
+    });
+
+    render(<LaunchJourney />);
+
+    await screen.findByRole("heading", { name: "Review and launch Hermes 1" });
+    const options = within(screen.getByRole("group", { name: "Model access" }));
+    expect(options.getByRole("button", { name: /^Hivra credits.*Powered by Venice/ })).toHaveAttribute("aria-pressed", "true");
+    expect(attributionAtPrepare).toHaveBeenCalledWith({ ref: "venice", code: "VENICE" });
   });
 
   function renderAtCapacity() {
