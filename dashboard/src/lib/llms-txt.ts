@@ -65,6 +65,7 @@ export function llmsTxtSections(
       links: [
         { label: "Home", path: "/", note: "Launch an agent on a computer of its own, or start with a computer and use it yourself, on Hivra Cloud, your own server or self-hosted" },
         { label: "Agents", path: "/agents", note: "Claude Code, Codex, Hermes, OpenClaw, Agent Zero and Aeon, each on a computer of its own, with what each one suits and how its model access works" },
+        { label: "Set up from your coding agent", path: "/setup.md", note: "Step-by-step instructions for an AI coding agent (Claude Code, Codex, Cursor) to set its person up with an agent on Hivra, and to carry its current work over" },
         { label: "Pricing", path: "/pricing", note: `Self-host free, or Hivra Cloud at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE} or ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}, with a ${MONEY_BACK_GUARANTEE}. The plan does not include AI usage. Every Hivra Cloud computer needs a paid plan, and a free account works with a computer or server you connect yourself` },
         { label: "Free tools", path: "/tools", note: "Keep-awake commands, a tmux cheat sheet, Claude Code plan and limit-reset calculators, an agent survival check and a hosting cost calculator. Free, with no signup" },
         { label: "Keep a Mac awake (caffeinate)", path: "/tools/keep-mac-awake", note: "Builds the caffeinate (macOS) or systemd-inhibit (Linux) command that keeps a laptop awake while an agent runs, and lists what it does not cover" },
