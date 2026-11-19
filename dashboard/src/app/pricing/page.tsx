@@ -13,6 +13,7 @@ import StructuredData from "@/components/StructuredData";
 import { glossify } from "@/components/gloss/glossify";
 import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
 import { isCardTrialEnabled } from "@/lib/billing/card-trial";
+import { isPlanLadderEnabled } from "@/lib/subscription/plan-ladder";
 import { getTokenSurfaceView, tokenSurfacesVisible } from "@/lib/compliance/token-surface-view";
 import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
@@ -96,7 +97,8 @@ export default async function PricingPage() {
   const view = await getTokenSurfaceView();
   const showToken = tokenSurfacesVisible(view);
   const options = PRICING_OPTIONS;
-  const cardTrial = isCardTrialEnabled();
+  // Plan-ladder sales never get the trial, so it is not offered while the ladder is on.
+  const cardTrial = isCardTrialEnabled() && !isPlanLadderEnabled();
 
   return (
     <PublicSite className={styles.page} data-page="pricing" tokenSurfaces={showToken}>
