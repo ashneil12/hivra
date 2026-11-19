@@ -1,171 +1,144 @@
 import { BlogArticle } from "../types";
 import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 
-// Extended 2026-10-05 for "hermes agent docker" (US 590, KD 5) and the Docker-vs-own-computer decision.
-// Nous Docker and install docs read 5 October 2026:
-// https://hermes-agent.nousresearch.com/docs/user-guide/docker
+// Sources fetched 2026-11-19:
 // https://hermes-agent.nousresearch.com/docs/getting-started/installation
-// Docker Hub: nousresearch/hermes-agent
-// Hivra: launch contracts hermes.ownServer=false. Updated 2026-11-17: new Hermes launches get a Hivra computer running
-// Hermes's own installer and web app, updated with `hermes update` (docs/STATUS.md). The old image lane is retired for new launches.
-// Not claimed: that Hivra runs Docker internally; BYO My cloud / My server for Hermes; affiliation with Nous.
-
+// https://hermes-agent.nousresearch.com/install.sh
+// https://hermes-agent.nousresearch.com/docs/user-guide/docker
+// https://hermes-agent.nousresearch.com/docs/user-guide/multi-profile-gateways
+// https://hermes-agent.nousresearch.com/docs/user-guide/messaging/telegram
+// https://hermes-agent.nousresearch.com/docs/user-guide/backup-and-transfer
+// https://docs.docker.com/reference/cli/docker/compose/down/
+// https://docs.docker.com/engine/containers/start-containers-automatically/
+// https://raw.githubusercontent.com/ashneil12/hivra/8b1892fdd765a59a9062b594f98ea94a84cf6275/docs/STATUS.md
 export const article: BlogArticle = {
   slug: "how-to-self-host-hermes-agent",
-  title: "How to self-host Hermes Agent: VPS setup, Docker, or its own computer",
-  metaTitle: "Self-host Hermes Agent: VPS, Docker, or a computer",
+  title: "How to self-host Hermes Agent: install, verify, and restore",
+  metaTitle: "Self-host Hermes Agent: setup, checks and recovery",
   metaDescription:
-    "Self-host Hermes Agent on Ubuntu: install script, Docker image, Telegram gateway, systemd. Or skip all that and run it on a Hivra computer.",
+    "Run Hermes Agent on a Linux server or in Docker. Verify the gateway after logout, check persistent storage, and back up before an upgrade.",
   publishedDate: "2026-04-11",
-  lastModified: "2026-11-17",
-  readingTimeMin: 16,
+  lastModified: "2026-11-19",
+  readingTimeMin: 12,
   author: "Hivra team",
-  tagline: "Docker can mean two different things here. Pick the one that matches the isolation you want.",
+  tagline: "A working prompt is the start. A server you can restart and restore is the goal.",
   intro:
-    "Hermes Agent runs on a VPS, keeps its memory and talks over Telegram while you sleep. Getting there from a blank Ubuntu server still takes a few hours when things go right. Docker shows up in two different ways in Nous's docs, and mixing them up is how people lose a weekend. Hivra is one managed path. It is not Nous, and it does not run Hermes on My cloud or My server.",
+    "This walkthrough is for Hermes Agent on a server you control. Pick a host install or a container, prove that the gateway survives a disconnected SSH session, then protect the state before upgrading. A running container is not a backup, and a successful install is not a recovery plan.",
   shortAnswer:
-    "Rent Ubuntu 24.04 with at least 2 vCPU and 4 GB RAM, install Docker, run Nous's install script, finish hermes setup, then run the gateway under systemd. Or run Hermes in nousresearch/hermes-agent with ~/.hermes at /opt/data. A Hivra computer runs Hermes's own installer on a private computer, with no server for you to keep current.",
+    "To self-host Hermes Agent, install it as a Linux user or run the official Docker image with persistent storage at /opt/data. Configure a model provider and gateway, then verify operation after SSH logout and restart. Before upgrading, create a private backup and know how to restore it. Docker is optional for host installs.",
   sections: [
     {
-      heading: "Docker container, or Hermes on its own computer?",
+      heading: "Choose a host install or a container",
       paragraphs: [
-        "Nous's [Docker guide](https://hermes-agent.nousresearch.com/docs/user-guide/docker) splits Docker into two jobs. Running Hermes in Docker puts the whole agent inside `nousresearch/hermes-agent`, with your config and keys on a host folder mounted at `/opt/data`. Docker as a terminal backend leaves Hermes on the host and only sandboxes the shell commands the agent runs. Same word, different blast radius.",
-        "Still deciding where Hermes should live? [Every way to run Hermes Agent in the cloud](/blog/hermes-agent-cloud) compares a VPS, Docker, Nous Hermes Cloud and a managed computer side by side.",
+        "There are two separate Docker decisions in Nous's [Docker guide](https://hermes-agent.nousresearch.com/docs/user-guide/docker). You can run the entire agent in `nousresearch/hermes-agent`, or install Hermes on the host and use Docker only as its terminal backend. The latter sandboxes shell commands, not the whole agent. Docker is optional for host installs; it is needed if you choose the Docker terminal backend or the container route.",
         [
-          "| Route | What stays isolated | What you maintain | Pick it when |",
-          "|---|---|---|---|",
-          "| Install on the VPS + Docker terminal backend | Shell commands the agent runs | OS updates, the Hermes install, systemd, Docker | You want Hermes as a normal Linux service and a sandbox for commands |",
-          "| Hermes in `nousresearch/hermes-agent` | The agent process and its tools, if you keep data on the mounted volume | Image pulls, the volume, ports you publish | You want one container to upgrade by pull, with data outside the image |",
-          "| Hivra computer | Your laptop: Hermes runs on a private computer Hivra starts for it | Your model key and what you ask it to do | You want Hermes up without keeping a compose file or a VPS current |",
+          "| Route | Where Hermes runs | What you maintain |",
+          "|---|---|---|",
+          "| Host install | Under a Linux user account | OS, Hermes install, gateway service, data directory |",
+          "| Official Docker image | Inside the container, with user data mounted at `/opt/data` | OS, Docker, image version, persistent mount, gateway configuration |",
         ].join("\n"),
-        "Hivra is not affiliated with Nous Research. On a Hivra computer, Hivra runs Hermes's own install script, the same one in Phase 3 below, and you update it with `hermes update`. It does not use the Docker image. Hermes does not run on My cloud or My server (`ownServer` is false for Hermes in Hivra's launch contracts), so do not treat a bring-your-own Hetzner project as a Hermes path here. OpenClaw, Claude Code, Codex and Agent Zero can use your own server. Hermes cannot.",
+        "Choose one route for this walkthrough. Do not start a host gateway and a container gateway with the same bot credentials. For a broader hosting comparison, use [Hermes Agent in the cloud](/blog/hermes-agent-cloud); this page stays with deployment checks and recovery.",
       ],
     },
     {
-      heading: "Before you start: do you actually want to self-host?",
+      heading: "Before you start: access, workload, and ownership",
       paragraphs: [
-        "Self-hosting makes sense if you want the data on your disk, you are already comfortable with Linux, you have a compliance reason to run it yourself, or you want to change how the agent behaves at the edges. The project is open source, so that path is real.",
-        "Skip the VPS path if your time is expensive, you want to be chatting today, or you would rather spend the evening on the work the agent will do. Hivra starts a Hermes agent from the dashboard, with the computer and messaging gateway already wired, and chat in the browser. The rest of this guide is for people who still want the server under their own SSH key.",
-        "What you need before the VPS path: Ubuntu 24.04 LTS (fresh install preferred), SSH as a user who can sudo, an API key from at least one LLM provider, and a Telegram account if you want the gateway. A domain helps for a public web UI. It is optional for Telegram alone.",
+        "Self-hosting fits better when you want the disk and update schedule under your control, need your own server, or are willing to diagnose Linux services and storage. It also makes you responsible for credentials, OS maintenance, recovery, and deciding what tools the agent may use.",
+        "Have SSH access, a dedicated non-root Linux account, and credentials for your chosen model provider. Follow the [installation prerequisites](https://hermes-agent.nousresearch.com/docs/getting-started/installation) for your OS. Run the installer as the account that will own Hermes, not as root and then copy its installation into another user's home.",
+        "Size the server for your workload rather than treating a RAM figure as a guarantee. Browser tools, concurrent work, the terminal sandbox, and local model inference need different headroom. Treat community server sizes as starting points, not guarantees. The [Hermes VPS comparison](/blog/best-vps-for-hermes-agent) owns provider and sizing comparisons. Setup time, maintenance effort, and model usage costs depend on your workload and experience; this guide does not promise a fixed bill or completion time.",
+        "Do not open an inbound port just to follow the container example. Publish a service only when you intend to use it and have configured its access controls. Telegram alone does not require publishing the container's API or dashboard ports.",
       ],
     },
     {
-      heading: "Server requirements",
+      heading: "Host route: install as the service user",
       paragraphs: [
-        "Minimum: 2 vCPU, 4 GB RAM, 20 GB SSD. That runs Hermes with Docker available for sandboxed commands. Hetzner's CX23 at €5.49/month excluding VAT and IPv4 is the community budget option many people quote, though Hetzner showed it as unavailable in October 2026, so check stock. DigitalOcean's 4 GB Basic Droplet is dearer for the same floor. Hostinger KVM 2 with 8 GB RAM shows up in setup threads when people want more RAM on one server.",
-        "Recommended: 4 vCPU, 8 GB RAM, 40 GB SSD. Extra RAM matters if you run Ollama beside the agent, or you turn on the Docker terminal backend and browser tools at once. 4 GB is the hard floor: below it, complex tasks hit OOM. OS: Ubuntu 24.04 LTS. Nous's install docs target that. Debian 12 can work if you are happy fixing the gaps yourself.",
+        "From the intended Linux account, use Nous's source installer:\n\n```\ncurl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash\n```\n\nFollow its shell/PATH instructions, then configure the provider and tools:\n\n```\nhermes setup\nhermes doctor\n```\n\nResolve the diagnostics that apply to your chosen setup before installing a background gateway. A Docker warning is not a reason to switch deployment routes without understanding which terminal backend you selected.",
+        "Use the installed `hermes` launcher rather than a hardcoded virtual-environment path. The [service-user installation notes](https://hermes-agent.nousresearch.com/docs/getting-started/installation) explain launcher ownership and system prerequisites. If you choose the Docker terminal backend, install Docker using its supported instructions before enabling that backend. It is a separate choice from running the whole agent in Docker.",
       ],
     },
     {
-      heading: "Phase 1: server preparation",
+      heading: "Container route: make the data mount explicit",
       paragraphs: [
-        "SSH into your VPS as root. Update the system:\n\n```\napt update && apt upgrade -y\n```\n\nCreate a non-root user for Hermes. Running as root is a bad habit on a machine that will hold API keys:\n\n```\nadduser hermes --disabled-password --gecos \"\"\nusermod -aG sudo hermes\necho 'hermes ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/hermes\nchmod 440 /etc/sudoers.d/hermes\n```\n\nCopy your SSH keys to the new user:\n\n```\nmkdir -p /home/hermes/.ssh\ncp ~/.ssh/authorized_keys /home/hermes/.ssh/\nchown -R hermes:hermes /home/hermes/.ssh\nchmod 700 /home/hermes/.ssh && chmod 600 /home/hermes/.ssh/authorized_keys\n```\n\nSwitch to that user and stay there:\n\n```\nsu - hermes\n```",
-        "Turn the firewall on before you publish anything:\n\n```\nsudo apt-get install -y ufw\nsudo ufw default deny incoming\nsudo ufw default allow outgoing\nsudo ufw allow ssh\nsudo ufw --force enable\nsudo ufw status verbose\n```",
+        "Nous's example uses a host directory at `~/.hermes` mounted inside the container at `/opt/data`. The image is stateless; config, API keys, sessions, skills, and memories belong in that persistent mount. Run interactive setup first:\n\n```\nmkdir -p ~/.hermes\ndocker run -it --rm -v ~/.hermes:/opt/data nousresearch/hermes-agent setup\n```",
+        "Then start the gateway with the same mount:\n\n```\ndocker run -d --name hermes --restart unless-stopped -v ~/.hermes:/opt/data nousresearch/hermes-agent gateway run\n```\n\nNo ports are published here. The [official Docker guide](https://hermes-agent.nousresearch.com/docs/user-guide/docker) explains the optional API and dashboard configuration. Stable and development image channels are different; record the image version or digest you use before changing it.",
+        "Before replacing a container, inspect its mount configuration in your Docker tooling. Confirm that the destination is `/opt/data`, the source is the host directory or named volume you intended, and that it contains the existing Hermes state. Reuse that same source when recreating the container. An empty but valid mount can produce an empty agent without an obvious startup failure.",
+        "`docker compose down` does not inherently erase a named volume. Docker's [Compose down reference](https://docs.docker.com/reference/cli/docker/compose/down/) says named volumes are removed with `--volumes`; anonymous volumes are not automatically reattached by a subsequent `up`. Use an explicit bind mount or named volume for persistent data, and do not use volume-removal options as part of a routine upgrade.",
       ],
     },
     {
-      heading: "Phase 2: Docker installation",
+      heading: "Connect Telegram without duplicating the whole setup",
       paragraphs: [
-        "You need Docker either as the terminal backend or as the runtime for the official image. Install from Docker's own Ubuntu repo, not the distro package:\n\n```\nsudo apt-get install -y ca-certificates curl gnupg\ncurl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg\necho \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable\" | sudo tee /etc/apt/sources.list.d/docker.list\nsudo apt-get update && sudo apt-get install -y docker-ce docker-ce-cli containerd.io\n```\n\nAdd the hermes user to the docker group:\n\n```\nsudo usermod -aG docker hermes && newgrp docker\n```\n\nCheck it:\n\n```\ndocker run --rm hello-world\n```\n\nIf you see a permission error, log out and back in. `newgrp docker` only fixes the current shell.",
+        "Configure the gateway's Telegram token and user authorization before relying on it. Nous documents `TELEGRAM_ALLOWED_USERS` and [DM pairing as an authorization option](https://hermes-agent.nousresearch.com/docs/user-guide/messaging/telegram); do not infer the bot's access policy from one missing environment variable. Verify that your intended account can send a message and that an unauthorized account cannot start an agent conversation. Never paste bot tokens into screenshots or support logs.",
+        "Use the dedicated [Hermes Telegram setup guide](/blog/how-to-set-up-hermes-agent-telegram) for bot creation and account setup. Here, the acceptance check is that the gateway answers the right person after the server session ends.",
       ],
     },
     {
-      heading: "Phase 3: install Hermes on the VPS",
+      heading: "Install the service, then prove it survives disconnects",
       paragraphs: [
-        "Nous's [installation page](https://hermes-agent.nousresearch.com/docs/getting-started/installation) gives a one-line source install for Linux, macOS and WSL2:\n\n```\ncurl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash\n```\n\nReload your shell, then check the binary:\n\n```\nsource ~/.bashrc\nhermes --version\nhermes doctor\n```\n\n`hermes doctor` checks Docker, Python, dependencies and write access under `~/.hermes/`. Fix what it flags before you go on.",
-        "Run the setup wizard:\n\n```\nhermes setup\n```\n\nIt asks for the LLM provider and writes the first files under `~/.hermes/` (`.env`, config, memory). Keep those. If you already use Nous Portal, `hermes setup --portal` is the short path Nous documents for provider plus Tool Gateway in one go.",
+        "For the host route, install and start the managed gateway from the same account that owns the installation:\n\n```\nhermes gateway install\nhermes gateway start\n```\n\nA Linux user service needs lingering to run without a login. The installation guide gives this administrator command; replace `SERVICE_USER` with the actual account:\n\n```\nsudo loginctl enable-linger SERVICE_USER\n```\n\nSee [managed gateway services](https://hermes-agent.nousresearch.com/docs/user-guide/multi-profile-gateways) for service types and platform-specific behavior. Do not assume a manually launched terminal process is a managed service.",
+        "For the container route, the example's `--restart unless-stopped` is the [container restart policy](https://docs.docker.com/engine/containers/start-containers-automatically/). It does not mean an intentionally stopped container will start itself again. Check both the container and gateway, not just whether Docker is running.",
+        "Use this acceptance checklist before leaving the server unattended:\n\n- Send a representative request and confirm a reply from the intended gateway.\n- Disconnect SSH completely and send another request from your chat client.\n- Reconnect and check the service manager or container state and gateway logs. Investigate repeated restarts instead of treating a running status as success.\n- During a maintenance window, restart the service or container and repeat the request.\n- If reboot recovery matters, perform a planned server reboot, then verify a reply without first logging into the service account.\n- Confirm the same profile and expected conversation or memory are present after each restart.\n\nA failed check is a reason to inspect service ownership, lingering, authorization, provider errors, and the persistent mount before moving on.",
       ],
     },
     {
-      heading: "Running Hermes inside Docker instead",
+      heading: "Back up before upgrading, and rehearse a restore",
       paragraphs: [
-        "If you want the agent itself in a container, Nous's Docker guide starts with a host data directory and an interactive setup:\n\n```\nmkdir -p ~/.hermes\ndocker run -it --rm \\\n  -v ~/.hermes:/opt/data \\\n  nousresearch/hermes-agent setup\n```\n\nThat writes keys into `~/.hermes/.env` on the host. The image is meant to be stateless. Your config, sessions and memories live on the mounted volume, so a later `docker pull` does not wipe them.",
-        "For a gateway that stays up:\n\n```\ndocker run -d \\\n  --name hermes \\\n  --restart unless-stopped \\\n  -v ~/.hermes:/opt/data \\\n  -p 8642:8642 \\\n  nousresearch/hermes-agent gateway run\n```\n\nPort 8642 is the OpenAI-compatible API and health endpoint inside the official image. Skip publishing it if you only need Telegram or Discord. Nous's guide also documents `HERMES_DASHBOARD=1` with port 9119 when you want the built-in dashboard beside the gateway. Tags on Docker Hub include `latest` / `stable`, `main`, and version pins. Use a digest when you need an exact deploy. Nous warns against pasting these commands into some browser-based VPS consoles, because characters like `:` can corrupt. Use SSH.",
-        "Compose is fine once the volume and image tag are clear. The failure mode people hit is `docker compose down` recreating a fresh volume and an empty agent. Named volumes and a quick check before recreate save that. For the pain points around browser libraries and updates, the older [self-hosting notes](/blog/self-hosting-hermes-guide) still help. This page stays the install owner.",
+        "Nous's [Backup & Transfer guide](https://hermes-agent.nousresearch.com/docs/user-guide/backup-and-transfer) documents a full-home backup:\n\n```\nhermes backup -o my-agent.zip\n```\n\nRun it in the Hermes environment you actually use. For a container deployment, that means the installation using the mounted `/opt/data`, not an unrelated host installation. Store a private copy off the server before upgrading; a zip left only on the same disk is not protection against losing that disk.",
+        "The archive includes every profile, memory, persona, skills, conversations, scheduled jobs, settings, and keys and logins such as `.env` and `auth.json`. Treat it as a credential-bearing secret. Do not commit it, attach it to an issue, or upload it to a public file-sharing link.",
+        "The documented restore command is:\n\n```\nhermes import my-agent.zip\n```\n\nImport replaces state. Before running a restore, preserve the current destination, read the import documentation, and stop the destination gateway through its service controls. Rehearse recovery on a private test destination without running a second gateway against the same bot. Do not assume a profile-only export includes the credentials of a full-home backup.",
+        "For a transfer that must preserve the destination host's settings, the upstream guide documents `hermes import my-agent.zip --keep-host` and the undo point it prints. Read what that option keeps before using it; do not substitute it blindly for a same-host restore. After import, run `hermes doctor`, verify the persistent mount again if using Docker, start only the intended gateway, and repeat the disconnect/restart checklist. Check expected state as well as the ability to get a fresh reply.",
       ],
     },
     {
-      heading: "Phase 4: LLM provider and the Docker terminal backend",
+      heading: "Upgrade with a recovery point, not just an old image",
       paragraphs: [
-        "OpenRouter is a common starting point: one key, many models. Put the key in the env file with tight permissions:\n\n```\nchmod 600 ~/.hermes/.env\necho 'OPENROUTER_API_KEY=sk-or-v1-your-key-here' >> ~/.hermes/.env\n```\n\nSet a default model with `hermes config set`, then smoke-test:\n\n```\nhermes -m 'What is 2+2?'\n```",
-        "If Hermes itself runs on the host and you want shell commands sandboxed, set the terminal backend (this is Docker-as-backend, not Hermes-in-Docker):\n\n```\nhermes config set terminal.backend docker\nhermes config get terminal\nhermes -m 'Run ls -la in a sandboxed environment and show me the output'\n```\n\nOn a 4 GB VPS, watch `free -h` before you enable that backend and browser tools together. The sandbox needs headroom.",
+        "Save the backup and record the current installation or image version first. On the host path, use the upstream update instructions. On the container path, recreate with the selected image and the same persistent mount. Recheck diagnostics, logs, authorization, and expected state afterward.",
+        "An old image and a data backup solve different problems. Reverting an image alone does not undo changes already written to the data directory, and an older runtime may not understand newer state. If the upgrade fails, stop and consult the release's recovery guidance before choosing an image rollback or a state restore. The [older self-hosting notes](/blog/self-hosting-hermes-guide) cover broader failure patterns; this checklist is the install and recovery path.",
       ],
     },
     {
-      heading: "Phase 5: Telegram gateway setup",
+      heading: "The Hivra alternative and its current availability",
       paragraphs: [
-        "Create a bot with @BotFather, copy the token, and get your numeric user id from @userinfobot.\n\n```\necho 'TELEGRAM_BOT_TOKEN=your-bot-token-here' >> ~/.hermes/.env\necho 'TELEGRAM_ALLOWED_USERS=your-numeric-user-id' >> ~/.hermes/.env\n```\n\nWithout the allowlist, anyone who finds the bot can talk to it. Test with `hermes gateway`, send a message, then Ctrl+C. The longer Telegram walkthrough lives in [how to set up Hermes Agent on Telegram](/blog/how-to-set-up-hermes-agent-telegram).",
-      ],
-    },
-    {
-      heading: "Phase 6: run as a persistent service",
-      paragraphs: [
-        "On the host install path, a gateway in an SSH session dies when the session dies. Install the user service:\n\n```\nhermes gateway install\nsystemctl --user enable hermes-gateway\nsystemctl --user start hermes-gateway\nsystemctl --user status hermes-gateway\n```\n\nFollow logs with `journalctl --user -u hermes-gateway -f`. After a reboot, if the service never comes back, enable linger so the user service can run without a login:\n\n```\nloginctl enable-linger hermes\n```",
-        "On the container path, `--restart unless-stopped` (or the Compose equivalent) is the keep-alive. Inside the current official image, Nous says `gateway run` is supervised by s6-overlay so a crashed gateway restarts inside the same container. Older tini-based images behaved differently. Read the date on the Docker guide before you assume which one you pulled.",
-      ],
-    },
-    {
-      heading: "Common errors and fixes",
-      paragraphs: [
-        "Permission denied on Docker after adding the group: log out and back in, or `newgrp docker`.\n\n`hermes: command not found` after install: `source ~/.bashrc`.\n\n`hermes doctor` still unhappy: run the project's update path, then re-check. Missing Python packages usually mean the install did not finish.",
-        "Telegram silent: token whitespace, wrong numeric user id, or gateway logs with the real error.\n\nOOM on tasks: stay at 4 GB or above.\n\nAPI errors after a good start: check the provider dashboard for spend limits.\n\nEmpty memory after a Compose recreate: confirm the named volume still mounts at `/opt/data` before you celebrate the new container.",
-      ],
-    },
-    {
-      heading: "The self-hosting calculation",
-      paragraphs: [
-        `Server cost: a CX23-class VPS around €5.49/month excluding VAT and IPv4. LLM API: often $5-50/month depending on how hard you push it. First setup: a few hours when it goes well. Upkeep: under an hour most months. At $50/hour, one painful evening of debugging already covers many months of Hivra's ${ENTRY_PLAN_PRICE} plan (${ENTRY_PLAN_SIZE}).`,
-        "Self-hosting wins when you like Linux, you will keep the agent for a long stretch, and you care about holding the disk yourself. It loses when updates break at a bad time or when the infrastructure work crowds out the actual tasks. Hivra is the managed alternative: Hermes from its own installer, on its own private computer, without a server for you to babysit. If you would rather skip the install, that is what it is for.",
+        "Hermes on Hivra runs in Hivra Cloud only, not on My cloud or My server. Existing Hermes agents keep their current setup. The official-installer setup below is in testing and is not on hivra.cloud yet.",
+        "In that setup, Hivra creates a private computer, runs Hermes's own installer, and opens Hermes's own web UI behind Hivra sign-in. Owners update it with `hermes update` or the Update Hermes button on the agent's Manage tab. Hivra is not affiliated with Nous Research.",
+        `Every Hivra Cloud computer needs a paid plan. Plans start at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. This is the managed-computer alternative if you do not want to maintain the server. Self-hosting fits better if you need your own infrastructure or want direct control of the disk, service configuration, and recovery process.`,
+        "See [the managed Hermes option and its current availability](/agents/hermes).",
       ],
     },
   ],
   faqs: [
     {
-      q: "Should I run Hermes in Docker or only use Docker as the terminal backend?",
-      a: "In Docker means the whole agent lives in nousresearch/hermes-agent with data under ~/.hermes mounted at /opt/data. Docker as the terminal backend leaves Hermes on the host and sandboxes shell commands only. Nous documents both. Pick the first when you want pull-to-upgrade. Pick the second when Hermes is a normal host service.",
-    },
-    {
-      q: "What Docker image does Hermes Agent use?",
-      a: "The official image on Docker Hub is nousresearch/hermes-agent. Tags include latest/stable, main, and version pins. Hivra doesn't use the image: on a Hivra computer, Hermes is installed with Nous's own install script.",
+      q: "Does self-hosting Hermes Agent require Docker?",
+      a: "No. Docker is optional for a host installation. It is required if you choose the official container image or Docker as the terminal backend. Those are separate choices: the backend sandboxes shell commands while Hermes itself can remain on the host.",
     },
     {
       q: "What is the cheapest server that can actually run Hermes Agent?",
-      a: "Community write-ups often cite Hetzner CX23 at €5.49/month excluding VAT and IPv4 (2 vCPU, 4 GB RAM). Below 4 GB RAM you will hit OOM on complex tasks. Re-check the vendor page before you pay: Hetzner showed this plan as unavailable in October 2026.",
+      a: "There is no guaranteed cheapest server for every workload. Compare current provider prices and availability, including tax, IPv4, storage, and model usage. Size for the tools you intend to run rather than treating a community configuration as a guaranteed minimum.",
     },
     {
       q: "How long does the setup actually take?",
-      a: "A few hours for someone who already knows Linux and Docker, when nothing odd breaks. First-time server work often stretches longer. On Hivra you skip the VPS setup.",
+      a: "There is no reliable fixed duration. Linux experience, provider setup, chat authorization, and the tools you enable change the work involved. Budget time for logout and restart checks and a restore rehearsal, not just the installer finishing.",
     },
     {
-      q: "Do I need my own domain for self-hosting?",
-      a: "Not for Telegram. You want a domain if you expose a web UI over HTTPS. Without one, keep the UI on a local port or SSH tunnel.",
+      q: "Does docker compose down delete Hermes memory?",
+      a: "Not inherently. Named volumes are removed with the --volumes option, while anonymous volumes are not automatically reattached by a subsequent up. Use a persistent bind mount or named volume at /opt/data, verify the source before recreating, and keep a private backup outside the server.",
     },
     {
-      q: "Can I migrate from OpenClaw to Hermes Agent?",
-      a: "Hermes ships a migration helper, hermes claw migrate, for config, memories, skills and env vars from an OpenClaw install. Not everything transfers cleanly, but the core path is automated.",
+      q: "What should I save before a Hermes upgrade?",
+      a: "Create a full backup with hermes backup -o my-agent.zip, keep it private because it includes credentials, and save a copy off the server. Record the current image or installation version and persistent mount. Rehearse hermes import on a private destination before depending on recovery.",
     },
     {
-      q: "Can Hermes on Hivra run on My cloud or My server?",
-      a: "No. Hermes is Hivra Cloud only in the launch contracts (ownServer is false). OpenClaw, Claude Code, Codex and Agent Zero can use your own server. Hermes cannot.",
-    },
-    {
-      q: "What happens when a Hermes update breaks my setup?",
-      a: "On the host path, update, then hermes doctor, then check gateway logs. On the container path, pin or roll back the image tag and keep the data volume. Most breakages show up in doctor or in journalctl / docker logs.",
+      q: "Can Hermes on Hivra run on my own server?",
+      a: "No. Hermes on Hivra is Hivra Cloud only. Existing agents keep their current setup; the official-installer setup is in testing and is not on hivra.cloud yet. For a server you control, use the upstream self-hosting route described here.",
     },
   ],
   relatedArticles: [
     { slug: "hermes-agent-cloud", title: "How to run Hermes Agent in the cloud: VPS, Docker, Nous Hermes Cloud or a computer of its own" },
-    {
-      slug: "self-hosting-hermes-guide",
-      title: "Self-hosting Hermes Agent: steps, costs and what breaks",
-    },
-    {
-      slug: "hermes-agent-skills-guide",
-      title: "Hermes Agent skills: how they work, how to create them, and what's on the Skills Hub",
-    },
-    { slug: "what-is-hermes-agent", title: "What is Hermes Agent? A plain-English explanation" },
+    { slug: "self-hosting-hermes-guide", title: "Self-hosting Hermes Agent: steps, costs and what breaks" },
     { slug: "best-vps-for-hermes-agent", title: "Best VPS for Hermes Agent in 2026" },
-    { slug: "persistent-memory-explained", title: "How persistent memory works in AI agents" },
+    { slug: "how-to-set-up-hermes-agent-telegram", title: "How to set up Hermes Agent on Telegram" },
+    { slug: "hermes-agent-memory-system-explained", title: "Hermes Agent memory and persistent state" },
+    { slug: "what-is-hermes-agent", title: "What is Hermes Agent? A plain-English explanation" },
   ],
   relatedComparisons: [
     { slug: "vs-nous-hermes-cloud", title: "Hivra vs Nous Hermes Cloud" },
