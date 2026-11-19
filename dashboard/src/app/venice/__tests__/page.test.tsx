@@ -65,6 +65,7 @@ describe("/venice", () => {
     delete process.env[FLAG];
     const { unmount } = render(<VenicePage />);
     expect(screen.queryByText(/VENICE/, { selector: "strong" })).not.toBeInTheDocument();
+    expect(document.querySelector("[data-venice-promo]")).toBeNull();
     unmount();
     process.env[FLAG] = "false";
     const off = render(<VenicePromo />);
@@ -72,7 +73,12 @@ describe("/venice", () => {
     off.unmount();
     process.env[FLAG] = "true";
     render(<VenicePromo />);
-    expect(screen.getByText(/Get \$10 of Venice inference with code/)).toBeInTheDocument();
-    expect(screen.getByText("VENICE")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /\$10\s*of Venice inference, on us/ })).toBeInTheDocument();
+    expect(screen.getByText("VENICE", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy code VENICE" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Claim your \$10/ })).toHaveAttribute(
+      "href",
+      "/dashboard/launch?agent=hermes&inference=venice&ref=venice&code=VENICE",
+    );
   });
 });

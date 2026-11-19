@@ -45,9 +45,9 @@ export default function VenicePage() {
       <main className={editorial.main} id="main-content">
         <Breadcrumbs items={[{ label: "Venice" }]} />
         <header className={`${editorial.masthead} ${styles.hero}`}>
-          <VenicePromo />
           <h1>Run your Venice agent 24/7. No server setup.</h1>
           <p>Pick an agent. Hivra gives it a computer and runs it on Venice.</p>
+          <VenicePromo />
         </header>
 
         <section aria-labelledby="venice-agents">
