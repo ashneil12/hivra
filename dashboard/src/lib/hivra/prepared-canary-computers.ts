@@ -346,6 +346,53 @@ qm config "$VMID" | sed -n 's/^tags:[[:space:]]*//p' | tr ';' '\n' | grep -Fxq "
 echo HIVRA_PREPARED_BINDING_READY`;
 }
 
+/**
+ * Deleting a claim releases the prepared computer instead of destroying it
+ * (docs/release/OMARCHY-PREPARED-REFRESH.md): under the slot's VM lock, the
+ * claim's own binding tag is removed and every other tag is kept. The VM is
+ * never stopped or destroyed. A slot bound to another claim is refused, and a
+ * slot whose tag is already gone (a retried delete) succeeds unchanged.
+ */
+export function preparedCanaryReleaseScript(
+  profile: PreparedCanaryProfile,
+  slot: PreparedCanarySlot,
+  bindingHash: string | null,
+): string {
+  if (bindingHash !== null && !/^[a-f0-9]{64}$/.test(bindingHash)) throw new Error("prepared_binding_unavailable");
+  const encodedMarker = `hivra-${profile}-operation%3A${slot.claim}`;
+  const plainMarker = `hivra-${profile}-operation:${slot.claim}`;
+  const bindingTag = bindingHash ? `hivra-bind-${bindingHash.slice(0, 32)}` : "";
+  return `set -euo pipefail
+VMID=${slot.vmid}
+install -d -m 0755 /run/lock
+exec 8>/run/lock/hivra-prepared-${slot.vmid}.lock
+flock -x -w 60 8 || { echo "prepared computer lifecycle is busy" >&2; exit 50; }
+CONFIG="$(qm config "$VMID")"
+case "$CONFIG" in *${shellQuote(encodedMarker)}*|*${shellQuote(plainMarker)}*) ;; *) echo "prepared computer identity mismatch" >&2; exit 51 ;; esac
+printf '%s\\n' "$CONFIG" | grep -F -- ${shellQuote(`name: ${preparedSlotName(profile, slot)}`)} >/dev/null \\
+  || { echo "prepared computer name mismatch" >&2; exit 52; }
+TAGS="$(printf '%s\\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p')"
+EXPECTED_TAG=${shellQuote(bindingTag)}
+HELD=""; OTHER=""; KEEP=""
+for TAG in $(printf '%s' "$TAGS" | tr ';,' '  '); do
+  if [ -n "$EXPECTED_TAG" ] && [ "$TAG" = "$EXPECTED_TAG" ]; then HELD=1; continue; fi
+  case "$TAG" in hivra-bind-*) OTHER=1 ;; esac
+  KEEP="\${KEEP:+$KEEP;}$TAG"
+done
+if [ -n "$OTHER" ]; then
+  echo "prepared computer is bound to another claim" >&2
+  exit 53
+fi
+if [ -n "$HELD" ]; then
+  if [ -n "$KEEP" ]; then qm set "$VMID" --tags "$KEEP" >/dev/null; else qm set "$VMID" --delete tags >/dev/null; fi
+  AFTER="$(qm config "$VMID" | sed -n 's/^tags:[[:space:]]*//p')"
+  for TAG in $(printf '%s' "$AFTER" | tr ';,' '  '); do
+    [ "$TAG" != "$EXPECTED_TAG" ] || { echo "prepared computer binding was not released" >&2; exit 54; }
+  done
+fi
+echo HIVRA_PREPARED_BINDING_RELEASED`;
+}
+
 export async function enforcePreparedCanaryBinding(
   row: AgentRow,
   profile: PreparedCanaryProfile,

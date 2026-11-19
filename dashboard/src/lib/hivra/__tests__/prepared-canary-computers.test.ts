@@ -1,9 +1,13 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   claimPreparedCanaryComputer,
   matchPreparedCanaryComputer,
   preparedCanaryBindingScript,
   preparedCanaryLifecycleScript,
+  preparedCanaryReleaseScript,
   preparedConsoleHostPreparationScript,
   preparedConsoleOrigin,
   preparedProfilesForDeployment,
@@ -363,5 +367,92 @@ ${transition}`], { encoding: "utf8" });
       .toBe("https://console.hermesos.cloud");
     expect(preparedConsoleOrigin(envOf({ HIVRA_PREPARED_CONSOLE_ORIGIN: "http://console.hermesos.cloud" }))).toBeNull();
     expect(preparedConsoleOrigin(envOf({ HIVRA_PREPARED_CONSOLE_ORIGIN: "https://console.evil.example" }))).toBeNull();
+  });
+});
+
+describe("prepared computer release script", () => {
+  const SLOT = { host: "node-b", node: "node-b", vmid: 2098, ip: "10.240.20.98", claim: "00000000-0000-4000-8000-000000001005" };
+  const HASH = "a".repeat(64);
+  const OWN = `hivra-bind-${"a".repeat(32)}`;
+  const FOREIGN = `hivra-bind-${"b".repeat(32)}`;
+  const IDENTITY = `name: hivra-windows-canary\nmeta: hivra-windows-operation%3A${SLOT.claim}`;
+  // A stub qm over a config file: set --tags rewrites the tags line, set --delete tags drops it.
+  const stubQm = `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$ROOT/calls"
+case "$1" in
+  config) cat "$ROOT/config" ;;
+  set)
+    grep -v '^tags:' "$ROOT/config" > "$ROOT/next" || true
+    [ "$3" = --tags ] && echo "tags: $4" >> "$ROOT/next"
+    mv "$ROOT/next" "$ROOT/config" ;;
+  *) exit 0 ;;
+esac
+`;
+
+  function runRelease(tags: string | null, hash: string | null = HASH, slot = SLOT) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "prepared-release-"));
+    try {
+      fs.mkdirSync(path.join(root, "bin"));
+      fs.writeFileSync(path.join(root, "bin/qm"), stubQm, { mode: 0o755 });
+      fs.writeFileSync(path.join(root, "bin/flock"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(root, "config"), `${IDENTITY}\n${tags === null ? "" : `tags: ${tags}\n`}`);
+      fs.writeFileSync(path.join(root, "calls"), "");
+      const script = preparedCanaryReleaseScript("windows", slot, hash).replaceAll("/run/lock", path.join(root, "lock"));
+      const result = spawnSync("bash", ["-s"], {
+        input: script, encoding: "utf8",
+        env: { ...process.env, ROOT: root, PATH: `${path.join(root, "bin")}:${process.env.PATH}` },
+      });
+      return {
+        code: result.status, stdout: result.stdout, stderr: result.stderr,
+        config: fs.readFileSync(path.join(root, "config"), "utf8"),
+        calls: fs.readFileSync(path.join(root, "calls"), "utf8").split("\n").filter(Boolean),
+      };
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+
+  it("removes only the claim's binding tag and never stops or destroys the VM", () => {
+    const result = runRelease(`hivra-prepared;${OWN};windows`);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("HIVRA_PREPARED_BINDING_RELEASED");
+    expect(result.config).toContain("tags: hivra-prepared;windows");
+    expect(result.config).not.toContain(OWN);
+    expect(result.calls.some((call) => /^(stop|shutdown|destroy)\b/.test(call))).toBe(false);
+  });
+
+  it("drops the tags line when the binding was the only tag", () => {
+    const result = runRelease(OWN);
+    expect(result.code).toBe(0);
+    expect(result.calls).toContain("set 2098 --delete tags");
+    expect(result.config).not.toContain("tags:");
+  });
+
+  it("succeeds unchanged on a retried delete whose binding is already gone", () => {
+    const result = runRelease("hivra-prepared");
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("HIVRA_PREPARED_BINDING_RELEASED");
+    expect(result.calls.some((call) => call.startsWith("set"))).toBe(false);
+  });
+
+  it("refuses a slot bound to another claim and leaves its tags alone", () => {
+    for (const tags of [`${OWN};${FOREIGN}`, FOREIGN]) {
+      const result = runRelease(tags);
+      expect(result.code).toBe(53);
+      expect(result.stderr).toContain("bound to another claim");
+      expect(result.calls.some((call) => call.startsWith("set"))).toBe(false);
+    }
+  });
+
+  it("refuses any bound slot when the row holds no binding of its own", () => {
+    const result = runRelease(OWN, null);
+    expect(result.code).toBe(53);
+    expect(result.calls.some((call) => call.startsWith("set"))).toBe(false);
+  });
+
+  it("refuses a VM that is not this prepared slot", () => {
+    const result = runRelease(OWN, HASH, { ...SLOT, claim: "00000000-0000-4000-8000-000000009999" });
+    expect(result.code).toBe(51);
+    expect(result.stderr).toContain("identity mismatch");
+    expect(result.calls.some((call) => call.startsWith("set"))).toBe(false);
+    expect(() => preparedCanaryReleaseScript("windows", SLOT, "not-a-hash")).toThrow("prepared_binding_unavailable");
   });
 });

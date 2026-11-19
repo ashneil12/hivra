@@ -43,6 +43,12 @@ quiescence, and mark the row deleted without destroying the prepared VM. Verify
 cleanup using exact operation receipts and retained backups, not absence of the
 HTTP client.
 
+Deleting a settled prepared claim (Windows or Omarchy, no refresh in flight)
+follows the same rule: under the slot's VM lock Delete removes only that claim's
+binding tag and keeps the prepared VM for the next claim. It refuses a VM whose
+identity is not the configured slot or that carries another claim's binding, and
+a retry after the tag is gone succeeds unchanged.
+
 ## Failure and rollback
 
 Updates have root Snapper, read-only home, `/boot`, `/etc`, and package-list
