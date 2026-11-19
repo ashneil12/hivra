@@ -10,6 +10,15 @@ import {
 
 const INSTANCE_ID = "11111111-2222-3333-4444-555555555555";
 
+// A restic-style RFC 3339 time a minute ago, with the given fraction and zone.
+// It is relative to now: the fixtures date their files two days before now, and
+// a fixed snapshot date would leave them newer than the snapshot once it passed.
+function recentSnapshotTime(fraction = ".123456789", offsetHours = 1): string {
+  const shifted = new Date(Date.now() - 60_000 + offsetHours * 3_600_000);
+  const zone = offsetHours === 0 ? "Z" : `+${String(offsetHours).padStart(2, "0")}:00`;
+  return shifted.toISOString().slice(0, 19) + fraction + zone;
+}
+
 function hasTool(name: string): boolean {
   return spawnSync("sh", ["-c", `command -v ${name}`]).status === 0;
 }
@@ -124,7 +133,7 @@ function runDrill(options: DrillOptions = {}) {
       HERMES_RESTORE_DRILL_MIN_DISK_MB: String(options.minDiskMb ?? 0),
       FAKE_AVAIL_MB: String(options.availMb ?? 100000),
       FAKE_RESTORE_BYTES: String(options.restoreBytes ?? 4096),
-      FAKE_SNAPSHOT_TIME: options.snapshotTime ?? "2026-10-29T04:03:12.123456789+01:00",
+      FAKE_SNAPSHOT_TIME: options.snapshotTime ?? recentSnapshotTime(),
       FAKE_DB: options.db ?? "good",
       FAKE_VM_STATUS: options.vmStatus ?? "running",
       FAKE_LIVE_ROOT: live,
@@ -173,7 +182,7 @@ describe("restic restore drill host script", () => {
   });
 
   hostIt("reads restic timestamps with any number of fractional digits", () => {
-    for (const time of ["2026-10-29T04:03:12.1+01:00", "2026-10-29T04:03:12.12345Z", "2026-10-29T04:03:12Z"]) {
+    for (const time of [recentSnapshotTime(".1"), recentSnapshotTime(".12345", 0), recentSnapshotTime("", 0)]) {
       const run = runDrill({ snapshotTime: time });
       expect({ time, status: run.status, pass: run.drill?.pass }).toEqual({ time, status: 0, pass: true });
     }
