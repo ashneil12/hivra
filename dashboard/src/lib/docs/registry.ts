@@ -25,6 +25,7 @@ import { doc as dashboardTour } from "./pages/dashboard-tour";
 import { doc as glossary } from "./pages/glossary";
 import { doc as telegram } from "./pages/telegram";
 import { doc as troubleshooting } from "./pages/troubleshooting";
+import { forFreePlanState } from "@/lib/copy/free-plan-copy";
 
 const ALL: DocPage[] = [
   gettingStarted,
@@ -54,7 +55,7 @@ const ALL: DocPage[] = [
   troubleshooting,
 ];
 
-export const DOCS: Record<string, DocPage> = Object.fromEntries(ALL.map((doc) => [doc.slug, doc]));
+export const DOCS: Record<string, DocPage> = Object.fromEntries(ALL.map((doc) => [doc.slug, forFreePlanState(doc)]));
 
 export { DOC_SECTIONS };
 
