@@ -126,6 +126,16 @@ describe("recordCardTrialStart", () => {
     expect(stripe.subscriptions.update).toHaveBeenCalledWith("sub_trial", { trial_end: "now" });
   });
 
+  it("keeps the trial when the unique conflict is a repeat delivery of the same subscription", async () => {
+    const { db } = fakeDb(
+      { hermes_trial_usage: [{ data: [], error: null }, { data: [], error: null }, { data: [{ id: "t1" }], error: null }] },
+      { code: "23505", message: "duplicate" }
+    );
+    const stripe = stripeWithCard("fp_new");
+    await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: false });
+    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+  });
+
   it("does not record the trial when the Stripe update fails, so the retry checks again", async () => {
     const { db, inserts } = fakeDb({ hermes_trial_usage: [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }] });
     const stripe = stripeWithCard("fp_used");

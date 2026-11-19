@@ -169,9 +169,18 @@ export async function recordCardTrialStart(params: {
       stripe_subscription_id: subscription.id,
       card_fingerprint: fingerprint,
     });
-    // The fingerprint is unique: a concurrent trial on the same card loses here.
-    if (insertError && insertError.code === "23505") reused = true;
-    else if (insertError) throw new Error(`trial usage write failed: ${insertError.message}`);
+    if (insertError && insertError.code === "23505") {
+      // A unique conflict is either a repeat delivery of this subscription's
+      // event (nothing to do) or another trial already on this card.
+      const { data: same, error: sameError } = await db
+        .from("hermes_trial_usage")
+        .select("id")
+        .eq("stripe_subscription_id", subscription.id)
+        .limit(1);
+      if (sameError) throw new Error(`trial usage read failed: ${sameError.message}`);
+      if (Array.isArray(same) && same.length > 0) return { endedEarly: false };
+      reused = true;
+    } else if (insertError) throw new Error(`trial usage write failed: ${insertError.message}`);
   }
 
   if (reused) {
