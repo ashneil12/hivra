@@ -49,13 +49,27 @@ export function changedKinds(paths) {
   return AGENT_KINDS.filter((kind) => kinds.has(kind));
 }
 
-/** True when the streamed run (NDJSON) carries the answer outside the question itself. */
-export function replyHasAnswer(ndjson, answer = CHECK_ANSWER, prompt = CHECK_PROMPT) {
-  const text = String(ndjson).split('\n')
-    .filter((line) => line.trim() && !/^\{"type":"_(ping|run)"/.test(line.trim()))
-    .join('\n')
-    .split(prompt).join('');
-  return new RegExp(`(^|[^0-9])${answer}([^0-9]|$)`).test(text);
+/** The agent's own reply text in a streamed run (NDJSON): Claude Code, Codex and plain-text agents. */
+export function replyTexts(ndjson) {
+  const texts = [];
+  for (const line of String(ndjson).split('\n')) {
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (!event || typeof event !== 'object') continue;
+    if (event.type === 'result' && typeof event.result === 'string') texts.push(event.result);
+    if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+      for (const part of event.message.content) if (part?.type === 'text' && typeof part.text === 'string') texts.push(part.text);
+    }
+    if (event.type === 'item.completed' && event.item?.type === 'agent_message' && typeof event.item.text === 'string') texts.push(event.item.text);
+    if (event.type === '_text' && typeof event.text === 'string') texts.push(event.text);
+  }
+  return texts;
+}
+
+/** True when the agent's reply (never the stream's metadata) carries the answer. */
+export function replyHasAnswer(ndjson, answer = CHECK_ANSWER) {
+  const pattern = new RegExp(`(^|[^0-9])${answer}([^0-9]|$)`);
+  return replyTexts(ndjson).some((text) => pattern.test(text));
 }
 
 function flagsOf(argv) {

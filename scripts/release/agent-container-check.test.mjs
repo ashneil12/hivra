@@ -27,11 +27,13 @@ test('kinds come back once each, in catalog order', () => {
   ]), ['openclaw', 'nuphos']);
 });
 
-test('the reply must carry the answer, not just echo the question', () => {
-  assert.equal(replyHasAnswer('{"type":"assistant","text":"837"}\n{"type":"_done","code":0}\n'), true);
-  assert.equal(replyHasAnswer(`{"type":"user","text":"${CHECK_PROMPT}"}\n{"type":"_done","code":1}\n`), false);
-  assert.equal(replyHasAnswer('{"type":"assistant","text":"18370"}\n'), false);
-  assert.equal(replyHasAnswer('{"type":"_ping"}\n'), false);
+test('the reply must carry the answer, not just echo the question or metadata', () => {
+  assert.equal(replyHasAnswer('{"type":"result","result":"837"}\n'), true);
+  assert.equal(replyHasAnswer('{"type":"assistant","message":{"content":[{"type":"text","text":"837"}]}}\n'), true);
+  assert.equal(replyHasAnswer('{"type":"item.completed","item":{"type":"agent_message","text":"837"}}\n'), true);
+  assert.equal(replyHasAnswer(`{"type":"user","message":{"content":[{"type":"text","text":"${CHECK_PROMPT}"}]}}\n`), false);
+  assert.equal(replyHasAnswer('{"type":"result","result":"18370"}\n'), false);
+  assert.equal(replyHasAnswer('{"type":"system","session_id":"a1b2-837-c3","usage":{"input_tokens":837}}\n{"type":"_ping"}\n'), false);
 });
 
 test('the runner template records a status only for a full, unattended run', async () => {
