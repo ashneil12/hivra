@@ -59,7 +59,7 @@ export const claudeCodeOnLinux: BlogArticle = {
       ],
     },
     {
-      heading: "Other Linux install methods: apt, dnf, apk and npm",
+      heading: "Other Linux install methods: apt, dnf, apk and npm Prefer to skip the server setup? [Claude Code on Hivra](/agents/claude-code) comes with the official CLI already installed.",
       paragraphs: [
         "The install script is not the only documented route. Anthropic publishes signed package repositories and an npm package, and each suits a different situation.",
         [
@@ -72,7 +72,7 @@ export const claudeCodeOnLinux: BlogArticle = {
         "The apt, dnf and apk repositories each offer two channels. `stable` serves a version about a week old that skips releases with major regressions. `latest` serves every release as soon as it ships. Anthropic's page has the exact repository setup for each package manager, including the signing key and its fingerprint, so copy those commands from the [setup page](https://code.claude.com/docs/en/setup#install-with-linux-package-managers) rather than from a blog. Once a repository is configured, installing and upgrading are the normal commands:",
         "```bash\nsudo apt install claude-code\nsudo apt update && sudo apt upgrade claude-code\n```",
         "On Fedora and RHEL the equivalents are `sudo dnf install claude-code` and `sudo dnf upgrade claude-code`.",
-        "**npm.** The npm package needs Node.js 22 or later. On an older Node, npm prints an `EBADENGINE` warning and finishes the install anyway, and the installed `claude` still runs, because the package downloads a native binary that does not use your Node. Never use `sudo npm install -g`: Anthropic warns it causes permission problems and security risks, and an install that needs sudo can't update itself. Avoid `npm update -g` too, since it may not move you to the newest release.",
+        "**npm.** The npm package needs Node.js 22 or later. On an older Node, npm prints an `EBADENGINE` warning and finishes the install anyway, and the installed `claude` still runs, because the package downloads a native binary that does not use your Node. Never use `sudo npm install -g`: Anthropic warns it causes permission problems and security risks, and an install that needs sudo can't update itself. Avoid `npm update -g` too, since it may not move you to the newest release. One more trap: npm 12 skips the package's postinstall step by default, so `claude` can then fail with `Error: claude native binary not installed.` Check with `npm --version`; if it starts with 12, Anthropic's fix is to switch to the native installer or allow the step, as its [npm 12 instructions](https://code.claude.com/docs/en/troubleshoot-install#fix-an-npm-12-install) describe.",
         "**Alpine.** Alpine ships without `bash` and `curl`, so the install command fails with a `not found` error until you add them:",
         "```bash\napk add bash curl\n```",
         "Alpine is a musl distribution, and the installer picks the matching musl binary for it. The docs also list `libgcc`, `libstdc++` and `ripgrep` as things it needs on Alpine, so install those too.",
@@ -133,6 +133,7 @@ export const claudeCodeOnLinux: BlogArticle = {
         "```bash\ntest -w ~/.local/bin && echo \"writable\" || echo \"not writable\"\ntest -w ~/.claude && echo \"writable\" || echo \"not writable\"\n```",
         "If either is not writable, create the folder and make yourself the owner:",
         "```bash\nsudo mkdir -p ~/.local/bin\nsudo chown -R $(whoami) ~/.local\n```",
+        "Those two commands repair `~/.local`. If it was `~/.claude` that failed the check, the installer can't write its downloads there either, so take that folder back too with `sudo chown -R $(whoami) ~/.claude`, then run both `test -w` checks again before you retry the install.",
         "If the problem was npm's global directory, Anthropic's advice is to switch to the native installer rather than reach for sudo.",
         "**The install is `Killed` on a small VPS.** A `Killed` message, exit code 137 and a note about running out of memory mean the Linux out-of-memory killer stopped the install. Installing needs roughly 512 MB of free memory, and running Claude Code needs more. Anthropic's fixes are to add swap, close other processes or use a larger server. A 2 GB swap file:",
         "```bash\nsudo fallocate -l 2G /swapfile\nsudo chmod 600 /swapfile\nsudo mkswap /swapfile\nsudo swapon /swapfile\n```",

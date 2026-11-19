@@ -50,7 +50,7 @@ export const claudeCodeOnWindows: BlogArticle = {
       ],
     },
     {
-      heading: "System requirements",
+      heading: "System requirements If you'd rather run it on a computer that stays on, [Claude Code on Hivra](/agents/claude-code) comes with the official CLI already installed.",
       paragraphs: [
         "From Anthropic's setup page, as of November 2026:",
         "- **Operating system:** Windows 10 version 1809 or later, or Windows Server 2019 or later.\n- **Hardware:** 4 GB of RAM or more, and an x64 or ARM64 processor.\n- **Network:** an internet connection.\n- **Shell:** PowerShell or CMD for native Windows, or Bash inside WSL.\n- **Location:** one of Anthropic's [supported countries](https://www.anthropic.com/supported-countries).\n- **Account:** a Pro, Max, Ultra, Team, Enterprise or Console account. The free claude.ai plan does not include Claude Code.",
@@ -82,7 +82,7 @@ export const claudeCodeOnWindows: BlogArticle = {
       heading: "npm and WinGet: the other install routes",
       paragraphs: [
         "Anthropic's page lists two more routes for Windows. Neither is the recommended one, and both exist for specific situations.",
-        "**npm** needs Node.js 22 or later and installs the same native binary as the standalone installer:\n\n```\nnpm install -g @anthropic-ai/claude-code\n```\n\nUpgrade with `npm install -g @anthropic-ai/claude-code@latest`. Anthropic says to avoid `npm update -g`, which may not move you to the newest release, and never to use `sudo npm install -g`. On Windows, npm creates `.ps1` launcher scripts that PowerShell's execution policy can block, which is the `running scripts is disabled on this system` error covered in the fixes below.",
+        "**npm** needs Node.js 22 or later and installs the same native binary as the standalone installer:\n\n```\nnpm install -g @anthropic-ai/claude-code\n```\n\nUpgrade with `npm install -g @anthropic-ai/claude-code@latest`. Anthropic says to avoid `npm update -g`, which may not move you to the newest release, and never to use `sudo npm install -g`. On Windows, npm creates `.ps1` launcher scripts that PowerShell's execution policy can block, which is the `running scripts is disabled on this system` error covered in the fixes below. Also check `npm --version` first: npm 12 skips Claude Code's postinstall step by default, which leaves `claude` failing with `Error: claude native binary not installed.` or a launcher Windows can't run. Anthropic's [npm 12 fix](https://code.claude.com/docs/en/troubleshoot-install#fix-an-npm-12-install) is to use the native installer instead or allow the step.",
         "**WinGet** installs with `winget install Anthropic.ClaudeCode`. WinGet installs do not auto-update. Run `winget upgrade Anthropic.ClaudeCode` now and then, or set `CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE` to `1` and let Claude Code run the upgrade in the background. The upgrade can fail while Claude Code is running because Windows locks the file, in which case Claude Code shows you the command to run by hand.",
         "If you only want the least maintenance, pick the native installer. It's the one Anthropic marks as recommended and the one that updates itself.",
       ],

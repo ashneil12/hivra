@@ -41,13 +41,13 @@ export const article: BlogArticle = {
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "codex resume brings the chat back. tmux brings the live process back.",
-  intro: `Codex stores each chat on disk, so you can leave and come back. We tested every command below on Codex CLI ${CODEX_VER}. Claude Code's resume flags are further down, since that's a different tool. Haven't installed Codex yet? Start with [how to install the Codex CLI](/blog/how-to-install-codex-cli).`,
+  intro: `Codex stores each chat on disk, so you can leave and come back. We tested every command below on Codex CLI ${CODEX_VER}. Claude Code's resume flags are further down, since that's a different tool.`,
   shortAnswer: `To resume a Codex CLI session, run codex resume --last for the newest chat in this folder, codex resume for the picker, or codex resume <id>. Sessions are saved under ~/.codex/sessions/. Tested on Codex CLI ${CODEX_VER}. Claude Code uses claude --continue or claude --resume instead.`,
   sections: [
     {
       heading: "How do I resume a Codex session?",
       paragraphs: [
-        `OpenAI's [CLI reference](${CODEX_REF}) lists \`codex resume\` as the way to continue an interactive session. We also ran \`codex resume --help\` and \`codex exec resume --help\` on Codex CLI ${CODEX_VER} to be sure. Use these:`,
+        `OpenAI's [CLI reference](${CODEX_REF}) lists \`codex resume\` as the way to continue an interactive session. We also ran \`codex resume --help\` and \`codex exec resume --help\` on Codex CLI ${CODEX_VER} to be sure. (Haven't installed Codex yet? Start with [how to install the Codex CLI](/blog/how-to-install-codex-cli).) Use these:`,
         "Picking a session back up from your phone is a different problem, and our [Codex on mobile guide](/blog/codex-mobile) walks through every way to do it.",
         [
           "| Command | What it does |",

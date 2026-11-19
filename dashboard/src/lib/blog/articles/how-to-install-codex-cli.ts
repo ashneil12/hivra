@@ -56,7 +56,7 @@ export const howToInstallCodexCli: BlogArticle = {
       ],
     },
     {
-      heading: "Every install method side by side",
+      heading: "Every install method side by side Want Codex on a computer that stays on without installing anything? See [Codex on Hivra](/agents/codex).",
       paragraphs: [
         [
           "| Method | Command | Best for | Watch out for |",
