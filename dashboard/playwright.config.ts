@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
+import { assertLiveManagedHostingAuditAllowed } from './e2e/first-run-audit/config';
 import { browserLaunchOptions } from './scripts/lib/playwright-launch.cjs';
 
 /**
@@ -40,6 +41,9 @@ const LAUNCH_SWEEP_ENABLED = process.env.LAUNCH_SWEEP === '1';
 // The trial-to-Pro journey (e2e/trial-to-pro.spec.ts): Stripe test mode on
 // Canary, opt-in only with TRIAL_JOURNEY=1.
 const TRIAL_JOURNEY_ENABLED = process.env.TRIAL_JOURNEY === '1';
+if (FIRST_RUN_AUDIT_ENABLED || REMOTE_DESKTOP_AUDIT_ENABLED || LAUNCH_SWEEP_ENABLED || TRIAL_JOURNEY_ENABLED) {
+  assertLiveManagedHostingAuditAllowed();
+}
 // One run id shared by every worker (they inherit this process's env).
 if (LAUNCH_SWEEP_ENABLED && !process.env.LAUNCH_SWEEP_RUN_ID) {
   process.env.LAUNCH_SWEEP_RUN_ID = `${new Date().toISOString().slice(0, 10).replace(/-/g, '')}${Math.random().toString(16).slice(2, 6)}`;

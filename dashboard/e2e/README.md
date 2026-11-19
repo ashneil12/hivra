@@ -1,5 +1,13 @@
 # Dashboard E2E — Tier 1 of the QA pyramid
 
+> **Live managed-hosting audits are paused.** First-run, launch sweep, remote-desktop
+> and trial-to-Pro reject live runs before Playwright setup. Clerk sent mail shortly
+> after ticket sign-in to synthetic audit addresses, including a reused account.
+> The cleanup reaper is also paused because it signs in as those users; its read-only
+> mode remains available. Use Jest fixtures for fresh account, trial and cleanup
+> checks. Fixture passes are not release evidence and do not replace any release
+> requirement. The live instructions below are for when the pause is lifted.
+
 Deterministic Playwright smoke + **visual regression (VRT)** against a deployed
 target. This is the cheap, broad net that runs on every PR so the routine "a
 route 500s" / "the deploy button broke" class gets caught without anyone
