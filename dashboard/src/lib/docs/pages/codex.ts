@@ -24,7 +24,7 @@ export const doc: DocPage = {
       heading: "Before you start",
       paragraphs: [
         "You need three things.",
-        `- **A Hivra account.** An account costs nothing. A Hivra Cloud computer needs a paid plan, which starts at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. A free account works with a server you connect yourself. See [Plans and billing](/docs/plans-and-billing) and [Run agents on your own server](/docs/connect-your-own-server).`,
+        `- **A Hivra account.** A Hivra Cloud computer needs a paid plan, which starts at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. You can use your own server if your account is eligible to connect it. See [Plans and billing](/docs/plans-and-billing) and [Run agents on your own server](/docs/connect-your-own-server).`,
         "- **A way to reach a model.** Pick one of three: sign in with your ChatGPT account, use a Venice API key, or pay with Hivra credits. The next block explains each.",
         "- **Room on your plan.** Codex can start as small as 0.5 CPU and 1 GB of memory with its browser off. With the browser on it needs at least 1.5 CPU and 3 GB.",
         "If you plan to use your own server, Codex runs on a Proxmox VE server you connected. The one-command Ubuntu route is for Linux Sandbox only.",
@@ -35,7 +35,7 @@ export const doc: DocPage = {
       paragraphs: [
         "1. Open **Launch** from your Home page. Under **What do you want to launch?** choose **Codex**.",
         "2. On the Review step, check the **Agent name**. Hivra suggests a name such as Codex 1 and bumps the number if that name is taken. You can change it.",
-        "3. Check **Where it runs**. It shows Hivra Cloud, or a server you connected if you have one. Press **Change** to open the panel, then **Done** to close it. Without a paid plan or a connected server, Launch shows a plan check with a **Check again** button and will not start.",
+        "3. Check **Where it runs**. It shows Hivra Cloud, or a server you connected if you have one. Press **Change** to open the panel, then **Done** to close it. Without an eligible plan or an eligible connected server, Launch shows a plan check with a **Check again** button and will not start.",
         "4. Check **Size**. Press **Change** to pick a different CPU and memory size.",
         "5. Decide on the **Browser** toggle. It lets Codex open and use a web browser on its computer. It starts on when the place it runs can hold it.",
         "6. Under **Model access**, answer \"How would you like to connect your agent to AI?\" by choosing one of the three options.",
@@ -160,7 +160,7 @@ export const doc: DocPage = {
     },
     {
       q: "Can Codex run on my own server?",
-      a: "Yes, on a Proxmox VE server you connected. A free Hivra account is enough for that. If you use credits there, the server needs to report that it can take a model key safely.",
+      a: "Yes, on a Proxmox VE server you connected. Your account must be eligible to connect the server. If you use credits there, the server needs to report that it can take a model key safely.",
     },
   ],
   articles: ["run-codex-24-7-in-the-cloud", "codex-pricing-by-chatgpt-plan"],

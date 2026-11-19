@@ -35,7 +35,7 @@ export const doc: DocPage = {
     {
       heading: "Your account sign-in",
       paragraphs: [
-        "Everything starts with your Hivra account. A Hivra account costs nothing, and you sign in with the sign-in screen at [sign in](/sign-in) or create one at [sign up](/sign-up). Once signed in you land on **Home**.",
+        "Everything starts with your Hivra account. You sign in with the sign-in screen at [sign in](/sign-in) or create one at [sign up](/sign-up). Once signed in you land on **Home**.",
         "Open **Settings**. The **Account** group holds **Profile and sign-in**, where your name, email, security options and sign-out live, and your **Account code**. Use **Profile and sign-in** to review how you sign in. The sign-in provider decides which options appear there, so look at that screen rather than assuming a particular method is on.",
         "![The Hivra Settings page showing Profile and sign-in, an Account code, billing, API keys and the agent toolkit](/images/docs/dash-settings.webp \"Settings with sample data. Look at the Account group at the top: Profile and sign-in with a sample email, and the Account code.\")",
         "The **Account code** is a short code that Hivra's server setup command shows before it connects a server to your account. It is a check that the command you are about to run is going to your account: continue only if the codes match. It is not a password and it does not sign anyone in.",

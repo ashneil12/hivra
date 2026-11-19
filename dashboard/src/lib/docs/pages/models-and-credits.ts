@@ -15,7 +15,7 @@ export const doc: DocPage = {
       paragraphs: [
         "Every agent on Hivra gets a computer of its own, but a computer does not think. The agent needs a model behind it, and somebody has to pay for that model. This page explains every way Hivra lets an agent reach one, which supported agents take which option, how to top up and watch credits, and how to change the model after launch.",
         "It is written for developers and AI power users who want to know, before pressing **Launch**, where each prompt goes and who bills it. Three things are billed separately and are easy to mix up.",
-        "A Hivra account costs nothing. A plan pays for the computer when Hivra Cloud runs it. Model usage is paid separately, from Hivra credits, so a plan never pays for the model and credits never pay for a computer. If you bring your own key or sign in with your own account, the provider bills you and Hivra credits are not involved. [What you pay for](/docs/plans-and-billing) covers plans in full.",
+        "A plan pays for the computer when Hivra Cloud runs it. Model usage is paid separately, from Hivra credits, so a plan never pays for the model and credits never pay for a computer. If you bring your own key or sign in with your own account, the provider bills you and Hivra credits are not involved. [What you pay for](/docs/plans-and-billing) covers plans in full.",
         "Hivra is an independent hosting service. It is not affiliated with Anthropic, OpenAI, Venice or the makers of the other supported agents, and the provider terms for any account you bring are between you and that provider.",
       ],
     },
@@ -45,7 +45,7 @@ export const doc: DocPage = {
         "The table above is for a computer on Hivra Cloud. Launch narrows the choices when the destination cannot use one of them.",
         "| Where the agent runs | What changes |\n| --- | --- |\n| Hivra Cloud | The full table above applies. |\n| A Proxmox server you connected | Claude Code, Codex, OpenClaw, Agent Zero and Aeon can run there. Hermes, DeepSeek Harness, OpenBot and Nuphos are Hivra Cloud only. Credits work, and credits for Claude Code need a server on provisioner release 2026.11.10.2 or later. Codex needs the server to report that it can take a model key safely. If it has not, the choice reads \"This server hasn't said it can take a model key safely yet. Update it in Capacity, or choose another option.\" |\n| A computer in your own cloud account | Not listed as an available place to run in Hivra's current status, so do not plan around it. If your Launch does show it, credits are not offered for any agent except Codex and the choice reads \"Hivra credits can't be set up for this agent on a computer in your own cloud yet.\" The agent's own sign-in becomes the default. |\n| A self-hosted installation of Hivra | There are no Hivra credits to offer. The agent's own sign-in is the default, and DeepSeek Harness defaults to your own key. |",
         "When credits are not an option, Hivra picks the agent's own sign-in as the default for you, except for DeepSeek Harness, which always needs a model at launch.",
-        "[Run agents on your own server](/docs/connect-your-own-server) covers connecting a server. A Hivra account costs nothing and works with a server you connect, but every computer that Hivra Cloud runs needs a paid plan.",
+        "[Run agents on your own server](/docs/connect-your-own-server) covers connecting a server. Every computer that Hivra Cloud runs needs a paid plan.",
       ],
     },
     {

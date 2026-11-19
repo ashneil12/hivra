@@ -29,7 +29,7 @@ export const doc: DocPage = {
       heading: "Before you start",
       paragraphs: [
         "- **A running Claude Code agent.** Telegram needs the computer to be reachable. If it is not ready yet, the Telegram area shows a \"Not ready\" notice that says the computer isn't reachable yet. Wait for the agent to finish starting and reload.\n- **A Telegram account on your phone or desktop**, so you can talk to @BotFather and later to your own bot.\n- **A browser that can reach Telegram.** Hivra checks your token against Telegram's own API directly from your browser, so a network that blocks api.telegram.org will stop the first step.\n- **A little patience on the connect step.** Saving the bot restarts the connection on the computer, and the page shows a notice while it saves.",
-        "You do not need a paid Hivra plan for Telegram itself, but every computer that Hivra Cloud runs needs one, and a free account works with a server you connect yourself. See [What you pay for](/docs/plans-and-billing).",
+        "You do not need a paid Hivra plan for Telegram itself, but every computer that Hivra Cloud runs needs one. See [What you pay for](/docs/plans-and-billing).",
       ],
     },
     {
