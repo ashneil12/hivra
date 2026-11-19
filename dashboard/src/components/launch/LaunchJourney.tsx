@@ -1470,6 +1470,7 @@ export function LaunchJourney(
   // below whatever the agent, so this does not decide who needs one.
   // Hermes (and Omarchy) cannot run on a server you connected.
   const ownServerOk = fitSubject?.ownServer !== false;
+  const compatibleOwnServerAvailable = ownServerOk && destination.readyTargets.length > 0;
   const managedPaidRequired = fitSubject !== null && fitSubject.hivraCloud === "plan" && fitSubject.minPlan !== "free";
   const atSlotLimit = Boolean(plan?.usage && plan.usage.agentCount >= plan.maxAgents);
   const managedFits = planCanFit(plan, draft.resources, poolExempt);
@@ -1592,7 +1593,9 @@ export function LaunchJourney(
     // A Free account is the platform, not a computer: it works with the
     // owner's own computer. Hivra-hosted compute is bought.
     capacityBlocker = ownServerOk
-      ? `${currentProfile?.name ?? "This launch"} on Hivra Cloud needs a paid plan. Your free account works with your own server: connect one, or choose a plan. ${ownServerNeeds(draft.profileId)}`
+      ? compatibleOwnServerAvailable
+        ? `${currentProfile?.name ?? "This launch"} on Hivra Cloud needs a paid plan. A compatible server is already connected; choose it to check capacity, or choose a plan.`
+        : `${currentProfile?.name ?? "This launch"} on Hivra Cloud needs a paid plan. Your free account works with your own server: connect one, or choose a plan. ${ownServerNeeds(draft.profileId)}`
       : `${currentProfile?.name ?? "This launch"} runs on Hivra Cloud only, and that needs a paid plan. Choose a plan to launch it.`;
     blockerRemedy = "managed-plan";
     paywall = "paid_profile";
@@ -2125,10 +2128,14 @@ export function LaunchJourney(
         : blockerRemedy === "check-plan" ? <button type="button" onClick={recheckPlan}>Check again</button>
         : blockerRemedy === "managed-plan" ? <>
           <Link href={upgradeHref} onClick={() => recordUpgradeClick("plan_blocker")}>{upgrade ? `Upgrade to ${upgrade.name}` : "Review plans"}</Link>
-          {ownServerOk ? <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button> : null}
+          {ownServerOk ? compatibleOwnServerAvailable
+            ? <button type="button" onClick={() => chooseDestinationMode("self-managed")}>Use connected server</button>
+            : <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button> : null}
         </> : blockerRemedy === "settle-plan" && planHold ? <>
           <Link href={billingSettleHref(draft.launchRequestId)}>{planHoldAction(planHold)}</Link>
-          {ownServerOk ? <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button> : null}
+          {ownServerOk ? compatibleOwnServerAvailable
+            ? <button type="button" onClick={() => chooseDestinationMode("self-managed")}>Use connected server</button>
+            : <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button> : null}
         </> : null}
     </span>
   ) : null;
