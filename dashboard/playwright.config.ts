@@ -10,8 +10,8 @@ import { browserLaunchOptions } from './scripts/lib/playwright-launch.cjs';
  * the runner — matches the qa-e2e agent's approach and keeps CI light. Point it
  * at a Vercel preview URL per-PR later via E2E_BASE_URL.
  *
- * Auth: golden-path specs reuse the verified Clerk sign-in-ticket mechanism
- * (see e2e/global-setup.ts). Public specs need no auth.
+ * Ticket sign-in for golden-path specs is paused (see e2e/global-setup.ts).
+ * Public specs need no auth.
  */
 const BASE_URL = process.env.E2E_BASE_URL || 'https://canary.hermesos.cloud';
 
@@ -51,8 +51,7 @@ if (LAUNCH_SWEEP_ENABLED && !process.env.LAUNCH_SWEEP_RUN_ID) {
 
 export default defineConfig({
   testDir: './e2e',
-  // global-setup mints a Clerk ticket + saves storage state for authed specs.
-  // It no-ops (skips authed projects) when CLERK_SECRET_KEY / QA_USER_ID absent.
+  // Setup rejects ticket sign-in during the pause and otherwise writes empty state.
   globalSetup: './e2e/global-setup.ts',
   timeout: 60_000,
   expect: {

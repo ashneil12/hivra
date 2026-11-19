@@ -1,28 +1,71 @@
 # Dashboard E2E — Tier 1 of the QA pyramid
 
 > **Live managed-hosting audits are paused.** First-run, launch sweep, remote-desktop
-> and trial-to-Pro reject live runs before Playwright setup. Clerk sent mail shortly
-> after ticket sign-in to synthetic audit addresses, including a reused account.
-> The cleanup reaper is also paused because it signs in as those users; its read-only
-> mode remains available. Use Jest fixtures for fresh account, trial and cleanup
-> checks. Fixture passes are not release evidence and do not replace any release
-> requirement. The live instructions below are for when the pause is lifted.
+> and trial-to-Pro reject live runs before Playwright setup. Ordinary Playwright
+> setup also rejects ticket sign-in when QA credentials are present. Clerk sent
+> mail shortly after ticket sign-in, including for a reused audit account.
+> Active cleanup remains paused; read-only inventory remains available separately.
+> The live instructions below are for when the pause is lifted.
 
-Deterministic Playwright smoke + **visual regression (VRT)** against a deployed
-target. This is the cheap, broad net that runs on every PR so the routine "a
-route 500s" / "the deploy button broke" class gets caught without anyone
-clicking around. (Tiers 2–3 — AI-generated + agentic browser QA — live in the
-`hermes-qa-swarm` harness.)
+## Weekly general check
+
+Run this representative offline check weekly on a clean checkout of the
+current `canary` head, with lockfile dependencies already installed and no
+service credentials or local environment files. On Linux, use a network
+namespace without external network access. If the runner cannot isolate the
+check, report it as blocked rather than falling back to a live suite.
+
+From the repository root:
+
+```bash
+unshare -Urn -- env -i PATH="$PATH" CI=1 bash -e <<'SH'
+node dashboard/scripts/check-test-wiring.cjs
+node scripts/release/public-tree-hygiene.mjs
+cd dashboard
+node node_modules/jest/bin/jest.js --runInBand --runTestsByPath \
+  __tests__/managed-hosting-audit-pause.test.ts \
+  __tests__/first-run-audit-hivra-cleanup.test.ts \
+  __tests__/trial-to-pro-state.test.ts \
+  __tests__/launch-sweep-result.test.ts \
+  src/lib/billing/__tests__/card-trial.test.ts \
+  src/app/api/workspace/sessions/__tests__/owner-routes.test.ts \
+  src/lib/launch/__tests__/launch-catalog.test.ts \
+  src/lib/hivra/__tests__/provider-agent-launch.test.ts \
+  src/lib/hivra/__tests__/managed-session-transcript.test.ts \
+  'src/app/api/hivra/agents/[id]/action/__tests__/sleep-aware.test.ts' \
+  src/lib/hivra/__tests__/agent-delete-cleanup.test.ts
+SH
+```
+
+Record the tested SHA, offline pass/fail and affected surfaces. This samples
+auth, trial and billing state, tenant ownership, catalog and launch contracts,
+chat transcript handling, wake and cleanup. No Playwright suite, real sign-in,
+payments, model calls, provisioning or customer data is involved. A read-only
+lookup of the public Canary deployment revision is separate from these tests.
+
+This does not change protected CI or the [managed release process](../../docs/release/MANAGED-HOSTING-RELEASES.md).
+It must not publish a `launch-sweep` status or replace a required sweep.
+The proposed [Promote gate](https://github.com/ashneil12/hivra/pull/593) stays
+held until an isolated runner using an approved auth path records a passing
+sweep on the exact served Canary revision. Live auth and release sweeps remain
+paused; changed-agent installers need isolated execution and bounded, revocable
+test model access before they can be enabled.
+
+## Playwright (not part of the weekly check)
+
+Playwright targets a deployed site and is separate from the offline baseline.
+Do not use the full suite during the live-auth pause, or assume every public
+spec is read-only: the telemetry spec checks real ingestion.
 
 ## Layout
 - `public.public.spec.ts` — logged-out routes render (HTTP < 400 + real content) + VRT.
 - `golden-deploy.authed.spec.ts` — the **login → dashboard → deploy** golden path. Skips if no QA session.
 - `first-run-audit.spec.ts` + `first-run-audit/` — the **19/20 gate**. Real provisioning. See below.
-- `global-setup.ts` — mints a Clerk sign-in ticket for the QA user and saves an authed storage state.
+- `global-setup.ts` — rejects ticket sign-in during the pause; without both QA credentials it writes empty storage state.
 - `playwright.config.ts` (repo root of `dashboard/`) — projects: `public` (no auth), `authed` (storage state),
   and `first-run-audit` (only exists when `FIRST_RUN_AUDIT=1`).
 
-## Run it
+## Run it after the pause
 ```bash
 npm run test:e2e            # all, against E2E_BASE_URL (default https://canary.hermesos.cloud)
 npm run test:e2e:public     # public smoke + VRT only (no secrets needed)
@@ -33,7 +76,7 @@ E2E_BASE_URL=https://<vercel-preview>.vercel.app npm run test:e2e   # gate a PR 
 - `CLERK_SECRET_KEY` — Backend API key for the **canary** Clerk instance (`splendid-longhorn-99`).
 - `QA_USER_ID` — the `qa-agent@hermesos.cloud` Clerk user id.
 
-Without them, `global-setup` no-ops and the authed specs skip — public smoke + VRT still run.
+Without them, setup writes empty storage state and the golden-path specs skip.
 
 ## VRT baselines
 Screenshots are OS-sensitive — **generate baselines on the Linux CI runner**, never commit

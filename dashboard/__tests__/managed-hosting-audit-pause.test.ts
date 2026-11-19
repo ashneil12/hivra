@@ -1,3 +1,5 @@
+import { chromium } from '@playwright/test';
+import globalSetup from '../e2e/global-setup';
 import { createAuditUser, mintSignInTicket } from '../e2e/first-run-audit/clerk-admin';
 import { reapAuditAccounts } from '../e2e/first-run-audit/reaper';
 import { establishAuditSession } from '../e2e/first-run-audit/session';
@@ -45,6 +47,17 @@ describe('managed-hosting audit mail pause', () => {
 
   it('keeps the ordinary Playwright config loadable', () => {
     expect(loadPlaywrightConfig).not.toThrow();
+  });
+
+  it('blocks ordinary Playwright setup from minting or redeeming a ticket for the standing QA user', async () => {
+    process.env.CLERK_SECRET_KEY = key;
+    process.env.QA_USER_ID = existingAuditUser.id;
+    const fetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'));
+
+    await expect(globalSetup({ projects: [] } as never)).rejects.toThrow(blocked);
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(chromium.launch).not.toHaveBeenCalled();
   });
 
   it('blocks new audit users, tickets for existing users, and redemption of already-issued tickets', async () => {
