@@ -243,8 +243,8 @@ export async function releaseCardTrialSleep(userId: string, db: Db | null = supa
     .select("trial_ends_at")
     .eq("user_id", userId)
     .maybeSingle();
-  // A failed read throws: returning would let the upsert clear trial_ends_at
-  // and the release would never run again.
+  // A database without the card-trial migration cannot have trial sleep to release.
+  if (error?.code === "42703" || error?.code === "PGRST204") return false;
   if (error) throw new Error(`trial sleep release read failed: ${error.message}`);
   if (!(data as { trial_ends_at?: string | null } | null)?.trial_ends_at) return false;
   const { error: updateError } = await db

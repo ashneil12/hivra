@@ -1131,11 +1131,12 @@ export class StripeWebhookService {
       );
     }
 
+    let releasedTrialSleep = false;
     if (cardTrial) {
       const { endedEarly } = await recordCardTrialStart({ stripe: getStripe(), subscription, userId });
       if (endedEarly) return "trial_rejected" as const;
-    } else if (subscription.metadata?.[CARD_TRIAL_METADATA_KEY] && subscription.status === "active") {
-      await releaseCardTrialSleep(userId);
+    } else if (subscription.status === "active") {
+      releasedTrialSleep = await releaseCardTrialSleep(userId);
     }
 
     const nextStatus =
@@ -1199,9 +1200,8 @@ export class StripeWebhookService {
                 ai_allowance_micro_usd: 0,
               }
             : {}),
-          // Only card-trial subscriptions touch trial_ends_at: set while the
-          // trial runs, cleared by the first paid event.
-          ...(subscription.metadata?.[CARD_TRIAL_METADATA_KEY]
+          // Clear the trial marker on payment, including a new paid subscription.
+          ...(releasedTrialSleep || subscription.metadata?.[CARD_TRIAL_METADATA_KEY]
             ? {
                 trial_ends_at:
                   cardTrial && subscription.trial_end

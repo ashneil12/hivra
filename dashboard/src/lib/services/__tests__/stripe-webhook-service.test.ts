@@ -11,7 +11,7 @@ process.env.STRIPE_SECRET_KEY = 'sk_test_123';
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 const recordCardTrialStartMock = jest.fn().mockResolvedValue({ endedEarly: false });
-const releaseCardTrialSleepMock = jest.fn().mockResolvedValue(true);
+const releaseCardTrialSleepMock = jest.fn().mockResolvedValue(false);
 jest.mock("@/lib/billing/card-trial", () => ({
   ...jest.requireActual("@/lib/billing/card-trial"),
   recordCardTrialStart: (...args: unknown[]) => recordCardTrialStartMock(...args),
@@ -1494,13 +1494,28 @@ describe("StripeWebhookService", () => {
       });
     });
 
-    it("never touches trial_ends_at for a subscription that is not a card trial", async () => {
+    it("clears a prior trial's limits and end date on direct paid resubscription", async () => {
       const captured = captureUpsert();
-      const sub = { ...trialSub("active"), metadata: { user_id: "user_1", plan: "operator" } } as unknown as Stripe.Subscription;
+      releaseCardTrialSleepMock.mockResolvedValueOnce(true);
+      const sub = { ...trialSub("active"), id: "sub_paid", trial_end: null, metadata: { user_id: "user_1", plan: "operator" } };
 
       await StripeWebhookService.handleSubscriptionChange(sub);
 
-      expect(captured.args).toBeDefined();
+      expect(captured.args).toMatchObject({
+        instance_limit: PLANS.operator.maxAgents,
+        stripe_subscription_id: "sub_paid",
+        trial_ends_at: null,
+      });
+      expect(releaseCardTrialSleepMock).toHaveBeenCalledWith("user_1");
+    });
+
+    it("omits trial fields for ordinary paid activation without prior trial state", async () => {
+      const captured = captureUpsert();
+      const sub = { ...trialSub("active"), id: "sub_paid", trial_end: null, metadata: { user_id: "user_1", plan: "operator" } };
+
+      await StripeWebhookService.handleSubscriptionChange(sub);
+
+      expect(captured.args).toMatchObject({ stripe_subscription_id: "sub_paid", status: "active" });
       expect(captured.args).not.toHaveProperty("trial_ends_at");
     });
   });

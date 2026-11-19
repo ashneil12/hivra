@@ -62,7 +62,7 @@ describe("isCardTrialSubscription", () => {
   });
 });
 
-type Result = { data: unknown; error: { message: string } | null };
+type Result = { data: unknown; error: { message: string; code?: string } | null };
 
 function fakeDb(results: Record<string, Result[]>, insertError: { code: string; message: string } | null = null) {
   const inserts: Array<{ table: string; row: unknown }> = [];
@@ -184,6 +184,14 @@ describe("isInCardTrial", () => {
 });
 
 describe("releaseCardTrialSleep", () => {
+  it("leaves ordinary paid subscriptions alone without the trial migration", async () => {
+    const { db, updates } = fakeDb({ hermes_subscriptions: [
+      { data: null, error: { message: "trial_ends_at does not exist", code: "42703" } },
+    ] });
+    await expect(releaseCardTrialSleep("u1", db)).resolves.toBe(false);
+    expect(updates).toHaveLength(0);
+  });
+
   it("returns converted trial agents to the paid default while the row still shows the trial", async () => {
     const { db, updates } = fakeDb({ hermes_subscriptions: [{ data: { trial_ends_at: "2026-11-25T12:00:00Z" }, error: null }] });
     await expect(releaseCardTrialSleep("u1", db)).resolves.toBe(true);

@@ -10,6 +10,7 @@ import { auth } from "@clerk/nextjs/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { supabaseAdmin } from "@/lib/supabase";
 import { holdsPaidPlan } from "@/lib/billing/subscription-status";
+import { isInCardTrial } from "@/lib/billing/card-trial";
 import { PLAN_LADDER_ID, activePlanLadder, publicPlanLadder, sellsLadderTo } from "@/lib/subscription/plan-ladder";
 import { countAlwaysOnAgents } from "@/lib/billing/plan-ladder-entitlement";
 
@@ -26,7 +27,7 @@ export async function GET() {
 
   const { data: sub } = await supabaseAdmin
     .from("hermes_subscriptions")
-    .select("plan, status, stripe_subscription_id, plan_ladder, always_on_limit, always_on_extra, ai_allowance_micro_usd, trial_ends_at")
+    .select("plan, status, stripe_subscription_id, plan_ladder, always_on_limit, always_on_extra, ai_allowance_micro_usd")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -50,7 +51,7 @@ export async function GET() {
     current: onLadder
       ? {
           plan: sub?.plan ?? null,
-          inCardTrial: Boolean(sub?.trial_ends_at),
+          inCardTrial: await isInCardTrial(userId),
           alwaysOnLimit: sub?.always_on_limit ?? null,
           alwaysOnExtra: sub?.always_on_extra ?? 0,
           alwaysOnInUse,
