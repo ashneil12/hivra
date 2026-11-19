@@ -3,7 +3,7 @@
 // account. Sentences that do are dropped; a remaining mention becomes "your
 // account". With the Free plan open, text is returned unchanged.
 
-import { isFreePlanClosed } from "@/lib/billing/free-plan-closure";
+import { isFreePlanClosed } from "@/lib/billing/free-plan-cutoff";
 
 const FREE_ACCOUNT_SENTENCE = /(^|[.!?]["”]?[ \t]+|\n|\|[ \t]*)[^.!?\n|]*\bfree (?:Hivra )?account\b[^.!?\n|]*[.!?]["”]?[ \t]?/gi;
 
