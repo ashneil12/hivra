@@ -64,6 +64,7 @@ describe("GET /api/cron/daily-instance-backups?action=restore-drill", () => {
     jest.clearAllMocks();
     process.env.CRON_SECRET = "expected-secret";
     process.env.HERMES_RESTIC_MASTER_KEY = "test-master-key";
+    process.env.DAILY_INSTANCE_BACKUP_RESTORE_DRILL_ENABLED = "true";
     spies = (["error", "warn", "log"] as const).map((level) =>
       jest.spyOn(console, level).mockImplementation(() => {})
     );
@@ -72,6 +73,28 @@ describe("GET /api/cron/daily-instance-backups?action=restore-drill", () => {
   afterEach(() => {
     spies.forEach((spy) => spy.mockRestore());
     process.env = { ...originalEnv };
+  });
+
+  it.each([undefined, "false", "0"])("refuses to dispatch when the drill flag is %s", async (value) => {
+    if (value === undefined) delete process.env.DAILY_INSTANCE_BACKUP_RESTORE_DRILL_ENABLED;
+    else process.env.DAILY_INSTANCE_BACKUP_RESTORE_DRILL_ENABLED = value;
+    const mock = makeSupabaseMock({ id: INSTANCE_ID, proxmox_node: "fixturenode1", proxmox_vmid: 1300 });
+    mockedSupabaseAdmin.from.mockImplementation(mock.from);
+    const response = await GET(request(`action=restore-drill&instanceId=${INSTANCE_ID}`));
+    expect(response.status).toBe(403);
+    expect(mockedRunHostScript).not.toHaveBeenCalled();
+    expect(mock.lookups).not.toContainEqual({ method: "eq", args: ["id", INSTANCE_ID] });
+  });
+
+  it("still requires the cron secret when the drill flag is on", async () => {
+    const response = await GET(
+      new NextRequest(`http://localhost/api/cron/daily-instance-backups?action=restore-drill&instanceId=${INSTANCE_ID}`, {
+        method: "GET",
+        headers: { authorization: "Bearer wrong-secret" },
+      })
+    );
+    expect(response.status).toBe(401);
+    expect(mockedRunHostScript).not.toHaveBeenCalled();
   });
 
   it("requires a valid instance id", async () => {

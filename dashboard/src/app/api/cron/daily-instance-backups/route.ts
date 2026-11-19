@@ -353,6 +353,9 @@ async function handle(req: NextRequest) {
   // Prove one instance's backup restores (?action=restore-drill&instanceId=<id>).
   // Nothing is written to the guest or the database; see restic-restore-drill.ts.
   if (manualAction === "restore-drill") {
+    if (!envBool("DAILY_INSTANCE_BACKUP_RESTORE_DRILL_ENABLED", false)) {
+      return apiError("restore drill is disabled (DAILY_INSTANCE_BACKUP_RESTORE_DRILL_ENABLED)", 403);
+    }
     const instanceId = req.nextUrl.searchParams.get("instanceId")?.trim() ?? "";
     if (!SAFE_INSTANCE_ID.test(instanceId)) return apiError("instanceId is required", 400);
     const { data: target, error: targetError } = await supabaseAdmin

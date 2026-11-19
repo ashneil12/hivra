@@ -45,7 +45,7 @@ if "restore" in args:
     include = args[args.index("--include") + 1]
     tree = target + include
     os.makedirs(os.path.join(tree, "profiles", "main"), exist_ok=True)
-    db = os.path.join(tree, "profiles", "main", "state.db")
+    db = os.path.join(tree, "profiles", "main", os.environ["FAKE_DB_NAME"])
     kind = os.environ["FAKE_DB"]
     if kind == "corrupt":
         with open(db, "wb") as handle:
@@ -93,12 +93,16 @@ else:
 const FAKE_DF = `#!/bin/sh
 printf 'Avail\\n%sM\\n' "$FAKE_AVAIL_MB"
 `;
+// FAKE_FLOCK_BUSY_FD names a lock descriptor another run already holds.
 const FAKE_FLOCK = `#!/bin/sh
+[ "\${2:-}" = "\${FAKE_FLOCK_BUSY_FD:-none}" ] && exit 1
 exit 0
 `;
 
 type DrillOptions = {
   db?: "good" | "corrupt" | "empty" | "none";
+  dbName?: string;
+  busyLockFd?: string;
   liveConfig?: string;
   vmStatus?: string;
   snapshotTime?: string;
@@ -135,6 +139,8 @@ function runDrill(options: DrillOptions = {}) {
       FAKE_RESTORE_BYTES: String(options.restoreBytes ?? 4096),
       FAKE_SNAPSHOT_TIME: options.snapshotTime ?? recentSnapshotTime(),
       FAKE_DB: options.db ?? "good",
+      FAKE_DB_NAME: options.dbName ?? "state.db",
+      FAKE_FLOCK_BUSY_FD: options.busyLockFd ?? "none",
       FAKE_VM_STATUS: options.vmStatus ?? "running",
       FAKE_LIVE_ROOT: live,
     },
@@ -197,6 +203,18 @@ describe("restic restore drill host script", () => {
     expect(run.leftovers).toEqual([]);
   });
 
+  hostIt("checks .sqlite and .sqlite3 databases too", () => {
+    for (const dbName of ["state.sqlite", "state.sqlite3"]) {
+      const good = runDrill({ dbName });
+      expect(good.drill).toMatchObject({ pass: true, databases_total: 1 });
+      expect(good.drill!.databases[0]).toMatchObject({ path: `profiles/main/${dbName}`, ok: true });
+
+      const corrupt = runDrill({ db: "corrupt", dbName });
+      expect(corrupt.status).toBe(11);
+      expect(corrupt.drill?.databases[0]).toMatchObject({ path: `profiles/main/${dbName}`, ok: false });
+    }
+  });
+
   hostIt("fails when the snapshot holds no database, or only an empty one", () => {
     const none = runDrill({ db: "none" });
     expect(none.status).toBe(11);
@@ -226,6 +244,18 @@ describe("restic restore drill host script", () => {
     const run = runDrill({ minDiskMb: 8000, availMb: 9000, restoreBytes: 2 * 1024 * 1024 * 1024 });
     expect(run.status).toBe(9);
     expect(run.stderr).toContain("RESTORE_DRILL_ABORT reason=restore_too_large");
+    expect(run.drill).toBeNull();
+    expect(run.leftovers).toEqual([]);
+  });
+
+  hostIt("refuses to start while another drill holds the host-wide lock", () => {
+    const script = buildRestoreDrillScript({ instanceId: INSTANCE_ID, vmid: 1138 });
+    expect(script).toContain("/hermes-restore-drill-host.lock");
+    // The host lock is taken before the free-space check.
+    expect(script.indexOf("flock -n 8")).toBeLessThan(script.indexOf('AVAIL_MB="$(free_mb)"'));
+    const run = runDrill({ busyLockFd: "8" });
+    expect(run.status).toBe(12);
+    expect(run.stderr).toContain("reason=restore_drill_already_running_on_host");
     expect(run.drill).toBeNull();
     expect(run.leftovers).toEqual([]);
   });

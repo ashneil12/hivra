@@ -84,6 +84,10 @@ chmod 700 "$RESTORE_ROOT"
 # its prune.
 exec 9>"\${HERMES_RESTIC_LOCK_DIR:-/var/lock}/hermes-restic-$INSTANCE_ID.lock"
 flock -n 9 || drill_abort backup_or_drill_already_running 12
+# One drill per host at a time, held from the free-space check through cleanup,
+# so two drills never both pass the disk check and then fill the shared disk.
+exec 8>"\${HERMES_RESTIC_LOCK_DIR:-/var/lock}/hermes-restore-drill-host.lock"
+flock -n 8 || drill_abort restore_drill_already_running_on_host 12
 
 # Copies left by a run that was killed (SIGKILL, reboot) hold decrypted tenant
 # data: remove this instance's drill folders older than six hours.
@@ -145,7 +149,8 @@ import datetime, hashlib, json, os, shutil, sqlite3, subprocess, sys
 restored, check_dir, live_vol, vmid, snap_id, snap_time, instance = sys.argv[1:8]
 MAX_DATABASES = 50
 SAMPLE = 8
-SKIP_SUFFIXES = (".db", "-wal", "-shm", "-journal", ".log", ".lock", ".pid", ".sock")
+DB_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+SKIP_SUFFIXES = DB_SUFFIXES + ("-wal", "-shm", "-journal", ".log", ".lock", ".pid", ".sock")
 
 def parse_time(value):
     # restic writes RFC 3339 with up to nanoseconds; Python takes microseconds.
@@ -175,7 +180,7 @@ for root, _dirs, names in os.walk(restored):
         size = os.path.getsize(path)
         total += size
         rel = os.path.relpath(path, restored)
-        if name.endswith(".db"):
+        if name.endswith(DB_SUFFIXES):
             databases.append(rel)
         elif not name.endswith(SKIP_SUFFIXES) and 0 < size <= 5 * 1024 * 1024:
             # Only files untouched for an hour before the snapshot are expected
