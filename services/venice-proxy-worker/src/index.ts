@@ -352,7 +352,15 @@ async function proxyChatCompletion(request: Request, env: Env): Promise<ProxiedC
       // acceptsBodyPatch: this Worker forwards `{ ...body, ...bodyPatch }`, so
       // authorize may lower the output cap to what the wallet covers instead
       // of refusing the request outright.
-      body: JSON.stringify({ plaintextKey, body, referenceId, acceptsBodyPatch: true }),
+      // clientAddress: the address Cloudflare saw, for the key-to-computer
+      // binding. Set by Cloudflare's edge, so the caller cannot choose it.
+      body: JSON.stringify({
+        plaintextKey,
+        body,
+        referenceId,
+        acceptsBodyPatch: true,
+        clientAddress: request.headers.get("CF-Connecting-IP"),
+      }),
     });
   } catch (err) {
     console.error("managed-venice authorize call failed", String(err));

@@ -1,6 +1,5 @@
 import { parseAuthzContext, type AuthzContext } from "./authz-context";
 import { evaluate } from "./policy-evaluator";
-import { isAgentNetworkEnabled } from "./flag";
 import type { Decision, DecisionReason, NetworkAction, NetworkResource } from "./types";
 import { NETWORK_ACTIONS } from "./types";
 
@@ -67,12 +66,8 @@ function malformed(request: AuthorizeRequest): boolean {
 
 export async function authorizeNetworkRequest(
   store: AuthzStore,
-  request: AuthorizeRequest,
-  env: Record<string, string | undefined> = process.env
+  request: AuthorizeRequest
 ): Promise<Decision> {
-  if (!isAgentNetworkEnabled(env)) {
-    return deny("network_disabled_on_deployment", "deployment-flag");
-  }
   if (malformed(request)) {
     return deny("malformed_request", "request-shape");
   }

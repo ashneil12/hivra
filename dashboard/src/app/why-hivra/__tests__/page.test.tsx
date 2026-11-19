@@ -289,8 +289,9 @@ describe("/why-hivra page", () => {
   it("lists agents by their agent catalog availability", () => {
     render(<WhyHivraEvolutionPage />);
     const availableCard = screen.getByRole("heading", { level: 3, name: "Available now" }).closest("div")!;
-    const previewCard = screen.getByRole("heading", { level: 3, name: "In preview" }).closest("div")!;
-    for (const [id, label] of [
+    // The preview card is shown only while some agent is still a preview.
+    const previewCard = screen.queryByRole("heading", { level: 3, name: "In preview" })?.closest("div") ?? null;
+    const lineup = [
       ["hermes", "Hermes Agent"],
       ["claude-code", "Claude Code"],
       ["codex", "Codex"],
@@ -298,7 +299,9 @@ describe("/why-hivra page", () => {
       ["openclaw", "OpenClaw"],
       ["aeon", "Aeon"],
       ["deepseek-harness", "DeepSeek"],
-    ] as const) {
+    ] as const;
+    expect(previewCard !== null).toBe(lineup.some(([id]) => getAgent(id)?.available !== true));
+    for (const [id, label] of lineup) {
       const card = getAgent(id)?.available ? availableCard : previewCard;
       expect(within(card as HTMLElement).getByText(label)).toBeInTheDocument();
     }

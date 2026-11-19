@@ -57,17 +57,3 @@ struct HivraWindowDragRegion: NSViewRepresentable {
         }
     }
 }
-
-struct HivraChromeButtonStyle: ButtonStyle {
-    @Environment(\.colorScheme) private var scheme
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13))
-            .foregroundStyle(.secondary)
-            .frame(width: 30, height: 30)
-            .background(configuration.isPressed ? HivraDesign.foreground(for: scheme).opacity(0.1) : .clear,
-                        in: RoundedRectangle(cornerRadius: 5))
-            .contentShape(Rectangle())
-    }
-}

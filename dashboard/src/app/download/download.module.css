@@ -54,7 +54,7 @@
   margin-bottom: 28px;
   padding: 24px;
   border: 1px solid var(--etched-border);
-  border-left: 3px solid var(--gold-leaf);
+  border-left: 2px solid var(--hg-stroke-strong);
   background: var(--public-surface, transparent);
 }
 
@@ -65,7 +65,7 @@
 
 .state p {
   margin: 0 0 18px;
-  font: 13px/1.7 var(--public-mono, monospace);
+  font: 13px/1.7 var(--font-sans);
   color: var(--text-secondary);
 }
 
@@ -80,7 +80,7 @@
   border: 1px solid var(--etched-border);
   background: var(--public-bg, transparent);
   color: var(--ink-black);
-  font: 550 13px/1.5 var(--public-font, sans-serif);
+  font: 550 13px/1.5 var(--font-display);
   text-align: left;
   text-decoration: none;
 }

@@ -50,14 +50,11 @@ it("reads saved metadata without claiming guest confirmation, with labeled optio
   expect(screen.getByText(/not a live inference check/)).toBeInTheDocument();
   expect(screen.queryByText(/Last confirmed/)).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  expect(screen.getByLabelText(/Model/)).toBeInTheDocument();
+  expect(screen.getByRole("listbox", { name: "Model" })).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Search models" })).toHaveAttribute("autocapitalize", "none");
   expect(screen.getByLabelText("Venice API key")).toHaveAttribute("type", "password");
   expect(screen.getByLabelText("Venice API key")).toHaveAttribute("autocomplete", "off");
   expect(screen.getByLabelText("Venice API key")).toHaveAttribute("autocapitalize", "none");
-  // iOS would otherwise save "Deepseek-v4-pro", an invalid model id.
-  expect(screen.getByLabelText(/Model/)).toHaveAttribute("autocapitalize", "none");
-  expect(screen.getByLabelText(/Model/)).toHaveAttribute("autocorrect", "off");
-  expect(screen.getByLabelText(/Model/)).toHaveAttribute("enterkeyhint", "done");
 });
 
 it("sends a single server request, wipes the submitted key, and refreshes confirmed metadata", async () => {
@@ -278,4 +275,23 @@ it.each(["unmount", "switch"])("ignores late launch recovery after %s", async ac
   await act(async () => finish({ requestId, operationId: op, status: "applied" }));
   expect(props.onChanged).not.toHaveBeenCalled();
   expect(continueLaunch).toHaveBeenCalledTimes(1);
+});
+
+it("sends the model chosen from the list", async () => {
+  await mount(); enterKey();
+  fireEvent.click(screen.getByRole("option", { name: /DeepSeek V4 Pro/i }));
+  fireEvent.click(screen.getByRole("button", { name: "Save connection" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0][2]).toEqual({ provider: "venice", mode: "byok", apiKey: "synthetic-fixture-key", model: "deepseek-v4-pro" });
+});
+
+it("seeds the model from the saved setting once", async () => {
+  read.mockResolvedValue({ llm: { ...config, mode: "byok" as const, model: "kimi-k2-6" }, pending: null });
+  render(<AgentModelSettings {...props} />);
+  await screen.findByText(/Venice · your API key · kimi-k2-6/);
+  await waitFor(() => expect(screen.getByRole("option", { selected: true })).toHaveTextContent(/Kimi/));
+  enterKey();
+  fireEvent.click(screen.getByRole("button", { name: "Save connection" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0][2]).toMatchObject({ model: "kimi-k2-6" });
 });

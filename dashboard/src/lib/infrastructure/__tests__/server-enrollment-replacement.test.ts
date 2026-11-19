@@ -197,7 +197,7 @@ describe("confirmServerEnrollment (T2, T15, T22, T30)", () => {
 
   it("runs an owner-entered address through the SSRF resolver", async () => {
     await confirmServerEnrollment(USER, ENROLLMENT_ID, { sshHost: "web-1.example" }, NOW);
-    expect(mockResolve).toHaveBeenCalledWith("web-1.example");
+    expect(mockResolve).toHaveBeenCalledWith("web-1.example", { userId: USER });
     expect(store.confirmServerEnrollmentRecord).toHaveBeenCalledWith(expect.objectContaining({ sshHost: "web-1.example" }));
     mockResolve.mockRejectedValue(new InfrastructureNetworkError("ssh_host_forbidden", "no"));
     store.confirmServerEnrollmentRecord.mockClear();
@@ -238,7 +238,7 @@ describe("replaceServerEnrollmentAccess (T30, T46)", () => {
 
   it("signs in with the pinned key, user hivra and the new key through sudo before changing anything", async () => {
     await replaceServerEnrollmentAccess(USER, ENROLLMENT_ID, request, deps());
-    expect(mockResolve).toHaveBeenCalledWith("web-1.example");
+    expect(mockResolve).toHaveBeenCalledWith("web-1.example", { userId: USER });
     const [script, env] = run.mock.calls[0];
     expect(script).toContain(REPLACEMENT_PROBE_MARKER);
     expect(env).toMatchObject({

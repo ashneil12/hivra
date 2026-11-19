@@ -199,7 +199,7 @@ describe("POST /api/mobile/launch — persona lane", () => {
       name: "Bea",
       provider: "venice",
       apiKey: "",
-      model: "deepseek-v4-flash",
+      model: "deepseek-v4-1-flash",
       managedVenice: { enabled: true, walletType: "hermesos" },
       // Plan-derived sizing (operator = 2 vCPU / 4096 MB) — never client-sent.
       cpuLimit: 2,
@@ -220,7 +220,7 @@ describe("POST /api/mobile/launch — persona lane", () => {
       customLlmBaseUrl: "https://proxy.hivra.test/api/v1",
     });
     expect(params.agentSettings.fallbackModels).toBe(
-      JSON.stringify([{ provider: "venice", model: "deepseek-v4-flash", apiKey: "" }])
+      JSON.stringify([{ provider: "venice", model: "deepseek-v4-1-flash", apiKey: "" }])
     );
 
     // The authored soul is the base of the system prompt; the firstRun block

@@ -5,7 +5,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { readAgentIdleEvidence, readAgentSoftwareFromBox } from "../agent-cli-meta";
+import { readAgentActivityFromBox, readAgentIdleEvidence, readAgentSoftwareFromBox } from "../agent-cli-meta";
 import { agentSoftwareSubject, type AgentSoftwareSubject } from "../agent-cli-status";
 
 const HOST = "box-7f3a.hivra.example";
@@ -29,9 +29,9 @@ const sentBearer = (fetcher: jest.Mock) => fetcher.mock.calls.some(([, init]) =>
 
 describe("readAgentSoftwareFromBox", () => {
   it("reads the version with the bearer only after the public reply proves a current connection service of this kind", async () => {
-    const fetcher = fakeBox(CURRENT_META, { ...CURRENT_META, agentCli: { name: "codex", version: "0.149.0", update: { state: "waiting", target: "0.149.1", updatedAt: "2026-09-25T00:30:00Z" } } });
+    const fetcher = fakeBox(CURRENT_META, { ...CURRENT_META, agentCli: { name: "codex", version: "0.149.0", update: { state: "waiting", target: "latest", updatedAt: "2026-09-25T00:30:00Z" } } });
     const reading = await readAgentSoftwareFromBox(target(), fetcher);
-    expect(reading).toEqual({ observation: "reported", report: { name: "codex", version: "0.149.0", update: { state: "waiting", target: "0.149.1", updatedAt: "2026-09-25T00:30:00Z", reason: null } } });
+    expect(reading).toEqual({ observation: "reported", report: { name: "codex", version: "0.149.0", update: { state: "waiting", target: "latest", updatedAt: "2026-09-25T00:30:00Z", reason: null } } });
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([`${ORIGIN}/api/meta`, `${ORIGIN}/api/meta`]);
     const [first, second] = fetcher.mock.calls.map(([, init]) => init as RequestInit);
     expect(new Headers(first.headers).has("authorization")).toBe(false);
@@ -167,6 +167,77 @@ describe("readAgentIdleEvidence", () => {
   });
 });
 
+describe("readAgentActivityFromBox", () => {
+  const AEON_META = { ...CURRENT_META, agentKind: "aeon" };
+  function box(options: { publicMeta?: unknown; privateMeta?: unknown; runs?: unknown; sessions?: unknown; fail?: string[] } = {}) {
+    const publicMeta = options.publicMeta ?? AEON_META;
+    return jest.fn(async (url: string, init?: RequestInit) => {
+      const route = url.slice(ORIGIN.length);
+      if ((options.fail ?? []).some((prefix) => route.startsWith(prefix))) return json({ error: "unavailable" }, { status: 409 });
+      if (route === "/api/meta") {
+        const authorized = new Headers(init?.headers).get("authorization") === `Bearer ${TOKEN}`;
+        return json(authorized ? options.privateMeta ?? publicMeta : publicMeta);
+      }
+      if (route === "/api/chat/runs") return json({ runs: options.runs ?? [] });
+      return json({ surface: "agent", sessions: options.sessions ?? [] });
+    });
+  }
+
+  it("reads app use, replies and terminals with the bearer only after the public reply proves the service", async () => {
+    const fetcher = box({
+      privateMeta: { ...AEON_META, agentApp: { name: "aeon", version: null, activity: { lastUsedAt: "2026-11-05T10:14:00.000Z", openConnections: 2 } } },
+      runs: [{ state: "running", createdAt: "2026-11-05T10:10:00.000Z" }],
+      sessions: [{ slot: 1, attached: true }],
+    });
+    const reading = await readAgentActivityFromBox(target(aeon), fetcher);
+    expect(reading).toEqual({
+      bootId: CURRENT_META.bootId,
+      appLastUsedAt: Date.parse("2026-11-05T10:14:00.000Z"),
+      appOpenConnections: 2,
+      runningReplies: 1,
+      lastReplyActivityAt: Date.parse("2026-11-05T10:10:00.000Z"),
+      terminalAttached: true,
+    });
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      `${ORIGIN}/api/meta`, `${ORIGIN}/api/meta`, `${ORIGIN}/api/chat/runs`, `${ORIGIN}/api/terminal/sessions?surface=agent`,
+    ]);
+    expect(new Headers((fetcher.mock.calls[0][1] as RequestInit).headers).has("authorization")).toBe(false);
+    expect(JSON.stringify(reading)).not.toContain(TOKEN);
+  });
+
+  it("reports what it could not read as unknown, never as zero", async () => {
+    // A Codex computer has no app; here its run list and terminals do not answer either.
+    const reading = await readAgentActivityFromBox(target(), box({ publicMeta: CURRENT_META, fail: ["/api/chat/runs", "/api/terminal"] }));
+    expect(reading).toEqual({
+      bootId: CURRENT_META.bootId, appLastUsedAt: null, appOpenConnections: null,
+      runningReplies: null, lastReplyActivityAt: null, terminalAttached: null,
+    });
+  });
+
+  it.each([
+    ["another kind of connection service", { publicMeta: { ...AEON_META, agentKind: "codex" } }],
+    ["an older connection service", { publicMeta: { agentKind: "aeon", surfaceAuth: "post-cookie-v1" } }],
+  ])("returns nothing and sends no bearer to %s", async (_case, options) => {
+    const fetcher = box(options);
+    expect(await readAgentActivityFromBox(target(aeon), fetcher)).toBeNull();
+    expect(sentBearer(fetcher)).toBe(false);
+  });
+
+  it("returns nothing when the service restarted between the two replies", async () => {
+    const fetcher = box({ privateMeta: { ...AEON_META, bootId: "0".repeat(32) } });
+    expect(await readAgentActivityFromBox(target(aeon), fetcher)).toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("never asks without a valid bearer and origin, and survives a failure", async () => {
+    const fetcher = box();
+    expect(await readAgentActivityFromBox(target(aeon, { apiToken: null }), fetcher)).toBeNull();
+    expect(await readAgentActivityFromBox(target(aeon, { chatUrl: `http://${HOST}` }), fetcher)).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(await readAgentActivityFromBox(target(aeon), jest.fn(async () => { throw new TypeError("fetch failed"); }))).toBeNull();
+  });
+});
+
 // The real connection service (provisioner/hivra-chat/server.js) on this
 // machine, with a stand-in Codex binary, its update status file and its lock:
 // the same replies a computer gives, read through the same reader.
@@ -232,19 +303,19 @@ describe("against the real connection service", () => {
   it("reports the installed version once read, and every update state the helper writes", async () => {
     expect(await until((value) => value.observation === "reported")).toEqual({ observation: "reported", report: { name: "codex", version: "0.149.0", update: null } });
     for (const state of ["downloading", "waiting", "installing"]) {
-      writeStatus({ name: "codex", state, from: "0.149.0", to: "0.149.1", updatedAt: "2026-09-25T00:30:00Z" });
-      expect(await read()).toEqual({ observation: "reported", report: { name: "codex", version: "0.149.0", update: { state, target: "0.149.1", updatedAt: "2026-09-25T00:30:00Z", reason: null } } });
+      writeStatus({ name: "codex", state, from: "0.149.0", to: "latest", updatedAt: "2026-09-25T00:30:00Z" });
+      expect(await read()).toEqual({ observation: "reported", report: { name: "codex", version: "0.149.0", update: { state, target: "latest", updatedAt: "2026-09-25T00:30:00Z", reason: null } } });
     }
-    writeStatus({ name: "codex", state: "rolled_back", from: "0.149.0", to: "0.149.1", updatedAt: "2026-09-25T00:30:00Z", reason: "install_failed" });
+    writeStatus({ name: "codex", state: "rolled_back", from: "0.149.0", to: "latest", updatedAt: "2026-09-25T00:30:00Z", reason: "install_failed" });
     expect(await read()).toMatchObject({ report: { update: { state: "rolled_back", reason: "install_failed" } } });
   }, 20_000);
 
   it("shows the finished swap with the old version first, then the new one", async () => {
     writeCodex("0.149.1", 1);
-    writeStatus({ name: "codex", state: "done", from: "0.149.0", to: "0.149.1", updatedAt: "2026-09-25T00:31:00Z" });
-    expect(await read()).toMatchObject({ report: { version: "0.149.0", update: { state: "done", target: "0.149.1" } } });
+    writeStatus({ name: "codex", state: "done", from: "0.149.0", to: "latest", updatedAt: "2026-09-25T00:31:00Z" });
+    expect(await read()).toMatchObject({ report: { version: "0.149.0", update: { state: "done", target: "latest" } } });
     expect(await until((value) => value.observation === "reported" && value.report.version === "0.149.1"))
-      .toMatchObject({ report: { version: "0.149.1", update: { state: "done", target: "0.149.1" } } });
+      .toMatchObject({ report: { version: "0.149.1", update: { state: "done", target: "latest" } } });
   }, 20_000);
 
   it("reads replies and agent terminals for the idle check", async () => {

@@ -37,7 +37,7 @@ describe("POST /api/infrastructure/connections/host-key-capture (T44, T45)", () 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(JSON.stringify(await response.json())).toContain(KEY.fingerprintSha256);
-    expect(capture).toHaveBeenCalledWith({ sshHost: "203.0.113.50", sshPort: 22 });
+    expect(capture).toHaveBeenCalledWith({ sshHost: "203.0.113.50", sshPort: 22, userId: "user_capture_1" });
   });
 
   it("answers every failure with one body, no sooner than 10 seconds after the request", async () => {

@@ -327,6 +327,19 @@ describe("managed Venice proxy keys", () => {
     });
   });
 
+  it("reports the owner's private-models-only setting on the verified key, off unless stored as true", async () => {
+    const { db, tables } = createMemoryDb();
+    const created = await createManagedVeniceProxyKey({ userId: "user_1", randomBytes: fixedRandomBytes, env }, db);
+    expect(await verifyManagedVeniceProxyKey({ plaintextKey: created.plaintextKey, env }, db)).toMatchObject({ privateModelsOnly: false });
+
+    const row = tables.managed_venice_proxy_keys[0];
+    row.metadata = { ...(row.metadata as Record<string, unknown>), privateOnly: { enabled: true } };
+    expect(await verifyManagedVeniceProxyKey({ plaintextKey: created.plaintextKey, env }, db)).toMatchObject({
+      privateModelsOnly: true,
+      defaultWalletType: "hermesos",
+    });
+  });
+
   it("rejects revoked keys", async () => {
     const { db } = createMemoryDb();
     const created = await createManagedVeniceProxyKey(

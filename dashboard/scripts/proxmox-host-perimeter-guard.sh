@@ -45,6 +45,14 @@ NFT_TARGET=""
 SSHD_TARGET=""
 CLOUDFLARE_ONLY="${PERIMETER_GUARD_CLOUDFLARE_ONLY:-0}"
 CADDY_CONFIG_DIR="${PERIMETER_GUARD_CADDY_DIR:-/etc/caddy}"
+# /etc/nftables.conf begins with `flush ruleset`, so `--apply`'s `nft -f` wipes
+# every table not defined in that file — including the out-of-band guest-security
+# tables maintained by their own systemd units. These two are restored (and
+# verified back) right after the apply so the host is never left without them.
+# `bridge hermes_vm_antispoof` is rebuilt by hivra-vm-antispoof.service and
+# `bridge hivra_ingress_pin` by hivra-ingress-pins.service.
+ANTISPOOF_UNIT="${PERIMETER_GUARD_ANTISPOOF_UNIT:-hivra-vm-antispoof.service}"
+INGRESS_PIN_UNIT="${PERIMETER_GUARD_INGRESS_PIN_UNIT:-hivra-ingress-pins.service}"
 
 SSHD_DIRECTIVES=(
   "PasswordAuthentication no"
@@ -75,6 +83,7 @@ NFT_REQUIRED_LINES=(
   'iifname "vmbr1" ct state new drop'
   'iifname "tailscale0" tcp dport 8006 accept'
   'iifname "vmbr1" ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } drop'
+  'iifname "vmbr1" ip6 daddr { fc00::/7, fe80::/10 } drop'
 )
 NFT_CLOUDFLARE_LINES=(
   'ip saddr @cloudflare_ipv4 tcp dport { 80, 443 } accept'
@@ -252,6 +261,14 @@ FWD_DROP = (
     'iifname "vmbr1" ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, '
     '172.16.0.0/12, 192.168.0.0/16 } drop'
 )
+# IPv6 counterpart. The host routes no IPv6 for guests, but a guest can still
+# try to source its own v6 default route off the host; block ULA (fc00::/7,
+# which also covers the fd00:ec2::254 cloud metadata address) and link-local
+# (fe80::/10). Prefix-only elements in ascending order so this string matches
+# nftables' canonical `nft list` rendering byte-for-byte (host /128 addresses
+# would be re-printed without the prefix and break the --check grep).
+FWD_DROP6 = 'iifname "vmbr1" ip6 daddr { fc00::/7, fe80::/10 } drop'
+FWD_DROPS = (FWD_DROP, FWD_DROP6)
 
 
 def norm(line):
@@ -289,15 +306,6 @@ def drop_named_blocks(lines, kind, name):
         out.append(lines[i])
         i += 1
     return out
-
-
-def is_fwd_wan_accept(n):
-    return (
-        n.startswith('iifname "vmbr1"')
-        and "accept" in n
-        and 'oifname "vmbr1"' not in n
-        and 'oifname "lo"' not in n
-    )
 
 
 def is_hoistable_guest_allow(n):
@@ -350,13 +358,22 @@ def harden_input(inner):
 
 
 def harden_forward(inner):
-    out = [line for line in inner if norm(line) != FWD_DROP]
-    anchor = next(
-        (i for i, line in enumerate(out) if is_fwd_wan_accept(norm(line))),
-        len(out),
-    )
-    out.insert(anchor, RULE_INDENT + FWD_DROP)
-    return out
+    # Guests must never reach RFC1918/CGNAT/link-local/metadata destinations, over
+    # IPv4 or IPv6, by ANY path. That includes a routed hairpin off the host
+    # (guest -> host gateway MAC -> another guest), which the bridge
+    # hermes_vm_isolation table — keyed on tap* interfaces — never sees. So the
+    # destination drops go at the TOP of the forward chain, ahead of every accept
+    # and jump, instead of merely before the first vmbr1->WAN accept: a
+    # vmbr1->vmbr1 hairpin accept, a service-chain jump, or (when no WAN accept
+    # matched) an accept the old anchor skipped could otherwise sit above the
+    # drop and re-open the path. The drops are destination-scoped and only match
+    # guest-sourced packets, so they are safe above the established/related
+    # accept — return traffic to a guest is oifname "vmbr1" and never matches.
+    out = [line for line in inner if norm(line) not in FWD_DROPS]
+    anchor = 0
+    while anchor < len(out) and is_chain_preamble(norm(out[anchor])):
+        anchor += 1
+    return out[:anchor] + [RULE_INDENT + r for r in FWD_DROPS] + out[anchor:]
 
 
 path = Path(sys.argv[1])
@@ -496,6 +513,23 @@ nft_ruleset_has_open_wan_rules() {
     grep -Eq '^[[:space:]]*tcp dport \{ 80, 443 \} accept([[:space:]]*#.*)?$' <<<"$1" && return 0
   fi
   return 1
+}
+
+# The RFC1918/metadata destination drops must sit ahead of every guest-sourced
+# accept in the forward chain; a vmbr1 accept above them (a vmbr1->vmbr1 hairpin
+# or a service jump) re-opens the routed path to private space. The generator
+# always top-places them, so this is a backstop that catches a hand-edited or
+# drifted ruleset. Argument: `nft list chain inet filter forward` output (wrapped
+# in its `chain forward { ... }`); scoped to that block so it stays correct even
+# when handed a wider ruleset that also carries vmbr1 input-chain accepts.
+forward_drops_precede_guest_accepts() {
+  printf '%s\n' "$1" | awk '
+    /chain forward[ \t]*\{/ { inchain = 1; next }
+    inchain && /^[ \t]*\}/ { inchain = 0 }
+    inchain && /iifname "vmbr1"[^#]*daddr[^#]*drop/ { seen = 1 }
+    inchain && /iifname "vmbr1"[^#]*accept/ { if (!seen) bad = 1 }
+    END { exit(bad ? 1 : 0) }
+  '
 }
 
 # --cloudflare-origin-only drops every 80/443 packet that does not come from
@@ -638,9 +672,32 @@ nft_runtime_is_hardened() {
     printf '%s\n' "$input" | grep -Fq 'ip6 saddr @cloudflare_ipv6 tcp dport { 80, 443 } accept' || return 1
   fi
   printf '%s\n' "$forward" | grep -Fq 'iifname "vmbr1" ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } drop' || return 1
+  printf '%s\n' "$forward" | grep -Fq 'iifname "vmbr1" ip6 daddr { fc00::/7, fe80::/10 } drop' || return 1
+  forward_drops_precede_guest_accepts "$forward" || return 1
   grep -Fq 'set cloudflare_ipv4' <<<"$ruleset" || return 1
   grep -Fq 'set cloudflare_ipv6' <<<"$ruleset" || return 1
   ! nft_ruleset_has_open_wan_rules "$input"
+}
+
+# True when the live kernel ruleset currently has table `$1 $2` (family, name).
+nft_table_present() { nft list table "$1" "$2" >/dev/null 2>&1; }
+
+# Restore an out-of-band table that `nft -f` (via `flush ruleset`) just wiped.
+# $1 family, $2 name, $3 systemd unit that rebuilds it, $4 whether it was
+# present before the apply (yes/no). A table that was not there before is left
+# alone. One that was there must come back, or the host is now missing a guest
+# protection, so refuse to report success.
+restore_flushed_table() {
+  local family="$1" name="$2" unit="$3" before="$4"
+  [ "$before" = "yes" ] || return 0
+  nft_table_present "$family" "$name" && return 0
+  log "flush ruleset removed table $family $name; restoring it via $unit"
+  # restart, not start: the rebuild units are Type=oneshot RemainAfterExit=yes,
+  # so once one has run it stays "active" and a later `start` is a no-op that
+  # would leave the table missing. restart re-runs ExecStart whatever the state.
+  systemctl restart "$unit" >/dev/null 2>&1 || true
+  nft_table_present "$family" "$name" \
+    || fatal "table $family $name was present before --apply but is missing after restoring via $unit; this host now lacks that guest protection — restore it before leaving"
 }
 
 if [ "$MODE" = "apply" ]; then
@@ -672,6 +729,11 @@ if [ "$MODE" = "apply" ]; then
   fi
   reload_sshd
 
+  # Note which out-of-band guest-security tables are live now, so the flush
+  # that the reload performs can be undone immediately below.
+  ANTISPOOF_BEFORE="no"; nft_table_present bridge hermes_vm_antispoof && ANTISPOOF_BEFORE="yes"
+  INGRESS_PIN_BEFORE="no"; nft_table_present bridge hivra_ingress_pin && INGRESS_PIN_BEFORE="yes"
+
   log "applying perimeter nftables guard"
   NFT_BACKUP="$NFT_CONF.bak-hermes-perimeter-$STAMP"
   cp -p "$NFT_CONF" "$NFT_BACKUP"
@@ -681,6 +743,13 @@ if [ "$MODE" = "apply" ]; then
     nft -f "$NFT_CONF" || log "WARNING: restoring the previous ruleset also failed; check nftables now"
     fatal "applied ruleset failed or lacked required rules; restored $NFT_CONF from $NFT_BACKUP"
   fi
+
+  # `nft -f` ran `flush ruleset`, which drops the antispoof and ingress-pin
+  # tables that live outside /etc/nftables.conf. Their own units would rebuild
+  # them within a minute (antispoof) or only at next boot (ingress pins), so
+  # rebuild them now and confirm they are back before reporting success.
+  restore_flushed_table bridge hermes_vm_antispoof "$ANTISPOOF_UNIT" "$ANTISPOOF_BEFORE"
+  restore_flushed_table bridge hivra_ingress_pin "$INGRESS_PIN_UNIT" "$INGRESS_PIN_BEFORE"
 else
   require_command sshd
   require_command nft
@@ -692,8 +761,8 @@ fi
 
 log "sshd: hardening drop-in applied and effective"
 if [ "$CLOUDFLARE_ONLY" = "1" ]; then
-  log "nftables: vmbr1 guest-to-host drops, tailscale-only 8006, Cloudflare-only 80/443, RFC1918 forward drop present"
+  log "nftables: vmbr1 guest-to-host drops, tailscale-only 8006, Cloudflare-only 80/443, RFC1918/metadata forward drops (v4+v6) present"
 else
-  log "nftables: vmbr1 guest-to-host drops, tailscale-only 8006, RFC1918 forward drop present (80/443 left open to all origins)"
+  log "nftables: vmbr1 guest-to-host drops, tailscale-only 8006, RFC1918/metadata forward drops (v4+v6) present (80/443 left open to all origins)"
 fi
 log "done"

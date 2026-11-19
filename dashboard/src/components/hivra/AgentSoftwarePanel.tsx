@@ -1,20 +1,23 @@
 "use client";
 
-// Manage › Updates: the agent's own software. For Claude Code and Codex, and
-// for the Aeon dashboard, OpenClaw and Agent Zero, the installed version next
-// to the version Hivra has tested, what an update is doing or did, and Update
-// now; for the CLIs also automatic updates (shown only while Hivra runs them).
+// Manage › Updates: the agent's own software (Claude Code, Codex, the Aeon
+// dashboard, OpenClaw, Agent Zero, Hermes, OpenBot, Nuphos). Hivra pins no
+// version: a launch installs upstream's newest release, and after that the
+// version only changes when the owner presses Update (which installs the
+// newest release again) or uses the agent's own update command. The card shows
+// the installed version, what an update is doing or did, and the button.
 // Nothing here is guessed: every line comes from what the computer last
 // reported (GET /api/hivra/agents/[id]/agent-software).
 
 import { useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import type { HivraAgent } from "@/lib/hivra/agent-api";
 import { agentSoftwareSubject, type AgentAppName, type AgentSoftwareUpdateReport, type AgentSoftwareView } from "@/lib/hivra/agent-cli-status";
 import { agentSoftwareDisplayName, agentSoftwareVersionName } from "@/lib/hivra/agent-software-names";
-import { setAgentSoftwareAutoUpdate, type AgentSoftwareAutoUpdate } from "@/lib/hivra/agent-software-api";
 import { useAgentSoftware } from "./useAgentSoftware";
 import { agentSoftwareCovered } from "./AgentSoftwareChip";
+import { UNREACHABLE_CARD_LINE, useReportUnreachable } from "./manage/ManageReachability";
 import {
   manageButtonDark, manageButtonGhost, manageCard, manageDisabled, manageError, manageLabel, manageMuted, manageSpin, manageValue,
 } from "./manage/manage-styles";
@@ -23,8 +26,6 @@ import {
 export type AgentSoftwareUpdateOutcome =
   | { ok: true; report: AgentSoftwareUpdateReport | null }
   | { ok: false; message: string; code: string | null };
-
-const VENDOR: Record<string, string> = { "claude-code": "Anthropic", codex: "OpenAI" };
 
 /** When Hivra last read the computer, in the viewer's own date and time. */
 function checkedAt(iso: string | null): string {
@@ -53,200 +54,114 @@ export function agentSoftwareUpdateError(code: string | null, message: string, m
 
 type Action = { label: string; primary: boolean } | null;
 
-/** The sentence for this state, and the update button it offers (if any). */
-function stateCopy(view: AgentSoftwareView, name: string, tested: string | null): { text: string; action: Action } {
-  const tv = tested ?? "";
-  switch (view.kind) {
-    case "not_running": return { text: `Start this agent to check or update ${name}.`, action: null };
-    case "checking": return { text: `Checking which ${name} version is installed…`, action: null };
-    case "unreachable": return { text: `Couldn't reach this agent to check its ${name} version.`, action: null };
-    case "older_connection_service":
-      return {
-        text: `This agent's connection service is older, so it doesn't report its ${name} version. Update the connection service below: it also moves ${name} to ${tv}, the version Hivra has tested.`,
-        action: null,
-      };
-    case "not_reported": return { text: "", action: null };
-    case "version_unreadable":
-      return { text: `Hivra couldn't read which ${name} version is installed.`, action: { label: `Reinstall ${tv}`, primary: false } };
-    case "current": return { text: `${name} is on the version Hivra has tested.`, action: null };
-    case "behind":
-      return { text: `An update is available. ${name} ${view.installed} is installed and Hivra has tested ${tv}.`, action: { label: `Update ${name}`, primary: true } };
-    case "ahead_custom":
-      return {
-        text: `${name} ${view.installed} is installed, which is newer than the version Hivra has tested (${tv}). Hivra chat may not work as expected with it. Automatic updates leave it as it is.`,
-        action: { label: `Switch to ${tv}`, primary: false },
-      };
-    case "ahead_hivra":
-      return {
-        text: `Hivra now tests ${name} ${tv}. This agent still has ${view.installed}, which Hivra installed before. Updating moves it to ${tv}.`,
-        action: { label: `Update ${name}`, primary: true },
-      };
-    // CLI versions are always ordered; this reads like any other untested version.
-    case "other_version":
-      return { text: `${name} ${view.installed} is installed, which isn't a version Hivra has tested.`, action: { label: `Switch to ${tv}`, primary: false } };
-    case "updating":
-      switch (view.phase) {
-        case "starting": return { text: "Starting the update…", action: null };
-        case "downloading": return { text: `Downloading ${name} ${view.target}. The agent keeps working while it downloads.`, action: null };
-        case "waiting": return { text: `Waiting for the current reply to finish. ${name} updates as soon as no reply is being written. Hivra waits up to 6 hours.`, action: null };
-        case "installing": return { text: `Installing ${name} ${view.target}. Messages you send now wait a few seconds and then send by themselves.`, action: null };
-        case "finishing": return { text: "Checking the new version…", action: null };
-      }
-      return { text: "", action: null };
-    case "update_done":
-      return { text: `${name} ${view.target} is installed. ${name} sessions already open in the ${name} session tab keep the previous version until you close them.`, action: null };
-    case "update_deferred":
-      return { text: `${name} wasn't updated because a reply was still being written after 6 hours. Nothing was changed.`, action: { label: "Try again", primary: true } };
-    case "update_rolled_back":
-      return {
-        text: `The update to ${view.target} didn't install, so Hivra put ${name} ${view.installed ?? "back to its previous version"}${view.installed ? " back" : ""}. Your agent works as before.`,
-        action: { label: "Try again", primary: false },
-      };
-    case "update_failed":
-      if (view.reason === "download_failed") {
-        return { text: `Hivra couldn't download ${name} ${view.target}. Nothing was changed.`, action: { label: "Try again", primary: false } };
-      }
-      if (view.reason === "could_not_start") {
-        return { text: `The connection service was updated, but the ${name} update couldn't start. Try again.`, action: { label: "Try again", primary: false } };
-      }
-      return {
-        text: `${name} ${view.target} didn't install, and Hivra couldn't put the previous version back. Chat may not work until this is fixed. Try again, or contact support.`,
-        action: { label: "Try again", primary: true },
-      };
-  }
+/**
+ * Where Manage already lets the person fix a computer whose update failed and
+ * could not be undone: restore points (Recovery) or Force restart (Advanced).
+ */
+export type SoftwareRecovery = { kind: "restore" | "force-restart"; open: () => void };
+
+/** The next steps after an update that failed and could not be undone. */
+function brokenUpdateNextStep(recovery: SoftwareRecovery | null): string {
+  if (!recovery) return "Try again, or contact support.";
+  return recovery.kind === "restore"
+    ? "Try again first. If that doesn't work, restore this agent from a restore point made before the update (button below). Contact support only if that doesn't help either."
+    : "Try again first. If that doesn't work, use Force restart in Advanced (button below). Contact support only if that doesn't help either.";
 }
 
+const RECOVERY_BUTTON = { restore: "Open Recovery", "force-restart": "Open Advanced" } as const;
+
+/** True when the update failed and the previous version couldn't be put back. */
+function rollbackFailed(view: AgentSoftwareView): boolean {
+  return view.kind === "update_failed" && !["download_failed", "could_not_start", "no_space"].includes(view.reason);
+}
+
+/** What the owner types in Terminal to do what the Update Hermes button does. */
+export const HERMES_TERMINAL_UPDATE = "hermes update";
+
+/** The agent's own update command, where it has one its owner can run in Terminal. */
+const TERMINAL_UPDATE: Partial<Record<string, string>> = {
+  hermes: HERMES_TERMINAL_UPDATE,
+  openclaw: "openclaw update",
+  codex: "npm install -g @openai/codex@latest",
+};
+
 /**
- * The same for an app Hivra hosts. It restarts once to update, so Hivra waits
- * until nobody has used it for a while (and it has no work running) instead of
- * for a reply. `v` names a version the way owners see it.
+ * The sentence for this state, and the update button it offers (if any).
+ * There is no tested version to compare with: the card says what is
+ * installed, what an update is doing or did, and always offers the update
+ * (the updater decides whether anything newer exists). `app` is null for the
+ * CLIs, which wait for a reply to finish rather than for the app to be idle.
  */
-function appStateCopy(view: AgentSoftwareView, app: AgentAppName, name: string, tested: string): { text: string; action: Action } {
+function softwareStateCopy(view: AgentSoftwareView, name: string, app: AgentAppName | null, terminalUpdate: string | null, recovery: SoftwareRecovery | null): { text: string; action: Action } {
   const v = agentSoftwareVersionName;
-  const tv = v(tested);
+  const update = (label = `Update ${name}`, primary = false): Action => ({ label, primary });
   switch (view.kind) {
     case "not_running": return { text: `Start this agent to check or update ${name}.`, action: null };
     case "checking": return { text: `Checking which ${name} version is installed…`, action: null };
-    case "unreachable": return { text: `Couldn't reach this agent to check its ${name} version.`, action: null };
+    case "unreachable": return { text: UNREACHABLE_CARD_LINE, action: null };
     case "older_connection_service":
     case "not_reported":
       return {
-        text: `This agent's connection service is older, so it doesn't report its ${name} version. Update the connection service below: it also moves ${name} to ${tv}, the version Hivra has tested.`,
+        text: `This agent's connection service is older, so it doesn't report its ${name} version. Update the connection service below: it also updates ${name} to its newest release.`,
         action: null,
       };
     case "version_unreadable":
-      return { text: `Hivra hasn't recorded which ${name} version this agent runs. Updating installs ${tv}, the version Hivra has tested.`, action: { label: `Update ${name}`, primary: true } };
-    case "current": return { text: `${name} is on the version Hivra has tested.`, action: null };
-    case "behind":
-      return { text: `An update is available. ${name} ${v(view.installed)} is installed and Hivra has tested ${tv}.`, action: { label: `Update ${name}`, primary: true } };
-    case "other_version":
-      return { text: `${name} ${v(view.installed)} is installed, which isn't a version Hivra has tested. Updating moves it to ${tv}.`, action: { label: `Update ${name}`, primary: true } };
-    case "ahead_custom":
-      return {
-        text: `${name} ${v(view.installed)} is installed, which is newer than the version Hivra has tested (${tv}). It may not work as expected inside Hivra.`,
-        action: { label: `Switch to ${tv}`, primary: false },
-      };
-    case "ahead_hivra":
-      return { text: `Hivra now tests ${name} ${tv}. This agent still has ${v(view.installed)}, which Hivra installed before. Updating moves it to ${tv}.`, action: { label: `Update ${name}`, primary: true } };
+      return { text: `Hivra couldn't read which ${name} version is installed.`, action: update() };
+    case "current": return { text: "", action: update() };
     case "updating":
       switch (view.phase) {
         case "starting": return { text: "Starting the update…", action: null };
         case "downloading":
           return app === "aeon"
-            ? { text: `Building ${name} ${v(view.target)}. ${name} keeps working while it builds, which can take 15 minutes.`, action: null }
-            : { text: `Downloading ${name} ${v(view.target)}. ${name} keeps working while it downloads.`, action: null };
+            ? { text: `Building ${name}'s newest version. ${name} keeps working while it builds, which can take 15 minutes.`, action: null }
+            : { text: `Downloading ${name}'s newest release. ${name} keeps working while it downloads.`, action: null };
         case "waiting":
-          return {
-            text: `Waiting until nobody is using ${name}. It updates once ${name} has been idle for 5 minutes${app === "agent-zero" ? " with no task running" : ""}, so close it in any other tab. Hivra waits up to 6 hours.`,
-            action: null,
-          };
-        case "installing": return { text: `Installing ${name} ${v(view.target)}. ${name} restarts and is back in about a minute.`, action: null };
+          return app
+            ? { text: `Waiting until nobody is using ${name}. It updates once ${name} has been idle for 5 minutes${app === "agent-zero" ? " with no task running" : ""}, so close it in any other tab. Hivra waits up to 6 hours.`, action: null }
+            : { text: `Waiting for the current reply to finish. ${name} updates as soon as no reply is being written. Hivra waits up to 6 hours.`, action: null };
+        case "installing":
+          return app
+            ? { text: `Installing ${name}'s newest release. ${name} restarts and is back in a few minutes.`, action: null }
+            : { text: `Installing ${name}'s newest release. Messages you send now wait a few seconds and then send by themselves.`, action: null };
         case "finishing": return { text: "Checking the new version…", action: null };
       }
       return { text: "", action: null };
-    case "update_done": return { text: `${name} ${v(view.target)} is installed.`, action: null };
+    case "update_done": return { text: `${name} ${v(view.installed)} is installed. It is the newest release.`, action: update() };
     case "update_deferred":
-      return { text: `${name} wasn't updated because it was still in use after 6 hours. Nothing was changed.`, action: { label: "Try again", primary: true } };
+      return { text: `${name} wasn't updated because it was still in use after 6 hours. Nothing was changed.`, action: update("Try again", true) };
     case "update_rolled_back":
       return {
-        text: `${name} ${v(view.target)} didn't start properly, so Hivra put ${view.installed ? `${name} ${v(view.installed)}` : "the previous version"} back. Your agent works as before.`,
-        action: { label: "Try again", primary: false },
+        text: `${name}'s newest release didn't start properly, so Hivra put ${view.installed ? `${name} ${v(view.installed)}` : "the previous version"} back. Your agent works as before.`,
+        action: update("Try again"),
       };
     case "update_failed":
+      if (view.reason === "local_changes") {
+        return {
+          text: `${name} didn't update because its install has changes of your own, and its updater leaves those alone. Nothing was changed.${terminalUpdate ? ` Run ${terminalUpdate} in Terminal to see what it needs.` : ""}`,
+          action: update("Try again"),
+        };
+      }
       if (view.reason === "download_failed") {
-        return { text: `Hivra couldn't ${app === "aeon" ? "build" : "download"} ${name} ${v(view.target)}. Nothing was changed.`, action: { label: "Try again", primary: false } };
+        return { text: `Hivra couldn't ${app === "aeon" ? "build" : "download"} ${name}'s newest release. Nothing was changed.`, action: update("Try again") };
       }
       if (view.reason === "no_space") {
         return { text: `There isn't enough free disk space on this agent's computer to update ${name}. Nothing was changed.`, action: null };
       }
       if (view.reason === "could_not_start") {
-        return { text: `The connection service was updated, but the ${name} update couldn't start. Try again.`, action: { label: "Try again", primary: false } };
+        return { text: `The connection service was updated, but the ${name} update couldn't start. Try again.`, action: update("Try again") };
       }
       return {
-        text: `${name} ${v(view.target)} didn't start properly, and Hivra couldn't put the previous version back. ${name} may not open until this is fixed. Try again, or contact support.`,
-        action: { label: "Try again", primary: true },
+        text: `${name}'s newest release didn't install, and Hivra couldn't put the previous version back. ${name} may not work until this is fixed. ${brokenUpdateNextStep(recovery)}`,
+        action: update("Try again", true),
       };
   }
-}
-
-function AutoUpdateToggle({ agentId, auto, name, onSaved }: {
-  agentId: string;
-  auto: AgentSoftwareAutoUpdate;
-  name: string;
-  onSaved: (state: Awaited<ReturnType<typeof setAgentSoftwareAutoUpdate>>) => void;
-}) {
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const toggle = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      onSaved(await setAgentSoftwareAutoUpdate(agentId, !auto.enabled));
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Your choice couldn't be saved. Try again.");
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <div style={{ display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div id={`agent-software-auto-${agentId}`} style={{ fontSize: 13.5, color: "var(--ink-black)", fontWeight: 600 }}>Update automatically</div>
-          <div style={{ ...manageMuted, marginTop: 3 }}>
-            When Hivra has tested a new version of {name}, it installs it while this agent is idle, never while a reply is being written.
-            {auto.source === "default" ? (auto.enabled ? " On by default for agents on Hivra Cloud." : " Off by default for agents on My server.") : ""}
-          </div>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={auto.enabled}
-          aria-labelledby={`agent-software-auto-${agentId}`}
-          disabled={saving}
-          onClick={() => void toggle()}
-          style={{ minWidth: 56, minHeight: 44, border: 0, background: "transparent", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: saving ? "default" : "pointer", flexShrink: 0, padding: 0 }}
-        >
-          <span aria-hidden="true" style={{ width: 48, height: 27, borderRadius: 14, border: "1px solid var(--etched-border)", background: auto.enabled ? "var(--gold-leaf)" : "rgba(255,255,255,0.05)", position: "relative", display: "inline-block", boxSizing: "border-box" }}>
-            {saving
-              ? <Loader2 size={13} style={{ ...manageSpin, color: "var(--ink-black)", position: "absolute", top: 6, left: auto.enabled ? 24 : 6 }} />
-              : <span style={{ position: "absolute", top: 3, left: auto.enabled ? 24 : 3, width: 19, height: 19, borderRadius: "50%", background: auto.enabled ? "var(--ink-black)" : "var(--text-muted)", transition: "left .15s ease" }} />}
-          </span>
-        </button>
-      </div>
-      {auto.pausedFor ? (
-        <div style={manageMuted}>Paused after the update to {auto.pausedFor.target} didn&apos;t install. Update {name} to try again.</div>
-      ) : null}
-      {error ? <div role="alert" style={manageError}>{error}</div> : null}
-    </div>
-  );
 }
 
 /**
  * The agent's software in Manage › Updates. `onUpdate` runs the in-place
  * update through Manage (its busy lock, progress and surface sign-in).
  */
-export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
+export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate, recovery = null }: {
   agent: HivraAgent;
   /** "Codex", "Claude Code", "Aeon"… */
   name: string;
@@ -255,12 +170,18 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
   /** This panel's update is running. */
   updating: boolean;
   onUpdate: () => Promise<AgentSoftwareUpdateOutcome>;
+  /** Manage's own way back from a failed update, when this computer has one. */
+  recovery?: SoftwareRecovery | null;
 }) {
   // A stopped agent says how to check it; one being set up or in error says nothing yet.
   const enabled = agentSoftwareCovered(agent) && (agent.status === "running" || agent.status === "stopped");
   const software = useAgentSoftware(agent.id, enabled);
   const [actionError, setActionError] = useState<string | null>(null);
   const state = software.state;
+  // Manage's one banner says the computer can't be reached; this card only
+  // says it is unavailable instead of its own error.
+  const unreachableNow = enabled && agent.status === "running" && state?.supported === true && state.view.kind === "unreachable";
+  useReportUnreachable("software", unreachableNow);
   if (!enabled) return null;
   if (!state) {
     // The first read failed: say so where the card would be, with a way to try again.
@@ -299,10 +220,10 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
 
   const app = state.app;
   const shown = agentSoftwareDisplayName(app, name);
-  const copy = app && state.tested ? appStateCopy(view, app, shown, state.tested) : stateCopy(view, name, state.tested);
-  const rawInstalled = "installed" in view && view.installed ? view.installed : view.kind === "update_done" ? view.target : null;
+  const terminalUpdate = TERMINAL_UPDATE[app ?? state.cli ?? ""] ?? null;
+  const copy = softwareStateCopy(view, shown, app, terminalUpdate, recovery);
+  const rawInstalled = "installed" in view && view.installed ? view.installed : null;
   const installed = rawInstalled && app ? agentSoftwareVersionName(rawInstalled) : rawInstalled;
-  const tested = state.tested && app ? agentSoftwareVersionName(state.tested) : state.tested;
   const update = async () => {
     setActionError(null);
     const outcome = await onUpdate();
@@ -320,7 +241,6 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
       <div style={card}>
         <div style={{ display: "grid", gap: 8 }}>
           <Fact label={`${shown} installed`}>{installed ?? (view.kind === "checking" || view.kind === "not_running" || view.kind === "unreachable" ? "—" : "Not reported")}</Fact>
-          <Fact label="Hivra's tested version">{tested ?? "—"}</Fact>
           <Fact label="Last checked">
             <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <span>{checkedAt(state.observedAt)}</span>
@@ -333,12 +253,9 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
             change (an update starting, finishing, or not installing); only
             its words change. */}
         <div role="status" aria-live="polite" data-testid="agent-software-state" style={{ fontSize: 13, color: "var(--ink-black)", lineHeight: 1.55, display: copy.text ? "flex" : "none", gap: 8, alignItems: "flex-start" }}>
-          {view.kind === "updating" ? <Loader2 size={14} aria-hidden="true" style={{ ...manageSpin, flexShrink: 0, marginTop: 3 }} /> : null}
+          {view.kind === "updating" ? <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="working" size={20} /></span> : null}
           <span>{copy.text}</span>
         </div>
-        {state.autoUpdate?.pausedFor && view.kind === "update_rolled_back" ? (
-          <div style={manageMuted}>Automatic updates are paused for {state.autoUpdate.pausedFor.target}.</div>
-        ) : null}
         {software.error ? <div style={manageMuted}>Couldn&apos;t check just now. {software.error}</div> : null}
 
         {copy.action ? (
@@ -355,21 +272,23 @@ export function AgentSoftwarePanel({ agent, name, busy, updating, onUpdate }: {
             </div>
             <div style={{ ...manageMuted, fontSize: 11.5 }}>
               {app
-                ? `Updating also refreshes Hivra's connection service without restarting the computer. ${shown} itself restarts once, when nobody is using it.`
-                : "Updating also refreshes Hivra's connection service without restarting the computer. Replies being written keep going, and terminals open on this page reconnect when it finishes."}
+                ? `Updating installs ${shown}'s newest release and also refreshes Hivra's connection service without restarting the computer. ${shown} restarts once, when nobody is using it.`
+                : `Updating installs ${shown}'s newest release and also refreshes Hivra's connection service without restarting the computer. Replies being written keep going, and terminals open on this page reconnect when it finishes.`}
             </div>
+          </div>
+        ) : null}
+        {recovery && rollbackFailed(view) ? (
+          <div>
+            <button type="button" onClick={recovery.open} style={manageButtonGhost} data-testid="agent-software-recovery">
+              {RECOVERY_BUTTON[recovery.kind]}
+            </button>
           </div>
         ) : null}
         {actionError ? <div role="alert" style={manageError}>{actionError}</div> : null}
 
-        {state.autoUpdate && state.autoUpdate.mode === "on" ? (
-          <AutoUpdateToggle agentId={agent.id} auto={state.autoUpdate} name={name} onSaved={software.replace} />
-        ) : null}
-
         <div style={{ ...manageMuted, fontSize: 11.5 }}>
-          {app
-            ? `Hivra installs only ${name} versions it has tested, so this can be older than the newest ${name} release.${app === "aeon" ? " Hivra updates the dashboard it hosts. Your Aeon skills and workflows live in your GitHub fork, which you keep up to date on GitHub." : ""}`
-            : <>Hivra installs only versions it has tested with Hivra chat, so this can be older than {VENDOR[state.cli ?? ""] ?? "the vendor"}&apos;s newest {name} release.</>}
+          {`Hivra installed ${shown}'s newest release when this agent was launched and never changes it by itself. Update installs the newest release again${app === "aeon" ? " of the dashboard Hivra hosts; your Aeon skills and workflows live in your GitHub fork, which you keep up to date on GitHub" : ""}.`}
+          {terminalUpdate ? <> You can also run <code>{terminalUpdate}</code> in Terminal.</> : null}
         </div>
       </div>
     </div>

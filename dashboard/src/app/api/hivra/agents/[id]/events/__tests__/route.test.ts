@@ -13,7 +13,6 @@ let mockEvents: Array<Record<string, unknown>>;
 let mockEventsError: unknown = null;
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {
     from: (table: string) => {

@@ -157,7 +157,7 @@ export function InstanceChannelsPanel({
         style={{
           textAlign: "left",
           border: "1px solid var(--etched-border)",
-          background: connected ? "rgba(34,197,94,0.05)" : "rgba(255,255,255,0.02)",
+          background: connected ? "color-mix(in srgb, var(--hg-ok) 5%, transparent)" : "var(--hg-fill-1)",
           padding: 14,
           display: "grid",
           gap: 8,
@@ -187,13 +187,13 @@ export function InstanceChannelsPanel({
             <Loader2 size={13} style={{ animation: "spin 1s linear infinite", opacity: 0.4 }} />
           ) : connected ? (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e" }} />
-              <span className="mono" style={{ ...mono, color: "#16a34a" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--hg-ok)" }} />
+              <span className="mono" style={{ ...mono, color: "var(--hg-ok)" }}>
                 Connected
               </span>
             </span>
           ) : partial ? (
-            <span className="mono" style={{ ...mono, color: "var(--amber, #d97706)" }}>
+            <span className="mono" style={{ ...mono, color: "var(--hg-warn)" }}>
               Incomplete
             </span>
           ) : (
@@ -318,7 +318,7 @@ export function InstanceChannelsPanel({
                 overflow: "hidden",
                 background: "color-mix(in srgb, var(--bg-surface) 96%, transparent)",
                 border: "1px solid var(--etched-border)",
-                boxShadow: "0 24px 80px rgba(0, 0, 0, 0.22)",
+                boxShadow: "var(--hg-shadow-lg)",
               }}
             >
               <div

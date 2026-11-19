@@ -69,7 +69,7 @@ export function OpsArchiveButton({ eventIds }: OpsArchiveButtonProps) {
         {isPending ? 'Archiving…' : `Archive All (${eventIds.length})`}
       </button>
       {error && (
-        <p style={{ margin: 0, fontSize: 12, color: '#b91c1c', maxWidth: 320 }}>
+        <p style={{ margin: 0, fontSize: 12, color: 'var(--hg-bad)', maxWidth: 320 }}>
           {error}
         </p>
       )}

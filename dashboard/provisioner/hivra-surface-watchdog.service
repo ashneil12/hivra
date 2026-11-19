@@ -1,0 +1,16 @@
+[Unit]
+Description=Hivra agent surface watchdog (real-path probe, bounded restart, unit failure receipts)
+After=network-online.target bux-hivra-chat.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Box credentials (api-token, agent-kind) live in the agent user's home.
+Environment=HIVRA_AGENT_HOME=/home/bux
+ExecStart=/usr/bin/python3 -I -B /var/lib/hivra/hivra-surface-watchdog.py
+Restart=always
+RestartSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

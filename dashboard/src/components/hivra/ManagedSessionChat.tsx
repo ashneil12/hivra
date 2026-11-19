@@ -11,6 +11,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertTriangle, Check, Info, Loader2, Pause, Play, Send, ShieldQuestion, Trash2, X } from "lucide-react";
 
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { CodeBlock } from "@/components/markdown/CodeBlock";
 import { AGENT_MARKDOWN_COMPONENTS } from "@/components/markdown/agent-markdown-image";
 import { computerContractDisplayText } from "@/lib/agent-computers/computer-contract";
@@ -119,7 +120,7 @@ function RunView({
             {run.tools.map((tool) => (
               <div key={tool.id} className={styles.tool}>
                 {tool.status === "running"
-                  ? <Loader2 size={13} className={styles.spin} aria-label="Running" />
+                  ? <ThinkingOrb size={20} state="working" label="Running" />
                   : tool.status === "done" ? <Check size={13} aria-label="Done" /> : <X size={13} aria-label="Failed" />}
                 <span className={styles.toolLabel}>
                   {tool.label}
@@ -156,7 +157,7 @@ function RunView({
           </div>
         ))}
         {run.text ? <Md text={run.text} /> : null}
-        {!hasOutput && run.state === "running" ? <Loader2 size={15} className={styles.spin} aria-label="Working" /> : null}
+        {!hasOutput && run.state === "running" ? <ThinkingOrb size={20} state="working" label="Working" /> : null}
         {run.error ? <div className={styles.runError}>⚠ {run.error}</div> : null}
         {run.state === "completed" && (run.tokensIn || run.tokensOut) ? (
           <div className={styles.runMeta}>
@@ -452,7 +453,7 @@ export function ManagedSessionChat({
         <div className={styles.inner}>
           {session.status === "provisioning" ? (
             <div className={styles.empty}>
-              <Loader2 size={18} className={styles.spin} aria-hidden /><br />
+              <ThinkingOrb size={32} state="connecting" /><br />
               DigitalOcean is starting this session’s microVM.
             </div>
           ) : transcript.runs.length === 0 && orphanPrompts.length === 0 ? (

@@ -333,7 +333,7 @@ export function StyledDropdown({
               style={{
                 background: "var(--bg-surface)",
                 border: "1px solid var(--etched-border)",
-                boxShadow: "0 12px 32px rgba(0,0,0,0.16)",
+                boxShadow: "var(--hg-shadow-lg)",
                 overflow: "hidden",
               }}
             >

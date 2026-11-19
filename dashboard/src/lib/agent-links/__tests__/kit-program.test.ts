@@ -24,6 +24,21 @@ describe("agent link kit", () => {
     expect(skill).toContain("(Studio, Omarchy x)");
   });
 
+  it("teaches the bridge in plain words, with or without linked computers", () => {
+    const bridge = [{ id: "33333333-3333-4333-8333-333333333333", name: "Owner Mac" }];
+    const only = renderComputersNote("Claude", [], bridge);
+    expect(only).toContain("Owner Mac");
+    expect(only).toContain("hivra-computers bridge run <computer> [--cwd DIR] [--timeout SECONDS] -- <command>");
+    expect(only).toContain("needs your owner's OK in Hivra");
+    expect(only).toContain("no sandbox");
+    expect(only).not.toContain("Your owner linked these computers");
+    const both = renderComputersNote("Claude", computers, bridge);
+    expect(both).toContain("Your owner linked these computers");
+    expect(both).toContain("hivra-computers run <computer> -- <command>");
+    expect(renderComputersNote("Claude", computers)).not.toContain("bridge");
+    expect(renderComputersSkill([], bridge)).toMatch(/^---\nname: hivra-computers\ndescription: .*\(Owner Mac\)/);
+  });
+
   it("is one script both seed lanes accept, with the request only base64 encoded", () => {
     const script = buildKitGuestScript({ mode: "install", cli: HIVRA_COMPUTERS_CLI,
       link: { endpoint: "https://canary.example.test/api/agent-link", key: `hvl_${"b".repeat(64)}`, agentId: "a" }, note: "n", skill: "s" });

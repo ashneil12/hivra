@@ -8,7 +8,6 @@ jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: { from: (...args: unknown[]) => mockFrom(...args) },
 }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 
 function request() {
   return new NextRequest("https://hivra.cloud/api/hivra/agents/00000000-0000-4000-8000-000000000a01/snapshots", {

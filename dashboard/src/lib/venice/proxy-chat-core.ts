@@ -9,6 +9,11 @@ import {
   type ManagedVeniceWalletType,
 } from "@/lib/billing/managed-venice-wallets";
 import { ManagedVeniceSpendCapError } from "@/lib/billing/managed-venice-spend-caps";
+import { managedVeniceSpendCapMessage } from "@/lib/billing/managed-venice-agent-spend-caps";
+import {
+  checkManagedVeniceAgentPrivateOnly,
+  managedVenicePrivateOnlyResponse,
+} from "@/lib/venice/agent-private-only";
 import {
   UnsupportedVeniceModelError,
   checkVeniceChatPricingCatalogStaleness,
@@ -32,6 +37,7 @@ import {
   type ManagedChatSurchargeEvidence,
   type ManagedChatSurchargePlan,
 } from "@/lib/venice/chat-surcharges";
+import { tryGrantLaunchCredit } from "@/lib/venice/promo/service";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
@@ -151,6 +157,8 @@ export async function authorizeManagedVeniceChat(params: {
    * response never reaches it. Omitted, a reference is generated here.
    */
   referenceId?: string;
+  /** The caller the inference Worker saw, for the key-to-computer binding. Omitted for direct requests. */
+  caller?: import("./key-binding").KeyBindingCaller;
 }): Promise<AuthorizeManagedVeniceChatResult> {
   if (params.referenceId !== undefined && !REFERENCE_ID_PATTERN.test(params.referenceId)) {
     return {
@@ -167,7 +175,7 @@ export async function authorizeManagedVeniceChat(params: {
     return { ok: false, response: apiError("Unauthorized", 401) };
   }
 
-  const verifiedKey = await verifyManagedVeniceProxyKey({ plaintextKey });
+  const verifiedKey = await verifyManagedVeniceProxyKey({ plaintextKey, ...(params.caller ? { caller: params.caller } : {}) });
   if (!verifiedKey) {
     return { ok: false, response: apiError("Unauthorized", 401) };
   }
@@ -269,6 +277,21 @@ export async function authorizeManagedVeniceChat(params: {
     throw error;
   }
 
+  // "Private models only": an agent whose owner turned it on may call only
+  // models Venice marks private. Checked here, after the model is known to be
+  // a real one and before any hold, so chat, Responses and the off-Vercel
+  // Worker (which authorizes through this function) are all covered. A no-op
+  // while MANAGED_VENICE_AGENT_PRIVATE_ONLY_ENABLED is off.
+  const privateOnly = await checkManagedVeniceAgentPrivateOnly({
+    key: verifiedKey,
+    model: body.model,
+    endpoint,
+    source: "managed-venice-chat",
+  });
+  if (!privateOnly.allowed) {
+    return { ok: false, response: managedVenicePrivateOnlyResponse(privateOnly) };
+  }
+
   // Catalog staleness check. We don't fail closed — Venice may have re-priced
   // models since our last snapshot and we'd rather charge the old rate than
   // 503 the user. But page hard so the operator can refresh the catalog
@@ -323,6 +346,12 @@ export async function authorizeManagedVeniceChat(params: {
 
   const walletType = verifiedKey.defaultWalletType ?? "hermesos";
 
+  // A card-wallet user who redeemed the Venice code before their key was minted
+  // gets the launch credit on their first request (flag-gated, best-effort).
+  if (walletType === "card") {
+    await tryGrantLaunchCredit({ userId: verifiedKey.userId });
+  }
+
   let budgeted: Awaited<ReturnType<typeof reserveManagedVeniceChatWithinBalance>>;
   try {
     budgeted = await reserveManagedVeniceChatWithinBalance({
@@ -341,7 +370,7 @@ export async function authorizeManagedVeniceChat(params: {
     if (error instanceof ManagedVeniceSpendCapError) {
       // Protective cap, not an empty wallet — the key stays active; the user
       // (or ops) raises the cap or waits for the month to roll over.
-      log.warn("Managed Venice request blocked by monthly spend cap", {
+      log.warn("Managed Venice request blocked by a spend cap", {
         source: "managed-venice-chat",
         route: "/api/managed-venice/v1/chat/completions",
         method: "POST",
@@ -358,9 +387,7 @@ export async function authorizeManagedVeniceChat(params: {
           status: 402,
           code: "managed_venice_spend_cap_reached",
           type: "billing_error",
-          message:
-            `Monthly managed Venice spend cap reached. Manage your limit in Hivra: ` +
-            `${managedVeniceTopUpUrl(walletType)}`,
+          message: managedVeniceSpendCapMessage(error, managedVeniceTopUpUrl(walletType)),
         }),
       };
     }

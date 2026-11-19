@@ -260,6 +260,7 @@ def artifact_records(root: Path) -> list[dict[str, object]]:
         "/opt/bux/hivra-chat/llm-application.js",
         "/opt/bux/hivra-chat/guarded-files.cjs",
         "/opt/bux/hivra-chat/agent-zero-editor.cjs",
+        "/opt/bux/hivra-chat/import-state.cjs",
         "/opt/bux/hivra-chat/server.js",
         "/usr/local/bin/hivra-agent-shell",
         "/usr/share/doc/hivra-caddy/LICENSE",
@@ -274,7 +275,7 @@ def artifact_records(root: Path) -> list[dict[str, object]]:
         "/opt/hivra/deepseek-runtime/package-lock.json",
         "/opt/hivra/deepseek-runtime/.hivra-native-install.json",
         *["/opt/hivra/deepseek-gateway/" + name for name in
-          ("server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "index.html", "app.js",
+          ("server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "import-state.cjs", "index.html", "app.js",
            "deepseek-harness/native-broker.cjs", "deepseek-harness/gateway-policy.cjs", "deepseek-harness/runtime-process.cjs")],
     ]
     records = []
@@ -291,9 +292,9 @@ def artifact_records(root: Path) -> list[dict[str, object]]:
 def service_records(runner: Callable[[list[str], str | None], bytes | None]) -> list[dict[str, str]]:
     units = [
         "bux-aeon.service", "bux-box-ttyd.service", "bux-hivra-chat.service",
-        "bux-local-browser.service", "bux-openclaw.service", "bux-ttyd.service",
+        "bux-local-browser.service", "bux-openclaw.service", "bux-hermes.service", "bux-ttyd.service",
         "hivra-direct-access.service",
-        "hivra-agent-zero.service", "hivra-novnc.service", "hivra-x11vnc.service", "hivra-xvfb.service",
+        "hivra-agent-zero.service", "hivra-openbot.service", "hivra-nuphos.service", "hivra-novnc.service", "hivra-x11vnc.service", "hivra-xvfb.service",
     ]
     records = []
     for unit in units:
@@ -343,6 +344,7 @@ def collect_receipt(
         ("node", ["/usr/bin/node", "--version"], None),
         ("npm", ["/usr/bin/npm", "--version"], None),
         ("openclaw", ["/home/bux/.npm-global/bin/openclaw", "--version"], "bux"),
+        ("hermes", ["/home/bux/.local/bin/hermes", "--version"], "bux"),
         ("ttyd", ["/usr/local/bin/ttyd", "--version"], None),
     ]:
         binaries.append({"name": name, "versionOutput": first_line(runner(arguments, user))})
@@ -702,7 +704,7 @@ def refresh_direct_access_evidence(*, provisioner_version: str, agent_kind: str,
 def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--provisioner-version", required=True)
-    parser.add_argument("--agent-kind", choices=("claude", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness", "linux-desktop"), required=True)
+    parser.add_argument("--agent-kind", choices=("claude", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos", "deepseek-harness", "linux-desktop", "linux-server"), required=True)
     parser.add_argument("--substrate", choices=("proxmox-kvm", "provider-vm"), required=True)
     parser.add_argument("--browser-enabled", choices=("0", "1"))
     parser.add_argument("--agent-zero-image")
@@ -715,7 +717,7 @@ def arguments() -> argparse.Namespace:
             raise ReceiptError("invalid direct-access refresh")
     elif value.browser_enabled is None:
         raise ReceiptError("browser selection is required")
-    elif value.agent_kind == "agent-zero":
+    elif value.agent_kind in ("agent-zero", "openbot", "nuphos"):
         if not isinstance(value.agent_zero_image, str) or "@" not in value.agent_zero_image or not DIGEST.fullmatch(value.agent_zero_image.rsplit("@", 1)[1]):
             raise ReceiptError("invalid selected container image")
     elif value.agent_zero_image is not None:

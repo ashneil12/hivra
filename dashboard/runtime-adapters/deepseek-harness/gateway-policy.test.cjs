@@ -88,7 +88,7 @@ test('complete gateway separates native cookies from Hivra management, routing a
       } };
       if (name === './deepseek-harness/runtime-process.cjs') return { async startRuntime(options) { launched = options; return {}; } };
       if (name === './guarded-files.cjs') return { createGuardedFiles: () => ({ read: () => ({ content: 'management-only fixture' }) }) };
-      if (name === './llm-application.js' || name === './agent-zero-editor.cjs') return realRequire(name);
+      if (name === './llm-application.js' || name === './agent-zero-editor.cjs' || name === './import-state.cjs') return realRequire(name);
       throw new Error(`Unexpected fixture dependency: ${name}`);
     },
     process: { env: { HIVRA_CHAT_PORT: '0', HIVRA_AGENT_KIND: 'deepseek-harness' }, once: (event, callback) => { eventHandlers[event] = callback; }, exit: code => { stopped = code; } },

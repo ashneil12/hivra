@@ -3,6 +3,9 @@ import "@testing-library/jest-dom";
 import { act, render, screen } from "@testing-library/react";
 
 import { DeferredGTM } from "../DeferredGTM";
+
+let mockPathname: string | null = null;
+jest.mock("next/navigation", () => ({ usePathname: () => mockPathname }));
 import { CONSENT_STORAGE_KEY, CONSENT_VERSION, writeStoredConsent } from "@/lib/consent/cookie-consent";
 
 jest.mock("@next/third-parties/google", () => ({
@@ -19,6 +22,7 @@ type W = Window & Record<string, unknown> & { gtag?: jest.Mock };
 describe("DeferredGTM", () => {
   beforeEach(() => {
     jest.useFakeTimers();
+    mockPathname = null;
     window.localStorage.clear();
     document.cookie = `${CONSENT_STORAGE_KEY}=; Max-Age=0; Path=/`;
     delete (window as W)["ga-disable-G-ML3NFRHMYF"];
@@ -116,6 +120,73 @@ describe("DeferredGTM", () => {
     });
     expect(screen.getByTestId("gtm-tag")).toHaveAttribute("data-gtm-id", "GTM-T6GPHP4N");
     expect(screen.queryByTestId("ga4-tag")).not.toBeInTheDocument();
+  });
+
+  describe("with Google Analytics on public pages only", () => {
+    function renderOn(pathname: string, publicPagesOnly = true) {
+      mockPathname = pathname;
+      const view = render(<DeferredGTM gtmId="GTM-T6GPHP4N" gaId="G-ML3NFRHMYF" publicPagesOnly={publicPagesOnly} />);
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+      return view;
+    }
+
+    it.each(["/dashboard", "/dashboard/agents/1", "/workspace-cloud", "/sign-in", "/sign-up", "/checkout", "/get-started/activate", "/wake"])(
+      "loads nothing on %s",
+      (pathname) => {
+        writeStoredConsent("accepted");
+        renderOn(pathname);
+        expect(screen.queryByTestId("gtm-tag")).not.toBeInTheDocument();
+        expect(screen.queryByTestId("ga4-tag")).not.toBeInTheDocument();
+      }
+    );
+
+    it("loads on a public page", () => {
+      writeStoredConsent("accepted");
+      renderOn("/pricing");
+      expect(screen.getByTestId("ga4-tag")).toBeInTheDocument();
+      expect((window as W)["ga-disable-G-ML3NFRHMYF"]).toBeUndefined();
+    });
+
+    it("still loads on signed-in pages while the switch is off", () => {
+      writeStoredConsent("accepted");
+      renderOn("/dashboard", false);
+      expect(screen.getByTestId("ga4-tag")).toBeInTheDocument();
+    });
+
+    it("stops GA sending after a move into the app, and lets it send again on the way out", () => {
+      writeStoredConsent("accepted");
+      const view = renderOn("/");
+      expect(screen.getByTestId("ga4-tag")).toBeInTheDocument();
+
+      mockPathname = "/dashboard";
+      view.rerender(<DeferredGTM gtmId="GTM-T6GPHP4N" gaId="G-ML3NFRHMYF" publicPagesOnly />);
+      // A loaded script cannot be unloaded; GA is told to stop sending instead.
+      expect((window as W)["ga-disable-G-ML3NFRHMYF"]).toBe(true);
+
+      mockPathname = "/blog";
+      view.rerender(<DeferredGTM gtmId="GTM-T6GPHP4N" gaId="G-ML3NFRHMYF" publicPagesOnly />);
+      expect((window as W)["ga-disable-G-ML3NFRHMYF"]).toBeUndefined();
+    });
+
+    it("keeps GA stopped when the visitor accepts on a signed-in page", () => {
+      mockPathname = "/dashboard";
+      const view = render(<DeferredGTM gtmId="GTM-T6GPHP4N" gaId="G-ML3NFRHMYF" publicPagesOnly />);
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+      act(() => {
+        writeStoredConsent("accepted");
+      });
+      expect(screen.queryByTestId("ga4-tag")).not.toBeInTheDocument();
+      expect((window as W)["ga-disable-G-ML3NFRHMYF"]).toBe(true);
+
+      mockPathname = "/";
+      view.rerender(<DeferredGTM gtmId="GTM-T6GPHP4N" gaId="G-ML3NFRHMYF" publicPagesOnly />);
+      expect(screen.getByTestId("ga4-tag")).toBeInTheDocument();
+      expect((window as W)["ga-disable-G-ML3NFRHMYF"]).toBeUndefined();
+    });
   });
 
   describe("inside a Hivra desktop app", () => {

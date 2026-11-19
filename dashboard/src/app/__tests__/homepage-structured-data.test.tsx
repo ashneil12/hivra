@@ -169,17 +169,17 @@ describe("homepage FAQ and offers structured data", () => {
   it("publishes the same questions and answers the page shows", async () => {
     process.env.HIVRA_NEW_TOKEN_SURFACES = "true";
     const faq = faqOf(findSchema(await LandingPage({})));
-    expect(faq.mainEntity).toHaveLength(7);
-    expect(faq.mainEntity.map((item) => [item.name, item.acceptedAnswer.text])).toEqual(homepageFaq(true).map(({ q, a }) => [q, a]));
+    expect(faq.mainEntity).toHaveLength(homepageFaq(true).length);
+    expect(faq.mainEntity.map((item) => [item.name, item.acceptedAnswer.text])).toEqual(homepageFaq(true).map(({ q, a }) => [q, a.replace(/\n\n/g, " ")]));
   });
 
-  it("leaves the token sentence out of the structured answers while the token surfaces are off, as it is off the page", async () => {
+  it("puts no token sentence in the structured answers, as there is none on the page", async () => {
     process.env.HIVRA_NEW_TOKEN_SURFACES = "false";
     const schema = findSchema(await LandingPage({}));
-    expect(faqOf(schema).mainEntity.map((item) => [item.name, item.acceptedAnswer.text])).toEqual(homepageFaq(false).map(({ q, a }) => [q, a]));
+    expect(faqOf(schema).mainEntity.map((item) => [item.name, item.acceptedAnswer.text])).toEqual(homepageFaq(false).map(({ q, a }) => [q, a.replace(/\n\n/g, " ")]));
     const markup = allStrings(schema).join("\n");
     expect(markup).not.toMatch(/Token-related access|\$HIVRA|\$HermesOS|airdrop|snapshot|litepaper|tokenomics|launchpad|bankr/i);
-    expect(markup).toMatch(/Do I need a token\?/);
+    expect(markup).not.toMatch(/Do I need a token\?/);
   });
 
   it("says AI key and AI usage in the markup, as the visible page does", async () => {
@@ -187,7 +187,9 @@ describe("homepage FAQ and offers structured data", () => {
     const markup = allStrings(schema).join("\n");
     expect(markup).toContain("Bring your own AI key");
     expect(markup).toContain("pay for it and for your AI usage");
-    expect(markup).not.toMatch(/\bmodel (?:key|usage|provider|API key)\b/i);
+    // The FAQ answers are Ash's own words (12 Nov 2026) and may say "model provider"; the rest of the markup says AI.
+    const faqText = new Set(faqOf(schema).mainEntity.map((item) => item.acceptedAnswer.text));
+    expect(allStrings(schema).filter((text) => !faqText.has(text)).join("\n")).not.toMatch(/\bmodel (?:key|usage|provider|API key)\b/i);
   });
 
   it("offers only what can be bought today: free self-hosting and the two hosted sizes", async () => {

@@ -1,4 +1,4 @@
-type HivraPreviewId = "deepseek-harness" | "buzz";
+type HivraPreviewId = "buzz";
 
 export interface HivraPreviewDefinition {
   id: HivraPreviewId;
@@ -20,17 +20,6 @@ export interface HivraPreviewDefinition {
  * without turning a preview into launch authority.
  */
 export const HIVRA_PREVIEWS: readonly HivraPreviewDefinition[] = [
-  {
-    id: "deepseek-harness",
-    name: "DeepSeek Harness",
-    kind: "agent-runtime",
-    eyebrow: "Private preview",
-    summary: "DeepSeek's coding agent, in its own interface on a computer of its own, using the model key you choose. It's in private preview and can't be launched yet.",
-    href: "/dashboard/agents#deepseek-harness",
-    actionLabel: "Open Agents",
-    usableNow: false,
-    launchable: false,
-  },
   {
     id: "buzz",
     name: "Buzz",

@@ -8,6 +8,8 @@ import path from "node:path";
 import vm from "node:vm";
 import WebSocket, { WebSocketServer } from "ws";
 
+import { launchOptions } from "../../../../scripts/lib/playwright-launch.cjs";
+
 const TOKEN = "b".repeat(64);
 const ORIGIN = "https://agent-zero.hivra.test";
 const RUNTIME_ID = "0123456789abcdef";
@@ -258,7 +260,7 @@ describe("Agent Zero mounted module graph", () => {
         if (name === "path") return path;
         if (name === "net") return net;
         if (name === "crypto") return crypto;
-        if (["./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs"].includes(name)) return realRequire(name);
+        if (["./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./import-state.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected dependency ${name}`);
       },
       process: { env: { HIVRA_CHAT_PORT: "0", HIVRA_AGENT_KIND: "agent-zero",
@@ -349,9 +351,14 @@ describe("Agent Zero mounted module graph", () => {
     expect(dispatched.slice(before)).toEqual([expect.objectContaining({ method: "POST", path: "/settings_set", body: '{"fixture":true}' })]);
   });
 
-  it.each(["components", "plugins", "vendor", "js", "extensions/webui"])("routes authenticated %s imports from blob modules without a Referer", async namespace => {
+  it.each(["components", "plugins", "vendor", "js", "usr/plugins", "extensions/webui"])("routes authenticated %s imports from blob modules without a Referer", async namespace => {
     expect(await request(`/${namespace}/fixture.js`)).toMatchObject({ status: 200, location: undefined });
     expect(await request(`/${namespace}/fixture.js`, { auth: false })).toMatchObject({ status: 401, location: undefined });
+  });
+
+  it("keeps the rest of the persisted volume out of the no-Referer static route", async () => {
+    for (const url of ["/usr", "/usr/", "/usr/memory/fixture.txt", "/usr/projects/fixture.js"])
+      expect(await request(url)).toMatchObject({ status: 404 });
   });
 
   it("limits extensions to the webui static namespace and GET/HEAD without a Referer", async () => {
@@ -415,7 +422,7 @@ describe("Agent Zero mounted module graph", () => {
   // Opt in for the focused runtime gate; ordinary unit CI does not download a browser.
   (process.env.HIVRA_A0_BROWSER_TEST === "1" ? it : it.skip)("initializes the real browser ModuleMap only once through the actual gateway", async () => {
     const { chromium } = await import("playwright");
-    const browser = await chromium.launch({ headless: true });
+    const browser = await chromium.launch(launchOptions({ headless: true }));
     moduleGraph = true;
     try {
       const context = await browser.newContext({ extraHTTPHeaders: { Authorization: `Bearer ${TOKEN}` } });
@@ -439,6 +446,41 @@ describe("Agent Zero mounted module graph", () => {
     expect(await request("/api/load_webui_extensions", { method: "POST", body: "{}" })).toMatchObject({ status: 404 });
     expect(await request("/components/fixture.js", { method: "POST", body: "{}" })).toMatchObject({ status: 404 });
     expect(await request("/index.js", { method: "POST", body: "{}" })).toMatchObject({ status: 404 });
+    expect(dispatched).toHaveLength(before);
+  });
+
+  it("routes the A0 CLI's root connector calls to the native backend for a signed-in web session only", async () => {
+    const cookie = await sessionCookie();
+    const chats = "/api/plugins/_a0_connector/v1/chats_list";
+    const probe = "/api/plugins/_a0_connector/v1/capabilities";
+    // The capability probe is public discovery; everything else needs the session.
+    let before = dispatched.length;
+    expect(await request(probe, { method: "POST", auth: false, body: "{}" })).toMatchObject({ status: 200 });
+    expect(dispatched).toHaveLength(before + 1);
+    expect(dispatched.at(-1)?.path).toBe(probe);
+    expect(dispatched.at(-1)?.authorization).toBeUndefined();
+    before = dispatched.length;
+    expect(await request(probe, { auth: false })).toMatchObject({ status: 401 });
+    expect(await request(chats, { method: "POST", auth: false, body: "{}" })).toMatchObject({ status: 401 });
+    expect(await request("/api/csrf_token", { auth: false })).toMatchObject({ status: 401 });
+    // A browser write from another site (Origin or Sec-Fetch-Site present) cannot ride the cookie.
+    expect(await request(chats, { method: "POST", auth: false, cookie, headers: { Origin: "https://other.hivra.test" }, body: "{}" })).toMatchObject({ status: 401 });
+    expect(await request(chats, { method: "POST", auth: false, cookie, headers: { "Sec-Fetch-Site": "cross-site" }, body: "{}" })).toMatchObject({ status: 401 });
+    expect(dispatched).toHaveLength(before);
+    // A non-browser client sends the session cookie with no Origin.
+    expect(await request(chats, { method: "POST", auth: false, cookie, body: "{}" })).toMatchObject({ status: 200 });
+    expect(dispatched.at(-1)?.path).toBe(chats);
+    expect(dispatched.at(-1)?.body).toBe("{}");
+    expect(dispatched.at(-1)?.cookie ?? "").not.toContain("hivra_auth");
+    expect(dispatched.at(-1)?.authorization).toBeUndefined();
+    loginFixture = "ready";
+    expect(await request("/api/csrf_token", { auth: false, cookie })).toMatchObject({ status: 200 });
+    loginFixture = "absent";
+    await request("/agent-zero/fixture/clear-all");
+    await resetNativeCsrf();
+    // Neighbouring paths stay with the gateway.
+    before = dispatched.length;
+    expect(await request("/api/load_webui_extensions", { method: "POST", auth: false, cookie, body: "{}" })).toMatchObject({ status: 404 });
     expect(dispatched).toHaveLength(before);
   });
 

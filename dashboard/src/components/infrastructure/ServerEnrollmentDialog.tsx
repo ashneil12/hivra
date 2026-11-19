@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle, ArrowRight, CheckCircle2, ExternalLink, KeyRound, Loader2, RefreshCw, SquareTerminal, X } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { InfrastructureApiError } from "@/lib/infrastructure/client";
@@ -16,6 +17,7 @@ import {
 
 import styles from "./Infrastructure.module.css";
 import enrollmentStyles from "./ServerEnrollment.module.css";
+import { serverEnrollmentAgentPrompt } from "@/lib/infrastructure/server-enrollment-agent-prompt";
 import { CopyButton } from "./CopyButton";
 import { ServerEnrollmentCard, useNow } from "./ServerEnrollmentCard";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
@@ -223,7 +225,7 @@ export function ServerEnrollmentDialog({
         <div className={styles.wizardBody}>
           {state.kind === "issuing" ? (
             <p className={enrollmentStyles.progress} role="status">
-              <Loader2 size={15} className={styles.spin} aria-hidden="true" /> Making your setup command…
+              <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="connecting" size={20} /></span> Making your setup command…
             </p>
           ) : state.kind === "unavailable" ? (
             <div className={styles.formError} role="alert">
@@ -254,6 +256,12 @@ export function ServerEnrollmentDialog({
             </p>
           ) : item && ready ? (
             <>
+              <p className={enrollmentStyles.meta}>
+                Running Proxmox?{" "}
+                <button type="button" className={enrollmentStyles.linkButton} onClick={() => { close(); onUseSshDetails(); }}>
+                  Connect it with SSH details instead
+                </button>
+              </p>
               <p className={enrollmentStyles.lead}>Run this on the server, as a user who can use sudo:</p>
               {open ? (
                 <div className={enrollmentStyles.commandRow}>
@@ -288,11 +296,29 @@ export function ServerEnrollmentDialog({
 
               {scriptOpen ? <ViewScriptFirst issued={ready.issued} /> : null}
 
+              {open ? (
+                <div className={enrollmentStyles.agentPrompt} data-testid="server-enrollment-agent-prompt">
+                  <p className={enrollmentStyles.meta}>
+                    <strong>Use a coding agent?</strong> Copy this prompt into Claude Code, Codex or another agent that can
+                    reach the server. It previews first and leaves the step that gives Hivra access to you.{" "}
+                    <CopyButton
+                      value={serverEnrollmentAgentPrompt({ ...ready.issued, expiresAt: item.expiresAt })}
+                      label="Copy the prompt for your coding agent"
+                      text="Copy prompt"
+                    />
+                  </p>
+                </div>
+              ) : null}
+
               <ul className={enrollmentStyles.notes}>
                 <li>Signed in as root? Leave out <code>sudo</code>.</li>
                 <li>
-                  Works with Ubuntu 22.04 or 24.04 on x86. The server needs a public IPv4 address and must accept SSH from
+                  Works with Ubuntu 22.04 or 24.04 on x86, not a Mac or Windows PC. The server needs a public IPv4 address and must accept SSH from
                   the internet. Home or office machine? Hosted Hivra can&apos;t reach private networks yet.
+                </li>
+                <li>
+                  An Ubuntu server connected this way runs Linux Sandbox. Claude Code, Codex, OpenClaw, Agent Zero, Aeon
+                  and Ubuntu Desktop need a Proxmox VE server connected with SSH details.
                 </li>
                 <li>
                   Proxmox VE connects with a root login for now: use <strong>Connect with SSH details instead</strong>.

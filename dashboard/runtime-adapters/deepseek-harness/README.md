@@ -312,9 +312,15 @@ would otherwise trip the 401 first). `VMID` and `IP` come from the ledger.
 
 1. **ACP lane.** Handshake, operation and revocation inside the same computer
    boundary. Not accepted; this is the gate the public catalog waits on.
-2. **Typed BYOK delivery.** Hivra's launch accepts no model credentials for this
-   kind, so neither a saved key nor Hivra credits reach it. Today the key is added
-   in DeepSeek Harness's own settings on the computer.
+2. **Typed model delivery.** Shipped in release `2026.11.10.5` for DeepSeek
+   computers on Proxmox. The launch carries a model key, base URL and model
+   together (Hivra credits through the managed Venice proxy by default, or the
+   owner's own Venice API key; default model `deepseek-v4-1-flash`). The guest
+   installer writes them, as the `bux` user, into DeepSeek Harness's own
+   `$DSH_HOME/settings.yaml` (an `llm-pi-ai` route plus `agent-default-model`)
+   and `$DSH_HOME/.credentials.yaml`, once, on a fresh install. The upstream
+   web UI only writes settings from a local browser, so a key cannot be added
+   through Hivra's gateway afterwards.
 3. **Owned runtime updater.** Shipped in release `2026.10.20.1` for DeepSeek
    computers on Proxmox: Manage › Updates runs `deepseek-harness/update-guest.py`
    through the runtime updater's guest half. It refuses a computer that is not

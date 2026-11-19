@@ -76,6 +76,14 @@ existing computer stays Canary-only even then (see Next, item 5).
   Omarchy computer a site holds); Hivra-managed Windows; macOS computers; custom
   images.
 - Complete self-hosting (Phase 4).
+- **Agent and app directory, and creators earning from usage.** A public,
+  searchable directory of the agents and apps Hivra can launch, built to be
+  found by search engines and AI assistants, with a page per agent. Later,
+  the people who make an agent can earn a share of what it earns, split by
+  how much each one is used. Usage and server-cost records are in place
+  (see [the marketplace seams](dashboard/docs/hivra-marketplace-seams.md));
+  nothing is paid or switched on. Needs: owner decisions on the share and
+  payouts, then engineering.
 
 **Not planned:** replacing an agent's own interface with a Hivra chat. Hermes,
 Agent Zero and other agents with their own interface keep it as the main one.
@@ -280,9 +288,9 @@ None closes Phase 1. Each dated entry, bound to its own revision, is in
 - Remove hidden dependencies on Hivra-only hosts, mutable scripts, environment assumptions, and business-only wiring from the portable path.
 - Preserve each runtime's working Hivra or native interface after launch.
 - Keep `/dashboard/workspace` optional; do not make it a dependency of portable provisioning.
-  **Current:** on Canary, `/dashboard` opens the workspace view behind the server
-  flag `HIVRA_WORKSPACE_SHELL_ENABLED`, and `/dashboard/workspace` forwards
-  there; production still opens the Hermes command center at `/dashboard`.
+  **Current:** `/dashboard` opens the workspace view and `/dashboard/workspace`
+  forwards there. Production still runs the older build until the next
+  owner-approved promotion.
 
 **Exit:** A user can launch one supported existing agent with their own runtime key on supported user-owned infrastructure, open its working interface, restart it, and remove it without Hivra-held credentials or Hivra model credits.
 

@@ -7,6 +7,7 @@ import type { BrowserContext, Page } from "playwright";
 import type { Config } from "../config.js";
 import type { Logger } from "../logger.js";
 import { cookieHost, type PlaywrightCookie } from "../cookies/parse.js";
+import { assertCanSandbox, CHROMIUM_COMMON_ARGS, diskCacheArg, resolveChromiumExecutable } from "../browser/chromium.js";
 
 interface Session {
   session_id: string;
@@ -269,19 +270,22 @@ export class SessionManager {
       await rm(join(dir, lock), { force: true }).catch(() => {});
     }
 
+    // Sandbox ON, always: this browser opens untrusted sites. See
+    // src/browser/chromium.ts for why there is no --no-sandbox fallback.
+    assertCanSandbox();
     const ctx = await chromium.launchPersistentContext(dir, {
+      executablePath: resolveChromiumExecutable(),
+      chromiumSandbox: true,
       headless: this.config.PLAYWRIGHT_HEADLESS,
       slowMo: this.config.PLAYWRIGHT_SLOW_MO_MS,
       viewport: { width: 1280, height: 800 },
       acceptDownloads: false,
       args: [
-        "--no-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-blink-features=AutomationControlled",
+        ...CHROMIUM_COMMON_ARGS,
         // Cap the HTTP disk cache so a long-lived persistent context can't grow
         // the profile (and the mounted browser-state volume) unbounded. Mirrors
         // the CDP path's bound. See finding_browser_sidecar_bloat_root_cause.
-        `--disk-cache-size=${Number(process.env.SIDECAR_DISK_CACHE_MB ?? 256) * 1024 * 1024}`,
+        diskCacheArg(Number(process.env.SIDECAR_DISK_CACHE_MB ?? 256)),
       ],
       // Service-worker fetches bypass context.route, so they would bypass the
       // navigation guard below.

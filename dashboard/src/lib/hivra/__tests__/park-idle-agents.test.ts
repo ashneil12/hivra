@@ -91,6 +91,8 @@ describe("runParkIdleHivraAgentsSweep", () => {
     process.env.HIVRA_IDLE_PARK_ENABLED = "true";
     await runParkIdleHivraAgentsSweep();
     expect(selectFilters.status).toBe("running");
+    // A sleeping computer is the sleep sweep's to manage, never parked here.
+    expect(selectFilters.sleep_state).toBe("awake");
     expect(selectFilters.deployment_target_id).toBeNull();
     expect(selectFilters.first_usage_at).toBeNull();
     expect(selectFilters.type).toEqual(PARKABLE_INTERACTIVE_KINDS);

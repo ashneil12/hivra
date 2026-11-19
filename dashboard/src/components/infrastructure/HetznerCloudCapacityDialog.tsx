@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import {
   useEffect,
   useId,
@@ -1034,7 +1035,7 @@ function ChooseCapacity({
   if (loading) {
     return (
       <div className={styles.capacityLoading} role="status" aria-live="polite">
-        <Loader2 size={21} className={styles.spin} aria-hidden="true" />
+        <ThinkingOrb state="searching" size={20} />
         <div>
           <strong>Loading live Hetzner choices…</strong>
           <span>Reading available sizes, locations, system images, and provider pricing.</span>

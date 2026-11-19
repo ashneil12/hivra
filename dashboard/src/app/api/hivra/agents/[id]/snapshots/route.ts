@@ -4,7 +4,6 @@ import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { supabaseAdmin } from "@/lib/supabase";
 import { UUID_V1_TO_8 } from "@/app/api/hivra/managed-sessions/route-support";
 
@@ -32,7 +31,6 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
     if (!supabaseAdmin) return apiError("Database not configured", 500);

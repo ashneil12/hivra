@@ -57,21 +57,21 @@ const BUCKET_FILTERS: Array<OpsEventBucket | 'all'> = [
 ];
 
 const severityStyles: Record<Severity, { bg: string; border: string; text: string }> = {
-  info: { bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.22)', text: '#1d4ed8' },
-  warn: { bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.22)', text: '#b45309' },
-  error: { bg: 'rgba(239,68,68,0.08)', border: 'rgba(239,68,68,0.22)', text: '#b91c1c' },
-  fatal: { bg: 'rgba(127,29,29,0.12)', border: 'rgba(127,29,29,0.28)', text: '#7f1d1d' },
+  info: { bg: 'color-mix(in srgb, var(--hg-fg) 4%, transparent)', border: 'color-mix(in srgb, var(--hg-fg) 11%, transparent)', text: 'var(--hg-text)' },
+  warn: { bg: 'color-mix(in srgb, var(--hg-warn) 8%, transparent)', border: 'color-mix(in srgb, var(--hg-warn) 22%, transparent)', text: 'var(--hg-warn)' },
+  error: { bg: 'color-mix(in srgb, var(--hg-bad) 8%, transparent)', border: 'color-mix(in srgb, var(--hg-bad) 22%, transparent)', text: 'var(--hg-bad)' },
+  fatal: { bg: 'color-mix(in srgb, var(--hg-bad) 12%, transparent)', border: 'color-mix(in srgb, var(--hg-bad) 28%, transparent)', text: 'var(--hg-bad)' },
 };
 
 const bucketStyles: Record<OpsEventBucket, { bg: string; border: string; text: string; label: string }> = {
-  'assistant-soft-error': { bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.22)', text: '#b45309', label: 'Soft Chat Error' },
-  'chat-runtime': { bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.22)', text: '#1d4ed8', label: 'Chat Runtime' },
-  proxy: { bg: 'rgba(244,63,94,0.08)', border: 'rgba(244,63,94,0.22)', text: '#be123c', label: 'Proxy' },
-  persistence: { bg: 'rgba(20,184,166,0.08)', border: 'rgba(20,184,166,0.22)', text: '#0f766e', label: 'Persistence' },
-  'client-runtime': { bg: 'rgba(168,85,247,0.08)', border: 'rgba(168,85,247,0.22)', text: '#7e22ce', label: 'Client Runtime' },
-  browser: { bg: 'rgba(14,165,233,0.08)', border: 'rgba(14,165,233,0.22)', text: '#0369a1', label: 'Browser' },
-  health: { bg: 'rgba(34,197,94,0.08)', border: 'rgba(34,197,94,0.22)', text: '#15803d', label: 'Health' },
-  other: { bg: 'rgba(107,114,128,0.08)', border: 'rgba(107,114,128,0.22)', text: '#374151', label: 'Other' },
+  'assistant-soft-error': { bg: 'color-mix(in srgb, var(--hg-warn) 8%, transparent)', border: 'color-mix(in srgb, var(--hg-warn) 22%, transparent)', text: 'var(--hg-warn)', label: 'Soft Chat Error' },
+  'chat-runtime': { bg: 'color-mix(in srgb, var(--hg-fg) 4%, transparent)', border: 'color-mix(in srgb, var(--hg-fg) 11%, transparent)', text: 'var(--hg-text)', label: 'Chat Runtime' },
+  proxy: { bg: 'color-mix(in srgb, var(--hg-bad) 8%, transparent)', border: 'color-mix(in srgb, var(--hg-bad) 22%, transparent)', text: 'var(--hg-bad)', label: 'Proxy' },
+  persistence: { bg: 'color-mix(in srgb, var(--hg-fg) 4%, transparent)', border: 'color-mix(in srgb, var(--hg-fg) 11%, transparent)', text: 'var(--hg-text)', label: 'Persistence' },
+  'client-runtime': { bg: 'color-mix(in srgb, var(--hg-fg) 4%, transparent)', border: 'color-mix(in srgb, var(--hg-fg) 11%, transparent)', text: 'var(--hg-text)', label: 'Client Runtime' },
+  browser: { bg: 'color-mix(in srgb, var(--hg-fg) 4%, transparent)', border: 'color-mix(in srgb, var(--hg-fg) 11%, transparent)', text: 'var(--hg-text)', label: 'Browser' },
+  health: { bg: 'color-mix(in srgb, var(--hg-ok) 8%, transparent)', border: 'color-mix(in srgb, var(--hg-ok) 22%, transparent)', text: 'var(--hg-ok)', label: 'Health' },
+  other: { bg: 'color-mix(in srgb, var(--hg-fg) 4%, transparent)', border: 'color-mix(in srgb, var(--hg-fg) 11%, transparent)', text: 'var(--hg-text-2)', label: 'Other' },
 };
 const UNARCHIVED_FETCH_CAP = 2000;
 
@@ -307,6 +307,13 @@ export default async function OpsPage(props: {
             >
               Releases
             </Link>
+            <Link
+              href="/dashboard/ops/margins"
+              className="action-button"
+              style={{ padding: '10px 20px', fontSize: 10, letterSpacing: '0.1em', textDecoration: 'none' }}
+            >
+              Usage and margins
+            </Link>
           </div>
         </div>
 
@@ -314,11 +321,12 @@ export default async function OpsPage(props: {
           <div
             style={{
               border: '1px solid rgba(245,158,11,0.45)',
-              background: 'rgba(245,158,11,0.08)',
+              borderRadius: 10,
+              background: 'color-mix(in srgb, var(--hg-warn) 8%, transparent)',
               padding: '0.75rem 1rem',
               marginBottom: '1rem',
               fontSize: 13,
-              color: '#92400e',
+              color: 'var(--hg-warn)',
             }}
           >
             Showing the {UNARCHIVED_FETCH_CAP} most recent unarchived incidents. Archive or delete what you see, then refresh to load the next batch.
@@ -337,9 +345,10 @@ export default async function OpsPage(props: {
               key={item.label}
               style={{
                 border: '1px solid var(--etched-border)',
-                background: 'var(--bg-surface)',
+                borderRadius: 10,
+                background: 'var(--hg-glass)',
                 padding: '1.25rem 1.2rem',
-                boxShadow: '0 6px 18px rgba(0,0,0,0.04)',
+                boxShadow: 'var(--hg-shadow-sm)',
               }}
             >
               <p className="mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--text-muted)', marginBottom: 8 }}>
@@ -367,6 +376,7 @@ export default async function OpsPage(props: {
                 style={{
                   padding: '8px 12px',
                   border: '1px solid var(--etched-border)',
+                  borderRadius: 7,
                   background: isActive ? 'var(--ink-black)' : 'var(--bg-surface)',
                   color: isActive ? 'var(--vellum-bg)' : 'var(--ink-black)',
                   textDecoration: 'none',
@@ -399,6 +409,7 @@ export default async function OpsPage(props: {
                 style={{
                   padding: '8px 12px',
                   border: '1px solid var(--etched-border)',
+                  borderRadius: 7,
                   background: isActive ? 'var(--ink-black)' : 'var(--bg-surface)',
                   color: isActive ? 'var(--vellum-bg)' : 'var(--ink-black)',
                   textDecoration: 'none',
@@ -430,7 +441,8 @@ export default async function OpsPage(props: {
                 style={{
                   padding: '8px 12px',
                   border: '1px solid var(--etched-border)',
-                  background: isActive ? 'rgba(0,0,0,0.92)' : 'var(--bg-surface)',
+                  borderRadius: 7,
+                  background: isActive ? 'var(--hg-accent)' : 'var(--bg-surface)',
                   color: isActive ? 'var(--vellum-bg)' : 'var(--ink-black)',
                   textDecoration: 'none',
                   fontSize: 11,
@@ -449,7 +461,8 @@ export default async function OpsPage(props: {
             <div
               style={{
                 border: '1px solid var(--etched-border)',
-                background: 'var(--bg-surface)',
+                borderRadius: 10,
+                background: 'var(--hg-glass)',
                 padding: '1.5rem',
               }}
             >
@@ -489,9 +502,10 @@ export default async function OpsPage(props: {
                         key={event.id}
                         style={{
                           border: '1px solid var(--etched-border)',
-                          background: 'var(--bg-surface)',
+                          borderRadius: 7,
+                          background: 'var(--hg-glass)',
                           padding: '1.25rem',
-                          boxShadow: '0 8px 24px rgba(0,0,0,0.04)',
+                          boxShadow: 'var(--hg-shadow-sm)',
                         }}
                       >
                         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -506,6 +520,7 @@ export default async function OpsPage(props: {
                                   letterSpacing: '0.12em',
                                   background: severityStyle.bg,
                                   border: `1px solid ${severityStyle.border}`,
+                                  borderRadius: 7,
                                   color: severityStyle.text,
                                   fontWeight: 700,
                                 }}
@@ -520,6 +535,7 @@ export default async function OpsPage(props: {
                                   letterSpacing: '0.1em',
                                   background: bucketStyle.bg,
                                   border: `1px solid ${bucketStyle.border}`,
+                                  borderRadius: 7,
                                   color: bucketStyle.text,
                                   fontWeight: 700,
                                 }}
@@ -595,7 +611,8 @@ export default async function OpsPage(props: {
                                     margin: 0,
                                     padding: '0.9rem',
                                     border: '1px solid var(--etched-border)',
-                                    background: 'rgba(0,0,0,0.03)',
+                                    borderRadius: 10,
+                                    background: 'var(--hg-fill-1)',
                                     fontSize: 12,
                                     overflowX: 'auto',
                                     whiteSpace: 'pre-wrap',
@@ -617,7 +634,8 @@ export default async function OpsPage(props: {
                                     margin: 0,
                                     padding: '0.9rem',
                                     border: '1px solid var(--etched-border)',
-                                    background: 'rgba(0,0,0,0.03)',
+                                    borderRadius: 10,
+                                    background: 'var(--hg-fill-1)',
                                     fontSize: 12,
                                     overflowX: 'auto',
                                     whiteSpace: 'pre-wrap',
@@ -643,7 +661,8 @@ export default async function OpsPage(props: {
                               margin: 0,
                               padding: '0.9rem',
                               border: '1px solid var(--etched-border)',
-                              background: 'rgba(0,0,0,0.03)',
+                              borderRadius: 10,
+                              background: 'var(--hg-fill-1)',
                               fontSize: 12,
                               overflowX: 'auto',
                               whiteSpace: 'pre-wrap',

@@ -26,6 +26,10 @@ export type ParsedColdStorageManifest = {
   sourceProxmoxNode: string;
   sourceProxmoxVmid: number;
   manifestPath: string;
+  /** "age" when the archive on the Storage Box is age-encrypted; absent for plain archives. */
+  encryption?: "age";
+  /** sha256 of the DECRYPTED archive (only for encrypted archives); archiveSha256 is of the stored file. */
+  plainSha256?: string;
 };
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
@@ -42,7 +46,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
  */
 const COLD_TS_COMPACT_RE = /^[0-9A-Za-z_-]{8,32}$/;
 const COLD_ARCHIVE_URI_RE =
-  /^(?:free|paid)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/data-([0-9A-Za-z_-]{8,32})\.tar\.zst$/i;
+  /^(?:free|paid)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/data-([0-9A-Za-z_-]{8,32})\.tar\.zst(?:\.age)?$/i;
 
 /** True iff `ts` is a safe compact timestamp segment (no shell metacharacters). */
 export function isValidColdTimestampCompact(ts: string): boolean {
@@ -51,7 +55,7 @@ export function isValidColdTimestampCompact(ts: string): boolean {
 
 /**
  * True iff `archiveUri` exactly matches the canonical archive layout
- * free|paid/<instance-uuid>/data-<ts>.tar.zst with both segments inside the
+ * free|paid/<instance-uuid>/data-<ts>.tar.zst[.age] with both segments inside the
  * shell-safe charsets above. Anything else (extra path segments, traversal,
  * metacharacters) must be treated as tampered and never reach a shell.
  */
@@ -153,6 +157,28 @@ export function parseColdStorageManifest(
     fail(manifestPath, "tier", "must be free or paid");
   }
 
+  // Optional encryption fields (additive, schema_version stays 1). Plain
+  // manifests carry neither and parse exactly as before.
+  let encryption: "age" | undefined;
+  let plainSha256: string | undefined;
+  if (manifest.encryption !== undefined) {
+    if (manifest.encryption !== "age") {
+      fail(manifestPath, "encryption", 'must be "age" when present');
+    }
+    encryption = "age";
+    plainSha256 = readString(manifest, manifestPath, "plain_sha256").toLowerCase();
+    if (!SHA256_RE.test(plainSha256)) {
+      fail(manifestPath, "plain_sha256", "must be 64 lowercase hex characters");
+    }
+  } else if (manifest.plain_sha256 !== undefined) {
+    fail(manifestPath, "plain_sha256", "is only valid together with encryption");
+  }
+  // The name and the manifest must agree, or a restore would feed ciphertext
+  // to zstd (or skip decrypting): a mismatch is tampering or a producer bug.
+  if ((encryption === "age") !== archiveUri.endsWith(".age")) {
+    fail(manifestPath, "archive_path", 'must end in ".age" exactly when encryption is "age"');
+  }
+
   return {
     instanceId,
     archivedAt: canonicalIso(
@@ -167,6 +193,7 @@ export function parseColdStorageManifest(
     sourceProxmoxNode: readString(manifest, manifestPath, "pve_host"),
     sourceProxmoxVmid: readPositiveInteger(manifest, manifestPath, "vmid"),
     manifestPath,
+    ...(encryption ? { encryption, plainSha256 } : {}),
   };
 }
 
@@ -176,7 +203,7 @@ export function parseColdStorageManifest(
  * needs to re-fetch the manifest for integrity checks.
  */
 export function manifestPathFromArchiveUri(archiveUri: string): string | null {
-  // archive_uri layout: free/<id>/data-<ts>.tar.zst → manifest at meta/<id>/<ts>.json.
+  // archive_uri layout: free/<id>/data-<ts>.tar.zst[.age] → manifest at meta/<id>/<ts>.json.
   // The segments are pinned to shell-safe charsets (SEC-02): the returned
   // path is interpolated into `ssh cold "cat <path>"` by the service, so a
   // poisoned archive_uri must fail closed to null rather than smuggle

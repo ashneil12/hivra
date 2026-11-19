@@ -6,6 +6,22 @@ import {
   getVenicePricingMap,
 } from "@/lib/venice/live-pricing";
 import { VENICE_CHAT_MODEL_PRICES } from "@/lib/venice/pricing";
+import { resolveVeniceChatPrice } from "@/lib/venice/cost-estimator";
+import { managedVeniceOutputCapPatch } from "@/lib/venice/chat-output-budget";
+
+const liveDeepseek = {
+  id: "deepseek-v4-flash",
+  model_spec: {
+    availableContextTokens: 1_000_000,
+    maxCompletionTokens: 262_144,
+    privacy: "private",
+    pricing: {
+      input: { usd: 0.138 },
+      output: { usd: 0.275 },
+      cache_input: { usd: 0.028 },
+    },
+  },
+};
 
 const originalFetch = global.fetch;
 const originalApiKey = process.env.VENICE_API_KEY;
@@ -179,16 +195,88 @@ describe("getVenicePricingMap", () => {
     );
   });
 
-  it("falls back to the static catalog when VENICE_API_KEY is unset", async () => {
+  it("fetches the public models list anonymously when no upstream key is configured", async () => {
     delete process.env.VENICE_API_KEY;
-    global.fetch = jest.fn();
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    delete process.env.MANAGED_VENICE_INFERENCE_KEYS;
+    const fetchMock = mockOkJson({ data: [liveDeepseek] });
+    global.fetch = fetchMock;
 
     const result = await getVenicePricingMap();
 
-    expect(result.source).toBe("fallback");
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.venice.ai/api/v1/models?type=text",
+      expect.objectContaining({ headers: {} })
+    );
+    expect(result.source).toBe("merged");
+    expect(result.map.get("deepseek-v4-flash")?.inputMicroUsdPerMillion).toBe(138_000);
+  });
+
+  it("retries anonymously when Venice rejects the configured key", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(new Response("nope", { status: 401 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [liveDeepseek] }), { status: 200 })
+      );
+    global.fetch = fetchMock;
+
+    const result = await getVenicePricingMap();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][1].headers).toEqual({});
+    expect(result.liveModelCount).toBe(1);
+  });
+
+  it("keeps the last live prices when a later refresh fails", async () => {
+    global.fetch = mockOkJson({ data: [liveDeepseek] });
+    await getVenicePricingMap();
+    global.fetch = jest.fn().mockResolvedValue(new Response("down", { status: 503 }));
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await getVenicePricingMap({ forceRefresh: true });
+
+    expect(result.source).toBe("merged");
+    expect(result.map.get("deepseek-v4-flash")?.maxOutputTokensSource).toBe("venice_live");
     warnSpy.mockRestore();
+  });
+
+  it("retries soon after a failed first fetch instead of pinning the catalog for the full TTL", async () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date("2026-11-10T00:00:00Z"));
+      global.fetch = jest.fn().mockResolvedValue(new Response("down", { status: 503 }));
+      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+      expect((await getVenicePricingMap()).source).toBe("fallback");
+
+      jest.setSystemTime(new Date("2026-11-10T00:00:45Z"));
+      global.fetch = mockOkJson({ data: [liveDeepseek] });
+      expect((await getVenicePricingMap()).source).toBe("merged");
+      warnSpy.mockRestore();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // The consumers (hold sizing and settlement) take this map as-is, so live
+  // limits and rates must reach them with the "venice_live" source.
+  it("feeds live limits and rates to the cost estimator and the output cap patch", async () => {
+    global.fetch = mockOkJson({ data: [liveDeepseek] });
+    const { map } = await getVenicePricingMap();
+
+    const price = resolveVeniceChatPrice("deepseek-v4-flash", map);
+    expect(price.maxOutputTokens).toBe(262_144);
+    expect(price.maxOutputTokensSource).toBe("venice_live");
+    expect(price.inputMicroUsdPerMillion).toBe(138_000);
+    // Confirmed maximum: no cap needs writing into the request.
+    expect(
+      managedVeniceOutputCapPatch("chat", { model: "deepseek-v4-flash" }, 262_144, price)
+    ).toEqual({});
+    // Catalog fallback is only a guess, so the held cap is always written.
+    const catalogPrice = resolveVeniceChatPrice("deepseek-v4-flash");
+    expect(catalogPrice.maxOutputTokensSource).toBe("catalog");
+    expect(
+      managedVeniceOutputCapPatch("chat", { model: "deepseek-v4-flash" }, catalogPrice.maxOutputTokens, catalogPrice)
+    ).toEqual({ max_completion_tokens: catalogPrice.maxOutputTokens });
   });
 
   // Review of #166: the chat proxy writes the cap it held into the forwarded

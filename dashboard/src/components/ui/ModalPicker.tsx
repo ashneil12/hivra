@@ -170,8 +170,8 @@ export function ModalPicker({
               zIndex: 9999,
               display: 'flex',
               justifyContent: 'center',
-              background: 'rgba(0,0,0,0.4)',
-              backdropFilter: 'blur(4px)',
+              background: 'color-mix(in srgb, var(--hg-bg) 40%, transparent)',
+              backdropFilter: 'blur(6px)',
             }}
             onClick={closeDialog}
           >

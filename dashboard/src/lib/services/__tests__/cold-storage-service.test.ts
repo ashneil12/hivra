@@ -796,11 +796,12 @@ describe("restoreInstance", () => {
     // is caught here, not 4h later by aeon fleet-sweep.
     const restoreCmd = runHostScript.mock.calls[0][0] as string;
     expect(restoreCmd).toContain("/usr/local/sbin/restore-vm-cold.sh");
-    // 9 positional args after the script path: instance, archive, sha, vmid,
-    // ip, gw, template, disk, cpu_limit
+    // 10 positional args after the script path: instance, archive, sha, vmid,
+    // ip, gw, template, disk, cpu_limit, ram_limit_mb
     const parts = restoreInvocationParts(restoreCmd);
-    expect(parts).toHaveLength(10); // script + 9 args
+    expect(parts).toHaveLength(11); // script + CPU and memory targets
     expect(parts[9]).toBe("0.5");
+    expect(parts[10]).toBe("4096");
 
     const activeUpdate = supabase.__queue.find(
       (tx) => (tx.payload as { lifecycle_state?: string })?.lifecycle_state === "active"
@@ -1172,16 +1173,17 @@ describe("restoreInstance", () => {
       // templateVmid is intentionally preserved from the original config so
       // subsequent redeploys keep their template lineage.
       templateVmid: 9004,
+      gatewayHost: "old-instance.agents.hermesos.cloud",
     });
   });
 
   it("backfills gatewayHost + hostEnvPrefix into infrastructure on restore (reclaim strips it → 'No host attached')", async () => {
     // Reclaim runs stripProxmoxInfrastructure, deleting the whole infra block.
-    // The restore must reconstruct gatewayHost from the destination gateway —
+    // The restore must reconstruct gatewayHost from the persisted public URL —
     // otherwise getProxmoxInfrastructure() returns null and the next live-update
     // fails with "No host attached" (regression for ADAIR/COACH).
     let activeUpdatePayload: Record<string, unknown> | undefined;
-    const rowWithStrippedInfra = { ...coldRow, config: {} };
+    const rowWithStrippedInfra = { ...coldRow, gateway_url: "https://restored-sub.hermesos.cloud", config: {} };
     const supabase = makeSupabase([
       { table: "hermes_instances", op: "select", result: { data: rowWithStrippedInfra, error: null } },
       { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
@@ -1192,14 +1194,16 @@ describe("restoreInstance", () => {
         capture: (payload) => { activeUpdatePayload = payload; },
       },
     ]);
-    const { deps } = makeDeps([restoreScriptOk({ vmid: 727, host: "fixturenode7", ip: "10.250.20.77" })]);
+    const { deps, runHostScript } = makeDeps([restoreScriptOk({ vmid: 727, host: "fixturenode7", ip: "10.250.20.77" })]);
     const result = await restoreInstance(
       supabase as never,
       VALID_INSTANCE_ID,
-      { ...restoreOptions, destinationGateway: "https://restored-sub.hermesos.cloud" },
+      { ...restoreOptions, destinationGateway: "10.250.22.1", cpuLimit: 4, ramLimitMb: 8192 },
       deps
     );
     expect(result).toMatchObject({ ok: true });
+    const args = restoreInvocationParts(runHostScript.mock.calls[0][0] as string);
+    expect(args.slice(9)).toEqual(["4", "8192"]);
     const cfg = activeUpdatePayload?.config as { infrastructure?: Record<string, unknown> } | undefined;
     expect(cfg?.infrastructure).toMatchObject({
       node: "fixturenode7",
@@ -1457,5 +1461,221 @@ describe("purgeArchive", () => {
     expect(runHostScript).not.toHaveBeenCalled();
     // And the row must not be flagged deleted — no update was attempted.
     expect(supabase.__queue).toHaveLength(1);
+  });
+});
+
+describe("age-encrypted cold archives (HERMES_BACKUP_ENCRYPTION)", () => {
+  // Obviously fake, shape-valid placeholders.
+  const FAKE_RECIPIENT = `age1${"q".repeat(58)}`;
+  const FAKE_IDENTITY = ["AGE-SECRET-KEY-1", "Q".repeat(58)].join("");
+  const PLAIN_SHA = "e".repeat(64);
+  const AGE_URI = `${VALID_ARCHIVE_URI}.age`;
+
+  const pausedRow = {
+    id: VALID_INSTANCE_ID,
+    proxmox_node: "fixturenode2",
+    proxmox_vmid: 216,
+    ipv4_address: "10.250.21.66",
+    resource_tier: "credit_base",
+    lifecycle_state: "paused",
+    status: "stopped",
+    subdomain: "agent-archive-test",
+    archive_uri: null,
+    archived_at: null,
+    archive_size_bytes: null,
+    archive_sha256: null,
+    archive_count: 0,
+    paused_reason: "inactivity",
+  };
+  const coldRow = {
+    ...pausedRow,
+    proxmox_node: null,
+    proxmox_vmid: null,
+    ipv4_address: null,
+    lifecycle_state: "cold_archived",
+    archive_uri: AGE_URI,
+    archived_at: "2026-05-16T10:29:40Z",
+    archive_size_bytes: VALID_SIZE,
+    archive_sha256: VALID_SHA,
+    archive_count: 1,
+    paused_reason: "cold_archived",
+  };
+  const restoreOptions = {
+    destinationHostSlug: "fixturenode5",
+    destinationVmid: 599,
+    destinationIp: "10.250.22.199",
+    destinationGateway: "10.250.22.1",
+    templateVmid: 9006,
+  };
+  const encEnv = { HERMES_BACKUP_ENCRYPTION: "on", HERMES_BACKUP_AGE_RECIPIENT: FAKE_RECIPIENT };
+
+  function encryptedArchiveScript(): HostScriptResult {
+    const ok = archiveScriptOk();
+    return { ...ok, stdout: `${ok.stdout} enc=age` };
+  }
+  function encryptedManifest(): HostScriptResult {
+    return {
+      ok: true,
+      stderr: "",
+      stdout: JSON.stringify({
+        ...JSON.parse(manifestJson().stdout),
+        archive_path: AGE_URI,
+        encryption: "age",
+        plain_sha256: PLAIN_SHA,
+      }),
+    };
+  }
+
+  it("encryption off: archive command and recorded uri are exactly the plain ones", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: pausedRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([archiveScriptOk(), manifestJson(), destroyOk(), caddyCleanupOk()]);
+    const result = await archiveInstance(supabase as never, VALID_INSTANCE_ID, deps);
+    expect(result).toMatchObject({ ok: true, archiveUri: VALID_ARCHIVE_URI });
+    const cmd = runHostScript.mock.calls[0][0] as string;
+    expect(cmd).not.toContain("HERMES_BACKUP");
+    expect(cmd.split("\n").pop()).toBe(`/usr/local/sbin/archive-vm-cold.sh 216 '${VALID_INSTANCE_ID}'`);
+  });
+
+  it("encryption on: passes only the public recipient and records the .age uri", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: pausedRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([encryptedArchiveScript(), encryptedManifest(), destroyOk(), caddyCleanupOk()]);
+    const result = await archiveInstance(supabase as never, VALID_INSTANCE_ID, {
+      ...deps,
+      env: { ...encEnv, HERMES_BACKUP_AGE_IDENTITY: FAKE_IDENTITY },
+    });
+    expect(result).toMatchObject({ ok: true, archiveUri: AGE_URI, archiveSha256: VALID_SHA });
+    const cmd = runHostScript.mock.calls[0][0] as string;
+    expect(cmd).toContain(
+      `HERMES_BACKUP_ENCRYPTION=on HERMES_BACKUP_AGE_RECIPIENT=${FAKE_RECIPIENT} /usr/local/sbin/archive-vm-cold.sh 216`
+    );
+    expect(cmd).not.toContain(FAKE_IDENTITY);
+    const coldUpdate = supabase.__queue.find(
+      (tx) => (tx.payload as { lifecycle_state?: string })?.lifecycle_state === "cold_archived"
+    );
+    expect(coldUpdate?.payload).toMatchObject({ archive_uri: AGE_URI, archive_sha256: VALID_SHA });
+  });
+
+  it.each([
+    ["missing", {}],
+    ["invalid", { HERMES_BACKUP_AGE_RECIPIENT: "age1short" }],
+  ])("encryption on with a %s recipient: refuses before the lock, never runs a host script", async (_n, extra) => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: pausedRow, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([]);
+    const result = await archiveInstance(supabase as never, VALID_INSTANCE_ID, {
+      ...deps,
+      env: { HERMES_BACKUP_ENCRYPTION: "on", ...extra },
+    });
+    expect(result).toMatchObject({ ok: false, reason: "host_script_failed", retryable: false });
+    expect((result as { message: string }).message).toContain("HERMES_BACKUP_AGE_RECIPIENT");
+    expect(runHostScript).not.toHaveBeenCalled();
+    expect(supabase.__queue).toHaveLength(1); // no lock, no update
+  });
+
+  it("encryption on but the script produced a plaintext archive: refuses to record it", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: pausedRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: null, error: null } }, // revert
+    ]);
+    const { deps, runHostScript } = makeDeps([archiveScriptOk(), manifestJson()]);
+    const result = await archiveInstance(supabase as never, VALID_INSTANCE_ID, { ...deps, env: encEnv });
+    expect(result).toMatchObject({ ok: false, reason: "manifest_verify_failed", retryable: false });
+    expect(runHostScript).toHaveBeenCalledTimes(2); // no destroy
+  });
+
+  it("restore of an encrypted archive delivers the identity only inside the stdin script", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+    ]);
+    const ok: HostScriptResult = {
+      ok: true,
+      stderr: "",
+      stdout: `RESULT status=ok instance=${VALID_INSTANCE_ID} vmid=599 host=fixturenode5 ip=10.250.22.199 archive=${AGE_URI} sha256=${VALID_SHA} size=${VALID_SIZE}`,
+    };
+    const { deps, runHostScript } = makeDeps([ok]);
+    const result = await restoreInstance(supabase as never, VALID_INSTANCE_ID, restoreOptions, {
+      ...deps,
+      env: { HERMES_BACKUP_AGE_IDENTITY: FAKE_IDENTITY },
+    });
+    expect(result).toMatchObject({ ok: true });
+    const script = runHostScript.mock.calls[0][0] as string;
+    expect(script).toContain(`<<'HERMES_BACKUP_AGE_IDENTITY_EOF'\n${FAKE_IDENTITY}\nHERMES_BACKUP_AGE_IDENTITY_EOF`);
+    expect(script.split(FAKE_IDENTITY)).toHaveLength(2);
+    expect(script).toContain("trap 'rm -f -- \"$__age_id_file\"' EXIT");
+    // identity file is set up before the script runs, never part of its argv
+    const invocation = restoreInvocationParts(script);
+    expect(invocation.join(" ")).not.toContain("AGE-SECRET-KEY");
+    expect(script.indexOf("HERMES_BACKUP_AGE_IDENTITY_FILE")).toBeLessThan(
+      script.indexOf("\n/usr/local/sbin/restore-vm-cold.sh")
+    );
+    expect(invocation[2]).toBe(`'${AGE_URI}'`);
+  });
+
+  it("restore of an encrypted archive without an identity fails clearly and touches nothing", async () => {
+    let revertedPayload: Record<string, unknown> | undefined;
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+      {
+        table: "hermes_instances",
+        op: "update",
+        result: { data: { id: VALID_INSTANCE_ID }, error: null },
+        capture: (payload) => { revertedPayload = payload; },
+      },
+    ]);
+    const { deps, runHostScript } = makeDeps([]);
+    const result = await restoreInstance(supabase as never, VALID_INSTANCE_ID, restoreOptions, { ...deps, env: {} });
+    expect(result).toMatchObject({ ok: false, reason: "host_script_failed", retryable: false });
+    expect((result as { message: string }).message).toContain("HERMES_BACKUP_AGE_IDENTITY is not configured");
+    expect(runHostScript).not.toHaveBeenCalled();
+    expect(revertedPayload).toMatchObject({ lifecycle_state: "cold_archived" });
+  });
+
+  it("restore of a plain archive never mentions the identity, even when one is configured", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: { ...coldRow, archive_uri: VALID_ARCHIVE_URI }, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+    ]);
+    const ok: HostScriptResult = {
+      ok: true,
+      stderr: "",
+      stdout: `RESULT status=ok instance=${VALID_INSTANCE_ID} vmid=599 host=fixturenode5 ip=10.250.22.199 archive=${VALID_ARCHIVE_URI} sha256=${VALID_SHA} size=${VALID_SIZE}`,
+    };
+    const { deps, runHostScript } = makeDeps([ok]);
+    await restoreInstance(supabase as never, VALID_INSTANCE_ID, restoreOptions, {
+      ...deps,
+      env: { HERMES_BACKUP_AGE_IDENTITY: FAKE_IDENTITY },
+    });
+    const script = runHostScript.mock.calls[0][0] as string;
+    expect(script).not.toContain("AGE");
+    expect(script.startsWith("__tmp=$(mktemp")).toBe(true);
+  });
+
+  it("slice verify of an encrypted archive probes the age header, not zstd", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([
+      { ok: true, stderr: "", stdout: encryptedManifest().stdout },
+      { ok: true, stderr: "", stdout: "OK" },
+    ]);
+    const result = await verifyArchiveIntegrity(supabase as never, VALID_INSTANCE_ID, { hostSlug: "fixturenode5" }, deps);
+    expect(result).toMatchObject({ ok: true, mode: "slice" });
+    const probe = runHostScript.mock.calls[1][0] as string;
+    expect(probe).toContain("age-encryption.org/v1");
+    expect(probe).not.toContain("zstd");
   });
 });

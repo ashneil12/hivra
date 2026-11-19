@@ -7,7 +7,6 @@ import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { createLaunchModelAdmissionService } from "@/lib/hivra/launch-model-admission";
 import {
   createHivraLaunchOperationService,
@@ -41,7 +40,6 @@ function genericReceiptResponse(saved: HivraLaunchOperationReplay) {
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ requestId: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     const { requestId } = await params;

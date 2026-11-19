@@ -131,8 +131,9 @@ with the cloud browser swapped for a **self-hosted Chrome on the box** and a
 ## Prerequisites
 
 - A **fresh Ubuntu 22.04** box (amd64) reachable over SSH, with `sudo`/root.
-- Outbound internet (the script pulls bux from GitHub, Chrome from Google's apt
-  repo, and Node/skills via the bux installer).
+- Outbound internet (the script pulls bux from GitHub, the pinned Chrome `.deb` from
+  Google's download pool (checked against its SHA-256), and Node/skills via the bux
+  installer).
 - ~4 GB RAM minimum (Chrome pushes the box well past bux's 2 GB baseline). The
   reference box is 4 vCPU / 6 GB / 40 GB.
 
@@ -153,26 +154,30 @@ and Chrome install if already present, and re-applies the overlay + prompt).
 | `AGENT_USER` | `bux` | **Pinned** — the bux installer + keeper hardcode `bux`; the script hard-fails on any other value. |
 | `BUX_DIR` | `/opt/bux` | **Pinned** — bux's unit `ExecStart` paths hardcode `/opt/bux`; the script hard-fails on any other value. |
 | `BUX_REF` | `f17c1b31d6688dd92e745ade650e00d46b4dc4da` | Reviewed bux commit. |
+| `CHROME_VERSION` / `CHROME_LINUX_AMD64_SHA256` | from `chrome-pin.json` | The pinned Google Chrome `.deb` and its SHA-256. Leave unset on managed computers so the installer and the runtime updater read the same pin; set both to override. |
 | `CDP_PORT` | `9222` | Local Chrome remote-debugging port. |
 | `PROFILE_DIR` | `/home/bux/.browser-profile` | **Must be non-default** (see gotcha #1). |
 | `HIVRA_CHAT_PORT` | `8080` | Hivra chat HTTP port. |
 | `DUMMY_BU_KEY` | `local` | Dummy `BROWSER_USE_API_KEY` (installer requires one; we self-host). |
-| `CLAUDE_CODE_VERSION` / `CODEX_CLI_VERSION` | from `agent-cli-versions.json` | Vetted CLI versions. Leave unset on managed computers so the installer, the runtime updater and the dashboard read the same pins. |
-| `AEON_REF` / `OPENCLAW_VERSION` / `AGENT_ZERO_IMAGE_DIGEST` | from `agent-app-versions.json` | Tested app versions (a full upstream commit, an x.y.z release, an image digest). Leave unset on managed computers for the same reason. |
+| `CLAUDE_CODE_VERSION` / `CODEX_CLI_VERSION` | upstream's newest npm release | Resolved at install time from the npm registry's `latest` tag. Set only to install a specific version. |
+| `AEON_REF` / `OPENCLAW_VERSION` / `AGENT_ZERO_IMAGE_DIGEST` | upstream's newest | Resolved at install time: the Aeon repository's `HEAD` commit, OpenClaw's npm `latest`, the digest behind `agent0ai/agent-zero:latest`. Set only to install a specific version. |
 
 ### Agent CLI versions
 
-Hivra owns the Claude Code and Codex versions on its computers. The vetted
-versions ship as `agent-cli-versions.json` (exported to the dashboard as
-`AGENT_CLI_VERSIONS`); vendor self-updaters are off (`DISABLE_AUTOUPDATER=1`
-for every CLI the gateway starts and on both terminal units, and Codex's
-`check_for_update_on_startup = false`, set by `hivra-codex-config-pin.py` only
-when the owner has not chosen). The agent terminal runs the exact binary the
-chat gateway runs and never falls back to another vendor's CLI.
+Hivra pins no Claude Code or Codex version. A new computer installs each
+CLI's newest npm release, and after that only the owner updates it: the
+Update button (below) or the CLI's own npm command. Hivra never updates a CLI
+by itself, and the vendors' background self-updaters stay off
+(`DISABLE_AUTOUPDATER=1` for every CLI the gateway starts and on both terminal
+units, and Codex's `check_for_update_on_startup = false`, set by
+`hivra-codex-config-pin.py` only when the owner has not chosen), so a CLI never
+swaps itself under a running chat. The agent terminal runs the exact binary
+the chat gateway runs and never falls back to another vendor's CLI.
 
-`hivra-update-guest-runtime.sh` reports the installed and vetted versions
-(`HIVRA_AGENT_CLI` line) and, when they differ, starts
-`hivra-agent-cli-update.sh` as a transient unit: it downloads the package,
+When the owner updates, `hivra-update-guest-runtime.sh` reports the installed
+version (`HIVRA_AGENT_CLI` line, `target=latest`) and starts
+`hivra-agent-cli-update.sh` as a transient unit: it resolves the newest npm
+release (and ends at once when that is installed already), downloads it,
 waits until no chat run is in flight (up to 6 hours), holds new runs back for
 the few seconds of the swap, verifies the new version and restores the previous
 package on failure. The gateway reports the installed version and the swap's
@@ -180,21 +185,23 @@ progress to the dashboard as `agentCli` on authenticated `GET /api/meta`.
 
 ### Agent app versions
 
-Hivra owns the Aeon dashboard, OpenClaw and Agent Zero versions on their
-computers the same way. The tested versions ship as `agent-app-versions.json`
-(exported to the dashboard as `AGENT_APP_VERSIONS`, with each pin's owner-facing
-label and the earlier pins Hivra moved off). The installer records what it put
-on the computer in the root-owned `/var/lib/hivra/agent-app.json`.
+The Aeon dashboard, OpenClaw and Agent Zero work the same way: a new computer
+installs upstream's newest (Aeon's `HEAD` commit, OpenClaw's npm `latest`,
+the image digest behind `agent0ai/agent-zero:latest`), and only the owner's
+Update moves it again. The installer records what it put on the computer in
+the root-owned `/var/lib/hivra/agent-app.json`.
 
-The runtime update reports the installed and tested versions
-(`HIVRA_AGENT_APP` line) and, when they differ, starts
-`hivra-agent-app-update.sh` as a transient unit (`hivra-agent-app-update`):
+When the owner updates, the runtime update reports the installed version
+(`HIVRA_AGENT_APP` line, `target=latest`) and starts
+`hivra-agent-app-update.sh` as a transient unit (`hivra-agent-app-update`). It
+first resolves upstream's newest the same way, ends at once when that is
+installed already, and otherwise:
 
 | App | Prepared while it keeps running | Swap | Put back on failure |
 |---|---|---|---|
-| OpenClaw | `npm cache add openclaw@<version>` as `bux` | `npm install -g` as `bux`, restart `bux-openclaw` | the package copy taken before the swap |
-| Agent Zero | `docker pull agent0ai/agent-zero@<digest>` (needs 12 GB free) | stop, copy `/opt/a0/usr` aside, rewrite the unit's one image digest, start | the previous unit and the data copy; the old image is removed only after success |
-| Aeon | a fresh build of the upstream commit in `~bux/.hivra/aeon-dashboard/<commit>` (never the owner's fork clone) | a `bux-aeon` drop-in setting `WorkingDirectory` and `AEON_REPO_ROOT=~/aeon`, restart | the previous drop-in, or none (the build in the clone) |
+| OpenClaw | `npm cache add openclaw@<newest>` as `bux` | `npm install -g` as `bux`, restart `bux-openclaw` | the package copy taken before the swap |
+| Agent Zero | `docker pull agent0ai/agent-zero:latest`, then its digest (needs 12 GB free) | stop, copy `/opt/a0/usr` aside, rewrite the unit's one image digest, start | the previous unit and the data copy; the old image is removed only after success |
+| Aeon | a fresh build of upstream's `HEAD` commit in `~bux/.hivra/aeon-dashboard/<commit>` (never the owner's fork clone) | a `bux-aeon` drop-in setting `WorkingDirectory` and `AEON_REPO_ROOT=~/aeon`, restart | the previous drop-in, or none (the build in the clone) |
 
 It waits (up to 6 hours, then `deferred`) until nobody has used the app
 through the gateway for 5 minutes and no app WebSocket is open (the gateway's
@@ -209,6 +216,21 @@ target version. A swap cut short leaves a journal in
 `/var/lib/hivra/agent-app-swap`, which the next run undoes first. Progress goes
 to `/var/lib/hivra/agent-app-update.json`; the gateway reports it with the
 installed version as `agentApp`.
+
+The same "being updated" answer also covers updates the managed updater never
+sees: when a proxied agent-app port refuses a connection — the app's own
+self-updater restarting it, a crash window, a slow boot — the gateway serves
+the hold page with `Retry-After` instead of a dead 502. Any agent-app kind
+registered in the gateway's `AGENT_APP` table (by name and loopback port)
+inherits this automatically; new kinds only need to join that table.
+
+A separate lock rule keeps host-side mutations alive: the start and
+provision scripts take `/run/lock/hivra-allocation.lock` on a dedicated fd
+so allocation and config steps serialize against each other, but `qm start`
+must never inherit that fd. The script calls it with the lock fd closed
+(`qm start "$VMID" 8>&-`), otherwise the kvm child holds the advisory lock
+for the VM's whole lifetime and every later host operation against that
+computer deadlocks on it.
 
 ## The one manual step
 
@@ -235,8 +257,9 @@ is the alternative long-lived-token path.
    with `BROWSER_USE_API_KEY=<dummy>` and `WITH_ZTK=0`. Cloning to `/opt/bux`
    (not `curl | bash`) is required because the systemd units hardcode
    `/opt/bux/agent/*`.
-3. **Google Chrome stable** — adds Google's apt repo, installs
-   `google-chrome-stable` (the `.deb`, **not** snap).
+3. **Google Chrome stable** — installs the pinned `google-chrome-stable` `.deb`
+   (**not** snap), keeps Google's apt repo out and holds the package at that build,
+   and writes the managed browser policy.
 4. **Browser overlay** — disables + removes the cloud keeper unit
    (`bux-browser-keeper.service`), drops in `local-browser-keeper.py`, creates the
    non-default profile dir, installs `bux-local-browser.service`.
@@ -435,13 +458,361 @@ update them yet.
   app's profile from a root-only snapshot, launches it, keeps it running and
   applies the saved view: `app` is the app full screen, `desktop` is the app in a
   window on the desktop. The gateway reaches the helper through an exact-argument
-  sudoers rule for `status`, `install`, `mode app`, `mode desktop` and `remove`
-  (`/api/claude-app/*`). The owner signs in to the unmodified app themselves; the
+  sudoers rule for `status`, `install`, `mode app`, `mode desktop`, `remove` and
+  the clipboard verbs below (`/api/claude-app/*`). The owner signs in to the unmodified app themselves; the
   helper never handles a Claude credential. The container's home is discarded on every
   desktop restart, so the app's own data is backed up (size-capped, root-only, one
   copy) on the same VM and restored before the app starts; that data includes the
-  app's sign-in session, no Hivra service reads it, and `remove` deletes it. Managed
-  Proxmox computers only.
+  app's sign-in session, no Hivra service reads it, and `remove` deletes it. The
+  Code tab's own data (`~/.claude`, `~/.claude.json`) is backed up the same way in a
+  second archive with its own cap, and the app starts in `~/Hivra`, the desktop's
+  one persistent folder, so projects opened from the Code tab survive restarts.
+  Managed Proxmox computers only.
+- **Desktop clipboard switch (optional, off by default).** Selkies' clipboard stays
+  off. The owner can turn on a clipboard switch on the Desktop strip; while it is on,
+  Paste in puts their clipboard's text on the desktop's clipboard and Copy out brings
+  the desktop's back, one request per press. The gateway reaches
+  `hivra-claude-app clipboard on|off`, `clipboard-put` (text on stdin, at most
+  256 KB) and `clipboard-get` through the same exact-argument sudoers rule; both
+  transfers refuse while the switch is off.
+- **Claude Code on Hivra credits.** When a Claude Code computer is launched with a
+  managed model key, the installer writes the CLI's own `~/.claude/settings.json`
+  `env` (Hivra's Anthropic Messages base URL, the key as the auth token, and every
+  model tier set to the chosen model) with mode 0600; without a key the computer
+  keeps native `claude auth login` sign-in.
+- **Clean agent browser view.** The Browser tab streams the agent's own Chrome, so the
+  window must open without Chrome's own warnings. Older computers still run a keeper
+  that passes `--no-sandbox` ("unsupported command-line flag" infobar), and a pinned
+  Chrome older than eight weeks shows "Can't update Chrome" and a "Finish update" chip.
+  The installer and the runtime update now install the sandboxed keeper, write
+  `/etc/opt/chrome/policies/managed/hivra-browser.json` (default-browser prompt,
+  promotional tabs, browser sign-in and the unsupported-OS warning off; any machine
+  policy also turns Chrome's outdated-build detector off), drop Google's apt source and
+  hold `google-chrome-stable` so nothing replaces the binary under the running browser.
+  The update restarts the browser only when nobody is attached to its debugging port,
+  and puts the previous keeper back if the browser does not return. The window opens at
+  the origin at the Xvfb screen's size, so it fills the tab.
+- **Chrome moves with the pin.** The pinned Chrome build ships as `chrome-pin.json`
+  (version, SHA-256 and the build it replaced), read by the installer and by the runtime
+  update. Because Chrome is held, the pin only moves when a release moves it. The update
+  installs the pin on an existing computer whose Chrome differs, only when the browser
+  can be restarted right then (the unit is off, or nothing is attached to its debugging
+  port), after checking the `.deb`'s SHA-256 and keeping a recovery copy of the installed
+  build (`dpkg-repack`, else the pin's `previous` build). It confirms the browser answers
+  on the pin's major version and otherwise puts the previous build back. A busy browser
+  keeps its current Chrome until a later update (`HIVRA_AGENT_BROWSER state=deferred`).
+- **Chat effort.** `POST /api/chat` takes an optional `effort`, exactly one of `low`,
+  `medium`, `high`, `xhigh` or `max`; any other value, or none, runs the turn with no
+  flag. Claude Code gets `--effort <level>` (checked in the pinned 2.1.292 package, and
+  accepted with all five levels from 2.1.117). Codex gets
+  `-c model_reasoning_effort="<level>"` on fresh and resumed turns, next to any provider
+  overrides (the pinned 0.149.1 parses minimal through ultra; the gateway stops at
+  `xhigh` and passes `max` as `xhigh`, because whether a model takes a higher level is
+  the model's decision). Other agent kinds ignore it. `GET /api/meta` lists the levels
+  the gateway will pass as `chatEffort`, only for Claude Code 2.1.117 or later and Codex
+  0.149.1 or later (a CLI that is older, or whose version could not be read, gets no
+  flag and no `chatEffort`), so a client shows the picker exactly when it has an effect.
+  `server.js` is a runtime update asset, so existing computers receive this with the
+  update.
+- **Hermes Agent.** `--agent-kind hermes` installs the official Hermes Agent with its own
+  installer (no Hivra image, fork or patch), points it at the launch model settings, and
+  runs Hermes's own web UI as `bux-hermes.service` on `127.0.0.1:9119`. The gateway proxies
+  it at `/hermes/` behind the token gate, HTTP and WebSocket, with the prefix stripped and
+  `X-Forwarded-Prefix: /hermes`. Updates are `hermes update` (Terminal, or the Update Hermes
+  button, which runs `hermes update --yes` as the agent user); the version comes from
+  `hermes --version`.
+  The Hermes gateway (scheduled tasks and chat channels) runs as a user service of the
+  agent user with linger, installed by `hermes gateway install`, at launch and by the
+  runtime update on existing Hermes computers.
+  From `2026.11.11.7`, `/hermes/` shows Hermes's own Desktop workspace in the browser
+  (`hermes webapp`) instead of the admin dashboard. The guest installer sets
+  `webapp.enabled` and runs `hermes webapp --build-only`; Hermes's gateway then serves the
+  Webapp on `127.0.0.1:9120`. Opening `/hermes/` through `/auth/bootstrap` goes to
+  `/hermes-sign-in`, which asks Hermes for a one-use launch link (`hermes webapp --no-open
+  --skip-build`) and redirects to it, so the owner is signed in without a token. While the
+  Webapp is not served, `/hermes/` keeps showing the dashboard on `:9119`. Update Hermes
+  turns the setting on, builds the Webapp after `hermes update` and restarts the gateway,
+  which is how existing Hermes computers switch over.
+  From `2026.11.12.1`, Manage › Model reads and sets Hermes's own model (`model.default`)
+  through `/api/model`, which runs `hermes config get`/`hermes config set` as the agent
+  user. It applies to new chats, like Hermes's own model picker. A Hermes the owner pointed
+  at another provider in Hermes itself is left alone (the endpoint answers 409).
+- **Git guard for Claude Code approvals (`2026.11.12.2`).** New computers ignore
+  `.claude/settings.local.json` in the agent user's git ignore, and every repository
+  created or cloned there gets a `pre-commit` hook (system `init.templateDir`) that refuses
+  a commit staging that file. Claude Code's "don't ask again" saves approved commands,
+  passwords included, in it. Existing computers are unchanged.
+- **Hermes restore points (`2026.11.12.3`).** `/api/restore-points` on a Hermes computer
+  reads and sets Hermes's own `checkpoints.enabled` with `hermes config get`/`set`. With it on,
+  Hermes snapshots a project before it changes files, and `/rollback` or `/undo` in a Hermes
+  chat goes back. Manage shows the switch only when `NEXT_PUBLIC_HIVRA_RESTORE_POINTS_ENABLED`
+  is `true`. Existing computers get it from the connection service update.
+- **OpenBot (CopilotKit).** From `2026.11.12.4`, `--agent-kind openbot` pulls the latest
+  official `ghcr.io/copilotkit/openbot` image (no Hivra image, fork or patch), records its
+  `OPENBOT_BUILD_VERSION`, and runs it by digest as `hivra-openbot.service` on host
+  networking at `127.0.0.1:3101` with its embedded PostgreSQL, in OpenBot's single-user
+  mode. Launch model settings become its `OPENAI_BASE_URL`/`OPENAI_API_KEY` (Chat
+  Completions). OpenBot has no base path, so the gateway serves it at the root of the box
+  origin behind the token gate, HTTP and WebSocket, presenting OpenBot's own loopback Host
+  and (for requests from the box's own origin) Origin; the gateway keeps only its own paths
+  (`/api/meta`, terminals, files and the other Hivra routes). `/openbot/` is the entry: it
+  asks once for the owner's CopilotKit Intelligence key (OpenBot refuses to start without
+  one), stores it in `~/.hivra/openbot-intelligence-key`, and the service, which waits for
+  that file, starts. Update OpenBot (`hivra-agent-app-update.sh openbot latest`) pulls the
+  latest image, swaps only if it is new, copies the database aside first and puts the
+  previous image and database back if the new release does not answer.
+- **Nuphos.** From `2026.11.12.5`, `--agent-kind nuphos` pulls the latest official Nuphos
+  runtime image (`ghcr.io/nuphos/runtime:latest-claude-code`; no Hivra image, fork or patch),
+  records its `OPENAB_RUNTIME_VERSION`, and runs it by digest as `hivra-nuphos.service` on
+  host networking at `127.0.0.1:3102` with all capabilities dropped and its home on the
+  `hivra-nuphos-home` volume. The gateway serves the runtime's own console at the root of
+  the box origin behind the token gate, presenting the box host as HTTPS
+  (`X-Forwarded-Host`/`X-Forwarded-Proto`) so the runtime tells Nuphos `wss://<box>/acp`
+  and sets its Secure console cookie; the gateway keeps only its own paths. The owner sets
+  the console password, presses Connect to Nuphos and chats from the Nuphos apps with
+  their own Nuphos account and Claude sign-in; Hivra gives it no model. The one exception
+  to the gate is the WebSocket upgrade of exactly `/acp`, which Nuphos's servers open with
+  a team key the runtime checks itself (it refuses every upgrade before setup); Hivra's
+  bearer and cookie are stripped from it and it never counts as use through Hivra. `/nuphos/`
+  is the entry the agent page opens. Update Nuphos (`hivra-agent-app-update.sh nuphos
+  latest`) pulls the latest runtime, swaps only if it is new and no conversation wrote to
+  its session homes recently, copies the runtime home aside first and puts the previous
+  image and home back if the new release does not answer.
+
+- **The A0 CLI reaches Agent Zero (`2026.11.18.5`).**
+  Official Agent Zero ships the connector plugin the A0 CLI needs, but the CLI
+  talks to the host's root (`/api/plugins/_a0_connector/v1/*`, `/api/csrf_token`,
+  `/socket.io`) and the connection service only mounted Agent Zero under
+  `/agent-zero`, so the CLI saw a missing plugin. A signed-in Connect app
+  session, or the public capability probe, now reaches those exact paths.
+  Browser writes from another site still cannot use the session.
+
+- **No package upgrade at first boot (`2026.11.18.4`).**
+  Every VM gets `ciupgrade 0`. Proxmox otherwise writes `package_upgrade: true`
+  into its generated user-data, and cloud-init then runs a full apt upgrade and,
+  on Ubuntu, `snap refresh` at first boot, so an unreachable snap store still
+  failed launches after `2026.11.18.3`. The guest keeps Ubuntu's daily
+  unattended security upgrades. Hosts without the option behave as before.
+
+- **Launches no longer depend on the snap store (`2026.11.18.3`).**
+  The guest's QEMU Guest Agent is installed by apt from the vendor data's
+  runcmd instead of cloud-config's `package_update`/`packages`. On Ubuntu that
+  module also runs `snap refresh`, so when the snap store's IPv4 front ends
+  refused connections every launch failed cloud-init, though nothing in a
+  launch needs a snap.
+
+- **Empty computers, kept cloud-init details, OpenClaw on Flash (`2026.11.18.2`).**
+  `HIVRA_PROVISION_MODE=empty` makes a computer's place (number, address,
+  ownership tags and receipt under the same lock as a launch, and a blank disk
+  of the asked size) without booting it or running any installer; nothing calls
+  it yet. When a guest's cloud-init fails, its status and the tail of its output
+  are kept in the root-only `/root/hivra-prov-<vmid>.cloud-init.txt` before the
+  guest is removed; the host log still carries only the classified reason. An
+  OpenClaw launched without a model now seeds DeepSeek V4.1 Flash.
+
+- **OpenClaw replies on Venice, and Aeon keeps a newer gh (`2026.11.18.1`).**
+  OpenClaw adds DeepSeek's own top-level `thinking` field to deepseek-v4
+  models, which Venice's strict chat schema rejects ("Invalid request
+  parameters"). The seeded Venice model, and a Venice model set from the
+  dashboard, now carry `compat.thinkingFormat: "openai"`, OpenClaw's own setting
+  for a plain OpenAI-style request. Aeon's step installed the pinned gh .deb even
+  when the image already had a newer gh, which apt refuses as a downgrade; any
+  gh at or above the pin is now kept.
+
+- **A failed launch says which step stopped (`2026.11.17.9`).** The guest is
+  removed when provisioning fails, so the host log only read "step
+  provision-claude-code-box.sh exited with status 1". The step's `die()` now
+  leaves its own message (Hivra's fixed text) in a root-only file under `/run`,
+  and the installer adds it to the "Hivra guest installation failure" line when
+  it is short plain text.
+
+- **OpenClaw launches finish installing (`2026.11.17.8`).** With the base
+  path set, OpenClaw's gateway answers 503 at its root, so the install's
+  readiness check (which asked for `/`) failed every new OpenClaw launch on
+  `2026.11.17.7`. The check now asks for `/openclaw/` when `openclaw.json`
+  names that base path, and `/` otherwise.
+
+- **OpenClaw's Control UI starts again (`2026.11.17.7`).**
+  OpenClaw 2026.11.5 sends `Referrer-Policy: no-referrer`, so the box gateway
+  could no longer tell which root-absolute requests (`/assets/*`, `/fonts/*`,
+  `/chat/*`) came from the Control UI it mounts at `/openclaw`, and the UI
+  never started ("Control UI did not start"). A new launch sets OpenClaw's own
+  `gateway.controlUi.basePath` to `/openclaw`, and the box gateway forwards
+  `/openclaw` unchanged whenever `openclaw.json` names that base path. A
+  computer whose config has no base path keeps the previous strip and Referer
+  re-home.
+
+- **Agent Zero has a model on a managed launch (`2026.11.17.6`).**
+  Current Agent Zero picks models from presets and ignores the `A0_SET_*`
+  model defaults, so a fresh box with a managed model key also gets Agent
+  Zero's Default preset (`usr/plugins/_model_config/presets.yaml`) set to the
+  same model and gateway. An existing presets file is never touched.
+  The same release fixes DeepSeek Harness launches: its gateway folder now
+  gets `import-state.cjs`, which `server.js` has required at start since
+  `2026.11.15.2`.
+
+- **OpenClaw and Aeon launch on their newest releases (`2026.11.17.4`).**
+  The box gateway drops forwarded-client headers on `/openclaw`, which
+  OpenClaw 2026.11.5 and later otherwise refuse from a loopback proxy
+  (`proxy_attribution_required`). Aeon keeps its own `next.config.ts` (as
+  `next.config.hivra-upstream.ts`) with only the `/aeon` mount added, since
+  its build now needs the bundler root that file sets. The host capacity
+  check counts a paused (napping) guest as active instead of refusing every
+  launch on that host with `invalid QEMU status`.
+
+- **Agent Zero settings land where current images read them (`2026.11.17.3`).**
+  Agent Zero v2.15 and later read only `/a0/usr/.env` and no longer copy the
+  mounted `/a0/.env` into it, so the seeded login and managed model were
+  ignored and every new Agent Zero launch failed its gateway readiness check.
+  The provisioner merges those keys into `/opt/a0/usr/.env` as well.
+
+- **Background reads never wake a napped computer (`2026.11.17.2`).** The
+  wake proxy treats a request carrying `X-Hivra-Background: 1` (Hivra's own
+  cron watchdogs, samplers and probes) as no proof: it never moves
+  `last_authed_at` and never wakes a napped or hibernated VM, which answers it
+  as asleep. A running guest still serves it. The dashboard's background
+  readers send the header.
+
+- **Newest agent version at launch, owner-run updates (`2026.11.17.1`).** Hivra
+  pins no agent version any more: `agent-cli-versions.json` and
+  `agent-app-versions.json` are gone. A launch installs upstream's newest
+  release (npm `latest` for Claude Code, Codex and OpenClaw, the
+  `agent0ai/agent-zero:latest` digest, Aeon's `HEAD` commit). Hivra never
+  updates an agent by itself; the owner's Update resolves the newest release
+  at that moment and swaps with the same rollback as before.
+
+- **Agent Zero plugin web UI imports and the v2.15 pin (`2026.11.15.7`).** The
+  gateway now serves no-Referer static module imports under
+  `/usr/plugins/<plugin>/webui/` (the Tailscale manager and other plugin web
+  interfaces) instead of answering 404. The pinned Agent Zero image moves to
+  `v2.15` (`sha256:05d6ab347bd7…`), with the reviewed `v2.2` image retained in
+  the pin's `previous` list; existing computers move through the managed
+  runtime/app update with rollback. The release also repairs the managed
+  update's idle gate: the surface watchdog's own probe used to count as app
+  use, so a watched box never looked idle and every scheduled app update
+  deferred until it gave up. The watchdog now marks its probe with a
+  box-local shared key (`~/.hivra/surface-watchdog-key`, created at
+  provision and by the runtime update), the gateway exempts that request
+  from use-tracking only when a loopback peer presents the key, the
+  direct-access site strips the marker outright, and the runtime update
+  restarts an already-installed watchdog. It also fixes the receipts
+  endpoint: watchdog state was written under a root-only directory the bux
+  gateway could never read, so `GET /api/surface-watchdog` always answered
+  not_installed; receipts now land group-readable for the agent user.
+
+- **Surface watchdog, browser-keeper cleanup and real-path readiness (`2026.11.15.6`).** A new
+  `hivra-surface-watchdog` service on each computer checks every registered agent
+  surface through the real gateway path (for Agent Zero, the same
+  `/agent-zero/api/csrf_token` call the dashboard makes), reports receipts at
+  `GET /api/surface-watchdog`, and restarts a wedged app unit only after a sustained
+  failure window — bounded by cooldown and a restart cap, and honouring the managed
+  update lock so a self-update shows as updating, not down. Non-browser boxes also
+  disable the legacy `bux-browser-keeper.service` unit at provision and runtime update
+  instead of leaving it crash-looping. New computers get it at provision; existing
+  computers get it from the connection service update.
+
+- **Lock fd isolation (`2026.11.15.5`).** Closes fd 8 on `qm start "$VMID" 8>&-` in
+  `hivra-start-on-host.sh` and `hivra-provision-on-host.sh` so the forked `kvm` child does
+  not inherit `/run/lock/hivra-allocation.lock`.
+
+- **Agent-app update resilience (`2026.11.15.3`).** An agent app's own self-updater or a
+  crash/restart window never writes the managed updater's lock, so the surface used to
+  502 until the app came back. Now any proxied port in the gateway's `AGENT_APP` table
+  that refuses a connection answers the same "being updated" page with `Retry-After`
+  instead — every agent kind, and any future kind registered in that table. Agent Zero's
+  entry fallback also tries `/ui/index`, and a fully unrecognised layout answers a
+  retrying 503 page for browsers instead of a bare 502. Existing computers get it from
+  the connection service update.
+
+- **Move an existing agent's state in (`2026.11.15.2`).** Manage's "Move an agent
+  from your device" mints a one-time transfer token on the box and hands the owner a prompt
+  their local agent follows to bundle and push its own state (`POST /api/import`, tar.gz).
+  The gateway unpacks it behind a per-kind allowlist (Claude/Codex/OpenClaw dotdirs, Agent
+  Zero `/opt/a0/usr`), keeps `~/.hivra`/`~/.ssh` out, and reports restore progress at
+  `GET /api/import/status`. Computers on older runtimes answer unsupported. Existing
+  computers get it from the connection service update.
+
+- **Agent Zero self-update layout (`2026.11.15.1`).** Newer Agent Zero (`v2.15`+) serves a
+  splash bootstrap at `/` that installs the real document from `/ui/index`; the box gateway
+  serves the pinned app document itself — `/`, then `/index.html` if the first document fails
+  the exact entry transform — so an in-container self-update no longer 502s the dashboard
+  surface. `/agent-zero/ui/index` redirects to the mount root. Existing computers get it from
+  the connection service update.
+
+- **Connect links for external apps (`2026.11.14.1`).** A computer's Manage/surface
+  "Connect app" action mints a connect grant on the box (`POST /connect/grant`, bearer only;
+  the box keeps the `sha256("user:pass")` digest in `~/.hivra/connect-grants.json`). The pair
+  signs in through `GET /connect/<user>:<pass>` or Agent Zero's own `POST /login`, so a
+  remote-instance client (the Agent Zero desktop app) attaches as it would to a self-hosted
+  install; `DELETE /connect/grant` revokes all links. Existing computers get it from the
+  connection service update.
+- **Host wake proxy (shipped, not installed).** From `2026.11.13.1` the bundle carries
+  `hivra-wake-proxy.py` with its units `hivra-wake-helper.service` (root: route files,
+  nap markers, per-VM lock and QMP `cont`, unix sockets only) and
+  `hivra-wake-proxy.service` (the `hivra-ingress` user: `127.0.0.1:8080` and
+  `[::1]:8080`, no capabilities), the per-computer host connector unit
+  `hivra-cf-template.service` (installed as `hivra-cf@.service`: cloudflared with
+  `--protocol http2`, its token read from the 0600 `/etc/hivra/ingress/<vmid>.env`,
+  never argv) and `hivra-ingress.tmpfiles.conf`. Bundle sync only stores them; nothing
+  runs until the separate, flag-gated wake-proxy install step copies them into place.
+  The proxy resumes only a paused VM whose nap marker holds the running QEMU pid, answers
+  an unknown host or a napping computer with 503, and wakes only on a signed, short-lived,
+  single-use `POST /__hivra/wake` ticket.
+- **Host wake proxy client wakes (shipped, dark).** From `2026.11.13.4`, `ctl client-wake auth`
+  lets the owner's bearer (or the dashboard's `/auth/bootstrap` form) resume a napped computer
+  when its route carries `bearer_sha256`; the default level `ticket` keeps tickets as the only wake.
+  Cookies and webhook signature headers never wake and never refresh the idle signal. Browsers
+  asking for a napped computer go to the route's `wake_url`. A nap marked `server-disarm`
+  (Telegram armed) sends client wakes to Hivra's `wake-request` instead.
+- **Host wake doorbell (shipped, dark).** From `2026.11.13.4`, the bundle carries
+  `hivra-wake-doorbell.py` and its unit. The doorbell install step (HIVRA_WAKE_DOORBELLS lists a
+  channel) installs it as user `hivra-doorbell` next to a running wake proxy. For email, the arm
+  host script hands the computer's own IMAP settings to it over its root-only socket before the
+  stop; it watches INBOX read-only and rings the wake proxy's helper (`request`, as "doorbell") for
+  mail from a sender Hermes would answer. A restart rings for every computer it had armed.
+- **Host wake doorbell for Discord (shipped, dark).** From `2026.11.13.5`, with
+  HIVRA_WAKE_DOORBELLS listing `discord`, the arm host script hands the computer's own bot token and
+  reply settings to the doorbell before the stop. The doorbell holds its own gateway session (READY
+  before the stop, no message-content intent), rings for a DM, a mention, a reply to the bot or a
+  free-response channel, sends one typing indicator and never posts. It stays connected about 90
+  seconds after the disarm. Agents are covered only with Hermes's own missed-message catch-up on and
+  a DM channel listed for it.
+- **Host ingress hardening (shipped, dark).** From `2026.11.13.6`, `hivra-ingress-pins.service`
+  (written and enabled by the wake-proxy install step; it runs `hivra-wake-proxy.py apply-pins`) re-applies each host-ingress computer's ARP/IP pin at boot
+  before the proxy and connectors start; the helper treats a running computer as not napped; the
+  forwarder cannot ask for wakes; the doorbell only reaches public mail servers and keeps ringing until
+  Hivra answers; the daemons never stop restarting.
+- **Host wake proxy calls Hivra (shipped, dark).** From `2026.11.13.3`, once the install step
+  (with `HIVRA_INGRESS_HOST_CREDENTIAL` on) has written `/etc/hivra/ingress/host-credential.json`,
+  the proxy reports each nap it resumes to `POST /api/hivra/ingress/wake-report`, and asks
+  `POST /api/hivra/ingress/wake-request` to wake a computer it cannot resume itself. Calls are
+  signed with the host credential (HMAC of host id and generation; revoked by moving the
+  generation on). No credential file: no calls, unchanged behaviour.
+- **Host ingress at start (shipped, dark).** From `2026.11.13.2`, `hivra-start-on-host.sh`
+  checks for `/etc/hivra/ingress/routes/<vmid>.json`. When it names the computer's own
+  hostname (the per-agent cutover wrote it), the start re-applies the host's ARP/IP pin
+  from `/etc/hivra/ingress/pins/`, starts the host connector `hivra-cf@<vmid>` and checks the
+  stable URL, and never restarts the guest connector. No route file: unchanged behaviour.
+- **DeepSeek Harness model at launch.** A launch can carry the model key, base URL and
+  model as a complete set. On a fresh install the guest writes the runtime's
+  `settings.yaml` and owner-only `.credentials.yaml` into its private home as the `bux`
+  account, before the service first starts; a restart or replay leaves them alone. With
+  none of the three, the computer starts without a model, as before.
+- **Linux server computer.** The `linux-server` kind is the Ubuntu computer without a
+  desktop: the same access base, `~/Hivra` workspace, Files and two terminals as Linux
+  Desktop, with no desktop capability and no Claude app helper. It takes the same
+  version 3 launch document on Proxmox and reports `linux-server` from `/api/meta`.
+- **Codex sign-in freshness.** The computer's chat page reports a repeat Codex
+  sign-in as fresh only when the credential changed, and says why one is not finished
+  yet.
+- **Launch and start hardening.** The installer waits for the dpkg lock and
+  retries `apt-get`, the pinned downloads and the npm/git fetches a bounded number
+  of times; the host launch script bounds the provisioner copy and the in-guest
+  install with `timeout` and SSH keepalives (still over the VMID-attested key) and
+  fails with a reason instead of staying in "provisioning"; the host start script
+  waits up to five minutes for the named tunnel. `system-prompt.md` and
+  `system-prompt-codex.md` tell the agent to send owners to **Manage** for updates,
+  restarts and restore points and not to upgrade or restart Hivra's own services.
 - **Agent Zero stop grace.** `hivra-agent-zero.service` stops the container
   with `docker stop -t 25` (docker's default is 10 s) and `TimeoutStopSec=30`,
   so the whole guest shutdown fits inside the shortest host budget that stops

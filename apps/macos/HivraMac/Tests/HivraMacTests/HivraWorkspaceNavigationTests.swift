@@ -12,8 +12,8 @@ struct HivraWorkspaceNavigationTests {
             "/dashboard/infrastructure", "/dashboard/launch", "/dashboard/settings",
         ])
         #expect(HivraWorkspaceDestination.overview.label == "Home")
-        // Capacity keeps its original route; the wire and stored value stays `infrastructure`.
-        #expect(HivraWorkspaceDestination.infrastructure.label == "Capacity")
+        // Servers keeps its original route; the wire and stored value stays `infrastructure`.
+        #expect(HivraWorkspaceDestination.infrastructure.label == "Servers")
         #expect(HivraWorkspaceDestination(rawValue: "infrastructure") == .infrastructure)
     }
 

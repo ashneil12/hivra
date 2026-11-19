@@ -1,0 +1,28 @@
+{
+  "name": "lite-agent-worker",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "description": "Free Lite cloud agents on Cloudflare Durable Objects: one object per agent with its own SQLite, asleep and free until messaged.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "pretest": "npm run build",
+    "test": "node --test --test-timeout=60000 test/*.test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260918.1",
+    "miniflare": "5.20260918.0-alpha",
+    "typescript": "5.9.3",
+    "wrangler": "4.135.0"
+  },
+  "overrides": {
+    "undici": "7.30.0"
+  }
+}

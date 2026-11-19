@@ -149,23 +149,23 @@ export function CookieConsentBanner() {
   const secondaryButtonStyle: React.CSSProperties = {
     minHeight: 44,
     padding: '8px 14px',
-    fontSize: 12,
-    letterSpacing: '0.05em',
+    fontSize: 13,
+    letterSpacing: 0,
     cursor: 'pointer',
     background: 'transparent',
     color: 'var(--text-secondary)',
     border: '1px solid var(--etched-border)',
-    borderRadius: 0,
+    borderRadius: 'var(--hg-radius-md)',
     whiteSpace: 'nowrap',
   };
   const primaryButtonStyle: React.CSSProperties = {
     minHeight: 44,
     padding: '8px 16px',
-    fontSize: 12,
-    letterSpacing: '0.05em',
+    fontSize: 13,
+    letterSpacing: 0,
     cursor: 'pointer',
     whiteSpace: 'nowrap',
-    borderRadius: 0,
+    borderRadius: 'var(--hg-radius-md)',
   };
 
   return (
@@ -186,15 +186,16 @@ export function CookieConsentBanner() {
         overflowY: 'auto',
         overscrollBehavior: 'contain',
         margin: '0 auto',
-        background: 'var(--overlay-bg)',
-        border: '1px solid var(--etched-border)',
-        backdropFilter: 'blur(12px)',
-        borderRadius: 0,
+        background: 'var(--hg-glass-strong)',
+        border: '1px solid var(--hg-stroke)',
+        backdropFilter: 'blur(var(--hg-glass-blur)) saturate(1.3)',
+        WebkitBackdropFilter: 'blur(var(--hg-glass-blur)) saturate(1.3)',
+        borderRadius: 'var(--hg-radius-xl)',
         padding: '1rem 1.25rem',
         display: 'flex',
         flexDirection: 'column',
         gap: '0.85rem',
-        boxShadow: '0 8px 30px rgba(0,0,0,0.18)',
+        boxShadow: 'var(--hg-glass-edge), var(--hg-shadow-lg)',
       }}
     >
       <p
@@ -367,11 +368,11 @@ function ConsentCategory({
           style={{
             flex: '0 0 auto',
             fontSize: 10,
-            letterSpacing: '0.08em',
+            letterSpacing: '0.05em',
             textTransform: 'uppercase',
             color: 'var(--text-muted)',
             border: '1px solid var(--etched-border)',
-            borderRadius: 0,
+            borderRadius: 999,
             padding: '3px 8px',
             whiteSpace: 'nowrap',
           }}
@@ -405,10 +406,10 @@ function ConsentCategory({
               position: 'relative',
               width: 40,
               height: 22,
-              borderRadius: 0,
+              borderRadius: 999,
               border: '1px solid var(--etched-border)',
               background: checked ? 'var(--ink-black)' : 'var(--bg-surface)',
-              transition: 'background 0.15s ease',
+              transition: 'background var(--hg-fast) var(--hg-ease)',
             }}
           >
             <span
@@ -418,9 +419,9 @@ function ConsentCategory({
                 left: checked ? 20 : 2,
                 width: 16,
                 height: 16,
-                borderRadius: 0,
-                background: checked ? 'var(--bg-surface)' : 'var(--text-muted)',
-                transition: 'left 0.15s ease',
+                borderRadius: '50%',
+                background: checked ? 'var(--hg-bg)' : 'var(--text-muted)',
+                transition: 'left var(--hg-fast) var(--hg-ease)',
               }}
             />
           </span>

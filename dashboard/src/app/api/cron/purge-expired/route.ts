@@ -156,6 +156,16 @@ async function releasePurgeClaim(
 }
 
 /**
+ * An old Hermes computer kept for the undo window after its agent moved to the
+ * official Hermes (config.movedTo, written by the move). Its deletion is
+ * deliberate and not a lapse: an owner who pays must not stop it from being
+ * deleted, and a payment must not bring it back (see restoreScheduledDeletions).
+ */
+function isMovedAway(instance: PurgeCandidate): boolean {
+  return instance.status === "scheduled_for_deletion" && Boolean((instance.config as { movedTo?: unknown } | null)?.movedTo);
+}
+
+/**
  * Whether the owner of a scheduled row is entitled right now, on any lane
  * (Stripe including past_due in grace, Apple, token tiers), by the same
  * resolver the lapse checks use. Such a row is only still scheduled because a
@@ -538,7 +548,7 @@ export async function GET(req: NextRequest) {
       // the race to the claim (neither the restore nor the resume can touch a
       // claimed row). Checked as late as possible, right before the destroy,
       // and the row is handed back to the payment instead of destroyed.
-      if (instance.status === "scheduled_for_deletion") {
+      if (instance.status === "scheduled_for_deletion" && !isMovedAway(instance)) {
         const pays = await ownerPaysNow(instance.user_id);
         if (pays !== false) {
           const released = await releasePurgeClaim(supabaseAdmin, instance, claimedAt);
@@ -721,7 +731,7 @@ export async function GET(req: NextRequest) {
 
       // The claim fences the row from a restore, so a payment that landed
       // during the teardown was a no-op. Say so loudly for a manual restore.
-      if (instance.status === "scheduled_for_deletion" && (await ownerPaysNow(instance.user_id))) {
+      if (instance.status === "scheduled_for_deletion" && !isMovedAway(instance) && (await ownerPaysNow(instance.user_id))) {
         await reportOpsEvent({
           source: "instance.purge_owner_paid_during_teardown",
           severity: "error",

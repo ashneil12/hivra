@@ -11,6 +11,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 
+import { launchOptions } from "./lib/playwright-launch.cjs";
+
 export type SelkiesTransport = "websocket" | "webrtc";
 
 export const SELKIES_DESKTOP_FIXTURE = {
@@ -511,7 +513,7 @@ async function runBrowserAcceptance(
     ? await chromium.connectOverCDP(cdpUrl, {
         headers: { "x-hivra-cdp-token": cdpToken ?? "" },
       })
-    : await chromium.launch({ headless: true });
+    : await chromium.launch(launchOptions({ headless: true }));
   let websocketCount = 0;
   let websocketFramesReceived = 0;
   let websocketFramesSent = 0;

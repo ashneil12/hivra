@@ -84,7 +84,7 @@ describe("portable native terminal setup", () => {
     expect(result.stdout).not.toContain("CLI claude");
     expect(result.stderr).toContain("The selected agent runtime is unavailable");
   });
-  it.each(["aeon", "openclaw", "agent-zero", "linux-desktop"])("opens a login shell for the %s dashboard or computer runtime", kind => {
+  it.each(["aeon", "openclaw", "agent-zero", "linux-desktop", "linux-server"])("opens a login shell for the %s dashboard or computer runtime", kind => {
     expect(run(kind)).toMatchObject({ status: 0, stdout: "BOX_SHELL\n", stderr: "" });
   });
   it.each([null, "", "unknown", "codex\nclaude"])("rejects unconfigured or invalid selection %s", kind => {
@@ -136,7 +136,7 @@ describe("portable native terminal setup", () => {
       }
     }
   });
-  it.each(["claude", "aeon", "openclaw", "agent-zero", "linux-desktop"])("keeps every Box Terminal tab on %s computers in its own persistent login shell", kind => {
+  it.each(["claude", "aeon", "openclaw", "agent-zero", "linux-desktop", "linux-server"])("keeps every Box Terminal tab on %s computers in its own persistent login shell", kind => {
     const { status, lines } = runInTerminal(kind, ["claude", "codex", "tmux"], ["--box-terminal", "3"]);
     expect(status).toBe(0);
     const argv = tmuxArgv(lines);
@@ -144,7 +144,7 @@ describe("portable native terminal setup", () => {
     // No command: tmux starts the owner's login shell.
     expect(argv.slice(-4)).toEqual(["new-session", "-A", "-s", "box-3"]);
   });
-  it.each(["aeon", "openclaw", "agent-zero", "linux-desktop"])("keeps the %s agent terminal shell in a persistent session too", kind => {
+  it.each(["aeon", "openclaw", "agent-zero", "linux-desktop", "linux-server"])("keeps the %s agent terminal shell in a persistent session too", kind => {
     const argv = tmuxArgv(runInTerminal(kind, ["tmux"], ["--agent-terminal", "2"]).lines);
     expect(argv.slice(0, 2)).toEqual(["-L", "hivra-agent"]);
     expect(argv.slice(-4)).toEqual(["new-session", "-A", "-s", "agent-2"]);
@@ -190,9 +190,9 @@ describe("portable native terminal setup", () => {
       expect(unit).toContain("KillMode=process\n");
     }
   });
-  it("moves only the Linux Desktop terminal profile into the shared Hivra workspace", () => {
+  it("moves only the Linux computer terminal profiles into the shared Hivra workspace", () => {
     const text = installer();
-    expect(text).toContain('if [ "${AGENT_KIND:-}" = "linux-desktop" ]; then');
+    expect(text).toContain('if [ "${AGENT_KIND:-}" = "linux-desktop" ] || [ "${AGENT_KIND:-}" = "linux-server" ]; then');
     expect(text).toContain("sed -i 's#^WorkingDirectory=.*#WorkingDirectory=/home/bux/Hivra#'");
     expect(text).toContain("/etc/systemd/system/bux-ttyd.service.d/base-path.conf");
     expect(text).toContain("/etc/systemd/system/bux-box-ttyd.service");

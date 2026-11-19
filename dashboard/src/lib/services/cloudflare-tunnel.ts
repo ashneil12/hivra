@@ -326,3 +326,167 @@ export async function deleteBoxTunnel(
     log.warn("cloudflare tunnel teardown failed; continuing", { source: LOG_SOURCE, error: err instanceof Error ? err.message : String(err) });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Host ingress (per-agent cutover). These calls move a box's tunnel between the
+// connector in the box and the host connector. A tunnel token or secret is
+// never logged, never put in an error and never returned by anything but
+// getBoxTunnelToken, whose caller hands it straight to SSH stdin.
+// ---------------------------------------------------------------------------
+
+const TUNNEL_UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+/** A tunnel run token: base64 of a small JSON document. */
+const TUNNEL_TOKEN_SHAPE = /^[A-Za-z0-9+/=_-]{40,4096}$/;
+/** The only origins a box hostname may point at: the box's (or the host proxy's) local port 8080. */
+export const BOX_TUNNEL_ORIGINS = ["http://localhost:8080", "http://127.0.0.1:8080"] as const;
+export type BoxTunnelOrigin = (typeof BOX_TUNNEL_ORIGINS)[number];
+
+function assertTunnelId(tunnelId: string): string {
+  if (typeof tunnelId !== "string" || !TUNNEL_UUID.test(tunnelId)) throw new Error("invalid tunnel id");
+  return tunnelId.toLowerCase();
+}
+
+function requireConfig(configOverride?: CloudflareTunnelConfig | null): CloudflareTunnelConfig {
+  const cfg = configOverride ?? getTunnelConfig();
+  if (!cfg) throw new Error("Cloudflare tunnel API is not configured");
+  return cfg;
+}
+
+/** The current run token of a box tunnel. The caller must pass it on only over stdin. */
+export async function getBoxTunnelToken(
+  tunnelId: string,
+  configOverride?: CloudflareTunnelConfig | null,
+): Promise<string> {
+  const cfg = requireConfig(configOverride);
+  const id = assertTunnelId(tunnelId);
+  const accountId = await resolveAccountId(cfg);
+  const token = await cf<unknown>(cfg, `/accounts/${accountId}/cfd_tunnel/${id}/token`);
+  if (typeof token !== "string" || !TUNNEL_TOKEN_SHAPE.test(token)) {
+    throw new Error("Cloudflare returned no usable tunnel credential");
+  }
+  return token;
+}
+
+/** One cloudflared process connected to a tunnel (Cloudflare calls it a client or connector). */
+export interface TunnelConnector {
+  /** The connector id; DELETE .../connections?client_id=<id> evicts it. */
+  clientId: string;
+  version: string | null;
+  runAt: string | null;
+  /** Open edge connections of this connector. */
+  connections: number;
+}
+
+/** Every connector the edge currently lists for the tunnel. */
+export async function listTunnelConnections(
+  tunnelId: string,
+  configOverride?: CloudflareTunnelConfig | null,
+): Promise<TunnelConnector[]> {
+  const cfg = requireConfig(configOverride);
+  const id = assertTunnelId(tunnelId);
+  const accountId = await resolveAccountId(cfg);
+  const clients = await cf<unknown>(cfg, `/accounts/${accountId}/cfd_tunnel/${id}/connections`);
+  if (!Array.isArray(clients)) throw new Error("Cloudflare returned an invalid connector list");
+  const out: TunnelConnector[] = [];
+  for (const client of clients) {
+    const c = (client ?? {}) as Record<string, unknown>;
+    if (typeof c.id !== "string" || !TUNNEL_UUID.test(c.id)) throw new Error("Cloudflare returned an invalid connector id");
+    const conns = Array.isArray(c.conns) ? c.conns.filter((conn) => {
+      const pending = (conn as Record<string, unknown> | null)?.is_pending_reconnect;
+      return pending !== true;
+    }).length : 0;
+    out.push({
+      clientId: c.id.toLowerCase(),
+      version: typeof c.version === "string" ? c.version : null,
+      runAt: typeof c.run_at === "string" ? c.run_at : null,
+      connections: conns,
+    });
+  }
+  return out;
+}
+
+/**
+ * Give the tunnel a new secret. Connectors already connected stay connected;
+ * any copy of the previous token can no longer connect. Read the new token
+ * with getBoxTunnelToken.
+ */
+export async function rotateTunnelSecret(
+  tunnelId: string,
+  configOverride?: CloudflareTunnelConfig | null,
+): Promise<void> {
+  const cfg = requireConfig(configOverride);
+  const id = assertTunnelId(tunnelId);
+  const accountId = await resolveAccountId(cfg);
+  const { randomBytes } = await import("node:crypto");
+  const secret = randomBytes(32).toString("base64");
+  await cf(cfg, `/accounts/${accountId}/cfd_tunnel/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ tunnel_secret: secret }),
+  });
+}
+
+/** Evict one connector from the edge. Its process may reconnect only with a current token. */
+export async function deleteTunnelConnection(
+  tunnelId: string,
+  clientId: string,
+  configOverride?: CloudflareTunnelConfig | null,
+): Promise<void> {
+  const cfg = requireConfig(configOverride);
+  const id = assertTunnelId(tunnelId);
+  if (typeof clientId !== "string" || !TUNNEL_UUID.test(clientId)) throw new Error("invalid connector id");
+  const accountId = await resolveAccountId(cfg);
+  const search = new URLSearchParams({ client_id: clientId.toLowerCase() });
+  await cf(cfg, `/accounts/${accountId}/cfd_tunnel/${id}/connections?${search.toString()}`, { method: "DELETE" });
+}
+
+type IngressRule = { hostname?: unknown; service?: unknown; [key: string]: unknown };
+
+async function readTunnelIngress(cfg: CloudflareTunnelConfig, accountId: string, id: string) {
+  const current = await cf<{ config?: { ingress?: unknown; [key: string]: unknown } | null }>(
+    cfg, `/accounts/${accountId}/cfd_tunnel/${id}/configurations`);
+  const config = current?.config && typeof current.config === "object" ? current.config : null;
+  const ingress = Array.isArray(config?.ingress) ? (config!.ingress as IngressRule[]) : null;
+  if (!config || !ingress) throw new Error("Cloudflare returned no tunnel ingress");
+  return { config, ingress };
+}
+
+/** Where the box hostname's rule in the tunnel's remote config points, or null when there is no such rule. */
+export async function getBoxTunnelOrigin(
+  tunnelId: string,
+  hostname: string,
+  configOverride?: CloudflareTunnelConfig | null,
+): Promise<string | null> {
+  const cfg = requireConfig(configOverride);
+  const id = assertTunnelId(tunnelId);
+  const accountId = await resolveAccountId(cfg);
+  const { ingress } = await readTunnelIngress(cfg, accountId, id);
+  const rule = ingress.find((entry) => entry.hostname === hostname.toLowerCase());
+  return rule && typeof rule.service === "string" ? rule.service : null;
+}
+
+/**
+ * Point the box hostname's rule at one of the two local origins. Both work
+ * from the box and from the host proxy, so this is safe while either
+ * connector serves. Every other rule and setting is kept as it is.
+ */
+export async function setBoxTunnelOrigin(
+  tunnelId: string,
+  hostname: string,
+  service: BoxTunnelOrigin,
+  configOverride?: CloudflareTunnelConfig | null,
+): Promise<void> {
+  if (!(BOX_TUNNEL_ORIGINS as readonly string[]).includes(service)) throw new Error("invalid tunnel origin");
+  const cfg = requireConfig(configOverride);
+  const id = assertTunnelId(tunnelId);
+  const accountId = await resolveAccountId(cfg);
+  const { config, ingress } = await readTunnelIngress(cfg, accountId, id);
+  const name = hostname.toLowerCase();
+  const matches = ingress.filter((entry) => entry.hostname === name);
+  if (matches.length !== 1) throw new Error("tunnel ingress has no single rule for the box hostname");
+  if (matches[0].service === service) return;
+  const next = ingress.map((entry) => (entry.hostname === name ? { ...entry, service } : entry));
+  await cf(cfg, `/accounts/${accountId}/cfd_tunnel/${id}/configurations`, {
+    method: "PUT",
+    body: JSON.stringify({ config: { ...config, ingress: next } }),
+  });
+}

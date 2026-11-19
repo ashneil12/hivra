@@ -7,6 +7,7 @@
 // user sees and what the agent is told cannot drift apart.
 
 import { getAgent as catalogAgent, type AgentDef } from "@/lib/hivra/agent-catalog";
+import { computerHasDesktop } from "@/lib/hivra/resource-landing";
 
 /** Every surface an agent or computer page can show, in display order. */
 export const AGENT_SURFACE_IDS = [
@@ -31,6 +32,7 @@ export interface AgentSurfaceSubject {
 // belongs to computers only: the desktop service refuses agent resources.
 const DASHBOARD_SURFACES: readonly AgentSurfaceId[] = ["aeon", "box", "files", "manage"];
 const COMPUTER_BASE_SURFACES: readonly AgentSurfaceId[] = ["desktop", "manage"];
+const COMPUTER_HEADLESS_SURFACES: readonly AgentSurfaceId[] = ["manage"];
 const COMPUTER_WORKSPACE_SURFACES: readonly AgentSurfaceId[] = ["box", "files"];
 
 function ordered(ids: Iterable<AgentSurfaceId>): AgentSurfaceId[] {
@@ -59,7 +61,10 @@ export function agentSurfacesFor(subject: AgentSurfaceSubject): AgentSurfaceId[]
     const hasWorkspace = subject.status === "running"
       && subject.computer_profile !== "windows"
       && Boolean(subject.chat_url?.trim());
-    return ordered(hasWorkspace ? [...COMPUTER_BASE_SURFACES, ...COMPUTER_WORKSPACE_SURFACES] : COMPUTER_BASE_SURFACES);
+    // A computer with no desktop (a Linux computer), or a profile Hivra does
+    // not know, never lists Desktop.
+    const base = computerHasDesktop(subject.computer_profile) ? COMPUTER_BASE_SURFACES : COMPUTER_HEADLESS_SURFACES;
+    return ordered(hasWorkspace ? [...base, ...COMPUTER_WORKSPACE_SURFACES] : base);
   }
   if (def?.surface === "dashboard") {
     return ordered([...DASHBOARD_SURFACES, ...(def.browser ? ["browser" as const] : [])]);
@@ -86,7 +91,7 @@ export function agentSurfaceLabel(id: AgentSurfaceId, def?: Pick<AgentDef, "name
   }
 }
 
-export type AgentSurfaceGroupId = "work" | "computer" | "manage";
+export type AgentSurfaceGroupId = "work" | "browser" | "computer" | "manage";
 export interface AgentSurfaceGroup {
   id: AgentSurfaceGroupId;
   label: string;
@@ -94,30 +99,59 @@ export interface AgentSurfaceGroup {
 }
 
 const GROUP_OF: Record<AgentSurfaceId, AgentSurfaceGroupId> = {
-  chat: "work", terminal: "work", aeon: "work", desktop: "work",
-  box: "computer", files: "computer", browser: "computer", git: "computer",
+  chat: "work", terminal: "work", aeon: "work",
+  browser: "browser",
+  desktop: "computer", box: "computer", files: "computer", git: "computer",
   manage: "manage", skills: "manage", tasks: "manage", telegram: "manage",
 };
 // Inside a group the order is the one the owner reads, not the storage order.
+// The agent's own session sits next to Chat. The browser the agent drives is
+// its own place, so it is quick to check on. The computer lists what you would
+// look at on the box: its screen, files, then a plain shell. Git has no place
+// of its own: its changes are a view inside Files (see HivraFiles).
 const GROUP_ORDER: Record<AgentSurfaceGroupId, readonly AgentSurfaceId[]> = {
-  work: ["chat", "aeon", "desktop", "terminal"],
-  computer: ["box", "files", "browser", "git"],
+  work: ["chat", "terminal", "aeon"],
+  browser: ["browser"],
+  computer: ["desktop", "files", "box"],
   manage: ["manage", "skills", "tasks", "telegram"],
 };
 
 /**
- * Agent pages group their surfaces as the agent, its computer, and Manage:
- * Agent · Computer (Terminal, Files, Browser, Git) · Manage. Groups with no
- * surface are dropped. Computers keep their short flat list and never call this.
+ * Agent pages group their surfaces as the agent, its browser, its computer, and
+ * Manage: Agent (Chat, its own session) · Browser · Computer (Desktop, Files,
+ * Terminal) · Manage. Git is not a tab: its changes are a view inside Files. Groups with
+ * no surface are dropped. Computers keep their short flat list and never call this.
  */
 export function agentSurfaceGroups(surfaces: readonly AgentSurfaceId[], def?: Pick<AgentDef, "surface"> | null): AgentSurfaceGroup[] {
   const present = new Set(surfaces);
-  const groups: AgentSurfaceGroup[] = (["work", "computer", "manage"] as const).map((id) => ({
+  const groups: AgentSurfaceGroup[] = (["work", "browser", "computer", "manage"] as const).map((id) => ({
     id,
-    label: id === "work" ? (def?.surface === "dashboard" ? "Dashboard" : "Agent") : id === "computer" ? "Computer" : "Manage",
+    label: id === "work" ? (def?.surface === "dashboard" ? "Dashboard" : "Agent") : id === "browser" ? "Browser" : id === "computer" ? "Computer" : "Manage",
     surfaces: GROUP_ORDER[id].filter((surface) => present.has(surface)),
   }));
   return groups.filter((group) => group.surfaces.length > 0);
+}
+
+/**
+ * An agent never owns a desktop of its own, but it can be given one: linked to
+ * one of the owner's desktop computers, or launched beside it. So its page
+ * always shows a Desktop entry in the Computer group that explains the choice,
+ * except for a DigitalOcean session, which has its own page.
+ */
+export function agentOffersDesktopEntry(subject: Pick<AgentSurfaceSubject, "type" | "computer_substrate">): boolean {
+  if (subject.computer_substrate === "do-managed-session") return false;
+  return catalogAgent(subject.type)?.surface !== "computer";
+}
+
+/**
+ * The tabs the agent page draws: `agentSurfacesFor` without the Git tab (its
+ * changes open inside Files) and, for an agent, with the Desktop entry.
+ * `agentSurfacesFor` stays the shared decision the Computer Contract and the
+ * launch Review read.
+ */
+export function agentPageSurfacesFor(subject: AgentSurfaceSubject): AgentSurfaceId[] {
+  const base = agentSurfacesFor(subject).filter((id) => id !== "git");
+  return agentOffersDesktopEntry(subject) ? ordered([...base, "desktop"]) : base;
 }
 
 export function agentSurfaceGroupOf(id: AgentSurfaceId): AgentSurfaceGroupId {

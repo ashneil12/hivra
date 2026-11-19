@@ -2,7 +2,7 @@ import { GET } from "../route";
 import { backupsIncludedWithInstance, calculateUsage, resolveBackupAddon } from "../helpers";
 import { auth } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { getCreditSummary, getPlanMonthlyCreditGrant } from "@/lib/billing/credits";
+import { getCreditSummary } from "@/lib/billing/credits";
 
 // Mock external dependencies
 jest.mock("@clerk/nextjs/server", () => ({
@@ -14,7 +14,6 @@ jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supaba
 jest.mock("@/lib/billing/credits", () => ({
   CREDIT_UNIT_LABEL: "100 credits = $1",
   getCreditSummary: jest.fn(),
-  getPlanMonthlyCreditGrant: jest.fn(),
 }));
 
 describe("calculateUsage helper", () => {
@@ -130,12 +129,8 @@ describe("GET /api/billing/usage", () => {
     (supabaseAdmin!.rpc as jest.Mock).mockResolvedValue({ data: 0, error: null });
     (getCreditSummary as jest.Mock).mockResolvedValue({
       balance: 500,
-      monthlyGrant: 0,
       unit: "100 credits = $1",
     });
-    (getPlanMonthlyCreditGrant as jest.Mock).mockImplementation((planKey: string | null) =>
-      planKey === "operator" ? 2090 : 0
-    );
   });
 
   afterEach(() => {
@@ -210,7 +205,6 @@ describe("GET /api/billing/usage", () => {
     expect(body.data.subscribed).toBe(false);
     expect(body.data.credits).toEqual({
       balance: 500,
-      monthlyGrant: 0,
       unit: "100 credits = $1",
     });
   });
@@ -311,7 +305,6 @@ describe("GET /api/billing/usage", () => {
   it("uses the resolved database entitlement limits in the usage payload", async () => {
     (getCreditSummary as jest.Mock).mockResolvedValueOnce({
       balance: 1250,
-      monthlyGrant: 2090,
       unit: "100 credits = $1",
     });
 
@@ -349,7 +342,6 @@ describe("GET /api/billing/usage", () => {
     expect(body.data.usage.usedRam).toBe(4096);
     expect(body.data.credits).toEqual({
       balance: 1250,
-      monthlyGrant: 2090,
       unit: "100 credits = $1",
     });
   });
@@ -380,7 +372,6 @@ describe("GET /api/billing/usage", () => {
   it("counts Hivra agents so post-login welcome can route existing Claude users to dashboard", async () => {
     (getCreditSummary as jest.Mock).mockResolvedValueOnce({
       balance: 1250,
-      monthlyGrant: 2090,
       unit: "100 credits = $1",
     });
 
@@ -568,11 +559,9 @@ describe("GET /api/billing/usage", () => {
     expect(res.status).toBe(200);
     expect(body.data.credits).toEqual({
       balance: 0,
-      monthlyGrant: 2090,
       unit: "100 credits = $1",
     });
     expect(getCreditSummary).not.toHaveBeenCalled();
-    expect(getPlanMonthlyCreditGrant).toHaveBeenCalledWith("operator");
   });
 
   it("treats Stripe trialing subscriptions as subscribed", async () => {

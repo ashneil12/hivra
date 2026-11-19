@@ -1,25 +1,46 @@
 "use client";
 
-import { useId } from "react";
+import { useEffect, useId, useState } from "react";
 
 import type { Provider } from "@/lib/models";
 import type { LaunchModelAccess, LaunchProfileId } from "@/lib/launch/contracts";
 import {
   bothWalletsFunded,
+  choicesFromVeniceKeyCheck,
   choosesModel,
   effectiveModel,
   effectiveProvider,
   modelChoices,
   providerName,
   requiresSavedKey,
+  AI_CONNECTION_QUESTION,
   savedKeyHint,
   savedKeysFor,
   type CreditsBalance,
+  type ModelChoice,
   type ModelAccessOption,
   type SavedModelKey,
 } from "@/lib/launch/model-access";
 
+import { VENICE_API_KEYS_URL, veniceSetupCallLink } from "@/lib/venice/onboarding";
+
+import type { VeniceKeyCheckResult } from "@/app/api/launch/venice-key-check/route";
+
 import styles from "./ModelAccessControl.module.css";
+
+const KEY_CHECK_DELAY_MS = 600;
+
+type KeyCheck =
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "ok"; models: ModelChoice[] }
+  | { state: "invalid" }
+  | { state: "unreachable" };
+
+/** A model's name in the picker, with its Private badge when it has one. */
+export function modelOptionLabel(choice: ModelChoice): string {
+  return choice.private ? `${choice.label} · Private` : choice.label;
+}
 
 /** How the agent reaches a model, the same three choices for every agent:
  * sign in inside it after it opens, send your own API key to its computer,
@@ -61,9 +82,46 @@ export function ModelAccessControl({
   const saved = savedKeysFor(profileId, access, savedKeys)[0] ?? null;
   const savedOnly = requiresSavedKey(profileId, access);
   const usingSaved = access.mode === "api-key" && (access.keySource === "saved" || savedOnly);
-  const models = modelChoices(profileId, access);
+  const [keyCheck, setKeyCheck] = useState<KeyCheck>({ state: "idle" });
+  const checkedKey = access.mode === "api-key" && provider === "venice" && !usingSaved ? pastedKey.trim() : "";
+  // A Venice key is checked shortly after it is pasted. The key goes to
+  // Hivra's server for that one check only; the answer lists what it can use.
+  useEffect(() => {
+    if (checkedKey.length < 8) { setKeyCheck({ state: "idle" }); return; }
+    const controller = new AbortController();
+    setKeyCheck({ state: "checking" });
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch("/api/launch/venice-key-check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key: checkedKey }),
+          signal: controller.signal,
+        });
+        const result = await response.json() as VeniceKeyCheckResult;
+        if (controller.signal.aborted) return;
+        setKeyCheck(result.ok
+          ? { state: "ok", models: choicesFromVeniceKeyCheck(result.models) }
+          : { state: result.reason === "invalid_key" ? "invalid" : "unreachable" });
+      } catch {
+        if (!controller.signal.aborted) setKeyCheck({ state: "unreachable" });
+      }
+    }, KEY_CHECK_DELAY_MS);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [checkedKey]);
+  const liveModels = keyCheck.state === "ok" && checkedKey && keyCheck.models.length > 0 ? keyCheck.models : null;
+  const models: ModelChoice[] = liveModels ?? modelChoices(profileId, access);
   const model = effectiveModel(profileId, access);
+  // Keep the picker on a model the key can use.
+  const firstLive = liveModels ? (liveModels.find(choice => choice.private) ?? liveModels[0]).value : null;
+  const needsLiveModel = Boolean(liveModels && !access.model.trim() && !liveModels.some(choice => choice.value === model));
+  useEffect(() => {
+    if (needsLiveModel && firstLive) onChange({ model: firstLive });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the list first arrives.
+  }, [needsLiveModel, firstLive]);
   const customModel = model !== "" && !models.some(choice => choice.value === model);
+  const usesVenice = access.mode === "credits" || (access.mode === "api-key" && provider === "venice");
+  const setupCall = veniceSetupCallLink(agentName.trim() || null);
 
   const chooseMode = (mode: LaunchModelAccess["mode"]) => {
     if (mode === access.mode) return;
@@ -124,7 +182,7 @@ export function ModelAccessControl({
         disabled={disabled}
         onChange={event => onChange({ model: event.target.value === "__custom" ? access.model : event.target.value })}
       >
-        {models.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+        {models.map(choice => <option key={choice.value} value={choice.value}>{modelOptionLabel(choice)}</option>)}
         {customModel ? <option value="__custom">{model} (entered under Advanced)</option> : null}
       </select>
       <details className={styles.advanced} open={customModel || undefined}>
@@ -150,6 +208,7 @@ export function ModelAccessControl({
 
   return (
     <div className={styles.control}>
+      <p className={styles.question}>{AI_CONNECTION_QUESTION}</p>
       <div className={styles.options} role="group" aria-label="Model access">
         {options.map(option => {
           const selected = access.mode === option.mode;
@@ -165,6 +224,7 @@ export function ModelAccessControl({
               >
                 <strong>{option.title}</strong>
                 <small>{option.unavailable ?? option.detail}</small>
+                {option.mode === "credits" && option.detail ? <small>Powered by Venice</small> : null}
               </button>
               {option.offerAddCredit ? (
                 <button type="button" className={styles.inlineAction} disabled={disabled} onClick={onAddCredit}>
@@ -245,6 +305,19 @@ export function ModelAccessControl({
                 onChange={event => onPastedKeyChange(event.target.value)}
               />
               <small>Sent only to {name}&apos;s computer. It isn&apos;t kept in this browser.</small>
+              {provider === "venice" ? (
+                <small>
+                  No key yet? <a href={VENICE_API_KEYS_URL} target="_blank" rel="noopener noreferrer">Create one in your Venice settings</a>, then paste it here.
+                </small>
+              ) : null}
+              {provider === "venice" && keyCheck.state !== "idle" ? (
+                <small aria-live="polite">
+                  {keyCheck.state === "checking" ? "Checking your key…"
+                    : keyCheck.state === "ok" ? "Key works."
+                    : keyCheck.state === "invalid" ? "Venice doesn't accept this key. Check it and try again."
+                    : "Couldn't reach Venice to check this key. You can still launch."}
+                </small>
+              ) : null}
               <label className={styles.checkbox}>
                 <input
                   type="checkbox"
@@ -297,16 +370,32 @@ export function ModelAccessControl({
               </select>
             </div>
           ) : null}
+          <p className={styles.note}>
+            Models come from Venice through Hivra, so you don&apos;t need a Venice account. Usage comes out of your Hivra credits. Models marked Private don&apos;t keep your prompts.
+          </p>
           {profileId === "aeon" ? (
             <p className={styles.note}>Aeon adds the credits to its model settings when you connect GitHub. You can change this choice there.</p>
-          ) : profileId === "openclaw" || profileId === "agent-zero" ? (
-            <p className={styles.note}>Hivra sets {name} up with Venice models paid from your credits. You can change its provider later in its own settings.</p>
+          ) : profileId === "openclaw" || profileId === "agent-zero" || profileId === "openbot" || profileId === "hermes-computer" ? (
+            <p className={styles.note}>You can change its provider later in its own settings.</p>
           ) : null}
           {modelPicker}
         </div>
       ) : null}
 
       {problem ? <p className={styles.problem} role="status">{problem}</p> : null}
+
+      {usesVenice ? (
+        <p className={styles.note}>
+          Want a hand connecting Venice?{" "}
+          <a
+            href={setupCall.href}
+            data-cta="launch-venice-setup-call"
+            {...(setupCall.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+          >
+            Book a setup call
+          </a>
+        </p>
+      ) : null}
     </div>
   );
 }

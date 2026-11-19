@@ -1,5 +1,7 @@
 import { createHash, randomBytes as nodeRandomBytes } from "node:crypto";
 
+import { tryGrantLaunchCredit, type PromoDb } from "@/lib/venice/promo/service";
+import { tryGrantStarterCredit, type StarterCreditDb } from "@/lib/billing/starter-credit";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import {
@@ -8,6 +10,7 @@ import {
   type ManagedVeniceWalletType,
 } from "@/lib/billing/managed-venice-wallets";
 import { requireDb } from "@/lib/billing/db-utils";
+import { readAgentPrivateOnly } from "@/lib/venice/agent-private-only";
 
 export type ManagedVeniceProxyKeyStatus = "active" | "revoked" | "paused";
 
@@ -113,6 +116,10 @@ function asVerifiedKey(row: ProxyKeyRow) {
   return {
     ...asPublicKey(row),
     keyHash: row.key_hash,
+    // The owner's "private models only" setting for this key. It is enforced
+    // only while MANAGED_VENICE_AGENT_PRIVATE_ONLY_ENABLED is on
+    // (agent-private-only.ts).
+    privateModelsOnly: readAgentPrivateOnly(row.metadata).enabled,
   };
 }
 
@@ -244,6 +251,14 @@ export async function createManagedVeniceProxyKey(
   // endpoint (chat, embeddings, images, audio, video, augment, anthropic). It
   // is read back out of `metadata.defaultWalletType` on every request, so it
   // must be right at mint time — there is no cross-wallet fallback downstream.
+  // Launching an agent in credits mode is when the Venice launch credit lands
+  // (flag-gated, best-effort, never throws): grant it before the wallet is
+  // resolved so a card wallet it funds is seen as funded.
+  if (requestedWalletType === "card" || params.autoSelectFundedWallet) {
+    await tryGrantLaunchCredit({ userId: params.userId }, client as unknown as PromoDb);
+    // One-time starter credit for a paid plan (best-effort, never throws).
+    await tryGrantStarterCredit({ userId: params.userId }, client as unknown as StarterCreditDb);
+  }
   const defaultWalletType = params.autoSelectFundedWallet
     ? await resolveFundedWalletType(
         { userId: params.userId, requested: requestedWalletType },
@@ -301,6 +316,12 @@ export async function verifyManagedVeniceProxyKey(
     plaintextKey: string;
     now?: Date;
     env?: Record<string, string | undefined>;
+    /**
+     * Who is calling, for the key-to-computer binding (key-binding.ts). Omitted,
+     * the current route's own caller is read. The inference Worker passes the
+     * address it saw.
+     */
+    caller?: import("./key-binding").KeyBindingCaller;
   },
   db: SupabaseLike | null | undefined = supabaseAdmin
 ) {
@@ -320,6 +341,18 @@ export async function verifyManagedVeniceProxyKey(
   if (!data) return null;
   const row = data as ProxyKeyRow;
   if (row.status !== "active") return null;
+
+  // Off by default; loaded only when the switch is set.
+  const bindingMode = (params.env ?? process.env).HIVRA_MANAGED_KEY_BINDING?.trim().toLowerCase();
+  if (bindingMode === "observe" || bindingMode === "enforce") {
+    const binding = await import("./key-binding");
+    const caller = params.caller ?? await binding.currentDirectCaller(params.env);
+    const decision = await binding.checkKeyBinding(
+      { keyId: row.id, userId: row.user_id ?? null, metadata: row.metadata ?? null, caller },
+      { env: params.env },
+    );
+    if (!decision.allowed) return null;
+  }
 
   const now = params.now ?? new Date();
   const { data: updated, error: updateError } = await table(

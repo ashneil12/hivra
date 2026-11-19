@@ -9,13 +9,11 @@ import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { createCanonicalRelationshipReader } from "@/lib/agent-computers/relationship-reader";
 import { noStore } from "@/app/api/hivra/managed-sessions/route-support";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     const limited = enforceAuthenticatedRouteRateLimit(req, {

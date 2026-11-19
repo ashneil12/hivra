@@ -305,3 +305,46 @@ describe("Free account and Hivra-hosted compute", () => {
     })).resolves.toEqual({ ok: true });
   });
 });
+
+describe("a move launch that replaces a Hermes instance", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // Pro (operator): 2 CPU / 4 GB pool, 1 agent slot, already full by the old Hermes.
+    (resolveEffectiveSubscription as jest.Mock).mockResolvedValue({
+      plan: "operator", source: "stripe", total_cpu_budget: 2, total_ram_budget: 4096, instance_limit: 1,
+    });
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hivra_agents") return buildTableStub([]).stub;
+      if (table === "hermes_instances") {
+        return buildTableStub([
+          { id: "old_hermes", cpu_limit: 2, ram_limit: 4096, status: "running" },
+          { id: "other_hermes", cpu_limit: 1, ram_limit: 1024, status: "stopped" },
+        ]).stub;
+      }
+      throw new Error(`Unexpected table ${table}`);
+    });
+    slotCount = 2;
+  });
+
+  it("leaves the excluded instance's compute and slot out of usage", async () => {
+    await expect(loadCurrentComputeUsage("user_x")).resolves.toEqual({ activeCount: 2, usedCpu: 3, usedRamGb: 5 });
+    await expect(loadCurrentComputeUsage("user_x", { excludeInstanceIds: ["old_hermes"] }))
+      .resolves.toEqual({ activeCount: 1, usedCpu: 1, usedRamGb: 1 });
+  });
+
+  it("ignores an excluded id that is not an active instance", async () => {
+    await expect(loadCurrentComputeUsage("user_x", { excludeInstanceIds: ["missing"] }))
+      .resolves.toEqual({ activeCount: 2, usedCpu: 3, usedRamGb: 5 });
+  });
+
+  it("admits a launch that fits only once the replaced instance is excluded", async () => {
+    slotCount = 1;
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hivra_agents") return buildTableStub([]).stub;
+      return buildTableStub([{ id: "old_hermes", cpu_limit: 2, ram_limit: 4096, status: "running" }]).stub;
+    });
+    const input = { userId: "user_x", type: "hermes", browser: false, mode: "launch" as const, cpu: 2, ram: 4 };
+    await expect(validateAgentResources(input)).resolves.toMatchObject({ ok: false, status: 403 });
+    await expect(validateAgentResources({ ...input, excludeInstanceIds: ["old_hermes"] })).resolves.toEqual({ ok: true });
+  });
+});

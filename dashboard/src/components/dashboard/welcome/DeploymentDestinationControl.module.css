@@ -19,12 +19,12 @@
 
 .label {
   display: block;
-  font-family: var(--font-mono), monospace;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0;
   line-height: 1.4;
-  text-transform: uppercase;
+  text-transform: none;
   color: var(--ink-black);
 }
 
@@ -59,7 +59,7 @@
 .option:focus-visible,
 .targetSelect:focus-visible,
 .manageLink:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 2px;
 }
 
@@ -98,7 +98,7 @@
   border-color: var(--ink-black);
   background: var(--bg-elevated);
   color: var(--ink-black);
-  box-shadow: inset 2px 0 0 var(--hivra-red);
+  box-shadow: none;
 }
 
 .option:disabled {
@@ -108,7 +108,7 @@
 
 .option > svg {
   margin-top: 1px;
-  color: var(--hivra-red);
+  color: var(--hg-text);
 }
 
 .option strong,
@@ -131,7 +131,7 @@
 }
 
 .check {
-  color: var(--hivra-red);
+  color: var(--hg-text);
 }
 
 .targetPanel {
@@ -139,19 +139,19 @@
   display: grid;
   gap: 11px;
   padding: 13px;
-  border: 1px solid color-mix(in srgb, var(--hivra-red) 24%, var(--etched-border));
-  background: color-mix(in srgb, var(--hivra-red-soft) 45%, transparent);
+  border: 1px solid var(--hg-stroke-strong);
+  background: var(--hg-fill-1);
 }
 
 .targetLabel {
   min-width: 0;
   display: grid;
   gap: 6px;
-  font-family: var(--font-mono), monospace;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--destination-muted);
 }
 
@@ -189,10 +189,11 @@
 
 .fact span {
   color: var(--destination-muted);
-  font-family: var(--font-mono), monospace;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 600;
 }
 
 .fact strong {
@@ -233,7 +234,7 @@
   align-items: center;
   min-height: 44px;
   color: inherit;
-  font-weight: 800;
+  font-weight: 600;
   text-underline-offset: 3px;
 }
 
@@ -257,7 +258,7 @@
 
 @container launch-destination (max-width: 400px) {
   .facts { grid-template-columns: 1fr; }
-  .fact span { font-size: 11px; }
+  .fact span { font-size: 0.8rem; }
   .fact { display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; }
   .fact strong { text-align: right; margin-top: 0; }
   .targetPanel { padding: 0.75rem; }

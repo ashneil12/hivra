@@ -1,0 +1,228 @@
+/* The model picker's menus (see ModelPicker.tsx; MIT, Copyright (c) 2026 Nick, THIRD_PARTY_LICENSES/monocode.txt). */
+
+.menu { padding: 4px; font-family: inherit; }
+.truncate { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A top-level row: its name, the current value, a chevron to its submenu. */
+.row,
+.option,
+.recent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hg-text);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.row { height: 36px; }
+.option { height: 32px; }
+.recent { height: 40px; }
+.row:hover:not(.rowOn),
+.option:hover:not(.rowOn),
+.recent:hover:not(.rowOn) { background: var(--hg-fill-1); }
+.rowOn { background: var(--hg-fill-3); }
+.rowLabel { flex: 1; min-width: 0; }
+.rowValue { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 112px; color: var(--hg-text-3); }
+.rowChevron { flex: none; color: var(--hg-text-3); }
+.check { flex: none; color: var(--hg-text-2); }
+@media (pointer: coarse) { .row, .option, .recent { min-height: 44px; } }
+
+.recentText { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.recentName { font-size: 13px; line-height: 16px; }
+.recentSub { color: var(--hg-text-3); font-size: 11px; line-height: 16px; }
+
+/* What a computer without effort says when a level is picked. */
+.note { display: grid; gap: 6px; margin: 4px 0 0; padding: 8px; border-top: 1px solid var(--hg-stroke-subtle); }
+.noteText { display: flex; align-items: flex-start; gap: 6px; margin: 0; color: var(--hg-text-2); font-size: 12px; line-height: 16px; }
+.noteOrb { display: inline-flex; flex: none; }
+.noteButton {
+  justify-self: start;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--hg-fill-3);
+  color: var(--hg-text);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.noteButton:hover { background: var(--hg-fill-2); }
+.noteButton:focus-visible { outline: 2px solid color-mix(in srgb, var(--hg-focus) 60%, transparent); outline-offset: 1px; }
+.footNote { margin: 0; padding: 6px 8px; color: var(--hg-text-3); font-size: 11px; line-height: 16px; }
+
+/* The model flyout: a provider rail beside a search field and the list. */
+.flyout { display: flex; min-height: 0; overflow: hidden; font-family: inherit; }
+.rail {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 44px;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: none;
+  border-right: 1px solid var(--hg-stroke-subtle);
+}
+.tab {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hg-text-3);
+  cursor: pointer;
+}
+.tab:hover:not(.tabOn) { background: var(--hg-fill-2); color: var(--hg-text); }
+.tabOn { background: var(--hg-fill-3); color: var(--hg-text); }
+.flyoutMain { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--hg-stroke-subtle);
+  color: var(--hg-text-3);
+}
+.searchIcon { flex: none; }
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--hg-text);
+  font-family: inherit;
+  font-size: 13px;
+}
+.searchInput::placeholder { color: var(--hg-text-3); }
+.list { flex: 1; min-height: 0; padding: 4px; overflow-y: auto; overscroll-behavior: none; }
+.empty { padding: 12px 8px; color: var(--hg-text-3); font-size: 12px; }
+.modelRow { display: flex; align-items: center; height: 32px; padding: 0 4px; border-radius: 8px; color: var(--hg-text); }
+.modelRow:hover:not(.rowOn) { background: var(--hg-fill-1); }
+.modelButton {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.provenance { flex: none; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hg-text-3); font-size: 10px; }
+.star {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hg-text-3);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--hg-fast) ease;
+}
+.modelRow:hover .star,
+.star:focus-visible,
+.starOn { opacity: 1; }
+.starOn { color: var(--hg-text-2); }
+.starSlot { display: grid; flex: none; place-items: center; width: 24px; height: 24px; }
+@media (pointer: coarse) { .star { opacity: 1; } }
+
+/* The strongest effort levels light up when hovered or highlighted (MonoCode's tile shimmer). */
+.effortOption { position: relative; isolation: isolate; overflow: hidden; }
+.effortOption > .effortTiles {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: grid;
+  grid-template-columns: repeat(32, minmax(0, 1fr));
+  grid-template-rows: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  padding: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* Feather all four sides so the tiles dissolve into the row instead of
+     stopping hard at its edge; intersecting the two fades rounds the corners. */
+  -webkit-mask-image:
+    linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent),
+    linear-gradient(to bottom, transparent, #000 35%, #000 65%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent),
+    linear-gradient(to bottom, transparent, #000 35%, #000 65%, transparent);
+  mask-composite: intersect;
+}
+.effortOption::after {
+  box-sizing: border-box;
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  content: "";
+  pointer-events: none;
+  opacity: 0;
+}
+.effortOption > :not(.effortTiles) { position: relative; z-index: 1; }
+.effortOption[data-effort-tone="strong"] { --effort-color: #a855f7; }
+.effortOption[data-effort-tone="max"] { --effort-color: #f4b942; }
+.effortTile {
+  box-sizing: border-box;
+  background-color: transparent;
+  box-shadow: inset -1px -1px 0 color-mix(in srgb, var(--effort-color) 32%, transparent);
+}
+.effortOption:is(:hover, :focus-visible, .effortActive) > .effortTiles { animation: effortTilesClear 5000ms linear 1 both; }
+.effortOption:is(:hover, :focus-visible, .effortActive) .effortTileFilled {
+  animation: effortTileFill 1400ms ease-out 3 both;
+  animation-delay: calc(var(--tile-distance) * 420ms);
+  will-change: background-color;
+}
+.effortOption:is(:hover, :focus-visible, .effortActive)::after {
+  animation: effortEdgeRipple 5000ms ease-in-out 1 both;
+  will-change: box-shadow, opacity;
+}
+@keyframes effortTilesClear {
+  0%, 92% { opacity: 1; visibility: visible; }
+  100% { opacity: 0; visibility: hidden; }
+}
+@keyframes effortTileFill {
+  0%, 100% { background-color: transparent; }
+  26% { background-color: var(--effort-color); }
+  52% { background-color: color-mix(in srgb, var(--effort-color) 18%, transparent); }
+}
+@keyframes effortEdgeRipple {
+  0%, 12%, 26%, 40%, 54%, 68%, 82% { opacity: 0.3; box-shadow: inset 0 0 4px 0 transparent; }
+  19%, 47%, 75% { opacity: 0.85; box-shadow: inset 0 0 12px 1px color-mix(in srgb, var(--effort-color) 55%, transparent); }
+  100% { opacity: 0; box-shadow: inset 0 0 4px 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .effortOption > .effortTiles { transition: none; }
+  .effortOption:is(:hover, :focus-visible, .effortActive) > .effortTiles { animation: none; opacity: 0.72; visibility: visible; }
+  .effortOption:is(:hover, :focus-visible, .effortActive)::after { animation: none; opacity: 0.42; box-shadow: none; will-change: auto; }
+  .effortOption:is(:hover, :focus-visible, .effortActive) .effortTileFilled { animation: none; background-color: var(--effort-color); will-change: auto; }
+}

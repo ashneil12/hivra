@@ -26,7 +26,6 @@ jest.mock("@/lib/supabase", () => ({
   },
 }));
 
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 
 jest.mock("@/lib/authenticated-rate-limit", () => ({
   RATE_LIMIT_PRESETS: { settingsWrite: {} },

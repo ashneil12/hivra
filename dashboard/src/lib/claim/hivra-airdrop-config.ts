@@ -62,7 +62,11 @@ export const HIVRA_AIRDROP: HivraAirdropConfig = {
   snapshotBlock: 53005062,
   snapshotTakenAt: "2026-10-23T23:51:11Z",
   snapshotUrl: "https://github.com/ashneil12/hivra/blob/main/dashboard/src/data/token/hivra-airdrop.json",
-  claim: { campaignUrl: null, opensAt: null, closesAt: null },
+  claim: {
+    campaignUrl: "https://app.sablier.com/airdrops/campaign/0x4131ab8f9797bb4887a72470b8af48fbec37522f-8453",
+    opensAt: "2026-10-29T13:30:00Z",
+    closesAt: "2027-01-27T13:30:00Z",
+  },
 };
 
 /**

@@ -7,7 +7,6 @@ import { z } from "zod";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { createBuzzCoordinator } from "@/lib/hivra/buzz-coordinator";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { buzzFailure, noStore, readBuzzMutation } from "../route-utils";
 
 const BindSchema = z.object({
@@ -19,7 +18,6 @@ const BindSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    if (!isHivraApiAllowed(request.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
     const mutation = await readBuzzMutation(request, userId, "hivra_buzz_bind_agent");

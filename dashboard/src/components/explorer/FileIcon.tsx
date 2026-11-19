@@ -45,7 +45,7 @@ export function FileIcon({ type, name, size = 24, className = "" }: FileIconProp
     case 'zip':
     case 'tar':
     case 'gz':
-      return <Archive size={size} className={`text-red-400 ${className}`} />;
+      return <Archive size={size} className={`text-[var(--hg-bad)] ${className}`} />;
     case 'sh':
     case 'bash':
     case 'zsh':

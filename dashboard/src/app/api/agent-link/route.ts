@@ -16,9 +16,7 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceRateLimit } from "@/lib/rate-limit";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { log } from "@/lib/logger";
-import { isAgentLinksEnabled } from "@/lib/agent-links/flag";
 import { computerKindLabel, linkLabel } from "@/lib/agent-links/eligibility";
 import { execRefusalCopy, runLinkedCommand } from "@/lib/agent-links/exec";
 import { LINK_EXEC_COMMAND_MAX, LINK_EXEC_STDIN_MAX, LINK_EXEC_TIMEOUT_MAX_SECONDS } from "@/lib/agent-links/exec-program";
@@ -39,7 +37,6 @@ const BODY_LIMIT = 800 * 1024;
 type Caller = { agent: OwnedRow; userId: string };
 
 async function caller(req: NextRequest): Promise<Caller | Response> {
-  if (!isHivraApiAllowed(req.headers.get("host")) || !isAgentLinksEnabled()) return noStore(apiError("Not found", 404));
   const match = /^Bearer\s+(\S+)$/i.exec(req.headers.get("authorization") ?? "");
   const found = match ? await findAgentByKey(match[1]) : null;
   if (!found) return refuse("Unauthorized", 401, "invalid_agent_link_key");

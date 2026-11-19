@@ -5,7 +5,7 @@
 // Pure data/logic keeps the catalog usable by the dashboard, API, CLI, and
 // provisioner without importing a UI or a database client.
 
-export type ComputerTemplateId = "ubuntu-desktop" | "omarchy" | "windows";
+export type ComputerTemplateId = "ubuntu-desktop" | "ubuntu-server" | "omarchy" | "windows";
 type ComputerTemplateStatus = "planned" | "private-preview" | "available";
 type ComputerIsolationDriver = "proxmox-kvm";
 
@@ -91,13 +91,13 @@ export interface ComputerTemplateDefinition {
   };
   access: {
     native: {
-      protocol: "sunshine-moonlight";
-      status: "guest-prepared" | "planned";
+      protocol: "sunshine-moonlight" | "none";
+      status: "guest-prepared" | "planned" | "none";
       note: string;
     };
     browser: {
-      protocol: "selkies-webrtc" | "selkies-websocket" | "guacamole-rdp";
-      status: "accepted-x11" | "planned-x11-only" | "planned-windows";
+      protocol: "selkies-webrtc" | "selkies-websocket" | "guacamole-rdp" | "none";
+      status: "accepted-x11" | "planned-x11-only" | "planned-windows" | "none";
       note: string;
     };
     administration: {
@@ -158,6 +158,45 @@ export const UBUNTU_DESKTOP_TEMPLATE: ComputerTemplateDefinition = {
       protocol: "ssh",
       status: "official-unattended-option",
       note: "Owner-scoped terminal and files remain available through the existing Hivra gateway.",
+    },
+  },
+};
+
+/** The same Ubuntu cloud image and guest base as Ubuntu Desktop, without the
+ * desktop: a small headless computer with a terminal and files. */
+export const UBUNTU_SERVER_TEMPLATE: ComputerTemplateDefinition = {
+  id: "ubuntu-server",
+  runtimeId: "linux-desktop",
+  name: "Linux computer",
+  kind: "operating-system",
+  summary: "A light Linux computer with a terminal and files. No desktop.",
+  status: "available",
+  launchable: true,
+  launchMode: "standard",
+  upstream: {
+    ...UBUNTU_DESKTOP_TEMPLATE.upstream,
+  },
+  requirements: {
+    ...UBUNTU_DESKTOP_TEMPLATE.requirements,
+    cpu: 0.5,
+    ramGb: 1,
+  },
+  provisioning: { ...UBUNTU_DESKTOP_TEMPLATE.provisioning },
+  access: {
+    native: {
+      protocol: "none",
+      status: "none",
+      note: "This computer has no desktop, so there is no native desktop access.",
+    },
+    browser: {
+      protocol: "none",
+      status: "none",
+      note: "This computer has no desktop, so there is no browser desktop.",
+    },
+    administration: {
+      protocol: "ssh",
+      status: "official-unattended-option",
+      note: "Owner-scoped terminal and files are available through the Hivra gateway.",
     },
   },
 };
@@ -301,6 +340,7 @@ export const WINDOWS_TEMPLATE: ComputerTemplateDefinition = {
 
 export const COMPUTER_TEMPLATES: readonly ComputerTemplateDefinition[] = [
   UBUNTU_DESKTOP_TEMPLATE,
+  UBUNTU_SERVER_TEMPLATE,
   OMARCHY_TEMPLATE,
   WINDOWS_TEMPLATE,
 ];

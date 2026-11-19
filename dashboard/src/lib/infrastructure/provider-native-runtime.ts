@@ -2,7 +2,54 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import currentRelease from "../../../provisioner-releases/2026.10.20.2.json";
+import currentRelease from "../../../provisioner-releases/2026.11.18.5.json";
+import noBootUpgradeRelease from "../../../provisioner-releases/2026.11.18.4.json";
+import snapFreeBootRelease from "../../../provisioner-releases/2026.11.18.3.json";
+import emptyModeRelease from "../../../provisioner-releases/2026.11.18.2.json";
+import veniceChatRelease from "../../../provisioner-releases/2026.11.18.1.json";
+import installReasonRelease from "../../../provisioner-releases/2026.11.17.9.json";
+import readinessRelease from "../../../provisioner-releases/2026.11.17.8.json";
+import basePathRelease from "../../../provisioner-releases/2026.11.17.7.json";
+import presetRelease from "../../../provisioner-releases/2026.11.17.6.json";
+import tgApplyRelease from "../../../provisioner-releases/2026.11.17.5.json";
+import launchFixesRelease from "../../../provisioner-releases/2026.11.17.4.json";
+import agentZeroUsrEnvRelease from "../../../provisioner-releases/2026.11.17.3.json";
+import agentZeroSettingsRelease from "../../../provisioner-releases/2026.11.17.2.json";
+import latestAgentsRelease from "../../../provisioner-releases/2026.11.17.1.json";
+import usrPluginsRelease from "../../../provisioner-releases/2026.11.15.7.json";
+import productionAgentZeroHotfixRelease from "../../../provisioner-releases/2026.11.15.8.json";
+import watchdogRelease from "../../../provisioner-releases/2026.11.15.6.json";
+import lockFdRelease from "../../../provisioner-releases/2026.11.15.5.json";
+import resilienceRelease from "../../../provisioner-releases/2026.11.15.3.json";
+import stateImportRelease from "../../../provisioner-releases/2026.11.15.2.json";
+import a0EntryFallbackRelease from "../../../provisioner-releases/2026.11.15.1.json";
+import connectLinksRelease from "../../../provisioner-releases/2026.11.14.1.json";
+
+import connectGrantsRelease from "../../../provisioner-releases/2026.11.13.6.json";
+import discordDoorbellRelease from "../../../provisioner-releases/2026.11.13.5.json";
+import doorbellRelease from "../../../provisioner-releases/2026.11.13.4.json";
+import hostCredentialRelease from "../../../provisioner-releases/2026.11.13.3.json";
+import hostIngressStartRelease from "../../../provisioner-releases/2026.11.13.2.json";
+import wakeProxyRelease from "../../../provisioner-releases/2026.11.13.1.json";
+import nuphosRelease from "../../../provisioner-releases/2026.11.12.5.json";
+import openbotRelease from "../../../provisioner-releases/2026.11.12.4.json";
+import restorePointsRelease from "../../../provisioner-releases/2026.11.12.3.json";
+import gitGuardRelease from "../../../provisioner-releases/2026.11.12.2.json";
+import hermesModelRelease from "../../../provisioner-releases/2026.11.12.1.json";
+import webappRelease from "../../../provisioner-releases/2026.11.11.7.json";
+import libatomicRelease from "../../../provisioner-releases/2026.11.11.6.json";
+import gatewayRelease from "../../../provisioner-releases/2026.11.11.5.json";
+import hermesRelease from "../../../provisioner-releases/2026.11.11.4.json";
+import chatEffortRelease from "../../../provisioner-releases/2026.11.11.3.json";
+import chromePinRelease from "../../../provisioner-releases/2026.11.11.2.json";
+import browserViewRelease from "../../../provisioner-releases/2026.11.11.1.json";
+import deepseekModelRelease from "../../../provisioner-releases/2026.11.10.5.json";
+import linuxServerRelease from "../../../provisioner-releases/2026.11.10.4.json";
+import freshnessRelease from "../../../provisioner-releases/2026.11.10.3.json";
+import creditsRelease from "../../../provisioner-releases/2026.11.10.2.json";
+import hardeningRelease from "../../../provisioner-releases/2026.11.10.1.json";
+import clipboardRelease from "../../../provisioner-releases/2026.11.03.1.json";
+import appUpdateRelease from "../../../provisioner-releases/2026.10.20.2.json";
 import ownedUpdateRelease from "../../../provisioner-releases/2026.10.20.1.json";
 import claudeAppRelease from "../../../provisioner-releases/2026.10.07.1.json";
 import terminalFollowupsRelease from "../../../provisioner-releases/2026.09.24.4.json";
@@ -64,11 +111,16 @@ const gatewayTargets = new Map<string, string>([
   ...["server.js", "llm-application.js", "guarded-files.cjs", "agent-zero-editor.cjs", "index.html", "app.js"].map(name => [`hivra-chat/${name}`, name] as const),
   ...["native-broker.cjs", "gateway-policy.cjs", "runtime-process.cjs"].map(name => [`deepseek-harness/${name}`, `deepseek-harness/${name}`] as const),
 ]);
+const DEEPSEEK_IMPORT_STATE_VERSIONS = ["2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5"] as const;
 function releaseRows(release: typeof currentRelease) {
   const rows = release.files.filter(file => closure.has(file.path)).map(file => [file.path, file.sha256, file.bytes,
     file.path.endsWith(".sh") ? 0o700 : 0o600] as const).sort((a, b) => a[0].localeCompare(b[0]));
-  const gatewayRows = release.files.filter(file => gatewayTargets.has(file.path))
-    .map(file => [gatewayTargets.get(file.path)!, file.sha256, file.bytes, 0o644] as const)
+  // server.js has required import-state.cjs at start since 2026.11.15.2, but the
+  // DeepSeek gateway only installs it from 2026.11.17.6 (older gateways never started).
+  const targets = (DEEPSEEK_IMPORT_STATE_VERSIONS as readonly string[]).includes(release.version)
+    ? new Map([...gatewayTargets, ["hivra-chat/import-state.cjs", "import-state.cjs"]]) : gatewayTargets;
+  const gatewayRows = release.files.filter(file => targets.has(file.path))
+    .map(file => [targets.get(file.path)!, file.sha256, file.bytes, 0o644] as const)
     .sort((a, b) => a[0].localeCompare(b[0]));
   return { rows, gatewayRows };
 }
@@ -85,8 +137,100 @@ const hash = (value: string | Buffer) => createHash("sha256").update(value).dige
 
 function checked(input: ProviderNativeRuntimeProbe) {
   const identity = parseProviderNativeWorkerIdentity(input.identity), access = parseProviderNativeAccess(input.access);
-  const release = identity.bundle.provisionerVersion === "2026.10.20.2"
+  const release = identity.bundle.provisionerVersion === "2026.11.18.5"
     ? currentRelease
+    : identity.bundle.provisionerVersion === "2026.11.18.4"
+    ? noBootUpgradeRelease
+    : identity.bundle.provisionerVersion === "2026.11.18.3"
+    ? snapFreeBootRelease
+    : identity.bundle.provisionerVersion === "2026.11.18.2"
+    ? emptyModeRelease
+    : identity.bundle.provisionerVersion === "2026.11.18.1"
+    ? veniceChatRelease
+    : identity.bundle.provisionerVersion === "2026.11.17.9"
+    ? installReasonRelease
+    : identity.bundle.provisionerVersion === "2026.11.17.8"
+    ? readinessRelease
+    : identity.bundle.provisionerVersion === "2026.11.17.7"
+    ? basePathRelease
+    : identity.bundle.provisionerVersion === "2026.11.17.6"
+    ? presetRelease
+    : identity.bundle.provisionerVersion === "2026.11.17.5"
+    ? tgApplyRelease
+    : identity.bundle.provisionerVersion === "2026.11.17.4"
+    ? launchFixesRelease
+    : identity.bundle.provisionerVersion === "2026.11.17.3"
+    ? agentZeroUsrEnvRelease
+    : identity.bundle.provisionerVersion === "2026.11.17.2"
+    ? agentZeroSettingsRelease
+    : identity.bundle.provisionerVersion === "2026.11.17.1"
+    ? latestAgentsRelease
+    : identity.bundle.provisionerVersion === "2026.11.15.8"
+    ? productionAgentZeroHotfixRelease
+    : identity.bundle.provisionerVersion === "2026.11.15.7"
+    ? usrPluginsRelease
+    : identity.bundle.provisionerVersion === "2026.11.15.6"
+    ? watchdogRelease
+    : identity.bundle.provisionerVersion === "2026.11.15.5"
+      ? lockFdRelease
+    : identity.bundle.provisionerVersion === "2026.11.15.3"
+      ? resilienceRelease
+    : identity.bundle.provisionerVersion === "2026.11.15.2"
+      ? stateImportRelease
+    : identity.bundle.provisionerVersion === "2026.11.15.1"
+      ? a0EntryFallbackRelease
+    : identity.bundle.provisionerVersion === "2026.11.14.1"
+      ? connectLinksRelease
+    : identity.bundle.provisionerVersion === "2026.11.13.6"
+      ? connectGrantsRelease
+    : identity.bundle.provisionerVersion === "2026.11.13.5"
+      ? discordDoorbellRelease
+    : identity.bundle.provisionerVersion === "2026.11.13.4"
+      ? doorbellRelease
+    : identity.bundle.provisionerVersion === "2026.11.13.3"
+      ? hostCredentialRelease
+    : identity.bundle.provisionerVersion === "2026.11.13.2"
+      ? hostIngressStartRelease
+    : identity.bundle.provisionerVersion === "2026.11.13.1"
+      ? wakeProxyRelease
+    : identity.bundle.provisionerVersion === "2026.11.12.5"
+      ? nuphosRelease
+    : identity.bundle.provisionerVersion === "2026.11.12.4"
+      ? openbotRelease
+    : identity.bundle.provisionerVersion === "2026.11.12.3"
+      ? restorePointsRelease
+    : identity.bundle.provisionerVersion === "2026.11.12.2"
+      ? gitGuardRelease
+    : identity.bundle.provisionerVersion === "2026.11.12.1"
+      ? hermesModelRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.7"
+      ? webappRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.6"
+      ? libatomicRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.5"
+      ? gatewayRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.4"
+      ? hermesRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.3"
+      ? chatEffortRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.2"
+      ? chromePinRelease
+    : identity.bundle.provisionerVersion === "2026.11.11.1"
+      ? browserViewRelease
+    : identity.bundle.provisionerVersion === "2026.11.10.5"
+      ? deepseekModelRelease
+    : identity.bundle.provisionerVersion === "2026.11.10.4"
+      ? linuxServerRelease
+    : identity.bundle.provisionerVersion === "2026.11.10.3"
+      ? freshnessRelease
+    : identity.bundle.provisionerVersion === "2026.11.10.2"
+      ? creditsRelease
+    : identity.bundle.provisionerVersion === "2026.11.10.1"
+      ? hardeningRelease
+    : identity.bundle.provisionerVersion === "2026.11.03.1"
+      ? clipboardRelease
+    : identity.bundle.provisionerVersion === "2026.10.20.2"
+      ? appUpdateRelease
     : identity.bundle.provisionerVersion === "2026.10.20.1"
       ? ownedUpdateRelease
     : identity.bundle.provisionerVersion === "2026.10.07.1"

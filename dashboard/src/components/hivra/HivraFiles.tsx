@@ -12,6 +12,7 @@ import { Folder, FileText, CornerLeftUp, Loader2, AlertTriangle, X, RefreshCw, P
 
 import styles from "./HivraFiles.module.css";
 
+import { HivraGit } from "@/components/hivra/HivraGit";
 import { listBoxFiles, readBoxFile, writeBoxFile, type BoxFileEntry } from "@/lib/hivra/agent-api";
 import type { WorkspaceFilesAccess } from "@/lib/hivra/workspace-browser-bridge";
 
@@ -21,7 +22,7 @@ function fmtSize(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-const mono: React.CSSProperties = { fontFamily: "var(--font-mono), monospace", fontSize: 11, letterSpacing: "0.02em" };
+const mono: React.CSSProperties = { fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.02em" };
 
 // Editing is offered up to the box write cap; bigger files stay view-only.
 const EDIT_MAX = 512 * 1024;
@@ -31,7 +32,44 @@ function focusLost(): boolean {
   return !active || active === document.body;
 }
 
-export function HivraFiles({ boxUrl, token, access, workspaceRoot }: { boxUrl: string; token?: string | null; access?: WorkspaceFilesAccess; workspaceRoot?: boolean }) {
+type FilesBrowserProps = { boxUrl: string; token?: string | null; access?: WorkspaceFilesAccess; workspaceRoot?: boolean };
+
+export type FilesView = "files" | "changes";
+
+/**
+ * The computer's files, and, when `showChanges` is on, a Changes view beside
+ * them: the code changes (git) in this computer's projects. The switch lives
+ * here so an owner who has never heard of git still finds it by looking at
+ * their files. `view` and `onViewChange` let a page open it directly (the old
+ * Git link); without them the switch keeps its own state. Hosts that pass an
+ * `access` adapter (provider desktops) never get the switch: their shared
+ * folder has no git behind it.
+ */
+export function HivraFiles({ showChanges, view, onViewChange, ...browser }: FilesBrowserProps & {
+  showChanges?: boolean;
+  view?: FilesView;
+  onViewChange?: (view: FilesView) => void;
+}) {
+  const [ownView, setOwnView] = useState<FilesView>("files");
+  const offered = Boolean(showChanges) && !browser.access;
+  if (!offered) return <FilesBrowser {...browser} />;
+  const current = view ?? ownView;
+  const choose = (next: FilesView) => { setOwnView(next); onViewChange?.(next); };
+  return (
+    <div className={styles.shell}>
+      <div className={styles.viewSwitch} role="group" aria-label="Files view">
+        <button type="button" aria-pressed={current === "files"} onClick={() => choose("files")} className={styles.viewButton}>Files</button>
+        <button type="button" aria-pressed={current === "changes"} onClick={() => choose("changes")} className={styles.viewButton}>Changes</button>
+        {current === "changes" ? <span className={styles.viewNote}>Code changes in this computer’s projects</span> : null}
+      </div>
+      {/* The browser stays mounted so its folder and open file survive a look at Changes. */}
+      <div className={styles.viewPane} hidden={current !== "files"}><FilesBrowser {...browser} /></div>
+      {current === "changes" ? <div className={styles.viewPane}><HivraGit boxUrl={browser.boxUrl} token={browser.token} /></div> : null}
+    </div>
+  );
+}
+
+function FilesBrowser({ boxUrl, token, access, workspaceRoot }: FilesBrowserProps) {
   const [path, setPath] = useState(".");
   const [entries, setEntries] = useState<BoxFileEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -168,7 +206,7 @@ export function HivraFiles({ boxUrl, token, access, workspaceRoot }: { boxUrl: s
           {loading ? (
             <LoadingState compact label="Loading files…" />
           ) : error ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px", color: "#e06c5a", fontSize: 13 }}><AlertTriangle size={16} /> {error}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "18px", color: "var(--hg-bad)", fontSize: 13 }}><AlertTriangle size={16} /> {error}</div>
           ) : entries.length === 0 ? (
             <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 13 }}>Empty.</div>
           ) : (
@@ -224,7 +262,7 @@ export function HivraFiles({ boxUrl, token, access, workspaceRoot }: { boxUrl: s
               </div>
             ) : null}
             {saveErr ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", color: "#e06c5a", fontSize: 12, borderBottom: "1px solid var(--etched-border)" }}><AlertTriangle size={13} /> {saveErr}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", color: "var(--hg-bad)", fontSize: 12, borderBottom: "1px solid var(--etched-border)" }}><AlertTriangle size={13} /> {saveErr}</div>
             ) : null}
             {editing ? (
               <textarea
@@ -236,12 +274,12 @@ export function HivraFiles({ boxUrl, token, access, workspaceRoot }: { boxUrl: s
                 autoCapitalize="off"
                 autoCorrect="off"
                 autoComplete="off"
-                style={{ flex: 1, width: "100%", boxSizing: "border-box", resize: "none", border: "none", outline: "none", background: "rgba(255,255,255,0.02)", color: "var(--ink-black)", padding: "14px 16px", fontFamily: "var(--font-mono), monospace", fontSize: 12, lineHeight: 1.55 }}
+                style={{ flex: 1, width: "100%", boxSizing: "border-box", resize: "none", border: "none", outline: "none", background: "var(--hg-fill-1)", color: "var(--ink-black)", padding: "14px 16px", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.55 }}
               />
             ) : (
               <div style={{ flex: 1, overflow: "auto", padding: "14px 16px" }}>
                 {file.error ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#e06c5a", fontSize: 13 }}><AlertTriangle size={16} /> {file.error}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--hg-bad)", fontSize: 13 }}><AlertTriangle size={16} /> {file.error}</div>
                 ) : (
                   <pre className="mono" style={{ ...mono, fontSize: 12, lineHeight: 1.55, color: "var(--ink-black)", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>{file.content}</pre>
                 )}

@@ -58,13 +58,13 @@ describe("HivraAgentsPanel", () => {
     expect(within(provider).getByTestId("agent-computer-pair")).toHaveTextContent("· On its own computer · My cloud");
   });
 
-  it("tags an agent whose Codex is behind Hivra's tested version, from the list alone", async () => {
+  it("tags an agent with an update waiting, from the list alone", async () => {
     listAgentsResultMock.mockResolvedValue({
       agents: [
-        { ...codeAgent, agent_software: { badge: "update_available", cli: "codex", installed: "0.140.0", tested: "0.149.1" } },
-        { ...codeAgent, id: "agent-2", name: "Fresh Agent", agent_software: { badge: null, cli: "codex", installed: "0.149.1", tested: "0.149.1" } },
-        { ...codeAgent, id: "agent-3", name: "Busy Agent", agent_software: { badge: "updating", cli: "codex", installed: "0.140.0", tested: "0.149.1" } },
-        { ...codeAgent, id: "agent-4", name: "Stuck Agent", agent_software: { badge: "update_failed", cli: "codex", installed: "0.140.0", tested: "0.149.1" } },
+        { ...codeAgent, agent_software: { badge: "update_available", cli: "codex", installed: "0.140.0" } },
+        { ...codeAgent, id: "agent-2", name: "Fresh Agent", agent_software: { badge: null, cli: "codex", installed: "0.149.1" } },
+        { ...codeAgent, id: "agent-3", name: "Busy Agent", agent_software: { badge: "updating", cli: "codex", installed: "0.140.0" } },
+        { ...codeAgent, id: "agent-4", name: "Stuck Agent", agent_software: { badge: "update_failed", cli: "codex", installed: "0.140.0" } },
       ],
       error: null,
     });
@@ -72,7 +72,7 @@ describe("HivraAgentsPanel", () => {
     const behind = (await screen.findByText("Code Agent")).closest("button")!;
     const tag = within(behind).getByTestId("agent-software-tag");
     expect(tag).toHaveTextContent("Update available");
-    expect(tag).toHaveAttribute("title", "Codex 0.140.0 is installed and Hivra has tested 0.149.1. Open the agent, then Updates.");
+    expect(tag).toHaveAttribute("title", "An update is waiting for this agent. Open the agent, then Updates.");
     expect(behind).toHaveAccessibleName("Open Code Agent, Codex, on its own computer, 2 CPU / 4 GB, Running, Update available");
     expect(within(screen.getByText("Fresh Agent").closest("button")!).queryByTestId("agent-software-tag")).not.toBeInTheDocument();
     expect(within(screen.getByText("Busy Agent").closest("button")!).getByTestId("agent-software-tag")).toHaveTextContent("Updating");
@@ -189,6 +189,33 @@ describe("HivraAgentsPanel", () => {
     expect(screen.getByText("Fresh agent")).toBeInTheDocument();
     expect(screen.queryByText("Code Agent")).not.toBeInTheDocument();
     expect(screen.queryByText("Needs repair")).not.toBeInTheDocument();
+  });
+
+  it("lists an agent that is asleep or waking up with the running ones, under its own status word", async () => {
+    const previous = process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP;
+    process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP = "1";
+    try {
+      listAgentsResultMock.mockResolvedValue({
+        agents: [
+          codeAgent,
+          { ...codeAgent, id: "nap", name: "Napping agent", sleep_state: "hibernated" },
+          { ...codeAgent, id: "wake", name: "Waking agent", sleep_state: "waking" },
+          { ...codeAgent, id: "off", name: "Stopped agent", status: "stopped" },
+        ],
+        error: null,
+      });
+      render(<HivraAgentsPanel />);
+      expect(await screen.findByRole("button", { name: /Open Napping agent/ })).toHaveTextContent("Asleep");
+      expect(screen.getByRole("button", { name: /Open Waking agent/ })).toHaveTextContent("Waking up");
+      fireEvent.click(screen.getByRole("button", { name: "Running" }));
+      expect(screen.getByText("Code Agent")).toBeInTheDocument();
+      expect(screen.getByText("Napping agent")).toBeInTheDocument();
+      expect(screen.getByText("Waking agent")).toBeInTheDocument();
+      expect(screen.queryByText("Stopped agent")).not.toBeInTheDocument();
+    } finally {
+      if (previous === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP;
+      else process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP = previous;
+    }
   });
 
   it("keeps one actions menu open and closes it on outside tap, Escape, or an action", async () => {

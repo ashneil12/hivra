@@ -144,7 +144,7 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
           border: "1px solid var(--etched-border)",
           background: "var(--bg-surface)",
           padding: "clamp(16px, 5vw, 2rem)",
-          boxShadow: "0 24px 80px rgba(0,0,0,0.06)",
+          boxShadow: 'var(--hg-shadow-lg)',
           display: "grid",
           gap: "1rem",
         }}
@@ -165,7 +165,7 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
             className="serif"
             style={{
               fontSize: "clamp(1.9rem, 5vw, 2.5rem)",
-              fontWeight: 400,
+              fontWeight: 600,
               lineHeight: 1.1,
               margin: 0,
             }}
@@ -197,7 +197,7 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
               background: "var(--ink-black)",
               color: "var(--bg-surface)",
               textDecoration: "none",
-              fontFamily: "var(--font-mono), monospace",
+              fontFamily: "var(--font-mono)",
               fontSize: 11,
               fontWeight: 700,
               textTransform: "uppercase",
@@ -217,7 +217,7 @@ export default async function ChatIndexPage(props: { searchParams: Promise<{ [ke
               border: "1px solid var(--etched-border)",
               color: "var(--ink-black)",
               textDecoration: "none",
-              fontFamily: "var(--font-mono), monospace",
+              fontFamily: "var(--font-mono)",
               fontSize: 11,
               fontWeight: 700,
               textTransform: "uppercase",

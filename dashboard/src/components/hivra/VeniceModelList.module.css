@@ -1,0 +1,21 @@
+.root { display: grid; gap: 8px; min-width: 0; }
+.search { width: 100%; box-sizing: border-box; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid var(--etched-border); background: var(--bg-surface); color: var(--ink-black); font-family: var(--font-mono); font-size: 12px; border-radius: var(--hg-radius-sm); }
+.search:focus-visible { outline: 2px solid var(--ink-black); outline-offset: 2px; }
+.search:disabled { opacity: .5; cursor: not-allowed; }
+.list { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--etched-border); background: var(--bg-surface); border-radius: var(--hg-radius-sm); }
+.disabled { opacity: .5; }
+.group { margin: 0; padding: 0; }
+.groupLabel { position: sticky; top: 0; z-index: 1; padding: 6px 12px; font-family: var(--font-sans); font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); background: var(--hg-fill-2); border-bottom: 1px solid var(--hg-stroke); }
+.option { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 12px; box-sizing: border-box; cursor: pointer; border-bottom: 1px solid var(--hg-stroke); color: var(--ink-black); }
+.option:last-child { border-bottom: 0; }
+.option[aria-disabled="true"] { cursor: not-allowed; }
+.active { background: var(--hg-fill-2); outline: 2px solid var(--ink-black); outline-offset: -2px; }
+.selected .name { font-weight: 700; }
+.body { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.name { font-size: 13px; overflow-wrap: anywhere; }
+.badge, .tag { font-family: var(--font-mono); font-size: 10px; padding: 1px 6px; border: 1px solid var(--etched-border); border-radius: var(--hg-radius-sm); color: var(--text-secondary); white-space: nowrap; }
+.tag { color: var(--ink-black); border-color: var(--ink-black); }
+.meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+.check { flex: 0 0 auto; width: 16px; text-align: center; color: var(--ink-black); }
+.empty { margin: 0; padding: 14px 12px; font-size: 12px; color: var(--text-secondary); }

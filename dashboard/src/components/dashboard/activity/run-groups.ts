@@ -101,7 +101,7 @@ function elapsed(from: ActivityEvent, to: ActivityEvent) {
     : undefined;
 }
 
-/** Reporter check-ins are coverage evidence, never part of a run. */
+/** Reporter check-ins are reporting evidence, never part of a run. */
 function isReporterHeartbeat(event: ActivityEvent) {
   return (
     /collector\.heartbeat/i.test(event.title) ||

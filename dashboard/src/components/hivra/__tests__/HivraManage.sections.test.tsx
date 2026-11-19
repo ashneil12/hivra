@@ -174,13 +174,17 @@ describe("stage-1 truthfulness", () => {
     // Nor does it explain buttons that aren't there.
     expect(overview).not.toHaveTextContent(/Stop shuts down the computer/);
     openSection("Resources");
-    expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent("Hivra can't resize Windows computers yet.");
+    expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent("This computer has a fixed size (");
   });
 
   it("says a prepared Windows computer has a fixed size, with its real size", () => {
     renderManage({ ...ubuntuRow, computer_profile: "windows", cpu: 4, ram: 8, managed_provisioner_channel: "canary" });
     openSection("Resources");
-    expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent("This prepared Windows computer has a fixed size of 4 CPU / 8 GB.");
+    expect(screen.getByTestId("manage-fixed-size")).toHaveTextContent("This computer has a fixed size (4 CPU, 8 GB). For a different size, launch a new one.");
+    // No greyed-out size controls and no technical heading: just the sentence.
+    expect(screen.getByTestId("manage-fixed-size")).not.toHaveTextContent("Fixed size");
+    expect(screen.queryByRole("group", { name: "Reserved CPU" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Apply/ })).not.toBeInTheDocument();
   });
 
   it("describes reserved memory as guaranteed, in plain words", () => {

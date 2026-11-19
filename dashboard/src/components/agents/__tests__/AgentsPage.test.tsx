@@ -43,6 +43,7 @@ describe("AgentsPage", () => {
       ["Aeon", "aeon"],
       ["OpenClaw", "openclaw"],
       ["Agent Zero", "agent-zero"],
+      ["DeepSeek Harness", "deepseek-harness"],
     ]) {
       expect(screen.getByRole("link", { name: `Launch ${name}` })).toHaveAttribute(
         "href",
@@ -51,23 +52,20 @@ describe("AgentsPage", () => {
     }
     // A row that can't be acted on is never listed as if it could.
     expect(screen.queryByText("Available to configure")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Launch DeepSeek/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /full runtime catalog/i })).not.toBeInTheDocument();
     expect(document.querySelector('a[href*="/dashboard/welcome"]')).toBeNull();
   });
 
-  it("describes the DeepSeek preview in plain words, without engineering notes", async () => {
+  it("lists DeepSeek Harness like every other agent, with no preview card", async () => {
     render(<AgentsPage />);
     await screen.findByRole("heading", { name: "No agents yet" });
     fireEvent.click(screen.getByText("Browse agents you can launch"));
-    const card = screen.getByRole("heading", { name: "DeepSeek Harness" }).closest("article") as HTMLElement;
-    expect(card).toHaveTextContent("Private preview");
-    expect(card).toHaveTextContent("can't be launched yet");
-    expect(card.textContent).not.toMatch(/canary|PTY|ACP|teardown|revocation|gated|runtime/i);
-    expect(screen.getByRole("link", { name: "Learn more" })).toHaveAttribute(
-      "href",
-      "/dashboard/runtimes/deepseek-harness",
-    );
+    const link = screen.getByRole("link", { name: "Launch DeepSeek Harness" });
+    expect(link).toHaveTextContent("Runs on DeepSeek V4.1 Flash.");
+    expect(link.textContent).not.toMatch(/canary|PTY|ACP|teardown|revocation|gated|runtime/i);
+    expect(document.body.textContent).not.toMatch(/Private preview|can't be launched yet/);
+    expect(document.getElementById("deepseek-harness")).toBeNull();
+    expect(document.querySelector('a[href="/dashboard/runtimes/deepseek-harness"]')).toBeNull();
   });
 
   it("brings an opened runtime catalog below the fold to the top under its heading", async () => {

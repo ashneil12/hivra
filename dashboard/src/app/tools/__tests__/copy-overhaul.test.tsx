@@ -93,7 +93,8 @@ describe("browser titles, descriptions and social titles come from the copy", ()
     expect(metaValue(hubMetadata.twitter, "title")).toBe(MD_META.tools.title);
   });
 
-  it.each(TOOL_ENTRIES)("$slug", async (entry) => {
+  // The agent tools (flag on) carry their own copy and are checked in agent-tools/__tests__.
+  it.each(TOOL_ENTRIES.filter((entry) => MD_META[entry.slug]))("$slug", async (entry) => {
     const expected = MD_META[entry.slug];
     const metadata = await generateMetadata({ params: Promise.resolve({ slug: entry.slug }) });
     expect(metadata.title).toEqual({ absolute: expected.title });
@@ -112,9 +113,9 @@ describe("the closing block is the same on every page and follows the repo's wor
     `If you want the computer to stay on after you leave your desk, Hivra offers a managed computer starting at ${formatPlanSize("entry")}.`,
     `A paid ${PLAN_DISPLAY.entry} computer stays on and is not paused for inactivity.`,
     "The plan does not include AI usage. Bring your own account or key where the agent supports it, or pay with Hivra credits.",
-    // Claude Code takes only the owner's own sign-in (lib/launch/model-access.ts), and every page can end in a Run Claude
-    // Code on Hivra button, so the "or pay with Hivra credits" above is followed by the one case where it does not hold.
-    "Claude Code uses your own Anthropic sign-in, not Hivra credits.",
+    // Every page can end in a Run Claude Code on Hivra button, so the block names both ways Claude Code reaches a
+    // model: the owner's own sign-in, or Hivra credits (lib/launch/model-access.ts).
+    "Claude Code can use your own Anthropic sign-in or Hivra credits.",
   ];
 
   it("builds the price and size from the plan facts and keeps the owner's approved sentences", () => {
@@ -128,9 +129,9 @@ describe("the closing block is the same on every page and follows the repo's wor
     expect(TOOLS_CLOSING.guarantee).toBe(MONEY_BACK_GUARANTEE);
   });
 
-  // The extra sentence is true only while the launch offers Claude Code no credits; this fails if that changes.
-  it("says Claude Code takes no Hivra credits only because its launch offers none", () => {
-    expect(modelAccessModes("claude-code")).toEqual(["native"]);
+  // The extra sentence is true only while the launch offers Claude Code both choices; this fails if that changes.
+  it("says Claude Code takes its own sign-in or Hivra credits because its launch offers both", () => {
+    expect(modelAccessModes("claude-code")).toEqual(["native", "credits"]);
     for (const profile of ["codex", "hermes"] as const) expect(modelAccessModes(profile)).toContain("credits");
   });
 
@@ -181,7 +182,7 @@ describe("/tools", () => {
 
     expect(within(container).getByRole("heading", { level: 2, name: TOOLS_HUB.directoryHeading })).toBeInTheDocument();
     expect(TOOLS_HUB.directoryHeading).toBe("Pick the problem you are trying to solve");
-    const names = within(container).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent);
+    const names = within(container).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent).slice(0, 6);
     expect(names).toEqual([
       "Claude Code Plan Calculator",
       "Agent Survival Check",

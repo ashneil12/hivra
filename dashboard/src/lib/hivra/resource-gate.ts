@@ -16,6 +16,7 @@ import {
 } from "@/lib/billing/hosted-compute";
 import { BASE_FLOOR, BROWSER_ADD, isPoolExempt } from "@/lib/hivra/agent-catalog";
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
+import { loadLadderEntitlement } from "@/lib/billing/plan-ladder-entitlement";
 
 export function isActiveComputeStatus(status: unknown): boolean {
   return status === "provisioning" || status === "running" || status === "stopped";
@@ -44,7 +45,7 @@ export interface ComputeUsage {
 // no hivra_agents row and use none of the pool's CPU or memory.
 export async function loadCurrentComputeUsage(
   userId: string,
-  opts?: { excludeHivraAgentId?: string },
+  opts?: { excludeHivraAgentId?: string; excludeInstanceIds?: string[] },
 ): Promise<ComputeUsage> {
   if (!supabaseAdmin) return { usedCpu: 0, usedRamGb: 0, activeCount: 0 };
 
@@ -90,9 +91,14 @@ export async function loadCurrentComputeUsage(
   const hivra = (Array.isArray(hivraAgents) ? hivraAgents : []).filter(
     (row) => isActiveComputeStatus((row as { status?: unknown }).status) && (row as { id?: unknown }).id !== excludeId,
   );
-  const legacy = (Array.isArray(legacyInstances) ? legacyInstances : []).filter((row) =>
+  // A move launch replaces a Hermes instance: its compute and its agent slot
+  // are not counted, so the launch may exceed the plan by exactly that instance.
+  const excludedInstances = new Set(opts?.excludeInstanceIds ?? []);
+  const activeLegacy = (Array.isArray(legacyInstances) ? legacyInstances : []).filter((row) =>
     isActiveComputeStatus((row as { status?: unknown }).status),
   );
+  const legacy = activeLegacy.filter((row) => !excludedInstances.has(String((row as { id?: unknown }).id)));
+  const excludedSlots = activeLegacy.length - legacy.length;
   // Pool-exempt agents (e.g. Aeon) consume a slot but not the CPU/RAM pool, so
   // their reserved compute is excluded from the budget other agents draw from.
   const usedHivraCpu = hivra.reduce((sum, row) => sum + (isPoolExempt(String(row.type)) ? 0 : (Number(row.cpu) || 0)), 0);
@@ -103,7 +109,7 @@ export async function loadCurrentComputeUsage(
   return {
     usedCpu: usedHivraCpu + usedLegacyCpu,
     usedRamGb: usedHivraRamGb + usedLegacyRamGb,
-    activeCount: slotCount as number,
+    activeCount: Math.max(0, (slotCount as number) - excludedSlots),
   };
 }
 
@@ -128,9 +134,10 @@ export async function resolvePlanAgentSlots(
   const sub = await resolveEffectiveSubscription(userId);
   if (!sub) return null;
   const plan = getPlan(sub.plan);
+  const ladder = await loadLadderEntitlement(userId);
   return {
     agentLimit: Number(sub.instance_limit) || plan.maxAgents,
-    planName: plan.name,
+    planName: ladder?.name ?? plan.name,
     // A Free account has slots but never a Hivra-hosted computer; writers that
     // create hosted compute refuse on this (the launch gate does it earlier).
     freeAccount: isFreeAccountEntitlement(sub),
@@ -157,6 +164,11 @@ export interface ValidateResourcesInput {
   mode: "launch" | "resize" | "attach";
   /** Hivra agent id to exclude from pool usage (required for "resize"). */
   excludeAgentId?: string;
+  /**
+   * Hermes instance ids a "launch" replaces: their CPU/memory and agent slot are
+   * left out, so the launch may exceed the plan by exactly those instances.
+   */
+  excludeInstanceIds?: string[];
   /** Slot-only agents (Aeon): skip the pool + per-agent-cap checks. */
   poolExempt?: boolean;
   /** Per-agent launch/resize floor (CPU cores / GB). Defaults to BASE_FLOOR + browser surcharge. */
@@ -178,6 +190,10 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
   }
 
   const plan = getPlan(sub.plan);
+  // A plan bought on the plan ladder takes its name and one agent's computer
+  // size from the ladder's settings; every other plan from the plan table.
+  const ladder = await loadLadderEntitlement(params.userId);
+  const planName = ladder?.name ?? plan.name;
   const isFreePlan = sub.plan === "free" || sub.source === "free";
 
   // A Free account never launches a Hivra-hosted computer, and neither does a
@@ -199,15 +215,17 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
   }
   const usage = await loadCurrentComputeUsage(
     params.userId,
-    params.mode === "resize" ? { excludeHivraAgentId: params.excludeAgentId } : undefined,
+    params.mode === "resize"
+      ? { excludeHivraAgentId: params.excludeAgentId }
+      : params.excludeInstanceIds?.length ? { excludeInstanceIds: params.excludeInstanceIds } : undefined,
   );
   const totalCpu = Number(sub.total_cpu_budget) || plan.totalCpu;
   const totalRamGb = (Number(sub.total_ram_budget) || plan.totalRam) / 1024;
   const remainingCpu = Math.max(0, totalCpu - usage.usedCpu);
   const remainingRamGb = Math.max(0, totalRamGb - usage.usedRamGb);
   const maxAgents = Number(sub.instance_limit) || plan.maxAgents;
-  const maxCpuPerAgent = plan.maxCpuPerAgent;
-  const maxRamPerAgentGb = plan.maxRamPerAgent / 1024;
+  const maxCpuPerAgent = ladder?.maxCpuPerAgent ?? plan.maxCpuPerAgent;
+  const maxRamPerAgentGb = (ladder?.maxRamPerAgentMb ?? plan.maxRamPerAgent) / 1024;
   const maximumCpu = params.maximumCpu ?? params.cpu;
   const maximumRam = params.maximumRam ?? params.ram;
   const floorCpu = params.floor?.cpu ?? (BASE_FLOOR.cpu + (params.browser ? BROWSER_ADD.cpu : 0));
@@ -237,7 +255,7 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
   if (params.mode === "attach") {
     if (usage.activeCount >= maxAgents) {
       log.warn("hivra resource gate: agent slot limit reached", denialDetail);
-      return { ok: false, status: 403, message: attachPlanAgentLimitMessage(plan.name, maxAgents, usage.activeCount) };
+      return { ok: false, status: 403, message: attachPlanAgentLimitMessage(planName, maxAgents, usage.activeCount) };
     }
     return { ok: true };
   }
@@ -249,7 +267,7 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
 
   if (params.mode === "launch" && usage.activeCount >= maxAgents) {
     log.warn("hivra resource gate: agent slot limit reached", denialDetail);
-    return { ok: false, status: 403, message: planAgentLimitMessage(plan.name, maxAgents) };
+    return { ok: false, status: 403, message: planAgentLimitMessage(planName, maxAgents) };
   }
 
   if (params.cpu < floorCpu || params.ram < floorRam) {
@@ -272,7 +290,7 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
       return {
         ok: false,
         status: 403,
-        message: `Your ${plan.name} pool only has ${formatGb(remainingCpu)} CPU / ${formatGb(remainingRamGb)} GB free.`,
+        message: `Your ${planName} pool only has ${formatGb(remainingCpu)} CPU / ${formatGb(remainingRamGb)} GB free.`,
       };
     }
 
@@ -282,7 +300,7 @@ export async function validateAgentResources(params: ValidateResourcesInput): Pr
 
     if (maximumCpu > maxCpuPerAgent || maximumRam > maxRamPerAgentGb) {
       log.warn("hivra resource gate: request exceeds per-agent cap", denialDetail);
-      return { ok: false, status: 403, message: `Your ${plan.name} plan allows up to ${formatGb(maxCpuPerAgent)} CPU / ${formatGb(maxRamPerAgentGb)} GB per agent.` };
+      return { ok: false, status: 403, message: `Your ${planName} plan allows up to ${formatGb(maxCpuPerAgent)} CPU / ${formatGb(maxRamPerAgentGb)} GB per agent.` };
     }
   }
 

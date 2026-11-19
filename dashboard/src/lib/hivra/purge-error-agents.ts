@@ -33,6 +33,7 @@ import {
   runProxmoxHostScript,
 } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
+import { PREPARED_OMARCHY_REFRESH_STAGE } from "./prepared-omarchy-refresh-contract";
 
 const LOG_SOURCE = "hivra/purge-error-agents";
 
@@ -52,6 +53,7 @@ const MAX_CANDIDATES_PER_RUN = 12;
 const SSH_TIMEOUT_MS = 120_000;
 
 interface ErrorAgentRow {
+  operation_payload?: Record<string, unknown> | null;
   id: string;
   user_id: string;
   type: string | null;
@@ -109,7 +111,7 @@ if qm status "$VMID" >/dev/null 2>&1; then
   qm stop "$VMID" --timeout 30 2>/dev/null || true
   qm destroy "$VMID" --purge 1 --destroy-unreferenced-disks 1
 fi
-rm -f "/root/hivra-prov-$VMID.log" "/root/hivra-start-$VMID.log"
+rm -f "/root/hivra-prov-$VMID.log" "/root/hivra-prov-$VMID.cloud-init.txt" "/root/hivra-start-$VMID.log"
 if qm status "$VMID" >/dev/null 2>&1; then
   echo "VMID $VMID still exists after destroy" >&2
   exit 1
@@ -123,6 +125,9 @@ echo "destroyed $VMID"`;
 
 async function purgeOne(row: ErrorAgentRow): Promise<ErrorPurgeResult> {
   const base = { agentId: row.id, vmid: row.vmid };
+  if (row.operation_payload?.stage === PREPARED_OMARCHY_REFRESH_STAGE) {
+    return { ...base, action: "skipped", reason: "prepared Omarchy refresh owns this reservation" };
+  }
   if (!supabaseAdmin) return { ...base, action: "skipped", reason: "no database client" };
 
   // A vmid means a VM may have allocated before the provision failed (the POST
@@ -227,12 +232,13 @@ export async function runPurgeErrorHivraAgentsSweep(
 
   let query = supabaseAdmin
     .from("hivra_agents")
-    .select("id, user_id, type, status, vmid, proxmox_host, allocation_operation_id, cf_tunnel_id, cf_hostname, error, created_at")
+    .select("id, user_id, type, status, vmid, proxmox_host, allocation_operation_id, cf_tunnel_id, cf_hostname, error, created_at, operation_payload")
     .eq("status", "error")
     // The managed purge uses managed credentials, paths and storage defaults.
     // Bound BYO rows require their owner-scoped target execution context.
     .is("deployment_target_id", null)
     .lt("created_at", cutoffIso)
+    .or("operation_payload->>stage.is.null,operation_payload->>stage.neq.prepared_omarchy_refresh")
     .order("created_at", { ascending: true })
     .limit(MAX_CANDIDATES_PER_RUN);
   if (options.agentId) query = query.eq("id", options.agentId);

@@ -49,9 +49,12 @@ struct HivraBrowserPane: View {
         ))
     }
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         ZStack {
-            Color(red: 0.035, green: 0.039, blue: 0.043)
+            // The base behind the page, so loading never flashes another colour.
+            HivraDesign.background(for: colorScheme)
                 .ignoresSafeArea()
 
             HivraWebView(webView: browser.webView)
@@ -143,8 +146,7 @@ struct HivraBrowserPane: View {
                 localRecoveryActions
             } else {
                 Button("Try again", action: browser.reload)
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color(recovery: HivraRecoveryAppearance.primaryAction))
+                    .buttonStyle(HivraButtonStyle(.primary))
             }
         }
     }
@@ -157,37 +159,35 @@ struct HivraBrowserPane: View {
             detail: HivraRecoveryCopy.stoppedDetail
         ) {
             Button("Reload", action: browser.reload)
-                .buttonStyle(.borderedProminent)
-                .tint(Color(recovery: HivraRecoveryAppearance.primaryAction))
+                .buttonStyle(HivraButtonStyle(.primary))
         }
     }
 
     private var localRecoveryActions: some View {
         VStack(spacing: 12) {
             Text("Set up or start Hivra on this Mac, or use another connection.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Color(recovery: HivraRecoveryAppearance.text).opacity(0.68))
 
             HStack(spacing: 10) {
                 if let onOpenLocalControls {
                     Button("Set up or start Local Hivra", action: onOpenLocalControls)
-                        .buttonStyle(.borderedProminent)
-                        .tint(Color(recovery: HivraRecoveryAppearance.primaryAction))
+                        .buttonStyle(HivraButtonStyle(.primary))
                 }
 
                 if let onUseHivraCanary {
                     Button("Use Hivra Canary", action: onUseHivraCanary)
-                        .buttonStyle(.bordered)
+                        .buttonStyle(HivraButtonStyle())
                 }
             }
 
             HStack(spacing: 10) {
                 Button("Try Local again", action: browser.reload)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(HivraButtonStyle())
 
                 if let onAddConnection {
                     Button("Add custom connection", action: onAddConnection)
-                        .buttonStyle(.bordered)
+                        .buttonStyle(HivraButtonStyle())
                 }
             }
         }

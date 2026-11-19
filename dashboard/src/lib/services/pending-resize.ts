@@ -38,6 +38,7 @@ import type { LiveUpdateInitiator } from "@/lib/services/live-update-initiator";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { isWebfreeBackend } from "@/lib/types/instance";
+import { blocksInstanceLiveMutation } from "./instance-live-mutation";
 
 const LOG_SOURCE = "pending-resize";
 
@@ -47,6 +48,9 @@ export const PENDING_RESIZE_SELECT = [
   "user_id",
   "name",
   "status",
+  "lifecycle_state",
+  "archive_uri",
+  "archive_sha256",
   "backend",
   "provider",
   "subdomain",
@@ -123,6 +127,10 @@ async function redeployOne(
   initiator: LiveUpdateInitiator,
 ): Promise<PendingResizeResult> {
   if (!supabaseAdmin) return { id: row.id, redeployed: false, error: "db_unavailable" };
+
+  if (blocksInstanceLiveMutation(row)) {
+    return { id: row.id, redeployed: false, skipped: true, error: "lifecycle_operation_pending" };
+  }
 
   // Only webfree-backed instances have the applyLiveUpdate recreate path.
   if (!isWebfreeBackend(row.backend)) {

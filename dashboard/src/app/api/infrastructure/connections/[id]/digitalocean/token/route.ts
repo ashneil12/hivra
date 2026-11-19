@@ -10,7 +10,7 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit, RATE_LIMIT_PRESETS } from "@/lib/authenticated-rate-limit";
 import { replaceDigitalOceanToken } from "@/lib/hivra/do-managed-sessions";
 import { DigitalOceanConnectionCreateSchema, ProviderTokenExpiryInputSchema } from "@/lib/infrastructure/contracts";
-import { hivraApiUnavailable, managedSessionFailure, noStore, readMutationBody, UUID } from "@/app/api/hivra/managed-sessions/route-support";
+import { managedSessionFailure, noStore, readMutationBody, UUID } from "@/app/api/hivra/managed-sessions/route-support";
 
 const Body = z.object({
   apiToken: DigitalOceanConnectionCreateSchema.shape.credentials.shape.apiToken,
@@ -18,8 +18,6 @@ const Body = z.object({
 }).strict();
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const unavailable = hivraApiUnavailable(request);
-  if (unavailable) return unavailable;
   const { userId } = await auth();
   if (!userId) return noStore(apiError("Unauthorized", 401));
   const { id } = await context.params;

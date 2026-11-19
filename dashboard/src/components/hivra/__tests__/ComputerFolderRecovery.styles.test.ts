@@ -4,10 +4,12 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { chromium } from "@playwright/test";
 
+import { launchOptions } from "../../../../scripts/lib/playwright-launch.cjs";
+
 // JSDOM does not model CSS cascade specificity faithfully. Exercise the real
 // scoped stylesheet against the global reset in Chromium, without a network.
 it("keeps recovery controls visible against the global reset in both themes", async () => {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(launchOptions());
   try {
     const page = await browser.newPage();
     await page.route("**/*", route => route.abort());

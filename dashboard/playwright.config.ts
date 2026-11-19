@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+import { browserLaunchOptions } from './scripts/lib/playwright-launch.cjs';
+
 /**
  * Dashboard E2E + visual-regression (VRT) — Tier 1 of the QA pyramid.
  *
@@ -27,6 +29,18 @@ const FIRST_RUN_AUDIT_TIMEOUT_MS = Number.parseInt(
   10,
 ) || 40 * 60_000;
 const REMOTE_DESKTOP_AUDIT_ENABLED = process.env.REMOTE_DESKTOP_AUDIT === '1';
+/**
+ * The LAUNCH SWEEP launches every agent and computer on Canary through the real
+ * Launch page (e2e/launch-sweep.spec.ts). Real infrastructure, so it is gated
+ * the same way as the first-run audit: the project only exists with
+ * LAUNCH_SWEEP=1. Each target runs in its own throwaway account; workers
+ * decide how many launch at once (Canary has one host: keep it at 1).
+ */
+const LAUNCH_SWEEP_ENABLED = process.env.LAUNCH_SWEEP === '1';
+// One run id shared by every worker (they inherit this process's env).
+if (LAUNCH_SWEEP_ENABLED && !process.env.LAUNCH_SWEEP_RUN_ID) {
+  process.env.LAUNCH_SWEEP_RUN_ID = `${new Date().toISOString().slice(0, 10).replace(/-/g, '')}${Math.random().toString(16).slice(2, 6)}`;
+}
 
 export default defineConfig({
   testDir: './e2e',
@@ -49,6 +63,8 @@ export default defineConfig({
     : [['html', { open: 'never' }], ['list']],
   use: {
     baseURL: BASE_URL,
+    // Local runs: installed Chrome, sandbox on. See scripts/lib/playwright-launch.cjs.
+    ...browserLaunchOptions(),
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -112,6 +128,25 @@ export default defineConfig({
             use: {
               ...devices['Desktop Chrome'],
               storageState: undefined,
+            },
+          },
+        ]
+      : []),
+    ...(LAUNCH_SWEEP_ENABLED
+      ? [
+          {
+            name: 'launch-sweep',
+            testMatch: /launch-sweep\.spec\.ts/,
+            timeout: 65 * 60_000,
+            // NEVER retry: a retry launches and bills a second computer, and
+            // hides exactly the flakiness customers would hit.
+            retries: 0,
+            use: {
+              ...devices['Desktop Chrome'],
+              storageState: undefined,
+              screenshot: 'off' as const,
+              video: 'off' as const,
+              trace: 'off' as const,
             },
           },
         ]

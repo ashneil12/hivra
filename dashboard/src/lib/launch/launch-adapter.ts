@@ -70,7 +70,8 @@ const CLOCK_SKEW_MS = 120_000;
 export type LaunchObservation =
   | { kind: "checking-host"; at: number }
   | { kind: "sent"; at: number }
-  | { kind: "receipt"; phase: string; at: number };
+  | { kind: "receipt"; phase: string; at: number }
+  | { kind: "waiting-for-room"; since: number; at: number };
 
 export type LaunchSubmitOptions = {
   /** A key typed into this page for this launch. Never stored. */
@@ -110,10 +111,54 @@ export function launchResumeModeFor(draft: Pick<LaunchDraft, "profileId" | "capa
 }
 
 export function launchResumeMode(profileId: LaunchProfileId): "resend" | "observe" {
-  return profileId === "claude-code" || profileId === "hermes" || profileId === "openclaw"
-    || profileId === "agent-zero" || profileId === "aeon"
+  return profileId === "claude-code" || profileId === "hermes" || profileId === "hermes-computer" || profileId === "openclaw"
+    || profileId === "agent-zero" || profileId === "openbot" || profileId === "nuphos" || profileId === "aeon" || profileId === "deepseek-harness"
     ? "observe"
     : "resend";
+}
+
+// When every server is out of room the launch is refused before anything is
+// created, so the same request can be sent again safely. The page keeps it
+// in line and sends it again until a server has room, instead of an error.
+export const SERVERS_FULL_RETRY_MS = 30_000;
+export const SERVERS_FULL_WAIT_LIMIT_MS = 30 * 60_000;
+
+export function isServersFullLaunchError(error: unknown): boolean {
+  return error instanceof HivraLaunchCorrectableError && error.code === "servers_full";
+}
+
+export async function waitForRoom<T>(
+  send: () => Promise<T>,
+  onObserved?: LaunchSubmitOptions["onObserved"],
+  timing: { retryMs?: number; limitMs?: number; sleep?: (ms: number) => Promise<void>; now?: () => number } = {},
+): Promise<T> {
+  const now = timing.now ?? Date.now;
+  const sleep = timing.sleep ?? pause;
+  const retryMs = timing.retryMs ?? SERVERS_FULL_RETRY_MS;
+  const limitMs = timing.limitMs ?? SERVERS_FULL_WAIT_LIMIT_MS;
+  let since: number | null = null;
+  for (;;) {
+    try {
+      return await send();
+    } catch (error) {
+      if (!isServersFullLaunchError(error)) throw error;
+      since ??= now();
+      if (now() - since >= limitMs) throw error;
+      onObserved?.({ kind: "waiting-for-room", since, at: now() });
+      await sleep(retryMs);
+    }
+  }
+}
+
+function submitWithReceipt(
+  input: ReceiptBearingCreateInput,
+  onObserved?: LaunchSubmitOptions["onObserved"],
+): Promise<HivraAgent> {
+  return waitForRoom(() => submitWithReceiptOnce(input, onObserved), onObserved);
+}
+
+function submitObserved(input: CreateAgentInput, draft: LaunchDraft, options: LaunchSubmitOptions): Promise<LaunchResult> {
+  return waitForRoom(() => submitObservedOnce(input, draft, options), options.onObserved);
 }
 
 type SubmissionOutcome =
@@ -127,7 +172,7 @@ function pause(milliseconds: number): Promise<void> {
 /** The provisioning POST can keep doing exact host-side confirmation after its
  * durable receipt already names the new computer. Reconcile that receipt in
  * parallel so the launch screen advances as soon as acceptance is known. */
-async function submitWithReceipt(
+async function submitWithReceiptOnce(
   input: ReceiptBearingCreateInput,
   onObserved?: LaunchSubmitOptions["onObserved"],
 ): Promise<HivraAgent> {
@@ -239,7 +284,7 @@ async function findObservedHermes(draft: LaunchDraft): Promise<LaunchResult | nu
 /** Posts a request that carries no receipt. A lost or failed response is
  * followed by one look for the computer it created; the request is never
  * sent again. */
-async function submitObserved(input: CreateAgentInput, draft: LaunchDraft, options: LaunchSubmitOptions): Promise<LaunchResult> {
+async function submitObservedOnce(input: CreateAgentInput, draft: LaunchDraft, options: LaunchSubmitOptions): Promise<LaunchResult> {
   options.onObserved?.({ kind: "sent", at: Date.now() });
   try {
     return await createAgent(input);
@@ -358,7 +403,7 @@ async function submitHermes(draft: LaunchDraft, options: LaunchSubmitOptions): P
   if (payload?.reason === "plan_required" || payload?.failureType === HOSTED_COMPUTE_REQUIRES_PLAN_CODE) {
     // A Hivra-run computer needs a plan. There is no card check to offer.
     throw new LaunchCorrectableError(
-      getApiErrorMessage(payload, "A Hivra-hosted computer needs a paid plan."),
+      "Hermes runs on Hivra Cloud only, and that needs a paid plan. Choose a plan to launch it.",
       response.status,
       HOSTED_COMPUTE_REQUIRES_PLAN_CODE,
       { kind: "open", label: "Choose a plan", href: "/dashboard/billing?tab=plans" },
@@ -378,6 +423,12 @@ async function submitHermes(draft: LaunchDraft, options: LaunchSubmitOptions): P
   // or a step after creation) still leaves the agent booting.
   const found = await findObservedHermes(draft).catch(() => null);
   if (found) return found;
+  // A gateway timeout (the platform cutting off this long request) or a page
+  // that is not JSON says nothing about whether the agent was created. Keep the
+  // draft in the "check again" flow so a retry cannot start a second Hermes.
+  if (payload === null || response.status === 502 || response.status === 503 || response.status === 504) {
+    throw new HivraLaunchInProgressError(draft.launchRequestId, "Hivra didn't get a clear answer in time. Your agent may still be starting.");
+  }
   throw new HivraLaunchRejectedError(message, response.status, typeof payload?.failureType === "string" ? payload.failureType : null);
 }
 
@@ -555,7 +606,9 @@ export async function submitLaunchDraft(
       launchRequestId: draft.launchRequestId,
     }, options.onObserved);
   }
-  if (profileId === "ubuntu-desktop") {
+  if (profileId === "ubuntu-desktop" || profileId === "ubuntu-server") {
+    // Both are stored as the linux-desktop type; the profile tells the route
+    // which one to build, and the route chooses the provisioner kind.
     return submitWithReceipt({
       type: "linux-desktop",
       computerProfile: profileId,
@@ -576,7 +629,89 @@ export async function submitLaunchDraft(
     }
     return submitHermes(draft, options);
   }
+  if (profileId === "deepseek-harness") {
+    // The launch its acceptance ran: Hivra Cloud, no browser, no receipt ID.
+    // DeepSeek's own settings refuse a remote key, so the launch always carries
+    // a model: Hivra credits, or the owner's Venice key.
+    if (deployment.mode !== "hivra-managed") {
+      throw new HivraLaunchCorrectableError("DeepSeek Harness runs on Hivra Cloud only.", 409, "deepseek_managed_only");
+    }
+    const deepseekAccess = accessOf(draft);
+    const model = effectiveModel("deepseek-harness", deepseekAccess);
+    if (deepseekAccess.mode === "credits") {
+      const walletType = creditsWallet(deepseekAccess, options.balance ?? { state: "unknown" });
+      return submitObserved(dashboardAgentRequest({
+        type: "deepseek-harness",
+        name: draft.name.trim(),
+        cpu: draft.resources.cpu,
+        ram: draft.resources.ram,
+        browser: false,
+        credits: { walletType },
+        llm: { provider: "venice", mode: "managed", model, walletType },
+        deployment,
+      }), draft, options);
+    }
+    if (deepseekAccess.mode !== "api-key") {
+      throw new HivraLaunchCorrectableError("Choose Hivra credits or your Venice API key for DeepSeek Harness.", 400, "model_access_required");
+    }
+    return submitObserved(dashboardAgentRequest({
+      type: "deepseek-harness",
+      name: draft.name.trim(),
+      cpu: draft.resources.cpu,
+      ram: draft.resources.ram,
+      browser: false,
+      credits: null,
+      llm: { provider: "venice", mode: "byok", model, ...(await launchKey(draft, options)) },
+      deployment,
+    }), draft, options);
+  }
+  if (profileId === "hermes-computer") {
+    // Hermes as a Hivra computer: the official Hermes, its own web UI. It is
+    // pointed at Venice at install (Hivra credits or the owner's Venice key),
+    // or left to be set up inside Hermes. Always the generic Hivra agent
+    // launch, like OpenClaw.
+    if (deployment.mode !== "hivra-managed") {
+      throw new HivraLaunchCorrectableError("Hermes runs on Hivra Cloud only.", 409, "hermes_managed_only");
+    }
+    const hermesAccess = accessOf(draft);
+    const model = effectiveModel("hermes-computer", hermesAccess);
+    if (hermesAccess.mode === "credits") {
+      const walletType = creditsWallet(hermesAccess, options.balance ?? { state: "unknown" });
+      return submitObserved(withTemplate(dashboardAgentRequest({
+        type: "hermes",
+        name: draft.name.trim(),
+        cpu: draft.resources.cpu,
+        ram: draft.resources.ram,
+        browser: false,
+        credits: { walletType },
+        llm: { provider: "venice", mode: "managed", model, walletType },
+        deployment,
+      }), draft), draft, options);
+    }
+    if (hermesAccess.mode === "api-key") {
+      return submitObserved(withTemplate(dashboardAgentRequest({
+        type: "hermes",
+        name: draft.name.trim(),
+        cpu: draft.resources.cpu,
+        ram: draft.resources.ram,
+        browser: false,
+        credits: null,
+        llm: { provider: "venice", mode: "byok", model, ...(await launchKey(draft, options)) },
+        deployment,
+      }), draft), draft, options);
+    }
+    return submitObserved(withTemplate(dashboardAgentRequest({
+      type: "hermes",
+      name: draft.name.trim(),
+      cpu: draft.resources.cpu,
+      ram: draft.resources.ram,
+      browser: false,
+      credits: null,
+      deployment,
+    }), draft), draft, options);
+  }
   if (profileId === "claude-code") {
+    const claudeAccess = accessOf(draft);
     return submitObserved(withTemplate(nativeCliAgentRequest({
       type: "claude-code",
       name: draft.name.trim(),
@@ -584,9 +719,15 @@ export async function submitLaunchDraft(
       ram: draft.resources.ram,
       browser: draft.browser,
       deployment,
+      credits: claudeAccess.mode === "credits"
+        ? {
+            walletType: creditsWallet(claudeAccess, options.balance ?? { state: "unknown" }),
+            model: effectiveModel("claude-code", claudeAccess),
+          }
+        : null,
     }), draft), draft, options);
   }
-  // OpenClaw, Agent Zero and Aeon, as their setup form launched them.
+  // OpenClaw, Agent Zero, OpenBot, Nuphos and Aeon, as their setup form launched them.
   const access = accessOf(draft);
   const credits = access.mode === "credits"
     ? { walletType: creditsWallet(access, options.balance ?? { state: "unknown" }) }
@@ -631,6 +772,8 @@ export function launchResultHref(draft: LaunchDraft, agentId: string): string {
     });
   }
   if (draft.profileId === "linux-terminal") return `/dashboard/agent/${id}?tab=manage`;
+  // A Linux computer has no desktop; it opens on its files.
+  if (draft.profileId === "ubuntu-server") return `/dashboard/agent/${id}?tab=files`;
   if (draft.profileId && PROFILE_DETAILS[draft.profileId].resourceKind === "computer") {
     // The launch operation installs the desktop. Opening its result must not
     // request a second installation (or bypass explicit preparation holds).
@@ -646,13 +789,23 @@ export function launchResultHref(draft: LaunchDraft, agentId: string): string {
   return `/dashboard/agent/${id}?welcome=1&tab=${surface === "dashboard" ? "aeon" : "terminal"}`;
 }
 
-/** Hermes shows its outcome in the journey (Start chatting); every other
- * accepted launch opens its own surface straight away. */
+/** Every agent shows its outcome in the journey (Setting up, then Ready);
+ * computers open their own surface straight away. */
 export function opensOnAcceptance(profileId: LaunchProfileId | null): boolean {
-  return profileId !== "hermes";
+  return !holdsForReadiness(profileId);
 }
 
-/** As opensOnAcceptance, for this launch: Hermes on DigitalOcean opens its
+/** Agent launches wait in the journey until the agent can answer. */
+export function holdsForReadiness(profileId: LaunchProfileId | null): boolean {
+  return profileId !== null && PROFILE_DETAILS[profileId].resourceKind === "agent";
+}
+
+/** Agents whose first screen is the Hivra chat, so the ready button says Start chatting. */
+export function opensInHivraChat(profileId: LaunchProfileId | null): boolean {
+  return profileId === "claude-code" || profileId === "codex" || profileId === "hermes" || profileId === "hermes-computer";
+}
+
+/** As opensOnAcceptance, for this launch: an agent on DigitalOcean opens its
  * DigitalOcean chat, never the Hivra Cloud workspace wait. */
 export function opensOnAcceptanceFor(draft: Pick<LaunchDraft, "profileId" | "capacity">): boolean {
   return draft.capacity.mode === "digitalocean" || opensOnAcceptance(draft.profileId);

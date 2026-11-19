@@ -32,7 +32,7 @@ export default function DashboardNotFound() {
             fontSize: 11,
             textTransform: "uppercase",
             letterSpacing: "0.18em",
-            color: "var(--hivra-red)",
+            color: "var(--hg-text-3)",
             marginBottom: "1rem",
             fontWeight: 700,
           }}
@@ -63,8 +63,8 @@ export default function DashboardNotFound() {
             fontWeight: 700,
             letterSpacing: "0.12em",
             textTransform: "uppercase",
-            color: "#fff",
-            background: "var(--hivra-red)",
+            color: "var(--hg-on-accent)",
+            background: "var(--hg-accent)",
           }}
         >
           <ArrowLeft size={14} aria-hidden="true" />

@@ -6,7 +6,7 @@ import { checkOutboundUrlSafety } from "@/lib/url-safety";
 import { validateHivraChatOrigin } from "./agent-host-result";
 
 const Input = z.object({ hostname: z.string().min(1).max(253), apiToken: z.string().regex(/^[a-f0-9]{64}$/),
-  runtime: z.enum(["claude", "codex", "aeon", "openclaw", "agent-zero"]) }).strict();
+  runtime: z.enum(["claude", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes"]) }).strict();
 
 async function boundedText(response: Response): Promise<string> {
   const reader = response.body?.getReader();
@@ -51,16 +51,25 @@ export async function verifyProviderPublicRuntime(raw: z.infer<typeof Input>, fe
     const meta: unknown = JSON.parse(metadata.text);
     const summary = z.object({ agentKind: z.literal(input.runtime), surfaceAuth: z.literal("post-cookie-v1") }).safeParse(meta);
     if (health.status !== 200 || health.text !== "ok" || metadata.status !== 200 || !summary.success || unauthenticated.status !== 401) return false;
-    const native = { aeon: "/aeon/", openclaw: "/openclaw/", "agent-zero": "/agent-zero/" };
+    const native = { aeon: "/aeon/", openclaw: "/openclaw/", "agent-zero": "/agent-zero/", openbot: "/openbot/", nuphos: "/nuphos/", hermes: "/hermes/" };
     const nativePath = input.runtime in native ? native[input.runtime as keyof typeof native] : null;
-    const [authenticated, terminal, boxTerminal, dashboard] = await Promise.all([
+    const [authenticated, terminal, boxTerminal, dashboard, csrf] = await Promise.all([
       get("/api/model", true, true), get("/terminal/", true), get("/box-terminal/", true),
       nativePath ? get(nativePath, true) : null,
+      // Agent Zero's real path is login -> entry document -> native CSRF
+      // through the gateway; healthz says nothing about it. The gateway
+      // validates that contract strictly (status, shape, session, runtime id),
+      // so a wedged upstream fails here instead of shipping a broken box.
+      input.runtime === "agent-zero" ? get("/agent-zero/api/csrf_token", true, true) : null,
     ]);
     const model = z.object({ agentKind: z.literal(input.runtime), model: z.string().max(4096).nullable() }).safeParse(JSON.parse(authenticated.text));
+    const a0Csrf = z.object({
+      ok: z.literal(true), token: z.string().length(43), runtime_id: z.string().regex(/^[0-9a-f]{16}$/),
+    }).strict().safeParse(csrf ? JSON.parse(csrf.text) : null);
     return !controller.signal.aborted && authenticated.status === 200 && model.success
       && terminal.status === 200 && boxTerminal.status === 200
-      && (!dashboard || [200, 301, 302, 303, 307, 308, 401, 403].includes(dashboard.status));
+      && (!dashboard || [200, 301, 302, 303, 307, 308, 401, 403].includes(dashboard.status))
+      && (!csrf || (csrf.status === 200 && a0Csrf.success));
   } catch { return false; }
   finally { clearTimeout(timeout); controller.abort(); }
 }

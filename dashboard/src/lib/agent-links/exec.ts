@@ -6,6 +6,7 @@ import "server-only";
 import { runProxmoxHostScriptWithStdin } from "@/lib/services/proxmox-instance-service";
 import { resolveHivraAgentExecutionContext } from "@/lib/hivra/agent-execution-context";
 import { executeGvisorComputerCommand } from "@/lib/hivra/gvisor-computer-service";
+import { wakeAgentForUserAction } from "@/lib/hivra/sleep-aware";
 import { log } from "@/lib/logger";
 import { linkTarget } from "./eligibility";
 import { buildLinkExecHostScript, buildLinkExecPayload, LINK_EXEC_STDERR_MAX, LINK_EXEC_STDOUT_MAX, parseLinkExecOutput,
@@ -17,6 +18,7 @@ const GVISOR_STDIN_MAX = 2 * 1024;
 
 const REFUSAL_COPY: Record<string, string> = {
   computer_not_running: "That computer isn't running. Ask your owner to start it.",
+  computer_asleep: "That computer is asleep and is still waking up. Try again in a few seconds.",
   binding_mismatch: "Hivra couldn't confirm that computer is the one on record, so nothing was run.",
   computer_unreachable: "Hivra couldn't reach that computer's host. Try again in a minute.",
   guest_unreachable: "That computer didn't answer. It may still be starting; try again in a minute.",
@@ -74,6 +76,12 @@ export async function runLinkedCommand(userId: string, computer: OwnedRow, reque
   if (!target.ok) return { status: "refused", reason: "not_supported" };
   if (computer.status !== "running") return { status: "refused", reason: "computer_not_running" };
   try {
+    if (target.lane !== "gvisor") {
+      // A napping or hibernated computer cannot run anything: wake it first. This
+      // is a request on behalf of the owner, so it counts as a reason to be awake.
+      const wake = await wakeAgentForUserAction(computer.id);
+      if (!wake.ok) return { status: "refused", reason: "computer_asleep" };
+    }
     return target.lane === "gvisor" ? await runOnGvisor(userId, computer, request) : await runOnProxmox(userId, computer, request);
   } catch (error) {
     log.warn("agent link command failed", { source: "agent-links/exec", failureType: "agent_link_exec_failed",

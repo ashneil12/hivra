@@ -2,7 +2,53 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import release from "../../../provisioner-releases/2026.10.20.2.json";
+import release from "../../../provisioner-releases/2026.11.18.5.json";
+import noBootUpgradeRelease from "../../../provisioner-releases/2026.11.18.4.json";
+import snapFreeBootRelease from "../../../provisioner-releases/2026.11.18.3.json";
+import emptyModeRelease from "../../../provisioner-releases/2026.11.18.2.json";
+import veniceChatRelease from "../../../provisioner-releases/2026.11.18.1.json";
+import installReasonRelease from "../../../provisioner-releases/2026.11.17.9.json";
+import readinessRelease from "../../../provisioner-releases/2026.11.17.8.json";
+import basePathRelease from "../../../provisioner-releases/2026.11.17.7.json";
+import presetRelease from "../../../provisioner-releases/2026.11.17.6.json";
+import tgApplyRelease from "../../../provisioner-releases/2026.11.17.5.json";
+import launchFixesRelease from "../../../provisioner-releases/2026.11.17.4.json";
+import agentZeroUsrEnvRelease from "../../../provisioner-releases/2026.11.17.3.json";
+import agentZeroSettingsRelease from "../../../provisioner-releases/2026.11.17.2.json";
+import latestAgentsRelease from "../../../provisioner-releases/2026.11.17.1.json";
+import usrPluginsRelease from "../../../provisioner-releases/2026.11.15.7.json";
+import productionAgentZeroHotfixRelease from "../../../provisioner-releases/2026.11.15.8.json";
+import watchdogRelease from "../../../provisioner-releases/2026.11.15.6.json";
+import lockFdRelease from "../../../provisioner-releases/2026.11.15.5.json";
+import resilienceRelease from "../../../provisioner-releases/2026.11.15.3.json";
+import stateImportRelease from "../../../provisioner-releases/2026.11.15.2.json";
+import a0EntryFallbackRelease from "../../../provisioner-releases/2026.11.15.1.json";
+import connectLinksRelease from "../../../provisioner-releases/2026.11.14.1.json";
+import connectGrantsRelease from "../../../provisioner-releases/2026.11.13.6.json";
+import discordDoorbellRelease from "../../../provisioner-releases/2026.11.13.5.json";
+import doorbellRelease from "../../../provisioner-releases/2026.11.13.4.json";
+import hostCredentialRelease from "../../../provisioner-releases/2026.11.13.3.json";
+import hostIngressStartRelease from "../../../provisioner-releases/2026.11.13.2.json";
+import wakeProxyRelease from "../../../provisioner-releases/2026.11.13.1.json";
+import nuphosRelease from "../../../provisioner-releases/2026.11.12.5.json";
+import openbotRelease from "../../../provisioner-releases/2026.11.12.4.json";
+import restorePointsRelease from "../../../provisioner-releases/2026.11.12.3.json";
+import gitGuardRelease from "../../../provisioner-releases/2026.11.12.2.json";
+import hermesModelRelease from "../../../provisioner-releases/2026.11.12.1.json";
+import webappRelease from "../../../provisioner-releases/2026.11.11.7.json";
+import libatomicRelease from "../../../provisioner-releases/2026.11.11.6.json";
+import gatewayRelease from "../../../provisioner-releases/2026.11.11.5.json";
+import hermesRelease from "../../../provisioner-releases/2026.11.11.4.json";
+import chatEffortRelease from "../../../provisioner-releases/2026.11.11.3.json";
+import chromePinRelease from "../../../provisioner-releases/2026.11.11.2.json";
+import browserViewRelease from "../../../provisioner-releases/2026.11.11.1.json";
+import deepseekModelRelease from "../../../provisioner-releases/2026.11.10.5.json";
+import linuxServerRelease from "../../../provisioner-releases/2026.11.10.4.json";
+import freshnessRelease from "../../../provisioner-releases/2026.11.10.3.json";
+import creditsRelease from "../../../provisioner-releases/2026.11.10.2.json";
+import hardeningRelease from "../../../provisioner-releases/2026.11.10.1.json";
+import clipboardRelease from "../../../provisioner-releases/2026.11.03.1.json";
+import appUpdateRelease from "../../../provisioner-releases/2026.10.20.2.json";
 import ownedUpdateRelease from "../../../provisioner-releases/2026.10.20.1.json";
 import claudeAppRelease from "../../../provisioner-releases/2026.10.07.1.json";
 import terminalFollowupsRelease from "../../../provisioner-releases/2026.09.24.4.json";
@@ -37,7 +83,7 @@ import { parseProviderDesktopLaunch, type ProviderDesktopLaunch, type ProviderDe
  * cleanup grant BEFORE fresh SSH and record proof against that captured grant.
  * Existing v1 recovery and historical release records deliberately stay intact.
  */
-const VERSION = "2026.10.20.2";
+const VERSION = "2026.11.18.5";
 const PROFILE = "desktop-owned-services-v1";
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -49,7 +95,7 @@ const rows = release.files.map(file => [file.path, file.sha256, file.bytes,
 const bundleSha256 = hash(JSON.stringify(rows));
 // Python worker.encode adds a newline; the bundle manifest digest does not.
 const closureSha256 = hash(JSON.stringify(rows.filter(row => closurePaths.includes(row[0]))) + "\n");
-function identity(version: "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.21.1" | "2026.09.22.1" | "2026.09.22.2" | "2026.09.24.1" | "2026.09.24.2" | "2026.09.24.3" | "2026.09.24.4" | "2026.10.07.1" | "2026.10.20.1" | "2026.10.20.2", bundle: string) { return z.object({ version: z.literal(3), agentId: Uuid, operationId: Uuid,
+function identity(version: "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.21.1" | "2026.09.22.1" | "2026.09.22.2" | "2026.09.24.1" | "2026.09.24.2" | "2026.09.24.3" | "2026.09.24.4" | "2026.10.07.1" | "2026.10.20.1" | "2026.10.20.2" | "2026.11.03.1" | "2026.11.10.1" | "2026.11.10.2" | "2026.11.10.3" | "2026.11.10.4" | "2026.11.10.5" | "2026.11.11.1" | "2026.11.11.2" | "2026.11.11.3" | "2026.11.11.4" | "2026.11.11.5" | "2026.11.11.6" | "2026.11.11.7" | "2026.11.12.1" | "2026.11.12.2" | "2026.11.12.3" | "2026.11.12.4" | "2026.11.12.5" | "2026.11.13.1" | "2026.11.13.2" | "2026.11.13.3" | "2026.11.13.4" | "2026.11.13.5" | "2026.11.13.6" | "2026.11.14.1" | "2026.11.15.1" | "2026.11.15.2" | "2026.11.15.3" | "2026.11.15.5" | "2026.11.15.6" | "2026.11.15.7" | "2026.11.15.8" | "2026.11.17.1" | "2026.11.17.2" | "2026.11.17.3" | "2026.11.17.4" | "2026.11.17.5" | "2026.11.17.6" | "2026.11.17.7" | "2026.11.17.8" | "2026.11.17.9" | "2026.11.18.1" | "2026.11.18.2" | "2026.11.18.3" | "2026.11.18.4" | "2026.11.18.5", bundle: string) { return z.object({ version: z.literal(3), agentId: Uuid, operationId: Uuid,
   bundle: z.object({ version: z.literal(1), state: z.literal("bundle_installed"), scopeSha256: Digest,
     bundleSha256: z.literal(bundle), provisionerVersion: z.literal(version) }).strict(),
   desktopCleanup: z.object({ profile: z.literal(PROFILE), closureSha256: z.literal(closureSha256) }).strict(),
@@ -59,6 +105,52 @@ const Identity = z.union([CurrentIdentity,
   identity("2026.09.24.4", "3bc4df89f60582b8f9505e3ab9ee6b5a4a751a2633b2d709a1f4b12549fd3b49"),
   identity("2026.10.07.1", "bbebf7e4d12adbb75069b86f6eb9681d173066437d2b29ce49cff1250159a3d3"),
   identity("2026.10.20.1", "a2fc56f1a4cf4a1d66f17654c441b70c27cc18960c3e48c570b7032976cdde2e"),
+  identity("2026.11.03.1", "7d2d002b3e312c953930a6c18a5dc4c03632d6b55d4877d944d8c52084050b86"),
+  identity("2026.11.10.1", "e57d625db5e9f9b79d99f8a245a7f743ece2f7f1359d1a0a667a0d2918044c84"),
+  identity("2026.11.10.2", "0236e50ffda2ef8f88c1334a6088f8e673c751263dc6184ab70ba37c9365b827"),
+  identity("2026.11.10.3", "37a30a87d5ed9ff618242d741daecd389ca32ab34716eeb7936849f686e9f87e"),
+  identity("2026.11.10.4", "83662174a473651d09b535b4deeca3e8342d6294eaa7efa17d18b3592ccc283e"),
+  identity("2026.11.11.1", "977de3d5d95252312cd75847d9b7762aa25b738153c12b09f5797fc8a35c9bb7"),
+  identity("2026.11.11.3", "b0a1ff631ab30fdda0c4ec5016a8c7d22888064134a82ae88594679c107b78e8"),
+  identity("2026.11.11.4", "f5e0c408e47f9c1950da3e228bf4234be877ab613de966bfea7540da35daee45"),
+  identity("2026.11.11.5", "e4c439b7e1590de448c204232543a1a9e2b0ca695efd652d79f934e38e97c5cf"),
+  identity("2026.11.11.6", "f2148144fee2ab681d36c584d882198c8bded295c3f6375780919e113ad0ef86"),
+  identity("2026.11.11.7", "880754711e2f8bd3d57eaa11b8dc1be47780de107214f610d2fbbe261d32eb0e"),
+  identity("2026.11.12.1", "d79a91eccf3d7aacc65efe2fdbe55e00f564caabc24f0ff4c0a5a324985d8e1c"),
+  identity("2026.11.12.2", "b42e5c39bbc4f7ce155816e8db4944a951a8040b1c4b80238df00ff575cd6737"),
+  identity("2026.11.12.3", "12ea5f0465a901a5b27a6b780fa3f497bf26006346209f7a7028d2b413d1e1a9"),
+  identity("2026.11.12.4", "65e603d9fa6930b1625be3bc89396286fa511f00df539eb99bc1a51554ffbba9"),
+  identity("2026.11.12.5", "2732136b7f6a94d42356c295f5414c90127e35d0608ee8bc2f74c2e3f4188f71"),
+  identity("2026.11.13.1", "19696e4692b2139538a76b2f2fbc5b78b15e83a8fa11cb271299183f9e9ca25d"),
+  identity("2026.11.13.2", "c89d66209b3f2019a1f0fab017b8e8631c2e6426ec1bd66c22ada361ea8bc72b"),
+  identity("2026.11.13.3", "f0e86fbe69ab3a44378010da7058df2bcdfe4375ad49cd7921325c2602c7b6c3"),
+  identity("2026.11.13.4", "b5266ae6dc98bef2f4134be25ac540703d3a8e641e8129ddd02caaaa747e3716"),
+  identity("2026.11.13.5", "c7c400fdd3009867c86ed21610c765f077b03e038f1ddcbec75966304ac5bd9f"),
+  identity("2026.11.13.6", "e402a4a3b2359852034c43354eac986014db92f354f204ea13728edcbf073f25"),
+  identity("2026.11.14.1", "03f424cd434b5142c8f482c67ad5b2a61787a5404a2cb8ec6a2ecd4fec72fd04"),
+  identity("2026.11.15.1", "4729a8faca0ab45d854ad48423ee6d87bfb94e818ce27599817998fdf2ababd8"),
+  identity("2026.11.15.2", "49a8f66e3fca1577e7932a2338de16e9c04d77bc9eb130ae81ccb7ac3a692cef"),
+  identity("2026.11.15.3", "a96d8c478acb7d8a2d97cc86e23515a7968cdf0e298307ca200b6d8512a0f5d8"),
+  identity("2026.11.15.5", "763ce9f86132cd5051819f3a4fe35cfd296ec2551f68000818a85ad980f22c58"),
+  identity("2026.11.15.6", "3063e0f8e3f0fbd3d256d9b6ae635bf02d129c049c99849ae376e03082896973"),
+  identity("2026.11.15.7", "28ae48475970fd17617292ae3a3b9823769ed3c9c8fc9d9a6774d32199a510ff"),
+  identity("2026.11.15.8", "697c6313094ef71186f966402e32524d8ae9f49c0f1b86d4d9d918dac8e0d499"),
+  identity("2026.11.17.1", "992ed8cd0bbfda5a5d2774394000339c0a7245f1ce15775c74f6d9424238493e"),
+  identity("2026.11.17.2", "9010b4c2b0abf9863fc70b3e8482fc500ecb4cfa8ced51f3776006e2066ebb02"),
+  identity("2026.11.17.3", "1346e7abf511d196a889b87231c098b7c6c9694690177db57a28ae2e8c368485"),
+  identity("2026.11.17.4", "001acfd88189bb756f0fee77209ade989f990d1eaae7b5bc992604cea514cbdf"),
+  identity("2026.11.17.5", "8c726d7c0c3959256bc42c935cedf9f6223e56941afb5caca16e1a8a2a13259c"),
+  identity("2026.11.17.6", "32f390c60478608464840c4471a10de28ddb8538cad795c63604df97b47c00f7"),
+  identity("2026.11.17.7", "2a7bcbfa2c1f5ee25763ee24c9da67d2adb9b7d7d8f6e8ed67fb4af631a1bda8"),
+  identity("2026.11.17.8", "35e68e27defa35a87bc1534c2ac8892bf1bbcdb4247486bc6bd098ee71261790"),
+  identity("2026.11.17.9", "1b4ba16a649580df24e25cd4c8c24e999756286a29bd117e24c0addc4f099d8f"),
+  identity("2026.11.18.1", "18a96a99165a0266ac83b5807ce14b83aa04b4b6701b19de8314559196dca132"),
+  identity("2026.11.18.2", "fa76708ee68f6e0626eb98dd1909fae215d4fb2e76373df0427287e35cbeabc8"),
+  identity("2026.11.18.3", "87177637f262036044be9d3c72fbbe339b80d19061a45d06d766b2531a701a75"),
+  identity("2026.11.18.4", "4eff220ba9a6b103e0a7892204aeccced297674749d0a269916f71736810b6d3"),
+  identity("2026.11.11.2", "21d6f9aaed7820ef3c80c5fecc2c237ebe9fdc63bcd7b819dae0b341de81a15f"),
+  identity("2026.11.10.5", "152d4137a9f509b4461dd444c43dff214dab3cdf6fc2c6affcf699c77588f993"),
+  identity("2026.10.20.2", "e89fbe1b10c5ed4c365a0d300b79c4b8f836a6c4811e7eb8b579defb0cd67f42"),
   identity("2026.09.24.3", "bd19950142f7c8e76f615b2ed1de075f76372a3b49bedd5291fa2242c540ce73"),
   identity("2026.09.24.2", "54898f145b981d4933bb32f09cdfa06e2e75a5c4916fe9a204f86fce6d8d5624"),
   identity("2026.09.24.1", "23214684196ddc161e76df3b49501c2239c4843e751497b332d81088802e5e04"),
@@ -117,7 +209,7 @@ export function buildProviderDesktopWorkerPlan(input: ProviderDesktopWorkerInput
       ? { version: 3, agentId: input.agentId, operationId: input.operationId,
         bundle: providerGuestBundleReceipt(input.scope, input.assets), desktopCleanup: { profile: PROFILE, closureSha256 } }
       : input.identity);
-    const maxRunMs = [VERSION, "2026.10.20.1", "2026.10.07.1", "2026.09.24.4", "2026.09.24.3", "2026.09.24.2", "2026.09.24.1", "2026.09.22.2", "2026.09.22.1", "2026.09.21.1", "2026.09.15.2", "2026.09.06.3", "2026.09.06.2", "2026.09.06.1", "2026.09.05.10", "2026.09.05.9", "2026.09.05.8"].includes(identity.bundle.provisionerVersion) ? 1_200_000 : 480_000;
+    const maxRunMs = [VERSION, "2026.11.11.4", "2026.11.11.3", "2026.11.11.2", "2026.11.11.1", "2026.11.10.5", "2026.11.10.4", "2026.11.10.3", "2026.11.10.2", "2026.11.10.1", "2026.11.03.1", "2026.10.20.2", "2026.10.20.1", "2026.10.07.1", "2026.09.24.4", "2026.09.24.3", "2026.09.24.2", "2026.09.24.1", "2026.09.22.2", "2026.09.22.1", "2026.09.21.1", "2026.09.15.2", "2026.09.06.3", "2026.09.06.2", "2026.09.06.1", "2026.09.05.10", "2026.09.05.9", "2026.09.05.8"].includes(identity.bundle.provisionerVersion) ? 1_200_000 : 480_000;
     if (checkedClock.boottimeMs > Number.MAX_SAFE_INTEGER - maxRunMs) throw new Error();
     if (identity.agentId !== input.agentId || identity.operationId !== input.operationId
       || identity.bundle.scopeSha256 !== providerGuestBundleScopeSha256(input.scope)) throw new Error();
@@ -128,6 +220,52 @@ export function buildProviderDesktopWorkerPlan(input: ProviderDesktopWorkerInput
     if (Buffer.byteLength(raw) > 128 * 1024) throw new Error();
     const recipe = providerGuestWorkerRecipe(identity.bundle.provisionerVersion);
     const boundRelease = identity.bundle.provisionerVersion === VERSION ? release
+      : identity.bundle.provisionerVersion === "2026.11.18.4" ? noBootUpgradeRelease
+      : identity.bundle.provisionerVersion === "2026.11.18.3" ? snapFreeBootRelease
+      : identity.bundle.provisionerVersion === "2026.11.18.2" ? emptyModeRelease
+      : identity.bundle.provisionerVersion === "2026.11.18.1" ? veniceChatRelease
+      : identity.bundle.provisionerVersion === "2026.11.17.9" ? installReasonRelease
+      : identity.bundle.provisionerVersion === "2026.11.17.8" ? readinessRelease
+      : identity.bundle.provisionerVersion === "2026.11.17.7" ? basePathRelease
+      : identity.bundle.provisionerVersion === "2026.11.17.6" ? presetRelease
+      : identity.bundle.provisionerVersion === "2026.11.17.5" ? tgApplyRelease
+      : identity.bundle.provisionerVersion === "2026.11.17.4" ? launchFixesRelease
+      : identity.bundle.provisionerVersion === "2026.11.17.3" ? agentZeroUsrEnvRelease
+      : identity.bundle.provisionerVersion === "2026.11.17.2" ? agentZeroSettingsRelease
+      : identity.bundle.provisionerVersion === "2026.11.17.1" ? latestAgentsRelease
+      : identity.bundle.provisionerVersion === "2026.11.15.8" ? productionAgentZeroHotfixRelease
+      : identity.bundle.provisionerVersion === "2026.11.15.7" ? usrPluginsRelease
+      : identity.bundle.provisionerVersion === "2026.11.15.6" ? watchdogRelease
+      : identity.bundle.provisionerVersion === "2026.11.15.5" ? lockFdRelease
+      : identity.bundle.provisionerVersion === "2026.11.15.3" ? resilienceRelease
+      : identity.bundle.provisionerVersion === "2026.11.15.2" ? stateImportRelease
+      : identity.bundle.provisionerVersion === "2026.11.15.1" ? a0EntryFallbackRelease
+      : identity.bundle.provisionerVersion === "2026.11.14.1" ? connectLinksRelease
+      : identity.bundle.provisionerVersion === "2026.11.13.6" ? connectGrantsRelease
+      : identity.bundle.provisionerVersion === "2026.11.13.5" ? discordDoorbellRelease
+      : identity.bundle.provisionerVersion === "2026.11.13.4" ? doorbellRelease
+      : identity.bundle.provisionerVersion === "2026.11.13.3" ? hostCredentialRelease
+      : identity.bundle.provisionerVersion === "2026.11.13.2" ? hostIngressStartRelease
+      : identity.bundle.provisionerVersion === "2026.11.13.1" ? wakeProxyRelease
+      : identity.bundle.provisionerVersion === "2026.11.12.5" ? nuphosRelease
+      : identity.bundle.provisionerVersion === "2026.11.12.4" ? openbotRelease
+      : identity.bundle.provisionerVersion === "2026.11.12.3" ? restorePointsRelease
+      : identity.bundle.provisionerVersion === "2026.11.12.2" ? gitGuardRelease
+      : identity.bundle.provisionerVersion === "2026.11.12.1" ? hermesModelRelease
+      : identity.bundle.provisionerVersion === "2026.11.11.7" ? webappRelease
+      : identity.bundle.provisionerVersion === "2026.11.11.6" ? libatomicRelease
+      : identity.bundle.provisionerVersion === "2026.11.11.5" ? gatewayRelease
+      : identity.bundle.provisionerVersion === "2026.11.11.4" ? hermesRelease
+      : identity.bundle.provisionerVersion === "2026.11.11.3" ? chatEffortRelease
+      : identity.bundle.provisionerVersion === "2026.11.11.2" ? chromePinRelease
+      : identity.bundle.provisionerVersion === "2026.11.11.1" ? browserViewRelease
+      : identity.bundle.provisionerVersion === "2026.11.10.5" ? deepseekModelRelease
+      : identity.bundle.provisionerVersion === "2026.11.10.4" ? linuxServerRelease
+      : identity.bundle.provisionerVersion === "2026.11.10.3" ? freshnessRelease
+      : identity.bundle.provisionerVersion === "2026.11.10.2" ? creditsRelease
+      : identity.bundle.provisionerVersion === "2026.11.10.1" ? hardeningRelease
+      : identity.bundle.provisionerVersion === "2026.11.03.1" ? clipboardRelease
+      : identity.bundle.provisionerVersion === "2026.10.20.2" ? appUpdateRelease
       : identity.bundle.provisionerVersion === "2026.10.20.1" ? ownedUpdateRelease
       : identity.bundle.provisionerVersion === "2026.10.07.1" ? claudeAppRelease
       : identity.bundle.provisionerVersion === "2026.09.24.4" ? terminalFollowupsRelease

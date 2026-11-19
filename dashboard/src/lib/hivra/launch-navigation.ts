@@ -11,6 +11,8 @@ const PORTABLE_AGENT_LAUNCH_IDS = [
   "aeon",
   "openclaw",
   "agent-zero",
+  "openbot",
+  "nuphos",
 ] as const;
 
 export type PortableAgentLaunchId = typeof PORTABLE_AGENT_LAUNCH_IDS[number];
@@ -75,6 +77,9 @@ const AGENT_TYPE_PROFILES: Readonly<Record<string, LaunchAgentProfileId>> = {
   aeon: "aeon",
   openclaw: "openclaw",
   "agent-zero": "agent-zero",
+  openbot: "openbot",
+  nuphos: "nuphos",
+  "deepseek-harness": "deepseek-harness",
 };
 
 export function launchProfileForAgentType(value: string | null | undefined): LaunchAgentProfileId | null {
@@ -94,6 +99,8 @@ const PORTABLE_LAUNCH_PROFILES: Readonly<Record<PortableLaunchResourceId, Launch
   aeon: "aeon",
   openclaw: "openclaw",
   "agent-zero": "agent-zero",
+  openbot: "openbot",
+  nuphos: "nuphos",
   "linux-desktop": "ubuntu-desktop",
   "linux-terminal": "linux-terminal",
   windows: "windows",

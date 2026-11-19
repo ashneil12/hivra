@@ -17,6 +17,15 @@
 #   3  VM provision / boot failure
 #   4  guest extract failure
 #   5  docker compose / health failure
+#   6  encrypted (age) archive cannot be decrypted: no identity file, age not
+#      installed, decrypt failed or plain sha256 mismatch (refuses to clone)
+#
+# Encrypted archives: a name ending in ".age" is an `age`-encrypted archive. The sha256
+# argument is always the hash of the file as stored on cold (the encrypted file). The
+# secret identity is NEVER an argument or env value: the caller writes it to a 0600 file
+# and exports its PATH as HERMES_BACKUP_AGE_IDENTITY_FILE, and removes it on exit. After
+# decrypting, the manifest's plain_sha256 (when present) is checked, then the restore
+# continues exactly as for a plain archive. Plain archives never touch this path.
 #
 # All positional args are required and chosen by the dashboard's restore
 # orchestrator (it knows the destination host's vmid range, ip pool, and
@@ -39,6 +48,7 @@
 #                                old callers don't accidentally provision an
 #                                unbounded VM. Sourced from tier-specs.ts via
 #                                the orchestrator.
+#   $10 ram_limit_mb             Persisted VM memory for the restored paid size.
 
 set -euo pipefail
 
@@ -146,6 +156,8 @@ GUEST_GW="${6:-}"
 TEMPLATE_VMID="${7:-}"
 TARGET_DISK_GB="${8:-30}"
 CPU_LIMIT="${9:-0.5}"
+RAM_LIMIT_MB="${10:-4096}"
+CPU_CORES=$(awk -v cpu="$CPU_LIMIT" 'BEGIN { n=int(cpu); if(cpu>n) n++; if(n<2) n=2; print n }')
 
 for var in INSTANCE_ID ARCHIVE_URI EXPECTED_SHA NEW_VMID GUEST_IP GUEST_GW TEMPLATE_VMID; do
   if [ -z "${!var}" ]; then
@@ -188,24 +200,82 @@ echo "═══ restore-vm-cold instance=$INSTANCE_ID vmid=$NEW_VMID host=$PVE_H
 SCRATCH=$(mktemp -d /tmp/hermes-restore-$INSTANCE_ID-XXXX)
 trap 'rm -rf "$SCRATCH"; cleanup_hivra_guest_ssh_identity || true' EXIT
 LOCAL_ARCHIVE="$SCRATCH/archive.tar.zst"
+DOWNLOAD_FILE="$LOCAL_ARCHIVE"
+ENCRYPTED=false
+AGE_MAGIC="age-encryption.org/v1"
+
+# Refuses (exit 6) before anything is cloned or destroyed when an encrypted archive
+# cannot be decrypted on this host. Never prints the identity.
+require_age_decrypt() {
+  if ! command -v age >/dev/null 2>&1; then
+    echo "[restore] REFUSING_RESTORE_NO_AGE: archive is age-encrypted but age is not installed on $(hostname); nothing was cloned or deleted" >&2
+    exit 6
+  fi
+  if [ -z "${HERMES_BACKUP_AGE_IDENTITY_FILE:-}" ] || [ ! -s "${HERMES_BACKUP_AGE_IDENTITY_FILE}" ]; then
+    echo "[restore] REFUSING_RESTORE_NO_AGE_IDENTITY: archive is age-encrypted but no decryption identity was provided (HERMES_BACKUP_AGE_IDENTITY is not configured); nothing was cloned or deleted" >&2
+    exit 6
+  fi
+}
+
+case "$ARCHIVE_URI" in
+  *.age)
+    ENCRYPTED=true
+    DOWNLOAD_FILE="$SCRATCH/archive.tar.zst.age"
+    require_age_decrypt
+    ;;
+esac
 
 echo "  step 1/6: download archive cold → $PVE_HOST"
 START=$(date +%s)
-if ! rsync -a --partial -e ssh "cold:$ARCHIVE_URI" "$LOCAL_ARCHIVE" 2>&1 | tail -3; then
+if ! rsync -a --partial -e ssh "cold:$ARCHIVE_URI" "$DOWNLOAD_FILE" 2>&1 | tail -3; then
   echo "[restore] rsync from cold storage failed" >&2
   exit 2
 fi
 DL_SEC=$(( $(date +%s) - START ))
-ARCHIVE_SIZE=$(stat -c %s "$LOCAL_ARCHIVE")
+ARCHIVE_SIZE=$(stat -c %s "$DOWNLOAD_FILE")
 
 echo "  step 2/6: verify SHA256 against manifest"
-ACTUAL_SHA=$(sha256sum "$LOCAL_ARCHIVE" | awk '{print $1}')
+ACTUAL_SHA=$(sha256sum "$DOWNLOAD_FILE" | awk '{print $1}')
 if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
   echo "[restore] SHA MISMATCH expected=$EXPECTED_SHA actual=$ACTUAL_SHA" >&2
   echo "[restore] refusing to clone destination VM; archive may be corrupt" >&2
   exit 2
 fi
 echo "    sha256:${ACTUAL_SHA:0:16}…  size:$(numfmt --to=iec $ARCHIVE_SIZE)  download:${DL_SEC}s"
+
+# An age file under a plain name (never produced by our scripts) must not be fed to zstd.
+if [ "$ENCRYPTED" != true ] && [ "$(head -c 21 "$LOCAL_ARCHIVE" 2>/dev/null || true)" = "$AGE_MAGIC" ]; then
+  ENCRYPTED=true
+  DOWNLOAD_FILE="$SCRATCH/archive.tar.zst.age"
+  mv -f "$LOCAL_ARCHIVE" "$DOWNLOAD_FILE"
+  require_age_decrypt
+fi
+
+if [ "$ENCRYPTED" = true ]; then
+  echo "  step 2b/6: decrypt age archive (sha256 above is of the encrypted file)"
+  PLAIN_SHA=""
+  MANIFEST_URI=$(printf '%s' "$ARCHIVE_URI" | sed -nE 's#^(free|paid)/([^/]+)/data-([^/]+)\.tar\.zst(\.age)?$#meta/\2/\3.json#p')
+  if [ -n "$MANIFEST_URI" ]; then
+    MANIFEST_JSON=$(ssh -n cold "cat $MANIFEST_URI" 2>/dev/null || true)
+    PLAIN_SHA=$(printf '%s' "$MANIFEST_JSON" | grep -oE '"plain_sha256"[[:space:]]*:[[:space:]]*"[a-f0-9]{64}"' | grep -oE '[a-f0-9]{64}' | head -1 || true)
+  fi
+  if ! age -d -i "$HERMES_BACKUP_AGE_IDENTITY_FILE" -o "$LOCAL_ARCHIVE" "$DOWNLOAD_FILE" 2>/dev/null; then
+    echo "[restore] age decrypt failed (wrong identity or corrupt archive); refusing to clone destination VM" >&2
+    exit 6
+  fi
+  rm -f "$DOWNLOAD_FILE"
+  if [ -n "$PLAIN_SHA" ]; then
+    ACTUAL_PLAIN_SHA=$(sha256sum "$LOCAL_ARCHIVE" | awk '{print $1}')
+    if [ "$ACTUAL_PLAIN_SHA" != "$PLAIN_SHA" ]; then
+      echo "[restore] PLAIN SHA MISMATCH after decrypt expected=$PLAIN_SHA actual=$ACTUAL_PLAIN_SHA" >&2
+      echo "[restore] refusing to clone destination VM; decrypted archive does not match its manifest" >&2
+      exit 6
+    fi
+    echo "    decrypted; plain sha256:${ACTUAL_PLAIN_SHA:0:16}… verified"
+  else
+    echo "    decrypted (age is authenticated; manifest plain_sha256 not available, not cross-checked)"
+  fi
+fi
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Step 3: clone template, resize, set IP/dns, start
@@ -223,6 +293,8 @@ qm set "$NEW_VMID" \
   --ipconfig0 "ip=$GUEST_IP/24,gw=$GUEST_GW" \
   --nameserver "185.12.64.1 185.12.64.2 1.1.1.1 8.8.8.8" \
   --cpulimit "$CPU_LIMIT" \
+  --cores "$CPU_CORES" \
+  --memory "$RAM_LIMIT_MB" \
   --agent enabled=1 \
   --onboot 1 >/dev/null
 

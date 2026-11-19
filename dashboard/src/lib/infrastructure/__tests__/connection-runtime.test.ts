@@ -2,6 +2,9 @@
 
 jest.mock("server-only", () => ({}));
 
+jest.mock("../home-connector", () => ({ userOwnsActiveConnector: jest.fn() }));
+
+import { userOwnsActiveConnector } from "../home-connector";
 import {
   buildUserProxmoxEnvironment,
   InfrastructureNetworkError,
@@ -145,5 +148,62 @@ describe("buildUserProxmoxEnvironment", () => {
     });
     expect(env).not.toHaveProperty("PROXMOX_SSH_KEY_PATH");
     expect(env).not.toHaveProperty("PROXMOX_API_TOKEN");
+  });
+});
+
+describe("a machine reached through the home connector", () => {
+  const ID = "11111111-1111-4111-8111-111111111111";
+  const NAME = `${ID}.connector.hivra.invalid`;
+  const ON = { HIVRA_HOME_CONNECTOR_ENABLED: "true", HOST_RELAY_URL: "https://relay.example.test", HOST_RELAY_SECRET: "test-relay-secret-with-at-least-32-characters" };
+
+  it("is refused by default and never resolved through DNS", async () => {
+    const lookup = jest.fn();
+    await expect(resolveValidatedSshDestination(NAME, { env: {}, lookup })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+    await expect(resolveValidatedSshDestination(NAME, { env: { HIVRA_HOME_CONNECTOR_ENABLED: "true" }, lookup })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("is accepted only as the reserved name, when the flag and relay are on, for the user who owns it", async () => {
+    const lookup = jest.fn();
+    (userOwnsActiveConnector as jest.Mock).mockResolvedValue(true);
+    await expect(resolveValidatedSshDestination(NAME, { env: ON, lookup, userId: "owner" })).resolves.toEqual({ hostname: NAME, address: NAME, family: 0, connectorId: ID });
+    expect(userOwnsActiveConnector).toHaveBeenCalledWith("owner", ID);
+    await expect(resolveValidatedSshDestination("bad.connector.hivra.invalid", { env: ON, lookup, userId: "owner" })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("refuses another user's connector, an unknown caller, and a failed ownership check", async () => {
+    const owns = userOwnsActiveConnector as jest.Mock;
+    owns.mockResolvedValue(false);
+    await expect(resolveValidatedSshDestination(NAME, { env: ON, userId: "someone-else" })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+    owns.mockClear();
+    owns.mockResolvedValue(true);
+    await expect(resolveValidatedSshDestination(NAME, { env: ON })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+    expect(owns).not.toHaveBeenCalled();
+    owns.mockRejectedValue(new Error("db down"));
+    await expect(resolveValidatedSshDestination(NAME, { env: ON, userId: "owner" })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+  });
+
+  it("does not weaken private address refusal, with or without the flag", async () => {
+    await expect(resolveValidatedSshDestination("192.168.1.20", { env: ON })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+    await expect(resolveValidatedSshDestination("10.250.0.4", { env: ON })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+    await expect(resolveValidatedSshDestination("127.0.0.1", { env: { ...ON, HIVRA_INFRA_ALLOW_PRIVATE_NETWORKS: "true" } })).rejects.toMatchObject({ code: "ssh_host_forbidden" });
+  });
+
+  it("marks the SSH environment for the relay transport and keeps the pinned fingerprint", () => {
+    const env = buildUserProxmoxEnvironment({
+      id: "c1", sshHost: NAME, sshPort: 22, sshUser: "root",
+      sshHostFingerprintSha256: "SHA256:" + "A".repeat(43), sshPrivateKey: "key",
+    }, { hostname: NAME, address: NAME, family: 0, connectorId: ID });
+    expect(env).toMatchObject({ PROXMOX_SSH_HOST: NAME, PROXMOX_SSH_TRANSPORT: "connector", PROXMOX_SSH_CONNECTOR_ID: ID });
+    expect(env.PROXMOX_SSH_HOST_FINGERPRINT).toBeTruthy();
+  });
+
+  it("leaves an ordinary host's environment unchanged", () => {
+    const env = buildUserProxmoxEnvironment({
+      id: "c1", sshHost: "pve.example.test", sshPort: 22, sshUser: "root",
+      sshHostFingerprintSha256: "SHA256:" + "A".repeat(43), sshPrivateKey: "key",
+    }, { hostname: "pve.example.test", address: "203.0.113.10", family: 4 });
+    expect(env.PROXMOX_SSH_TRANSPORT).toBeUndefined();
   });
 });

@@ -714,7 +714,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     const chooser = await screen.findByRole("region", { name: "How would you like to add capacity?" });
     expect(screen.getByRole("alert")).toHaveTextContent(/Managed capacity could not be loaded/);
     expect(screen.getByRole("button", { name: "Retry Hivra Cloud capacity" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Hivra Cloud capacity" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Hivra Cloud" })).not.toBeInTheDocument();
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
     fireEvent.click(within(chooser).getByRole("button", { name: /Use an existing server/i }));
     fireEvent.click(within(chooser).getByRole("button", { name: /Connect a server you already have/i }));
@@ -758,7 +758,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     render(<InfrastructureConnectionsPage />);
 
-    expect(await screen.findByRole("heading", { name: "Hivra Cloud capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Hivra Cloud" })).toBeInTheDocument();
     expect(screen.queryByText(/Capacity is ready for Linux Sandbox/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Continue launch/i })).not.toBeInTheDocument();
   });
@@ -869,22 +869,20 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
   // Live test of slice 10: the sheet said "Capacity is ready" for the Hivra
   // Cloud plan the launch had just outgrown, and its "Continue launch" link
   // (no server in it) left the sheet open over the launch.
-  it("inside Launch, returns to the launch from any Launch link and doesn't offer Hivra Cloud back as news", async () => {
+  it("inside Launch, doesn't offer Hivra Cloud back as news", async () => {
     (getHivraCloudCapacity as jest.Mock).mockResolvedValue(ACTIVE_HIVRA_CLOUD);
     const onLaunchTarget = jest.fn();
     const onClose = jest.fn();
 
     render(<InfrastructureConnectionsPage embedded={{ launchResourceId: "codex", onLaunchTarget, onClose }} />);
 
-    expect(await screen.findByRole("heading", { name: "Hivra Cloud capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Hivra Cloud" })).toBeInTheDocument();
     expect(screen.queryByText(/Capacity is ready/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Continue launch/i })).not.toBeInTheDocument();
 
-    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
-    screen.getByRole("link", { name: /Launch an agent/i }).dispatchEvent(click);
-    expect(click.defaultPrevented).toBe(true);
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(onLaunchTarget).not.toHaveBeenCalled();
+    // The compact Hivra Cloud line carries no Launch link of its own.
+    expect(screen.queryByRole("link", { name: /Launch an/i })).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
     expect(mockRouterPush).not.toHaveBeenCalled();
   });
 
@@ -1372,36 +1370,17 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (getHivraCloudCapacity as jest.Mock).mockResolvedValue(ACTIVE_HIVRA_CLOUD);
     render(<InfrastructureConnectionsPage />);
 
-    expect(await screen.findByRole("heading", { name: "Hivra Cloud capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Hivra Cloud" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "How would you like to add capacity?" })).not.toBeInTheDocument();
-    const cloudCard = screen.getByRole("heading", { name: "Hivra Cloud" }).closest("article") as HTMLElement;
-    expect(within(cloudCard).getByText(/Your plan's CPU and RAM allowance/i)).toHaveTextContent("The servers that host them have separate capacity.");
-    expect(within(cloudCard).getByText("1.5 vCPU allocated")).toBeInTheDocument();
-    expect(within(cloudCard).getByText("3 GB allocated")).toBeInTheDocument();
-    expect(within(cloudCard).getByText("0.5 of 2")).toBeInTheDocument();
-    expect(within(cloudCard).getByText("1 GB of 4 GB")).toBeInTheDocument();
-    expect(within(cloudCard).getByRole("link", { name: "Open Hermes One" })).toHaveAttribute(
-      "href",
-      "/dashboard/instances/hermes-one",
-    );
-    expect(within(cloudCard).getByRole("link", { name: "Manage resources for Codex One" })).toHaveAttribute(
-      "href",
-      "/dashboard/agent/codex-one?tab=manage&section=resources",
-    );
-    expect(within(cloudCard).getByRole("link", { name: "Open Codex One" })).toHaveAttribute(
-      "href",
-      "/dashboard/agent/codex-one",
-    );
-    expect(within(cloudCard).getByRole("link", { name: /Launch an agent/i })).toHaveAttribute(
-      "href",
-      "/dashboard/launch?start=1&kind=agent",
-    );
-    expect(within(cloudCard).getByRole("link", { name: /Launch a computer/i })).toHaveAttribute(
-      "href",
-      "/dashboard/launch?start=1&kind=computer",
-    );
+    const cloudLine = screen.getByRole("region", { name: "Hivra Cloud" });
+    expect(within(cloudLine).getByText("Pro")).toBeInTheDocument();
+    expect(cloudLine).toHaveTextContent("2 of 3 computers in use");
+    expect(cloudLine).toHaveTextContent("1.5 of 2 CPU");
+    // One compact line: the managed computers and resize controls are not repeated here.
+    expect(within(cloudLine).queryByRole("link", { name: /Open /i })).not.toBeInTheDocument();
+    expect(within(cloudLine).queryByRole("link", { name: /Launch an/i })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add capacity" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add a server" }));
     const chooser = screen.getByRole("region", { name: "How would you like to add capacity?" });
     expect(within(chooser).getByText("Pro is active. Review plan options in Billing.")).toBeInTheDocument();
     expect(requestSubscriptionCheckout).not.toHaveBeenCalled();
@@ -1412,18 +1391,26 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     expect(within(chooser).queryByRole("button", { name: /Choose Hivra Cloud/i })).not.toBeInTheDocument();
   });
 
-  it.each([
-    { source: "stripe", canChangePlanInPlace: true, label: "Upgrade or manage plan" },
-    { source: "grant", canChangePlanInPlace: false, label: "View plan options" },
-  ])("routes a paid $source plan to Billing without a new purchase", async ({ source, canChangePlanInPlace, label }) => {
+  it("offers a paid stripe plan an Upgrade link to Billing, not a new purchase", async () => {
     (getHivraCloudCapacity as jest.Mock).mockResolvedValue({
       ...ACTIVE_HIVRA_CLOUD,
-      plan: { ...ACTIVE_HIVRA_CLOUD.plan, source, canChangePlanInPlace },
+      plan: { ...ACTIVE_HIVRA_CLOUD.plan, source: "stripe", canChangePlanInPlace: true },
     });
     render(<InfrastructureConnectionsPage />);
-    expect(await screen.findByRole("link", { name: label })).toHaveAttribute("href", "/dashboard/billing");
-    expect(screen.queryByRole("button", { name: /Buy more capacity/i })).not.toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Upgrade" })).toHaveAttribute("href", "/dashboard/billing");
+    expect(screen.queryByRole("button", { name: "Upgrade" })).not.toBeInTheDocument();
     expect(requestSubscriptionCheckout).not.toHaveBeenCalled();
+  });
+
+  it("shows no upgrade for a paid grant plan", async () => {
+    (getHivraCloudCapacity as jest.Mock).mockResolvedValue({
+      ...ACTIVE_HIVRA_CLOUD,
+      plan: { ...ACTIVE_HIVRA_CLOUD.plan, source: "grant", canChangePlanInPlace: false },
+    });
+    render(<InfrastructureConnectionsPage />);
+    await screen.findByRole("region", { name: "Hivra Cloud" });
+    expect(screen.queryByRole("link", { name: "Upgrade" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upgrade" })).not.toBeInTheDocument();
   });
 
   it("opens Hivra Cloud checkout only after the user chooses power and confirms", async () => {
@@ -3046,7 +3033,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
     (getHetznerCloudInventory as jest.Mock).mockResolvedValue([HETZNER_SERVER]);
     render(<InfrastructureConnectionsPage />);
 
-    const addCapacity = await screen.findByRole("button", { name: "Add capacity" });
+    const addCapacity = await screen.findByRole("button", { name: "Add a server" });
     fireEvent.click(addCapacity);
     const chooser = screen.getByRole("region", { name: "How would you like to add capacity?" });
     fireEvent.click(within(chooser).getByRole("button", { name: /Choose cloud provider/i }));
@@ -3139,7 +3126,7 @@ describe("InfrastructureConnectionsPage first-run entry", () => {
 
     await waitFor(() => expect(screen.queryByRole(role as "dialog" | "alertdialog")).not.toBeInTheDocument());
     expect(opener).toHaveFocus();
-    expect(screen.getByRole("button", { name: "Add capacity" })).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add a server" })).not.toHaveFocus();
   });
 
   it("requires typed confirmation before force-forgetting an idle ambiguous Hetzner connection", async () => {

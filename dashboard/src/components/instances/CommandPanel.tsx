@@ -179,7 +179,7 @@ function QuickConnectRow({
       style={{
         textAlign: 'left',
         border: '1px solid var(--etched-border)',
-        background: connected ? 'rgba(34,197,94,0.05)' : 'rgba(255,255,255,0.02)',
+        background: connected ? 'color-mix(in srgb, var(--hg-ok) 5%, transparent)' : 'var(--hg-fill-1)',
         padding: '9px 11px',
         display: 'flex',
         alignItems: 'center',
@@ -219,7 +219,7 @@ function QuickConnectRow({
       {loading ? (
         <Loader2 size={12} style={{ animation: 'spin 1s linear infinite', opacity: 0.4, flexShrink: 0 }} />
       ) : connected ? (
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--hg-ok)', flexShrink: 0 }} />
       ) : (
         <span
           className="mono cmdp-small"
@@ -228,7 +228,7 @@ function QuickConnectRow({
             textTransform: 'uppercase',
             letterSpacing: '0.12em',
             fontWeight: 700,
-            color: partial ? 'var(--amber, #d97706)' : 'var(--text-muted)',
+            color: partial ? 'var(--hg-warn)' : 'var(--text-muted)',
             flexShrink: 0,
           }}
         >
@@ -259,8 +259,8 @@ function ConnectedAppChip({ slug, onClick }: { slug: string; onClick: () => void
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        border: '1px solid rgba(22,163,74,0.4)',
-        background: 'rgba(22,163,74,0.06)',
+        border: '1px solid color-mix(in srgb, var(--hg-ok) 40%, transparent)',
+        background: 'color-mix(in srgb, var(--hg-ok) 6%, transparent)',
         cursor: 'pointer',
       }}
     >
@@ -337,7 +337,7 @@ function StatusPill({ state }: { state: InstanceActivityDigest['state'] | null }
     color = 'var(--text-muted)';
   } else if (state === 'responding') {
     label = 'Active';
-    color = '#16a34a';
+    color = 'var(--hg-ok)';
   } else if (state === 'not_running') {
     label = 'Asleep';
     color = '#71717a';
@@ -848,7 +848,7 @@ export function CommandPanel({
               lineHeight: 1.6,
               color: 'var(--ink-black)',
               border: '1px solid var(--etched-border)',
-              background: 'rgba(212, 175, 55, 0.06)',
+              background: 'var(--hg-fill-2)',
               padding: '12px 13px',
             }}
           >
@@ -948,7 +948,7 @@ export function CommandPanel({
                 style={{
                   fontSize: 12,
                   lineHeight: 1.45,
-                  color: syncStatus.ok ? 'var(--text-secondary)' : '#dc2626',
+                  color: syncStatus.ok ? 'var(--text-secondary)' : 'var(--hg-bad)',
                 }}
               >
                 {syncStatus.msg}
@@ -957,7 +957,7 @@ export function CommandPanel({
             {composioKey.hasKey ? (
               <div style={{ display: 'grid', gap: 12 }}>
                 {connectError ? (
-                  <span style={{ fontSize: 12, color: '#dc2626', lineHeight: 1.4 }}>{connectError}</span>
+                  <span style={{ fontSize: 12, color: 'var(--hg-bad)', lineHeight: 1.4 }}>{connectError}</span>
                 ) : null}
                 {connectedApps.apps.size > 0 ? (
                   <div style={{ display: 'grid', gap: 6 }}>

@@ -84,7 +84,7 @@ export function VoiceBrief({ text }: { text: string }) {
         alignItems: 'center',
         gap: 10,
         border: '1px solid var(--etched-border)',
-        background: 'rgba(212, 175, 55, 0.06)',
+        background: 'var(--hg-fill-2)',
         padding: '8px 10px',
       }}
     >
@@ -105,7 +105,7 @@ export function VoiceBrief({ text }: { text: string }) {
           borderRadius: 0,
           border: '1px solid var(--gold-leaf)',
           background: speaking ? 'var(--gold-leaf)' : 'transparent',
-          color: speaking ? 'var(--ink-black)' : 'var(--gold-leaf)',
+          color: speaking ? 'var(--hg-on-accent)' : 'var(--gold-leaf)',
           cursor: 'pointer',
         }}
       >

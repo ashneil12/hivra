@@ -134,8 +134,8 @@ export function AuthRuntimeNotice() {
       style={{
         // At most 720px wide, and never touching the screen edge.
         margin: '16px max(16px, calc((100% - 720px) / 2)) 0',
-        border: '1px solid rgba(239,68,68,0.24)',
-        background: 'rgba(239,68,68,0.05)',
+        border: '1px solid color-mix(in srgb, var(--hg-bad) 30%, transparent)', borderRadius: 'var(--hg-radius-md)',
+        background: 'color-mix(in srgb, var(--hg-bad) 7%, transparent)',
         color: 'var(--ink-black)',
         padding: '12px 14px',
         display: 'flex',

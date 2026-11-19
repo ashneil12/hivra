@@ -47,7 +47,7 @@ jest.mock("react-markdown", () => ({
   },
 }));
 jest.mock("remark-gfm", () => ({ __esModule: true, default: jest.fn() }));
-jest.mock("@/components/markdown/CodeBlock", () => ({ CodeBlock: ({ value }: { value: string }) => <pre>{value}</pre> }));
+jest.mock("@/components/hivra/chat/CodeBlock", () => ({ CodeBlock: ({ value }: { value: string }) => <pre>{value}</pre> }));
 jest.mock("@/lib/telemetry/posthog-client", () => ({ captureClient: jest.fn() }));
 jest.mock("@/lib/client/logger", () => ({ clientLog: { warn: jest.fn() } }));
 
@@ -337,7 +337,7 @@ describe("HivraChat against the real guest chat gateway", () => {
 
     // The welcome is a real conversation: the owner's reply resumes it.
     await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
-    fireEvent.change(screen.getByPlaceholderText("Message Atlas…"), { target: { value: "TAG:follow WAIT:0 now email me the winner" } });
+    fireEvent.change(screen.getByPlaceholderText("Message Atlas"), { target: { value: "TAG:follow WAIT:0 now email me the winner" } });
     fireEvent.click(screen.getByLabelText("Send message"));
     expect(await screen.findByText("Working on follow. Finished follow.", undefined, { timeout: 15_000 })).toBeInTheDocument();
     expect(calls("follow")[0].argv).toEqual(expect.arrayContaining(["--resume", SESSION_ID]));
@@ -411,7 +411,7 @@ describe("HivraChat against the real guest chat gateway", () => {
     window.localStorage.setItem("hivra:first-welcome:e2e-devices", "1");
 
     const phone = render(chat());
-    fireEvent.change(await screen.findByPlaceholderText("Message Atlas…"), { target: { value: "TAG:phone WAIT:2500 draft the launch post" } });
+    fireEvent.change(await screen.findByPlaceholderText("Message Atlas"), { target: { value: "TAG:phone WAIT:2500 draft the launch post" } });
     fireEvent.click(screen.getByLabelText("Send message"));
     await pollUntil(() => calls("phone").length === 1, 15_000, "phone turn to start");
     closeTab(phone.unmount);
@@ -432,7 +432,7 @@ describe("HivraChat against the real guest chat gateway", () => {
     const boxUrl = `http://127.0.0.1:${firstGateway.port}`;
     window.localStorage.setItem("hivra:first-welcome:e2e-restart", "1");
     render(<HivraChat boxUrl={boxUrl} storageKey="e2e-restart" token={TOKEN} agentName="Atlas" agentKind="claude" />);
-    fireEvent.change(await screen.findByPlaceholderText("Message Atlas…"), { target: { value: "TAG:restart WAIT:2500 keep going" } });
+    fireEvent.change(await screen.findByPlaceholderText("Message Atlas"), { target: { value: "TAG:restart WAIT:2500 keep going" } });
     fireEvent.click(screen.getByLabelText("Send message"));
     expect(await screen.findByText("Working on restart.", undefined, { timeout: 15_000 })).toBeInTheDocument();
 
@@ -454,7 +454,7 @@ describe("HivraChat against the real guest chat gateway", () => {
       return { gateway, chat };
     }
     async function send(text: string) {
-      fireEvent.change(await screen.findByPlaceholderText("Message Atlas…"), { target: { value: text } });
+      fireEvent.change(await screen.findByPlaceholderText("Message Atlas"), { target: { value: text } });
       fireEvent.click(screen.getByLabelText("Send message"));
     }
     const settled = () => waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument(), { timeout: 15_000 });

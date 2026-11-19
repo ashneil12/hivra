@@ -7,7 +7,7 @@ import { attachRequestLog } from "./request-log.js";
 import { revalidateTierOrExit } from "./tier/revalidate.js";
 import { hasSufficientMemory, totalRamMb, MIN_VM_RAM_BYTES } from "./preflight/memory.js";
 import { SessionManager } from "./playwright/session-manager.js";
-import { registerHealthRoutes } from "./routes/health.js";
+import { cdpBrowserProbe, registerHealthRoutes } from "./routes/health.js";
 import { registerSessionRoutes } from "./routes/session.js";
 import { registerNavigationRoutes } from "./routes/navigation.js";
 import { registerInteractionRoutes } from "./routes/interaction.js";
@@ -63,7 +63,13 @@ async function main() {
 
   attachRequestLog(app, logger);
 
-  registerHealthRoutes(app, { sessions, startedAt, tierOk: tierResult.ok });
+  const cdpEnabled = /^(1|true|yes|on)$/i.test(process.env.AGENT_CDP_ENABLED ?? "");
+  registerHealthRoutes(app, {
+    sessions,
+    startedAt,
+    tierOk: tierResult.ok,
+    cdpProbe: cdpEnabled ? cdpBrowserProbe(Number(process.env.AGENT_CDP_PORT || 9223)) : undefined,
+  });
   registerSessionRoutes(app, { sessions });
   registerNavigationRoutes(app, { sessions });
   registerInteractionRoutes(app, { sessions });

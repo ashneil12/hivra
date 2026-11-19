@@ -13,7 +13,6 @@ import { auth } from "@clerk/nextjs/server";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
 import { installCuratedSkillsOnBox, listInstallableSkillMeta } from "@/lib/hivra/skill-install";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
@@ -28,7 +27,6 @@ import {
 // dashboard, and the heavy SKILL.md bodies never reach the client bundle.
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
@@ -52,7 +50,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);

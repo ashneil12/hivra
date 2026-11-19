@@ -18,6 +18,7 @@
 // server-side FREE_STANDING_TASK_LIMIT in the cron route.
 const FREE_STANDING_TASK_LIMIT = 1;
 
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   CalendarClock,
@@ -122,9 +123,9 @@ function formatTime(value?: string | null): string {
 }
 
 function statusColor(job: BoxJob): string {
-  if (job.last_error) return "#ef4444";
+  if (job.last_error) return "var(--hg-bad)";
   const status = (job.last_status || "").toLowerCase();
-  if (status === "success" || status === "ok" || status === "completed") return "#22c55e";
+  if (status === "success" || status === "ok" || status === "completed") return "var(--hg-ok)";
   if (status === "running") return "var(--gold-leaf)";
   return "var(--text-muted)";
 }
@@ -415,7 +416,7 @@ export function TasksPanel({
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
         <CalendarClock size={18} style={{ color: "var(--gold-leaf)" }} />
         <div style={{ flex: "1 1 220px", minWidth: 0 }}>
-          <h2 className="serif" style={{ fontSize: "1.4rem", fontWeight: 400, margin: 0, color: "var(--ink-black)" }}>
+          <h2 className="serif" style={{ fontSize: "1.4rem", fontWeight: 600, letterSpacing: "-0.03em", margin: 0, color: "var(--ink-black)" }}>
             Scheduled Tasks
           </h2>
           <div className="mono" style={{ fontSize: 12, marginTop: 4, opacity: 0.6, lineHeight: 1.45 }}>
@@ -458,9 +459,9 @@ export function TasksPanel({
       {actionError ? (
         <div
           style={{
-            border: "1px solid #ef4444",
-            background: "rgba(239,68,68,0.06)",
-            color: "#ef4444",
+            border: "1px solid var(--hg-bad)",
+            background: "color-mix(in srgb, var(--hg-bad) 6%, transparent)",
+            color: "var(--hg-bad)",
             fontSize: 12,
             padding: "10px 12px",
             marginBottom: 16,
@@ -472,7 +473,7 @@ export function TasksPanel({
 
       {loading ? (
         <div style={{ padding: 48, textAlign: "center", color: "var(--text-muted)" }}>
-          <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} />
+          <ThinkingOrb state="searching" size={32} />
         </div>
       ) : loadError ? (
         <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
@@ -588,8 +589,8 @@ export function TasksPanel({
                     <span style={labelStyle}>Next</span> {formatTime(job.next_run_at)}
                   </span>
                   {job.last_error ? (
-                    <span style={{ color: "#ef4444", flexBasis: "100%", minWidth: 0, overflowWrap: "anywhere" }}>
-                      <span style={{ ...labelStyle, color: "#ef4444" }}>Error</span> {job.last_error}
+                    <span style={{ color: "var(--hg-bad)", flexBasis: "100%", minWidth: 0, overflowWrap: "anywhere" }}>
+                      <span style={{ ...labelStyle, color: "var(--hg-bad)" }}>Error</span> {job.last_error}
                     </span>
                   ) : null}
                 </div>
@@ -618,7 +619,7 @@ export function TasksPanel({
                     type="button"
                     onClick={() => void deleteJob(job)}
                     disabled={busy}
-                    style={{ ...iconButtonStyle, color: "#ef4444", borderColor: "rgba(239,68,68,0.4)" }}
+                    style={{ ...iconButtonStyle, color: "var(--hg-bad)", borderColor: "color-mix(in srgb, var(--hg-bad) 40%, transparent)" }}
                   >
                     <Trash2 size={12} /> Delete
                   </button>

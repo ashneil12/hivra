@@ -25,7 +25,7 @@ export default async function ToolsPage() {
         <div
           className="mono"
           style={{
-            fontFamily: 'var(--font-mono), monospace', fontSize: 10, fontWeight: 700,
+            fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700,
             textTransform: 'uppercase', letterSpacing: '0.16em', color: 'var(--text-muted)',
             marginBottom: 8,
           }}
@@ -34,7 +34,7 @@ export default async function ToolsPage() {
         </div>
         <h1
           className="serif"
-          style={{ fontSize: 'clamp(1.6rem, 4vw, 2.2rem)', fontWeight: 400, margin: 0, color: 'var(--ink-black)' }}
+          style={{ fontSize: 'clamp(1.6rem, 4vw, 2.2rem)', fontWeight: 600, margin: 0, color: 'var(--ink-black)' }}
         >
           Give your agents new powers
         </h1>

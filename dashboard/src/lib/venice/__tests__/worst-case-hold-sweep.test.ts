@@ -40,8 +40,8 @@ import { createManagedVeniceSpendWorld } from "@/test-utils/managed-venice-spend
 const USER = "user_worst_case_sweep";
 const KEY_ID = "33333333-3333-4333-8333-333333333333";
 const OPUS = "claude-opus-4-8";
-// claude-opus-4-8: $30 per million output tokens, 128,000 output maximum.
-const OPUS_OUTPUT_MICRO_USD_PER_TOKEN = 30;
+// claude-opus-4-8: $25 per million output tokens, 128,000 output maximum.
+const OPUS_OUTPUT_MICRO_USD_PER_TOKEN = 25;
 const USD = 1_000_000;
 const HOUR_MS = 60 * 60 * 1000;
 const hoursAgo = (hours: number) => new Date(Date.now() - hours * HOUR_MS).toISOString();
@@ -136,7 +136,7 @@ describe("the stale-hold sweep on #166 worst-case holds", () => {
   );
 
   // An older Worker cannot be given a cap, so with a catalog maximum its hold
-  // is bounded by the context window: about $33 on claude-opus-4-8.
+  // is bounded by the context window: about $30 on claude-opus-4-8.
   it("the largest hold, an older Worker's on catalog pricing, is still charged only the bounded estimate", async () => {
     mockWorld.fundCard(USER, 50 * USD);
     const { budgeted, row, held, input } = await worstCaseHold("ref_old_worker", {
@@ -144,7 +144,7 @@ describe("the stale-hold sweep on #166 worst-case holds", () => {
       pricingMap: catalogPricing,
     });
     expect(budgeted.bodyPatch).toEqual({});
-    expect(held).toBeGreaterThan(30 * USD);
+    expect(held).toBeGreaterThan(25 * USD);
     row.expires_at = hoursAgo(1);
 
     await sweepStaleManagedVeniceReservations({});
@@ -174,8 +174,8 @@ describe("the stale-hold sweep on #166 worst-case holds", () => {
         ],
       },
     });
-    // claude-opus-4-8: 1,000,000-token context at $6 per 1M input.
-    expect(input).toBe(6 * USD);
+    // claude-opus-4-8: 1,000,000-token context at $5 per 1M input.
+    expect(input).toBe(5 * USD);
     row.expires_at = hoursAgo(1);
 
     await sweepStaleManagedVeniceReservations({});

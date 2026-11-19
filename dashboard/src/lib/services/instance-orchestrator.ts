@@ -75,6 +75,10 @@ import {
   instanceCanFitBrowserSidecar,
 } from "@/lib/browser-sidecar/deployment-gate";
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
+import {
+  readInstanceLiveMutationBlock,
+  type InstanceLiveMutationState,
+} from "@/lib/services/instance-live-mutation";
 import { log } from "@/lib/logger";
 import { buildIdleGatedUpdateProvisioningScript } from "@/lib/services/idle-gated-update-builder";
 import { buildUpdateResultExtrasShell } from "@/lib/services/box-update-safety";
@@ -103,7 +107,7 @@ function shQuote(value: string | number): string {
 }
 
 // We mirror the row type here so this module doesn't depend on route.ts
-export interface InstanceRowForOrchestration {
+export interface InstanceRowForOrchestration extends InstanceLiveMutationState {
   id: string;
   user_id: string;
   provider: string;
@@ -390,6 +394,8 @@ export async function applyLiveUpdate(
   options: LiveUpdateOptions
 ): Promise<LiveUpdateResult> {
   const { initiator } = options;
+  const lifecycleBlock = await readInstanceLiveMutationBlock(supabaseAdmin, instance.id, instance);
+  if (lifecycleBlock) return { applied: false as const, error: lifecycleBlock, initiator };
   const proxmoxInfrastructure = getProxmoxInfrastructure(instance.config);
   const liveHetznerServerId = provisionedHetznerServerId(instance);
   if (!proxmoxInfrastructure && !instance.host_id && !liveHetznerServerId) {
@@ -934,6 +940,10 @@ fi
     ].join("\n");
   }
 
+  // Script construction/provider reads can take time. Do not launch against a
+  // computer archived or claimed for restoration since the caller loaded it.
+  const launchBlock = await readInstanceLiveMutationBlock(supabaseAdmin, instance.id, instance);
+  if (launchBlock) return { applied: false as const, error: launchBlock, initiator };
   const launchResult = proxmoxLaunchScript
     ? await runProxmoxHostScript(proxmoxLaunchScript, proxmoxScriptEnv, launchTimeoutMs(90_000))
     : await sshExec(ipv4, "bash -s", {
@@ -941,6 +951,10 @@ fi
       stdin: innerScript,
     });
 
+  // A concurrent archive/restore must not be overwritten by either the
+  // success or failure patch from an update launched from an older snapshot.
+  const completionBlock = await readInstanceLiveMutationBlock(supabaseAdmin, instance.id, instance);
+  if (completionBlock) return { applied: false as const, error: completionBlock, initiator };
   if (!launchResult.ok) {
     const launchFailure = launchResult.stderr || launchResult.error || "";
     log.error("update launch failed", new Error("update launch failed"), {

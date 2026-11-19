@@ -22,6 +22,7 @@ const LAUNCH_TELEMETRY_ROUTE = "/dashboard/launch";
 
 export type LaunchFunnelEvent =
   | "activation_page_viewed"
+  | "launch_catalog_page_viewed"
   | "activation_started"
   | "activation_dashboard_reached"
   | "activation_instance_requested"

@@ -367,8 +367,7 @@ function chooseEmail(user: ClerkUser): string | null {
 /**
  * Resolve a Clerk user id to a recipient (the primary email when verified,
  * else any verified address) plus first name. Unverified addresses are never
- * returned. Exported so the warm-pool campaign uses
- * the exact same mechanism as the lifecycle sweep. Returns null when the
+ * returned. Returns null when the
  * Clerk user is gone or has no usable address; throws on Clerk API errors.
  */
 export async function resolveClerkRecipient(
@@ -592,7 +591,12 @@ export async function runLifecycleEmailSweep(opts?: {
       instances: instancesByUser.get(userId) ?? [],
       now,
     });
-    const unsent = due.filter((d) => !alreadySent.has(`${userId}:${d.key}`));
+    // The first-win launch email says the same thing as day1_idle; one is enough.
+    const unsent = due.filter(
+      (d) =>
+        !alreadySent.has(`${userId}:${d.key}`) &&
+        !(d.key === "day1_idle" && alreadySent.has(`${userId}:first_win_launch`))
+    );
     if (due.length > 0 && unsent.length === 0) {
       summary.skipped_already_sent += 1;
       continue;

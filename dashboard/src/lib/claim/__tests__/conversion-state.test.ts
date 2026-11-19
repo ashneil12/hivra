@@ -60,13 +60,17 @@ function inputs(overrides: Partial<ConversionInputs> = {}): ConversionInputs {
 }
 
 describe("committed configuration", () => {
-  it("ships with the airdrop wallet and the published snapshot, and no claim yet", () => {
+  it("ships with the airdrop wallet, the published snapshot and the Sablier claim window", () => {
     expect(HIVRA_AIRDROP).toEqual({
       senderAddress: "0x3B954866d4329E19C1B9165774c88508f2fefA0c",
       snapshotBlock: 53005062,
       snapshotTakenAt: "2026-10-23T23:51:11Z",
       snapshotUrl: "https://github.com/ashneil12/hivra/blob/main/dashboard/src/data/token/hivra-airdrop.json",
-      claim: { campaignUrl: null, opensAt: null, closesAt: null },
+      claim: {
+        campaignUrl: "https://app.sablier.com/airdrops/campaign/0x4131ab8f9797bb4887a72470b8af48fbec37522f-8453",
+        opensAt: "2026-10-29T13:30:00Z",
+        closesAt: "2027-01-27T13:30:00Z",
+      },
     });
   });
 
@@ -78,7 +82,8 @@ describe("committed configuration", () => {
       url: "https://github.com/ashneil12/hivra/blob/main/dashboard/src/data/token/hivra-airdrop.json",
       takenAt: "2026-10-23T23:51:11.000Z",
     });
-    expect(facts.claim?.phase).toBe("unpublished");
+    // Before 29 Oct 13:30 UTC the claim is set but not open yet.
+    expect(facts.claim?.phase).toBe("not_open");
   });
 
   it("the committed airdrop wallet passes its EIP-55 checksum and is not a token contract", () => {
@@ -88,13 +93,13 @@ describe("committed configuration", () => {
     expect(sender.toLowerCase()).not.toBe(HERMESOS_TOKEN.address);
   });
 
-  it("is launched from the committed registry, with the snapshot shown and no claim or switch offered yet", () => {
+  it("is launched from the committed registry, with the snapshot shown, the claim not open yet and no switch offered", () => {
     const access = { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null };
     const before = resolveConversionState(readConversionInputs(access, new Date("2026-10-27T12:00:00Z")));
     if (before.status !== "launched") throw new Error(`expected launched, got ${before.status}`);
     expect(before.hivraPublishedAddress).toBe("0xe3a1F26440A9FDf5d17b6B3F12F5ebB290080871");
     expect(before.snapshot?.block).toBe(53005062);
-    expect(before.claim.phase).toBe("unpublished");
+    expect(before.claim.phase).toBe("not_open");
     expect(before.access).toEqual({ kind: "unknown" });
     expect(before.problems).toEqual([]);
     // After activation a grandfathered holder keeps $HermesOS: the claim has not closed, so no switch is offered.
