@@ -3,6 +3,8 @@ import Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { log } from "@/lib/logger";
 import { PLANS } from "@/lib/subscription";
+import { PLAN_LADDER_ID } from "@/lib/subscription/plan-ladder";
+import { testPlanLadder } from "@/test-utils/plan-ladder";
 
 process.env.STRIPE_SECRET_KEY = 'sk_test_123';
 
@@ -1501,6 +1503,61 @@ describe("StripeWebhookService", () => {
       expect(captured.args).toBeDefined();
       expect(captured.args).not.toHaveProperty("trial_ends_at");
     });
+  });
+
+  it("keeps a ladder trial on the small pool and restores the bought plan on conversion", async () => {
+    const env = jest.replaceProperty(process, "env", {
+      ...process.env,
+      HIVRA_PLAN_LADDER_CONFIG: JSON.stringify(testPlanLadder),
+    });
+    try {
+      const subscription = {
+        id: "sub_card_trial",
+        customer: "cus_1",
+        status: "trialing",
+        start_date: 1000,
+        trial_end: 1_800_000_000,
+        metadata: { user_id: "user_1", plan: "operator", hivra_trial: "card_7d", plan_ladder: PLAN_LADDER_ID },
+        items: { data: [{ price: { id: testPlanLadder.plans.operator.monthlyPriceId }, current_period_start: 1000, current_period_end: 2000 }] },
+      } as unknown as Stripe.Subscription;
+      const upsert = jest.fn().mockResolvedValue({ error: null });
+      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+        const builder = createMockBuilder();
+        if (table === "hermes_subscriptions") builder.upsert = upsert;
+        return builder;
+      });
+      recordCardTrialStartMock.mockClear();
+      releaseCardTrialSleepMock.mockClear();
+
+      await StripeWebhookService.handleSubscriptionChange(subscription);
+      expect(recordCardTrialStartMock).toHaveBeenCalledTimes(1);
+      expect(upsert).toHaveBeenLastCalledWith(expect.objectContaining({
+        plan: "operator",
+        plan_ladder: PLAN_LADDER_ID,
+        instance_limit: 1,
+        total_cpu_budget: 1,
+        total_ram_budget: 2048,
+        always_on_limit: 0,
+        always_on_extra: 0,
+        ai_allowance_micro_usd: 0,
+        trial_ends_at: new Date(1_800_000_000 * 1000).toISOString(),
+      }), expect.anything());
+
+      await StripeWebhookService.handleSubscriptionChange({ ...subscription, status: "active" });
+      expect(releaseCardTrialSleepMock).toHaveBeenCalledWith("user_1");
+      expect(upsert).toHaveBeenLastCalledWith(expect.objectContaining({
+        plan: "operator",
+        plan_ladder: PLAN_LADDER_ID,
+        instance_limit: 4,
+        total_cpu_budget: 8,
+        total_ram_budget: 16384,
+        always_on_limit: 2,
+        ai_allowance_micro_usd: 5_000_000,
+        trial_ends_at: null,
+      }), expect.anything());
+    } finally {
+      env.restore();
+    }
   });
 
   describe("handleSubscriptionChange — tier-change wiring", () => {

@@ -853,7 +853,7 @@ export class StripeWebhookService {
         : null;
     // A card trial gets the trial's small pool until Stripe charges the card;
     // the first paid event writes the plan's own limits.
-    const cardTrial = !ladder.isLadder && isCardTrialSubscription(subscription);
+    const cardTrial = isCardTrialSubscription(subscription);
     const plan = cardTrial
       ? { ...CARD_TRIAL_LIMITS, priority: legacyPlan.priority }
       : {
@@ -1184,10 +1184,18 @@ export class StripeWebhookService {
                 upgrade_source: source,
               }
             : {}),
+          ...(ladderColumns ?? {}),
           instance_limit: plan.maxAgents,
           total_cpu_budget: plan.totalCpu,
           total_ram_budget: plan.totalRam,
-          ...(ladderColumns ?? {}),
+          // Keep the ladder's identity but not its paid limits while trialing.
+          ...(cardTrial && ladderColumns
+            ? {
+                always_on_limit: 0,
+                always_on_extra: 0,
+                ai_allowance_micro_usd: 0,
+              }
+            : {}),
           // Only card-trial subscriptions touch trial_ends_at: set while the
           // trial runs, cleared by the first paid event.
           ...(subscription.metadata?.[CARD_TRIAL_METADATA_KEY]

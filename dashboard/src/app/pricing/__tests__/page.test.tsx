@@ -33,6 +33,9 @@ import { LOCALE_COOKIE_NAME } from "@/lib/i18n";
 import { HOSTED_MACHINES } from "@/lib/subscription/hosted-ladder";
 import { PAYMENT_GRACE_HOURS, PLANS } from "@/lib/subscription/plans";
 import { findBannedClaims } from "@/lib/tools/copy-rules";
+import { testPlanLadder } from "@/test-utils/plan-ladder";
+
+jest.mock("@/lib/supabase", () => ({ supabaseAdmin: {} }));
 
 jest.mock("next/link", () => {
   const MockLink = ({ href, children, ...rest }: { href: string; children: React.ReactNode; [key: string]: unknown }) => (
@@ -66,6 +69,39 @@ function pageAndStructuredText(container: HTMLElement): string {
 function titleOf(): string {
   return (metadata.title as { absolute: string }).absolute;
 }
+
+describe("the public card trial", () => {
+  beforeEach(() => {
+    jest.replaceProperty(process, "env", {
+      ...process.env,
+      HIVRA_CARD_TRIAL: "on",
+      HIVRA_PLAN_LADDER: "on",
+      HIVRA_PLAN_LADDER_CONFIG: JSON.stringify(testPlanLadder),
+      STRIPE_SECRET_KEY: "sk_test_fixture",
+      STRIPE_WEBHOOK_SECRET: "whsec_fixture",
+    });
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it("offers the monthly entry trial and discloses its ladder renewal price", async () => {
+    await renderPricing();
+    expect(screen.getByRole("link", { name: "Start a 7-day free trial" })).toHaveAttribute("href", "/get-started?plan=operator");
+    expect(screen.getByTestId("card-trial-note")).toHaveTextContent(/first-time buyers get 7 days free, then \$12\.99\/month\. A card is needed/);
+    expect(screen.getByTestId("card-trial-note")).toHaveTextContent("one agent with 1 vCPU and 2 GB");
+    expect(screen.getByRole("link", { name: PRICING_ACTIONS.chooseLarger.label })).toHaveAttribute("href", PRICING_ACTIONS.chooseLarger.href);
+  });
+
+  it.each(["HIVRA_CARD_TRIAL", "HIVRA_PLAN_LADDER_CONFIG", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"])(
+    "does not advertise the trial without %s",
+    async (setting) => {
+      delete process.env[setting];
+      await renderPricing();
+      expect(screen.queryByRole("link", { name: "Start a 7-day free trial" })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("card-trial-note")).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: PRICING_ACTIONS.chooseEntry.label })).toHaveAttribute("href", PRICING_ACTIONS.chooseEntry.href);
+    },
+  );
+});
 
 it("stops advertising Free when a scheduled cutoff passes without a module reload", async () => {
   const env = jest.replaceProperty(process, "env", {

@@ -174,10 +174,10 @@ export function buildPricingOffers(siteUrl: string): Array<Record<string, unknow
 const ENTRY = planSizeParts("entry");
 const LARGER = planSizeParts("larger");
 
-/** Shown on the entry plan while the card trial is on (HIVRA_CARD_TRIAL=on). */
+/** Shown on the entry plan when Checkout can offer the card trial. */
 export const CARD_TRIAL_PRICING = {
   label: "Start a 7-day free trial",
-  note: `Free for 7 days, then ${ENTRY.price}/month. A card is needed to start and is charged when the trial ends unless you cancel. During the trial you get one agent with 1 vCPU and 2 GB, and it sleeps when idle.`,
+  note: (monthlyCents: number) => `Eligible first-time buyers get 7 days free, then $${(monthlyCents / 100).toFixed(2)}/month. A card is needed to start and is charged when the trial ends unless you cancel. During the trial you get one agent with 1 vCPU and 2 GB, and it sleeps when idle.`,
 } as const;
 
 /** The paragraphs under the headline. */

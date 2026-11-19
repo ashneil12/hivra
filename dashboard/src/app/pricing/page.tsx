@@ -12,9 +12,8 @@ import styles from "@/components/public-editorial/secondary-site.module.css";
 import StructuredData from "@/components/StructuredData";
 import { glossify } from "@/components/gloss/glossify";
 import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
-import { isCardTrialEnabled } from "@/lib/billing/card-trial";
+import { getCardTrialOffer } from "@/lib/billing/card-trial";
 import { isFreePlanClosed } from "@/lib/billing/free-plan-closure";
-import { isPlanLadderEnabled } from "@/lib/subscription/plan-ladder";
 import { getTokenSurfaceView, tokenSurfacesVisible } from "@/lib/compliance/token-surface-view";
 import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
@@ -100,8 +99,7 @@ export default async function PricingPage() {
   const view = await getTokenSurfaceView();
   const showToken = tokenSurfacesVisible(view);
   const options = PRICING_OPTIONS;
-  // Plan-ladder sales never get the trial, so it is not offered while the ladder is on.
-  const cardTrial = isCardTrialEnabled() && !isPlanLadderEnabled();
+  const cardTrial = getCardTrialOffer();
   // Once the Free plan is closed to new sign-ups, the page stops offering it.
   const freeClosed = isFreePlanClosed();
   const intro = freeClosed ? PRICING_INTRO_FREE_CLOSED : PRICING_INTRO;
@@ -191,7 +189,7 @@ export default async function PricingPage() {
                 <p key={paragraph}>{paragraph}</p>
               ))}
               <p>{options.entry.goodFor}</p>
-              {cardTrial ? <p className={page.trialNote} data-testid="card-trial-note">{CARD_TRIAL_PRICING.note}</p> : null}
+              {cardTrial ? <p className={page.trialNote} data-testid="card-trial-note">{CARD_TRIAL_PRICING.note(cardTrial.monthlyCents)}</p> : null}
               <Link className={`${page.action} ${page.actionPrimary}`} href={PRICING_ACTIONS.chooseEntry.href}>
                 {cardTrial ? CARD_TRIAL_PRICING.label : PRICING_ACTIONS.chooseEntry.label}
                 <ArrowRight size={18} aria-hidden="true" />

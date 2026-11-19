@@ -9,6 +9,8 @@
 import type Stripe from "stripe";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
+import { getStripePriceId, PLANS } from "@/lib/subscription/plans";
+import { activePlanLadder, isPlanLadderEnabled } from "@/lib/subscription/plan-ladder";
 
 const SOURCE = "card-trial";
 
@@ -26,6 +28,26 @@ export const CARD_TRIAL_STARTER_CREDIT_USD = 1;
 
 export function isCardTrialEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return env.HIVRA_CARD_TRIAL?.trim().toLowerCase() === "on";
+}
+
+/** The offer and its renewal amount, for the same monthly entry price checkout sells. */
+export function getCardTrialOffer(): { monthlyCents: number } | null {
+  if (!isCardTrialEnabled() || !supabaseAdmin || !process.env.STRIPE_SECRET_KEY?.trim() ||
+      !process.env.STRIPE_WEBHOOK_SECRET?.trim()) return null;
+
+  if (isPlanLadderEnabled()) {
+    const config = activePlanLadder();
+    if (!config) return null;
+    const entry = config.plans[CARD_TRIAL_PLAN];
+    return entry.monthlyCents > 0 ? { monthlyCents: entry.monthlyCents } : null;
+  }
+
+  try {
+    if (!getStripePriceId(CARD_TRIAL_PLAN, "monthly").trim()) return null;
+    return { monthlyCents: PLANS[CARD_TRIAL_PLAN].price };
+  } catch {
+    return null;
+  }
 }
 
 /** True when this Stripe subscription is a card trial that is still in its trial. */
@@ -47,15 +69,14 @@ export interface CardTrialHistory {
 
 /**
  * Whether this checkout gets the trial: the switch is on, it is the entry plan
- * billed monthly, not a plan-ladder sale, and the account has never paid or
- * trialed before.
+ * billed monthly, and the account has never paid or trialed before.
  */
 export function checkoutGetsCardTrial(
-  input: { planKey: string; cadence: string; ladderSale: boolean } & CardTrialHistory,
+  input: { planKey: string; cadence: string } & CardTrialHistory,
   env: Record<string, string | undefined> = process.env
 ): boolean {
   if (!isCardTrialEnabled(env)) return false;
-  if (input.planKey !== CARD_TRIAL_PLAN || input.cadence !== "monthly" || input.ladderSale) return false;
+  if (input.planKey !== CARD_TRIAL_PLAN || input.cadence !== "monthly") return false;
   if (input.hadTrial) return false;
   if (input.existingSub?.upgraded_at) return false;
   if (input.existingSub?.stripe_subscription_id) return false;

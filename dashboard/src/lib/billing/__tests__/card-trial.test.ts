@@ -14,7 +14,7 @@ jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
 
 const ON = { HIVRA_CARD_TRIAL: "on" };
-const base = { planKey: "operator", cadence: "monthly", ladderSale: false, existingSub: null, hadTrial: false };
+const base = { planKey: "operator", cadence: "monthly", existingSub: null, hadTrial: false };
 
 describe("checkoutGetsCardTrial", () => {
   it("offers the trial to a first-time monthly entry-plan buyer while the switch is on", () => {
@@ -26,7 +26,6 @@ describe("checkoutGetsCardTrial", () => {
     ["the switch has another value", base, { HIVRA_CARD_TRIAL: "true" }],
     ["a larger plan", { ...base, planKey: "fleet" }, ON],
     ["yearly billing", { ...base, cadence: "yearly" }, ON],
-    ["a plan-ladder sale", { ...base, ladderSale: true }, ON],
     ["an account that trialed before", { ...base, hadTrial: true }, ON],
     ["an account that paid before", { ...base, existingSub: { upgraded_at: "2026-10-01T00:00:00Z" } }, ON],
     ["an account with a Stripe subscription", { ...base, existingSub: { stripe_subscription_id: "sub_1" } }, ON],
