@@ -20,6 +20,28 @@ export function parseSleepMode(env: string | undefined | null): SleepMode {
   return SLEEP_MODES.find((mode) => mode === value) ?? "off";
 }
 
+/**
+ * HIVRA_SLEEP_TRIM_MEMORY=1: a computer drops its file cache just before it
+ * sleeps, so the host gets the memory back. Off unless set to exactly 1.
+ */
+export function isSleepMemoryTrimEnabled(env: string | undefined | null = process.env.HIVRA_SLEEP_TRIM_MEMORY): boolean {
+  return env?.trim() === "1";
+}
+
+/**
+ * HIVRA_SLEEP_DROP_MEMORY_AFTER_DAYS: an agent that has been in deep sleep this
+ * many days loses its saved memory and keeps its disk, so it boots from disk on
+ * the next wake. A whole number from 1 to 365; anything else is off (null).
+ */
+export function sleepMemoryDropAfterDays(
+  env: string | undefined | null = process.env.HIVRA_SLEEP_DROP_MEMORY_AFTER_DAYS,
+): number | null {
+  const value = env?.trim() ?? "";
+  if (!/^[0-9]{1,3}$/.test(value)) return null;
+  const days = Number.parseInt(value, 10);
+  return days >= 1 && days <= 365 ? days : null;
+}
+
 // Defaults from the design. All durations are seconds.
 export const DEFAULT_NAP_AFTER_SECONDS = 4 * 60;
 /**

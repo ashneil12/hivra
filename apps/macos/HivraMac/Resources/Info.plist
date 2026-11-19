@@ -9,7 +9,7 @@
     <key>CFBundleExecutable</key>
     <string>HivraMac</string>
     <key>CFBundleIdentifier</key>
-    <string>cloud.hivra.mac.alpha</string>
+    <string>cloud.hivra.mac</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -17,9 +17,26 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.2.1</string>
+    <string>0.3.0</string>
     <key>CFBundleVersion</key>
-    <string>3</string>
+    <string>4</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>cloud.hivra.mac.sign-in</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>hivra</string>
+            </array>
+        </dict>
+    </array>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+    <key>SUFeedURL</key>
+    <string>https://github.com/ashneil12/hivra/releases/download/mac-updates/appcast.xml</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
     <key>CFBundleIconFile</key>
     <string>Hivra</string>
     <key>LSMinimumSystemVersion</key>

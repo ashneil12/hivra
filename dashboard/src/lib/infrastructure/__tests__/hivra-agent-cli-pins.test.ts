@@ -9,26 +9,26 @@ import path from "node:path";
 import vm from "node:vm";
 import { createRequire } from "node:module";
 
-import { AGENT_CLI_VERSIONS } from "../portable-provisioner-contract";
-
-// Hivra owns the Claude Code / Codex versions on its computers: the pins ship
-// as bundle data, vendor self-updaters stay off, and the gateway reports the
-// installed version so the dashboard can offer the vetted one.
+// Hivra pins no agent version: a launch installs the newest release upstream
+// publishes, vendor self-updaters stay off (the owner updates with the Update
+// button), and the gateway reports the installed version to the dashboard.
 
 const bundle = path.join(process.cwd(), "provisioner");
 const PIN_SCRIPT = path.join(bundle, "hivra-codex-config-pin.py");
 const SERVER_PATH = path.join(bundle, "hivra-chat/server.js");
 
-describe("vetted agent CLI pins", () => {
-  it("exports the same pins the guest installer reads", () => {
-    const pins = JSON.parse(fs.readFileSync(path.join(bundle, "agent-cli-versions.json"), "utf8"));
-    expect(AGENT_CLI_VERSIONS).toEqual(pins);
-    expect(Object.keys(pins).sort()).toEqual(["claude-code", "codex"]);
-    for (const version of Object.values(pins)) expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+describe("no agent version pins", () => {
+  it("ships no pin files and installs the newest releases at launch", () => {
+    expect(fs.existsSync(path.join(bundle, "agent-cli-versions.json"))).toBe(false);
+    expect(fs.existsSync(path.join(bundle, "agent-app-versions.json"))).toBe(false);
     const installer = fs.readFileSync(path.join(bundle, "provision-claude-code-box.sh"), "utf8");
     expect(installer).not.toMatch(/CLAUDE_CODE_VERSION="\$\{CLAUDE_CODE_VERSION:-\d/);
-    expect(installer).toContain('CLAUDE_CODE_VERSION="$(read_agent_cli_pin claude-code)"');
-    expect(installer).toContain('CODEX_CLI_VERSION="$(read_agent_cli_pin codex)"');
+    expect(installer).toContain('https://registry.npmjs.org/$1/latest');
+    expect(installer).toContain('CLAUDE_CODE_VERSION="$(latest_or_die @anthropic-ai/claude-code)"');
+    expect(installer).toContain('CODEX_CLI_VERSION="$(latest_or_die @openai/codex)"');
+    expect(installer).toContain('OPENCLAW_VERSION="$(latest_or_die openclaw)"');
+    expect(installer).toContain('docker pull "${A0_REPO}:latest"');
+    expect(installer).toContain('git ls-remote "${AEON_REPO_URL:-https://github.com/aaronjmars/aeon.git}" HEAD');
   });
 });
 
@@ -175,11 +175,11 @@ describe("gateway agent CLI report", () => {
   }));
 
   it("reports the updater's progress and ignores anything malformed", () => withBox("codex", { error: null, stdout: "codex-cli 0.149.1\n" }, async (box) => {
-    fs.writeFileSync(box.status, JSON.stringify({ name: "codex", state: "waiting", from: "0.149.1", to: "0.156.1", updatedAt: "2026-09-24T18:00:00Z" }));
-    expect((await box.meta()).agentCli).toEqual({ name: "codex", version: "0.149.1", update: { state: "waiting", target: "0.156.1", updatedAt: "2026-09-24T18:00:00Z" } });
-    fs.writeFileSync(box.status, JSON.stringify({ name: "codex", state: "rolled_back", to: "0.156.1", updatedAt: "2026-09-24T18:05:00Z", reason: "install_failed" }));
-    expect((await box.meta()).agentCli.update).toEqual({ state: "rolled_back", target: "0.156.1", updatedAt: "2026-09-24T18:05:00Z", reason: "install_failed" });
-    for (const bad of [{ name: "claude-code", state: "done", to: "2.1.246" }, { name: "codex", state: "<b>", to: "0.156.1" }, { name: "codex", state: "done", to: "latest" }, "not json"]) {
+    fs.writeFileSync(box.status, JSON.stringify({ name: "codex", state: "waiting", from: "0.149.1", to: "latest", updatedAt: "2026-09-24T18:00:00Z" }));
+    expect((await box.meta()).agentCli).toEqual({ name: "codex", version: "0.149.1", update: { state: "waiting", target: "latest", updatedAt: "2026-09-24T18:00:00Z" } });
+    fs.writeFileSync(box.status, JSON.stringify({ name: "codex", state: "rolled_back", to: "latest", updatedAt: "2026-09-24T18:05:00Z", reason: "install_failed" }));
+    expect((await box.meta()).agentCli.update).toEqual({ state: "rolled_back", target: "latest", updatedAt: "2026-09-24T18:05:00Z", reason: "install_failed" });
+    for (const bad of [{ name: "claude-code", state: "done", to: "latest" }, { name: "codex", state: "<b>", to: "latest" }, { name: "codex", state: "done", to: "0.156.1" }, "not json"]) {
       fs.writeFileSync(box.status, typeof bad === "string" ? bad : JSON.stringify(bad));
       expect((await box.meta()).agentCli).toEqual({ name: "codex", version: "0.149.1" });
     }

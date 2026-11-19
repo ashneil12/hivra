@@ -56,7 +56,11 @@ export type ScheduleSource =
  *                   except `ignore` and ones marked disabled; while `up` runs
  *                   the file must be readable (`requiredWhileUp`)
  *   env-keys        a .env file: each [key regex, platform] set to a value
- *   yaml-enabled    a YAML file: every two-space key with "enabled: true" under it
+ *   yaml-enabled    a YAML file: every two-space key with "enabled: true" under it.
+ *                   With `section` or `known`, only keys under that top-level
+ *                   section, or named in `known` wherever they sit, count
+ *                   (other switches with "enabled: true" are not channels);
+ *                   `ignore` names are never channels
  *   json-channels   a JSON file: every key of the object at `at` not disabled
  *   systemd-env     a fixed `tag` while `key` is set in `path` and `unit` is active
  *   systemd-active  a fixed `tag` while `unit` is active
@@ -67,7 +71,10 @@ export type ChannelSource =
       ignore: readonly string[]; requiredWhileUp: boolean; up?: ProcessMatch; owner?: ProcessMatch;
     }
   | { kind: "env-keys"; prefix: string; path: string; keys: readonly (readonly [string, string])[]; up?: ProcessMatch; owner?: ProcessMatch }
-  | { kind: "yaml-enabled"; prefix: string; path: string; up?: ProcessMatch; owner?: ProcessMatch }
+  | {
+      kind: "yaml-enabled"; prefix: string; path: string; section?: string; known?: readonly string[];
+      ignore?: readonly string[]; up?: ProcessMatch; owner?: ProcessMatch;
+    }
   | { kind: "json-channels"; prefix: string; path: string; at: readonly string[]; up?: ProcessMatch; owner?: ProcessMatch }
   | { kind: "systemd-env"; tag: string; platform: string; unit: string; path: string; key: string; owner?: ProcessMatch }
   | { kind: "systemd-active"; tag: string; platform: string; unit: string; owner?: ProcessMatch };
@@ -117,7 +124,11 @@ export type WakePlatform = "telegram" | "matrix" | "email" | "discord";
 export interface AgentWakeProfile {
   /** hivra_agents.type. */
   type: string;
-  /** Processes whose presence means work is running right now (a coding CLI, a job runner). */
+  /**
+   * Processes whose presence means work is running right now (a coding CLI, a job runner).
+   * One left open in the computer's own tmux is a standing session and is not counted:
+   * it is busy only while it prints, which the probe reads from tmux as recent use.
+   */
   busy: readonly ProcessMatch[];
   /** The agent's own long-running processes, checked for CPU use by the safety net. */
   agentProcesses: readonly ProcessMatch[];

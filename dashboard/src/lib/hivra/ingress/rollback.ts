@@ -314,10 +314,11 @@ export async function releaseHostIngressOnDelete(input: { agentId: string; hostn
 }
 
 async function detachOnHost(hostId: string, vmid: number, hostname: string): Promise<boolean> {
-  const { resolveProxmoxTargetConfiguration, runProxmoxHostScript } = await import("@/lib/services/proxmox-instance-service");
+  const { resolveProxmoxTargetConfiguration, runProxmoxHostScriptWithStdin } = await import("@/lib/services/proxmox-instance-service");
   const { parseIngressStep } = await import("@/lib/hivra/ingress/cutover-scripts");
   const candidate = resolveProxmoxTargetConfiguration(process.env, hostId);
-  const run = await runProxmoxHostScript(buildIngressDetachScript({ vmid, hostname }), candidate.env,
+  // Not `bash -s`: the detach script's `exec </dev/null` would end it there.
+  const run = await runProxmoxHostScriptWithStdin(buildIngressDetachScript({ vmid, hostname }), "", candidate.env,
     { timeoutMs: 120_000, maxOutputBytes: 64 * 1024 });
   return parseIngressStep(run.stdout)?.ok === true;
 }

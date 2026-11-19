@@ -45,27 +45,36 @@ const rowFor = (entry: VeniceChatModelPrice): Row =>
   ({ id: entry.model, name: entry.displayName, badge: PRIVACY_LABEL[entry.privacy], meta: metaFor(entry) });
 const unknownRow = (id: string): Row => ({ id, name: id, badge: null, meta: "Not in Hivra's Venice list" });
 
-export function VeniceModelList({ value, current, onChange, disabled, label, suggested = DEFAULT_SUGGESTED_MODELS }: {
+/** `privateOnly` lists only the models Venice marks private (for an agent set to private models only). */
+export function VeniceModelList({ value, current, onChange, disabled, label, suggested = DEFAULT_SUGGESTED_MODELS, privateOnly = false }: {
   value: string | null; current?: string | null; onChange: (id: string) => void; disabled?: boolean;
-  label: string; suggested?: readonly string[];
+  label: string; suggested?: readonly string[]; privateOnly?: boolean;
 }) {
   const uid = useId();
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
+  const listed = useMemo(
+    () => (privateOnly ? VENICE_CHAT_MODEL_PRICES.filter(entry => entry.privacy !== "anonymized") : VENICE_CHAT_MODEL_PRICES),
+    [privateOnly],
+  );
+
   const groups = useMemo<Group[]>(() => {
     const q = query.trim().toLowerCase();
     const out: Group[] = [];
+    const offered = (entry: VeniceChatModelPrice | null): entry is VeniceChatModelPrice =>
+      !!entry && (!privateOnly || entry.privacy !== "anonymized");
     if (!q) {
-      const extras = [current, value].filter((id, i, all): id is string => !!id && !veniceCatalogEntry(id) && all.indexOf(id) === i);
+      // A model Hivra's list does not carry cannot be shown as private, so it is left out too.
+      const extras = privateOnly ? [] : [current, value].filter((id, i, all): id is string => !!id && !veniceCatalogEntry(id) && all.indexOf(id) === i);
       if (extras.length) out.push({ label: "Not in the list", rows: extras.map(unknownRow) });
-      const picks = suggested.map(veniceCatalogEntry).filter((e): e is VeniceChatModelPrice => !!e);
+      const picks = suggested.map(veniceCatalogEntry).filter(offered);
       if (picks.length) out.push({ label: "Suggested", rows: picks.map(rowFor) });
     }
     const suggestedSet = new Set(q ? [] : suggested);
     const byFamily = new Map<string, Row[]>();
-    for (const entry of VENICE_CHAT_MODEL_PRICES) {
+    for (const entry of listed) {
       if (suggestedSet.has(entry.model)) continue;
       if (q && !entry.displayName.toLowerCase().includes(q) && !entry.model.toLowerCase().includes(q)) continue;
       const family = veniceModelFamily(entry.model);
@@ -73,7 +82,7 @@ export function VeniceModelList({ value, current, onChange, disabled, label, sug
     }
     for (const [family, rows] of [...byFamily].sort(([a], [b]) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b)))) out.push({ label: family, rows });
     return out;
-  }, [query, current, value, suggested]);
+  }, [query, current, value, suggested, privateOnly, listed]);
 
   const flat = useMemo(() => groups.flatMap(g => g.rows), [groups]);
   // The same id can appear twice only if it is both unknown and suggested, which cannot happen.
@@ -106,7 +115,7 @@ export function VeniceModelList({ value, current, onChange, disabled, label, sug
   return <div className={styles.root}>
     <input type="search" role="combobox" aria-label="Search models" aria-expanded="true" aria-controls={listId} aria-autocomplete="list"
       aria-activedescendant={active ? optionId(active) : undefined} className={styles.search}
-      placeholder={`Search ${VENICE_CHAT_MODEL_PRICES.length} Venice models`} value={query} disabled={disabled}
+      placeholder={privateOnly ? `Search ${listed.length} private Venice models` : `Search ${VENICE_CHAT_MODEL_PRICES.length} Venice models`} value={query} disabled={disabled}
       onChange={e => setQuery(e.target.value)} onKeyDown={onKeyDown}
       autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="off" />
     <div ref={listRef} id={listId} role="listbox" aria-label={label} aria-disabled={disabled || undefined}

@@ -123,8 +123,9 @@ const AGENT_ENV = Object.assign({}, process.env, {
   // desktop owner's home directories.
   PATH: ATTACHED ? String(process.env.PATH || "/usr/bin:/bin") : "/usr/local/bin:/home/bux/.bun/bin:/home/bux/.npm-global/bin:/home/bux/.local/bin:/usr/bin:/bin",
   HOME: HOME,
-  // Hivra installs and updates the vetted CLI versions (agent-cli-versions.json);
-  // a vendor self-update would swap the binary under the gateway mid-life.
+  // The CLI changes version only when its owner updates it (Hivra's Update
+  // button); a silent vendor self-update would swap the binary under the
+  // gateway mid-life.
   DISABLE_AUTOUPDATER: "1",
 });
 // Where new agent sessions start. For an attached agent this is its root-owned,
@@ -145,7 +146,7 @@ if (ATTACHED) {
 const CLAUDE_ENV = AGENT_ENV; // back-compat alias used by the claude login handlers
 
 // The installed agent CLI version, reported on /api/meta so the dashboard can
-// compare it with the release's vetted pin (agent-cli-versions.json). Probed at
+// show it to the owner (Hivra pins no CLI version). Probed at
 // start and again whenever the binary changes on disk (hivra-agent-cli-update
 // swaps it in place); the field is omitted until the first probe finishes and
 // the version is null when it failed. The updater's progress rides along. Only
@@ -190,7 +191,7 @@ function agentCliReport() {
   try {
     const status = JSON.parse(fs.readFileSync(AGENT_CLI_STATUS, "utf8"));
     if (status && status.name === AGENT_CLI.name && AGENT_CLI_UPDATE_STATES.has(status.state)
-      && typeof status.to === "string" && /^\d+\.\d+\.\d+$/.test(status.to)) {
+      && status.to === "latest") {
       report.update = { state: status.state, target: status.to, updatedAt: typeof status.updatedAt === "string" ? status.updatedAt : null,
         ...(typeof status.reason === "string" && /^[a-z_]{1,40}$/.test(status.reason) ? { reason: status.reason } : {}) };
     }
@@ -212,8 +213,9 @@ function agentCliUpdateRefusal() {
 
 // The hosted agent app (the Aeon dashboard, OpenClaw, Agent Zero) and the
 // version of it this computer runs, reported on /api/meta (authenticated
-// callers only) so the dashboard can compare it with the release's tested pin
-// (agent-app-versions.json). hivra-agent-app-update moves it to that pin; it
+// callers only) so the dashboard can show it to the owner. Hivra pins no app
+// version: hivra-agent-app-update moves it to upstream's newest release when
+// the owner presses Update; it
 // reads `activity` (when the app was last used through this gateway and how
 // many of its WebSockets are open) to wait until nobody is using it, and while
 // it swaps the app it holds the app's surface here with the lock file. OpenClaw
@@ -232,9 +234,9 @@ const AGENT_APP_LOCK = process.env.HIVRA_AGENT_APP_LOCK || "/run/hivra-agent-app
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/bux/.npm-global/bin/openclaw";
 const HERMES_BIN = process.env.HERMES_BIN || "/home/bux/.local/bin/hermes";
 const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, openbot: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, nuphos: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
-// What an update status may name as its target. Hermes, OpenBot and Nuphos have no
-// Hivra pin: their update is always to whatever upstream publishes as latest.
-const AGENT_APP_TARGET = { ...AGENT_APP_VERSION, hermes: /^latest$/, openbot: /^latest$/, nuphos: /^latest$/ };
+// What an update status may name as its target: always the word "latest",
+// since every update goes to whatever upstream publishes as newest.
+const AGENT_APP_TARGET = /^latest$/;
 // A gateway start counts as use: nothing is known about the minutes before it.
 let agentAppLastUsedAt = Date.now();
 let agentAppOpenConnections = 0;
@@ -307,7 +309,7 @@ function readSmallJson(file) {
 function agentAppReport() {
   if (!AGENT_APP) return null;
   const pattern = AGENT_APP_VERSION[AGENT_APP.name];
-  const targetPattern = AGENT_APP_TARGET[AGENT_APP.name];
+  const targetPattern = AGENT_APP_TARGET;
   let version = null;
   const activity = { lastUsedAt: new Date(agentAppLastUsedAt).toISOString(), openConnections: agentAppOpenConnections };
   if (AGENT_APP.name === "openclaw") {
@@ -2068,6 +2070,9 @@ function applyOpenclawLlm(res, j) {
   if (needsBase && !LLM_BASEURL_RE.test(baseUrl)) return jsonRes(res, 400, { ok: false, error: "baseUrl doesn't look right (https URL)" });
   const block = { api, apiKey, models: [{ id: model, name: model, contextWindow: 200000, maxTokens: 8192, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, reasoning: false }] };
   if (needsBase) block.baseUrl = baseUrl;
+  // Venice's chat schema is strict: OpenClaw's DeepSeek-native `thinking` field
+  // (sent for deepseek-v4 ids) is a 400 there, so Venice models speak plain OpenAI.
+  if (provider === "venice" && api === "openai-completions") block.models[0].compat = { thinkingFormat: "openai" };
   const primary = provider + "/" + model;
   // agents.defaults.model = { primary } and agents.defaults.models = { "<primary>": {} }
   // are SIBLINGS under defaults (the runtime loader is lax, but `config patch` is
@@ -2600,6 +2605,27 @@ function a0Login(cb, isCurrent) {
   r.write(body); r.end();
   return r;
 }
+// The A0 CLI (agent0ai/a0-connector) talks to the host's ROOT, not to a mount:
+// POST /api/plugins/_a0_connector/v1/*, GET /api/csrf_token, the file/upload
+// helpers it uses, and /socket.io. It signs in once through POST /login with a
+// Connect app grant, then holds the ordinary surface cookie. A non-browser
+// client does not send an Origin header on those calls, which the cookie gate
+// for mutations requires, so this narrow path set accepts the same cookie
+// without one. A browser always sends Origin (and Sec-Fetch-Site) on a write, so
+// a page on another site still cannot ride the cookie. The capability probe is
+// A0's own public discovery endpoint and needs no sign-in.
+const A0_CONNECTOR_REQS = new WeakSet();
+const A0_CONNECTOR_PROBE = "/api/plugins/_a0_connector/v1/capabilities";
+const A0_CONNECTOR_CORE_API = new Set(["/api/csrf_token", "/api/image_get", "/api/download_work_dir_file", "/api/chat_files_path_get", "/api/get_work_dir_files"]);
+function a0ConnectorRootPath(req, u) {
+  if (u.startsWith("/api/plugins/") || A0_CONNECTOR_CORE_API.has(u)) return true;
+  // The gateway's own /api/upload takes the management bearer; the CLI sends the web session and a CSRF header.
+  return u === "/api/upload" && Boolean(req.headers["x-csrf-token"]) && !bearerAuthed(req);
+}
+function a0ConnectorRootAuthed(req) {
+  if (authed(req)) return true;
+  return validAuthSession(cookieVal(req, AUTH_COOKIE)) && !req.headers["origin"] && !req.headers["sec-fetch-site"];
+}
 // Proxy to Agent Zero with the login session injected. On a cache miss — or when
 // the container rotates the session and 302s back to /login — (re)log in and retry
 // the (GET) request once, so the owner never sees Agent Zero's own login screen.
@@ -2617,7 +2643,7 @@ function a0CanonicalEntryHtml(html) {
   return seen["index.js"] === 1 && seen["js/initFw.js"] === 1 ? rewritten : null;
 }
 function a0Proxy(req, res, retried, csrfContext, editorContext) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req) && !A0_CONNECTOR_REQS.has(req)) return denyHtml(res);
   if (!retried && isAgentAppPort(AGENT_ZERO_PORT) && agentAppHold(req, res)) return;
   let apath = req.url.slice("/agent-zero".length); if (!apath.startsWith("/")) apath = "/" + apath;
   // Newer Agent Zero serves a splash bootstrap at / that installs the real
@@ -2913,7 +2939,34 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
 function gateProxy(req, res, port, strip) {
   if (!authed(req)) return denyHtml(res);
   if (isAgentAppPort(port) && agentAppHold(req, res)) return;
-  return proxyHttp(req, res, port, strip);
+  return proxyHttp(req, res, port, strip, false, openclawPort(port) ? OPENCLAW_SET_HEADERS : null);
+}
+// OpenClaw's gateway (2026.11.5 and newer) refuses a loopback request that
+// carries forwarded-client headers unless gateway.trustedProxies names the
+// proxy (proxy_attribution_required). This gate is the only way in and has
+// already authenticated the owner, so OpenClaw sees it as what it is: a local
+// caller. Forwarded headers the tunnel added are dropped, as for Hermes.
+const OPENCLAW_SET_HEADERS = { forwarded: null, "x-forwarded-for": null, "x-forwarded-host": null,
+  "x-forwarded-proto": null, "x-forwarded-port": null, "x-forwarded-prefix": null, "x-real-ip": null };
+function openclawPort(port) {
+  return AGENT_KIND === "openclaw" && port === OPENCLAW_PORT;
+}
+// OpenClaw serves its Control UI below gateway.controlUi.basePath, its own
+// setting for a reverse-proxy path prefix. A computer whose openclaw.json names
+// /openclaw gets the path unchanged; an older one is served at the root, with
+// the prefix stripped and its root-absolute assets re-homed by Referer (which
+// OpenClaw 2026.11.5 and newer no longer send: Referrer-Policy no-referrer).
+let openclawMount = { mtime: -1, strip: "/openclaw" };
+function openclawStrip() {
+  try {
+    const stat = fs.statSync(OC_CFG());
+    if (stat.mtimeMs !== openclawMount.mtime) {
+      const j = JSON.parse(fs.readFileSync(OC_CFG(), "utf8"));
+      const basePath = j && j.gateway && j.gateway.controlUi && j.gateway.controlUi.basePath;
+      openclawMount = { mtime: stat.mtimeMs, strip: basePath === "/openclaw" ? "" : "/openclaw" };
+    }
+  } catch { openclawMount = { mtime: -1, strip: "/openclaw" }; }
+  return openclawMount.strip;
 }
 // Hermes's web UI behind the same gate. It checks that Host and Origin are its
 // own loopback address and that the peer is loopback, and it builds its links
@@ -3757,9 +3810,11 @@ const AEON_SYNC_REBASE_MARKER = path.join(HOME, ".hivra", "aeon-sync-rebase.json
 // test keeps them together); used only when no durable copy exists yet.
 const AEON_HIVRA_NEXT_CONFIG = [
   "import type { NextConfig } from 'next'",
-  "// Hivra hosts this dashboard behind a token-proxy mounted at /aeon.",
+  "import upstream from './next.config.hivra-upstream'",
+  "// Hivra hosts this dashboard behind a token-proxy mounted at /aeon. Aeon's own",
+  "// config (next.config.hivra-upstream.ts) is kept as is; only the mount is added.",
   "const basePath = process.env.AEON_BASE_PATH || undefined",
-  "const nextConfig: NextConfig = basePath ? { basePath, assetPrefix: basePath } : {}",
+  "const nextConfig: NextConfig = basePath ? { ...upstream, basePath, assetPrefix: basePath } : upstream",
   "export default nextConfig",
   "",
 ].join("\n");
@@ -3943,6 +3998,23 @@ async function ensureAeonNextConfig(gitDir) {
     console.error("hivra-chat: aeon dashboard folder is missing; " + AEON_NEXT_CONFIG + " could not be restored");
     return;
   }
+  // The wrapper imports Aeon's own config, kept beside it; an empty one stands
+  // in if that copy is gone, so the next build still resolves the import.
+  const kept = path.join(path.dirname(file), "next.config.hivra-upstream.ts");
+  if (text.includes("./next.config.hivra-upstream") && !fs.existsSync(kept)) {
+    writeFileDurably(kept, "import type { NextConfig } from 'next'\nconst nextConfig: NextConfig = {}\nexport default nextConfig\n", 0o644);
+  }
+  // That kept copy is this computer's, never a change for the owner's git.
+  const exclude = path.join(gitDir, "info", "exclude");
+  const excluded = "/" + path.posix.join(path.posix.dirname(AEON_NEXT_CONFIG), "next.config.hivra-upstream.ts");
+  try {
+    let lines = "";
+    try { lines = fs.readFileSync(exclude, "utf8"); } catch {}
+    if (!lines.split("\n").includes(excluded)) {
+      fs.mkdirSync(path.dirname(exclude), { recursive: true });
+      fs.appendFileSync(exclude, (lines && !lines.endsWith("\n") ? "\n" : "") + excluded + "\n");
+    }
+  } catch {}
   if (writeFileDurably(file, text, 0o644)) {
     const what = current !== null && current.includes(AEON_NEXT_CONFIG_MARKER) ? "was damaged in " : "was missing from ";
     console.error("hivra-chat: aeon dashboard basePath config " + what + AEON_NEXT_CONFIG + " and has been restored");
@@ -4546,7 +4618,7 @@ const server = http.createServer((req, res) => {
     try { refPath = new URL(String(req.headers["referer"] || "")).pathname; } catch {}
     if (refPath === "/openclaw" || refPath.startsWith("/openclaw/")) {
       req.url = "/openclaw" + req.url;
-      return gateProxy(req, res, OPENCLAW_PORT, "/openclaw");
+      return gateProxy(req, res, OPENCLAW_PORT, openclawStrip());
     }
   }
   // Agent Zero's web UI serves at root (no basePath), so its root-absolute assets/
@@ -4587,6 +4659,12 @@ const server = http.createServer((req, res) => {
         res.writeHead(307, { Location: "/agent-zero" + req.url, "Cache-Control": "no-store" });
         return res.end();
       }
+      req.url = "/agent-zero" + req.url;
+      return a0Proxy(req, res);
+    }
+    if (a0ConnectorRootPath(req, u)) {
+      if (!(req.method === "POST" && u === A0_CONNECTOR_PROBE) && !a0ConnectorRootAuthed(req)) return jsonRes(res, 401, { error: "unauthorized" });
+      A0_CONNECTOR_REQS.add(req);
       req.url = "/agent-zero" + req.url;
       return a0Proxy(req, res);
     }
@@ -4699,10 +4777,11 @@ const server = http.createServer((req, res) => {
   // through this same gate. The dashboard has no auth of its own, so the gate is
   // the access boundary — same as the terminals.
   if (u === "/aeon" || u.startsWith("/aeon/")) return gateProxy(req, res, AEON_PORT);
-  // OpenClaw gateway Control UI. STRIP /openclaw: the gateway serves at root, so we
-  // peel the mount prefix before forwarding; root-absolute sub-resources are caught
-  // by the re-home block above. Same gate-as-access-boundary model as Aeon.
-  if (u === "/openclaw" || u.startsWith("/openclaw/")) return gateProxy(req, res, OPENCLAW_PORT, "/openclaw");
+  // OpenClaw gateway Control UI. With basePath=/openclaw in openclaw.json the path
+  // goes through unchanged; an older computer serves at root, so the mount prefix is
+  // peeled and root-absolute sub-resources are caught by the re-home block above.
+  // Same gate-as-access-boundary model as Aeon.
+  if (u === "/openclaw" || u.startsWith("/openclaw/")) return gateProxy(req, res, OPENCLAW_PORT, openclawStrip());
   if (u === "/agent-zero" || u.startsWith("/agent-zero/")) return a0Proxy(req, res);
   // Hermes's own web UI (the official one, unmodified), prefix stripped.
   if (AGENT_KIND === "hermes" && req.method === "GET" && u === HERMES_SIGN_IN) return hermesSignIn(req, res);
@@ -4738,7 +4817,7 @@ server.on("upgrade", (req, socket, head) => {
   else if (u.startsWith("/box-terminal")) port = 7682;
   else if (u.startsWith("/vnc")) { port = 6080; strip = "/vnc"; }
   else if (u.startsWith("/aeon")) port = AEON_PORT; // Next.js HMR ws (dev); no strip (basePath=/aeon)
-  else if (u.startsWith("/openclaw")) { port = OPENCLAW_PORT; strip = "/openclaw"; } // gateway WS control/RPC (served at root)
+  else if (u.startsWith("/openclaw")) { port = OPENCLAW_PORT; strip = openclawStrip(); } // gateway WS control/RPC (at its basePath, or at root on an older computer)
   else if (u.startsWith("/agent-zero")) { port = AGENT_ZERO_PORT; strip = "/agent-zero"; } // Agent Zero WS (served at root)
   else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
   else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)
@@ -4777,6 +4856,7 @@ server.on("upgrade", (req, socket, head) => {
   const openbotWs = AGENT_KIND === "openbot" && port === OPENBOT_PORT;
   const openbotSet = openbotWs ? openbotHeaders(req) : null;
   const nuphosWs = AGENT_KIND === "nuphos" && port === NUPHOS_PORT;
+  const openclawWs = openclawPort(port);
   // Terminals from the socket release listen on an owner-only unix socket; older
   // ones on the loopback port. Keep the positional connect for a port.
   const terminalUp = (port === 7681 || port === 7682) ? terminalUpstream(port) : null;
@@ -4794,6 +4874,7 @@ server.on("upgrade", (req, socket, head) => {
       if (hermesWs && (key === "host" || key in hermesSet)) continue;
       if (openbotWs && (key === "host" || key in openbotSet)) continue;
       if (nuphosWs && key in NUPHOS_SET_HEADERS) continue;
+      if (openclawWs && key in OPENCLAW_SET_HEADERS) continue;
       if (key === "authorization") {
         const bearer = String(raw || "").match(/^Bearer\s+(.+)$/i);
         if (bearer && safeEq(bearer[1], API_TOKEN)) continue;

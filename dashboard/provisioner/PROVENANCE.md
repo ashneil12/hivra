@@ -234,18 +234,19 @@ inferring them from a live host.
   `https://cli.github.com/packages/pool/main/g/gh/gh_2.98.0_amd64.deb`
   - package version: `2.98.0`
   - SHA-256: `f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6`
-- Anthropic Claude Code npm package: `@anthropic-ai/claude-code@2.1.292`
+- Anthropic Claude Code npm package: `@anthropic-ai/claude-code`, upstream's newest
+  release at install time (npm `latest`); no Hivra pin
 - Anthropic Claude desktop app for Linux (optional, owner-initiated):
   `https://downloads.claude.ai/claude-desktop/apt/stable/pool/main/c/claude-desktop/claude-desktop_2.26454.0_amd64.deb`
   - package version: `2.26454.0`
   - SHA-256: `6d3e4973dcb11511ddd962040b3073b435d1592b3174a82ef52e50377a75a63f`
   - size: 180809792 bytes
   - proprietary Anthropic software, downloaded from Anthropic's repository and never bundled or redistributed by Hivra
-- OpenAI Codex CLI npm package: `@openai/codex@0.149.1`
-- OpenClaw npm package: `openclaw@2026.6.10`
-- Agent Zero OCI image:
-  `agent0ai/agent-zero@sha256:05d6ab347bd7db4b6bd5a7d902c9965281ff852ff23f29fffcc1c8919e628bd8` (`v2.15`)
-  - previous reviewed image: `agent0ai/agent-zero@sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0` (`v2.2`)
+- OpenAI Codex CLI npm package: `@openai/codex`, npm `latest` at install time; no Hivra pin
+- OpenClaw npm package: `openclaw`, npm `latest` at install time; no Hivra pin
+- Agent Zero OCI image: `agent0ai/agent-zero:latest`, recorded by the digest it
+  resolved to at install time; no Hivra pin
+- Aeon: the upstream repository's `HEAD` commit at install time; no Hivra pin
 - Selkies X11 desktop OCI image:
   `ghcr.io/selkies-project/selkies-egl-desktop@sha256:6ee5ddc3aa50ec9b3f22d2090ee1b0d2161e7be5acd9f385717e7c3603f6b3aa`
   - observed source commit: `dbc97872dbeae49e7f1e4491c3dee54f437f364d`
@@ -545,6 +546,181 @@ a restart. Remote-desktop assets are unchanged, so the remote-desktop bundle
 revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
+
+Release `2026.11.18.5` builds on `2026.11.18.4`. The connection service
+(`hivra-chat/server.js`) of an Agent Zero computer now answers the A0 CLI's
+root-level calls (`/api/plugins/...`, the CSRF and file helpers it uses) for a
+signed-in Connect app session, so `a0 --host <the computer's address>` reaches
+the connector plugin that official Agent Zero already ships. The dashboard's
+Connect app dialog shows that command. Changed: that file, plus the documents,
+the version and the provider worker's release labels. This source release does
+not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.18.4` builds on `2026.11.18.3`. `hivra-provision-on-host.sh`
+sets `ciupgrade 0` on every VM it makes, so Proxmox's generated user-data no
+longer asks cloud-init for a first-boot package upgrade (which also refreshes
+snaps on Ubuntu). Changed: that script, plus the documents, the version and the
+provider worker's release labels. This source release does not deploy, install,
+enable or start anything on a host or computer.
+
+Release `2026.11.18.3` builds on `2026.11.18.2`. `hivra-provision-on-host.sh`
+installs QEMU Guest Agent through apt in the vendor data's runcmd rather than
+cloud-config's package module, which on Ubuntu also refreshes snaps and failed
+cloud-init whenever the snap store was unreachable. Changed: that script, plus
+the documents, the version and the provider worker's release labels. This
+source release does not deploy, install, enable or start anything on a host or
+computer.
+
+Release `2026.11.18.2` builds on `2026.11.18.1`. `hivra-provision-on-host.sh`
+gains `HIVRA_PROVISION_MODE=empty` (allocate and tag a computer with a blank
+disk, no boot, no installer) and, when a guest's cloud-init fails, keeps its
+status and output tail in a root-only host file before cleanup.
+`provision-claude-code-box.sh` seeds DeepSeek V4.1 Flash for an OpenClaw
+launched without a model. Changed: those two scripts, plus the documents, the
+version and the provider worker's release labels. This source release does not
+deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.18.1` builds on `2026.11.17.9`. A new OpenClaw's Venice model,
+and a Venice model set from the dashboard, carry OpenClaw's own
+`compat.thinkingFormat: "openai"`, so OpenClaw no longer adds DeepSeek's
+top-level `thinking` field that Venice's strict chat schema rejects. Aeon's step
+keeps an installed gh at or above the pinned version instead of forcing a
+downgrade apt refuses. Changed: `provision-claude-code-box.sh`,
+`hivra-chat/server.js`, plus the documents, the version and the provider
+worker's release labels. This source release does not deploy, install, enable
+or start anything on a host or computer.
+
+Release `2026.11.17.9` builds on `2026.11.17.8` and makes a failed launch
+name the step that stopped it. A failed guest is removed with its logs, so the
+host log only said "step provision-claude-code-box.sh exited with status 1".
+The step's `die()` now also writes its own message (Hivra's fixed text) to the
+root-only `/run/hivra-install-failure-reason`, which the installer clears before
+the step runs and appends to its "Hivra guest installation failure" line when it
+is at most 200 plain characters. Changed: `provision-claude-code-box.sh`,
+`hivra-install-agent.py`, plus the documents, the version and the provider
+worker's release labels. This source release does not deploy, install, enable
+or start anything on a host or computer.
+
+Release `2026.11.17.8` builds on `2026.11.17.7` and lets a new OpenClaw
+launch finish installing again. With `gateway.controlUi.basePath` set to
+`/openclaw`, OpenClaw's gateway answers 503 at its root, and the installer's
+runtime readiness check asked for `/`, so every OpenClaw launch on
+`2026.11.17.7` stopped with "OpenClaw Control UI did not become ready". The
+check now asks for `/openclaw/` when `openclaw.json` names that base path, and
+`/` otherwise. Changed: `provision-claude-code-box.sh`, plus the documents, the
+version and the provider worker's release labels. This source release does not
+deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.17.7` builds on `2026.11.17.6` and lets OpenClaw's Control
+UI start again behind the box gateway. From 2026.11.5 OpenClaw's gateway sends
+`Referrer-Policy: no-referrer`, so the browser stopped sending the Referer the
+box gateway used to re-home the Control UI's root-absolute requests
+(`/assets/*`, `/fonts/*`, `/chat/*`) under `/openclaw`; the app bundle 404ed
+and OpenClaw's boot watchdog showed "Control UI did not start". A new launch
+now seeds OpenClaw's own `gateway.controlUi.basePath` (`/openclaw`), its
+documented setting for a reverse-proxy path prefix, and the box gateway
+forwards `/openclaw` without stripping it whenever `openclaw.json` names that
+base path; a computer whose config has none keeps the previous strip and
+Referer re-home. Changed: `provision-claude-code-box.sh`, `hivra-chat/server.js`,
+plus the documents, the version and the provider worker's release labels. This
+source release does not deploy, install, enable or start anything on a host or
+computer.
+
+Release `2026.11.17.6` builds on `2026.11.17.5` and gives a managed-Venice
+Agent Zero launch a working model again. Current Agent Zero images choose their
+models from presets (`usr/plugins/_model_config/presets.yaml`, the file its
+own Settings writes) and ignore the `A0_SET_*` model defaults Hivra seeds, so a
+launch with Hivra credits opened with no model connected and never answered.
+On a fresh box with a managed model key, the provisioner now writes Agent
+Zero's Default preset with the same model and gateway (chat and utility; the
+embedding stays Agent Zero's own local default); an existing presets file is
+the owner's and is left alone, and older images ignore the file. It also
+lets DeepSeek Harness start again: since `2026.11.15.2` the gateway's
+`server.js` requires `import-state.cjs` at start, but the DeepSeek installer
+copied only its own list of gateway files into `/opt/hivra/deepseek-gateway`,
+so the gateway exited on start and every launch hit the native readiness
+deadline. The installer, the runtime receipt and the provider-VM runtime probe
+now include that file. Changed: `provision-claude-code-box.sh`,
+`deepseek-harness/install-guest.py`, `hivra-runtime-receipt.py`, plus the
+documents, the version and the provider worker's release labels. This source release does not deploy,
+install, enable or start anything on a host or computer.
+
+Release `2026.11.17.5` builds on `2026.11.17.4` and hardens `hivra-tg-apply`
+against symlink redirection of its one root-authored write. The chat gateway
+runs the helper as root (scoped NOPASSWD) to write the Telegram bot's env file
+into `/etc/bux`, a directory that is group-writable by the agent user so the
+gateway and bot can keep their own state files there. That writability let the
+agent user replace the `tg.env` entry with a symlink, and the old
+`cat > "$TG_ENV_DIR/tg.env"` followed by `chgrp`/`chmod` would then follow the
+symlink and turn a root-authored write into an arbitrary-path root write. The
+helper now stages the file in the root-only parent directory (`/etc`, where the
+agent user cannot write, so the perms steps can never be raced onto a symlink)
+and moves it into place on the same filesystem; `rename(2)` replaces the
+directory entry atomically and never follows a symlink sitting at the
+destination. Behaviour for the agent user is unchanged — it still only reads
+`tg.env` and writes its own state files. Changed: `hivra-tg-apply` and its
+regression test, plus the version and the provider worker's release labels.
+This source release does not deploy, install, enable or start anything on a
+host or computer.
+
+Release `2026.11.17.4` builds on `2026.11.17.3` and fixes two launches broken
+by their newest upstream releases. OpenClaw 2026.11.5 refuses a loopback
+request that carries forwarded-client headers unless `gateway.trustedProxies`
+names the proxy (`proxy_attribution_required`), so its Control UI never
+loaded; the box gateway now drops the tunnel's forwarded headers on `/openclaw`
+HTTP and WebSocket traffic, as it already does for Hermes. Aeon's own
+`apps/dashboard/next.config.ts` now sets a bundler root its build needs, and
+Hivra's basePath file replaced it, so every Aeon build failed; the provisioner
+and the Update path keep Aeon's file as `next.config.hivra-upstream.ts` and
+only add the `/aeon` mount on top. A guest paused by Hivra's sleep (`qm
+suspend`) made the host capacity check refuse every launch on that host
+(`invalid QEMU status`); it now counts a paused guest as active. A failed
+guest install now also names its fixed reason (Hivra's own install error code,
+or which step exited with which status) in the host log, never launch data.
+Changed: `hivra-chat/server.js`, `provision-claude-code-box.sh`,
+`hivra-agent-app-update.sh`, `hivra-host-capacity-admission`,
+`hivra-install-agent.py`, plus the
+documents, the version and the provider worker's release labels. This source
+release does not deploy, install, enable or start anything on a host or
+computer.
+
+Release `2026.11.17.3` builds on `2026.11.17.2` and fixes Agent Zero launches
+on current images. Agent Zero reads its settings only from `/a0/usr/.env`;
+older images copied the mounted `/a0/.env` there on first start, but v2.15 and
+later do not, so a new box started with no login, its CSRF endpoint refused
+the gateway (`ok: false`), and the launch failed its readiness check after five
+minutes. The provisioner now merges the managed keys (login, and the managed
+model when one is given) into `/opt/a0/usr/.env`, keeping every other line.
+Changed: `provision-claude-code-box.sh`, plus the documents, the version and the
+provider worker's release labels. This source release does not deploy,
+install, enable or start anything on a host or computer.
+
+Release `2026.11.17.2` builds on `2026.11.17.1` and stops Hivra's own
+background reads from keeping a computer awake: the wake proxy treats a request
+carrying `X-Hivra-Background: 1` as carrying no proof, so it never moves the
+idle signal (`last_authed_at`) and never wakes a napped or hibernated VM (a
+napped VM answers it as asleep); a running guest still serves it. The header
+only takes away, so sending it cannot wake or keep awake anyone's computer.
+Changed: `hivra-wake-proxy.py`, `test_hivra_wake_proxy.py`, plus the documents,
+the version and the provider worker's release labels. This source release does
+not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.17.1` builds on `2026.11.15.7` and removes Hivra's agent
+version pins (`agent-cli-versions.json` and `agent-app-versions.json` leave the
+bundle). A new computer installs upstream's newest release of its agent at
+launch: Claude Code, Codex and OpenClaw from their npm `latest` tag, Agent Zero
+from `agent0ai/agent-zero:latest` (recorded by digest), and Aeon from its
+repository's `HEAD` commit. Hivra no longer updates an agent by itself. When the
+owner presses Update, the runtime update reports `target=latest` and
+`hivra-agent-cli-update.sh` / `hivra-agent-app-update.sh` resolve upstream's
+newest release at that moment, end at once when it is installed already, and
+otherwise swap and roll back exactly as before. Changed:
+`provision-claude-code-box.sh`, `hivra-update-guest-runtime.sh`,
+`hivra-guest-runtime-update.sh`, `hivra-agent-cli-update.sh`,
+`hivra-agent-app-update.sh`, `hivra-chat/server.js`,
+`hivra-codex-config-pin.py` (comments only), plus the documents, the version
+and the provider worker's release labels. This source release does not
+deploy, install, enable or start anything on a host or computer.
 
 Release `2026.11.15.7` builds on `2026.11.15.6` and lets Agent Zero plugin web
 interfaces load: the gateway's no-Referer static-import allowlist now also covers

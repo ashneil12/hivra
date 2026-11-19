@@ -91,6 +91,7 @@ export default function LandingHeader({ isSignedIn: isSignedInProp, tokenSurface
     { label: "Agents", href: "/#agents" },
     { label: "Computers", href: "/#computers" },
     { label: copy.nav.pricing, href: "/#pricing" },
+    { label: "Docs", href: "/docs" },
     { label: "Blog", href: "/blog" },
     { label: "Ecosystem", href: "/ecosystem" },
     ...(tokenSurfaces ? [{ label: "Litepaper", href: LITEPAPER_HREF }] : []),

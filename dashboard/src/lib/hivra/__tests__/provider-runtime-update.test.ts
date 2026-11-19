@@ -68,7 +68,7 @@ describe("dispatch script", () => {
     const guest = byTarget.get(`${dir}/guest.sh`)!;
     expect(guest.content.equals(assets.get("hivra-guest-runtime-update.sh")!)).toBe(true);
     expect(guest.digest).toBe(createHash("sha256").update(guest.content).digest("hex"));
-    for (const relative of ["hivra-chat/server.js", "hivra-chat/app.js", "hivra-agent-shell", "agent-cli-versions.json", "hivra-claude-app.py"]) {
+    for (const relative of ["hivra-chat/server.js", "hivra-chat/app.js", "hivra-agent-shell", "hivra-agent-cli-update.sh", "hivra-claude-app.py"]) {
       expect(byTarget.get(`${dir}/source/${relative}`)!.content.equals(assets.get(relative)!)).toBe(true);
     }
     const runner = byTarget.get(`${dir}/run.sh`)!.content.toString();
@@ -78,7 +78,7 @@ describe("dispatch script", () => {
 
   it("archives each runtime file once, in the layout the guest half expects", () => {
     const tar = script.split("\n").find(line => line.startsWith("tar -czf"))!;
-    expect(tar).toBe('tar -czf "$DIR/runtime.tar.gz" -C "$DIR/source/hivra-chat" server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js -C "$DIR/source" hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service agent-cli-versions.json hivra-agent-cli-update.sh hivra-codex-config-pin.py hivra-tg-apply hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json agent-app-versions.json hivra-agent-app-update.sh local-browser-keeper.py chrome-pin.json hivra-surface-watchdog.py hivra-surface-watchdog.service');
+    expect(tar).toBe('tar -czf "$DIR/runtime.tar.gz" -C "$DIR/source/hivra-chat" server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js -C "$DIR/source" hivra-agent-shell bux-ttyd-base-path.conf bux-box-ttyd.service hivra-agent-cli-update.sh hivra-codex-config-pin.py hivra-tg-apply hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json hivra-agent-app-update.sh local-browser-keeper.py chrome-pin.json hivra-surface-watchdog.py hivra-surface-watchdog.service');
   });
 
   it("refuses an operation id that is not a UUID", () => {
@@ -94,10 +94,10 @@ describe("status", () => {
     ["HIVRA_PROVIDER_RUNTIME_UPDATE_STATE lost\n", { state: "lost" }],
     ["HIVRA_PROVIDER_RUNTIME_UPDATE_STATE finished 0 1\n", { state: "finished", exitCode: 0, committed: true, agentCli: null, agentApp: null }],
     ["HIVRA_PROVIDER_RUNTIME_UPDATE_STATE finished 1 0\n", { state: "finished", exitCode: 1, committed: false, agentCli: null, agentApp: null }],
-    ["HIVRA_PROVIDER_RUNTIME_UPDATE_STATE finished 0 1\nHIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=scheduled\n",
-      { state: "finished", exitCode: 0, committed: true, agentCli: "HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=scheduled", agentApp: null }],
-    ["HIVRA_PROVIDER_RUNTIME_UPDATE_STATE finished 0 1\nHIVRA_AGENT_APP name=openclaw version=2026.4.1 target=2026.5.2 state=scheduled\n",
-      { state: "finished", exitCode: 0, committed: true, agentCli: null, agentApp: "HIVRA_AGENT_APP name=openclaw version=2026.4.1 target=2026.5.2 state=scheduled" }],
+    ["HIVRA_PROVIDER_RUNTIME_UPDATE_STATE finished 0 1\nHIVRA_AGENT_CLI name=codex version=0.149.1 target=latest state=scheduled\n",
+      { state: "finished", exitCode: 0, committed: true, agentCli: "HIVRA_AGENT_CLI name=codex version=0.149.1 target=latest state=scheduled", agentApp: null }],
+    ["HIVRA_PROVIDER_RUNTIME_UPDATE_STATE finished 0 1\nHIVRA_AGENT_APP name=openclaw version=2026.4.1 target=latest state=scheduled\n",
+      { state: "finished", exitCode: 0, committed: true, agentCli: null, agentApp: "HIVRA_AGENT_APP name=openclaw version=2026.4.1 target=latest state=scheduled" }],
   ])("reads %j", (output, expected) => {
     expect(parseProviderRuntimeUpdateStatus(output)).toEqual(expected);
   });

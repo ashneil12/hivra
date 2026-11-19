@@ -449,6 +449,41 @@ describe("Agent Zero mounted module graph", () => {
     expect(dispatched).toHaveLength(before);
   });
 
+  it("routes the A0 CLI's root connector calls to the native backend for a signed-in web session only", async () => {
+    const cookie = await sessionCookie();
+    const chats = "/api/plugins/_a0_connector/v1/chats_list";
+    const probe = "/api/plugins/_a0_connector/v1/capabilities";
+    // The capability probe is public discovery; everything else needs the session.
+    let before = dispatched.length;
+    expect(await request(probe, { method: "POST", auth: false, body: "{}" })).toMatchObject({ status: 200 });
+    expect(dispatched).toHaveLength(before + 1);
+    expect(dispatched.at(-1)?.path).toBe(probe);
+    expect(dispatched.at(-1)?.authorization).toBeUndefined();
+    before = dispatched.length;
+    expect(await request(probe, { auth: false })).toMatchObject({ status: 401 });
+    expect(await request(chats, { method: "POST", auth: false, body: "{}" })).toMatchObject({ status: 401 });
+    expect(await request("/api/csrf_token", { auth: false })).toMatchObject({ status: 401 });
+    // A browser write from another site (Origin or Sec-Fetch-Site present) cannot ride the cookie.
+    expect(await request(chats, { method: "POST", auth: false, cookie, headers: { Origin: "https://other.hivra.test" }, body: "{}" })).toMatchObject({ status: 401 });
+    expect(await request(chats, { method: "POST", auth: false, cookie, headers: { "Sec-Fetch-Site": "cross-site" }, body: "{}" })).toMatchObject({ status: 401 });
+    expect(dispatched).toHaveLength(before);
+    // A non-browser client sends the session cookie with no Origin.
+    expect(await request(chats, { method: "POST", auth: false, cookie, body: "{}" })).toMatchObject({ status: 200 });
+    expect(dispatched.at(-1)?.path).toBe(chats);
+    expect(dispatched.at(-1)?.body).toBe("{}");
+    expect(dispatched.at(-1)?.cookie ?? "").not.toContain("hivra_auth");
+    expect(dispatched.at(-1)?.authorization).toBeUndefined();
+    loginFixture = "ready";
+    expect(await request("/api/csrf_token", { auth: false, cookie })).toMatchObject({ status: 200 });
+    loginFixture = "absent";
+    await request("/agent-zero/fixture/clear-all");
+    await resetNativeCsrf();
+    // Neighbouring paths stay with the gateway.
+    before = dispatched.length;
+    expect(await request("/api/load_webui_extensions", { method: "POST", auth: false, cookie, body: "{}" })).toMatchObject({ status: 404 });
+    expect(dispatched).toHaveLength(before);
+  });
+
   it("never forwards browser backend cookies or management bearer on a native upgrade without a cached session", async () => {
     expect(await upgrade("/socket.io/?EIO=4&transport=websocket", { Authorization: `Bearer ${TOKEN}`, Cookie: "session=untrusted" })).toBe(101);
     expect(upgrades.at(-1)?.headers.cookie).toBeUndefined();

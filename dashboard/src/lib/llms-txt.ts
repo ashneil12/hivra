@@ -85,7 +85,7 @@ export function llmsTxtSections(
         { label: "Features", path: "/features", note: "Persistent memory, browser automation, scheduled tasks and several agents on one account, and which agent and plan each depends on" },
         { label: "About", path: "/about", note: "How Hivra began as HermesOS, what it does today and what it is not, its open source code, what it costs, where it is going and how to contact it" },
         { label: "Why I'm building Hivra", path: "/why-hivra", note: "The founder's note on why AI agents need separate computers, meaningful limits and infrastructure people can inspect" },
-        { label: "Compare", path: "/compare", note: "Hivra vs Agent 37, Hostinger, xCloud, Nous Hermes Cloud, a self-hosted VPS, Railway and Render, plus OpenClaw to Hermes and broader hosting choices, with a dated price table" },
+        { label: "Compare", path: "/compare", note: "Fifteen comparisons: Hivra vs Agent 37, Hostinger, xCloud, Nous Hermes Cloud, a self-hosted VPS, Railway and Render; Claude Code on the web, OpenAI Codex cloud and Cursor cloud agents; GitHub Codespaces, Fly.io Sprites and E2B sandboxes; plus OpenClaw to Hermes and broader hosting choices, with a dated price table for the hosts" },
       ],
     },
     ...(tokenSurfaces ? [    {
@@ -111,6 +111,7 @@ export function llmsTxtSections(
     {
       heading: "Updates",
       links: [
+        { label: "Docs", path: "/docs", note: "How to launch, open and update an agent, with a page for every supported agent and computer" },
         { label: "Blog", path: "/blog", note: "Guides and explainers on AI agents, hosting, and memory" },
         { label: "Changelog", path: "/changelog", note: "A dated shipping history of notable changes: new features, fixes, upstream syncs and infrastructure work. Not a promise of future features" },
         { label: "Changelog RSS feed", path: "/changelog/rss.xml", note: "Subscribe to product ships" },

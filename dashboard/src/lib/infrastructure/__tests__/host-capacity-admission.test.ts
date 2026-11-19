@@ -27,7 +27,7 @@ case "\${1:-}" in
     ;;
   status)
     [ "\${FAIL_QM_STATUS:-0}" != 1 ] || exit 43
-    printf 'status: running\\n'
+    printf 'status: %s\\n' "\${QM_STATUS-running}"
     ;;
   *) exit 44 ;;
 esac
@@ -63,6 +63,20 @@ esac
       },
     });
   }
+
+  it("counts a paused (napping) guest as active instead of refusing every launch on the host", () => {
+    const result = run({ QM_STATUS: "paused" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("active_floor_mb=512 active_max_mb=1024 active_max_cpu_milli=4000");
+  });
+
+  it("does not count a stopped guest, counts a transient one, and refuses an unreadable status", () => {
+    expect(run({ QM_STATUS: "stopped" }).stdout).toContain("active_floor_mb=0 active_max_mb=0 active_max_cpu_milli=0");
+    expect(run({ QM_STATUS: "prelaunch" }).stdout).toContain("active_floor_mb=512 active_max_mb=1024 active_max_cpu_milli=4000");
+    const unreadable = run({ QM_STATUS: "" });
+    expect(unreadable.status).not.toBe(0);
+    expect(unreadable.stderr).toContain("invalid QEMU status");
+  });
 
   it("fails closed when the QEMU inventory command fails", () => {
     const result = run({ FAIL_QM_LIST: "1" });

@@ -13,6 +13,7 @@ import { isFastWakeEnabled } from "./fast-wake-flags";
 import {
   AUTONOMOUS_KINDS,
   DESKTOP_KINDS,
+  isSleepMemoryTrimEnabled,
   parseSleepMode,
   type SleepMode,
 } from "./agent-sleep-policy";
@@ -662,6 +663,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
         manual,
         ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
         ...(hostIngress ? { hostIngress: true } : {}),
+        ...(isSleepMemoryTrimEnabled() ? { trimMemory: true } : {}),
         ...(profile ? { profile } : {}),
         ...(sleepCoverage
           ? { channelCoverage: sleepCoverage }

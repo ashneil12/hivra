@@ -28,6 +28,7 @@ import type { BillingController } from "../useBillingController";
 import { ChoiceGroup } from "./ChoiceGroup";
 import styles from "../Billing.module.css";
 import { TOKEN_PAYMENT_FINALITY } from "@/components/billing/TransferDetails";
+import { LadderPlans, usePlanLadder } from "./LadderPlans";
 
 export const PLANS_INTRO =
   `Every computer that Hivra Cloud runs for you needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. A free account works with a computer or server you connect yourself. Bring your own model key and we add nothing to what you spend.`;
@@ -269,6 +270,17 @@ export function PlannedSizesStrip() {
 }
 
 export function PlansTab({ c, heading }: { c: BillingController; heading: string }) {
+  // Plan ladder (HIVRA_PLAN_LADDER): new sign-ups and ladder subscribers see
+  // the ladder's plans. A paid plan from before the ladder sees this page
+  // exactly as before.
+  const { answer: ladderAnswer, reload: reloadLadder } = usePlanLadder();
+  if (ladderAnswer?.enabled && (ladderAnswer.offered || ladderAnswer.current)) {
+    return <LadderPlans c={c} answer={ladderAnswer} reload={reloadLadder} />;
+  }
+  return <LegacyPlansTab c={c} heading={heading} />;
+}
+
+function LegacyPlansTab({ c, heading }: { c: BillingController; heading: string }) {
   const plan = c.data?.subscribed ? c.data.plan : null;
   const source = (plan?.source ?? null) as PlanSource | null;
   const currentPlanKey = (plan?.key ?? null) as PlanKey | null;

@@ -1,7 +1,7 @@
 /** @jest-environment node */
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -51,6 +51,7 @@ cloud-init() {
     unknown) printf 'status: unknown\\nPRIVATE_DIAGNOSTIC\\n' ;;
     malformed) printf 'status: done\\nPRIVATE_DIAGNOSTIC\\n' ;;
     empty) : ;;
+    diag) printf 'status: error\\nPRIVATE_DIAGNOSTIC\\n' ;;
     *) return 1 ;;
   esac
 }
@@ -71,6 +72,8 @@ exec "$@"
       input: `set -euo pipefail
 VM_KEY=/unused-fixture-key
 IP=192.0.2.1
+VMID=1100
+CLOUD_INIT_KEEP_DIR="$FIXTURE_DIR"
 GSSH=(ssh)
 log() { printf '%s\\n' "$*" >&2; }
 fail() { log "$*"; exit 1; }
@@ -88,6 +91,9 @@ printf 'INSTALL_NEXT\\n'
       attempts: Number(readFileSync(join(fixture, "attempts"), "utf8")),
       elapsed: Number(readFileSync(join(fixture, "clock"), "utf8")),
       budgets: readFileSync(join(fixture, "timeouts"), "utf8").trim().split("\n").filter(Boolean),
+      kept: existsSync(join(fixture, "hivra-prov-1100.cloud-init.txt"))
+        ? { text: readFileSync(join(fixture, "hivra-prov-1100.cloud-init.txt"), "utf8"), mode: statSync(join(fixture, "hivra-prov-1100.cloud-init.txt")).mode & 0o777 }
+        : null,
     };
   } finally {
     rmSync(fixture, { recursive: true, force: true });
@@ -102,7 +108,7 @@ describe("guest boot gate", () => {
     expect(result.stderr).toContain("guest cloud-init completed");
   });
 
-  it.each(["error", "degraded", "sudo-denied", "missing", "disabled", "unknown", "malformed", "empty"])(
+  it.each(["disabled", "unknown", "malformed", "empty"])(
     "stops immediately on %s without copying, installing or leaking guest diagnostics", (step) => {
       const result = boot([step, "done"]);
       expect(result.status).toBe(1);
@@ -110,8 +116,31 @@ describe("guest boot gate", () => {
       expect(result.stdout).not.toContain("INSTALL_NEXT");
       expect(result.stdout + result.stderr).not.toContain("PRIVATE_DIAGNOSTIC");
       expect(result.stderr).toContain("cloud-init");
+      expect(result.kept).toBeNull();
     },
   );
+
+  it.each(["error", "degraded", "sudo-denied", "missing"])(
+    "stops on %s, keeps cloud-init's details only in a root-only host file, and never logs them", (step) => {
+      const result = boot([step, "diag"]);
+      expect(result.status).toBe(1);
+      expect(result.attempts).toBe(2);
+      expect(result.stdout).not.toContain("INSTALL_NEXT");
+      expect(result.stdout + result.stderr).not.toContain("PRIVATE_DIAGNOSTIC");
+      expect(result.stderr).toContain("guest cloud-init check failed");
+      expect(result.stderr).toContain("hivra-prov-1100.cloud-init.txt (root only)");
+      expect(result.kept).toMatchObject({ mode: 0o600 });
+      expect(result.kept!.text).toContain("PRIVATE_DIAGNOSTIC");
+      expect(result.budgets.at(-1)).toBe("--kill-after=2s 20s");
+    },
+  );
+
+  it("drops details kept from an earlier failed launch on the same VMID once the guest boots cleanly", () => {
+    const result = boot(["error", "diag"]);
+    expect(result.kept).not.toBeNull();
+    // A later clean run starts by removing the earlier file.
+    expect(source).toContain('rm -f -- "${CLOUD_INIT_KEEP_DIR:-/root}/hivra-prov-${VMID}.cloud-init.txt"');
+  });
 
   it.each(["transport", "running", "not-run", "timeout", "killed"])(
     "fails when %s never resolves, with no fall-through to installation", (step) => {

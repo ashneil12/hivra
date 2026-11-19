@@ -125,11 +125,11 @@ if [ -f "$TG_APPLY" ] && [ ! -L "$TG_APPLY" ]; then install -o root -g root -m 0
 else : > "$BACKUP/hivra-tg-apply.absent"; fi
 if [ -f "$DROPIN" ] && [ ! -L "$DROPIN" ]; then install -o root -g root -m 0600 "$DROPIN" "$BACKUP/detached-runs.conf"
 else : > "$BACKUP/detached-runs.conf.absent"; fi
-for asset in bux-ttyd-base-path.conf bux-box-ttyd.service agent-cli-versions.json hivra-agent-cli-update.sh hivra-codex-config-pin.py; do
+for asset in bux-ttyd-base-path.conf bux-box-ttyd.service hivra-agent-cli-update.sh hivra-codex-config-pin.py; do
   [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
     || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
 done
-for asset in hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json agent-app-versions.json hivra-agent-app-update.sh; do
+for asset in hivra-claude-app.py hivra-claude-app.service claude-desktop-pin.json hivra-agent-app-update.sh; do
   [ -f "$WORK/$asset" ] && [ ! -L "$WORK/$asset" ] \
     || { echo "runtime update archive is incomplete or unsafe" >&2; exit 1; }
 done
@@ -395,11 +395,12 @@ rm -rf -- "$BACKUP_ROOT/previous"
 mv -- "$BACKUP" "$BACKUP_ROOT/previous"
 COMMITTED=1
 
-# Agent CLI (Claude Code / Codex computers). Vendor self-updaters stay off, so
-# Hivra moves the CLI to this release's vetted version (agent-cli-versions.json):
-# hivra-agent-cli-update.sh runs as a transient unit that downloads, waits for
-# in-flight chat runs to finish, swaps and verifies, so a slow download never
-# holds this request. Nothing here can fail the committed update above.
+# Agent CLI (Claude Code / Codex computers). This update runs only when the
+# owner presses Update, and it moves the CLI to the newest release on npm
+# (Hivra pins no version): hivra-agent-cli-update.sh runs as a transient unit
+# that resolves "latest", downloads, waits for in-flight chat runs to finish,
+# swaps and verifies, so a slow download never holds this request. Nothing
+# here can fail the committed update above.
 AGENT_CLI_HELPER=/usr/local/sbin/hivra-agent-cli-update
 agent_cli_report() {
   local name bin target version state
@@ -412,10 +413,7 @@ agent_cli_report() {
     runuser -u bux -- env -i HOME=/home/bux PATH=/usr/bin:/bin python3 -I - <"$WORK/hivra-codex-config-pin.py" >/dev/null 2>&1 \
       || echo "the Codex startup update check could not be turned off" >&2
   fi
-  target="$(python3 -I -c 'import json, re, sys
-value = json.load(open(sys.argv[1])).get(sys.argv[2])
-if not isinstance(value, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value): sys.exit(1)
-print(value)' "$WORK/agent-cli-versions.json" "$name")" || return 0
+  target=latest
   install -o root -g root -m 0700 "$WORK/hivra-agent-cli-update.sh" "$AGENT_CLI_HELPER"
   version="$(runuser -u bux -- env -i HOME=/home/bux PATH=/home/bux/.npm-global/bin:/usr/local/bin:/usr/bin:/bin DISABLE_AUTOUPDATER=1 \
     timeout -k 5 30 "$bin" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)" || version=""
@@ -437,28 +435,19 @@ print(value)' "$WORK/agent-cli-versions.json" "$name")" || return 0
 }
 agent_cli_report || true
 
-# Agent app (Aeon dashboard, OpenClaw, Agent Zero, Hermes computers). Hivra moves the
-# app to this release's tested version (agent-app-versions.json) the same way:
-# hivra-agent-app-update.sh runs as a transient unit that prepares the new
-# version next to the running one, waits until nobody is using the app, swaps,
-# checks it and puts the previous version back on failure. Hermes has no Hivra
-# pin: its target is the word "latest" and the helper runs Hermes's own
-# `hermes update --yes`. Nothing here can fail the committed update above.
+# Agent app (Aeon dashboard, OpenClaw, Agent Zero, Hermes, OpenBot, Nuphos
+# computers), the same way: Hivra pins no app version, so the target is always
+# the word "latest" and hivra-agent-app-update.sh resolves it to upstream's
+# newest release, prepares it next to the running one, waits until nobody is
+# using the app, swaps, checks it and puts the previous version back on
+# failure (for Hermes it runs Hermes's own `hermes update --yes`). Nothing here
+# can fail the committed update above.
 AGENT_APP_HELPER=/usr/local/sbin/hivra-agent-app-update
 AGENT_APP_RECORD=/var/lib/hivra/agent-app.json
 agent_app_report() {
   local name="$KIND_BEFORE" target version state
   case "$name" in aeon|openclaw|agent-zero|hermes|openbot|nuphos) ;; *) return 0 ;; esac
-  if [ "$name" = hermes ] || [ "$name" = openbot ] || [ "$name" = nuphos ]; then
-    target=latest
-  else
-  target="$(python3 -I -c 'import json, re, sys
-pins = {"aeon": r"[0-9a-f]{40}", "openclaw": r"[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}", "agent-zero": r"sha256:[0-9a-f]{64}"}
-entry = json.load(open(sys.argv[1])).get(sys.argv[2])
-value = entry.get("version") if isinstance(entry, dict) else None
-if not isinstance(value, str) or not re.fullmatch(pins[sys.argv[2]], value): sys.exit(1)
-print(value)' "$WORK/agent-app-versions.json" "$name")" || return 0
-  fi
+  target=latest
   install -o root -g root -m 0700 "$WORK/hivra-agent-app-update.sh" "$AGENT_APP_HELPER"
   case "$name" in
     openclaw)

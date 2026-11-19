@@ -29,9 +29,9 @@ const sentBearer = (fetcher: jest.Mock) => fetcher.mock.calls.some(([, init]) =>
 
 describe("readAgentSoftwareFromBox", () => {
   it("reads the version with the bearer only after the public reply proves a current connection service of this kind", async () => {
-    const fetcher = fakeBox(CURRENT_META, { ...CURRENT_META, agentCli: { name: "codex", version: "0.149.0", update: { state: "waiting", target: "0.149.1", updatedAt: "2026-09-25T00:30:00Z" } } });
+    const fetcher = fakeBox(CURRENT_META, { ...CURRENT_META, agentCli: { name: "codex", version: "0.149.0", update: { state: "waiting", target: "latest", updatedAt: "2026-09-25T00:30:00Z" } } });
     const reading = await readAgentSoftwareFromBox(target(), fetcher);
-    expect(reading).toEqual({ observation: "reported", report: { name: "codex", version: "0.149.0", update: { state: "waiting", target: "0.149.1", updatedAt: "2026-09-25T00:30:00Z", reason: null } } });
+    expect(reading).toEqual({ observation: "reported", report: { name: "codex", version: "0.149.0", update: { state: "waiting", target: "latest", updatedAt: "2026-09-25T00:30:00Z", reason: null } } });
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([`${ORIGIN}/api/meta`, `${ORIGIN}/api/meta`]);
     const [first, second] = fetcher.mock.calls.map(([, init]) => init as RequestInit);
     expect(new Headers(first.headers).has("authorization")).toBe(false);
@@ -303,19 +303,19 @@ describe("against the real connection service", () => {
   it("reports the installed version once read, and every update state the helper writes", async () => {
     expect(await until((value) => value.observation === "reported")).toEqual({ observation: "reported", report: { name: "codex", version: "0.149.0", update: null } });
     for (const state of ["downloading", "waiting", "installing"]) {
-      writeStatus({ name: "codex", state, from: "0.149.0", to: "0.149.1", updatedAt: "2026-09-25T00:30:00Z" });
-      expect(await read()).toEqual({ observation: "reported", report: { name: "codex", version: "0.149.0", update: { state, target: "0.149.1", updatedAt: "2026-09-25T00:30:00Z", reason: null } } });
+      writeStatus({ name: "codex", state, from: "0.149.0", to: "latest", updatedAt: "2026-09-25T00:30:00Z" });
+      expect(await read()).toEqual({ observation: "reported", report: { name: "codex", version: "0.149.0", update: { state, target: "latest", updatedAt: "2026-09-25T00:30:00Z", reason: null } } });
     }
-    writeStatus({ name: "codex", state: "rolled_back", from: "0.149.0", to: "0.149.1", updatedAt: "2026-09-25T00:30:00Z", reason: "install_failed" });
+    writeStatus({ name: "codex", state: "rolled_back", from: "0.149.0", to: "latest", updatedAt: "2026-09-25T00:30:00Z", reason: "install_failed" });
     expect(await read()).toMatchObject({ report: { update: { state: "rolled_back", reason: "install_failed" } } });
   }, 20_000);
 
   it("shows the finished swap with the old version first, then the new one", async () => {
     writeCodex("0.149.1", 1);
-    writeStatus({ name: "codex", state: "done", from: "0.149.0", to: "0.149.1", updatedAt: "2026-09-25T00:31:00Z" });
-    expect(await read()).toMatchObject({ report: { version: "0.149.0", update: { state: "done", target: "0.149.1" } } });
+    writeStatus({ name: "codex", state: "done", from: "0.149.0", to: "latest", updatedAt: "2026-09-25T00:31:00Z" });
+    expect(await read()).toMatchObject({ report: { version: "0.149.0", update: { state: "done", target: "latest" } } });
     expect(await until((value) => value.observation === "reported" && value.report.version === "0.149.1"))
-      .toMatchObject({ report: { version: "0.149.1", update: { state: "done", target: "0.149.1" } } });
+      .toMatchObject({ report: { version: "0.149.1", update: { state: "done", target: "latest" } } });
   }, 20_000);
 
   it("reads replies and agent terminals for the idle check", async () => {

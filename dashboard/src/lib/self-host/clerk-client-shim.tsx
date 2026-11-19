@@ -117,6 +117,21 @@ export function useSession() {
 }
 
 /**
+ * The desktop app's ticket sign-in (app/desktop/finish) is a hosted-only
+ * flow: a self-hosted install signs in with its local operator account, so
+ * this stand-in is never loaded and never signs anyone in.
+ */
+export function useClerk() {
+  return {
+    loaded: false,
+    session: null,
+    client: null,
+    signOut: async () => {},
+    setActive: async () => {},
+  };
+}
+
+/**
  * Clerk's useReverification retries a request after its "confirm it's you"
  * dialog. A local operator has no such dialog, and the server shim answers
  * that check for any signed-in operator, so requests go straight through.

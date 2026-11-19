@@ -38,7 +38,10 @@ wake_url (the owner's agent page, which wakes it through the server); other
 requests get 503. When the nap said `server-disarm` (a channel such as Telegram
 is armed and only Hivra can take it down), a client wake goes to Hivra as a
 wake-request instead of a local cont. The idle signal (`last_authed_at` in
-stats) moves only on a verified ticket, bearer or bootstrap.
+stats) moves only on a verified ticket, bearer or bootstrap. A request with
+`X-Hivra-Background: 1` (Hivra's own cron and probe reads) carries no proof
+here: it never moves `last_authed_at` and never wakes a napped VM; a napped VM
+answers it as asleep.
 
 Calls to Hivra (only once the install step wrote a host credential to
 /etc/hivra/ingress/host-credential.json; without it the proxy calls nothing).
@@ -144,6 +147,8 @@ BAD_PROOF_WINDOW = 60.0
 BAD_PROOF_SOURCES = 4096
 WAKE_CONNECT_DEADLINE = 3.0
 WAKE_URL_MAX = 512
+# Sent by Hivra's own background reads of a computer; see background_request.
+BACKGROUND_HEADER = "x-hivra-background"
 
 # The guest fixup after a proxy wake: the host's clock, then drop the paused
 # guest's dead :443 connections. It never touches the guest's tunnel unit,
@@ -1739,6 +1744,11 @@ class Forwarder(object):
             proof = bootstrap_proof(body)
         if proof is None:
             proof = bearer_proof(request)
+        if background_request(request):
+            # Hivra's own background reads (cron watchdogs, samplers, probes) carry the box's bearer but are
+            # not use: they never move last_authed_at and never wake a napped or hibernated VM. They still
+            # reach a running guest and count in inflight/last_any like any request.
+            proof = None
         if vmid in self.draining:
             await self.asleep(request, writer)
             return
@@ -2036,6 +2046,14 @@ def bootstrap_proof(body):
     values = form.get("token") or []
     token = values[0] if values else ""
     return {"kind": "bootstrap", "token": token} if 1 <= len(token) <= PROOF_MAX else None
+
+
+def background_request(request):
+    """True when the request says it is a Hivra background read (BACKGROUND_HEADER: 1). Anyone can send the
+    header, but it only takes away: such a request never counts as the owner's use and never wakes the VM, so a
+    user who spoofs it only lets their own computer nap sooner."""
+    values = request.header(BACKGROUND_HEADER)
+    return len(values) == 1 and values[0].strip() == "1"
 
 
 def bearer_proof(request):

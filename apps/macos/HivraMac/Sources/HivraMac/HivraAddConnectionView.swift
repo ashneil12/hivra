@@ -52,7 +52,7 @@ struct HivraAddConnectionView: View {
                     .accessibilityLabel("Connection could not be added. \(validationMessage)")
             }
 
-            Divider()
+            Rectangle().fill(HivraDesign.stroke(.regular, for: colorScheme)).frame(height: 1)
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -66,7 +66,7 @@ struct HivraAddConnectionView: View {
             .padding(20)
         }
         .frame(width: 510)
-        .background(HivraDesign.background(for: colorScheme))
+        .background { HivraWindowBackground(tintStrength: 0.9) }
         .onChange(of: kind) { previous, next in
             if address.isEmpty || address == defaultAddress(for: previous) {
                 address = defaultAddress(for: next)

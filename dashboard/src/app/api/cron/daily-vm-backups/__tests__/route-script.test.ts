@@ -21,6 +21,13 @@ describe("daily VM backup host script", () => {
     expect(decodeEmbeddedDailyBackupScript()).toBe(sourceScript);
   });
 
+  it("skips memory-backed scratch roots unless they are named explicitly", () => {
+    const embedded = decodeEmbeddedDailyBackupScript();
+
+    expect(embedded).toContain("skipped=memory_backed");
+    expect(embedded).toContain('[ -z "${HERMES_DAILY_BACKUP_SCRATCH_ROOTS:-}" ] && { [ "$fs" = tmpfs ] || [ "$fs" = ramfs ]; }');
+  });
+
   it("refuses live snapshot backups when host memory headroom is unsafe", () => {
     const sourceScript = readRepoFile("scripts/ops/backup-vm-daily.sh");
 
@@ -75,5 +82,50 @@ describe("daily VM backup host script", () => {
 
     expect(preflightScript).toContain("HERMES_DAILY_BACKUP_PREFLIGHT_ONLY=1");
     expect(preflightScript).toContain("--apply");
+  });
+});
+
+describe("daily VM backup age encryption", () => {
+  const script = readRepoFile("scripts/ops/backup-vm-daily.sh");
+  const route = readRepoFile("src/app/api/cron/daily-vm-backups/route.ts");
+
+  it("refuses with distinct codes before vzdump, never installing age", () => {
+    expect(script).toContain("REFUSING_BACKUP_NO_AGE");
+    expect(script).toContain("REFUSING_BACKUP_BAD_AGE_RECIPIENT");
+    expect(script).toContain("^age1[0-9a-z]{58}$");
+    expect(script.indexOf("REFUSING_BACKUP_NO_AGE")).toBeLessThan(script.indexOf('vzdump "$VMID"'));
+    expect(script).not.toMatch(/apt(-get)? install/);
+  });
+
+  it("encrypts before upload, uploads the .age file and drops the plaintext", () => {
+    const enc = script.indexOf('age -r "$BACKUP_AGE_RECIPIENT" -o "$ARCHIVE.age" "$ARCHIVE"');
+    expect(enc).toBeGreaterThan(script.indexOf('vzdump "$VMID"'));
+    expect(enc).toBeLessThan(script.indexOf('rsync -a --inplace --partial -e ssh "$ARCHIVE"'));
+    expect(script).toContain('REMOTE_ARCHIVE="$REMOTE_ARCHIVE.age"');
+    expect(script).toContain('"plain_sha256"');
+  });
+
+  it("retention accepts and deletes the .age path", () => {
+    expect(script).toContain(String.raw`\.vma\.zst(\.age)?$"`);
+  });
+
+  it("the route refuses to back up when the switch is on and the recipient is unusable", () => {
+    expect(route).toContain("resolveBackupEncryption(process.env)");
+    expect(route).toContain("backup_encryption_misconfigured");
+    expect(route.indexOf("backup_encryption_misconfigured")).toBeLessThan(route.indexOf("const results = {"));
+  });
+
+  it("only the public recipient reaches script command lines", () => {
+    expect(route).toContain("backupEncryptionEnvPrefix");
+    expect(route).not.toContain("process.env.HERMES_BACKUP_AGE_IDENTITY");
+    expect(script).not.toContain("HERMES_BACKUP_AGE_IDENTITY");
+  });
+
+  it("restore smoke understands .age backups and owns removal of the identity file", () => {
+    const smoke = decodeEmbeddedDailyBackupScript(); // keep the b64 constant parsed
+    expect(smoke).toBe(script);
+    expect(route).toContain("age -d -i \"$HERMES_BACKUP_AGE_IDENTITY_FILE\"");
+    expect(route).toContain("removeOnExit: false");
+    expect(route).toContain("hermes-age-identity.*) trap");
   });
 });
