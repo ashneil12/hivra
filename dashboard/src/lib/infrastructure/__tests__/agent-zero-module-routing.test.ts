@@ -34,6 +34,7 @@ const MODULES: Record<string, string> = {
 describe("Agent Zero mounted module graph", () => {
   let gateway: http.Server;
   let upstream: http.Server;
+  let desktopBroker: http.Server;
   let port: number;
   let moduleGraph = false;
   let requireNativeCsrf = false;
@@ -107,6 +108,8 @@ describe("Agent Zero mounted module graph", () => {
   }
 
   beforeAll(async () => {
+    desktopBroker = http.createServer((_req, res) => { res.writeHead(403); res.end("desktop broker"); });
+    track(desktopBroker); desktopBroker.listen(0, "127.0.0.1"); await once(desktopBroker, "listening");
     upstream = http.createServer((req, res) => {
       let body = ""; req.setEncoding("utf8"); req.on("data", chunk => { body += chunk; });
       req.on("end", () => {
@@ -264,6 +267,7 @@ describe("Agent Zero mounted module graph", () => {
         throw new Error(`Unexpected dependency ${name}`);
       },
       process: { env: { HIVRA_CHAT_PORT: "0", HIVRA_AGENT_KIND: "agent-zero",
+        HIVRA_REMOTE_DESKTOP_BROKER_PORT: String((desktopBroker.address() as AddressInfo).port),
         AGENT_ZERO_PORT: String((upstream.address() as AddressInfo).port) } },
       __dirname: path.dirname(serverPath), Buffer, URL, URLSearchParams, setTimeout, clearTimeout,
       console: { log() {}, warn(...values: unknown[]) { warnings.push(values.join(" ")); }, error() {} },
@@ -276,7 +280,7 @@ describe("Agent Zero mounted module graph", () => {
     for (const client of wsServer.clients) client.terminate();
     wsServer.close();
     for (const socket of sockets) socket.destroy();
-    await Promise.all([gateway, upstream].map(server => new Promise<void>((resolve, reject) => {
+    await Promise.all([gateway, upstream, desktopBroker].map(server => new Promise<void>((resolve, reject) => {
       server.close(error => error ? reject(error) : resolve());
     })));
   });
@@ -288,6 +292,39 @@ describe("Agent Zero mounted module graph", () => {
     const secondUrl = new URL("./second.js", ORIGIN + "/js/first.js?v=1").pathname;
     expect(secondUrl).toBe("/js/second.js");
     expect(await request(secondUrl, { ref: "/js/first.js" })).toMatchObject({ status: 200, body: "export const ready = true;" });
+  });
+
+  const browserPath = "/desktop/session/browser-" + "a".repeat(32) + "/";
+  it("serves the Xpra iframe, assets and session info from their original root URLs", async () => {
+    const cookie = await sessionCookie();
+    for (const [url, ref] of [
+      [browserPath + "index.html?path=" + encodeURIComponent(browserPath), "/agent-zero/"],
+      [browserPath + "js/Client.js", browserPath + "index.html"],
+      [browserPath + "Info", undefined],
+    ] as const) {
+      const before = dispatched.length;
+      expect(await request(url, { ref, auth: false })).toMatchObject({ status: 401 });
+      expect(await request(url, { ref, auth: false, cookie })).toMatchObject({ status: 200, location: undefined });
+      expect(dispatched.slice(before)).toEqual([expect.objectContaining({ method: "GET", path: url })]);
+      expect(dispatched.at(-1)?.cookie ?? "").not.toContain(cookie);
+    }
+    for (const url of ["/desktop/handoff", "/desktop/sessions/test/", "/desktop/session/browser-no-match/"]) {
+      expect(await request(url, { cookie })).toMatchObject({ status: 403, body: "desktop broker" });
+    }
+  });
+
+  it("routes the Xpra WebSocket with the same owner session and Origin checks as the native app", async () => {
+    const cookie = await sessionCookie();
+    const before = upgrades.length;
+    const url = browserPath + "?encoding=jpeg";
+    await request("/agent-zero/api/csrf_token", { cookie });
+    try {
+      expect(await upgrade(url, {})).toBe(401);
+      expect(await upgrade(url, { Cookie: cookie })).toBe(401);
+      expect(await upgrade(url, { Cookie: cookie, Origin: ORIGIN, "Sec-WebSocket-Protocol": "binary" })).toBe(101);
+      expect(upgrades.slice(before)).toEqual([expect.objectContaining({ path: url,
+        headers: expect.objectContaining({ cookie: `${NATIVE_COOKIE}; native_aux=retained; csrf_token_${RUNTIME_ID}=${CSRF_TOKEN}`, "sec-websocket-protocol": "binary" }) })]);
+    } finally { await request("/agent-zero/fixture/clear-all"); }
   });
 
   it.each(Object.keys(EDITOR_FIXTURES))("transforms only the pinned native editor at root and mounted paths: %s", async asset => {

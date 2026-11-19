@@ -490,4 +490,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261118230000", name: "provider_release_admission_2026_11_18_5" },
   { version: "20261119140000", name: "agent_setup_requests" },
   { version: "20261119150000", name: "card_trial" },
+  { version: "20261119151000", name: "provider_release_admission_2026_11_19_1" },
 ];
