@@ -258,9 +258,13 @@ A separate test reads the live Launch page and fails if it offers a tile that
 
 **Where it runs.** Not from this repository's Actions: the public-tree rules keep
 workflows bound to live infrastructure out of the public tree, and public run logs
-would show Canary's internals. The schedule (weekly, and before every release into `main`) runs from a private
-operations runner that checks out this repository and runs the commands below with
-the Canary test credentials.
+would show Canary's internals. A private runner sweeps Canary nightly and within
+15 minutes of every merge into `canary`, checking out the exact commit Canary
+serves, and records the verdict on that commit as the `launch-sweep` commit
+status. Production Promote requires a green one
+(`ops/launch-sweep-runner/README.md`, and "Launch sweep before Promote" in
+`docs/release/MANAGED-HOSTING-RELEASES.md`). By hand, with the Canary test
+credentials:
 
 ```bash
 CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \

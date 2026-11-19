@@ -146,6 +146,28 @@ export function sweepVerdict(results: SweepResult[]): {
   return { ok: broken.length === 0 && leaked.length === 0 && privateOnlyFailed.length === 0, broken, leaked, privateOnlyFailed };
 }
 
+/** The verdict as counts, for a commit status. */
+export function verdictCounts(results: SweepResult[]): {
+  ok: boolean;
+  total: number;
+  passed: number;
+  knownBroken: number;
+  broken: number;
+  leaked: number;
+  privateOnlyFailed: number;
+} {
+  const verdict = sweepVerdict(results);
+  return {
+    ok: results.length > 0 && verdict.ok,
+    total: results.length,
+    passed: results.filter((row) => row.passed).length,
+    knownBroken: results.filter((row) => !row.passed && row.knownBroken).length,
+    broken: verdict.broken.length,
+    leaked: verdict.leaked.length,
+    privateOnlyFailed: verdict.privateOnlyFailed.length,
+  };
+}
+
 export function sweepMarkdown(results: SweepResult[]): string {
   const rows = [...results].sort((a, b) => a.tile.localeCompare(b.tile));
   const verdict = sweepVerdict(rows);

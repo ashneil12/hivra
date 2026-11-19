@@ -1,0 +1,42 @@
+# The pre-Promote gate: a production candidate on main must have a green launch
+# sweep, on itself or on a Canary commit with the same source tree. The sweep
+# runs on a private runner and records `launch-sweep` commit statuses here
+# (docs/release/MANAGED-HOSTING-RELEASES.md, "Launch sweep before Promote").
+# Read-only: it only reads statuses, deployments and trees through the API.
+name: Launch sweep gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Candidate commit SHA (default: the run commit)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  deployments: read
+  statuses: read
+
+jobs:
+  gate:
+    name: Green launch sweep for this source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Check the launch sweep for the candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/release/launch-sweep-status.mjs gate "$CANDIDATE" | tee -a "$GITHUB_STEP_SUMMARY"

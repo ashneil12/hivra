@@ -76,11 +76,18 @@ Do not overwrite Canary experiments with a blanket reset to main.
    `hermesos-canary`, a retired private repository, or a feature worktree). That
    build must not move any domain; it only stages a candidate for step 4. Canary is
    never CLI-deployed. Keep credentials out of GitHub PRs, logs, and source control.
-4. Review the exact candidate and approve production separately. In Vercel select
+4. Check that the candidate has a green launch sweep:
+   `node scripts/release/launch-sweep-status.mjs gate <candidate-sha>` (the
+   **Launch sweep gate** check on `main` runs the same). It passes only when the
+   candidate, or a Canary commit with the same source tree, has a green
+   `launch-sweep` status (see "Launch sweep before Promote" below). Do not
+   Promote a candidate that fails it; a skip is the owner's explicit decision,
+   recorded in the Promote packet with the reason.
+5. Review the exact candidate and approve production separately. In Vercel select
    the `hermesos` deployment and **Promote**. A trusted operator may instead use
    `vercel promote <verified-deployment-id>`. This action changes live traffic;
    merging a PR, passing CI, or preparing a candidate does not authorize it.
-5. Confirm the custom domain points to that deployment, then verify the affected
+6. Confirm the custom domain points to that deployment, then verify the affected
    authenticated user workflow and preservation of existing state. If it regresses,
    restore the recorded prior deployment and investigate before trying again.
 
@@ -88,6 +95,22 @@ A source/tree match is necessary but insufficient: production environment values
 can differ from Canary. Check changed configuration and migration compatibility.
 Keep the previous deployment available. Vercel rollback does not undo database
 migrations or external side effects; those require a separately reviewed plan.
+
+## Launch sweep before Promote
+
+The launch sweep launches every tile on Canary's Launch page as a new customer,
+asks it a question, checks the answer and deletes everything
+(`dashboard/e2e/README.md`, LAUNCH SWEEP). A private runner runs it nightly and
+after every merge into `canary`, against the commit Canary serves, and records
+the verdict on that commit as the `launch-sweep` commit status
+([runner setup](../../ops/launch-sweep-runner/README.md)).
+
+The gate (`scripts/release/launch-sweep-status.mjs gate`) reads only those
+statuses, the Canary project's GitHub deployments and commit trees. A candidate
+matches a Canary commit when the whole tree is the same, or the `dashboard/` tree
+is (a docs-only difference outside `dashboard/` does not change what production
+builds). It changes nothing in Vercel and is not a substitute for checking
+production configuration and migrations.
 
 ## Queued database steps
 
