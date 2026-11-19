@@ -10,6 +10,7 @@ import {
   rmSync,
   utimesSync,
   writeFileSync,
+  statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -99,15 +100,31 @@ function backedUpFixture(): Fixture {
   mkdirSync(join(workspace, "project"), { recursive: true });
   execFileSync("python3", [
     "-c",
-    `import sqlite3, sys
+    // The live box never checkpoints before the copy: the committed table lives
+    // only in the WAL, so the drill passes only if it restores the sidecar too.
+    `import os, sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 c.execute("PRAGMA journal_mode=WAL")
+c.execute("PRAGMA wal_autocheckpoint=0")
 c.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT)")
 c.executemany("INSERT INTO sessions VALUES (?, ?)", [("s%d" % i, "chat %d" % i * 20) for i in range(500)])
 c.commit()
-c.close()`,
+sys.stdout.flush()
+os._exit(0)`,
     join(state, "profiles", "main", "state.db"),
   ]);
+  const dbPath = join(state, "profiles", "main", "state.db");
+  const mainOnly = join(work, "main-only.db");
+  cpSync(dbPath, mainOnly);
+  const mainTables = execFileSync("python3", [
+    "-c",
+    `import sqlite3, sys; print(sqlite3.connect(sys.argv[1]).execute("SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0])`,
+    mainOnly,
+  ]).toString().trim();
+  if (mainTables !== "0" || statSync(dbPath + "-wal").size === 0) {
+    throw new Error("fixture database was checkpointed; the WAL path would go untested");
+  }
+  rmSync(mainOnly);
   const stable = ["config.yaml", "profiles/main/SOUL.md", "profiles/main/memory.json"];
   writeFileSync(join(state, "config.yaml"), "model: test\nprovider: venice\n");
   writeFileSync(join(state, "profiles", "main", "SOUL.md"), "# Main profile\n");
@@ -164,7 +181,8 @@ describe("restic restore drill against a real restic repo", () => {
       instance: INSTANCE_ID,
       snapshot: snapshots[0].short_id,
       cleanup: "removed",
-      files: 4,
+      // config.yaml, SOUL.md, memory.json, state.db and its -wal and -shm sidecars.
+      files: 6,
       databases_total: 1,
       databases: [{ path: "profiles/main/state.db", ok: true, result: "ok", tables: 1 }],
       compare: { status: "compared", sampled: 3, matched: 3, changed: 0, missing: 0 },
