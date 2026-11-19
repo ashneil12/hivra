@@ -30,8 +30,13 @@ anything a crashed run left; the workflow runs it after every sweep.
 
 ## Set it up once
 
-1. Create a private repository (for example `ashneil12/hivra-launch-sweep`) and
-   copy `launch-sweep.yml` to its `.github/workflows/`.
+1. Create a private repository (for example `ashneil12/hivra-launch-sweep`).
+   From the same reviewed source revision, copy `launch-sweep.yml` to its
+   `.github/workflows/` and `scripts/release/launch-sweep-status.mjs` to its
+   root as `launch-sweep-status.mjs`. Commit them together. The private copy
+   discovers Canary's served revision and writes statuses; it is not loaded
+   from the tested tree, so release mode can verify the runner before the
+   gate merges. Update the workflow and helper together.
 2. Register a self-hosted runner on it with the labels `self-hosted` and
    `launch-sweep`. A small Linux VM (2 vCPU, 4 GB, Ubuntu 24.04) is enough: the
    computers it launches run on Hivra's own hosts, and the 15-minute poll costs
@@ -73,10 +78,12 @@ anything a crashed run left; the workflow runs it after every sweep.
 
 4. Optional variables: `CUSTOMER_PATH_AGENT` (the reference agent, default `claude-code`), `LAUNCH_SWEEP_SAMPLE_SIZE` (tiles per night, default 3), `LAUNCH_SWEEP_WORKERS` (parallel targets, default 1: two launches at once on Canary's single host have failed at kickoff) and
    `LAUNCH_SWEEP_RUNS_ON` (a JSON list of runner labels).
-5. Run the workflow once by hand in `sample` mode with `only` set to
-   `ubuntu-server` to check the setup; its results are in the run's artifacts
-   and it records no status. Then run it in `release` mode and check that the
-   tested commit in `ashneil12/hivra` shows a `launch-sweep` status.
+5. With card trials enabled on Canary in Stripe test mode, run `release`
+   by hand and check for a successful `launch-sweep` status on the served
+   commit in `ashneil12/hivra`, linking to that private run. Verify this
+   before merging the gate. To check just the launch harness, run `sample`
+   mode with `only` set to `ubuntu-server`; that diagnostic writes no status.
+   Scheduled rotation needs `test:launch-sweep:sample` in the served tree.
 
 ## Reading a result
 

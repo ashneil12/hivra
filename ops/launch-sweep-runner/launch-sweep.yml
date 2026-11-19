@@ -1,5 +1,6 @@
 # Canary release testing on a schedule. Copy this file to .github/workflows/ in
-# the private runner repository (see README.md next to it). It is not a workflow
+# the private runner repository with launch-sweep-status.mjs as described in
+# the README. It is not a workflow
 # of this public repository: it needs Canary admin and Stripe test secrets and
 # launches real computers.
 #
@@ -49,9 +50,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ashneil12/hivra
-          ref: canary
-          sparse-checkout: scripts/release
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
@@ -62,14 +62,15 @@ jobs:
           SCHEDULE: ${{ github.event.schedule }}
           INPUT_MODE: ${{ inputs.mode }}
         run: |
-          sha="$(node scripts/release/launch-sweep-status.mjs served-sha)"
+          sha="$(node launch-sweep-status.mjs served-sha)"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           if [ "$EVENT" = "workflow_dispatch" ]; then
             echo "mode=$INPUT_MODE" >> "$GITHUB_OUTPUT"
             echo "run=true" >> "$GITHUB_OUTPUT"
           elif [ "$SCHEDULE" = "*/15 * * * *" ]; then
+            run="$(node launch-sweep-status.mjs needs-sweep --sha "$sha")"
             echo "mode=release" >> "$GITHUB_OUTPUT"
-            echo "run=$(node scripts/release/launch-sweep-status.mjs needs-sweep --sha "$sha")" >> "$GITHUB_OUTPUT"
+            echo "run=$run" >> "$GITHUB_OUTPUT"
           else
             echo "mode=sample" >> "$GITHUB_OUTPUT"
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -84,7 +85,7 @@ jobs:
       SHA: ${{ needs.pick.outputs.sha }}
       MODE: ${{ needs.pick.outputs.mode }}
       STATUS_CONTEXT: ${{ needs.pick.outputs.mode == 'release' && 'launch-sweep' || 'launch-sample' }}
-      GITHUB_TOKEN: ${{ secrets.HIVRA_STATUS_TOKEN }}
+      STATUS_HELPER: ${{ github.workspace }}/runner-tools/launch-sweep-status.mjs
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       LAUNCH_SWEEP_RUN_ID: gh${{ github.run_id }}
       LAUNCH_SWEEP_OUT_DIR: ${{ github.workspace }}/out
@@ -93,36 +94,51 @@ jobs:
       LAUNCH_SWEEP_SAMPLE_SIZE: ${{ vars.LAUNCH_SWEEP_SAMPLE_SIZE || '3' }}
       LAUNCH_SWEEP_ONLY: ${{ inputs.only || '' }}
       CUSTOMER_PATH_AGENT: ${{ vars.CUSTOMER_PATH_AGENT || 'claude-code' }}
-      CLERK_SECRET_KEY: ${{ secrets.LAUNCH_SWEEP_CLERK_SECRET_KEY }}
-      LAUNCH_SWEEP_SUPABASE_URL: ${{ secrets.LAUNCH_SWEEP_SUPABASE_URL }}
-      LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY }}
-      TRIAL_JOURNEY_STRIPE_SECRET_KEY: ${{ secrets.TRIAL_JOURNEY_STRIPE_SECRET_KEY }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        id: runner_tools
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: runner-tools
+          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ashneil12/hivra
           ref: ${{ needs.pick.outputs.sha }}
+          path: hivra
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: dashboard/package-lock.json
+          cache-dependency-path: hivra/dashboard/package-lock.json
       # A run limited with `only` checks a few tiles by hand; it never records
       # a status on the commit, so it cannot stand in for a full run.
       - name: Mark the commit as being tested
         if: env.LAUNCH_SWEEP_ONLY == ''
-        run: node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --context "$STATUS_CONTEXT" --state pending --description "Testing on Canary ($MODE)" --target-url "$RUN_URL"
+        env:
+          GITHUB_TOKEN: ${{ secrets.HIVRA_STATUS_TOKEN }}
+        run: node "$STATUS_HELPER" publish --sha "$SHA" --context "$STATUS_CONTEXT" --state pending --description "Testing on Canary ($MODE)" --target-url "$RUN_URL"
       - name: Install
-        working-directory: dashboard
+        working-directory: hivra/dashboard
         run: |
           npm ci
           npx playwright install --with-deps chromium
       - name: Run the customer path or tonight's sample on Canary
         id: sweep
-        working-directory: dashboard
+        working-directory: hivra/dashboard
         continue-on-error: true
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.LAUNCH_SWEEP_CLERK_SECRET_KEY }}
+          LAUNCH_SWEEP_SUPABASE_URL: ${{ secrets.LAUNCH_SWEEP_SUPABASE_URL }}
+          LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY }}
+          TRIAL_JOURNEY_STRIPE_SECRET_KEY: ${{ secrets.TRIAL_JOURNEY_STRIPE_SECRET_KEY }}
         run: |
           if [ "$MODE" = "release" ]; then
+            if [[ "$CUSTOMER_PATH_AGENT" =~ ^[[:space:]]*none[[:space:]]*$ ]]; then
+              echo "::error::Release testing requires a reference agent."
+              exit 1
+            fi
             npm run test:trial-journey
           else
             if [ -z "$LAUNCH_SWEEP_ONLY" ]; then export LAUNCH_SWEEP_ONLY="$(npm run -s test:launch-sweep:sample)"; fi
@@ -131,25 +147,28 @@ jobs:
           fi
       - name: Summary
         if: always() && env.MODE == 'sample'
-        working-directory: dashboard
+        working-directory: hivra/dashboard
         continue-on-error: true
         run: npm run test:launch-sweep:summary -- "$LAUNCH_SWEEP_RUN_ID"
       - name: Reap anything a crashed run left
         id: reap
         if: always()
-        working-directory: dashboard
+        working-directory: hivra/dashboard
         continue-on-error: true
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.LAUNCH_SWEEP_CLERK_SECRET_KEY }}
         run: npm run audit:first-run:cleanup
       # Green only when the run itself exited cleanly (every step finished, and
       # for a sample every tile covered), a sample's verdict is green, and the
       # reaper found nothing left running.
       - name: Record the verdict on the commit
-        if: always() && env.LAUNCH_SWEEP_ONLY == ''
+        if: always() && steps.runner_tools.outcome == 'success' && env.LAUNCH_SWEEP_ONLY == ''
         env:
+          GITHUB_TOKEN: ${{ secrets.HIVRA_STATUS_TOKEN }}
           SWEEP_OUTCOME: ${{ steps.sweep.outcome }}
           REAP_OUTCOME: ${{ steps.reap.outcome }}
         run: |
-          publish() { node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --context "$STATUS_CONTEXT" --target-url "$RUN_URL" "$@"; }
+          publish() { node "$STATUS_HELPER" publish --sha "$SHA" --context "$STATUS_CONTEXT" --target-url "$RUN_URL" "$@"; }
           if [ "$SWEEP_OUTCOME" != "success" ]; then
             publish --state failure --description "The $MODE run did not finish cleanly ($SWEEP_OUTCOME)"
           elif [ "$REAP_OUTCOME" != "success" ]; then
@@ -167,11 +186,9 @@ jobs:
           name: canary-${{ needs.pick.outputs.mode }}-${{ needs.pick.outputs.sha }}
           path: |
             out/
-            dashboard/playwright-report/
-            dashboard/test-results/
+            hivra/dashboard/playwright-report/
+            hivra/dashboard/test-results/
           retention-days: 30
-      - name: Fail the run when cleanup failed
-        if: always() && steps.reap.outcome == 'failure'
-        run: |
-          echo "::error::Cleanup failed; check Canary for computers this run left running."
-          exit 1
+      - name: Fail the run when testing or cleanup failed
+        if: always() && (steps.sweep.outcome == 'failure' || steps.reap.outcome == 'failure')
+        run: exit 1

@@ -166,7 +166,7 @@ test('the runner template records green only for a complete, cleanly reaped run,
   // A run limited with `only` must never write a status on the commit.
   assert.match(step('Mark the commit as being tested'), /if: env\.LAUNCH_SWEEP_ONLY == ''/);
   const record = step('Record the verdict on the commit');
-  assert.match(record, /if: always\(\) && env\.LAUNCH_SWEEP_ONLY == ''/);
+  assert.match(record, /if: always\(\) && steps\.runner_tools\.outcome == 'success' && env\.LAUNCH_SWEEP_ONLY == ''/);
   // The sweep's own exit and the reaper's result both gate a green verdict.
   assert.match(record, /SWEEP_OUTCOME: \$\{\{ steps\.sweep\.outcome \}\}/);
   assert.match(record, /REAP_OUTCOME: \$\{\{ steps\.reap\.outcome \}\}/);
@@ -177,4 +177,18 @@ test('the runner template records green only for a complete, cleanly reaped run,
   // The release run (customer path) writes the gating status; the nightly sample does not.
   assert.match(source, /STATUS_CONTEXT: \$\{\{ needs\.pick\.outputs\.mode == 'release' && 'launch-sweep' \|\| 'launch-sample' \}\}/);
   assert.match(source, /npm run test:trial-journey/);
+  assert.match(step("Run the customer path or tonight's sample on Canary"), /none\[\[:space:\]\]\*\$/);
+});
+
+test('runner verification does not depend on the status helper being on Canary', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../../ops/launch-sweep-runner/launch-sweep.yml', import.meta.url), 'utf8');
+  const [pick, sweep] = source.split('\n  sweep:');
+  assert.match(pick, /ref: \$\{\{ github\.workflow_sha \}\}/);
+  assert.match(pick, /node launch-sweep-status\.mjs served-sha/);
+  assert.doesNotMatch(pick, /repository: ashneil12\/hivra/);
+  assert.match(sweep, /ref: \$\{\{ github\.workflow_sha \}\}\n\s+path: runner-tools/);
+  assert.match(sweep, /repository: ashneil12\/hivra\n\s+ref: \$\{\{ needs\.pick\.outputs\.sha \}\}\n\s+path: hivra/);
+  assert.match(sweep, /STATUS_HELPER: \$\{\{ github\.workspace \}\}\/runner-tools\/launch-sweep-status\.mjs/);
+  assert.doesNotMatch(sweep, /node scripts\/release\/launch-sweep-status\.mjs/);
 });
