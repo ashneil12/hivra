@@ -537,6 +537,24 @@ describe("POST /api/billing/subscribe", () => {
       expect(mockStripeSessionsCreate).not.toHaveBeenCalled();
     });
 
+    it("does not resume a direct-payment session once the buyer gets the card trial", async () => {
+      process.env.HIVRA_CARD_TRIAL = "on";
+      try {
+        pendingCheckout();
+        mockStripeSessionsList.mockResolvedValueOnce({
+          data: [{ id: "cs_plain", status: "open", url: "https://stripe.test/plain", metadata: { user_id: mockUserId, plan: "operator" } }],
+        });
+
+        const res = await POST(createRequest({ plan: "operator" }));
+        const body = await res.json();
+
+        expect(body.data?.resumed).not.toBe(true);
+        expect(mockStripeSessionsCreate.mock.calls[0][0].subscription_data.trial_period_days).toBe(7);
+      } finally {
+        delete process.env.HIVRA_CARD_TRIAL;
+      }
+    });
+
     it("never reuses the idempotency key of a session it just expired", async () => {
       // Plain checkout, then one from Launch (which expires the plain one),
       // then plain again: the third must not replay the first, expired

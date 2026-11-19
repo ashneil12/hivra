@@ -355,6 +355,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // The card trial (HIVRA_CARD_TRIAL=on): 7 days of the entry plan, card
+    // required, once per account. Off, every checkout is direct payment.
+    const trialCandidate =
+      checkoutGetsCardTrial({ planKey, cadence, ladderSale: Boolean(ladderSale), existingSub, hadTrial: false });
+    const withTrial = trialCandidate && !(await accountHadCardTrial(clerkUserId));
+    const trial = withTrial ? cardTrialCheckoutFields() : null;
+
     const stripe = getStripe();
 
     const hasRecentPendingCheckout = isRecentPendingCheckout(
@@ -470,7 +477,8 @@ export async function POST(req: NextRequest) {
             session.url &&
             session.metadata?.plan === planKey &&
             (session.metadata?.plan_ladder ?? null) === (ladderSale ? PLAN_LADDER_ID : null) &&
-            (session.metadata?.return_to ?? null) === returnTo
+            (session.metadata?.return_to ?? null) === returnTo &&
+            (session.metadata?.hivra_trial ?? null) === (trial?.metadata.hivra_trial ?? null)
         );
 
         if (matchingSession?.url) {
@@ -537,12 +545,6 @@ export async function POST(req: NextRequest) {
       ? `_x${keyDigest([...expiredSessionIds].sort().join(","))}`
       : "";
     const ladderKeyPart = ladderSale ? `_l${PLAN_LADDER_ID}` : "";
-    // The card trial (HIVRA_CARD_TRIAL=on): 7 days of the entry plan, card
-    // required, once per account. Off, every checkout is direct payment.
-    const trialCandidate =
-      checkoutGetsCardTrial({ planKey, cadence, ladderSale: Boolean(ladderSale), existingSub, hadTrial: false });
-    const withTrial = trialCandidate && !(await accountHadCardTrial(clerkUserId));
-    const trial = withTrial ? cardTrialCheckoutFields() : null;
     const trialKeyPart = trial ? "_t" : "";
     const idempotencyKey = `checkout_np_${clerkUserId}_${planKey}_${cadence}${ladderKeyPart}${trialKeyPart}${returnKey}${expiredKey}_${Math.floor(Date.now() / 3600000)}`;
     const returnQuery = returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : "";
