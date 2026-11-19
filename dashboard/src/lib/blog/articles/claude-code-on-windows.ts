@@ -46,11 +46,11 @@ export const claudeCodeOnWindows: BlogArticle = {
           "| WSL 2 | WSL 2 turned on | Supported | Linux toolchains, or when you want sandboxed command execution |",
           "| WSL 1 | WSL 1 turned on | Not supported | Only if WSL 2 isn't available to you |",
         ].join("\n"),
-        "Many Windows users never need more than the first row. If your code is a .NET app, a Node project you edit in VS Code, or anything that builds on Windows, install natively and get on with your day. If your project is built for Linux, or you want Anthropic's sandbox, use WSL 2. The rest of this guide covers both, then what to do when you want Claude Code running somewhere other than your PC.",
+        "Many Windows users never need more than the first row. If your code is a .NET app, a Node project you edit in VS Code, or anything that builds on Windows, install natively and get on with your day. If your project is built for Linux, or you want Anthropic's sandbox, use WSL 2. The rest of this guide covers both, then what to do when you want Claude Code running somewhere other than your PC. If you'd rather run it on a computer that stays on, [Claude Code on Hivra](/agents/claude-code) comes with the official CLI already installed.",
       ],
     },
     {
-      heading: "System requirements If you'd rather run it on a computer that stays on, [Claude Code on Hivra](/agents/claude-code) comes with the official CLI already installed.",
+      heading: "System requirements",
       paragraphs: [
         "From Anthropic's setup page, as of November 2026:",
         "- **Operating system:** Windows 10 version 1809 or later, or Windows Server 2019 or later.\n- **Hardware:** 4 GB of RAM or more, and an x64 or ARM64 processor.\n- **Network:** an internet connection.\n- **Shell:** PowerShell or CMD for native Windows, or Bash inside WSL.\n- **Location:** one of Anthropic's [supported countries](https://www.anthropic.com/supported-countries).\n- **Account:** a Pro, Max, Ultra, Team, Enterprise or Console account. The free claude.ai plan does not include Claude Code.",

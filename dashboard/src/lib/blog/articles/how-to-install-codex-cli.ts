@@ -52,11 +52,11 @@ export const howToInstallCodexCli: BlogArticle = {
         "OpenAI's [Codex CLI README](https://github.com/openai/codex) lists the install commands. They are the same ones OpenAI's [Codex CLI docs](https://learn.chatgpt.com/docs/cli) show in their install tabs. As of November 2026:",
         "- **macOS or Linux:** `curl -fsSL https://chatgpt.com/codex/install.sh | sh`\n- **Windows (PowerShell):** `powershell -ExecutionPolicy ByPass -c \"irm https://chatgpt.com/codex/install.ps1 | iex\"`\n- **Any system with npm:** `npm install -g @openai/codex`\n- **macOS with Homebrew:** `brew install --cask codex`\n- **Manual:** download an archive from the [latest GitHub Release](https://github.com/openai/codex/releases/latest), extract it and rename the binary to `codex`.",
         "After any of them, open a terminal in a project folder and run `codex`. The first time, pick **Sign in with ChatGPT** (or another sign-in method) and a browser window opens to finish the login. That is the whole install.",
-        "The rest of this guide covers what to pick, what each system needs, and what to do when something goes wrong.",
+        "The rest of this guide covers what to pick, what each system needs, and what to do when something goes wrong. Want Codex on a computer that stays on without installing anything? See [Codex on Hivra](/agents/codex).",
       ],
     },
     {
-      heading: "Every install method side by side Want Codex on a computer that stays on without installing anything? See [Codex on Hivra](/agents/codex).",
+      heading: "Every install method side by side",
       paragraphs: [
         [
           "| Method | Command | Best for | Watch out for |",

@@ -55,11 +55,11 @@ export const claudeCodeOnLinux: BlogArticle = {
         "`claude --version` prints a version number such as `2.1.211 (Claude Code)`. `claude doctor` prints a read-only health report: install health, settings errors and warnings with suggested fixes, without starting a session.",
         "If your shell says `claude: command not found` after the install, `~/.local/bin` is probably missing from your PATH. The installer reports this under \"Setup notes\" and prints the fix, but it doesn't change PATH itself. To check and fix it in Bash:",
         "```bash\nls -la ~/.local/bin/claude\necho $PATH | tr ':' '\\n' | grep -Fx \"$HOME/.local/bin\"\necho 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.bashrc\nsource ~/.bashrc\n```",
-        "The first command confirms the program is there, the second shows whether the folder is on your PATH, and the last two add it permanently for Bash. For Zsh, use `~/.zshrc` in place of `~/.bashrc`.",
+        "The first command confirms the program is there, the second shows whether the folder is on your PATH, and the last two add it permanently for Bash. For Zsh, use `~/.zshrc` in place of `~/.bashrc`. Prefer to skip the server setup? [Claude Code on Hivra](/agents/claude-code) comes with the official CLI already installed.",
       ],
     },
     {
-      heading: "Other Linux install methods: apt, dnf, apk and npm Prefer to skip the server setup? [Claude Code on Hivra](/agents/claude-code) comes with the official CLI already installed.",
+      heading: "Other Linux install methods: apt, dnf, apk and npm",
       paragraphs: [
         "The install script is not the only documented route. Anthropic publishes signed package repositories and an npm package, and each suits a different situation.",
         [
