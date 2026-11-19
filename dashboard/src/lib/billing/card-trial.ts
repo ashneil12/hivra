@@ -63,7 +63,7 @@ export function isCardTrialSubscription(
 export interface CardTrialHistory {
   /** The account's subscription row, if any. */
   existingSub?: { stripe_subscription_id?: string | null; upgraded_at?: string | null } | null;
-  /** Whether a trial was ever recorded for this account. */
+  /** Whether a trial attempt was ever recorded for this account. */
   hadTrial: boolean;
 }
 
@@ -101,10 +101,14 @@ export function cardTrialCheckoutFields(): {
 
 type Db = NonNullable<typeof supabaseAdmin>;
 
-/** Whether the account ever started a card trial. A failed read counts as yes: never hand out a second trial on doubt. */
+function readTrialHistory(userId: string, db: Db) {
+  return db.from("hermes_trial_usage").select("id").eq("user_id", userId).limit(1);
+}
+
+/** Whether the account ever attempted a card trial. A failed read counts as yes. */
 export async function accountHadCardTrial(userId: string, db: Db | null = supabaseAdmin): Promise<boolean> {
   if (!db) return true;
-  const { data, error } = await db.from("hermes_trial_usage").select("id").eq("user_id", userId).limit(1);
+  const { data, error } = await readTrialHistory(userId, db);
   if (error) {
     log.warn("could not read trial history; not offering a trial", {
       source: SOURCE,
@@ -211,8 +215,15 @@ export async function recordCardTrialStart(params: {
       userId,
       subscriptionId: subscription.id,
     });
-    // Nothing is recorded for this subscription, so a failed cancellation is
-    // retried by the webhook and checked again.
+    // Count the attempt for this account, so its next Checkout can be paid.
+    // Do not bind the rejected subscription or card to its trial history:
+    // if cancellation fails, the next webhook must still reject it.
+    const { data: attempts, error: attemptsError } = await readTrialHistory(userId, db);
+    if (attemptsError) throw new Error(`trial usage read failed: ${attemptsError.message}`);
+    if (!attempts?.length) {
+      const { error: recordError } = await db.from("hermes_trial_usage").insert({ user_id: userId });
+      if (recordError) throw new Error(`trial usage write failed: ${recordError.message}`);
+    }
     await params.stripe.subscriptions.cancel(subscription.id, { invoice_now: false, prorate: false });
     return { endedEarly: true };
   }

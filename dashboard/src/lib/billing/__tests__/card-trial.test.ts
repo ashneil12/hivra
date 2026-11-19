@@ -1,5 +1,6 @@
 import type Stripe from "stripe";
 import {
+  accountHadCardTrial,
   CARD_TRIAL_DAYS,
   cardTrialCheckoutFields,
   checkoutGetsCardTrial,
@@ -79,8 +80,8 @@ function fakeDb(results: Record<string, Result[]>, insertError: { code: string; 
     };
     q.limit = () => Promise.resolve(next());
     q.maybeSingle = () => Promise.resolve(next());
-    q.insert = (row: unknown) => {
-      if (insertError) return Promise.resolve({ error: insertError });
+    q.insert = (row: Record<string, unknown>) => {
+      if (insertError && row.stripe_subscription_id) return Promise.resolve({ error: insertError });
       inserts.push({ table, row });
       return Promise.resolve({ error: null });
     };
@@ -109,12 +110,14 @@ describe("recordCardTrialStart", () => {
     expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
   });
 
-  it("cancels without billing when another account already trialed with the same card", async () => {
-    const { db, inserts } = fakeDb({ hermes_trial_usage: [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }] });
+  it("cancels without billing and makes the next checkout a paid one", async () => {
+    const history = [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }, { data: [], error: null }];
+    const { db, inserts } = fakeDb({ hermes_trial_usage: history });
     const stripe = stripeWithCard("fp_used");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: true });
-    // Nothing is recorded, so a failed Stripe cancellation is retried and checked again.
-    expect(inserts).toHaveLength(0);
+    expect(inserts).toEqual([{ table: "hermes_trial_usage", row: { user_id: "u1" } }]);
+    history.push({ data: inserts.map((_, i) => ({ id: String(i) })), error: null });
+    expect(checkoutGetsCardTrial({ ...base, hadTrial: await accountHadCardTrial("u1", db) }, ON)).toBe(false);
     expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_trial", { invoice_now: false, prorate: false });
     expect(stripe.subscriptions.update).not.toHaveBeenCalled();
   });
@@ -137,12 +140,20 @@ describe("recordCardTrialStart", () => {
     expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
   });
 
-  it("does not record the trial when Stripe cancellation fails, so the retry checks again", async () => {
+  it("retries cancellation without granting access or recording the attempt twice", async () => {
     const { db, inserts } = fakeDb({ hermes_trial_usage: [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }] });
     const stripe = stripeWithCard("fp_used");
     stripe.subscriptions.cancel.mockRejectedValueOnce(new Error("stripe down"));
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).rejects.toThrow("stripe down");
-    expect(inserts).toHaveLength(0);
+    expect(inserts).toEqual([{ table: "hermes_trial_usage", row: { user_id: "u1" } }]);
+    const { db: retryDb, inserts: retryInserts } = fakeDb({ hermes_trial_usage: [
+      { data: [], error: null },
+      { data: [{ user_id: "u0" }], error: null },
+      { data: [{ id: "rejected_attempt" }], error: null },
+    ] });
+    await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db: retryDb })).resolves.toEqual({ endedEarly: true });
+    expect(retryInserts).toHaveLength(0);
+    expect(stripe.subscriptions.cancel).toHaveBeenCalledTimes(2);
   });
 
   it("does nothing on a repeat event for a trial already recorded", async () => {
