@@ -44,6 +44,18 @@ export async function endTrialNow(key: string, id: string): Promise<StripeSubscr
   return (await stripe(key, 'POST', `/subscriptions/${encodeURIComponent(id)}`, { trial_end: 'now' })) as unknown as StripeSubscription;
 }
 
+/** Every subscription the customer has had, canceled ones included. */
+export async function listSubscriptions(key: string, customer: string): Promise<StripeSubscription[]> {
+  const body = await stripe(key, 'GET', `/subscriptions?customer=${encodeURIComponent(customer)}&status=all&limit=100`);
+  return ((body.data as StripeSubscription[] | undefined) ?? []);
+}
+
+/** Total the customer has paid across their invoices, in cents. */
+export async function amountPaidCents(key: string, customer: string): Promise<number> {
+  const body = await stripe(key, 'GET', `/invoices?customer=${encodeURIComponent(customer)}&limit=100`);
+  return ((body.data as { amount_paid?: number }[] | undefined) ?? []).reduce((sum, invoice) => sum + (invoice.amount_paid ?? 0), 0);
+}
+
 export async function cancelSubscription(key: string, id: string): Promise<void> {
   await stripe(key, 'DELETE', `/subscriptions/${encodeURIComponent(id)}`).catch(() => undefined);
 }

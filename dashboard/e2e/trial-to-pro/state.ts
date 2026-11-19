@@ -40,3 +40,18 @@ export function trialLengthOk(trialEndsAt: string, startedAt: Date): boolean {
   const days = (new Date(trialEndsAt).getTime() - startedAt.getTime()) / 86_400_000;
   return days > 6.9 && days < 7.1;
 }
+
+/**
+ * A repeat card's trial is rejected: its trial subscription was canceled,
+ * nothing else is running, and nothing was charged.
+ */
+export function repeatTrialRejected(
+  subscriptions: { status: string; metadata: Record<string, string> }[],
+  amountPaidCents: number,
+): boolean {
+  return (
+    subscriptions.some((sub) => sub.status === 'canceled' && sub.metadata.hivra_trial === 'card_7d') &&
+    subscriptions.every((sub) => sub.status === 'canceled') &&
+    amountPaidCents === 0
+  );
+}
