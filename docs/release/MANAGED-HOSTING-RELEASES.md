@@ -107,6 +107,10 @@ path). It records the verdict on that commit as the `launch-sweep` commit status
 of a small rotating sample of Launch tiles is recorded separately as
 `launch-sample` and does not gate Promote.
 
+Changed-agent install and reply checks are
+[disabled pending an isolated worker](../../ops/agent-container-check/README.md).
+The Canary sweep remains separate.
+
 The gate (`scripts/release/launch-sweep-status.mjs gate`) reads only those
 statuses, the Canary project's GitHub deployments and commit trees. A candidate
 matches a Canary commit when the whole tree is the same, or the `dashboard/` tree
