@@ -3,17 +3,16 @@
 `launch-sweep.yml` is the workflow for a **private** runner repository. Its cost
 stays flat however many agents the catalog has:
 
-- **After every Canary merge** (a poll every 15 minutes finds a served commit
-  with no `launch-sweep` status): the one full customer path,
+- **After a new Canary deployment is observed** (a poll every 15 minutes
+  finds the currently served commit with no `launch-sweep` status): the one full customer path,
   `dashboard/e2e/trial-to-pro.spec.ts`. A new account starts the card trial,
   becomes Pro when the card is charged, then launches one reference agent
   (`CUSTOMER_PATH_AGENT`, default `claude-code`), gets a reply, sleeps and wakes
   it, and deletes it. Its result is the `launch-sweep` status on that commit in
   `ashneil12/hivra`, which the pre-Promote gate reads.
 - **Nightly:** a full launch of a small rotating sample of the Launch tiles
-  (`LAUNCH_SWEEP_SAMPLE_SIZE`, default 3), so every tile gets a full launch every
-  few nights. It records the informational `launch-sample` status; it does not
-  gate Promote.
+  (`LAUNCH_SWEEP_SAMPLE_SIZE`, default 3). Larger catalogs take longer to
+  cycle. It records the informational `launch-sample` status; it does not gate Promote.
 - **By hand:** run the workflow in either mode. `only` limits a sample run to a
   few targets and then records no status.
 

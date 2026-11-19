@@ -1,12 +1,11 @@
 # Canary release testing on a schedule. Copy this file to .github/workflows/ in
 # the private runner repository with launch-sweep-status.mjs as described in
-# the README. It is not a workflow
-# of this public repository: it needs Canary admin and Stripe test secrets and
-# launches real computers.
+# the README. It is not a public workflow: it needs Canary admin and Stripe
+# test secrets and launches real computers.
 #
 # Its cost stays flat as the catalog grows:
-#   - after every Canary merge (a poll every 15 minutes finds a served commit
-#     with no launch-sweep status): the one full customer path, card trial to
+#   - when a 15-minute poll sees a new served Canary commit: the one full
+#     customer path, card trial to
 #     Pro and one reference agent (dashboard/e2e/trial-to-pro.spec.ts). Its
 #     verdict is the `launch-sweep` commit status the pre-Promote gate reads;
 #   - nightly: a full launch of a small rotating sample of the Launch tiles,
@@ -88,8 +87,8 @@ jobs:
       STATUS_HELPER: ${{ github.workspace }}/runner-tools/launch-sweep-status.mjs
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       LAUNCH_SWEEP_RUN_ID: gh${{ github.run_id }}
-      LAUNCH_SWEEP_OUT_DIR: ${{ github.workspace }}/out
-      LAUNCH_SWEEP_VERDICT_FILE: ${{ github.workspace }}/out/verdict.json
+      LAUNCH_SWEEP_OUT_DIR: ${{ github.workspace }}/hivra/dashboard/launch-sweep-output
+      LAUNCH_SWEEP_VERDICT_FILE: ${{ github.workspace }}/hivra/dashboard/launch-sweep-output/verdict.json
       LAUNCH_SWEEP_WORKERS: ${{ vars.LAUNCH_SWEEP_WORKERS || '1' }}
       LAUNCH_SWEEP_SAMPLE_SIZE: ${{ vars.LAUNCH_SWEEP_SAMPLE_SIZE || '3' }}
       LAUNCH_SWEEP_ONLY: ${{ inputs.only || '' }}
@@ -106,24 +105,31 @@ jobs:
           repository: ashneil12/hivra
           ref: ${{ needs.pick.outputs.sha }}
           path: hivra
+          clean: true
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: hivra/dashboard/package-lock.json
+      - name: Install
+        working-directory: hivra/dashboard
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
       # A run limited with `only` checks a few tiles by hand; it never records
       # a status on the commit, so it cannot stand in for a full run.
       - name: Mark the commit as being tested
         if: env.LAUNCH_SWEEP_ONLY == ''
         env:
           GITHUB_TOKEN: ${{ secrets.HIVRA_STATUS_TOKEN }}
-        run: node "$STATUS_HELPER" publish --sha "$SHA" --context "$STATUS_CONTEXT" --state pending --description "Testing on Canary ($MODE)" --target-url "$RUN_URL"
-      - name: Install
-        working-directory: hivra/dashboard
         run: |
-          npm ci
-          npx playwright install --with-deps chromium
+          served="$(node "$STATUS_HELPER" served-sha)"
+          if [ "$served" != "$SHA" ]; then
+            echo "::error::Canary moved before testing began; run again on the current deployment."
+            exit 1
+          fi
+          node "$STATUS_HELPER" publish --sha "$SHA" --context "$STATUS_CONTEXT" --state pending --description "Testing on Canary ($MODE)" --target-url "$RUN_URL"
       - name: Run the customer path or tonight's sample on Canary
         id: sweep
         working-directory: hivra/dashboard
@@ -141,7 +147,14 @@ jobs:
             fi
             npm run test:trial-journey
           else
-            if [ -z "$LAUNCH_SWEEP_ONLY" ]; then export LAUNCH_SWEEP_ONLY="$(npm run -s test:launch-sweep:sample)"; fi
+            if [ -z "$LAUNCH_SWEEP_ONLY" ]; then
+              sample="$(npm run -s test:launch-sweep:sample)"
+              if [ -z "$sample" ]; then
+                echo "::error::The nightly sample is empty."
+                exit 1
+              fi
+              export LAUNCH_SWEEP_ONLY="$sample"
+            fi
             echo "Sample: $LAUNCH_SWEEP_ONLY"
             npm run test:launch-sweep
           fi
@@ -173,6 +186,9 @@ jobs:
             publish --state failure --description "The $MODE run did not finish cleanly ($SWEEP_OUTCOME)"
           elif [ "$REAP_OUTCOME" != "success" ]; then
             publish --state failure --description "Cleanup failed: the run may have left computers running"
+          elif ! served="$(node "$STATUS_HELPER" served-sha)" || [ "$served" != "$SHA" ]; then
+            publish --state error --description "Could not confirm the same Canary deployment at the end of testing"
+            exit 1
           elif [ "$MODE" = "release" ]; then
             publish --state success --description "Customer path passed: trial, Pro, one agent used, slept, woken, deleted"
           elif [ -f "$LAUNCH_SWEEP_VERDICT_FILE" ]; then
@@ -185,7 +201,7 @@ jobs:
         with:
           name: canary-${{ needs.pick.outputs.mode }}-${{ needs.pick.outputs.sha }}
           path: |
-            out/
+            hivra/dashboard/launch-sweep-output/
             hivra/dashboard/playwright-report/
             hivra/dashboard/test-results/
           retention-days: 30

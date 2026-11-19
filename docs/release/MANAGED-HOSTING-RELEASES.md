@@ -98,8 +98,8 @@ migrations or external side effects; those require a separately reviewed plan.
 
 ## Launch sweep before Promote
 
-After every merge into `canary`, a private runner runs the one full customer
-path against the commit Canary serves: a new account starts the card trial,
+When the private runner sees a new served Canary commit, it runs the full
+customer path against it: a new account starts the card trial,
 becomes Pro when the card is charged, then launches one reference agent, gets a
 reply, sleeps and wakes it, and deletes it (`dashboard/e2e/README.md`, Customer
 path). It records the verdict on that commit as the `launch-sweep` commit status
