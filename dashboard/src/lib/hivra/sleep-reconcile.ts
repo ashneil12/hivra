@@ -82,8 +82,9 @@ if systemctl is-active --quiet "hivra-sleep-$VMID" 2>/dev/null; then UNIT=true; 
 # A sleep or wake script holds this lock while it works. If it is held, the computer is about to change.
 install -d -m 0755 /run/lock
 if { exec 9>"/run/lock/hivra-vm-$VMID.lock"; } 2>/dev/null && ! flock -x -n 9; then UNIT=true; fi
-STATUS="$(qm status "$VMID" 2>/dev/null | awk '$1=="status:" {print $2; exit}')" || emit false unknown unreachable "$UNIT"
-QMP="$(qm status "$VMID" --verbose 2>/dev/null | awk '$1=="qmpstatus:" {print $2; exit}')" || emit false unknown unreachable "$UNIT"
+# Drain stdout after the first match so the parser cannot cut off qm with SIGPIPE.
+STATUS="$(qm status "$VMID" 2>/dev/null | awk '$1=="status:" && !found {print $2; found=1}')" || emit false unknown unreachable "$UNIT"
+QMP="$(qm status "$VMID" --verbose 2>/dev/null | awk '$1=="qmpstatus:" && !found {print $2; found=1}')" || emit false unknown unreachable "$UNIT"
 LOCK="$(printf '%s\\n' "$CONFIG" | awk '$1=="lock:" {print $2; exit}')"
 case "$STATUS/\${QMP:-none}/\${LOCK:-none}" in
   running/running/none) emit true awake observed "$UNIT" ;;

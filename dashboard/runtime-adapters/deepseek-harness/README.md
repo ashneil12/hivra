@@ -1,13 +1,11 @@
-# DeepSeek Harness native adapter (not enabled)
+# DeepSeek Harness native adapter (alpha)
 
-This directory contains tests and evidence tooling for an **experimental
-runtime that no user can launch**. The immutable runtime recipe, broker, service
-owner and guest installer live in the versioned `provisioner/deepseek-harness/`
-source bundle so the guest gateway can be reviewed as one coherent artifact.
-The host launcher and guest installer accept a typed v2 DeepSeek launch, which
-only the claim-bound operator harness (`scripts/deepseek-proxmox-canary.ts`) and
-the private provider path use. The public catalog keeps the kind unavailable,
-so deploying the dashboard or preparing a host cannot install or start it.
+DeepSeek Harness is [available in alpha on eligible Hivra Cloud computers](../../../docs/STATUS.md#agents).
+It replies in its own web UI through Hivra's authenticated gateway, not through
+Hivra's shared chat API. The immutable runtime recipe, broker, service owner
+and guest installer are in `provisioner/deepseek-harness/`. The claim-bound
+operator harness (`scripts/deepseek-proxmox-canary.ts`) also supports a headless
+reply check; that does not exercise browser chat or ACP orchestration.
 
 The staged gateway reserves native root/RPC paths, requires Hivra bearer
 authority for exact computer-management routes, and reports unhealthy until the
@@ -39,6 +37,11 @@ gateway regressions live beside the broker tests.
   `.31.4` or any later release is recorded. It now builds its payload from the
   committed release, so it must be re-dispatched after each sealed bundle. It is
   not model, browser or public access proof.
+- **Offline reply fixture:** the pinned package uses the guest's launch-time
+  model seed to send a prompt to a loopback model stub. The native RPC and
+  WebSocket path returns a completed assistant message through the broker;
+  the headless profile returns `pong` on stdout. No real inference, browser
+  rendering, public access, deployed host or ACP behavior is checked.
 - **Native session renewal** (this broker revision): proactive renewal before
   cookie expiry and one re-exchange after an upstream 401 are covered by unit
   tests against a fake upstream that applies dsh's cookie rule
@@ -145,8 +148,7 @@ teardown by deleting and inventory-checking its exact owner-labelled container.
 
 The `service-owner.py`, `install-guest.py` and DeepSeek-specific
 `bux-hivra-chat.service` template are bundled since `.31.2` and composed by the
-typed v2 guest path (operator harness and private provider path), **not enabled
-in the catalog**. They verify the exact disk
+typed v2 guest path. They verify the exact disk
 and loaded definition (including `NeedDaemonReload=no`), finite control-group
 stop settings, non-root supervisor membership and stable invocation identity.
 Stop acceptance requires idle jobs, zero unit PIDs, empty cgroup v2 and closed
@@ -188,11 +190,36 @@ node scripts/test-deepseek-native-runtime.mjs \
   --output /absolute/new-evidence-directory
 ```
 
-The receipt hashes every adapter file and the runner, records image/container
+The receipt hashes the snapshotted inputs and the runner, records image/container
 identity, verifies immutable install/reuse, actual shell/PTY, native HTML, write-only synthetic credential storage,
 0600 permissions, restart persistence, native WebSocket/SSE and revocation, and
 unconditionally removes the exact owned container. No real model key is used.
-`PASS` means this **local component smoke** passed, never public enablement.
+`PASS` means this **local component smoke** passed; it does not test replies.
+
+### Offline reply fixture
+
+From `dashboard/` on disposable Linux amd64 with Node 22.19 or newer, Python 3,
+and permission to create a network namespace, run:
+
+```sh
+(
+  set -eu
+  runtime=$(mktemp -d)
+  trap 'rm -rf -- "$runtime"' EXIT
+  cp provisioner/deepseek-harness/package.json provisioner/deepseek-harness/package-lock.json "$runtime/"
+  npm ci --prefix "$runtime" --ignore-scripts --no-audit --no-fund
+  sudo unshare --net sh -eu -c '
+    ip link set lo up
+    exec setpriv --reuid="$1" --regid="$2" --clear-groups --no-new-privs \
+      env -i PATH=/usr/local/bin:/usr/bin:/bin "$3" \
+      runtime-adapters/deepseek-harness/actual-package-reply-smoke.cjs "$4"
+  ' sh "$(id -u)" "$(id -g)" "$(command -v node)" "$runtime"
+)
+```
+
+Only the package installation needs registry access. The reply check refuses
+to run as root or with any non-loopback network interface. It uses only a
+synthetic key, temporary state, and canned streaming responses.
 
 ## Operator re-acceptance on Canary
 
@@ -208,6 +235,7 @@ operator-only: it refuses anything but the Canary origin
 npm run lab:deepseek-proxmox -- --inspect  ...   # free VMID/IP and capacity, no mutation
 npm run lab:deepseek-proxmox -- --launch --vmid <n> --octet <n> ...
 npm run lab:deepseek-proxmox -- --read-access --token-file <new private file> ...
+npm run lab:deepseek-proxmox -- --ask ...        # headless, may incur inference charges
 npm run lab:deepseek-proxmox -- --restart ...    # new boot identity, then native readiness
 npm run lab:deepseek-proxmox -- --teardown ...   # VM, volumes, host artifacts and tunnel
 ```
@@ -308,10 +336,10 @@ would otherwise trip the 401 first). `VMID` and `IP` come from the ledger.
    `<url>/auth/bootstrap`; never put the token in a URL) and still answers a
    model prompt. Then `rm -rf -- "$D"` and run `--teardown`.
 
-## Remaining public-enable gates
+## Reply readiness and operating constraints
 
 1. **ACP lane.** Handshake, operation and revocation inside the same computer
-   boundary. Not accepted; this is the gate the public catalog waits on.
+   boundary are not accepted. The native chat alpha does not depend on ACP.
 2. **Typed model delivery.** Shipped in release `2026.11.10.5` for DeepSeek
    computers on Proxmox. The launch carries a model key, base URL and model
    together (Hivra credits through the managed Venice proxy by default, or the
@@ -333,9 +361,10 @@ would otherwise trip the 401 first). `VMID` and `IP` come from the ledger.
    unexpected runtime exit stops the gateway. Any gateway restart therefore ends
    in-flight agent work. The detached chat-run lane does not apply: DeepSeek's
    native routes are not the Hivra chat surface.
-5. **Re-acceptance on the current release** through the public connection path:
-   native UI, model reply, restart, cancellation, failed install, expired access
-   and full cgroup/VM teardown, then public catalog and provider dispatch.
+5. **Re-acceptance on the current release** is still unrecorded. A live reply
+   check needs an approved disposable computer on the exact release, the normal
+   authenticated native UI, a real reply with the intended model, and teardown.
+   Headless `--ask` can supplement but cannot replace this check.
 
 Buzz connection, Omarchy image and remote-desktop latency acceptance are separate
 work; none is implemented or proven by this adapter.
