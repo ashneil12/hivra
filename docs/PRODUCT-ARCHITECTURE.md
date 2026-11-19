@@ -95,8 +95,9 @@ UI, a BYOK DeepSeek V4 Flash reply through DeepSeek Harness's own settings and
 credential APIs, six-command non-root public WebSocket PTY, restart with a new
 boot identity, old-cookie rejection, post-restart model inference, revocation
 and unconditional teardown with no QGA snippet left behind. ACP remains
-unverified, so the public catalog entry stays closed. See the
-combined live acceptance.
+unverified; see [Current product status](STATUS.md#agents) for native UI alpha
+availability. This historical result does not establish live reply acceptance
+on a later release.
 
 ## Reading rule
 
