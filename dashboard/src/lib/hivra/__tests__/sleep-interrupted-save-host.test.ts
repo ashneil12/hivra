@@ -35,7 +35,14 @@ run("an interrupted save, on a stand-in host", () => {
     bin("qm", `D=${JSON.stringify(dir)}
 case "$1" in
   config) cat "$D/config" ;;
-  status) printf 'status: %s\\nqmpstatus: %s\\n' "$(cat "$D/status")" "$(cat "$D/qmp")" ;;
+  status)
+    printf 'status: %s\\nqmpstatus: %s\\n' "$(cat "$D/status")" "$(cat "$D/qmp")"
+    case "\${TEST_STATUS_OUTPUT:-}" in
+      "stream:\${3:-plain}")
+        printf 'status: stopped\\nqmpstatus: running\\n'
+        exec awk 'BEGIN { for (i = 0; i < 100000; i++) print "detail: extra status output" }' ;;
+      "fail:\${3:-plain}") exit 1 ;;
+    esac ;;
   unlock) sed -i '/^lock:/d' "$D/config"; echo unlock >> "$D/calls" ;;
   set) [ "$*" = "set ${VMID} --skiplock 1 --lock suspended" ] || exit 1
        sed -i 's/^lock:.*/lock: suspended/' "$D/config"; echo mark-saved >> "$D/calls" ;;
@@ -59,15 +66,15 @@ esac`);
       ...(state.vmstate ? ["vmstate: local-lvm:vm-4242-state-suspend-2026-11-18"] : []),
     ].join("\n") + "\n");
   };
-  const exec = (script: string) => {
+  const exec = (script: string, statusOutput = "") => {
     const r = spawnSync("bash", ["-c", script.replaceAll("/run/lock", path.join(dir, "lock"))], {
-      encoding: "utf8", env: { ...process.env, PATH: `${path.join(dir, "bin")}:${process.env.PATH}` }, timeout: 20_000,
+      encoding: "utf8", env: { ...process.env, PATH: `${path.join(dir, "bin")}:${process.env.PATH}`, TEST_STATUS_OUTPUT: statusOutput }, timeout: 20_000,
     });
     expect(r.status).toBe(0);
     return r.stdout;
   };
   const target = { vmid: VMID, bindingTag: TAG };
-  const state = () => parseSleepStateReceipt(exec(buildSleepStateHostScript(target)), VMID);
+  const state = (statusOutput?: string) => parseSleepStateReceipt(exec(buildSleepStateHostScript(target), statusOutput), VMID);
   const recover = (since: number | null = null) => exec(buildInterruptedSaveRecoveryScript(target, since));
   const calls = () => readFileSync(path.join(dir, "calls"), "utf8").trim().split("\n").filter(Boolean);
 
@@ -82,6 +89,20 @@ esac`);
     expect(state()).toMatchObject({ ok: false, observed: "unknown", reason: "unexpected_state" });
     host({ status: "stopped", qmp: "stopped", lock: "suspended", vmstate: true });
     expect(state()).toMatchObject({ ok: true, observed: "hibernated" });
+    expect(calls()).toEqual([]);
+  });
+
+  it.each(["plain", "--verbose"])("keeps the first %s status field while draining stdout", (mode) => {
+    host({ status: "running", qmp: "paused" });
+
+    expect(state(`stream:${mode}`)).toMatchObject({ ok: true, observed: "napping", reason: "observed" });
+    expect(calls()).toEqual([]);
+  });
+
+  it.each(["plain", "--verbose"])("reports a failed %s status command even if it printed matching fields", (mode) => {
+    host({ status: "running", qmp: "paused" });
+
+    expect(state(`fail:${mode}`)).toMatchObject({ ok: false, observed: "unknown", reason: "unreachable" });
     expect(calls()).toEqual([]);
   });
 
