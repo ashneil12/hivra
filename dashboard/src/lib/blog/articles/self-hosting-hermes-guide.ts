@@ -1,5 +1,10 @@
 import { BlogArticle } from "../types";
 
+// Backup facts checked against Hermes Agent stable v0.23.2 (tag commit ae2a81ccc00e9b7c06301523e5bb09608397149c; fetched 2026-11-19):
+// https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.2
+// https://github.com/NousResearch/hermes-agent/blob/v0.23.2/website/docs/user-guide/backup-and-transfer.md
+// https://github.com/NousResearch/hermes-agent/blob/v0.23.2/hermes_cli/subcommands/backup.py
+// https://github.com/NousResearch/hermes-agent/blob/v0.23.2/hermes_cli/backup.py
 export const article: BlogArticle = {
   slug: "self-hosting-hermes-guide",
   title: "How to self-host Hermes Agent, and what goes wrong",
@@ -7,7 +12,7 @@ export const article: BlogArticle = {
   metaDescription:
     "How to self-host Hermes Agent: the setup steps, what breaks, what it costs in time and money, and when managed hosting makes more sense.",
   publishedDate: "2026-03-13",
-  lastModified: "2026-10-21",
+  lastModified: "2026-11-19",
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "Yes, you can. Some parts fight back.",
@@ -72,7 +77,7 @@ export const article: BlogArticle = {
     },
     {
       q: "How do I back up my agent's memory?",
-      a: "The memory data is stored in the Docker volume. Back it up by exporting the volume contents to a compressed archive and copying it offsite. Automate this with a cron job that runs daily. There is no built-in backup tooling in the self-hosted setup.",
+      a: "Hermes provides a built-in full-home backup command: `hermes backup -o my-agent.zip`. A full archive can contain credentials such as `.env` and `auth.json`, so treat it as private and keep a copy off the server. For safe restore steps and rehearsal cautions, see the [Hermes Agent self-hosting guide](/blog/how-to-self-host-hermes-agent).",
     },
     {
       q: "Can I run Hermes on a Mac or Windows machine?",
