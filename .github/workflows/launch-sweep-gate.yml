@@ -1,6 +1,6 @@
 # The pre-Promote gate: a production candidate on main must have a green launch
 # sweep, on itself or on a Canary commit with the same source tree. The sweep
-# runs on a private runner and records `launch-sweep` commit statuses here
+# runs on a private runner and records a `launch-sweep` commit status here
 # (docs/release/MANAGED-HOSTING-RELEASES.md, "Launch sweep before Promote").
 # Read-only: it only reads statuses, deployments and trees through the API.
 name: Launch sweep gate
@@ -20,7 +20,7 @@ on:
 permissions:
   contents: read
   deployments: read
-  statuses: read
+  'statuses': read
 
 jobs:
   gate:
