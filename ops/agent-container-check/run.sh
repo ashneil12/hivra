@@ -4,9 +4,8 @@
 # delete the container. Usage, from the repository root:
 #   CHECK_MODEL_KEY=... CHECK_MODEL_ORIGIN=https://canary.hermesos.cloud CHECK_MODEL=... \
 #     ops/agent-container-check/run.sh <agent-kind>
-# The key is a Hivra managed-model key from that origin, as a launched agent
-# gets: Claude Code uses its Anthropic endpoint, every other kind the
-# OpenAI-compatible one.
+# The key is a Hivra managed-model key: Claude Code uses the Anthropic
+# endpoint, and Codex uses the OpenAI-compatible Responses endpoint.
 # Needs Docker, and privileged containers (the installer manages systemd units).
 set -euo pipefail
 kind="${1:?usage: run.sh <agent-kind>}"
@@ -17,8 +16,12 @@ root="$(git rev-parse --show-toplevel)"
 name="hivra-agent-check-${kind}-$$"
 log_dir="${CHECK_LOG_DIR:-${root}/out/agent-checks}"
 mkdir -p "$log_dir"
-if [ "$kind" = "claude" ]; then base_url="${CHECK_MODEL_ORIGIN%/}/api/managed-venice/anthropic"
-else base_url="${CHECK_MODEL_ORIGIN%/}/api/managed-venice/v1"; fi
+case "$kind" in
+  claude) base_url="${CHECK_MODEL_ORIGIN%/}/api/managed-venice/anthropic" ;;
+  codex|aeon|openclaw|agent-zero|openbot|nuphos|hermes)
+    base_url="${CHECK_MODEL_ORIGIN%/}/api/managed-venice/v1" ;;
+  *) echo "[agent-check] unsupported agent kind: $kind" >&2; exit 2 ;;
+esac
 
 cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -36,11 +39,24 @@ for _ in $(seq 30); do
 done
 
 echo "[agent-check] ${kind}: installing"
-docker exec -e HIVRA_AGENT_KIND="$kind" -e HIVRA_COMPUTER_SUBSTRATE=proxmox-kvm -e HIVRA_WANT_BROWSER=0 \
-  -e HIVRA_MODEL_KEY="$CHECK_MODEL_KEY" -e HIVRA_MODEL_BASE_URL="$base_url" -e HIVRA_HERMES_MODEL="$CHECK_MODEL" \
+HIVRA_MODEL_KEY="$CHECK_MODEL_KEY" docker exec -e HIVRA_AGENT_KIND="$kind" -e HIVRA_COMPUTER_SUBSTRATE=proxmox-kvm -e HIVRA_WANT_BROWSER=0 \
+  -e HIVRA_MODEL_KEY -e HIVRA_MODEL_BASE_URL="$base_url" -e HIVRA_HERMES_MODEL="$CHECK_MODEL" \
   "$name" bash -c 'cp -r /src /opt/hivra-src && bash /opt/hivra-src/provision-claude-code-box.sh' \
   > "${log_dir}/${kind}-install.log" 2>&1 \
-  || { echo "[agent-check] ${kind}: install failed (tail of ${log_dir}/${kind}-install.log):"; tail -20 "${log_dir}/${kind}-install.log"; exit 1; }
+  || { echo "[agent-check] ${kind}: install failed (see install log)"; exit 1; }
+
+if [ "$kind" = "codex" ]; then
+  # Reproduce the deploy-time agent-bootstrap provider file; the installer
+  # alone intentionally doesn't set Codex's model provider.
+  CHECK_MODEL_BASE_URL="$base_url" docker exec -u bux -e CHECK_MODEL_KEY \
+    -e CHECK_MODEL_BASE_URL -e CHECK_MODEL "$name" \
+    node /check/agent-container-check.mjs seed-codex --home /home/bux
+fi
+
+case "$kind" in
+  claude|codex) ;;
+  *) echo "[agent-check] ${kind}: installer readiness passed; native chat not checked"; exit 0 ;;
+esac
 
 # The box's chat listens on 127.0.0.1 only, as on a real computer, so it is
 # asked from inside the container with the box's own Node.

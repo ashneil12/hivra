@@ -9,7 +9,9 @@
 //   node scripts/release/agent-container-check.mjs ask --url http://127.0.0.1:18080 --token-file <path>
 //     asks the box's chat and exits non-zero unless the reply has the answer
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export const AGENT_KINDS = ['claude', 'codex', 'aeon', 'openclaw', 'agent-zero', 'openbot', 'nuphos', 'hermes'];
 // Shared install code: a change there is covered by the reference kind here
@@ -90,7 +92,7 @@ async function ask(url, token, timeoutMs) {
       body: JSON.stringify({ message: CHECK_PROMPT }),
       signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`the box's chat answered HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) throw new Error(`the box's chat answered HTTP ${res.status}`);
     const decoder = new TextDecoder();
     for await (const chunk of res.body) {
       body += decoder.decode(chunk, { stream: true });
@@ -107,6 +109,14 @@ async function ask(url, token, timeoutMs) {
   }
 }
 
+/** Mirror the initial provider file written by the launch bootstrap. Run as bux. */
+export function seedCodexProvider(home, { CHECK_MODEL_KEY: apiKey, CHECK_MODEL_BASE_URL: baseUrl, CHECK_MODEL: model }) {
+  if (!apiKey || !baseUrl || !model) throw new Error('Codex provider needs a model key, base URL, and model');
+  writeFileSync(join(home, '.hivra', 'llm-provider.json'),
+    JSON.stringify({ provider: 'venice', apiKey, baseUrl, model }) + '\n',
+    { flag: 'wx', mode: 0o600 });
+}
+
 async function main(argv) {
   const [command, ...rest] = argv;
   const flags = flagsOf(rest);
@@ -120,17 +130,19 @@ async function main(argv) {
     if (!flags.url || !flags['token-file']) throw new Error('ask needs --url and --token-file');
     const token = readFileSync(flags['token-file'], 'utf8').trim();
     const body = await ask(flags.url, token, Number(flags['timeout-ms']) || 5 * 60_000);
-    if (!replyHasAnswer(body)) {
-      console.error(body.slice(-2000));
-      throw new Error(`no ${CHECK_ANSWER} in the agent's reply`);
-    }
+    if (!replyHasAnswer(body)) throw new Error(`no ${CHECK_ANSWER} in the agent's reply`);
     console.log(`replied ${CHECK_ANSWER}`);
     return;
   }
-  throw new Error(`Unknown command "${command ?? ''}". Use changed or ask.`);
+  if (command === 'seed-codex') {
+    if (!flags.home) throw new Error('seed-codex needs --home');
+    seedCodexProvider(flags.home, process.env);
+    return;
+  }
+  throw new Error(`Unknown command "${command ?? ''}". Use changed, ask, or seed-codex.`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main(process.argv.slice(2)).catch((error) => {
     console.error(`[agent-container-check] ${error.message}`);
     process.exit(1);
