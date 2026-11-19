@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import {
   AlertTriangle,
   Check,
   CheckCircle2,
   Clock3,
-  Loader2,
   ServerCog,
   X,
 } from "lucide-react";
@@ -220,7 +220,7 @@ export function InfrastructurePrepareDialog({
         >
           {phase === "success" ? <CheckCircle2 size={21} />
             : phase === "failure" ? <AlertTriangle size={21} />
-              : phase === "running" ? <Loader2 size={21} className={styles.spin} />
+              : phase === "running" ? <ThinkingOrb state="connecting" size={20} />
                 : <ServerCog size={21} />}
         </span>
         <span className={styles.eyebrow}>

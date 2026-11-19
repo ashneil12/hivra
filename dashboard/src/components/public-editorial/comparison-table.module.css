@@ -9,7 +9,7 @@
   --ct-text: var(--text-secondary, #555555);
   --ct-muted: var(--text-muted, #777777);
   --ct-accent: var(--gold-leaf, #a9792b);
-  --ct-mono: var(--public-mono, ui-monospace, monospace);
+  --ct-mono: var(--font-sans);
   --ct-tint: color-mix(in srgb, var(--ct-accent) 9%, transparent);
   --ct-hover: color-mix(in srgb, var(--ct-ink) 3%, transparent);
   position: relative;
@@ -18,17 +18,18 @@
   overflow-x: auto;
   overscroll-behavior-x: contain;
   border: 1px solid var(--ct-line);
+  border-radius: var(--hg-radius-lg);
 }
 
 .wrap[data-variant="home"] {
-  --ct-line: var(--line, rgba(240, 239, 233, 0.1));
-  --ct-surface: var(--bg-2, #101216);
-  --ct-ink: var(--text, #f0efe9);
-  --ct-text: var(--text, #f0efe9);
-  --ct-muted: var(--muted, #a4a9ae);
-  --ct-accent: var(--red, #fb5148);
-  --ct-tint: rgba(251, 81, 72, 0.08);
-  --ct-hover: rgba(240, 239, 233, 0.03);
+  --ct-line: var(--hg-stroke);
+  --ct-surface: var(--hg-glass);
+  --ct-ink: var(--hg-text);
+  --ct-text: var(--hg-text);
+  --ct-muted: var(--hg-text-3);
+  --ct-accent: var(--hg-text);
+  --ct-tint: var(--hg-fill-1);
+  --ct-hover: var(--hg-fill-hover);
   margin: 0;
   background: var(--ct-surface);
 }

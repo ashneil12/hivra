@@ -8,8 +8,7 @@ import { getAgent } from "@/lib/hivra/agent-catalog";
 import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
 import type { AgentSoftwareView } from "@/lib/hivra/agent-cli-status";
 
-// Manage › Updates for a Codex agent: what its computer reports about Codex
-// next to Hivra's tested version, Update going through Manage's own in-place
+// Manage › Updates for a Codex agent: what its computer reports about Codex, Update going through Manage's own in-place
 // update, and the header's "Update available" that opens this section.
 
 const mockUpdateAgentRuntime = jest.fn();
@@ -27,7 +26,6 @@ jest.mock("@/lib/hivra/agent-api", () => ({
 }));
 jest.mock("@/lib/hivra/agent-software-api", () => ({
   getAgentSoftware: (...args: unknown[]) => mockGetSoftware(...args),
-  setAgentSoftwareAutoUpdate: jest.fn(),
 }));
 jest.mock("@/lib/hivra/agent-model-settings-api", () => ({
   ...jest.requireActual("@/lib/hivra/agent-model-settings-api"),
@@ -40,9 +38,19 @@ jest.mock("@/lib/hivra/computer-contract-client", () => ({
 jest.mock("@/components/instances/CookieImportModal", () => ({ CookieImportModal: () => null }));
 jest.mock("../ToolInstallPicker", () => ({ ToolInstallPicker: () => null }));
 jest.mock("../HivraPrivateAccessPanel", () => ({ HivraPrivateAccessPanel: () => null }));
+jest.mock("../HivraLogin", () => ({
+  HivraLogin: ({ reauth, agentKind, onDone }: { reauth?: boolean; agentKind?: string; onDone: () => void }) => (
+    <button type="button" onClick={onDone}>login-{agentKind}-{reauth ? "again" : "first"}</button>
+  ),
+}));
+jest.mock("../HivraGitHubConnect", () => ({
+  HivraGitHubConnect: ({ reconnect, onDone }: { reconnect?: boolean; onDone: () => void }) => (
+    <button type="button" onClick={onDone}>github-{reconnect ? "change" : "first"}</button>
+  ),
+}));
 jest.mock("@/components/billing/UpgradePaywallModal", () => ({ UpgradePaywallModal: () => null }));
 
-const TESTED = "0.149.1";
+const TARGET = "latest";
 const plan: PlanInfo = { key: "command", name: "Command", subscribed: true, maxAgents: 8, maxCpuPerAgent: 8, maxRamPerAgent: 16, poolCpu: 24, poolRam: 128, usage: { agentCount: 1, usedCpu: 2, usedRam: 4 } };
 const row = {
   id: "agent-a", name: "Builder", type: "codex", status: "running", cpu: 2, ram: 4, deployment_mode: "hivra-managed",
@@ -51,8 +59,7 @@ const row = {
 };
 const agent = { ...(row as unknown as HivraAgent), manage: manageCapabilitiesFor(row, { preparedMatch: true }) };
 const software = (view: AgentSoftwareView) => ({
-  supported: true, cli: "codex", view, tested: TESTED, observedAt: "2026-09-25T11:58:00.000Z", update: null, lastRequest: null,
-  autoUpdate: { mode: "off", enabled: true, source: "default", pausedFor: null },
+  supported: true, cli: "codex", view, observedAt: "2026-09-25T11:58:00.000Z", update: null, lastRequest: null,
 });
 
 function renderManage(props: Partial<Parameters<typeof HivraManage>[0]> = {}) {
@@ -66,14 +73,14 @@ beforeEach(() => {
   jest.clearAllMocks();
   resetAgentSoftwareForTests();
   window.history.replaceState(null, "", "/dashboard/agent/agent-a?tab=manage");
-  mockGetSoftware.mockResolvedValue(software({ kind: "behind", installed: "0.140.0" }));
+  mockGetSoftware.mockResolvedValue(software({ kind: "current", installed: "0.140.0" }));
 });
 
-it("shows Codex next to Hivra's tested version in Updates, above the connection service", async () => {
+it("shows the Codex card in Updates, above the connection service", async () => {
   renderManage();
   openSection("Updates");
   const panel = screen.getByRole("tabpanel", { name: "Updates" });
-  expect(await within(panel).findByTestId("agent-software-state")).toHaveTextContent("Codex 0.140.0 is installed and Hivra has tested 0.149.1.");
+  await within(panel).findByTestId("agent-software-state");
   const codexCard = within(panel).getByRole("button", { name: "Update Codex" });
   const connection = within(panel).getByRole("button", { name: "Update connection service" });
   expect(codexCard.compareDocumentPosition(connection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -88,17 +95,17 @@ it("updates Codex through Manage's in-place update: one action at a time, surfac
   fireEvent.click(await screen.findByRole("button", { name: "Update Codex" }));
 
   expect(mockUpdateAgentRuntime).toHaveBeenCalledWith("agent-a");
-  expect(screen.getByText("Updating the connection service…").closest("[role=\"status\"]")).toHaveTextContent(/moves the agent to its tested version once no reply is being written/);
+  expect(screen.getByText("Updating the connection service…").closest("[role=\"status\"]")).toHaveTextContent(/updates the agent to its newest release once no reply is being written/);
   // Manage's busy lock covers the other update and every other action.
   expect(screen.getByRole("button", { name: "Update connection service" })).toBeDisabled();
   expect(onConnectionServiceRestarted).not.toHaveBeenCalled();
 
-  mockGetSoftware.mockResolvedValue(software({ kind: "updating", phase: "downloading", target: TESTED, installed: "0.140.0" }));
-  await act(async () => finish({ status: "running", agentCli: { name: "codex", version: "0.140.0", target: TESTED, state: "scheduled" } }));
+  mockGetSoftware.mockResolvedValue(software({ kind: "updating", phase: "downloading", target: TARGET, installed: "0.140.0" }));
+  await act(async () => finish({ status: "running", agentCli: { name: "codex", version: "0.140.0", target: TARGET, state: "scheduled" } }));
   await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
   expect(onConnectionServiceRestarted).toHaveBeenCalledTimes(1);
   await waitFor(() => expect(mockGetSoftware).toHaveBeenLastCalledWith("agent-a", { live: true }));
-  expect(await screen.findByText(/^Downloading Codex 0\.149\.1\./)).toBeInTheDocument();
+  expect(await screen.findByText(/^Downloading Codex's newest release\./)).toBeInTheDocument();
 });
 
 it("explains a refusal by its code in the Codex card, not as a raw server message", async () => {
@@ -149,17 +156,18 @@ it("says which is busy, the agent, when Update connection service is refused for
 });
 
 it("follows the Codex update the connection service update starts", async () => {
-  mockUpdateAgentRuntime.mockResolvedValue({ status: "running", agentCli: { name: "codex", version: "0.140.0", target: TESTED, state: "scheduled" } });
+  mockUpdateAgentRuntime.mockResolvedValue({ status: "running", agentCli: { name: "codex", version: "0.140.0", target: TARGET, state: "scheduled" } });
   renderManage();
   openSection("Updates");
   await screen.findByTestId("agent-software-state");
-  mockGetSoftware.mockResolvedValue(software({ kind: "updating", phase: "starting", target: TESTED, installed: "0.140.0" }));
+  mockGetSoftware.mockResolvedValue(software({ kind: "updating", phase: "starting", target: TARGET, installed: "0.140.0" }));
   fireEvent.click(screen.getByRole("button", { name: "Update connection service" }));
   await waitFor(() => expect(mockGetSoftware).toHaveBeenLastCalledWith("agent-a", { live: true }));
   expect(await screen.findByText("Starting the update…")).toBeInTheDocument();
 });
 
 it("puts Update available in Manage's header, which opens Updates", async () => {
+  mockGetSoftware.mockResolvedValue(software({ kind: "older_connection_service" }));
   renderManage();
   const chip = await screen.findByTestId("agent-software-chip");
   expect(chip).toHaveTextContent("Update available");
@@ -191,5 +199,44 @@ it("opens Updates from the #agent-software link", async () => {
   window.history.replaceState(null, "", "/dashboard/agent/agent-a?tab=manage#agent-software");
   renderManage();
   expect(screen.getByRole("tab", { name: "Updates" })).toHaveAttribute("aria-selected", "true");
-  expect(await screen.findByTestId("agent-software-state")).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Update Codex" })).toBeVisible();
+});
+
+it("opens Recovery from a failed update that couldn't be undone", async () => {
+  mockGetSoftware.mockResolvedValue(software({ kind: "update_failed", reason: "install_failed", target: TARGET, installed: null }));
+  renderManage();
+  openSection("Updates");
+  fireEvent.click(await screen.findByRole("button", { name: /Open (Recovery|Advanced)/ }));
+  expect(window.location.search).toMatch(/section=(recovery|advanced)/);
+});
+
+it("offers Sign in again for a running Codex agent, in place, and closes it when done", async () => {
+  const { onChanged } = renderManage();
+  const card = screen.getByTestId("manage-sign-in-again");
+  fireEvent.click(within(card).getByRole("button", { name: "Sign in again" }));
+  fireEvent.click(within(card).getByRole("button", { name: "login-codex-again" }));
+  expect(onChanged).toHaveBeenCalledTimes(1);
+  expect(within(card).getByText("Signed in again.")).toBeInTheDocument();
+});
+
+it("lets a person back out of signing in again", () => {
+  renderManage();
+  const card = screen.getByTestId("manage-sign-in-again");
+  fireEvent.click(within(card).getByRole("button", { name: "Sign in again" }));
+  fireEvent.click(within(card).getByRole("button", { name: "Cancel" }));
+  expect(within(card).getByRole("button", { name: "Sign in again" })).toBeInTheDocument();
+});
+
+it("offers no sign-in control for a stopped agent", () => {
+  renderManage({ agent: { ...agent, status: "stopped" } });
+  expect(screen.queryByTestId("manage-sign-in-again")).not.toBeInTheDocument();
+});
+
+it("offers Change GitHub token for a running Aeon agent", () => {
+  const aeonRow = { ...row, id: "agent-b", type: "aeon" };
+  const aeon = { ...(aeonRow as unknown as HivraAgent), manage: manageCapabilitiesFor(aeonRow, { preparedMatch: true }) };
+  renderManage({ agent: aeon, def: getAgent("aeon") });
+  const card = screen.getByTestId("manage-sign-in-again");
+  fireEvent.click(within(card).getByRole("button", { name: "Change GitHub token" }));
+  expect(within(card).getByRole("button", { name: "github-change" })).toBeInTheDocument();
 });

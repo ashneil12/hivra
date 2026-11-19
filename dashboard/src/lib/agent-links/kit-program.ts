@@ -19,7 +19,7 @@
 import { linkLabel } from "./eligibility";
 
 export const KIT_RESULT_PREFIX = "HIVRA_LINK_KIT ";
-export const KIT_CLI_VERSION = "2026.10.19.1";
+export const KIT_CLI_VERSION = "2026.11.12.1";
 
 export interface KitComputer {
   id: string;
@@ -27,10 +27,16 @@ export interface KitComputer {
   kind: string;
 }
 
+/** One of the owner's own computers an agent can ask to run a command on (the local bridge). */
+export interface KitBridgeComputer {
+  id: string;
+  name: string;
+}
+
 export const HIVRA_COMPUTERS_CLI = String.raw`#!/usr/bin/env python3
 # hivra-computers: use the other computers your owner linked to you in Hivra.
 # Installed and kept up to date by Hivra. Version ${KIT_CLI_VERSION}.
-import argparse, base64, json, os, shlex, sys, urllib.error, urllib.request
+import argparse, base64, json, os, shlex, sys, time, urllib.error, urllib.request
 
 CONFIG = os.path.expanduser("~/.hivra/link.json")
 
@@ -46,8 +52,10 @@ def config():
     except (OSError, ValueError, KeyError):
         fail("no computers are linked to this agent. The owner can link one in Hivra: Manage, then Computers.")
 
-def call(method, body=None, timeout=60):
+def call(method, body=None, timeout=60, path=None):
     endpoint, key = config()
+    if path:
+        endpoint = endpoint.rsplit("/", 1)[0] + "/" + path
     data = None if body is None else json.dumps(body).encode()
     request = urllib.request.Request(endpoint, data=data, method=method, headers={
         "Authorization": "Bearer " + key, "Content-Type": "application/json", "User-Agent": "hivra-computers/${KIT_CLI_VERSION}"})
@@ -82,9 +90,73 @@ def emit(result):
         sys.stderr.write("\nhivra-computers: the command ran out of time and was stopped. Use --timeout (up to 120) or run it in the background with nohup.\n")
     return int(result["exitCode"])
 
+def bridge_computers():
+    return call("GET", path="agent-bridge").get("computers", [])
+
+def bridge_pick(wanted):
+    computers = bridge_computers()
+    exact = [c for c in computers if c["id"] == wanted]
+    found = exact or [c for c in computers if c["name"].lower() == wanted.lower()]
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        fail("no computer of your owner's called %s. Run: hivra-computers bridge list" % wanted)
+    fail("more than one computer is called %s. Use its id (hivra-computers bridge list)." % wanted)
+
+def bridge_run(args):
+    words = args.command
+    if not words:
+        fail("give a command, e.g. hivra-computers bridge run %s -- ls -la" % args.computer)
+    computer = bridge_pick(args.computer)
+    body = {"computer": computer["id"], "argv": words}
+    if args.cwd:
+        body["cwd"] = args.cwd
+    if args.timeout:
+        body["timeoutSeconds"] = args.timeout
+    made = call("POST", body, path="agent-bridge")["request"]
+    interval = float(os.environ.get("HIVRA_BRIDGE_POLL_SECONDS", "2.5"))
+    waiting = False
+    request = made
+    deadline = time.time() + (args.timeout or 30) + 900
+    while True:
+        status = request.get("status")
+        if status == "done":
+            return bridge_emit(request.get("result") or {})
+        if status == "denied":
+            fail("your owner said no to this command on %s." % computer["name"], 3)
+        if status == "expired":
+            fail("your owner didn't approve this command in time, so it did not run. Ask again when they are around.", 4)
+        if status == "failed":
+            message = (request.get("result") or {}).get("message") or request.get("errorCode") or "the command could not run"
+            fail("the command did not run on %s: %s" % (computer["name"], message), 5)
+        if status == "pending" and not waiting:
+            sys.stderr.write("Waiting for your owner to approve this in Hivra...\n")
+            sys.stderr.flush()
+            waiting = True
+        if time.time() > deadline:
+            fail("gave up waiting for the command to finish. Its id is %s." % made["id"], 6)
+        time.sleep(interval)
+        request = call("GET", path="agent-bridge?id=" + made["id"])["request"]
+
+def bridge_emit(result):
+    sys.stdout.write(result.get("stdout") or "")
+    sys.stdout.flush()
+    sys.stderr.write(result.get("stderr") or "")
+    if result.get("truncated"):
+        sys.stderr.write("\nhivra-computers: output was cut short. Write long output to a file.\n")
+    return int(result.get("exitCode") or 0)
+
 def main():
     parser = argparse.ArgumentParser(prog="hivra-computers", description="Use the computers linked to you in Hivra.")
     sub = parser.add_subparsers(dest="action", required=True)
+    p_bridge = sub.add_parser("bridge", help="ask to run a command on one of your owner's own computers (they approve it)")
+    bridge_sub = p_bridge.add_subparsers(dest="bridge_action", required=True)
+    bridge_sub.add_parser("list", help="list your owner's own computers you can ask")
+    p_brun = bridge_sub.add_parser("run", help="run one command (an argument list, no shell) after your owner approves")
+    p_brun.add_argument("computer")
+    p_brun.add_argument("--cwd", help="folder to run in")
+    p_brun.add_argument("--timeout", type=int, default=30, help="seconds the command may run (at most 120)")
+    p_brun.add_argument("command", nargs="*")
     sub.add_parser("list", help="list the computers you can use")
     p_run = sub.add_parser("run", help="run a shell command on a computer")
     p_run.add_argument("computer")
@@ -100,12 +172,23 @@ def main():
     argv = sys.argv[1:]
     # Everything after "--" is the remote command, flags and all.
     remote = None
-    if argv[:1] == ["run"] and "--" in argv:
+    if (argv[:1] == ["run"] or argv[:2] == ["bridge", "run"]) and "--" in argv:
         cut = argv.index("--")
         argv, remote = argv[:cut], argv[cut + 1:]
     args = parser.parse_args(argv)
     if remote is not None:
         args.command = remote
+
+    if args.action == "bridge":
+        if args.bridge_action == "list":
+            computers = bridge_computers()
+            if not computers:
+                print("Your owner has no computer set up for you to ask. They can add one in Hivra.")
+                return 0
+            for computer in computers:
+                print("%s\t%s" % (computer["name"], computer["id"]))
+            return 0
+        return bridge_run(args)
 
     if args.action == "list":
         data = call("GET")
@@ -171,11 +254,12 @@ function computerLines(computers: KitComputer[]): string[] {
   return computers.map((computer) => `- ${linkLabel(computer.name)} (${computer.kind}), id \`${computer.id}\``);
 }
 
-/** ~/.hivra/COMPUTERS.md: what the agent can use, in its own words. */
-export function renderComputersNote(agentName: string, computers: KitComputer[]): string {
+function bridgeLines(bridgeComputers: KitBridgeComputer[]): string[] {
+  return bridgeComputers.map((computer) => `- ${linkLabel(computer.name)}, id \`${computer.id}\``);
+}
+
+function linkedSection(agentName: string, computers: KitComputer[]): string[] {
   return [
-    "# Computers you can use",
-    "",
     `Your owner linked these computers to you (${linkLabel(agentName, "this agent")}) in Hivra. You can run commands and move files on them with the \`hivra-computers\` command. Hivra keeps this file current; it changes when your owner links or removes a computer.`,
     "",
     ...computerLines(computers),
@@ -189,19 +273,51 @@ export function renderComputersNote(agentName: string, computers: KitComputer[])
     "",
     "These computers belong to your owner. Do there only what your owner asked, and say what you did.",
     "",
+  ];
+}
+
+function bridgeSection(bridgeComputers: KitBridgeComputer[]): string[] {
+  return [
+    "## Your owner's own computer",
+    "",
+    "Your owner also set up their own computer so you can ask to run a command on it:",
+    "",
+    ...bridgeLines(bridgeComputers),
+    "",
+    "- `hivra-computers bridge list` shows them.",
+    "- `hivra-computers bridge run <computer> [--cwd DIR] [--timeout SECONDS] -- <command> [args...]` asks to run one command there. The computer can be named by its name or its id. The command is a program and its arguments, not a shell line (use `-- sh -c '...'` if you need a pipe). It stops after 30 seconds unless you pass `--timeout` (at most 120).",
+    "",
+    "Every command needs your owner's OK in Hivra first (or an hour's allowance they gave you for that computer). The command waits, printing \"Waiting for your owner to approve this in Hivra...\", then prints the output and exits with the command's own exit code. If your owner says no, or doesn't answer in time, it exits non-zero and nothing ran.",
+    "",
+    "The command runs as your owner, on their real computer, with no sandbox. Ask only for what the task needs, keep each command small and easy to read, and say what you ran and why.",
+    "",
+  ];
+}
+
+/** ~/.hivra/COMPUTERS.md: what the agent can use, in its own words. */
+export function renderComputersNote(agentName: string, computers: KitComputer[], bridgeComputers: KitBridgeComputer[] = []): string {
+  return [
+    "# Computers you can use",
+    "",
+    ...(computers.length > 0 ? linkedSection(agentName, computers) : []),
+    ...(bridgeComputers.length > 0 ? bridgeSection(bridgeComputers) : []),
   ].join("\n");
 }
 
-export function renderComputersSkill(computers: KitComputer[]): string {
-  const names = computers.slice(0, 8).map((computer) => linkLabel(computer.name)).join(", ");
-  const more = computers.length > 8 ? ` and ${computers.length - 8} more` : "";
+export function renderComputersSkill(computers: KitComputer[], bridgeComputers: KitBridgeComputer[] = []): string {
+  const labels = [...computers.map((computer) => linkLabel(computer.name)), ...bridgeComputers.map((computer) => linkLabel(computer.name))];
+  const names = labels.slice(0, 8).join(", ");
+  const more = labels.length > 8 ? ` and ${labels.length - 8} more` : "";
+  const what = computers.length > 0
+    ? "Run commands, copy files and take screenshots on the other computers your owner linked to you in Hivra"
+    : "Ask to run a command on your owner's own computer, with their approval in Hivra";
   return [
     "---",
     "name: hivra-computers",
-    `description: Run commands, copy files and take screenshots on the other computers your owner linked to you in Hivra (${names}${more}). Use when asked to do something on, check, set up or fix one of those computers.`,
+    `description: ${what} (${names}${more}). Use when asked to do something on, check, set up or fix one of those computers.`,
     "---",
     "",
-    renderComputersNote("you", computers).replace(/^# Computers you can use\n\n/, ""),
+    renderComputersNote("you", computers, bridgeComputers).replace(/^# Computers you can use\n\n/, ""),
   ].join("\n");
 }
 

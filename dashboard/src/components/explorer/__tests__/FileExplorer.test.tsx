@@ -10,7 +10,9 @@ const INSTANCE_EXPLORER_HOME = resolveExplorerHome("inst_123");
 
 jest.mock("react-markdown", () => ({
   __esModule: true,
-  default: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+  default: ({ children, components }: { children?: React.ReactNode; components?: Record<string, unknown> }) => (
+    <div data-img-override={typeof components?.img === "function" ? "yes" : "no"}>{children}</div>
+  ),
 }));
 
 jest.mock("remark-gfm", () => ({
@@ -130,6 +132,17 @@ describe("FileExplorer", () => {
     expect(screen.getByText(`${INSTANCE_EXPLORER_HOME}/README.md`)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /open in editor/i })).toBeInTheDocument();
     expect(await screen.findByText(/Explorer Notes/)).toBeInTheDocument();
+  });
+
+  it("previews an agent markdown file with the image override, so its images wait for a click", async () => {
+    render(<FileExplorer instanceId="inst_123" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("README.md")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("README.md"));
+
+    expect(await screen.findByText(/Explorer Notes/)).toHaveAttribute("data-img-override", "yes");
   });
 
   it("offers a download link for the selected file", async () => {

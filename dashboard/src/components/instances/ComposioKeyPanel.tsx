@@ -86,15 +86,15 @@ export function ComposioKeyPanel({
     return (
       <div
         style={{
-          border: "1px solid rgba(22,163,74,0.35)",
-          background: "rgba(22,163,74,0.05)",
+          border: "1px solid color-mix(in srgb, var(--hg-ok) 35%, transparent)",
+          background: "color-mix(in srgb, var(--hg-ok) 5%, transparent)",
           padding: "12px 13px",
           display: "flex",
           alignItems: "center",
           gap: 10,
         }}
       >
-        <Check size={16} style={{ color: "#16a34a", flexShrink: 0 }} />
+        <Check size={16} style={{ color: "var(--hg-ok)", flexShrink: 0 }} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div className="serif" style={{ fontSize: 14.5, color: "var(--ink-black)" }}>
             Composio connected
@@ -146,7 +146,7 @@ export function ComposioKeyPanel({
     <div
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.02)",
+        background: "var(--hg-fill-1)",
         padding: "13px",
         display: "grid",
         gap: 10,
@@ -200,8 +200,8 @@ export function ComposioKeyPanel({
           display: "flex",
           alignItems: "center",
           gap: 8,
-          border: `1px solid ${error ? "rgba(220,38,38,0.5)" : "var(--etched-border)"}`,
-          background: "rgba(255,255,255,0.02)",
+          border: `1px solid ${error ? "color-mix(in srgb, var(--hg-bad) 50%, transparent)" : "var(--etched-border)"}`,
+          background: "var(--hg-fill-1)",
           padding: "8px 10px",
         }}
       >
@@ -234,7 +234,7 @@ export function ComposioKeyPanel({
         />
       </div>
       {error ? (
-        <span style={{ fontSize: 12, color: "#dc2626", lineHeight: 1.4 }}>{error}</span>
+        <span style={{ fontSize: 12, color: "var(--hg-bad)", lineHeight: 1.4 }}>{error}</span>
       ) : null}
       <button
         type="button"

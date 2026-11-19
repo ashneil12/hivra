@@ -33,7 +33,7 @@ export const STAYS_ON = "A paid Hivra Cloud computer stays on and is not paused 
  * Aeon is listed as hosted, but Hivra only hosts its dashboard: its scheduled work runs
  * on the owner's own GitHub Actions (lib/launch/contracts.ts).
  */
-export const HIVRA_AGENTS_CELL = "Hermes, OpenClaw, Agent Zero, Claude Code, Codex, Aeon (dashboard only)";
+export const HIVRA_AGENTS_CELL = "Hermes, OpenClaw, Agent Zero, Claude Code, Codex, Aeon (dashboard only), DeepSeek Harness (alpha)";
 
 /**
  * Ends every meta description that quotes a price ("Prices as of October 2026."), in the same month the
@@ -65,22 +65,23 @@ export const DECISION_SECTION: CompareSection = {
  * "verified" on the page: vendors have moved prices since (Hostinger's sale price) and Nous
  * now shows its per-size prices only after sign-in, so the page cannot claim live checking.
  */
-export function cautionSection(): CompareSection {
+export function cautionSection(checked?: string): CompareSection {
   return {
     heading: "Things a comparison chart cannot tell you",
     tone: "note",
     blocks: paragraphs(
-      `Prices, feature availability, introductory offers and refund policies can all change. The vendor figures and documentation on this page were collected from each provider's published pages in ${formatCheckedMonth()}. Some of them may have changed since, so confirm any quoted vendor price, hardware size, compliance status or security statement against the provider's current documentation before you buy.`,
+      `Prices, feature availability, introductory offers and refund policies can all change. The vendor figures and documentation on this page were collected from each provider's published pages in ${formatCheckedMonth(checked)}. Some of them may have changed since, so confirm any quoted vendor price, hardware size, compliance status or security statement against the provider's current documentation before you buy.`,
       "Security claims also need context. A managed host can take infrastructure upkeep off your hands, but it cannot make an unrestricted AI agent safe. Review secrets, account permissions, approvals and backups wherever you run it.",
     ),
   };
 }
 
 /** "Where these numbers come from" for a page that quotes a competitor's prices or terms. */
-export function priceSources(links: CompareSources["links"], notes?: string[], plural = false): CompareSources {
+export function priceSources(links: CompareSources["links"], notes?: string[], plural = false, checked?: string): CompareSources {
   const who = plural ? "the other providers come from their" : "the other provider come from its";
   return {
-    intro: `Prices and terms for ${who} own pages, as of ${formatCheckedMonth()}. Vendors change prices, so check the source before you pay.`,
+    intro: `Prices and terms for ${who} own pages, as of ${formatCheckedMonth(checked)}. Vendors change prices, so check the source before you pay.`,
+    ...(checked ? { checked } : {}),
     notes,
     links,
   };
@@ -107,6 +108,19 @@ export const COMPARISON_LABELS: Record<string, string> = {
   "vs-render": "Hivra vs Render",
   "openclaw-to-hermes": "OpenClaw to Hermes",
   "ai-agent-hosting-alternatives": "AI agent hosting alternatives",
+  "vs-claude-code-on-the-web": "Hivra vs Claude Code on the web",
+  "vs-openai-codex-cloud": "Hivra vs OpenAI Codex cloud",
+  "vs-cursor-cloud-agents": "Hivra vs Cursor cloud agents",
+  "vs-github-codespaces": "Hivra vs GitHub Codespaces",
+  "vs-fly-sprites": "Hivra vs Fly.io Sprites",
+  "vs-e2b": "Hivra vs E2B sandboxes",
+  "vs-lobsterland": "Hivra vs Lobsterland",
+  "vs-construct-computer": "Hivra vs Construct Computer",
+  "vs-orgo": "Hivra vs Orgo",
+  "vs-machine0": "Hivra vs machine0",
+  "vs-kiloclaw": "Hivra vs KiloClaw",
+  "vs-simular-box": "Hivra vs Simular box",
+  "vs-cubicles": "Hivra vs Cubicles",
 };
 
 export const BLOG_LABELS: Record<string, string> = {
@@ -117,6 +131,28 @@ export const BLOG_LABELS: Record<string, string> = {
   "what-is-hermes-agent": "What is Hermes Agent?",
 };
 
+/** Labels for the /agents pages that the comparison pages link to. */
+export const AGENT_LABELS: Record<string, string> = {
+  hermes: "Hermes on Hivra",
+  openclaw: "OpenClaw on Hivra",
+  "claude-code": "Claude Code on Hivra",
+  codex: "Codex on Hivra",
+};
+
+/** Labels for the /docs pages that the comparison pages link to. */
+export const DOC_LABELS: Record<string, string> = {
+  "plans-and-billing": "What you pay for",
+  "connect-your-own-server": "Run agents on your own server",
+  "linux-computer": "Linux computer",
+  "linux-sandbox": "Linux Sandbox",
+  hermes: "Hermes",
+  openclaw: "OpenClaw",
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  "security-and-access": "Security and access",
+  "models-and-credits": "Models and credits",
+};
+
 export const HOSTING_COST_CALCULATOR_HREF = "/tools/ai-agent-hosting-cost-calculator";
 
 /** Related links under the closing row: other comparisons, then blog posts, then anything extra. */
@@ -124,12 +160,21 @@ export function relatedLinks(input: {
   comparisons: string[];
   blog?: string[];
   features?: Array<{ slug: string; label: string }>;
+  /** /agents/[slug] pages, by slug. */
+  agents?: string[];
+  /** /docs/[slug] pages, by slug. */
+  docs?: string[];
+  /** Adds a link to /pricing. */
+  pricing?: boolean;
   extra?: Array<{ label: string; href: string }>;
 }): Array<{ label: string; href: string }> {
   return [
     ...input.comparisons.map((slug) => ({ label: COMPARISON_LABELS[slug], href: `/compare/${slug}` })),
     ...(input.blog ?? []).map((slug) => ({ label: `Blog: ${BLOG_LABELS[slug]}`, href: `/blog/${slug}` })),
     ...(input.features ?? []).map(({ slug, label }) => ({ label: `Feature: ${label}`, href: `/features/${slug}` })),
+    ...(input.agents ?? []).map((slug) => ({ label: `Agent: ${AGENT_LABELS[slug]}`, href: `/agents/${slug}` })),
+    ...(input.docs ?? []).map((slug) => ({ label: `Docs: ${DOC_LABELS[slug]}`, href: `/docs/${slug}` })),
+    ...(input.pricing ? [{ label: "Hivra pricing", href: "/pricing" }] : []),
     ...(input.extra ?? []),
   ];
 }

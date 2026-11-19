@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Move this computer's Claude Code or Codex CLI to the release's vetted version
-# (agent-cli-versions.json). Vendor self-updaters are off on Hivra computers, so
-# after provisioning this is the only way the CLI version changes.
+# Move this computer's Claude Code or Codex CLI to the newest release its
+# vendor publishes on npm. Hivra never runs this by itself: it runs when the
+# computer's owner presses Update. Hivra pins no version; "latest" is resolved
+# here, at the moment of the update.
 #
-#   hivra-agent-cli-update.sh claude|codex X.Y.Z
+#   hivra-agent-cli-update.sh claude|codex latest
 #
 # hivra-update-guest-runtime.sh starts it as a transient systemd unit, so a slow
 # download never holds the dashboard's update request. It downloads first, then
@@ -18,7 +19,7 @@ umask 022
 
 KIND="${1:-}"
 TARGET="${2:-}"
-[[ "$TARGET" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid target version" >&2; exit 64; }
+[ "$TARGET" = latest ] || { echo "invalid target (only latest)" >&2; exit 64; }
 
 # Fixed guest paths; the overrides exist only for the offline test fixture.
 AGENT_USER=bux
@@ -57,7 +58,7 @@ case "$KIND" in
     BIN="${CODEX_BIN:-$OWNER_PREFIX/bin/codex}"
     BACKUP="$AGENT_HOME/.hivra/agent-cli-backup"
     ;;
-  *) echo "usage: hivra-agent-cli-update.sh claude|codex X.Y.Z" >&2; exit 64 ;;
+  *) echo "usage: hivra-agent-cli-update.sh claude|codex latest" >&2; exit 64 ;;
 esac
 PACKAGE_DIR="$PREFIX/lib/node_modules/$PACKAGE"
 
@@ -156,12 +157,18 @@ if as_package_owner test -d "$BACKUP/package"; then
   drop_backup
   FROM="$(installed_version || true)"
 fi
-if [ "$FROM" = "$TARGET" ]; then write_status done; exit 0; fi
+# The newest release on npm right now.
+write_status downloading
+NEWEST="$(as_package_owner timeout -k 10 120 npm --prefix "$PREFIX" view "$PACKAGE@latest" version 2>/dev/null </dev/null | tail -n 1 | tr -d '[:space:]')" || NEWEST=""
+if ! [[ "$NEWEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  write_status failed download_failed
+  exit 1
+fi
+if [ "$FROM" = "$NEWEST" ]; then write_status done; exit 0; fi
 
 # Download while the agent may still be working; the swap below then installs
 # from the local cache in seconds.
-write_status downloading
-if ! npm_bounded "$DOWNLOAD_TIMEOUT_SECONDS" cache add "$PACKAGE@$TARGET"; then
+if ! npm_bounded "$DOWNLOAD_TIMEOUT_SECONDS" cache add "$PACKAGE@$NEWEST"; then
   write_status failed download_failed
   exit 1
 fi
@@ -182,8 +189,8 @@ done
 
 write_status installing
 save_backup
-if npm_bounded "$INSTALL_TIMEOUT_SECONDS" install -g --prefer-offline --no-audit --no-fund "$PACKAGE@$TARGET" \
-  && [ "$(installed_version || true)" = "$TARGET" ]; then
+if npm_bounded "$INSTALL_TIMEOUT_SECONDS" install -g --prefer-offline --no-audit --no-fund "$PACKAGE@$NEWEST" \
+  && [ "$(installed_version || true)" = "$NEWEST" ]; then
   drop_backup
   write_status done
   exit 0

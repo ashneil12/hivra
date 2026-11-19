@@ -17,11 +17,11 @@ import {
 } from "@/lib/hivra/provider-agent-resize-contract";
 
 const label: React.CSSProperties = {
-  fontFamily: "var(--font-mono), monospace", fontSize: 10, fontWeight: 700,
+  fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700,
   textTransform: "uppercase", letterSpacing: "0.16em", color: "var(--text-muted)",
 };
 const card: React.CSSProperties = {
-  border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.035)",
+  border: "1px solid var(--hg-stroke)", borderRadius: 14, background: "var(--hg-glass)", backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)", WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)", boxShadow: "var(--hg-glass-edge), var(--hg-shadow-sm)",
   padding: 18, display: "grid", gap: 14, boxSizing: "border-box", minWidth: 0,
   gridTemplateColumns: "minmax(0, 1fr)", marginBottom: 20,
 };
@@ -219,7 +219,7 @@ export function ProviderResizePanel({ agent, onChanged, onFeedbackChange }: {
   if (unsupported) {
     return (
       <div style={card} data-testid="provider-resize-fixed">
-        <div className="serif" style={{ fontSize: 16, fontWeight: 400, color: "var(--ink-black)" }}>Fixed size · {size}</div>
+        <div className="serif" style={{ fontSize: 16, fontWeight: 600, color: "var(--ink-black)" }}>Fixed size · {size}</div>
         <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
           Hivra can&apos;t change this Hetzner server type from here. {unsupported}
         </div>
@@ -231,7 +231,7 @@ export function ProviderResizePanel({ agent, onChanged, onFeedbackChange }: {
     <>
       <div className="mono" style={{ ...label, marginBottom: 10 }}>Resize</div>
       <div style={card} data-testid="provider-resize-panel">
-        {error ? <div role="alert" style={{ border: "1px solid #c0392b", padding: "10px 12px", fontSize: 12, lineHeight: 1.5 }}>{error}</div> : null}
+        {error ? <div role="alert" style={{ border: "1px solid var(--hg-bad)", padding: "10px 12px", fontSize: 12, lineHeight: 1.5 }}>{error}</div> : null}
         {operation ? (
           <>
             <div>

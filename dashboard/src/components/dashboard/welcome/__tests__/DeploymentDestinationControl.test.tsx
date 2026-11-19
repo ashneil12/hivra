@@ -71,22 +71,29 @@ function Harness({
   runtimeId = "codex",
   hints = [],
   managedAvailable = true,
+  preferSelfManaged = false,
+  ownServerSupported = true,
   capacitySetupHref,
 }: {
   runtimeId?: string;
   hints?: string[];
   managedAvailable?: boolean;
+  preferSelfManaged?: boolean;
+  ownServerSupported?: boolean;
   capacitySetupHref?: string;
 }) {
   const state = useLaunchDestination(runtimeId, {
     handoff: parseLaunchTargetHandoff(hints),
     managedAvailable,
+    preferSelfManaged,
+    selfManagedAvailable: ownServerSupported,
   });
   return (
     <>
       <DeploymentDestinationControl
         state={state}
         managedAvailable={managedAvailable}
+        ownServerSupported={ownServerSupported}
         runtimeName="Codex"
         capacitySetupHref={capacitySetupHref}
       />
@@ -448,5 +455,25 @@ describe("DeploymentDestinationControl", () => {
       expectedConnectionRevision: TARGET.evidenceConnectionRevision,
     });
     expect(deploymentForTarget(null)).toBeNull();
+  });
+
+  it("opens a free account on its ready connected server, until it chooses Hivra Cloud", async () => {
+    render(<Harness preferSelfManaged />);
+    await waitFor(() => expect(screen.getByTestId("deployment")).toHaveTextContent(TARGET.id));
+    expect(screen.getByRole("button", { name: /My infrastructure/i })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: /Hivra Cloud/i }));
+    expect(screen.getByTestId("deployment")).toHaveTextContent('{"mode":"hivra-managed"}');
+  });
+
+  it("stays on Hivra Cloud for a free account with no ready server", async () => {
+    (listInfrastructureTargets as jest.Mock).mockResolvedValue([]);
+    render(<Harness preferSelfManaged />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh ready hosts" })).toBeEnabled());
+    expect(screen.getByTestId("deployment")).toHaveTextContent('{"mode":"hivra-managed"}');
+  });
+
+  it("says a Hivra Cloud only agent is not available on a connected server, without 'yet'", () => {
+    render(<Harness ownServerSupported={false} />);
+    expect(screen.getByText("Not available for Codex. It runs on Hivra Cloud only.")).toBeInTheDocument();
   });
 });

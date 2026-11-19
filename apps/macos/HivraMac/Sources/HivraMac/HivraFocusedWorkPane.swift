@@ -53,14 +53,13 @@ struct HivraFocusedWorkPane: View {
                     .accessibilityLabel("Resource surfaces")
                 } else {
                     Text(browser.isLoading ? "Opening workspace…" : profile.name)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(HivraDesign.secondaryText(for: colorScheme))
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if browser.isLoading {
-                    ProgressView().controlSize(.small)
-                        .accessibilityLabel("Loading work pane")
+                    HivraThinkingOrb(size: 20, label: "Loading work pane")
                 }
                 Button { if let onReturn { onReturn() } else { onDetach(browser.currentURL ?? profile.url) } } label: {
                     Image(systemName: onReturn == nil ? "macwindow.on.rectangle" : "arrow.down.right.and.arrow.up.left")
@@ -70,11 +69,10 @@ struct HivraFocusedWorkPane: View {
                 .accessibilityLabel(onReturn == nil ? "Open in Separate Window" : "Return to Hivra")
                 navigationMenu
             }
-            .frame(height: 38)
-            .padding(.horizontal, 12)
-            .background(HivraDesign.surface(for: colorScheme))
+            .frame(height: 40)
+            .padding(.horizontal, 10)
             .overlay(alignment: .bottom) {
-                Rectangle().fill(HivraDesign.border(for: colorScheme)).frame(height: 1)
+                Rectangle().fill(HivraDesign.stroke(.subtle, for: colorScheme)).frame(height: 1)
             }
 
             HivraBrowserPane(
@@ -105,17 +103,12 @@ struct HivraFocusedWorkPane: View {
             browser.selectWorkspaceSurface(surface.id)
         } label: {
             Text(surface.label)
-                .font(.system(size: 12, weight: active ? .semibold : .regular))
+                .font(.system(size: 12.5, weight: .medium))
                 .lineLimit(1)
                 .fixedSize()
                 .padding(.horizontal, 11)
-                .frame(minHeight: 28)
-                .foregroundStyle(active ? HivraDesign.foreground(for: colorScheme) : .secondary)
-                .background(active ? HivraDesign.foreground(for: colorScheme).opacity(0.06) : .clear,
-                            in: RoundedRectangle(cornerRadius: 5))
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HivraRowStyle(selected: active, height: 28))
         .accessibilityAddTraits(active ? .isSelected : [])
     }
 

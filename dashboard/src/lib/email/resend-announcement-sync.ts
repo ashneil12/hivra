@@ -1,6 +1,12 @@
 import { Resend } from "resend";
 import { log } from "@/lib/logger";
 
+import { pickVerifiedEmail } from "./clerk-verified-email";
+import {
+  DEFAULT_SEGMENT_NAME,
+  DEFAULT_TOPIC_DESCRIPTION,
+  DEFAULT_TOPIC_NAME,
+} from "./announcement-audience";
 import { isInternalNonReceivingRecipient } from "./welcome";
 
 const LOG_SOURCE = "resend-announcement-sync";
@@ -12,11 +18,6 @@ const ANNOUNCEMENT_SETUP_TTL_MS = 5 * 60_000;
 const CONTACT_SYNC_DELAY_MS = 800;
 const RATE_LIMIT_RETRY_MS = 1_500;
 const MAX_RATE_LIMIT_RETRIES = 5;
-const DEFAULT_SEGMENT_NAME = "Hivra customers";
-const DEFAULT_TOPIC_NAME = "Product updates";
-const DEFAULT_TOPIC_DESCRIPTION =
-  "Product announcements, launch notes, customer updates, and other Hivra news.";
-
 const CONTACT_PROPERTIES = [
   { key: "clerk_user_id", type: "string" as const },
   { key: "clerk_created_at", type: "string" as const },
@@ -116,11 +117,9 @@ function requireEnv(name: string) {
   return value;
 }
 
+// Only a Clerk-verified address may be enrolled; an unverified one may not belong to the user.
 function chooseEmail(user: ClerkAnnouncementUser) {
-  const addresses = user.email_addresses || [];
-  const primary = addresses.find((address) => address.id === user.primary_email_address_id);
-  const verified = addresses.find((address) => address.verification?.status === "verified");
-  return primary?.email_address || verified?.email_address || addresses[0]?.email_address || null;
+  return pickVerifiedEmail(user);
 }
 
 function formatClerkCreatedAt(value: number | null | undefined) {
@@ -463,6 +462,9 @@ export async function syncClerkUserToAnnouncementAudience(user: ClerkAnnouncemen
   } as const;
 }
 
+// F106: this path enrols the address exactly as typed, with no Clerk check, into the
+// 'Hivra customers' audience. It has no caller today. Do not wire it to a public form
+// until Ash decides whether reservation contacts may join that audience at all.
 export async function syncReservationToAnnouncementAudience(email: string) {
   const recipient = buildReservationRecipient(email);
   if (!recipient) {

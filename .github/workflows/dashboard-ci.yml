@@ -25,16 +25,20 @@ permissions:
   contents: read
 
 # A newer commit on the same PR makes the older run obsolete, so cancel it.
-# Push, merge-queue and manual runs each verify one exact commit: they get their
-# own group and are never cancelled (a shared group would also drop a queued
-# run whenever a newer one arrived).
+# Pushes to canary work the same way: a newer push verifies a tree that
+# contains every earlier merge, so an older canary run still in progress is
+# cancelled (the same rule Current tree safety already uses). When merges land
+# minutes apart this saves a full run per superseded merge, and the newest
+# canary commit always gets a complete run.
+# Merge-queue and manual runs each verify one exact commit: they get their own
+# group and are never cancelled.
 concurrency:
-  group: dashboard-ci-${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: dashboard-ci-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 # `npm run verify` (lint, typecheck, jest, build) ran as one serial job and hit
 # 20 minutes on 2026-09-24, 16 of them in `jest --runInBand`. The same work now
-# runs as parallel jobs, with jest split into duration-balanced shards
+# runs as parallel jobs, with jest split into eight duration-balanced shards
 # (dashboard/scripts/jest-duration-sequencer.cjs). "Verify Dashboard" is the
 # aggregate check and passes only when every job below passed.
 jobs:
@@ -107,16 +111,19 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Venice promo SQL and service tests (PGlite)
+        run: npm run test:venice-promo
+
   jest:
-    name: Jest (shard ${{ matrix.shard }}/4)
+    name: Jest (shard ${{ matrix.shard }}/8)
     runs-on: ubuntu-latest
-    # A shard takes about 4 minutes of jest plus 1-2 minutes of setup.
+    # A shard takes about 2-3 minutes of jest plus 1-2 minutes of setup.
     timeout-minutes: 15
     strategy:
       # Report every failing shard, not just the first one.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     defaults:
       run:
         working-directory: dashboard
@@ -165,9 +172,12 @@ jobs:
           echo "HERMES_CONFIG_TEST_PYTHON=$HERMES_CONFIG_TEST_VENV/bin/python" >> "$GITHUB_ENV"
 
       # The smoke-contract and hot-path suites are part of every shard's
-      # selection, so they are not run a second time here.
+      # selection, so they are not run a second time here. Eight shards
+      # (2026-11-17, was four) halve the slowest job. Each shard stays serial
+      # (--runInBand): parallel jest workers on the 4-CPU runner made the
+      # PostgreSQL, Python and shell-fixture suites time out or race.
       - name: Run jest shard
-        run: npm run test:ci -- --shard=${{ matrix.shard }}/4
+        run: npm run test:ci -- --shard=${{ matrix.shard }}/8
 
   build:
     name: Production build
@@ -231,6 +241,12 @@ jobs:
 
       - name: Attached network filter rendering (T5, T36, T37)
         run: python3 -I -B scripts/test-attached-network-sets.py
+
+      - name: Needs you add-on for Hermes (hivra-inbox plugin)
+        run: python3 -I -B scripts/test-hermes-inbox-plugin.py
+
+      - name: Ask me first hook for Claude Code
+        run: python3 -I -B scripts/test-hivra-ask-hook.py
 
       - name: Attached DNS relay (T36)
         run: docker run --rm --network none -v "$PWD":/src:ro "$PYTHON_IMAGE" python3 /src/scripts/test-attached-dns-relay.py

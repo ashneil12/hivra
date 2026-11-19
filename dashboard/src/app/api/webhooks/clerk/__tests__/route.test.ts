@@ -1,13 +1,25 @@
 import crypto from "crypto";
 import { stopDeletedUserInstances } from "@/lib/recovery/stop-deleted-user-instances";
 jest.mock("@/lib/recovery/stop-deleted-user-instances", () => ({ stopDeletedUserInstances: jest.fn() }));
-import { NextRequest } from "next/server";
+import { after, NextRequest } from "next/server";
 
 import { POST } from "../route";
 import { syncClerkUserToAnnouncementAudience } from "@/lib/email/resend-announcement-sync";
+import { sendWelcomeEmail } from "@/lib/email/welcome";
 
 jest.mock("@/lib/email/resend-announcement-sync", () => ({
   syncClerkUserToAnnouncementAudience: jest.fn(),
+}));
+
+// `after` only exists inside a request scope; run its callbacks inline so the
+// welcome send and the audience sync can be asserted after POST resolves.
+jest.mock("next/server", () => ({
+  ...jest.requireActual("next/server"),
+  after: jest.fn(),
+}));
+
+jest.mock("@/lib/email/welcome", () => ({
+  sendWelcomeEmail: jest.fn(),
 }));
 
 function signPayload(params: {
@@ -30,8 +42,14 @@ describe("POST /api/webhooks/clerk", () => {
     typeof syncClerkUserToAnnouncementAudience
   >;
 
+  const mockedWelcome = sendWelcomeEmail as jest.MockedFunction<typeof sendWelcomeEmail>;
+
   beforeEach(() => {
     jest.clearAllMocks();
+    (after as unknown as jest.Mock).mockImplementation((callback: () => unknown) => {
+      void callback();
+    });
+    mockedWelcome.mockResolvedValue({ sent: true } as Awaited<ReturnType<typeof sendWelcomeEmail>>);
     jest.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
     process.env = { ...originalEnv, CLERK_WEBHOOK_SECRET: secret };
   });
@@ -131,6 +149,98 @@ describe("POST /api/webhooks/clerk", () => {
       reason: "unsupported_event",
     });
     expect(mockedSync).not.toHaveBeenCalled();
+  });
+
+  it("does not send the welcome to an address Clerk has not verified", async () => {
+    const user = {
+      id: "user_new",
+      first_name: "Ash",
+      primary_email_address_id: "email_unverified",
+      email_addresses: [
+        { id: "email_unverified", email_address: "victim@gmail.com", verification: { status: "unverified" } },
+      ],
+    };
+
+    const response = await POST(makeRequest({ type: "user.created", data: user }));
+
+    expect(response.status).toBe(200);
+    expect(mockedWelcome).not.toHaveBeenCalled();
+  });
+
+  it("welcomes the verified secondary address when the primary is unverified", async () => {
+    const user = {
+      id: "user_mixed",
+      first_name: "Ash",
+      primary_email_address_id: "email_primary",
+      email_addresses: [
+        { id: "email_primary", email_address: "typed-not-proven@gmail.com", verification: { status: "unverified" } },
+        { id: "email_secondary", email_address: "proven@gmail.com", verification: { status: "verified" } },
+      ],
+    };
+
+    const response = await POST(makeRequest({ type: "user.created", data: user }));
+
+    expect(response.status).toBe(200);
+    expect(mockedWelcome).toHaveBeenCalledTimes(1);
+    expect(mockedWelcome).toHaveBeenCalledWith({ email: "proven@gmail.com", firstName: "Ash" });
+  });
+
+  it("welcomes a verified primary address (control)", async () => {
+    const user = {
+      id: "user_ok",
+      first_name: "Ash",
+      primary_email_address_id: "email_123",
+      email_addresses: [
+        { id: "email_123", email_address: "Ash@Example.com", verification: { status: "verified" } },
+      ],
+    };
+
+    await POST(makeRequest({ type: "user.created", data: user }));
+
+    expect(mockedWelcome).toHaveBeenCalledWith({ email: "ash@example.com", firstName: "Ash" });
+  });
+
+  it("syncs the audience on user.updated once the address becomes verified (F106)", async () => {
+    // A sign-up that verifies later gets no welcome (user.created fired first), but the
+    // audience must still follow the verification through user.updated.
+    mockedSync.mockResolvedValue({
+      skipped: false,
+      email: "late@example.com",
+      action: "created",
+      unsubscribed: false,
+    });
+    const user = {
+      id: "user_late",
+      primary_email_address_id: "email_late",
+      email_addresses: [
+        { id: "email_late", email_address: "late@example.com", verification: { status: "verified" } },
+      ],
+    };
+
+    const response = await POST(makeRequest({ type: "user.updated", data: user }));
+
+    expect(response.status).toBe(200);
+    expect(mockedSync).toHaveBeenCalledTimes(1);
+    expect(mockedSync).toHaveBeenCalledWith(user);
+  });
+
+  it("does not enrol on user.updated while the only address is still unverified (F106)", async () => {
+    // The enrolment decision is made inside the sync, which reads the Clerk
+    // verification state; the route passes the user through unchanged.
+    mockedSync.mockResolvedValue({ skipped: true, reason: "missing_email" });
+    const user = {
+      id: "user_still_unverified",
+      primary_email_address_id: "email_u",
+      email_addresses: [
+        { id: "email_u", email_address: "victim@example.com", verification: { status: "unverified" } },
+      ],
+    };
+
+    const response = await POST(makeRequest({ type: "user.updated", data: user }));
+
+    expect(response.status).toBe(200);
+    expect(mockedSync).toHaveBeenCalledWith(user);
+    expect(mockedWelcome).not.toHaveBeenCalled();
   });
 
   it("fails closed when the webhook secret is missing", async () => {

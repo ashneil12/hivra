@@ -2,11 +2,12 @@ import Fastify from "fastify";
 import sensible from "@fastify/sensible";
 import { buildBearerAuthPreHandler } from "./auth/bearer.js";
 import { loadConfig } from "./config.js";
-import { buildLogger, redactArgs } from "./logger.js";
+import { buildLogger } from "./logger.js";
+import { attachRequestLog } from "./request-log.js";
 import { revalidateTierOrExit } from "./tier/revalidate.js";
 import { hasSufficientMemory, totalRamMb, MIN_VM_RAM_BYTES } from "./preflight/memory.js";
 import { SessionManager } from "./playwright/session-manager.js";
-import { registerHealthRoutes } from "./routes/health.js";
+import { cdpBrowserProbe, registerHealthRoutes } from "./routes/health.js";
 import { registerSessionRoutes } from "./routes/session.js";
 import { registerNavigationRoutes } from "./routes/navigation.js";
 import { registerInteractionRoutes } from "./routes/interaction.js";
@@ -60,27 +61,15 @@ async function main() {
   // endpoint are explicitly exempt — see auth/bearer.ts.
   app.addHook("onRequest", buildBearerAuthPreHandler(config, logger));
 
-  // Single observability hook: every request emits one structured log line on completion.
-  app.addHook("onResponse", async (req, reply) => {
-    const args =
-      req.method === "POST" && typeof req.body === "object" && req.body !== null
-        ? redactArgs(req.body)
-        : undefined;
-    logger.info(
-      {
-        tool: req.routeOptions.url ?? req.url,
-        method: req.method,
-        status: reply.statusCode,
-        duration_ms: reply.elapsedTime,
-        identity: (req.body as { identity?: string } | undefined)?.identity,
-        session_id: (req.body as { session_id?: string } | undefined)?.session_id,
-        args,
-      },
-      "request",
-    );
-  });
+  attachRequestLog(app, logger);
 
-  registerHealthRoutes(app, { sessions, startedAt, tierOk: tierResult.ok });
+  const cdpEnabled = /^(1|true|yes|on)$/i.test(process.env.AGENT_CDP_ENABLED ?? "");
+  registerHealthRoutes(app, {
+    sessions,
+    startedAt,
+    tierOk: tierResult.ok,
+    cdpProbe: cdpEnabled ? cdpBrowserProbe(Number(process.env.AGENT_CDP_PORT || 9223)) : undefined,
+  });
   registerSessionRoutes(app, { sessions });
   registerNavigationRoutes(app, { sessions });
   registerInteractionRoutes(app, { sessions });

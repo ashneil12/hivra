@@ -16,7 +16,6 @@ import {
   labelForNavigationItem,
   mobileNavigationCopy,
 } from '@/lib/dashboard-navigation';
-import { isWorkspaceShellNavigationEnabled } from '@/lib/flags/workspace-shell';
 import { isLocalAuthMode } from '@/lib/self-host/config';
 
 export interface MobileMoreSheetProps {
@@ -27,7 +26,6 @@ export interface MobileMoreSheetProps {
   userEmail: string;
   /** The account code the server setup script shows. */
   accountCode?: string | null;
-  resourceKind?: 'agent' | 'computer' | null;
 }
 
 type HostedAccountControls = {
@@ -68,15 +66,17 @@ const SHEET_STYLES = `
     max-height: calc(var(--workspace-viewport-height, 100dvh) - env(safe-area-inset-top, 0px) - 24px);
     padding: 0;
     color: var(--ink-black);
-    background: var(--bg-surface);
+    background: var(--hg-glass-strong);
+    -webkit-backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
+    backdrop-filter: blur(var(--hg-glass-blur)) saturate(1.3);
     border: 0;
-    border-top: 1px solid var(--etched-border);
-    border-radius: 0;
-    box-shadow: 0 -16px 48px rgba(0, 0, 0, 0.24);
+    border-top: 1px solid var(--hg-stroke);
+    border-radius: var(--hg-radius-xl) var(--hg-radius-xl) 0 0;
+    box-shadow: var(--hg-glass-edge), var(--hg-shadow-lg);
     overflow: hidden;
   }
   .hivra-more-sheet[open] { display: flex; flex-direction: column; }
-  .hivra-more-sheet::backdrop { background: rgba(0, 0, 0, 0.5); }
+  .hivra-more-sheet::backdrop { background: color-mix(in srgb, var(--hg-bg) 40%, transparent); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
   .hivra-more-sheet__head {
     flex-shrink: 0;
     display: flex;
@@ -85,16 +85,16 @@ const SHEET_STYLES = `
     gap: 12px;
     min-height: 56px;
     padding: 6px max(8px, env(safe-area-inset-right, 0px)) 6px max(16px, env(safe-area-inset-left, 0px));
-    border-bottom: 1px solid var(--etched-border);
+    border-bottom: 1px solid var(--hg-stroke);
   }
   .hivra-more-sheet__title,
   .hivra-more-sheet__heading {
     margin: 0;
     color: var(--text-muted);
-    font-family: var(--font-mono), 'Space Mono', monospace;
+    font-family: var(--font-sans);
     font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.15em;
+    font-weight: 600;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
   }
   .hivra-more-sheet__close {
@@ -105,7 +105,8 @@ const SHEET_STYLES = `
     flex-shrink: 0;
     color: var(--text-muted);
     background: transparent;
-    border: 1px solid var(--etched-border);
+    border: 0;
+    border-radius: var(--hg-radius-md);
     cursor: pointer;
     touch-action: manipulation;
   }
@@ -116,7 +117,7 @@ const SHEET_STYLES = `
     overscroll-behavior: contain;
     padding: 8px 0 calc(16px + env(safe-area-inset-bottom, 0px));
   }
-  .hivra-more-sheet__group { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--etched-border); }
+  .hivra-more-sheet__group { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--hg-stroke); }
   .hivra-more-sheet__heading { padding: 0 max(16px, env(safe-area-inset-left, 0px)) 4px; }
   .hivra-more-sheet__row {
     display: flex;
@@ -125,11 +126,13 @@ const SHEET_STYLES = `
     width: 100%;
     min-height: 48px;
     padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0 max(14px, env(safe-area-inset-left, 0px));
+    margin: 0 8px; width: calc(100% - 16px);
     color: var(--text-secondary);
     background: transparent;
     border: 0;
-    border-left: 2px solid transparent;
-    font-family: var(--font-mono), 'Space Mono', monospace;
+    border-left: 0;
+    border-radius: var(--hg-radius-md);
+    font-family: var(--font-sans);
     font-size: 13px;
     text-align: left;
     text-decoration: none;
@@ -140,8 +143,8 @@ const SHEET_STYLES = `
   .hivra-more-sheet__row svg { flex-shrink: 0; }
   .hivra-more-sheet__label { flex: 1; min-width: 0; }
   .hivra-more-sheet__hint { flex-shrink: 0; color: var(--text-muted); font-size: 11px; }
-  .hivra-more-sheet__row:active { background: var(--hivra-red-soft); transition: none; }
-  .hivra-more-sheet__row[aria-current='page'] { color: var(--ink-black); background: var(--hivra-red-soft); border-left-color: var(--hivra-red); font-weight: 700; }
+  .hivra-more-sheet__row:active { background: var(--hg-fill-2); transition: none; }
+  .hivra-more-sheet__row[aria-current='page'] { color: var(--ink-black); background: var(--hg-fill-2); font-weight: 600; }
   .hivra-more-sheet__row:disabled { opacity: 0.5; cursor: default; }
   .hivra-more-sheet__row--attention { color: var(--ink-black); }
   .hivra-more-sheet__badge {
@@ -151,8 +154,9 @@ const SHEET_STYLES = `
     height: 16px;
     padding: 0 3px;
     color: #fff;
-    background: var(--hivra-red);
-    font-family: var(--font-mono), 'Space Mono', monospace;
+    background: var(--hg-bad);
+    border-radius: 999px;
+    font-family: var(--font-sans);
     font-size: 11px;
     font-weight: 700;
     line-height: 1;
@@ -165,11 +169,11 @@ const SHEET_STYLES = `
   }
   .hivra-more-sheet__identity strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
   .hivra-more-sheet__identity small { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
-  .hivra-more-sheet :is(a, button):focus-visible { outline: 2px solid var(--hivra-red); outline-offset: -2px; }
+  .hivra-more-sheet :is(a, button):focus-visible { outline: 2px solid var(--hg-focus); outline-offset: -2px; }
 `;
 
 /** Phone "More": every destination that is not on the bottom bar, plus account and theme. */
-export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userName, userEmail, accountCode = null, resourceKind }: MobileMoreSheetProps) {
+export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userName, userEmail, accountCode = null }: MobileMoreSheetProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const pathname = usePathname();
@@ -177,7 +181,6 @@ export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userN
   const text = mobileNavigationCopy(copy);
   const { resolvedTheme, setTheme } = useTheme();
   const [signingOut, setSigningOut] = useState(false);
-  const workspaceShellEnabled = isWorkspaceShellNavigationEnabled();
   const localAuth = isLocalAuthMode();
   // On phones this sheet is the only sign-out, so rows enable once ClerkJS loads.
   const [hosted, setHosted] = useState(() => (localAuth ? null : hostedAccountControls()));
@@ -231,7 +234,7 @@ export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userN
         {attentionCount > 0 && (
           <Link href={`${DASHBOARD_RUNTIME_LIST_HREF}&attention=1`} onClick={onClose}
             className="hivra-more-sheet__row hivra-more-sheet__row--attention"
-            aria-label={`${attentionCount} agents or computers need attention`}>
+            aria-label={`${attentionCount} agents or computers need you`}>
             <AlertCircle size={18} aria-hidden /><span className="hivra-more-sheet__label">{text.needsAttention}</span>
             <span className="hivra-more-sheet__badge" aria-hidden>{attentionCount}</span>
           </Link>
@@ -239,9 +242,9 @@ export function MobileMoreSheet({ onClose, onOpenSwitcher, attentionCount, userN
         {DASHBOARD_MOBILE_MORE_GROUPS.map((group) => (
           <section key={group.id} className="hivra-more-sheet__group" aria-labelledby={`${titleId}-${group.id}`}>
             <h3 id={`${titleId}-${group.id}`} className="hivra-more-sheet__heading">{text[group.id]}</h3>
-            {filterDashboardNavigation(group.items, workspaceShellEnabled).map((item) => {
+            {filterDashboardNavigation(group.items).map((item) => {
               const Icon = item.icon;
-              const active = isDashboardNavigationItemActive(item, pathname, resourceKind, workspaceShellEnabled);
+              const active = isDashboardNavigationItemActive(item, pathname);
               return (
                 <Link key={item.id} href={item.href} onClick={onClose} className="hivra-more-sheet__row"
                   aria-current={active ? 'page' : undefined}>

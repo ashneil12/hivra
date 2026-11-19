@@ -1,12 +1,9 @@
 import {
-  agentCliAutoUpdateGate,
-  agentCliAutoUpdateMode,
   agentSoftwareBadge,
   agentSoftwareSubject,
-  compareCliVersions,
-  compareSoftwareVersions,
   deriveAgentSoftware,
-  effectiveAgentCliAutoUpdate,
+  isAgentSoftwareTarget,
+  isAgentSoftwareVersion,
   parseAgentAppReport,
   parseAgentCliMeta,
   parseAgentCliReport,
@@ -15,14 +12,17 @@ import {
   type AgentSoftwareSubject,
 } from "../agent-cli-status";
 
+// Hivra pins no agent version: a launch installs upstream's newest release, and
+// after that the owner updates (target `latest`). Nothing here is ever "behind".
+
 const NOW = Date.parse("2026-09-25T12:00:00.000Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
 const MIN = 60_000;
 const codex = agentSoftwareSubject({ type: "codex", computer_substrate: "proxmox-kvm" }) as AgentSoftwareSubject;
-const TESTED = "0.149.1";
+const IMAGE = `sha256:${"a".repeat(64)}`;
 
-function view(record: AgentSoftwareRecord | null, status = "running") {
-  return deriveAgentSoftware({ subject: codex, status, tested: TESTED, record, now: NOW });
+function view(record: AgentSoftwareRecord | null, status = "running", subject: AgentSoftwareSubject = codex) {
+  return deriveAgentSoftware({ subject, status, record, now: NOW });
 }
 const reported = (installed: string | null, extra: AgentSoftwareRecord = {}): AgentSoftwareRecord => ({
   observation: installed === null ? "version_unreadable" : "reported",
@@ -31,63 +31,77 @@ const reported = (installed: string | null, extra: AgentSoftwareRecord = {}): Ag
   ...extra,
 });
 
-describe("parseAgentCliReport (moved from the lifecycle route)", () => {
+describe("parseAgentCliReport", () => {
   it.each([
-    ["HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=scheduled", { name: "codex", version: "0.149.1", target: "0.156.1", state: "scheduled" }],
-    ["HIVRA_AGENT_CLI name=claude-code version=unknown target=2.1.246 state=failed", { name: "claude-code", version: null, target: "2.1.246", state: "failed" }],
+    ["HIVRA_AGENT_CLI name=codex version=0.149.1 target=latest state=scheduled", { name: "codex", version: "0.149.1", target: "latest", state: "scheduled" }],
+    ["HIVRA_AGENT_CLI name=claude-code version=unknown target=latest state=failed", { name: "claude-code", version: null, target: "latest", state: "failed" }],
   ])("reads %s", (line, expected) => {
     expect(parseAgentCliReport(`noise\n${line}\nHIVRA_GUEST_RUNTIME_UPDATED vmid=1\n`)).toEqual(expected);
   });
-  it("ignores any other shape", () => {
-    expect(parseAgentCliReport("HIVRA_AGENT_CLI name=codex version=0.149.1 target=latest state=scheduled")).toBeNull();
-    expect(parseAgentCliReport("HIVRA_AGENT_CLI name=gemini version=1.0.0 target=1.0.1 state=scheduled")).toBeNull();
+  it("ignores any other shape, including a pinned target", () => {
+    expect(parseAgentCliReport("HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=scheduled")).toBeNull();
+    expect(parseAgentCliReport("HIVRA_AGENT_CLI name=gemini version=1.0.0 target=latest state=scheduled")).toBeNull();
   });
 });
 
 describe("parseAgentCliMeta", () => {
   it("reads the gateway's agentCli with its update progress", () => {
-    expect(parseAgentCliMeta({ name: "codex", version: "0.149.0", update: { state: "waiting", target: "0.149.1", updatedAt: "2026-09-25T00:30:00Z" } }, "codex"))
-      .toEqual({ name: "codex", version: "0.149.0", update: { state: "waiting", target: "0.149.1", updatedAt: "2026-09-25T00:30:00Z", reason: null } });
+    expect(parseAgentCliMeta({ name: "codex", version: "0.149.0", update: { state: "waiting", target: "latest", updatedAt: "2026-09-25T00:30:00Z" } }, "codex"))
+      .toEqual({ name: "codex", version: "0.149.0", update: { state: "waiting", target: "latest", updatedAt: "2026-09-25T00:30:00Z", reason: null } });
     expect(parseAgentCliMeta({ name: "codex", version: null }, "codex")).toEqual({ name: "codex", version: null, update: null });
-    expect(parseAgentCliMeta({ name: "codex", version: "0.149.0", update: { state: "rolled_back", target: "0.149.1", updatedAt: null, reason: "install_failed" } }, "codex")?.update)
-      .toEqual({ state: "rolled_back", target: "0.149.1", updatedAt: null, reason: "install_failed" });
   });
   it.each([
     ["another CLI's name", { name: "claude-code", version: "2.1.246" }],
     ["an unknown name", { name: "gemini", version: "1.0.0" }],
     ["a version that isn't x.y.z", { name: "codex", version: "latest" }],
-    ["an unknown update state", { name: "codex", version: "0.149.0", update: { state: "exploded", target: "0.149.1" } }],
-    ["a target that isn't x.y.z", { name: "codex", version: "0.149.0", update: { state: "done", target: "next" } }],
-    ["a malformed reason", { name: "codex", version: "0.149.0", update: { state: "failed", target: "0.149.1", reason: "Rm -rf" } }],
+    ["an unknown update state", { name: "codex", version: "0.149.0", update: { state: "exploded", target: "latest" } }],
+    ["a pinned target", { name: "codex", version: "0.149.0", update: { state: "done", target: "0.149.1" } }],
+    ["a malformed reason", { name: "codex", version: "0.149.0", update: { state: "failed", target: "latest", reason: "Rm -rf" } }],
     ["no object", "codex 0.149.0"],
   ])("refuses %s", (_case, value) => {
     expect(parseAgentCliMeta(value, "codex")).toBeNull();
   });
 });
 
-describe("compareCliVersions", () => {
-  it("orders numerically, not as text", () => {
-    expect(compareCliVersions("0.149.1", "0.149.1")).toBe(0);
-    expect(compareCliVersions("0.99.0", "0.149.0")).toBe(-1);
-    expect(compareCliVersions("2.1.246", "2.1.99")).toBe(1);
-    expect(compareCliVersions("1.0.0", "0.999.999")).toBe(1);
+describe("versions and targets", () => {
+  it("names each version in its software's own form, and only `latest` as a target", () => {
+    expect(isAgentSoftwareVersion("openclaw", "2026.11.4")).toBe(true);
+    expect(isAgentSoftwareVersion("aeon", "e".repeat(40))).toBe(true);
+    expect(isAgentSoftwareVersion("agent-zero", IMAGE)).toBe(true);
+    expect(isAgentSoftwareVersion("agent-zero", "v2.15")).toBe(false);
+    for (const name of ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos"] as const) {
+      expect(isAgentSoftwareTarget(name, "latest")).toBe(true);
+      expect(isAgentSoftwareTarget(name, "1.2.3")).toBe(false);
+    }
+  });
+
+  it("reads the runtime updater's app line for every app, with `latest` as the target", () => {
+    expect(parseAgentAppReport(`noise\nHIVRA_AGENT_APP name=agent-zero version=${IMAGE} target=latest state=scheduled\n`))
+      .toEqual({ name: "agent-zero", version: IMAGE, target: "latest", state: "scheduled" });
+    expect(parseAgentAppReport("HIVRA_AGENT_APP name=aeon version=unknown target=latest state=running"))
+      .toEqual({ name: "aeon", version: null, target: "latest", state: "running" });
+    expect(parseAgentAppReport("HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=latest state=scheduled"))
+      .toEqual({ name: "openclaw", version: "2026.6.10", target: "latest", state: "scheduled" });
+    expect(parseAgentAppReport(`HIVRA_AGENT_APP name=aeon version=unknown target=${"e".repeat(40)} state=running`)).toBeNull();
+    expect(parseAgentAppReport("HIVRA_AGENT_APP name=hermes version=0.23.1 target=stable state=scheduled")).toBeNull();
+    expect(parseAgentAppReport(`HIVRA_AGENT_APP name=aeon version=${IMAGE} target=latest state=running`)).toBeNull();
   });
 });
 
 describe("agentSoftwareSubject", () => {
-  it("covers Claude Code and Codex with their CLI, and the dashboard agents without one", () => {
+  it("covers Claude Code and Codex with their CLI, and the app agents without one", () => {
     expect(agentSoftwareSubject({ type: "claude-code" })).toEqual({ type: "claude-code", cli: "claude-code", app: null, software: "claude-code", gatewayKind: "claude" });
     expect(codex).toEqual({ type: "codex", cli: "codex", app: null, software: "codex", gatewayKind: "codex" });
     expect(agentSoftwareSubject({ type: "aeon", computer_substrate: "proxmox-kvm" })).toEqual({ type: "aeon", cli: null, app: "aeon", software: "aeon", gatewayKind: "aeon" });
-    expect(agentSoftwareSubject({ type: "agent-zero" })).toMatchObject({ app: "agent-zero", software: "agent-zero", gatewayKind: "agent-zero" });
-    expect(agentSoftwareSubject({ type: "openclaw" })).toMatchObject({ cli: null, app: "openclaw", software: "openclaw" });
+    expect(agentSoftwareSubject({ type: "openbot" })).toEqual({ type: "openbot", cli: null, app: "openbot", software: "openbot", gatewayKind: "openbot" });
+  });
+  it.each(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes"])("covers a My cloud %s agent", (type) => {
+    expect(agentSoftwareSubject({ type, computer_substrate: "provider-vm" })).toMatchObject({ type });
   });
   it.each([
     ["DeepSeek, whose update is refused", { type: "deepseek-harness" }],
     ["a computer", { type: "linux-desktop", computer_profile: "ubuntu-desktop" }],
-    ["My cloud", { type: "codex", computer_substrate: "provider-vm" }],
     ["a Linux Sandbox", { type: "codex", computer_substrate: "gvisor" }],
-    ["a DigitalOcean session", { type: "codex", computer_substrate: "do-managed-session" }],
     ["an agent on a prepared computer", { type: "codex", computer_profile: "windows" }],
   ])("leaves out %s", (_case, row) => {
     expect(agentSoftwareSubject(row)).toBeNull();
@@ -95,234 +109,63 @@ describe("agentSoftwareSubject", () => {
 });
 
 describe("deriveAgentSoftware", () => {
-  it("says nothing about a computer that isn't running", () => {
-    expect(view(reported("0.149.0"), "stopped")).toEqual({ kind: "not_running" });
-  });
-  it("is still checking before the first reading", () => {
-    expect(view(null)).toEqual({ kind: "checking" });
-    expect(view({ observation: "checking" })).toEqual({ kind: "checking" });
-  });
   it("passes on what the computer couldn't say", () => {
+    expect(view(reported("0.149.0"), "stopped")).toEqual({ kind: "not_running" });
+    expect(view(null)).toEqual({ kind: "checking" });
     expect(view({ observation: "unreachable" })).toEqual({ kind: "unreachable" });
     expect(view({ observation: "older_connection_service" })).toEqual({ kind: "older_connection_service" });
     expect(view(reported(null))).toEqual({ kind: "version_unreadable" });
   });
-  it("compares against Hivra's tested version, never the newest release", () => {
-    expect(view(reported(TESTED))).toEqual({ kind: "current", installed: TESTED });
-    expect(view(reported("0.149.0"))).toEqual({ kind: "behind", installed: "0.149.0" });
-  });
-  it("tells an owner's own newer install from one Hivra put there before lowering its tested version", () => {
-    expect(view(reported("0.150.0"))).toEqual({ kind: "ahead_custom", installed: "0.150.0" });
-    expect(view(reported("0.150.0", { hivra_installed_version: "0.150.0" }))).toEqual({ kind: "ahead_hivra", installed: "0.150.0" });
-  });
-  it.each(["downloading", "waiting", "installing"] as const)("follows an update while %s", (state) => {
-    expect(view(reported("0.149.0", { update_state: state, update_target: TESTED, update_updated_at: ago(MIN) })))
-      .toEqual({ kind: "updating", phase: state, target: TESTED, installed: "0.149.0" });
-  });
-  it("ignores a stored result for another target", () => {
-    expect(view(reported("0.149.0", { update_state: "failed", update_target: "0.140.0", update_reason: "install_failed", update_updated_at: ago(MIN) })))
-      .toEqual({ kind: "behind", installed: "0.149.0" });
-  });
-  it("reads a finished swap whose new version isn't read yet as finishing, then as the version it reports", () => {
-    const done = { update_state: "done", update_target: TESTED, update_updated_at: ago(30_000) };
-    expect(view(reported("0.149.0", done))).toEqual({ kind: "updating", phase: "finishing", target: TESTED, installed: "0.149.0" });
-    expect(view(reported("0.149.0", { ...done, update_updated_at: ago(10 * MIN) }))).toEqual({ kind: "behind", installed: "0.149.0" });
-    expect(view(reported(null, { ...done, update_updated_at: ago(10 * MIN) }))).toEqual({ kind: "checking" });
-  });
-  it("shows a finished update as just finished for a while, then as current", () => {
-    const done = { update_state: "done", update_target: TESTED, update_updated_at: ago(5 * MIN) };
-    expect(view(reported(TESTED, done))).toEqual({ kind: "update_done", target: TESTED, installed: TESTED });
-    expect(view(reported(TESTED, { ...done, update_updated_at: ago(7 * 60 * MIN) }))).toEqual({ kind: "current", installed: TESTED });
-  });
-  it.each([
-    ["deferred", "chat_run_in_flight", { kind: "update_deferred", target: TESTED, installed: "0.149.0" }],
-    ["rolled_back", "install_failed", { kind: "update_rolled_back", target: TESTED, installed: "0.149.0" }],
-    ["failed", "download_failed", { kind: "update_failed", reason: "download_failed", target: TESTED, installed: "0.149.0" }],
-    ["failed", "install_failed", { kind: "update_failed", reason: "install_failed", target: TESTED, installed: "0.149.0" }],
-  ])("says how an update ended: %s (%s)", (state, reason, expected) => {
-    expect(view(reported("0.149.0", { update_state: state, update_target: TESTED, update_reason: reason, update_updated_at: ago(MIN) }))).toEqual(expected);
-  });
-  it.each(["deferred", "rolled_back", "failed"])("lets a newer version the owner installed after a %s update decide, so it is never moved back down", (state) => {
-    const ended = { update_state: state, update_target: TESTED, update_reason: "install_failed", update_updated_at: ago(MIN) };
-    const owners = view(reported("0.150.0", ended));
-    expect(owners).toEqual({ kind: "ahead_custom", installed: "0.150.0" });
-    expect(agentCliAutoUpdateGate(owners, null, TESTED)).toEqual({ ok: false, skip: "owner_version" });
-  });
-  it("shows a request the computer hasn't reported yet as starting, and one that couldn't start as failed", () => {
-    const request = { requested_at: ago(MIN), requested_target: TESTED, requested_by: "owner" };
-    expect(view(reported("0.149.0", { ...request, request_result: "scheduled" }))).toEqual({ kind: "updating", phase: "starting", target: TESTED, installed: "0.149.0" });
-    expect(view(reported("0.149.0", { ...request, request_result: null, requested_by: "auto" }))).toEqual({ kind: "updating", phase: "starting", target: TESTED, installed: "0.149.0" });
-    expect(view(reported("0.149.0", { ...request, request_result: "failed" }))).toEqual({ kind: "update_failed", reason: "could_not_start", target: TESTED, installed: "0.149.0" });
-    // A stale status file from before the request doesn't hide it.
-    expect(view(reported("0.149.0", { ...request, request_result: "scheduled", update_state: "done", update_target: TESTED, update_updated_at: ago(3 * 60 * MIN) })))
-      .toEqual({ kind: "updating", phase: "starting", target: TESTED, installed: "0.149.0" });
-    // Progress newer than the request wins, and an old request no longer counts.
-    expect(view(reported("0.149.0", { ...request, request_result: "scheduled", update_state: "downloading", update_target: TESTED, update_updated_at: ago(0) }))).toMatchObject({ phase: "downloading" });
-    expect(view(reported("0.149.0", { ...request, requested_at: ago(20 * MIN), request_result: "scheduled" }))).toEqual({ kind: "behind", installed: "0.149.0" });
-  });
-});
 
-describe("readings that are too old to say what an update did", () => {
-  const H = 60 * MIN;
-  it.each([
-    ["downloading", 20 * MIN],
-    ["installing", 15 * MIN],
-    ["waiting", 6 * H + 15 * MIN],
-  ] as const)("doesn't keep saying %s past how long that step can take", (state, limit) => {
-    // Read while the step was running, never read again (the agents list never reads computers).
-    const lastRead = { update_state: state, update_target: TESTED, update_updated_at: ago(2 * 24 * H), observed_at: ago(2 * 24 * H) };
-    expect(view(reported("0.149.0", lastRead))).toEqual({ kind: "checking" });
-    expect(agentSoftwareBadge(view(reported("0.149.0", lastRead)))).toBeNull();
-    // Inside the limit it is still in progress.
-    const recent = { update_state: state, update_target: TESTED, update_updated_at: ago(limit - 2 * MIN), observed_at: ago(limit - 3 * MIN) };
-    expect(view(reported("0.149.0", recent))).toMatchObject({ kind: "updating", phase: state });
+  it("shows any installed version as current: there is no tested version to be behind", () => {
+    expect(view(reported("0.100.0"))).toEqual({ kind: "current", installed: "0.100.0" });
+    expect(view(reported("9.9.9"))).toEqual({ kind: "current", installed: "9.9.9" });
   });
-  it("shows the installed version when the computer still reports a step long after it should have ended", () => {
-    // Read just now, and the updater's status is two days old: it stopped.
-    const stopped = { update_state: "downloading", update_target: TESTED, update_updated_at: ago(2 * 24 * H), observed_at: ago(MIN) };
-    expect(view(reported("0.149.0", stopped))).toEqual({ kind: "behind", installed: "0.149.0" });
+
+  it("follows the owner's update and reads why it stopped", () => {
+    const at = { update_updated_at: ago(MIN), update_target: "latest" } as const;
+    expect(view(reported("0.149.0", { ...at, update_state: "installing" }))).toEqual({ kind: "updating", phase: "installing", target: "latest", installed: "0.149.0" });
+    expect(view(reported("0.169.0", { ...at, update_state: "done" }))).toEqual({ kind: "update_done", target: "0.169.0", installed: "0.169.0" });
+    expect(view(reported("0.149.0", { ...at, update_state: "rolled_back" }))).toEqual({ kind: "update_rolled_back", target: "latest", installed: "0.149.0" });
+    expect(view(reported("0.149.0", { ...at, update_state: "failed", update_reason: "download_failed" }))).toMatchObject({ kind: "update_failed", reason: "download_failed" });
+    expect(view(reported("0.149.0", { ...at, update_state: "deferred" }))).toMatchObject({ kind: "update_deferred" });
   });
-  it.each([
-    ["the owner's", "owner", "scheduled"],
-    ["an automatic", "auto", null],
-    ["an unconfirmed", "owner", "unverified"],
-  ] as const)("doesn't call an agent behind from a reading older than %s update", (_case, by, result) => {
-    const sent = { requested_at: ago(11 * MIN), requested_target: TESTED, requested_by: by, request_result: result, observed_at: ago(12 * MIN) };
-    expect(view(reported("0.149.0", sent))).toEqual({ kind: "checking" });
-    expect(summarizeAgentSoftware(view(reported("0.149.0", sent)), codex, TESTED).badge).toBeNull();
+
+  it("ignores an update recorded against a pinned target from before", () => {
+    expect(view(reported("0.149.0", { update_state: "installing", update_target: "0.156.1", update_updated_at: ago(MIN) }))).toEqual({ kind: "current", installed: "0.149.0" });
   });
-  it("doesn't call an agent behind from a reading older than an unconfirmed update just sent", () => {
-    const sent = { requested_at: ago(2 * MIN), requested_target: TESTED, requested_by: "owner", request_result: "unverified", observed_at: ago(3 * MIN) };
-    expect(view(reported("0.149.0", sent))).toEqual({ kind: "checking" });
+
+  it("stops following a step that ran past its limit, and a failure after a day", () => {
+    expect(view(reported("0.149.0", { update_state: "downloading", update_target: "latest", update_updated_at: ago(30 * MIN) }))).toEqual({ kind: "current", installed: "0.149.0" });
+    expect(view(reported("0.149.0", { update_state: "failed", update_target: "latest", update_updated_at: ago(25 * 60 * MIN) }))).toEqual({ kind: "current", installed: "0.149.0" });
   });
-  it("still calls it behind when the update never reached the computer, or it was read after", () => {
-    const sent = { requested_at: ago(11 * MIN), requested_target: TESTED, requested_by: "owner", observed_at: ago(12 * MIN) };
-    for (const result of ["host_not_ready", "busy", "refused", "failed"]) {
-      expect(view(reported("0.149.0", { ...sent, request_result: result }))).toEqual({ kind: "behind", installed: "0.149.0" });
-    }
-    expect(view(reported("0.149.0", { ...sent, request_result: "scheduled", observed_at: ago(MIN) }))).toEqual({ kind: "behind", installed: "0.149.0" });
+
+  it("shows a request the computer hasn't reported yet as starting, and one that couldn't start as failed", () => {
+    const requested = { requested_target: "latest", requested_at: ago(MIN / 2) } as const;
+    expect(view(reported("0.149.0", { ...requested, request_result: "scheduled" }))).toEqual({ kind: "updating", phase: "starting", target: "latest", installed: "0.149.0" });
+    expect(view(reported("0.149.0", { ...requested, request_result: "failed" }))).toEqual({ kind: "update_failed", reason: "could_not_start", target: "latest", installed: "0.149.0" });
+  });
+
+  it("works the same for an app, whose version is in the app's own form", () => {
+    const zero = agentSoftwareSubject({ type: "agent-zero" }) as AgentSoftwareSubject;
+    expect(view(reported(IMAGE), "running", zero)).toEqual({ kind: "current", installed: IMAGE });
+    expect(view(reported("2026.11.4"), "running", zero)).toEqual({ kind: "version_unreadable" });
+    const hermes = agentSoftwareSubject({ type: "hermes" }) as AgentSoftwareSubject;
+    expect(view(reported("0.23.1", { update_state: "failed", update_reason: "local_changes", update_target: "latest", update_updated_at: ago(MIN) }), "running", hermes))
+      .toEqual({ kind: "update_failed", reason: "local_changes", target: "latest", installed: "0.23.1" });
   });
 });
 
 describe("badges and summaries", () => {
-  it("offers an update only when behind Hivra's tested version or the connection service is older", () => {
-    expect(agentSoftwareBadge({ kind: "behind", installed: "1.0.0" })).toBe("update_available");
+  it("never says an update is available because of a version: only an older connection service or a waiting update", () => {
+    expect(agentSoftwareBadge({ kind: "current", installed: "0.1.0" })).toBeNull();
     expect(agentSoftwareBadge({ kind: "older_connection_service" })).toBe("update_available");
-    expect(agentSoftwareBadge({ kind: "ahead_custom", installed: "9.0.0" })).toBeNull();
-    expect(agentSoftwareBadge({ kind: "current", installed: "1.0.0" })).toBeNull();
-    expect(agentSoftwareBadge({ kind: "updating", phase: "waiting", target: "1.0.1", installed: "1.0.0" })).toBe("updating");
-    expect(agentSoftwareBadge({ kind: "update_rolled_back", target: "1.0.1", installed: "1.0.0" })).toBe("update_failed");
-  });
-  it("summarizes for the agents list without anything but versions", () => {
-    expect(summarizeAgentSoftware({ kind: "behind", installed: "0.149.0" }, codex, TESTED))
-      .toEqual({ badge: "update_available", cli: "codex", app: null, installed: "0.149.0", tested: TESTED });
-  });
-});
-
-// ── Agent apps (Aeon dashboard, OpenClaw, Agent Zero) ───────────────────────
-
-const OLD_IMAGE = `sha256:${"d".repeat(64)}`;
-const IMAGE = `sha256:${"b".repeat(64)}`;
-const zero = agentSoftwareSubject({ type: "agent-zero", computer_substrate: "proxmox-kvm" }) as AgentSoftwareSubject;
-const openclaw = agentSoftwareSubject({ type: "openclaw" }) as AgentSoftwareSubject;
-function appView(subject: AgentSoftwareSubject, tested: string, record: AgentSoftwareRecord | null, previous: string[] = []) {
-  return deriveAgentSoftware({ subject, status: "running", tested, previous, record, now: NOW });
-}
-
-describe("agent app versions", () => {
-  it("orders x.y.z versions by number and places a commit or digest only by the pins Hivra moved off", () => {
-    expect(compareSoftwareVersions("2026.6.10", "2026.9.33")).toBe(-1);
-    expect(compareSoftwareVersions("2026.10.1", "2026.9.33")).toBe(1);
-    expect(compareSoftwareVersions(IMAGE, IMAGE)).toBe(0);
-    expect(compareSoftwareVersions(OLD_IMAGE, IMAGE, [OLD_IMAGE])).toBe(-1);
-    expect(compareSoftwareVersions(OLD_IMAGE, IMAGE)).toBeNull();
+    expect(agentSoftwareBadge({ kind: "update_deferred", target: "latest", installed: null })).toBe("update_available");
+    expect(agentSoftwareBadge({ kind: "updating", phase: "waiting", target: "latest", installed: null })).toBe("updating");
+    expect(agentSoftwareBadge({ kind: "update_failed", reason: "install_failed", target: "latest", installed: null })).toBe("update_failed");
   });
 
-  it("reads the runtime updater's app line, each version in its app's own form", () => {
-    expect(parseAgentAppReport(`noise\nHIVRA_AGENT_APP name=agent-zero version=${OLD_IMAGE} target=${IMAGE} state=scheduled\n`))
-      .toEqual({ name: "agent-zero", version: OLD_IMAGE, target: IMAGE, state: "scheduled" });
-    expect(parseAgentAppReport(`HIVRA_AGENT_APP name=aeon version=unknown target=${"e".repeat(40)} state=running`))
-      .toEqual({ name: "aeon", version: null, target: "e".repeat(40), state: "running" });
-    expect(parseAgentAppReport(`HIVRA_AGENT_APP name=aeon version=unknown target=${IMAGE} state=running`)).toBeNull();
-    expect(parseAgentAppReport("HIVRA_AGENT_APP name=openclaw version=2026.6.10 target=latest state=scheduled")).toBeNull();
-    expect(parseAgentAppReport("HIVRA_AGENT_CLI name=codex version=0.149.1 target=0.156.1 state=scheduled")).toBeNull();
-  });
-
-  it("reads the gateway's agentApp strictly", () => {
-    expect(parseAgentCliMeta({ name: "agent-zero", version: OLD_IMAGE, update: { state: "downloading", target: IMAGE, updatedAt: null }, activity: {} }, "agent-zero"))
-      .toEqual({ name: "agent-zero", version: OLD_IMAGE, update: { state: "downloading", target: IMAGE, updatedAt: null, reason: null } });
-    expect(parseAgentCliMeta({ name: "agent-zero", version: "v2.2" }, "agent-zero")).toBeNull();
-    expect(parseAgentCliMeta({ name: "aeon", version: OLD_IMAGE }, "aeon")).toBeNull();
-    expect(parseAgentCliMeta({ name: "openclaw", version: "2026.6.10", update: { state: "done", target: IMAGE } }, "openclaw")).toBeNull();
-  });
-
-  it("calls an earlier tested image behind, an unknown one another version, and an unrecorded one unreadable", () => {
-    const reportedImage = (installed: string | null) => ({ observation: installed ? "reported" : "version_unreadable", installed_version: installed, observed_at: ago(MIN) });
-    expect(appView(zero, IMAGE, reportedImage(IMAGE), [OLD_IMAGE])).toEqual({ kind: "current", installed: IMAGE });
-    expect(appView(zero, IMAGE, reportedImage(OLD_IMAGE), [OLD_IMAGE])).toEqual({ kind: "behind", installed: OLD_IMAGE });
-    expect(appView(zero, IMAGE, reportedImage(`sha256:${"9".repeat(64)}`), [OLD_IMAGE])).toEqual({ kind: "other_version", installed: `sha256:${"9".repeat(64)}` });
-    expect(appView(zero, IMAGE, reportedImage(null), [OLD_IMAGE])).toEqual({ kind: "version_unreadable" });
-    // An x.y.z app is ordered like a CLI.
-    expect(appView(openclaw, "2026.9.33", reportedImage("2026.6.10"))).toEqual({ kind: "behind", installed: "2026.6.10" });
-    expect(appView(openclaw, "2026.9.33", reportedImage("2026.10.5"))).toEqual({ kind: "ahead_custom", installed: "2026.10.5" });
-  });
-
-  it("says not reported when the connection service predates app versions", () => {
-    expect(appView(zero, IMAGE, { observation: "not_reported", observed_at: ago(MIN) })).toEqual({ kind: "not_reported" });
-  });
-
-  it("follows an app update and reads why it stopped", () => {
-    const at = { update_updated_at: ago(MIN), installed_version: OLD_IMAGE, observation: "reported", observed_at: ago(MIN) } as const;
-    expect(appView(zero, IMAGE, { ...at, update_state: "waiting", update_target: IMAGE }, [OLD_IMAGE]))
-      .toEqual({ kind: "updating", phase: "waiting", target: IMAGE, installed: OLD_IMAGE });
-    expect(appView(zero, IMAGE, { ...at, update_state: "failed", update_target: IMAGE, update_reason: "no_space" }, [OLD_IMAGE]))
-      .toEqual({ kind: "update_failed", reason: "no_space", target: IMAGE, installed: OLD_IMAGE });
-    expect(appView(zero, IMAGE, { ...at, update_state: "failed", update_target: IMAGE, update_reason: "not_installed" }, [OLD_IMAGE]))
-      .toMatchObject({ kind: "update_failed", reason: "could_not_start" });
-    expect(appView(zero, IMAGE, { ...at, update_state: "rolled_back", update_target: IMAGE, update_reason: "install_failed" }, [OLD_IMAGE]))
-      .toEqual({ kind: "update_rolled_back", target: IMAGE, installed: OLD_IMAGE });
-    // An Aeon build or an image pull may take over an hour: still downloading, not stuck.
-    const longAgo = { ...at, update_state: "downloading", update_target: IMAGE, update_updated_at: ago(70 * MIN) };
-    expect(appView(zero, IMAGE, longAgo, [OLD_IMAGE])).toMatchObject({ kind: "updating", phase: "downloading" });
-  });
-
-  it("badges an app on an untested version, but not one whose version was never recorded, and never a CLI", () => {
-    expect(agentSoftwareBadge({ kind: "version_unreadable" }, true)).toBeNull();
-    expect(agentSoftwareBadge({ kind: "other_version", installed: OLD_IMAGE }, true)).toBe("update_available");
-    expect(agentSoftwareBadge({ kind: "version_unreadable" })).toBeNull();
-    expect(summarizeAgentSoftware({ kind: "behind", installed: OLD_IMAGE }, zero, IMAGE))
-      .toEqual({ badge: "update_available", cli: null, app: "agent-zero", installed: OLD_IMAGE, tested: IMAGE });
-  });
-});
-
-describe("automatic updates", () => {
-  it("ships dark: only on or preview turn it on", () => {
-    expect(agentCliAutoUpdateMode(undefined)).toBe("off");
-    expect(agentCliAutoUpdateMode("")).toBe("off");
-    expect(agentCliAutoUpdateMode("yes")).toBe("off");
-    expect(agentCliAutoUpdateMode(" ON ")).toBe("on");
-    expect(agentCliAutoUpdateMode("preview")).toBe("preview");
-  });
-  it("defaults on for Hivra Cloud and off for My server until the owner chooses", () => {
-    expect(effectiveAgentCliAutoUpdate(null, "hivra-managed")).toEqual({ enabled: true, source: "default" });
-    expect(effectiveAgentCliAutoUpdate({ auto_update: null }, "self-managed")).toEqual({ enabled: false, source: "default" });
-    expect(effectiveAgentCliAutoUpdate({ auto_update: false }, "hivra-managed")).toEqual({ enabled: false, source: "owner" });
-    expect(effectiveAgentCliAutoUpdate({ auto_update: true }, "self-managed")).toEqual({ enabled: true, source: "owner" });
-  });
-  it("updates only a reported version that is behind, or ahead because Hivra lowered its version", () => {
-    expect(agentCliAutoUpdateGate({ kind: "behind", installed: "0.149.0" }, null, TESTED)).toEqual({ ok: true });
-    expect(agentCliAutoUpdateGate({ kind: "ahead_hivra", installed: "0.150.0" }, null, TESTED)).toEqual({ ok: true });
-    expect(agentCliAutoUpdateGate({ kind: "update_deferred", target: TESTED, installed: "0.149.0" }, null, TESTED)).toEqual({ ok: true });
-    expect(agentCliAutoUpdateGate({ kind: "ahead_custom", installed: "0.150.0" }, null, TESTED)).toEqual({ ok: false, skip: "owner_version" });
-    expect(agentCliAutoUpdateGate({ kind: "older_connection_service" }, null, TESTED)).toEqual({ ok: false, skip: "not_reported" });
-    expect(agentCliAutoUpdateGate({ kind: "version_unreadable" }, null, TESTED)).toEqual({ ok: false, skip: "not_reported" });
-    expect(agentCliAutoUpdateGate({ kind: "current", installed: TESTED }, null, TESTED)).toEqual({ ok: false, skip: "not_behind" });
-    expect(agentCliAutoUpdateGate({ kind: "updating", phase: "waiting", target: TESTED, installed: "0.149.0" }, null, TESTED)).toEqual({ ok: false, skip: "updating" });
-  });
-  it("stays paused after a failed update to this target", () => {
-    expect(agentCliAutoUpdateGate({ kind: "behind", installed: "0.149.0" }, { auto_paused_target: TESTED, auto_paused_reason: "rolled_back" }, TESTED)).toEqual({ ok: false, skip: "paused" });
-    expect(agentCliAutoUpdateGate({ kind: "update_rolled_back", target: TESTED, installed: "0.149.0" }, null, TESTED)).toEqual({ ok: false, skip: "paused" });
-    // A pause for an older target doesn't hold a newer one.
-    expect(agentCliAutoUpdateGate({ kind: "behind", installed: "0.149.0" }, { auto_paused_target: "0.148.0", auto_paused_reason: "failed" }, TESTED)).toEqual({ ok: true });
+  it("summarizes for the agents list with only the installed version", () => {
+    expect(summarizeAgentSoftware({ kind: "current", installed: "0.149.1" }, codex)).toEqual({ badge: null, cli: "codex", app: null, installed: "0.149.1" });
   });
 });

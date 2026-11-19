@@ -19,7 +19,7 @@ import path from "node:path";
 export interface StubGuestVm {
   vmid: number;
   ip: string;
-  status?: "running" | "stopped";
+  status?: "running" | "stopped" | "paused";
   /** The `agent:` config value. Omit for `agent: 1`, pass null to leave it out. */
   agent?: string | null;
   /** Whether the guest agent answers. Defaults to true for a running VM. */
@@ -43,7 +43,7 @@ export interface StubRunResult {
   sshCalls: string[];
   /** Every `ssh` invocation's arguments, including refused ones. */
   sshArgs: string[][];
-  /** Every recorded `qm set|stop|destroy` invocation's arguments, one line each. */
+  /** Every recorded `qm set|stop|shutdown|destroy` invocation's arguments, one line each. */
   qmCalls: string[];
 }
 
@@ -91,6 +91,12 @@ case "$1" in
     ;;
   set|stop|destroy)
     printf '%s\n' "$*" >> "$STUB_ROOT/capture/qm-calls"
+    ;;
+  shutdown)
+    # Recorded so a test can prove a refused delete never asked the guest to shut
+    # down. Exits non-zero like any unhandled verb, so callers take their fallback.
+    printf '%s\n' "$*" >> "$STUB_ROOT/capture/qm-calls"
+    exit 2
     ;;
   *) exit 2 ;;
 esac

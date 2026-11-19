@@ -28,9 +28,9 @@ export function AuthLocalSetupPanel({
         style={{
           width: "100%",
           maxWidth: 760,
-          border: "1px solid rgba(239,68,68,0.24)",
-          background: "rgba(255,255,255,0.92)",
-          boxShadow: "0 24px 80px rgba(0,0,0,0.08)",
+          border: "1px solid color-mix(in srgb, var(--hg-bad) 30%, transparent)", borderRadius: "var(--hg-radius-lg)",
+          background: "var(--hg-glass-strong)",
+          boxShadow: "var(--hg-glass-edge), var(--hg-shadow-lg)",
           padding: "1.5rem",
         }}
       >

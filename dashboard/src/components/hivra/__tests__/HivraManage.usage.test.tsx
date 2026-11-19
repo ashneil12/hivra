@@ -155,7 +155,7 @@ describe("Usage in Overview", () => {
     ["the guest agent didn't answer", usage({ notes: ["guest_agent_unavailable"], disk: { usedBytes: null, sizeBytes: null, allocatedBytes: 42949672960, filesystem: null, guestReported: false } }),
       "Disk use isn't available: the computer's guest agent didn't answer."],
     ["the host couldn't be reached", usage({ ageSeconds: 300, stale: true, notes: ["host_unreachable"] }),
-      "Last read 5 min ago. Hivra couldn't reach this computer's host just now."],
+      "Unavailable while the computer can't be reached. Last read 5 min ago."],
     ["the computer isn't on its host", usage({ power: { observed: "missing", recorded: "stopped", matches: true }, notes: ["vm_missing"], cpu: null, memory: null, disk: null, uptimeSeconds: null }),
       "Hivra couldn't find this computer on its host."],
   ])("says so when %s", async (_case, view, text) => {
@@ -185,15 +185,15 @@ describe("Usage in Overview", () => {
     const failed = usage({ ...unread, refreshing: false, notes: ["host_unreachable"] });
     mockGetComputerUsage.mockImplementation(async (_id: string, options?: { cached?: boolean }) => {
       if (options?.cached) return unread;
-      throw new ComputerUsageError("Hivra couldn't reach this computer's host just now.", 503, null);
+      throw new ComputerUsageError("Hivra couldn't reach this computer's host just now.", 503, null, "host_unreachable");
     });
     renderManage(desk);
     const card = usageCard();
-    expect(await within(card).findByRole("alert")).toHaveTextContent("Hivra couldn't reach this computer's host just now.");
+    expect(await within(card).findByTestId("manage-usage-unreachable")).toHaveTextContent("Unavailable while the computer can't be reached");
     mockGetComputerUsage.mockResolvedValue(failed);
     fireEvent.click(within(card).getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(calls()).toHaveLength(3));
-    expect(await within(card).findByRole("alert")).toHaveTextContent("Hivra couldn't reach this computer's host just now.");
+    expect(await within(card).findByText("Unavailable while the computer can't be reached")).toBeVisible();
     expect(card).not.toHaveTextContent(/Reading/);
   });
 

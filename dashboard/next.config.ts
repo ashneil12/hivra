@@ -210,6 +210,10 @@ const nextConfig: NextConfig = {
     "/enroll/script": ["./bootstrap/server-enroll.sh"],
     "/enroll/script.sha256": ["./bootstrap/server-enroll.sh"],
     "/api/infrastructure/server-enrollments": ["./bootstrap/server-enroll.sh"],
+    // The home connector's installer carries the connector's own three files.
+    "/api/infrastructure/home-connector/install": ["./bootstrap/home-connector/*"],
+    // The local bridge's installer carries the bridge program and the connector module it imports.
+    "/api/hivra/bridge/install": ["./bootstrap/local-bridge/*"],
     // The four documents the token geo-policy applies to are not public files:
     // each handler reads its full and token-free copy, staged by
     // scripts/stage-litepaper.mjs, and picks one by the viewer's country
@@ -282,6 +286,14 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return {
       afterFiles: [
+      // Matrix push gateway (channel wake). The push gateway API fixes this
+      // path, and app router folders that start with "_" are private, so it
+      // is rewritten to the route. The route is dark (404) unless channel wake
+      // is configured.
+      {
+        source: "/_matrix/push/v1/notify",
+        destination: "/api/webhooks/channel-wake/matrix",
+      },
       // UK Dental DBR GTM landing page lives on a separate Vercel project
       // (clearweb.one/dental). Proxy /dental through the dashboard origin so
       // hivra.cloud/dental returns HTTP 200 instead of 404 — marketing/outreach

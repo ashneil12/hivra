@@ -57,7 +57,7 @@ const HivraLaunchIntentSchema = z.object({
   resourceKind: z.enum(["agent", "computer"]),
   runtimeId: z.enum(["codex", "linux-desktop"]),
   name: z.string().trim().min(1).max(256),
-  computerProfile: z.enum(["ubuntu-desktop", "omarchy", "windows"]).nullable(),
+  computerProfile: z.enum(["ubuntu-desktop", "ubuntu-server", "omarchy", "windows"]).nullable(),
   cpu: z.number().min(0.5).max(9999).multipleOf(0.5),
   ram: z.number().int().positive().max(9999),
   maximumCpu: z.number().min(0.5).max(9999).multipleOf(0.5).optional(),
@@ -79,7 +79,7 @@ const HivraLaunchIntentSchema = z.object({
     && value.desktopControlOrigin === null;
   const validUbuntu = value.runtimeId === "linux-desktop"
     && value.resourceKind === "computer"
-    && value.computerProfile === "ubuntu-desktop"
+    && (value.computerProfile === "ubuntu-desktop" || value.computerProfile === "ubuntu-server")
     && value.browser === false
     && value.managedVenice === false
     && value.desktopControlOrigin !== null;
@@ -408,7 +408,8 @@ export function createHivraLaunchOperationService(dependencies: ServiceDependenc
       || agent.type !== operation.runtime_id
       || (operation.agent_id !== null && agent.id !== operation.agent_id)
       || (operation.runtime_id === "codex" && agent.computer_profile != null)
-      || (operation.runtime_id === "linux-desktop" && agent.computer_profile !== "ubuntu-desktop")) {
+      || (operation.runtime_id === "linux-desktop"
+        && agent.computer_profile !== "ubuntu-desktop" && agent.computer_profile !== "ubuntu-server")) {
       throw new HivraLaunchOperationStoreError();
     }
     return agent;

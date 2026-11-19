@@ -50,6 +50,7 @@ import {
   fetchActivityDigestSummary,
   fetchClerkUser,
   isoYearWeek,
+  resolveClerkRecipient,
   runLifecycleEmailSweep,
   selectDueLifecycleEmails,
   stalledInstance,
@@ -1053,5 +1054,67 @@ describe("fetchClerkUser", () => {
     await expect(fetchClerkUser("sk_test", "user_broken")).rejects.toThrow(
       "Clerk user fetch failed for user_broken: 500"
     );
+  });
+});
+
+describe("resolveClerkRecipient — only Clerk-verified addresses (F106)", () => {
+  const originalFetch = global.fetch;
+
+  function mockClerkUser(user: Record<string, unknown>) {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => user,
+    }) as unknown as typeof fetch;
+  }
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("returns null when the only address was typed in and never verified", async () => {
+    mockClerkUser({
+      id: "user_u",
+      first_name: "Sam",
+      primary_email_address_id: "addr_u",
+      email_addresses: [
+        { id: "addr_u", email_address: "victim@example.com", verification: { status: "unverified" } },
+      ],
+    });
+
+    await expect(resolveClerkRecipient("clerk-secret", "user_u")).resolves.toBeNull();
+  });
+
+  it("uses the verified secondary address when the primary is unverified", async () => {
+    mockClerkUser({
+      id: "user_mixed",
+      first_name: "Sam",
+      primary_email_address_id: "addr_typed",
+      email_addresses: [
+        { id: "addr_typed", email_address: "typed-not-proven@example.com", verification: { status: "unverified" } },
+        { id: "addr_proven", email_address: "proven@example.com", verification: { status: "verified" } },
+      ],
+    });
+
+    await expect(resolveClerkRecipient("clerk-secret", "user_mixed")).resolves.toEqual({
+      email: "proven@example.com",
+      firstName: "Sam",
+    });
+  });
+
+  it("uses a verified primary address (control)", async () => {
+    mockClerkUser({
+      id: "user_ok",
+      first_name: "Sam",
+      primary_email_address_id: "addr_ok",
+      email_addresses: [
+        { id: "addr_ok", email_address: "sam@example.com", verification: { status: "verified" } },
+      ],
+    });
+
+    await expect(resolveClerkRecipient("clerk-secret", "user_ok")).resolves.toEqual({
+      email: "sam@example.com",
+      firstName: "Sam",
+    });
   });
 });

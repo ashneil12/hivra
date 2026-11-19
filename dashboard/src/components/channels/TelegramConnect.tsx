@@ -27,6 +27,7 @@ import {
 import { recordChannelConnection, type ChannelTargetKind } from "@/lib/channels/record-connection";
 import { clientLog } from "@/lib/client/logger";
 
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 export interface TelegramConnectStatus {
   connected: boolean;
   active?: boolean;
@@ -85,7 +86,7 @@ const inputStyle: React.CSSProperties = {
   minHeight: 44,
   padding: "10px 12px",
   border: "1px solid var(--etched-border)",
-  background: "rgba(255,255,255,0.04)",
+  background: "var(--hg-fill-1)",
   color: "var(--ink-black)",
   fontSize: 13,
   fontFamily: "var(--font-mono), monospace",
@@ -425,9 +426,9 @@ export function TelegramConnect({
       {error ? (
         <div
           style={{
-            border: "1px solid #c0392b",
-            background: "rgba(192,57,43,0.08)",
-            color: "#e06c5a",
+            border: "1px solid var(--hg-bad)",
+            background: "color-mix(in srgb, var(--hg-bad) 8%, transparent)",
+            color: "var(--hg-bad)",
             fontSize: 13,
             padding: "10px 14px",
             marginBottom: 16,
@@ -440,7 +441,7 @@ export function TelegramConnect({
         <div
           style={{
             border: "1px solid var(--etched-border)",
-            background: "rgba(255,255,255,0.04)",
+            background: "var(--hg-fill-1)",
             color: "var(--text-secondary)",
             fontSize: 13,
             padding: "10px 14px",
@@ -453,7 +454,7 @@ export function TelegramConnect({
 
       {status === null ? (
         <div style={{ padding: 30, textAlign: "center" }}>
-          <Loader2 size={18} style={{ animation: "spin 1s linear infinite", opacity: 0.5 }} />
+          <ThinkingOrb state="searching" size={20} />
         </div>
       ) : connected ? (
         <ConnectedCard
@@ -520,7 +521,7 @@ function ConnectedCard({
     <div
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.035)",
+        background: "var(--hg-fill-1)",
         padding: 20,
         display: "grid",
         gap: 14,
@@ -533,7 +534,7 @@ function ConnectedCard({
             width: 9,
             height: 9,
             borderRadius: "50%",
-            background: status.active === false ? "var(--text-muted)" : "#22c55e",
+            background: status.active === false ? "var(--text-muted)" : "var(--hg-ok)",
           }}
         />
         <strong className="serif" style={{ fontSize: 18, fontWeight: 400, color: "var(--ink-black)" }}>
@@ -582,14 +583,14 @@ function ConnectedCard({
             onClick={() => setConfirming(true)}
             disabled={busy}
             className="mono telegram-disconnect-slot"
-            style={{ ...cardButton, border: "1px solid var(--etched-border)", background: "transparent", color: "#e06c5a", cursor: busy ? "default" : "pointer" }}
+            style={{ ...cardButton, border: "1px solid var(--etched-border)", background: "transparent", color: "var(--hg-bad)", cursor: busy ? "default" : "pointer" }}
           >
             {busy ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : "Disconnect"}
           </button>
         )}
       </div>
       {confirming ? (
-        <div style={{ border: "1px solid rgba(192,57,43,0.4)", background: "rgba(192,57,43,0.04)", padding: 14, display: "grid", gap: 10 }}>
+        <div style={{ border: "1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)", background: "color-mix(in srgb, var(--hg-bad) 4%, transparent)", padding: 14, display: "grid", gap: 10 }}>
           <p style={{ fontSize: 13, color: "var(--ink-black)", lineHeight: 1.55, margin: 0 }}>
             Disconnect {handle}? Your agent stops answering on Telegram, and reconnecting needs a bot token from BotFather again.
           </p>
@@ -598,7 +599,7 @@ function ConnectedCard({
             onClick={() => { setConfirming(false); onDisconnect(); }}
             disabled={busy}
             className="mono"
-            style={{ ...cardButton, justifySelf: "start", border: "1px solid #c0392b", background: "transparent", color: "#e06c5a", cursor: busy ? "default" : "pointer" }}
+            style={{ ...cardButton, justifySelf: "start", border: "1px solid var(--hg-bad)", background: "transparent", color: "var(--hg-bad)", cursor: busy ? "default" : "pointer" }}
           >
             Disconnect {handle}
           </button>
@@ -676,7 +677,7 @@ function DeeplinkPairingStep({
     <div
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.035)",
+        background: "var(--hg-fill-1)",
         padding: 18,
         display: "grid",
         gap: 12,
@@ -741,7 +742,7 @@ function CodePairingStep({
     <div
       style={{
         border: "1px solid var(--etched-border)",
-        background: "rgba(255,255,255,0.035)",
+        background: "var(--hg-fill-1)",
         padding: 18,
         display: "grid",
         gap: 12,

@@ -29,7 +29,8 @@
  *     mailing the entire historical dormant fleet.
  *
  * Recipient resolution copies the cold-storage-notifications mechanism:
- * Clerk user fetch → primary email, falling back to any verified address.
+ * Clerk user fetch → primary email when Clerk reports it verified, else any
+ * verified address. An unverified address is never mailed.
  */
 
 import "server-only";
@@ -37,6 +38,7 @@ import { chunk } from "@/lib/array-utils";
 
 import { type InstanceActivityDigest } from "@/lib/command-center/activity";
 import { isPaidPlan } from "@/lib/conversion-funnel";
+import { pickVerifiedEmail } from "@/lib/email/clerk-verified-email";
 import {
   sendLifecycleEmail,
   type ActivityDigestSummary,
@@ -357,17 +359,15 @@ export async function fetchClerkUser(secretKey: string, userId: string): Promise
   return (await response.json()) as ClerkUser;
 }
 
+// Only a Clerk-verified address: an unverified one may belong to someone who never signed up (F106).
 function chooseEmail(user: ClerkUser): string | null {
-  const addresses = user.email_addresses ?? [];
-  const primary = addresses.find((a) => a.id === user.primary_email_address_id);
-  const verified = addresses.find((a) => a.verification?.status === "verified");
-  return primary?.email_address ?? verified?.email_address ?? addresses[0]?.email_address ?? null;
+  return pickVerifiedEmail(user);
 }
 
 /**
- * Resolve a Clerk user id to a recipient (primary email, falling back to any
- * verified address) plus first name. Exported so the warm-pool campaign uses
- * the exact same mechanism as the lifecycle sweep. Returns null when the
+ * Resolve a Clerk user id to a recipient (the primary email when verified,
+ * else any verified address) plus first name. Unverified addresses are never
+ * returned. Returns null when the
  * Clerk user is gone or has no usable address; throws on Clerk API errors.
  */
 export async function resolveClerkRecipient(
@@ -591,7 +591,12 @@ export async function runLifecycleEmailSweep(opts?: {
       instances: instancesByUser.get(userId) ?? [],
       now,
     });
-    const unsent = due.filter((d) => !alreadySent.has(`${userId}:${d.key}`));
+    // The first-win launch email says the same thing as day1_idle; one is enough.
+    const unsent = due.filter(
+      (d) =>
+        !alreadySent.has(`${userId}:${d.key}`) &&
+        !(d.key === "day1_idle" && alreadySent.has(`${userId}:first_win_launch`))
+    );
     if (due.length > 0 && unsent.length === 0) {
       summary.skipped_already_sent += 1;
       continue;

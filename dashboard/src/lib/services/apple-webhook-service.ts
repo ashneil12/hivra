@@ -54,7 +54,6 @@ import type {
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
-import { grantSubscriptionCycleCredits } from "@/lib/billing/credits";
 import {
   appleSandboxFallbackEnabled,
   getAppleEnvironment,
@@ -425,20 +424,6 @@ export class AppleWebhookService {
       },
       notificationType
     );
-
-    // Cycle credit grant — idempotent on
-    // apple_subscription:<originalTransactionId>:<periodStart>:<periodEnd>,
-    // so redeliveries and reconciler convergence can never double-grant.
-    await grantSubscriptionCycleCredits({
-      userId,
-      planKey,
-      subscriptionId: originalTransactionId,
-      periodStart: transaction.purchaseDate,
-      periodEnd: transaction.expiresDate,
-      source: "apple",
-      actor: "apple_webhook",
-      referencePrefix: "apple_subscription",
-    });
 
     // Same tier machinery as the Stripe activation path. Failures never roll
     // back the subscription write (mirrors stripe-webhook-service).

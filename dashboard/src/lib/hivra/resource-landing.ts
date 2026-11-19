@@ -42,9 +42,17 @@ export interface ResourceDescriptor {
   resourceKind?: "agent" | "computer" | undefined;
 }
 
+/**
+ * A computer profile as the surfaces read it: a known profile, or "unknown" for
+ * a stored value Hivra does not recognise. An unknown profile never has a
+ * desktop (it fails closed), so it is not guessed to be Ubuntu.
+ */
+export type NormalizedComputerProfile = ComputerTemplateId | "unknown";
+
 export interface ResourceLanding {
-  /** The surface this resource opens on. */
-  landing: "conversation" | "desktop";
+  /** The surface this resource opens on. "workspace" is a running computer with
+   * no desktop (a Linux computer): it opens on its files and terminal. */
+  landing: "conversation" | "desktop" | "workspace";
   /**
    * True when a conversation exists at all. For a running computer this is
    * false — its conversation was never a real pane, it was a fall-through to a
@@ -65,9 +73,9 @@ export interface ResourceLanding {
    * The normalized profile. Null when this resource is not a computer. A null
    * computer_profile on a linux-desktop row resolves to "ubuntu-desktop" — that
    * was the only computer image before profiles existed, so null is Ubuntu, not
-   * a fourth profile.
+   * a fourth profile. A stored profile Hivra does not know is "unknown".
    */
-  profile: ComputerTemplateId | null;
+  profile: NormalizedComputerProfile | null;
 }
 
 /** A computer is only a computer when it is actually up. */
@@ -77,16 +85,28 @@ function isRunning(status: string | null | undefined): boolean {
 
 export function normalizeComputerProfile(
   value: string | null | undefined,
-): ComputerTemplateId {
-  return value === "omarchy" || value === "windows" ? value : "ubuntu-desktop";
+): NormalizedComputerProfile {
+  // No profile is the original Ubuntu desktop. Any other value must be one
+  // Hivra knows; a profile it does not know is never taken for a desktop.
+  if (value == null || value === "" || value === "ubuntu-desktop") return "ubuntu-desktop";
+  return value === "omarchy" || value === "windows" || value === "ubuntu-server" ? value : "unknown";
 }
 
+/** Whether a computer's stored profile has a desktop at all. A Linux computer
+ * (ubuntu-server) has none, and neither does a profile Hivra does not know. */
+export function computerHasDesktop(value: string | null | undefined): boolean {
+  const profile = normalizeComputerProfile(value);
+  return profile === "ubuntu-desktop" || profile === "omarchy" || profile === "windows";
+}
+
+/** The component a profile's desktop renders through, or null when it has none. */
 export function desktopTransportForProfile(
-  profile: ComputerTemplateId | null,
-): DesktopTransport {
+  profile: NormalizedComputerProfile | null,
+): DesktopTransport | null {
   if (profile === "omarchy") return "omarchy";
   if (profile === "windows") return "windows";
-  return "remote";
+  if (profile === null || profile === "ubuntu-desktop") return "remote";
+  return null;
 }
 
 /**
@@ -117,6 +137,18 @@ export function resolveResourceLanding(
   }
 
   const profile = normalizeComputerProfile(resource.computerProfile);
+  // A running computer with no desktop opens on its files and terminal. It is
+  // never given a desktop, whatever its type says.
+  if (!computerHasDesktop(resource.computerProfile)) {
+    return {
+      landing: "workspace",
+      conversation: false,
+      desktop: false,
+      desktopTransport: null,
+      desktopAutoOpen: false,
+      profile,
+    };
+  }
   return {
     landing: "desktop",
     // A running computer has no conversation surface. It used to be handed the

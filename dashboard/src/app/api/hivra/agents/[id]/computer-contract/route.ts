@@ -17,7 +17,6 @@ import { z } from "zod";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { RATE_LIMIT_PRESETS, enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { computerContractPlanFor } from "@/lib/agent-computers/computer-contract-input";
 import {
@@ -54,7 +53,6 @@ async function loadOwnedAgent(
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));
@@ -79,7 +77,6 @@ const STEP_DEADLINE_MS = 55_000;
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const deadline = Date.now() + STEP_DEADLINE_MS;
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return noStore(apiError("Not found", 404));
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return noStore(apiError("Unauthorized", 401));

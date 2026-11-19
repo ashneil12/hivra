@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { motion, useReducedMotion } from "framer-motion";
 import posthog from "posthog-js";
 import { X, Sparkles, Loader2, ExternalLink, Copy, CheckCircle2, AlertTriangle } from "lucide-react";
 import { SafePortal } from "@/components/ui/SafePortal";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
+import { readHttpsAuthorizationUrl } from "@/lib/safe-http-url";
 import { verifyNousPortalConnection } from "@/lib/nous-oauth";
 import {
   buildHermesOverlayVariants,
@@ -309,6 +311,10 @@ export function NousPortalOAuthModal({
       }
 
       const data = payload.data as DeviceCodeSession;
+      // The verification address comes from the guest; it is opened and shown only when it is https.
+      if (!readHttpsAuthorizationUrl(data.verification_url)) {
+        throw new Error("Nous Portal did not return a usable sign-in link. Please try again.");
+      }
       setSession(data);
       setConnectStep("waiting");
       if (data.expires_in && data.expires_in > 0) {
@@ -365,8 +371,8 @@ export function NousPortalOAuthModal({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "rgba(0,0,0,0.4)",
-        backdropFilter: "blur(4px)",
+        background: "color-mix(in srgb, var(--hg-bg) 40%, transparent)",
+        backdropFilter: "blur(6px)",
         padding: "calc(20px + env(safe-area-inset-top, 0px)) 20px calc(20px + env(safe-area-inset-bottom, 0px))",
       }}
     >
@@ -466,7 +472,7 @@ export function NousPortalOAuthModal({
 
           {connectStep === "starting" && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "24px 0" }}>
-              <Loader2 size={28} style={{ animation: "spin 1s linear infinite", color: "var(--ink-black)" }} />
+              <ThinkingOrb state="searching" size={32} />
               <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0, textAlign: "center" }}>
                 Connecting to the live agent to begin Nous Portal login…
               </p>
@@ -533,7 +539,7 @@ export function NousPortalOAuthModal({
                   </motion.button>
                 </div>
                 {openFallbackVisible && (
-                  <div style={{ padding: "8px 10px", background: "rgba(0,0,0,0.02)", border: "1px solid var(--etched-border)", color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.5 }}>
+                  <div style={{ padding: "8px 10px", background: "var(--hg-fill-1)", border: "1px solid var(--etched-border)", color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.5 }}>
                     If the Nous Portal page did not open, use <strong>Copy URL</strong> and paste it into a new tab.
                   </div>
                 )}
@@ -546,7 +552,7 @@ export function NousPortalOAuthModal({
                     alignItems: "center",
                     gap: 8,
                     padding: "10px 12px",
-                    background: "rgba(0,0,0,0.02)",
+                    background: "var(--hg-fill-1)",
                     border: "1px solid var(--etched-border)",
                     fontSize: 12,
                     color: "var(--text-muted)",
@@ -568,7 +574,7 @@ export function NousPortalOAuthModal({
 
           {connectStep === "finalizing" && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "24px 0" }}>
-              <Loader2 size={28} style={{ animation: "spin 1s linear infinite", color: "var(--ink-black)" }} />
+              <ThinkingOrb state="searching" size={32} />
               <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0, textAlign: "center", maxWidth: 360 }}>
                 Nous Portal approved the login. Hermes is saving your reusable session and verifying the connection…
               </p>
@@ -593,8 +599,8 @@ export function NousPortalOAuthModal({
                   alignItems: "center",
                   gap: 8,
                   padding: "10px 12px",
-                  background: "rgba(239,68,68,0.05)",
-                  border: "1px solid rgba(239,68,68,0.25)",
+                  background: "color-mix(in srgb, var(--hg-bad) 5%, transparent)",
+                  border: "1px solid color-mix(in srgb, var(--hg-bad) 25%, transparent)",
                   color: "var(--red)",
                   fontSize: 13,
                 }}

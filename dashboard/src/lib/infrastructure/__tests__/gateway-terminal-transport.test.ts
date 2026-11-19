@@ -76,7 +76,7 @@ describe("gateway terminal transport", () => {
         if (name === "fs") return fakeFs;
         if (name === "net") return fakeNet;
         if (name === "child_process") return { spawn: () => { throw new Error("no process"); }, execFile: () => { throw new Error("no process"); } };
-        if (["path", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs"].includes(name)) return realRequire(name);
+        if (["path", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs", "./import-state.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected guest dependency: ${name}`);
       },
       process: { env: { HOME: home, HIVRA_CHAT_PORT: "0", HIVRA_AGENT_KIND: "linux-desktop", ...unitEnv }, once: () => undefined, getuid: () => uid },

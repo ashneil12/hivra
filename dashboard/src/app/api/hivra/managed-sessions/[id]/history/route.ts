@@ -8,11 +8,9 @@ import { auth } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { readManagedSessionHistory } from "@/lib/hivra/do-managed-sessions";
-import { managedSessionFailure, noStore, UUID, hivraApiUnavailable } from "../../route-support";
+import { managedSessionFailure, noStore, UUID } from "../../route-support";
 
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const unavailable = hivraApiUnavailable(request);
-  if (unavailable) return unavailable;
   const { userId } = await auth();
   if (!userId) return noStore(apiError("Unauthorized", 401));
   const { id } = await context.params;

@@ -81,7 +81,7 @@ export const CONSENT_VERSION = 1;
 // choice, localStorage is the primary client read. Either being present counts
 // as "decided".
 export const CONSENT_STORAGE_KEY = 'hh_cookie_consent';
-const CONSENT_COOKIE_NAME = 'hh_cookie_consent';
+export const CONSENT_COOKIE_NAME = 'hh_cookie_consent';
 const CONSENT_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180; // 180 days
 
 export interface StoredConsent {
@@ -104,6 +104,19 @@ function parseStored(raw: string | null | undefined): StoredConsent | null {
       version: parsed.version,
       timestamp: typeof parsed.timestamp === 'number' ? parsed.timestamp : 0,
     };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The stored choice from the raw value of the consent cookie (URL-encoded, as
+ * the browser sends it). For server code, which reads the request's cookies.
+ */
+export function parseConsentCookieValue(raw: string | null | undefined): StoredConsent | null {
+  if (!raw) return null;
+  try {
+    return parseStored(decodeURIComponent(raw));
   } catch {
     return null;
   }

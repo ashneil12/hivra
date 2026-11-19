@@ -3651,7 +3651,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         env: expect.objectContaining({ PROXMOX_NODE: "fixturenode2" }),
       })
     );
-    expect(hivraAllocationQuery.select).toHaveBeenCalledWith("proxmox_host, cpu, ram, status, vmid");
+    expect(hivraAllocationQuery.select).toHaveBeenCalledWith("proxmox_host, cpu, ram, status, vmid, sleep_state");
   });
 
   it("counts stopped Hivra computers' disk but not their CPU/RAM when ranking hosts", async () => {

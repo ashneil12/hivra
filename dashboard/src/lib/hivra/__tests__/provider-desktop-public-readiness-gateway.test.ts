@@ -42,7 +42,7 @@ it("preserves broker framing authority through the public desktop gateway", asyn
         if (name === "child_process") return { spawn() { throw new Error("No child processes"); }, execFile() { throw new Error("No child processes"); } };
         if (name === "./guarded-files.cjs") return { createGuardedFiles: () => ({}) };
         if (name === "./agent-zero-editor.cjs") return { SOURCES: {}, rewriteNativeEditorAsset: (_path: string, body: Buffer) => body };
-        if (["path", "net", "crypto", "./llm-application.js"].includes(name)) return realRequire(name);
+        if (["path", "net", "crypto", "./llm-application.js", "./import-state.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected dependency ${name}`);
       },
       process: { env: { HIVRA_CHAT_PORT: "0", HIVRA_AGENT_KIND: "linux-desktop", HIVRA_REMOTE_DESKTOP_BROKER_PORT: String(upstreamPort) }, once() {}, exit() {} },

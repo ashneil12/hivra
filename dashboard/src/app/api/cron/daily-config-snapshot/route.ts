@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
+import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 import {
   buildConfigSnapshotStagingScript,
   buildMetadataFile,
@@ -40,11 +41,10 @@ function envBool(name: string, fallback: boolean): boolean {
   return v === "true" || v === "1" || v === "yes";
 }
 
+// Host output goes through the shared redactor, so the same token shapes are masked here as
+// in ops_events and the push gate (a local list drifted from them before).
 function redactHostOutput(value: string, max = 8000): string {
-  return value
-    .replace(/-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/g, "[REDACTED_KEY]")
-    .replace(/gh[pousr]_[A-Za-z0-9_]{20,}/g, "[REDACTED]")
-    .slice(0, max);
+  return redactSensitiveCommandOutput(value, max);
 }
 
 type TargetRow = {

@@ -408,7 +408,14 @@ type ProxmoxProvisionTargetCandidate = {
 // distinctly from "no candidate passed the filters" — an unreadable registry is
 // a hard stop, not an empty candidate list to fail over through.
 type ProxmoxProvisionTargetCandidateSet =
-  | { ok: true; candidates: ProxmoxProvisionTargetCandidate[] }
+  | {
+      ok: true;
+      candidates: ProxmoxProvisionTargetCandidate[];
+      /** Registry hosts left out of the ranking because their placement
+       *  budget is full. When every remaining candidate then fails for
+       *  another reason (e.g. an unprepared host), "full" is the true answer. */
+      capacityFullHostIds?: string[];
+    }
   | {
       ok: false;
       status: number;
@@ -539,6 +546,12 @@ type ProxmoxHostRegistryRow = {
   max_tenant_instances: number | null;
   thinpool_size_gb: number | null;
   thinpool_overcommit_ratio: number | null;
+  /** Per-host CPU overcommit; null/absent = HERMES_PROXMOX_CPU_OVERCOMMIT_RATIO. */
+  cpu_overcommit_ratio?: number | string | null;
+  /** Per-host: deep-sleeping agents hold no CPU/RAM in placement. */
+  placement_skip_deep_sleep?: boolean | null;
+  /** Latest capacity sweep reading (hivra/capacity/sweep), when the host is swept. */
+  capacity_reading?: unknown;
 };
 
 // The one `proxmox_hosts.status` value that means "in rotation". Everything
@@ -673,7 +686,10 @@ async function loadProxmoxHostRegistry(
     supabase
       .from("proxmox_hosts")
       .select(
-        "id, status, env_prefix, total_cpu, total_ram_mb, reserved_cpu, reserved_ram_mb, wake_headroom_ram_mb, max_tenant_instances, thinpool_size_gb, thinpool_overcommit_ratio"
+        // "*" so optional per-host settings added later (cpu_overcommit_ratio,
+        // placement_skip_deep_sleep) read as undefined on a database that does
+        // not have them yet, instead of halting placement on schema skew.
+        "*"
       )
   );
 
@@ -722,8 +738,40 @@ async function loadProxmoxHostRegistry(
   return { active: [], nonActiveHostIds, registryHasAnyRows, outcome: "empty" };
 }
 
+export const PROXMOX_SERVERS_FULL_MESSAGE =
+  "Our servers are full right now. Please try again in a few minutes.";
+
 // Hivra agent statuses whose VM holds CPU and RAM on its host.
 const HIVRA_AGENT_POWERED_STATUSES: ReadonlySet<string> = new Set(["provisioning", "running"]);
+
+// Sleep states whose VM is saved to disk and holds no CPU or RAM on its host
+// (status stays "running" while asleep). Wake admission checks the host's real
+// free memory before it starts one again, so placement may give their CPU and
+// RAM to new agents. Opt-in: HIVRA_PLACEMENT_SKIP_DEEP_SLEEP=1.
+const HIVRA_AGENT_DEEP_SLEEP_STATES: ReadonlySet<string> = new Set(["hibernated"]);
+
+export function resolveHostCpuOvercommitRatio(
+  hostValue: number | string | null | undefined,
+  fallback: number
+): number {
+  const parsed = typeof hostValue === "string" ? Number(hostValue) : hostValue;
+  return typeof parsed === "number" && Number.isFinite(parsed) && parsed > 0 && parsed <= 20 ? parsed : fallback;
+}
+
+export function placementSkipsDeepSleep(env: Record<string, string | undefined>): boolean {
+  const raw = env.HIVRA_PLACEMENT_SKIP_DEEP_SLEEP?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "on";
+}
+
+export function hivraAgentHoldsCpuAndRam(
+  row: { status?: string | null; sleep_state?: string | null },
+  skipDeepSleep: boolean
+): boolean {
+  const status = row.status;
+  if (status === null || status === undefined || !HIVRA_AGENT_POWERED_STATUSES.has(status)) return false;
+  if (skipDeepSleep && row.sleep_state && HIVRA_AGENT_DEEP_SLEEP_STATES.has(row.sleep_state)) return false;
+  return true;
+}
 
 type RankedProxmoxHost = {
   host: ProxmoxHostRegistryRow;
@@ -733,6 +781,37 @@ type RankedProxmoxHost = {
   diskSizeGb: number;
 };
 
+// Disk by measurement (stress test 2026-11-18): agents really use 7-17 GB of
+// the thin pool, but placement counted a flat HIVRA_AGENT_VM_DISK_GB each, so a
+// server full of sleeping agents looked out of disk while it had room. When a
+// host has a fresh capacity reading with its pool, placement uses the pool's
+// real use instead: room up to MEASURED_POOL_FILL_LIMIT, with
+// MEASURED_DISK_RESERVE_GB kept for the new agent and for each launch still
+// in progress (they are not in the reading yet).
+export const MEASURED_POOL_FILL_LIMIT = 0.85;
+export const MEASURED_DISK_RESERVE_GB = 20;
+const MEASURED_POOL_READING_MAX_AGE_MS = 15 * 60 * 1000;
+
+export function measuredFreeDiskGb(
+  reading: unknown,
+  launchesInProgress: number,
+  nowMs: number,
+): number | null {
+  if (!reading || typeof reading !== "object") return null;
+  const r = reading as { v?: unknown; at?: unknown; pool?: unknown };
+  if (r.v !== 1 || typeof r.at !== "string") return null;
+  const age = nowMs - Date.parse(r.at);
+  if (!Number.isFinite(age) || age < 0 || age > MEASURED_POOL_READING_MAX_AGE_MS) return null;
+  const pool = r.pool as { sizeMb?: unknown; usedPercent?: unknown } | null | undefined;
+  if (!pool || typeof pool !== "object") return null;
+  const sizeMb = Number(pool.sizeMb);
+  const usedPercent = Number(pool.usedPercent);
+  if (!Number.isFinite(sizeMb) || sizeMb <= 0 || !Number.isFinite(usedPercent) || usedPercent < 0) return null;
+  const sizeGb = sizeMb / 1024;
+  const usedGb = (sizeGb * usedPercent) / 100;
+  return sizeGb * MEASURED_POOL_FILL_LIMIT - usedGb - Math.max(0, launchesInProgress) * MEASURED_DISK_RESERVE_GB;
+}
+
 async function rankProxmoxHostsForPlacement(params: {
   supabase: NonNullable<typeof supabaseAdmin>;
   env: NodeJS.ProcessEnv;
@@ -740,6 +819,7 @@ async function rankProxmoxHostsForPlacement(params: {
   neededCpu: number;
   neededRamMb: number;
   neededDiskGb: number;
+  onCapacityFull?: (hostId: string) => void;
 }): Promise<RankedProxmoxHost[]> {
   const hostIds = params.hosts.map((h) => h.id);
   if (hostIds.length === 0) return [];
@@ -756,9 +836,13 @@ async function rankProxmoxHostsForPlacement(params: {
   // disk. CPU/RAM are split out below by status.
   const { data: hivraRows, error: hivraError } = await params.supabase
     .from("hivra_agents")
-    .select("proxmox_host, cpu, ram, status, vmid")
+    .select("proxmox_host, cpu, ram, status, vmid, sleep_state")
     .in("proxmox_host", hostIds)
     .neq("status", "deleted");
+  const skipDeepSleepEverywhere = placementSkipsDeepSleep(params.env);
+  const skipDeepSleepHosts = new Set(
+    params.hosts.filter((h) => h.placement_skip_deep_sleep === true).map((h) => h.id)
+  );
 
   if (error || hivraError) {
     const allocationError = error ?? hivraError;
@@ -777,6 +861,7 @@ async function rankProxmoxHostsForPlacement(params: {
   }
 
   const allocByHost = new Map<string, { cpu: number; ram: number; disk: number }>();
+  const launchesInProgressByHost = new Map<string, number>();
   for (const row of rows ?? []) {
     const node = (row as { proxmox_node?: string | null }).proxmox_node;
     if (!node) continue;
@@ -797,15 +882,26 @@ async function rankProxmoxHostsForPlacement(params: {
   for (const row of hivraRows ?? []) {
     const node = (row as { proxmox_host?: string | null }).proxmox_host;
     if (!node) continue;
-    const { status, vmid } = row as { status?: string | null; vmid?: number | null };
+    const { status, vmid, sleep_state } = row as {
+      status?: string | null;
+      vmid?: number | null;
+      sleep_state?: string | null;
+    };
     const powered = status !== null && status !== undefined && HIVRA_AGENT_POWERED_STATUSES.has(status);
+    const holdsCpuAndRam = hivraAgentHoldsCpuAndRam(
+      { status, sleep_state },
+      skipDeepSleepEverywhere || skipDeepSleepHosts.has(node)
+    );
     // A powered row owns (or is about to own) a VM. Any other non-deleted row
     // owns one only if it recorded a vmid: a stopped computer keeps its disk,
     // and an errored one may have allocated before it failed.
     const ownsVm = powered || (vmid !== null && vmid !== undefined);
     if (!ownsVm) continue;
+    if (status === "provisioning") {
+      launchesInProgressByHost.set(node, (launchesInProgressByHost.get(node) ?? 0) + 1);
+    }
     const acc = allocByHost.get(node) ?? { cpu: 0, ram: 0, disk: 0 };
-    if (powered) {
+    if (holdsCpuAndRam) {
       acc.cpu += Number((row as { cpu?: number | null }).cpu ?? 0);
       acc.ram += Number((row as { ram?: number | null }).ram ?? 0) * 1024;
     }
@@ -813,7 +909,7 @@ async function rankProxmoxHostsForPlacement(params: {
     allocByHost.set(node, acc);
   }
 
-  const cpuOvercommitRatio = resolveProxmoxCpuOvercommitRatio(params.env);
+  const defaultCpuOvercommitRatio = resolveProxmoxCpuOvercommitRatio(params.env);
   const ranked: RankedProxmoxHost[] = [];
   const placementDiagnostics: Array<Record<string, unknown>> = [];
   for (const host of params.hosts) {
@@ -823,6 +919,7 @@ async function rankProxmoxHostsForPlacement(params: {
       resolveProxmoxVmDiskGb(target.env)
     );
     const alloc = allocByHost.get(host.id) ?? { cpu: 0, ram: 0, disk: 0 };
+    const cpuOvercommitRatio = resolveHostCpuOvercommitRatio(host.cpu_overcommit_ratio, defaultCpuOvercommitRatio);
     const cpuBudget = (host.total_cpu - host.reserved_cpu) * cpuOvercommitRatio;
     const freeCpu = cpuBudget - alloc.cpu;
     const freeRamMb =
@@ -840,7 +937,16 @@ async function rankProxmoxHostsForPlacement(params: {
       thinpoolSizeGb !== null && thinpoolSizeGb !== undefined
         ? thinpoolSizeGb * overcommitRatio
         : null;
-    const freeDiskGb = diskBudgetGb !== null ? diskBudgetGb - alloc.disk : null;
+    const measuredDiskGb = measuredFreeDiskGb(
+      host.capacity_reading,
+      launchesInProgressByHost.get(host.id) ?? 0,
+      Date.now()
+    );
+    const diskMeasured = measuredDiskGb !== null;
+    const freeDiskGb = diskMeasured
+      ? measuredDiskGb
+      : diskBudgetGb !== null ? diskBudgetGb - alloc.disk : null;
+    const neededDiskForCheckGb = diskMeasured ? MEASURED_DISK_RESERVE_GB : diskSizeGb;
 
     placementDiagnostics.push({
       hostId: host.id,
@@ -862,12 +968,18 @@ async function rankProxmoxHostsForPlacement(params: {
       diskBudgetGb,
       allocatedDiskGb: alloc.disk,
       freeDiskGb,
-      neededDiskGb: diskSizeGb,
+      diskMeasured,
+      neededDiskGb: neededDiskForCheckGb,
     });
 
-    if (freeCpu < params.neededCpu) continue;
-    if (freeRamMb < params.neededRamMb) continue;
-    if (freeDiskGb !== null && freeDiskGb < diskSizeGb) continue;
+    if (
+      freeCpu < params.neededCpu ||
+      freeRamMb < params.neededRamMb ||
+      (freeDiskGb !== null && freeDiskGb < neededDiskForCheckGb)
+    ) {
+      params.onCapacityFull?.(host.id);
+      continue;
+    }
 
     ranked.push({ host, freeCpu, freeRamMb, freeDiskGb, diskSizeGb });
   }
@@ -880,7 +992,7 @@ async function rankProxmoxHostsForPlacement(params: {
       neededCpu: params.neededCpu,
       neededRamMb: params.neededRamMb,
       neededDiskGb: params.neededDiskGb,
-      cpuOvercommitRatio,
+      cpuOvercommitRatio: defaultCpuOvercommitRatio,
       placementDiagnostics,
     });
   }
@@ -1171,6 +1283,7 @@ async function buildProxmoxProvisionTargetCandidates(params: {
       };
     }
 
+    const capacityFullHostIds: string[] = [];
     const ranked = await rankProxmoxHostsForPlacement({
       supabase: params.supabase,
       env: params.env,
@@ -1178,6 +1291,7 @@ async function buildProxmoxProvisionTargetCandidates(params: {
       neededCpu: params.neededCpu,
       neededRamMb: params.neededRamMb,
       neededDiskGb: params.neededDiskGb,
+      onCapacityFull: (hostId) => capacityFullHostIds.push(hostId),
     });
 
     log.info("proxmox placement using registry path", {
@@ -1201,6 +1315,7 @@ async function buildProxmoxProvisionTargetCandidates(params: {
           maxTenantInstancesOverride: host.max_tenant_instances,
         };
       }),
+      capacityFullHostIds,
     };
   }
 
@@ -1594,6 +1709,30 @@ export async function selectAvailableProxmoxProvisionTarget(params: {
     };
   }
 
+  // A ready host was full and every other candidate failed for a different
+  // reason (an unprepared or unreachable spare). Telling the person the
+  // spare "needs an update" is misleading: the truthful answer is "full".
+  const capacityFullHostIds = candidateSet.capacityFullHostIds ?? [];
+  if (lastUnavailable && capacityFullHostIds.length > 0) {
+    log.warn("proxmox placement: ready hosts full, remaining candidates not usable", {
+      source: LOG_SOURCE,
+      failureType: "proxmox_capacity_full_spares_unusable",
+      userId: params.userId,
+      capacityFullHostIds,
+      lastUnavailableMessage: lastUnavailable.message,
+    });
+    return {
+      ok: false,
+      status: 503,
+      message: PROXMOX_SERVERS_FULL_MESSAGE,
+      error: {
+        code: "PROXMOX_NO_PLACEMENT_TARGET",
+        capacityFullHostIds,
+        otherCandidateError: lastUnavailable.error ?? null,
+      },
+    };
+  }
+
   if (lastUnavailable) {
     return { ok: false, ...lastUnavailable };
   }
@@ -1644,16 +1783,9 @@ function resolveInfrastructureProviderForUser(userId: string): "hetzner" | "prox
   // pinned to whichever infra they were provisioned on, no
   // cross-infra migration).
   //
-  // Two opt-out paths:
-  //   1. HERMES_PROXMOX_DISABLED_USER_IDS — emergency allowlist that
-  //      forces a specific user back onto Hetzner if Proxmox provisioning
-  //      breaks for them. Use this if a customer reports failures and we
-  //      want to keep them unblocked while we fix Proxmox.
-  //   2. HERMES_PROXMOX_ENABLED_USER_IDS still works as a *legacy*
-  //      whitelist when the environment is in transition: if it's set,
-  //      ONLY listed users get Proxmox (matches the old behaviour for
-  //      gradual rollout). Once you're ready for full self-serve, unset
-  //      that env var and the whole pool goes Proxmox.
+  // One opt-out: HERMES_PROXMOX_DISABLED_USER_IDS is an emergency list that
+  // forces a specific user back onto Hetzner if Proxmox provisioning breaks
+  // for them, keeping them unblocked while Proxmox is fixed.
   const proxmoxAvailable =
     process.env.HERMES_INFRA_PROVIDER?.trim().toLowerCase() === "proxmox";
   if (!proxmoxAvailable) {
@@ -1666,13 +1798,6 @@ function resolveInfrastructureProviderForUser(userId: string): "hetzner" | "prox
   );
   if (proxmoxDisabledForUser) {
     return "hetzner";
-  }
-
-  // Transitional: when HERMES_PROXMOX_ENABLED_USER_IDS is set, treat it
-  // as a whitelist (old behaviour). Unset → everyone gets Proxmox.
-  const enabledList = process.env.HERMES_PROXMOX_ENABLED_USER_IDS?.trim();
-  if (enabledList) {
-    return envListIncludes(enabledList, userId) ? "proxmox" : "hetzner";
   }
 
   return "proxmox";

@@ -1,7 +1,6 @@
 /** @jest-environment node */
 import { NextRequest } from "next/server";
-import { GET, PATCH } from "../route";
-import { AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
+import { GET } from "../route";
 
 const mockAuth = jest.fn();
 const mockRateLimit = jest.fn();
@@ -12,7 +11,6 @@ let mockRecord: Record<string, unknown> | null;
 const writes: Array<{ op: string; payload: unknown }> = [];
 
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => true }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: (...args: unknown[]) => mockRateLimit(...args) }));
 jest.mock("@/lib/hivra/agent-cli-meta", () => ({ readAgentSoftwareFromBox: (...args: unknown[]) => mockReadBox(...args) }));
 jest.mock("@/lib/hivra/agent-events", () => ({ logHivraAgentEvent: (...args: unknown[]) => mockLogEvent(...args) }));
@@ -47,20 +45,14 @@ jest.mock("@/lib/supabase", () => ({
 
 const ID = "11111111-1111-4111-8111-111111111111";
 const TOKEN = "c".repeat(64);
-const TESTED = AGENT_CLI_VERSIONS.codex;
+const TESTED = "0.149.1";
 const params = (id = ID) => ({ params: Promise.resolve({ id }) });
 const get = (query = "") => GET(new NextRequest(`https://hivra.cloud/api/hivra/agents/${ID}/agent-software${query}`, { headers: { Host: "hivra.cloud" } }), params());
-function patch(body: unknown, headers: Record<string, string> = { Origin: "https://hivra.cloud", "Sec-Fetch-Site": "same-origin" }) {
-  return PATCH(new NextRequest(`https://hivra.cloud/api/hivra/agents/${ID}/agent-software`, {
-    method: "PATCH", headers: { Host: "hivra.cloud", "Content-Type": "application/json", ...headers }, body: JSON.stringify(body),
-  }), params());
-}
 const fresh = () => new Date(Date.now() - 60_000).toISOString();
 
 beforeEach(() => {
   jest.clearAllMocks();
   writes.length = 0;
-  delete process.env.HIVRA_AGENT_CLI_AUTO_UPDATE;
   mockAuth.mockResolvedValue({ userId: "owner" });
   mockRateLimit.mockReturnValue(null);
   mockAgentRow = {
@@ -79,10 +71,11 @@ describe("GET", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const body = await response.json();
     expect(body.data).toMatchObject({
-      supported: true, cli: "codex", tested: TESTED,
-      view: { kind: "behind", installed: "0.140.0" },
-      autoUpdate: { mode: "off", enabled: true, source: "default", pausedFor: null },
+      supported: true, cli: "codex",
+      view: { kind: "current", installed: "0.140.0" },
     });
+    expect(body.data).not.toHaveProperty("tested");
+    expect(body.data).not.toHaveProperty("autoUpdate");
     expect(mockReadBox).toHaveBeenCalledWith(expect.objectContaining({ chatUrl: "https://box-7f3a.hivra.example", apiToken: TOKEN, subject: expect.objectContaining({ cli: "codex" }) }));
     const text = JSON.stringify(body);
     expect(text).not.toContain(TOKEN);
@@ -120,12 +113,17 @@ describe("GET", () => {
     expect(mockReadBox).not.toHaveBeenCalled();
   });
 
-  it("reports the rollout switch and the owner's choice", async () => {
-    process.env.HIVRA_AGENT_CLI_AUTO_UPDATE = "on";
-    mockAgentRow = { ...mockAgentRow, deployment_mode: "self-managed" };
-    mockRecord = { agent_id: ID, user_id: "owner", observation: "reported", installed_version: TESTED, observed_at: fresh(), auto_paused_target: TESTED, auto_paused_reason: "rolled_back" };
-    const body = await (await get()).json();
-    expect(body.data.autoUpdate).toEqual({ mode: "on", enabled: false, source: "default", pausedFor: { target: TESTED, reason: "rolled_back" } });
+  it("covers a My cloud agent like a Proxmox one", async () => {
+    mockAgentRow = { ...mockAgentRow, computer_substrate: "provider-vm", deployment_mode: "self-managed" };
+    const body = await (await get("?live=1")).json();
+    expect(body.data).toMatchObject({ supported: true, cli: "codex", view: { kind: "current", installed: "0.140.0" } });
+    expect(mockReadBox).toHaveBeenCalled();
+  });
+
+  it("says nothing for a My cloud desktop", async () => {
+    mockAgentRow = { ...mockAgentRow, type: "linux-desktop", computer_profile: "ubuntu-desktop", computer_substrate: "provider-vm" };
+    expect((await (await get("?live=1")).json()).data).toEqual({ supported: false });
+    expect(mockReadBox).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -144,41 +142,5 @@ describe("GET", () => {
     mockRateLimit.mockReturnValueOnce(new Response("Slow down", { status: 429 }));
     expect((await get()).status).toBe(429);
     expect(mockReadBox).not.toHaveBeenCalled();
-  });
-});
-
-describe("PATCH", () => {
-  it("saves the owner's choice and records it", async () => {
-    process.env.HIVRA_AGENT_CLI_AUTO_UPDATE = "on";
-    const response = await patch({ autoUpdate: false });
-    expect(response.status).toBe(200);
-    expect(writes[0]).toMatchObject({ op: "upsert", payload: expect.objectContaining({ agent_id: ID, user_id: "owner", auto_update: false }) });
-    expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "agent_cli_auto_update_changed", agentId: ID, detail: { enabled: false } }));
-    expect((await response.json()).data.autoUpdate).toMatchObject({ mode: "on", enabled: false, source: "owner" });
-    expect(mockReadBox).not.toHaveBeenCalled();
-  });
-
-  it.each<Record<string, string>>([{ Origin: "https://evil.example", "Sec-Fetch-Site": "cross-site" }, {}])("refuses a request from another site %j", async (headers) => {
-    expect((await patch({ autoUpdate: true }, headers)).status).toBe(403);
-    expect(writes).toHaveLength(0);
-  });
-
-  it.each([[{ autoUpdate: "yes" }], [{}], [{ autoUpdate: true, extra: 1 }]])("refuses a malformed body %j", async (body) => {
-    expect((await patch(body)).status).toBe(400);
-    expect(writes).toHaveLength(0);
-  });
-
-  it("refuses an agent without a CLI Hivra updates, and another owner's agent", async () => {
-    mockAgentRow = { ...mockAgentRow, type: "aeon" };
-    expect((await patch({ autoUpdate: true })).status).toBe(400);
-    mockAuth.mockResolvedValue({ userId: "someone-else" });
-    expect((await patch({ autoUpdate: true })).status).toBe(404);
-    expect(writes).toHaveLength(0);
-  });
-
-  it("is rate limited", async () => {
-    mockRateLimit.mockReturnValueOnce(new Response("Slow down", { status: 429 }));
-    expect((await patch({ autoUpdate: true })).status).toBe(429);
-    expect(writes).toHaveLength(0);
   });
 });

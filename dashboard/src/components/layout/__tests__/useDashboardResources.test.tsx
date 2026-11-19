@@ -1,12 +1,10 @@
 /** @jest-environment jsdom */
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useDashboardResources } from '../useDashboardResources';
-import { isHivraEnabled } from '@/lib/hivra/hivra-flag';
 import { useWorkspaceAgents, WorkspaceOwnerContext } from '@/components/workspace/useWorkspaceAgents';
 import { resetResourceInventory, resourceInventory } from '@/lib/workspace/resource-inventory';
 import type { ReactNode } from 'react';
 
-jest.mock('@/lib/hivra/hivra-flag', () => ({ isHivraEnabled: jest.fn(() => true) }));
 
 const originalFetch = global.fetch;
 const response = (data: unknown) => ({ ok: true, json: async () => ({ success: true, data }) }) as Response;
@@ -17,20 +15,9 @@ afterAll(() => { global.fetch = originalFetch; });
 const ownedBy = (owner: string) => function Owner({ children }: { children: ReactNode }) {
   return <WorkspaceOwnerContext.Provider value={owner}>{children}</WorkspaceOwnerContext.Provider>;
 };
-beforeEach(() => { (isHivraEnabled as jest.Mock).mockReturnValue(true); resetResourceInventory(); });
+beforeEach(() => { resetResourceInventory(); });
 
 describe('useDashboardResources', () => {
-  it('does not fetch a disabled Hivra source or report it as a failure', async () => {
-    (isHivraEnabled as jest.Mock).mockReturnValue(false);
-    global.fetch = jest.fn().mockResolvedValue(response(hermes));
-    const { result } = renderHook(() => useDashboardResources('one'));
-    await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-    expect(global.fetch).toHaveBeenCalledWith('/api/instances?summary=true', expect.objectContaining({ cache: 'no-store' }));
-    expect(result.current.resources.map((resource) => resource.uid)).toEqual(['h-writer']);
-    expect(result.current.errors).toEqual({ hermes: null, hivra: null });
-  });
-
   it('shows a successful source before the other finishes, then reports partial failure', async () => {
     let rejectHivra!: (reason: Error) => void;
     global.fetch = jest.fn((url) => url === '/api/instances?summary=true' ? Promise.resolve(response(hermes)) : new Promise((_, reject) => { rejectHivra = reject; })) as jest.Mock;

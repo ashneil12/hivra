@@ -29,8 +29,9 @@
 //      only because requests still running hold the money, the 402 says so
 //      (ManagedVeniceBalanceHeldError): it frees up as they settle.
 //   4. The model maximum is only trusted when Venice published it (the live
-//      /v1/models refresh). While that refresh is down the proxy prices from
-//      the static catalog, whose maximum can lag Venice's (it listed
+//      /v1/models refresh, live-pricing.ts). If that refresh fails the proxy keeps
+//      its last live prices, or prices from the static catalog when it never
+//      had any. The catalog's maximum can lag Venice's (it listed
 //      zai-org-glm-5-1 at 24,000 while Venice allowed 80,000). So when the
 //      maximum came from the catalog, the cap the hold covers is always written
 //      into the forwarded request, even when it equals that maximum.
@@ -61,6 +62,11 @@ import { microdollarsToDisplayDollars } from "@/lib/billing/microdollars";
 import { log } from "@/lib/logger";
 import { surchargeHoldMicroUsd, type ManagedChatSurchargePlan } from "@/lib/venice/chat-surcharges";
 import { reserveManagedVeniceChatRequest } from "@/lib/venice/proxy-settlement";
+import {
+  ManagedVeniceAgentSpendCapError,
+  agentSpendCapReached,
+  readAgentDailyAllowance,
+} from "@/lib/billing/managed-venice-agent-spend-caps";
 import {
   estimateChatCompletionCost,
   maxAffordableVeniceChatOutputCap,
@@ -337,25 +343,48 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
   const requested = requestedOutputCap(protocol, body);
   const fullCap = Math.min(requested ?? modelMaxOutputTokens, modelMaxOutputTokens);
   const fullPatch = managedVeniceOutputCapPatch(protocol, body, fullCap, price);
-  let refused: ManagedVeniceInsufficientBalanceError;
-  try {
-    // The worst case, if it is at most half of what is available.
-    const reservation = await reserve(fullPatch, { maxShareOfAvailableBps: MAX_HOLD_SHARE_BPS });
-    return {
-      reservation,
-      bodyPatch: fullPatch,
-      outputCap: fullCap,
-      modelMaxOutputTokens,
-      clampedToBalance: false,
-    };
-  } catch (error) {
-    if (!(error instanceof ManagedVeniceInsufficientBalanceError)) throw error;
-    refused = error;
+  // The agent's daily limit is a second budget next to the wallet: what is
+  // left of it today, after what requests still running hold. Null when no
+  // limit applies (the flag is off or the owner set none).
+  const allowance = await readAgentDailyAllowance({ userId: params.userId, proxyKeyId: params.proxyKeyId });
+  const fullHoldMicroUsd =
+    estimateChatCompletionCost(managedVeniceChatEstimateBody(protocol, body, fullPatch), pricingMap).reservedCostMicroUsd +
+    surchargeMicroUsd;
+  const fullFitsAllowance =
+    !allowance || fullHoldMicroUsd * 10_000 <= allowance.remainingMicroUsd * MAX_HOLD_SHARE_BPS;
+  let refused: ManagedVeniceInsufficientBalanceError | null = null;
+  if (fullFitsAllowance) {
+    try {
+      // The worst case, if it is at most half of what is available.
+      const reservation = await reserve(fullPatch, { maxShareOfAvailableBps: MAX_HOLD_SHARE_BPS });
+      return {
+        reservation,
+        bodyPatch: fullPatch,
+        outputCap: fullCap,
+        modelMaxOutputTokens,
+        clampedToBalance: false,
+      };
+    } catch (error) {
+      // A request running at the same time took the agent's allowance first:
+      // size down from what is left, like the wallet.
+      if (error instanceof ManagedVeniceAgentSpendCapError && allowance) {
+        refused = null;
+      } else {
+        if (!(error instanceof ManagedVeniceInsufficientBalanceError)) throw error;
+        refused = error;
+      }
+    }
   }
 
-  // Lower the cap to what half the available balance covers, never below the
-  // floor while the whole balance covers the floor.
-  const balance = await balanceOf(refused);
+  // Lower the cap to what half the available balance (and half of what is
+  // left of the agent's daily limit) covers, never below the floor while the
+  // whole of both covers the floor.
+  const balance = refused ? await balanceOf(refused) : await readWalletBalance(params.userId, params.walletType);
+  const freshAllowance = allowance
+    ? await readAgentDailyAllowance({ userId: params.userId, proxyKeyId: params.proxyKeyId })
+    : null;
+  const agentBound = freshAllowance !== null && freshAllowance.remainingMicroUsd < balance.availableMicroUsd;
+  const sizingMicroUsd = agentBound ? freshAllowance!.remainingMicroUsd : balance.availableMicroUsd;
   const estimateBody = managedVeniceChatEstimateBody(protocol, body, fullPatch);
   const floorCap = Math.min(MIN_CLAMPED_OUTPUT_TOKENS, fullCap);
   const floorHoldMicroUsd =
@@ -367,11 +396,21 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
   // what is left after it.
   const affordable = maxAffordableVeniceChatOutputCap(
     estimateBody,
-    balance.availableMicroUsd - surchargeMicroUsd,
+    sizingMicroUsd - surchargeMicroUsd,
     pricingMap
   );
-  if (affordable < floorCap) throw refusal(balance, floorHoldMicroUsd);
-  const shareMicroUsd = Math.floor((balance.availableMicroUsd * MAX_HOLD_SHARE_BPS) / 10_000) - surchargeMicroUsd;
+  if (affordable < floorCap) {
+    if (agentBound) {
+      throw await agentSpendCapReached({
+        userId: params.userId,
+        proxyKeyId: params.proxyKeyId,
+        allowance: freshAllowance!,
+        requestedMicroUsd: floorHoldMicroUsd,
+      });
+    }
+    throw refusal(balance, floorHoldMicroUsd);
+  }
+  const shareMicroUsd = Math.floor((sizingMicroUsd * MAX_HOLD_SHARE_BPS) / 10_000) - surchargeMicroUsd;
   const affordableShare = maxAffordableVeniceChatOutputCap(estimateBody, shareMicroUsd, pricingMap);
   const outputCap = Math.min(fullCap, Math.max(affordableShare, floorCap));
   const bodyPatch = managedVeniceOutputCapPatch(protocol, body, outputCap, price);

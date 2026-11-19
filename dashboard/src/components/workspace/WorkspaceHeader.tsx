@@ -35,12 +35,12 @@ export function WorkspaceHeader({
   onCloseSurface,
 }: WorkspaceHeaderProps) {
   const iconButton =
-    "inline-flex min-h-[32px] min-w-[32px] shrink-0 items-center justify-center border border-transparent text-[var(--text-muted)] outline-none transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1";
+    "inline-flex min-h-[32px] min-w-[32px] shrink-0 items-center justify-center rounded-[7px] border border-transparent text-[var(--text-muted)] outline-none transition-colors hover:bg-[var(--hg-fill-hover)] hover:text-[var(--ink-black)] focus-visible:ring-2 focus-visible:ring-[var(--hg-focus)] focus-visible:ring-offset-1";
 
   return (
     <header
       data-testid="workspace-header"
-      className="flex min-h-[40px] min-w-0 shrink-0 items-center gap-1.5 border-b border-[var(--etched-border)] bg-[var(--bg-surface)] px-2 py-0.5"
+      className="flex min-h-[40px] min-w-0 shrink-0 items-center gap-1.5 border-b border-[var(--hg-stroke-subtle)] bg-[var(--hg-glass)] backdrop-blur-xl backdrop-saturate-[1.3] px-2 py-0.5"
     >
       <button
         type="button"
@@ -63,11 +63,11 @@ export function WorkspaceHeader({
         aria-label={`Switch agent — currently ${agent.name}`}
         onClick={onOpenAgentPicker}
         className={[
-          "mono flex min-h-[32px] min-w-0 shrink items-center gap-2 border px-2 text-left outline-none",
-          "focus-visible:ring-2 focus-visible:ring-[var(--hivra-red)] focus-visible:ring-offset-1",
+          "flex min-h-[32px] min-w-0 shrink items-center gap-2 rounded-[7px] border px-2 text-left outline-none",
+          "focus-visible:ring-2 focus-visible:ring-[var(--hg-focus)] focus-visible:ring-offset-1",
           agentPickerOpen
-            ? "border-[var(--hivra-red-line)] bg-[var(--bg-elevated)]"
-            : "border-[var(--etched-border)] hover:border-[var(--hivra-red-line)]",
+            ? "border-[var(--hg-stroke-strong)] bg-[var(--hg-fill-2)]"
+            : "border-[var(--hg-stroke)] hover:border-[var(--hg-stroke-strong)]",
         ].join(" ")}
       >
         <span

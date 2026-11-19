@@ -2,12 +2,11 @@ import { NextRequest } from "next/server";
 import { randomUUID } from "node:crypto";
 import { GET } from "../route";
 
-const mockAuth = jest.fn(), mockAllowed = jest.fn();
+const mockAuth = jest.fn();
 const mockGenericOriginal = jest.fn(), mockCreateGeneric = jest.fn();
 const mockLegacyOriginal = jest.fn(), mockCreateLegacy = jest.fn();
 const mockFindGvisorReceipt = jest.fn();
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => mockAllowed() }));
 jest.mock("@/lib/hivra/launch-operation-store", () => ({ createHivraLaunchOperationService: () => {
   mockCreateGeneric(); return { original: mockGenericOriginal };
 } }));
@@ -22,7 +21,7 @@ const requestId = randomUUID(), agentId = randomUUID();
 const req = new NextRequest(`https://canary.hivra.test/api/hivra/agent-launches/${requestId}`);
 const params = { params: Promise.resolve({ requestId }) };
 beforeEach(() => {
-  jest.resetAllMocks(); mockAllowed.mockReturnValue(true); mockAuth.mockResolvedValue({ userId: "owner" });
+  jest.resetAllMocks(); mockAuth.mockResolvedValue({ userId: "owner" });
   mockGenericOriginal.mockResolvedValue(null);
   mockFindGvisorReceipt.mockResolvedValue(null);
   mockLegacyOriginal.mockResolvedValue({ requestId, phase: "waiting", agent: { id: agentId, type: "codex", user_id: "owner",
@@ -33,10 +32,6 @@ it("requires authentication before reading private request state", async () => {
   const response = await GET(req, params);
   expect(response.status).toBe(401); expect(response.headers.get("Cache-Control")).toBe("no-store");
   expect(mockCreateGeneric).not.toHaveBeenCalled(); expect(mockCreateLegacy).not.toHaveBeenCalled();
-});
-it("preserves the host feature gate", async () => {
-  mockAllowed.mockReturnValue(false);
-  expect((await GET(req, params)).status).toBe(404); expect(mockAuth).not.toHaveBeenCalled();
 });
 it("rejects invalid IDs before constructing private storage", async () => {
   expect((await GET(req, { params: Promise.resolve({ requestId: "invalid" }) })).status).toBe(400);

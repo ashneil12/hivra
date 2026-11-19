@@ -14,8 +14,10 @@ import {
   flushPostHogQueue,
   disablePostHogClient,
 } from '@/lib/telemetry/posthog-client'
-import { sendGaEvent } from '@/lib/telemetry/ga-client'
+import { sendGaEvent, sendGaSignUpFromServer } from '@/lib/telemetry/ga-client'
+import { isGaPublicPagesOnly } from '@/lib/telemetry/ga-config'
 import { readStoredConsent } from '@/lib/consent/cookie-consent'
+import { isPrivateAnalyticsPath } from '@/lib/telemetry/analytics-private-routes'
 import {
   SIGNUP_ATTRIBUTION_STORAGE_KEY,
   cleanSignupAttribution,
@@ -165,35 +167,22 @@ function captureSignupAttribution(
   }
 }
 
-// Routes that handle credentials, payments, wallet operations, or token-bearing
-// flows: session replay must never capture them. posthog-js's `urlBlocklist` is
-// a remote (server-controlled) recording-config field — NOT a client `init`
-// option (#128/#142) — so we enforce the same policy client-side instead: stop
-// replay when navigating into one of these routes and resume when leaving.
-const SENSITIVE_RECORDING_ROUTES: RegExp[] = [
-  /\/sign-in/,
-  /\/sign-up/,
-  /\/dashboard\/welcome/,
-  // Launch takes model API keys, credit top-ups and card checks.
-  /\/dashboard\/launch/,
-  /\/dashboard\/billing/,
-  /\/dashboard\/wallet/,
-  /\/dashboard\/settings/,
-  /\/dashboard\/chat/,
-  /\/dashboard\/agent\/[^/]+/,
-  /\/dashboard\/instances\/[^/]+\/console/,
-  /\/token(\b|\/)/,
-  /\/get-started\/activate/,
-];
+// Session replay never runs once a person is signed in, nor on the public
+// pages that handle sign-in, payment or tokens. The list lives in
+// lib/telemetry/analytics-private-routes, shared with Google Analytics. Replay
+// is therefore limited to public pages, and only for visitors whose analytics
+// consent is stored. The policy wording proposed for this rule is entry P11 in
+// docs/legal-copy-changes.md.
+//
+// posthog-js's `urlBlocklist` is a remote (server-controlled) recording-config
+// field — NOT a client `init` option (#128/#142) — so we enforce the policy
+// client-side instead: stop replay when navigating into one of these routes
+// and resume when leaving.
+const isSensitiveRecordingPath = isPrivateAnalyticsPath;
 
 function isLocalhostHost(): boolean {
   if (typeof window === 'undefined') return false;
   return /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/i.test(window.location.hostname);
-}
-
-function isSensitiveRecordingPath(pathname: string | null | undefined): boolean {
-  if (!pathname) return false;
-  return SENSITIVE_RECORDING_ROUTES.some((pattern) => pattern.test(pathname));
 }
 
 // Collapse UUID-shaped path segments before reporting a pageview so PostHog's
@@ -636,8 +625,9 @@ if (typeof window !== 'undefined' && analyticsEnabled) {
       maskAllInputs: true,
       maskTextSelector: '[data-ph-mask], [data-sensitive]',
       blockSelector: 'input[type="password"], [data-ph-block]',
-      // Route-level suppression (credential/payment/token pages) is enforced
-      // client-side via applyRouteRecordingPolicy — see SENSITIVE_RECORDING_ROUTES.
+      // Route-level suppression (every signed-in page, plus public credential,
+      // payment and token pages) is enforced client-side via
+      // applyRouteRecordingPolicy — see isSensitiveRecordingPath.
       // (urlBlocklist is a server-only remote-config field, not a client init
       // option — #128/#142.)
     },
@@ -740,7 +730,8 @@ function PostHogPageView() {
 
   // Enforce session-replay suppression on sensitive routes (the client-side
   // equivalent of posthog's remote-only urlBlocklist): stop replay when
-  // entering a credential/payment/token route, resume when leaving.
+  // entering a signed-in page or a credential/payment/token route, resume when
+  // leaving.
   useEffect(() => {
     applyRouteRecordingPolicy(pathname);
   }, [pathname]);
@@ -898,7 +889,12 @@ function maybeCaptureSignupCompleted(user: ClerkSignupUser): void {
   // GA4's recommended sign-up event, so Google Analytics can attribute
   // sign-ups to the organic landing page. Mark `sign_up` as a key event in the
   // GA4 property. No personal data in the params: heard_about is one of a fixed
-  // list of values (the free-text detail stays out of GA).
+  // list of values (the free-text detail stays out of GA). When GA stays off
+  // signed-in pages, the server sends the same event instead.
+  if (isGaPublicPagesOnly()) {
+    sendGaSignUpFromServer();
+    return;
+  }
   sendGaEvent('sign_up', {
     method,
     ...(heardAbout ? { heard_about: heardAbout.heard_about } : {}),

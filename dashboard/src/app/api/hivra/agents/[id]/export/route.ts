@@ -11,7 +11,6 @@ import { auth } from "@clerk/nextjs/server";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiError, handleApiError } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import {
   RATE_LIMIT_PRESETS,
   enforceAuthenticatedRouteRateLimit,
@@ -20,7 +19,6 @@ import { buildAgentExport, exportFileName } from "@/lib/hivra/agent-export";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);

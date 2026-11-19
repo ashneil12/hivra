@@ -164,6 +164,72 @@ export function reserveRateLimit(identifier: string, config: ReservationRateLimi
   };
 }
 
+type FailureBudgetRecord = {
+  /** Attempts counted since the last quiet stretch. */
+  attempts: number;
+  /** When the most recent attempt was counted. */
+  lastAttemptAt: number;
+  /** Lockouts since the budget last went quiet. */
+  lockouts: number;
+  /** Attempts are refused until this time. */
+  lockedUntil: number;
+};
+
+const failureBudgetStore = new Map<string, FailureBudgetRecord>();
+
+export interface FailureBudgetConfig {
+  /** Attempts allowed before a lockout starts. */
+  maxAttempts: number;
+  /** A gap this long with no counted attempt forgets the attempts so far. The first lockout lasts this long. */
+  windowMs: number;
+  /** Longest lockout. Each repeat lockout doubles the one before, up to this. */
+  maxLockoutMs: number;
+}
+
+/**
+ * A budget for guessing one secret, keyed on the account being guessed, not on
+ * the caller: a caller can choose what address it presents. Each attempt is
+ * counted when it starts, so attempts that overlap cannot all get past the limit.
+ * Once `maxAttempts` are counted, attempts are refused until a lockout ends. Each
+ * repeat lockout doubles, up to `maxLockoutMs`. A caller that succeeds clears the
+ * budget with resetFailureBudget, so only unsuccessful attempts build up.
+ *
+ * Quiet time ends the build-up: `windowMs` with no counted attempt forgets the
+ * attempts so far, and an hour without a lockout starts the backoff again.
+ */
+export function reserveFailureBudget(identifier: string, config: FailureBudgetConfig): RateLimitResult {
+  const now = Date.now();
+  const record: FailureBudgetRecord = failureBudgetStore.get(identifier) ?? {
+    attempts: 0,
+    lastAttemptAt: now,
+    lockouts: 0,
+    lockedUntil: 0,
+  };
+  if (now < record.lockedUntil) {
+    return { success: false, retryAfterMs: record.lockedUntil - now };
+  }
+  if (now - record.lastAttemptAt > config.windowMs) {
+    record.attempts = 0;
+  }
+  if (record.lockouts > 0 && now - record.lockedUntil > config.maxLockoutMs) {
+    record.lockouts = 0;
+  }
+  record.attempts += 1;
+  record.lastAttemptAt = now;
+  if (record.attempts >= config.maxAttempts) {
+    record.lockouts += 1;
+    record.attempts = 0;
+    record.lockedUntil = now + Math.min(config.windowMs * 2 ** (record.lockouts - 1), config.maxLockoutMs);
+  }
+  failureBudgetStore.set(identifier, record);
+  return { success: true };
+}
+
+/** Clears a failure budget after a successful attempt. */
+export function resetFailureBudget(identifier: string): void {
+  failureBudgetStore.delete(identifier);
+}
+
 /**
  * Parses the RIGHTMOST entry of an address header. A proxy appends the address
  * it saw to the end of the list, so only the last entry was written by the
@@ -219,8 +285,9 @@ const NO_ADDRESS = "127.0.0.1";
  *   address that connected to it.
  * - Self-hosted with HIVRA_TRUSTED_CLIENT_ADDRESS_HEADER: that header only
  *   (the same setting the server-enrollment card trusts).
- * - Otherwise: the rightmost `x-forwarded-for` hop, the one the nearest
- *   proxy (or Next's own server, from the socket) appended.
+ * - Otherwise: the rightmost `x-forwarded-for` hop. Next does not add a hop from
+ *   the socket, so this is only trustworthy when the proxy in front overwrites
+ *   or appends the header. Where it does neither, the caller chooses the value.
  * A list keeps only its rightmost hop. With no usable address the key is the
  * shared NO_ADDRESS bucket, never a guess from another header.
  *
@@ -254,6 +321,12 @@ if (typeof setInterval !== "undefined") {
       const lastUpdate = Math.max(record.lastReset, record.failureWindowStart ?? 0);
       if (!record.inFlight && now - lastUpdate > 60 * 60 * 1000) {
         store.delete(key);
+      }
+    }
+    for (const [key, record] of Array.from(failureBudgetStore.entries())) {
+      // An hour with no counted attempt and no lockout in force ends the backoff.
+      if (now - Math.max(record.lastAttemptAt, record.lockedUntil) > 60 * 60 * 1000) {
+        failureBudgetStore.delete(key);
       }
     }
   }, 10 * 60 * 1000);

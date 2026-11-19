@@ -1,0 +1,591 @@
+{
+  "schema": 1,
+  "about": "Every outside repository Hivra installs, takes code from, or was inspired by. Checked weekly with scripts/upstreams/check-upstreams.mjs; see docs/upstreams/README.md.",
+  "lastFullCheck": "2026-11-17",
+  "repos": [
+    {
+      "id": "monocode",
+      "repo": "hardbeat920/monocode",
+      "role": "ported-code",
+      "licence": "MIT",
+      "use": "Chat components in dashboard/src/components/hivra/chat and the agent sidebar are adapted from it (THIRD_PARTY_LICENSES/monocode.txt). Ash's MonoCode Hub fork tracks its main.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "09d04436babb39ad72198cdf22f735067027fc04",
+        "latest": "v0.16.0"
+      }
+    },
+    {
+      "id": "thinking-orbs",
+      "repo": "Jakubantalik/thinking-orbs",
+      "role": "library",
+      "licence": "MIT",
+      "use": "Activity orbs (npm thinking-orbs, dashboard/package.json).",
+      "pin": "0.3.2",
+      "pinFile": "dashboard/package.json",
+      "watch": "tags",
+      "checked": {
+        "head": "de85557ca220332586d070d8788c0e1d6e877a0d",
+        "latest": "v0.3.1"
+      },
+      "tagPattern": "^v\\d+\\.\\d+\\.\\d+$"
+    },
+    {
+      "id": "hermes",
+      "repo": "NousResearch/hermes-agent",
+      "role": "agent-runtime",
+      "licence": "MIT",
+      "use": "Hermes computers install from the official installer; owners update with `hermes update`. Hivra serves its Desktop Webapp and dashboard.",
+      "pin": null,
+      "watch": "tags",
+      "tagPattern": "^v0\\.\\d+\\.\\d+$",
+      "checked": {
+        "head": "081e8d9b75b2bedae297a89232b04ef9be7b26a0",
+        "latest": "v0.23.2"
+      }
+    },
+    {
+      "id": "openclaw",
+      "repo": "openclaw/openclaw",
+      "role": "agent-runtime",
+      "licence": "MIT",
+      "use": "OpenClaw agents: a launch installs the newest npm release; owners update in place.",
+      "pin": null,
+      "watch": "tags",
+      "tagPattern": "^v\\d{4}\\.\\d+\\.\\d+$",
+      "checked": {
+        "head": "687dc6c99a32714473a646942382ebcd7f5e6552",
+        "latest": "v2026.11.4"
+      }
+    },
+    {
+      "id": "agent-zero",
+      "repo": "agent0ai/agent-zero",
+      "role": "agent-runtime",
+      "licence": "MIT",
+      "use": "Agent Zero agents run the official image: a launch pulls :latest and runs it by digest; owners update in place.",
+      "pin": null,
+      "watch": "tags",
+      "tagPattern": "^v\\d+\\.\\d+$",
+      "checked": {
+        "head": "ba9b67df0f54ac78106ae85c552ef5d2458f7c9a",
+        "latest": "v2.15"
+      }
+    },
+    {
+      "id": "claude-code",
+      "repo": "anthropics/claude-code",
+      "role": "agent-runtime",
+      "licence": "Anthropic commercial terms",
+      "use": "Claude Code agents (npm @anthropic-ai/claude-code): newest release at launch; owners update.",
+      "pin": null,
+      "watch": "tags",
+      "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
+      "checked": {
+        "head": "cd8ca4374469b19c8cd5ee494e839e26d022fbec",
+        "latest": "v2.1.326"
+      }
+    },
+    {
+      "id": "codex",
+      "repo": "openai/codex",
+      "role": "agent-runtime",
+      "licence": "Apache-2.0",
+      "use": "Codex agents (npm @openai/codex): newest release at launch; owners update.",
+      "pin": null,
+      "watch": "tags",
+      "tagPattern": "^rust-v\\d+\\.\\d+\\.\\d+$",
+      "checked": {
+        "head": "e3b721754e1e7e1e942db94431dff957c509e67e",
+        "latest": "rust-v0.169.0"
+      }
+    },
+    {
+      "id": "openbot",
+      "repo": "CopilotKit/openbot",
+      "role": "agent-runtime",
+      "licence": "MIT",
+      "use": "OpenBot agents run the official image ghcr.io/copilotkit/openbot (behind a flag).",
+      "pin": null,
+      "watch": "tags",
+      "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
+      "checked": {
+        "head": "9c2a1f14fb63149b7a0963ed54834bf08fdb4b38",
+        "latest": "v1.0.3"
+      }
+    },
+    {
+      "id": "nuphos",
+      "repo": "nuphos/nuphos",
+      "role": "agent-runtime",
+      "licence": "Apache-2.0",
+      "use": "Nuphos agents run the official runtime image.",
+      "pin": null,
+      "watch": "tags",
+      "tagPattern": "^runtime-v\\d+\\.\\d+\\.\\d+$",
+      "checked": {
+        "head": "46f8dc648924508a5acc40801c8f3eadc890f9c9",
+        "latest": "runtime-v0.1.62"
+      }
+    },
+    {
+      "id": "aeon",
+      "repo": "aaronjmars/aeon",
+      "role": "agent-runtime",
+      "licence": "MIT",
+      "use": "Aeon agents for customers: a launch builds the newest commit; owners update.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "3290794c11689e442812649984c2942b88ae7a99",
+        "latest": null
+      }
+    },
+    {
+      "id": "deepseek-harness",
+      "repo": "deepseek-ai/deepseek-harness",
+      "role": "agent-runtime",
+      "licence": "MIT",
+      "use": "Experimental DeepSeek Harness agents (npm @deepseek-ai/dsh).",
+      "pin": "0.1.2-alpha.2",
+      "pinFile": "docs/release/RUNTIME-DISTRIBUTION.md",
+      "watch": "tags",
+      "tagPattern": "^dsh-v",
+      "checked": {
+        "head": "39163dd30f703a79079e2d2446545cff3c453738",
+        "latest": "dsh-v0.2.2-rc.2"
+      }
+    },
+    {
+      "id": "buzz",
+      "repo": "block/buzz",
+      "role": "agent-runtime",
+      "licence": "Apache-2.0",
+      "use": "Optional Buzz relay and native app. Buzz 1.0 now lives in block/buzz-app.",
+      "pin": "8dbc65d9e2c80d9d8516e17b751c46e0568100e6",
+      "pinFile": "docs/release/RUNTIME-DISTRIBUTION.md",
+      "watch": "head",
+      "checked": {
+        "head": "97d5a46cc6e024e1c07134b59758c826e0272ba2",
+        "latest": "desktop-v0.5.28"
+      }
+    },
+    {
+      "id": "buzz-app",
+      "repo": "block/buzz-app",
+      "role": "agent-runtime",
+      "licence": "Apache-2.0",
+      "use": "Buzz 1.0 (not yet adopted).",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "0cfdbd989ea82c2e93c6a3b0d7c4c54508af797e",
+        "latest": null
+      }
+    },
+    {
+      "id": "bux",
+      "repo": "browser-use/bux",
+      "role": "agent-runtime",
+      "licence": "MIT",
+      "use": "Agent computer base (browser, terminal), cloned at a pinned commit.",
+      "pin": "f17c1b31d6688dd92e745ade650e00d46b4dc4da",
+      "pinFile": "dashboard/provisioner/provision-claude-code-box.sh",
+      "watch": "head",
+      "checked": {
+        "head": "f17c1b31d6688dd92e745ade650e00d46b4dc4da",
+        "latest": null
+      }
+    },
+    {
+      "id": "omarchy",
+      "repo": "omacom/omarchy",
+      "role": "desktop-stack",
+      "licence": "MIT",
+      "use": "Desktop computers (Omarchy).",
+      "pin": null,
+      "watch": "tags",
+      "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
+      "checked": {
+        "head": "3b36b9e19ea00a6c21492098308a7f44a8091564",
+        "latest": "v4.5.0"
+      }
+    },
+    {
+      "id": "omarchy-iso",
+      "repo": "omacom/omarchy-iso",
+      "role": "desktop-stack",
+      "licence": "MIT",
+      "use": "Omarchy install image.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "c6790ac8e6cd8b1e2f5396e7ce1489a8c96d96d8",
+        "latest": null
+      }
+    },
+    {
+      "id": "aquamarine",
+      "repo": "hyprwm/aquamarine",
+      "role": "desktop-stack",
+      "licence": "BSD-3-Clause",
+      "use": "Hivra carries a cursor-plane hotspot patch for 0.14.0 (dashboard/provisioner/remote-desktop/aquamarine-virtio-cursor).",
+      "pin": "v0.14.0",
+      "watch": "tags",
+      "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
+      "checked": {
+        "head": "d2aca076f2b1938347bb42ed972b01e3e24ce5d3",
+        "latest": "v0.16.0"
+      }
+    },
+    {
+      "id": "selkies",
+      "repo": "selkies-project/selkies",
+      "role": "desktop-stack",
+      "licence": "MPL-2.0",
+      "use": "Browser remote desktop image, pinned by digest (install-omarchy-web.py).",
+      "pin": "sha256:0bfcce1f",
+      "pinFile": "dashboard/provisioner/remote-desktop/install-omarchy-web.py",
+      "watch": "head",
+      "checked": {
+        "head": "de7c2963f2ed293fc6c8235eee408beb32f1db7a",
+        "latest": null
+      }
+    },
+    {
+      "id": "sunshine",
+      "repo": "LizardByte/Sunshine",
+      "role": "desktop-stack",
+      "licence": "GPL-3.0",
+      "use": "Low-latency desktop streaming (installed, not redistributed).",
+      "pin": null,
+      "watch": "tags",
+      "tagPattern": "^v\\d{4}\\.",
+      "checked": {
+        "head": "7cf6fbdfbbd2bc561fbb299e15d532ef02b7512d",
+        "latest": "v2026.1116.150042"
+      }
+    },
+    {
+      "id": "bankr-skills",
+      "repo": "BankrBot/skills",
+      "role": "skills",
+      "licence": "none at repo root (per-skill only)",
+      "use": "Skill text copied into dashboard/src/data/curated-skills.ts. Check each skill's own licence before copying more.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "63a0688b3b2a545db6e8291b74047420ef285e29",
+        "latest": null
+      }
+    },
+    {
+      "id": "openai-skills",
+      "repo": "openai/skills",
+      "role": "skills",
+      "licence": "see repo",
+      "use": "Referenced in the curated skills list.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "49f948faa9258a0c61caceaf225e179651397431",
+        "latest": null
+      }
+    },
+    {
+      "id": "marketing-skills",
+      "repo": "coreyhaines31/marketingskills",
+      "role": "skills",
+      "licence": "MIT",
+      "use": "Historical attribution only (THIRD_PARTY_LICENSES/marketing-skills.txt); no longer shipped.",
+      "pin": null,
+      "watch": "tags",
+      "checked": {
+        "head": "1f837447b20bb6f0e72d87b80ece1c221c362c7d",
+        "latest": "v2.14.12"
+      }
+    },
+    {
+      "id": "opentelemetry-collector-contrib",
+      "repo": "open-telemetry/opentelemetry-collector-contrib",
+      "role": "inspiration",
+      "licence": "Apache-2.0",
+      "use": "Chosen activity-collection backbone (docs/research/activity-observability-repositories.md).",
+      "pin": null,
+      "watch": "tags",
+      "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
+      "checked": {
+        "head": "941c7130b140739781031dfd91b90f8edad371d3",
+        "latest": "v0.165.1"
+      }
+    },
+    {
+      "id": "langfuse",
+      "repo": "langfuse/langfuse",
+      "role": "inspiration",
+      "licence": "MIT core",
+      "use": "Evaluated for LLM tracing.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "01e7f5f746b15493d18fe06b24ae06ac08d5ae74",
+        "latest": null
+      }
+    },
+    {
+      "id": "honcho",
+      "repo": "plastic-labs/honcho",
+      "role": "inspiration",
+      "licence": "see repo",
+      "use": "Agent memory reference (blog, shared-brain spec).",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "7d3a53fd86830e0f9a3df15839748c6496d56db6",
+        "latest": null
+      }
+    },
+    {
+      "id": "gbrain",
+      "repo": "garrytan/gbrain",
+      "role": "inspiration",
+      "licence": "see repo",
+      "use": "Shared-brain spec reference.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "ad6da0b724799d6a70934911dbda1cfaafcf39b8",
+        "latest": null
+      }
+    },
+    {
+      "id": "herdr",
+      "repo": "herdrdev/herdr",
+      "role": "inspiration",
+      "licence": "see repo",
+      "use": "Agent-network spec reference.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "ee5bfb5041bb3e4a49d591c72308aae3c81ecdde",
+        "latest": null
+      }
+    },
+    {
+      "id": "atlas",
+      "repo": "pacifio/atlas",
+      "role": "inspiration",
+      "licence": "see repo",
+      "use": "Agent-network spec reference.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "840698fc899a5439631c191de6d1ceb4050ff003",
+        "latest": null
+      }
+    },
+    {
+      "id": "row-bot",
+      "repo": "siddsachar/row-bot",
+      "role": "inspiration",
+      "licence": "see repo",
+      "use": "Agent-network spec reference.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "02902732e5ae4fe06ce55e5e70b5550c7fdf6d2e",
+        "latest": null
+      }
+    },
+    {
+      "id": "acp",
+      "repo": "agentclientprotocol/agent-client-protocol",
+      "role": "inspiration",
+      "licence": "Apache-2.0",
+      "use": "Agent Client Protocol (DeepSeek Harness orchestration, agent network).",
+      "pin": null,
+      "watch": "tags",
+      "checked": {
+        "head": "4aab69b4e6bcb53965ff5b1141d2f04a62a25c6c",
+        "latest": "schema-v1.32.0"
+      }
+    },
+    {
+      "id": "spawnbox",
+      "repo": "TulipFarm/spawnbox",
+      "role": "inspiration",
+      "licence": "see repo",
+      "use": "Sleep/wake research (docs/plans/mono-sleep-wake.md).",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "2c7d6493952170ab71d9377c467fbc69d78a75d7",
+        "latest": null
+      }
+    },
+    {
+      "id": "substrate",
+      "repo": "agent-substrate/substrate",
+      "role": "inspiration",
+      "licence": "see repo",
+      "use": "Sleep/wake research.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "0d6a5fd27cbbba7d52903d65876a82bc3bcd7af7",
+        "latest": null
+      }
+    },
+    {
+      "id": "e2b-runtime",
+      "repo": "e2b-dev/runtime",
+      "role": "inspiration",
+      "licence": "see repo",
+      "use": "Sleep/wake research.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "391b22443460fb30432da889b44aa413478d5717",
+        "latest": null
+      }
+    },
+    {
+      "id": "firecracker",
+      "repo": "firecracker-microvm/firecracker",
+      "role": "inspiration",
+      "licence": "Apache-2.0",
+      "use": "Sandbox/sleep research.",
+      "pin": null,
+      "watch": "tags",
+      "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
+      "checked": {
+        "head": "cc88013eadcf432da1b37d47d445b7e8bcc3046e",
+        "latest": "v1.18.0"
+      }
+    },
+    {
+      "id": "gvisor",
+      "repo": "google/gvisor",
+      "role": "inspiration",
+      "licence": "Apache-2.0",
+      "use": "Sandbox research.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "89cacadae21eca4270a8f7c79281d0426d33ac5f",
+        "latest": null
+      }
+    },
+    {
+      "id": "rakazo",
+      "repo": "elie222/rakazo",
+      "role": "inspiration",
+      "licence": "Apache-2.0",
+      "use": "Always-on bots with memory, routines and their own computer. Candidate for the agent catalog (has a Docker quick start); not offered yet.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "f671b15c3e92a8abb659e8d30ce14953532eef00",
+        "latest": null
+      }
+    },
+    {
+      "id": "rowboat",
+      "repo": "rowboatlabs/rowboat",
+      "role": "inspiration",
+      "licence": "Apache-2.0",
+      "use": "Hosts Hermes, OpenClaw, Claude Code or Codex agents in one group chat, or connects agents running elsewhere. Competitor; watch its agent-connect protocol.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "c67cd08246208ebd1c480e866d0cd7304d035ae1",
+        "latest": null
+      }
+    },
+    {
+      "id": "huntaway",
+      "repo": "jpsanders/huntaway",
+      "role": "inspiration",
+      "licence": "MIT",
+      "use": "Idle detection per agent harness, runaway-process killing, save-and-close of idle CLI sessions. Input to sleep/wake (docs/plans/mono-sleep-wake.md).",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "9460aa995bf5d76a140b762822c8306cdb7f79db",
+        "latest": null
+      }
+    },
+    {
+      "id": "muster",
+      "repo": "ZacxDev/muster",
+      "role": "inspiration",
+      "licence": "MIT",
+      "use": "One waiting-first list of agent sessions across machines, phone push when a session needs you; machines dial out. Reference for the Needs-you inbox.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "64fb1e5713b872910ffa156dca65a621028e1d78",
+        "latest": null
+      }
+    },
+    {
+      "id": "muxflow",
+      "repo": "gal064/muxflow",
+      "role": "inspiration",
+      "licence": "MIT",
+      "use": "Screenshot and file paste into remote agent sessions over SSH, phone alerts from agent hooks. Reference for chat attachments and alerts.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "ee69bad028247b8c42801e7219b282dd2d7b3282",
+        "latest": null
+      }
+    },
+    {
+      "id": "safeagents",
+      "repo": "huggingface/safeagents",
+      "role": "inspiration",
+      "licence": "Apache-2.0",
+      "use": "Local proxy that checks every tool call before the harness runs it (works by base URL). Candidate owner-installed guard; not wired in.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "a8ee22d67adb2b5e23fe5e8692e2df8847241a00",
+        "latest": null
+      }
+    },
+    {
+      "id": "gemini-api-cli",
+      "repo": "google-gemini/gemini-api-cli",
+      "role": "inspiration",
+      "licence": "Apache-2.0",
+      "use": "Self-hosted environment worker for Gemini managed agents (`gemini-api environments connect`). Used in the off-by-default managed agents guide (dashboard/src/lib/blog/articles/run-managed-agents-on-your-own-computer.ts).",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "07908f93053fee452d649eb6d308952948b3fd53",
+        "latest": null
+      }
+    },
+    {
+      "id": "anthropic-cli",
+      "repo": "anthropics/anthropic-cli",
+      "role": "inspiration",
+      "licence": "see repo",
+      "use": "The `ant` CLI; `ant beta:worker poll` is the self-hosted sandbox worker for Claude Managed Agents. Used in the same off-by-default guide.",
+      "pin": null,
+      "watch": "head",
+      "checked": {
+        "head": "4d6a42e08fad9999602fdc9273b0960976c010d9",
+        "latest": null
+      }
+    }
+  ],
+  "excluded": [
+    {
+      "repo": "nightly-labs OpenBot",
+      "reason": "PolyForm Noncommercial since 0.1.12; a paid host cannot offer it without a commercial licence."
+    }
+  ]
+}

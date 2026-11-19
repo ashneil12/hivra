@@ -26,6 +26,19 @@ export interface ToolPatch {
   detail?: string;
   status?: ToolStatus;
   result?: string;
+  /** The tool's own input JSON, trimmed to a safe size (see compactToolInput),
+   * for the rich rows: a task list, an edit's diff, a plan. */
+  input?: unknown;
+  /** "thinking": the agent's reasoning, shown as its own muted row. */
+  kind?: "thinking";
+}
+
+/** The model's context window as the agent's stream reports it: the size of the
+ * prompt it last sent (`used`), and the window of the model (`window`). The two
+ * can arrive in different events, so either may be missing. */
+export interface UsageReport {
+  used?: number;
+  window?: number;
 }
 
 // The UI operations a parser may perform. HivraChat wires these to React state;
@@ -47,6 +60,9 @@ export interface ChatSink {
    * Codex's `turn.completed` / `turn.failed`). Agents without one leave it to
    * the process's exit. */
   reportOutcome(outcome: TurnOutcome): void;
+  /** Token usage the agent's stream carries. Optional: a sink that does not
+   * show a context meter leaves it out. */
+  reportUsage?(usage: UsageReport): void;
 }
 
 export interface AgentAdapter {
@@ -80,6 +96,67 @@ function snippet(content: unknown): string {
       .slice(0, 200);
   }
   return "";
+}
+
+const MAX_INPUT_TEXT = 12000;
+const MAX_INPUT_ITEMS = 40;
+
+/**
+ * A tool's input JSON, kept small enough to store with the chat: long strings
+ * (a written file, an edit's old and new text) are cut, long lists are capped.
+ * Only plain JSON values survive.
+ */
+export function compactToolInput(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return value.length > MAX_INPUT_TEXT ? value.slice(0, MAX_INPUT_TEXT) + "…" : value;
+  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+  if (depth >= 4) return undefined;
+  if (Array.isArray(value)) return value.slice(0, MAX_INPUT_ITEMS).map((item) => compactToolInput(item, depth + 1));
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(0, MAX_INPUT_ITEMS)) {
+      const kept = compactToolInput(item, depth + 1);
+      if (kept !== undefined) out[key] = kept;
+    }
+    return out;
+  }
+  return undefined;
+}
+
+function hasKeys(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value) && Object.keys(value as object).length > 0;
+}
+
+/** One line of an agent's reasoning, for the collapsed row: its first non-empty line. */
+export function thinkingSummary(text: string): string {
+  const line = text.replace(/\*\*/g, "").split(/\n+/).map((part) => part.trim()).find(Boolean) || "";
+  return line.length > 120 ? line.slice(0, 119) + "…" : line;
+}
+
+function wholeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+/** Claude's per-request usage: the prompt it just sent is input plus both cache reads and writes. */
+function reportClaudeUsage(sink: ChatSink, usage: unknown) {
+  if (!sink.reportUsage || !usage || typeof usage !== "object") return;
+  const u = usage as Record<string, unknown>;
+  const used = wholeNumber(u.input_tokens) + wholeNumber(u.cache_read_input_tokens) + wholeNumber(u.cache_creation_input_tokens);
+  if (used > 0) sink.reportUsage({ used });
+}
+
+/** The context window the final `result` names, per model. The model that took the most input is the one working. */
+function claudeContextWindow(modelUsage: unknown): number | undefined {
+  if (!modelUsage || typeof modelUsage !== "object") return undefined;
+  let best: { window: number; weight: number } | undefined;
+  for (const entry of Object.values(modelUsage as Record<string, unknown>)) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    const window = wholeNumber(e.contextWindow);
+    if (!window) continue;
+    const weight = wholeNumber(e.inputTokens) + wholeNumber(e.cacheReadInputTokens) + wholeNumber(e.cacheCreationInputTokens);
+    if (!best || weight > best.weight) best = { window, weight };
+  }
+  return best?.window;
 }
 
 // Codex `file_change` carries a changed-paths list; flatten it for the subtitle.
@@ -125,20 +202,49 @@ const claudeAdapter: AgentAdapter = {
           state.seenText = true;
           sink.appendText(delta.text);
         }
+        if (delta?.type === "thinking_delta" && typeof (delta as { thinking?: unknown }).thinking === "string") {
+          const id = (state.thinkingId as string | undefined) || `thinking-${String(state.thinkingCount || 0)}`;
+          const prior = (state.thinkingText as string | undefined) || "";
+          const text = prior + (delta as unknown as { thinking: string }).thinking;
+          state.thinkingText = text;
+          sink.upsertTool(id, { name: "Thinking", kind: "thinking", detail: thinkingSummary(text), result: text.slice(0, 20000), status: "running" });
+        }
       } else if (et === "content_block_start") {
         const cb = e.content_block as { type?: string; id?: string; name?: string; input?: unknown } | undefined;
         if (cb?.type === "tool_use") {
           sink.upsertTool(cb.id, { name: cb.name || "tool", detail: fmtInput(cb.input), status: "running" });
+        } else if (cb?.type === "thinking") {
+          // Each reasoning block is one row; the next one gets its own id.
+          state.thinkingCount = Number(state.thinkingCount || 0) + 1;
+          state.thinkingId = `thinking-${String(state.thinkingCount)}`;
+          state.thinkingText = "";
+          state.thinkingSeen = true;
+          sink.upsertTool(state.thinkingId as string, { name: "Thinking", kind: "thinking", detail: "", status: "running" });
         }
+      } else if (et === "content_block_stop" && state.thinkingId) {
+        const id = state.thinkingId as string;
+        state.thinkingId = undefined;
+        sink.upsertTool(id, { status: "done" });
+      } else if (et === "message_start" && !ev.parent_tool_use_id) {
+        reportClaudeUsage(sink, (e.message as Record<string, unknown> | undefined)?.usage);
       }
     } else if (type === "assistant") {
       const content = ((ev.message as Record<string, unknown>)?.content as unknown[]) || [];
       for (const c of content) {
         if (c && typeof c === "object" && (c as Record<string, unknown>).type === "tool_use") {
           const block = c as Record<string, unknown>;
-          sink.upsertTool(block.id as string, { name: (block.name as string) || "tool", detail: fmtInput(block.input), status: "running" });
+          const input = compactToolInput(block.input);
+          sink.upsertTool(block.id as string, { name: (block.name as string) || "tool", detail: fmtInput(block.input), status: "running", ...(hasKeys(input) ? { input } : {}) });
+        } else if (c && typeof c === "object" && (c as Record<string, unknown>).type === "thinking" && !state.thinkingSeen) {
+          // Without partial messages the reasoning arrives whole, in the final message.
+          const thinking = String((c as Record<string, unknown>).thinking || "").trim();
+          if (thinking) {
+            state.thinkingCount = Number(state.thinkingCount || 0) + 1;
+            sink.upsertTool(`thinking-${String(state.thinkingCount)}`, { name: "Thinking", kind: "thinking", detail: thinkingSummary(thinking), result: thinking.slice(0, 20000), status: "done" });
+          }
         }
       }
+      if (!ev.parent_tool_use_id) reportClaudeUsage(sink, (ev.message as Record<string, unknown> | undefined)?.usage);
       // Fallback: a run without --include-partial-messages emits no text deltas,
       // only this complete message. Use its text ONLY when no deltas were seen,
       // so partial+final never double the text (the welcome-rendered-twice bug).
@@ -160,6 +266,8 @@ const claudeAdapter: AgentAdapter = {
     } else if (type === "result") {
       const sid = ev.session_id as string | undefined;
       if (sid) sink.setSessionId(sid);
+      const window = claudeContextWindow(ev.modelUsage);
+      if (window) sink.reportUsage?.({ window });
       // API failures (e.g. an invalid --model → 404) land HERE with is_error:true
       // and the human message in `result` — while subtype still says "success".
       // Without this the turn just ends silently with an empty assistant bubble.
@@ -269,6 +377,9 @@ const codexAdapter: AgentAdapter = {
           segments.set(id, text);
           sink.setText(Array.from(segments.values()).join("\n\n"));
         }
+      } else if (itype === "reasoning") {
+        const text = String(item.text || snippet(item.content) || "").trim();
+        if (text) sink.upsertTool(id, { name: "Thinking", kind: "thinking", detail: thinkingSummary(text), result: text.slice(0, 20000), status: done ? "done" : "running" });
       } else if (itype === "command_execution") {
         const cmd = String(item.command || "");
         const out = String(item.aggregated_output || item.output || "");

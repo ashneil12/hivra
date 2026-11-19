@@ -1,0 +1,47 @@
+[Unit]
+Description=Hivra wake proxy (unprivileged front door for host-ingress computers on 127.0.0.1:8080)
+After=network.target systemd-tmpfiles-setup.service hivra-wake-helper.service hivra-ingress-pins.service
+Wants=hivra-wake-helper.service
+# Never give up restarting: a unit left failed would leave computers unreachable or deaf.
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+# Installed by the wake-proxy install step from the checked provisioner bundle.
+ExecStart=/usr/bin/python3 -I -B /usr/local/lib/hivra-ingress/hivra-wake-proxy.py proxy
+Restart=always
+RestartSec=1
+WatchdogSec=20
+User=hivra-ingress
+Group=hivra-ingress
+UMask=0077
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+# Its own control socket. Routes and nap markers are only read.
+ReadWritePaths=-/run/hivra-ingress-fwd
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+LimitNOFILE=65536
+MemoryMax=128M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

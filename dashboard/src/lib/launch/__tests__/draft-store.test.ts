@@ -213,7 +213,7 @@ describe("launch draft storage", () => {
     expect(read()?.name).toHaveLength(60);
   });
 
-  it.each(["claude-code", "hermes", "openclaw", "agent-zero", "aeon"] as const)("restores a %s draft", profileId => {
+  it.each(["claude-code", "hermes", "openclaw", "agent-zero", "aeon", "deepseek-harness"] as const)("restores a %s draft", profileId => {
     const draft = { ...createLaunchDraft(), stage: "plan" as const, resourceKind: "agent" as const, profileId, name: "Agent 1" };
     write(draft);
     expect(read()).toEqual(draft);

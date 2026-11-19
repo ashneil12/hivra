@@ -1,3 +1,4 @@
+import { LITEPAPER_HREF } from "@/components/public-site/PublicLink";
 import type { CSSProperties } from "react";
 import Link from "next/link";
 
@@ -121,7 +122,7 @@ export default function TokenomicsLaunchedView({
       <p><strong>Proposed:</strong> Additional spending and settlement across compute, Exchange, Arena, Signal, Seal, Challenges, Experience, Missions and Interchange, alongside the wider treasury policy.</p>
       <p>The full Litepaper explains why Hivra is building these pieces and which belong to <strong>Next</strong>, <strong>Then</strong> or <strong>Research</strong>. It isn&apos;t a delivery timetable or a guarantee that every proposal will ship unchanged.</p>
       <div style={{ margin: "0 0 1rem" }}>
-        <p style={LINK_LINE}><a href="/docs/litepaper">Read the Litepaper</a></p>
+        <p style={LINK_LINE}><a href={LITEPAPER_HREF}>Read the Litepaper</a></p>
         <p style={LINK_LINE}><a href="/TOKENOMICS.md" target="_blank" rel="noopener noreferrer">Read the tokenomics document</a></p>
         <p style={LINK_LINE}><Link href="/token">Verify the token contracts</Link></p>
       </div>

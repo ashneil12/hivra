@@ -409,6 +409,8 @@ def private_source(value):
 try: expected=json.loads(__import__('base64').b64decode(sys.argv[1],validate=True),object_pairs_hook=unique)
 except Exception: fail('inspection_input_invalid')
 if not isinstance(expected,dict) or set(expected)!={'computerId','vmid','guestPrivateIpv4','publicIpv4','inspectionRevision'}: fail('inspection_input_shape')
+if len(sys.argv)!=3 or sys.argv[2] not in ('0','1'): fail('native_route_proof_invalid')
+native_route_proven=sys.argv[2]=='1'
 uuid=r'[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
 if not re.fullmatch(uuid,str(expected['computerId']),re.I): fail('computer_identity_invalid')
 if not isinstance(expected['vmid'],int) or expected['vmid']<100: fail('vm_identity_invalid')
@@ -531,7 +533,7 @@ boot_id=pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
 if not re.fullmatch(uuid,boot_id,re.I): fail('guest_boot_invalid')
 boottime_ns=time.clock_gettime_ns(time.CLOCK_BOOTTIME)
 now=datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00','Z')
-descriptor={'protocol':'hivra-omarchy-native-prepared-v2','computerId':expected['computerId'],'vmid':expected['vmid'],'profile':'omarchy','guestPrivateIpv4':str(expected_ip),'inspectionRevision':expected['inspectionRevision'],'preparationOperationId':binding['operationId'],'serviceOwnerUid':binding['ownerUid'],'waylandDisplay':binding['waylandDisplay'],'omarchyPackageVersion':omarchy_version,'sunshineVersion':sunshine_version,'guardianSha256':guardian_sha,'ownershipSha256':ownership_sha,'sunshineSha256':sunshine_sha,'preparedSha256':prepared_sha,'guestBootId':boot_id,'observedBoottimeNs':str(boottime_ns),'compositor':'wayland-hyprland','webBrokerOrigin':'${OMARCHY_WEB_BROKER_ORIGIN}','webSelkiesImage':selkies_image,'webNodeImage':node_image,'route':{'status':'configured-proven','publicIpv4':str(public_ip),'tcpPorts':expected_tcp,'udpPorts':expected_udp,'sourceCidrs':sorted(source_sets[0])},'privateNetworkReachable':True,'supportsInputTakeover':True,'observedAt':now}
+descriptor={'protocol':'hivra-omarchy-native-prepared-v2','computerId':expected['computerId'],'vmid':expected['vmid'],'profile':'omarchy','guestPrivateIpv4':str(expected_ip),'inspectionRevision':expected['inspectionRevision'],'preparationOperationId':binding['operationId'],'serviceOwnerUid':binding['ownerUid'],'waylandDisplay':binding['waylandDisplay'],'omarchyPackageVersion':omarchy_version,'sunshineVersion':sunshine_version,'guardianSha256':guardian_sha,'ownershipSha256':ownership_sha,'sunshineSha256':sunshine_sha,'preparedSha256':prepared_sha,'guestBootId':boot_id,'observedBoottimeNs':str(boottime_ns),'compositor':'wayland-hyprland','webBrokerOrigin':'${OMARCHY_WEB_BROKER_ORIGIN}','webSelkiesImage':selkies_image,'webNodeImage':node_image,'route':({'status':'configured-proven','publicIpv4':str(public_ip),'tcpPorts':expected_tcp,'udpPorts':expected_udp,'sourceCidrs':sorted(source_sets[0])} if native_route_proven else {'status':'browser-only','publicIpv4':str(public_ip)}),'privateNetworkReachable':True,'supportsInputTakeover':True,'observedAt':now}
 print('${OMARCHY_NATIVE_PREPARED_MARKER}'+json.dumps(descriptor,sort_keys=True,separators=(',',':'))) `;
 
 export const OMARCHY_NATIVE_INSPECTION_REVISION = createHash("sha256")
@@ -558,7 +560,7 @@ export const OMARCHY_DESKTOP_SESSION_REVISION = createHash("sha256")
   ].join("\n"))
   .digest("hex");
 
-const Route = z.object({
+const NativeRoute = z.object({
   status: z.literal("configured-proven"),
   publicIpv4: z.string().regex(IPV4).refine(publicIpv4),
   tcpPorts: z.tuple([z.literal(47984), z.literal(47989), z.literal(48010)]),
@@ -593,7 +595,10 @@ const Descriptor = z.object({
   webBrokerOrigin: z.literal(OMARCHY_WEB_BROKER_ORIGIN),
   webSelkiesImage: z.literal("ghcr.io/selkies-project/selkies/desktop@sha256:0bfcce1fa30024a8eb34e2504a74e1fb18f4c1424d92c1b6ad6282fb3b1ae87b"),
   webNodeImage: z.literal("node@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32"),
-  route: Route,
+  route: z.discriminatedUnion("status", [NativeRoute, z.object({
+    status: z.literal("browser-only"),
+    publicIpv4: z.string().regex(IPV4).refine(publicIpv4),
+  }).strict()]),
   privateNetworkReachable: z.literal(true),
   supportsInputTakeover: z.literal(true),
   observedAt: z.string().datetime({ offset: true }),
@@ -666,6 +671,8 @@ export function buildPreparedOmarchyNativeCapabilityInspectionScript(input: {
   guestIp: string;
   publicIpv4: string;
   infrastructureBindingTag: string;
+  /** Browser access observes native routes when present but does not require them. */
+  inspectionMode?: "browser" | "native";
 }): string {
   if (!UUID.test(input.computerId) || !Number.isSafeInteger(input.vmid) || input.vmid < 100
     || !privateIpv4(input.guestIp) || !publicIpv4(input.publicIpv4)
@@ -695,13 +702,20 @@ TAGS="$(printf '%s\n' "$VM_CONFIG" | sed -n 's/^tags:[[:space:]]*//p')"
 printf '%s\n' "$TAGS" | tr ';' '\n' | grep -Fxq "$EXPECTED_BINDING_TAG"
 printf '%s\n' "$VM_CONFIG" | sed -n 's/^ipconfig0:[[:space:]]*//p' | tr ',' '\n' | grep -Fxq "ip=$GUEST_IP/24"
 NFT_RULESET="$(nft list ruleset)"
-printf '%s\n' "$NFT_RULESET" | grep -Fq "ip daddr $PUBLIC_IP tcp dport { 47984, 47989, 48010 } dnat to $GUEST_IP"
-printf '%s\n' "$NFT_RULESET" | grep -Fq "ip daddr $PUBLIC_IP udp dport { 47998, 47999, 48000, 48002, 48010 } dnat to $GUEST_IP"
-printf '%s\n' "$NFT_RULESET" | grep -Fq "ip daddr $GUEST_IP tcp dport { 47984, 47989, 48010 } accept"
-printf '%s\n' "$NFT_RULESET" | grep -Fq "ip daddr $GUEST_IP udp dport { 47998, 47999, 48000, 48002, 48010 } accept"
-! printf '%s\n' "$NFT_RULESET" | grep -Eq 'dport([^0-9]|.*[^0-9])47990([^0-9]|$).*accept|dport([^0-9]|.*[^0-9])47990([^0-9]|$).*dnat'
+NATIVE_ROUTE_PROVEN=0
+if grep -Fq "ip daddr $PUBLIC_IP tcp dport { 47984, 47989, 48010 } dnat to $GUEST_IP" <<< "$NFT_RULESET" \
+  && grep -Fq "ip daddr $PUBLIC_IP udp dport { 47998, 47999, 48000, 48002, 48010 } dnat to $GUEST_IP" <<< "$NFT_RULESET" \
+  && grep -Fq "ip daddr $GUEST_IP tcp dport { 47984, 47989, 48010 } accept" <<< "$NFT_RULESET" \
+  && grep -Fq "ip daddr $GUEST_IP udp dport { 47998, 47999, 48000, 48002, 48010 } accept" <<< "$NFT_RULESET"; then
+  NATIVE_ROUTE_PROVEN=1
+fi
+if grep -Eq 'dport([^0-9]|.*[^0-9])47990([^0-9]|$).*accept|dport([^0-9]|.*[^0-9])47990([^0-9]|$).*dnat' <<< "$NFT_RULESET"; then
+  printf 'HIVRA_CAPABILITY_FAILURE sunshine_admin_exposed\n' >&2
+  exit 1
+fi
+${input.inspectionMode === "browser" ? "" : '[ "$NATIVE_ROUTE_PROVEN" = 1 ]'}
 ${buildVmidBoundGuestExecPrelude()}
-run_vmid_bound_guest_exec /bin/bash -c 'printf "%s" "$1" | /usr/bin/base64 --decode | /usr/bin/python3 -I -B - "$2"' hivra ${shellQuote(program)} ${shellQuote(expected)}
+run_vmid_bound_guest_exec /bin/bash -c 'printf "%s" "$1" | /usr/bin/base64 --decode | /usr/bin/python3 -I -B - "$2" "$3"' hivra ${shellQuote(program)} ${shellQuote(expected)} "$NATIVE_ROUTE_PROVEN"
 `;
 }
 
@@ -732,9 +746,10 @@ export function parsePreparedOmarchyNativeCapability(
       bootIdentitySha256: createHash("sha256").update(descriptor.guestBootId.toLowerCase()).digest("hex"),
       observedRevision: OMARCHY_DESKTOP_SESSION_REVISION,
       compositor: "wayland",
-      // Native Sunshine starts only on an exact validated build (the grant
-      // refuses others), so only such a build advertises it.
-      installedTransports: isAcceptedOmarchyNativeBuild(descriptor.omarchyPackageVersion, descriptor.sunshineVersion)
+      // Native Sunshine requires both a validated package pair and observed
+      // exclusive host routes. Browser readiness alone never advertises it.
+      installedTransports: descriptor.route.status === "configured-proven"
+        && isAcceptedOmarchyNativeBuild(descriptor.omarchyPackageVersion, descriptor.sunshineVersion)
         ? ["sunshine-moonlight", "selkies-websocket"] : ["selkies-websocket"],
       privateNetworkReachable: true,
       supportsInputTakeover: true,

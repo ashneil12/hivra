@@ -17,7 +17,6 @@ import {
   HetznerCloudTokenCheckError,
 } from "@/lib/infrastructure/hetzner-cloud";
 import { connectDigitalOcean, ManagedSessionError } from "@/lib/hivra/do-managed-sessions";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import {
   createInfrastructureConnection,
   InfrastructureConnectionStoreError,
@@ -160,10 +159,6 @@ export async function POST(request: NextRequest) {
     }
 
     if (parsed.data.provider === "digitalocean") {
-      // DigitalOcean sessions are Hivra agents, which are canary-only.
-      if (!isHivraApiAllowed(request.headers.get("host"))) {
-        return noStore(apiError("DigitalOcean Managed Agents is not available here yet.", 404));
-      }
       const result = await connectDigitalOcean(userId, {
         name: parsed.data.name,
         apiToken: parsed.data.credentials.apiToken,

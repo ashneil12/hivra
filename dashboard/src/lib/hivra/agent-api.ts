@@ -6,7 +6,9 @@
 
 import type { ProviderRuntimeUpdateStage } from "./provider-runtime-update-contract";
 import type { AgentId } from "./agent-catalog";
+import type { InboxPrompt } from "@/lib/agent-inbox/types";
 import type { ComputerTemplateId } from "./computer-catalog";
+import { readHttpsAuthorizationUrl } from "@/lib/safe-http-url";
 import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
 import { isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
 import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
@@ -30,6 +32,7 @@ import {
 import { z } from "zod";
 import { readJson } from "@/lib/client/read-json";
 
+export type AgentSleepPolicy = "off" | "t1" | "t3" | "full";
 export type AgentStatus = "provisioning" | "running" | "stopped" | "error" | "deleted";
 
 export interface HivraAgent {
@@ -37,6 +40,10 @@ export interface HivraAgent {
   type: AgentId;
   /** Operating-system image/profile. Separate from the optional agent runtime. */
   computer_profile?: ComputerTemplateId | "linux-terminal" | null;
+  /** Last verified initial-claim update; owner updates may subsequently change it. */
+  omarchy_release_receipt?: { requestedRelease: { release: string; releaseCommit: string; isoSha256: string; isoUrl: string; isoFilename: string };
+    observed: { packageVersion: string; osVersion: string; kernelRelease: string; observedAt: string } } | null;
+  prepared_update_stage?: string;
   name: string;
   status: AgentStatus;
   /** Display-only current activity; never grants authority to retry an operation. */
@@ -65,6 +72,8 @@ export interface HivraAgent {
   provisioned_at?: string | null;
   /** Bearer token for the box's introspection endpoints (sessions/files/skills). */
   api_token?: string | null;
+  /** The newest approval or question this agent is waiting on (Needs you). */
+  inbox_prompt?: InboxPrompt | null;
   /** Onboarding + identity (the bootstrap system). All optional. */
   goal?: string | null;
   context?: string | null;
@@ -88,6 +97,16 @@ export interface HivraAgent {
   /** The agents list's stored summary of this agent's software (Claude Code /
    *  Codex version against Hivra's tested one). Absent where not covered. */
   agent_software?: AgentSoftwareSummary | null;
+  /** Sleep: awake, draining, napping, hibernating, hibernated, waking or
+   *  wake_failed. `status` stays `running` while the agent sleeps. Absent from
+   *  an older server, which reads as awake. */
+  sleep_state?: string | null;
+  /** Bumped on every sleep or wake change (a bigint, so a number or a string). */
+  sleep_generation?: number | string | null;
+  /** "Sleep when idle": `full` lets it nap, `off` keeps it awake. */
+  sleep_policy?: AgentSleepPolicy | null;
+  /** "Keep awake": this agent never sleeps. */
+  always_on?: boolean | null;
 }
 
 export interface HivraAgentSnapshot {
@@ -256,7 +275,7 @@ export async function createAgent(input: CreateAgentInput): Promise<HivraAgent> 
     }
     // Refused before anything was created (no host could take it right now):
     // back to Review with the reason, never "couldn't confirm".
-    if ((r.status >= 400 && r.status < 500) || j?.code === "placement_unavailable") {
+    if ((r.status >= 400 && r.status < 500) || j?.code === "placement_unavailable" || j?.code === "servers_full") {
       throw new HivraLaunchCorrectableError(
         message,
         r.status,
@@ -328,6 +347,8 @@ export async function getAgent(id: string): Promise<HivraAgent | null> {
 
 export async function deleteAgent(id: string, options: {
   signal?: AbortSignal; onProgress?: (message: string) => void;
+  /** Remove only Hivra's record of a computer its host reports gone. */
+  recordOnly?: boolean;
 } = {}): Promise<void> {
   const stages: Record<string, string> = {
     installer_stopping: "Stopping the original installer before removal…",
@@ -344,7 +365,7 @@ export async function deleteAgent(id: string, options: {
     const timeout = setTimeout(abort, Math.min(110_000, deadline - Date.now()));
     let r: Response, j: Record<string, unknown> | null;
     try {
-      r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}`, { method: "DELETE", signal: controller.signal, redirect: "error" });
+      r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}${options.recordOnly ? "?recordOnly=1" : ""}`, { method: "DELETE", signal: controller.signal, redirect: "error" });
       j = await readJson(r);
     } catch {
       // An uncertain delivery stops the loop. No inferred failure, completed
@@ -620,6 +641,99 @@ export const restoreAgentSnapshot = async (id: string, snapshotId: string): Prom
   await agentAction(id, "restore", { snapshotId });
 };
 
+/** How a wake request ended: up, still waking (ask again), or not possible. */
+export type WakeAgentResult =
+  | { state: "awake"; wakeMs: number | null }
+  | { state: "waking" }
+  | { state: "failed"; message: string };
+
+/**
+ * Wake a sleeping agent. The server waits up to 45 seconds: 200 means it is up,
+ * 202 means still waking. A network failure or any other answer is "failed",
+ * never a throw, so the page can show a plain message and a button to try again.
+ */
+export async function wakeAgent(id: string, signal?: AbortSignal): Promise<WakeAgentResult> {
+  try {
+    const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/wake`, {
+      method: "POST", cache: "no-store", signal,
+    });
+    const j = await readJson(r);
+    const data = j?.success === true && j.data && typeof j.data === "object" ? j.data as Record<string, unknown> : null;
+    if (r.ok && data) {
+      if (r.status === 202 || data.state === "waking") return { state: "waking" };
+      const wakeMs = Number(data.wakeMs);
+      return { state: "awake", wakeMs: Number.isFinite(wakeMs) && wakeMs >= 0 ? wakeMs : null };
+    }
+    return { state: "failed", message: typeof j?.error === "string" && j.error ? j.error : "Your agent could not be woken up. Try again in a moment." };
+  } catch {
+    return { state: "failed", message: "Could not reach Hivra to wake your agent. Check your connection and try again." };
+  }
+}
+
+/** The manual test sleep. Throws an Error with a plain message when it cannot. */
+export async function sleepAgentNow(id: string, tier: "nap" | "hibernate"): Promise<{ outcome: string; reason: string | null }> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/sleep`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tier }),
+  });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) throw new Error(typeof j?.error === "string" && j.error ? j.error : "Could not put your agent to sleep.");
+  const data = j.data && typeof j.data === "object" ? j.data as Record<string, unknown> : {};
+  return { outcome: typeof data.outcome === "string" ? data.outcome : "unknown", reason: typeof data.reason === "string" ? data.reason : null };
+}
+
+/** Save "Sleep when idle" (sleep_policy) and/or "Keep awake" (always_on). */
+export async function saveAgentSleepSettings(
+  id: string,
+  patch: { sleep_policy?: "off" | "full"; always_on?: boolean },
+): Promise<{ sleep_policy: AgentSleepPolicy | null; always_on: boolean }> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/sleep-settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) throw new Error(typeof j?.error === "string" && j.error ? j.error : "Could not save this setting.");
+  const data = j.data && typeof j.data === "object" ? j.data as Record<string, unknown> : {};
+  return {
+    sleep_policy: ["off", "t1", "t3", "full"].includes(String(data.sleep_policy)) ? data.sleep_policy as AgentSleepPolicy : null,
+    always_on: data.always_on === true,
+  };
+}
+
+export interface TelegramWakeSetting {
+  /** The switch applies to this agent. */
+  available: boolean;
+  enabled: boolean;
+  /** A message would wake the agent right now. */
+  armed: boolean;
+}
+
+function telegramWakeSetting(data: unknown): TelegramWakeSetting {
+  const d = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  return { available: d.available === true, enabled: d.enabled === true, armed: d.armed === true };
+}
+
+/** Whether "Wake on Telegram messages" applies to this agent, and whether it is on. */
+export async function getTelegramWakeSetting(id: string): Promise<TelegramWakeSetting> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/telegram-wake`, { cache: "no-store" });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) return { available: false, enabled: false, armed: false };
+  return telegramWakeSetting(j.data);
+}
+
+export async function saveTelegramWakeSetting(id: string, enabled: boolean): Promise<TelegramWakeSetting> {
+  const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/telegram-wake`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  const j = await readJson(r);
+  if (!r.ok || !j || j.success !== true) throw new Error(typeof j?.error === "string" && j.error ? j.error : "Could not save this setting.");
+  return telegramWakeSetting(j.data);
+}
+
 const ProviderResizeViewResponseSchema = z.object({
   operation: ProviderResizeOperationViewSchema.nullable(),
   catalog: ProviderResizeCatalogSchema.nullable(),
@@ -695,7 +809,7 @@ export async function confirmProviderResize(input: {
 
 /** Why a usage read failed, with the HTTP status and any Retry-After. */
 export class ComputerUsageError extends Error {
-  constructor(message: string, readonly status: number, readonly retryAfterSeconds: number | null) {
+  constructor(message: string, readonly status: number, readonly retryAfterSeconds: number | null, readonly code: string | null = null) {
     super(message);
     this.name = "ComputerUsageError";
   }
@@ -715,6 +829,7 @@ export async function getComputerUsage(id: string, options: { cached?: boolean; 
       r.status === 429 ? "Usage was refreshed a lot just now." : (j?.error as string) || "Hivra couldn't read this computer's usage.",
       r.status,
       Number.isFinite(retry) && retry > 0 ? retry : null,
+      typeof j?.code === "string" ? j.code : null,
     );
   }
   const parsed = ComputerUsageViewSchema.safeParse(j.data);
@@ -808,11 +923,11 @@ export interface AeonConnectStatus {
   at: string;
 }
 
-export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null; connect?: AeonConnectStatus | null }> {
+export async function boxLoginStatus(boxUrl: string, token?: string | null): Promise<{ loggedIn: boolean; email?: string | null; sub?: string | null; connect?: AeonConnectStatus | null; fresh?: boolean | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/login/status`, { cache: "no-store", headers: boxHeaders(token) });
     if (!r.ok) return { loggedIn: false };
-    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string; connect?: AeonConnectStatus | null };
+    return (await r.json()) as { loggedIn: boolean; email?: string; sub?: string; connect?: AeonConnectStatus | null; fresh?: boolean | null };
   } catch {
     return { loggedIn: false };
   }
@@ -830,7 +945,10 @@ export async function boxLoginStartRaw(boxUrl: string, token?: string | null): P
   const r = await fetch(`${boxBase(boxUrl)}/api/login/start`, { method: "POST", headers: boxHeaders(token) });
   const j = (await r.json().catch(() => ({}))) as { url?: string; code?: string; deviceAuth?: boolean; error?: string };
   if (!r.ok || !j.url) throw new Error(j.error || "Could not start login");
-  return { url: j.url, code: j.code || null, deviceAuth: Boolean(j.deviceAuth) };
+  // The box's sign-in address is opened and linked by the caller, so only https is returned.
+  const url = readHttpsAuthorizationUrl(j.url);
+  if (!url) throw new Error("The box did not return a usable sign-in link. Please try again.");
+  return { url, code: j.code || null, deviceAuth: Boolean(j.deviceAuth) };
 }
 
 /** Managed-Venice wiring handed to the box at Aeon connect: the box sets these
@@ -952,6 +1070,46 @@ export async function readBoxFile(boxUrl: string, file: string, token?: string |
 export async function writeBoxFile(boxUrl: string, file: string, content: string, token?: string | null): Promise<{ ok: boolean; error: string | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/file`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ path: file, content }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+// ---- Moving an existing agent onto this box --------------------------------
+// The Manage "Move an agent from your device" flow: mint a single-use transfer
+// token for the prompt the owner pastes into their local agent, track the
+// restore, or push a bundle the owner already has. Everything goes
+// browser-to-box direct — the bundle never passes through Vercel.
+export interface BoxImportStatus {
+  supported: boolean;
+  state: "idle" | "unpacking" | "restoring" | "restarting" | "done" | "error";
+  detail?: string;
+  restored?: string[];
+  skipped?: string[];
+  files?: number;
+  error?: string | null;
+  finishedAt?: number;
+}
+export async function boxImportToken(boxUrl: string, token?: string | null): Promise<{ token: string; expiresAt: string }> {
+  const r = await fetch(`${boxBase(boxUrl)}/api/import/token`, { method: "POST", headers: boxHeaders(token) });
+  const j = (await r.json().catch(() => ({}))) as { token?: string; expiresAt?: string; error?: string };
+  if (!r.ok || !j.token || !j.expiresAt) throw new Error(j.error || `HTTP ${r.status}`);
+  return { token: j.token, expiresAt: j.expiresAt };
+}
+export async function boxImportStatus(boxUrl: string, token?: string | null): Promise<BoxImportStatus | null> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/import/status`, { cache: "no-store", headers: boxHeaders(token) });
+    if (!r.ok) return null;
+    return (await r.json()) as BoxImportStatus;
+  } catch { return null; }
+}
+export async function boxImportPush(boxUrl: string, data: Blob, token?: string | null): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream", ...boxHeaders(token) },
+      body: data,
+    });
     const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
     if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
     return { ok: true, error: null };
@@ -1099,6 +1257,9 @@ export type ClaudeAppStatus = {
   profileSaved: boolean;
   installing: boolean;
   lastError: string | null;
+  /** The owner's clipboard switch for the desktop, off unless they turned it on.
+   * null: this computer's software predates the switch (an update brings it). */
+  clipboard: boolean | null;
 };
 const CLAUDE_APP_PROTOCOL = "hivra-claude-app-v1";
 function parseClaudeAppStatus(value: unknown): ClaudeAppStatus | null {
@@ -1116,6 +1277,7 @@ function parseClaudeAppStatus(value: unknown): ClaudeAppStatus | null {
     profileSaved: v.profileSaved === true,
     installing: v.installing === true,
     lastError: typeof v.lastError === "string" && v.lastError ? v.lastError.slice(0, 200) : null,
+    clipboard: typeof v.clipboard === "boolean" ? v.clipboard : null,
   };
 }
 /** `available: false` means this computer does not offer the Claude app at all
@@ -1155,16 +1317,43 @@ export async function claudeAppRemove(boxUrl: string, token?: string | null): Pr
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 
+// The desktop clipboard: an owner switch, then one request per Paste in / Copy out.
+// Selkies' own clipboard stays off; nothing moves unless the owner presses a button.
+export async function desktopClipboardSet(boxUrl: string, enabled: boolean, token?: string | null): Promise<{ ok: boolean; clipboard?: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/clipboard`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ enabled }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; clipboard?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, clipboard: j.clipboard === true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+export async function desktopClipboardPaste(boxUrl: string, text: string, token?: string | null): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/clipboard/paste`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ text }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+export async function desktopClipboardCopy(boxUrl: string, token?: string | null): Promise<{ ok: boolean; text?: string; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/claude-app/clipboard/copy`, { method: "POST", cache: "no-store", headers: boxHeaders(token) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; text?: unknown; error?: string };
+    if (!r.ok || !j.ok || typeof j.text !== "string") return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, text: j.text, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+
 // ---- per-box model override (Manage → Model) --------------------------------
 // model=null means "the CLI's own default". Changes apply on the NEXT chat turn
 // (the box reads ~/.hivra/agent-model per spawn) — no restart, no redeploy.
-export async function getBoxModel(boxUrl: string, token?: string | null): Promise<{ model: string | null; error: string | null }> {
+export async function getBoxModel(boxUrl: string, token?: string | null): Promise<{ model: string | null; error: string | null; hermesConfig: boolean; provider: "venice" | "other" | null }> {
   try {
     const r = await fetch(`${boxBase(boxUrl)}/api/model`, { cache: "no-store", headers: boxHeaders(token) });
-    const j = (await r.json().catch(() => ({}))) as { model?: string | null; error?: string };
-    if (!r.ok) return { model: null, error: j.error || `HTTP ${r.status}` };
-    return { model: j.model || null, error: null };
-  } catch (e) { return { model: null, error: (e as Error).message }; }
+    const j = (await r.json().catch(() => ({}))) as { model?: string | null; error?: string; hermesConfig?: boolean; provider?: string | null };
+    if (!r.ok) return { model: null, error: j.error || `HTTP ${r.status}`, hermesConfig: false, provider: null };
+    return { model: j.model || null, error: null, hermesConfig: j.hermesConfig === true, provider: j.provider === "venice" || j.provider === "other" ? j.provider : null };
+  } catch (e) { return { model: null, error: (e as Error).message, hermesConfig: false, provider: null }; }
 }
 export async function setBoxModel(boxUrl: string, model: string | null, token?: string | null): Promise<{ ok: boolean; model?: string | null; error: string | null }> {
   try {
@@ -1175,8 +1364,52 @@ export async function setBoxModel(boxUrl: string, model: string | null, token?: 
   } catch (e) { return { ok: false, error: (e as Error).message }; }
 }
 
+// ---- Hermes restore points (Manage → Restore points) ---------------------------
+// Hermes's own checkpoints.enabled. An older connection service answers 404, so
+// `supported` is false and Manage asks for the update instead.
+export async function getBoxRestorePoints(boxUrl: string, token?: string | null): Promise<{ enabled: boolean; supported: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/restore-points`, { cache: "no-store", headers: boxHeaders(token) });
+    const j = (await r.json().catch(() => ({}))) as { enabled?: boolean; hermesConfig?: boolean; error?: string };
+    if (r.status === 404) return { enabled: false, supported: false, error: null };
+    if (!r.ok) return { enabled: false, supported: false, error: j.error || `HTTP ${r.status}` };
+    return { enabled: j.enabled === true, supported: j.hermesConfig === true, error: null };
+  } catch (e) { return { enabled: false, supported: false, error: (e as Error).message }; }
+}
+export async function setBoxRestorePoints(boxUrl: string, enabled: boolean, token?: string | null): Promise<{ ok: boolean; enabled?: boolean; error: string | null }> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/restore-points`, { method: "POST", headers: { "Content-Type": "application/json", ...boxHeaders(token) }, body: JSON.stringify({ enabled }) });
+    const j = (await r.json().catch(() => ({}))) as { ok?: boolean; enabled?: boolean; error?: string };
+    if (!r.ok || !j.ok) return { ok: false, error: j.error || `HTTP ${r.status}` };
+    return { ok: true, enabled: j.enabled === true, error: null };
+  } catch (e) { return { ok: false, error: (e as Error).message }; }
+}
+
 // Manage model-key settings use the server-only delivery flow exposed through
 // agent-model-settings-api.ts; no browser-to-guest credential writes.
+
+// ---- what the chat gateway offers (GET /api/meta) ------------------------------
+export interface BoxChatMeta {
+  agentKind: string | null;
+  model: string | null;
+  /** The effort levels this computer's agent takes with a chat turn. Empty: none, so the chat offers no effort. */
+  chatEffort: string[];
+}
+/** Null: the computer did not answer (an older gateway, or unreachable). The bearer goes only to the
+ * computer the chat already sends its turns to; it widens nothing the public answer says about effort. */
+export async function getBoxChatMeta(boxUrl: string, token?: string | null, signal?: AbortSignal): Promise<BoxChatMeta | null> {
+  try {
+    const r = await fetch(`${boxBase(boxUrl)}/api/meta`, { cache: "no-store", headers: boxHeaders(token), signal });
+    if (!r.ok) return null;
+    const j = (await r.json().catch(() => null)) as { agentKind?: unknown; model?: unknown; chatEffort?: unknown } | null;
+    if (!j || typeof j !== "object") return null;
+    return {
+      agentKind: typeof j.agentKind === "string" ? j.agentKind : null,
+      model: typeof j.model === "string" && j.model ? j.model : null,
+      chatEffort: Array.isArray(j.chatEffort) ? j.chatEffort.filter((level): level is string => typeof level === "string") : [],
+    };
+  } catch { return null; }
+}
 
 // ---- permission presets (Manage → Permissions) -------------------------------
 // null/"" = full access (the box default). "limited" = no shell (claude) /

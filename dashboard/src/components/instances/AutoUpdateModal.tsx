@@ -129,19 +129,19 @@ export function AutoUpdateModal({
 
   const feedbackStyles: Record<FeedbackTone, { border: string; background: string; color: string }> = {
     success: {
-      border: '1px solid rgba(22, 101, 52, 0.24)',
-      background: 'rgba(22, 163, 74, 0.08)',
-      color: '#166534',
+      border: '1px solid color-mix(in srgb, var(--hg-ok) 24%, transparent)',
+      background: 'color-mix(in srgb, var(--hg-ok) 8%, transparent)',
+      color: 'var(--hg-ok)',
     },
     warning: {
-      border: '1px solid rgba(180, 83, 9, 0.24)',
-      background: 'rgba(217, 119, 6, 0.08)',
-      color: '#92400e',
+      border: '1px solid color-mix(in srgb, var(--hg-warn) 24%, transparent)',
+      background: 'color-mix(in srgb, var(--hg-warn) 8%, transparent)',
+      color: 'var(--hg-warn)',
     },
     error: {
-      border: '1px solid rgba(185, 28, 28, 0.24)',
-      background: 'rgba(239, 68, 68, 0.08)',
-      color: '#991b1b',
+      border: '1px solid color-mix(in srgb, var(--hg-bad) 24%, transparent)',
+      background: 'color-mix(in srgb, var(--hg-bad) 8%, transparent)',
+      color: 'var(--hg-bad)',
     },
   };
 
@@ -172,7 +172,7 @@ export function AutoUpdateModal({
               display: 'flex',
               overflowY: 'auto',
               padding: 'max(24px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(24px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px))',
-              background: 'rgba(7, 10, 20, 0.58)',
+              background: 'color-mix(in srgb, var(--hg-bg) 40%, transparent)',
             }}
           >
             {/* The panel scrolls inside the viewport so Save stays reachable on
@@ -191,7 +191,7 @@ export function AutoUpdateModal({
                 margin: 'auto',
                 background: 'var(--vellum-bg)',
                 border: '1px solid var(--ink-black)',
-                boxShadow: '0 24px 80px rgba(0,0,0,0.28)',
+                boxShadow: 'var(--hg-shadow-lg)',
                 padding: 'clamp(16px, 4.2vw, 24px)',
                 display: 'grid',
                 gap: '1rem',
@@ -206,9 +206,9 @@ export function AutoUpdateModal({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    border: '1px solid rgba(59, 130, 246, 0.22)',
-                    background: 'rgba(59, 130, 246, 0.08)',
-                    color: '#1d4ed8',
+                    border: '1px solid var(--hg-stroke-strong)',
+                    background: 'var(--hg-fill-2)',
+                    color: 'var(--hg-fg)',
                   }}
                 >
                   <Clock3 size={18} />
@@ -237,7 +237,7 @@ export function AutoUpdateModal({
                   color: 'var(--text-muted)',
                   padding: '10px 12px',
                   border: '1px solid var(--etched-border)',
-                  background: 'rgba(255,255,255,0.45)',
+                  background: 'var(--hg-glass-strong)',
                 }}
               >
                 Hermes pulls the latest image or compose changes, runs a safe `docker compose up -d --remove-orphans`,
@@ -251,7 +251,7 @@ export function AutoUpdateModal({
                   gap: 10,
                   padding: '14px 16px',
                   border: '1px solid var(--etched-border)',
-                  background: 'rgba(255,255,255,0.45)',
+                  background: 'var(--hg-glass-strong)',
                   cursor: 'pointer',
                 }}
               >

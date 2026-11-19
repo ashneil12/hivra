@@ -6,6 +6,8 @@ import { supabaseAdmin } from "@/lib/supabase";
  * Stop one Hivra Cloud computer under its lifecycle lease, keeping its disk. Shared by the
  * deleted-owner sweep and the unpaid-owner sweep (hivra-lapse-enforce.ts): both mean "contain
  * this VM, never delete it". Throws on any doubt, leaving the operation for the reconciler.
+ * A napping or hibernated computer is stopped too, without being woken: the stop script
+ * switches a paused VM off and discards a hibernation before it disables autostart.
  */
 export async function stopHivraManagedComputer(userId: string, agentId: string): Promise<void> {
   if (!supabaseAdmin) throw new Error("Database not configured");
@@ -44,6 +46,10 @@ export async function stopHivraManagedComputer(userId: string, agentId: string):
     if (!stopped.ok) throw new Error("Computer shutdown or autostart disable is unconfirmed");
     if (!desktopRevoked) throw new Error("Desktop access revocation is incomplete");
     if (!await completeHivraAgentOperation({ ...operation, expectedDesiredState: "stopped", status: "stopped" })) throw new Error("Computer shutdown persistence was superseded");
+    // A napping computer was switched off and a hibernated one had its saved
+    // memory discarded (verifiedStopVmScript), so nothing is asleep any more.
+    // Best effort: the stop stands, and a record left behind is settled by the sleep sweep.
+    try { await (await import("@/lib/hivra/sleep-aware")).markAgentAwake(agentId); } catch { /* the stop stands */ }
   } catch (failure) {
     // Retain the operation for the existing reconciler rather than allowing a
     // competing Start while an unconfirmed provider action may still run.

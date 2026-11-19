@@ -40,30 +40,56 @@ describe("GET /api/instances/[id]/aeon-gate", () => {
   it("says active for a running instance", async () => {
     maybeSingle.mockResolvedValue({ data: { status: "running" }, error: null });
 
-    await expect(call(INSTANCE_ID)).resolves.toEqual({ status: 200, body: { active: true, status: "running" } });
+    await expect(call(INSTANCE_ID)).resolves.toEqual({ status: 200, body: { active: true } });
     expect(eq).toHaveBeenCalledWith("id", INSTANCE_ID);
     expect(neq).toHaveBeenCalledWith("status", "deleted");
   });
 
   it("says inactive for a stopped instance and for one that does not exist", async () => {
     maybeSingle.mockResolvedValue({ data: { status: "stopped" }, error: null });
-    await expect(call(INSTANCE_ID)).resolves.toEqual({ status: 200, body: { active: false, status: "stopped" } });
+    await expect(call(INSTANCE_ID)).resolves.toEqual({ status: 200, body: { active: false } });
 
     maybeSingle.mockResolvedValue({ data: null, error: null });
-    await expect(call(INSTANCE_ID)).resolves.toEqual({ status: 200, body: { active: false, status: "not_found" } });
+    await expect(call(INSTANCE_ID)).resolves.toEqual({ status: 200, body: { active: false } });
+  });
+
+  // The only consumer reads `.active` (aeon-setup.sh). A raw status string would
+  // tell an anonymous caller about billing and deletion state (scheduled_for_
+  // deletion, failed, redeploying), so every state answers the same single key.
+  it.each([
+    ["stopped", { status: "stopped" }],
+    ["scheduled for deletion", { status: "scheduled_for_deletion" }],
+    ["failed", { status: "failed" }],
+    ["redeploying", { status: "redeploying" }],
+    ["provisioning", { status: "provisioning" }],
+    ["missing", null],
+  ])("returns only the active key for a %s instance", async (_label, row) => {
+    maybeSingle.mockResolvedValue({ data: row, error: null });
+
+    const { status, body } = await call(INSTANCE_ID);
+    expect(status).toBe(200);
+    expect(body).toEqual({ active: false });
+    expect(Object.keys(body)).toEqual(["active"]);
+  });
+
+  it("returns only the active key for a running instance", async () => {
+    maybeSingle.mockResolvedValue({ data: { status: "running" }, error: null });
+
+    const { body } = await call(INSTANCE_ID);
+    expect(Object.keys(body)).toEqual(["active"]);
   });
 
   it("fails closed when the database errors", async () => {
     maybeSingle.mockResolvedValue({ data: null, error: { message: "boom" } });
-    await expect(call(INSTANCE_ID)).resolves.toEqual({ status: 200, body: { active: false, status: "not_found" } });
+    await expect(call(INSTANCE_ID)).resolves.toEqual({ status: 200, body: { active: false } });
 
     maybeSingle.mockRejectedValue(new Error("network"));
-    await expect(call(INSTANCE_ID)).resolves.toEqual({ status: 200, body: { active: false, status: "error" } });
+    await expect(call(INSTANCE_ID)).resolves.toEqual({ status: 200, body: { active: false } });
   });
 
   // The route has no credential, so anyone can send it any text for an id. An
   // id that is not a UUID cannot match a row (the column is a uuid), so the
-  // route answers not_found without sending the text to the database at all.
+  // route answers inactive without sending the text to the database at all.
   it.each([
     ["words", "not-a-uuid"],
     ["a filter fragment", "x,status.eq.running"],
@@ -72,26 +98,26 @@ describe("GET /api/instances/[id]/aeon-gate", () => {
     ["a UUID with a prefix", `x${INSTANCE_ID}`],
     ["an empty string", ""],
   ])("does not query the database for %s", async (_label, id) => {
-    await expect(call(id)).resolves.toEqual({ status: 200, body: { active: false, status: "not_found" } });
+    await expect(call(id)).resolves.toEqual({ status: 200, body: { active: false } });
     expect(from).not.toHaveBeenCalled();
   });
 
   it("accepts a UUID in upper case", async () => {
     maybeSingle.mockResolvedValue({ data: { status: "running" }, error: null });
 
-    await expect(call(INSTANCE_ID.toUpperCase())).resolves.toEqual({ status: 200, body: { active: true, status: "running" } });
+    await expect(call(INSTANCE_ID.toUpperCase())).resolves.toEqual({ status: 200, body: { active: true } });
     expect(eq).toHaveBeenCalledTimes(1);
   });
 
   // The route is unauthenticated by design, so the per-IP limit is the only
-  // brake on a hostile caller. Exceeding it answers 429 with the same
-  // active:false contract every other refusal uses.
-  it("returns 429 rate_limited once the caller exceeds the per-IP limit", async () => {
+  // brake on a hostile caller. Exceeding it answers 429 with the same single
+  // active:false body.
+  it("returns 429 once the caller exceeds the per-IP limit", async () => {
     mockedRateLimit.mockReturnValueOnce({ success: false, retryAfterMs: 30_000 });
 
     await expect(call(INSTANCE_ID)).resolves.toEqual({
       status: 429,
-      body: { active: false, status: "rate_limited" },
+      body: { active: false },
     });
     expect(from).not.toHaveBeenCalled();
   });
@@ -111,7 +137,7 @@ describe("GET /api/instances/[id]/aeon-gate", () => {
 
     await expect(call("not-a-uuid")).resolves.toEqual({
       status: 429,
-      body: { active: false, status: "rate_limited" },
+      body: { active: false },
     });
     expect(from).not.toHaveBeenCalled();
   });

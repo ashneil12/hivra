@@ -1,7 +1,54 @@
 import "server-only";
 import { z } from "zod";
 
-import currentRelease from "../../../provisioner-releases/2026.10.20.2.json";
+import currentRelease from "../../../provisioner-releases/2026.11.18.5.json";
+import noBootUpgradeRelease from "../../../provisioner-releases/2026.11.18.4.json";
+import snapFreeBootRelease from "../../../provisioner-releases/2026.11.18.3.json";
+import emptyModeRelease from "../../../provisioner-releases/2026.11.18.2.json";
+import veniceChatRelease from "../../../provisioner-releases/2026.11.18.1.json";
+import installReasonRelease from "../../../provisioner-releases/2026.11.17.9.json";
+import readinessRelease from "../../../provisioner-releases/2026.11.17.8.json";
+import basePathRelease from "../../../provisioner-releases/2026.11.17.7.json";
+import presetRelease from "../../../provisioner-releases/2026.11.17.6.json";
+import tgApplyRelease from "../../../provisioner-releases/2026.11.17.5.json";
+import launchFixesRelease from "../../../provisioner-releases/2026.11.17.4.json";
+import agentZeroUsrEnvRelease from "../../../provisioner-releases/2026.11.17.3.json";
+import agentZeroSettingsRelease from "../../../provisioner-releases/2026.11.17.2.json";
+import latestAgentsRelease from "../../../provisioner-releases/2026.11.17.1.json";
+import usrPluginsRelease from "../../../provisioner-releases/2026.11.15.7.json";
+import productionAgentZeroHotfixRelease from "../../../provisioner-releases/2026.11.15.8.json";
+import watchdogRelease from "../../../provisioner-releases/2026.11.15.6.json";
+import lockFdRelease from "../../../provisioner-releases/2026.11.15.5.json";
+import resilienceRelease from "../../../provisioner-releases/2026.11.15.3.json";
+import stateImportRelease from "../../../provisioner-releases/2026.11.15.2.json";
+import a0EntryFallbackRelease from "../../../provisioner-releases/2026.11.15.1.json";
+import connectLinksRelease from "../../../provisioner-releases/2026.11.14.1.json";
+
+import connectGrantsRelease from "../../../provisioner-releases/2026.11.13.6.json";
+import discordDoorbellRelease from "../../../provisioner-releases/2026.11.13.5.json";
+import doorbellRelease from "../../../provisioner-releases/2026.11.13.4.json";
+import hostCredentialRelease from "../../../provisioner-releases/2026.11.13.3.json";
+import hostIngressStartRelease from "../../../provisioner-releases/2026.11.13.2.json";
+import wakeProxyRelease from "../../../provisioner-releases/2026.11.13.1.json";
+import nuphosRelease from "../../../provisioner-releases/2026.11.12.5.json";
+import openbotRelease from "../../../provisioner-releases/2026.11.12.4.json";
+import restorePointsRelease from "../../../provisioner-releases/2026.11.12.3.json";
+import gitGuardRelease from "../../../provisioner-releases/2026.11.12.2.json";
+import hermesModelRelease from "../../../provisioner-releases/2026.11.12.1.json";
+import webappRelease from "../../../provisioner-releases/2026.11.11.7.json";
+import libatomicRelease from "../../../provisioner-releases/2026.11.11.6.json";
+import gatewayRelease from "../../../provisioner-releases/2026.11.11.5.json";
+import hermesRelease from "../../../provisioner-releases/2026.11.11.4.json";
+import chatEffortRelease from "../../../provisioner-releases/2026.11.11.3.json";
+import chromePinRelease from "../../../provisioner-releases/2026.11.11.2.json";
+import browserViewRelease from "../../../provisioner-releases/2026.11.11.1.json";
+import deepseekModelRelease from "../../../provisioner-releases/2026.11.10.5.json";
+import linuxServerRelease from "../../../provisioner-releases/2026.11.10.4.json";
+import freshnessRelease from "../../../provisioner-releases/2026.11.10.3.json";
+import creditsRelease from "../../../provisioner-releases/2026.11.10.2.json";
+import hardeningRelease from "../../../provisioner-releases/2026.11.10.1.json";
+import clipboardRelease from "../../../provisioner-releases/2026.11.03.1.json";
+import appUpdateRelease from "../../../provisioner-releases/2026.10.20.2.json";
 import ownedUpdateRelease from "../../../provisioner-releases/2026.10.20.1.json";
 import claudeAppRelease from "../../../provisioner-releases/2026.10.07.1.json";
 import terminalFollowupsRelease from "../../../provisioner-releases/2026.09.24.4.json";
@@ -61,6 +108,52 @@ const desktopRevisionByVersion = {
   "2026.10.07.1": REMOTE_DESKTOP_BUNDLE_REVISION,
   "2026.10.20.1": REMOTE_DESKTOP_BUNDLE_REVISION,
   "2026.10.20.2": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.03.1": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.10.1": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.10.2": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.10.3": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.10.4": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.10.5": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.11.1": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.11.2": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.11.3": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.11.4": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.11.5": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.11.6": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.11.7": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.12.1": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.12.2": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.12.3": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.12.4": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.12.5": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.13.1": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.13.2": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.13.3": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.13.4": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.13.5": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.13.6": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.14.1": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.15.1": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.15.2": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.15.3": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.15.5": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.15.6": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.15.7": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.15.8": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.17.1": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.17.2": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.17.3": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.17.4": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.17.5": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.17.6": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.17.7": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.17.8": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.17.9": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.18.1": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.18.2": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.18.3": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.18.4": REMOTE_DESKTOP_BUNDLE_REVISION,
+  "2026.11.18.5": REMOTE_DESKTOP_BUNDLE_REVISION,
 } satisfies Record<ProviderDesktopWorkerIdentity["bundle"]["provisionerVersion"], string>;
 const ControlOrigin = z.string().max(300).refine(value => {
   try { const url = new URL(value); return url.protocol === "https:" && url.origin === value; } catch { return false; }
@@ -87,7 +180,7 @@ export function buildProviderDesktopPowerProbe(input: ProviderDesktopRuntimeProb
 /** Releases whose installed gateway speaks hivra-workspace-v1. The probe,
  * receipt parser and session issuer must share one list so a release bump
  * cannot admit a probe the issuer then refuses. */
-export const PROVIDER_WORKSPACE_PROTOCOL_VERSIONS = ["2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2"] as const;
+export const PROVIDER_WORKSPACE_PROTOCOL_VERSIONS = ["2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5"] as const;
 /** Workspace grants require installed code and the running gateway's original
  * identity/configuration, not a release label or unauthenticated HTML alone. */
 export function buildProviderWorkspaceRuntimeProbe(input: ProviderWorkspaceRuntimeProbe): string {
@@ -97,7 +190,53 @@ export function buildProviderWorkspaceRuntimeProbe(input: ProviderWorkspaceRunti
 function buildProbe(input: ProviderDesktopRuntimeProbe, captureBootId: boolean, workspaceControlOrigin?: string): string {
   try {
     const expected = checked(input);
-    const release = expected.identity.bundle.provisionerVersion === "2026.10.20.2" ? currentRelease
+    const release = expected.identity.bundle.provisionerVersion === "2026.11.18.5" ? currentRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.18.4" ? noBootUpgradeRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.18.3" ? snapFreeBootRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.18.2" ? emptyModeRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.18.1" ? veniceChatRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.17.9" ? installReasonRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.17.8" ? readinessRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.17.7" ? basePathRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.17.6" ? presetRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.17.5" ? tgApplyRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.17.4" ? launchFixesRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.17.3" ? agentZeroUsrEnvRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.17.2" ? agentZeroSettingsRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.17.1" ? latestAgentsRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.15.8" ? productionAgentZeroHotfixRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.15.7" ? usrPluginsRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.15.6" ? watchdogRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.15.5" ? lockFdRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.15.3" ? resilienceRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.15.2" ? stateImportRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.15.1" ? a0EntryFallbackRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.14.1" ? connectLinksRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.13.6" ? connectGrantsRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.13.5" ? discordDoorbellRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.13.4" ? doorbellRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.13.3" ? hostCredentialRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.13.2" ? hostIngressStartRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.13.1" ? wakeProxyRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.12.5" ? nuphosRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.12.4" ? openbotRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.12.3" ? restorePointsRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.12.2" ? gitGuardRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.12.1" ? hermesModelRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.11.7" ? webappRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.11.6" ? libatomicRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.11.5" ? gatewayRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.11.4" ? hermesRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.11.3" ? chatEffortRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.11.2" ? chromePinRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.11.1" ? browserViewRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.10.5" ? deepseekModelRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.10.4" ? linuxServerRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.10.3" ? freshnessRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.10.2" ? creditsRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.10.1" ? hardeningRelease
+    : expected.identity.bundle.provisionerVersion === "2026.11.03.1" ? clipboardRelease
+    : expected.identity.bundle.provisionerVersion === "2026.10.20.2" ? appUpdateRelease
     : expected.identity.bundle.provisionerVersion === "2026.10.20.1" ? ownedUpdateRelease
     : expected.identity.bundle.provisionerVersion === "2026.10.07.1" ? claudeAppRelease
     : expected.identity.bundle.provisionerVersion === "2026.09.24.4" ? terminalFollowupsRelease
@@ -205,7 +344,9 @@ try:
  workspace_process=[]
  def workspace_observe(services):
   if WORKSPACE_CONTROL is None: return
-  if preparation['controlOrigin']!=WORKSPACE_CONTROL or len(WORKSPACE_FILES)!=${["2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2"].includes(expected.identity.bundle.provisionerVersion) ? 12 : ["2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2"].includes(expected.identity.bundle.provisionerVersion) ? 11 : 10}: reject()
+
+  if preparation['controlOrigin']!=WORKSPACE_CONTROL or len(WORKSPACE_FILES)!=${["2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1"].includes(expected.identity.bundle.provisionerVersion) ? 12 : ["2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5"].includes(expected.identity.bundle.provisionerVersion) ? 13 : ["2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2"].includes(expected.identity.bundle.provisionerVersion) ? 11 : 10}: reject()
+
   for entry in WORKSPACE_FILES:
    raw=read(pathlib.Path('/opt/bux')/entry['path'],entry['bytes'],0o644)
    if len(raw)!=entry['bytes'] or hashlib.sha256(raw).hexdigest()!=entry['sha256']: reject()

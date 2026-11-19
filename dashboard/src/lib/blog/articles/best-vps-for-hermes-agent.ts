@@ -21,6 +21,7 @@ export const article: BlogArticle = {
       heading: "Minimum specs and what happens below them",
       paragraphs: [
         "Minimum: 2 vCPU, 4GB RAM, 40GB SSD. At this spec, Hermes Agent with an external API provider (OpenRouter, Anthropic, OpenAI) runs reliably for a single user. The 4GB RAM floor is hard: at 2GB you see OOM errors on complex tasks involving browser automation or heavy file processing. The errors are not always graceful; they can corrupt the session in progress.",
+        "A VPS is one of four ways to run Hermes around the clock. [How to run Hermes Agent in the cloud](/blog/hermes-agent-cloud) compares it with Docker, Nous Hermes Cloud and a managed computer.",
         "The 40GB storage recommendation exists because `~/.hermes/` grows over time. Session logs accumulate in `~/.hermes/sessions/` and the SQLite database (`state.db`) grows with every conversation. On a 20GB disk at several sessions per day, you can fill it in 6-12 months. Start with 40GB or configure log rotation early.",
         "Docker adds overhead. If you use `hermes config set terminal.backend docker` (which sandbox-isolates shell commands), Docker needs an additional 1-2GB for container spin-up. On a 4GB server running the gateway and Docker simultaneously, run `free -h` before enabling the Docker backend. It is easy to forget it and discover the problem at 2am when a task fails.",
       ],
@@ -109,6 +110,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "hermes-agent-cloud", title: "How to run Hermes Agent in the cloud: VPS, Docker, Nous Hermes Cloud or a computer of its own" },
     { slug: "how-to-self-host-hermes-agent", title: "How to self-host Hermes Agent on a VPS" },
     { slug: "how-to-self-host-openclaw", title: "How to self-host OpenClaw" },
     { slug: "hermes-agent-telegram-discord-setup", title: "Hermes Agent gateway setup: Telegram, Discord, and 13 more" },

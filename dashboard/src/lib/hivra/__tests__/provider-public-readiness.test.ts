@@ -55,6 +55,35 @@ it("accepts a native first-run redirect without following it or forwarding its b
   expect(await verifyProviderPublicRuntime({ ...input, runtime: "aeon" }, fetcher)).toBe(true);
   expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/aeon"))).toHaveLength(0);
 });
+describe("agent-zero real path", () => {
+  const a0Input = { hostname: "box-fixture.hermesos.cloud", runtime: "agent-zero" as const, apiToken: "a".repeat(64) };
+  const a0Csrf = { ok: true, token: "x".repeat(43), runtime_id: "0".repeat(16) };
+  function setupA0(csrf: () => Response) {
+    return jest.fn(async (url: string, options?: RequestInit) => {
+      const path = new URL(url).pathname, headers = options?.headers as Record<string, string>;
+      if (path === "/healthz") return new Response("ok");
+      if (path === "/api/meta") return Response.json({ agentKind: "agent-zero", surfaceAuth: "post-cookie-v1" });
+      if (path === "/api/model") return headers.Authorization
+        ? Response.json({ agentKind: "agent-zero", model: null }) : Response.json({ error: "unauthorized" }, { status: 401 });
+      if (path === "/agent-zero/api/csrf_token") return csrf();
+      return new Response("native surface");
+    });
+  }
+  it("passes only when the native CSRF endpoint answers the strict contract through the gateway", async () => {
+    const fetcher = setupA0(() => Response.json(a0Csrf));
+    await expect(verifyProviderPublicRuntime(a0Input, fetcher)).resolves.toBe(true);
+    expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toContain("/agent-zero/api/csrf_token");
+  });
+  it.each([
+    ["wedged upstream (502)", () => new Response("Bad Gateway", { status: 502 })],
+    ["wrong shape", () => Response.json({ ok: true, token: "short", runtime_id: "0".repeat(16) })],
+    ["missing runtime id", () => Response.json({ ok: true, token: "x".repeat(43) })],
+    ["extra fields", () => Response.json({ ...a0Csrf, session: "abc" })],
+    ["not ok", () => Response.json({ ok: false, token: "x".repeat(43), runtime_id: "0".repeat(16) })],
+  ])("fails closed on %s", async (_label, csrf) => {
+    await expect(verifyProviderPublicRuntime(a0Input, setupA0(csrf))).resolves.toBe(false);
+  });
+});
 it("stops on delivery errors and never exposes the private error or retries", async () => {
   const fetcher = setup(); fetcher.mockRejectedValue(new Error("PRIVATE_NETWORK_MESSAGE"));
   expect(await verifyProviderPublicRuntime(input, fetcher)).toBe(false);

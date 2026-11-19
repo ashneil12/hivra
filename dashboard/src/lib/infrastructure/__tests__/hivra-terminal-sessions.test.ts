@@ -41,7 +41,7 @@ describe("persistent terminal sessions on the guest gateway", () => {
             },
           };
         }
-        if (["fs", "path", "net", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs"].includes(name)) return realRequire(name);
+        if (["fs", "path", "net", "crypto", "./llm-application.js", "./guarded-files.cjs", "./agent-zero-editor.cjs", "./chat-runs.cjs", "./import-state.cjs"].includes(name)) return realRequire(name);
         throw new Error(`Unexpected guest dependency: ${name}`);
       },
       process: { env: { HOME: home, HIVRA_CHAT_PORT: "0" }, once: () => undefined },

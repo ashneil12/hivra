@@ -109,7 +109,6 @@ export type DecisionReason =
   | "org_mismatch"
   | "cross_org"
   | "network_disabled"
-  | "network_disabled_on_deployment"
   | "org_paused"
   | "principal_not_joined"
   | "member_removed"

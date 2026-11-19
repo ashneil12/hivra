@@ -1,0 +1,9 @@
+name: hivra-inbox
+version: 1.0.0
+description: "Shows the owner's Hivra Needs you list when Hermes waits for an approval or a question, and lets the owner answer an approval from there. Remove it with: hermes plugins disable hivra-inbox"
+author: Hivra
+provides_hooks:
+  - pre_approval_request
+  - post_approval_response
+  - on_human_input_request
+  - on_human_input_resolved

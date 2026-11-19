@@ -219,4 +219,35 @@ describe("NousPortalOAuthModal", () => {
       )
     ).toBeUndefined();
   });
+
+  it("refuses a verification address that is not https and never offers or opens it", async () => {
+    Object.defineProperty(global, "fetch", {
+      configurable: true,
+      writable: true,
+      value: jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: {
+            session_id: "sess_bad",
+            user_code: "NOUS-0000",
+            verification_url: "javascript:alert(1)",
+            poll_interval: 5,
+            expires_in: 900,
+          },
+        }),
+      }),
+    });
+    const openSpy = jest.fn();
+    Object.defineProperty(window, "open", { configurable: true, writable: true, value: openSpy });
+
+    render(<NousPortalOAuthModal instanceId="inst-nous-bad-url" onClose={jest.fn()} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /connect nous portal/i }));
+    });
+
+    expect(screen.queryByRole("button", { name: /open nous portal/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("javascript:alert(1)")).not.toBeInTheDocument();
+    expect(openSpy).not.toHaveBeenCalled();
+  });
 });

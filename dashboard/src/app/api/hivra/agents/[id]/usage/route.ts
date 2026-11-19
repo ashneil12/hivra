@@ -22,7 +22,6 @@ import { auth } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
@@ -58,6 +57,7 @@ import {
   singleFlightUsageRead,
   type ComputerUsageCacheRow,
 } from "@/lib/hivra/computer-usage-cache";
+import { recordComputerMissingOnHost } from "@/lib/hivra/computer-missing";
 import { UUID_V1_TO_8 } from "@/app/api/hivra/managed-sessions/route-support";
 
 const SOURCE = "hivra/agents/[id]/usage";
@@ -97,8 +97,8 @@ function respond(data: ComputerUsageView, status = 200) {
   return response;
 }
 
-function fail(message: string, status: number) {
-  const response = apiError(message, status);
+function fail(message: string, status: number, code?: string) {
+  const response = apiError(message, status, undefined, code ? { code } : undefined);
   response.headers.set("Cache-Control", "no-store, private");
   return response;
 }
@@ -235,7 +235,6 @@ function refusedByBinding(cache: ComputerUsageCacheRow | null): boolean {
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return fail("Not found", 404);
     const { userId } = await auth();
     if (!userId) return fail("Unauthorized", 401);
     if (!supabaseAdmin) return fail("Database not configured", 500);
@@ -313,7 +312,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       });
       const kept = await recordComputerUsage({ agentId: row.id, userId, sample: null, errorCode: read.code }).catch(() => null);
       const latest = kept ?? (cache ? { ...cache, lastErrorCode: read.code } : null);
-      if (!readStoredUsage(latest?.sample)) return fail(USAGE_MESSAGES.hostUnreachable, 503);
+      if (!readStoredUsage(latest?.sample)) return fail(USAGE_MESSAGES.hostUnreachable, 503, "host_unreachable");
       return respond(viewFrom(row, latest, { refreshing: false }));
     }
     if (read.outcome.kind === "binding_mismatch") {
@@ -323,9 +322,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       await recordComputerUsage({ agentId: row.id, userId, sample: null, errorCode: "binding_mismatch", clearSample: true }).catch(() => null);
       return fail(USAGE_MESSAGES.bindingMismatch, 409);
     }
-    const next = storedUsageFor(read.outcome, String(row.status));
+    // Only the host's definite "no such computer" answer reaches here as
+    // "missing": a timeout, network failure or unreadable output is a failed
+    // read above and never changes the row.
+    let viewRow = row;
+    if (read.outcome.kind === "missing" && (row.status === "running" || row.status === "stopped")) {
+      const recorded = await recordComputerMissingOnHost({
+        userId, agentId: row.id, agentType: typeof row.type === "string" ? row.type : null,
+      });
+      if (recorded) viewRow = { ...row, status: "error" };
+    }
+    const next = storedUsageFor(read.outcome, String(viewRow.status));
     const saved = await recordComputerUsage({ agentId: row.id, userId, sample: next, errorCode: null }).catch(() => null);
-    return respond(viewFrom(row, saved ?? { sample: next, observedAt: new Date().toISOString(), lastErrorCode: null }, { refreshing: false }));
+    return respond(viewFrom(viewRow, saved ?? { sample: next, observedAt: new Date().toISOString(), lastErrorCode: null }, { refreshing: false }));
   } catch (error) {
     return handleApiError(error);
   }

@@ -11,6 +11,7 @@ import {
   type ClaudeAppView,
 } from "@/lib/hivra/agent-api";
 import styles from "./ClaudeAppSwitch.module.css";
+import { DesktopClipboard } from "./DesktopClipboard";
 
 // Polling is quick while something is changing and slow once it has settled.
 const FAST_POLL_MS = 3_000;
@@ -30,6 +31,8 @@ const clockMs = () => Date.now();
  * all on a computer that does not offer the app.
  *
  * Nothing here handles a Claude sign-in: the owner signs in inside the app.
+ * The desktop's clipboard switch sits beside it, since both are reached through
+ * the same helper on the computer.
  */
 export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: string; token?: string | null; active?: boolean }) {
   const [available, setAvailable] = useState(false);
@@ -172,6 +175,14 @@ export function ClaudeAppSwitch({ boxUrl, token, active = true }: { boxUrl: stri
             …
           </button>
         </>
+      ) : null}
+      {status.clipboard !== null ? (
+        <DesktopClipboard
+          boxUrl={boxUrl}
+          token={token}
+          enabled={status.clipboard}
+          onChanged={(clipboard) => setStatus((current) => current ? { ...current, clipboard } : current)}
+        />
       ) : null}
       {status.lastError && !installing ? (
         <span className={styles.error} role="alert" title={status.lastError}>

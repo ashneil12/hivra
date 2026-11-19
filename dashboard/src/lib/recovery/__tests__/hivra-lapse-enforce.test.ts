@@ -137,6 +137,14 @@ describe("while the switch is on", () => {
     expect(stop.mock.calls).toEqual([["user_lapsed", "c-run"]]);
   });
 
+  it.each(["napping", "hibernated", "draining", "waking", "wake_failed"])(
+    "keeps a computer that is %s in the sweep: sleeping is no way to stay unpaid and running", async (sleepState) => {
+      table = [computer("c-asleep", "user_lapsed", { sleep_state: sleepState })];
+      const result = await runHivraLapseSweep();
+      expect(stop).toHaveBeenCalledWith("user_lapsed", "c-asleep");
+      expect(result).toMatchObject({ running: 1, lapsed: 1, stopped: 1 });
+    });
+
   it("asks about each owner once, however many computers they have", async () => {
     table = [computer("c-1", "user_a"), computer("c-2", "user_a"), computer("c-3", "user_b")];
     await runHivraLapseSweep();

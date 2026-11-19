@@ -62,7 +62,9 @@ function buildIntegrationSuccessPayload(params: {
 }
 
 function sanitizeEnvValue(value: unknown): string {
-  return String(value).replace(/[\r\n\0]/g, '');
+  // The webfree loader reads each .env with Python splitlines(), which also ends a line
+  // at these characters, so a value holding one could add a variable line.
+  return String(value).replace(/[\r\n\0\x0b\x0c\x1c-\x1e\x85\u2028\u2029]/g, '');
 }
 
 function formatEnvValue(value: string): string {
@@ -742,6 +744,59 @@ export async function POST(
         return apiError(`Integration platform ${platform} not supported yet.`, 400);
     }
 
+    // formatEnvValue wraps a value in single quotes and escapes only the apostrophe, as
+    // \'. Two shapes then leave compose's quoting unbalanced, and compose rejects the
+    // whole env file: a value that ends in a backslash (the closing quote is escaped),
+    // and a backslash directly before an apostrophe (the escaped quote reads as a close).
+    // The default profile's .env is the compose env_file, so refuse both there. A legacy
+    // sub-profile .env is sourced by a shell, which cannot read the trailing-backslash
+    // form either, so refuse that there too. A webfree sub-profile is read by the profile
+    // loader, which decodes both shapes back to the original value, so it is allowed.
+    const isWebfreeSubProfile = isSubProfile && isWebfreeBackend(instance?.backend);
+    const writtenCredentialValues = Object.values(credentials ?? {}).map((value) => sanitizeEnvValue(value));
+    if (
+      !disconnect &&
+      !isWebfreeSubProfile &&
+      writtenCredentialValues.some((value) => value.endsWith('\\'))
+    ) {
+      return apiError(
+        'Values cannot end with a backslash in integration settings. Remove it and save again.',
+        400,
+        { failureType: 'integration_value_unsupported', retryable: false },
+      );
+    }
+    if (
+      !disconnect &&
+      !isSubProfile &&
+      writtenCredentialValues.some((value) => value.includes("\\'"))
+    ) {
+      return apiError(
+        "Backslashes before an apostrophe (\\') are not supported in integration values on the default profile. Remove them and save again.",
+        400,
+        { failureType: 'integration_value_unsupported', retryable: false },
+      );
+    }
+
+    // A legacy sub-profile's .env is sourced by the gateway supervisor (set -a; . .env),
+    // and formatEnvValue's \' escape is not a shell quote, so an apostrophe would end
+    // the quote early and run the rest as a command. Refuse the value instead. Webfree
+    // boxes never reach that shell sink (their profile loader decodes \', and the
+    // profile routes that source the .env are webfree-gated), so they are not refused.
+    // Check the String() form that is actually written, so an array or object value
+    // cannot carry a quote past the check.
+    if (
+      isSubProfile &&
+      !disconnect &&
+      !isWebfreeBackend(instance?.backend) &&
+      Object.values(credentials ?? {}).some((value) => sanitizeEnvValue(value).includes("'"))
+    ) {
+      return apiError(
+        "Apostrophes (') are not supported in integration values for a sub-profile. Remove them and save again.",
+        400,
+        { failureType: 'integration_value_unsupported', retryable: false },
+      );
+    }
+
     // Try Sidecar API First (Phase 3 Architect Update)
     if (!isWebUIBackend && instance && instance.gateway_url && apiServerKey) {
       try {
@@ -841,7 +896,9 @@ export async function POST(
     }
 
     // FALLBACK: Build a bash script to safely update the .env file and restart the container via SSH
-    // We base64 encode the env updates to prevent ANY shell injection on the remote.
+    // We base64 encode the env update lines so they cross SSH intact. That protects
+    // the transport only. A legacy sub-profile .env is then sourced by a shell, so
+    // its apostrophes are refused above; webfree boxes read it with the profile loader.
     const b64Updates = envUpdates.map((line) => Buffer.from(line).toString('base64'));
     
     // We conditionally apply the script to either the main instance or the specific sub-profile using docker exec.

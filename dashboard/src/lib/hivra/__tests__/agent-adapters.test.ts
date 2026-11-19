@@ -6,6 +6,7 @@ import {
   type ChatSink,
   type ToolPatch,
   type TurnOutcome,
+  type UsageReport,
 } from "@/lib/hivra/agent-adapters";
 
 // A recording sink so we can assert exactly what a parser emitted.
@@ -15,6 +16,7 @@ function recorder() {
   const tools = new Map<string | undefined, ToolPatch>();
   const warnings: string[] = [];
   const outcomes: TurnOutcome[] = [];
+  const usage: UsageReport[] = [];
   let sessionId: string | null = null;
   const sink: ChatSink = {
     setSessionId: (id) => {
@@ -41,12 +43,16 @@ function recorder() {
       outcomes.push(outcome);
       calls.push("outcome:" + outcome);
     },
+    reportUsage: (u) => {
+      usage.push(u);
+    },
   };
   return {
     sink,
     calls,
     warnings,
     outcomes,
+    usage,
     get text() {
       return text;
     },
@@ -344,5 +350,63 @@ describe("agent-adapters", () => {
       const text = extractAssistantText([{ type: "_text", text: "hi there" }], "generic");
       expect(text).toBe("hi there");
     });
+  });
+});
+
+describe("agent-adapters: what the chat's rich rows read", () => {
+  it("keeps a tool's input, trimmed, for task lists, diffs and plans", () => {
+    const r = run(getAdapter("claude"), [
+      { type: "stream_event", event: { type: "content_block_start", content_block: { type: "tool_use", id: "e1", name: "Edit", input: {} } } },
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "e1", name: "Edit", input: { file_path: "/w/a.ts", old_string: "a", new_string: "x".repeat(20000) } }] } },
+    ]);
+    const input = r.tool("e1")?.input as { file_path: string; new_string: string };
+    expect(input.file_path).toBe("/w/a.ts");
+    expect(input.new_string.length).toBeLessThan(13000);
+    expect(r.tool("e1")?.status).toBe("running");
+  });
+
+  it("turns Claude's thinking stream into one reasoning row that closes with its block", () => {
+    const r = run(getAdapter("claude"), [
+      { type: "stream_event", event: { type: "content_block_start", content_block: { type: "thinking" } } },
+      { type: "stream_event", event: { type: "content_block_delta", delta: { type: "thinking_delta", thinking: "**Checking the parser**\nIt splits on commas." } } },
+      { type: "stream_event", event: { type: "content_block_stop" } },
+      { type: "assistant", message: { content: [{ type: "thinking", thinking: "**Checking the parser**\nIt splits on commas." }, { type: "text", text: "Done." }] } },
+    ]);
+    const row = r.tool("thinking-1");
+    expect(row).toMatchObject({ name: "Thinking", kind: "thinking", status: "done", detail: "Checking the parser" });
+    expect(row?.result).toContain("It splits on commas.");
+    // The final message must not add a second row for the same reasoning.
+    expect(r.tool("thinking-2")).toBeUndefined();
+    expect(r.text).toBe("Done.");
+  });
+
+  it("shows reasoning that only arrives whole in the final message", () => {
+    const r = run(getAdapter("claude"), [
+      { type: "assistant", message: { content: [{ type: "thinking", thinking: "Plan the change." }] } },
+    ]);
+    expect(r.tool("thinking-1")).toMatchObject({ kind: "thinking", status: "done", detail: "Plan the change." });
+  });
+
+  it("shows a Codex reasoning item as a reasoning row", () => {
+    const r = run(getAdapter("codex"), [
+      { type: "item.completed", item: { id: "r1", type: "reasoning", text: "**Weighing options**\nPick the small change." } },
+    ]);
+    expect(r.tool("r1")).toMatchObject({ name: "Thinking", kind: "thinking", status: "done" });
+  });
+
+  it("reports the prompt Claude just sent as a level, then the window from the result", () => {
+    const r = run(getAdapter("claude"), [
+      { type: "stream_event", event: { type: "message_start", message: { usage: { input_tokens: 100, cache_read_input_tokens: 4000, cache_creation_input_tokens: 900, output_tokens: 1 } } } },
+      { type: "assistant", message: { content: [{ type: "text", text: "Hi" }], usage: { input_tokens: 120, cache_read_input_tokens: 5000, cache_creation_input_tokens: 0 } } },
+      { type: "result", subtype: "success", modelUsage: { "small-model": { inputTokens: 10, contextWindow: 100000 }, "big-model": { inputTokens: 90000, cacheReadInputTokens: 5000, contextWindow: 1000000 } } },
+    ]);
+    expect(r.usage).toEqual([{ used: 5000 }, { used: 5120 }, { window: 1000000 }]);
+  });
+
+  it("does not count a sub-agent's requests as the conversation's context", () => {
+    const r = run(getAdapter("claude"), [
+      { type: "assistant", parent_tool_use_id: "t1", message: { content: [], usage: { input_tokens: 999, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } },
+    ]);
+    expect(r.usage).toEqual([]);
   });
 });

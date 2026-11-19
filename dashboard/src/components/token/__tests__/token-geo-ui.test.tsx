@@ -53,7 +53,6 @@ import { PaymentMethodsTab } from "@/app/dashboard/billing/_components/PaymentMe
 import type { BillingController } from "@/app/dashboard/billing/useBillingController";
 import { ManagedVeniceDepositModal } from "@/components/billing/ManagedVeniceDepositModal";
 import { ConvertPanel } from "@/components/claim/ConvertPanel";
-import { ManagedVeniceCreditsPocket } from "@/components/dashboard/command-center/ManagedVeniceCreditsPocket";
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
 import FullTokenomicsSection from "@/components/landing/FullTokenomicsSection";
 import TokenPageClient from "@/components/token/TokenPageClient";
@@ -165,31 +164,6 @@ describe("managed-Venice top-up dialog", () => {
     expect(screen.getByRole("button", { name: /pay by card/i })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText(/launch bonus/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /start card checkout/i })).toBeInTheDocument();
-  });
-});
-
-describe("command-center credits pocket", () => {
-  const summary = {
-    wallets: {
-      hermesos: { tokenDisplay: "0", lockedValueMicroUsd: 0, availableMicroUsd: 0, reservedMicroUsd: 0 },
-      card: { balanceMicroUsd: 5_000_000, availableMicroUsd: 5_000_000, reservedMicroUsd: 0 },
-    },
-    discount: { rate: "launch_20", discountBps: 2000, launchSubsidyUsedMicroUsd: 1, launchSubsidyCapMicroUsd: 250_000_000 },
-    killSwitch: { active: false, weeklySubsidyUsedMicroUsd: 1, thresholdMicroUsd: 1_000_000_000 },
-    keys: [],
-  } as unknown as Parameters<typeof ManagedVeniceCreditsPocket>[0]["summary"];
-
-  it("drops the launch-bonus rows for a blocked viewer and keeps the balance", () => {
-    mockAccess = BLOCKED;
-    render(<ManagedVeniceCreditsPocket summary={summary} />);
-    expect(screen.queryByText("Launch bonus")).not.toBeInTheDocument();
-    expect(screen.queryByText("Launch allocation")).not.toBeInTheDocument();
-    expect(screen.getByTestId("managed-venice-credits-pocket")).toHaveTextContent("$5.00");
-  });
-
-  it("shows them to an allowed viewer", () => {
-    render(<ManagedVeniceCreditsPocket summary={summary} />);
-    expect(screen.getByText("Launch bonus")).toBeInTheDocument();
   });
 });
 

@@ -69,7 +69,10 @@ const HIVRA_TYPES = new Set([
   "codex",
   "openclaw",
   "agent-zero",
+  "openbot",
+  "nuphos",
   "aeon",
+  "deepseek-harness",
   "linux-desktop",
 ]);
 

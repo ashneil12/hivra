@@ -54,8 +54,9 @@ export async function activateOmarchyNativeSession(
 
   const inspected = await deps.inspectCapability(params.computerId, {
     loadAgent: async candidateId => candidateId === params.computerId ? agent : null,
-  }, { persistReceipt: false });
-  if (!inspected.ok || !inspected.nativeDescriptor || !inspected.receipt) {
+  }, { persistReceipt: false, omarchyInspectionMode: "native" });
+  if (!inspected.ok || !inspected.nativeDescriptor || !inspected.receipt
+    || inspected.nativeDescriptor.route.status !== "configured-proven") {
     return { ok: false, code: "computer_not_ready" };
   }
 

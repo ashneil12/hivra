@@ -92,8 +92,9 @@ export function BuyTokenCard() {
     <section
       aria-label={forToken(buyCopy.ariaLabel)}
       style={{
-        border: '1px solid var(--etched-border)',
-        background: 'var(--bg-surface)',
+        border: '1px solid var(--hg-stroke)',
+        borderRadius: 10,
+        background: 'var(--hg-glass)',
         padding: 'clamp(1.25rem, 4vw, 1.75rem)',
         marginBottom: '1.5rem',
         display: 'flex',
@@ -118,6 +119,7 @@ export function BuyTokenCard() {
           style={{
             padding: '8px 14px',
             border: '1px solid var(--ink-black)',
+            borderRadius: 7,
             background: 'var(--ink-black)',
             color: 'var(--bg-surface)',
             textDecoration: 'none',
@@ -137,7 +139,8 @@ export function BuyTokenCard() {
 
       <div
         style={{
-          border: '1px solid var(--etched-border)',
+          border: '1px solid var(--hg-stroke)',
+          borderRadius: 10,
           padding: '0.65rem 0.85rem',
           background: 'var(--bg-elevated, transparent)',
           display: 'flex',
@@ -231,8 +234,9 @@ export function SelfCustodyVerificationPanel({
     <section
       aria-label={verificationCopy.ariaLabel}
       style={{
-        border: '1px solid var(--etched-border)',
-        background: 'var(--bg-surface)',
+        border: '1px solid var(--hg-stroke)',
+        borderRadius: 10,
+        background: 'var(--hg-glass)',
         padding: 'clamp(1.25rem, 4vw, 1.75rem)',
         marginBottom: '1.5rem',
         display: 'flex',
@@ -261,6 +265,7 @@ export function SelfCustodyVerificationPanel({
                 style={{
                   padding: '9px 14px',
                   border: '1px solid var(--ink-black)',
+                  borderRadius: 10,
                   background: 'var(--ink-black)',
                   color: 'var(--bg-surface)',
                   cursor: locking ? 'wait' : 'pointer',
@@ -286,7 +291,8 @@ export function SelfCustodyVerificationPanel({
                 className={touchStyles.touchTarget}
                 style={{
                   padding: '9px 12px',
-                  border: '1px solid var(--etched-border)',
+                  border: '1px solid var(--hg-stroke)',
+                  borderRadius: 10,
                   background: 'transparent',
                   color: 'var(--ink-black)',
                   cursor: connecting || locking ? 'wait' : 'pointer',
@@ -314,6 +320,7 @@ export function SelfCustodyVerificationPanel({
               style={{
                 padding: '9px 14px',
                 border: '1px solid var(--ink-black)',
+                borderRadius: 10,
                 background: 'var(--ink-black)',
                 color: 'var(--bg-surface)',
                 cursor: connecting ? 'wait' : 'pointer',
@@ -344,7 +351,8 @@ export function SelfCustodyVerificationPanel({
               className="mono"
               title={connectedAddress ?? undefined}
               style={{
-                border: '1px solid var(--etched-border)',
+                border: '1px solid var(--hg-stroke)',
+                borderRadius: 7,
                 padding: '4px 8px',
                 fontSize: 11,
               }}
@@ -394,7 +402,7 @@ export function SelfCustodyVerificationPanel({
             )}
           </p>
           {veniceBoostEligible && (
-            <p style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#16a34a', margin: 0, lineHeight: 1.5, fontWeight: 600 }}>
+            <p style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--hg-ok)', margin: 0, lineHeight: 1.5, fontWeight: 600 }}>
               <CheckCircle2 size={13} style={{ flexShrink: 0 }} />
               Eligible — you&apos;re holding enough VVV for the Venice compute boost (+1 vCPU / +2 GB per agent).
             </p>
@@ -409,12 +417,12 @@ export function SelfCustodyVerificationPanel({
         </p>
       )}
       {success && (
-        <p role="status" style={{ fontSize: 12.5, color: '#16a34a', margin: 0, lineHeight: 1.5 }}>
+        <p role="status" style={{ fontSize: 12.5, color: 'var(--hg-ok)', margin: 0, lineHeight: 1.5 }}>
           {success}
         </p>
       )}
       {error && (
-        <p role="alert" style={{ fontSize: 12.5, color: '#dc2626', margin: 0, lineHeight: 1.5 }}>
+        <p role="alert" style={{ fontSize: 12.5, color: 'var(--hg-bad)', margin: 0, lineHeight: 1.5 }}>
           {error}
         </p>
       )}
@@ -483,12 +491,13 @@ export function QuoteCard({
     return (
       <div
         style={{
-          border: '1px solid #16a34a',
+          border: '1px solid var(--hg-ok)',
+          borderRadius: 10,
           padding: '1rem 1.25rem',
-          background: 'var(--bg-surface)',
+          background: 'var(--hg-glass)',
         }}
       >
-        <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.18em', fontWeight: 700, color: '#16a34a' }}>
+        <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.18em', fontWeight: 700, color: 'var(--hg-ok)' }}>
           {tierLabel(tier)} tier · eligible
         </span>
         <p style={{ margin: '6px 0 0', fontSize: 13, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
@@ -513,9 +522,10 @@ export function QuoteCard({
   return (
     <div
       style={{
-        border: '1px solid var(--etched-border)',
+        border: '1px solid var(--hg-stroke)',
+        borderRadius: 10,
         padding: '1rem 1.25rem',
-        background: 'var(--bg-surface)',
+        background: 'var(--hg-glass)',
         display: 'flex',
         flexDirection: 'column',
         gap: 12,
@@ -536,8 +546,9 @@ export function QuoteCard({
             style={{
               fontSize: 10,
               padding: '3px 7px',
-              border: '1px solid #ff2c2d',
-              color: '#ff2c2d',
+              border: '1px solid var(--hg-stroke-strong)',
+              borderRadius: 7,
+              color: 'var(--hg-text)',
               fontWeight: 700,
               letterSpacing: '0.1em',
             }}
@@ -572,6 +583,7 @@ export function QuoteCard({
               alignSelf: 'flex-start',
               padding: '10px 18px',
               border: '1px solid var(--ink-black)',
+              borderRadius: 10,
               background: 'var(--ink-black)',
               color: 'var(--bg-surface)',
               cursor: minting ? 'wait' : 'pointer',
@@ -621,7 +633,7 @@ export function QuoteCard({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             {/* Ticks every second — keep translators away from the live text
                 node or React's 1s updates race their <font> rewrites. */}
-            <span className="mono notranslate" translate="no" style={{ fontSize: 11, color: '#16a34a' }}>
+            <span className="mono notranslate" translate="no" style={{ fontSize: 11, color: 'var(--hg-ok)' }}>
               Expires in {formatCountdown(remainingMs)}
             </span>
             <span className="mono" style={{ fontSize: 9, opacity: 0.55, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
@@ -648,6 +660,7 @@ export function QuoteCard({
               alignSelf: 'flex-start',
               padding: '8px 14px',
               border: '1px solid var(--ink-black)',
+              borderRadius: 7,
               background: 'var(--ink-black)',
               color: 'var(--bg-surface)',
               cursor: minting ? 'wait' : 'pointer',
@@ -696,14 +709,15 @@ export function QuotePanel({
       aria-label="Deposit quotes"
       style={{
         position: 'relative',
-        border: '1px solid var(--etched-border)',
-        background: 'var(--bg-surface)',
+        border: '1px solid var(--hg-stroke)',
+        borderRadius: 10,
+        background: 'var(--hg-glass)',
         padding: 'clamp(1.5rem, 4vw, 2.25rem)',
         marginBottom: '1.5rem',
         display: 'flex',
         flexDirection: 'column',
         gap: 18,
-        boxShadow: '0 18px 40px -18px rgba(0,0,0,0.18)',
+        boxShadow: 'var(--hg-shadow-md)',
       }}
     >
       <span
@@ -732,6 +746,7 @@ export function QuotePanel({
               color: 'var(--gold-leaf)',
               padding: '4px 10px',
               border: '1px solid color-mix(in srgb, var(--gold-leaf) 35%, transparent)',
+              borderRadius: 7,
               background: 'color-mix(in srgb, var(--gold-leaf) 5%, transparent)',
             }}
           >
@@ -773,10 +788,11 @@ export function QuotePanel({
               flexDirection: 'column',
               alignItems: 'center',
               gap: 4,
-              border: '2px solid #ff2c2d',
+              border: '1px solid var(--hg-stroke-strong)',
+              borderRadius: 10,
               padding: '14px 20px',
               minWidth: 160,
-              background: 'rgba(255, 44, 45, 0.06)',
+              background: 'var(--hg-fill-1)',
               position: 'relative',
             }}
           >
@@ -786,7 +802,7 @@ export function QuotePanel({
                 fontSize: 9,
                 letterSpacing: '0.22em',
                 textTransform: 'uppercase',
-                color: '#ff2c2d',
+                color: 'var(--hg-text)',
                 fontWeight: 800,
               }}
             >
@@ -797,7 +813,7 @@ export function QuotePanel({
               style={{
                 fontSize: '1.85rem',
                 fontWeight: 700,
-                color: '#ff2c2d',
+                color: 'var(--hg-text)',
                 lineHeight: 1.05,
                 letterSpacing: '-0.01em',
               }}
@@ -824,10 +840,11 @@ export function QuotePanel({
               flexDirection: 'column',
               alignItems: 'center',
               gap: 4,
-              border: '2px solid #ff2c2d',
+              border: '1px solid var(--hg-stroke-strong)',
+              borderRadius: 10,
               padding: '14px 20px',
               minWidth: 160,
-              background: 'rgba(255, 44, 45, 0.06)',
+              background: 'var(--hg-fill-1)',
             }}
           >
             <span
@@ -836,7 +853,7 @@ export function QuotePanel({
                 fontSize: 9,
                 letterSpacing: '0.22em',
                 textTransform: 'uppercase',
-                color: '#ff2c2d',
+                color: 'var(--hg-text)',
                 fontWeight: 800,
               }}
             >
@@ -847,7 +864,7 @@ export function QuotePanel({
               style={{
                 fontSize: '1.35rem',
                 fontWeight: 700,
-                color: '#ff2c2d',
+                color: 'var(--hg-text)',
                 lineHeight: 1.1,
                 letterSpacing: '-0.01em',
                 textAlign: 'center',

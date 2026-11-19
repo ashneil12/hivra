@@ -5,6 +5,9 @@ import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import '@testing-library/jest-dom';
 import { WebuiIframe } from '../WebuiIframe';
 
+jest.mock("@/components/ui/ThinkingOrb", () => ({
+  ThinkingOrb: ({ label }: { label?: string }) => <span data-testid="thinking-orb" role="img" aria-label={label ?? "Working"} />,
+}));
 jest.mock('@/lib/telemetry/iframe-events', () => ({
   trackIframeLoaded: jest.fn(),
   trackIframeError: jest.fn(),
@@ -121,13 +124,13 @@ describe('WebuiIframe', () => {
     expect(window.open).not.toHaveBeenCalled();
   });
 
-  it('uses dashboard-native square chrome for handoff loading instead of teal/purple glass styling', async () => {
+  it('uses dashboard-native chrome for handoff loading instead of teal/purple glass styling', async () => {
     mockSuccessfulFetch();
     render(<WebuiIframe instanceId="inst_theme" />);
 
     const status = screen.getByRole('status', { name: /connecting/i });
     expect(status).toHaveStyle({
-      borderRadius: '0',
+      borderRadius: '14px',
     });
 
     const shellMarkup = status.outerHTML;

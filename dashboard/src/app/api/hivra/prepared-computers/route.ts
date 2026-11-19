@@ -1,4 +1,5 @@
 export const runtime = "nodejs";
+export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -10,7 +11,6 @@ import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { sanitizeHivraAgentRow } from "@/lib/hivra/agent-llm";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
 import { claimPreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
 import { log } from "@/lib/logger";
@@ -26,7 +26,6 @@ export async function POST(request: NextRequest) {
   try {
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
-    if (!isHivraApiAllowed(request.headers.get("host"))) return apiError("Not found", 404);
     if (request.nextUrl.search || !isSameOriginMutationRequest(request)) return apiError("Request denied", 403);
     if (!hasStrictJsonContentType(request) || request.headers.has("content-encoding")) return apiError("JSON required", 415);
     const limited = enforceAuthenticatedRouteRateLimit(request, {
@@ -39,7 +38,7 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) return apiError("Invalid request", 400);
     try {
       const agent = await claimPreparedCanaryComputer({ userId, ...parsed.data });
-      return apiSuccess({ agent: sanitizeHivraAgentRow(agent) }, 201);
+      return apiSuccess({ agent: sanitizeHivraAgentRow(agent) }, agent.status === "provisioning" ? 202 : 201);
     } catch (error) {
       const raw = error instanceof Error ? error.message : FALLBACK_CLAIM_CODE;
       const code = CLAIM_CODE_PATTERN.test(raw) ? raw : FALLBACK_CLAIM_CODE;

@@ -474,4 +474,25 @@ describe("POST /api/instances/[id]/oauth/codex/start", () => {
       })
     );
   });
+
+  it("refuses a device URL that is not https instead of returning it to the browser", async () => {
+    (sshExec as jest.Mock)
+      .mockResolvedValueOnce({ ok: true, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({
+        ok: true,
+        stdout: '{"url":"javascript:alert(1)","code":"ABCD-EFGH"}',
+        stderr: "",
+      });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/inst-123/oauth/codex/start", { method: "POST" }),
+      { params: Promise.resolve({ id: "inst-123" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(json.success).toBe(false);
+    expect(json.data).toBeUndefined();
+    expect(JSON.stringify(json)).not.toContain("javascript:alert(1)");
+  });
 });

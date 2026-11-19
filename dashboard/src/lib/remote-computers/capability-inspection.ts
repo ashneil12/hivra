@@ -591,7 +591,7 @@ export function verifyDesktopReadinessReceipt(
 export async function inspectRemoteDesktopCapability(
   agentId: string,
   dependencies: Partial<Dependencies> = {},
-  options: { preparationOperationId?: string; persistReceipt?: boolean } = {},
+  options: { preparationOperationId?: string; persistReceipt?: boolean; omarchyInspectionMode?: "browser" | "native" } = {},
 ): Promise<RemoteDesktopCapabilityInspectionResult> {
   if (!UUID.test(agentId)) return { ok: false, agentId, targetId: null, vmid: null, error: "Agent id is invalid." };
   const deps = { ...DEFAULT_DEPENDENCIES, ...dependencies };
@@ -641,6 +641,7 @@ export async function inspectRemoteDesktopCapability(
         vmid,
         guestIp: ip,
         publicIpv4: context.env.PROXMOX_PUBLIC_IP?.trim() ?? "",
+        inspectionMode: options.omarchyInspectionMode ?? "browser",
         infrastructureBindingTag: context.infrastructureBindingTag,
       })
       : windows

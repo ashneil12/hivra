@@ -139,8 +139,8 @@ describe("/api/managed-venice/internal/authorize: the Worker's reference", () =>
     expect(cap).toBeLessThan(128_000);
     const [hold] = mockMemory.tables.managed_venice_reservations;
     expect(hold).toMatchObject({ reference_id: REFERENCE, status: "active" });
-    // $30 per million output tokens: the hold covers every token of the cap.
-    expect(Number(hold.reserved_micro_usd)).toBeGreaterThanOrEqual(cap * 30);
+    // $25 per million output tokens: the hold covers every token of the cap.
+    expect(Number(hold.reserved_micro_usd)).toBeGreaterThanOrEqual(cap * 25);
     expect(Number(hold.reserved_micro_usd)).toBeLessThanOrEqual(1_000_000);
   });
 

@@ -110,3 +110,145 @@ it("keeps enrollment inputs free of touch-keyboard capitalization", async () => 
   }
   expect(screen.getByLabelText("HTTPS coordination URL")).toHaveAttribute("inputmode", "url");
 });
+
+describe("private network v2 (flag on)", () => {
+  const FLAG = "NEXT_PUBLIC_HIVRA_PRIVATE_NETWORK_V2";
+  const saved = process.env[FLAG];
+  beforeEach(() => { process.env[FLAG] = "1"; });
+  afterEach(() => { if (saved === undefined) delete process.env[FLAG]; else process.env[FLAG] = saved; });
+
+  const live = (extra: Record<string, unknown> = {}) => ({ state: "connected", loginServer: "https://controlplane.tailscale.com",
+    ipv4: "100.64.0.7", observedAt: "2026-11-11T12:00:00Z", provider: "tailscale", ...extra });
+
+  it("offers three networks and tells people to make a one-off key with tag:hivra", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: null } }));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    expect(await screen.findByRole("radio", { name: "Tailscale" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Headscale" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "NetBird" })).toBeInTheDocument();
+    expect(screen.getByText(/one-off, pre-approved key with the tag tag:hivra/)).toBeInTheDocument();
+  });
+
+  it("sends the chosen provider, and an optional NetBird server only when given", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: null } }))
+      .mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true,
+        connection: live({ provider: "netbird", loginServer: "https://api.netbird.io", ipv4: "100.92.1.2" }) } }));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    fireEvent.click(await screen.findByRole("radio", { name: "NetBird" }));
+    fireEvent.change(screen.getByLabelText("One-time enrollment key"), { target: { value: "nb-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect private network" }));
+    expect(await screen.findByText("100.92.1.2")).toBeInTheDocument();
+    expect(JSON.parse(mockFetch.mock.calls[1][1].body)).toEqual({ action: "connect", provider: "netbird", authKey: "nb-secret" });
+    expect(screen.getByText(/Make a setup key that can be used once/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Policy to copy")).not.toBeInTheDocument();
+  });
+
+  it("shows a collapsed policy after connecting and copies it", async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    mockFetch.mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: live({ canSeeOtherDevices: false, visiblePeerCount: 0 }) } }));
+    const { container } = render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    expect(await screen.findByText("Keep your other devices safe")).toBeInTheDocument();
+    expect(container.querySelector("details")).not.toHaveAttribute("open");
+    expect(screen.getByText(/no other devices\. This is what it can see, not a proof/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Policy to copy").textContent).toContain('"tag:hivra:22"');
+    fireEvent.click(screen.getByRole("button", { name: "Copy policy" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"tagOwners"')));
+    expect(await screen.findByText("Copied")).toBeInTheDocument();
+  });
+
+  it("warns gently, and opens the policy, when the computer can see other devices", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true,
+      connection: live({ canSeeOtherDevices: true, visiblePeerCount: 3 }) } }));
+    const { container } = render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    expect(await screen.findByText(/shows this computer 3 other devices/)).toBeInTheDocument();
+    expect(screen.getByText(/not a proof of what it can reach/)).toBeInTheDocument();
+    expect(container.querySelector("details")).toHaveAttribute("open");
+  });
+
+  it("warns when the computer joined without tag:hivra", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: live({ taggedHivra: false }) } }));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    expect(await screen.findByText(/joined without the tag:hivra tag/)).toBeInTheDocument();
+  });
+
+  it("switches network in one action from the connected screen", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: live() } }))
+      .mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true,
+        connection: live({ provider: "netbird", loginServer: "https://api.netbird.io", ipv4: "100.92.1.2" }) } }));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use a different network" }));
+    fireEvent.click(screen.getByRole("radio", { name: "NetBird" }));
+    fireEvent.change(screen.getByLabelText("One-time enrollment key"), { target: { value: "nb-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Switch private network" }));
+    expect(await screen.findByText("100.92.1.2")).toBeInTheDocument();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(mockFetch.mock.calls[1][1].body).provider).toBe("netbird");
+  });
+
+  it("shows the plain-words reason when a connect is refused", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: null } }))
+      .mockResolvedValueOnce(jsonResponse({ success: false, failureCode: "client_too_old",
+        error: "This computer's Tailscale is older than 1.104.4, which Hivra needs to connect safely. Update Tailscale on the computer, then connect again." }, 202));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    fireEvent.change(await screen.findByLabelText("One-time enrollment key"), { target: { value: "k" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect private network" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/older than 1\.104\.4/);
+  });
+});
+
+it("keeps the original screen when the flag is off", async () => {
+  mockFetch.mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: null } }));
+  render(<HivraPrivateAccessPanel agentId="agent-1" />);
+  await screen.findByLabelText("One-time enrollment key");
+  expect(screen.queryByRole("radio", { name: "NetBird" })).not.toBeInTheDocument();
+  expect(screen.queryByText(/tag:hivra/)).not.toBeInTheDocument();
+});
+
+describe("protection and wording", () => {
+  const FLAG = "NEXT_PUBLIC_HIVRA_PRIVATE_NETWORK_V2";
+  const saved = process.env[FLAG];
+  afterEach(() => { if (saved === undefined) delete process.env[FLAG]; else process.env[FLAG] = saved; });
+  const live = (extra: Record<string, unknown> = {}) => ({ state: "connected", loginServer: "https://controlplane.tailscale.com",
+    ipv4: "100.64.0.7", observedAt: "2026-11-12T12:00:00Z", provider: "tailscale", ...extra });
+
+  it("says when the safety rule is missing and reapplies it with one action, even with the flag off", async () => {
+    delete process.env[FLAG];
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: live({ blockPresent: false, clientVersion: "1.104.6" }) } }))
+      .mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: live({ blockPresent: true, clientVersion: "1.104.6" }) } }));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    expect(await screen.findByText(/safety rule is not active on this computer/)).toBeInTheDocument();
+    expect(screen.getByText("1.104.6")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reapply protection" }));
+    await waitFor(() => expect(screen.queryByText(/safety rule is not active/)).not.toBeInTheDocument());
+    expect(JSON.parse(mockFetch.mock.calls[1][1].body)).toEqual({ action: "reapply" });
+  });
+
+  it("shows nothing about protection when the computer did not report it", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: live() } }));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    await screen.findByText("100.64.0.7");
+    expect(screen.queryByRole("button", { name: "Reapply protection" })).not.toBeInTheDocument();
+  });
+
+  it("explains what disconnecting NetBird does, not what it does for Tailscale", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true,
+      connection: live({ providerKind: "netbird", loginServer: "https://api.netbird.io" }) } }));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    expect(await screen.findByText(/removes its saved login, so it cannot reconnect by itself/)).toBeInTheDocument();
+    expect(screen.queryByText(/Tailscale or Headscale admin page/)).not.toBeInTheDocument();
+  });
+
+  it("tells people to merge the policy, and where their own login goes", async () => {
+    process.env[FLAG] = "1";
+    mockFetch.mockResolvedValueOnce(jsonResponse({ success: true, data: { supported: true, connection: live() } }));
+    render(<HivraPrivateAccessPanel agentId="agent-1" />);
+    expect(await screen.findByText(/Merge these entries into your existing Tailscale policy file/)).toBeInTheDocument();
+    expect(screen.getByText(/Pasting over the whole file replaces your other rules/)).toBeInTheDocument();
+    expect(screen.getByText(/Replace REPLACE-ME@example\.com with your own login/)).toBeInTheDocument();
+  });
+});

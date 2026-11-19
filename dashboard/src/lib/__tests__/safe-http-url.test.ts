@@ -1,4 +1,4 @@
-import { hasSafeHttpAccessUrl, isSafeHttpNavigationUrl } from "@/lib/safe-http-url";
+import { hasSafeHttpAccessUrl, isSafeHttpNavigationUrl, readHttpsAuthorizationUrl } from "@/lib/safe-http-url";
 
 describe("isSafeHttpNavigationUrl", () => {
   it.each([
@@ -72,4 +72,24 @@ describe("hasSafeHttpAccessUrl", () => {
       expect(hasSafeHttpAccessUrl(value)).toBe(false);
     },
   );
+});
+
+describe("readHttpsAuthorizationUrl", () => {
+  it("returns an https authorization URL unchanged", () => {
+    expect(readHttpsAuthorizationUrl("https://auth.openai.com/codex/device")).toBe("https://auth.openai.com/codex/device");
+  });
+
+  it.each([
+    "javascript:alert(1)",
+    "http://auth.example.test/device",
+    "data:text/html,<h1>x</h1>",
+    "not a url",
+    "",
+  ])("reads %s as no URL", (value) => {
+    expect(readHttpsAuthorizationUrl(value)).toBe("");
+  });
+
+  it.each([undefined, null, 42, ["https://auth.example.test"]])("reads non-string %p as no URL", (value) => {
+    expect(readHttpsAuthorizationUrl(value)).toBe("");
+  });
 });

@@ -11,13 +11,11 @@ import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { setTemplateVisibility, deleteTemplate } from "@/lib/hivra/agent-templates";
 
 // PATCH /api/hivra/templates/[id] { visibility } — private | link | public.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);
@@ -39,7 +37,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 // DELETE /api/hivra/templates/[id].
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    if (!isHivraApiAllowed(req.headers.get("host"))) return apiError("Not found", 404);
     const { id } = await params;
     const { userId } = await auth();
     if (!userId) return apiError("Unauthorized", 401);

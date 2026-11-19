@@ -16,7 +16,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "seed": "tsx src/cli/seed.ts",
-    "test": "vitest run --reporter=verbose",
+    "test": "vitest run --reporter=verbose tests/*.test.ts",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "lint": "tsc --noEmit",
@@ -29,7 +29,7 @@
     "imapflow": "^1.0.180",
     "mailparser": "^3.7.2",
     "pino": "^9.5.0",
-    "playwright": "^1.49.0",
+    "playwright": "1.64.1",
     "yaml": "^2.6.1",
     "zod": "^3.23.8"
   },

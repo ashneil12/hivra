@@ -8,16 +8,15 @@ import "server-only";
 // gates (sign-in, same origin, and the refusals for kinds of computer that
 // can't be updated here) and answers with this outcome.
 //
-// For Claude Code and Codex the same update also schedules the move to the
-// version Hivra has tested (AGENT_CLI_VERSIONS), and for the Aeon dashboard,
-// OpenClaw and Agent Zero the move to the tested app version
-// (AGENT_APP_VERSIONS); the helper's report of that comes back as agentCli or
-// agentApp, and is recorded for the Updates section.
+// The same update also schedules the move of the agent's CLI or app to its
+// upstream's newest release (Hivra pins no version; the target is `latest`);
+// the helper's report of that comes back as agentCli or agentApp, and is
+// recorded for the Updates section.
 
 import { randomUUID } from "node:crypto";
 import { log } from "@/lib/logger";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
-import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS, PORTABLE_HIVRA_PROVISIONER_VERSION } from "@/lib/infrastructure/portable-provisioner-contract";
+import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "@/lib/infrastructure/portable-provisioner-contract";
 import { logHivraAgentEvent } from "./agent-events";
 import { shellQuote } from "./proxmox-target";
 import { lifecycleMutationPrelude } from "./agent-power-scripts";
@@ -28,6 +27,8 @@ import {
   releaseHivraAgentOperation,
 } from "./agent-operation-store";
 import { isPreparedProfile, runtimeUpdateRefusal } from "./lifecycle-support";
+import { isAgentAwake } from "./agent-sleep-store";
+import { wakeForUserAction } from "./sleep-aware";
 import {
   lifecycleActivityCredential,
   providerFailureDetail,
@@ -35,6 +36,7 @@ import {
   type HivraLifecycleAgentRow,
 } from "./agent-lifecycle-host";
 import {
+  AGENT_UPDATE_TARGET,
   agentSoftwareSubject,
   parseAgentAppReport,
   parseAgentCliReport,
@@ -44,14 +46,12 @@ import {
 import { HOST_READINESS_TIMEOUT_MS, RUNTIME_UPDATE_TIMEOUT_MS } from "./lifecycle-timeouts";
 import {
   readAgentSoftwareRecord,
-  recordAutomaticAgentSoftwareResult,
   recordOwnerAgentSoftwareRequest,
   requestResultOf,
 } from "./agent-cli-store";
 
 // The host script's bound (RUNTIME_UPDATE_TIMEOUT_MS) and the readiness
-// check's live in lifecycle-timeouts.ts, which the automatic-update cron
-// budgets around.
+// check's live in lifecycle-timeouts.ts.
 //
 // The updater's own deadline, counted on the host from the first line of the
 // script (so it includes the FD8 wait). The margin covers the SSH connection
@@ -59,7 +59,8 @@ import {
 // skips its optional reporter step rather than run past this deadline.
 const RUNTIME_UPDATE_HOST_BUDGET_SECONDS = RUNTIME_UPDATE_TIMEOUT_MS / 1000 - 20;
 
-export type HivraAgentRuntimeUpdateTrigger = "owner" | "auto";
+/** Only an agent's owner starts this update: Hivra never updates an agent by itself. */
+export type HivraAgentRuntimeUpdateTrigger = "owner";
 
 export type HivraAgentRuntimeUpdateFailureCode =
   | "unsupported"
@@ -70,7 +71,8 @@ export type HivraAgentRuntimeUpdateFailureCode =
   | "not_running"
   | "busy"
   | "unverified"
-  | "superseded";
+  | "superseded"
+  | "asleep";
 
 export type HivraAgentRuntimeUpdateOutcome =
   | { ok: true; agentCli: AgentCliUpdateReport | null; agentApp: AgentAppUpdateReport | null }
@@ -92,10 +94,8 @@ type RuntimeUpdateInput = {
  * VM. The caller has already loaded `agent` scoped to `userId`. Returns why it
  * didn't run instead of throwing, except for unexpected errors.
  *
- * For a Claude Code or Codex agent, and an Aeon, OpenClaw or Agent Zero agent,
- * it then records the request against the version Hivra has tested: an owner's
- * request here; an automatic one's result (CLIs only) against the claim the
- * sweep made before calling.
+ * For an agent whose CLI or app Hivra updates, it then records the owner's
+ * request (target `latest`) for the Updates section.
  */
 export async function runHivraAgentRuntimeUpdate(input: RuntimeUpdateInput): Promise<HivraAgentRuntimeUpdateOutcome> {
   const requestedAt = new Date();
@@ -106,15 +106,13 @@ export async function runHivraAgentRuntimeUpdate(input: RuntimeUpdateInput): Pro
     const report = !outcome.ok ? null : subject.cli
       ? (outcome.agentCli?.name === subject.cli ? outcome.agentCli : null)
       : (outcome.agentApp?.name === subject.app ? outcome.agentApp : null);
-    const tested = subject.cli ? AGENT_CLI_VERSIONS[subject.cli] : AGENT_APP_VERSIONS[subject.app!].version;
-    const target = report?.target ?? tested;
+    // Hivra pins no version: every update aims at upstream's newest release.
+    const target = report?.target ?? AGENT_UPDATE_TARGET;
     const result = requestResultOf(outcome.ok ? { ok: true, report } : outcome);
     // An owner's request is recorded once it reached the host (or found it
-    // not ready or busy); the sweep's claim always gets its result.
+    // not ready or busy).
     const reached = outcome.ok || outcome.code === "host_not_ready" || outcome.code === "busy" || outcome.code === "unverified";
-    if (input.trigger === "auto") {
-      if (subject.cli) await recordAutomaticAgentSoftwareResult(ref, tested, result, report);
-    } else if (reached) {
+    if (reached) {
       await recordOwnerAgentSoftwareRequest({
         agent: ref, subject, target, requestedAt, result, report,
         previous: await readAgentSoftwareRecord(ref.id, ref.user_id),
@@ -125,17 +123,21 @@ export async function runHivraAgentRuntimeUpdate(input: RuntimeUpdateInput): Pro
 }
 
 async function updateInPlace(input: RuntimeUpdateInput): Promise<HivraAgentRuntimeUpdateOutcome> {
-  const { userId, agent, trigger } = input;
+  const { userId, agent } = input;
   const source = input.source ?? "hivra/agents/[id]/action";
-  // The route refuses these before calling; the sweep never selects them.
-  // A DeepSeek update restarts DeepSeek and ends a task it is working on, so
-  // only its owner starts one; the automatic sweep never does. A Linux Sandbox
+  // The route refuses these before calling. A Linux Sandbox
   // updates through its adapter (mutateGvisorComputer) and a My cloud agent
   // through the provider lane (provider-runtime-update.ts), never this Proxmox helper.
   if (runtimeUpdateRefusal(agent) || isPreparedProfile(agent) || agent.computer_substrate === "gvisor"
-    || agent.computer_substrate === "provider-vm"
-    || (agent.type === "deepseek-harness" && trigger === "auto")) {
+    || agent.computer_substrate === "provider-vm") {
     return failure("unsupported", 409, "This computer can't update its connection service here. Nothing was changed.");
+  }
+
+  // A sleeping computer cannot take the update: the owner's request wakes it.
+  if (!isAgentAwake(agent)) {
+    const wake = await wakeForUserAction(agent);
+    if (!wake.ok) return failure("asleep", wake.status === 402 ? 402 : 503, wake.message);
+    if (wake.cold) return failure("not_running", 409, "Start this computer before updating its connection service.");
   }
 
   const prepared = await resolveHivraLifecycleTarget({ userId, agent, action: "update_runtime", source });
@@ -208,7 +210,6 @@ printf 'HIVRA_RUNTIME_UPDATE_READY\\n'`,
       userId,
       agentId: agent.id,
       vmid,
-      trigger,
       hostOk: r.ok,
       errorMessage: r.error ?? null,
       stderr: r.stderr?.slice(0, 300) ?? null,
@@ -257,8 +258,7 @@ printf 'HIVRA_RUNTIME_UPDATE_READY\\n'`,
     event: "runtime_updated",
     agentId: String(agent.id),
     agentType: typeof agent.type === "string" ? agent.type : null,
-    // An owner's update is recorded exactly as before; only the sweep's says so.
-    detail: { inPlace: true, ...(agentCli ? { agentCli } : {}), ...(agentApp ? { agentApp } : {}), ...(trigger === "auto" ? { trigger } : {}) },
+    detail: { inPlace: true, ...(agentCli ? { agentCli } : {}), ...(agentApp ? { agentApp } : {}) },
   });
   return { ok: true, agentCli, agentApp };
 }

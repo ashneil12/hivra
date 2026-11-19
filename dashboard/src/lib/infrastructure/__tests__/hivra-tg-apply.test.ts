@@ -1,7 +1,7 @@
 /** @jest-environment node */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, existsSync, symlinkSync, lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -72,6 +72,26 @@ fi
     expect(run("disable").status).toBe(0);
     expect(existsSync(path.join(envDir, "tg.env"))).toBe(false);
     expect(calls().slice(-1)).toEqual(["systemctl disable --now bux-tg"]);
+  });
+
+  it("does not follow a symlink a hostile bux plants at tg.env (no arbitrary root write)", () => {
+    // /etc/bux is group-bux-writable, so a compromised bux can swap tg.env for
+    // a symlink to a root-owned target (e.g. /etc/cron.d/x) and try to make the
+    // root helper's write land there. The helper must stage + rename, never
+    // write through the planted symlink.
+    mkdirSync(envDir, { recursive: true });
+    const victim = path.join(root, "victim-root-owned");
+    writeFileSync(victim, "ORIGINAL-ROOT-CONTENT\n");
+    symlinkSync(victim, path.join(envDir, "tg.env"));
+
+    const result = run("apply", "TG_BOT_TOKEN=333:attacker\n");
+    expect(result.status).toBe(0);
+
+    // The arbitrary root-owned target is untouched...
+    expect(readFileSync(victim, "utf8")).toBe("ORIGINAL-ROOT-CONTENT\n");
+    // ...and tg.env is now a real file holding the token, not the symlink.
+    expect(lstatSync(path.join(envDir, "tg.env")).isSymbolicLink()).toBe(false);
+    expect(readFileSync(path.join(envDir, "tg.env"), "utf8")).toBe("TG_BOT_TOKEN=333:attacker\n");
   });
 
   it("rejects an unknown action without touching the bot", () => {

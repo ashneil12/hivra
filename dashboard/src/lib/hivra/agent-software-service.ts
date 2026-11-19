@@ -5,17 +5,13 @@ import "server-only";
 // section, the agent header and the automatic-update sweep all share. The
 // computer's address and bearer are used here and never leave the server.
 
-import { AGENT_APP_VERSIONS, AGENT_CLI_VERSIONS } from "@/lib/infrastructure/portable-provisioner-contract";
 import { readAgentSoftwareFromBox } from "./agent-cli-meta";
 import { saveAgentSoftwareObservation, type StoredAgentSoftware } from "./agent-cli-store";
 import {
-  agentCliAutoUpdateMode,
   agentSoftwareSubject,
   deriveAgentSoftware,
-  effectiveAgentCliAutoUpdate,
-  isAgentSoftwareVersion,
+  isAgentSoftwareTarget,
   summarizeAgentSoftware,
-  type AgentCliAutoUpdateMode,
   type AgentCliRequestResult,
   type AgentCliUpdateState,
   type AgentSoftwareRecord,
@@ -39,22 +35,6 @@ export interface AgentSoftwareAgentRow {
   chat_url?: unknown;
   cf_hostname?: unknown;
   api_token?: unknown;
-}
-
-export function testedVersionFor(subject: AgentSoftwareSubject): string | null {
-  if (subject.cli) return AGENT_CLI_VERSIONS[subject.cli];
-  return subject.app ? AGENT_APP_VERSIONS[subject.app].version : null;
-}
-
-/** The app's tested versions Hivra moved off, newest first (empty for the CLIs). */
-export function previousVersionsFor(subject: AgentSoftwareSubject): string[] {
-  return subject.app ? AGENT_APP_VERSIONS[subject.app].previous.map((pin) => pin.version) : [];
-}
-
-
-/** The rollout switch for automatic updates (unset means off). */
-export function configuredAgentCliAutoUpdateMode(env: Record<string, string | undefined> = process.env): AgentCliAutoUpdateMode {
-  return agentCliAutoUpdateMode(env.HIVRA_AGENT_CLI_AUTO_UPDATE);
 }
 
 export function isAgentSoftwareStale(record: AgentSoftwareRecord | null, now: number): boolean {
@@ -83,7 +63,6 @@ export function observeAgentSoftware(agent: AgentSoftwareAgentRow, subject: Agen
     return saveAgentSoftwareObservation({
       agent: { id: agent.id, user_id: agent.user_id, type: agent.type },
       subject,
-      tested: testedVersionFor(subject),
       reading,
       previous,
       now: new Date(),
@@ -97,8 +76,7 @@ export function observeAgentSoftware(agent: AgentSoftwareAgentRow, subject: Agen
 export function agentSoftwareSummaryFor(agent: AgentSoftwareAgentRow, record: AgentSoftwareRecord | null, now: number): AgentSoftwareSummary | null {
   const subject = agentSoftwareSubject(agent);
   if (!subject) return null;
-  const tested = testedVersionFor(subject);
-  return summarizeAgentSoftware(deriveAgentSoftware({ subject, status: agent.status, tested, previous: previousVersionsFor(subject), record, now }), subject, tested);
+  return summarizeAgentSoftware(deriveAgentSoftware({ subject, status: agent.status, record, now }), subject);
 }
 
 export type AgentSoftwareResponse =
@@ -108,50 +86,30 @@ export type AgentSoftwareResponse =
       cli: AgentSoftwareSubject["cli"];
       app: AgentSoftwareSubject["app"];
       view: AgentSoftwareView;
-      tested: string | null;
       observedAt: string | null;
       update: { state: AgentCliUpdateState; target: string; reason: string | null; updatedAt: string | null } | null;
       lastRequest: { by: "owner" | "auto"; at: string; target: string; result: AgentCliRequestResult | null } | null;
-      /** Absent for agents without a CLI Hivra updates. */
-      autoUpdate: {
-        mode: AgentCliAutoUpdateMode;
-        enabled: boolean;
-        source: "default" | "owner";
-        pausedFor: { target: string; reason: "rolled_back" | "failed" } | null;
-      } | null;
     };
 
 /** What the owner API answers: public fields only, never the computer's address or bearer. */
-export function agentSoftwareResponse(agent: AgentSoftwareAgentRow, record: AgentSoftwareRecord | null, mode: AgentCliAutoUpdateMode, now: number): AgentSoftwareResponse {
+export function agentSoftwareResponse(agent: AgentSoftwareAgentRow, record: AgentSoftwareRecord | null, now: number): AgentSoftwareResponse {
   const subject = agentSoftwareSubject(agent);
   if (!subject) return { supported: false };
-  const tested = testedVersionFor(subject);
-  const view = deriveAgentSoftware({ subject, status: agent.status, tested, previous: previousVersionsFor(subject), record, now });
-  const auto = effectiveAgentCliAutoUpdate(record, agent.deployment_mode);
+  const view = deriveAgentSoftware({ subject, status: agent.status, record, now });
   const updateState = record?.update_state as AgentCliUpdateState | null | undefined;
-  const isVersion = (value: unknown): value is string => isAgentSoftwareVersion(subject.software, value);
+  // Every update's target is the word "latest": Hivra pins no version.
+  const isTarget = (value: unknown): value is string => isAgentSoftwareTarget(subject.software, value);
   return {
     supported: true,
     cli: subject.cli,
     app: subject.app,
     view,
-    tested,
     observedAt: record?.observed_at ?? null,
-    update: updateState && isVersion(record?.update_target)
+    update: updateState && isTarget(record?.update_target)
       ? { state: updateState, target: record.update_target, reason: record.update_reason ?? null, updatedAt: record.update_updated_at ?? null }
       : null,
-    lastRequest: record?.requested_at && isVersion(record.requested_target) && (record.requested_by === "owner" || record.requested_by === "auto")
+    lastRequest: record?.requested_at && isTarget(record.requested_target) && (record.requested_by === "owner" || record.requested_by === "auto")
       ? { by: record.requested_by, at: record.requested_at, target: record.requested_target, result: (record.request_result ?? null) as AgentCliRequestResult | null }
-      : null,
-    autoUpdate: subject.cli
-      ? {
-          mode,
-          enabled: auto.enabled,
-          source: auto.source,
-          pausedFor: isVersion(record?.auto_paused_target) && (record.auto_paused_reason === "rolled_back" || record.auto_paused_reason === "failed")
-            ? { target: record.auto_paused_target, reason: record.auto_paused_reason }
-            : null,
-        }
       : null,
   };
 }

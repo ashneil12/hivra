@@ -16,6 +16,11 @@ import {
   stopNativeOmarchyDesktop,
 } from "@/lib/remote-computers/native-desktop-handoff";
 import {
+  WINDOWS_DESKTOP_REASON_COPY,
+  isWindowsDesktopReason,
+  type WindowsDesktopReasonAction,
+} from "@/lib/remote-computers/windows-desktop-reason";
+import {
   DESKTOP_STREAMING_MODE_DETAILS,
   DESKTOP_STREAMING_MODES,
   readStreamModePreference,
@@ -133,6 +138,7 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
   const [windowsPreparationState, setWindowsPreparationState] = useState<WindowsPreparationState>("idle");
   const [windowsPreparationMessage, setWindowsPreparationMessage] = useState("");
   const [windowsLaunchState, setWindowsLaunchState] = useState<WindowsLaunchState>("idle");
+  const [windowsReasonAction, setWindowsReasonAction] = useState<WindowsDesktopReasonAction | null>(null);
   const [windowsLaunchUrl, setWindowsLaunchUrl] = useState<string | null>(null);
   const [windowsLaunchMode, setWindowsLaunchMode] = useState<StreamMode | null>(null);
   const [windowsFrameLoaded, setWindowsFrameLoaded] = useState(false);
@@ -680,12 +686,17 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
     const payload = await response.json().catch(() => null) as {
       success?: boolean;
       code?: string;
+      reason?: string;
       error?: string;
       data?: { launchUrl?: string };
     } | null;
     if (attempt !== windowsAttemptRef.current) return "failed";
     if (!response.ok || payload?.success !== true || typeof payload.data?.launchUrl !== "string") {
-      setWindowsPreparationMessage(payload?.error || "The fast Windows desktop could not be opened.");
+      // A coarse reason from the server becomes one plain sentence and one
+      // action; without one the server's own message stands.
+      const reasonCopy = isWindowsDesktopReason(payload?.reason) ? WINDOWS_DESKTOP_REASON_COPY[payload.reason] : null;
+      setWindowsReasonAction(reasonCopy?.action ?? null);
+      setWindowsPreparationMessage(reasonCopy?.text ?? (payload?.error || "The fast Windows desktop could not be opened."));
       return response.status === 409
         && (payload?.code === "windows_prepare_required" || payload?.code === "windows_prepare_resume_required")
         ? "prepare_required" : "failed";
@@ -713,6 +724,7 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
   const openWindowsDesktop = async () => {
     if (profile !== "windows" || windowsLaunchState === "opening") return;
     const attempt = ++windowsAttemptRef.current;
+    setWindowsReasonAction(null);
     setWindowsLaunchState("opening");
     setWindowsPreparationMessage(`Opening ${STREAM_MODE_DETAILS[streamModeRef.current].status} over the fast Windows connection…`);
     try {
@@ -782,13 +794,20 @@ export function HivraConsoleDesktop({ computerId, name, profile, active = true, 
               ))}
             </select>
           </label>
-          <button ref={windowsFastOpenButtonRef} type="button" onClick={() => void openWindowsDesktop()}
-            disabled={windowsBusy} className={styles.stripAction}
-            aria-label={windowsLaunchState === "failed" ? "Try again" : windowsLaunchUrl ? "Reconnect Windows desktop" : "Open fast Windows desktop"}
-            title={windowsQualityChanged ? "Reconnect to apply the selected quality" : "Open Windows over the verified private RDP gateway"}>
-            {windowsBusy ? "Opening" : windowsLaunchState === "failed" ? "Try again" : windowsLaunchUrl ? "Reconnect" : "Open"}
-            {windowsLaunchUrl || windowsLaunchState === "failed" ? <RefreshCw size={11} /> : <MonitorUp size={11} />}
-          </button>
+          {windowsLaunchState === "failed" && !windowsBusy && windowsReasonAction === "restart" ? (
+            <a href={`/dashboard/agent/${encodeURIComponent(computerId)}?tab=manage`} className={styles.stripAction}
+              title="Open Manage to restart this computer">
+              Restart in Manage
+            </a>
+          ) : (
+            <button ref={windowsFastOpenButtonRef} type="button" onClick={() => void openWindowsDesktop()}
+              disabled={windowsBusy} className={styles.stripAction}
+              aria-label={windowsLaunchState === "failed" ? "Try again" : windowsLaunchUrl ? "Reconnect Windows desktop" : "Open fast Windows desktop"}
+              title={windowsQualityChanged ? "Reconnect to apply the selected quality" : "Open Windows over the verified private RDP gateway"}>
+              {windowsBusy ? "Opening" : windowsLaunchState === "failed" ? "Try again" : windowsLaunchUrl ? "Reconnect" : "Open"}
+              {windowsLaunchUrl || windowsLaunchState === "failed" ? <RefreshCw size={11} /> : <MonitorUp size={11} />}
+            </button>
+          )}
           <button type="button" onClick={() => void fullscreen()} className={styles.stripIcon}
             aria-label={expandLabel} title={expandTitle}>{immersive ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button>
         </header>

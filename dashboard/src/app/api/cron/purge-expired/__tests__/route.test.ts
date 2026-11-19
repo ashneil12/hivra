@@ -10,6 +10,19 @@ import { reportOpsEvent } from "@/lib/ops-events";
 import { deleteProxmoxInstance } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 import { locateProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
+import { StripeWebhookService } from "@/lib/services/stripe-webhook-service";
+import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+
+jest.mock("@/lib/services/stripe-webhook-service", () => ({
+  StripeWebhookService: {
+    restoreScheduledDeletions: jest.fn().mockResolvedValue(undefined),
+    resumeBillingSuspendedInstances: jest.fn().mockResolvedValue(undefined),
+  },
+}));
+// The purge's entitled-owner check (cross-lane resolver). Default: not entitled.
+jest.mock("@/lib/billing/instance-entitlement", () => ({
+  resolveEffectiveSubscription: jest.fn().mockResolvedValue(null),
+}));
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 
@@ -351,6 +364,36 @@ describe("GET /api/cron/purge-expired", () => {
         updated_at: expect.any(String),
       })
     );
+  });
+
+  it("purges an old computer kept for a Hermes move even when its owner pays, and never restores it", async () => {
+    process.env.CRON_SECRET = "expected-secret";
+    mockedResolveProxmoxLifecycleTarget.mockReturnValue({
+      provider: "proxmox" as const, vmid: 204, privateIpv4: "10.250.20.56", gatewayHost: "agent-moved.example.com",
+    });
+    mockedIsProxmoxBackedInstanceRow.mockReturnValue(true);
+    mockedDeleteProxmoxInstance.mockResolvedValue({ ok: true, stdout: "", stderr: "" });
+    (resolveEffectiveSubscription as jest.Mock).mockResolvedValue({ plan: "pro" });
+    const { updateMock } = makeUpdate();
+    mockedSupabaseAdmin.from
+      .mockImplementationOnce(() => scheduledFetch([{
+        id: "moved", user_id: "user_paying", name: "Moved", status: "scheduled_for_deletion", hetzner_server_id: null, host_id: null,
+        config: { infrastructure: { provider: "proxmox", vmid: 204 }, movedTo: { agentId: "agent-1", moveId: "m1" } },
+      }]))
+      .mockImplementationOnce(() => strandedDeletedFetch([]))
+      .mockImplementation((table: string) => {
+        if (table === "instance_deletion_archives") return { insert: jest.fn().mockResolvedValue({ error: null }) };
+        return { update: updateMock };
+      });
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/cron/purge-expired", { method: "GET", headers: { authorization: "Bearer expected-secret" } })
+    );
+
+    expect((await response.json()).data.purged).toBe(1);
+    expect(mockedDeleteProxmoxInstance).toHaveBeenCalled();
+    expect(StripeWebhookService.restoreScheduledDeletions).not.toHaveBeenCalled();
+    (resolveEffectiveSubscription as jest.Mock).mockResolvedValue(null);
   });
 
   it("hands cold-archived rows to the cold-retention pipeline instead of tearing down the (already destroyed) VM", async () => {
@@ -989,12 +1032,59 @@ describe("GET /api/cron/purge-expired", () => {
       expect(body.data.results).toEqual([
         { id: "inst-miss", name: "Miss", success: false, error: "Failed to purge instance" },
       ]);
+      // Never marked deleted: the claim (deleted_at only) is released so the
+      // row is retried exactly as it was, and a payment can restore it.
       expect(update.updateMock).not.toHaveBeenCalledWith(
-        expect.objectContaining({ status: "deleted" }),
+        expect.objectContaining({ lifecycle_state: "deleted" }),
+      );
+      expect(update.updateMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: expect.anything() }),
+      );
+      expect(update.updateMock).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ deleted_at: expect.any(String) }),
+      );
+      expect(update.updateMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ deleted_at: null }),
       );
       expect(reportOpsEvent).not.toHaveBeenCalledWith(
         expect.objectContaining({ source: "instance.purge_destroyed" }),
       );
+    });
+
+    it("does not destroy a scheduled row when the owner's entitlement cannot be read", async () => {
+      useProxmoxTeardown();
+      const update = makeUpdate();
+      stageRows([proxmoxRow], update);
+      (resolveEffectiveSubscription as jest.Mock).mockRejectedValueOnce(new Error("db down"));
+      const restore = StripeWebhookService.restoreScheduledDeletions as jest.Mock;
+      restore.mockClear();
+
+      const response = await GET(cronRequest());
+      const body = await response.json();
+
+      expect(body.data.purged).toBe(0);
+      expect(mockedDeleteProxmoxInstance).not.toHaveBeenCalled();
+      expect(update.updateMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ deleted_at: null }));
+      expect(restore).not.toHaveBeenCalled();
+    });
+
+    it("does not destroy a scheduled row whose owner is entitled now; hands it back to restore and resume", async () => {
+      useProxmoxTeardown();
+      const update = makeUpdate();
+      stageRows([proxmoxRow], update);
+      (resolveEffectiveSubscription as jest.Mock).mockResolvedValueOnce({ plan: "pro", status: "active" });
+      const restore = StripeWebhookService.restoreScheduledDeletions as jest.Mock;
+
+      const response = await GET(cronRequest());
+      const body = await response.json();
+
+      expect(body.data.purged).toBe(0);
+      expect(mockedDeleteProxmoxInstance).not.toHaveBeenCalled();
+      expect(update.updateMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ deleted_at: null }));
+      expect(restore).toHaveBeenCalledWith("user_miss");
+      expect(StripeWebhookService.resumeBillingSuspendedInstances).toHaveBeenCalledWith("user_miss");
     });
 
     it("keeps the row when the fleet search found the VM on another host (row untouched, retry later)", async () => {
@@ -1016,7 +1106,7 @@ describe("GET /api/cron/purge-expired", () => {
 
       expect(body.data.purged).toBe(0);
       expect(update.updateMock).not.toHaveBeenCalledWith(
-        expect.objectContaining({ status: "deleted" }),
+        expect.objectContaining({ lifecycle_state: "deleted" }),
       );
     });
 

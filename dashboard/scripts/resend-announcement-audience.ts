@@ -2,6 +2,13 @@ import { Resend } from "resend";
 import * as dotenv from "dotenv";
 import * as path from "path";
 
+import { pickVerifiedEmail } from "../src/lib/email/clerk-verified-email";
+import {
+  DEFAULT_SEGMENT_NAME,
+  DEFAULT_TOPIC_DESCRIPTION,
+  DEFAULT_TOPIC_NAME,
+} from "../src/lib/email/announcement-audience";
+
 dotenv.config({ path: path.resolve(__dirname, "../.env.local") });
 
 const CLERK_API_BASE_URL = "https://api.clerk.com/v1";
@@ -9,10 +16,6 @@ const CLERK_PAGE_SIZE = 100;
 const CONTACT_SYNC_DELAY_MS = 800;
 const RATE_LIMIT_RETRY_MS = 1_500;
 const MAX_RATE_LIMIT_RETRIES = 5;
-const DEFAULT_SEGMENT_NAME = "Hermes OS customers";
-const DEFAULT_TOPIC_NAME = "Product updates";
-const DEFAULT_TOPIC_DESCRIPTION =
-  "Product announcements, launch notes, customer updates, and other Hermes OS news.";
 const CONTACT_PROPERTIES = [
   { key: "clerk_user_id", type: "string" as const },
   { key: "clerk_created_at", type: "string" as const },
@@ -125,11 +128,9 @@ function maskEmail(email: string) {
   return `${visible}${"*".repeat(Math.max(1, local.length - visible.length))}@${domain}`;
 }
 
+// Only a Clerk-verified address may be enrolled; an unverified one may not belong to the user.
 function chooseEmail(user: ClerkUser) {
-  const addresses = user.email_addresses || [];
-  const primary = addresses.find((address) => address.id === user.primary_email_address_id);
-  const verified = addresses.find((address) => address.verification?.status === "verified");
-  return primary?.email_address || verified?.email_address || addresses[0]?.email_address || null;
+  return pickVerifiedEmail(user);
 }
 
 function formatClerkCreatedAt(value: number | null | undefined) {

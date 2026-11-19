@@ -6,7 +6,8 @@ import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 // https://hermes-agent.nousresearch.com/docs/user-guide/docker
 // https://hermes-agent.nousresearch.com/docs/getting-started/installation
 // Docker Hub: nousresearch/hermes-agent
-// Hivra: launch contracts hermes.ownServer=false; image ghcr.io/ashneil12/vanilla-hermes-agent (not the Nous image).
+// Hivra: launch contracts hermes.ownServer=false. Updated 2026-11-17: new Hermes launches get a Hivra computer running
+// Hermes's own installer and web app, updated with `hermes update` (docs/STATUS.md). The old image lane is retired for new launches.
 // Not claimed: that Hivra runs Docker internally; BYO My cloud / My server for Hermes; affiliation with Nous.
 
 export const article: BlogArticle = {
@@ -16,19 +17,20 @@ export const article: BlogArticle = {
   metaDescription:
     "Self-host Hermes Agent on Ubuntu: install script, Docker image, Telegram gateway, systemd. Or skip all that and run it on a Hivra computer.",
   publishedDate: "2026-04-11",
-  lastModified: "2026-10-21",
+  lastModified: "2026-11-17",
   readingTimeMin: 16,
   author: "Hivra team",
   tagline: "Docker can mean two different things here. Pick the one that matches the isolation you want.",
   intro:
     "Hermes Agent runs on a VPS, keeps its memory and talks over Telegram while you sleep. Getting there from a blank Ubuntu server still takes a few hours when things go right. Docker shows up in two different ways in Nous's docs, and mixing them up is how people lose a weekend. Hivra is one managed path. It is not Nous, and it does not run Hermes on My cloud or My server.",
   shortAnswer:
-    "Rent Ubuntu 24.04 with at least 2 vCPU and 4 GB RAM, install Docker, run Nous's install script, finish hermes setup, then run the gateway under systemd. Or run Hermes in nousresearch/hermes-agent with ~/.hermes at /opt/data. A Hivra computer uses Hivra's maintained image on its own private computer, with no compose file for you to keep current.",
+    "Rent Ubuntu 24.04 with at least 2 vCPU and 4 GB RAM, install Docker, run Nous's install script, finish hermes setup, then run the gateway under systemd. Or run Hermes in nousresearch/hermes-agent with ~/.hermes at /opt/data. A Hivra computer runs Hermes's own installer on a private computer, with no server for you to keep current.",
   sections: [
     {
       heading: "Docker container, or Hermes on its own computer?",
       paragraphs: [
         "Nous's [Docker guide](https://hermes-agent.nousresearch.com/docs/user-guide/docker) splits Docker into two jobs. Running Hermes in Docker puts the whole agent inside `nousresearch/hermes-agent`, with your config and keys on a host folder mounted at `/opt/data`. Docker as a terminal backend leaves Hermes on the host and only sandboxes the shell commands the agent runs. Same word, different blast radius.",
+        "Still deciding where Hermes should live? [Every way to run Hermes Agent in the cloud](/blog/hermes-agent-cloud) compares a VPS, Docker, Nous Hermes Cloud and a managed computer side by side.",
         [
           "| Route | What stays isolated | What you maintain | Pick it when |",
           "|---|---|---|---|",
@@ -36,7 +38,7 @@ export const article: BlogArticle = {
           "| Hermes in `nousresearch/hermes-agent` | The agent process and its tools, if you keep data on the mounted volume | Image pulls, the volume, ports you publish | You want one container to upgrade by pull, with data outside the image |",
           "| Hivra computer | Your laptop: Hermes runs on a private computer Hivra starts for it | Your model key and what you ask it to do | You want Hermes up without keeping a compose file or a VPS current |",
         ].join("\n"),
-        "Hivra is not affiliated with Nous Research. On Hivra Cloud, Hermes runs from Hivra's maintained image `ghcr.io/ashneil12/vanilla-hermes-agent`, not from the Nous release on Docker Hub. Hermes does not run on My cloud or My server (`ownServer` is false for Hermes in Hivra's launch contracts), so do not treat a bring-your-own Hetzner project as a Hermes path here. OpenClaw, Claude Code, Codex and Agent Zero can use your own server. Hermes cannot.",
+        "Hivra is not affiliated with Nous Research. On a Hivra computer, Hivra runs Hermes's own install script, the same one in Phase 3 below, and you update it with `hermes update`. It does not use the Docker image. Hermes does not run on My cloud or My server (`ownServer` is false for Hermes in Hivra's launch contracts), so do not treat a bring-your-own Hetzner project as a Hermes path here. OpenClaw, Claude Code, Codex and Agent Zero can use your own server. Hermes cannot.",
       ],
     },
     {
@@ -113,7 +115,7 @@ export const article: BlogArticle = {
       heading: "The self-hosting calculation",
       paragraphs: [
         `Server cost: a CX23-class VPS around €5.49/month excluding VAT and IPv4. LLM API: often $5-50/month depending on how hard you push it. First setup: a few hours when it goes well. Upkeep: under an hour most months. At $50/hour, one painful evening of debugging already covers many months of Hivra's ${ENTRY_PLAN_PRICE} plan (${ENTRY_PLAN_SIZE}).`,
-        "Self-hosting wins when you like Linux, you will keep the agent for a long stretch, and you care about holding the disk yourself. It loses when updates break at a bad time or when the infrastructure work crowds out the actual tasks. Hivra is the managed alternative: Hermes from Hivra's maintained build, on its own private computer, without a compose file for you to babysit. If you would rather skip the install, that is what it is for.",
+        "Self-hosting wins when you like Linux, you will keep the agent for a long stretch, and you care about holding the disk yourself. It loses when updates break at a bad time or when the infrastructure work crowds out the actual tasks. Hivra is the managed alternative: Hermes from its own installer, on its own private computer, without a server for you to babysit. If you would rather skip the install, that is what it is for.",
       ],
     },
   ],
@@ -124,7 +126,7 @@ export const article: BlogArticle = {
     },
     {
       q: "What Docker image does Hermes Agent use?",
-      a: "The official image on Docker Hub is nousresearch/hermes-agent. Tags include latest/stable, main, and version pins. Hivra Cloud runs Hermes from ghcr.io/ashneil12/vanilla-hermes-agent instead. That is Hivra's maintained build, not the Nous release.",
+      a: "The official image on Docker Hub is nousresearch/hermes-agent. Tags include latest/stable, main, and version pins. Hivra doesn't use the image: on a Hivra computer, Hermes is installed with Nous's own install script.",
     },
     {
       q: "What is the cheapest server that can actually run Hermes Agent?",
@@ -152,6 +154,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "hermes-agent-cloud", title: "How to run Hermes Agent in the cloud: VPS, Docker, Nous Hermes Cloud or a computer of its own" },
     {
       slug: "self-hosting-hermes-guide",
       title: "Self-hosting Hermes Agent: steps, costs and what breaks",

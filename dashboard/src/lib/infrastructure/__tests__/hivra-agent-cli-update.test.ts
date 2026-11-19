@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 // hivra-agent-cli-update.sh moves a computer's Claude Code / Codex CLI to the
-// release's vetted version. These tests run the real helper with npm, runuser
+// newest release on npm when its owner presses Update. These tests run the real helper with npm, runuser
 // and timeout replaced by fakes, against throwaway npm prefixes. The helper runs
 // npm under env -i, so the fakes read their settings from fake.env beside them.
 
@@ -25,11 +25,16 @@ while [ "\${1#-}" != "$1" ]; do shift 2; done
 shift
 exec "$@"
 `,
-  // npm --prefix PREFIX cache add PKG@V | install -g ... PKG@V
+  // npm --prefix PREFIX view PKG@latest version | cache add PKG@V | install -g ... PKG@V
   npm: `#!/bin/sh
 . "\${0%/*}/fake.env"
 [ "$1" = --prefix ] || { echo "npm without an explicit prefix" >&2; exit 96; }
 prefix="$2"; shift 2
+if [ "$1" = view ]; then
+  [ "\${FAKE_NPM_VIEW_EXIT:-0}" = 0 ] || exit "$FAKE_NPM_VIEW_EXIT"
+  case "$2" in @openai/codex@latest) echo "\${FAKE_NPM_LATEST:-0.156.1}" ;; *) echo "\${FAKE_NPM_LATEST:-2.1.281}" ;; esac
+  exit 0
+fi
 spec=""; for arg in "$@"; do spec="$arg"; done
 echo "npm $prefix $1 $spec home=$HOME lock=$([ -e "$FAKE_LOCK" ] && echo held || echo free)" >> "$FAKE_LOG"
 case "$1" in
@@ -103,11 +108,11 @@ describe("hivra-agent-cli-update.sh", () => {
   beforeEach(() => { f = fixture(); });
   afterEach(() => fs.rmSync(f.root, { recursive: true, force: true }));
 
-  it("moves an idle Codex computer to the vetted version as its owner, holding new runs back only for the swap", () => {
-    const result = run(f, "codex", "0.156.1");
+  it("moves an idle Codex computer to the newest release as its owner, holding new runs back only for the swap", () => {
+    const result = run(f, "codex", "latest");
     expect(result.status).toBe(0);
     expect(version(path.join(f.home, ".npm-global", "bin", "codex"))).toBe("0.156.1");
-    expect(result.doc).toMatchObject({ name: "codex", state: "done", from: "0.149.1", to: "0.156.1" });
+    expect(result.doc).toMatchObject({ name: "codex", state: "done", from: "0.149.1", to: "latest" });
     const prefix = path.join(f.home, ".npm-global");
     // Download first with the lock free, then the swap under the lock.
     expect(result.log.filter(line => line.startsWith("npm "))).toEqual([
@@ -121,10 +126,10 @@ describe("hivra-agent-cli-update.sh", () => {
   });
 
   it("installs Claude Code into the system prefix it came from", () => {
-    const result = run(f, "claude", "2.1.281");
+    const result = run(f, "claude", "latest");
     expect(result.status).toBe(0);
     expect(version(path.join(f.system, "bin", "claude"))).toBe("2.1.281");
-    expect(result.doc).toMatchObject({ name: "claude-code", state: "done", from: "2.1.246", to: "2.1.281" });
+    expect(result.doc).toMatchObject({ name: "claude-code", state: "done", from: "2.1.246", to: "latest" });
     expect(result.log.filter(line => line.startsWith("npm "))).toEqual([
       `npm ${f.system} cache @anthropic-ai/claude-code@2.1.281 home=/root lock=free`,
       `npm ${f.system} install @anthropic-ai/claude-code@2.1.281 home=/root lock=held`,
@@ -132,10 +137,10 @@ describe("hivra-agent-cli-update.sh", () => {
     expect(fs.existsSync(path.join(f.state, "agent-cli-backup"))).toBe(false);
   });
 
-  it("does nothing but report when the computer already runs the vetted version", () => {
-    const result = run(f, "codex", "0.149.1");
+  it("does nothing but report when the computer already runs the newest release", () => {
+    const result = run(f, "codex", "latest", { FAKE_NPM_LATEST: "0.149.1" });
     expect(result.status).toBe(0);
-    expect(result.doc).toMatchObject({ state: "done", from: "0.149.1", to: "0.149.1" });
+    expect(result.doc).toMatchObject({ state: "done", from: "0.149.1", to: "latest" });
     expect(result.log.filter(line => line.startsWith("npm "))).toEqual([]);
   });
 
@@ -143,7 +148,7 @@ describe("hivra-agent-cli-update.sh", () => {
     const sleeper = spawn("sleep", ["30"]);
     try {
       runStatus(f, "00000000-0000-4000-8000-000000000001", { state: "running", runnerPid: sleeper.pid });
-      const result = run(f, "codex", "0.156.1");
+      const result = run(f, "codex", "latest");
       expect(result.status).toBe(0);
       expect(result.doc).toMatchObject({ state: "deferred", reason: "chat_run_in_flight" });
       expect(result.log.some(line => line.includes(" install "))).toBe(false);
@@ -154,17 +159,17 @@ describe("hivra-agent-cli-update.sh", () => {
 
   it("treats a run admitted a moment ago as in flight even before its runner exists", () => {
     runStatus(f, "00000000-0000-4000-8000-000000000002", { state: "starting" });
-    expect(run(f, "codex", "0.156.1").doc).toMatchObject({ state: "deferred" });
+    expect(run(f, "codex", "latest").doc).toMatchObject({ state: "deferred" });
   });
 
   it("does not wait on a run whose runner is gone or which finished", () => {
     runStatus(f, "00000000-0000-4000-8000-000000000003", { state: "running", runnerPid: 2147483646 });
     runStatus(f, "00000000-0000-4000-8000-000000000004", { state: "finished", runnerPid: process.pid });
-    expect(run(f, "codex", "0.156.1").doc).toMatchObject({ state: "done" });
+    expect(run(f, "codex", "latest").doc).toMatchObject({ state: "done" });
   });
 
   it("puts the previous version back when the new one does not install", () => {
-    const result = run(f, "codex", "0.156.1", { FAKE_NPM_INSTALL_EXIT: "1" });
+    const result = run(f, "codex", "latest", { FAKE_NPM_INSTALL_EXIT: "1" });
     expect(result.status).toBe(1);
     expect(result.doc).toMatchObject({ state: "rolled_back", reason: "install_failed", from: "0.149.1" });
     expect(version(path.join(f.home, ".npm-global", "bin", "codex"))).toBe("codex-cli 0.149.1");
@@ -172,13 +177,13 @@ describe("hivra-agent-cli-update.sh", () => {
   });
 
   it("puts the previous version back when the installed binary reports another version", () => {
-    const result = run(f, "claude", "2.1.281", { FAKE_NPM_REPORTS: "2.1.999" });
+    const result = run(f, "claude", "latest", { FAKE_NPM_REPORTS: "2.1.999" });
     expect(result.doc).toMatchObject({ state: "rolled_back" });
     expect(version(path.join(f.system, "bin", "claude"))).toBe("2.1.246 (Claude Code)");
   });
 
   it("stops before the swap when the download fails", () => {
-    const result = run(f, "codex", "0.156.1", { FAKE_NPM_CACHE_EXIT: "1" });
+    const result = run(f, "codex", "latest", { FAKE_NPM_CACHE_EXIT: "1" });
     expect(result.status).toBe(1);
     expect(result.doc).toMatchObject({ state: "failed", reason: "download_failed" });
     expect(result.log.some(line => line.includes(" install "))).toBe(false);
@@ -191,13 +196,20 @@ describe("hivra-agent-cli-update.sh", () => {
     fs.cpSync(path.join(f.home, ".npm-global", "lib", "node_modules", "@openai", "codex"), path.join(backup, "package"), { recursive: true });
     // The interrupted install left a broken package behind.
     fs.rmSync(path.join(f.home, ".npm-global", "lib", "node_modules", "@openai", "codex"), { recursive: true });
-    const result = run(f, "codex", "0.149.1");
+    const result = run(f, "codex", "latest", { FAKE_NPM_LATEST: "0.149.1" });
     expect(result.doc).toMatchObject({ state: "done", from: "0.149.1" });
     expect(version(path.join(f.home, ".npm-global", "bin", "codex"))).toBe("codex-cli 0.149.1");
     expect(fs.existsSync(backup)).toBe(false);
   });
 
-  it.each([["gemini", "1.0.0"], ["codex", "latest"], ["codex", "1.0.0;id"], ["", ""]])("refuses %s %s", (kind, target) => {
+  it("stops before anything else when npm can't say which release is newest", () => {
+    const result = run(f, "codex", "latest", { FAKE_NPM_VIEW_EXIT: "1" });
+    expect(result.status).toBe(1);
+    expect(result.doc).toMatchObject({ state: "failed", reason: "download_failed" });
+    expect(result.log.filter(line => line.startsWith("npm "))).toEqual([]);
+  });
+
+  it.each([["gemini", "latest"], ["codex", "0.156.1"], ["codex", "1.0.0;id"], ["", ""]])("refuses %s %s", (kind, target) => {
     const result = run(f, kind, target);
     expect(result.status).toBe(64);
     expect(result.log).toEqual([]);

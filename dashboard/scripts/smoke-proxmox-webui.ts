@@ -12,12 +12,20 @@
 //   ts-node -r ./scripts/register-server-only-noop.cjs -r tsconfig-paths/register scripts/smoke-proxmox-webui.ts
 
 import { randomBytes } from "crypto";
+import { writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { redactSensitiveCommandOutput } from "../src/lib/command-output-redaction";
 import {
   provisionProxmoxInstance,
   deleteProxmoxInstance,
   runProxmoxHostScript,
 } from "../src/lib/services/proxmox-instance-service";
 import type { ProxmoxInfrastructure } from "../src/lib/services/proxmox-instance-service";
+
+// Host output can echo a provider key or a host credential, so it is masked before it is
+// printed. The whole text is kept (no length cap); only the secret-shaped spans change.
+const maskHostOutput = (text: string) => redactSensitiveCommandOutput(text, Number.POSITIVE_INFINITY);
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -52,7 +60,7 @@ async function fetchUntil(
   });
 }
 
-async function main() {
+export async function main() {
   const crofKey = process.env.CROF_KEY;
   if (!crofKey) {
     console.error("CROF_KEY is required");
@@ -87,12 +95,12 @@ async function main() {
         runHostScript: async (script) => {
           const r = await runProxmoxHostScript(script);
           if (!r.ok) {
-            console.error(`[smoke] runHostScript FAILED — full output below:`);
+            console.error(`[smoke] runHostScript FAILED — full output below (secret-shaped text masked):`);
             console.error(`[smoke] ----- STDOUT (${r.stdout.length} chars) -----`);
-            console.error(r.stdout);
+            console.error(maskHostOutput(r.stdout));
             console.error(`[smoke] ----- STDERR (${r.stderr.length} chars) -----`);
-            console.error(r.stderr);
-            console.error(`[smoke] ----- error: ${r.error || "(none)"}`);
+            console.error(maskHostOutput(r.stderr));
+            console.error(`[smoke] ----- error: ${maskHostOutput(r.error || "(none)")}`);
           }
           return r;
         },
@@ -101,7 +109,14 @@ async function main() {
     if (result.ok) provisionedInfrastructure = result.infrastructure;
 
     const elapsed = Math.round((Date.now() - startedAt) / 1000);
-    console.log(`[smoke] provisionProxmoxInstance returned in ${elapsed}s:`, result);
+    // Log an explicit allowlist. The raw result carries the per-instance bearer
+    // (apiServerKey), which must never reach stdout, a transcript or a bug report.
+    console.log(`[smoke] provisionProxmoxInstance returned in ${elapsed}s:`, {
+      ok: result.ok,
+      ...(result.ok
+        ? { vmid: result.vmid, ipv4: result.ipv4, gatewayUrl: result.gatewayUrl }
+        : { error: maskHostOutput(result.error) }),
+    });
 
     if (!result.ok) {
       throw new Error("provisioning returned not-ok");
@@ -110,7 +125,7 @@ async function main() {
     const gatewayUrl = result.gatewayUrl;
     const apiServerKey = result.apiServerKey;
     console.log(`[smoke] Gateway: ${gatewayUrl}`);
-    console.log(`[smoke] Bearer key length: ${apiServerKey.length} (prefix: ${apiServerKey.slice(0, 6)})`);
+    console.log(`[smoke] Bearer key length: ${apiServerKey.length}`);
 
     // 1) Probe /health (public, no auth required by the WebUI Caddyfile).
     // Phase 1 returns as soon as the VM and Caddy route exist; Phase 2 still
@@ -168,7 +183,12 @@ async function main() {
     console.log(`[smoke] Or, if KEEP_VM=1, leaving the VM up for manual chat testing.`);
 
     if (process.env.KEEP_VM === "1") {
+      // The bearer for manual chat testing goes to an owner-only file, never to stdout,
+      // so the transcript keeps no copy of it.
+      const bearerPath = join(tmpdir(), `smoke-webui-${instanceId}.bearer`);
+      writeFileSync(bearerPath, `${apiServerKey}\n`, { mode: 0o600 });
       console.log(`[smoke] KEEP_VM=1 set, NOT cleaning up. VMID ${result.vmid} left running.`);
+      console.log(`[smoke] Bearer for manual testing written to ${bearerPath} (owner-only, not printed).`);
       provisionedInfrastructure = null;
       return;
     }
@@ -184,7 +204,9 @@ async function main() {
 
 }
 
-main().catch((err) => {
-  console.error("[smoke] FAIL — unexpected error:", err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("[smoke] FAIL — unexpected error:", err);
+    process.exit(1);
+  });
+}

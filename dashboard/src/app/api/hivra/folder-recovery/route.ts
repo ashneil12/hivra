@@ -5,7 +5,6 @@ export const maxDuration = 300;
 import { auth } from "@clerk/nextjs/server";
 import type { NextRequest } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
-import { isHivraApiAllowed } from "@/lib/hivra/hivra-flag";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { FolderRecoveryError, FOLDER_RECOVERY_MAX_ARTIFACT_BYTES } from "@/lib/hivra/folder-recovery-artifact";
@@ -13,7 +12,6 @@ import { exportComputerFolder, restoreComputerFolder } from "@/lib/hivra/folder-
 import { log } from "@/lib/logger";
 
 export async function POST(request: NextRequest) {
-  if (!isHivraApiAllowed(request.headers.get("host"))) return apiError("Not found", 404);
   const { userId } = await auth();
   if (!userId) return apiError("Unauthorized", 401);
   if (!isSameOriginMutationRequest(request)) return apiError("Use the same-origin recovery page.", 403);

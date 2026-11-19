@@ -16,3 +16,20 @@ export function resourceAttention(status: string, pendingPrompt?: unknown): Reso
 export function attentionLabel(attention: ResourceAttention): string {
   return attention === "approval" ? "Needs approval" : attention === "clarify" ? "Needs your input" : "Needs attention";
 }
+
+/**
+ * The one rule for "needs the owner": the sidebar badge, the phone More sheet
+ * and the Needs your attention page all count rows through it, so the number
+ * and the list cannot disagree. Error and failed statuses already read as
+ * "error" in `attention`.
+ */
+export function needsOwnerAttention(row: { attention?: ResourceAttention | null }): boolean {
+  return Boolean(row.attention);
+}
+
+/** Plain words for what is wrong when a row has no stored reason of its own. */
+export function attentionFallbackReason(attention: ResourceAttention | null | undefined): string {
+  if (attention === "approval") return "It is waiting for you to approve something.";
+  if (attention === "clarify") return "It is waiting for your answer.";
+  return "Something went wrong and it stopped working.";
+}

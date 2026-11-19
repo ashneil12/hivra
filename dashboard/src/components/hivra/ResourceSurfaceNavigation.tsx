@@ -13,7 +13,11 @@ type Surface = { id: string; label: string; icon: ReactNode };
  * surface its button always opens; without one the button reopens the view
  * last used in the group (its first view the first time).
  */
-export type SurfaceGroup<T extends string> = { id: string; label: string; icon: ReactNode; surfaces: T[]; home?: T };
+export type SurfaceGroup<T extends string> = {
+  id: string; label: string; icon: ReactNode; surfaces: T[]; home?: T;
+  /** The view a group without a `home` opens the first time, instead of its first surface. */
+  start?: T;
+};
 const PRIMARY = new Set(["chat", "aeon", "terminal", "desktop", "files", "manage"]);
 // Inside the Manage group its own pane is the settings, so its tab says so
 // instead of repeating the group's name. The flat bar (computers) and native
@@ -200,10 +204,10 @@ export function ResourceSurfaceNavigation<T extends string>({
 }
 
 /**
- * Agent · Computer (Terminal, Files, Browser, Git) · Manage.
+ * Agent (Chat, its own session) · Computer (Desktop, Browser, Files, Terminal) · Manage.
  *
  * Agent and Manage open their home surface (Chat or the dashboard, Settings);
- * Computer reopens the view last used in it (Terminal first). The active
+ * Computer reopens the view last used in it (its `start` view the first time). The active
  * group's surfaces sit in their own row as tabs, so every surface stays one
  * tap away without an overflow menu. A group with a single surface has no
  * row: its button already opens it, and the row would only repeat its name.
@@ -231,7 +235,8 @@ function GroupedSurfaceNavigation<T extends string>({
   const openGroup = (group: SurfaceGroup<T>) => {
     const home = group.home && group.surfaces.includes(group.home) ? group.home : undefined;
     const last = remembered[group.id];
-    choose(group, home ?? (last && group.surfaces.includes(last) ? last : group.surfaces[0]));
+    const start = group.start && group.surfaces.includes(group.start) ? group.start : undefined;
+    choose(group, home ?? (last && group.surfaces.includes(last) ? last : start ?? group.surfaces[0]));
   };
   const subSurfaces = activeGroup.surfaces.length > 1 ? activeGroup.surfaces : [];
   // Export sits with Manage: in its row, or in the bar when Manage has none.

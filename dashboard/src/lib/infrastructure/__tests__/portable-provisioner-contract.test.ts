@@ -1,7 +1,7 @@
 /** @jest-environment node */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -9,6 +9,7 @@ import {
   HIVRA_AGENT_VM_DISK_GB,
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_DIRECTORY,
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES,
+  PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
   PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION,
   PORTABLE_HIVRA_RUNTIME_COMPATIBILITY,
@@ -18,6 +19,7 @@ import {
   portableHivraRequiredAssetsForProvisionerDirectory,
   portableProvisionerSupportsCatalogRuntime,
   portableRuntimeCompatibilityForProvisioner,
+  compatibleProxmoxVersionsForRuntime,
   isCompatibleProviderVmProvisionerVersion,
   supportsModelSettingsProvisionerVersion,
   isCompatibleProxmoxProvisionerVersion,
@@ -33,8 +35,13 @@ const source = (relativePath: string) =>
 const updaterSource = () =>
   `${source("hivra-update-guest-runtime.sh")}\n${source("hivra-guest-runtime-update.sh")}`;
 const LEGACY_RUNTIME_IDS = [
-  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "deepseek-harness",
+  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes", "deepseek-harness",
 ];
+
+// Releases before 2026.10.20.2 lack agent-app-versions.json, which the aeon,
+// openclaw and agent-zero installers need, and DeepSeek Harness is admitted
+// only from the release its live acceptance ran on.
+const PREDECESSOR_RUNTIME_IDS = ["claude-code", "codex"];
 
 function shellFunction(sourceText: string, name: string, nextMarker: string): string {
   const start = sourceText.indexOf(`${name}() {`);
@@ -159,46 +166,46 @@ describe("portable provisioner source contract", () => {
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.08.26.10"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.08.26.10",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: LEGACY_RUNTIME_IDS,
+      supportedCatalogRuntimeIds: PREDECESSOR_RUNTIME_IDS,
     });
     expect(portableRuntimeCompatibilityForProvisioner({ready:false,version:"2026.08.26.10"})).toBeNull();
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.08.27.1"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.08.27.1",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: LEGACY_RUNTIME_IDS,
+      supportedCatalogRuntimeIds: PREDECESSOR_RUNTIME_IDS,
     });
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.08.27.2"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.08.27.2",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: LEGACY_RUNTIME_IDS,
+      supportedCatalogRuntimeIds: PREDECESSOR_RUNTIME_IDS,
     });
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.08.26.4"})).toBeNull();
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.08.27.3"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.08.27.3",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: LEGACY_RUNTIME_IDS,
+      supportedCatalogRuntimeIds: PREDECESSOR_RUNTIME_IDS,
     });
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.08.27.4"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.08.27.4",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: LEGACY_RUNTIME_IDS,
+      supportedCatalogRuntimeIds: PREDECESSOR_RUNTIME_IDS,
     });
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.09.04.2"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.09.04.2",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: [...LEGACY_RUNTIME_IDS, "linux-desktop"],
+      supportedCatalogRuntimeIds: [...PREDECESSOR_RUNTIME_IDS, "linux-desktop"],
     });
     expect(portableProvisionerSupportsCatalogRuntime("2026.09.04.2", "linux-desktop")).toBe(true);
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.09.04.3"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.09.04.3",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: [...LEGACY_RUNTIME_IDS, "linux-desktop"],
+      supportedCatalogRuntimeIds: [...PREDECESSOR_RUNTIME_IDS, "linux-desktop"],
     });
     expect(portableProvisionerSupportsCatalogRuntime("2026.09.04.3", "linux-desktop")).toBe(true);
     expect(portableRuntimeCompatibilityForProvisioner({ready:true,version:"2026.09.04.4"})).toEqual({
       ...PORTABLE_HIVRA_RUNTIME_COMPATIBILITY, provisionerVersion:"2026.09.04.4",
       supportedHostCapabilities: [],
-      supportedCatalogRuntimeIds: [...LEGACY_RUNTIME_IDS, "linux-desktop"],
+      supportedCatalogRuntimeIds: [...PREDECESSOR_RUNTIME_IDS, "linux-desktop"],
     });
     expect(portableProvisionerSupportsCatalogRuntime("2026.09.04.4", "linux-desktop")).toBe(true);
     expect(portableProvisionerSupportsCatalogRuntime("2026.09.05.1", "linux-desktop")).toBe(true);
@@ -209,7 +216,7 @@ describe("portable provisioner source contract", () => {
   it("ships the guest model-setting dependency in the verified bundle and installer", () => {
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain("hivra-chat/llm-application.js");
     expect(source("provision-claude-code-box.sh")).toContain("hivra-chat/llm-application.js");
-    expect(source("provision-claude-code-box.sh")).toContain("for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js; do");
+    expect(source("provision-claude-code-box.sh")).toContain("for f in server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs import-state.cjs chat-runs.cjs index.html app.js; do");
     expect(source("hivra-chat/server.js")).toContain('require("./llm-application.js")');
   });
   it("derives runtime compatibility from every runtime the vendored bundle accepts", () => {
@@ -222,8 +229,12 @@ describe("portable provisioner source contract", () => {
         "aeon",
         "openclaw",
         "agent-zero",
+        "openbot",
+        "nuphos",
+        "hermes",
         "deepseek-harness",
         "linux-desktop",
+        "linux-server",
       ],
       supportedHostCapabilities: ["windows-installer"],
     });
@@ -234,7 +245,7 @@ describe("portable provisioner source contract", () => {
     expect(portableRuntimeCompatibilityForProvisioner({
       ready: true,
       version: PORTABLE_HIVRA_PROVISIONER_VERSION,
-    })?.supportedCatalogRuntimeIds).toContain("linux-desktop");
+    })?.supportedCatalogRuntimeIds).toEqual(expect.arrayContaining(["linux-desktop", "linux-server"]));
     expect(portableRuntimeCompatibilityForProvisioner({
       ready: true,
       version: "2026.09.08.3",
@@ -247,9 +258,9 @@ describe("portable provisioner source contract", () => {
     const hostProvisioner = source("hivra-provision-on-host.sh");
     const runtimeInstaller = source("provision-claude-code-box.sh");
     expect(hostProvisioner).toContain(
-      'case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|deepseek-harness|linux-desktop)',
+      'case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|deepseek-harness|linux-desktop|linux-server)',
     );
-    for (const agentKind of ["codex", "aeon", "openclaw", "agent-zero"]) {
+    for (const agentKind of ["codex", "aeon", "openclaw", "agent-zero", "hermes"]) {
       expect(runtimeInstaller).toContain(`[ "$AGENT_KIND" = "${agentKind}" ]`);
     }
     expect(runtimeInstaller).toContain(
@@ -346,7 +357,9 @@ describe("portable provisioner source contract", () => {
     expect(hostProvisioner).toContain('-o HostKeyAlgorithms=ssh-ed25519');
     expect(hostProvisioner).toContain('-o HostKeyAlias="$GUEST_SSH_HOST_ALIAS"');
     expect(hostProvisioner).toContain('GSCP=(scp');
-    expect(hostProvisioner).toContain('"${GSCP[@]}" -r "$PROV_DIR"');
+    // Still the VMID-attested key array; the copy is now bounded and keepalive-checked.
+    expect(hostProvisioner).toContain('"${GSCP[@]}" -o ServerAliveInterval=15 -o ServerAliveCountMax=8');
+    expect(hostProvisioner).toContain('-r "$PROV_DIR" "ubuntu@${IP}:${GUEST_PROVISIONER}"');
     expect(hostProvisioner).not.toContain("StrictHostKeyChecking=no");
     expect(hostProvisioner).not.toContain("UserKnownHostsFile=/dev/null");
     expect(identityGate).toBeGreaterThan(0);
@@ -401,7 +414,7 @@ describe("portable provisioner source contract", () => {
   it("ships a bounded guest runtime updater that preserves identity and rolls back failed gateway assets", () => {
     const updater = updaterSource();
     expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain("hivra-update-guest-runtime.sh");
-    expect(updater).toContain("ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs chat-runs.cjs index.html app.js)");
+    expect(updater).toContain("ASSETS=(server.js llm-application.js guarded-files.cjs agent-zero-editor.cjs import-state.cjs chat-runs.cjs index.html app.js)");
     expect(updater).toContain('ARCHIVE_SHA256="$(sha256sum "$ARCHIVE"');
     expect(updater).toContain('install -o root -g root -m 0600 "$ARCHIVE" "$ROOT_ARCHIVE"');
     expect(updater).toContain('sha256sum "$ROOT_ARCHIVE"');
@@ -553,19 +566,17 @@ describe("portable provisioner source contract", () => {
     expect(installerSource).not.toMatch(/(?:^|\s)--branch\s+(?:main|latest)(?:\s|$)/i);
     expect(installerSource).not.toMatch(/(?:@|\/releases\/)(?:main|latest)(?:[\s/"']|$)/i);
     expect(installerSource).toContain("BUX_REF=\"${BUX_REF:-f17c1b31d6688dd92e745ade650e00d46b4dc4da}\"");
-    // The Aeon commit, OpenClaw version and Agent Zero image come from the
-    // release's pins file, each in a form that can't move.
-    expect(installerSource).toContain('AEON_REF="$(read_agent_app_pin aeon)"');
-    expect(installerSource).toContain('OPENCLAW_VERSION="$(read_agent_app_pin openclaw)"');
-    expect(installerSource).toContain('AGENT_ZERO_IMAGE_DIGEST="$(read_agent_app_pin agent-zero)"');
-    const pins = JSON.parse(source("agent-app-versions.json"));
-    expect(pins.aeon.version).toMatch(/^[0-9a-f]{40}$/);
-    expect(pins.openclaw.version).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(pins["agent-zero"].version).toMatch(/^sha256:[0-9a-f]{64}$/);
-    for (const pin of [pins.aeon, pins.openclaw, pins["agent-zero"]].flatMap((entry) => [entry, ...entry.previous])) {
-      expect(pin.version).toMatch(/^([0-9a-f]{40}|\d+\.\d+\.\d+|sha256:[0-9a-f]{64})$/);
-      expect(typeof pin.label).toBe("string");
-    }
+    // Hivra pins no agent version: the installer asks upstream for its newest
+    // release once, at launch, and installs that exact version, commit or
+    // image digest, so nothing moves under the computer after launch.
+    expect(existsSync(path.join(bundleRoot, "agent-app-versions.json"))).toBe(false);
+    expect(existsSync(path.join(bundleRoot, "agent-cli-versions.json"))).toBe(false);
+    expect(installerSource).toContain('CLAUDE_CODE_VERSION="$(latest_or_die @anthropic-ai/claude-code)"');
+    expect(installerSource).toContain('CODEX_CLI_VERSION="$(latest_or_die @openai/codex)"');
+    expect(installerSource).toContain('OPENCLAW_VERSION="$(latest_or_die openclaw)"');
+    expect(installerSource).toContain("git ls-remote");
+    expect(installerSource).toContain('A0_IMAGE="${A0_REPO}@${AGENT_ZERO_IMAGE_DIGEST}"');
+    expect(installerSource).toContain('[[ "$AGENT_ZERO_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "could not read the Agent Zero image digest"');
   });
 
   it("keeps the plain Linux computer independent from the Bux agent checkout", () => {
@@ -584,7 +595,7 @@ describe("portable provisioner source contract", () => {
     const runtimeInstaller = source("provision-claude-code-box.sh");
 
     expect(hostProvisioner).toContain("--agent enabled=1");
-    expect(runtimeInstaller).toMatch(/apt-get install -y[^\n]*qemu-guest-agent/);
+    expect(runtimeInstaller).toMatch(/apt_get install -y[^\n]*qemu-guest-agent/);
     expect(runtimeInstaller).toContain("systemctl enable --now qemu-guest-agent");
   });
 
@@ -679,7 +690,7 @@ describe("portable provisioner source contract", () => {
     expect(server).not.toContain("?token=");
     expect(server).toContain('surfaceAuth: "post-cookie-v1"');
     expect(page).toContain('method="POST"');
-    expect(page).toContain("useSurfaceBootstrap({ url, token, active, recheck: signInEpoch, metadataCache })");
+    expect(page).toContain("useSurfaceBootstrap({ url, token, active, recheck: signInEpoch, metadataCache, surface, expected })");
     expect(surfaceBootstrap).toContain('/auth/bootstrap');
     expect(surfaceBootstrap).toContain('record.surfaceAuth === "post-cookie-v1"');
     expect(surfaceBootstrap).toContain('credentials: "omit"');
@@ -762,7 +773,7 @@ describe("portable provisioner source contract", () => {
     expect(installer).toContain('|| die "aeon production build failed"');
     expect(installer).toContain('|| die "openclaw npm install failed"');
     expect(installer).toContain('|| die "Agent Zero image pull failed');
-    expect(installer).toContain("agent0ai/agent-zero@${AGENT_ZERO_IMAGE_DIGEST}");
+    expect(installer).toContain('A0_IMAGE="${A0_REPO}@${AGENT_ZERO_IMAGE_DIGEST}"');
     expect(installer).toContain("wait_for_http");
     expect(installer).toContain("wait_for_exact_http_200");
     expect(installer).toContain("wait_for_browser_ready");
@@ -896,16 +907,100 @@ wait_for_browser_ready '${envFile}' 9333
       "8b8d719715ec9bb68fb858a1e334d23209047d82",
       "2026.8.2",
       "fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2",
-      "152.0.7977.64-1",
-      "4eae0736a812d9bc851cd2937f7af00e47dbaf8305845eed452703ff009873c7",
+      "157.0.8103.50-1",
+      "92148bd14dc05823a64061c2fafcf20d4d82b3fc56f5831206f16d2ac9ee3f79",
       "2.98.0",
       "f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6",
-      "@anthropic-ai/claude-code@2.1.292",
-      "@openai/codex@0.149.1",
-      "openclaw@2026.6.10",
-      "sha256:d8fd86114b02e9b4b6f14ef6f696b1ba7af46e52327734bb8a77f7aaf8556cf0",
     ]) {
       expect(provenance).toContain(pin);
     }
+  });
+});
+
+describe("per-runtime provisioner minimums", () => {
+  it("agent-zero needs the release that seeds /a0/usr/.env for current images", () => {
+    expect(portableProvisionerSupportsCatalogRuntime("2026.11.17.2", "agent-zero")).toBe(false);
+    expect(portableProvisionerSupportsCatalogRuntime("2026.10.20.2", "agent-zero")).toBe(false);
+    expect(portableProvisionerSupportsCatalogRuntime("2026.11.17.3", "agent-zero")).toBe(true);
+    expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.11.17.2" })?.supportedCatalogRuntimeIds)
+      .not.toContain("agent-zero");
+  });
+
+  it.each(["aeon", "openclaw"])("%s needs a release that ships its app updater", (runtime) => {
+    expect(portableProvisionerSupportsCatalogRuntime("2026.10.20.1", runtime)).toBe(false);
+    expect(portableProvisionerSupportsCatalogRuntime("2026.09.24.4", runtime)).toBe(false);
+    expect(portableProvisionerSupportsCatalogRuntime("2026.10.20.2", runtime)).toBe(true);
+    expect(portableProvisionerSupportsCatalogRuntime(PORTABLE_HIVRA_PROVISIONER_VERSION, runtime)).toBe(true);
+    expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.10.20.1" })?.supportedCatalogRuntimeIds)
+      .not.toContain(runtime);
+  });
+
+  it("does not hold other runtimes to those minimums", () => {
+    for (const runtime of ["claude-code", "codex"]) {
+      expect(portableProvisionerSupportsCatalogRuntime("2026.10.20.1", runtime)).toBe(true);
+    }
+  });
+});
+
+describe("deepseek-harness provisioner minimum", () => {
+  it("is admitted only from the release its live acceptance ran on", () => {
+    expect(portableProvisionerSupportsCatalogRuntime(PORTABLE_HIVRA_PROVISIONER_VERSION, "deepseek-harness")).toBe(true);
+    expect(PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS["deepseek-harness"]).toBe("2026.11.10.5");
+    for (const version of ["2026.11.10.4", "2026.11.10.3", "2026.11.03.1", "2026.10.20.2", "2026.10.20.1", "2026.09.04.2", "2026.08.26.10"]) {
+      expect({ version, deepseek: portableProvisionerSupportsCatalogRuntime(version, "deepseek-harness") }).toEqual({ version, deepseek: false });
+      expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version })?.supportedCatalogRuntimeIds).not.toContain("deepseek-harness");
+    }
+    expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: PORTABLE_HIVRA_PROVISIONER_VERSION })?.supportedCatalogRuntimeIds)
+      .toContain("deepseek-harness");
+  });
+
+  it("skips an older managed host in placement and leaves other runtimes' lists alone", () => {
+    expect(compatibleProxmoxVersionsForRuntime("deepseek-harness")).toEqual(["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    expect(compatibleProxmoxVersionsForRuntime("claude-code")).toEqual(compatibleProxmoxVersionsForRuntime(null));
+    expect(compatibleProxmoxVersionsForRuntime("codex")).toEqual(compatibleProxmoxVersionsForRuntime(null));
+  });
+
+  it("keeps a connected server's DeepSeek check off the My cloud lane, which stays private", () => {
+    // Provider VMs keep their own list; this change does not widen it.
+    expect(PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS).toEqual(LEGACY_RUNTIME_IDS);
+  });
+
+  it("ships the guest bundle files the acceptance run installs", () => {
+    for (const file of ["install-native.py", "install-guest.py", "update-guest.py", "runtime-process.cjs", "native-broker.cjs", "gateway-policy.cjs"]) {
+      expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES).toContain(`deepseek-harness/${file}`);
+    }
+    expect(source("hivra-provision-on-host.sh")).toContain("DeepSeek Harness requires pre-journaled named HTTPS access");
+  });
+});
+
+describe("linux-server provisioner minimum", () => {
+  it("needs the release that ships the kind, and leaves Linux Desktop placement unchanged", () => {
+    expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.4", "linux-server")).toBe(true);
+    for (const version of ["2026.11.10.3", "2026.11.10.2", "2026.11.10.1", "2026.11.03.1", "2026.10.20.2", "2026.09.04.2"]) {
+      expect({ version, linuxServer: portableProvisionerSupportsCatalogRuntime(version, "linux-server") }).toEqual({ version, linuxServer: false });
+      expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version })?.supportedCatalogRuntimeIds).not.toContain("linux-server");
+    }
+    // A host on .3 still takes Linux Desktop; a host on .4 takes both profiles.
+    expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.3", "linux-desktop")).toBe(true);
+    expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.11.10.3" })?.supportedCatalogRuntimeIds).toContain("linux-desktop");
+    expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.4", "linux-desktop")).toBe(true);
+    expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.11.10.4" })?.supportedCatalogRuntimeIds)
+      .toEqual(expect.arrayContaining(["linux-desktop", "linux-server"]));
+    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(expect.arrayContaining(["2026.11.10.3", "2026.11.10.4"]));
+    // Linux Desktop has no per-runtime minimum, so host readiness is the same list as before.
+    expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(compatibleProxmoxVersionsForRuntime(null));
+  });
+
+  it("is refused by every provider-VM check", () => {
+    expect(providerProvisionerSupportsCatalogRuntime(PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION, "linux-server")).toBe(false);
+    expect(PORTABLE_HIVRA_SUPPORTED_PROVIDER_VM_CATALOG_RUNTIME_IDS as readonly string[]).not.toContain("linux-server");
+  });
+
+  it("wraps the accepted AGENT_KIND values with the same shell, Python and gateway allowlists", () => {
+    expect(source("hivra-install-agent.py")).toContain('LINUX_COMPUTER_KINDS = {"linux-desktop", "linux-server"}');
+    expect(source("hivra-runtime-receipt.py")).toContain('"linux-desktop", "linux-server"), required=True');
+    expect(source("hivra-agent-shell")).toContain("aeon|openclaw|agent-zero|hermes|openbot|nuphos|linux-desktop|linux-server)");
+    expect(source("hivra-chat/server.js")).toContain('["deepseek-harness", "linux-desktop", "linux-server"].includes(process.env.HIVRA_AGENT_KIND)');
   });
 });

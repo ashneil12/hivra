@@ -3,7 +3,7 @@
  * generate-cold-storage-host-scripts.cjs
  *
  * Emits src/lib/services/cold-storage-host-scripts.generated.ts — ONLY the
- * base64 payloads of the two ops shell scripts, so what the service installs on
+ * base64 payloads of the cold-storage ops shell scripts, so what the service installs on
  * each PVE host is always byte-identical to the file in the repo.
  *
  * Run after editing scripts/ops/archive-vm-cold.sh or restore-vm-cold.sh:
@@ -40,7 +40,7 @@ const lines = [
   "// ─────────────────────────────────────────────────────────────────────────────",
   "// GENERATED FILE — DO NOT EDIT BY HAND.",
   "// Regenerate with: node scripts/generate-cold-storage-host-scripts.cjs",
-  "// Source of truth: scripts/ops/archive-vm-cold.sh, scripts/ops/restore-vm-cold.sh",
+  "// Source of truth: scripts/ops/archive-vm-cold.sh, restore-vm-cold.sh, reencrypt-cold-archive.sh",
   "// Parity is enforced by src/lib/services/__tests__/cold-storage-host-scripts.test.ts",
   "// ─────────────────────────────────────────────────────────────────────────────",
   "",
@@ -49,6 +49,9 @@ const lines = [
   "",
   "export const RESTORE_VM_COLD_SH_B64 =",
   chunk(b64("scripts/ops/restore-vm-cold.sh")) + ";",
+  "",
+  "export const REENCRYPT_COLD_ARCHIVE_SH_B64 =",
+  chunk(b64("scripts/ops/reencrypt-cold-archive.sh")) + ";",
   "",
 ];
 

@@ -14,7 +14,7 @@ export const LINK_ROW_COLUMNS = [
   "bootstrapped_at", "operation_id", "deployment_mode", "proxmox_host", "infrastructure_connection_id",
   "deployment_target_id", "infrastructure_connection_revision", "infrastructure_binding_token_hash",
   "infrastructure_binding_token_enforced", "managed_provisioner_channel", "provider_capacity_order_id",
-  "provider_enrollment_attempt_id", "provider_server_id",
+  "provider_enrollment_attempt_id", "provider_server_id", "sleep_state",
 ].join(", ");
 
 export type OwnedRow = LinkRow & Record<string, unknown> & { id: string; user_id: string };
@@ -88,6 +88,8 @@ export interface LinkCandidate {
   kind: string;
   /** The row's lifecycle status, so two rows with one name can be told apart. */
   status: string;
+  /** Awake, napping and so on, when the row says; the picker shows a sleeping computer as asleep. */
+  sleepState?: string | null;
   linked: boolean;
   available: boolean;
   reason?: string;
@@ -102,6 +104,7 @@ export function candidatesFor(subject: OwnedRow, rows: OwnedRow[], linkedIds: Se
       id: row.id, name: linkLabel(row.name, subjectIsComputer ? "Agent" : "Computer"),
       kind: subjectIsComputer ? String(row.type ?? "agent") : computerKindLabel(row),
       status: String(row.status ?? "unknown"),
+      ...(typeof row.sleep_state === "string" ? { sleepState: row.sleep_state } : {}),
       linked: linkedIds.has(row.id), available: side.ok, ...(side.ok ? {} : { reason: side.reason }),
     };
   });

@@ -11,6 +11,7 @@ import {
 import { supabaseAdmin } from "@/lib/supabase";
 import { appendManagedVeniceFinancialEvent } from "@/lib/billing/managed-venice-financial-events";
 import { assertManagedVeniceWithinSpendCap } from "@/lib/billing/managed-venice-spend-caps";
+import { assertManagedVeniceAgentWithinSpendCap } from "@/lib/billing/managed-venice-agent-spend-caps";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { responsesUsageTokens, VENICE_RESPONSES_ENDPOINT } from "./responses-protocol";
@@ -167,6 +168,15 @@ export async function reserveManagedVeniceChatRequest(
     { userId: params.userId, addMicroUsd: estimate.estimatedCostMicroUsd },
     client
   );
+  // Per-agent daily limit (off by default): the same refusal, scoped to this
+  // agent's own key. No-op when the flag is off or no limit applies.
+  // Checked against the whole hold (what capture may take), counting holds of
+  // requests still running; the stamp makes the database guard re-check it in
+  // the same transaction as the insert, so parallel requests cannot all pass.
+  const agentCapStamp = await assertManagedVeniceAgentWithinSpendCap(
+    { userId: params.userId, proxyKeyId: params.proxyKeyId, addMicroUsd: estimate.reservedCostMicroUsd },
+    client
+  );
   const subsidyState = params.subsidyState ?? DEFAULT_SUBSIDY_STATE;
   // What the stale-hold sweep charges this hold if Venice answers but the
   // exact usage never arrives: the input estimate plus a bounded share of the
@@ -211,6 +221,7 @@ export async function reserveManagedVeniceChatRequest(
         : {}),
       metadata: {
         proxyKeyId: params.proxyKeyId,
+        ...(agentCapStamp ?? {}),
         estimatedCostMicroUsd: estimate.estimatedCostMicroUsd,
         reservedCostMicroUsd: estimate.reservedCostMicroUsd,
         inputEstimateMicroUsd: estimate.inputCostMicroUsd,

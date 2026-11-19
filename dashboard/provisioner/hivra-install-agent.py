@@ -21,10 +21,13 @@ import sys
 import tempfile
 
 
-KINDS = {"claude", "codex", "aeon", "openclaw", "agent-zero"}
+KINDS = {"claude", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos"}
 FIELDS = {"version", "agentKind", "computerSubstrate", "wantBrowser", "modelKey",
           "modelBaseUrl", "model", "tunnelToken", "accessHostname"}
 LINUX_DESKTOP_FIELDS = FIELDS | {"publicOrigin", "computerId", "controlOrigin"}
+# v3 is the Linux computer document: Linux Desktop and the desktop-free Linux
+# server share one shape. The server kind is Proxmox-only (checked below).
+LINUX_COMPUTER_KINDS = {"linux-desktop", "linux-server"}
 # v4 is v1 plus the agent-run reporter credential, for the two runtimes whose
 # transcripts it reads. Contract:
 # docs/superpowers/specs/2026-09-22-agent-run-tracing-contract.md
@@ -104,7 +107,7 @@ def parse_launch(raw, *, provider_desktop=False):
             raise ValueError()
         if ((version == 1 and value["agentKind"] not in KINDS)
                 or (version == 2 and value["agentKind"] != "deepseek-harness")
-                or (version == 3 and value["agentKind"] != "linux-desktop")
+                or (version == 3 and value["agentKind"] not in LINUX_COMPUTER_KINDS)
                 or (version == 4 and value["agentKind"] not in ACTIVITY_TELEMETRY_KINDS)):
             raise ValueError()
         # Agent-run reporting is verified only on Proxmox computers.
@@ -145,12 +148,19 @@ def parse_launch(raw, *, provider_desktop=False):
                 raise ValueError()
             if hostname is not None and value["publicOrigin"] != "https://" + hostname:
                 raise ValueError()
-            # Never silently discard launch-time secrets/settings. Native
-            # Models UI owns these until typed key custody is implemented.
-            if any(value[key] for key in ("modelKey", "modelBaseUrl", "model")):
+            # Never silently discard launch-time secrets/settings. The DeepSeek
+            # native runtime takes its model from the install-time seed, all
+            # three typed values or none; a Linux computer has no model at all.
+            if version == 2:
+                if not valid_native_model(value["modelKey"], value["modelBaseUrl"], value["model"]):
+                    raise ValueError()
+            elif any(value[key] for key in ("modelKey", "modelBaseUrl", "model")):
                 raise ValueError()
         if version == 3:
             if value["computerSubstrate"] != ("provider-vm" if provider_desktop else "proxmox-kvm") or value["wantBrowser"] is not None:
+                raise ValueError()
+            # The desktop-free server has no provider-VM install path.
+            if value["agentKind"] == "linux-server" and (provider_desktop or value["computerSubstrate"] != "proxmox-kvm"):
                 raise ValueError()
             if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", value["computerId"]):
                 raise ValueError()
@@ -179,6 +189,39 @@ def valid_activity_telemetry(value):
     except ValueError:
         return False
     return True
+
+
+NATIVE_MODEL_KEY = re.compile(r"[\x21-\x7e]{8,8192}")
+NATIVE_MODEL_NAME = re.compile(r"[A-Za-z0-9._:/-]{1,128}")
+NATIVE_MODEL_PATH = re.compile(r"(?:/[A-Za-z0-9._~-]+)*/?")
+
+
+def valid_native_model(key, base_url, model):
+    """The DeepSeek native runtime's launch-time model settings, all or none.
+
+    Returns a bool and never an input value: the caller turns False into the
+    generic refusal, so a malformed key or URL is never echoed. The base URL is
+    one canonical HTTPS endpoint (no userinfo, port, query or fragment) whose
+    host passes the same label rules as a public origin, optionally followed by
+    plain path segments. The same endpoint reaches a YAML file and an outbound
+    request, so every character that carries meaning there is refused here.
+    """
+    if not (isinstance(key, str) and isinstance(base_url, str) and isinstance(model, str)):
+        return False
+    if not (key or base_url or model):
+        return True
+    if not (key and base_url and model):
+        return False
+    if not NATIVE_MODEL_KEY.fullmatch(key) or not NATIVE_MODEL_NAME.fullmatch(model):
+        return False
+    if len(base_url.encode("utf-8")) > 2048 or not base_url.startswith("https://"):
+        return False
+    authority, slash, tail = base_url[8:].partition("/")
+    path = slash + tail
+    if not canonical_origin("https://" + authority) or not NATIVE_MODEL_PATH.fullmatch(path):
+        return False
+    # Plain-looking dot segments still address the parent or the same directory.
+    return all(segment not in (".", "..") for segment in path.split("/"))
 
 
 def canonical_origin(value):
@@ -217,6 +260,20 @@ def create_exact(file, data, uid, mode):
         if existing != data:
             raise InstallError("existing tunnel configuration differs; explicit repair required")
         return
+    write_atomic(file, data, uid, mode, publish_exclusive)
+
+
+def replace_exact(file, data, uid, mode):
+    # Atomic overwrite for content this installer generated and is allowed to
+    # migrate — same staging/fsync discipline as create_exact, but the rename
+    # replaces the reviewed predecessor instead of refusing to.
+    existing = read_existing(file, uid, mode)
+    if existing is None:
+        raise InstallError("replacement requires an existing configuration")
+    write_atomic(file, data, uid, mode, os.replace)
+
+
+def write_atomic(file, data, uid, mode, publish):
     fd, temporary = tempfile.mkstemp(prefix=".hivra-install-", dir=file.parent)
     try:
         os.fchmod(fd, mode)
@@ -225,7 +282,7 @@ def create_exact(file, data, uid, mode):
             stream.flush()
             os.fsync(fd)
         # Publish without replacement or a crash window with two hard links.
-        publish_exclusive(temporary, file)
+        publish(temporary, file)
     finally:
         os.close(fd)
         try:
@@ -314,6 +371,15 @@ def configure_named_tunnel(token, uid):
 
 
 def direct_config(hostname):
+    # The watchdog's exempt probe carries a box-local secret; still strip the
+    # marker on this hop so a remote request can never present it to loopback.
+    return (hostname + " {\n\trequest_header -X-Hivra-Surface-Watchdog\n\treverse_proxy 127.0.0.1:8080\n}\n").encode("ascii")
+
+
+def legacy_direct_config(hostname):
+    # What this installer generated for the same hostname before the marker
+    # strip shipped — safe to migrate in place because only we could have
+    # written these exact bytes.
     return (hostname + " {\n\treverse_proxy 127.0.0.1:8080\n}\n").encode("ascii")
 
 
@@ -321,11 +387,15 @@ def check_direct_access(hostname, uid):
     for directory in (DIRECT_CONFIG_FILE.parent, DIRECT_UNIT_FILE.parent.parent, DIRECT_UNIT_FILE.parent):
         check_directory(directory, uid)
     expected = direct_config(hostname)
+    migrate = False
     for file, data, mode in ((DIRECT_CONFIG_FILE, expected, 0o644), (DIRECT_UNIT_FILE, DIRECT_UNIT, 0o644)):
         existing = read_existing(file, uid, mode)
         if existing is not None and existing != data:
+            if file == DIRECT_CONFIG_FILE and existing == legacy_direct_config(hostname):
+                migrate = True
+                continue
             raise InstallError("existing direct-access configuration differs; explicit repair required")
-    return expected
+    return expected, migrate
 
 
 def check_effective_direct_access(allow_missing):
@@ -340,11 +410,14 @@ def check_effective_direct_access(allow_missing):
 
 
 def configure_direct_access(hostname, uid):
-    expected = check_direct_access(hostname, uid)
+    expected, migrate = check_direct_access(hostname, uid)
     check_effective_direct_access(allow_missing=True)
     if not os.access("/usr/local/bin/caddy", os.X_OK):
         raise InstallError("caddy is missing")
-    create_exact(DIRECT_CONFIG_FILE, expected, uid, 0o644)
+    if migrate:
+        replace_exact(DIRECT_CONFIG_FILE, expected, uid, 0o644)
+    else:
+        create_exact(DIRECT_CONFIG_FILE, expected, uid, 0o644)
     create_exact(DIRECT_UNIT_FILE, DIRECT_UNIT, uid, 0o644)
     service(("daemon-reload",))
     check_effective_direct_access(allow_missing=False)
@@ -382,6 +455,10 @@ def install_agent(launch, source, *, provider_desktop=None):
     # The existing enclosing lifecycle worker owns timeout/compensation. This
     # entrypoint is synchronous: no detached worker or unowned retry is created.
     def bootstrap():
+        try:
+            DIE_REASON.unlink()
+        except FileNotFoundError:
+            pass
         subprocess.run(["/bin/bash", str(source / "provision-claude-code-box.sh")],
                        check=True, env=environment, stdin=subprocess.DEVNULL)
     if owned_desktop:
@@ -415,6 +492,10 @@ def install_agent(launch, source, *, provider_desktop=None):
         native = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(native)
         environment["HIVRA_NATIVE_PREPARE_ONLY"] = "1"
+        # The shared base installer has no use for the native model settings;
+        # only the owned seed in install-guest.py consumes them, over stdin.
+        for name in ("HIVRA_MODEL_KEY", "HIVRA_MODEL_BASE_URL", "HIVRA_HERMES_MODEL"):
+            environment[name] = ""
         native.install(launch, source, bootstrap)
         # The base-only pass deliberately did not record a runtime receipt.
         try:
@@ -539,11 +620,58 @@ def main():
         os.close(fd)
 
 
+# Where provision-claude-code-box.sh's die() leaves its own (Hivra-authored) message.
+DIE_REASON = Path("/run/hivra-install-failure-reason")
+
+
+def die_reason():
+    """The provisioning step's own die() message, if it is short, plain text."""
+    try:
+        with open(DIE_REASON, "rb") as handle:
+            raw = handle.read(301)
+    except OSError:
+        return None
+    if len(raw) > 300:
+        return None
+    try:
+        text = raw.decode("ascii").strip()
+    except UnicodeDecodeError:
+        return None
+    return text if re.fullmatch(r"[A-Za-z0-9 .,:;()_/+-]{1,200}", text) else None
+
+
+def install_failure_reason(error):
+    """A fixed, payload-free reason for the host log, or None.
+
+    Only Hivra's own install errors (fixed code strings, never launch data) and
+    the exit status of a failed step are named; any other exception text could
+    carry payload and stays unprinted.
+    """
+    if type(error).__name__ == "InstallError":
+        text = str(error)
+        if re.fullmatch(r"[A-Za-z0-9 .,:;()_/-]{1,200}", text):
+            return text
+        return None
+    if isinstance(error, subprocess.CalledProcessError):
+        argv = error.cmd if isinstance(error.cmd, (list, tuple)) else []
+        names = [os.path.basename(str(part)) for part in argv[:3]]
+        step = next((name for name in names if re.fullmatch(r"[A-Za-z0-9._-]{1,60}\.(?:sh|py)", name)), None)
+        reason = "step %s exited with status %d" % (step or "command", error.returncode)
+        stopped = die_reason() if step == "provision-claude-code-box.sh" else None
+        return reason + ": " + stopped if stopped else reason
+    if isinstance(error, subprocess.TimeoutExpired):
+        return "a step ran past its deadline"
+    return None
+
+
 if __name__ == "__main__":
     try:
         main()
-    except Exception:
+    except Exception as error:
         # Inner package/service diagnostics remain available through the
         # existing private provisioning log; do not print payload/exception data.
         print("Hivra guest installation failed; inspect the private provisioning log.", file=sys.stderr)
+        reason = install_failure_reason(error)
+        if reason:
+            print("Hivra guest installation failure: " + reason, file=sys.stderr)
         sys.exit(1)

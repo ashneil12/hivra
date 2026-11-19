@@ -20,6 +20,12 @@ import { publicHivraAgentActivity } from "./agent-authority";
 import { ModelKeySelectionSchema, VENICE_DEFAULT_MODEL } from "./model-key-selection";
 export { VENICE_DEFAULT_MODEL } from "./model-key-selection";
 
+export { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, OPENCLAW_DEFAULT_MODEL } from "./model-key-selection";
+/** Hivra-credit models Claude Code can run: Venice's Anthropic models only. */
+export function isManagedClaudeCodeModel(model: string): boolean {
+  return /^claude-[a-z0-9.-]+$/.test(model);
+}
+
 export const VENICE_DIRECT_BASE_URL = "https://api.venice.ai/api/v1";
 
 // Same charset clamp as the box's model override (server.js MODEL_RE).
@@ -78,12 +84,18 @@ export function validateLlmInput(raw: unknown, agentType: string): LlmValidation
   if (provider !== "venice") return { ok: false, error: "Unsupported LLM provider" };
 
   const def = getAgent(agentType);
-  if (!def?.llm || !def.llm.providers.includes("venice")) {
+  // An Anthropic-wire agent (Claude Code) reaches Venice only through Hivra's
+  // managed Messages shim, so it takes Hivra credits and never a raw key.
+  const managedShimOnly = Boolean(def?.managedVenice && def.llm?.wire === "anthropic");
+  if (!managedShimOnly && (!def?.llm || !def.llm.providers.includes("venice"))) {
     return { ok: false, error: `${def?.name || agentType} doesn't support an alternative LLM provider yet` };
   }
 
   const mode = o.mode === "managed" ? "managed" : o.mode === "byok" ? "byok" : null;
   if (!mode) return { ok: false, error: "llm.mode must be byok or managed" };
+  if (managedShimOnly && mode !== "managed") {
+    return { ok: false, error: `${def?.name || agentType} can use Hivra credits or its own sign-in, not a Venice API key` };
+  }
 
   if (mode === "byok" && (typeof o.apiKey !== "string" || !o.apiKey.trim())) {
     return { ok: false, error: "A Venice API key is required for bring-your-own-key" };
@@ -91,6 +103,9 @@ export function validateLlmInput(raw: unknown, agentType: string): LlmValidation
   const parsed = ModelKeySelectionSchema.safeParse(o);
   if (!parsed.success || !parsed.data) return { ok: false, error: "Check the model settings, API key and selected wallet before launching." };
   const selection = parsed.data;
+  if (managedShimOnly && typeof o.model === "string" && o.model.trim() && !isManagedClaudeCodeModel(selection.model)) {
+    return { ok: false, error: `${def?.name || agentType} on Hivra credits runs Claude models only` };
+  }
   return {
     ok: true,
     input: {
@@ -197,6 +212,10 @@ export function sanitizeHivraAgentRow<T extends Record<string, unknown>>(row: T)
   delete rest.provider_install_outcome;
   delete rest.proxmox_host;
   delete rest.ip;
+  // A recovered agent can carry failure text from an earlier operation (a
+  // restart or update that converged it to running without touching `error`).
+  // Error text on a running row is always stale, so it never reaches clients.
+  if (rest.status === "running") rest.error = null;
   return {
     ...rest,
     activity: publicHivraAgentActivity(row),

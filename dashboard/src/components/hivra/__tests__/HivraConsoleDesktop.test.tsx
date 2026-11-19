@@ -231,6 +231,36 @@ describe("HivraConsoleDesktop", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 
+  it.each([
+    ["guest_not_ready", "Windows is still starting up. Give it a minute, then try again.", "Try again"],
+    ["host_unreachable", "Hivra can't reach this computer right now. Try again in a moment.", "Try again"],
+    ["unknown", "The Windows desktop couldn't open. Try again.", "Try again"],
+  ])("explains a %s failure in one plain sentence with Try again", async (reason, sentence, action) => {
+    fetchMock.mockImplementation(() => response(503, {
+      success: false, reason, error: "Windows RDP inspection could not be confirmed. Try opening it again.",
+    }));
+    render(<HivraConsoleDesktop computerId="windows-id" name="Work PC" profile="windows" />);
+    fireEvent.click(screen.getByRole("button", { name: "Open fast Windows desktop" }));
+    expect(await screen.findByRole("button", { name: action })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe(sentence);
+    expect(screen.queryByRole("link", { name: "Restart in Manage" })).toBeNull();
+  });
+
+  it.each([
+    ["rdp_unavailable", "Windows isn't accepting remote desktop connections right now. Restarting the computer usually fixes this."],
+    ["not_prepared", "This computer isn't ready for the fast desktop yet. Restart it, then try again."],
+  ])("sends a %s failure to Restart in Manage instead of Try again", async (reason, sentence) => {
+    fetchMock.mockImplementation(() => response(503, {
+      success: false, reason, error: "Windows RDP inspection could not be confirmed. Try opening it again.",
+    }));
+    render(<HivraConsoleDesktop computerId="windows-id" name="Work PC" profile="windows" />);
+    fireEvent.click(screen.getByRole("button", { name: "Open fast Windows desktop" }));
+    const restart = await screen.findByRole("link", { name: "Restart in Manage" });
+    expect(restart.getAttribute("href")).toBe("/dashboard/agent/windows-id?tab=manage");
+    expect(screen.getByRole("status").textContent).toBe(sentence);
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
   it("replaces the idle prompt during handoff and keeps loading until the gateway frame loads", async () => {
     let finish!: (value: Response) => void;
     fetchMock.mockImplementation(() => new Promise<Response>(resolve => { finish = resolve; }));

@@ -41,7 +41,7 @@ describe("Venice chat cost estimator", () => {
   it.each([
     ["claude-opus-4-8", 128_000],
     ["openai-gpt-54", 131_072],
-    ["deepseek-v4-pro", 32_768],
+    ["deepseek-v4-pro", 262_144],
     ["venice-uncensored-1-2", 8_192],
   ])("holds %s's full %i-token maximum output when no cap is sent", (model, maxOutput) => {
     const estimate = estimateChatCompletionCost({
@@ -276,7 +276,7 @@ describe("maxAffordableVeniceChatOutputCap", () => {
     ...extra,
   });
 
-  it.each([100_000, 1_000_000, 1_234_567, 3_999_999])(
+  it.each([100_000, 1_000_000, 1_234_567, 3_000_000])(
     "returns the largest cap whose hold fits %i microdollars",
     (available) => {
       const cap = maxAffordableVeniceChatOutputCap(request(), available);

@@ -14,15 +14,16 @@
   padding: 0.85rem 0.95rem;
   border: 1px solid var(--etched-border);
   background: var(--bg-elevated);
+  border-radius: var(--hg-radius-sm);
 }
 
 .fieldLabel {
   display: block;
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 10.5px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.5;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
 }
@@ -30,9 +31,9 @@
 .amount {
   display: block;
   margin: 0;
-  font-family: var(--font-grotesk), 'Space Grotesk', system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: 1.7rem;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.1;
   letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
@@ -71,7 +72,7 @@
 
 .address {
   display: block;
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.6;
   color: var(--ink-black);
@@ -101,18 +102,19 @@
   border: 1px solid color-mix(in srgb, var(--ink-black) 22%, transparent);
   background: var(--bg-surface);
   color: var(--ink-black);
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 10.5px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.3;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+  transition: border-color var(--hg-fast) var(--hg-ease), background-color var(--hg-fast) var(--hg-ease), color var(--hg-fast) var(--hg-ease);
+  border-radius: var(--hg-radius-sm);
 }
 
 .copyButton:hover:not(:disabled) {
-  border-color: var(--ink-black);
+  border-color: var(--hg-stroke-strong);
 }
 
 .copyButton:disabled {
@@ -136,17 +138,18 @@
   border: 1px solid var(--ink-black);
   background: var(--btn-bg);
   color: var(--btn-text);
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.35;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   text-decoration: none;
+  border-radius: var(--hg-radius-sm);
 }
 
 .walletLink:hover {
-  border-color: var(--hivra-red);
+  border-color: var(--hg-stroke-strong);
 }
 
 .walletBlock {
@@ -173,10 +176,10 @@
   gap: 0.55rem;
   min-height: 44px;
   padding: 0.35rem 0;
-  font-family: var(--font-mono), 'Space Mono', monospace;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--ink-black);
   cursor: pointer;
@@ -189,7 +192,7 @@
 
 .qrChevron {
   margin-left: auto;
-  transition: transform 150ms ease;
+  transition: transform var(--hg-fast) var(--hg-ease);
 }
 
 .qrDetails[open] .qrChevron {
@@ -206,7 +209,7 @@
 .field :is(a, button, summary):focus-visible,
 .walletLink:focus-visible,
 .copyButton:focus-visible {
-  outline: 2px solid var(--hivra-red);
+  outline: 2px solid var(--hg-focus);
   outline-offset: 3px;
 }
 

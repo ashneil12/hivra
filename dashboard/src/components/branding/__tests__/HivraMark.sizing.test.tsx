@@ -7,6 +7,8 @@ import { chromium, type Browser } from "@playwright/test";
 
 import LandingHeader, { FunnelHeader } from "@/components/layout/LandingHeader";
 
+import { launchOptions } from "../../../../scripts/lib/playwright-launch.cjs";
+
 // Every stylesheet resolves to one style mock, so this makes each CSS module
 // class name equal to its key. The real stylesheets below then apply to the
 // real component markup.
@@ -49,7 +51,7 @@ async function markWidths(browser: Browser, css: string, element: ReactElement, 
 // element: rules left on `svg` silently keep the width/height attributes.
 describe("approved mark sizing at breakpoints", () => {
   let browser: Browser;
-  beforeAll(async () => { browser = await chromium.launch(); });
+  beforeAll(async () => { browser = await chromium.launch(launchOptions()); });
   afterAll(async () => { await browser?.close(); });
 
   it.each([

@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Check, Copy, Loader2, X } from "lucide-react";
+import { Check, Copy, X } from "lucide-react";
 
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import { useMediaQuery } from "@/lib/client/media-query";
 import { SafePortal } from "@/components/ui/SafePortal";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import {
   buildDesktopInlineCommand,
   buildDesktopLauncherScript,
@@ -267,7 +268,7 @@ export function ConnectDesktopModal({ instanceId, onClose }: ConnectDesktopModal
         minWidth: 0,
         padding: 16,
         border: "1px solid var(--etched-border)",
-        background: "rgba(127,127,127,0.04)",
+        background: "var(--hg-fill-1)",
       }}
     >
       <span className="mono" style={{ ...(coarse ? kickerTouch : kicker), color: "var(--text-primary)" }}>
@@ -379,7 +380,7 @@ export function ConnectDesktopModal({ instanceId, onClose }: ConnectDesktopModal
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(26,26,26,0.55)",
+        background: "color-mix(in srgb, var(--hg-bg) 40%, transparent)",
         backdropFilter: "blur(5px)",
         display: "flex",
         overflowY: "auto",
@@ -400,7 +401,7 @@ export function ConnectDesktopModal({ instanceId, onClose }: ConnectDesktopModal
           overflowX: "hidden",
           background: "var(--bg-elevated)",
           border: "1px solid var(--etched-border)",
-          boxShadow: "0 30px 80px rgba(26,26,26,0.25)",
+          boxShadow: "var(--hg-shadow-lg)",
         }}
       >
         {/* Header */}
@@ -448,7 +449,7 @@ export function ConnectDesktopModal({ instanceId, onClose }: ConnectDesktopModal
         <div style={{ padding: "clamp(16px, 5vw, 24px)", minWidth: 0 }}>
           {loading ? (
             <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--text-muted)", fontSize: 13 }}>
-              <Loader2 size={15} className="animate-spin" /> Loading connection details…
+              <ThinkingOrb state="connecting" size={20} /> Loading connection details…
             </div>
           ) : error ? (
             <div style={{ padding: "12px 14px", border: "1px solid var(--etched-border)", color: "var(--text-primary)", fontSize: 13 }}>

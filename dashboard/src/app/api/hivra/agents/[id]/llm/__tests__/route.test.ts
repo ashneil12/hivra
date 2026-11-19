@@ -4,11 +4,10 @@ import { GET, POST } from "../route";
 import { ModelKeyError, type ModelKeyProblem } from "@/lib/hivra/model-key-coordinator";
 import { ModelKeyStoreError } from "@/lib/hivra/model-key-store";
 
-const mockAuth = jest.fn(), mockAllowed = jest.fn(), mockLimit = jest.fn();
+const mockAuth = jest.fn(), mockLimit = jest.fn();
 const mockSummary = jest.fn(), mockStart = jest.fn(), mockResume = jest.fn(), mockCreate = jest.fn();
 const mockLaunchCreate = jest.fn(), mockLaunchSummary = jest.fn(), mockContinueLaunch = jest.fn(), mockCancelLaunch = jest.fn(), mockNoLaunch = jest.fn();
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
-jest.mock("@/lib/hivra/hivra-flag", () => ({ isHivraApiAllowed: () => mockAllowed() }));
 jest.mock("@/lib/hivra/model-key-coordinator", () => ({
   ...jest.requireActual("@/lib/hivra/model-key-coordinator"),
   createModelKeyCoordinator: () => { mockCreate(); return { summary: mockSummary, start: mockStart, resume: mockResume }; },
@@ -33,7 +32,7 @@ function req(body?: unknown, headers: Record<string, string> = {}) {
     ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }) });
 }
 beforeEach(() => {
-  jest.resetAllMocks(); mockAuth.mockResolvedValue({ userId: "owner" }); mockAllowed.mockReturnValue(true);
+  jest.resetAllMocks(); mockAuth.mockResolvedValue({ userId: "owner" });
   mockLimit.mockReturnValue(null); mockSummary.mockResolvedValue({ llm: null, pending: null });
   mockStart.mockResolvedValue({ operationId, status: "applied" }); mockResume.mockResolvedValue({ operationId, status: "pending", reason: "computer_busy" });
   mockLaunchSummary.mockResolvedValue(null); mockNoLaunch.mockResolvedValue(undefined);
@@ -46,11 +45,6 @@ it.each([GET, POST])("requires authenticated ownership before reading a body or 
   const response = await handler(req({ action: "apply", operationId, llm: byok }), params);
   expect(response.status).toBe(401); expect(response.headers.get("Cache-Control")).toBe("no-store");
   expect(mockCreate).not.toHaveBeenCalled(); expect(mockLaunchCreate).not.toHaveBeenCalled();
-});
-it.each([GET, POST])("keeps the existing Hivra feature/host gate", async handler => {
-  mockAllowed.mockReturnValue(false);
-  expect((await handler(req(), params)).status).toBe(404);
-  expect(mockAuth).not.toHaveBeenCalled(); expect(mockCreate).not.toHaveBeenCalled();
 });
 it.each<Record<string, string>>([
   { Origin: "https://foreign.test" }, { "Sec-Fetch-Site": "cross-site" }, { Origin: "" }, { "Sec-Fetch-Site": "" },

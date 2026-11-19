@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle, ArrowRight, CheckCircle2, ExternalLink, KeyRound, Loader2, RefreshCw, SquareTerminal, X } from "lucide-react";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { InfrastructureApiError } from "@/lib/infrastructure/client";
@@ -16,6 +17,7 @@ import {
 
 import styles from "./Infrastructure.module.css";
 import enrollmentStyles from "./ServerEnrollment.module.css";
+import { serverEnrollmentAgentPrompt } from "@/lib/infrastructure/server-enrollment-agent-prompt";
 import { CopyButton } from "./CopyButton";
 import { ServerEnrollmentCard, useNow } from "./ServerEnrollmentCard";
 import { useInfrastructureDialog } from "./useInfrastructureDialog";
@@ -223,7 +225,7 @@ export function ServerEnrollmentDialog({
         <div className={styles.wizardBody}>
           {state.kind === "issuing" ? (
             <p className={enrollmentStyles.progress} role="status">
-              <Loader2 size={15} className={styles.spin} aria-hidden="true" /> Making your setup command…
+              <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="connecting" size={20} /></span> Making your setup command…
             </p>
           ) : state.kind === "unavailable" ? (
             <div className={styles.formError} role="alert">
@@ -254,12 +256,25 @@ export function ServerEnrollmentDialog({
             </p>
           ) : item && ready ? (
             <>
+              <p className={enrollmentStyles.meta}>
+                Running Proxmox?{" "}
+                <button type="button" className={enrollmentStyles.linkButton} onClick={() => { close(); onUseSshDetails(); }}>
+                  Connect it with SSH details instead
+                </button>
+              </p>
               <p className={enrollmentStyles.lead}>Run this on the server, as a user who can use sudo:</p>
               {open ? (
                 <div className={enrollmentStyles.commandRow}>
                   <code className={enrollmentStyles.command} data-testid="server-enrollment-command">{ready.issued.command}</code>
                   <CopyButton value={ready.issued.command} label="Copy the setup command" />
                 </div>
+              ) : null}
+              {open ? (
+                <p className={enrollmentStyles.meta}>
+                  The command asks for your one-time code. Paste it when it does:{" "}
+                  <code data-testid="server-enrollment-code">{ready.issued.code}</code>{" "}
+                  <CopyButton value={ready.issued.code} label="Copy the one-time code" />
+                </p>
               ) : null}
               <p className={enrollmentStyles.meta}>
                 {open ? <>Single use · expires in {clock(expiresIn)} · </> : null}
@@ -281,11 +296,29 @@ export function ServerEnrollmentDialog({
 
               {scriptOpen ? <ViewScriptFirst issued={ready.issued} /> : null}
 
+              {open ? (
+                <div className={enrollmentStyles.agentPrompt} data-testid="server-enrollment-agent-prompt">
+                  <p className={enrollmentStyles.meta}>
+                    <strong>Use a coding agent?</strong> Copy this prompt into Claude Code, Codex or another agent that can
+                    reach the server. It previews first and leaves the step that gives Hivra access to you.{" "}
+                    <CopyButton
+                      value={serverEnrollmentAgentPrompt({ ...ready.issued, expiresAt: item.expiresAt })}
+                      label="Copy the prompt for your coding agent"
+                      text="Copy prompt"
+                    />
+                  </p>
+                </div>
+              ) : null}
+
               <ul className={enrollmentStyles.notes}>
                 <li>Signed in as root? Leave out <code>sudo</code>.</li>
                 <li>
-                  Works with Ubuntu 22.04 or 24.04 on x86. The server needs a public IPv4 address and must accept SSH from
+                  Works with Ubuntu 22.04 or 24.04 on x86, not a Mac or Windows PC. The server needs a public IPv4 address and must accept SSH from
                   the internet. Home or office machine? Hosted Hivra can&apos;t reach private networks yet.
+                </li>
+                <li>
+                  An Ubuntu server connected this way runs Linux Sandbox. Claude Code, Codex, OpenClaw, Agent Zero, Aeon
+                  and Ubuntu Desktop need a Proxmox VE server connected with SSH details.
                 </li>
                 <li>
                   Proxmox VE connects with a root login for now: use <strong>Connect with SSH details instead</strong>.
@@ -335,9 +368,10 @@ export function ServerEnrollmentDialog({
 /** Verifiable in a few commands: the body is the same for everyone and
  * pinned in the repository; only the final line differs. */
 function ViewScriptFirst({ issued }: { issued: ServerEnrollmentIssueResult }) {
+  // The download asks for the code, so it is copied on its own, one line. The
+  // checks after it never prompt, so a plain multi-line paste cannot feed them
+  // to the prompt as the code.
   const recipe = [
-    "d=$(mktemp -d) && cd \"$d\"",
-    issued.downloadCommand,
     "sha256sum hivra-enroll.sh                 # matches \"your download\" below",
     "head -n -1 hivra-enroll.sh | sha256sum    # matches the published script",
     "less hivra-enroll.sh",
@@ -358,6 +392,7 @@ function ViewScriptFirst({ issued }: { issued: ServerEnrollmentIssueResult }) {
         </a>{" "}
         · the same file is in Hivra&apos;s public repository at <code>dashboard/bootstrap/server-enroll.sh</code>.
       </p>
+      <p>The commands that ask for the code expect the same one-time code, <code>{issued.code}</code>.</p>
       <p><strong>Try it without changing anything</strong> (no sudo needed):</p>
       <div className={enrollmentStyles.commandRow}>
         <code className={enrollmentStyles.command}>{issued.dryRunCommand}</code>
@@ -368,9 +403,15 @@ function ViewScriptFirst({ issued }: { issued: ServerEnrollmentIssueResult }) {
         <SquareTerminal size={14} aria-hidden="true" /> The downloaded file contains your one-time code. Delete it when
         you&apos;re done. The code stops working once it&apos;s used, and after 15 minutes. Downloading doesn&apos;t use it up.
       </p>
+      <p>1. Copy this line and paste it on its own. It asks for the one-time code, then downloads the script into a new folder:</p>
+      <div className={enrollmentStyles.commandRow}>
+        <code className={enrollmentStyles.command}>{issued.downloadCommand}</code>
+        <CopyButton value={issued.downloadCommand} label="Copy the download command" />
+      </div>
+      <p>2. In the same terminal, copy these checks and run them. They do not ask for the code again:</p>
       <div className={enrollmentStyles.commandRow}>
         <pre className={enrollmentStyles.recipe}>{recipe}</pre>
-        <CopyButton value={recipe} label="Copy the download-and-check commands" />
+        <CopyButton value={recipe} label="Copy the check-and-run commands" />
       </div>
       <p className={enrollmentStyles.fine}>To undo it later: <code>{issued.uninstallCommand}</code></p>
     </div>

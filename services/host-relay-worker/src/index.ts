@@ -19,7 +19,7 @@ export interface Env {
 
 const CONNECTION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TOKEN_ID = /^[A-Za-z0-9_-]{16,64}$/;
-const ROUTE = /^\/v1\/hosts\/([0-9a-f-]{36})\/(agent|client|revoke|status|stream\/([A-Za-z0-9_-]{16,64}))$/;
+const ROUTE = /^\/v1\/hosts\/([0-9a-f-]{36})\/(agent|client|revoke|status|exec|stream\/([A-Za-z0-9_-]{16,64}))$/;
 const CLOCK_SKEW_SECONDS = 120;
 const MAX_TICKET_LIFETIME_SECONDS = 120;
 const MAX_GENERATION = 1_000_000_000;
@@ -28,6 +28,10 @@ const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_PENDING_BYTES = 256 * 1024;
 const STREAM_ATTACH_TIMEOUT_MS = 10_000;
 const MIN_SECRET_LENGTH = 32;
+const MAX_EXEC_BODY_BYTES = 16 * 1024;
+const MAX_EXEC_REPLY_BYTES = 1024 * 1024;
+const MAX_EXEC_WAIT_MS = 140_000;
+const EXEC_GRACE_MS = 15_000;
 
 const encoder = new TextEncoder();
 
@@ -124,17 +128,39 @@ function retireAgent(socket: WebSocket, code: 4000 | 4001, reason: "replaced" | 
   }
 }
 
+/** The id given to a control socket when it was accepted (survives hibernation). */
+function socketId(socket: WebSocket): string | null {
+  try {
+    const attachment = socket.deserializeAttachment() as { socketId?: unknown } | null;
+    return typeof attachment?.socketId === "string" ? attachment.socketId : null;
+  } catch {
+    return null;
+  }
+}
+
 function frameSize(data: string | ArrayBuffer): number {
   return typeof data === "string" ? encoder.encode(data).byteLength : data.byteLength;
 }
 
 export class HostRelay extends DurableObject<Env> {
   private streams = new Map<string, StreamEntry>();
+  /** The one local-bridge command in flight for this connection, if any. */
+  private exec: { id: string; socketId: string | null; settle: (reply: Record<string, unknown> | null) => void } | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     // Keepalive pings are answered by the runtime without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"type":"ping"}', '{"type":"pong"}'));
+  }
+
+  /**
+   * The machine's current control socket. A replaced socket can stay listed
+   * (closing) for a while after its replacement connected, so pick the newest
+   * one that is still open.
+   */
+  private liveAgent(): WebSocket | undefined {
+    const open = this.ctx.getWebSockets("agent").filter((socket) => socket.readyState === WebSocket.OPEN);
+    return open[open.length - 1];
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -148,6 +174,7 @@ export class HostRelay extends DurableObject<Env> {
 
     if (route === "revoke") return this.revoke(request, master);
     if (route === "status") return this.status(request, master);
+    if (route === "exec") return this.execute(request, master);
     if (!isUpgrade(request)) return json(426, { error: "websocket_required" });
     if (route === "agent") return this.acceptAgent(request, master, connectionId);
     if (route === "client") return this.acceptClient(request, master, connectionId);
@@ -202,7 +229,7 @@ export class HostRelay extends DurableObject<Env> {
     if (!sameString(request.headers.get("authorization") ?? "", `Bearer ${await adminToken(master)}`)) {
       return json(401, { error: "unauthorized" });
     }
-    const agent = this.ctx.getWebSockets("agent")[0];
+    const agent = this.liveAgent();
     const generation = agent ? Number(this.ctx.getTags(agent).find((tag) => tag.startsWith("gen:"))?.slice(4)) : null;
     return json(200, {
       online: Boolean(agent),
@@ -212,6 +239,54 @@ export class HostRelay extends DurableObject<Env> {
     });
   }
 
+  /**
+   * Local bridge: hand one signed `exec` to the machine's control socket and
+   * wait for its answer. The relay never reads or runs the command; the bridge
+   * on the machine verifies the ticket and refuses anything not approved.
+   */
+  private async execute(request: Request, master: string): Promise<Response> {
+    if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
+    if (!sameString(request.headers.get("authorization") ?? "", `Bearer ${await adminToken(master)}`)) {
+      return json(401, { error: "unauthorized" });
+    }
+    const text = await request.text();
+    if (encoder.encode(text).byteLength > MAX_EXEC_BODY_BYTES) return json(413, { error: "too_large" });
+    let body: { ticket?: unknown; request?: { timeoutSeconds?: unknown } };
+    try {
+      body = JSON.parse(text) as typeof body;
+    } catch {
+      return json(400, { error: "invalid_request" });
+    }
+    if (typeof body.ticket !== "string" || body.ticket.length > 2048 || typeof body.request !== "object" || body.request === null) {
+      return json(400, { error: "invalid_request" });
+    }
+    const agent = this.liveAgent();
+    if (!agent) return json(503, { error: "host_offline" });
+    if (this.exec) return json(429, { error: "bridge_busy" });
+    const timeoutSeconds = typeof body.request.timeoutSeconds === "number" ? body.request.timeoutSeconds : 30;
+    const waitMs = Math.min(MAX_EXEC_WAIT_MS, Math.max(1, timeoutSeconds) * 1000 + EXEC_GRACE_MS);
+    const id = randomToken();
+    const reply = await new Promise<Record<string, unknown> | null>((resolve) => {
+      const settle = (value: Record<string, unknown> | null) => {
+        clearTimeout(timer);
+        if (this.exec?.id === id) this.exec = null;
+        resolve(value);
+      };
+      const timer = setTimeout(() => settle(null), waitMs);
+      this.exec = { id, socketId: socketId(agent), settle };
+      try {
+        agent.send(JSON.stringify({ type: "exec", id, ticket: body.ticket, request: body.request }));
+      } catch {
+        settle(null);
+      }
+    });
+    if (!reply) {
+      console.log(JSON.stringify({ event: "bridge_exec_no_answer", agents: this.ctx.getWebSockets("agent").length }));
+      return json(504, { error: "no_answer" });
+    }
+    return json(200, reply);
+  }
+
   private async acceptAgent(request: Request, master: string, connectionId: string): Promise<Response> {
     const generation = await this.verifyConnector(request, master, "agent", connectionId, "");
     if (generation === null) return json(401, { error: "unauthorized" });
@@ -219,6 +294,7 @@ export class HostRelay extends DurableObject<Env> {
     for (const socket of this.ctx.getWebSockets("agent")) retireAgent(socket, 4000, "replaced");
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1], ["agent", `gen:${generation}`]);
+    pair[1].serializeAttachment({ socketId: randomToken() });
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -253,7 +329,7 @@ export class HostRelay extends DurableObject<Env> {
     });
     if (replayed) return json(401, { error: "unauthorized" });
 
-    const agent = this.ctx.getWebSockets("agent")[0];
+    const agent = this.liveAgent();
     if (!agent) return json(503, { error: "host_offline" });
     if (this.streams.size >= MAX_STREAMS) return json(429, { error: "too_many_streams" });
 
@@ -345,15 +421,22 @@ export class HostRelay extends DurableObject<Env> {
 
   // Hibernation handlers: only the agent control socket is hibernatable.
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
-    if (typeof message !== "string" || message.length > 256) return;
+    if (typeof message !== "string" || message.length > MAX_EXEC_REPLY_BYTES) return;
     try {
-      if ((JSON.parse(message) as { type?: unknown }).type === "ping") socket.send(JSON.stringify({ type: "pong" }));
+      const body = JSON.parse(message) as Record<string, unknown>;
+      if (body.type === "ping") socket.send(JSON.stringify({ type: "pong" }));
+      else if (body.type === "exec_result" && this.exec && body.id === this.exec.id) {
+        const { type: _type, id: _id, ...result } = body;
+        this.exec.settle(result);
+      }
     } catch {
-      // Ignore anything that is not a ping.
+      // Ignore anything that is not a ping or an answer.
     }
   }
 
   async webSocketClose(socket: WebSocket, code: number, reason: string) {
+    // Only the socket the command went to ends it: a replaced socket's late close must not.
+    if (this.exec && this.exec.socketId === socketId(socket)) this.exec.settle(null);
     try {
       socket.close(code === 1005 ? 1000 : code, reason);
     } catch {

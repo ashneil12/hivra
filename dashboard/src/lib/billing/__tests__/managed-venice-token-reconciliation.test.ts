@@ -95,6 +95,35 @@ describe("managed Venice token quote reconciliation", () => {
     );
   });
 
+  it("is not stalled by a spray of dust transfers across more blocks than the timestamp lookup cap", async () => {
+    const settleQuote = jest.fn(async () => ({ status: "settled" as const, quoteId: "quote_1" }));
+    const dust = Array.from({ length: 250 }, (_, i) =>
+      transferAt(60 + i, 1_000n, `0xdust${i.toString(16).padStart(4, "0")}`)
+    );
+    // Head at block 400 = 10:31:40, still inside the quote window.
+    const chain = makeChain(
+      [...dust, transferAt(380, BigInt(quoteRow.token_amount_raw as string), "0xpaid")],
+      { block: 400, time: "2026-05-16T10:31:40.000Z" }
+    );
+
+    const result = await reconcileManagedVeniceTokenQuote({
+      quoteId: "quote_1",
+      userId: "user_1",
+      db: createMemoryDb([quoteRow]),
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote,
+      now: new Date("2026-05-16T10:31:40.000Z"),
+    });
+
+    expect(result.status).toBe("settled");
+    expect(settleQuote).toHaveBeenCalledWith(
+      expect.objectContaining({ transactionHash: "0xpaid" }),
+      expect.anything()
+    );
+  });
+
   it("matches an over-send and settles it for the ACTUAL received amount (not no_match)", async () => {
     const settleQuote = jest.fn(async () => ({ status: "settled" as const, quoteId: "quote_1" }));
     // User sent 10% more than quoted — real money, inside the over-send ceiling.

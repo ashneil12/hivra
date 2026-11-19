@@ -494,72 +494,45 @@ holds a computer, the page reads it again every 5 s so the controls it blocks
 come back when it ends. Not built: disk grow, Hetzner power-off, and power or resize for Windows on My
 server. The Agents section holds the attach work's ComputerAgentsPanel.
 
-**Claude Code and Codex updates (built 2026-09-25, ported to canary
-2026-10-20; the automatic sweep ships off).** Vendor self-updaters stay off on Hivra computers; the release
-pins a tested version per CLI (`provisioner/agent-cli-versions.json`,
-`AGENT_CLI_VERSIONS`), and the in-place connection-service update moves the CLI
-to it once no reply is being written, putting the previous version back if the
-new one doesn't install. What an owner sees:
+**Claude Code and Codex updates (built 2026-09-25; pins and automatic updates
+removed 2026-11-17 in release 2026.11.17.1).** Hivra pins no agent version. A
+launch installs each CLI's newest npm release, and after that Hivra never
+changes it by itself: the owner updates with Update in Manage (or the CLI's own
+npm command). Vendor background self-updaters stay off so a CLI never swaps
+itself under a running reply. What an owner sees:
 
 - *Current.* Hivra reads the computer on the server only
   (`lib/hivra/agent-cli-meta.ts`): the public `/api/meta` first, and only when
   that proves a current connection service of the agent's kind, the same
   endpoint with the computer's bearer, which never reaches the browser for
   this. One interpretation (`lib/hivra/agent-cli-status.ts`) serves the owner
-  API (`GET/PATCH /api/hivra/agents/[id]/agent-software`), the agents list
-  (stored readings only, one query, no computer reads), the header chip beside
-  the agent's name and Manage › Updates. "Update available" means behind
-  Hivra's tested version, never behind the vendor's newest release; a newer
-  version the owner installed is shown as newer than tested and never
-  offered as an update. An agent whose connection service predates version
-  reporting (no `bootId` in its public meta, a proxy tied to release
-  2026.09.24.2 until the gateway reports its release) is asked to update the
-  connection service instead. Aeon, OpenClaw and Agent Zero are covered the
-  same way (see the next paragraph). DeepSeek, computers, attached Codex,
-  DigitalOcean sessions, My cloud and Linux Sandboxes are not covered.
-- *Update now* is the lifecycle route's `update_runtime`, now one shared
-  function (`lib/hivra/agent-runtime-update.ts`) with the same host readiness,
-  binding tag, operation lease and receipt; refusals carry a code
-  (`host_not_ready`, `busy`, `not_running`, `unverified`) for Manage's copy.
-  Readings, requests and the owner's choice live in `hivra_agent_cli_updates`
-  (migration 20260925140000, service role only).
-- *Automatic updates* (`/api/cron/update-hivra-agent-clis`, every 30 minutes)
-  ship dark: `HIVRA_AGENT_CLI_AUTO_UPDATE` unset or `off` reads nothing,
-  `preview` reads agents and reports what it would update, `on` updates. Each
-  run reads up to 40 agents and updates at most 5, one per host, only when the
-  owner's choice (default on for Hivra Cloud, off for My server; the toggle is
-  shown only while the switch is `on`) allows it, the version was reported and
-  is behind (or ahead only because Hivra lowered its tested version after
-  installing it; a newer version the owner installed after an update was
-  deferred or failed is theirs and is never moved back down), the target isn't paused after an automatic failure, no reply
-  is being written, no agent terminal is attached, nothing was used for 30
-  minutes, the owner's account still exists (Hivra checks it; one it can't
-  confirm counts as deleted), and the per-target claim allows one request
-  every 20 hours. A run that updates stops starting computer reads after 7 s,
-  so the agents it read can still be checked and claimed in time. The
-  claim function is the authority on the owner's choice and the pause, so a
-  stale read can't override them, and a run that can't read the stored
-  choices reads and updates nobody. Only `host_not_ready` and `busy` leave
-  the 20-hour cooldown open; any other refusal holds it. No update is claimed
-  after 25 s into a run, so its host readiness check and 240 s host script
-  end inside the function's 300 s.
-- *Target / not built.* A `release` field in authenticated meta (box side), a
-  Home card, and a separate operation kind so an automatic update doesn't hold
-  the owner's Stop/Restart with "another action is running". Flipping the
-  switch to `on` is a fleet rollout decision: canary first, then production
-  after the migration, Promote and env.
+  API (`GET /api/hivra/agents/[id]/agent-software`), the agents list (stored
+  readings only, one query, no computer reads), the header chip beside the
+  agent's name and Manage › Updates. Any installed version is shown as it is;
+  there is no tested version to be behind. "Update available" appears only when
+  the connection service predates version reporting, or an update the owner
+  started was deferred. Aeon, OpenClaw and Agent Zero are covered the same way
+  (see the next paragraph). DeepSeek, computers, attached Codex, DigitalOcean
+  sessions and Linux Sandboxes are not covered.
+- *Update* is the lifecycle route's `update_runtime`
+  (`lib/hivra/agent-runtime-update.ts`) with the same host readiness, binding
+  tag, operation lease and receipt; refusals carry a code (`host_not_ready`,
+  `busy`, `not_running`, `unverified`) for Manage's copy. It reports
+  `target=latest`, and `hivra-agent-cli-update.sh` resolves the newest npm
+  release at that moment, ends at once when it is installed already, and
+  otherwise swaps once no reply is being written, putting the previous version
+  back if the new one doesn't install. Readings and requests live in
+  `hivra_agent_cli_updates` (migration 20260925140000, service role only); its
+  automatic-update columns are no longer written.
 
 **Aeon, OpenClaw and Agent Zero updates (built 2026-10-20 in release
-2026.10.20.2; not yet on any existing computer).** The same pattern for the
-hosted apps. The release pins a tested version per app
-(`provisioner/agent-app-versions.json`, `AGENT_APP_VERSIONS`): the Aeon
-dashboard's upstream commit, OpenClaw's npm version and Agent Zero's image
-digest, each with the name owners see ("v2.2", never the digest) and the
-earlier pins Hivra moved off (a commit or a digest is "behind" only when it is
-one of those; an x.y.z version is ordered by number). The installer reads the
-same file and records what it installed on the computer; the connection-service
-update reports the installed version (`HIVRA_AGENT_APP`) and, when it differs,
-starts `hivra-agent-app-update.sh`, which prepares the new version beside the
+2026.10.20.2; pins removed in 2026.11.17.1).** The same pattern for the
+hosted apps. A launch installs upstream's newest: the Aeon repository's `HEAD`
+commit, OpenClaw's npm `latest`, and the digest behind
+`agent0ai/agent-zero:latest`. The installer records what it installed on the
+computer; the owner's Update reports the installed version (`HIVRA_AGENT_APP`,
+`target=latest`) and starts `hivra-agent-app-update.sh`, which resolves
+upstream's newest at that moment, prepares it beside the
 running one, waits until nobody has used the app through Hivra for 5 minutes
 and the app has no work in flight, swaps, restarts only the app's own service,
 and puts the previous version back when the new one does not answer
@@ -579,6 +552,23 @@ passes a live check on a disposable computer (Agent Zero after v2.2 also needs t
 gateway's native editor adapter, which targets v2.2's exact files). Existing
 computers get the updater with their next connection-service update once their
 host holds release 2026.10.20.2.
+
+**Claude app clipboard switch, Code tab backup and agent browser sandbox (built
+2026-11-03 in release 2026.11.03.1; not yet on any existing computer).** On an
+Ubuntu Desktop computer that offers the Claude app, the Desktop strip gains a
+clipboard switch, off by default. Selkies' own clipboard stays off; with the
+switch on, Paste in puts the owner's clipboard text on the desktop's clipboard
+and Copy out brings the desktop's back, one request per press, through
+`hivra-claude-app` (`provisioner/README.md`). The app now starts in `~/Hivra`,
+and Claude Code's data from its Code tab is backed up beside the app's own so
+sessions survive a desktop restart. The agent's own Chrome
+(`local-browser-keeper.py`) runs with Chromium's sandbox on. Not built: a
+seamless clipboard (it needs the desktop container recreated with Selkies'
+clipboard on, which the provider ownership proof does not allow today), and
+Chromium's sandbox for the Claude app inside the contained desktop. Existing
+computers get the helper and gateway changes with their next connection-service
+update once their host holds release 2026.11.03.1; the keeper change reaches
+computers provisioned from it.
 
 Updates says how every kind of computer is kept up to date (2026-10-19). Where
 Hivra's connection service runs, it offers Update connection service. Where it

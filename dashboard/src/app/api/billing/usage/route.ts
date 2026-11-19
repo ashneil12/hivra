@@ -3,10 +3,11 @@ import { apiSuccess, apiError } from "@/lib/api-response";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { getPlan } from "@/lib/subscription";
+import { loadLadderEntitlement } from "@/lib/billing/plan-ladder-entitlement";
+import { activePlanLadder, asLadderPlanKey } from "@/lib/subscription/plan-ladder";
 import {
   CREDIT_UNIT_LABEL,
   getCreditSummary,
-  getPlanMonthlyCreditGrant,
 } from "@/lib/billing/credits";
 import { isBillingV2ServerEnabled } from "@/lib/billing/billing-v2-availability";
 import { readPlanOnHold, resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
@@ -107,7 +108,6 @@ export async function GET() {
       ? await getCreditSummary(userId, sub?.plan ?? null)
       : {
           balance: 0,
-          monthlyGrant: getPlanMonthlyCreditGrant(sub?.plan ?? null),
           unit: CREDIT_UNIT_LABEL,
         };
 
@@ -219,16 +219,21 @@ export async function GET() {
     const maxAgents = sub.instance_limit;
     const totalCpu = sub.total_cpu_budget;
     const totalRam = sub.total_ram_budget;
+    // A plan bought on the plan ladder shows the ladder's name, price and
+    // per-agent size. Null everywhere the ladder is not configured.
+    const ladder = await loadLadderEntitlement(userId).catch(() => null);
+    const ladderKey = ladder ? asLadderPlanKey(ladder.planKey) : null;
+    const ladderPrice = ladderKey ? activePlanLadder()?.plans[ladderKey]?.monthlyCents ?? null : null;
 
     return usageSuccess({
       subscribed: true,
       plan: {
         key: sub.plan,
-        name: plan.name,
-        price: plan.price,
+        name: ladder?.name ?? plan.name,
+        price: ladderPrice ?? plan.price,
         maxAgents,
-        maxCpuPerAgent: plan.maxCpuPerAgent,
-        maxRamPerAgent: plan.maxRamPerAgent,
+        maxCpuPerAgent: ladder?.maxCpuPerAgent ?? plan.maxCpuPerAgent,
+        maxRamPerAgent: ladder?.maxRamPerAgentMb ?? plan.maxRamPerAgent,
         totalCpu,
         totalRam,
         status: sub.status,

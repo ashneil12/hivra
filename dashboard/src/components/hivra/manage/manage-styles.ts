@@ -4,12 +4,15 @@ import type { CSSProperties } from "react";
 // minimum target.
 
 export const manageLabel: CSSProperties = {
-  fontFamily: "var(--font-mono), monospace", fontSize: 10, fontWeight: 700,
-  textTransform: "uppercase", letterSpacing: "0.16em", color: "var(--text-muted)",
+  fontFamily: "var(--font-sans)", fontSize: 11, fontWeight: 600,
+  textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--hg-text-3)",
 };
 
 export const manageCard: CSSProperties = {
-  border: "1px solid var(--etched-border)", background: "rgba(255,255,255,0.035)",
+  border: "1px solid var(--hg-stroke)", background: "var(--hg-glass)",
+  borderRadius: "var(--hg-radius-lg)", boxShadow: "var(--hg-glass-edge), var(--hg-shadow-sm)",
+  backdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
+  WebkitBackdropFilter: "blur(var(--hg-glass-blur)) saturate(1.3)",
   padding: 18, display: "grid", gap: 14, boxSizing: "border-box", minWidth: 0,
   // minmax(0,1fr): the single column may SHRINK below its content's max-content
   // (e.g. a long endpoint URL) so children truncate instead of widening the card.
@@ -25,20 +28,21 @@ export const manageMuted: CSSProperties = {
 };
 
 export const manageButtonDark: CSSProperties = {
-  border: "1px solid var(--ink-black)", background: "var(--ink-black)", color: "var(--bg-surface)",
-  fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800,
+  border: "1px solid var(--hg-accent)", background: "var(--hg-accent)", color: "var(--hg-on-accent)",
+  borderRadius: "var(--hg-radius-sm)", fontFamily: "var(--font-sans)", fontSize: 12.5, fontWeight: 600,
   padding: "9px 14px", display: "inline-flex", alignItems: "center", gap: 7, minHeight: 40,
 };
 
 export const manageButtonGhost: CSSProperties = {
-  border: "1px solid var(--etched-border)", background: "transparent", color: "var(--ink-black)",
-  fontSize: 10, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 800,
+  border: "1px solid var(--hg-stroke)", background: "transparent", color: "var(--hg-text)",
+  borderRadius: "var(--hg-radius-sm)", fontFamily: "var(--font-sans)", fontSize: 12.5, fontWeight: 600,
   padding: "9px 14px", display: "inline-flex", alignItems: "center", gap: 7, minHeight: 40,
 };
 
 export const manageError: CSSProperties = {
-  border: "1px solid #c0392b", background: "rgba(192,57,43,0.08)", color: "#e06c5a", fontSize: 12.5,
-  padding: "9px 13px", fontFamily: "var(--font-mono), monospace", lineHeight: 1.5, overflowWrap: "anywhere",
+  border: "1px solid color-mix(in srgb, var(--hg-bad) 40%, transparent)",
+  background: "color-mix(in srgb, var(--hg-bad) 8%, transparent)", color: "var(--hg-bad)", fontSize: 12.5,
+  borderRadius: "var(--hg-radius-md)", padding: "9px 13px", fontFamily: "var(--font-sans)", lineHeight: 1.5, overflowWrap: "anywhere",
 };
 
 export const manageSpin: CSSProperties = { animation: "spin 1s linear infinite" };

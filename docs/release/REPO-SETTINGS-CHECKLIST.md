@@ -29,7 +29,7 @@ It does not read the settings below. See
 | Secret scanning and push protection | Keep on | `gh api repos/ashneil12/hivra --jq .security_and_analysis` |
 | Secret scanning for non-provider patterns, and validity checks | Owner's choice; both add coverage to the repository's own Gitleaks rules | same call |
 | Private vulnerability reporting | Keep on, because [SECURITY.md](../../SECURITY.md) points reporters to it | Settings, Code security |
-| Required status checks on `canary` and `main` | `Current tree safety` stays required; see the trap on `Verify Dashboard` | `gh api repos/ashneil12/hivra/branches/canary/protection` |
+| Required status checks on `canary` and `main` | `Current tree safety` stays required; see the trap on `Verify Dashboard`. On `canary`, "require branches to be up to date" (`strict`) is off since 2026-11-17: every push to `canary` gets its own full Dashboard CI and Current tree safety run, so a pull request no longer re-runs CI after "Update branch". `main` keeps `strict` on | `gh api repos/ashneil12/hivra/branches/canary/protection` |
 | Required approving reviews | Leave at zero while the repository has one owner | same call |
 | Stale branches | Delete only branches that have no open pull request and no unmerged work | `gh pr list --state open --json number,headRefName` |
 | Allowed Actions | Optional: restrict to a selected list. Keep the requirement that actions are pinned to a commit | Settings, Actions, General |
@@ -50,9 +50,9 @@ only when the change touches `dashboard/**`, `docker-compose.yml` or `.github/**
 A pull request that touches only `docs/`, `scripts/`, `services/`, `apps/` or
 `contracts/` never reports that check, so a required `Verify Dashboard` would wait
 on it forever. Administrators follow the branch rules, so nobody could merge past
-it. The branch must also be up to date before merging, and the check takes several
-minutes, so every merge into `canary` restarts the required check on every other
-open pull request. Two safe routes exist. One is to remove the path filter from
+it. If `strict` (up to date before merging) is ever turned back on, the check
+takes several minutes, so every merge into `canary` would restart the required
+check on every other open pull request. Two safe routes exist. One is to remove the path filter from
 the `pull_request` trigger in `.github/workflows/dashboard-ci.yml` so the check
 always reports. The other is to add a summary check that always reports. Land
 that as its own reviewed change, and only add the requirement after the check has

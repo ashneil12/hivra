@@ -3,6 +3,8 @@ import { spawn } from "child_process";
 
 // SCRIPTURE_ANCHOR: proxmox-foundation | Luke 14:28 | Verse: Which of you, desiring to build a tower, doesn't first sit down and count the cost?
 import { Client as Ssh2Client, type ConnectConfig } from "ssh2";
+
+import { parseConnectorHostname } from "@/lib/infrastructure/home-connector-host";
 import type { CodexVaultBundle } from "@/lib/codex-oauth";
 import type { NousVaultBundle } from "@/lib/nous-oauth";
 import type { InstanceBankrAgentConfig } from "@/lib/billing/bankr-instance-wallets";
@@ -59,6 +61,7 @@ import {
   PROXMOX_VM_MISSING_MARKER,
   PROXMOX_VM_STILL_RUNNING_MARKER,
   buildProxmoxDeleteScript,
+  buildProxmoxDormantArchiveRemoveScript,
   buildProxmoxDormantArchiveScript,
   buildProxmoxInfrastructureDiscoveryScript,
   buildProxmoxMetricsScript,
@@ -105,6 +108,7 @@ export {
   PROXMOX_VM_STILL_RUNNING_MARKER,
   buildProxmoxCaddySiteCleanupScript,
   buildProxmoxDeleteScript,
+  buildProxmoxDormantArchiveRemoveScript,
   buildProxmoxDormantArchiveScript,
   buildProxmoxGuestBootstrapScript,
   buildProxmoxInfrastructureDiscoveryScript,
@@ -207,6 +211,9 @@ export interface HostScriptResult {
   /** Sudo transport only: the command never reached the script, and the
    * fixed diagnosis says why. */
   sudoFailure?: SudoTransportFailure;
+  /** Only when asked for with reportTimings: milliseconds from the start of
+   * the SSH connect until the session was ready. */
+  sshReadyMs?: number;
 }
 
 /** Default and absolute host-output limits protect the control plane from a
@@ -251,6 +258,11 @@ type HostScriptTimeoutOverride =
   | {
       timeoutMs?: number;
       earlyFinishMarker?: string;
+      /** With earlyFinishMarker: finish only once a newline follows the
+       * marker, so a receipt line that has only partly arrived is never cut. */
+      earlyFinishOnLine?: boolean;
+      /** Add sshReadyMs to the result. */
+      reportTimings?: boolean;
       maxOutputBytes?: number;
       /** Sudo transport only. "bounded" (the default) stops the remote script
        * with TERM, then KILL, just before Hivra's own deadline. "none" is for
@@ -1535,6 +1547,16 @@ type HostInvocation = {
   stdin: string;
 };
 
+/**
+ * Whether the early-finish marker has arrived. With `wholeLine` the line that
+ * holds it must also be complete: a chunk can end in the middle of a receipt.
+ */
+export function markerSeen(stdout: string, marker: string, wholeLine: boolean): boolean {
+  const at = stdout.indexOf(marker);
+  if (at < 0) return false;
+  return !wholeLine || stdout.indexOf("\n", at + marker.length) >= 0;
+}
+
 function withoutSudoSentinel(result: HostScriptResult): HostScriptResult {
   return { ...result, stderr: stripSudoSentinel(result.stderr).stderr };
 }
@@ -1561,6 +1583,8 @@ async function runProxmoxHostInvocation(
   const dispatchDeadline = performance.now() + timeoutMs;
   const earlyFinishMarker =
     typeof timeoutMsOverride === "object" ? timeoutMsOverride?.earlyFinishMarker : undefined;
+  const earlyFinishOnLine = typeof timeoutMsOverride === "object" && timeoutMsOverride.earlyFinishOnLine === true;
+  const reportTimings = typeof timeoutMsOverride === "object" && timeoutMsOverride.reportTimings === true;
   const maxOutputBytes = resolveHostScriptMaxOutputBytes(timeoutMsOverride);
   const mode = envValue(env, "PROXMOX_EXEC_MODE", "ssh");
   const userInfrastructureConnection =
@@ -1625,8 +1649,23 @@ async function runProxmoxHostInvocation(
   if (!host) {
     return { ok: false, stdout: "", stderr: "", error: "PROXMOX_SSH_HOST is not configured." };
   }
+  // A machine behind a home router: the socket is a relay session, not a
+  // direct connection. Host key pinning below is unchanged.
+  let relaySock: import("node:stream").Duplex | null = null;
+  if (userInfrastructureConnection && envValue(env, "PROXMOX_SSH_TRANSPORT") === "connector") {
+    const connectorId = envValue(env, "PROXMOX_SSH_CONNECTOR_ID");
+    if (!connectorId || parseConnectorHostname(host) !== connectorId.toLowerCase()) {
+      return { ok: false, stdout: "", stderr: "", error: "This machine's connector is not set up correctly." };
+    }
+    try {
+      relaySock = await (await import("@/lib/infrastructure/host-relay")).openRelaySocket(connectorId);
+    } catch (err) {
+      return { ok: false, stdout: "", stderr: "", error: err instanceof Error ? err.message : "Hivra's relay did not open a session to this machine." };
+    }
+  }
   const privateKeyEnv = envPrivateKey(env);
   if (!keyPath && !privateKeyEnv && envValue(env, "PROXMOX_ALLOW_SSH_AGENT") !== "true") {
+    relaySock?.destroy();
     return {
       ok: false,
       stdout: "",
@@ -1648,6 +1687,7 @@ async function runProxmoxHostInvocation(
       const { readFile } = await import("fs/promises");
       privateKeyBuf = await readFile(/*turbopackIgnore: true*/ keyPath);
     } catch (err) {
+      relaySock?.destroy();
       return {
         ok: false,
         stdout: "",
@@ -1660,6 +1700,8 @@ async function runProxmoxHostInvocation(
   return await new Promise<HostScriptResult>((resolve) => {
       const conn = new Ssh2Client();
       let settled = false;
+      // When the SSH session became ready, from the start of the connect.
+      let sshReadyMs: number | null = null;
       // What the server presented, recorded before the verifier refuses it.
       let presentedFingerprint: string | null = null;
       const stdoutChunks: Buffer[] = [];
@@ -1686,8 +1728,14 @@ async function runProxmoxHostInvocation(
         } catch {
           // ignore
         }
+        try {
+          relaySock?.destroy();
+        } catch {
+          // ignore
+        }
         const bounded = result.ok && performance.now() >= dispatchDeadline ? timeoutResult() : result;
-        resolve(sudoTransport ? withoutSudoSentinel(bounded) : bounded);
+        const timed = reportTimings && sshReadyMs !== null ? { ...bounded, sshReadyMs } : bounded;
+        resolve(sudoTransport ? withoutSudoSentinel(timed) : timed);
       };
 
       const timer = setTimeout(() => {
@@ -1724,6 +1772,7 @@ async function runProxmoxHostInvocation(
       const connectConfig: ConnectConfig = {
         host,
         port: Number(port) || 22,
+        ...(relaySock ? { sock: relaySock } : {}),
         username: user,
         // ssh2 accepts undefined privateKey — falls through to ssh-agent
         // if PROXMOX_ALLOW_SSH_AGENT=true is configured at runtime.
@@ -1756,6 +1805,7 @@ async function runProxmoxHostInvocation(
 
       conn.on("ready", () => {
         if (!active()) return;
+        sshReadyMs = Date.now() - t0;
         debugLog("ssh.ready");
         if (!active()) return;
         conn.exec(command, (err, stream) => {
@@ -1826,7 +1876,7 @@ async function runProxmoxHostInvocation(
             // independently on the host.
             if (earlyFinishMarker && !settled) {
               const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-              if (stdout.includes(earlyFinishMarker)) {
+              if (markerSeen(stdout, earlyFinishMarker, earlyFinishOnLine)) {
                 debugLog("marker.found");
                 const stderr = Buffer.concat(stderrChunks).toString("utf8");
                 finish({ ok: true, stdout, stderr });
@@ -2553,9 +2603,36 @@ export async function archiveProxmoxDormantInstance(
   return runner(script);
 }
 
+/** Removes a dormant dump the reclaim sweep abandoned. Only a vzdump file in archiveDir is removed. */
+export async function removeProxmoxDormantArchive(
+  infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
+  params: {
+    archiveDir: string;
+    archivePath: string;
+    hostConfig?: ProxmoxHostRoutingConfig | null;
+  },
+  deps: ProxmoxHostAwareDeps = {}
+): Promise<HostScriptResult> {
+  const env = params.hostConfig
+    ? resolveProxmoxHostEnv(params.hostConfig, deps.env ?? process.env)
+    : deps.hostConfig
+      ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
+      : resolveProxmoxOperationEnv(deps.env ?? process.env, infrastructure);
+  const script = buildProxmoxDormantArchiveRemoveScript({
+    archiveDir: params.archiveDir,
+    archivePath: params.archivePath,
+  });
+  const runner = deps.runHostScript ?? ((hostScript: string) => runProxmoxHostScript(hostScript, env));
+  return runner(script);
+}
+
 export async function deleteProxmoxInstance(
   infrastructure: ProxmoxInfrastructure,
-  deps: ProxmoxHostAwareDeps & { expectedInstanceId: string }
+  deps: ProxmoxHostAwareDeps & {
+    expectedInstanceId: string;
+    /** Dormant reclaim: refuse a running guest instead of shutting it down. */
+    refuseIfRunning?: boolean;
+  }
 ): Promise<HostScriptResult> {
   const env = deps.hostConfig
     ? resolveProxmoxHostEnv(deps.hostConfig, deps.env ?? process.env)
@@ -2566,6 +2643,7 @@ export async function deleteProxmoxInstance(
     gatewayHost: infrastructure.gatewayHost,
     caddySitesDir: envValue(env, "PROXMOX_CADDY_SITES_DIR", "/etc/caddy/hermes.d"),
     gracefulShutdownTimeoutSeconds: envInt(env, "PROXMOX_DELETE_GRACEFUL_TIMEOUT_SEC", 30),
+    refuseIfRunning: deps.refuseIfRunning === true,
   });
   const runner = deps.runHostScript ?? ((hostScript: string) => runProxmoxHostScript(hostScript, env));
   return runner(script);

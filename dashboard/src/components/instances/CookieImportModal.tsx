@@ -15,6 +15,7 @@ import {
 
 import { SafePortal } from "@/components/ui/SafePortal";
 
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 // The recommended export tool: open-source, runs entirely on-device (no upload),
 // one click per site. Exactly what you want for live login cookies.
 const EXT_CHROME =
@@ -198,7 +199,7 @@ export function CookieImportModal({ instanceId, endpoint, authToken, onClose, on
         style={{
           position: "fixed",
           inset: 0,
-          background: "rgba(26,26,26,0.55)",
+          background: "color-mix(in srgb, var(--hg-bg) 40%, transparent)",
           backdropFilter: "blur(5px)",
           display: "flex",
           alignItems: "center",
@@ -222,7 +223,7 @@ export function CookieImportModal({ instanceId, endpoint, authToken, onClose, on
             overflowX: "hidden",
             background: "var(--bg-elevated)",
             border: "1px solid var(--etched-border)",
-            boxShadow: "0 30px 80px rgba(26,26,26,0.25)",
+            boxShadow: "var(--hg-shadow-lg)",
           }}
         >
           {/* Header */}
@@ -274,7 +275,7 @@ export function CookieImportModal({ instanceId, endpoint, authToken, onClose, on
               /* ---- Success ---- */
               <div style={{ display: "grid", gap: 16 }}>
                 <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                  <CheckCircle2 size={20} style={{ color: "var(--accent-positive, #2e7d32)", flexShrink: 0 }} />
+                  <CheckCircle2 size={20} style={{ color: "var(--hg-ok)", flexShrink: 0 }} />
                   <div style={{ ...body, opacity: 1 }}>
                     Imported <strong>{done.imported}</strong> cookie{done.imported === 1 ? "" : "s"} across{" "}
                     <strong>{done.domains.length}</strong> site{done.domains.length === 1 ? "" : "s"}
@@ -396,7 +397,7 @@ export function CookieImportModal({ instanceId, endpoint, authToken, onClose, on
                     }}
                   />
                   {busy ? (
-                    <Loader2 size={20} className="animate-spin" style={{ color: "var(--text-muted)" }} />
+                    <ThinkingOrb state="working" size={20} />
                   ) : (
                     <UploadCloud size={22} style={{ color: "var(--text-muted)" }} />
                   )}
@@ -438,7 +439,7 @@ export function CookieImportModal({ instanceId, endpoint, authToken, onClose, on
                 )}
 
                 {error && (
-                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start", color: "var(--accent-negative, #b3261e)", fontSize: 13 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start", color: "var(--hg-bad)", fontSize: 13 }}>
                     <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
                     <span>{error}</span>
                   </div>

@@ -9,13 +9,26 @@
 
 import { resourceAttention, type ResourceAttention } from "./resource-attention";
 import type { HivraAgent } from "./agent-api";
+import type { InboxPrompt } from "@/lib/agent-inbox/types";
 import { getAgent as catalogAgent } from "./agent-catalog";
 import { getComputerTemplate } from "./computer-catalog";
+import { isComputerMissingOnHostRow } from "./computer-usage-contract";
+import { errorKeepsComputer, isPreparedProfile } from "./lifecycle-support";
 import { agentComputerPair, type AgentComputerPair } from "@/lib/agent-computers/agent-surfaces";
 import type { AgentSoftwareSummary } from "./agent-cli-status";
+import { agentSleepView } from "./agent-sleep-ui";
 
 export type UnifiedKind = "hermes" | "hivra";
-type UnifiedState = "running" | "updating" | "provisioning" | "stopped" | "error" | "other";
+export type UnifiedState = "running" | "asleep" | "waking" | "updating" | "provisioning" | "stopped" | "error" | "other";
+
+/**
+ * A running computer: awake, asleep or waking. An asleep agent is still
+ * running (it wakes when opened), so lists, filters and "continue" treat it as
+ * running. Only the label and the dot say it is resting.
+ */
+export function isRunningState(state: UnifiedState): boolean {
+  return state === "running" || state === "asleep" || state === "waking";
+}
 
 export interface HermesInstanceLite {
   pendingPrompt?: unknown;
@@ -28,6 +41,8 @@ export interface HermesInstanceLite {
 
 export interface UnifiedAgent {
   attention?: ResourceAttention | null;
+  /** What the agent is waiting on, when Needs you can show (and maybe answer) it. */
+  prompt?: InboxPrompt;
   /** Unique across both families (kind-prefixed). */
   uid: string;
   kind: UnifiedKind;
@@ -74,6 +89,13 @@ export interface UnifiedAgent {
   attachment?: UnifiedAttachment | null;
   /** Where the row opens, when that is more than /dashboard/agent/<id>. */
   href?: string;
+  /** The stored failure message of a failed launch (status `error`). */
+  failureReason?: string;
+  /** The host reports this computer gone. Only removing its record resolves it. */
+  missingOnHost?: boolean;
+  /** An errored Hivra Cloud computer that still has its machine: Start can
+   *  bring it back ("Try again"). Absent when the launch must be launched again. */
+  canTryAgain?: boolean;
 }
 
 export interface UnifiedAttachment {
@@ -97,6 +119,8 @@ export interface AttachedAgentLite {
 
 const STATE_LABELS: Record<UnifiedState, string> = {
   running: "Running",
+  asleep: "Asleep",
+  waking: "Waking up",
   updating: "Updating",
   provisioning: "Starting",
   stopped: "Stopped",
@@ -132,8 +156,17 @@ export function hivraResourceKind(row: { type: string; computer_profile?: string
   return row.computer_profile || catalogAgent(row.type)?.resourceKind === "computer" ? "computer" : "agent";
 }
 
-const HIVRA_DOT: Record<UnifiedState, string> = { running: "#22c55e", updating: "#f59e0b", provisioning: "#3b82f6", stopped: "var(--text-muted)", error: "#c0392b", other: "var(--text-muted)" };
-const HERMES_DOT: Record<UnifiedState, string> = { running: "#22c55e", updating: "#f59e0b", provisioning: "#3b82f6", stopped: "var(--text-muted)", error: "#c0392b", other: "var(--text-muted)" };
+const HIVRA_DOT: Record<UnifiedState, string> = { running: "#22c55e", asleep: "#7c8fc7", waking: "#60a5fa", updating: "#f59e0b", provisioning: "#3b82f6", stopped: "var(--text-muted)", error: "#c0392b", other: "var(--text-muted)" };
+const HERMES_DOT: Record<UnifiedState, string> = { running: "#22c55e", asleep: "#7c8fc7", waking: "#60a5fa", updating: "#f59e0b", provisioning: "#3b82f6", stopped: "var(--text-muted)", error: "#c0392b", other: "var(--text-muted)" };
+
+/** Same rule as Manage's Start for a computer in error (errorKeepsComputer). */
+function canTryAgain(a: HivraAgent): boolean {
+  if (isComputerMissingOnHostRow(a)) return false;
+  if (a.computer_substrate && a.computer_substrate !== "proxmox-kvm") return false;
+  if (a.deployment_mode && a.deployment_mode !== "hivra-managed") return false;
+  if (isPreparedProfile({ computer_profile: a.computer_profile })) return false;
+  return errorKeepsComputer({ status: a.status, provisioned_at: a.provisioned_at, vmid: a.vmid });
+}
 
 function unifyHivra(a: HivraAgent): UnifiedAgent {
   const def = catalogAgent(a.type);
@@ -141,10 +174,18 @@ function unifyHivra(a: HivraAgent): UnifiedAgent {
   // "updating", distinct from a first-time launch ("provisioning").
   let state = hivraState(a.status);
   if (state === "provisioning" && a.provisioned_at) state = "updating";
+  // A running agent that is not awake reads as Asleep, or Waking up. Behind
+  // NEXT_PUBLIC_HIVRA_AGENT_SLEEP: with it off this is always "awake".
+  if (state === "running") {
+    const sleep = agentSleepView(a);
+    if (sleep === "asleep") state = "asleep";
+    else if (sleep === "waking") state = "waking";
+  }
   const resourceKind = hivraResourceKind(a);
   return {
     uid: `x-${a.id}`, kind: "hivra", id: a.id, name: a.name, emoji: a.emoji ?? null,
-    attention: resourceAttention(a.status),
+    attention: resourceAttention(a.status, a.inbox_prompt),
+    ...(a.inbox_prompt && a.status === "running" ? { prompt: a.inbox_prompt } : {}),
     statusRaw: a.status, state, dot: HIVRA_DOT[state],
     // Every computer shares the linux-desktop catalog entry ("Ubuntu Desktop"),
     // so its operating system comes from the stored profile.
@@ -156,6 +197,9 @@ function unifyHivra(a: HivraAgent): UnifiedAgent {
     cpu: a.cpu, ram: a.ram, model: null, provider: null, agentType: a.type,
     computerPair: resourceKind === "agent" ? agentComputerPair(a) : null,
     software: resourceKind === "agent" && a.agent_software?.badge ? a.agent_software : null,
+    ...(a.status === "error" && a.error?.trim() ? { failureReason: a.error.trim() } : {}),
+    ...(isComputerMissingOnHostRow(a) ? { missingOnHost: true } : {}),
+    ...(a.status === "error" && canTryAgain(a) ? { canTryAgain: true } : {}),
   };
 }
 
@@ -195,7 +239,7 @@ function unifyHermes(i: HermesInstanceLite): UnifiedAgent {
 
 // Single stable order for the merged list: running first, then provisioning,
 // stopped, error, other — and by name within each bucket.
-const STATE_RANK: Record<UnifiedState, number> = { running: 0, updating: 1, provisioning: 2, stopped: 3, error: 4, other: 5 };
+const STATE_RANK: Record<UnifiedState, number> = { running: 0, waking: 0, asleep: 0, updating: 1, provisioning: 2, stopped: 3, error: 4, other: 5 };
 // An agent added to a computer follows that computer's own row, so a lookup by
 // the computer's id finds the computer first.
 export function unifyAll(hermes: HermesInstanceLite[], hivra: HivraAgent[], attached: AttachedAgentLite[] = []): UnifiedAgent[] {

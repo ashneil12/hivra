@@ -15,7 +15,7 @@ import {
   validateHivraMigrationConfig,
 } from "../hivra-migration";
 import { HIVRA_MIGRATION, type HivraMigrationConfig } from "../hivra-migration-config";
-import type { HivraAirdropConfig } from "../hivra-airdrop-config";
+import { HIVRA_AIRDROP, type HivraAirdropConfig } from "../hivra-airdrop-config";
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
@@ -43,6 +43,7 @@ function config(overrides: Partial<HivraMigrationConfig> = {}): HivraMigrationCo
     ...HIVRA_MIGRATION,
     published: true,
     announcedAt: "2026-10-21T16:00:00Z",
+    claimRecordsUrl: null,
     founder: {
       ...HIVRA_MIGRATION.founder!,
       // These fixtures model a 13-week plan ending 28 Jan 2027; the shipped default plan is 12 weeks (see the 90-day test below).
@@ -61,13 +62,26 @@ function validate(c: HivraMigrationConfig, claimClosesAt: string | null = null) 
 }
 
 describe("committed config", () => {
-  it("is unpublished, with no launch dates and no receipts", () => {
-    expect(HIVRA_MIGRATION.published).toBe(false);
-    expect(HIVRA_MIGRATION.announcedAt).toBeNull();
-    expect(HIVRA_MIGRATION.founder?.saleStart).toBeNull();
-    expect(HIVRA_MIGRATION.founder?.saleDay).toBeNull();
-    expect(HIVRA_MIGRATION.founder?.burnDate).toBeNull();
+  it("is published with the announcement, the 12 weekly sale dates and the claim records link", () => {
+    expect(HIVRA_MIGRATION.published).toBe(true);
+    expect(HIVRA_MIGRATION.announcedAt).toBe("2026-10-28T05:00:00Z");
+    expect(HIVRA_MIGRATION.claimRecordsUrl).toBe("https://basescan.org/address/0x4131ab8F9797bB4887A72470B8AF48fBEc37522F");
+    expect(HIVRA_MIGRATION.founder?.weeks).toBe(12);
+    expect(HIVRA_MIGRATION.founder?.saleStart).toBe("2026-11-12");
+    expect(HIVRA_MIGRATION.founder?.saleDay).toBe("Thursday");
+    expect(HIVRA_MIGRATION.founder?.burnDate).toBe("2027-01-29");
     expect(HIVRA_MIGRATION.receipts).toEqual([]);
+  });
+
+  it("passes every check against the committed claim window (last sale 28 Jan 2027, the day after it closes)", () => {
+    const { migration, problems } = validateHivraMigrationConfig(HIVRA_MIGRATION, {
+      hivraAddress: HIVRA.address,
+      now: new Date("2026-10-29T14:00:00Z"),
+      claimClosesAt: HIVRA_AIRDROP.claim.closesAt,
+    });
+    expect(problems).toEqual([]);
+    expect(migration.founder?.saleStart?.iso).toBe("2026-11-12T00:00:00.000Z");
+    expect(migration.founder?.burnDate?.iso).toBe("2027-01-29T00:00:00.000Z");
   });
 
   it("passes every check with its filled-in values", () => {
@@ -470,8 +484,11 @@ describe("getServedHivraMigration / hivraMigrationHref", () => {
     expect(warn).toHaveBeenCalledWith("HIVRA migration config rejected", expect.objectContaining({ problems: expect.stringContaining("repeats a founder-sale transaction") }));
   });
 
-  it("is not served from the committed configs (dormant launch, unpublished page)", () => {
-    expect(getServedHivraMigration({ env: ON })).toBeNull();
+  it("is served from the committed configs once the claim window is set", () => {
+    const served = getServedHivraMigration({ env: ON, now: new Date("2026-10-29T14:00:00Z") });
+    expect(served?.claim.campaignUrl).toBe("https://app.sablier.com/airdrops/campaign/0x4131ab8f9797bb4887a72470b8af48fbec37522f-8453");
+    expect(served?.claim.phase).toBe("open");
+    expect(served?.founder?.saleStart?.iso).toBe("2026-11-12T00:00:00.000Z");
   });
 
   it("logs rejected values once", () => {

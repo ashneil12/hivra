@@ -10,23 +10,21 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import Link from "next/link";
 import { Activity, AlertTriangle, RefreshCw } from "lucide-react";
+import { StatusText } from "@/components/ui/StatusText";
 import { AgentActivityPanel } from "@/components/dashboard/AgentActivityPanel";
 import type {
   ActivitySnapshot,
   ActivityEvent,
-  ActivityCapability,
   ActivityResource,
 } from "@/lib/activity-observability/types";
 import {
   kindLabels,
   sourceNames,
-  capabilityNames,
   capabilityExplanation,
   capabilityStateLabel,
-  installFailureText,
   monitoringStates,
-  nativeTracingReason,
   presentEvent,
   producerName,
   reportingAlerts,
@@ -37,7 +35,7 @@ import { AgentRuns, AgentRunsIntro } from "./AgentRuns";
 import { selectRuns } from "./run-groups";
 import styles from "./ActivityObservatory.module.css";
 
-type View = "runs" | "timeline" | "attention" | "coverage" | "usage";
+type View = "runs" | "timeline" | "attention" | "usage";
 
 // Below this width the list and inspector share one column, so the inspector
 // opens inline under the selected record instead of after the whole list.
@@ -63,14 +61,23 @@ function timestamp(value?: string) {
         timeStyle: "medium",
       });
 }
-const reportingWarning = (capability: ActivityCapability) =>
-  ["stale", "expired", "degraded"].includes(capability.state);
-const alertTitle = (capability: ActivityCapability) =>
-  capability.state === "expired"
-    ? "run reporting credential expired"
-    : "run reporting stopped checking in";
+/** "3 hours ago" style wording, measured from when the snapshot was taken. */
+function relativeTime(value: string | undefined, now: string) {
+  if (!value) return "a while ago";
+  const then = Date.parse(value);
+  const base = Date.parse(now);
+  if (Number.isNaN(then) || Number.isNaN(base)) return "a while ago";
+  const minutes = Math.max(0, Math.round((base - then) / 60000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} ${days === 1 ? "day" : "days"} ago`;
+}
+const agentHref = (id: string) => `/dashboard/agent/${encodeURIComponent(id)}`;
 
-const coverageContext = (
+const reportingContext = (
   resource: ActivityResource,
   now: string,
 ): CapabilityContext => ({
@@ -78,98 +85,6 @@ const coverageContext = (
   agentType: resource.agentType,
   now,
 });
-
-/** The credential line, stated only as far as the recorded facts support it. */
-function CredentialLine({
-  capability,
-  context,
-}: {
-  capability: ActivityCapability;
-  context: CapabilityContext;
-}) {
-  const reason = nativeTracingReason(capability, context);
-  // The computer presented an expired credential after the latest issuance:
-  // "valid until" would describe a credential it is not using.
-  if (reason === "expired_credential_presented") {
-    if (!capability.issuedAt) return null;
-    const issued = Date.parse(capability.issuedAt);
-    const checkedIn = capability.lastSeenAt
-      ? Date.parse(capability.lastSeenAt)
-      : NaN;
-    // Whether the computer ever checked in with the latest credential.
-    const neverUsed = Number.isNaN(checkedIn) || checkedIn < issued;
-    return (
-      <p className={styles.meta}>
-        {neverUsed ? "New" : "Latest"} reporting credential issued{" "}
-        {timestamp(capability.issuedAt)};{" "}
-        {neverUsed
-          ? "the computer has not checked in with it"
-          : "the computer has since presented an expired one"}
-      </p>
-    );
-  }
-  // Set up but not reporting: the credential exists only in Hivra's records.
-  if (capability.state === "missing")
-    return capability.issuedAt ? (
-      <p className={styles.meta}>
-        Reporting set up {timestamp(capability.issuedAt)}
-      </p>
-    ) : null;
-  if (!capability.expiresAt) return null;
-  const expires = Date.parse(capability.expiresAt);
-  const expired =
-    !Number.isNaN(expires) && !!context.now && expires <= Date.parse(context.now);
-  return (
-    <p className={styles.meta}>
-      {expired
-        ? "Reporting credential expired"
-        : "Reporting credential valid until"}{" "}
-      {timestamp(capability.expiresAt)}
-    </p>
-  );
-}
-
-/** Automatic agent run reporting for one computer: state, check-in and credential. */
-function ReportingCoverage({
-  capability,
-  context,
-}: {
-  capability: ActivityCapability;
-  context: CapabilityContext;
-}) {
-  const install = installFailureText(capability.installFailureReason);
-  return (
-    <div className={styles.reporting}>
-      <p>
-        <strong>{capabilityNames[capability.key] ?? capability.label}</strong> ·{" "}
-        <span
-          className={reportingWarning(capability) ? styles.warning : undefined}
-        >
-          {capabilityStateLabel(capability, context)}
-        </span>
-      </p>
-      <p className={styles.muted}>
-        {capabilityExplanation(capability, context)}
-      </p>
-      {capability.state !== "unsupported" &&
-        capability.state !== "degraded" && (
-          <p className={styles.meta}>
-            Reporter last checked in:{" "}
-            {capability.lastSeenAt
-              ? timestamp(capability.lastSeenAt)
-              : "No check-in received"}
-          </p>
-        )}
-      {capability.installFailedAt && (
-        <p className={styles.meta}>
-          Last install attempt failed {timestamp(capability.installFailedAt)}
-          {install ? `: ${install}` : ""}
-        </p>
-      )}
-      <CredentialLine capability={capability} context={context} />
-    </div>
-  );
-}
 
 function Inspector({
   event,
@@ -234,15 +149,14 @@ function Inspector({
         {event.needsAttention ? "Worth checking" : "History record"}
       </p>
       <h2>{presentation.title}</h2>
-      <span
+      <StatusText
         className={
           event.needsAttention || presentation.warning
             ? styles.warning
             : styles.muted
         }
-      >
-        {presentation.status}
-      </span>
+        value={presentation.status}
+      />
       <h3>What happened</h3>
       <p className={styles.muted}>{presentation.happened}</p>
       <h3>{event.needsAttention ? "What to do" : "Why this is here"}</h3>
@@ -302,7 +216,7 @@ export function ActivityObservatory({
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<View>("timeline");
+  const [chosenView, setChosenView] = useState<View | null>(null);
   const [search, setSearch] = useState("");
   const [agent, setAgent] = useState("all");
   const [kind, setKind] = useState("all");
@@ -405,6 +319,22 @@ export function ActivityObservatory({
     void refresh();
     return () => request.current?.abort();
   }, [refresh]);
+  const events = useMemo(() => data?.events ?? [], [data]);
+  const now = data?.generatedAt ?? "";
+  // Things that need the person: records marked for review, and computers that
+  // stopped reporting. Needs you opens first, and only exists, while there are any.
+  const alerts = reportingAlerts(data?.resources ?? []);
+  const attentionEvents = events.filter((event) => event.needsAttention);
+  const attentionCount = attentionEvents.length + alerts.length;
+  const view: View =
+    chosenView === "usage" && !showUsage
+      ? "timeline"
+      : chosenView && (chosenView !== "attention" || attentionCount > 0)
+        ? chosenView
+        : attentionCount > 0
+          ? "attention"
+          : "timeline";
+  const setView = setChosenView;
   // The tab strip scrolls sideways on phones; keep the active view in sight
   // without moving the page vertically.
   useEffect(() => {
@@ -418,8 +348,6 @@ export function ActivityObservatory({
     else if (target.right > bounds.right)
       strip.scrollLeft += target.right - bounds.right + 16;
   }, [view]);
-  const events = useMemo(() => data?.events ?? [], [data]);
-  const now = data?.generatedAt ?? "";
   const query = search.trim().toLowerCase();
   // Stable per query, agent and kind, so the derived lists below can memoise
   // and a keystroke or selection does not regroup every loaded record.
@@ -456,7 +384,6 @@ export function ActivityObservatory({
     () =>
       events.filter(
         (event) =>
-          (view !== "attention" || event.needsAttention) &&
           (view !== "runs" || isRunRecord(event)) &&
           inScope(event) &&
           matchesQuery(event),
@@ -515,42 +442,6 @@ export function ActivityObservatory({
         setSelected(next);
       }
     : setSelected;
-  // Reporting gaps follow the same filters as records: the agent filter and
-  // search (by computer and gap), and a kind filter hides them because a gap
-  // is not an activity type. The badge counts everything, and the view says
-  // how much the filters hide.
-  const alerts = reportingAlerts(data?.resources ?? []);
-  const alertText = ({
-    resource,
-    capability,
-  }: (typeof alerts)[number]) =>
-    [
-      resource.name,
-      resource.id,
-      alertTitle(capability),
-      capabilityExplanation(capability, coverageContext(resource, now)),
-    ]
-      .join(" ")
-      .toLowerCase();
-  const visibleAlerts = alerts.filter(
-    (alert) =>
-      (agent === "all" || alert.resource.id === agent) &&
-      kind === "all" &&
-      (!query || alertText(alert).includes(query)),
-  );
-  const attentionEvents = events.filter((event) => event.needsAttention);
-  const attentionCount = attentionEvents.length + alerts.length;
-  const hiddenAttention =
-    attentionCount -
-    visibleAlerts.length -
-    attentionEvents.filter((event) => inScope(event) && matchesQuery(event))
-      .length;
-  const filtersActive = Boolean(query) || agent !== "all" || kind !== "all";
-  const clearFilters = () => {
-    setSearch("");
-    setAgent("all");
-    setKind("all");
-  };
   const agents = Array.from(
     new Map(events.map((event) => [event.agentId, event.agentName])).entries(),
   );
@@ -558,43 +449,25 @@ export function ActivityObservatory({
     data?.degraded ||
     data?.sources.some((source) => source.state === "degraded");
   const views: [View, string][] = [
+    ...(attentionCount > 0 ? [["attention", "Needs you"] as [View, string]] : []),
     ["timeline", "History"],
-    ["runs", "Agent runs"],
-    ["attention", "Needs attention"],
-    ["coverage", "What is monitored"],
+    ["runs", "Runs"],
     ...(showUsage ? [["usage", "Usage"] as [View, string]] : []),
   ];
   const viewHelp =
     view === "runs"
       ? "Follow reported agent steps in order. Select a step to inspect what was reported; a quiet run does not mean it finished."
-      : view === "attention"
-        ? "Only records marked for review and reporting gaps on running computers appear here. The count covers loaded records and current reporting, not all activity or a guarantee that everything is fine."
-        : "This is your saved history. Routine changes are not alerts; use Needs attention to review reported problems.";
+      : "This is your saved history. Routine changes are not alerts.";
   return (
     <section className={styles.root} aria-label="Activity">
       <header className={styles.heading}>
         <div>
-          <p className={styles.kicker}>Your agents, in the open</p>
           <h1>Activity</h1>
           <p className={styles.muted}>
-            See what your agents and computers reported. Routine history appears
-            here too.
+            What your agents did, and anything that needs you.
           </p>
         </div>
         <div className={styles.actions}>
-          {data && (
-            <button
-              className={`${styles.coverageButton} ${monitoringFailed ? styles.warning : ""}`}
-              onClick={() => setView("coverage")}
-            >
-              {monitoringFailed && (
-                <AlertTriangle size={15} aria-hidden="true" />
-              )}
-              {monitoringFailed
-                ? "Some records could not be loaded"
-                : "Monitoring limits"}
-            </button>
-          )}
           <button
             className={styles.refresh}
             disabled={loading}
@@ -613,7 +486,7 @@ export function ActivityObservatory({
             onClick={() => setView(key)}
           >
             {title}
-            {key === "attention" && attentionCount > 0 && (
+            {key === "attention" && (
               <span className={styles.count}>{attentionCount}</span>
             )}
           </button>
@@ -625,9 +498,17 @@ export function ActivityObservatory({
           {data && " Showing previously loaded history. It may be out of date."}
         </p>
       )}
-      {data?.degraded && (
+      {data && monitoringFailed && (
         <p className={styles.notice} role="status">
-          Some activity could not be loaded. This history may be incomplete.
+          <AlertTriangle size={15} aria-hidden="true" /> Some records could not
+          be loaded. This history may be incomplete.{" "}
+          <button
+            className={styles.inlineButton}
+            disabled={loading}
+            onClick={() => void refresh()}
+          >
+            Try again
+          </button>
         </p>
       )}
       {loading && !data && (
@@ -641,95 +522,63 @@ export function ActivityObservatory({
         </div>
       ) : (
         data &&
-        (view === "coverage" ? (
-          <section className={styles.coverage} aria-label="Monitoring coverage">
-            <p className={styles.kicker}>What Hivra can see</p>
-            <h2>What is recorded, and what is missing.</h2>
-            <p className={styles.muted}>
-              Hivra shows saved computer changes and what supported agents
-              report about their own runs. Agent reports come from inside the
-              computer; they are not an audit of every command, file change, or
-              network connection, and a quiet computer is not proof that nothing
-              happened.
-            </p>
-            <h3>Types of history</h3>
-            {data.sources.map((source) => (
-              <div className={styles.coverRow} key={source.id}>
-                <strong>{sourceNames[source.id] ?? source.label}</strong>
-                <div>
-                  <span
-                    className={
-                      source.state === "degraded"
-                        ? styles.warning
-                        : styles.muted
-                    }
-                  >
-                    {monitoringStates[source.state]}
-                  </span>
-                  <p className={styles.muted}>
-                    {sourceExplanation(source, data.resources)}
-                  </p>
-                  <details className={styles.technical}>
-                    <summary>Technical source details</summary>
-                    <p>{source.label}</p>
-                    <p>{source.detail}</p>
-                  </details>
-                </div>
-              </div>
-            ))}
-            <h3>Your computers and agents</h3>
-            {data.resources.length ? (
-              data.resources.map((resource) => (
-                <div className={styles.coverRow} key={resource.id}>
-                  <div>
-                    <strong>{resource.name}</strong>
-                    <details className={styles.technical}>
-                      <summary>Technical identifier</summary>
-                      <p className={styles.resourceId}>{resource.id}</p>
-                    </details>
-                  </div>
-                  <div>
-                    <p className={styles.muted}>
-                      Last agent report: {timestamp(resource.lastSeenAt)}
+        (view === "attention" ? (
+          <section aria-label="Needs you" className={styles.needs}>
+            {attentionCount > 0 ? (
+              <ul>
+                {alerts.map(({ resource, capability }) => (
+                  <li key={`gap-${resource.id}`} className={styles.need}>
+                    <AlertTriangle
+                      size={16}
+                      className={styles.warning}
+                      aria-hidden="true"
+                    />
+                    <p>
+                      {resource.name} stopped reporting{" "}
+                      {relativeTime(capability.lastSeenAt, now)}
                     </p>
-                    {resource.capabilities
-                      .filter(
-                        (capability) => capability.key === "native_tracing",
-                      )
-                      .map((capability) => (
-                        <ReportingCoverage
-                          key={capability.key}
-                          capability={capability}
-                          context={coverageContext(resource, data.generatedAt)}
-                        />
-                      ))}
-                    <div className={styles.capabilities}>
-                      {resource.capabilities
-                        .filter(
-                          (capability) => capability.key !== "native_tracing",
-                        )
-                        .map((capability) => (
-                          <span key={capability.key}>
-                            {capabilityNames[capability.key] ??
-                              capability.label}{" "}
-                            · {capabilityStateLabel(capability)}
-                            {capability.lastSeenAt && (
-                              <small>
-                                Last seen {timestamp(capability.lastSeenAt)}
-                              </small>
-                            )}
-                          </span>
-                        ))}
-                    </div>
-                  </div>
-                </div>
-              ))
+                    <Link
+                      className={styles.primaryAction}
+                      href={agentHref(resource.id)}
+                      aria-label={`Open ${resource.name}`}
+                    >
+                      Open
+                    </Link>
+                  </li>
+                ))}
+                {attentionEvents.map((event) => {
+                  const presentation = presentEvent(event);
+                  const target = event.computerId ?? event.agentId;
+                  return (
+                    <li key={event.id} className={styles.need}>
+                      <AlertTriangle
+                        size={16}
+                        className={styles.warning}
+                        aria-hidden="true"
+                      />
+                      <p>
+                        {event.agentName}: {presentation.title}{" "}
+                        <StatusText
+                          className={styles.muted}
+                          value={presentation.status}
+                        />{" "}
+                        <time className={styles.meta} dateTime={event.occurredAt}>
+                          {relativeTime(event.occurredAt, now)}
+                        </time>
+                      </p>
+                      <Link
+                        className={styles.primaryAction}
+                        href={agentHref(target)}
+                        aria-label={`Open ${event.agentName}`}
+                      >
+                        Open
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
             ) : (
-              <p className={styles.empty}>
-                {data.degraded
-                  ? "No computers or agents are shown. Some information could not be loaded; refresh to try again."
-                  : "No computers or agents were returned by the available history."}
-              </p>
+              <p className={styles.empty}>Nothing needs you right now.</p>
             )}
           </section>
         ) : (
@@ -742,56 +591,6 @@ export function ActivityObservatory({
               </details>
             ) : (
               <p className={styles.viewHelp}>{viewHelp}</p>
-            )}
-            {view === "attention" && visibleAlerts.length > 0 && (
-              <section aria-label="Reporting gaps" className={styles.alerts}>
-                <h2 className={styles.kicker}>Reporting gaps</h2>
-                <ul>
-                  {visibleAlerts.map(({ resource, capability }) => (
-                    <li key={resource.id} className={styles.alert}>
-                      <AlertTriangle
-                        size={16}
-                        className={styles.warning}
-                        aria-hidden="true"
-                      />
-                      <div>
-                        <strong>
-                          {resource.name}: {alertTitle(capability)}
-                        </strong>
-                        <p className={styles.muted}>
-                          {capabilityExplanation(
-                            capability,
-                            coverageContext(resource, data.generatedAt),
-                          )}
-                        </p>
-                        <p className={styles.meta}>
-                          Reporter last checked in:{" "}
-                          {capability.lastSeenAt
-                            ? timestamp(capability.lastSeenAt)
-                            : "No check-in received"}
-                        </p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  className={styles.refresh}
-                  onClick={() => setView("coverage")}
-                >
-                  See what is monitored
-                </button>
-              </section>
-            )}
-            {view === "attention" && filtersActive && hiddenAttention > 0 && (
-              <p className={styles.viewHelp} role="status">
-                {hiddenAttention}{" "}
-                {hiddenAttention === 1 ? "item needs" : "items need"} attention
-                but {hiddenAttention === 1 ? "is" : "are"} hidden by your search
-                or filters.{" "}
-                <button className={styles.inlineButton} onClick={clearFilters}>
-                  Clear search and filters
-                </button>
-              </p>
             )}
             <div className={styles.toolbar}>
               <input
@@ -890,16 +689,15 @@ export function ActivityObservatory({
                               {kindLabels[event.kind] ?? label(event.kind)}
                             </span>
                             <span className={styles.eventBottom}>
-                              <span
+                              <StatusText
                                 className={
                                   event.needsAttention ||
                                   presentEvent(event).warning
                                     ? styles.warning
                                     : undefined
                                 }
-                              >
-                                {presentEvent(event).status}
-                              </span>
+                                value={presentEvent(event).status}
+                              />
                               <time dateTime={event.occurredAt}>
                                 {timestamp(event.occurredAt)}
                               </time>
@@ -922,8 +720,7 @@ export function ActivityObservatory({
                         : data.degraded
                           ? "No activity was returned by the available history."
                           : "No activity was recorded in the last 30 days."}{" "}
-                      See What is monitored to understand which records are
-                      available.
+                      Open Sources below to see what Hivra keeps a record of.
                     </p>
                   )}
                 </section>
@@ -949,6 +746,74 @@ export function ActivityObservatory({
                 Showing the records loaded so far. Search and filters only cover
                 these records.
               </p>
+            )}
+            {view === "timeline" && (
+              <details className={styles.sources}>
+                <summary>Sources</summary>
+                <h3>What Hivra keeps a record of</h3>
+                {data.sources.map((source) => (
+                  <div className={styles.coverRow} key={source.id}>
+                    <strong>{sourceNames[source.id] ?? source.label}</strong>
+                    <div>
+                      <StatusText
+                        className={
+                          source.state === "degraded"
+                            ? styles.warning
+                            : styles.muted
+                        }
+                        value={monitoringStates[source.state]}
+                      />
+                      <p className={styles.muted}>
+                        {sourceExplanation(source, data.resources)}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+                <h3>When each computer last reported</h3>
+                {data.resources.length ? (
+                  data.resources.map((resource) => (
+                    <div className={styles.coverRow} key={resource.id}>
+                      <strong>{resource.name}</strong>
+                      <div>
+                        <p className={styles.muted}>
+                          {resource.lastSeenAt
+                            ? `Last reported ${relativeTime(resource.lastSeenAt, now)}`
+                            : "Has not reported yet"}
+                        </p>
+                        {resource.capabilities
+                          .filter(
+                            (capability) => capability.key === "native_tracing",
+                          )
+                          .map((capability) => {
+                            const context = reportingContext(resource, now);
+                            return (
+                              <p className={styles.muted} key={capability.key}>
+                                <StatusText
+                                  className={
+                                    ["stale", "expired", "degraded"].includes(
+                                      capability.state,
+                                    )
+                                      ? styles.warning
+                                      : undefined
+                                  }
+                                  value={capabilityStateLabel(capability, context)}
+                                />
+                                {" · "}
+                                {capabilityExplanation(capability, context)}
+                              </p>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className={styles.empty}>
+                    {data.degraded
+                      ? "No computers or agents are shown. Some information could not be loaded; try again."
+                      : "No computers or agents have reported yet."}
+                  </p>
+                )}
+              </details>
             )}
           </>
         ))

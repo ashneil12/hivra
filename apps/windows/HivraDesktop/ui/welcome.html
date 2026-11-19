@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Welcome to Hivra</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="card">
+    <div class="mark">Hivra</div>
+
+    <section id="choices">
+      <h1>Give your AI agent a computer of its own.</h1>
+      <p class="lede">Start free. Launch an agent in a minute, then pick it up from any device.</p>
+      <div class="actions">
+        <button class="primary" id="sign-up">Get started free</button>
+        <button id="sign-in">I already have an account</button>
+      </div>
+      <p class="error" id="error" role="alert" hidden></p>
+      <p class="note">Your browser opens to sign in, then brings you straight back here.</p>
+      <button class="link" id="embedded">Sign in with email in this window instead</button>
+    </section>
+
+    <section id="waiting" role="status" aria-live="polite" hidden>
+      <canvas class="orb" id="orb" aria-hidden="true"></canvas>
+      <h1 id="waiting-title">Finish signing in in your browser</h1>
+      <p class="lede" id="waiting-detail">We'll bring you back here as soon as you're done.</p>
+      <div class="row" id="waiting-actions">
+        <button id="reopen">Open browser again</button>
+        <button id="cancel">Cancel</button>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="welcome.js"></script>
+</body>
+</html>

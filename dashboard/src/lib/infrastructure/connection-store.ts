@@ -5,6 +5,7 @@ import { z } from "zod";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { normalizeProxmoxSshHostFingerprint } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
+import { connectorHostAllowedForUser, revokeConnectorForRemovedConnection } from "./home-connector";
 
 import { SshPrivateKeyError, unlockSshPrivateKey } from "./ssh-private-key";
 import {
@@ -592,6 +593,10 @@ export async function createInfrastructureConnection(
     // credential as a private key.
     throw new InfrastructureConnectionStoreError("invalid_request");
   }
+  // A connector name as the SSH host is only for the owner who enrolled that machine.
+  if (!(await connectorHostAllowedForUser(userId, input.endpoint.sshHost))) {
+    throw new InfrastructureConnectionStoreError("invalid_request");
+  }
   // Resolve encryption configuration before the transaction starts. The RPC
   // inserts metadata and its credential envelope atomically, so neither row can
   // outlive a failure in the other insert.
@@ -653,6 +658,12 @@ export async function updateInfrastructureConnection(
     }))
   ) {
     throw new InfrastructureConnectionStoreError("conflict");
+  }
+  // Only when the host actually changes: an unrelated edit must not depend on the connector row.
+  const hostChanged = Boolean(input.endpoint?.sshHost)
+    && input.endpoint!.sshHost.trim().toLowerCase() !== (current.ssh_host ?? "").trim().toLowerCase();
+  if (hostChanged && !(await connectorHostAllowedForUser(userId, input.endpoint!.sshHost))) {
+    throw new InfrastructureConnectionStoreError("invalid_request");
   }
   const nextSetupMode = input.setupMode ?? current.setup_mode;
   const currentConfiguration = normalizedConfiguration(current.config);
@@ -857,6 +868,9 @@ export async function deleteInfrastructureConnection(
   if (disposition !== "deleted") {
     throw new InfrastructureConnectionStoreError("database_error");
   }
+  // A machine reached through its connector stops being reachable with the
+  // connection: bump its generation and tell the relay. Never fails the delete.
+  await revokeConnectorForRemovedConnection(userId, current.ssh_host);
 }
 
 export async function forceForgetHetznerCloudConnection(

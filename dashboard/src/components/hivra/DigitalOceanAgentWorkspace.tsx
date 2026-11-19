@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CalendarClock, Info, KeyRound, Loader2, Pause, Play, Unlink } from "lucide-react";
 
@@ -409,7 +410,7 @@ export function DigitalOceanAgentWorkspace({
   if (!session) {
     return (
       <div role="status" style={{ padding: 24, display: "flex", gap: 8, alignItems: "center", color: "var(--text-muted)" }}>
-        <Loader2 size={16} aria-hidden /> Checking the DigitalOcean session…
+        <ThinkingOrb size={20} state="searching" /> Checking the DigitalOcean session…
       </div>
     );
   }

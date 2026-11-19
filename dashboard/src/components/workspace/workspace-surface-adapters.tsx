@@ -318,16 +318,20 @@ function resolveHivraSurface(
             </SurfaceFrame>
           );
         }
-        return (
-          <SurfaceFrame key={desktopKey} {...frameProps}>
-            <HivraRemoteDesktop
-              computerId={source.agent.id}
-              name={computer.name}
-              active
-              autoPrepare
-            />
-          </SurfaceFrame>
-        );
+        // A computer with no desktop (transport null) never mounts one: it
+        // falls through to the surfaces below, which have none for it.
+        if (transport === "remote") {
+          return (
+            <SurfaceFrame key={desktopKey} {...frameProps}>
+              <HivraRemoteDesktop
+                computerId={source.agent.id}
+                name={computer.name}
+                active
+                autoPrepare
+              />
+            </SurfaceFrame>
+          );
+        }
       }
 
       if (surface === "files" && boxUrl) {
@@ -357,6 +361,7 @@ function resolveHivraSurface(
             token={token}
             label={`${computer.name} · terminal`}
             description="Shell on this computer"
+            surface="terminal"
           />
         );
       }
@@ -371,6 +376,7 @@ function resolveHivraSurface(
             token={token}
             label={`${computer.name} · browser`}
             description="Browser on this computer"
+            surface="browser"
           />
         );
       }

@@ -1,4 +1,4 @@
-import { attentionLabel, resourceAttention } from '../resource-attention';
+import { attentionFallbackReason, attentionLabel, needsOwnerAttention, resourceAttention } from '../resource-attention';
 
 it('only exposes a real, unexpired prompt kind', () => {
   expect(resourceAttention('running')).toBeNull();
@@ -15,4 +15,17 @@ it('keeps healthy and stopped resources quiet, and failures actionable', () => {
   expect(resourceAttention('failed')).toBe('error');
   expect(attentionLabel('approval')).toBe('Needs approval');
   expect(attentionLabel('clarify')).toBe('Needs your input');
+});
+
+it('counts a row as needing the owner exactly when it has an attention kind', () => {
+  expect(needsOwnerAttention({ attention: resourceAttention('error') })).toBe(true);
+  expect(needsOwnerAttention({ attention: resourceAttention('failed') })).toBe(true);
+  expect(needsOwnerAttention({ attention: resourceAttention('running') })).toBe(false);
+  expect(needsOwnerAttention({})).toBe(false);
+});
+
+it('has a plain fallback reason for every kind', () => {
+  expect(attentionFallbackReason('error')).toBe('Something went wrong and it stopped working.');
+  expect(attentionFallbackReason('approval')).toMatch(/approve/);
+  expect(attentionFallbackReason('clarify')).toMatch(/answer/);
 });
