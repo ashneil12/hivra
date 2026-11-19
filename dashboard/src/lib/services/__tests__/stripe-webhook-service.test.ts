@@ -1469,11 +1469,11 @@ describe("StripeWebhookService", () => {
       jest.dontMock("@/lib/services/tier-change-service");
     });
 
-    it("writes nothing when the card already trialed on another account (the paid event follows)", async () => {
+    it("writes nothing and reports rejection when the card already trialed on another account", async () => {
       recordCardTrialStartMock.mockResolvedValueOnce({ endedEarly: true });
       const captured = captureUpsert();
 
-      await StripeWebhookService.handleSubscriptionChange(trialSub("trialing"));
+      await expect(StripeWebhookService.handleSubscriptionChange(trialSub("trialing"))).resolves.toBe("trial_rejected");
 
       expect(captured.args).toBeUndefined();
     });

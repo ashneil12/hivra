@@ -338,7 +338,8 @@ export class StripeWebhookService {
 
       try {
         const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-        await this.handleSubscriptionChange(subscription);
+        const outcome = await this.handleSubscriptionChange(subscription);
+        if (outcome === "trial_rejected") return;
         log.info("activated subscription from checkout.session.completed", {
           source: LOG_SOURCE,
           subscriptionId,
@@ -803,6 +804,10 @@ export class StripeWebhookService {
       return;
     }
 
+    if (subscription.status === "canceled" && subscription.metadata[CARD_TRIAL_METADATA_KEY]) {
+      return "trial_rejected" as const;
+    }
+
     const userId = subscription.metadata.user_id;
     const planKey = subscription.metadata.plan as PlanKey;
 
@@ -1127,10 +1132,8 @@ export class StripeWebhookService {
     }
 
     if (cardTrial) {
-      // One trial per card: a card that already trialed on another account
-      // ends this trial now, and the resulting paid event activates the plan.
       const { endedEarly } = await recordCardTrialStart({ stripe: getStripe(), subscription, userId });
-      if (endedEarly) return;
+      if (endedEarly) return "trial_rejected" as const;
     } else if (subscription.metadata?.[CARD_TRIAL_METADATA_KEY] && subscription.status === "active") {
       await releaseCardTrialSleep(userId);
     }

@@ -149,8 +149,8 @@ async function cardFingerprint(stripe: Stripe, subscription: Stripe.Subscription
 
 /**
  * Records a card trial when it starts. If another account already trialed with
- * the same card, the trial ends now so Stripe charges for the plan instead.
- * Returns true when the trial was ended. Throws on a failed write so the
+ * the same card, cancel the duplicate without charging for a paid plan.
+ * Returns true when the trial was rejected. Throws on a failed write so the
  * webhook retries.
  */
 export async function recordCardTrialStart(params: {
@@ -205,15 +205,15 @@ export async function recordCardTrialStart(params: {
   }
 
   if (reused) {
-    log.info("card already used for a trial on another account; ending this trial now", {
+    log.info("card already used for a trial on another account; canceling duplicate trial", {
       source: SOURCE,
       failureType: "card_trial_card_reused",
       userId,
       subscriptionId: subscription.id,
     });
-    // Nothing is recorded for this subscription, so a failed update is
+    // Nothing is recorded for this subscription, so a failed cancellation is
     // retried by the webhook and checked again.
-    await params.stripe.subscriptions.update(subscription.id, { trial_end: "now" });
+    await params.stripe.subscriptions.cancel(subscription.id, { invoice_now: false, prorate: false });
     return { endedEarly: true };
   }
   return { endedEarly: false };

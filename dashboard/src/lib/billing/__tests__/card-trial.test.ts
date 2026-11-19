@@ -92,9 +92,9 @@ function fakeDb(results: Record<string, Result[]>, insertError: { code: string; 
 function stripeWithCard(fingerprint: string | null) {
   return {
     paymentMethods: { retrieve: jest.fn().mockResolvedValue({ card: fingerprint ? { fingerprint } : null }) },
-    subscriptions: { update: jest.fn().mockResolvedValue({}) },
+    subscriptions: { update: jest.fn(), cancel: jest.fn().mockResolvedValue({}) },
   } as unknown as Stripe & {
-    subscriptions: { update: jest.Mock };
+    subscriptions: { update: jest.Mock; cancel: jest.Mock };
   };
 }
 
@@ -106,23 +106,25 @@ describe("recordCardTrialStart", () => {
     const stripe = stripeWithCard("fp_new");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: false });
     expect(inserts).toEqual([{ table: "hermes_trial_usage", row: { user_id: "u1", stripe_subscription_id: "sub_trial", card_fingerprint: "fp_new" } }]);
-    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+    expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
   });
 
-  it("ends the trial now when another account already trialed with the same card", async () => {
+  it("cancels without billing when another account already trialed with the same card", async () => {
     const { db, inserts } = fakeDb({ hermes_trial_usage: [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }] });
     const stripe = stripeWithCard("fp_used");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: true });
-    // Nothing is recorded, so a failed Stripe update is retried and checked again.
+    // Nothing is recorded, so a failed Stripe cancellation is retried and checked again.
     expect(inserts).toHaveLength(0);
-    expect(stripe.subscriptions.update).toHaveBeenCalledWith("sub_trial", { trial_end: "now" });
+    expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_trial", { invoice_now: false, prorate: false });
+    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
   });
 
   it("ends the trial when a concurrent trial on the same card recorded first", async () => {
     const { db } = fakeDb({ hermes_trial_usage: [{ data: [], error: null }, { data: [], error: null }] }, { code: "23505", message: "duplicate" });
     const stripe = stripeWithCard("fp_race");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: true });
-    expect(stripe.subscriptions.update).toHaveBeenCalledWith("sub_trial", { trial_end: "now" });
+    expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_trial", { invoice_now: false, prorate: false });
+    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
   });
 
   it("keeps the trial when the unique conflict is a repeat delivery of the same subscription", async () => {
@@ -132,13 +134,13 @@ describe("recordCardTrialStart", () => {
     );
     const stripe = stripeWithCard("fp_new");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: false });
-    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+    expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
   });
 
-  it("does not record the trial when the Stripe update fails, so the retry checks again", async () => {
+  it("does not record the trial when Stripe cancellation fails, so the retry checks again", async () => {
     const { db, inserts } = fakeDb({ hermes_trial_usage: [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }] });
     const stripe = stripeWithCard("fp_used");
-    stripe.subscriptions.update.mockRejectedValueOnce(new Error("stripe down"));
+    stripe.subscriptions.cancel.mockRejectedValueOnce(new Error("stripe down"));
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).rejects.toThrow("stripe down");
     expect(inserts).toHaveLength(0);
   });
@@ -148,7 +150,7 @@ describe("recordCardTrialStart", () => {
     const stripe = stripeWithCard("fp_new");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: false });
     expect(inserts).toHaveLength(0);
-    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+    expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
   });
 
   it("throws on a failed read so the webhook retries", async () => {
