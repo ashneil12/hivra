@@ -41,7 +41,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "The browser, mostly. Headless Chromium needs system libraries that slim Docker images often leave out. If the agent throws missing-library errors when it opens a browser, you have to add them and rebuild the image yourself instead of pulling the published one. The README explains how. It's still not a one-command fix.",
         "Memory is the sneaky one. The memory volume is mounted into the container, but run `docker compose down` and `docker compose up` without minding the volume names and Docker can quietly create a new, empty one. Your agent wakes up with amnesia. Use named volumes and check them before every restart. People get caught by this once. Sometimes twice.",
-        "Then there are updates, which never really stop. A new version can change how memory is stored or rename environment variables. Hermes v0.5.0 added a migration tool that carries memory, API settings and skills across, and that helps. But when `hermes update` turns up a renamed config key, you're fixing it by hand. No backups? An upgrade can wipe out months of what your agent learned.",
+        "Then there are updates, which never really stop. A new version can change how memory is stored or rename environment variables. Hermes v0.5.0 added a migration tool that carries memory, API settings and skills across, and that helps. But when `hermes update` turns up a renamed config key, you're fixing it by hand. No backups? An upgrade can wipe out months of what your agent learned. For the current backup command and restore cautions, see the [Hermes Agent self-hosting guide](/blog/how-to-self-host-hermes-agent).",
       ],
     },
     {
@@ -77,7 +77,7 @@ export const article: BlogArticle = {
     },
     {
       q: "How do I back up my agent's memory?",
-      a: "Hermes provides a built-in full-home backup command: `hermes backup -o my-agent.zip`. A full archive can contain credentials such as `.env` and `auth.json`, so treat it as private and keep a copy off the server. For safe restore steps and rehearsal cautions, see the [Hermes Agent self-hosting guide](/blog/how-to-self-host-hermes-agent).",
+      a: "Hermes provides a built-in full-home backup command: hermes backup -o my-agent.zip. A full archive can contain credentials such as .env and auth.json, so treat it as private and keep a copy off the server. For restore steps and rehearsal cautions, see the Hermes Agent self-hosting guide linked above.",
     },
     {
       q: "Can I run Hermes on a Mac or Windows machine?",
