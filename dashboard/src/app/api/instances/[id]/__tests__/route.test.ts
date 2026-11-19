@@ -71,6 +71,7 @@ jest.mock("@clerk/nextjs/server", () => ({
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
 
 jest.mock("@/lib/hetzner/client", () => ({
+  HetznerCloudApiError: jest.requireActual("@/lib/hetzner/client").HetznerCloudApiError,
   getServer: jest.fn(),
   powerOnServer: jest.fn(),
   shutdownServer: jest.fn(),
@@ -6167,6 +6168,53 @@ describe("DELETE /api/instances/[id]", () => {
     expect(log.warn).not.toHaveBeenCalledWith(
       "hetzner server already gone (404) — proceeding with DB delete",
       expect.anything()
+    );
+  });
+
+  // F090: an interrupted provision leaves a creation receipt; after the orphan
+  // server is removed by hand, the client's structured 404 must still let the
+  // row be deleted instead of returning 502 forever.
+  it("treats a structured HetznerCloudApiError 404 on a creation receipt as already gone", async () => {
+    const { HetznerCloudApiError } = jest.requireActual("@/lib/hetzner/client");
+    (deleteHetznerServer as jest.Mock).mockRejectedValue(
+      new HetznerCloudApiError(404, "DELETE", "/servers/42", "request_failed", "not_found")
+    );
+    const updateSpy = jest.fn().mockReturnValue({
+      eq: jest.fn().mockResolvedValue({ error: null }),
+    });
+    (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "hermes_instances") {
+        return {
+          select: jest.fn(() =>
+            deleteRowSelect({
+              id: "inst-123",
+              user_id: "user_123",
+              status: "provisioning",
+              provider: "openai",
+              hetzner_server_id: 42,
+              gateway_url: null,
+              host_id: null,
+              config: {},
+            }),
+          ),
+          update: updateSpy,
+        };
+      }
+      return {
+        update: jest.fn().mockReturnValue({
+          eq: jest.fn().mockResolvedValue({ error: null }),
+        }),
+      };
+    });
+
+    const response = await DELETE(confirmedDeleteRequest(), {
+      params: Promise.resolve({ id: "inst-123" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(deleteHetznerServer).toHaveBeenCalledWith(42);
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "deleted", lifecycle_state: "deleted" })
     );
   });
 });

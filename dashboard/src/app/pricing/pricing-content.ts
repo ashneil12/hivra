@@ -172,6 +172,12 @@ export function buildPricingOffers(siteUrl: string): Array<Record<string, unknow
 const ENTRY = planSizeParts("entry");
 const LARGER = planSizeParts("larger");
 
+/** Shown on the entry plan while the card trial is on (HIVRA_CARD_TRIAL=on). */
+export const CARD_TRIAL_PRICING = {
+  label: "Start a 7-day free trial",
+  note: `Free for 7 days, then ${ENTRY.price}/month. A card is needed to start and is charged when the trial ends unless you cancel. During the trial you get one agent with 1 vCPU and 2 GB, and it sleeps when idle.`,
+} as const;
+
 /** The paragraphs under the headline. */
 export const PRICING_INTRO = [
   "Sign up free and connect your own server, or use Hivra's open-source platform yourself. Or pay us to run the computer for you. No requirement to buy a token.",
@@ -297,6 +303,8 @@ export interface PricingFaqItem {
   links?: PricingFaqLink[];
   /** Mentions the token: shown, and put in the FAQPage JSON-LD, only while the token surfaces are visible. */
   tokenOnly?: boolean;
+  /** The answer once the Free plan is closed to new sign-ups (HIVRA_FREE_PLAN_CLOSED_AT). */
+  aFreeClosed?: string;
 }
 
 export const PRICING_FAQ_HEADING = "Questions people usually ask";
@@ -305,10 +313,12 @@ export const PRICING_FAQ: PricingFaqItem[] = [
   {
     q: "Is Hivra free?",
     a: `The open-source platform is free to self-host, and a free Hivra account works with a computer or server you connect yourself. That doesn't make the physical or cloud server free, and your AI usage still has a cost. A computer that Hivra runs for you is paid, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}.`,
+    aFreeClosed: `The open-source platform is free to self-host. That doesn't make the physical or cloud server free, and your AI usage still has a cost. Hivra Cloud has no free plan: a computer that Hivra runs for you is paid, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}.`,
   },
   {
     q: "Does Hivra run a free computer for me?",
     a: "No. Every computer that Hivra Cloud runs for you needs a paid plan. A free account works with a computer or server that you connect yourself, and you can self-host the open-source platform at no software cost.",
+    aFreeClosed: "No. Every computer that Hivra Cloud runs for you needs a paid plan. You can self-host the open-source platform at no software cost.",
   },
   {
     q: "Do I have to pay for an AI model as well?",
@@ -359,6 +369,13 @@ export const PRICING_FAQ: PricingFaqItem[] = [
 ];
 
 /** The questions to show (and to put in FAQPage JSON-LD) for a viewer who may or may not see token copy. */
-export function visiblePricingFaq(tokenSurfacesVisible: boolean): PricingFaqItem[] {
-  return PRICING_FAQ.filter((item) => tokenSurfacesVisible || !item.tokenOnly);
+/** The item with its answer for a closed Free plan, when it has one. */
+export function withFreeClosedAnswer(item: PricingFaqItem): PricingFaqItem {
+  return item.aFreeClosed ? { ...item, a: item.aFreeClosed } : item;
+}
+
+export function visiblePricingFaq(tokenSurfacesVisible: boolean, freePlanClosed = false): PricingFaqItem[] {
+  return PRICING_FAQ.filter((item) => tokenSurfacesVisible || !item.tokenOnly).map((item) =>
+    freePlanClosed ? withFreeClosedAnswer(item) : item
+  );
 }

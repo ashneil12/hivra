@@ -57,6 +57,12 @@ describe("tryGrantStarterCredit", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it("caps the grant at $1 while the account is in a card trial", async () => {
+    const { db, rpc } = rpcDb({ data: { granted: true, status: "granted", amountMicroUsd: 1000000 }, error: null });
+    await tryGrantStarterCredit({ userId: "u1", env: {}, resolveSubscription: paid, resolveAccountCreatedAt: signedUp, resolveCardTrial: async () => true }, db);
+    expect(rpc).toHaveBeenCalledWith("grant_starter_credit", expect.objectContaining({ p_amount_micro_usd: 1000000 }));
+  });
+
   it("does nothing when turned off", async () => {
     const { db, rpc } = rpcDb({ data: {}, error: null });
     const r = await tryGrantStarterCredit({ userId: "u1", env: { HIVRA_STARTER_CREDIT_USD: "0" }, resolveSubscription: paid, resolveAccountCreatedAt: signedUp }, db);
