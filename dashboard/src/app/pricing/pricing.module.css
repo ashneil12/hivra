@@ -79,6 +79,8 @@
 .offer > .action { position: relative; margin-top: auto; }
 /* The three buttons share one row, so a rule across the panel above them makes it read as an action row, not as a gap. */
 .offer > .action::before { content: ""; position: absolute; left: -36px; right: -36px; top: -34px; border-top: 1px solid var(--etched-border); pointer-events: none; }
+/* The trial note sits right above the action row; keep it clear of the row's rule. */
+.offer > .trialNote { margin-bottom: 52px; }
 .offerSelf .action { background: var(--hg-bg); }
 .offerSelf .action:hover,
 .offerSelf .action:focus-visible { background: var(--hg-fill-hover); color: var(--hg-text); }
@@ -147,6 +149,7 @@
   .offer + .offer { border-left: 0; border-top: 1px solid var(--etched-border); }
   .offer > .action { margin-top: 8px; max-width: 360px; }
   .offer > .action::before { display: none; }
+  .offer > .trialNote { margin-bottom: 18px; }
   .ownServer { grid-template-columns: 1fr; }
   .ownServer .action { max-width: 360px; }
 }

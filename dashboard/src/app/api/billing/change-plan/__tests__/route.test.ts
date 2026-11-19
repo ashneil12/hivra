@@ -24,6 +24,11 @@ jest.mock("@/lib/services/tier-change-service", () => ({
   applyTierChange: jest.fn(),
 }));
 
+const mockInCardTrial = jest.fn();
+jest.mock("@/lib/billing/card-trial", () => ({
+  isInCardTrial: (...a: unknown[]) => mockInCardTrial(...a),
+}));
+
 jest.mock("@/lib/ops-events", () => ({
   // Preserve the real module (apiError() depends on sanitizeOpsMetadata) and
   // only stub the feed write.
@@ -47,6 +52,7 @@ describe("POST /api/billing/change-plan", () => {
     // Default OFF — each downgrade test that needs it sets the flag explicitly.
     delete process.env.HERMES_SELF_SERVE_DOWNGRADE_ENABLED;
 
+    mockInCardTrial.mockResolvedValue(false);
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: mockUserId });
     (currentUser as jest.Mock).mockResolvedValue({
       emailAddresses: [{ emailAddress: "test@example.com" }],
@@ -526,6 +532,20 @@ describe("POST /api/billing/change-plan", () => {
     expect(body.error).toMatch(/not linked|re-subscribe/i);
     expect(mockUpdateSubscription).not.toHaveBeenCalled();
     expect(updateBuilder.update).not.toHaveBeenCalled();
+  });
+
+  it("ends the card trial and charges now when a trial account upgrades", async () => {
+    mockInCardTrial.mockResolvedValueOnce(true);
+    const { mockUpdateSubscription, updateBuilder } = setupDowngradeMocks("operator");
+
+    const res = await POST(makeJsonRequest("http://localhost/api/billing/change-plan", { newPlan: "fleet" }));
+    expect(res.status).toBe(200);
+
+    expect(mockUpdateSubscription).toHaveBeenCalledWith(
+      "sub_123",
+      expect.objectContaining({ trial_end: "now", payment_behavior: "error_if_incomplete" })
+    );
+    expect(updateBuilder.update).toHaveBeenCalledWith(expect.objectContaining({ plan: "fleet", trial_ends_at: null }));
   });
 
   // ── Self-serve downgrade (Batch 6) ────────────────────────────────────────

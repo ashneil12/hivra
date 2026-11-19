@@ -21,8 +21,9 @@ export function parseAgentParam(value: string | null | undefined): LaunchProfile
   return launchProfileForAgentType(value);
 }
 
-export function buildVeniceLaunchHref(agent: string, inference: VeniceInference = "venice", ref = "venice"): string {
+export function buildVeniceLaunchHref(agent: string, inference: VeniceInference = "venice", ref = "venice", code?: string): string {
   const query = new URLSearchParams({ agent, inference, ref });
+  if (code) query.set("code", code);
   return `${LAUNCH_ROUTE}?${query.toString()}`;
 }
 

@@ -26,6 +26,7 @@ describe("launch link parsing", () => {
 
   it("builds the href", () => {
     expect(buildVeniceLaunchHref("openclaw")).toBe("/dashboard/launch?agent=openclaw&inference=venice&ref=venice");
+    expect(buildVeniceLaunchHref("hermes", "venice", "venice", "VENICE")).toBe("/dashboard/launch?agent=hermes&inference=venice&ref=venice&code=VENICE");
   });
 
   it("preselects credits or a Venice key", () => {

@@ -80,6 +80,16 @@ export const ACCOUNT_DELETION_TABLES: AccountDeletionTable[] = [
     // Newer than hivra_agent_events; a database without it has nothing to delete.
     optionalIfMissing: true,
   },
+  // Setup requests from a coding agent, once a person claimed one: their
+  // account id, when they opened it and the agent it led to.
+  {
+    table: "hivra_agent_setup_requests",
+    filterColumn: "user_id",
+    source: "userId",
+    reason: "setup requests from a coding agent that the person opened",
+    // Newer than the other tables; a database without it has nothing to delete.
+    optionalIfMissing: true,
+  },
   // Server setup commands and their receipts. Receipts
   // (infrastructure_server_enrollment_events) go by cascade from their
   // enrollment; the service role can't delete them directly.

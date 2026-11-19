@@ -171,6 +171,23 @@ jobs:
           uv pip install --python "$HERMES_CONFIG_TEST_VENV/bin/python" PyYAML==6.0.3
           echo "HERMES_CONFIG_TEST_PYTHON=$HERMES_CONFIG_TEST_VENV/bin/python" >> "$GITHUB_ENV"
 
+      # The restore drill suite restores a real restic snapshot from a
+      # disposable repo. Pin the release the managed hosts run and verify it.
+      - name: Install pinned restic
+        shell: bash
+        env:
+          RESTIC_VERSION: "0.18.0"
+          RESTIC_SHA256: 98f6dd8bf5b59058d04bfd8dab58e196cc2a680666ccee90275a3b722374438e
+        run: |
+          RESTIC_DIR="$RUNNER_TEMP/restic-$RESTIC_VERSION"
+          mkdir -p "$RESTIC_DIR"
+          curl -fsSL -o "$RESTIC_DIR/restic.bz2" "https://github.com/restic/restic/releases/download/v$RESTIC_VERSION/restic_${RESTIC_VERSION}_linux_amd64.bz2"
+          echo "$RESTIC_SHA256  $RESTIC_DIR/restic.bz2" | sha256sum -c -
+          bunzip2 "$RESTIC_DIR/restic.bz2"
+          chmod 755 "$RESTIC_DIR/restic"
+          "$RESTIC_DIR/restic" version
+          echo "$RESTIC_DIR" >> "$GITHUB_PATH"
+
       # The smoke-contract and hot-path suites are part of every shard's
       # selection, so they are not run a second time here. Eight shards
       # (2026-11-17, was four) halve the slowest job. Each shard stays serial

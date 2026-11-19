@@ -21,16 +21,18 @@ export interface PublicSiteProps {
    * readable in the browser.
    */
   tokenSurfaces?: boolean;
+  /** The Free plan is closed to new sign-ups: the footer stops offering it. */
+  freePlanClosed?: boolean;
 }
 
 /** Public-only design scope. Each page supplies its own main landmark. */
-export default function PublicSite({ children, className, variant = "default", "data-page": page, isSignedIn, tokenSurfaces }: PublicSiteProps) {
+export default function PublicSite({ children, className, variant = "default", "data-page": page, isSignedIn, tokenSurfaces, freePlanClosed = false }: PublicSiteProps) {
   const showTokenSurfaces = tokenSurfaces ?? newTokenSurfacesEnabled();
   return (
     <div className={[styles.site, className].filter(Boolean).join(" ")} data-public-site data-variant={variant} data-page={page}>
       <LandingHeader isSignedIn={isSignedIn} tokenSurfaces={showTokenSurfaces} />
       {children}
-      <Footer tokenSurfaces={showTokenSurfaces} />
+      <Footer tokenSurfaces={showTokenSurfaces} freePlanClosed={freePlanClosed} />
     </div>
   );
 }

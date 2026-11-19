@@ -11,6 +11,7 @@ import {
 } from "@/lib/billing/credits";
 import { isBillingV2ServerEnabled } from "@/lib/billing/billing-v2-availability";
 import { readPlanOnHold, resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { readCardTrialEndsAt } from "@/lib/billing/card-trial";
 import { isPaidTier, VENICE_BOOST_CPU, VENICE_BOOST_RAM_MB } from "@/lib/services/tier-boost";
 import { isVeniceBoostEligible } from "@/lib/billing/venice-compute-boost";
 import { isActiveComputeStatus } from "@/lib/hivra/resource-gate";
@@ -224,6 +225,7 @@ export async function GET() {
     const ladder = await loadLadderEntitlement(userId).catch(() => null);
     const ladderKey = ladder ? asLadderPlanKey(ladder.planKey) : null;
     const ladderPrice = ladderKey ? activePlanLadder()?.plans[ladderKey]?.monthlyCents ?? null : null;
+    const trialEndsAt = sub.source === "stripe" ? await readCardTrialEndsAt(userId) : null;
 
     return usageSuccess({
       subscribed: true,
@@ -238,6 +240,7 @@ export async function GET() {
         totalRam,
         status: sub.status,
         currentPeriodEnd: sub.currentPeriodEnd ?? null,
+        trialEndsAt,
         source: sub.source,
         tokenTier: sub.tokenTier,
         canChangePlanInPlace: sub.canChangePlanInPlace,

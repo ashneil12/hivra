@@ -12,6 +12,12 @@ import styles from "../Billing.module.css";
 /** Shown with no plan at all: never subscribed, or a plan that has ended. */
 const NO_PLAN_TEXT = `Every computer that Hivra Cloud runs for you needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. A free account works with a computer or server you connect yourself. If a plan has ended, your Hivra Cloud computers are stopped and their files are kept. Choose a plan, then press Start.`;
 
+/** The card trial's line on the plan plate: what the trial has and what full Pro adds. */
+export function cardTrialText(trialEndsAt: string): string {
+  const ends = new Date(trialEndsAt).toLocaleDateString("en-GB", { day: "numeric", month: "long" });
+  return `Free trial until ${ends}: 1 agent with 1 vCPU and 2 GB, and it sleeps when idle. Full Pro gives you 3 agents, 2 vCPU, 4 GB and Keep awake. Your card is charged when the trial ends unless you cancel.`;
+}
+
 /** The plate's idle-policy line for a free account that holds a Hivra-run computer. */
 const FREE_HOSTED_COMPUTER_TEXT = "Needs a paid plan";
 
@@ -99,6 +105,22 @@ export function OverviewTab({
 
   return (
     <div className={styles.stack}>
+      {hasPlan && plan?.trialEndsAt ? (
+        <div className={`${styles.alert} ${styles.alertInfo}`} role="status" data-testid="card-trial-banner">
+          <div className={styles.alertBody}>
+            <p className={styles.alertText}>{cardTrialText(plan.trialEndsAt)}</p>
+          </div>
+          <button
+            type="button"
+            className={`${styles.button} ${styles.primary}`}
+            onClick={() => void c.handleEndTrial()}
+            disabled={c.endingTrial}
+          >
+            {c.endingTrial ? <Loader2 size={14} className={styles.spin} aria-hidden="true" /> : null}
+            Upgrade to full Pro now
+          </button>
+        </div>
+      ) : null}
       {hasPlan && plan && usage ? (
         <RatingPlate
           plan={plan}
