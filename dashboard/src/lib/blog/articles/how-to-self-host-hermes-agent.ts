@@ -105,6 +105,7 @@ export const article: BlogArticle = {
         "Hermes on Hivra runs in Hivra Cloud only, not on My cloud or My server. Existing Hermes agents keep their current setup. The official-installer setup below is in testing and is not on hivra.cloud yet.",
         "In that setup, Hivra creates a private computer, runs Hermes's own installer, and opens Hermes's own web UI behind Hivra sign-in. Owners update it with `hermes update` or the Update Hermes button on the agent's Manage tab. Hivra is not affiliated with Nous Research.",
         `Every Hivra Cloud computer needs a paid plan. Plans start at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. This is the managed-computer alternative if you do not want to maintain the server. Self-hosting fits better if you need your own infrastructure or want direct control of the disk, service configuration, and recovery process.`,
+        "See [the managed Hermes option and its current availability](/agents/hermes).",
       ],
     },
   ],
