@@ -9,6 +9,8 @@
 import type Stripe from "stripe";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
+import { getStripePriceId, PLANS } from "@/lib/subscription/plans";
+import { activePlanLadder, isPlanLadderEnabled } from "@/lib/subscription/plan-ladder";
 
 const SOURCE = "card-trial";
 
@@ -28,6 +30,26 @@ export function isCardTrialEnabled(env: Record<string, string | undefined> = pro
   return env.HIVRA_CARD_TRIAL?.trim().toLowerCase() === "on";
 }
 
+/** The offer and its renewal amount, for the same monthly entry price checkout sells. */
+export function getCardTrialOffer(): { monthlyCents: number } | null {
+  if (!isCardTrialEnabled() || !supabaseAdmin || !process.env.STRIPE_SECRET_KEY?.trim() ||
+      !process.env.STRIPE_WEBHOOK_SECRET?.trim()) return null;
+
+  if (isPlanLadderEnabled()) {
+    const config = activePlanLadder();
+    if (!config) return null;
+    const entry = config.plans[CARD_TRIAL_PLAN];
+    return entry.monthlyCents > 0 ? { monthlyCents: entry.monthlyCents } : null;
+  }
+
+  try {
+    if (!getStripePriceId(CARD_TRIAL_PLAN, "monthly").trim()) return null;
+    return { monthlyCents: PLANS[CARD_TRIAL_PLAN].price };
+  } catch {
+    return null;
+  }
+}
+
 /** True when this Stripe subscription is a card trial that is still in its trial. */
 export function isCardTrialSubscription(
   subscription: Pick<Stripe.Subscription, "status" | "metadata">
@@ -41,21 +63,20 @@ export function isCardTrialSubscription(
 export interface CardTrialHistory {
   /** The account's subscription row, if any. */
   existingSub?: { stripe_subscription_id?: string | null; upgraded_at?: string | null } | null;
-  /** Whether a trial was ever recorded for this account. */
+  /** Whether a trial attempt was ever recorded for this account. */
   hadTrial: boolean;
 }
 
 /**
  * Whether this checkout gets the trial: the switch is on, it is the entry plan
- * billed monthly, not a plan-ladder sale, and the account has never paid or
- * trialed before.
+ * billed monthly, and the account has never paid or trialed before.
  */
 export function checkoutGetsCardTrial(
-  input: { planKey: string; cadence: string; ladderSale: boolean } & CardTrialHistory,
+  input: { planKey: string; cadence: string } & CardTrialHistory,
   env: Record<string, string | undefined> = process.env
 ): boolean {
   if (!isCardTrialEnabled(env)) return false;
-  if (input.planKey !== CARD_TRIAL_PLAN || input.cadence !== "monthly" || input.ladderSale) return false;
+  if (input.planKey !== CARD_TRIAL_PLAN || input.cadence !== "monthly") return false;
   if (input.hadTrial) return false;
   if (input.existingSub?.upgraded_at) return false;
   if (input.existingSub?.stripe_subscription_id) return false;
@@ -80,10 +101,14 @@ export function cardTrialCheckoutFields(): {
 
 type Db = NonNullable<typeof supabaseAdmin>;
 
-/** Whether the account ever started a card trial. A failed read counts as yes: never hand out a second trial on doubt. */
+function readTrialHistory(userId: string, db: Db) {
+  return db.from("hermes_trial_usage").select("id").eq("user_id", userId).limit(1);
+}
+
+/** Whether the account ever attempted a card trial. A failed read counts as yes. */
 export async function accountHadCardTrial(userId: string, db: Db | null = supabaseAdmin): Promise<boolean> {
   if (!db) return true;
-  const { data, error } = await db.from("hermes_trial_usage").select("id").eq("user_id", userId).limit(1);
+  const { data, error } = await readTrialHistory(userId, db);
   if (error) {
     log.warn("could not read trial history; not offering a trial", {
       source: SOURCE,
@@ -128,8 +153,8 @@ async function cardFingerprint(stripe: Stripe, subscription: Stripe.Subscription
 
 /**
  * Records a card trial when it starts. If another account already trialed with
- * the same card, the trial ends now so Stripe charges for the plan instead.
- * Returns true when the trial was ended. Throws on a failed write so the
+ * the same card, cancel the duplicate without charging for a paid plan.
+ * Returns true when the trial was rejected. Throws on a failed write so the
  * webhook retries.
  */
 export async function recordCardTrialStart(params: {
@@ -184,15 +209,22 @@ export async function recordCardTrialStart(params: {
   }
 
   if (reused) {
-    log.info("card already used for a trial on another account; ending this trial now", {
+    log.info("card already used for a trial on another account; canceling duplicate trial", {
       source: SOURCE,
       failureType: "card_trial_card_reused",
       userId,
       subscriptionId: subscription.id,
     });
-    // Nothing is recorded for this subscription, so a failed update is
-    // retried by the webhook and checked again.
-    await params.stripe.subscriptions.update(subscription.id, { trial_end: "now" });
+    // Count the attempt for this account, so its next Checkout can be paid.
+    // Do not bind the rejected subscription or card to its trial history:
+    // if cancellation fails, the next webhook must still reject it.
+    const { data: attempts, error: attemptsError } = await readTrialHistory(userId, db);
+    if (attemptsError) throw new Error(`trial usage read failed: ${attemptsError.message}`);
+    if (!attempts?.length) {
+      const { error: recordError } = await db.from("hermes_trial_usage").insert({ user_id: userId });
+      if (recordError) throw new Error(`trial usage write failed: ${recordError.message}`);
+    }
+    await params.stripe.subscriptions.cancel(subscription.id, { invoice_now: false, prorate: false });
     return { endedEarly: true };
   }
   return { endedEarly: false };
@@ -211,8 +243,8 @@ export async function releaseCardTrialSleep(userId: string, db: Db | null = supa
     .select("trial_ends_at")
     .eq("user_id", userId)
     .maybeSingle();
-  // A failed read throws: returning would let the upsert clear trial_ends_at
-  // and the release would never run again.
+  // A database without the card-trial migration cannot have trial sleep to release.
+  if (error?.code === "42703" || error?.code === "PGRST204") return false;
   if (error) throw new Error(`trial sleep release read failed: ${error.message}`);
   if (!(data as { trial_ends_at?: string | null } | null)?.trial_ends_at) return false;
   const { error: updateError } = await db

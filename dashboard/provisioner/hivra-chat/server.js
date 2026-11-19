@@ -2615,6 +2615,11 @@ function a0Login(cb, isCurrent) {
 // a page on another site still cannot ride the cookie. The capability probe is
 // A0's own public discovery endpoint and needs no sign-in.
 const A0_CONNECTOR_REQS = new WeakSet();
+// Agent Zero gives Xpra a root-absolute path for both its assets and its
+// stream. Only its browser sessions belong to A0, not the desktop broker.
+function a0BrowserSession(pathname) {
+  return AGENT_KIND === "agent-zero" && /^\/desktop\/session\/browser-[a-f0-9]{32}(?:\/|$)/.test(pathname);
+}
 const A0_CONNECTOR_PROBE = "/api/plugins/_a0_connector/v1/capabilities";
 const A0_CONNECTOR_CORE_API = new Set(["/api/csrf_token", "/api/image_get", "/api/download_work_dir_file", "/api/chat_files_path_get", "/api/get_work_dir_files"]);
 function a0ConnectorRootPath(req, u) {
@@ -4626,6 +4631,10 @@ const server = http.createServer((req, res) => {
   // in-app request (Referer is the /agent-zero surface) back under /agent-zero, where
   // the mount below strips the prefix before forwarding to the container.
   if (AGENT_KIND === "agent-zero" && !u.startsWith("/agent-zero")) {
+    if (a0BrowserSession(u) && (req.method === "GET" || req.method === "HEAD")) {
+      req.url = "/agent-zero" + req.url;
+      return a0Proxy(req, res);
+    }
     // The native Socket.IO client uses its default root transport path for
     // both polling and WebSocket upgrades. Keep that one exact endpoint at
     // root; a0Proxy applies the same owner/Origin gate as mounted native RPC.
@@ -4804,7 +4813,8 @@ server.on("upgrade", (req, socket, head) => {
   // the one WebSocket that passes without the Hivra gate, and it never counts
   // as use of the app through Hivra.
   const nuphosAcp = AGENT_KIND === "nuphos" && u === NUPHOS_ACP;
-  const remoteDesktopUpgrade = u.startsWith("/desktop/");
+  const a0BrowserUpgrade = a0BrowserSession(u);
+  const remoteDesktopUpgrade = !a0BrowserUpgrade && u.startsWith("/desktop/");
   // The ttyd/noVNC websockets carry the actual terminal/VNC I/O — gate them too.
   // The browser sends the hivra_auth cookie (set on the iframe's first load) on
   // the upgrade handshake automatically.
@@ -4819,7 +4829,7 @@ server.on("upgrade", (req, socket, head) => {
   else if (u.startsWith("/aeon")) port = AEON_PORT; // Next.js HMR ws (dev); no strip (basePath=/aeon)
   else if (u.startsWith("/openclaw")) { port = OPENCLAW_PORT; strip = openclawStrip(); } // gateway WS control/RPC (at its basePath, or at root on an older computer)
   else if (u.startsWith("/agent-zero")) { port = AGENT_ZERO_PORT; strip = "/agent-zero"; } // Agent Zero WS (served at root)
-  else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
+  else if (a0BrowserUpgrade || (AGENT_KIND === "agent-zero" && u === "/socket.io/")) port = AGENT_ZERO_PORT;
   else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)
   else if (AGENT_KIND === "openbot" && !openbotGatewayPath(u)) port = OPENBOT_PORT; // OpenBot's WebSockets (served at the root)
   else if (AGENT_KIND === "nuphos" && !nuphosGatewayPath(u)) port = NUPHOS_PORT; // the runtime's /acp and console sockets

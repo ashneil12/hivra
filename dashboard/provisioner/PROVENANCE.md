@@ -547,6 +547,11 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.19.1` routes the built-in Agent Zero browser’s Xpra session
+through the authenticated native app gateway, not the full-computer desktop
+broker. Only the gateway, release labels and documentation change; this
+bundle does not update an installed connection service by itself.
+
 Release `2026.11.18.5` builds on `2026.11.18.4`. The connection service
 (`hivra-chat/server.js`) of an Agent Zero computer now answers the A0 CLI's
 root-level calls (`/api/plugins/...`, the CSRF and file helpers it uses) for a

@@ -1,12 +1,17 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
-  claimPreparedCanaryComputer,
+  resumePreparedCanaryComputer,
   matchPreparedCanaryComputer,
   preparedCanaryBindingScript,
   preparedCanaryLifecycleScript,
+  preparedCanaryReleaseScript,
+  preparedComputerForDelete,
+  releasePreparedComputerClaim,
   preparedConsoleHostPreparationScript,
   preparedConsoleOrigin,
-  preparedProfilesForDeployment,
   readPreparedSlot,
 } from "../prepared-canary-computers";
 
@@ -169,87 +174,81 @@ ${transition}`], { encoding: "utf8" });
     expect(result.stdout).toBe(`HIVRA_PREPARED_LIFECYCLE omarchy ${action} ${status}\n`);
   });
 
-  it("reserves a pending Omarchy owner before dispatching its exact latest release", async () => {
-    const release = { release: "v4.0.6", releaseCommit: "b".repeat(40), isoFilename: "omarchy-4.0.6.iso", isoUrl: "https://iso.omarchy.org/omarchy-4.0.6.iso", isoSha256: "c".repeat(64) };
-    const reserveRefresh = jest.fn(async row => ({ ...row, id: "44444444-4444-4444-8444-444444444444" }));
-    const advanceRefresh = jest.fn(async (_owner, row) => row);
-    const runHost = jest.fn(); const insert = jest.fn();
-    const row = await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY" }, {
-      findOwnerProfile: async () => null, findSlotOwner: async () => null, runHost, insert: insert as never,
-      latestRelease: async () => release, reserveRefresh, advanceRefresh,
-    });
-    expect(reserveRefresh).toHaveBeenCalledWith(expect.objectContaining({ user_id: "owner", status: "provisioning", desired_state: "running", operation_kind: "provision" }), release, expect.objectContaining({vmid:2099}));
-    expect(row.operation_payload).toEqual({ stage: "prepared_omarchy_refresh", refreshId: row.operation_id });
-    expect(row.allocation_operation_id).toBe(row.operation_id);
-    expect(advanceRefresh).toHaveBeenCalledWith("owner", row);
-    expect(runHost).not.toHaveBeenCalled(); expect(insert).not.toHaveBeenCalled();
+  const assignedOmarchy = {
+    id: "assigned", user_id: "operator-a", computer_profile: "omarchy" as const,
+    type: "linux-desktop", deployment_mode: "hivra-managed", managed_provisioner_channel: "canary",
+    proxmox_host: "node-b", vmid: 2099, ip: "10.240.20.99", status: "running",
+    infrastructure_binding_token_enforced: true,
+  };
+
+  it("cannot assign a released guest to either the next operator or its previous owner", async () => {
+    let row: typeof assignedOmarchy | null = assignedOmarchy;
+    const lookup = jest.fn(async () => row);
+    const request = { userId: "operator-a", profile: "omarchy", operator: true } as const;
+    await expect(resumePreparedCanaryComputer(request, lookup)).resolves.toBe(assignedOmarchy);
+    await expect(resumePreparedCanaryComputer({ ...request, userId: "operator-b" }, lookup))
+      .rejects.toThrow("prepared_slot_claimed");
+
+    const released = await releasePreparedComputerClaim(
+      { infrastructure_binding_token_hash: "a".repeat(64) },
+      { profile: "omarchy", slot: readPreparedSlot("omarchy")! },
+      async () => ({ ok: true, stdout: "HIVRA_PREPARED_BINDING_RELEASED\n", stderr: "" }),
+    );
+    expect(released.ok).toBe(true);
+    row = { ...assignedOmarchy, status: "deleted" };
+    await expect(resumePreparedCanaryComputer(request, lookup)).rejects.toThrow("prepared_profile_unavailable");
+    row = null; // The live-owner lookup excludes deleted rows.
+    await expect(resumePreparedCanaryComputer({ ...request, userId: "operator-b" }, lookup))
+      .rejects.toThrow("prepared_profile_unavailable");
+    await expect(resumePreparedCanaryComputer(request, lookup)).rejects.toThrow("prepared_profile_unavailable");
   });
 
-  it("does not reserve or dispatch when the official latest release is unavailable", async () => {
-    const reserveRefresh = jest.fn(); const advanceRefresh = jest.fn();
-    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY" }, {
-      findOwnerProfile: async () => null, findSlotOwner: async () => null,
-      latestRelease: async () => { throw new Error("upstream unavailable"); }, reserveRefresh, advanceRefresh,
-    })).rejects.toThrow("prepared_omarchy_release_unavailable");
-    expect(reserveRefresh).not.toHaveBeenCalled(); expect(advanceRefresh).not.toHaveBeenCalled();
+  it.each(["omarchy", "windows"] as const)("refuses an unassigned %s slot without clean-guest evidence", async profile => {
+    const lookup = jest.fn().mockResolvedValue(null);
+    await expect(resumePreparedCanaryComputer({ userId: "operator-a", profile, operator: true }, lookup))
+      .rejects.toThrow("prepared_profile_unavailable");
+    expect(lookup).toHaveBeenCalledWith(readPreparedSlot(profile));
   });
 
-  it("returns the durable pending row when HTTP host dispatch is unconfirmed", async () => {
-    const release = { release: "v4.0.6", releaseCommit: "b".repeat(40), isoFilename: "omarchy-4.0.6.iso", isoUrl: "https://iso.omarchy.org/omarchy-4.0.6.iso", isoSha256: "c".repeat(64) };
-    const row = await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY" }, {
-      findOwnerProfile: async () => null, findSlotOwner: async () => null, latestRelease: async () => release,
-      reserveRefresh: async row => ({...row,id:"44444444-4444-4444-8444-444444444444"}) as never,
-      advanceRefresh: async () => { throw new Error("HTTP timeout"); },
-    });
-    expect(row.status).toBe("provisioning"); expect(row.operation_id).toEqual(expect.any(String));
+  it("returns the existing owner's pending refresh but does not reassign it during or after cancellation", async () => {
+    const pending = {
+      ...assignedOmarchy, status: "provisioning", operation_kind: "provision",
+      operation_payload: { stage: "prepared_omarchy_refresh" }, infrastructure_binding_token_enforced: false,
+    };
+    let row: (typeof pending & { desired_state?: string }) | null = pending;
+    const lookup = async () => row;
+    const request = { userId: "operator-a", profile: "omarchy", operator: true } as const;
+    const nextOwner = { ...request, userId: "operator-b" };
+    await expect(resumePreparedCanaryComputer(request, lookup)).resolves.toBe(pending);
+    row = { ...pending, desired_state: "deleted" };
+    await expect(resumePreparedCanaryComputer(request, lookup)).rejects.toThrow("prepared_profile_unavailable");
+    await expect(resumePreparedCanaryComputer(nextOwner, lookup)).rejects.toThrow("prepared_slot_claimed");
+    row = null;
+    await expect(resumePreparedCanaryComputer(nextOwner, lookup)).rejects.toThrow("prepared_profile_unavailable");
   });
 
-  it("opens an existing Omarchy owner's slot without forcing upgrades or calling upstream", async () => {
-    const prior = { id: "44444444-4444-4444-8444-444444444444", user_id: "owner", computer_profile: "omarchy" as const,
-      proxmox_host: "node-b", vmid: 2099, infrastructure_binding_token_hash: "a".repeat(64), infrastructure_binding_token_enforced: true };
-    const runHost = jest.fn();
-    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY" }, {
-      findOwnerProfile: async () => prior,
-      findSlotOwner: async () => null,
-      runHost,
-      insert: jest.fn() as never,
-    })).resolves.toBe(prior);
-    expect(runHost).not.toHaveBeenCalled();
+  it.each([
+    { status: "deleted" },
+    { operation_kind: "delete" },
+    { desired_state: "deleted" },
+    { infrastructure_binding_token_enforced: false },
+    { type: "hermes" },
+    { deployment_mode: "self-managed" },
+    { managed_provisioner_channel: "default" },
+    { proxmox_host: "another-host" },
+    { vmid: 1 },
+    { ip: "10.240.20.1" },
+    { computer_profile: "windows" as const },
+  ])("refuses to resume an ineligible row: %j", async override => {
+    await expect(resumePreparedCanaryComputer(
+      { userId: "operator-a", profile: "omarchy", operator: true }, async () => ({ ...assignedOmarchy, ...override }),
+    )).rejects.toThrow("prepared_profile_unavailable");
   });
 
-  it("reuses the owner's already-bound exact slot without issuing another provider mutation", async () => {
-    const prior = { id: "44444444-4444-4444-8444-444444444444", user_id: "owner", computer_profile: "windows" as const,
-      proxmox_host: "node-b", vmid: 2098, infrastructure_binding_token_hash: "a".repeat(64), infrastructure_binding_token_enforced: true };
-    const runHost = jest.fn();
-    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "windows", name: "WINDOWS" }, {
-      findOwnerProfile: async () => prior,
-      findSlotOwner: async () => null,
-      runHost,
-      insert: jest.fn() as never,
-      markBindingEnforced: jest.fn(),
-    })).resolves.toBe(prior);
-    expect(runHost).not.toHaveBeenCalled();
-  });
-
-  it("binds a legacy owner row to the exact prepared VM before admitting it", async () => {
-    const prior = { id: "44444444-4444-4444-8444-444444444444", user_id: "owner", computer_profile: "windows" as const,
-      proxmox_host: "node-b", vmid: 2098, infrastructure_binding_token_hash: "b".repeat(64), infrastructure_binding_token_enforced: false };
-    const runHost = jest.fn(async (_script: string, _slot: unknown) => {
-      void _script;
-      void _slot;
-      return { ok: true, stdout: "HIVRA_PREPARED_BINDING_READY\n", stderr: "" };
-    });
-    const marked = { ...prior, infrastructure_binding_token_enforced: true };
-    const markBindingEnforced = jest.fn(async () => marked);
-    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "windows", name: "WINDOWS" }, {
-      findOwnerProfile: async () => prior,
-      findSlotOwner: async () => null,
-      runHost,
-      insert: jest.fn() as never,
-      markBindingEnforced,
-    })).resolves.toBe(marked);
-    expect(String(runHost.mock.calls[0][0])).toContain("hivra-bind-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-    expect(markBindingEnforced).toHaveBeenCalledWith(prior);
+  it("fails closed when the active owner lookup errors", async () => {
+    const lookup = jest.fn().mockRejectedValue(new Error("database_unavailable"));
+    await expect(resumePreparedCanaryComputer({ userId: "operator-a", profile: "omarchy", operator: true }, lookup))
+      .rejects.toThrow("database_unavailable");
   });
 
   it("refuses to replace a different prepared binding tag", () => {
@@ -260,97 +259,37 @@ ${transition}`], { encoding: "utf8" });
     expect(script).toContain("hivra-bind-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   });
 
-  it("does not claim a slot already owned by another user", async () => {
-    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "windows", name: "WINDOWS" }, {
-      findOwnerProfile: async () => null,
-      findSlotOwner: async () => ({ id: "55555555-5555-4555-8555-555555555555", user_id: "other", computer_profile: "windows", proxmox_host: "node-b", vmid: 2098 }),
-      runHost: jest.fn(),
-      insert: jest.fn() as never,
-      markBindingEnforced: jest.fn(),
-    })).rejects.toThrow("prepared_slot_claimed");
-  });
-
-  // A deployment serves the fixture it configures, on the delivery lane it
-  // provisions on: production's lane is "default", and it recognises the row it
-  // wrote there. The Canary channel gate is gone with it.
-  it("serves a deployment's own prepared slot with no Canary channel gate", () => {
+  it("recognizes the fixture configured on the deployment's own lane", () => {
     delete process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON;
     process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "default";
     process.env.HIVRA_PREPARED_COMPUTERS_JSON = CONFIG;
 
     expect(readPreparedSlot("omarchy")).toEqual(expect.objectContaining({ host: "node-b", vmid: 2099 }));
-    expect([...preparedProfilesForDeployment()].sort()).toEqual(["omarchy", "windows"]);
-    expect(matchPreparedCanaryComputer({
-      type: "linux-desktop", computer_profile: "omarchy", managed_provisioner_channel: "default",
-      proxmox_host: "node-b", vmid: 2099, ip: "10.240.20.99",
-    })).toEqual({ profile: "omarchy", slot: expect.objectContaining({ vmid: 2099 }) });
-    // Its own row on the Canary lane is not its fixture.
-    expect(matchPreparedCanaryComputer({
-      type: "linux-desktop", computer_profile: "omarchy", managed_provisioner_channel: "canary",
-      proxmox_host: "node-b", vmid: 2099, ip: "10.240.20.99",
-    })).toBeNull();
+    expect(matchPreparedCanaryComputer({ ...assignedOmarchy, managed_provisioner_channel: "default" }))
+      .toEqual({ profile: "omarchy", slot: expect.objectContaining({ vmid: 2099 }) });
+    expect(matchPreparedCanaryComputer(assignedOmarchy)).toBeNull();
   });
 
-  it("serves only the profiles its configuration names", () => {
-    process.env.HIVRA_PREPARED_COMPUTERS_JSON = JSON.stringify({
-      omarchy: { host: "node-b", node: "node-b", vmid: 2099, ip: "10.240.20.99", claim: "019d13b0-4f19-7f55-9a22-83e72232d8c1" },
-    });
-    expect(preparedProfilesForDeployment()).toEqual(["omarchy"]);
+  it("reads only the profiles its configuration names", () => {
+    process.env.HIVRA_PREPARED_COMPUTERS_JSON = JSON.stringify({ omarchy: readPreparedSlot("omarchy") });
+    expect(readPreparedSlot("omarchy")).not.toBeNull();
     expect(readPreparedSlot("windows")).toBeNull();
   });
 
   it("ignores a slot on a host this deployment holds no credentials for", () => {
     process.env.HIVRA_PREPARED_COMPUTERS_JSON = JSON.stringify({
-      omarchy: { host: "node-z", node: "node-z", vmid: 2099, ip: "10.240.20.99", claim: "019d13b0-4f19-7f55-9a22-83e72232d8c1" },
+      omarchy: { ...readPreparedSlot("omarchy"), host: "node-z" },
     });
     expect(readPreparedSlot("omarchy")).toBeNull();
-    expect(preparedProfilesForDeployment()).toEqual([]);
   });
 
   it("asserts the guest name its configuration gives instead of assuming Canary", () => {
     process.env.HIVRA_PREPARED_COMPUTERS_JSON = JSON.stringify({
-      omarchy: { host: "node-b", node: "node-b", vmid: 2099, ip: "10.240.20.99",
-        claim: "019d13b0-4f19-7f55-9a22-83e72232d8c1", name: "hivra-omarchy-prod" },
+      omarchy: { ...readPreparedSlot("omarchy"), name: "hivra-omarchy-prod" },
     });
     const script = preparedCanaryLifecycleScript("omarchy", readPreparedSlot("omarchy")!, "start");
     expect(script).toContain("name: hivra-omarchy-prod");
     expect(script).not.toContain("name: hivra-omarchy-canary");
-  });
-
-  it("writes the pending reservation on the deployment's own delivery lane", async () => {
-    process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "default";
-    const reserveRefresh = jest.fn(async row => ({ ...row, id: "44444444-4444-4444-8444-444444444444" }));
-    await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY" }, {
-      findOwnerProfile: async () => null, findSlotOwner: async () => null,
-      latestRelease: async () => ({ release: "v4.0.6", releaseCommit: "b".repeat(40), isoFilename: "omarchy-4.0.6.iso", isoUrl: "https://iso.omarchy.org/omarchy-4.0.6.iso", isoSha256: "c".repeat(64) }),
-      reserveRefresh, advanceRefresh: async (_owner,row) => row,
-    });
-    expect(reserveRefresh).toHaveBeenCalledWith(expect.objectContaining({ managed_provisioner_channel: "default" }), expect.anything(), expect.anything());
-  });
-
-  it("refuses to claim when this deployment's lane is unreadable instead of writing a canary row", async () => {
-    // Regression: the claim used to fall back to "canary" and insert a row that the
-    // same deployment's lifecycle and console paths then refuse, on a live VM.
-    retainedCanaryDeployment();
-    process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "not-a-lane";
-    const priorTarget = process.env.VERCEL_TARGET_ENV;
-    delete process.env.VERCEL_TARGET_ENV;
-    const insert = jest.fn();
-    const runHost = jest.fn();
-    try {
-      await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY" }, {
-        findOwnerProfile: async () => null,
-        findSlotOwner: async () => null,
-        runHost: runHost as never,
-        insert: insert as never,
-        markBindingEnforced: jest.fn() as never,
-      })).rejects.toThrow("prepared_profile_unavailable");
-    } finally {
-      if (priorTarget === undefined) delete process.env.VERCEL_TARGET_ENV;
-      else process.env.VERCEL_TARGET_ENV = priorTarget;
-    }
-    expect(runHost).not.toHaveBeenCalled();
-    expect(insert).not.toHaveBeenCalled();
   });
 
   it("accepts only a Hivra console origin, and none at all when unset", () => {
@@ -363,5 +302,143 @@ ${transition}`], { encoding: "utf8" });
       .toBe("https://console.hermesos.cloud");
     expect(preparedConsoleOrigin(envOf({ HIVRA_PREPARED_CONSOLE_ORIGIN: "http://console.hermesos.cloud" }))).toBeNull();
     expect(preparedConsoleOrigin(envOf({ HIVRA_PREPARED_CONSOLE_ORIGIN: "https://console.evil.example" }))).toBeNull();
+  });
+});
+
+describe("prepared computer release script", () => {
+  const SLOT = { host: "node-b", node: "node-b", vmid: 2098, ip: "10.240.20.98", claim: "00000000-0000-4000-8000-000000001005" };
+  const HASH = "a".repeat(64);
+  const OWN = `hivra-bind-${"a".repeat(32)}`;
+  const FOREIGN = `hivra-bind-${"b".repeat(32)}`;
+  const IDENTITY = `name: hivra-windows-canary\nmeta: hivra-windows-operation%3A${SLOT.claim}`;
+  // A stub qm over a config file: set --tags rewrites the tags line, set --delete tags drops it.
+  const stubQm = `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$ROOT/calls"
+case "$1" in
+  config) cat "$ROOT/config" ;;
+  set)
+    grep -v '^tags:' "$ROOT/config" > "$ROOT/next" || true
+    [ "$3" = --tags ] && echo "tags: $4" >> "$ROOT/next"
+    mv "$ROOT/next" "$ROOT/config" ;;
+  *) exit 0 ;;
+esac
+`;
+
+  function runRelease(tags: string | null, hash: string | null = HASH, slot = SLOT) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "prepared-release-"));
+    try {
+      fs.mkdirSync(path.join(root, "bin"));
+      fs.writeFileSync(path.join(root, "bin/qm"), stubQm, { mode: 0o755 });
+      fs.writeFileSync(path.join(root, "bin/flock"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(root, "config"), `${IDENTITY}\n${tags === null ? "" : `tags: ${tags}\n`}`);
+      fs.writeFileSync(path.join(root, "calls"), "");
+      const script = preparedCanaryReleaseScript("windows", slot, hash).replaceAll("/run/lock", path.join(root, "lock"));
+      const result = spawnSync("bash", ["-s"], {
+        input: script, encoding: "utf8",
+        env: { ...process.env, ROOT: root, PATH: `${path.join(root, "bin")}:${process.env.PATH}` },
+      });
+      return {
+        code: result.status, stdout: result.stdout, stderr: result.stderr,
+        config: fs.readFileSync(path.join(root, "config"), "utf8"),
+        calls: fs.readFileSync(path.join(root, "calls"), "utf8").split("\n").filter(Boolean),
+      };
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+
+  it("removes only the claim's binding tag and never stops or destroys the VM", () => {
+    const result = runRelease(`hivra-prepared;${OWN};windows`);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("HIVRA_PREPARED_BINDING_RELEASED");
+    expect(result.config).toContain("tags: hivra-prepared;windows");
+    expect(result.config).not.toContain(OWN);
+    expect(result.calls.some((call) => /^(stop|shutdown|destroy)\b/.test(call))).toBe(false);
+  });
+
+  it("drops the tags line when the binding was the only tag", () => {
+    const result = runRelease(OWN);
+    expect(result.code).toBe(0);
+    expect(result.calls).toContain("set 2098 --delete tags");
+    expect(result.config).not.toContain("tags:");
+  });
+
+  it("succeeds unchanged on a retried delete whose binding is already gone", () => {
+    const result = runRelease("hivra-prepared");
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("HIVRA_PREPARED_BINDING_RELEASED");
+    expect(result.calls.some((call) => call.startsWith("set"))).toBe(false);
+  });
+
+  it("refuses a slot bound to another claim and leaves its tags alone", () => {
+    for (const tags of [`${OWN};${FOREIGN}`, FOREIGN]) {
+      const result = runRelease(tags);
+      expect(result.code).toBe(53);
+      expect(result.stderr).toContain("bound to another claim");
+      expect(result.calls.some((call) => call.startsWith("set"))).toBe(false);
+    }
+  });
+
+  it("refuses any bound slot when the row holds no binding of its own", () => {
+    const result = runRelease(OWN, null);
+    expect(result.code).toBe(53);
+    expect(result.calls.some((call) => call.startsWith("set"))).toBe(false);
+  });
+
+  it("refuses a VM that is not this prepared slot", () => {
+    const result = runRelease(OWN, HASH, { ...SLOT, claim: "00000000-0000-4000-8000-000000009999" });
+    expect(result.code).toBe(51);
+    expect(result.stderr).toContain("identity mismatch");
+    expect(result.calls.some((call) => call.startsWith("set"))).toBe(false);
+    expect(() => preparedCanaryReleaseScript("windows", SLOT, "not-a-hash")).toThrow("prepared_binding_unavailable");
+  });
+});
+
+describe("prepared computer delete routing", () => {
+  const SLOT_ROW = {
+    type: "linux-desktop", managed_provisioner_channel: "canary", proxmox_host: "node-b", vmid: 2098, ip: "10.240.20.98",
+  };
+  beforeEach(() => {
+    process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "canary";
+    process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON = CONFIG;
+    Object.assign(process.env, HOST_ENV);
+  });
+
+  it("releases the configured slot of a Hivra-managed prepared claim", () => {
+    expect(preparedComputerForDelete({ ...SLOT_ROW, computer_profile: "windows", deployment_mode: "hivra-managed" }))
+      .toEqual({ profile: "windows", slot: expect.objectContaining({ vmid: 2098 }) });
+  });
+
+  it("refuses a Hivra-managed prepared claim that matches no configured slot", () => {
+    expect(preparedComputerForDelete({ ...SLOT_ROW, vmid: 2097, computer_profile: "windows", deployment_mode: "hivra-managed" }))
+      .toBe("unconfigured");
+  });
+
+  it("leaves a self-managed Windows computer and ordinary computers to the VM destroy path", () => {
+    expect(preparedComputerForDelete({
+      ...SLOT_ROW, computer_profile: "windows", deployment_mode: "self-managed",
+      proxmox_host: "__hivra_self_managed_no_ambient_authority__",
+    })).toBeNull();
+    expect(preparedComputerForDelete({ ...SLOT_ROW, computer_profile: null, deployment_mode: "hivra-managed" })).toBeNull();
+  });
+
+  it("reports a release that did not print its receipt as failed", async () => {
+    const slot = { host: "node-b", node: "node-b", vmid: 2098, ip: "10.240.20.98", claim: "00000000-0000-4000-8000-000000001005" };
+    const runHost = jest.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "" });
+    const result = await releasePreparedComputerClaim({ infrastructure_binding_token_hash: "a".repeat(64) }, { profile: "windows", slot }, runHost);
+    expect(result.ok).toBe(false);
+    expect(runHost.mock.calls[0][0]).toContain(`hivra-bind-${"a".repeat(32)}`);
+    expect(runHost.mock.calls[0][0]).not.toContain("qm destroy");
+    runHost.mockResolvedValue({ ok: true, stdout: "HIVRA_PREPARED_BINDING_RELEASED\n", stderr: "" });
+    expect((await releasePreparedComputerClaim({ infrastructure_binding_token_hash: "a".repeat(64) }, { profile: "windows", slot }, runHost)).ok).toBe(true);
+  });
+});
+
+describe("prepared computer claims", () => {
+  it("refuses a claim from an account that is not an operator before touching any slot", async () => {
+    const findSlotOwner = jest.fn();
+    await expect(resumePreparedCanaryComputer(
+      { userId: "customer", profile: "omarchy", operator: false },
+      findSlotOwner,
+    )).rejects.toThrow("prepared_computer_operator_only");
+    expect(findSlotOwner).not.toHaveBeenCalled();
   });
 });

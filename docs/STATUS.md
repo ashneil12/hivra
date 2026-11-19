@@ -92,20 +92,17 @@ The one-command Ubuntu connect gives Linux Sandbox only. The agents above, and U
 | Ubuntu Desktop | Available | Hivra Cloud or a Proxmox server you connected |
 | Linux computer | Available | Hivra Cloud on a paid plan. A headless Ubuntu computer with a terminal and files, no desktop (provisioner release 2026.11.10.4). Attaching an agent to it is not supported yet. |
 | Linux Sandbox | Available | A gVisor-ready server you connected |
-| Omarchy | Available, with a condition | A prepared computer on Hivra Cloud. A launch claims the one prepared Omarchy computer the site holds, so the tile appears only where that computer is configured. Hivra does not yet build a fresh Omarchy computer per customer. |
+| Omarchy | Available, with a condition | Existing claims only; new claims are paused. A retained guest cannot be assigned again until its clean reset or rebuild can be verified. |
 | Windows | Available, with a condition | On a Proxmox server you connected, from your own licensed Windows ISO. Hivra-managed Windows is not offered. |
 | macOS | Not offered | Planned only. |
 
-Pending release: new Omarchy claims will reserve the prepared computer while
-updating to the latest supported official stable v4 release. Desktop stays
-blocked until the exact release, migrations and rebooted kernel are verified;
-existing owner opens do not trigger upgrades. This requires migration
-`20261103010000` and the matching dashboard release. Live rollout is unverified.
+An already-reserved Omarchy refresh continues to require verification of the
+exact release, migrations and rebooted kernel before Desktop opens. Refresh
+is not a guest reset. Existing owner opens do not start a new refresh.
 See [the rollout and recovery notes](release/OMARCHY-PREPARED-REFRESH.md).
 
-Public copy never calls Omarchy or Windows plainly available, and never calls
-them a preview: each always carries its condition, "Omarchy (prepared
-computer)" and "Windows on your own server with your licensed image".
+Public copy says Omarchy (prepared computer) is paused for new claims.
+Windows requires your own server and your licensed image. Neither is a preview.
 
 ## Other surfaces
 
@@ -114,7 +111,7 @@ computer)" and "Windows on your own server with your licensed image".
 | Buzz agent collaboration | Usable: connect a relay and install the sidecar on an eligible computer. Not a launch target. |
 | Self-hosting the whole platform | Preview. `README.md` headlines "Self-host preview" and the roadmap page says so. |
 | Free agent tools on `/tools` | Canary only. Seven added tools (agent picker, running-cost calculator, free-model finder, job library, Telegram and Discord wizard, security check, SOUL.md builder) show only while `NEXT_PUBLIC_HIVRA_AGENT_TOOLS_ENABLED` is on. The flag is on for Canary and off for hivra.cloud. |
-| Card trial | Built, off by default. While `HIVRA_CARD_TRIAL` is `on`, a first-time buyer of the entry plan (monthly) gets 7 days free in Stripe Checkout, with a card required and charged when the trial ends. During the trial the account has one agent with 1 vCPU and 2 GB, its Hivra Cloud agents sleep when idle and can't be kept awake, and the AI starter credit is $1. One trial per account and per card. Billing shows the trial with an "Upgrade to full Pro now" button that ends the trial and charges right away; changing plan during the trial also ends it. Trial accounts get no Venice promo credit or top-up bonus. The pricing page shows the trial only while the switch is on and the plan ladder is off. No App Store trial. Needs the `20261119150000_card_trial` migration. |
+| Card trial | Built, off by default. While `HIVRA_CARD_TRIAL` is `on`, a first-time buyer of the entry plan (monthly) gets 7 days free in Stripe Checkout, with a card required and charged when the trial ends. During the trial the account has one agent with 1 vCPU and 2 GB, its Hivra Cloud agents sleep when idle and can't be kept awake, and the AI starter credit is $1. One trial per account and per card. Billing shows the trial with an "Upgrade to full Pro now" button that ends the trial and charges right away; changing plan during the trial also ends it. Trial accounts get no Venice promo credit or top-up bonus. With either pricing mode, the pricing page offers the trial only when enabled and the monthly entry price, Stripe Checkout, webhooks, and the database are configured. No App Store trial. Needs the `20261119150000_card_trial` migration. |
 | Free plan closed to new sign-ups | Built, off by default. While `HIVRA_FREE_PLAN_CLOSED_AT` is set (an ISO time), accounts created at or after it cannot activate the Free plan, connect their own server or launch on it without a paid plan or trial; accounts created before it keep the Free account. The pricing page stops offering the Free plan once that time has passed. |
 | Free cloud agent | Preview, off by default. While `NEXT_PUBLIC_HIVRA_FREE_CLOUD_AGENT` is `1`, `/dashboard/free-agent` lets any signed-in account create one Lite agent: a chat agent with memory notes that lives in Cloudflare Durable Objects (`services/lite-agent-worker`), not on a computer. It has a daily allowance of free messages on Hivra's configured models, or no limit with the owner's own OpenAI-compatible key. It cannot run code or use a computer. It needs the Worker deployed and `HIVRA_LITE_AGENT_URL` and `HIVRA_LITE_AGENT_SECRET` set on the deployment. Hivra-run computers still need a paid plan. |
 | Hivra Memory | Preview, off by default. While `NEXT_PUBLIC_HIVRA_MEMORY` is `1`, the public page `/memory` describes a free cloud memory that any agent can share over MCP or HTTPS, and `/dashboard/memory` lets a signed-in account create and revoke memory keys, copy the setup for Claude Code, Codex, other MCP apps and plain HTTPS, see how much is stored and delete everything. Memories live in the memory Worker (`services/memory-worker`), one store per account; agents reach it directly with a key. The dashboard needs `HIVRA_MEMORY_URL` and `HIVRA_MEMORY_SECRET` set on the deployment. Not built yet: an installer, plugins for Hermes and OpenClaw, importing past chats. |

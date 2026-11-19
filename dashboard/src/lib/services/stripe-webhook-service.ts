@@ -338,7 +338,8 @@ export class StripeWebhookService {
 
       try {
         const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-        await this.handleSubscriptionChange(subscription);
+        const outcome = await this.handleSubscriptionChange(subscription);
+        if (outcome === "trial_rejected") return;
         log.info("activated subscription from checkout.session.completed", {
           source: LOG_SOURCE,
           subscriptionId,
@@ -803,6 +804,10 @@ export class StripeWebhookService {
       return;
     }
 
+    if (subscription.status === "canceled" && subscription.metadata[CARD_TRIAL_METADATA_KEY]) {
+      return "trial_rejected" as const;
+    }
+
     const userId = subscription.metadata.user_id;
     const planKey = subscription.metadata.plan as PlanKey;
 
@@ -853,7 +858,7 @@ export class StripeWebhookService {
         : null;
     // A card trial gets the trial's small pool until Stripe charges the card;
     // the first paid event writes the plan's own limits.
-    const cardTrial = !ladder.isLadder && isCardTrialSubscription(subscription);
+    const cardTrial = isCardTrialSubscription(subscription);
     const plan = cardTrial
       ? { ...CARD_TRIAL_LIMITS, priority: legacyPlan.priority }
       : {
@@ -1126,13 +1131,12 @@ export class StripeWebhookService {
       );
     }
 
+    let releasedTrialSleep = false;
     if (cardTrial) {
-      // One trial per card: a card that already trialed on another account
-      // ends this trial now, and the resulting paid event activates the plan.
       const { endedEarly } = await recordCardTrialStart({ stripe: getStripe(), subscription, userId });
-      if (endedEarly) return;
-    } else if (subscription.metadata?.[CARD_TRIAL_METADATA_KEY] && subscription.status === "active") {
-      await releaseCardTrialSleep(userId);
+      if (endedEarly) return "trial_rejected" as const;
+    } else if (subscription.status === "active") {
+      releasedTrialSleep = await releaseCardTrialSleep(userId);
     }
 
     const nextStatus =
@@ -1184,13 +1188,20 @@ export class StripeWebhookService {
                 upgrade_source: source,
               }
             : {}),
+          ...(ladderColumns ?? {}),
           instance_limit: plan.maxAgents,
           total_cpu_budget: plan.totalCpu,
           total_ram_budget: plan.totalRam,
-          ...(ladderColumns ?? {}),
-          // Only card-trial subscriptions touch trial_ends_at: set while the
-          // trial runs, cleared by the first paid event.
-          ...(subscription.metadata?.[CARD_TRIAL_METADATA_KEY]
+          // Keep the ladder's identity but not its paid limits while trialing.
+          ...(cardTrial && ladderColumns
+            ? {
+                always_on_limit: 0,
+                always_on_extra: 0,
+                ai_allowance_micro_usd: 0,
+              }
+            : {}),
+          // Clear the trial marker on payment, including a new paid subscription.
+          ...(releasedTrialSleep || subscription.metadata?.[CARD_TRIAL_METADATA_KEY]
             ? {
                 trial_ends_at:
                   cardTrial && subscription.trial_end

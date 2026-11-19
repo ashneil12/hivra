@@ -1,5 +1,6 @@
 import type Stripe from "stripe";
 import {
+  accountHadCardTrial,
   CARD_TRIAL_DAYS,
   cardTrialCheckoutFields,
   checkoutGetsCardTrial,
@@ -14,7 +15,7 @@ jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
 
 const ON = { HIVRA_CARD_TRIAL: "on" };
-const base = { planKey: "operator", cadence: "monthly", ladderSale: false, existingSub: null, hadTrial: false };
+const base = { planKey: "operator", cadence: "monthly", existingSub: null, hadTrial: false };
 
 describe("checkoutGetsCardTrial", () => {
   it("offers the trial to a first-time monthly entry-plan buyer while the switch is on", () => {
@@ -26,7 +27,6 @@ describe("checkoutGetsCardTrial", () => {
     ["the switch has another value", base, { HIVRA_CARD_TRIAL: "true" }],
     ["a larger plan", { ...base, planKey: "fleet" }, ON],
     ["yearly billing", { ...base, cadence: "yearly" }, ON],
-    ["a plan-ladder sale", { ...base, ladderSale: true }, ON],
     ["an account that trialed before", { ...base, hadTrial: true }, ON],
     ["an account that paid before", { ...base, existingSub: { upgraded_at: "2026-10-01T00:00:00Z" } }, ON],
     ["an account with a Stripe subscription", { ...base, existingSub: { stripe_subscription_id: "sub_1" } }, ON],
@@ -62,7 +62,7 @@ describe("isCardTrialSubscription", () => {
   });
 });
 
-type Result = { data: unknown; error: { message: string } | null };
+type Result = { data: unknown; error: { message: string; code?: string } | null };
 
 function fakeDb(results: Record<string, Result[]>, insertError: { code: string; message: string } | null = null) {
   const inserts: Array<{ table: string; row: unknown }> = [];
@@ -80,8 +80,8 @@ function fakeDb(results: Record<string, Result[]>, insertError: { code: string; 
     };
     q.limit = () => Promise.resolve(next());
     q.maybeSingle = () => Promise.resolve(next());
-    q.insert = (row: unknown) => {
-      if (insertError) return Promise.resolve({ error: insertError });
+    q.insert = (row: Record<string, unknown>) => {
+      if (insertError && row.stripe_subscription_id) return Promise.resolve({ error: insertError });
       inserts.push({ table, row });
       return Promise.resolve({ error: null });
     };
@@ -93,9 +93,9 @@ function fakeDb(results: Record<string, Result[]>, insertError: { code: string; 
 function stripeWithCard(fingerprint: string | null) {
   return {
     paymentMethods: { retrieve: jest.fn().mockResolvedValue({ card: fingerprint ? { fingerprint } : null }) },
-    subscriptions: { update: jest.fn().mockResolvedValue({}) },
+    subscriptions: { update: jest.fn(), cancel: jest.fn().mockResolvedValue({}) },
   } as unknown as Stripe & {
-    subscriptions: { update: jest.Mock };
+    subscriptions: { update: jest.Mock; cancel: jest.Mock };
   };
 }
 
@@ -107,23 +107,27 @@ describe("recordCardTrialStart", () => {
     const stripe = stripeWithCard("fp_new");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: false });
     expect(inserts).toEqual([{ table: "hermes_trial_usage", row: { user_id: "u1", stripe_subscription_id: "sub_trial", card_fingerprint: "fp_new" } }]);
-    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+    expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
   });
 
-  it("ends the trial now when another account already trialed with the same card", async () => {
-    const { db, inserts } = fakeDb({ hermes_trial_usage: [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }] });
+  it("cancels without billing and makes the next checkout a paid one", async () => {
+    const history: Result[] = [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }, { data: [], error: null }];
+    const { db, inserts } = fakeDb({ hermes_trial_usage: history });
     const stripe = stripeWithCard("fp_used");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: true });
-    // Nothing is recorded, so a failed Stripe update is retried and checked again.
-    expect(inserts).toHaveLength(0);
-    expect(stripe.subscriptions.update).toHaveBeenCalledWith("sub_trial", { trial_end: "now" });
+    expect(inserts).toEqual([{ table: "hermes_trial_usage", row: { user_id: "u1" } }]);
+    history.push({ data: inserts.map((_, i) => ({ id: String(i) })), error: null });
+    expect(checkoutGetsCardTrial({ ...base, hadTrial: await accountHadCardTrial("u1", db) }, ON)).toBe(false);
+    expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_trial", { invoice_now: false, prorate: false });
+    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
   });
 
   it("ends the trial when a concurrent trial on the same card recorded first", async () => {
     const { db } = fakeDb({ hermes_trial_usage: [{ data: [], error: null }, { data: [], error: null }] }, { code: "23505", message: "duplicate" });
     const stripe = stripeWithCard("fp_race");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: true });
-    expect(stripe.subscriptions.update).toHaveBeenCalledWith("sub_trial", { trial_end: "now" });
+    expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_trial", { invoice_now: false, prorate: false });
+    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
   });
 
   it("keeps the trial when the unique conflict is a repeat delivery of the same subscription", async () => {
@@ -133,15 +137,23 @@ describe("recordCardTrialStart", () => {
     );
     const stripe = stripeWithCard("fp_new");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: false });
-    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+    expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
   });
 
-  it("does not record the trial when the Stripe update fails, so the retry checks again", async () => {
+  it("retries cancellation without granting access or recording the attempt twice", async () => {
     const { db, inserts } = fakeDb({ hermes_trial_usage: [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }] });
     const stripe = stripeWithCard("fp_used");
-    stripe.subscriptions.update.mockRejectedValueOnce(new Error("stripe down"));
+    stripe.subscriptions.cancel.mockRejectedValueOnce(new Error("stripe down"));
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).rejects.toThrow("stripe down");
-    expect(inserts).toHaveLength(0);
+    expect(inserts).toEqual([{ table: "hermes_trial_usage", row: { user_id: "u1" } }]);
+    const { db: retryDb, inserts: retryInserts } = fakeDb({ hermes_trial_usage: [
+      { data: [], error: null },
+      { data: [{ user_id: "u0" }], error: null },
+      { data: [{ id: "rejected_attempt" }], error: null },
+    ] });
+    await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db: retryDb })).resolves.toEqual({ endedEarly: true });
+    expect(retryInserts).toHaveLength(0);
+    expect(stripe.subscriptions.cancel).toHaveBeenCalledTimes(2);
   });
 
   it("does nothing on a repeat event for a trial already recorded", async () => {
@@ -149,7 +161,7 @@ describe("recordCardTrialStart", () => {
     const stripe = stripeWithCard("fp_new");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: false });
     expect(inserts).toHaveLength(0);
-    expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+    expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
   });
 
   it("throws on a failed read so the webhook retries", async () => {
@@ -172,6 +184,14 @@ describe("isInCardTrial", () => {
 });
 
 describe("releaseCardTrialSleep", () => {
+  it("leaves ordinary paid subscriptions alone without the trial migration", async () => {
+    const { db, updates } = fakeDb({ hermes_subscriptions: [
+      { data: null, error: { message: "trial_ends_at does not exist", code: "42703" } },
+    ] });
+    await expect(releaseCardTrialSleep("u1", db)).resolves.toBe(false);
+    expect(updates).toHaveLength(0);
+  });
+
   it("returns converted trial agents to the paid default while the row still shows the trial", async () => {
     const { db, updates } = fakeDb({ hermes_subscriptions: [{ data: { trial_ends_at: "2026-11-25T12:00:00Z" }, error: null }] });
     await expect(releaseCardTrialSleep("u1", db)).resolves.toBe(true);

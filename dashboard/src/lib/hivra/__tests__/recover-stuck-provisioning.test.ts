@@ -792,6 +792,51 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     );
   });
 
+  it("finishes a stale delete of a prepared computer by releasing its binding, never destroying the VM", async () => {
+    const prior = { ...process.env };
+    process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "canary";
+    process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON = JSON.stringify({
+      windows: { host: "node-b", node: "node-b", vmid: 2098, ip: "10.240.20.98", claim: "00000000-0000-4000-8000-000000001005" },
+    });
+    process.env.PROXMOX_NODE_B_SSH_HOST = "198.51.100.11";
+    process.env.PROXMOX_NODE_B_SSH_USER = "root";
+    try {
+      (resolveProxmoxTargetConfiguration as jest.Mock).mockReturnValue({ env: { SLOT: "node-b" } });
+      installSupabase([buildStuckRow({
+        type: "linux-desktop", computer_profile: "windows", managed_provisioner_channel: "canary",
+        proxmox_host: "node-b", vmid: 2098, ip: "10.240.20.98",
+        status: "stopped", desired_state: "deleted", operation_kind: "delete", allocation_operation_id: null,
+      })]);
+      mockedRunScript.mockResolvedValue({
+        ok: true, stdout: "HIVRA_PREPARED_BINDING_RELEASED\n", stderr: "",
+      } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+
+      const summary = await runRecoverStuckHivraProvisioningSweep();
+
+      expect(summary).toMatchObject({ cancelled: 1 });
+      const scripts = mockedRunScript.mock.calls.map(([script]) => script);
+      expect(scripts.some((script) => script.includes("HIVRA_PREPARED_BINDING_RELEASED"))).toBe(true);
+      expect(scripts.some((script) => script.includes("qm destroy"))).toBe(false);
+      expect(mockedCompleteDelete).toHaveBeenCalled();
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in prior)) delete process.env[key];
+      Object.assign(process.env, prior);
+    }
+  });
+
+  it("keeps a stale prepared delete whose slot is not configured here", async () => {
+    installSupabase([buildStuckRow({
+      type: "linux-desktop", computer_profile: "windows", proxmox_host: "node-b", vmid: 2098, ip: "10.240.20.98",
+      status: "stopped", desired_state: "deleted", operation_kind: "delete", allocation_operation_id: null,
+    })]);
+
+    const summary = await runRecoverStuckHivraProvisioningSweep();
+
+    expect(summary).toMatchObject({ skipped: 1 });
+    expect(mockedRunScript.mock.calls.some(([script]) => script.includes("qm destroy"))).toBe(false);
+    expect(mockedCompleteDelete).not.toHaveBeenCalled();
+  });
+
   it("retains a stale delete when exact-bound private-access logout is unconfirmed", async () => {
     installSupabase([buildStuckRow({
       status: "stopped",

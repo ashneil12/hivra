@@ -9,6 +9,8 @@
  * e2e/global-setup.ts already uses in production CI; it is proven.
  */
 
+import { assertLiveManagedHostingAuditAllowed } from './config';
+
 const CLERK_API = 'https://api.clerk.com/v1';
 
 export interface ClerkUser {
@@ -56,6 +58,7 @@ export async function createAuditUser(
   secretKey: string,
   email: string,
 ): Promise<ClerkUser> {
+  assertLiveManagedHostingAuditAllowed();
   const res = await clerkFetch(secretKey, '/users', {
     method: 'POST',
     body: JSON.stringify({
@@ -86,6 +89,7 @@ export async function mintSignInTicket(
   userId: string,
   expiresInSeconds = 1800,
 ): Promise<string> {
+  assertLiveManagedHostingAuditAllowed();
   const res = await clerkFetch(secretKey, '/sign_in_tokens', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId, expires_in_seconds: expiresInSeconds }),

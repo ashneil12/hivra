@@ -5,6 +5,7 @@ import { getStripe } from "@/lib/stripe";
 import { log } from "@/lib/logger";
 import { enforceRateLimit, getIP } from "@/lib/rate-limit";
 import { StripeWebhookService } from "@/lib/services/stripe-webhook-service";
+import { isCardTrialSubscription } from "@/lib/billing/card-trial";
 import {
   handleWorkspaceCloudCheckoutCompleted,
   handleWorkspaceCloudSubscriptionChange,
@@ -115,7 +116,11 @@ export async function POST(req: NextRequest) {
           if (isWorkspaceCloudSubscription(subscription)) {
             await handleWorkspaceCloudSubscriptionChange(subscription);
           } else {
-            await StripeWebhookService.handleSubscriptionChange(subscription);
+            // A delayed trial snapshot must not replace already-paid limits.
+            const currentSubscription = isCardTrialSubscription(subscription)
+              ? await getStripe().subscriptions.retrieve(subscription.id)
+              : subscription;
+            await StripeWebhookService.handleSubscriptionChange(currentSubscription);
           }
           break;
         }

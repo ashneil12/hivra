@@ -518,10 +518,7 @@ export async function submitLaunchDraft(
     let payload: { success?: boolean; error?: string; code?: string; data?: { agent?: HivraAgent } } | null = null;
     try { payload = await response.json(); } catch { /* handled below */ }
     if (!response.ok || payload?.success !== true || !payload.data?.agent) {
-      // `prepared_profile_unavailable` is decided before any host work or row
-      // insert: this deployment has no prepared-computer slot. That is a
-      // definite rejection, never the "may already have reached Hivra" screen,
-      // which also leaves the draft stuck on that receipt.
+      // A prepared-computer refusal never starts a new reservation.
       if (payload?.code === "prepared_profile_unavailable") {
         throw new HivraLaunchRejectedError(
           "Omarchy is not available on this site. Choose another computer.",

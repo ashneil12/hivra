@@ -15,8 +15,10 @@
 import {
   ENTRY_PLAN_PRICE,
   ENTRY_PLAN_SIZE,
+  CONNECTED_SERVER_ELIGIBILITY,
   FREE_ACCOUNT_SENTENCE,
   HOSTED_COMPUTE_NEEDS_PLAN,
+  HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
   LARGER_PLAN_PRICE,
   MONEY_BACK_GUARANTEE,
   PLAN_DISPLAY,
@@ -146,44 +148,50 @@ export const PRICING_ROWS: PricingRow[] = [
  * Offer JSON-LD for the pricing table: one Offer per row, the same option
  * name, price, currency and billing period the page shows.
  */
-export function buildPricingOffers(siteUrl: string): Array<Record<string, unknown>> {
-  return PRICING_ROWS.map((row) => ({
-    "@type": "Offer",
-    name: row.option,
-    price: row.priceAmount,
-    priceCurrency: "USD",
-    description: row.monthly
-      ? `${row.price} a month ${row.priceFor}. ${row.refund}.`
-      : "Run Hivra on your own server from the open source code. You bring the server and pay for it, and you cover your own AI usage.",
-    url: `${siteUrl}/pricing#pricing-table`,
-    ...(row.monthly
-      ? {
-          priceSpecification: {
-            "@type": "UnitPriceSpecification",
-            price: row.priceAmount,
-            priceCurrency: "USD",
-            billingDuration: "P1M",
-          },
-        }
-      : {}),
-  }));
+export function buildPricingOffers(siteUrl: string, entryPrice = ENTRY_PLAN_PRICE): Array<Record<string, unknown>> {
+  return PRICING_ROWS.map((row) => {
+    const price = row.key === "operator" ? entryPrice : row.price;
+    const priceAmount = price.slice(1);
+    return {
+      "@type": "Offer",
+      name: row.option,
+      price: priceAmount,
+      priceCurrency: "USD",
+      description: row.monthly
+        ? `${price} a month ${row.priceFor}. ${row.refund}.`
+        : "Run Hivra on your own server from the open source code. You bring the server and pay for it, and you cover your own AI usage.",
+      url: `${siteUrl}/pricing#pricing-table`,
+      ...(row.monthly
+        ? {
+            priceSpecification: {
+              "@type": "UnitPriceSpecification",
+              price: priceAmount,
+              priceCurrency: "USD",
+              billingDuration: "P1M",
+            },
+          }
+        : {}),
+    };
+  });
 }
 
 const ENTRY = planSizeParts("entry");
 const LARGER = planSizeParts("larger");
 
-/** Shown on the entry plan while the card trial is on (HIVRA_CARD_TRIAL=on). */
+/** Shown on the entry plan when Checkout can offer the card trial. */
 export const CARD_TRIAL_PRICING = {
   label: "Start a 7-day free trial",
-  note: `Free for 7 days, then ${ENTRY.price}/month. A card is needed to start and is charged when the trial ends unless you cancel. During the trial you get one agent with 1 vCPU and 2 GB, and it sleeps when idle.`,
+  note: (entryPrice: string) => `Eligible first-time buyers get 7 days free, then ${entryPrice}/month. A card is needed to start and is charged when the trial ends unless you cancel. During the trial you get one agent with 1 vCPU and 2 GB, and it sleeps when idle.`,
 } as const;
 
 /** The paragraphs under the headline. */
+const SEPARATE_MODEL_COST = "Prices are per month, in US dollars. Your AI provider's charges are separate, whether you sign in with your own account (where the agent supports it, subject to the provider's terms) or use an API key.";
 export const PRICING_INTRO = [
   "Sign up free and connect your own server, or use Hivra's open-source platform yourself. Or pay us to run the computer for you. No requirement to buy a token.",
   HOSTED_COMPUTE_NEEDS_PLAN,
-  "Prices are per month, in US dollars. Your AI provider's charges are separate, whether you sign in with your own account (where the agent supports it, subject to the provider's terms) or use an API key.",
+  SEPARATE_MODEL_COST,
 ] as const;
+export const PRICING_INTRO_FREE_CLOSED = [HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, SEPARATE_MODEL_COST] as const;
 
 export const PRICING_OPTIONS = {
   heading: "Choose how you want to run it",
@@ -258,7 +266,7 @@ export const PRICING_AGENTS = {
   intro: "What you can run depends on where it runs:",
   items: [
     { name: "On Hivra Cloud:", text: "Every Hivra Cloud computer needs a paid plan, whichever agent you run on it. Hermes runs on Hivra Cloud only." },
-    { name: "On your own computer or server:", text: FREE_ACCOUNT_SENTENCE },
+    { name: "On your own computer or server:", text: FREE_ACCOUNT_SENTENCE, textFreeClosed: CONNECTED_SERVER_ELIGIBILITY },
     { name: "Claude Code and Codex:", text: "Support signing in with your own provider account, subject to the provider's terms." },
     {
       name: "Other supported agents:",

@@ -16,6 +16,7 @@
  */
 import type { Browser, BrowserContext } from '@playwright/test';
 
+import { assertLiveManagedHostingAuditAllowed } from './config';
 import {
   applyHumanBrowserSignals,
   humanBrowserContextOptions,
@@ -55,6 +56,7 @@ export async function establishAuditSession(
   browser: Browser,
   { baseUrl, ticket, onContext }: SessionOptions,
 ): Promise<BrowserContext> {
+  assertLiveManagedHostingAuditAllowed();
   // NB: browser.newContext() does NOT inherit the project's `use` options, so
   // the UA here is the raw (headless) one unless we set it explicitly.
   const context = await browser.newContext({

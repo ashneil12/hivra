@@ -579,6 +579,10 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **Agent Zero built-in browser (`2026.11.19.1`).** Xpra’s assets and live
+  connection now share the same authenticated browser-session route. Existing
+  guests need **Update connection service** after the new bundle is available.
+
 - **The A0 CLI reaches Agent Zero (`2026.11.18.5`).**
   Official Agent Zero ships the connector plugin the A0 CLI needs, but the CLI
   talks to the host's root (`/api/plugins/_a0_connector/v1/*`, `/api/csrf_token`,

@@ -31,7 +31,7 @@ export const doc: DocPage = {
     {
       heading: "Before you start",
       paragraphs: [
-        "- **A Hivra account.** A Hivra account costs nothing. Every computer Hivra Cloud runs for you needs a paid plan, see [pricing](/pricing) and [Plans and billing](/docs/plans-and-billing). A free account works with a server you connect yourself.\n- **Somewhere to run it.** Hivra Cloud, or a Proxmox server you connected. See [Run agents on your own server](/docs/connect-your-own-server).\n- **A computer of at least 1 vCPU and 2 GB of RAM.** That is the floor Hivra enforces for Agent Zero. Hivra suggests 2 vCPU and 4 GB for ordinary use.\n- **A way to pay for model use.** Either Hivra credits, which reach models through Venice, or a provider you set up inside Agent Zero. Model charges are separate from hosting. Hivra credits are not offered on a self-hosted installation or for a computer in your own cloud, so there you set the provider inside Agent Zero.",
+        "- **A Hivra account.** Every computer Hivra Cloud runs for you needs a paid plan, see [pricing](/pricing) and [Plans and billing](/docs/plans-and-billing). You can use your own server if your account is eligible to connect it.\n- **Somewhere to run it.** Hivra Cloud, or a Proxmox server you connected. See [Run agents on your own server](/docs/connect-your-own-server).\n- **A computer of at least 1 vCPU and 2 GB of RAM.** That is the floor Hivra enforces for Agent Zero. Hivra suggests 2 vCPU and 4 GB for ordinary use.\n- **A way to pay for model use.** Either Hivra credits, which reach models through Venice, or a provider you set up inside Agent Zero. Model charges are separate from hosting. Hivra credits are not offered on a self-hosted installation or for a computer in your own cloud, so there you set the provider inside Agent Zero.",
         "Agent Zero runs real code and a real browser, so give it work you can review before you hand it access to anything important. See [Security and access](/docs/security-and-access) for how Hivra treats a computer as a boundary, and what that boundary does not promise.",
       ],
     },
@@ -103,7 +103,7 @@ export const doc: DocPage = {
   faqs: [
     {
       q: "Does Agent Zero need a paid plan on Hivra?",
-      a: "On Hivra Cloud, yes. Every computer Hivra Cloud runs for you needs a paid plan, because the agent and its browser run on that computer. A Hivra account itself costs nothing, and a free account works with a server you connect yourself.",
+      a: "On Hivra Cloud, yes. Every computer Hivra Cloud runs for you needs a paid plan, because the agent and its browser run on that computer. Agent Zero can also run on a compatible Proxmox server if your account is eligible to connect it.",
     },
     {
       q: "How big does the computer need to be?",

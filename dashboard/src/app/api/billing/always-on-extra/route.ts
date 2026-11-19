@@ -16,6 +16,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getStripe } from "@/lib/stripe";
 import { log } from "@/lib/logger";
 import { hasPlanAccessStatus, isLiveStripeSubscriptionId } from "@/lib/billing/subscription-status";
+import { isCardTrialSubscription } from "@/lib/billing/card-trial";
 import {
   PLAN_LADDER_ID,
   activePlanLadder,
@@ -72,6 +73,9 @@ export async function POST(req: NextRequest) {
         subscriptionId: subscription.id,
       });
       return apiError("Your subscription could not be matched to your account.", 409);
+    }
+    if (isCardTrialSubscription(subscription)) {
+      return apiError("Always-on extras are available after your card trial.", 409);
     }
     const ladder = readLadderSubscription(config, subscription);
     if (!ladder.plan) return apiError("Plan changes are paused for a moment. Please try again shortly.", 503);

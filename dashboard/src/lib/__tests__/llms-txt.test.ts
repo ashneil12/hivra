@@ -1,6 +1,5 @@
 import { COMPUTER_ROADMAP } from "@/app/ecosystem/ecosystem-content";
-import { PRICING_INTRO } from "@/app/pricing/pricing-content";
-import { HOSTED_COMPUTE_NEEDS_PLAN, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
+import { CONNECTED_SERVER_ELIGIBILITY, HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
 import { ECOSYSTEM_STAGES } from "@/lib/ecosystem-map";
 import { NON_AFFILIATION_LINE, SITE_DESCRIPTION } from "../brand-description";
 import { buildLlmsTxt, llmsTxtSections, PUBLIC_REPOSITORY_URL } from "../llms-txt";
@@ -98,37 +97,27 @@ describe("buildLlmsTxt", () => {
     expect(txt).toContain("self-host the platform on your own server");
   });
 
-  // Owner decision, 21 October 2026: Hivra runs no free computer. The map used to say only
-  // "OpenClaw and Agent Zero need a paid size", which told a reader that Claude Code, Codex,
-  // Hermes, Aeon and an Ubuntu computer were launchable on Hivra Cloud without paying. It now says
-  // once, in the canonical words, that every computer Hivra Cloud runs is paid, and what a free
-  // account is for. The price and size are built from the plan constants, not typed.
-  it("says every computer Hivra Cloud runs is paid and what a free account works with, and singles out no agent", () => {
+  it("describes hosted plans and connected-server eligibility without advertising Free", () => {
     const txt = buildLlmsTxt({ siteUrl: SITE });
     const rule =
-      "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.";
+      "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM.";
     expect(txt).toContain(rule);
-    expect(HOSTED_COMPUTE_NEEDS_PLAN).toBe(rule);
-    // The pricing page states the same two sentences, so the map and the page cannot disagree.
-    expect(PRICING_INTRO).toContain(rule);
+    expect(HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE).toBe(rule);
     // It sits in the "Available now on Hivra Cloud" paragraph, before the Hermes limit.
     expect(txt).toContain(`${rule} Hermes runs on Hivra Cloud only.`);
     expect(txt.split(rule)).toHaveLength(2);
     expect(txt).not.toMatch(/\bneed a paid (?:size|plan)\b/i);
     expect(txt).not.toMatch(/OpenClaw and Agent Zero need/);
-    // The /pricing note carries the short form.
     const pricing = LLMS_TXT_SECTIONS.flatMap((section) => section.links).find((link) => link.path === "/pricing");
-    expect(pricing?.note).toContain(
-      "Every Hivra Cloud computer needs a paid plan, and a free account works with a computer or server you connect yourself",
-    );
+    expect(pricing?.note).toContain(CONNECTED_SERVER_ELIGIBILITY);
     // No free hosted computer, trial or starter credit is offered anywhere in the map.
-    expect(txt).not.toMatch(/free (?:hosted|computer|tier|plan)|free trial|starter credit|promo/i);
+    expect(txt).not.toMatch(/free (?:hosted|computer|tier|plan|(?:Hivra )?account)|free trial|starter credit|promo/i);
   });
 
   it("states plans by price and size, never per computer, and drops the multi-agent promise", () => {
     const txt = buildLlmsTxt({ siteUrl: SITE });
     expect(txt).toContain(
-      "Self-host free, or Hivra Cloud at $9.99 a month for 2 vCPU and 4 GB of RAM or $19.99 a month for 4 vCPU and 8 GB of RAM",
+      "Self-host the open-source platform at no software cost, or use Hivra Cloud at $9.99 a month for 2 vCPU and 4 GB of RAM or $19.99 a month for 4 vCPU and 8 GB of RAM",
     );
     expect(txt).not.toMatch(/computer from \$/i);
     expect(txt).not.toMatch(/multi-agent/i);

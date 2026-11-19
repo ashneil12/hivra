@@ -6,6 +6,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getStripe, validateOrRecreateStripeCustomer } from "@/lib/stripe";
 import { PLANS } from "@/lib/subscription";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { PLAN_LADDER_ID } from "@/lib/subscription/plan-ladder";
+import { testPlanLadder } from "@/test-utils/plan-ladder";
 
 // Mock dependencies
 jest.mock("@clerk/nextjs/server", () => ({
@@ -58,6 +60,13 @@ describe("POST /api/billing/subscribe", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useRealTimers();
+    jest.replaceProperty(process, "env", {
+      ...process.env,
+      STRIPE_SECRET_KEY: "sk_test_fixture",
+      STRIPE_WEBHOOK_SECRET: "whsec_fixture",
+      HIVRA_CARD_TRIAL: "off",
+      HIVRA_PLAN_LADDER: "off",
+    });
     consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     consoleWarnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
 
@@ -115,10 +124,9 @@ describe("POST /api/billing/subscribe", () => {
   });
 
   afterEach(() => {
+    jest.restoreAllMocks();
     jest.clearAllTimers();
     jest.useRealTimers();
-    consoleErrorSpy.mockRestore();
-    consoleWarnSpy.mockRestore();
   });
 
   function createRequest(body: Record<string, unknown> = { plan: "fleet" }, rawHeaders: Record<string, string> = {}) {
@@ -1233,17 +1241,7 @@ describe("POST /api/billing/subscribe", () => {
     expect(upsertCall![0].signup_attribution).toEqual({ utm_source: "twitter" });
   });
 
-  // ── No trials: Checkout is direct payment (owner decision 2026-10-07) ─────
-  describe("checkout never offers a trial", () => {
-    const ORIGINAL_ENV = process.env;
-
-    beforeEach(() => {
-      process.env = { ...ORIGINAL_ENV };
-    });
-
-    afterAll(() => {
-      process.env = ORIGINAL_ENV;
-    });
+  describe("trial and direct-payment checkout", () => {
 
     it("refuses the Free plan to a new account once it is closed", async () => {
       mockNeedsPlanForFree.mockResolvedValueOnce(true);
@@ -1290,6 +1288,42 @@ describe("POST /api/billing/subscribe", () => {
       });
       expect(params.subscription_data.metadata.hivra_trial).toBe("card_7d");
       expect(supabaseAdmin!.from).toHaveBeenCalledWith("hermes_trial_usage");
+    });
+
+    it.each([
+      ["eligible entry buyer", "operator", "monthly", "on", "whsec_fixture", [], true],
+      ["trial flag off", "operator", "monthly", "off", "whsec_fixture", [], false],
+      ["webhook not configured", "operator", "monthly", "on", "", [], false],
+      ["previous trial", "operator", "monthly", "on", "whsec_fixture", [{ id: "t1" }], false],
+      ["yearly entry", "operator", "yearly", "on", "whsec_fixture", [], false],
+      ["another plan", "fleet", "monthly", "on", "whsec_fixture", [], false],
+    ] as const)("keeps the ladder price and the expected trial fields for %s", async (_case, plan, cadence, flag, webhook, rows, withTrial) => {
+      process.env.HIVRA_PLAN_LADDER = "on";
+      process.env.HIVRA_PLAN_LADDER_CONFIG = JSON.stringify(testPlanLadder);
+      process.env.HIVRA_CARD_TRIAL = flag;
+      process.env.STRIPE_WEBHOOK_SECRET = webhook;
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+      mockSupabaseQuery.limit.mockResolvedValue({ data: rows, error: null });
+
+      const res = await POST(createRequest({ plan, cadence }));
+      expect(res.status).toBe(200);
+      const [params] = mockStripeSessionsCreate.mock.calls[0];
+      const price = testPlanLadder.plans[plan][cadence === "yearly" ? "yearlyPriceId" : "monthlyPriceId"];
+      expect(params.line_items).toEqual([{ price, quantity: 1 }]);
+      expect(params.metadata).toMatchObject({ plan_ladder: PLAN_LADDER_ID });
+      expect(params.subscription_data.metadata).toMatchObject({ plan_ladder: PLAN_LADDER_ID });
+      if (withTrial) {
+        expect(params.payment_method_collection).toBe("always");
+        expect(params.metadata.hivra_trial).toBe("card_7d");
+        expect(params.subscription_data).toMatchObject({
+          metadata: { hivra_trial: "card_7d" },
+          trial_period_days: 7,
+          trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
+        });
+      } else {
+        expect(params.metadata).not.toHaveProperty("hivra_trial");
+        expect(params.subscription_data).not.toHaveProperty("trial_period_days");
+      }
     });
 
     it.each([

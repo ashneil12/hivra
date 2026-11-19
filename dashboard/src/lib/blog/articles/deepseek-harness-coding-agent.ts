@@ -48,7 +48,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "DeepSeek Harness needs at least 2 vCPU and 3 GB of RAM. Every Hivra Cloud computer needs a paid plan, and the entry plan is " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + ". That covers the agent's minimum with some room left, but a heavy build or a large test suite can use all of it.",
         "The computer has no browser set up for the agent. DeepSeek Harness is for working on code and files in a terminal-style environment, so do not plan on it driving websites. If a task needs a browser, pick an agent that ships one. [Agent Zero](/blog/what-is-agent-zero) brings its own.",
-        "A free Hivra account is enough to look around, but launching this agent runs a Hivra Cloud computer, and that needs a paid plan. The details are on [the DeepSeek Harness docs page](/docs/deepseek-harness).",
+        "Launching this agent runs a Hivra Cloud computer and requires a plan that includes it. The details are on [the DeepSeek Harness docs page](/docs/deepseek-harness).",
       ],
     },
     {
@@ -83,7 +83,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Does it need a paid plan?",
-      a: "Yes. A Hivra account is free, but every Hivra Cloud computer needs a paid plan. The agent's minimum is 2 vCPU and 3 GB of RAM.",
+      a: "Yes. Every Hivra Cloud computer needs a paid plan. The agent's minimum is 2 vCPU and 3 GB of RAM.",
     },
     {
       q: "Is Hivra affiliated with DeepSeek?",

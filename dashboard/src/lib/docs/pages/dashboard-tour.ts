@@ -1,6 +1,6 @@
 import type { DocPage } from "../types";
 import { CLI_RUN_LIFETIME } from "@/lib/blog/runtime-facts";
-import { HOSTED_COMPUTE_NEEDS_PLAN } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE } from "@/lib/blog/plan-facts";
 
 export const doc: DocPage = {
   slug: "dashboard-tour",
@@ -48,7 +48,7 @@ export const doc: DocPage = {
         "![The Launch Choose step listing the agent tiles, each with a short description](/images/docs/dash-launch-choose.webp \"Launch step 1 (Choose) with sample data: one tile per agent, each saying whether it fits your plan.\")",
         "![The Launch Review step for a sample Codex agent showing where it runs, size, browser toggle, model access choices and cost](/images/docs/dash-launch-review.webp \"Launch step 2 (Review and launch) with sample data: where it runs, size, model access and the Cost row. The balance shown is a sample.\")",
         "After you confirm, the page tells you what is happening: that your agent's computer is being created, that it is setting up, or, if something failed, that it could not start, with a way back to Review. If you leave and come back to Launch partway through, it asks whether to continue the launch you started or start a new one.",
-        HOSTED_COMPUTE_NEEDS_PLAN,
+        HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
         "The full walk through, including the model choices and what to do when a launch fails, is in [Launch your first agent](/docs/getting-started). How the model is paid for is in [how your agent gets its model](/docs/models-and-credits).",
       ],
     },
@@ -109,7 +109,7 @@ export const doc: DocPage = {
         "**Billing** is titled **Plan & billing** and has tabs for **Overview**, **Plans**, **Payment methods**, **Credits** and **History**. Overview shows your current plan and how much of its processor and memory is in use, with **Change plan**, **Manage payment method** and **Cancel subscription**. Credits and History appear only where those features are switched on for your account. Agent wallets are opened from the Wallets row in Settings. Plans, prices and the money-back terms are in [what you pay for](/docs/plans-and-billing).",
         "**Servers** is where you add capacity: Hivra-hosted, your own cloud account, or your own machine. The page is titled **Your servers**, and a first visit asks **How would you like to add capacity?** with three choices: **Let Hivra host it**, **Use my cloud account** and **Connect my own machine**.",
         "![The Add capacity chooser with three options: Let Hivra host it, Use my cloud account and Connect my own machine](/images/docs/dash-infra-choose.webp \"The first-setup chooser with sample props. Connect my own machine is the third card.\")",
-        "Connecting a machine costs nothing in Hivra, and connecting does not buy a server. Once connected, servers are listed under **Connected servers**, and a launch can target one. [Run agents on your own server](/docs/connect-your-own-server) covers requirements and both ways to connect.",
+        "Connecting a machine does not buy a server. Your account must be eligible to connect it. Once connected, servers are listed under **Connected servers**, and a launch can target one. [Run agents on your own server](/docs/connect-your-own-server) covers requirements and both ways to connect.",
         "Disconnecting a server deletes Hivra's key for it, so Hivra can no longer sign in. The page shows the command to remove the hivra user from the server itself if you want that too.",
         "**Applications** says you can keep using Hivra in the browser with nothing to install, offers to add the Hivra web app to your Dock, desktop or Home Screen where your browser supports it, and links to your computers. **Help** has an email link for support, the community Discord, and the Terms and Privacy pages. When you write to support, include what you were trying to do and any error message, and leave out passwords and API keys.",
       ],

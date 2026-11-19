@@ -3,13 +3,15 @@ import Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { log } from "@/lib/logger";
 import { PLANS } from "@/lib/subscription";
+import { PLAN_LADDER_ID } from "@/lib/subscription/plan-ladder";
+import { testPlanLadder } from "@/test-utils/plan-ladder";
 
 process.env.STRIPE_SECRET_KEY = 'sk_test_123';
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 const recordCardTrialStartMock = jest.fn().mockResolvedValue({ endedEarly: false });
-const releaseCardTrialSleepMock = jest.fn().mockResolvedValue(true);
+const releaseCardTrialSleepMock = jest.fn().mockResolvedValue(false);
 jest.mock("@/lib/billing/card-trial", () => ({
   ...jest.requireActual("@/lib/billing/card-trial"),
   recordCardTrialStart: (...args: unknown[]) => recordCardTrialStartMock(...args),
@@ -1467,11 +1469,11 @@ describe("StripeWebhookService", () => {
       jest.dontMock("@/lib/services/tier-change-service");
     });
 
-    it("writes nothing when the card already trialed on another account (the paid event follows)", async () => {
+    it("writes nothing and reports rejection when the card already trialed on another account", async () => {
       recordCardTrialStartMock.mockResolvedValueOnce({ endedEarly: true });
       const captured = captureUpsert();
 
-      await StripeWebhookService.handleSubscriptionChange(trialSub("trialing"));
+      await expect(StripeWebhookService.handleSubscriptionChange(trialSub("trialing"))).resolves.toBe("trial_rejected");
 
       expect(captured.args).toBeUndefined();
     });
@@ -1492,15 +1494,85 @@ describe("StripeWebhookService", () => {
       });
     });
 
-    it("never touches trial_ends_at for a subscription that is not a card trial", async () => {
+    it("clears a prior trial's limits and end date on direct paid resubscription", async () => {
       const captured = captureUpsert();
-      const sub = { ...trialSub("active"), metadata: { user_id: "user_1", plan: "operator" } } as unknown as Stripe.Subscription;
+      releaseCardTrialSleepMock.mockResolvedValueOnce(true);
+      const sub = { ...trialSub("active"), id: "sub_paid", trial_end: null, metadata: { user_id: "user_1", plan: "operator" } };
 
       await StripeWebhookService.handleSubscriptionChange(sub);
 
-      expect(captured.args).toBeDefined();
+      expect(captured.args).toMatchObject({
+        instance_limit: PLANS.operator.maxAgents,
+        stripe_subscription_id: "sub_paid",
+        trial_ends_at: null,
+      });
+      expect(releaseCardTrialSleepMock).toHaveBeenCalledWith("user_1");
+    });
+
+    it("omits trial fields for ordinary paid activation without prior trial state", async () => {
+      const captured = captureUpsert();
+      const sub = { ...trialSub("active"), id: "sub_paid", trial_end: null, metadata: { user_id: "user_1", plan: "operator" } };
+
+      await StripeWebhookService.handleSubscriptionChange(sub);
+
+      expect(captured.args).toMatchObject({ stripe_subscription_id: "sub_paid", status: "active" });
       expect(captured.args).not.toHaveProperty("trial_ends_at");
     });
+  });
+
+  it("keeps a ladder trial on the small pool and restores the bought plan on conversion", async () => {
+    const env = jest.replaceProperty(process, "env", {
+      ...process.env,
+      HIVRA_PLAN_LADDER_CONFIG: JSON.stringify(testPlanLadder),
+    });
+    try {
+      const subscription = {
+        id: "sub_card_trial",
+        customer: "cus_1",
+        status: "trialing",
+        start_date: 1000,
+        trial_end: 1_800_000_000,
+        metadata: { user_id: "user_1", plan: "operator", hivra_trial: "card_7d", plan_ladder: PLAN_LADDER_ID },
+        items: { data: [{ price: { id: testPlanLadder.plans.operator.monthlyPriceId }, current_period_start: 1000, current_period_end: 2000 }] },
+      } as unknown as Stripe.Subscription;
+      const upsert = jest.fn().mockResolvedValue({ error: null });
+      (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+        const builder = createMockBuilder();
+        if (table === "hermes_subscriptions") builder.upsert = upsert;
+        return builder;
+      });
+      recordCardTrialStartMock.mockClear();
+      releaseCardTrialSleepMock.mockClear();
+
+      await StripeWebhookService.handleSubscriptionChange(subscription);
+      expect(recordCardTrialStartMock).toHaveBeenCalledTimes(1);
+      expect(upsert).toHaveBeenLastCalledWith(expect.objectContaining({
+        plan: "operator",
+        plan_ladder: PLAN_LADDER_ID,
+        instance_limit: 1,
+        total_cpu_budget: 1,
+        total_ram_budget: 2048,
+        always_on_limit: 0,
+        always_on_extra: 0,
+        ai_allowance_micro_usd: 0,
+        trial_ends_at: new Date(1_800_000_000 * 1000).toISOString(),
+      }), expect.anything());
+
+      await StripeWebhookService.handleSubscriptionChange({ ...subscription, status: "active" });
+      expect(releaseCardTrialSleepMock).toHaveBeenCalledWith("user_1");
+      expect(upsert).toHaveBeenLastCalledWith(expect.objectContaining({
+        plan: "operator",
+        plan_ladder: PLAN_LADDER_ID,
+        instance_limit: 4,
+        total_cpu_budget: 8,
+        total_ram_budget: 16384,
+        always_on_limit: 2,
+        ai_allowance_micro_usd: 5_000_000,
+        trial_ends_at: null,
+      }), expect.anything());
+    } finally {
+      env.restore();
+    }
   });
 
   describe("handleSubscriptionChange — tier-change wiring", () => {
