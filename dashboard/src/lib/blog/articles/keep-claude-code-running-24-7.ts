@@ -79,7 +79,7 @@ export const article: BlogArticle = {
     {
       heading: "Fix 3: the DIY VPS route",
       paragraphs: [
-        "No always-on machine at home? Rent one. Anthropic's system requirements for Claude Code list 4 GB of RAM, and a 4 GB server from a budget host runs roughly $5-10/month. Setup looks like this:\n\n```bash\n# 1. SSH into the fresh server\nssh root@your-vps-ip\n\n# 2. Install Claude Code with Anthropic's native installer\ncurl -fsSL https://claude.ai/install.sh | bash\n\n# 3. Authenticate (run claude once and follow the login flow)\nclaude\n\n# 4. Run it inside tmux so it survives your disconnects\ntmux new -s claude\nclaude\n```\n\nPrefer npm? `npm install -g @anthropic-ai/claude-code` installs the same binary and needs Node.js 22 or later. Then detach, close your laptop and go to sleep. The agent keeps working, and you can reattach from your phone over SSH if you want to check in.",
+        "No always-on machine at home? Rent one. Anthropic's system requirements for Claude Code list 4 GB of RAM, and a 4 GB server from a budget host runs roughly $5-10/month. Setup looks like this:\n\n```bash\n# 1. SSH into the fresh server\nssh root@your-vps-ip\n\n# 2. Install Claude Code with Anthropic's native installer\ncurl -fsSL https://claude.ai/install.sh | bash\n\n# 3. Authenticate (run claude once and follow the login flow)\nclaude\n\n# 4. Run it inside tmux so it survives your disconnects\ntmux new -s claude\nclaude\n```\n\nPrefer npm? `npm install -g @anthropic-ai/claude-code` installs the same binary and needs Node.js 22 or later. Then detach, close your laptop and go to sleep. The agent keeps working, and you can reattach from your phone over SSH if you want to check in. Step-by-step install and sign-in on a server is in [Claude Code on Linux](/blog/claude-code-on-linux), and if your always-on machine is a PC, see [Claude Code on Windows](/blog/claude-code-on-windows).",
         "Beyond the server rent, the DIY route has other costs. Setup takes an hour or two if the steps go clean, and more if they don't. The login flow on a headless server means copying URLs and codes between machines. Then comes upkeep: OS updates, CLI updates, a disk filling up with logs. Small jobs, but they land on you at bad times.\n\nSecurity is yours too. The server sits on the public internet with your logged-in agent on it. SSH keys only, firewall on, fail2ban is a good idea. That's your job now. All you get is a terminal over SSH: no browser view of what the agent is doing, no file browser, nothing on mobile beyond a raw shell.",
       ],
     },
@@ -156,6 +156,8 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "claude-code-on-windows", title: "Claude Code on Windows: install natively, in WSL, or on a Linux computer (as of November 2026)" },
+    { slug: "claude-code-on-linux", title: "Claude Code on Linux: install, sign in, run it on a server and fix common errors" },
     { slug: "claude-code-on-your-phone", title: "Claude Code on your phone: every way to use it from mobile (as of November 2026)" },
     { slug: "codex-resume-session", title: "How to resume a Codex session (and Claude Code too)" },
     { slug: "run-codex-24-7-in-the-cloud", title: "Codex cloud, or Codex on a computer that stays on? Where to run it 24/7" },

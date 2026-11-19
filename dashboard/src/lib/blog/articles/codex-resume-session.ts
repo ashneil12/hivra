@@ -41,7 +41,7 @@ export const article: BlogArticle = {
   readingTimeMin: 11,
   author: "Hivra team",
   tagline: "codex resume brings the chat back. tmux brings the live process back.",
-  intro: `Codex stores each chat on disk, so you can leave and come back. We tested every command below on Codex CLI ${CODEX_VER}. Claude Code's resume flags are further down, since that's a different tool.`,
+  intro: `Codex stores each chat on disk, so you can leave and come back. We tested every command below on Codex CLI ${CODEX_VER}. Claude Code's resume flags are further down, since that's a different tool. Haven't installed Codex yet? Start with [how to install the Codex CLI](/blog/how-to-install-codex-cli).`,
   shortAnswer: `To resume a Codex CLI session, run codex resume --last for the newest chat in this folder, codex resume for the picker, or codex resume <id>. Sessions are saved under ~/.codex/sessions/. Tested on Codex CLI ${CODEX_VER}. Claude Code uses claude --continue or claude --resume instead.`,
   sections: [
     {
@@ -169,6 +169,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "how-to-install-codex-cli", title: "How to install the Codex CLI on Mac, Linux and Windows" },
     { slug: "codex-mobile", title: "Codex on mobile: how to use OpenAI Codex from your phone" },
     { slug: "run-codex-24-7-in-the-cloud", title: "Codex cloud, or Codex on a computer that stays on?" },
     { slug: "keep-claude-code-running-24-7", title: "Will Claude Code keep running if you close your laptop?" },
