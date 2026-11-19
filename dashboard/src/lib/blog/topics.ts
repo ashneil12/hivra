@@ -20,6 +20,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "keep-claude-code-running-24-7",
       "claude-code-remote-control",
       "claude-code-on-your-phone",
+      "claude-code-on-windows",
       "run-codex-24-7-in-the-cloud",
       "claude-code-vs-codex-24-7",
       "cursor-vs-claude-code",
@@ -31,6 +32,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "claude-code-dangerously-skip-permissions",
       "codex-resume-session",
       "codex-mobile",
+      "how-to-install-codex-cli",
     ],
   },
   {
@@ -41,6 +43,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "ai-agent-hosting-guide",
       "managed-vs-self-hosted-ai-agents",
       "ai-agent-vps",
+      "claude-code-on-linux",
       "best-vps-for-hermes-agent",
       "do-you-need-a-gpu-to-run-an-ai-agent",
       "cost-of-running-ai-agent",
