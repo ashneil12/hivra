@@ -85,7 +85,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
+      # A run limited with `only` checks a few tiles; it never records a
+      # verdict on the commit, so it cannot stand in for a full sweep.
       - name: Mark the commit as being swept
+        if: env.LAUNCH_SWEEP_ONLY == ''
         run: node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --state pending --description "Sweeping Canary" --target-url "$RUN_URL"
       - name: Install
         working-directory: dashboard
@@ -93,6 +96,7 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
       - name: Sweep every Launch tile on Canary
+        id: sweep
         working-directory: dashboard
         continue-on-error: true
         run: npm run test:launch-sweep
@@ -102,13 +106,25 @@ jobs:
         continue-on-error: true
         run: npm run test:launch-sweep:summary -- "$LAUNCH_SWEEP_RUN_ID"
       - name: Reap anything a crashed run left
+        id: reap
         if: always()
         working-directory: dashboard
+        continue-on-error: true
         run: npm run audit:first-run:cleanup
+      # Green only when the sweep itself exited cleanly (every tile covered,
+      # every target finished), its verdict is green, and the reaper found
+      # nothing left running.
       - name: Record the verdict on the commit
-        if: always()
+        if: always() && env.LAUNCH_SWEEP_ONLY == ''
+        env:
+          SWEEP_OUTCOME: ${{ steps.sweep.outcome }}
+          REAP_OUTCOME: ${{ steps.reap.outcome }}
         run: |
-          if [ -f "$LAUNCH_SWEEP_VERDICT_FILE" ]; then
+          if [ "$SWEEP_OUTCOME" != "success" ]; then
+            node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --state failure --description "The sweep did not finish cleanly ($SWEEP_OUTCOME)" --target-url "$RUN_URL"
+          elif [ "$REAP_OUTCOME" != "success" ]; then
+            node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --state failure --description "Cleanup failed: the run may have left computers running" --target-url "$RUN_URL"
+          elif [ -f "$LAUNCH_SWEEP_VERDICT_FILE" ]; then
             node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --verdict "$LAUNCH_SWEEP_VERDICT_FILE" --target-url "$RUN_URL"
           else
             node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --state error --description "The sweep wrote no verdict" --target-url "$RUN_URL"
@@ -119,3 +135,8 @@ jobs:
           name: launch-sweep-${{ needs.pick.outputs.sha }}
           path: out/
           retention-days: 30
+      - name: Fail the run when cleanup failed
+        if: always() && steps.reap.outcome == 'failure'
+        run: |
+          echo "::error::Cleanup failed; check Canary for computers this run left running."
+          exit 1
