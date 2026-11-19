@@ -39,7 +39,12 @@ export const SetupRequestBody = z.object({
   inference: z.enum(["venice", "venice-key"]).optional(),
   /** The coding agent's own name, shown to the person ("Claude Code"). */
   client: z.string().trim().min(1).max(40).regex(/^[\p{L}\p{N} ._()-]+$/u).optional(),
-}).strict();
+}).strict().refine((body) => !body.inference || body.agent, {
+  // Launch applies model access to a chosen agent only, so it can't be carried
+  // through the agent picker.
+  message: "inference needs agent",
+  path: ["inference"],
+});
 export type SetupRequestInput = z.infer<typeof SetupRequestBody>;
 
 // No 0/O or 1/I, so a code read aloud or retyped stays the same code.
@@ -110,6 +115,16 @@ export type SetupStatusBody = {
 
 export function claimDeadline(row: Pick<SetupRow, "claimed_at">): number | null {
   return row.claimed_at ? Date.parse(row.claimed_at) + SETUP_LAUNCH_MINUTES * 60_000 : null;
+}
+
+/**
+ * Whether this person may continue the request now: it is theirs and still
+ * inside its launch window. After the window the poll no longer follows a
+ * launch, so continuing would only start an agent nobody tracks.
+ */
+export function setupClaimUsable(row: Pick<SetupRow, "user_id" | "claimed_at">, userId: string, now = Date.now()): boolean {
+  const deadline = claimDeadline(row);
+  return row.user_id === userId && deadline !== null && now <= deadline;
 }
 
 /** The poll answer, from the request row and the agent it found (if any). */

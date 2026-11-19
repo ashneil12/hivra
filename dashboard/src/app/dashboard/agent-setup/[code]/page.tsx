@@ -13,6 +13,7 @@ import {
   displaySetupCode,
   parseSetupCode,
   setupAgentName,
+  setupClaimUsable,
   type SetupAgentId,
   type SetupRow,
 } from "@/lib/agent-setup/core";
@@ -38,7 +39,7 @@ async function loadView(code: string, userId: string): Promise<View> {
     return { kind: "unavailable" };
   }
   if (!row) return { kind: "gone" };
-  if (row.user_id && row.user_id !== userId) return { kind: "gone" };
+  if (row.user_id && !setupClaimUsable(row, userId)) return { kind: "gone" };
   if (!row.user_id && Date.now() > Date.parse(row.expires_at)) return { kind: "gone" };
   return { kind: "open", row };
 }

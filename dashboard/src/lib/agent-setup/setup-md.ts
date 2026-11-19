@@ -45,7 +45,7 @@ curl -sS -X POST ${origin}/api/agent-setup \\
   -d '{"agent":"claude-code","inference":"venice","client":"Claude Code"}'
 \`\`\`
 
-All fields are optional. \`agent\` is an id from the table above, \`inference\` is \`venice\` (Hivra credits, nothing to set up) or \`venice-key\` (their own Venice key), and \`client\` is your own name as the person knows you. Leave \`inference\` out to let them choose on the page. The answer looks like:
+All fields are optional. \`agent\` is an id from the table above, \`inference\` is \`venice\` (Hivra credits, nothing to set up) or \`venice-key\` (their own Venice key) and needs \`agent\`, and \`client\` is your own name as the person knows you. Leave \`inference\` out to let them choose on the page. The answer looks like:
 
 \`\`\`json
 {"success":true,"data":{"id":"…","code":"ABCD-EFGH","approveUrl":"${origin}/dashboard/agent-setup/ABCDEFGH","pollUrl":"${origin}/api/agent-setup/…","pollHeader":"${SETUP_TOKEN_HEADER}","pollSecret":"…","pollEverySeconds":${SETUP_POLL_SECONDS},"expiresAt":"…"}}

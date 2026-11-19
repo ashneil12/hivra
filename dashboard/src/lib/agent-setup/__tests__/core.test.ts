@@ -7,6 +7,7 @@ import {
   newSetupCode,
   parseSetupCode,
   resolveSetupStatus,
+  setupClaimUsable,
   setupLaunchPath,
   type SetupRow,
 } from "../core";
@@ -55,6 +56,11 @@ describe("SetupRequestBody", () => {
     expect(SetupRequestBody.safeParse({ client: "<script>" }).success).toBe(false);
     expect(SetupRequestBody.safeParse({ inference: "openai" }).success).toBe(false);
   });
+
+  it("refuses model access without an agent, since Launch can't carry it through the picker", () => {
+    expect(SetupRequestBody.safeParse({ inference: "venice-key" }).success).toBe(false);
+    expect(SetupRequestBody.safeParse({ agent: "codex", inference: "venice-key" }).success).toBe(true);
+  });
 });
 
 describe("setupLaunchPath", () => {
@@ -62,6 +68,17 @@ describe("setupLaunchPath", () => {
     expect(setupLaunchPath("claude-code", "venice")).toBe("/dashboard/launch?agent=claude-code&inference=venice&ref=agent-setup");
     expect(setupLaunchPath("hermes", null)).toBe("/dashboard/launch?agent=hermes&ref=agent-setup");
     expect(setupLaunchPath(null, "venice")).toBe("/dashboard/launch?kind=agent&start=1&ref=agent-setup");
+  });
+});
+
+describe("setupClaimUsable", () => {
+  it("lets only the person who opened it continue, and only inside the launch window", () => {
+    expect(setupClaimUsable(claimed, "user_1", NOW)).toBe(true);
+    expect(setupClaimUsable(claimed, "user_2", NOW)).toBe(false);
+    expect(setupClaimUsable(base, "user_1", NOW)).toBe(false);
+    // Opened 09:55, so the window closes at 11:55.
+    expect(setupClaimUsable(claimed, "user_1", Date.parse("2026-11-17T11:55:00Z"))).toBe(true);
+    expect(setupClaimUsable(claimed, "user_1", Date.parse("2026-11-17T12:00:00Z"))).toBe(false);
   });
 });
 

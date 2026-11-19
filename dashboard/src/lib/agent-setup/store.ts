@@ -3,6 +3,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   SETUP_LAUNCH_MINUTES,
+  setupClaimUsable,
   SETUP_OPEN_MINUTES,
   hashPollSecret,
   newPollSecret,
@@ -57,7 +58,8 @@ export async function findSetupByCode(code: string): Promise<SetupRow | null> {
 
 /**
  * Ties an open request to the signed-in person. First person wins: a request
- * someone else already claimed is not moved, and an expired one is not claimed.
+ * someone else already claimed is not moved, an expired one is not claimed, and
+ * the person's own claim stops working once its launch window has passed.
  * Returns the row as it now stands, or null when this person may not use it.
  */
 export async function claimSetupRequest(code: string, userId: string, now = Date.now()): Promise<SetupRow | null> {
@@ -69,7 +71,7 @@ export async function claimSetupRequest(code: string, userId: string, now = Date
   if (error) throw new Error(`setup request claim failed: ${error.message}`);
   if (data) return data as SetupRow;
   const existing = await findSetupByCode(code);
-  return existing && existing.user_id === userId ? existing : null;
+  return existing && setupClaimUsable(existing, userId, now) ? existing : null;
 }
 
 /**
