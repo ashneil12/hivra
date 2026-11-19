@@ -87,14 +87,12 @@ describe("Hermes self-hosting operational guide", () => {
     expect(copy).toContain("does not promise a fixed bill or completion time");
   });
 
-  it("scopes Hivra's new lane to Canary and retains billing facts and the self-host choice", () => {
+  it("scopes Hivra's new setup to testing and retains billing facts and the self-host choice", () => {
     const hivra = section("The Hivra alternative and its current availability");
     for (const expected of [
-      "Hivra Cloud only, not My cloud or My server",
-      "Existing Hermes agents keep their current lane",
-      "live on Canary",
-      "next owner-approved production promotion",
-      "Do not read this as production availability",
+      "Hivra Cloud only, not on My cloud or My server",
+      "Existing Hermes agents keep their current setup",
+      "in testing and is not on hivra.cloud yet",
     ]) {
       expect(hivra).toContain(expected);
     }
@@ -102,7 +100,7 @@ describe("Hermes self-hosting operational guide", () => {
     expect(hivra).toContain(`${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}`);
     expect(hivra).toContain("Self-hosting fits better");
     const answer = article.faqs.find(({ q }) => q === "Can Hermes on Hivra run on my own server?")!.a;
-    expect(answer).toContain("live on Canary");
-    expect(answer).toContain("next owner-approved production promotion");
+    expect(answer).toContain("in testing and is not on hivra.cloud yet");
+    expect(answer).not.toMatch(/canary/i);
   });
 });
