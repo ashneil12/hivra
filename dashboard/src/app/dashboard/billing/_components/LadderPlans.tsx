@@ -18,6 +18,7 @@ export interface PlanLadderAnswer {
   offered?: boolean;
   current?: {
     plan: string | null;
+    inCardTrial: boolean;
     alwaysOnLimit: number | null;
     alwaysOnExtra: number;
     alwaysOnInUse: number | null;
@@ -232,7 +233,7 @@ export function LadderPlans({
         })}
       </div>
 
-      {answer.current && ladder.alwaysOnExtra && (
+      {answer.current && !answer.current.inCardTrial && ladder.alwaysOnExtra && (
         <div className={styles.controls}>
           <div className={styles.control}>
             <span className={styles.controlLabel}>

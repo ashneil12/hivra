@@ -26,7 +26,7 @@ export async function GET() {
 
   const { data: sub } = await supabaseAdmin
     .from("hermes_subscriptions")
-    .select("plan, status, stripe_subscription_id, plan_ladder, always_on_limit, always_on_extra, ai_allowance_micro_usd")
+    .select("plan, status, stripe_subscription_id, plan_ladder, always_on_limit, always_on_extra, ai_allowance_micro_usd, trial_ends_at")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -50,6 +50,7 @@ export async function GET() {
     current: onLadder
       ? {
           plan: sub?.plan ?? null,
+          inCardTrial: Boolean(sub?.trial_ends_at),
           alwaysOnLimit: sub?.always_on_limit ?? null,
           alwaysOnExtra: sub?.always_on_extra ?? 0,
           alwaysOnInUse,
