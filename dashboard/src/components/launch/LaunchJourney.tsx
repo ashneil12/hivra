@@ -1033,13 +1033,16 @@ export function LaunchJourney(
     if (ownerId === undefined) return;
     // A template link decides once the template has been read.
     if (templateParam && !templateResult) return;
-    const stored = readLaunchDraft(ownerId);
+    const hermesProfile = legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE;
+    const saved = readLaunchDraft(ownerId);
+    const stored = saved ? withHermesLane(saved, hermesProfile) : null;
     const requestedProfileId = isLaunchProfileId(requestedProfileParam) ? requestedProfileParam : null;
     // A deep link to the prepared Canary computer is ignored where it cannot
     // be claimed, so the link lands on Choose instead of an unusable profile.
     // Read directly: this effect only ever runs on the client.
-    const requestedProfile = linkedTemplate?.profileId
+    const linkedProfile = linkedTemplate?.profileId
       ?? (requestedProfileId === "omarchy" && !preparedCanaryAvailable ? null : requestedProfileId);
+    const requestedProfile = linkedProfile === "hermes" || linkedProfile === "hermes-computer" ? hermesProfile : linkedProfile;
     const freshFromIntent = (): LaunchDraft => {
       const next = createLaunchDraft();
       if (!requestedProfile) return next;
@@ -1056,6 +1059,8 @@ export function LaunchJourney(
         template: linkedTemplate ? { id: linkedTemplate.id, name: linkedTemplate.name } : null,
       }, inferenceParam);
     };
+    // A URL already carrying our stage is a return to the journey, not a new preset.
+    const insideJourney = new URLSearchParams(window.location.search).has("stage");
     let initial: LaunchDraft;
     if (stored && (stored.launchState === "uncertain" || stored.launchState === "submitting")) {
       // A launch whose outcome is unknown is never set aside for a new one.
@@ -1064,13 +1069,17 @@ export function LaunchJourney(
       // Back from an upgrade this draft started.
       initial = stored;
     } else if (startParam === "1" || requestedProfile) {
-      if (isUnfinishedLaunchDraft(stored) && startParam !== "1" && stored.profileId === requestedProfile
-        && (stored.template?.id ?? null) === (linkedTemplate?.id ?? null)) {
-        initial = stored;
-      } else if (isUnfinishedLaunchDraft(stored)) {
-        setDraft(null);
-        setResumeChoice({ stored, fresh: withHermesLane(freshFromIntent(), legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE) });
-        return;
+      if (isUnfinishedLaunchDraft(stored)) {
+        const linkedAccess = withVeniceInference(stored, inferenceParam).modelAccess;
+        if (startParam !== "1" && stored.profileId === requestedProfile
+          && (stored.template?.id ?? null) === (linkedTemplate?.id ?? null)
+          && (insideJourney || (stored.modelAccess.mode === linkedAccess.mode && stored.modelAccess.provider === linkedAccess.provider))) {
+          initial = stored;
+        } else {
+          setDraft(null);
+          setResumeChoice({ stored, fresh: freshFromIntent() });
+          return;
+        }
       } else {
         initial = freshFromIntent();
       }
@@ -1078,14 +1087,9 @@ export function LaunchJourney(
       // A plain Launch link names nothing, so it opens Choose with nothing
       // picked, whatever an earlier visit left saved. Only a reload or a
       // history step inside the journey (its URL carries a stage) restores it.
-      const insideJourney = new URLSearchParams(window.location.search).has("stage");
       initial = insideJourney && stored ? stored : createLaunchDraft();
     }
-    // Hermes goes to the lane that applies: a link or draft that names plain
-    // Hermes opens the computer lane where it is on, and a computer-lane draft
-    // restored where it is off goes back to the instances lane.
-    const hermesProfile = legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE;
-    initial = withHermesLane(withCurrentStage(initial), hermesProfile);
+    initial = withCurrentStage(initial);
     setResumeChoice(null);
     writeLaunchDraft(initial, ownerId);
     setDraft(initial);

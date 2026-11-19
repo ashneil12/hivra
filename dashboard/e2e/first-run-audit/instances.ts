@@ -68,13 +68,25 @@ export async function listInstances(
 export async function listHivraAgents(
   request: APIRequestContext,
   baseUrl: string,
+  requireVerifiedList = false,
 ): Promise<HivraAgentSummary[]> {
-  const res = await request.get(`${baseUrl}/api/hivra/agents`, { timeout: 90_000 });
-  if (!res.ok()) return [];
+  const res = await request.get(`${baseUrl}/api/hivra/agents`, { timeout: 90_000 }).catch((error: unknown) => {
+    if (requireVerifiedList) throw new Error('Agent inventory request failed');
+    throw error;
+  });
+  if (!res.ok()) {
+    if (requireVerifiedList) throw new Error(`Agent inventory failed: HTTP ${res.status()}`);
+    return [];
+  }
   const body = (await res.json().catch(() => null)) as
     | ApiEnvelope<{ agents?: HivraAgentSummary[] }>
     | null;
-  return Array.isArray(body?.data?.agents) ? body.data.agents : [];
+  const agents = body?.data?.agents;
+  if (requireVerifiedList && (
+    body?.success !== true || !Array.isArray(agents) ||
+    agents.some((agent) => typeof agent?.id !== 'string' || !agent.id)
+  )) throw new Error('Agent inventory response was not verified');
+  return Array.isArray(agents) ? agents : [];
 }
 
 export async function getInstance(
@@ -267,12 +279,13 @@ export async function destroyAllHivraAgents(
   baseUrl: string,
   attempts = 40,
   retryDelayMs = 15_000,
+  { verifyDisappearance = false } = {},
 ): Promise<{ destroyed: string[]; survived: DestroyResult[] }> {
   const destroyed = new Set<string>();
   let survived: DestroyResult[] = [];
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    const remaining = await listHivraAgents(request, baseUrl);
+    const remaining = await listHivraAgents(request, baseUrl, verifyDisappearance);
     if (remaining.length === 0) return { destroyed: [...destroyed], survived: [] };
 
     survived = [];
@@ -307,6 +320,12 @@ export async function destroyAllHivraAgents(
     if (attempt < attempts && retryDelayMs > 0) await sleep(retryDelayMs);
   }
 
+  if (verifyDisappearance) {
+    const remaining = await listHivraAgents(request, baseUrl, true);
+    survived = remaining.map(({ id }) => ({
+      id, deleted: false, httpStatus: 0, error: 'Still listed after cleanup',
+    }));
+  }
   return { destroyed: [...destroyed], survived };
 }
 

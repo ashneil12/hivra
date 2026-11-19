@@ -18,6 +18,33 @@ jest.mock("@/lib/venice/promo/service", () => ({
 }));
 
 import { GET } from "../route";
+import { getUserPromoLines, recordVeniceAttribution } from "@/lib/venice/promo/service";
+
+describe("GET /api/billing/venice-promo attribution", () => {
+  it("records the returned claim cookie for the signed-in account before trying to grant credit", async () => {
+    const flag = process.env.HIVRA_VENICE_PROMO_ENABLED;
+    process.env.HIVRA_VENICE_PROMO_ENABLED = "true";
+    try {
+      const save = jest.mocked(recordVeniceAttribution);
+      save.mockClear();
+      jest.mocked(getUserPromoLines).mockResolvedValueOnce([]);
+      launch.mockImplementationOnce(async () => {
+        expect(save).toHaveBeenCalledWith({ userId: "u1", attribution: { ref: "venice", code: "VENICE" } });
+        return { attempted: false };
+      });
+
+      const response = await GET(new NextRequest("http://localhost/api/billing/venice-promo?prepareLaunch=1", {
+        headers: { cookie: "hivra_venice_attr=ref%3Dvenice%26code%3DVENICE" },
+      }));
+
+      expect(response.status).toBe(200);
+      expect(launch).toHaveBeenCalledWith({ userId: "u1" });
+    } finally {
+      if (flag === undefined) delete process.env.HIVRA_VENICE_PROMO_ENABLED;
+      else process.env.HIVRA_VENICE_PROMO_ENABLED = flag;
+    }
+  });
+});
 
 describe("GET /api/billing/venice-promo starter credit", () => {
   beforeEach(() => jest.clearAllMocks());
