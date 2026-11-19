@@ -172,7 +172,7 @@ export default async function PricingPage() {
                 <p key={paragraph}>{paragraph}</p>
               ))}
               <p>{options.entry.goodFor}</p>
-              {cardTrial ? <p data-testid="card-trial-note">{CARD_TRIAL_PRICING.note}</p> : null}
+              {cardTrial ? <p className={page.trialNote} data-testid="card-trial-note">{CARD_TRIAL_PRICING.note}</p> : null}
               <Link className={`${page.action} ${page.actionPrimary}`} href={PRICING_ACTIONS.chooseEntry.href}>
                 {cardTrial ? CARD_TRIAL_PRICING.label : PRICING_ACTIONS.chooseEntry.label}
                 <ArrowRight size={18} aria-hidden="true" />
