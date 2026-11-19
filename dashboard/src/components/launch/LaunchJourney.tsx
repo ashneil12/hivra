@@ -2274,6 +2274,7 @@ export function LaunchJourney(
     profileId: draft.profileId,
     substrate,
     planName: plan?.name ?? null,
+    cloudPlanAccess: planChecked && plan?.usage ? isPaidPlan(plan) ? "paid" : "free" : "unknown",
     modelNote: modelCostNote(draft.profileId, draft.modelAccess),
     planOnHold: planHold ? planHold.planName : null,
   }) : "";

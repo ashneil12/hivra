@@ -374,12 +374,17 @@ describe("plan rows", () => {
   });
 
   it("states cost without claiming a purchase", () => {
-    expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Free" })).toBe("No extra charge. Uses your Free plan allowance.");
+    expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Free", cloudPlanAccess: "free" }))
+      .toBe("Requires a paid plan to launch on Hivra Cloud.");
+    expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Operator", cloudPlanAccess: "paid" }))
+      .toBe("No extra charge. Uses your Operator plan allowance.");
+    expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: null, cloudPlanAccess: "unknown" }))
+      .toBe("Checking your Hivra Cloud plan before launch.");
     // A plan on hold is never presented as Free or as costing nothing.
-    expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Free", planOnHold: "Pro" }))
+    expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Pro", cloudPlanAccess: "paid", planOnHold: "Pro" }))
       .toBe("Uses your Pro plan allowance once the plan is active again.");
-    expect(costSummary({ profileId: "codex", substrate: "proxmox", planName: "Free", planOnHold: "Pro" })).toMatch(/your server's own capacity/);
-    expect(costSummary({ profileId: "codex", substrate: "provider-vm", planName: "Free" })).toMatch(/cloud provider keeps billing/);
+    expect(costSummary({ profileId: "codex", substrate: "proxmox", planName: "Free", cloudPlanAccess: "free", planOnHold: "Pro" })).toMatch(/your server's own capacity/);
+    expect(costSummary({ profileId: "codex", substrate: "provider-vm", planName: "Free", cloudPlanAccess: "free" })).toMatch(/cloud provider keeps billing/);
   });
 
   it("describes the Linux computer as a terminal and files with no desktop, on the same plan as Ubuntu Desktop", () => {

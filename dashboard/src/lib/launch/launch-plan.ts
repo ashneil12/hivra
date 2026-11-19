@@ -572,12 +572,15 @@ export function costSummary({
   profileId,
   substrate,
   planName,
+  cloudPlanAccess,
   modelNote = null,
   planOnHold = null,
 }: {
   profileId: LaunchProfileId;
   substrate: LaunchSubstrate;
   planName: string | null;
+  /** Whether a verified Hivra Cloud plan can cover this launch. */
+  cloudPlanAccess: "paid" | "free" | "unknown";
   /** How model usage is paid, when it isn't set up inside the agent. */
   modelNote?: string | null;
   /** A paid plan holds the account but is on hold until it is settled. */
@@ -587,6 +590,12 @@ export function costSummary({
   if (profileId === "omarchy") return "Nothing is bought. It uses a computer Hivra already set up.";
   if (substrate === "hivra-cloud" && planOnHold) {
     return withModel(`Uses your ${planOnHold} plan allowance once the plan is active again.`);
+  }
+  if (substrate === "hivra-cloud" && cloudPlanAccess === "free") {
+    return withModel("Requires a paid plan to launch on Hivra Cloud.");
+  }
+  if (substrate === "hivra-cloud" && cloudPlanAccess === "unknown") {
+    return withModel("Checking your Hivra Cloud plan before launch.");
   }
   if (substrate === "hivra-cloud" && profileId === "aeon") {
     return withModel(`No extra charge. Uses one agent slot on your ${planName ?? "Hivra Cloud"} plan, not its CPU and memory.`);

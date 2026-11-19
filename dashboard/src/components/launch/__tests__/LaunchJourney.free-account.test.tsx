@@ -128,6 +128,9 @@ it("offers a connected server separately from the paid Hivra Cloud path", async 
 
   const blocker = await screen.findByRole("alert");
   expect(blocker).toHaveTextContent("A compatible server is already connected; choose it to check capacity");
+  const cost = screen.getByLabelText("Cost", { selector: "dl" });
+  expect(cost).toHaveTextContent("Requires a paid plan to launch on Hivra Cloud.");
+  expect(cost).not.toHaveTextContent(/Free plan allowance/);
   fireEvent.click(within(blocker).getByRole("button", { name: "Use connected server" }));
 
   expect(screen.getByRole("button", { name: /^My infrastructure/ })).toHaveAttribute("aria-pressed", "true");
