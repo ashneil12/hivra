@@ -172,6 +172,12 @@ export function buildPricingOffers(siteUrl: string): Array<Record<string, unknow
 const ENTRY = planSizeParts("entry");
 const LARGER = planSizeParts("larger");
 
+/** Shown on the entry plan while the card trial is on (HIVRA_CARD_TRIAL=on). */
+export const CARD_TRIAL_PRICING = {
+  label: "Start a 7-day free trial",
+  note: `Free for 7 days, then ${ENTRY.price}/month. A card is needed to start and is charged when the trial ends unless you cancel. During the trial you get one agent with 1 vCPU and 2 GB, and it sleeps when idle.`,
+} as const;
+
 /** The paragraphs under the headline. */
 export const PRICING_INTRO = [
   "Sign up free and connect your own server, or use Hivra's open-source platform yourself. Or pay us to run the computer for you. No requirement to buy a token.",

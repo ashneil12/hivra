@@ -7,6 +7,7 @@ import {
   type PlanKey,
 } from "@/lib/subscription";
 import { getStripe } from "@/lib/stripe";
+import { CARD_TRIAL_LIMITS, CARD_TRIAL_METADATA_KEY, isCardTrialSubscription, recordCardTrialStart } from "@/lib/billing/card-trial";
 import { log } from "@/lib/logger";
 import { posthogClient } from "@/lib/posthog";
 import {
@@ -847,12 +848,17 @@ export class StripeWebhookService {
       ladder.isLadder && ladderConfig && ladder.plan
         ? ladderSubscriptionColumns(ladderConfig, ladder.plan.planKey, ladder.alwaysOnExtras)
         : null;
-    const plan = {
-      maxAgents: ladderLimits?.maxAgents ?? legacyPlan.maxAgents,
-      totalCpu: ladderLimits?.totalCpu ?? legacyPlan.totalCpu,
-      totalRam: ladderLimits?.totalRam ?? legacyPlan.totalRam,
-      priority: legacyPlan.priority,
-    };
+    // A card trial gets the trial's small pool until Stripe charges the card;
+    // the first paid event writes the plan's own limits.
+    const cardTrial = !ladder.isLadder && isCardTrialSubscription(subscription);
+    const plan = cardTrial
+      ? { ...CARD_TRIAL_LIMITS, priority: legacyPlan.priority }
+      : {
+          maxAgents: ladderLimits?.maxAgents ?? legacyPlan.maxAgents,
+          totalCpu: ladderLimits?.totalCpu ?? legacyPlan.totalCpu,
+          totalRam: ladderLimits?.totalRam ?? legacyPlan.totalRam,
+          priority: legacyPlan.priority,
+        };
 
     // Cross-check `metadata.plan` against the actual price the customer is
     // paying for. Stripe's metadata is authoritative for the platform but
@@ -1117,6 +1123,13 @@ export class StripeWebhookService {
       );
     }
 
+    if (cardTrial) {
+      // One trial per card: a card that already trialed on another account
+      // ends this trial now, and the resulting paid event activates the plan.
+      const { endedEarly } = await recordCardTrialStart({ stripe: getStripe(), subscription, userId });
+      if (endedEarly) return;
+    }
+
     const nextStatus =
       subscription.status === "active" || subscription.status === "trialing"
         ? "active"
@@ -1170,6 +1183,16 @@ export class StripeWebhookService {
           total_cpu_budget: plan.totalCpu,
           total_ram_budget: plan.totalRam,
           ...(ladderColumns ?? {}),
+          // Only card-trial subscriptions touch trial_ends_at: set while the
+          // trial runs, cleared by the first paid event.
+          ...(subscription.metadata?.[CARD_TRIAL_METADATA_KEY]
+            ? {
+                trial_ends_at:
+                  cardTrial && subscription.trial_end
+                    ? new Date(subscription.trial_end * 1000).toISOString()
+                    : null,
+              }
+            : {}),
           excess_resources: false,
           current_period_start: periodStart
             ? new Date(periodStart * 1000).toISOString()
@@ -1218,7 +1241,7 @@ export class StripeWebhookService {
       await grantPlanAllowanceForUser(userId);
     }
 
-    if (subscription.status === "active" || subscription.status === "trialing") {
+    if (!cardTrial && (subscription.status === "active" || subscription.status === "trialing")) {
       // Bump every running instance to the new tier (DB tier_key + live VM
       // resize for Proxmox VMs). Webhook continues even if any individual
       // resize fails — the DB write is the source of truth, and warden's

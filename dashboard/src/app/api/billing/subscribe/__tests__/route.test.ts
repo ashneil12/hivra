@@ -1231,8 +1231,43 @@ describe("POST /api/billing/subscribe", () => {
       expect(params).not.toHaveProperty("discounts");
     });
 
+    it("gives a first-time monthly Pro buyer the 7-day card trial while HIVRA_CARD_TRIAL is on", async () => {
+      process.env.HIVRA_CARD_TRIAL = "on";
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+
+      const res = await POST(createRequest({ plan: "operator" }));
+      expect(res.status).toBe(200);
+
+      const params = mockStripeSessionsCreate.mock.calls[0][0];
+      expect(params.payment_method_collection).toBe("always");
+      expect(params.subscription_data).toMatchObject({
+        trial_period_days: 7,
+        trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
+      });
+      expect(params.subscription_data.metadata.hivra_trial).toBe("card_7d");
+      expect(supabaseAdmin!.from).toHaveBeenCalledWith("hermes_trial_usage");
+    });
+
+    it.each([
+      ["a larger plan", { plan: "fleet" }, null, []],
+      ["yearly billing", { plan: "operator", cadence: "yearly" }, null, []],
+      ["an account that trialed before", { plan: "operator" }, null, [{ id: "t1" }]],
+      ["an account that paid before", { plan: "operator" }, { stripe_customer_id: "cus_123", plan: "free", status: "canceled", upgraded_at: "2026-10-01T00:00:00Z" }, []],
+    ])("gives no trial to %s even with HIVRA_CARD_TRIAL on", async (_name, body, existing, trialRows) => {
+      process.env.HIVRA_CARD_TRIAL = "on";
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: existing, error: null });
+      mockSupabaseQuery.limit.mockResolvedValue({ data: trialRows, error: null });
+
+      const res = await POST(createRequest(body));
+      expect(res.status).toBe(200);
+
+      const params = mockStripeSessionsCreate.mock.calls[0][0];
+      expect(params.subscription_data).not.toHaveProperty("trial_period_days");
+      expect(params.subscription_data.metadata).not.toHaveProperty("hivra_trial");
+    });
+
     it.each(["operator", "fleet", "command"] as const)(
-      "%s checkout never sends trial_period_days, trial_end or trial metadata, even with the retired trial env set",
+      "%s checkout never sends trial_period_days, trial_end or trial metadata, with the card trial switch off and the retired trial env set",
       async (plan) => {
         // The retired experiment env must have no effect any more.
         process.env.TRIAL_EXPERIMENT_ENABLED = "true";

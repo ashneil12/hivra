@@ -16,6 +16,11 @@ import {
   isLiveStripeSubscriptionId,
 } from "@/lib/billing/subscription-status";
 import { log } from "@/lib/logger";
+import {
+  accountHadCardTrial,
+  cardTrialCheckoutFields,
+  checkoutGetsCardTrial,
+} from "@/lib/billing/card-trial";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { loadPlanLadderTag } from "@/lib/billing/plan-ladder-entitlement";
 import {
@@ -189,7 +194,7 @@ export async function POST(req: NextRequest) {
     const { data: existingSub, error: existingSubError } = await supabaseAdmin
       .from("hermes_subscriptions")
       .select(
-        "stripe_customer_id, stripe_subscription_id, plan, status, updated_at, signup_attribution"
+        "stripe_customer_id, stripe_subscription_id, plan, status, updated_at, signup_attribution, upgraded_at"
       )
       .eq("user_id", clerkUserId)
       .maybeSingle();
@@ -532,7 +537,14 @@ export async function POST(req: NextRequest) {
       ? `_x${keyDigest([...expiredSessionIds].sort().join(","))}`
       : "";
     const ladderKeyPart = ladderSale ? `_l${PLAN_LADDER_ID}` : "";
-    const idempotencyKey = `checkout_np_${clerkUserId}_${planKey}_${cadence}${ladderKeyPart}${returnKey}${expiredKey}_${Math.floor(Date.now() / 3600000)}`;
+    // The card trial (HIVRA_CARD_TRIAL=on): 7 days of the entry plan, card
+    // required, once per account. Off, every checkout is direct payment.
+    const trialCandidate =
+      checkoutGetsCardTrial({ planKey, cadence, ladderSale: Boolean(ladderSale), existingSub, hadTrial: false });
+    const withTrial = trialCandidate && !(await accountHadCardTrial(clerkUserId));
+    const trial = withTrial ? cardTrialCheckoutFields() : null;
+    const trialKeyPart = trial ? "_t" : "";
+    const idempotencyKey = `checkout_np_${clerkUserId}_${planKey}_${cadence}${ladderKeyPart}${trialKeyPart}${returnKey}${expiredKey}_${Math.floor(Date.now() / 3600000)}`;
     const returnQuery = returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : "";
 
     const sessionMetadata: Record<string, string> = {
@@ -541,6 +553,7 @@ export async function POST(req: NextRequest) {
       cadence,
       checkout_ip: ip,
       ...(ladderSale ? { plan_ladder: PLAN_LADDER_ID } : {}),
+      ...(trial ? trial.metadata : {}),
     };
 
     const session = await stripe.checkout.sessions.create(
@@ -551,10 +564,11 @@ export async function POST(req: NextRequest) {
         customer: stripeCustomerId,
         metadata: returnTo ? { ...sessionMetadata, return_to: returnTo } : sessionMetadata,
         line_items: [{ price: stripePriceId, quantity: 1 }],
-        // Direct payment only: no trial_period_days, ever (owner decision
-        // 2026-10-07: you purchase and you get what you want).
+        // Direct payment unless this checkout gets the card trial (owner
+        // decision 2026-11-19). The card is collected either way.
         subscription_data: {
           metadata: sessionMetadata,
+          ...(trial ? trial.subscription_data : {}),
         },
         // {CHECKOUT_SESSION_ID} is replaced by Stripe — used by confirm-checkout
         // to instantly activate the account without waiting for webhook delivery

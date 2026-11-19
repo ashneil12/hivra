@@ -12,6 +12,7 @@ import styles from "@/components/public-editorial/secondary-site.module.css";
 import StructuredData from "@/components/StructuredData";
 import { glossify } from "@/components/gloss/glossify";
 import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
+import { isCardTrialEnabled } from "@/lib/billing/card-trial";
 import { getTokenSurfaceView, tokenSurfacesVisible } from "@/lib/compliance/token-surface-view";
 import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
@@ -24,6 +25,7 @@ import {
   PRICING_CLOSING,
   PRICING_COMPARISON,
   PRICING_FAQ,
+  CARD_TRIAL_PRICING,
   PRICING_FAQ_HEADING,
   PRICING_INTRO,
   PRICING_OPTIONS,
@@ -94,6 +96,7 @@ export default async function PricingPage() {
   const view = await getTokenSurfaceView();
   const showToken = tokenSurfacesVisible(view);
   const options = PRICING_OPTIONS;
+  const cardTrial = isCardTrialEnabled();
 
   return (
     <PublicSite className={styles.page} data-page="pricing" tokenSurfaces={showToken}>
@@ -169,8 +172,9 @@ export default async function PricingPage() {
                 <p key={paragraph}>{paragraph}</p>
               ))}
               <p>{options.entry.goodFor}</p>
+              {cardTrial ? <p data-testid="card-trial-note">{CARD_TRIAL_PRICING.note}</p> : null}
               <Link className={`${page.action} ${page.actionPrimary}`} href={PRICING_ACTIONS.chooseEntry.href}>
-                {PRICING_ACTIONS.chooseEntry.label}
+                {cardTrial ? CARD_TRIAL_PRICING.label : PRICING_ACTIONS.chooseEntry.label}
                 <ArrowRight size={18} aria-hidden="true" />
               </Link>
             </article>

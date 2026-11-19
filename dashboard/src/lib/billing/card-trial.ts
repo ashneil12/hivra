@@ -1,0 +1,202 @@
+// The card trial: a 7-day Stripe trial of the entry plan (Pro), card required
+// at Checkout. Off unless HIVRA_CARD_TRIAL=on. While it runs, the account gets
+// a small computer pool, its Hivra Cloud agents sleep when idle and can't be
+// kept awake, and the AI starter credit is capped. When the trial ends, Stripe
+// charges the card and the subscription becomes a normal Pro plan. A trial that
+// ends unpaid or canceled goes through the existing billing suspension path.
+// Owner decision 2026-11-19.
+
+import type Stripe from "stripe";
+import { supabaseAdmin } from "@/lib/supabase";
+import { log } from "@/lib/logger";
+
+const SOURCE = "card-trial";
+
+export const CARD_TRIAL_DAYS = 7;
+export const CARD_TRIAL_PLAN = "operator" as const;
+/** Stripe subscription metadata that marks a card trial. */
+export const CARD_TRIAL_METADATA_KEY = "hivra_trial";
+export const CARD_TRIAL_METADATA_VALUE = "card_7d";
+
+/** The trial's computer pool: one agent, 1 vCPU and 2 GB, enough for every agent's base size. */
+export const CARD_TRIAL_LIMITS = { maxAgents: 1, totalCpu: 1, totalRam: 2048 } as const;
+
+/** The most AI starter credit a trialing account gets. */
+export const CARD_TRIAL_STARTER_CREDIT_USD = 1;
+
+export function isCardTrialEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.HIVRA_CARD_TRIAL?.trim().toLowerCase() === "on";
+}
+
+/** True when this Stripe subscription is a card trial that is still in its trial. */
+export function isCardTrialSubscription(
+  subscription: Pick<Stripe.Subscription, "status" | "metadata">
+): boolean {
+  return (
+    subscription.status === "trialing" &&
+    subscription.metadata?.[CARD_TRIAL_METADATA_KEY] === CARD_TRIAL_METADATA_VALUE
+  );
+}
+
+export interface CardTrialHistory {
+  /** The account's subscription row, if any. */
+  existingSub?: { stripe_subscription_id?: string | null; upgraded_at?: string | null } | null;
+  /** Whether a trial was ever recorded for this account. */
+  hadTrial: boolean;
+}
+
+/**
+ * Whether this checkout gets the trial: the switch is on, it is the entry plan
+ * billed monthly, not a plan-ladder sale, and the account has never paid or
+ * trialed before.
+ */
+export function checkoutGetsCardTrial(
+  input: { planKey: string; cadence: string; ladderSale: boolean } & CardTrialHistory,
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  if (!isCardTrialEnabled(env)) return false;
+  if (input.planKey !== CARD_TRIAL_PLAN || input.cadence !== "monthly" || input.ladderSale) return false;
+  if (input.hadTrial) return false;
+  if (input.existingSub?.upgraded_at) return false;
+  if (input.existingSub?.stripe_subscription_id) return false;
+  return true;
+}
+
+/** The Checkout fields that start the trial. The card is always collected. */
+export function cardTrialCheckoutFields(): {
+  payment_method_collection: "always";
+  subscription_data: Pick<Stripe.Checkout.SessionCreateParams.SubscriptionData, "trial_period_days" | "trial_settings">;
+  metadata: Record<string, string>;
+} {
+  return {
+    payment_method_collection: "always",
+    subscription_data: {
+      trial_period_days: CARD_TRIAL_DAYS,
+      trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
+    },
+    metadata: { [CARD_TRIAL_METADATA_KEY]: CARD_TRIAL_METADATA_VALUE },
+  };
+}
+
+type Db = NonNullable<typeof supabaseAdmin>;
+
+/** Whether the account ever started a card trial. A failed read counts as yes: never hand out a second trial on doubt. */
+export async function accountHadCardTrial(userId: string, db: Db | null = supabaseAdmin): Promise<boolean> {
+  if (!db) return true;
+  const { data, error } = await db.from("hermes_trial_usage").select("id").eq("user_id", userId).limit(1);
+  if (error) {
+    log.warn("could not read trial history; not offering a trial", {
+      source: SOURCE,
+      failureType: "card_trial_history_read_failed",
+      userId,
+    });
+    return true;
+  }
+  return Array.isArray(data) && data.length > 0;
+}
+
+/** True while the account's subscription row is inside a card trial. A failed read is false. */
+export async function isInCardTrial(userId: string, db: Db | null = supabaseAdmin, now: Date = new Date()): Promise<boolean> {
+  if (!db) return false;
+  try {
+    const { data, error } = await db
+      .from("hermes_subscriptions")
+      .select("trial_ends_at")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error || !data) return false;
+    const endsAt = (data as { trial_ends_at?: string | null }).trial_ends_at;
+    return typeof endsAt === "string" && new Date(endsAt).getTime() > now.getTime();
+  } catch {
+    return false;
+  }
+}
+
+/** Card fingerprint of the subscription's default payment method, or null. */
+async function cardFingerprint(stripe: Stripe, subscription: Stripe.Subscription): Promise<string | null> {
+  const pm = subscription.default_payment_method;
+  const pmId = typeof pm === "string" ? pm : pm?.id;
+  if (!pmId) return null;
+  const method = typeof pm === "object" && pm?.card ? pm : await stripe.paymentMethods.retrieve(pmId);
+  return method.card?.fingerprint ?? null;
+}
+
+/**
+ * Records a card trial when it starts. If another account already trialed with
+ * the same card, the trial ends now so Stripe charges for the plan instead.
+ * Returns true when the trial was ended. Throws on a failed write so the
+ * webhook retries.
+ */
+export async function recordCardTrialStart(params: {
+  stripe: Stripe;
+  subscription: Stripe.Subscription;
+  userId: string;
+  db?: Db | null;
+}): Promise<{ endedEarly: boolean }> {
+  const db = params.db ?? supabaseAdmin;
+  if (!db) throw new Error("database not configured");
+  const { subscription, userId } = params;
+
+  const { data: existing, error: existingError } = await db
+    .from("hermes_trial_usage")
+    .select("id")
+    .eq("stripe_subscription_id", subscription.id)
+    .limit(1);
+  if (existingError) throw new Error(`trial usage read failed: ${existingError.message}`);
+  if (Array.isArray(existing) && existing.length > 0) return { endedEarly: false };
+
+  const fingerprint = await cardFingerprint(params.stripe, subscription);
+  let reused = false;
+  if (fingerprint) {
+    const { data: prior, error: priorError } = await db
+      .from("hermes_trial_usage")
+      .select("user_id")
+      .eq("card_fingerprint", fingerprint)
+      .neq("user_id", userId)
+      .limit(1);
+    if (priorError) throw new Error(`trial usage read failed: ${priorError.message}`);
+    reused = Array.isArray(prior) && prior.length > 0;
+  }
+
+  const { error: insertError } = await db.from("hermes_trial_usage").insert({
+    user_id: userId,
+    stripe_subscription_id: subscription.id,
+    card_fingerprint: fingerprint,
+  });
+  if (insertError) throw new Error(`trial usage write failed: ${insertError.message}`);
+
+  if (reused) {
+    log.info("card already used for a trial on another account; ending this trial now", {
+      source: SOURCE,
+      failureType: "card_trial_card_reused",
+      userId,
+      subscriptionId: subscription.id,
+    });
+    await params.stripe.subscriptions.update(subscription.id, { trial_end: "now" });
+    return { endedEarly: true };
+  }
+  return { endedEarly: false };
+}
+
+/** Makes a trial account's new Hivra Cloud agent sleep when idle. Best-effort. */
+export async function applyCardTrialSleep(userId: string, agentId: string, db: Db | null = supabaseAdmin): Promise<boolean> {
+  if (!db || !(await isInCardTrial(userId, db))) return false;
+  const { error } = await db
+    .from("hivra_agents")
+    .update({ sleep_policy: "full", always_on: false })
+    .eq("id", agentId)
+    .eq("user_id", userId);
+  if (error) {
+    log.warn("could not set sleep for a trial agent", {
+      source: SOURCE,
+      failureType: "card_trial_sleep_policy_failed",
+      userId,
+      agentId,
+    });
+    return false;
+  }
+  return true;
+}
+
+export const CARD_TRIAL_KEEP_AWAKE_MESSAGE =
+  "During the free trial, agents sleep when idle. Keep awake is available once your plan starts.";
