@@ -166,6 +166,41 @@ describe("ActivatePage", () => {
     });
   });
 
+  it("goes on to the entry plan's checkout when the Free plan is closed", async () => {
+    let plan = "free";
+    mockGet.mockImplementation((key: string) => (key === "plan" ? plan : null));
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        json: async () => ({ success: false, error: "Hivra no longer has a free plan.", reason: "FREE_PLAN_CLOSED" }),
+      } as Response)
+      .mockResolvedValue({
+        json: async () => ({ success: true, data: { url: "https://checkout.stripe.com/c/pay/cs_test_trial" } }),
+      } as Response);
+
+    const { rerender } = render(<ActivatePage />);
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/get-started/activate?plan=operator");
+    });
+
+    // The router keeps the page mounted and only changes the query.
+    plan = "operator";
+    rerender(<ActivatePage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenLastCalledWith("/api/billing/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: "operator", cadence: "monthly" }),
+      });
+    });
+    await waitFor(() => {
+      expect(assignMock).toHaveBeenCalledWith("https://checkout.stripe.com/c/pay/cs_test_trial");
+    });
+  });
+
   it("activates the free plan without opening Stripe checkout", async () => {
     mockGet.mockImplementation((key: string) => {
       if (key === "plan") return "free";

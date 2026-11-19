@@ -108,6 +108,8 @@ export interface BillingUsageData {
     totalRam: number;
     status: string;
     currentPeriodEnd: string | null;
+    /** When the card trial ends; null or missing when the account is not in one. */
+    trialEndsAt?: string | null;
     source?: BillingPlanSource;
     tokenTier?: "pro" | "power";
     canChangePlanInPlace?: boolean;
@@ -300,6 +302,7 @@ export function useBillingController() {
   const [cryptoMode, setCryptoMode] = useState<"yearly" | "permanent">("yearly");
   const [changingPlan, setChangingPlan] = useState<string | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);
+  const [endingTrial, setEndingTrial] = useState(false);
   // Cancel save-flow: one survey question + a matched save offer shown
   // BEFORE the existing cancel path (the Stripe billing portal). "Cancel
   // anyway" runs handlePortal unchanged.
@@ -1263,6 +1266,26 @@ export function useBillingController() {
     }
   };
 
+  const handleEndTrial = async () => {
+    setEndingTrial(true);
+    captureBillingEvent("upgrade_clicked", { surface: "billing", via: "end_trial", from_plan: "trial", to_plan: "operator" });
+    try {
+      const res = await fetch("/api/billing/end-trial", { method: "POST" });
+      const result = await res.json();
+      if (result.success) {
+        setSuccessMsg("You're on full Pro now: 3 agents, 2 vCPU and 4 GB, and Keep awake.");
+        await fetchUsage();
+      } else {
+        setViolation(result.error || "Couldn't upgrade right now. Please try again.");
+      }
+    } catch (err) {
+      clientLog.error("End trial request failed", err, { source: "billing-page" });
+      setViolation("Couldn't upgrade right now. Please try again.");
+    } finally {
+      setEndingTrial(false);
+    }
+  };
+
   const handleEnableBackup = async (instanceId: string) => {
     setEnablingBackup(instanceId);
     try {
@@ -1335,6 +1358,7 @@ export function useBillingController() {
     setCryptoMode,
     changingPlan,
     portalLoading,
+    endingTrial,
     showCancelSaveFlow,
     setShowCancelSaveFlow,
     toppingUp,
@@ -1390,6 +1414,7 @@ export function useBillingController() {
     handleRefreshTokenHolding,
     handleConnectWallet,
     handlePortal,
+    handleEndTrial,
     handleEnableBackup,
   };
 }

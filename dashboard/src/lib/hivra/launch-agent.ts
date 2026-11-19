@@ -28,6 +28,8 @@ import { checkHostWakeCapacity } from "@/lib/proxmox/wake-admission";
 import { selectAvoidingCriticalHosts } from "@/lib/hivra/capacity/placement";
 import { GOALS } from "@/lib/hivra/agent-identity";
 import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
+import { applyCardTrialSleep } from "@/lib/billing/card-trial";
+import { FREE_PLAN_CLOSED_CODE, FREE_PLAN_CLOSED_MESSAGE, accountNeedsPlanForFree } from "@/lib/billing/free-plan-closure";
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
@@ -1180,6 +1182,10 @@ export async function launchHivraAgentForUser(
       }
     }
 
+    if (deployment.mode === "self-managed" && (await accountNeedsPlanForFree(userId))) {
+      return apiError(FREE_PLAN_CLOSED_MESSAGE, 403, undefined, { code: FREE_PLAN_CLOSED_CODE });
+    }
+
     if (deployment.mode === "self-managed") {
       // Select the substrate from the exact owner-bound target, never a browser
       // supplied host/server ID. A provider computer cannot enter the Proxmox
@@ -1764,6 +1770,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       await launchOperations.accept(launchOperationAdmission, String(agent.id), 202);
     }
     await logHivraAgentEvent({ userId, event: "launch_requested", agentId: agent.id, agentType: type, detail: { cpu, ram, goal } });
+    if (deployment.mode === "hivra-managed") await applyCardTrialSleep(userId, String(agent.id));
 
     // box_created (server-side funnel event) for the hivra lane. The Hermes lane
     // (/api/instances) has emitted this since #353's fix, but claude-code / codex /
