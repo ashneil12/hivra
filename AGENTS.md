@@ -51,6 +51,10 @@ Everything in this repository is public: every branch, commit message, PR title 
 
 Use enough verification for the risk of the change:
 
+- Scope discretionary tests to the behavior that changed and the callers,
+  dependencies and shared contracts it can affect. Broaden the selection when
+  changing a shared path or when the impact is uncertain. This does not change
+  protected CI checks or required release verification.
 - Tiny or local change: run the smallest relevant check. Examples: a focused unit test, lint on the touched file, or a docs/script smoke check. No post-deploy check is expected.
 - Normal change: run the relevant tests plus a basic sanity check for the affected workflow. If the change is user-facing, check canary after the Vercel Git build of the `canary` merge.
 - Risky or user-facing hot path: run focused hot-path or smoke-contract tests, broader verification when practical, and a post-deploy canary check after the build.
@@ -58,6 +62,10 @@ Use enough verification for the risk of the change:
 High-risk areas include auth, billing, chat, provisioning, instance lifecycle, gateway/networking, runtime contracts, migrations, secrets, and deployment workflows.
 
 For dashboard changes, `cd dashboard && npm run verify:plan -- --risk <tiny|normal|high>` prints the expected verification level.
+
+The [weekly general check](dashboard/e2e/README.md#weekly-general-check) runs
+representative offline coverage separately from per-change verification. It is
+not a live test or release approval.
 
 ## Live Environment Acceptance
 
