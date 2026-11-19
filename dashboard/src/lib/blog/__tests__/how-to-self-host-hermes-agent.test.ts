@@ -64,7 +64,7 @@ describe("Hermes self-hosting operational guide", () => {
     ]) expect(acceptance).toContain(expected);
   });
 
-  it("provides private backup and destructive-restore guidance, not just image rollback", () => {
+  it("provides private backup and accurate restore guidance, not just image rollback", () => {
     const recovery = section("Back up before upgrading, and rehearse a restore");
     for (const expected of [
       "hermes backup -o my-agent.zip",
@@ -74,14 +74,31 @@ describe("Hermes self-hosting operational guide", () => {
       ".env",
       "auth.json",
       "credential-bearing secret",
-      "Import replaces state",
-      "private test destination",
+      "leaves destination-only files in place",
+      "fresh isolated destination",
       "hermes doctor",
       "verify the persistent mount again",
     ]) expect(recovery).toContain(expected);
     expect(section("Upgrade with a recovery point, not just an old image")).toContain(
       "Reverting an image alone does not undo changes already written"
     );
+  });
+
+  it("separates import overlay, transfer replacement, and automatic service restart behavior", () => {
+    const recovery = section("Back up before upgrading, and rehearse a restore");
+    for (const expected of [
+      "Plain `hermes import` is an overlay",
+      "overwrites matching files from the archive",
+      "Import may start a gateway service that is already installed",
+      "even if it was stopped",
+      "it does not install a missing service",
+      "fresh isolated destination with no gateway service installed",
+      "separate replacement workflow",
+      "`hermes import my-agent.zip --keep-host --messaging-off`",
+      "imported messaging bots are switched off",
+    ]) expect(recovery).toContain(expected);
+    expect(recovery).not.toContain("Import replaces state");
+    expect(recovery).not.toContain("stop the destination gateway through its service controls");
   });
 
   it("keeps authorization brief and removes unconditional resource and access claims", () => {

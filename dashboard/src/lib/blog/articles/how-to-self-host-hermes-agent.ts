@@ -8,9 +8,14 @@ import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 // https://hermes-agent.nousresearch.com/docs/user-guide/multi-profile-gateways
 // https://hermes-agent.nousresearch.com/docs/user-guide/messaging/telegram
 // https://hermes-agent.nousresearch.com/docs/user-guide/backup-and-transfer
+// https://hermes-agent.nousresearch.com/docs/reference/cli-commands
+// https://hermes-agent.nousresearch.com/docs/developer-guide/gateway-internals
 // https://docs.docker.com/reference/cli/docker/compose/down/
 // https://docs.docker.com/engine/containers/start-containers-automatically/
 // https://raw.githubusercontent.com/ashneil12/hivra/8b1892fdd765a59a9062b594f98ea94a84cf6275/docs/STATUS.md
+// https://raw.githubusercontent.com/NousResearch/hermes-agent/main/hermes_cli/backup.py
+// https://raw.githubusercontent.com/NousResearch/hermes-agent/main/hermes_cli/backup_keep_host.py
+// https://raw.githubusercontent.com/NousResearch/hermes-agent/main/hermes_cli/gateway_setup_service.py
 export const article: BlogArticle = {
   slug: "how-to-self-host-hermes-agent",
   title: "How to self-host Hermes Agent: install, verify, and restore",
@@ -85,8 +90,8 @@ export const article: BlogArticle = {
       paragraphs: [
         "Nous's [Backup & Transfer guide](https://hermes-agent.nousresearch.com/docs/user-guide/backup-and-transfer) documents a full-home backup:\n\n```\nhermes backup -o my-agent.zip\n```\n\nRun it in the Hermes environment you actually use. For a container deployment, that means the installation using the mounted `/opt/data`, not an unrelated host installation. Store a private copy off the server before upgrading; a zip left only on the same disk is not protection against losing that disk.",
         "The archive includes every profile, memory, persona, skills, conversations, scheduled jobs, settings, and keys and logins such as `.env` and `auth.json`. Treat it as a credential-bearing secret. Do not commit it, attach it to an issue, or upload it to a public file-sharing link.",
-        "The documented restore command is:\n\n```\nhermes import my-agent.zip\n```\n\nImport replaces state. Before running a restore, preserve the current destination, read the import documentation, and stop the destination gateway through its service controls. Rehearse recovery on a private test destination without running a second gateway against the same bot. Do not assume a profile-only export includes the credentials of a full-home backup.",
-        "For a transfer that must preserve the destination host's settings, the upstream guide documents `hermes import my-agent.zip --keep-host` and the undo point it prints. Read what that option keeps before using it; do not substitute it blindly for a same-host restore. After import, run `hermes doctor`, verify the persistent mount again if using Docker, start only the intended gateway, and repeat the disconnect/restart checklist. Check expected state as well as the ability to get a fresh reply.",
+        "The documented restore command is:\n\n```\nhermes import my-agent.zip\n```\n\nPlain `hermes import` is an overlay: it overwrites matching files from the archive but leaves destination-only files in place. It is not an exact mirror or a full replacement. Import may start a gateway service that is already installed for the destination, even if it was stopped; it does not install a missing service. For a rehearsal, use a fresh isolated destination with no gateway service installed, then inspect the restored files and state before intentionally installing or starting one. Do not assume a profile-only export includes the credentials of a full-home backup.",
+        "For a Hermes Cloud transfer, upstream documents a separate replacement workflow using `hermes import my-agent.zip --keep-host --messaging-off`. That workflow removes eligible destination files absent from the archive while preserving the host-owned items listed in the guide; its imported messaging bots are switched off. This is not the behavior of plain `hermes import` and is not a generic exact-replacement shortcut for a self-hosted restore. Read the option's keep list and printed undo point before using it. After import, run `hermes doctor`, verify the persistent mount again if using Docker, start only the intended gateway, and repeat the disconnect/restart checklist. Check expected state as well as the ability to get a fresh reply.",
       ],
     },
     {
