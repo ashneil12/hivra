@@ -141,6 +141,31 @@ describe("blog registry", () => {
     }
   });
 
+  // Headings render as plain text in the page and its contents list, so markdown there shows up literally.
+  it("writes section headings as plain text, without inline markdown", () => {
+    const marked = BLOG_ARTICLES_LIST.flatMap((article) =>
+      article.sections
+        .filter(({ heading }) => /[`*_]|\]\(/.test(heading))
+        .map(({ heading }) => `${article.slug}: ${heading}`),
+    );
+    expect(marked).toEqual([]);
+  });
+
+  it("numbers route headings to match the count the short answer gives", () => {
+    const COUNTS: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7 };
+    const mismatched: string[] = [];
+    for (const article of BLOG_ARTICLES_LIST) {
+      const routes = article.sections.map(({ heading }) => /^Route (\d+):/.exec(heading)?.[1]).filter(Boolean).map(Number);
+      if (routes.length === 0) continue;
+      const word = /\b(two|three|four|five|six|seven) (?:ways|routes)\b/i.exec(article.shortAnswer ?? "")?.[1]?.toLowerCase();
+      const expected = routes.map((_, index) => index + 1);
+      if (!word || COUNTS[word] !== routes.length || routes.join() !== expected.join()) {
+        mismatched.push(`${article.slug}: short answer says ${word ?? "no count"}, headings number ${routes.join(", ")}`);
+      }
+    }
+    expect(mismatched).toEqual([]);
+  });
+
   it("links only to routes that exist or that the cutover adds", () => {
     const featureSlugs = new Set(featureParams().map(({ slug }) => slug));
     const compareSlugs = new Set(compareParams().map(({ slug }) => slug));

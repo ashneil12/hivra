@@ -47,7 +47,7 @@ export const howToInstallCodexCli: BlogArticle = {
     "As of November 2026, on macOS or Linux run `curl -fsSL https://chatgpt.com/codex/install.sh | sh`. On Windows run the PowerShell command in step two below, or use WSL. `npm install -g @openai/codex` and `brew install --cask codex` also work. Then run `codex` and choose Sign in with ChatGPT.",
   sections: [
     {
-      heading: "The short version: one command, then `codex`",
+      heading: "The short version: one install command, then sign in",
       paragraphs: [
         "OpenAI's [Codex CLI README](https://github.com/openai/codex) lists the install commands. They are the same ones OpenAI's [Codex CLI docs](https://learn.chatgpt.com/docs/cli) show in their install tabs. As of November 2026:",
         "- **macOS or Linux:** `curl -fsSL https://chatgpt.com/codex/install.sh | sh`\n- **Windows (PowerShell):** `powershell -ExecutionPolicy ByPass -c \"irm https://chatgpt.com/codex/install.ps1 | iex\"`\n- **Any system with npm:** `npm install -g @openai/codex`\n- **macOS with Homebrew:** `brew install --cask codex`\n- **Manual:** download an archive from the [latest GitHub Release](https://github.com/openai/codex/releases/latest), extract it and rename the binary to `codex`.",

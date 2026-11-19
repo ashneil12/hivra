@@ -121,7 +121,7 @@ export const claudeCodeOnYourPhone: BlogArticle = {
       ],
     },
     {
-      heading: "Route 5: a Claude Code computer on Hivra, opened from a browser",
+      heading: "A managed option: a Claude Code computer on Hivra, opened from a browser",
       paragraphs: [
         "Hivra is the do-it-yourself route with the machine already taken care of. You launch Claude Code on a private cloud computer that is reserved for it, with the official Anthropic CLI already installed, and you reach its terminal, files and chat from a browser, wherever you are, with nothing to install. Hivra is not affiliated with Anthropic.",
         `**What you get.** ${PLAN_SUMMARY} Open the computer's Terminal tab, start \`tmux\` and run \`claude\` inside it. ${CLI_RUN_LIFETIME} Your files, repositories and Claude Code login stay on the computer, so you return to the same workspace from any device.`,
