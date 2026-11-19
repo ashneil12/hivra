@@ -151,6 +151,11 @@ const FREE_PLAN_CLOSED_FOR_COPY = isFreePlanClosed();
 export const FREE_ACCOUNT_SENTENCE = FREE_PLAN_CLOSED_FOR_COPY
   ? "Hivra Cloud has no free plan; you can self-host the open-source platform at no software cost."
   : "A free account works with a computer or server you connect yourself.";
+/** Picks the copy for the Free plan's state: open (a free account exists) or closed to new sign-ups. */
+export function freeAccountCopy(openText: string, closedText: string): string {
+  return FREE_PLAN_CLOSED_FOR_COPY ? closedText : openText;
+}
+
 /** The same fact as a clause, after "and". */
 export const FREE_ACCOUNT_CLAUSE = FREE_PLAN_CLOSED_FOR_COPY
   ? "the open-source platform is free to self-host"
