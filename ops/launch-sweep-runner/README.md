@@ -30,10 +30,33 @@ anything a crashed run left; the workflow runs it after every sweep.
    copy `launch-sweep.yml` to its `.github/workflows/`.
 2. Register a self-hosted runner on it with the labels `self-hosted` and
    `launch-sweep`. A small Linux VM (2 vCPU, 4 GB, Ubuntu 24.04) is enough: the
-   computers it launches run on Hivra's own hosts. The 15-minute poll is free on
-   a self-hosted runner; on GitHub-hosted runners set the repository variable
-   `LAUNCH_SWEEP_RUNS_ON` to `["ubuntu-latest"]` and expect the poll to use
-   Actions minutes.
+   computers it launches run on Hivra's own hosts, and the 15-minute poll costs
+   nothing on a self-hosted runner. A full sweep takes a few hours, which is
+   more than GitHub's free Actions minutes cover; to use GitHub-hosted runners
+   anyway, set the repository variable `LAUNCH_SWEEP_RUNS_ON` to
+   `["ubuntu-latest"]`.
+
+   To register the VM, take a registration token from the private repository
+   (it lasts an hour), then on the VM as a normal user with sudo:
+
+   ```bash
+   # On a machine with gh signed in as the repository owner:
+   gh api -X POST repos/ashneil12/hivra-launch-sweep/actions/runners/registration-token --jq .token
+
+   # On the VM (Ubuntu 24.04):
+   sudo apt-get update && sudo apt-get install -y curl jq tar
+   mkdir -p ~/actions-runner && cd ~/actions-runner
+   V=$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest | jq -r .tag_name | sed 's/^v//')
+   curl -fsSL -o runner.tar.gz "https://github.com/actions/runner/releases/download/v${V}/actions-runner-linux-x64-${V}.tar.gz"
+   tar xzf runner.tar.gz
+   ./config.sh --unattended --url https://github.com/ashneil12/hivra-launch-sweep \
+     --token <registration token> --name launch-sweep-1 --labels launch-sweep
+   sudo ./svc.sh install && sudo ./svc.sh start
+   ```
+
+   `self-hosted` is added automatically. The workflow installs Node and the
+   browser itself (`playwright install --with-deps` uses sudo, so the runner
+   user needs passwordless sudo, which Ubuntu's default cloud user has).
 3. Add these repository secrets:
 
    | Secret | What |
@@ -45,8 +68,10 @@ anything a crashed run left; the workflow runs it after every sweep.
 
 4. Optional variables: `LAUNCH_SWEEP_WORKERS` (parallel targets, default 1: two launches at once on Canary's single host have failed at kickoff) and
    `LAUNCH_SWEEP_RUNS_ON` (a JSON list of runner labels).
-5. Run the workflow once by hand with `only` set to `linux-computer` and check
-   that the swept commit in `ashneil12/hivra` shows a `launch-sweep` status.
+5. Run the workflow once by hand with `only` set to `linux-computer` to check
+   the setup; its results are in the run's artifacts. A run limited with `only`
+   records no status. Then run it by hand without `only` and check that the
+   swept commit in `ashneil12/hivra` shows a `launch-sweep` status.
 
 ## Reading a result
 
