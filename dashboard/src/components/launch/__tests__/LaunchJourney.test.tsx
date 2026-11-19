@@ -4,7 +4,7 @@ import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { setupLaunchPath } from "@/lib/agent-setup/core";
-import { createLaunchDraft, writeLaunchDraft } from "@/lib/launch/draft-store";
+import { createLaunchDraft, readLaunchDraft, writeLaunchDraft } from "@/lib/launch/draft-store";
 import { LaunchJourney } from "../LaunchJourney";
 
 const routerPushMock = jest.fn();
@@ -94,6 +94,18 @@ describe("LaunchJourney", () => {
 
     await screen.findByRole("heading", { name: "Review and launch Hermes 1" });
     expect(screen.getByRole("button", { name: /^Use my own API key/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it.each([null, "venice-key"] as const)("restores a legacy Hermes draft into the active profile (inference: %s)", async (inference) => {
+    const draft = createLaunchDraft();
+    writeLaunchDraft({ ...draft, stage: "review", resourceKind: "agent", profileId: "hermes", name: "My saved Hermes" }, "user_123");
+    openSetupLink(setupLaunchPath("hermes", inference));
+
+    if (inference) {
+      fireEvent.click(await screen.findByRole("button", { name: "Continue Hermes launch" }));
+    }
+    await screen.findByRole("heading", { name: "Review and launch My saved Hermes" });
+    expect(readLaunchDraft("user_123")).toMatchObject({ profileId: "hermes-computer", launchRequestId: draft.launchRequestId });
   });
 
   function saveCodexDraft() {

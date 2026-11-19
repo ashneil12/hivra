@@ -1033,14 +1033,15 @@ export function LaunchJourney(
     if (ownerId === undefined) return;
     // A template link decides once the template has been read.
     if (templateParam && !templateResult) return;
-    const stored = readLaunchDraft(ownerId);
+    const hermesProfile = legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE;
+    const saved = readLaunchDraft(ownerId);
+    const stored = saved ? withHermesLane(saved, hermesProfile) : null;
     const requestedProfileId = isLaunchProfileId(requestedProfileParam) ? requestedProfileParam : null;
     // A deep link to the prepared Canary computer is ignored where it cannot
     // be claimed, so the link lands on Choose instead of an unusable profile.
     // Read directly: this effect only ever runs on the client.
     const linkedProfile = linkedTemplate?.profileId
       ?? (requestedProfileId === "omarchy" && !preparedCanaryAvailable ? null : requestedProfileId);
-    const hermesProfile = legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE;
     const requestedProfile = linkedProfile === "hermes" || linkedProfile === "hermes-computer" ? hermesProfile : linkedProfile;
     const freshFromIntent = (): LaunchDraft => {
       const next = createLaunchDraft();
@@ -1088,10 +1089,7 @@ export function LaunchJourney(
       // history step inside the journey (its URL carries a stage) restores it.
       initial = insideJourney && stored ? stored : createLaunchDraft();
     }
-    // Hermes goes to the lane that applies: a link or draft that names plain
-    // Hermes opens the computer lane where it is on, and a computer-lane draft
-    // restored where it is off goes back to the instances lane.
-    initial = withHermesLane(withCurrentStage(initial), hermesProfile);
+    initial = withCurrentStage(initial);
     setResumeChoice(null);
     writeLaunchDraft(initial, ownerId);
     setDraft(initial);
