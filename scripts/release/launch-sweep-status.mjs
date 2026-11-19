@@ -13,7 +13,7 @@ import { pathToFileURL } from 'node:url';
 //   node scripts/release/launch-sweep-status.mjs served-sha
 //       The commit the Canary project serves now (its newest successful
 //       GitHub deployment).
-//   node scripts/release/launch-sweep-status.mjs needs-sweep [--sha <sha>]
+//   node scripts/release/launch-sweep-status.mjs needs-sweep [--sha <sha>] [--context agent-checks]
 //       Prints `true` when that commit (default: the served one) has no
 //       launch-sweep status yet.
 //   node scripts/release/launch-sweep-status.mjs publish --sha <sha> --state <pending|success|failure|error> [--context launch-sample]
@@ -75,9 +75,9 @@ export async function servedCanarySha(request, repo = DEFAULT_REPO) {
 }
 
 /** The newest launch-sweep status on a commit, or null. */
-export async function sweepStatus(request, sha, repo = DEFAULT_REPO) {
+export async function sweepStatus(request, sha, repo = DEFAULT_REPO, context = STATUS_CONTEXT) {
   const combined = await request(`/repos/${repo}/commits/${sha}/status?per_page=100`);
-  const status = (combined.statuses || []).find((row) => row.context === STATUS_CONTEXT);
+  const status = (combined.statuses || []).find((row) => row.context === context);
   return status
     ? { state: status.state, description: status.description, targetUrl: status.target_url, sha: combined.sha }
     : null;
@@ -184,7 +184,7 @@ export async function main(argv = process.argv.slice(2), { request = github(), l
   }
   if (command === 'needs-sweep') {
     const sha = flags.sha || (await servedCanarySha(request, repo));
-    log(String((await sweepStatus(request, sha, repo)) === null));
+    log(String((await sweepStatus(request, sha, repo, flags.context || STATUS_CONTEXT)) === null));
     return 0;
   }
   if (command === 'publish') {

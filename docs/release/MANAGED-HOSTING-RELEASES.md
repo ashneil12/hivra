@@ -107,6 +107,11 @@ path). It records the verdict on that commit as the `launch-sweep` commit status
 of a small rotating sample of Launch tiles is recorded separately as
 `launch-sample` and does not gate Promote.
 
+Each Canary merge that changes an agent's install code also installs just that
+agent with the real guest installer in a throwaway container on the same runner
+box and asks it a sum ([agent install checks](../../ops/agent-container-check/README.md)).
+It records the informational `agent-checks` status.
+
 The gate (`scripts/release/launch-sweep-status.mjs gate`) reads only those
 statuses, the Canary project's GitHub deployments and commit trees. A candidate
 matches a Canary commit when the whole tree is the same, or the `dashboard/` tree
