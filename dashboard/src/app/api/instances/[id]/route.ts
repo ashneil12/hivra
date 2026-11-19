@@ -53,6 +53,7 @@ import {
 } from "@/lib/services/instance-orchestrator";
 import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import {
+  HetznerCloudApiError,
   powerOnServer,
   shutdownServer,
   getServer,
@@ -2601,7 +2602,10 @@ export async function DELETE(
           }
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          const alreadyGone = msg.includes("→ 404");
+          // The client throws HetznerCloudApiError with a numeric status; the
+          // message-fragment check covers older error shapes.
+          const alreadyGone =
+            (e instanceof HetznerCloudApiError && e.status === 404) || msg.includes("→ 404");
           if (!alreadyGone) {
             log.error("hetzner delete failed; refusing to mark instance deleted (avoid orphan billable VM)", e, {
               source: "instances",

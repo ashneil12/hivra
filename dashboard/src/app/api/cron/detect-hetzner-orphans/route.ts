@@ -15,11 +15,21 @@ import { runHetznerOrphanSweep } from "@/lib/recovery/hetzner-orphan-detection";
  *
  * Schedule: daily via vercel.json. A leaked server bills until someone acts, and
  * the two-hour age floor means a daily look is enough.
+ *
+ * Gate: HETZNER_ORPHAN_SWEEP_ENABLED="true" turns the sweep on; default off, so
+ * merging does not start provider reads or alerts.
  */
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const ROUTE = "/api/cron/detect-hetzner-orphans";
+/** ops-events keeps at most 25 array items, so each alert carries one batch. */
+export const ORPHAN_ALERT_BATCH_SIZE = 25;
+
+function sweepEnabled(): boolean {
+  const v = process.env.HETZNER_ORPHAN_SWEEP_ENABLED?.trim().toLowerCase();
+  return v === "true" || v === "1" || v === "yes";
+}
 
 export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -40,15 +50,31 @@ export async function GET(req: NextRequest) {
     return apiError("Unauthorized", 401);
   }
 
+  if (!sweepEnabled()) {
+    return apiSuccess({
+      skipped: "hetzner_orphan_sweep_disabled",
+      serversScanned: 0,
+      liveServers: 0,
+      youngServers: 0,
+      orphans: [],
+    });
+  }
+
   try {
     const summary = await runHetznerOrphanSweep();
 
-    if (summary.orphans.length > 0) {
-      const count = summary.orphans.length;
+    const count = summary.orphans.length;
+    const batches = Math.ceil(count / ORPHAN_ALERT_BATCH_SIZE);
+    for (let batch = 0; batch < batches; batch += 1) {
+      const orphans = summary.orphans.slice(
+        batch * ORPHAN_ALERT_BATCH_SIZE,
+        (batch + 1) * ORPHAN_ALERT_BATCH_SIZE,
+      );
+      const batchLabel = batches > 1 ? ` (batch ${batch + 1} of ${batches})` : "";
       await reportOpsEvent({
         source: "synthetic.hetzner-orphan-server",
         severity: "warn",
-        title: `Hetzner hermes-deploy servers with no live row: ${count}`,
+        title: `Hetzner hermes-deploy servers with no live row: ${count}${batchLabel}`,
         message:
           `detect-hetzner-orphans found ${count} hermes-deploy server(s) that no live instance or host ` +
           `row points at. Nothing was deleted. Each one bills until it is removed: check it in the ` +
@@ -57,7 +83,9 @@ export async function GET(req: NextRequest) {
         metadata: {
           orphan_count: count,
           servers_scanned: summary.serversScanned,
-          orphans: summary.orphans.map((orphan) => ({
+          batch: batch + 1,
+          batches,
+          orphans: orphans.map((orphan) => ({
             server_id: orphan.serverId,
             age_hours: orphan.ageHours,
             reason: orphan.reason,
