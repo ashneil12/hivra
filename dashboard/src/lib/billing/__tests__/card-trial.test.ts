@@ -111,7 +111,7 @@ describe("recordCardTrialStart", () => {
   });
 
   it("cancels without billing and makes the next checkout a paid one", async () => {
-    const history = [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }, { data: [], error: null }];
+    const history: Result[] = [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }, { data: [], error: null }];
     const { db, inserts } = fakeDb({ hermes_trial_usage: history });
     const stripe = stripeWithCard("fp_used");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: true });
