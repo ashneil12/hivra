@@ -281,7 +281,7 @@ describe("Hetzner prices: one basis, and the stock warning", () => {
   ];
 
   it("says in the same paragraph, answer or snippet that a CX23, CX33 or CX43 price excludes VAT and IPv4", () => {
-    expect(cheapestMentions.length).toBeGreaterThanOrEqual(8);
+    expect(cheapestMentions.length).toBeGreaterThanOrEqual(7);
     const missing = BLOG_ARTICLES_LIST.flatMap((article) =>
       strings(article)
         .filter((text) => HETZNER_PRICE.test(text))
@@ -302,7 +302,7 @@ describe("Hetzner prices: one basis, and the stock warning", () => {
     expect(article.shortAnswer).toContain("Hetzner showed both as unavailable in October 2026, so check stock");
     expect(faqAnswer("best-vps-for-hermes-agent", /cheapest server/i)).toContain("unavailable in October 2026");
     expect(faqAnswer("what-is-hermes-agent", /Hermes Agent free/i)).toContain("unavailable in October 2026");
-    expect(faqAnswer("how-to-self-host-hermes-agent", /cheapest server/i)).toContain("unavailable in October 2026");
+    expect(faqAnswer("how-to-self-host-hermes-agent", /cheapest server/i)).not.toMatch(/Hetzner|€5\.49|CX23|2 vCPU|4 GB RAM|unavailable in October 2026/i);
   });
 
   it("gives the with-IPv4 prices Hetzner lists, and warns that stock is limited, where servers are recommended", () => {

@@ -11,9 +11,6 @@ import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 // https://docs.docker.com/reference/cli/docker/compose/down/
 // https://docs.docker.com/engine/containers/start-containers-automatically/
 // https://raw.githubusercontent.com/ashneil12/hivra/8b1892fdd765a59a9062b594f98ea94a84cf6275/docs/STATUS.md
-// https://raw.githubusercontent.com/ashneil12/hivra/8b1892fdd765a59a9062b594f98ea94a84cf6275/dashboard/src/lib/blog/articles/best-vps-for-hermes-agent.ts
-// The Hetzner quote below is historical, not a current offer.
-
 export const article: BlogArticle = {
   slug: "how-to-self-host-hermes-agent",
   title: "How to self-host Hermes Agent: install, verify, and restore",
@@ -116,7 +113,7 @@ export const article: BlogArticle = {
     },
     {
       q: "What is the cheapest server that can actually run Hermes Agent?",
-      a: "Community write-ups often cite Hetzner CX23 at €5.49/month excluding VAT and IPv4 (2 vCPU, 4 GB RAM). That is a historical example, not a current offer or a guaranteed minimum for your workload. Hetzner showed this plan as unavailable in October 2026. Check current stock and size for the tools you intend to run.",
+      a: "There is no guaranteed cheapest server for every workload. Compare current provider prices and availability, including tax, IPv4, storage, and model usage. Size for the tools you intend to run rather than treating a community configuration as a guaranteed minimum.",
     },
     {
       q: "How long does the setup actually take?",

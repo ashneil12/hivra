@@ -31,6 +31,12 @@ describe("Hermes self-hosting operational guide", () => {
     expect(copy).not.toMatch(/(?:checked|read|fetched) on \d/i);
   });
 
+  it("avoids repeating the historical Hetzner price, hardware, or stock quote", () => {
+    const answer = article.faqs.find(({ q }) => q === "What is the cheapest server that can actually run Hermes Agent?")?.a;
+    expect(answer).toBe("There is no guaranteed cheapest server for every workload. Compare current provider prices and availability, including tax, IPv4, storage, and model usage. Size for the tools you intend to run rather than treating a community configuration as a guaranteed minimum.");
+    expect(answer).not.toMatch(/Hetzner|€|CX23|vCPU|GB RAM|October 2026|unavailable/i);
+  });
+
   it("separates optional host sandboxing from the persistent container route", () => {
     expect(copy).toContain("Docker is optional for host installs");
     const container = section("Container route: make the data mount explicit");
