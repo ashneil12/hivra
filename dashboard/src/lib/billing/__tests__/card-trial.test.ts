@@ -183,4 +183,10 @@ describe("releaseCardTrialSleep", () => {
     await expect(releaseCardTrialSleep("u1", db)).resolves.toBe(false);
     expect(updates).toHaveLength(0);
   });
+
+  it("throws on a failed read so the webhook retries before the trial is cleared", async () => {
+    const { db, updates } = fakeDb({ hermes_subscriptions: [{ data: null, error: { message: "down" } }] });
+    await expect(releaseCardTrialSleep("u1", db)).rejects.toThrow("trial sleep release read failed");
+    expect(updates).toHaveLength(0);
+  });
 });

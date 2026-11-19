@@ -211,7 +211,10 @@ export async function releaseCardTrialSleep(userId: string, db: Db | null = supa
     .select("trial_ends_at")
     .eq("user_id", userId)
     .maybeSingle();
-  if (error || !(data as { trial_ends_at?: string | null } | null)?.trial_ends_at) return false;
+  // A failed read throws: returning would let the upsert clear trial_ends_at
+  // and the release would never run again.
+  if (error) throw new Error(`trial sleep release read failed: ${error.message}`);
+  if (!(data as { trial_ends_at?: string | null } | null)?.trial_ends_at) return false;
   const { error: updateError } = await db
     .from("hivra_agents")
     .update({ sleep_policy: "off" })
