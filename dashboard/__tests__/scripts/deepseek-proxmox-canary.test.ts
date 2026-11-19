@@ -819,14 +819,18 @@ describe("DeepSeek Proxmox Canary operator harness", () => {
     expect(script).not.toContain("flock");
   });
 
-  it("passes the ask only for a clean exit whose reply contains pong", () => {
+  it("passes the ask only for a clean exit and a standalone pong reply", () => {
     const receipt = (exitCode: number, text: string) => ({ exitCode, elapsedMs: 4200, replyB64: Buffer.from(text).toString("base64") });
     expect(evaluateDeepSeekAsk(receipt(0, "pong\n"))).toEqual({ passed: true, exitCode: 0, elapsedMs: 4200, reply: "pong" });
     expect(evaluateDeepSeekAsk(receipt(0, "Pong.")).passed).toBe(true);
     expect(evaluateDeepSeekAsk(receipt(0, "I cannot do that")).passed).toBe(false);
+    expect(evaluateDeepSeekAsk(receipt(0, "The prompt asked me to say pong, but I could not reply.")).passed).toBe(false);
+    expect(evaluateDeepSeekAsk(receipt(0, "ping-pong")).passed).toBe(false);
+    expect(evaluateDeepSeekAsk(receipt(0, "p\u0000ong")).passed).toBe(false);
+    expect(evaluateDeepSeekAsk(receipt(0, "pong".padEnd(16_385))).passed).toBe(false);
     expect(evaluateDeepSeekAsk(receipt(1, "pong")).passed).toBe(false);
     expect(evaluateDeepSeekAsk(receipt(124, "")).passed).toBe(false);
-    expect(evaluateDeepSeekAsk(receipt(0, "\u001b[31mpong\u001b[0m")).reply).not.toContain("\u001b");
+    expect(evaluateDeepSeekAsk(receipt(0, "\u001b[31mpong\u001b[0m"))).toMatchObject({ passed: true, reply: "pong" });
     expect(() => evaluateDeepSeekAsk({ exitCode: 0, elapsedMs: 1, replyB64: "not base64!" })).toThrow("invalid ask receipt");
     expect(() => evaluateDeepSeekAsk({})).toThrow("invalid ask receipt");
   });
