@@ -547,6 +547,122 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.18.5` builds on `2026.11.18.4`. The connection service
+(`hivra-chat/server.js`) of an Agent Zero computer now answers the A0 CLI's
+root-level calls (`/api/plugins/...`, the CSRF and file helpers it uses) for a
+signed-in Connect app session, so `a0 --host <the computer's address>` reaches
+the connector plugin that official Agent Zero already ships. The dashboard's
+Connect app dialog shows that command. Changed: that file, plus the documents,
+the version and the provider worker's release labels. This source release does
+not deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.18.4` builds on `2026.11.18.3`. `hivra-provision-on-host.sh`
+sets `ciupgrade 0` on every VM it makes, so Proxmox's generated user-data no
+longer asks cloud-init for a first-boot package upgrade (which also refreshes
+snaps on Ubuntu). Changed: that script, plus the documents, the version and the
+provider worker's release labels. This source release does not deploy, install,
+enable or start anything on a host or computer.
+
+Release `2026.11.18.3` builds on `2026.11.18.2`. `hivra-provision-on-host.sh`
+installs QEMU Guest Agent through apt in the vendor data's runcmd rather than
+cloud-config's package module, which on Ubuntu also refreshes snaps and failed
+cloud-init whenever the snap store was unreachable. Changed: that script, plus
+the documents, the version and the provider worker's release labels. This
+source release does not deploy, install, enable or start anything on a host or
+computer.
+
+Release `2026.11.18.2` builds on `2026.11.18.1`. `hivra-provision-on-host.sh`
+gains `HIVRA_PROVISION_MODE=empty` (allocate and tag a computer with a blank
+disk, no boot, no installer) and, when a guest's cloud-init fails, keeps its
+status and output tail in a root-only host file before cleanup.
+`provision-claude-code-box.sh` seeds DeepSeek V4.1 Flash for an OpenClaw
+launched without a model. Changed: those two scripts, plus the documents, the
+version and the provider worker's release labels. This source release does not
+deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.18.1` builds on `2026.11.17.9`. A new OpenClaw's Venice model,
+and a Venice model set from the dashboard, carry OpenClaw's own
+`compat.thinkingFormat: "openai"`, so OpenClaw no longer adds DeepSeek's
+top-level `thinking` field that Venice's strict chat schema rejects. Aeon's step
+keeps an installed gh at or above the pinned version instead of forcing a
+downgrade apt refuses. Changed: `provision-claude-code-box.sh`,
+`hivra-chat/server.js`, plus the documents, the version and the provider
+worker's release labels. This source release does not deploy, install, enable
+or start anything on a host or computer.
+
+Release `2026.11.17.9` builds on `2026.11.17.8` and makes a failed launch
+name the step that stopped it. A failed guest is removed with its logs, so the
+host log only said "step provision-claude-code-box.sh exited with status 1".
+The step's `die()` now also writes its own message (Hivra's fixed text) to the
+root-only `/run/hivra-install-failure-reason`, which the installer clears before
+the step runs and appends to its "Hivra guest installation failure" line when it
+is at most 200 plain characters. Changed: `provision-claude-code-box.sh`,
+`hivra-install-agent.py`, plus the documents, the version and the provider
+worker's release labels. This source release does not deploy, install, enable
+or start anything on a host or computer.
+
+Release `2026.11.17.8` builds on `2026.11.17.7` and lets a new OpenClaw
+launch finish installing again. With `gateway.controlUi.basePath` set to
+`/openclaw`, OpenClaw's gateway answers 503 at its root, and the installer's
+runtime readiness check asked for `/`, so every OpenClaw launch on
+`2026.11.17.7` stopped with "OpenClaw Control UI did not become ready". The
+check now asks for `/openclaw/` when `openclaw.json` names that base path, and
+`/` otherwise. Changed: `provision-claude-code-box.sh`, plus the documents, the
+version and the provider worker's release labels. This source release does not
+deploy, install, enable or start anything on a host or computer.
+
+Release `2026.11.17.7` builds on `2026.11.17.6` and lets OpenClaw's Control
+UI start again behind the box gateway. From 2026.11.5 OpenClaw's gateway sends
+`Referrer-Policy: no-referrer`, so the browser stopped sending the Referer the
+box gateway used to re-home the Control UI's root-absolute requests
+(`/assets/*`, `/fonts/*`, `/chat/*`) under `/openclaw`; the app bundle 404ed
+and OpenClaw's boot watchdog showed "Control UI did not start". A new launch
+now seeds OpenClaw's own `gateway.controlUi.basePath` (`/openclaw`), its
+documented setting for a reverse-proxy path prefix, and the box gateway
+forwards `/openclaw` without stripping it whenever `openclaw.json` names that
+base path; a computer whose config has none keeps the previous strip and
+Referer re-home. Changed: `provision-claude-code-box.sh`, `hivra-chat/server.js`,
+plus the documents, the version and the provider worker's release labels. This
+source release does not deploy, install, enable or start anything on a host or
+computer.
+
+Release `2026.11.17.6` builds on `2026.11.17.5` and gives a managed-Venice
+Agent Zero launch a working model again. Current Agent Zero images choose their
+models from presets (`usr/plugins/_model_config/presets.yaml`, the file its
+own Settings writes) and ignore the `A0_SET_*` model defaults Hivra seeds, so a
+launch with Hivra credits opened with no model connected and never answered.
+On a fresh box with a managed model key, the provisioner now writes Agent
+Zero's Default preset with the same model and gateway (chat and utility; the
+embedding stays Agent Zero's own local default); an existing presets file is
+the owner's and is left alone, and older images ignore the file. It also
+lets DeepSeek Harness start again: since `2026.11.15.2` the gateway's
+`server.js` requires `import-state.cjs` at start, but the DeepSeek installer
+copied only its own list of gateway files into `/opt/hivra/deepseek-gateway`,
+so the gateway exited on start and every launch hit the native readiness
+deadline. The installer, the runtime receipt and the provider-VM runtime probe
+now include that file. Changed: `provision-claude-code-box.sh`,
+`deepseek-harness/install-guest.py`, `hivra-runtime-receipt.py`, plus the
+documents, the version and the provider worker's release labels. This source release does not deploy,
+install, enable or start anything on a host or computer.
+
+Release `2026.11.17.5` builds on `2026.11.17.4` and hardens `hivra-tg-apply`
+against symlink redirection of its one root-authored write. The chat gateway
+runs the helper as root (scoped NOPASSWD) to write the Telegram bot's env file
+into `/etc/bux`, a directory that is group-writable by the agent user so the
+gateway and bot can keep their own state files there. That writability let the
+agent user replace the `tg.env` entry with a symlink, and the old
+`cat > "$TG_ENV_DIR/tg.env"` followed by `chgrp`/`chmod` would then follow the
+symlink and turn a root-authored write into an arbitrary-path root write. The
+helper now stages the file in the root-only parent directory (`/etc`, where the
+agent user cannot write, so the perms steps can never be raced onto a symlink)
+and moves it into place on the same filesystem; `rename(2)` replaces the
+directory entry atomically and never follows a symlink sitting at the
+destination. Behaviour for the agent user is unchanged — it still only reads
+`tg.env` and writes its own state files. Changed: `hivra-tg-apply` and its
+regression test, plus the version and the provider worker's release labels.
+This source release does not deploy, install, enable or start anything on a
+host or computer.
+
 Release `2026.11.17.4` builds on `2026.11.17.3` and fixes two launches broken
 by their newest upstream releases. OpenClaw 2026.11.5 refuses a loopback
 request that carries forwarded-client headers unless `gateway.trustedProxies`

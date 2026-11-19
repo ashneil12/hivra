@@ -41,6 +41,13 @@ jest.mock("@/lib/proxmox/wake-admission", () => ({
   releaseHostWakeSlot: (...a: unknown[]) => mockRelease(...a),
 }));
 
+const mockMakeRoom = jest.fn();
+const mockRoomEnabled = jest.fn();
+jest.mock("../sleep/wake-make-room", () => ({
+  isWakeMakesRoomEnabled: () => mockRoomEnabled(),
+  makeRoomForWake: (...a: unknown[]) => mockMakeRoom(...a),
+}));
+
 const mockLapsed = jest.fn();
 jest.mock("../lapse-gate", () => ({ isStartBlockedForLapse: (...a: unknown[]) => mockLapsed(...a) }));
 
@@ -50,7 +57,12 @@ jest.mock("../sleep-reconcile", () => ({ reconcileAgentSleep: (...a: unknown[]) 
 const mockSsrfFetch = jest.fn();
 jest.mock("@/lib/ssrf-safe-fetch", () => ({ ssrfSafeFetch: (...a: unknown[]) => mockSsrfFetch(...a) }));
 
-import { ensureHivraAgentAwake, isStuckTransient, pollPublicHealthz } from "../agent-wake";
+const mockAfter = jest.fn();
+jest.mock("../after-response", () => ({ runAfterResponse: (...a: unknown[]) => mockAfter(...a) }));
+const mockRunStorage = jest.fn();
+jest.mock("../sleep-storage", () => ({ runSleepStorage: (...a: unknown[]) => mockRunStorage(...a) }));
+
+import { ensureHivraAgentAwake, isStuckTransient, pollPublicHealthz, resetStorageKicks, wakesAtOncePerHost, WAKE_TURN_RETRY_MS, WAKE_TURN_WAIT_MS } from "../agent-wake";
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
 const VMID = 1234;
@@ -103,7 +115,12 @@ describe("ensureHivraAgentAwake", () => {
     mockFinish.mockResolvedValue(true);
     mockLogEvent.mockResolvedValue(true);
     mockResolveTarget.mockResolvedValue({ ok: true, target });
+    mockRunScript.mockReset();
     mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt(), stderr: "" });
+    mockAcquire.mockReset();
+    mockMakeRoom.mockReset();
+    mockRoomEnabled.mockReset();
+    mockRoomEnabled.mockReturnValue(false);
     mockAcquire.mockResolvedValue({ admitted: true, freeMb: 9000, activeWakes: 0 });
     mockRelease.mockResolvedValue(undefined);
     mockSsrfFetch.mockResolvedValue({ status: 200 });
@@ -125,6 +142,32 @@ describe("ensureHivraAgentAwake", () => {
     await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open" })).resolves.toEqual({ state: "failed", reason: "not_found" });
     mockReadRow.mockResolvedValueOnce({ data: null, error: { code: "XX" } });
     await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open" })).resolves.toEqual({ state: "failed", reason: "agent_unreadable" });
+  });
+
+  it("asks for a stored agent back and starts that work right after the response, without packing anything", async () => {
+    resetStorageKicks();
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated", sleep_stored_at: "2026-11-01T00:00:00Z" }), error: null });
+    mockRunStorage.mockResolvedValue({ counts: {}, errors: 0, returning: 1 });
+    await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open" }))
+      .resolves.toEqual({ state: "waking", reason: "restoring_from_storage" });
+    // It never claims the computer or runs the wake script: its disks are not there yet.
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockRunScript).not.toHaveBeenCalled();
+    expect(mockAfter).toHaveBeenCalledTimes(1);
+    await (mockAfter.mock.calls[0][0] as () => Promise<void>)();
+    expect(mockRunStorage).toHaveBeenCalledTimes(1);
+    const input = mockRunStorage.mock.calls[0][0] as { env: Record<string, unknown>; hostActs: (h: string) => Promise<boolean>; deadline: number; startBy: number };
+    expect(input.env.HIVRA_SLEEP_STORE_AFTER_DAYS).toBeUndefined();
+    await expect(input.hostActs("any")).resolves.toBe(false);
+    expect(input.deadline - input.startBy).toBeGreaterThanOrEqual(65_000);
+    // A page that asks again every few seconds does not start the work every time.
+    await ensureHivraAgentAwake(AGENT_ID, { trigger: "open" });
+    expect(mockAfter).toHaveBeenCalledTimes(1);
+    // Outside a request there is nothing to run after: the answer is the same and the sweep does the work.
+    resetStorageKicks();
+    mockAfter.mockImplementation(() => { throw new Error("outside a request"); });
+    await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "schedule" }))
+      .resolves.toEqual({ state: "waking", reason: "restoring_from_storage" });
   });
 
   it("never wakes a lapsed owner", async () => {
@@ -193,6 +236,67 @@ describe("ensureHivraAgentAwake", () => {
     expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "wake_failed" }));
   });
 
+  it("waits its turn when the server's wakes are all taken, then wakes, instead of failing", async () => {
+    // Seen on Canary: five deep-sleeping agents woken together, two came back and three were told the wake failed.
+    jest.useFakeTimers();
+    try {
+      const taken = { admitted: false, reason: "concurrency", freeMb: 9000, activeWakes: 2, cap: 2, retryAfterSeconds: 30 };
+      mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+      mockAcquire.mockResolvedValueOnce(taken).mockResolvedValueOnce(taken).mockResolvedValue({ admitted: true, freeMb: 9000, activeWakes: 1 });
+      mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt({ from: "hibernated", reason: "restored" }), stderr: "" });
+      const pending = ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
+      await jest.advanceTimersByTimeAsync(WAKE_TURN_RETRY_MS * 2 + 2_000);
+      expect((await pending).state).toBe("awake");
+      expect(mockAcquire).toHaveBeenCalledTimes(3);
+      expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "awake" }));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("asks the server again when the connection for the wake was refused, and wakes", async () => {
+    // Seen on Canary: twelve wakes at once, the server dropped one login, and that wake failed in under a second.
+    mockReadRow.mockResolvedValue({ data: row(), error: null });
+    mockRunScript
+      .mockResolvedValueOnce({ ok: false, stdout: "", stderr: "", error: "SSH connection failed: Connection lost before handshake" })
+      .mockResolvedValue({ ok: true, stdout: wakeReceipt(), stderr: "" });
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 20_000, ...fast });
+    expect(result.state).toBe("awake");
+    expect(mockRunScript).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not repeat a host call that ran and failed", async () => {
+    mockReadRow.mockResolvedValue({ data: row(), error: null });
+    mockRunScript.mockResolvedValue({ ok: false, stdout: "partial output", stderr: "", error: "SSH connection failed: read ECONNRESET" });
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 20_000, ...fast });
+    expect(result.state).toBe("failed");
+    expect(mockRunScript).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts four deep-sleep wakes at once per server unless a setting says otherwise", () => {
+    expect(wakesAtOncePerHost({})).toBe("4");
+    expect(wakesAtOncePerHost({ HERMES_WAKE_MAX_CONCURRENT_PER_HOST: "2" })).toBe("2");
+    expect(wakesAtOncePerHost({ HIVRA_WAKE_MAX_CONCURRENT_PER_HOST: "6", HERMES_WAKE_MAX_CONCURRENT_PER_HOST: "2" })).toBe("6");
+    expect(wakesAtOncePerHost({ HIVRA_WAKE_MAX_CONCURRENT_PER_HOST: "many" })).toBe("4");
+    expect(wakesAtOncePerHost({ HIVRA_WAKE_MAX_CONCURRENT_PER_HOST: "0" })).toBe("4");
+  });
+
+  it("gives up as wake_failed when no turn comes within the wait", async () => {
+    jest.useFakeTimers();
+    try {
+      mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+      mockAcquire.mockResolvedValue({ admitted: false, reason: "concurrency", freeMb: 9000, activeWakes: 2, cap: 2, retryAfterSeconds: 30 });
+      const pending = ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 120_000, ...fast });
+      await jest.advanceTimersByTimeAsync(WAKE_TURN_WAIT_MS + 5_000);
+      expect(await pending).toEqual({ state: "failed", reason: "capacity_concurrency" });
+      expect(mockRunScript).not.toHaveBeenCalled();
+      expect(mockAcquire.mock.calls.length).toBeGreaterThan(5);
+      expect(mockRelease).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("finishes as wake_failed when the host defers the wake, and runs no script", async () => {
     mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
     mockAcquire.mockResolvedValue({ admitted: false, reason: "host_ram", freeMb: 100, activeWakes: 1, cap: 2, retryAfterSeconds: 30 });
@@ -202,6 +306,56 @@ describe("ensureHivraAgentAwake", () => {
     expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "wake_failed" }));
     expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "fail", reason: "capacity_host_ram" }));
     expect(mockRelease).toHaveBeenCalled();
+  });
+
+  it("with making room on, a wake short of memory deepens nappers and then wakes", async () => {
+    mockRoomEnabled.mockReturnValue(true);
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+    mockAcquire
+      .mockResolvedValueOnce({ admitted: false, reason: "host_ram", freeMb: 100, activeWakes: 0, cap: 4, retryAfterSeconds: 30 })
+      .mockResolvedValue({ admitted: true, freeMb: 6000, activeWakes: 0 });
+    mockMakeRoom.mockImplementation(async (input: { fits: () => Promise<boolean> }) => {
+      expect(await input.fits()).toBe(true);
+      return { fits: true, deepened: 1, tried: 1, ms: 10_000 };
+    });
+    mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt({ from: "hibernated", reason: "restored" }), stderr: "" });
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
+    expect(result.state).toBe("awake");
+    expect(mockMakeRoom).toHaveBeenCalledTimes(1);
+    expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "wake", detail: expect.objectContaining({ room_deepened: 1 }) }));
+  });
+
+  it("with making room on and no napper to deepen, the wake is still refused", async () => {
+    mockRoomEnabled.mockReturnValue(true);
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+    mockAcquire.mockResolvedValue({ admitted: false, reason: "host_ram", freeMb: 100, activeWakes: 0, cap: 4, retryAfterSeconds: 30 });
+    mockMakeRoom.mockResolvedValue({ fits: false, deepened: 0, tried: 0, ms: 5 });
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
+    expect(result).toEqual({ state: "failed", reason: "capacity_host_ram" });
+    expect(mockRunScript).not.toHaveBeenCalled();
+  });
+
+  it("with making room on, a start the server's capacity check refused is tried again after making room", async () => {
+    mockRoomEnabled.mockReturnValue(true);
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+    mockRunScript
+      .mockResolvedValueOnce({ ok: true, stdout: wakeReceipt({ ok: false, from: "hibernated", to: "hibernated", reason: "capacity" }), stderr: "" })
+      .mockResolvedValue({ ok: true, stdout: wakeReceipt({ from: "hibernated", reason: "restored" }), stderr: "" });
+    mockMakeRoom.mockImplementation(async (input: { fits: () => Promise<boolean> }) => {
+      expect(await input.fits()).toBe(true);
+      return { fits: true, deepened: 2, tried: 2, ms: 20_000 };
+    });
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
+    expect(result.state).toBe("awake");
+    expect(mockRunScript).toHaveBeenCalledTimes(2);
+  });
+
+  it("with making room off, a capacity refusal fails the wake and no napper is touched", async () => {
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+    mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt({ ok: false, from: "hibernated", to: "hibernated", reason: "capacity" }), stderr: "" });
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
+    expect(result).toEqual({ state: "failed", reason: "capacity" });
+    expect(mockMakeRoom).not.toHaveBeenCalled();
   });
 
   it("finishes as wake_failed when the receipt does not parse", async () => {

@@ -579,6 +579,78 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **The A0 CLI reaches Agent Zero (`2026.11.18.5`).**
+  Official Agent Zero ships the connector plugin the A0 CLI needs, but the CLI
+  talks to the host's root (`/api/plugins/_a0_connector/v1/*`, `/api/csrf_token`,
+  `/socket.io`) and the connection service only mounted Agent Zero under
+  `/agent-zero`, so the CLI saw a missing plugin. A signed-in Connect app
+  session, or the public capability probe, now reaches those exact paths.
+  Browser writes from another site still cannot use the session.
+
+- **No package upgrade at first boot (`2026.11.18.4`).**
+  Every VM gets `ciupgrade 0`. Proxmox otherwise writes `package_upgrade: true`
+  into its generated user-data, and cloud-init then runs a full apt upgrade and,
+  on Ubuntu, `snap refresh` at first boot, so an unreachable snap store still
+  failed launches after `2026.11.18.3`. The guest keeps Ubuntu's daily
+  unattended security upgrades. Hosts without the option behave as before.
+
+- **Launches no longer depend on the snap store (`2026.11.18.3`).**
+  The guest's QEMU Guest Agent is installed by apt from the vendor data's
+  runcmd instead of cloud-config's `package_update`/`packages`. On Ubuntu that
+  module also runs `snap refresh`, so when the snap store's IPv4 front ends
+  refused connections every launch failed cloud-init, though nothing in a
+  launch needs a snap.
+
+- **Empty computers, kept cloud-init details, OpenClaw on Flash (`2026.11.18.2`).**
+  `HIVRA_PROVISION_MODE=empty` makes a computer's place (number, address,
+  ownership tags and receipt under the same lock as a launch, and a blank disk
+  of the asked size) without booting it or running any installer; nothing calls
+  it yet. When a guest's cloud-init fails, its status and the tail of its output
+  are kept in the root-only `/root/hivra-prov-<vmid>.cloud-init.txt` before the
+  guest is removed; the host log still carries only the classified reason. An
+  OpenClaw launched without a model now seeds DeepSeek V4.1 Flash.
+
+- **OpenClaw replies on Venice, and Aeon keeps a newer gh (`2026.11.18.1`).**
+  OpenClaw adds DeepSeek's own top-level `thinking` field to deepseek-v4
+  models, which Venice's strict chat schema rejects ("Invalid request
+  parameters"). The seeded Venice model, and a Venice model set from the
+  dashboard, now carry `compat.thinkingFormat: "openai"`, OpenClaw's own setting
+  for a plain OpenAI-style request. Aeon's step installed the pinned gh .deb even
+  when the image already had a newer gh, which apt refuses as a downgrade; any
+  gh at or above the pin is now kept.
+
+- **A failed launch says which step stopped (`2026.11.17.9`).** The guest is
+  removed when provisioning fails, so the host log only read "step
+  provision-claude-code-box.sh exited with status 1". The step's `die()` now
+  leaves its own message (Hivra's fixed text) in a root-only file under `/run`,
+  and the installer adds it to the "Hivra guest installation failure" line when
+  it is short plain text.
+
+- **OpenClaw launches finish installing (`2026.11.17.8`).** With the base
+  path set, OpenClaw's gateway answers 503 at its root, so the install's
+  readiness check (which asked for `/`) failed every new OpenClaw launch on
+  `2026.11.17.7`. The check now asks for `/openclaw/` when `openclaw.json`
+  names that base path, and `/` otherwise.
+
+- **OpenClaw's Control UI starts again (`2026.11.17.7`).**
+  OpenClaw 2026.11.5 sends `Referrer-Policy: no-referrer`, so the box gateway
+  could no longer tell which root-absolute requests (`/assets/*`, `/fonts/*`,
+  `/chat/*`) came from the Control UI it mounts at `/openclaw`, and the UI
+  never started ("Control UI did not start"). A new launch sets OpenClaw's own
+  `gateway.controlUi.basePath` to `/openclaw`, and the box gateway forwards
+  `/openclaw` unchanged whenever `openclaw.json` names that base path. A
+  computer whose config has no base path keeps the previous strip and Referer
+  re-home.
+
+- **Agent Zero has a model on a managed launch (`2026.11.17.6`).**
+  Current Agent Zero picks models from presets and ignores the `A0_SET_*`
+  model defaults, so a fresh box with a managed model key also gets Agent
+  Zero's Default preset (`usr/plugins/_model_config/presets.yaml`) set to the
+  same model and gateway. An existing presets file is never touched.
+  The same release fixes DeepSeek Harness launches: its gateway folder now
+  gets `import-state.cjs`, which `server.js` has required at start since
+  `2026.11.15.2`.
+
 - **OpenClaw and Aeon launch on their newest releases (`2026.11.17.4`).**
   The box gateway drops forwarded-client headers on `/openclaw`, which
   OpenClaw 2026.11.5 and later otherwise refuse from a loopback proxy

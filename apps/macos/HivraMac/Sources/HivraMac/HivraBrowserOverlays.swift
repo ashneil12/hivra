@@ -19,20 +19,22 @@ struct HivraRecoveryCard<Actions: View>: View {
     var body: some View {
         VStack(spacing: 18) {
             Image(systemName: symbol)
-                .font(.system(size: 34, weight: .light))
-                .foregroundStyle(Color(red: 1, green: 0.25, blue: 0.27))
+                .font(.system(size: 30, weight: .light))
+                .foregroundStyle(Color(recovery: HivraRecoveryAppearance.error))
 
             VStack(spacing: 6) {
                 Text(title)
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .font(HivraDesign.display(19))
+                    .tracking(HivraDesign.displayTracking(19))
+                    .accessibilityAddTraits(.isHeader)
                 if let address {
                     Text(address)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(Color(recovery: HivraRecoveryAppearance.text).opacity(0.68))
                 }
                 Text(detail)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Color(recovery: HivraRecoveryAppearance.text).opacity(0.68))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 440)
             }
@@ -41,11 +43,14 @@ struct HivraRecoveryCard<Actions: View>: View {
         }
         .padding(38)
         .foregroundStyle(Color(recovery: HivraRecoveryAppearance.text))
-        .background(Color(recovery: HivraRecoveryAppearance.card), in: RoundedRectangle(cornerRadius: 18))
+        .background(Color(recovery: HivraRecoveryAppearance.card), in: RoundedRectangle(cornerRadius: HivraDesign.Radius.dialog, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+            RoundedRectangle(cornerRadius: HivraDesign.Radius.dialog, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.09), lineWidth: 1)
         }
+        // The card is always dark so it reads over a blank white failed page;
+        // its controls follow suit.
+        .environment(\.colorScheme, .dark)
         .padding(32)
     }
 }
@@ -77,8 +82,7 @@ struct HivraPopupRecovery: View {
 
     private func retryButton(_ title: String) -> some View {
         Button(title, action: onRetry)
-            .buttonStyle(.borderedProminent)
-            .tint(Color(recovery: HivraRecoveryAppearance.primaryAction))
+            .buttonStyle(HivraButtonStyle(.primary))
     }
 }
 
@@ -102,7 +106,7 @@ struct HivraDownloadBanner: View {
             switch notice.outcome {
             case .finished(let file):
                 Image(systemName: "arrow.down.circle")
-                    .foregroundStyle(HivraDesign.foreground(for: scheme))
+                    .foregroundStyle(HivraDesign.secondaryText(for: scheme))
                 Text("Downloaded \(notice.filename)")
                     .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 8)
@@ -113,7 +117,7 @@ struct HivraDownloadBanner: View {
                 .buttonStyle(HivraButtonStyle())
             case .failed:
                 Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(HivraDesign.crimson)
+                    .foregroundStyle(HivraDesign.bad(for: scheme))
                 Text("Couldn’t download \(notice.filename)")
                     .lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 8)
@@ -123,14 +127,12 @@ struct HivraDownloadBanner: View {
                 .help("Dismiss")
                 .accessibilityLabel("Dismiss download notice")
         }
-        .font(.system(size: 12))
+        .font(.system(size: 12.5))
         .padding(.leading, 14)
         .padding(.trailing, 6)
         .padding(.vertical, 6)
         .frame(maxWidth: 520)
-        .background(HivraDesign.surface(for: scheme))
-        .overlay { Rectangle().stroke(HivraDesign.border(for: scheme), lineWidth: 1) }
-        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+        .hivraGlass(cornerRadius: HivraDesign.Radius.panel, strong: true)
         .padding(16)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("download-notice")

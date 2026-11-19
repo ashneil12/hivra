@@ -22,6 +22,7 @@ export const article: BlogArticle = {
       heading: "The short answer",
       paragraphs: [
         "The supported route is Claude Code Channels. A channel is an MCP server that pushes an incoming message into the Claude Code session already running on your machine. Claude can act on your real repository and reply through the same chat. Anthropic labels Channels a research preview, so check the [official Channels documentation](https://code.claude.com/docs/en/channels) before setup. The flag syntax can change while it's in preview.",
+        "Channels are one of several phone routes. Our [Claude Code on your phone guide](/blog/claude-code-on-your-phone) compares them all side by side.",
         "The research preview ships three chat plugins: Telegram, Discord and iMessage. Each one needs Bun. Channels work with a claude.ai login or an Anthropic Console API key, and they aren't available on Amazon Bedrock, Google Cloud's Agent Platform or Microsoft Foundry. On claude.ai Team and Enterprise plans, channels stay blocked until an Owner turns them on. With a Console API key they're allowed unless your organisation deploys managed settings, in which case they stay blocked until `channelsEnabled` is true. Pro and Max users with no organisation opt in per session with the `--channels` flag.",
         "A channel doesn't move Claude Code onto your phone. Your phone is an input and a reply surface. The code, the tools, the permissions and the session stay on the host machine. If that machine sleeps, restarts without recovering the process, or exits Claude Code, the channel stops receiving work.",
       ],
@@ -140,6 +141,7 @@ export const article: BlogArticle = {
     },
   ],
   relatedArticles: [
+    { slug: "claude-code-on-your-phone", title: "Claude Code on your phone: every way to use it from mobile (as of November 2026)" },
     {
       slug: "keep-claude-code-running-24-7",
       title: "How to keep Claude Code running 24/7",

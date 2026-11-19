@@ -5,17 +5,55 @@ import Testing
 
 @Suite("Hivra connection profiles")
 struct HivraConnectionProfileTests {
-    @Test("seeds local and Canary profiles")
-    func seedsDefaultProfiles() {
+    @Test("a public build seeds only Hivra")
+    func seedsHivraOnly() {
+        let profiles = HivraConnectionProfile.defaults(includeDeveloper: false)
+
+        #expect(profiles.map(\.id) == [HivraConnectionProfile.builtInHivraID])
+        #expect(profiles[0].isBuiltInHivra)
+        #expect(profiles[0].url.absoluteString == "https://hivra.cloud/dashboard")
+    }
+
+    @Test("developer builds add local and Canary after Hivra")
+    func seedsDeveloperProfiles() {
         let profiles = HivraConnectionProfile.defaults
 
-        #expect(profiles.map(\.kind) == [.local, .hivraCloud])
-        #expect(profiles[0].id == HivraConnectionProfile.builtInLocalID)
-        #expect(profiles[1].id == HivraConnectionProfile.builtInCanaryID)
-        #expect(profiles[0].isBuiltInLocal)
-        #expect(profiles[1].isBuiltInCanary)
-        #expect(profiles[0].url.absoluteString == "http://127.0.0.1:3000/dashboard")
-        #expect(profiles[1].url.absoluteString == "https://canary.hermesos.cloud/dashboard")
+        #expect(profiles.map(\.kind) == [.hivraCloud, .local, .hivraCloud])
+        #expect(profiles[0].isBuiltInHivra)
+        #expect(profiles[1].id == HivraConnectionProfile.builtInLocalID)
+        #expect(profiles[2].id == HivraConnectionProfile.builtInCanaryID)
+        #expect(profiles[1].isBuiltInLocal)
+        #expect(profiles[2].isBuiltInCanary)
+        #expect(profiles[1].url.absoluteString == "http://127.0.0.1:3000/dashboard")
+        #expect(profiles[2].url.absoluteString == "https://canary.hermesos.cloud/dashboard")
+    }
+
+    @Test("saved connections from an earlier version gain Hivra once")
+    func addsHivraToSavedProfiles() {
+        let saved = HivraConnectionProfile.developerDefaults
+        let upgraded = HivraConnectionProfile.addingHivra(to: saved)
+
+        #expect(upgraded.first?.id == HivraConnectionProfile.builtInHivraID)
+        #expect(upgraded.count == saved.count + 1)
+        #expect(HivraConnectionProfile.addingHivra(to: upgraded) == upgraded)
+    }
+
+    @Test("Hivra is recognised only on its own origin")
+    func bindsHivraIdentity() {
+        let wrongOrigin = HivraConnectionProfile(
+            id: HivraConnectionProfile.builtInHivraID,
+            name: "Not Hivra",
+            url: URL(string: "https://hivra.cloud.example/dashboard")!,
+            kind: .hivraCloud
+        )
+        let withCredentials = HivraConnectionProfile(
+            id: HivraConnectionProfile.builtInHivraID,
+            name: "Hivra",
+            url: URL(string: "https://a:b@hivra.cloud/dashboard")!,
+            kind: .hivraCloud
+        )
+        #expect(!wrongOrigin.isBuiltInHivra)
+        #expect(!withCredentials.isBuiltInHivra)
     }
 
     @Test("binds built-in connection actions to stable identity and origin")

@@ -1334,7 +1334,7 @@ describe("POST /api/hivra/agents", () => {
     const kickoff = mockRunProxmoxHostScript.mock.calls[0][0] as string;
     expect(kickoff).toContain("claimed_octets=");
     expect(kickoff).toContain('grep -qx "$cand"');
-    const allocationLockedAt = kickoff.indexOf("flock -w 60 8");
+    const allocationLockedAt = kickoff.indexOf("flock -w 150 8");
     const localInventoryAt = kickoff.indexOf('local_vmids="$(qm list');
     const clusterInventoryAt = kickoff.indexOf("pvesh get /cluster/resources --type vm");
     const ipInventoryAt = kickoff.indexOf('claimed_octets="$(');
@@ -2795,7 +2795,9 @@ describe("POST /api/hivra/agents", () => {
     expect(provisionScript).toContain("HIVRA_MODEL_BASE_URL_B64=");
     expect(provisionScript).toContain("write_secret_b64 'https://hivra.cloud/api/managed-venice/v1'");
     expect(provisionScript).toContain("HIVRA_HERMES_MODEL_B64=");
-    expect(provisionScript).toContain("write_secret_b64 'deepseek-v4-pro'");
+    // OpenClaw starts on Flash: Venice's deepseek-v4-pro stalled on its prompt.
+    expect(provisionScript).toContain("write_secret_b64 'deepseek-v4-1-flash'");
+    expect(provisionScript).not.toContain("write_secret_b64 'deepseek-v4-pro'");
     const openClawExec = provisionScript.split("\n").find((line) => line.trimStart().startsWith("exec env ")) ?? "";
     expect(openClawExec).not.toContain("hven_live_TESTKEY123");
     expect(mockAgentInsert).toHaveBeenCalledWith(
@@ -3211,7 +3213,7 @@ describe("POST /api/hivra/agents", () => {
     expect(kickoffScript).toContain("HIVRA_VMID_REFERENCE_PLANE='canaryplanefixture'");
     expect(kickoffScript).toContain("HIVRA_VMID_REFERENCE_LANE=hivra");
     expect(kickoffScript).toContain("HIVRA_VMID_REFERENCES='200\n201'");
-    const lock = kickoffScript.indexOf("flock -w 60 8");
+    const lock = kickoffScript.indexOf("flock -w 150 8");
     const sync = kickoffScript.indexOf("\nhivra_vmid_reference_sync");
     const record = kickoffScript.indexOf('hivra_vmid_reference_record "$VMID"');
     expect(lock).toBeGreaterThan(-1);

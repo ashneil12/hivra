@@ -37,6 +37,7 @@ import { NextRequest } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
+import { resolveBackupEncryption } from "@/lib/cold-storage/backup-encryption";
 import { archiveInstance, type ColdArchiveResult } from "@/lib/services/cold-storage-service";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
@@ -142,6 +143,25 @@ async function handle(req: NextRequest) {
   const thresholdHours = Math.max(1, envInt("COLD_STORAGE_ARCHIVE_THRESHOLD_HOURS", 48));
   const batchSize = Math.max(1, Math.min(200, envInt("COLD_STORAGE_ARCHIVE_BATCH_SIZE", 50)));
   const tiers = envList("COLD_STORAGE_ARCHIVE_TIERS", ["credit_base"]);
+
+  // HERMES_BACKUP_ENCRYPTION=on with an unusable recipient: refuse the whole run
+  // (no archive, no destroy). Never upload plaintext while the switch is on.
+  const encryption = resolveBackupEncryption(process.env);
+  if (enabled && encryption.enabled && !encryption.ok) {
+    log.error("cold archive refused: backup encryption misconfigured", new Error(encryption.error), {
+      source: LOG_SOURCE,
+      route: "/api/cron/archive-stopped-vms",
+      failureType: "backup_encryption_misconfigured",
+    });
+    await reportOpsEvent({
+      source: "cron.archive_stopped_vms_encryption_misconfigured",
+      severity: "error",
+      title: "Cold archive refused: backup encryption misconfigured",
+      message: encryption.error,
+      route: "/api/cron/archive-stopped-vms",
+    });
+    return apiError(encryption.error, 500);
+  }
   const stuckRecoveryMinutes = Math.max(
     5,
     envInt("COLD_STORAGE_STUCK_RECOVERY_MINUTES", 20)

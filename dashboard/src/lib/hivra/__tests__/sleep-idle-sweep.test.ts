@@ -19,7 +19,7 @@ const mockDb: { value: unknown } = {
           return Promise.resolve(mockResolve.fn(call)).then(resolve, reject);
         },
       };
-      for (const op of ["select", "eq", "in", "not", "is", "or", "lt", "lte", "gte", "order", "limit"]) {
+      for (const op of ["select", "eq", "neq", "in", "not", "is", "or", "lt", "lte", "gte", "order", "limit"]) {
         builder[op] = (...args: unknown[]) => {
           call.ops.push([op, args]);
           return builder;
@@ -78,8 +78,18 @@ jest.mock("../telegram-wake/sweep", () => ({
   runTelegramWakeSweep: (...args: unknown[]) => mockTelegramSweep(...args),
 }));
 
+// The real steps, wrapped so a test can read the limits the sweep hands them.
+jest.mock("../sleep-memory-drop", () => {
+  const actual = jest.requireActual("../sleep-memory-drop");
+  return { ...actual, runSleepMemoryDrops: jest.fn(actual.runSleepMemoryDrops) };
+});
+jest.mock("../sleep-storage", () => {
+  const actual = jest.requireActual("../sleep-storage");
+  return { ...actual, runSleepStorage: jest.fn(actual.runSleepStorage) };
+});
+
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -88,7 +98,9 @@ import {
   resetSleepSweepCooldowns,
   runSleepIdleSweep,
   staleLeaseResult,
+  HIBERNATE_HARD_LIMIT_MS,
   HOST_WORK_CAP,
+  SWEEP_BUDGET_MS,
   NOT_IDLE_COOLDOWN_MS,
 } from "../sleep-idle-sweep";
 import { AWAKE, COLD, HIBERNATED, NAPPING, TAG, VMID, makeHostHarness, type HostHarness, type HostState } from "./sleep-stub-host.fixtures";
@@ -851,6 +863,22 @@ describe("steps 3 and 4: hibernate and nap", () => {
 describe("time budget", () => {
   afterEach(() => jest.useRealTimers());
 
+  it("gives the drop and storage steps room for their host calls, which outlast the budget for starting work", async () => {
+    // Handed the 50 s budget as their limit, neither step could ever start a 60 to 90 s host call.
+    const { runSleepMemoryDrops } = jest.requireMock("../sleep-memory-drop") as { runSleepMemoryDrops: jest.Mock };
+    const { runSleepStorage } = jest.requireMock("../sleep-storage") as { runSleepStorage: jest.Mock };
+    setTables({ hosts: { data: hostsTable([{ id: "local", sleep_mode: "canary" }]) } });
+    await run({ HIVRA_SLEEP_MODE: "canary", HIVRA_SLEEP_DROP_MEMORY_AFTER_DAYS: "7" });
+    for (const step of [runSleepMemoryDrops, runSleepStorage]) {
+      expect(step).toHaveBeenCalledTimes(1);
+      const input = step.mock.calls[0][0] as { deadline: number; startBy: number };
+      expect(input.startBy).toBe(NOW + SWEEP_BUDGET_MS);
+      expect(input.deadline).toBe(NOW + HIBERNATE_HARD_LIMIT_MS);
+      // The longest host call either step makes, plus the storage step's margin.
+      expect(input.deadline - input.startBy).toBeGreaterThanOrEqual(95_000);
+    }
+  });
+
   it("starts no sleep when too little of the budget is left", async () => {
     setTables({
       hosts: { data: hostsTable([{ id: "local", sleep_mode: "canary" }]) },
@@ -937,6 +965,50 @@ describe("time budget", () => {
   });
 });
 
+describe("storage: an agent on its way back", () => {
+  const zero = { tracked: 0, stored: 0, storeStarted: 0, storeEnded: 0, unstoreStarted: 0, unstored: 0, unstoreFailed: 0, refused: 0 };
+
+  it("looks again within the same run instead of leaving the next move to the next run", async () => {
+    const { runSleepStorage } = jest.requireMock("../sleep-storage") as { runSleepStorage: jest.Mock };
+    runSleepStorage
+      .mockResolvedValueOnce({ counts: { ...zero, tracked: 1, unstoreStarted: 1 }, errors: 0, returning: 1 })
+      .mockResolvedValueOnce({ counts: { ...zero, tracked: 1 }, errors: 0, returning: 1 })
+      .mockResolvedValueOnce({ counts: { ...zero, tracked: 1, unstored: 1 }, errors: 0, returning: 0 });
+    const summary = await run({ HIVRA_SLEEP_MODE: "off" }, { storageRecheckMs: 5 });
+    expect(runSleepStorage).toHaveBeenCalledTimes(3);
+    expect(summary.storage).toMatchObject({ tracked: 1, unstoreStarted: 1, unstored: 1 });
+  });
+
+  it("does not answer while a wake that a later look started is still running", async () => {
+    // Seen on Canary: the wake began after the run had started waiting for its other work, the run
+    // answered, and the wake froze holding its lease with the computer never started.
+    const { runSleepStorage } = jest.requireMock("../sleep-storage") as { runSleepStorage: jest.Mock };
+    let woke = false;
+    mockEnsure.mockImplementationOnce(() => new Promise((resolve) => setTimeout(() => { woke = true; resolve({ state: "awake" }); }, 60)));
+    runSleepStorage
+      .mockResolvedValueOnce({ counts: { ...zero, tracked: 1, unstoreStarted: 1 }, errors: 0, returning: 1 })
+      .mockImplementationOnce(async (input: { wake: (id: string) => Promise<unknown> }) => {
+        await input.wake("agent-back");
+        return { counts: { ...zero, tracked: 1, unstored: 1 }, errors: 0, returning: 0 };
+      });
+    await run({ HIVRA_SLEEP_MODE: "off" }, { storageRecheckMs: 5 });
+    expect(mockEnsure).toHaveBeenCalledWith("agent-back", expect.objectContaining({ trigger: "schedule" }));
+    expect(woke).toBe(true);
+  });
+
+  it("looks once when nothing is on its way back, and stops looking when the budget is nearly spent", async () => {
+    const { runSleepStorage } = jest.requireMock("../sleep-storage") as { runSleepStorage: jest.Mock };
+    await run({ HIVRA_SLEEP_MODE: "off" }, { storageRecheckMs: 5 });
+    expect(runSleepStorage).toHaveBeenCalledTimes(1);
+    runSleepStorage.mockClear();
+    runSleepStorage.mockResolvedValue({ counts: { ...zero, tracked: 1 }, errors: 0, returning: 1 });
+    await run({ HIVRA_SLEEP_MODE: "off" }, { storageRecheckMs: 5, budgetMs: 3_000 });
+    expect(runSleepStorage).toHaveBeenCalledTimes(1);
+    const { runSleepStorage: actual } = jest.requireActual("../sleep-storage");
+    runSleepStorage.mockImplementation(actual);
+  });
+});
+
 describe("parseSleepStateReceipt", () => {
   const line = (over: Record<string, unknown> = {}) =>
     `HIVRA_SLEEP_STATE ${JSON.stringify({ ok: true, vmid: VMID, observed: "napping", reason: "observed", unit_active: false, ...over })}\n`;
@@ -1018,6 +1090,20 @@ describe("buildSleepStateHostScript", () => {
       const run = exec(state);
       expect(run.status).toBe(0);
       expect(run.receipt).toMatchObject({ ok: true, observed, unitActive: false });
+    });
+
+    it("reads a stopped long sleeper as still asleep only with a mark written for it", () => {
+      const markDir = path.join(h.dir, "var-lib-hivra-sleep");
+      const mark = path.join(markDir, `cold-${VMID}`);
+      mkdirSync(markDir, { recursive: true });
+      writeFileSync(mark, `${TAG}\n`);
+      expect(exec(COLD).receipt).toMatchObject({ ok: true, observed: "hibernated" });
+      // A running computer is what it is, whatever mark was left behind.
+      expect(exec(AWAKE).receipt).toMatchObject({ ok: true, observed: "awake" });
+      writeFileSync(mark, "hivra-bind-other\n");
+      expect(exec(COLD).receipt).toMatchObject({ ok: true, observed: "cold" });
+      rmSync(mark, { force: true });
+      expect(exec(COLD).receipt).toMatchObject({ ok: true, observed: "cold" });
     });
 
     it("never changes the computer", () => {

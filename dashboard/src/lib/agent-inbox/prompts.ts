@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
+import { alwaysAllowEnabled, createRule, hasActiveRule, safeRuleCommand } from "./allow-rules";
 import { APPROVAL_CHOICES, type ApprovalChoice, type InboxPrompt } from "./types";
 
 export { APPROVAL_CHOICES, type ApprovalChoice, type InboxPrompt };
@@ -42,6 +43,8 @@ interface PromptRow {
   command: string | null;
   command_complete: boolean | null;
   choices: string[] | null;
+  tool?: string | null;
+  id?: string;
   created_at: string;
   expires_at: string;
   answer_choice: string | null;
@@ -76,6 +79,7 @@ function toPrompt(row: PromptRow): InboxPrompt {
     expiresAt: row.expires_at,
     answerable: kind === "approval" && choices.includes("deny"),
     answeredChoice: (cleanChoices([row.answer_choice])[0] ?? null),
+    claudeCode: Boolean(row.tool),
   };
 }
 
@@ -118,11 +122,29 @@ export interface PendingInput {
 export async function recordPending(computer: InboxComputer, input: PendingInput, now = new Date()): Promise<{ choice: ApprovalChoice } | null> {
   const ttl = Math.min(Math.max(Math.floor(input.ttlSeconds ?? 300), 30), MAX_TTL_SECONDS);
   const kind = input.kind;
-  const choices = kind === "approval" ? cleanChoices(input.choices ?? []) : [];
+  let choices = kind === "approval" ? cleanChoices(input.choices ?? []) : [];
   const sessionId = input.sessionId?.trim() || null;
   const tool = input.tool?.trim().slice(0, 40) || null;
   let auto: { choice: ApprovalChoice } | null = null;
-  if (kind === "approval" && sessionId && tool && choices.includes("session")) {
+  let outcome = "allowed_for_chat";
+  // Claude Code prompts (they name a tool): "always" is only offered, and rules
+  // only applied, with HIVRA_INBOX_ALWAYS_ALLOW on and an exact, safe match.
+  if (tool) {
+    choices = choices.filter((choice) => choice !== "always");
+    const exact = kind === "approval" && alwaysAllowEnabled()
+      ? safeRuleCommand(tool, input.command, Boolean(input.commandComplete))
+      : null;
+    if (exact && choices.includes("deny")) {
+      if (await hasActiveRule(computer.id, computer.user_id, tool, exact)) {
+        // The hook only understands allow/deny: hand it a plain allow.
+        auto = { choice: "once" };
+        outcome = "allowed_always";
+      } else {
+        choices = cleanChoices([...choices, "always"]);
+      }
+    }
+  }
+  if (!auto && kind === "approval" && sessionId && tool && choices.includes("session")) {
     const { data, error } = await db()
       .from("agent_inbox_prompts")
       .select("prompt_id")
@@ -148,7 +170,7 @@ export async function recordPending(computer: InboxComputer, input: PendingInput
       session_id: sessionId,
       created_at: now.toISOString(),
       expires_at: new Date(now.getTime() + ttl * 1000).toISOString(),
-      ...(auto ? { answer_choice: auto.choice, answered_at: now.toISOString(), resolved_at: now.toISOString(), resolved_outcome: "allowed_for_chat" } : {}),
+      ...(auto ? { answer_choice: auto.choice, answered_at: now.toISOString(), resolved_at: now.toISOString(), resolved_outcome: outcome } : {}),
     }, { onConflict: "agent_id,prompt_id", ignoreDuplicates: true });
   if (error) throw new Error(`could not record a prompt: ${error.message}`);
   return auto;
@@ -169,14 +191,16 @@ export async function answersFor(computer: InboxComputer, promptIds: string[]): 
   if (promptIds.length === 0) return [];
   const { data, error } = await db()
     .from("agent_inbox_prompts")
-    .select("prompt_id, answer_choice, answer_text")
+    .select("prompt_id, answer_choice, answer_text, tool")
     .eq("agent_id", computer.id)
     .in("prompt_id", promptIds)
     .not("answered_at", "is", null)
     .is("resolved_at", null);
   if (error) throw new Error(`could not read answers: ${error.message}`);
-  return ((data ?? []) as Pick<PromptRow, "prompt_id" | "answer_choice" | "answer_text">[]).flatMap((row) => {
-    const choice = cleanChoices([row.answer_choice])[0];
+  return ((data ?? []) as Pick<PromptRow, "prompt_id" | "answer_choice" | "answer_text" | "tool">[]).flatMap((row) => {
+    let choice = cleanChoices([row.answer_choice])[0];
+    // Claude Code's hook only knows allow/deny; the rule itself lives on the server.
+    if (choice === "always" && row.tool) choice = "once";
     return choice ? [{ prompt_id: row.prompt_id, choice, text: row.answer_text ?? null }] : [];
   });
 }
@@ -188,7 +212,7 @@ export async function openPromptsFor(agentIds: string[], now = new Date()): Prom
   try {
     const { data, error } = await supabaseAdmin
       .from("agent_inbox_prompts")
-      .select("agent_id, prompt_id, kind, summary, command, command_complete, choices, created_at, expires_at, answer_choice, answered_at")
+      .select("agent_id, prompt_id, kind, tool, summary, command, command_complete, choices, created_at, expires_at, answer_choice, answered_at")
       .in("agent_id", ids)
       .is("resolved_at", null)
       .gt("expires_at", now.toISOString())
@@ -223,7 +247,7 @@ export async function answerPrompt(
 ): Promise<AnswerResult> {
   const { data, error } = await db()
     .from("agent_inbox_prompts")
-    .select("agent_id, user_id, prompt_id, kind, summary, command, command_complete, choices, created_at, expires_at, answer_choice, answered_at, resolved_at")
+    .select("id, agent_id, user_id, prompt_id, kind, tool, summary, command, command_complete, choices, created_at, expires_at, answer_choice, answered_at, resolved_at")
     .eq("agent_id", agentId)
     .eq("prompt_id", promptId)
     .eq("user_id", userId)
@@ -240,6 +264,10 @@ export async function answerPrompt(
   if (answer.choice !== "deny" && !prompt.commandComplete) {
     return { ok: false, status: 400, message: "Open the chat to see the whole command before you allow it." };
   }
+  const rule = answer.choice === "always" && data.tool ? safeRuleCommand(data.tool, data.command, Boolean(data.command_complete)) : null;
+  if (answer.choice === "always" && data.tool && !rule) {
+    return { ok: false, status: 400, message: "That answer is not offered for this request." };
+  }
   const text = answer.choice === "deny" ? answer.text?.trim().slice(0, 500) || null : null;
   const { data: updated, error: updateError } = await db()
     .from("agent_inbox_prompts")
@@ -252,5 +280,6 @@ export async function answerPrompt(
     .select("prompt_id");
   if (updateError) throw new Error(`could not save the answer: ${updateError.message}`);
   if (!updated?.length) return { ok: false, status: 409, message: "This was already answered." };
+  if (rule && data.tool) await createRule(agentId, userId, data.tool, rule, data.id);
   return { ok: true, prompt: { ...prompt, answeredChoice: answer.choice } };
 }

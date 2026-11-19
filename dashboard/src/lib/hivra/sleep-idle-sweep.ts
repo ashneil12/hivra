@@ -2,7 +2,9 @@ import "server-only";
 
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
-import { parseSleepMode, type SleepMode } from "./agent-sleep-policy";
+import { parseSleepMode, sleepMemoryDropAfterDays, type SleepMode } from "./agent-sleep-policy";
+import { resetSleepMemoryDropCooldowns, runSleepMemoryDrops, type MemoryDropCounts } from "./sleep-memory-drop";
+import { resetSleepStorageState, runSleepStorage, type SleepStorageCounts } from "./sleep-storage";
 import { resolveHivraProxmoxHost } from "./proxmox-target";
 import {
   SCHEDULED_WAKE_LEAD_SECONDS,
@@ -80,6 +82,10 @@ export const SWEEP_BUDGET_MS = 50_000;
  * agent hibernating with no one to finish the lease. The route's maxDuration is 300 s.
  */
 export const HIBERNATE_HARD_LIMIT_MS = 285_000;
+/** While an agent is coming back from storage, the storage step looks again this often within one run. */
+export const STORAGE_RECHECK_MS = 4_000;
+const STORAGE_RECHECK_MARGIN_MS = 6_000;
+const STORAGE_RECHECK_MAX = 12;
 /** Scheduled wakes may use at most this much of the budget, so sleeping still gets a turn. */
 const WAKE_STEP_BUDGET_MS = 22_000;
 /** The Telegram webhook step's own share of the run, so a slow Telegram never starves the sleep step after it. */
@@ -148,6 +154,8 @@ export function resetSleepSweepCooldowns(): void {
   ingressCooldowns.clear();
   leaseCooldowns.clear();
   driftCooldowns.clear();
+  resetSleepMemoryDropCooldowns();
+  resetSleepStorageState();
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +185,10 @@ export interface SleepIdleSweepSummary {
   drift: { checked: number; settled: number; consistent: number; left: number; woke: number };
   hibernate: SweepStepCounts;
   nap: SweepStepCounts;
+  /** Long sleepers whose saved memory was dropped (disk kept). Only when that is switched on. */
+  memoryDrops?: MemoryDropCounts;
+  /** Agents packed into the storage box and brought back. Only when there was such work. */
+  storage?: SleepStorageCounts;
   /** Telegram wake webhooks set and taken down. Only when that feature is configured. */
   telegram?: TelegramSweepCounts;
   /** Other channels' wake arms, and deferred channel wakes. Only when channel wake is configured. */
@@ -212,6 +224,8 @@ export interface SleepIdleSweepOptions {
   env?: Record<string, string | undefined>;
   now?: () => number;
   budgetMs?: number;
+  /** How often the storage step looks again while an agent is coming back. For tests. */
+  storageRecheckMs?: number;
 }
 
 type Db = NonNullable<typeof supabaseAdmin>;
@@ -233,6 +247,7 @@ interface Context {
   now: () => number;
   startedAt: number;
   deadline: number;
+  storageRecheckMs: number;
   summary: SleepIdleSweepSummary;
   /**
    * Work that outlived its step: wakes past their wait, sleeps cut off at the
@@ -741,6 +756,75 @@ async function resetStoppedSleepRecords(ctx: Context): Promise<void> {
   }
 }
 
+// --- Long sleepers: drop the saved memory, keep the disk ----------------------
+
+async function runMemoryDrops(ctx: Context): Promise<void> {
+  const hosts = await loadHosts(ctx);
+  if (!hosts) return;
+  const result = await runSleepMemoryDrops({
+    db: ctx.db,
+    env: ctx.env,
+    now: ctx.now,
+    // A host call may run past the budget for starting work, up to the run's hard limit.
+    startBy: ctx.deadline,
+    deadline: ctx.startedAt + HIBERNATE_HARD_LIMIT_MS,
+    hostActs: (host) => hostActs(hosts.get(host)),
+  });
+  if (!result) return;
+  ctx.summary.memoryDrops = result.counts;
+  ctx.summary.errors += result.errors;
+}
+
+// --- Storage: pack long sleepers, bring back the ones asked for ---------------
+
+async function runStorage(ctx: Context): Promise<void> {
+  // The hosts are read only if something may be packed.
+  let hosts: Map<string, HostInfo> | null | undefined;
+  const once = () => runSleepStorage({
+    db: ctx.db,
+    env: ctx.env,
+    now: ctx.now,
+    startBy: ctx.deadline,
+    deadline: ctx.startedAt + HIBERNATE_HARD_LIMIT_MS,
+    hostActs: async (host) => {
+      if (hosts === undefined) hosts = await loadHosts(ctx);
+      return !!hosts && hostActs(hosts.get(host));
+    },
+    resolveTarget: resolveSleepTarget,
+    // Its disks are back: the normal wake boots it. The run waits for it like any other wake it starts.
+    wake: async (agentId) => {
+      ctx.pending.push(ensureHivraAgentAwake(agentId, { trigger: "schedule", waitMs: 120_000 }).catch(() => undefined));
+    },
+  });
+  const first = await once();
+  const c = first.counts;
+  const report = () => {
+    if (c.tracked + c.stored + c.storeStarted + c.storeEnded + c.unstoreStarted + c.unstored + c.unstoreFailed + c.refused > 0) {
+      ctx.summary.storage = c;
+    }
+  };
+  report();
+  ctx.summary.errors += first.errors;
+  if (first.returning === 0) return;
+  // Someone is waiting for an agent that is on its way back. Rather than leave the next move to the
+  // next run a minute away, look again every few seconds while this run may still start work. It runs
+  // beside the later steps, so a return never costs the other agents their nap.
+  ctx.pending.push((async () => {
+    let returning = first.returning;
+    for (let i = 0; i < STORAGE_RECHECK_MAX && returning > 0; i += 1) {
+      if (ctx.deadline - ctx.now() <= ctx.storageRecheckMs + STORAGE_RECHECK_MARGIN_MS) break;
+      await new Promise((resolve) => setTimeout(resolve, ctx.storageRecheckMs));
+      const again = await once();
+      for (const key of Object.keys(c) as Array<keyof SleepStorageCounts>) {
+        if (key !== "tracked") c[key] += again.counts[key];
+      }
+      ctx.summary.errors += again.errors;
+      returning = again.returning;
+      report();
+    }
+  })().catch(() => undefined));
+}
+
 // --- Steps 3 and 4: hibernate and nap -----------------------------------------
 
 async function loadHosts(ctx: Context): Promise<Map<string, HostInfo> | null> {
@@ -1049,6 +1133,7 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
     now,
     startedAt,
     deadline: startedAt + (options.budgetMs ?? SWEEP_BUDGET_MS),
+    storageRecheckMs: options.storageRecheckMs ?? STORAGE_RECHECK_MS,
     summary,
     pending: [],
   };
@@ -1067,7 +1152,12 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
     ...(hostIngressConfigured(env)
       ? ([["host ingress", runHostIngress]] as Array<[string, (c: Context) => Promise<void>]>)
       : []),
+    // Bringing a stored agent back never waits for the sleep switch: with it off, nothing new is packed.
+    ["storage", runStorage],
     ...(actsOnSleep ? ([["hibernate and nap", runSleepSteps]] as Array<[string, (c: Context) => Promise<void>]>) : []),
+    ...(actsOnSleep && sleepMemoryDropAfterDays(env.HIVRA_SLEEP_DROP_MEMORY_AFTER_DAYS) !== null
+      ? ([["memory drops", runMemoryDrops]] as Array<[string, (c: Context) => Promise<void>]>)
+      : []),
   ];
   for (const [name, step] of steps) {
     if (remaining(ctx) <= 0) {
@@ -1084,9 +1174,15 @@ export async function runSleepIdleSweep(options: SleepIdleSweepOptions = {}): Pr
   // Finish what is still running before answering (see Context.pending). No new work starts here.
   if (ctx.pending.length > 0) {
     const hardLimit = startedAt + HIBERNATE_HARD_LIMIT_MS;
-    const drained = hardLimit > now()
-      ? await untilDeadline(ctx, Promise.allSettled(ctx.pending), hardLimit)
-      : { timedOut: true as const };
+    // Work that is still running may add more (the storage re-check starts a wake once an agent's
+    // disks are back), so wait again until a pass finds nothing new. Answering with a wake still in
+    // flight would freeze it holding its lease, with the computer never started.
+    let drained: { timedOut: boolean } = { timedOut: hardLimit <= now() };
+    for (let waited = 0; !drained.timedOut && waited < ctx.pending.length;) {
+      const batch = ctx.pending.slice();
+      waited = batch.length;
+      drained = await untilDeadline(ctx, Promise.allSettled(batch), hardLimit);
+    }
     if (drained.timedOut) {
       log.warn("sleep sweep work still running at the hard limit; its leases are settled later", {
         source: LOG_SOURCE,

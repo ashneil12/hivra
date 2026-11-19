@@ -1,10 +1,11 @@
 /** @jest-environment node */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
-  buildIdleProbeHostScript, buildSleepHostScript, buildWakeHostScript, idleVerdict, parseIdleProbeOutput,
+  buildIdleProbeHostScript, buildMemoryDropHostScript, buildSleepHostScript, buildWakeHostScript, idleVerdict, parseIdleProbeOutput,
+  parseMemoryDropReceipt,
   parseIdleProbeRefusal, parseSleepReceipt, parseWakeReceipt, TRIM_GUEST_COMMAND, type WakeAdmission,
 } from "../agent-sleep-scripts";
 import { HOST_VM_CONTROL_PROGRAM, HOST_VM_CONTROL_SOCKETS_PROGRAM } from "../sleep/host-vm-control-program";
@@ -50,7 +51,7 @@ describe("script construction", () => {
     expect(digest(withoutProbe(buildSleepHostScript({ ...target, tier: "nap", manual: false }))))
       .toBe("30792d3358eeeb69c93e71559494694ca8e8eb4b3e3a6c07fa71fd529f838ff0");
     expect(digest(withoutProbe(buildSleepHostScript({ ...target, tier: "hibernate", manual: false }))))
-      .toBe("ff24aec0040e571da4a5d8acb1d278283b9589bfd9d97c41e04286f59b80c9d6");
+      .toBe("6afca6eae86892fd2115fe862baa9f475e1dc777f6cc2d699bc5aa4b3b87314e");
     expect(digest(buildWakeHostScript({ ...target, admission })))
       .toBe("8ad925ebfdf85c7142ec9936216d1855b53a7e3fd1fff1cadade0835235abd01");
   });
@@ -662,6 +663,96 @@ host("wake script against a stub host", () => {
     expect(receipt(run)).toMatchObject({ ok: false, from: "cold", to: "cold", reason: "cold" });
     none(run.calls);
     expect(fixups(run.calls)).toEqual([]);
+  });
+
+  it("boots a long sleeper from its disk only when asked and only with the host's mark", () => {
+    const coldMark = path.join(h.dir, "var-lib-hivra-sleep", `cold-${VMID}`);
+    const coldWake = buildWakeHostScript({ vmid: VMID, bindingTag: TAG, admission: { provisionerDirectory: h.provisionerDir, hostReserveMb: 2048, enforceCeilings: true, cpuDensityMilli: 1500, memoryDensityMilli: 1200 }, coldStart: true });
+    rmSync(coldMark, { force: true });
+    // No mark: an owner switched it off, and it stays off.
+    const unmarked = h.run(coldWake, COLD);
+    expect(receipt(unmarked)).toMatchObject({ ok: false, from: "cold", to: "cold", reason: "cold" });
+    expect(unmarked.calls.some((c) => c.startsWith(`qm start`))).toBe(false);
+    // Marked: admitted and started like a restore, autostart given back, mark gone.
+    mkdirSync(path.dirname(coldMark), { recursive: true });
+    writeFileSync(coldMark, `${TAG}\n`);
+    writeFileSync(onbootMark(h), "");
+    const run = h.run(coldWake, { ...COLD, onboot: 0 });
+    expect(receipt(run)).toMatchObject({ ok: true, from: "cold", to: "awake", reason: "cold_started" });
+    const at = (prefix: string) => run.calls.findIndex((c) => c.startsWith(prefix));
+    expect(at("admission")).toBeGreaterThan(-1);
+    expect(at("admission")).toBeLessThan(at(`qm start ${VMID}`));
+    expect(run.state).toMatchObject({ status: "running", onboot: 1 });
+    expect(existsSync(coldMark)).toBe(false);
+    // A mark written for another computer (a reused number) counts as none.
+    writeFileSync(coldMark, "hivra-bind-other\n");
+    expect(receipt(h.run(coldWake, COLD))).toMatchObject({ ok: false, reason: "cold" });
+    // A refused admission leaves it off and keeps the mark for the next try.
+    writeFileSync(coldMark, `${TAG}\n`);
+    const refused = h.run(coldWake, COLD, { STUB_ADMISSION_REFUSES: "1" });
+    expect(receipt(refused)).toMatchObject({ ok: false, reason: "capacity", to: "cold" });
+    expect(existsSync(coldMark)).toBe(true);
+    rmSync(coldMark, { force: true });
+    // A computer with saved memory is still restored, exactly as without the switch.
+    const restored = h.run(coldWake, HIBERNATED);
+    expect(receipt(restored)).toMatchObject({ ok: true, from: "hibernated", reason: "restored" });
+    // Without the switch the mark changes nothing.
+    writeFileSync(coldMark, `${TAG}\n`);
+    expect(receipt(h.run(wake(), COLD))).toMatchObject({ ok: false, reason: "cold" });
+    rmSync(coldMark, { force: true });
+    // Its disks are in storage: never started, even if a cold mark is also there.
+    const storedMark = path.join(h.dir, "var-lib-hivra-sleep", `stored-${VMID}`);
+    writeFileSync(storedMark, `${TAG}\n`);
+    writeFileSync(coldMark, `${TAG}\n`);
+    const stored = h.run(coldWake, COLD);
+    expect(receipt(stored)).toMatchObject({ ok: false, from: "cold", to: "cold", reason: "stored" });
+    expect(stored.calls.some((c) => c.startsWith(`qm start`))).toBe(false);
+    expect(existsSync(storedMark)).toBe(true);
+    // A stored mark written for another computer counts as none.
+    writeFileSync(storedMark, "hivra-bind-other\n");
+    expect(receipt(h.run(coldWake, COLD))).toMatchObject({ ok: true, reason: "cold_started" });
+    rmSync(storedMark, { force: true });
+    rmSync(coldMark, { force: true });
+  });
+
+  it("drops the saved memory of a hibernated computer, marks it, and then a cold start wakes it", () => {
+    const coldMark = path.join(h.dir, "var-lib-hivra-sleep", `cold-${VMID}`);
+    const drop = buildMemoryDropHostScript({ vmid: VMID, bindingTag: TAG });
+    const dropReceipt = (run: { stdout: string; stderr?: string }) => explain(run, parseMemoryDropReceipt(run.stdout, VMID));
+    rmSync(coldMark, { force: true });
+    const run = h.run(drop, HIBERNATED);
+    expect(dropReceipt(run)).toEqual({ ok: true, vmid: VMID, reason: "dropped" });
+    expect(run.state).toMatchObject({ status: "stopped", lock: "", vmstate: false });
+    expect(run.calls).toEqual(expect.arrayContaining([`qm unlock ${VMID}`, `pvesm free local-lvm:vm-${VMID}-state-suspend`]));
+    expect(run.calls.some((c) => /^qm (start|stop|destroy|resume|suspend)/.test(c))).toBe(false);
+    expect(readFileSync(coldMark, "utf8")).toBe(`${TAG}\n`);
+    rmSync(coldMark, { force: true });
+    // Anything that is not off with saved memory is left exactly as it is, unmarked.
+    for (const state of [AWAKE, NAPPING, COLD, { ...HIBERNATED, lock: "backup" }]) {
+      const left = h.run(drop, state);
+      expect(dropReceipt(left)).toMatchObject({ ok: false, reason: "not_hibernated" });
+      expect(left.state).toEqual(state);
+      expect(left.calls.some((c) => /^(qm (unlock|set)|pvesm)/.test(c))).toBe(false);
+      expect(existsSync(coldMark)).toBe(false);
+    }
+    // Another computer's tag, or a script already working on it: nothing happens.
+    expect(dropReceipt(h.run(drop, { ...HIBERNATED, tags: "hivra-bind-other" }))).toMatchObject({ ok: false, reason: "binding_mismatch" });
+    const busy = h.run(drop, HIBERNATED, { STUB_FLOCK_BUSY: "1" });
+    expect(dropReceipt(busy)).toMatchObject({ ok: false, reason: "busy" });
+    expect(busy.state).toEqual(HIBERNATED);
+    // A drop that changed nothing takes its mark away again: the computer still resumes from saved memory.
+    const stuck = h.run(drop, { ...HIBERNATED, unlockFail: true, setFail: true });
+    expect(dropReceipt(stuck)).toMatchObject({ ok: false, reason: "drop_failed" });
+    expect(stuck.state).toMatchObject({ lock: "suspended", vmstate: true });
+    expect(existsSync(coldMark)).toBe(false);
+    // Half done (unlocked, saved memory still listed): marked, so the next wake still starts it.
+    const partial = h.run(drop, { ...HIBERNATED, setFail: true });
+    expect(dropReceipt(partial)).toMatchObject({ ok: false, reason: "drop_partial" });
+    expect(existsSync(coldMark)).toBe(true);
+    rmSync(coldMark, { force: true });
+    expect(() => buildMemoryDropHostScript({ vmid: VMID, bindingTag: null })).toThrow();
+    expect(parseMemoryDropReceipt('HIVRA_MEMORY_DROP_RESULT {"ok":true,"vmid":1234,"reason":"busy"}\n', VMID)).toBeNull();
+    expect(parseMemoryDropReceipt('HIVRA_MEMORY_DROP_RESULT {"ok":true,"vmid":99999,"reason":"dropped"}\n', VMID)).toBeNull();
   });
 
   it("refuses any odd state and never resumes it", () => {

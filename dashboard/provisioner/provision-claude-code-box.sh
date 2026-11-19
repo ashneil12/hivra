@@ -144,7 +144,10 @@ c_bold=$'\033[1m'; c_dim=$'\033[2m'; c_green=$'\033[32m'; c_red=$'\033[31m'; c_r
 say()  { printf '%s==>%s %s\n' "$c_bold" "$c_reset" "$*"; }
 ok()   { printf '%s  ok%s %s\n' "$c_green" "$c_reset" "$*"; }
 warn() { printf '%s  ! %s %s\n' "$c_red" "$c_reset" "$*" >&2; }
-die()  { warn "$*"; exit 1; }
+# die() also leaves its own message (Hivra's fixed text) for hivra-install-agent.py,
+# which names it in the host log's "Hivra guest installation failure" line; the
+# guest is removed on failure, so this is the only trace of which step stopped.
+die()  { warn "$*"; ( umask 077; printf '%s\n' "$*" > /run/hivra-install-failure-reason ) 2>/dev/null || true; exit 1; }
 
 # The pinned Google Chrome build ships as data too (chrome-pin.json), so this
 # installer and the runtime updater (hivra-guest-runtime-update.sh), which moves
@@ -938,7 +941,15 @@ if [ "$AGENT_KIND" = "aeon" ]; then
 say "5b/7  Aeon dashboard (hosted Next.js; tasks run on the user's own GitHub Actions)"
 # ===========================================================================
 # GitHub CLI — Aeon shells out to `gh` for auth + every GitHub API call.
-if ! dpkg-query -W -f='${Version}' gh 2>/dev/null | grep -Fxq "$GH_VERSION"; then
+# The image may already carry a newer gh (installing the pinned .deb over it
+# is a downgrade apt refuses under -y). Any installed gh at or above the pin
+# is kept as is.
+gh_at_least_pin() {
+  local installed
+  installed="$(dpkg-query -W -f='${Version}' gh 2>/dev/null || true)"
+  [ -n "$installed" ] && dpkg --compare-versions "$installed" ge "$GH_VERSION"
+}
+if ! gh_at_least_pin; then
   GH_TMP="$(mktemp /tmp/github-cli.XXXXXX.deb)"
   trap 'rm -f -- "${GH_TMP:-}"' EXIT
   curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
@@ -950,9 +961,8 @@ if ! dpkg-query -W -f='${Version}' gh 2>/dev/null | grep -Fxq "$GH_VERSION"; the
   rm -f -- "$GH_TMP"
   trap - EXIT
 fi
-dpkg-query -W -f='${Version}' gh 2>/dev/null | grep -Fxq "$GH_VERSION" \
-  || die "GitHub CLI version does not match ${GH_VERSION}"
-ok "verified gh ${GH_VERSION}"
+gh_at_least_pin || die "GitHub CLI is older than ${GH_VERSION}"
+ok "verified gh $(dpkg-query -W -f='${Version}' gh) (at least ${GH_VERSION})"
 
 # The dashboard's RUNTIME footprint is tiny (~200 MB), but a one-time `next build`
 # peaks much higher. Ensure a swapfile exists so the build can spill instead of
@@ -1135,6 +1145,10 @@ if [ ! -s "${OPENCLAW_CFG_DIR}/openclaw.json" ]; then
   #  - auth.mode=none: the token-proxy already authenticates every user and the
   #    gateway is loopback+firewalled (OpenClaw's documented fronting-proxy
   #    deployment) — so the Control UI must NOT demand a SECOND token from the user.
+  #  - controlUi.basePath=/openclaw: OpenClaw's own setting for serving the Control UI
+  #    below a reverse-proxy prefix, so its assets and routes stay under the box
+  #    gateway's /openclaw mount (2026.11.5 sends no Referer, so the gateway can no
+  #    longer re-home root-absolute requests; without it the UI never starts).
   #  - controlUi.dangerouslyAllowHostHeaderOriginFallback: the Control UI WS arrives
   #    with the public tunnel Origin (not loopback); this accepts it. Safe only
   #    because the gate is the real boundary (same model as Aeon's ALLOW_ANY_HOST).
@@ -1160,7 +1174,7 @@ if [ ! -s "${OPENCLAW_CFG_DIR}/openclaw.json" ]; then
   # Generic managed-Venice env (same the dashboard sends every managed agent):
   # HIVRA_MODEL_KEY (hven_ proxy key) / HIVRA_MODEL_BASE_URL (gateway /v1) /
   # HIVRA_HERMES_MODEL (model id).
-  OC_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-pro}"
+  OC_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-1-flash}"
   # Defensive: only embed the key + model if they're safe to interpolate into JSON
   # (no quotes/backslashes/spaces that would corrupt the config). hven_* keys are
   # base64url + the model is dashboard-validated; this guards a future format change
@@ -1169,7 +1183,10 @@ if [ ! -s "${OPENCLAW_CFG_DIR}/openclaw.json" ]; then
      && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$' \
      && printf '%s' "${OC_MODEL}" | grep -qE '^[A-Za-z0-9_.-]+$'; then
     OC_BASEURL="${HIVRA_MODEL_BASE_URL:-https://hivra.cloud/api/managed-venice/v1}"
-    OC_VENICE_JSON=", \"agents\": { \"defaults\": { \"model\": { \"primary\": \"venice/${OC_MODEL}\" }, \"models\": { \"venice/${OC_MODEL}\": {} } } }, \"models\": { \"mode\": \"merge\", \"providers\": { \"venice\": { \"baseUrl\": \"${OC_BASEURL}\", \"api\": \"openai-completions\", \"apiKey\": \"${HIVRA_MODEL_KEY}\", \"models\": [ { \"id\": \"${OC_MODEL}\", \"name\": \"${OC_MODEL} (Venice)\", \"contextWindow\": 128000, \"maxTokens\": 4096, \"input\": [\"text\"], \"cost\": { \"input\": 0, \"output\": 0, \"cacheRead\": 0, \"cacheWrite\": 0 }, \"reasoning\": false } ] } } }"
+    # compat.thinkingFormat "openai": OpenClaw otherwise adds DeepSeek's native
+    # top-level `thinking` field to deepseek-v4 models, and Venice's strict
+    # chat schema rejects it ("Invalid request parameters").
+    OC_VENICE_JSON=", \"agents\": { \"defaults\": { \"model\": { \"primary\": \"venice/${OC_MODEL}\" }, \"models\": { \"venice/${OC_MODEL}\": {} } } }, \"models\": { \"mode\": \"merge\", \"providers\": { \"venice\": { \"baseUrl\": \"${OC_BASEURL}\", \"api\": \"openai-completions\", \"apiKey\": \"${HIVRA_MODEL_KEY}\", \"models\": [ { \"id\": \"${OC_MODEL}\", \"name\": \"${OC_MODEL} (Venice)\", \"contextWindow\": 128000, \"maxTokens\": 4096, \"input\": [\"text\"], \"cost\": { \"input\": 0, \"output\": 0, \"cacheRead\": 0, \"cacheWrite\": 0 }, \"reasoning\": false, \"compat\": { \"thinkingFormat\": \"openai\" } } ] } } }"
     ok "managed-Venice billing wired into openclaw.json (model venice/${OC_MODEL})"
   elif [ -n "${HIVRA_MODEL_KEY:-}" ]; then
     warn "managed-Venice key/model has unexpected characters — skipping billing wiring (won't write corrupt config)"
@@ -1184,7 +1201,7 @@ if [ ! -s "${OPENCLAW_CFG_DIR}/openclaw.json" ]; then
     "bind": "loopback",
     "port": ${OPENCLAW_PORT},
     "auth": { "mode": "none" },
-    "controlUi": { "dangerouslyAllowHostHeaderOriginFallback": true }
+    "controlUi": { "basePath": "/openclaw", "dangerouslyAllowHostHeaderOriginFallback": true }
   }${OC_BROWSER_JSON}${OC_VENICE_JSON}
 }
 JSON
@@ -1361,6 +1378,45 @@ with os.fdopen(fd, "w", encoding="utf-8") as f:
 os.replace(tmp, dst)
 PY
 chmod 600 "$A0_USR_ENV"
+# Current Agent Zero picks its models from presets (usr/plugins/_model_config/
+# presets.yaml, the file its own Settings writes) and ignores the A0_SET_*
+# model defaults above, so a launch with managed Venice still asked for a
+# model. Seed its Default preset with the same model, only on a fresh box (an
+# existing file is the owner's). Older images ignore this file.
+A0_PRESETS="${A0_ROOT}/usr/plugins/_model_config/presets.yaml"
+if [ -n "${HIVRA_MODEL_KEY:-}" ] && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$' \
+   && [ ! -e "$A0_PRESETS" ] && [ ! -L "$A0_PRESETS" ]; then
+  A0_MODEL="${HIVRA_HERMES_MODEL:-deepseek-v4-pro}"
+  printf '%s' "$A0_MODEL" | grep -qE '^[A-Za-z0-9_.:/-]+$' || A0_MODEL="deepseek-v4-pro"
+  A0_BASEURL="${HIVRA_MODEL_BASE_URL:-https://hivra.cloud/api/managed-venice/v1}"
+  printf '%s' "$A0_BASEURL" | grep -qE '^https://[A-Za-z0-9.:/_-]+$' \
+    || A0_BASEURL="https://hivra.cloud/api/managed-venice/v1"
+  for d in "${A0_ROOT}/usr/plugins" "${A0_ROOT}/usr/plugins/_model_config"; do
+    [ ! -L "$d" ] || die "Agent Zero plugin folder must not be a symlink"
+    mkdir -p "$d"
+  done
+  cat > "$A0_PRESETS" <<A0PRESETS
+- name: Default
+  chat:
+    provider: openai
+    name: "${A0_MODEL}"
+    api_base: "${A0_BASEURL}"
+    ctx_length: 128000
+    ctx_history: 0.7
+    vision: false
+  utility:
+    provider: openai
+    name: "${A0_MODEL}"
+    api_base: "${A0_BASEURL}"
+    ctx_length: 128000
+    ctx_input: 0.7
+  embedding:
+    provider: huggingface
+    name: sentence-transformers/all-MiniLM-L6-v2
+    api_base: ""
+A0PRESETS
+  chmod 600 "$A0_PRESETS"
+fi
 if [ -n "${HIVRA_MODEL_KEY:-}" ] && printf '%s' "${HIVRA_MODEL_KEY}" | grep -qE '^[A-Za-z0-9_-]+$'; then
   ok "managed-Venice seeded into Agent Zero /opt/a0/.env (model ${HIVRA_HERMES_MODEL:-deepseek-v4-pro})"
 else
@@ -2184,7 +2240,11 @@ if [ "$AGENT_KIND" = "aeon" ]; then
   ok "Aeon dashboard passed runtime-specific readiness"
 elif [ "$AGENT_KIND" = "openclaw" ]; then
   systemctl is-active --quiet bux-openclaw.service || die "OpenClaw service is not active"
-  wait_for_http "http://127.0.0.1:${OPENCLAW_PORT}/" || die "OpenClaw Control UI did not become ready"
+  # The Control UI answers at its basePath (/openclaw on a launch from 2026.11.17.7);
+  # with a basePath set, the gateway's root answers 503.
+  OPENCLAW_UI_PATH="/"
+  if grep -Eq '"basePath": *"/openclaw"' "${OPENCLAW_CFG_DIR}/openclaw.json" 2>/dev/null; then OPENCLAW_UI_PATH="/openclaw/"; fi
+  wait_for_http "http://127.0.0.1:${OPENCLAW_PORT}${OPENCLAW_UI_PATH}" || die "OpenClaw Control UI did not become ready"
   ok "OpenClaw passed runtime-specific readiness"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   systemctl is-active --quiet hivra-agent-zero.service || die "Agent Zero service is not active"
@@ -2258,7 +2318,7 @@ if [ "$AGENT_KIND" = "aeon" ]; then
   STATUS_HINT="sudo -iu ${AGENT_USER} gh auth status"
 elif [ "$AGENT_KIND" = "openclaw" ]; then
   LOGIN_HINT="open the Control UI (/openclaw) and configure model providers + channels there"
-  STATUS_HINT="systemctl status bux-openclaw --no-pager; curl -fsS http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}/ -o /dev/null -w '%{http_code}\n'"
+  STATUS_HINT="systemctl status bux-openclaw --no-pager; curl -fsS http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}${OPENCLAW_UI_PATH:-/} -o /dev/null -w '%{http_code}\n'"
 elif [ "$AGENT_KIND" = "hermes" ]; then
   LOGIN_HINT="open the Hermes web UI (/hermes); a managed model is pre-seeded. Scheduled tasks and chat channels run in the Hermes gateway (user service). Update with: sudo -iu ${AGENT_USER} hermes update"
   STATUS_HINT="systemctl status bux-hermes --no-pager; sudo -iu ${AGENT_USER} hermes gateway status; curl -fsS http://127.0.0.1:${HERMES_PORT:-9119}/ -o /dev/null -w '%{http_code}\n'"

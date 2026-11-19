@@ -139,18 +139,32 @@ for n in names[:500]:
 for d in (HOME + "/.claude/projects", HOME + "/.codex/sessions"):
     t = newest(d, 5, 4000)
     if t: last.append(t)
-cli_busy = sum(1 for v in procs.values() if v[0] in ("claude", "codex") or re.search(r"(^|/)(claude|codex)( |$)", v[2]))
+# A coding CLI left open in the computer's own tmux is a standing session, not
+# a run: its mere presence says nothing. It is busy while it prints (the tmux
+# output time below feeds lastUsedAt); the tmux server's own command line,
+# which repeats the CLI's name, is not a CLI either. Anywhere else (a chat run,
+# a cron job, a script) a CLI process is a run in progress.
+def standing(pid):
+    n = 0
+    while pid in procs and n < 64:
+        if procs[pid][0].startswith("tmux"): return True
+        pid = procs[pid][1]; n += 1
+    return False
+cli_busy = sum(1 for q, v in procs.items() if (v[0] in ("claude", "codex") or re.search(r"(^|/)(claude|codex)( |$)", v[2])) and not standing(q))
 # ---- terminals: a ttyd child is one open terminal tab ----
 term = sum(len(children(p)) for p, v in procs.items() if v[0] == "ttyd")
 tmux_att = 0
 for sock in ("hivra-agent", "hivra-box"):
     try:
-        r = subprocess.run(["/usr/sbin/runuser", "-u", "bux", "--", "tmux", "-L", sock, "list-sessions", "-F",
-                            "#{session_attached} #{session_activity}"], capture_output=True, text=True, timeout=2)
+        r = subprocess.run(["/usr/sbin/runuser", "-u", "bux", "--", "tmux", "-L", sock, "list-windows", "-a", "-F",
+                            "#{session_attached} #{session_activity} #{window_activity}"], capture_output=True, text=True, timeout=2)
         for ln in r.stdout.splitlines():
-            a, act = (ln.split() + ["0", "0"])[:2]
+            a, act, out = (ln.split() + ["0", "0", "0"])[:3]
             tmux_att += int(a) > 0
-            if act.isdigit() and int(act) > 0: last.append(float(act))
+            # session_activity is the last key press; window_activity is the last
+            # time anything was printed there, which is how a working CLI shows.
+            for t in (act, out):
+                if t.isdigit() and int(t) > 0: last.append(float(t))
     except Exception: err("tmux")
 # ---- sockets: established connections per local port ----
 def gateway_hex():
@@ -271,7 +285,15 @@ for k, name in (("TELEGRAM_BOT_TOKEN", "telegram"), ("DISCORD_BOT_TOKEN", "disco
                 ("PHOTON_PROJECT_ID", "photon"), ("RAFT_PROFILE", "raft"), ("BUZZ_RELAY_URL", "buzz")):
     if re.search(r"^%s\w*=\S" % k, env, re.M): hermes_ch(name)
 cfg = rd(HOME + "/.hermes/config.yaml", 262144) or ""
-for name in re.findall(r"^  (\w+):\s*\n(?:    .*\n)*?    enabled:\s*true", cfg, re.M): hermes_ch(name)
+# Only a platform counts: a block under the top-level "platforms:", or one named like a known platform
+# wherever it sits. Other switches with "enabled: true" (gateway.bot_loop_guard is one) are not channels.
+KNOWN_PLATFORMS = ("telegram", "discord", "slack", "whatsapp", "whatsapp_cloud", "signal", "matrix", "mattermost",
+                   "email", "sms", "bluebubbles", "dingtalk", "feishu", "qqbot", "wecom", "wecom_callback", "weixin",
+                   "google_chat", "irc", "line", "teams", "simplex", "ntfy", "photon", "raft", "buzz", "imessage",
+                   "homeassistant", "webhook")
+for top, block in re.findall(r"^(\w+):[^\n]*\n((?:(?:[ \t]+[^\n]*)?\n)*)", cfg + "\n", re.M):
+    for name in re.findall(r"^  (\w+):\s*\n(?:    .*\n)*?    enabled:\s*true", block, re.M):
+        if name not in NOT_CHANNELS and (top == "platforms" or name in KNOWN_PLATFORMS): hermes_ch(name)
 # Per-channel facts for the wake adapters. Modes and host names only, never a secret.
 def env_on(key): return (env_value(env, key) or "").lower() in ("true", "1", "yes", "on")
 def host_of(url):

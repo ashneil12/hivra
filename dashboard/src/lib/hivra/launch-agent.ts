@@ -31,7 +31,7 @@ import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
-import { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DIRECT_BASE_URL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
+import { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, OPENCLAW_DEFAULT_MODEL, VENICE_DIRECT_BASE_URL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
 import { resolveLaunchLlmVaultKey } from "@/lib/hivra/launch-llm-vault-key";
 import { getTemplateForLaunch, type TemplateIdentity } from "@/lib/hivra/agent-templates";
 import { bankrSkillsDirForType } from "@/lib/hivra/bankr-skills-seed";
@@ -494,7 +494,7 @@ install -d -m 0700 /var/lib/hivra/provision-operations
 # running, so another launch cannot admit against capacity before this one is
 # active and visible in the host inventory.
 exec 8>/run/lock/hivra-allocation.lock
-flock -w 60 8 || { echo "timed out waiting for the Hivra allocation lock" >&2; exit 1; }
+flock -w ${HIVRA_LAUNCH_ALLOCATION_LOCK_WAIT_SECONDS} 8 || { echo "timed out waiting for the Hivra allocation lock" >&2; exit 1; }
 # Inventory is intentionally captured only after FD 8 is held. A launcher that
 # waited behind another provision must observe the predecessor's committed VM
 # configuration and private IP, rather than allocate from its pre-wait snapshot.
@@ -661,7 +661,7 @@ BINDING_TAG=${shellQuote(infrastructureBindingTag)}
 STORAGE=${shellQuote(storage)}
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
-flock -w 60 8 || { echo "timed out waiting for the Hivra rollback lock" >&2; exit 1; }
+flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8 || { echo "timed out waiting for the Hivra rollback lock" >&2; exit 1; }
 PIDFILE="/run/hivra-provision/$VMID.pid"
 vm_owned_by_operation() {
   tags="$(qm config "$VMID" 2>/dev/null | sed -n 's/^tags:[[:space:]]*//p')" || return 1
@@ -777,6 +777,27 @@ async function resolveStickyHivraProxmoxHost(userId: string): Promise<string | n
   return selectedHost;
 }
 
+
+
+// Every launch on a server holds the server-wide allocation lock for about a
+// minute while its computer is created. A 60 s wait meant a third launch
+// arriving together failed (stress test 2026-11-18). Waiting longer lets
+// launches queue; the budgets still fit the launch route's 420 s limit
+// (150 + ~60 identity wait + 120 + the rest).
+/** Code a launch answers with when every server in rotation is out of room. */
+export const HIVRA_LAUNCH_SERVERS_FULL_CODE = "servers_full";
+
+export function isServersFullPlacementError(error: unknown): boolean {
+  return Boolean(
+    error && typeof error === "object" &&
+    (error as { code?: unknown }).code === "PROXMOX_NO_PLACEMENT_TARGET" &&
+    Array.isArray((error as { capacityFullHostIds?: unknown }).capacityFullHostIds) &&
+    ((error as { capacityFullHostIds: unknown[] }).capacityFullHostIds.length > 0),
+  );
+}
+
+export const HIVRA_LAUNCH_ALLOCATION_LOCK_WAIT_SECONDS = 150;
+export const HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS = 120;
 
 export interface LaunchAgentOptions {
   /**
@@ -1319,10 +1340,9 @@ export async function launchHivraAgentForUser(
 
       explicitClaudeHost = LAUNCHABLE_BOX_TYPES.has(type) ? resolveHivraClaudeCodeProxmoxHost(process.env) : null;
       stickyHost = explicitClaudeHost ? null : await resolveStickyHivraProxmoxHost(userId);
-      const forceTargetId = explicitClaudeHost ?? stickyHost;
       // With HIVRA_HOST_CAPACITY_ALERTS on, a host whose latest capacity reading
       // is critical is tried only when no other host can take the launch.
-      const placement = await selectAvoidingCriticalHosts(excludeTargetIds => selectAvailableProxmoxProvisionTarget({
+      const placeOn = (forceTargetId: string | null) => selectAvoidingCriticalHosts(excludeTargetIds => selectAvailableProxmoxProvisionTarget({
         supabase: supabaseAdmin,
         env: process.env,
         hostConfig: null,
@@ -1348,14 +1368,30 @@ export async function launchHivraAgentForUser(
             : {}),
         }),
       }), { forced: Boolean(forceTargetId) });
+      let placement = await placeOn(explicitClaudeHost ?? stickyHost);
+      // The owner's usual server is a preference, not a rule: when it cannot
+      // take this launch (full, or not ready), the launch moves to any other
+      // server in rotation instead of failing.
+      if (!placement.ok && stickyHost && !explicitClaudeHost) {
+        log.warn("hivra sticky host could not take the launch; trying the other servers", {
+          source: "hivra/agents",
+          failureType: "hivra_agent_sticky_host_spillover",
+          userId,
+          stickyHost,
+          placementStatus: placement.status,
+          placementMessage: placement.message,
+        });
+        placement = await placeOn(null);
+      }
       if (!placement.ok) {
+        const serversFull = isServersFullPlacementError(placement.error);
         // error, not warn: a blocked launch is customer-visible and only error
         // level reaches ops_events. The reason (which host, which prerequisite)
         // is the difference between a self-describing incident and an hour of
         // hand probing.
         log.error("hivra launch blocked: no Proxmox placement target available", new Error(placement.message), {
           source: "hivra/agents",
-          failureType: "hivra_agent_no_proxmox_placement_target",
+          failureType: serversFull ? "hivra_fleet_full" : "hivra_agent_no_proxmox_placement_target",
           userId,
           agentType: type,
           requestedCpu: cpu,
@@ -1366,7 +1402,11 @@ export async function launchHivraAgentForUser(
         });
         // Refused before anything was created: the launch can be tried again
         // as it is, and the client must not treat it as possibly created.
-        return apiError(placement.message, placement.status, undefined, { code: "placement_unavailable" });
+        // "servers_full": every server in rotation is out of room. The launch
+        // page keeps the request and sends it again until room frees up.
+        return apiError(placement.message, placement.status, undefined, {
+          code: serversFull ? HIVRA_LAUNCH_SERVERS_FULL_CODE : "placement_unavailable",
+        });
       }
       env = placement.env;
       host = placement.targetId ?? env.PROXMOX_NODE ?? resolveHivraProxmoxHost();
@@ -1492,7 +1532,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         const anthropicWire = def.llm?.wire === "anthropic";
         llmBaseUrl = anthropicWire ? getManagedVeniceAnthropicBaseUrl() : getManagedVeniceProxyBaseUrl();
         llmModel = resolvedLlmInput.model
-          ?? (anthropicWire ? MANAGED_CLAUDE_CODE_DEFAULT_MODEL : type === "deepseek-harness" ? DEEPSEEK_HARNESS_DEFAULT_MODEL : type === "hermes" ? HERMES_DEFAULT_MODEL : "deepseek-v4-pro");
+          ?? (anthropicWire ? MANAGED_CLAUDE_CODE_DEFAULT_MODEL : type === "deepseek-harness" ? DEEPSEEK_HARNESS_DEFAULT_MODEL : type === "hermes" ? HERMES_DEFAULT_MODEL : type === "openclaw" ? OPENCLAW_DEFAULT_MODEL : "deepseek-v4-pro");
       } else {
         llmConfig = {
           provider: "venice",
@@ -1870,7 +1910,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
             allocationStorage,
             infrastructureBindingTag,
           ), env, {
-            timeoutMs: 90_000,
+            timeoutMs: (HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS + 60) * 1000,
           })
         : { ok: true, stdout: "", stderr: "", error: undefined };
       await releaseTunnelForFailedProvision();
@@ -2041,7 +2081,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
           provisionOperationId,
           allocationStorage,
           infrastructureBindingTag,
-        ), env, { timeoutMs: 90_000 });
+        ), env, { timeoutMs: (HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS + 60) * 1000 });
         providerAbsenceVerified = rollback.ok;
         if (rollback.ok) {
           terminalPersisted = await completeHivraAgentDelete({
@@ -2135,7 +2175,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         allocationStorage,
         infrastructureBindingTag,
       ), env, {
-        timeoutMs: 90_000,
+        timeoutMs: (HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS + 60) * 1000,
       });
       const cancelledDelete = rollback.ok
         ? await completeHivraAgentDelete({
@@ -2208,7 +2248,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
 
     const allocationVerificationScript = `set -euo pipefail
 exec 8>/run/lock/hivra-allocation.lock
-flock -w 60 8
+flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8
 TAGS="$(qm config ${vmid} | sed -n 's/^tags:[[:space:]]*//p')"
 printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq ${shellQuote(infrastructureBindingTag)}
 printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq ${shellQuote(`hivra-op-${provisionOperationId.replace(/-/g, "")}`)}
@@ -2230,7 +2270,7 @@ printf 'HIVRA_ALLOCATION_VERIFIED %s\\n' ${vmid}`;
         allocationStorage,
         infrastructureBindingTag,
       ), env, {
-        timeoutMs: 90_000,
+        timeoutMs: (HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS + 60) * 1000,
       });
       const terminalPersisted = rollback.ok
         ? await releaseProvisionOperation(cpuLimitResult.error || "cpu limit apply failed", true)
@@ -2278,7 +2318,7 @@ printf 'HIVRA_ALLOCATION_VERIFIED %s\\n' ${vmid}`;
     const cpuUnitsResult = await runProxmoxHostScript(
       `set -euo pipefail
 exec 8>/run/lock/hivra-allocation.lock
-flock -w 60 8
+flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8
 TAGS="$(qm config ${vmid} | sed -n 's/^tags:[[:space:]]*//p')"
 printf '%s\n' "$TAGS" | tr ';' '\n' | grep -Fxq ${shellQuote(infrastructureBindingTag)}
 printf '%s\n' "$TAGS" | tr ';' '\n' | grep -Fxq ${shellQuote(`hivra-op-${provisionOperationId.replace(/-/g, "")}`)}

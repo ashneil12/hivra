@@ -72,7 +72,7 @@ struct HivraLocalSetupView: View {
 
                     if isInitializing {
                         HStack(spacing: 10) {
-                            ProgressView().controlSize(.small)
+                            HivraThinkingOrb(size: 20, label: "Setting up")
                             Text("Setting up the local installation…")
                                 .font(.system(size: 12))
                         }
@@ -86,7 +86,7 @@ struct HivraLocalSetupView: View {
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
-                                .background(HivraDesign.surface(for: colorScheme))
+                                .hivraCard(cornerRadius: HivraDesign.Radius.card)
                         }
                         .font(.system(size: 12))
                         .padding(.horizontal, 20)
@@ -96,7 +96,7 @@ struct HivraLocalSetupView: View {
             }
             .frame(maxWidth: .infinity)
 
-            Divider()
+            Rectangle().fill(HivraDesign.stroke(.regular, for: colorScheme)).frame(height: 1)
             HStack {
                 if isInitializing {
                     Button("Cancel setup", action: runtime.cancelOperation)
@@ -118,7 +118,7 @@ struct HivraLocalSetupView: View {
             .padding(20)
         }
         .frame(width: 540, height: 570)
-        .background(HivraDesign.background(for: colorScheme))
+        .background { HivraWindowBackground(tintStrength: 0.9) }
         .interactiveDismissDisabled(isInitializing)
         .onChange(of: runtime.state) { _, state in
             if case .failed = state { showingOutput = true }

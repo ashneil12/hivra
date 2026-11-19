@@ -8,7 +8,7 @@ import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { resolveProxmoxHostCapacityPolicy } from "@/lib/infrastructure/host-capacity-policy";
 import { acquireHostWakeSlot, normalizeWakeRamMb, releaseHostWakeSlot } from "@/lib/proxmox/wake-admission";
 import { resolveHivraLifecycleTarget, type HivraLifecycleTarget } from "./agent-lifecycle-host";
-import { STALE_SLEEP_LEASE_MS } from "./agent-sleep-policy";
+import { sleepMemoryDropAfterDays, STALE_SLEEP_LEASE_MS } from "./agent-sleep-policy";
 import { isStartBlockedForLapse } from "./lapse-gate";
 import {
   claimAgentWake,
@@ -20,6 +20,9 @@ import {
 } from "./agent-sleep-store";
 import { buildWakeHostScript, parseWakeReceipt, WAKE_RESULT_PREFIX, type WakeAdmission, type WakeReceipt } from "./agent-sleep-scripts";
 import { isFastWakeEnabled } from "./fast-wake-flags";
+import { isAgentStored, requestAgentUnstore } from "./sleep-storage-state";
+import { runAfterResponse } from "./after-response";
+import { isWakeMakesRoomEnabled, makeRoomForWake } from "./sleep/wake-make-room";
 import {
   disarmChannelsForWake,
   rearmChannelsAfterFailedWake,
@@ -57,6 +60,9 @@ const HEALTHZ_FAST_WINDOW_MS = 3_000;
 /** The host script's own bounds: up to 15 s for a sleep that holds the computer, 8 s of guest-agent wait, and for a restore the start itself. A nap wake normally takes about one second. */
 const WAKE_SCRIPT_TIMEOUT_MS = 60_000;
 const RESTORE_SCRIPT_TIMEOUT_MS = 120_000;
+/** A computer booted from its disk (its saved memory was dropped): the script may wait longer for the guest, and so does the health check. */
+const COLD_START_SCRIPT_TIMEOUT_MS = 170_000;
+export const COLD_START_HEALTHZ_BUDGET_MS = 120_000;
 const DEFAULT_POLL_MS = 1_000;
 
 /** States an operation is still moving through. The row settles by itself. */
@@ -139,6 +145,63 @@ export function buildWakeAdmissionFor(target: HivraLifecycleTarget): WakeAdmissi
  * host's provisioner readiness check, which is right here: these scripts are
  * inline and never call the start helper.
  */
+const STORAGE_KICK_EVERY_MS = 8_000;
+const storageKickAt = new Map<string, number>();
+export function resetStorageKicks(): void {
+  storageKickAt.clear();
+}
+
+/**
+ * Someone is waiting for a stored agent. The sleep sweep would start bringing it
+ * back, and notice when its disks are back, within a minute each; this does the
+ * same piece of work right after the response, so a person watching the page
+ * (which asks again every few seconds) waits for the copy and the boot, not for
+ * the clock. It packs nothing, and every step it takes is the sweep's own,
+ * guarded against running twice.
+ */
+function kickStorageReturn(agentId: string): void {
+  const nowMs = Date.now();
+  if ((storageKickAt.get(agentId) ?? 0) > nowMs) return;
+  storageKickAt.set(agentId, nowMs + STORAGE_KICK_EVERY_MS);
+  if (storageKickAt.size > 500) storageKickAt.clear();
+  try {
+    runAfterResponse(async () => {
+      if (!supabaseAdmin) return;
+      const { runSleepStorage } = await import("./sleep-storage");
+      await runSleepStorage({
+        db: supabaseAdmin,
+        // Bringing back only: with the packing setting left out, nothing new is packed.
+        env: { ...process.env, HIVRA_SLEEP_STORE_AFTER_DAYS: undefined },
+        now: Date.now,
+        startBy: nowMs + 20_000,
+        deadline: nowMs + 100_000,
+        hostActs: async () => false,
+        resolveTarget: resolveSleepTarget,
+        wake: (id) => ensureHivraAgentAwake(id, { trigger: "schedule", waitMs: 120_000 }),
+      });
+    }, { source: LOG_SOURCE, failureType: "sleep_storage_kick_failed", instanceId: agentId });
+  } catch {
+    // Not inside a request (a scheduled run): the sweep itself does this work.
+  }
+}
+
+/** How long a wake waits for its turn when the server's concurrent wakes are all taken, and how often it asks again. */
+export const WAKE_TURN_WAIT_MS = 75_000;
+export const WAKE_TURN_RETRY_MS = 3_000;
+/**
+ * Deep-sleep wakes a server starts at once. Measured on Canary with two: one wake every 6-7 s and no
+ * strain on the server, so ten together did not all fit the wait. The memory check still guards each
+ * one. HIVRA_WAKE_MAX_CONCURRENT_PER_HOST sets it; the older shared setting is honoured after it.
+ */
+export const DEFAULT_WAKES_AT_ONCE_PER_HOST = 4;
+export function wakesAtOncePerHost(env: Record<string, string | undefined> = process.env): string {
+  for (const raw of [env.HIVRA_WAKE_MAX_CONCURRENT_PER_HOST, env.HERMES_WAKE_MAX_CONCURRENT_PER_HOST]) {
+    const n = Number(raw?.trim());
+    if (raw?.trim() && Number.isInteger(n) && n >= 1 && n <= 32) return String(n);
+  }
+  return String(DEFAULT_WAKES_AT_ONCE_PER_HOST);
+}
+
 export async function resolveSleepTarget(row: AgentRow, source: string) {
   return resolveHivraLifecycleTarget({
     userId: String(row.user_id),
@@ -158,6 +221,35 @@ export interface WakeScriptRun {
   sshReadyMs?: number;
 }
 
+/** How many more times a host call is tried when its SSH connection was never made. */
+export const HOST_CONNECT_RETRIES = 2;
+const HOST_CONNECT_RETRY_MS = 400;
+
+/**
+ * Runs a host script, trying again when the connection itself was refused. A server lets only so
+ * many SSH logins be in progress at once and drops the rest, which a crowd of wakes can reach (seen
+ * on Canary with twelve at once: one wake failed in under a second without reaching the server).
+ * Nothing ran in that case, so asking again is safe; the scripts are also safe to repeat.
+ */
+async function runHostScriptForWake(
+  script: string,
+  env: HivraLifecycleTarget["env"],
+  options?: Parameters<typeof runProxmoxHostScript>[2],
+): ReturnType<typeof runProxmoxHostScript> {
+  for (let attempt = 0; ; attempt += 1) {
+    const result = options === undefined ? await runProxmoxHostScript(script, env) : await runProxmoxHostScript(script, env, options);
+    const refused = !!result && !result.ok && !result.stdout && /^SSH connect/.test(result.error ?? "");
+    if (!refused || attempt >= HOST_CONNECT_RETRIES) return result;
+    log.warn("host connection for a wake was refused; trying again", {
+      source: LOG_SOURCE,
+      failureType: "agent_wake_host_connect_refused",
+      attempt: attempt + 1,
+      reason: (result.error ?? "").slice(0, 160),
+    });
+    await new Promise((resolve) => setTimeout(resolve, HOST_CONNECT_RETRY_MS * (attempt + 1) + Math.floor(Math.random() * HOST_CONNECT_RETRY_MS)));
+  }
+}
+
 /** Runs the wake script once. Never throws: a script that cannot be built or run is a null receipt. */
 export async function runWakeHostScript(
   row: AgentRow,
@@ -165,6 +257,8 @@ export async function runWakeHostScript(
   options: { restore: boolean; killStaleSockets?: boolean; hostIngress?: boolean },
 ): Promise<WakeScriptRun> {
   const startedAt = Date.now();
+  // With memory drops switched on, a restore may meet a computer whose saved memory was dropped. The host's mark decides.
+  const coldStart = options.restore && sleepMemoryDropAfterDays() !== null;
   let script: string;
   try {
     script = buildWakeHostScript({
@@ -176,13 +270,14 @@ export async function runWakeHostScript(
       ...(options.killStaleSockets === true ? { killStaleSockets: true } : {}),
       // The host runs this computer's public connector: drop the proxy's nap marker, and never touch the guest's tunnel.
       ...(options.hostIngress === true ? { hostIngress: true } : {}),
+      ...(coldStart ? { coldStart: true } : {}),
     });
   } catch {
     return { receipt: null, runError: "script_invalid", ms: Date.now() - startedAt };
   }
   try {
-    const result = await runProxmoxHostScript(script, target.env, {
-      timeoutMs: options.restore ? RESTORE_SCRIPT_TIMEOUT_MS : WAKE_SCRIPT_TIMEOUT_MS,
+    const result = await runHostScriptForWake(script, target.env, {
+      timeoutMs: coldStart ? COLD_START_SCRIPT_TIMEOUT_MS : options.restore ? RESTORE_SCRIPT_TIMEOUT_MS : WAKE_SCRIPT_TIMEOUT_MS,
       // The receipt is the script's last word, so the answer can come back as
       // soon as its line is complete, without waiting for the session to close.
       ...(isFastWakeEnabled("early_finish") ? { earlyFinishMarker: WAKE_RESULT_PREFIX.trim(), earlyFinishOnLine: true } : {}),
@@ -299,15 +394,46 @@ async function performWakeSteps(
     if (restore) {
       // A restore claims host RAM all at once. Take a slot first, so a crowd of
       // wakes cannot start together. A host that cannot be asked admits the wake.
-      const decision = await acquireHostWakeSlot(
+      const ask = () => acquireHostWakeSlot(
         { vmid: target.vmid },
         {
           instanceId: agentId,
           neededRamMb: normalizeWakeRamMb(row.ram),
-          runHostScript: (script) => runProxmoxHostScript(script, target.env),
+          // Only the limit is read from this; the host call below is the target's own.
+          env: { ...process.env, HERMES_WAKE_MAX_CONCURRENT_PER_HOST: wakesAtOncePerHost() },
+          runHostScript: (script) => runHostScriptForWake(script, target.env),
         },
       );
       slotTarget = target;
+      // The server's wakes are all taken: that clears as soon as one of them finishes, so wait
+      // for a turn (the agent keeps showing as waking) instead of telling its owner the wake failed.
+      const waitUntil = Date.now() + WAKE_TURN_WAIT_MS;
+      let waited = 0;
+      const takeTurn = async () => {
+        let answer = await ask();
+        while (!answer.admitted && answer.reason === "concurrency" && Date.now() + WAKE_TURN_RETRY_MS <= waitUntil) {
+          await new Promise((resolve) => setTimeout(resolve, WAKE_TURN_RETRY_MS));
+          waited += 1;
+          answer = await ask();
+        }
+        return answer;
+      };
+      let decision = await takeTurn();
+      // A server short of memory does not clear by waiting. With making room switched on, its
+      // longest-idle nappers go into deep sleep until this wake fits; otherwise it is refused at once.
+      if (!decision.admitted && decision.reason === "host_ram" && isWakeMakesRoomEnabled()) {
+        const room = await makeRoomForWake({
+          agentId,
+          hostId: String(target.executionContext?.host ?? ""),
+          fits: async () => {
+            decision = await takeTurn();
+            return decision.admitted || decision.reason !== "host_ram";
+          },
+        });
+        detail.room_deepened = room.deepened;
+        detail.room_ms = room.ms;
+      }
+      if (waited > 0) detail.turn_waits = waited;
       if (!decision.admitted) {
         detail.deferred = decision.reason;
         return failed(`capacity_${decision.reason}`);
@@ -355,11 +481,26 @@ async function performWakeSteps(
 
     // Any socket-based channel that was armed (Telegram's long poll included)
     // means the guest holds dead sockets: drop them, so it reconnects at once.
-    const run = await runWakeHostScript(row, target, {
+    const runScript = () => runWakeHostScript(row, target, {
       restore,
-      ...(channels.disarm.killStaleSockets ? { killStaleSockets: true } : {}),
+      ...(channels.disarm?.killStaleSockets ? { killStaleSockets: true } : {}),
       ...(hostIngress ? { hostIngress: true } : {}),
     });
+    let run = await runScript();
+    // The server's own capacity check refused the start (it counts what running and napping
+    // computers are promised): make room the same way, and ask the server again after each one.
+    if (restore && run.receipt && !run.receipt.ok && run.receipt.reason === "capacity" && isWakeMakesRoomEnabled()) {
+      const room = await makeRoomForWake({
+        agentId,
+        hostId: String(target.executionContext?.host ?? ""),
+        fits: async () => {
+          run = await runScript();
+          return !(run.receipt && !run.receipt.ok && run.receipt.reason === "capacity");
+        },
+      });
+      detail.room_deepened = Number(detail.room_deepened ?? 0) + room.deepened;
+      detail.room_ms = Number(detail.room_ms ?? 0) + room.ms;
+    }
     if (hostIngress) detail.via = "ssh";
     detail.script_ms = run.ms;
     if (run.sshReadyMs !== undefined) detail.ssh_ready_ms = run.sshReadyMs;
@@ -371,13 +512,23 @@ async function performWakeSteps(
     // The host's own time, so the rest of script_ms reads as transport.
     if (isFastWakeEnabled("timing")) detail.host_ms = run.receipt.ms;
 
+    if (run.receipt.reason === "stored") {
+      // Its disks are in the storage box (the record had not caught up). Ask for it back; the sweep wakes it then.
+      if (supabaseAdmin) await requestAgentUnstore(supabaseAdmin, agentId).catch(() => false);
+      kickStorageReturn(agentId);
+      return failed("stored");
+    }
     if (run.receipt.to === "cold") {
       // Nothing saved and the computer is off. The normal start path owns that.
       return { result: "awake", reason: "cold", cold: true, detail };
     }
     if (!run.receipt.ok) return failed(run.receipt.reason);
 
-    const health = await pollPublicHealthz(row.cf_hostname, isFastWakeEnabled("fast_healthz") ? { fastStart: true } : {});
+    const health = await pollPublicHealthz(row.cf_hostname, {
+      ...(isFastWakeEnabled("fast_healthz") ? { fastStart: true } : {}),
+      // A boot from disk brings the agent's own services up from nothing.
+      ...(run.receipt.reason === "cold_started" ? { budgetMs: COLD_START_HEALTHZ_BUDGET_MS } : {}),
+    });
     detail.healthz_ms = health.ms;
     detail.healthz_attempts = health.attempts;
     if (!health.up) return failed("public_healthz_timeout");
@@ -495,6 +646,14 @@ export async function ensureHivraAgentAwake(
   // A lapsed owner is never woken: the lapse sweep owns that computer now.
   if (await isStartBlockedForLapse(row as { user_id?: unknown }, "start")) {
     return { state: "failed", reason: "lapsed" };
+  }
+
+  // Packed into the storage box: its disks come back first, which takes minutes.
+  // The request is noted and the sleep sweep does the rest, then wakes it.
+  if (isAgentStored(row)) {
+    if (supabaseAdmin) await requestAgentUnstore(supabaseAdmin, agentId).catch(() => false);
+    kickStorageReturn(agentId);
+    return { state: "waking", reason: "restoring_from_storage" };
   }
 
   let operationId = "";

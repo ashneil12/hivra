@@ -148,7 +148,7 @@ export function InboxAnswer({
         </div>
       ) : step === "always" ? (
         <div className="flex flex-col gap-2 rounded-[10px] bg-[var(--bg-elevated)] px-3 py-2.5 text-[12.5px] leading-[1.45] text-[var(--text-secondary)]">
-          <p>{agentName} will stop asking for commands like this, in every chat. You can undo it in Hermes&apos;s own settings.</p>
+          <p>{agentName} will stop asking for commands like this, in every chat. {prompt.claudeCode ? "You can undo it in Settings, Needs you." : "You can undo it in Hermes\u2019s own settings."}</p>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className={primary} disabled={disabled} onClick={() => void answer("always")}>
               {busy === "always" ? "Sending…" : "Always allow"}

@@ -5,6 +5,24 @@ import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import { readBearerKey } from "@/lib/venice/proxy-bearer";
+import { managedVenicePrivateOnlyModelFilter } from "@/lib/venice/agent-private-only";
+
+// Keep only the models a "private models only" key may call. A body that is
+// not a model list is returned as it came: the setting is enforced when a
+// model is called, this only keeps the agent's own pickers honest.
+function keepListedModels(text: string, keep: (modelId: string) => boolean): string {
+  try {
+    const parsed = JSON.parse(text) as { data?: unknown };
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.data)) return text;
+    const data = parsed.data.filter(
+      (entry) => !!entry && typeof entry === "object" && typeof (entry as { id?: unknown }).id === "string"
+        && keep((entry as { id: string }).id)
+    );
+    return JSON.stringify({ ...parsed, data });
+  } catch {
+    return text;
+  }
+}
 
 export async function GET(req: NextRequest) {
   const plaintextKey = readBearerKey(req);
@@ -12,6 +30,9 @@ export async function GET(req: NextRequest) {
 
   const verifiedKey = await verifyManagedVeniceProxyKey({ plaintextKey });
   if (!verifiedKey) return apiError("Unauthorized", 401);
+
+  // Null unless this key is set to private models only (agent-private-only.ts).
+  const keepModel = await managedVenicePrivateOnlyModelFilter(verifiedKey);
 
   // Per-type catalogs (image / video / tts / music / upscale / embedding) live
   // only on Venice — they are NOT in our text (LLM) pricing map. Proxy any
@@ -50,7 +71,8 @@ export async function GET(req: NextRequest) {
         { cause: error }
       );
     }
-    const upstreamText = await upstream.text();
+    const upstreamBody = await upstream.text();
+    const upstreamText = keepModel && upstream.ok ? keepListedModels(upstreamBody, keepModel) : upstreamBody;
     return new Response(upstreamText, {
       status: upstream.status,
       headers: {
@@ -64,7 +86,8 @@ export async function GET(req: NextRequest) {
   // per-model release dates, so use the cache's fetchedAt as a coarse proxy
   // so consumers can tell when the catalog was last refreshed.
   const createdSeconds = Math.floor(live.fetchedAt / 1000);
-  const data = Array.from(live.map.values()).map((price) => ({
+  const prices = Array.from(live.map.values()).filter((price) => !keepModel || keepModel(price.model));
+  const data = prices.map((price) => ({
     id: price.model,
     object: "model",
     created: createdSeconds,

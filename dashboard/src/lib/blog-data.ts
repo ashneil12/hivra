@@ -54,6 +54,12 @@ import { article as runManagedAgentsOnYourOwnComputer } from "./blog/articles/ru
 import { article as hermesAgentCloud } from "./blog/articles/hermes-agent-cloud";
 import { article as openrouterFreeModels } from "./blog/articles/openrouter-free-models";
 import { article as bestLlmForCoding } from "./blog/articles/best-llm-for-coding";
+import { codexMobile } from "./blog/articles/codex-mobile";
+import { claudeCodeOnYourPhone } from "./blog/articles/claude-code-on-your-phone";
+import { howToSelfHostAgentZero } from "./blog/articles/how-to-self-host-agent-zero";
+import { howToInstallCodexCli } from "./blog/articles/how-to-install-codex-cli";
+import { claudeCodeOnWindows } from "./blog/articles/claude-code-on-windows";
+import { claudeCodeOnLinux } from "./blog/articles/claude-code-on-linux";
 
 // SCRIPTURE_ANCHOR: blog-store | Psalm 78:4 | Verse: We will tell the generation to come the praises of Yahweh, his strength, and his wondrous works.
 export const BLOG_ARTICLES: Record<string, BlogArticle> = {
@@ -112,6 +118,12 @@ export const BLOG_ARTICLES: Record<string, BlogArticle> = {
   "hermes-agent-cloud": hermesAgentCloud,
   "openrouter-free-models": openrouterFreeModels,
   "best-llm-for-coding": bestLlmForCoding,
+  "codex-mobile": codexMobile,
+  "claude-code-on-your-phone": claudeCodeOnYourPhone,
+  "how-to-self-host-agent-zero": howToSelfHostAgentZero,
+  "how-to-install-codex-cli": howToInstallCodexCli,
+  "claude-code-on-windows": claudeCodeOnWindows,
+  "claude-code-on-linux": claudeCodeOnLinux,
 };
 
 export const BLOG_ARTICLES_LIST: BlogArticle[] = Object.values(BLOG_ARTICLES).sort(

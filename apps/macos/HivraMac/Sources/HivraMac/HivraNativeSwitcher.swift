@@ -13,7 +13,8 @@ struct HivraNativeSwitcher: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(HivraDesign.crimson)
+                    .font(.system(size: 15))
+                    .foregroundStyle(HivraDesign.mutedText(for: colorScheme))
                 TextField("Find an agent or computer…", text: $query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 16))
@@ -24,33 +25,34 @@ struct HivraNativeSwitcher: View {
                     // never depends on the text system passing cancelOperation along.
                     .onKeyPress(.escape) { onDismiss(); return .handled }
             }
-            .padding(20)
-            Divider()
+            .padding(.horizontal, 18).padding(.vertical, 16)
+            Rectangle().fill(HivraDesign.stroke(.regular, for: colorScheme)).frame(height: 1)
 
             HStack {
                 Text(session.profile.name)
                     .lineLimit(1)
                 Spacer()
                 if session.snapshot?.loading == true {
-                    ProgressView().controlSize(.small)
+                    HivraThinkingOrb(size: 20, label: "Refreshing")
                     Text("Refreshing…")
                 } else {
                     Text("\(matches.count) \(matches.count == 1 ? "result" : "results")")
                 }
             }
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .font(.system(size: 11.5))
+            .foregroundStyle(HivraDesign.mutedText(for: colorScheme))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
 
             if !sourceErrors.isEmpty {
                 HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(HivraDesign.warn(for: colorScheme))
                     Text(sourceErrors)
                         .font(.system(size: 11))
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     Button("Retry", action: session.refresh)
+                        .buttonStyle(HivraButtonStyle())
                         .disabled(session.snapshot?.loading == true)
                 }
                 .padding(.horizontal, 20)
@@ -82,6 +84,7 @@ struct HivraNativeSwitcher: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 6)
                     .onChange(of: selectedUID) { _, uid in
                         if let uid { proxy.scrollTo(uid, anchor: .center) }
                     }
@@ -89,7 +92,7 @@ struct HivraNativeSwitcher: View {
                 }
             }
 
-            Divider()
+            Rectangle().fill(HivraDesign.stroke(.regular, for: colorScheme)).frame(height: 1)
             HStack(spacing: 12) {
                 Text("↑↓ Select")
                 Text("↵ Open")
@@ -104,12 +107,17 @@ struct HivraNativeSwitcher: View {
                     .buttonStyle(HivraButtonStyle(.primary))
                     .disabled(selectedResource == nil)
             }
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(.secondary)
-            .padding(16)
+            .font(.system(size: 11))
+            .foregroundStyle(HivraDesign.mutedText(for: colorScheme))
+            .padding(14)
         }
         .frame(width: 560, height: 500)
-        .background(HivraDesign.background(for: colorScheme))
+        .background {
+            ZStack {
+                HivraVisualEffect(material: .popover, blending: .behindWindow)
+                HivraDesign.glassTint(for: colorScheme, strong: true)
+            }
+        }
         .onAppear {
             selectedUID = session.activeTab?.resourceUID
             reconcileSelection()
@@ -149,38 +157,40 @@ struct HivraNativeSwitcher: View {
     private func resourceRow(_ resource: HivraWorkspaceResource) -> some View {
         HStack(spacing: 12) {
             Image(systemName: resource.kind == .computer ? "desktopcomputer" : "sparkles")
-                .font(.system(size: 16))
-                .foregroundStyle(HivraDesign.crimson)
-                .frame(width: 26)
+                .font(.system(size: 14))
+                .foregroundStyle(HivraDesign.secondaryText(for: colorScheme))
+                .frame(width: 30, height: 30)
+                .background(HivraDesign.fill(.two, for: colorScheme), in: RoundedRectangle(cornerRadius: HivraDesign.Radius.card, style: .continuous))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text(resource.name)
                     .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(HivraDesign.foreground(for: colorScheme))
                     .lineLimit(2)
                 Text(session.resources.filter { $0.name == resource.name }.count > 1
                      ? "\(resource.description) · \(resource.uid)" : resource.description)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(HivraDesign.secondaryText(for: colorScheme))
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
             Text("\(session.snapshot?.errors[resource.source] != nil ? "Last known: " : "")\(resource.status.replacingOccurrences(of: "_", with: " ").capitalized)")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+                .foregroundStyle(HivraDesign.mutedText(for: colorScheme))
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: 120, alignment: .trailing)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 10)
+        .padding(.vertical, 6)
         .contentShape(Rectangle())
     }
 
     private func emptyState(_ title: String, detail: String) -> some View {
         VStack(spacing: 8) {
-            Text(title).font(.system(size: 21, design: .serif))
+            Text(title).font(HivraDesign.display(17)).tracking(HivraDesign.displayTracking(17))
             Text(detail)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12.5))
+                .foregroundStyle(HivraDesign.secondaryText(for: colorScheme))
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
         }

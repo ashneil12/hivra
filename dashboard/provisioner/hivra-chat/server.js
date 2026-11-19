@@ -2070,6 +2070,9 @@ function applyOpenclawLlm(res, j) {
   if (needsBase && !LLM_BASEURL_RE.test(baseUrl)) return jsonRes(res, 400, { ok: false, error: "baseUrl doesn't look right (https URL)" });
   const block = { api, apiKey, models: [{ id: model, name: model, contextWindow: 200000, maxTokens: 8192, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, reasoning: false }] };
   if (needsBase) block.baseUrl = baseUrl;
+  // Venice's chat schema is strict: OpenClaw's DeepSeek-native `thinking` field
+  // (sent for deepseek-v4 ids) is a 400 there, so Venice models speak plain OpenAI.
+  if (provider === "venice" && api === "openai-completions") block.models[0].compat = { thinkingFormat: "openai" };
   const primary = provider + "/" + model;
   // agents.defaults.model = { primary } and agents.defaults.models = { "<primary>": {} }
   // are SIBLINGS under defaults (the runtime loader is lax, but `config patch` is
@@ -2602,6 +2605,27 @@ function a0Login(cb, isCurrent) {
   r.write(body); r.end();
   return r;
 }
+// The A0 CLI (agent0ai/a0-connector) talks to the host's ROOT, not to a mount:
+// POST /api/plugins/_a0_connector/v1/*, GET /api/csrf_token, the file/upload
+// helpers it uses, and /socket.io. It signs in once through POST /login with a
+// Connect app grant, then holds the ordinary surface cookie. A non-browser
+// client does not send an Origin header on those calls, which the cookie gate
+// for mutations requires, so this narrow path set accepts the same cookie
+// without one. A browser always sends Origin (and Sec-Fetch-Site) on a write, so
+// a page on another site still cannot ride the cookie. The capability probe is
+// A0's own public discovery endpoint and needs no sign-in.
+const A0_CONNECTOR_REQS = new WeakSet();
+const A0_CONNECTOR_PROBE = "/api/plugins/_a0_connector/v1/capabilities";
+const A0_CONNECTOR_CORE_API = new Set(["/api/csrf_token", "/api/image_get", "/api/download_work_dir_file", "/api/chat_files_path_get", "/api/get_work_dir_files"]);
+function a0ConnectorRootPath(req, u) {
+  if (u.startsWith("/api/plugins/") || A0_CONNECTOR_CORE_API.has(u)) return true;
+  // The gateway's own /api/upload takes the management bearer; the CLI sends the web session and a CSRF header.
+  return u === "/api/upload" && Boolean(req.headers["x-csrf-token"]) && !bearerAuthed(req);
+}
+function a0ConnectorRootAuthed(req) {
+  if (authed(req)) return true;
+  return validAuthSession(cookieVal(req, AUTH_COOKIE)) && !req.headers["origin"] && !req.headers["sec-fetch-site"];
+}
 // Proxy to Agent Zero with the login session injected. On a cache miss — or when
 // the container rotates the session and 302s back to /login — (re)log in and retry
 // the (GET) request once, so the owner never sees Agent Zero's own login screen.
@@ -2619,7 +2643,7 @@ function a0CanonicalEntryHtml(html) {
   return seen["index.js"] === 1 && seen["js/initFw.js"] === 1 ? rewritten : null;
 }
 function a0Proxy(req, res, retried, csrfContext, editorContext) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req) && !A0_CONNECTOR_REQS.has(req)) return denyHtml(res);
   if (!retried && isAgentAppPort(AGENT_ZERO_PORT) && agentAppHold(req, res)) return;
   let apath = req.url.slice("/agent-zero".length); if (!apath.startsWith("/")) apath = "/" + apath;
   // Newer Agent Zero serves a splash bootstrap at / that installs the real
@@ -2926,6 +2950,23 @@ const OPENCLAW_SET_HEADERS = { forwarded: null, "x-forwarded-for": null, "x-forw
   "x-forwarded-proto": null, "x-forwarded-port": null, "x-forwarded-prefix": null, "x-real-ip": null };
 function openclawPort(port) {
   return AGENT_KIND === "openclaw" && port === OPENCLAW_PORT;
+}
+// OpenClaw serves its Control UI below gateway.controlUi.basePath, its own
+// setting for a reverse-proxy path prefix. A computer whose openclaw.json names
+// /openclaw gets the path unchanged; an older one is served at the root, with
+// the prefix stripped and its root-absolute assets re-homed by Referer (which
+// OpenClaw 2026.11.5 and newer no longer send: Referrer-Policy no-referrer).
+let openclawMount = { mtime: -1, strip: "/openclaw" };
+function openclawStrip() {
+  try {
+    const stat = fs.statSync(OC_CFG());
+    if (stat.mtimeMs !== openclawMount.mtime) {
+      const j = JSON.parse(fs.readFileSync(OC_CFG(), "utf8"));
+      const basePath = j && j.gateway && j.gateway.controlUi && j.gateway.controlUi.basePath;
+      openclawMount = { mtime: stat.mtimeMs, strip: basePath === "/openclaw" ? "" : "/openclaw" };
+    }
+  } catch { openclawMount = { mtime: -1, strip: "/openclaw" }; }
+  return openclawMount.strip;
 }
 // Hermes's web UI behind the same gate. It checks that Host and Origin are its
 // own loopback address and that the peer is loopback, and it builds its links
@@ -4577,7 +4618,7 @@ const server = http.createServer((req, res) => {
     try { refPath = new URL(String(req.headers["referer"] || "")).pathname; } catch {}
     if (refPath === "/openclaw" || refPath.startsWith("/openclaw/")) {
       req.url = "/openclaw" + req.url;
-      return gateProxy(req, res, OPENCLAW_PORT, "/openclaw");
+      return gateProxy(req, res, OPENCLAW_PORT, openclawStrip());
     }
   }
   // Agent Zero's web UI serves at root (no basePath), so its root-absolute assets/
@@ -4618,6 +4659,12 @@ const server = http.createServer((req, res) => {
         res.writeHead(307, { Location: "/agent-zero" + req.url, "Cache-Control": "no-store" });
         return res.end();
       }
+      req.url = "/agent-zero" + req.url;
+      return a0Proxy(req, res);
+    }
+    if (a0ConnectorRootPath(req, u)) {
+      if (!(req.method === "POST" && u === A0_CONNECTOR_PROBE) && !a0ConnectorRootAuthed(req)) return jsonRes(res, 401, { error: "unauthorized" });
+      A0_CONNECTOR_REQS.add(req);
       req.url = "/agent-zero" + req.url;
       return a0Proxy(req, res);
     }
@@ -4730,10 +4777,11 @@ const server = http.createServer((req, res) => {
   // through this same gate. The dashboard has no auth of its own, so the gate is
   // the access boundary — same as the terminals.
   if (u === "/aeon" || u.startsWith("/aeon/")) return gateProxy(req, res, AEON_PORT);
-  // OpenClaw gateway Control UI. STRIP /openclaw: the gateway serves at root, so we
-  // peel the mount prefix before forwarding; root-absolute sub-resources are caught
-  // by the re-home block above. Same gate-as-access-boundary model as Aeon.
-  if (u === "/openclaw" || u.startsWith("/openclaw/")) return gateProxy(req, res, OPENCLAW_PORT, "/openclaw");
+  // OpenClaw gateway Control UI. With basePath=/openclaw in openclaw.json the path
+  // goes through unchanged; an older computer serves at root, so the mount prefix is
+  // peeled and root-absolute sub-resources are caught by the re-home block above.
+  // Same gate-as-access-boundary model as Aeon.
+  if (u === "/openclaw" || u.startsWith("/openclaw/")) return gateProxy(req, res, OPENCLAW_PORT, openclawStrip());
   if (u === "/agent-zero" || u.startsWith("/agent-zero/")) return a0Proxy(req, res);
   // Hermes's own web UI (the official one, unmodified), prefix stripped.
   if (AGENT_KIND === "hermes" && req.method === "GET" && u === HERMES_SIGN_IN) return hermesSignIn(req, res);
@@ -4769,7 +4817,7 @@ server.on("upgrade", (req, socket, head) => {
   else if (u.startsWith("/box-terminal")) port = 7682;
   else if (u.startsWith("/vnc")) { port = 6080; strip = "/vnc"; }
   else if (u.startsWith("/aeon")) port = AEON_PORT; // Next.js HMR ws (dev); no strip (basePath=/aeon)
-  else if (u.startsWith("/openclaw")) { port = OPENCLAW_PORT; strip = "/openclaw"; } // gateway WS control/RPC (served at root)
+  else if (u.startsWith("/openclaw")) { port = OPENCLAW_PORT; strip = openclawStrip(); } // gateway WS control/RPC (at its basePath, or at root on an older computer)
   else if (u.startsWith("/agent-zero")) { port = AGENT_ZERO_PORT; strip = "/agent-zero"; } // Agent Zero WS (served at root)
   else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
   else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)

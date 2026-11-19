@@ -103,7 +103,10 @@ function checkChannel(c: ChannelSource): void {
     if (c.profilesDir !== undefined) { checkPath(c.profilesDir); checkPath(c.profilePath); }
   } else if (c.kind === "json-channels") {
     if (c.at.length === 0 || !c.at.every((k) => KEY.test(k))) fail("json path");
-  } else if (c.kind !== "yaml-enabled") fail("channel kind");
+  } else if (c.kind === "yaml-enabled") {
+    if (c.section !== undefined && !NAME.test(c.section)) fail("yaml section");
+    if (![...(c.known ?? []), ...(c.ignore ?? [])].every((n) => NAME.test(n))) fail("yaml names");
+  } else fail("channel kind");
 }
 function checkWake(platform: string, w: ChannelWakeSource): void {
   if (!WAKE_PLATFORMS.includes(platform as WakePlatform)) fail("wake platform");

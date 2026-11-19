@@ -12,7 +12,11 @@ function from(table: string) {
     gte: (c: string, v: string) => { filters.push(r => String(r[c]) >= v); return chain; },
     maybeSingle: async () => ({ data: rows()[0] ?? null, error: null }),
     then: (resolve: (v: unknown) => unknown) => {
-      if (patch) { for (const r of rows()) Object.assign(r, patch); return Promise.resolve({ data: null, error: null }).then(resolve); }
+      if (patch) {
+        const changed = rows();
+        for (const r of changed) Object.assign(r, patch);
+        return Promise.resolve({ data: changed.map(r => ({ id: r.id })), error: null }).then(resolve);
+      }
       return Promise.resolve({ data: rows(), error: null }).then(resolve);
     },
   };

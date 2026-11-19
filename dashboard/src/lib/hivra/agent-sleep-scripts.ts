@@ -22,6 +22,7 @@
 // receipt rather than the exit code. An unexpected shell failure still prints a
 // receipt (reason script_error, state unknown) and keeps its non-zero exit.
 
+import { hibernationDiscardBody } from "./agent-power-scripts";
 import { buildVmidBoundGuestExecPrelude } from "@/lib/hivra/vmid-bound-guest-exec";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
 import {
@@ -71,10 +72,15 @@ export const HIBERNATE_TIMEOUT_SECONDS = 240;
 /** How long the guest agent gets to answer after a wake. A restore from disk needs longer than a resume. */
 export const WAKE_AGENT_WAIT_SECONDS = 8;
 export const RESTORE_AGENT_WAIT_SECONDS = 30;
+/** A computer whose saved memory was dropped boots from its disk, so its guest agent answers later still. */
+export const COLD_START_AGENT_WAIT_SECONDS = 90;
 /** What the wake script waits for a sleep script that holds the computer. */
 export const WAKE_LOCK_WAIT_SECONDS = 15;
 /** The guest agent socket lock, shared by every script that talks to one guest agent. */
 const QGA_LOCK_WAIT_SECONDS = 30;
+
+/** The host's mark for a computer whose saved memory was dropped. Next to the autostart mark. */
+const COLD_MARK_SHELL = "$ONBOOT_MARK_DIR/cold-$VMID";
 
 const MIN_VMID = 100;
 const MAX_VMID = 999_999_999;
@@ -330,6 +336,44 @@ const ADMISSION_FAST_QM_SHELL = `# The admission helper reads every VM with qm c
 # For the helper only, these two answer from the files the CLI itself reads, and
 # hand anything they cannot answer exactly back to the real CLI.
 ${FAST_QM_FUNCTIONS}`;
+
+/**
+ * Recovers a computer whose save to disk did not end cleanly and left Proxmox's "suspending" lock
+ * on it. Every later state read then sees a state it does not know: the computer could not sleep,
+ * wake or be deleted until someone unlocked it by hand. Two cases, both seen in Proxmox's own code
+ * and one of them on Canary under load:
+ *
+ *  - The save finished and only the last step failed (the QEMU "quit" timed out while many saves
+ *    wrote at once). The computer is off and its saved state is complete and recorded. Proof is the
+ *    save's own "State saved, quitting" line in the journal since this save began. It is then marked
+ *    as saved, exactly as Proxmox would have, and wakes later like any deep sleeper.
+ *  - The save failed. Proxmox removed the partial state and kept the lock on purpose. The lock is
+ *    taken off, and a computer the save left paused runs again; one whose QEMU died is left off.
+ *
+ * Saved state that is recorded without that proof may be partial and is never touched. Nothing is
+ * done while a save is still running. The caller holds the per-computer lock and reads the state
+ * afterwards. $1 is the second (epoch) this save began, or empty when unknown. Uses the caller's qm.
+ */
+export const INTERRUPTED_SAVE_SHELL = String.raw`recover_interrupted_save() {
+  local conf since="\${1:-}"
+  if systemctl is-active --quiet "hivra-sleep-$VMID" 2>/dev/null; then return 1; fi
+  conf="$(qm config "$VMID" 2>/dev/null)" || return 1
+  [ "$(printf '%s
+' "$conf" | awk '$1=="lock:" {print $2; exit}')" = suspending ] || return 1
+  if printf '%s
+' "$conf" | grep '^vmstate:' >/dev/null; then
+    case "$since" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$(qm status "$VMID" 2>/dev/null | awk '$1=="status:" {print $2; exit}')" = stopped ] || return 1
+    journalctl -u "hivra-sleep-$VMID.service" --since "@$since" -o cat --no-pager 2>/dev/null       | grep -Fx 'State saved, quitting' >/dev/null || return 1
+    qm set "$VMID" --skiplock 1 --lock suspended >/dev/null 2>&1 || return 1
+    return 0
+  fi
+  qm unlock "$VMID" >/dev/null 2>&1 || return 1
+  if [ "$(qm status "$VMID" --verbose 2>/dev/null | awk '$1=="qmpstatus:" {print $2; exit}')" = paused ]; then
+    qm resume "$VMID" >/dev/null 2>&1 || true
+  fi
+  return 0
+}`.replaceAll("\\${", "${");
 
 function stateShell(fastConfig: boolean): string {
   return `# One config read serves the binding check and the first state read.
@@ -1285,8 +1329,11 @@ if [ "$FROM" = awake ]; then
 fi
 ` : ""}STEP="$(now_ms)"
 RC=0
+SAVE_SINCE="$(( $(date +%s) - 1 ))"
 command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} systemd-run --unit="hivra-sleep-$VMID" --collect --wait --quiet qm suspend "$VMID" --todisk 1 </dev/null >/dev/null 2>&1 || RC=$?
 observe
+# A save that did not end cleanly leaves the computer locked, in a state nothing reads: settle it here.
+if [ "$RC" != 0 ] && [ "$OBS" = unknown ] && recover_interrupted_save "$SAVE_SINCE"; then CONFIG_FRESH=0; observe; fi
 mark hibernate "$STEP"
 ${hostIngress ? `# Only a computer that is still paused keeps its nap marker; the proxy never resumes any other.
 [ "$OBS" = napping ] || ingress_unmark
@@ -1344,7 +1391,8 @@ ${receiptShell("sleep")}
 ${ctlShell()}
 ${input.fastConfigRead === true ? `${FAST_QM_SHELL}
 ` : ""}${stateShell(input.fastConfigRead === true)}
-${probeShell(input.manual === true, coverage, input.profile ?? null)}
+${nap ? "" : `${INTERRUPTED_SAVE_SHELL}
+`}${probeShell(input.manual === true, coverage, input.profile ?? null)}
 ${hostIngress ? `${ingressShell()}
 ` : ""}${trimShell(trimMemory)}install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
@@ -1384,6 +1432,12 @@ export interface WakeHostScriptInput {
    * Off by default.
    */
   hostIngress?: boolean;
+  /**
+   * A long sleeper whose saved memory was dropped (the host holds a mark that
+   * says so) is admitted and booted from its disk like a restore. Without the
+   * mark a stopped computer is still left alone. Off by default.
+   */
+  coldStart?: boolean;
 }
 
 function assertAdmission(admission: WakeAdmission): void {
@@ -1432,7 +1486,9 @@ capacity_inputs() {
 }`;
 }
 
-function wakeBody(hostIngress = false): string {
+function wakeBody(hostIngress = false, coldStart = false): string {
+  // What the restore branch expects to find: saved memory, or (cold start) whichever of the two it saw first.
+  const expect = coldStart ? '"$EXPECT"' : "hibernated";
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
@@ -1450,20 +1506,31 @@ case "$ST/$QMP/$LOCK" in
       [ "$OBS" = awake ] || finish false resume_unconfirmed "$OBS"
     fi
     ;;
-  stopped/*/suspended)
+  stopped/*/suspended${coldStart ? "|stopped/*/none" : ""})
     WOKE_REASON=restored
     AGENT_WAIT=${RESTORE_AGENT_WAIT_SECONDS}
-    capacity_inputs || finish false capacity_inputs hibernated
+${coldStart ? `    EXPECT=hibernated
+    if [ "$LOCK" = none ]; then
+      # Off with nothing saved. Only a computer whose saved memory this system dropped is booted here.
+      # Packed into the storage box: its disks here are empty. It is never started; the caller brings it back first.
+      [ "$(cat "$ONBOOT_MARK_DIR/stored-$VMID" 2>/dev/null || true)" != "$EXPECTED_BINDING_TAG" ] || { TO=cold; finish false stored cold; }
+      # The mark names the computer it was written for, so a reused number never inherits one.
+      [ "$(cat "${COLD_MARK_SHELL}" 2>/dev/null || true)" = "$EXPECTED_BINDING_TAG" ] || { TO=cold; finish false cold cold; }
+      WOKE_REASON=cold_started
+      AGENT_WAIT=${COLD_START_AGENT_WAIT_SECONDS}
+      EXPECT=cold
+    fi
+` : ""}    capacity_inputs || finish false capacity_inputs ${expect}
     install -d -m 0755 /run/lock
     exec 8>/run/lock/hivra-allocation.lock
-    flock -w 60 8 || finish false lock_timeout hibernated
+    flock -w 60 8 || finish false lock_timeout ${expect}
     # The state may have changed while this waited for the lock.
     read_state || finish false state_unreadable
-    [ "$(tier_of)" = hibernated ] || finish false state_changed "$(tier_of)"
+    [ "$(tier_of)" = ${expect} ] || finish false state_changed "$(tier_of)"
     ADMIT="$(now_ms)"
     if ! run_admission "$VMID" "$TARGET_FLOOR_MB" "$TARGET_MAX_MB" "$TARGET_MAX_CPU" \\
         "$HOST_RESERVE_MB" "$ENFORCE_CEILINGS" "$CPU_DENSITY_MILLI" "$MEMORY_DENSITY_MILLI" 0 </dev/null >&2; then
-      finish false capacity hibernated
+      finish false capacity ${expect}
     fi
     mark admission "$ADMIT"
     # The VM process outlives this script, so it must not inherit the lock descriptors.
@@ -1489,7 +1556,8 @@ case "$ST/$QMP/$LOCK" in
     if [ -e "$ONBOOT_MARK" ]; then
       qm set "$VMID" --onboot 1 >/dev/null 2>&1 && rm -f "$ONBOOT_MARK" || true
     fi
-    ;;
+${coldStart ? `    rm -f "${COLD_MARK_SHELL}" 2>/dev/null || true
+` : ""}    ;;
   running/running/none)
     WOKE_REASON=already
     ;;
@@ -1552,8 +1620,87 @@ ${input.hostIngress === true ? `${ingressShell()}
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
 flock -x -w ${WAKE_LOCK_WAIT_SECONDS} 9 || { require_binding; observe; finish false busy "$OBS"; }
 require_binding
-${wakeBody(input.hostIngress === true)}
+${wakeBody(input.hostIngress === true, input.coldStart === true)}
 `;
+}
+
+// ---------------------------------------------------------------------------
+// Drop the saved memory of a long sleeper
+// ---------------------------------------------------------------------------
+
+export const MEMORY_DROP_RESULT_PREFIX = "HIVRA_MEMORY_DROP_RESULT ";
+
+/**
+ * Drops the saved memory of one hibernated computer and keeps its disk. It acts
+ * only on a computer that is off with saved memory, under the same per-computer
+ * lock as sleep and wake, and it leaves a mark on the host first: the wake
+ * script (cold start) boots a marked computer from its disk, and never an
+ * unmarked one. A drop that changed nothing takes its mark away again.
+ * Prints one HIVRA_MEMORY_DROP_RESULT line.
+ */
+export function buildMemoryDropHostScript(input: { vmid: number; bindingTag: string | null }): string {
+  const tag = assertTarget(input.vmid, input.bindingTag);
+  return `set -euo pipefail
+VMID=${input.vmid}
+EXPECTED_BINDING_TAG=${shellQuote(tag)}
+# The host script itself arrives on stdin, so no command may read it.
+qm() { command timeout -k 5 60 qm "$@" </dev/null; }
+pvesm() { command timeout -k 5 60 pvesm "$@" </dev/null; }
+ONBOOT_MARK_DIR=/var/lib/hivra-sleep
+COLD_MARK="${COLD_MARK_SHELL}"
+EMITTED=0
+emit() {
+  [ "$EMITTED" = 0 ] || return 0
+  EMITTED=1
+  printf '%s {"ok":%s,"vmid":%s,"reason":"%s"}\\n' ${MEMORY_DROP_RESULT_PREFIX.trim()} "$1" "$VMID" "$2"
+}
+finish() { emit "$1" "$2"; exit 0; }
+trap 'emit false script_error' EXIT
+read_saved() {
+  CONFIG="$(qm config "$VMID" 2>/dev/null)" || return 1
+  STATUS="$(qm status "$VMID" 2>/dev/null | awk '$1=="status:" {print $2; exit}')" || return 1
+  LOCK="$(printf '%s\\n' "$CONFIG" | awk '$1=="lock:" {print $2; exit}')"
+  VMSTATE="$(printf '%s\\n' "$CONFIG" | awk '$1=="vmstate:" {print $2; exit}')"
+  [ -n "$STATUS" ]
+}
+install -d -m 0755 /run/lock
+exec 9>/run/lock/hivra-vm-${input.vmid}.lock
+flock -x -n 9 || finish false busy
+read_saved || finish false unreachable
+printf '%s\\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p' | tr ';' '\\n' | grep -Fx -- "$EXPECTED_BINDING_TAG" >/dev/null \\
+  || finish false binding_mismatch
+# Only a computer that is off with its memory saved. Anything else is left exactly as it is.
+[ "$STATUS" = stopped ] && [ "$LOCK" = suspended ] && [ -n "$VMSTATE" ] || finish false not_hibernated
+install -d -m 0700 "$ONBOOT_MARK_DIR" || finish false mark_failed
+printf '%s\\n' "$EXPECTED_BINDING_TAG" >"$COLD_MARK" || finish false mark_failed
+( ${hibernationDiscardBody().split("\n").join("\n  ")} ) >/dev/null 2>&1 || true
+if ! read_saved; then finish false unreachable_after; fi
+if [ "$LOCK" = suspended ] && [ -n "$VMSTATE" ]; then
+  # Nothing changed: it still resumes from its saved memory, so it is not marked.
+  rm -f "$COLD_MARK"
+  finish false drop_failed
+fi
+# The lock or the saved memory is gone, so the next wake boots it from disk. The mark stays either way.
+if [ -n "$VMSTATE" ] || [ "$LOCK" = suspended ]; then finish false drop_partial; fi
+finish true dropped
+`;
+}
+
+export interface MemoryDropReceipt {
+  ok: boolean;
+  vmid: number;
+  reason: string;
+}
+
+/** Strict read of the drop script's one receipt line. Anything else is null, and null counts as a failure. */
+export function parseMemoryDropReceipt(stdout: string, expectedVmid?: number): MemoryDropReceipt | null {
+  const row = readReceiptLine(stdout, MEMORY_DROP_RESULT_PREFIX);
+  if (!row) return null;
+  if (typeof row.ok !== "boolean" || !Number.isSafeInteger(row.vmid)
+      || (expectedVmid !== undefined && row.vmid !== expectedVmid)
+      || typeof row.reason !== "string" || !REASON.test(row.reason)) return null;
+  if (row.ok && row.reason !== "dropped") return null;
+  return { ok: row.ok, vmid: row.vmid as number, reason: row.reason };
 }
 
 // ---------------------------------------------------------------------------

@@ -505,6 +505,11 @@ const recipes = Object.freeze({
     workerSha256: "e58572e0b21dc0d1a80dab7fa550a970da6d6d480460c89b6e068493b6cfcbd5",
     workerSize: 45216,
   }),
+  "2026.11.15.8": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; production's Agent Zero hotfix seeds Agent Zero's login and managed model into /a0/usr/.env (the 2026.11.17.3 fix, cut from 2026.11.15.7). The worker only advances its release labels.
+    workerSha256: "061138439c1b4ce7f4730c3baa92125dd92973a827c5acbc9a9b6604aab4cd89",
+    workerSize: 45216,
+  }),
   "2026.11.17.1": Object.freeze({
     protocol: "v1" as const, // Same worker protocol; the release drops Hivra's agent version pins (a launch installs upstream's newest release and only the owner's Update moves it). The worker only advances its release labels.
     workerSha256: "7e7628ffc80574698f0f322c5ac7d6039cd05f65332512513ac0dfc6bc6a0142",
@@ -523,6 +528,56 @@ const recipes = Object.freeze({
   "2026.11.17.4": Object.freeze({
     protocol: "v1" as const, // Same worker protocol; the release lets OpenClaw 2026.11.5+ and current Aeon launch (the gateway drops forwarded headers on /openclaw; Aeon keeps its own Next config). The worker only advances its release labels.
     workerSha256: "99ca7ca23efc42959b52b1fc68b79356b64b4339891984c1832bb5553c8b0b7d",
+    workerSize: 45216,
+  }),
+  "2026.11.17.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release hardens hivra-tg-apply against symlink redirection of its root write (stages in the root-only parent and renames into place). The worker only advances its release labels.
+    workerSha256: "f7f00f36160d81d77cd13ba82a4ef7df7fa1858952c2b535a91ea7391b36cd0c",
+    workerSize: 45216,
+  }),
+  "2026.11.17.6": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release seeds current Agent Zero's model preset so a managed-Venice launch has a model. The worker only advances its release labels.
+    workerSha256: "6592f2d22b8662d25ff01156ae3e4416e025833bfd709744eb791fbb165e475f",
+    workerSize: 45216,
+  }),
+  "2026.11.17.7": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release serves OpenClaw's Control UI at its own basePath /openclaw. The worker only advances its release labels.
+    workerSha256: "3d4ad07770a9a2019744c5237ae7be39dec5dda72e667cd84245b087eabb2928",
+    workerSize: 45216,
+  }),
+  "2026.11.17.8": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release checks OpenClaw's install readiness at its basePath. The worker only advances its release labels.
+    workerSha256: "081f86af5dd9f69e3a3460de5482723901ba4bfc28b274a25da32a774d496c48",
+    workerSize: 45216,
+  }),
+  "2026.11.17.9": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release names the provisioning step's own failure message in the host log. The worker only advances its release labels.
+    workerSha256: "344588e6dda111c31d9dcfe33fc3b54e56c9f60202255c88719bec558f7fac9e",
+    workerSize: 45216,
+  }),
+  "2026.11.18.1": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release keeps OpenClaw's Venice chat requests inside Venice's schema and lets Aeon keep a newer gh. The worker only advances its release labels.
+    workerSha256: "80f9d6f5f345e3231a26f987684c50b9045677d2a6c9694548a8de802ed0b4f0",
+    workerSize: 45216,
+  }),
+  "2026.11.18.2": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release adds the host's empty-computer mode, keeps cloud-init's failure details on the host and starts OpenClaw on Flash. The worker only advances its release labels.
+    workerSha256: "aa2d51d05feb79c1c6b8ef1d022ac96eea01e1d6e5eeaf1d5c28b3c48272a6fb",
+    workerSize: 45216,
+  }),
+  "2026.11.18.3": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release installs the guest agent without cloud-init's package module, so a launch no longer depends on the snap store. The worker only advances its release labels.
+    workerSha256: "cb246d7154d6266bb49ab9b2f5e1ec626de58f73579e942814f889ba6feaec43",
+    workerSize: 45216,
+  }),
+  "2026.11.18.4": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release turns off Proxmox's first-boot package upgrade, which also refreshed snaps. The worker only advances its release labels.
+    workerSha256: "7cd38a8e2709c7d2e65445dbd321f058e8729e9e13a39fa6e83517becd4cc1ad",
+    workerSize: 45216,
+  }),
+  "2026.11.18.5": Object.freeze({
+    protocol: "v1" as const, // Same worker protocol; the release lets the A0 CLI reach Agent Zero through the connection service. The worker only advances its release labels.
+    workerSha256: "6ce6eff7b17dcb548fb570d853fb079a877ffd4bc500761afecb9fbcfc524f68",
     workerSize: 45216,
   }),
 });
