@@ -2583,4 +2583,27 @@ describe("resolveInstanceIpv4", () => {
     expect(from).not.toHaveBeenCalled();
     expect(getHetznerInstanceStatus).not.toHaveBeenCalled();
   });
+
+  // F090: a provisioning row whose Hetzner server id is only a creation receipt
+  // (no gateway yet) must not be read as the instance's live server.
+  it("does not treat a creation receipt's server as the live server", async () => {
+    (getHetznerInstanceStatus as jest.Mock).mockResolvedValue({ status: "provisioning", ipv4: "203.0.113.77" });
+
+    await expect(
+      resolveInstanceIpv4(
+        {
+          id: "inst-123",
+          user_id: "user-123",
+          provider: "openai",
+          api_key_encrypted: "enc",
+          status: "provisioning",
+          hetzner_server_id: 42,
+          gateway_url: null,
+        },
+        undefined
+      )
+    ).resolves.toBe("");
+
+    expect(getHetznerInstanceStatus).not.toHaveBeenCalled();
+  });
 });

@@ -6,6 +6,7 @@ import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
+import { FREE_PLAN_CLOSED_CODE, FREE_PLAN_CLOSED_MESSAGE, accountNeedsPlanForFree } from "@/lib/billing/free-plan-closure";
 import {
   enforceAuthenticatedRouteRateLimit,
   RATE_LIMIT_PRESETS,
@@ -147,6 +148,10 @@ export async function POST(request: NextRequest) {
           issueCount: parsed.error.issues.length,
         }),
       );
+    }
+
+    if (await accountNeedsPlanForFree(userId)) {
+      return noStore(apiError(FREE_PLAN_CLOSED_MESSAGE, 403, undefined, { code: FREE_PLAN_CLOSED_CODE }));
     }
 
     if (parsed.data.provider === "hetzner-cloud") {

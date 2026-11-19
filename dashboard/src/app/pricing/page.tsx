@@ -12,6 +12,9 @@ import styles from "@/components/public-editorial/secondary-site.module.css";
 import StructuredData from "@/components/StructuredData";
 import { glossify } from "@/components/gloss/glossify";
 import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
+import { isCardTrialEnabled } from "@/lib/billing/card-trial";
+import { isFreePlanClosed } from "@/lib/billing/free-plan-closure";
+import { isPlanLadderEnabled } from "@/lib/subscription/plan-ladder";
 import { getTokenSurfaceView, tokenSurfacesVisible } from "@/lib/compliance/token-surface-view";
 import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
@@ -24,6 +27,7 @@ import {
   PRICING_CLOSING,
   PRICING_COMPARISON,
   PRICING_FAQ,
+  CARD_TRIAL_PRICING,
   PRICING_FAQ_HEADING,
   PRICING_INTRO,
   PRICING_OPTIONS,
@@ -32,6 +36,7 @@ import {
   buildPricingOffers,
   formatPricesAsOf,
   visiblePricingFaq,
+  withFreeClosedAnswer,
   type PricingFaqItem,
 } from "./pricing-content";
 
@@ -94,18 +99,32 @@ export default async function PricingPage() {
   const view = await getTokenSurfaceView();
   const showToken = tokenSurfacesVisible(view);
   const options = PRICING_OPTIONS;
+  // Plan-ladder sales never get the trial, so it is not offered while the ladder is on.
+  const cardTrial = isCardTrialEnabled() && !isPlanLadderEnabled();
+  // Once the Free plan is closed to new sign-ups, the page stops offering it.
+  const freeClosed = isFreePlanClosed();
+  const intro = freeClosed ? PRICING_INTRO.filter((paragraph) => !paragraph.startsWith("Sign up free")) : PRICING_INTRO;
 
   return (
-    <PublicSite className={styles.page} data-page="pricing" tokenSurfaces={showToken}>
-      <StructuredData schema={buildPricingSchema(visiblePricingFaq(showToken))} />
+    <PublicSite className={styles.page} data-page="pricing" tokenSurfaces={showToken} freePlanClosed={freeClosed}>
+      <StructuredData schema={buildPricingSchema(visiblePricingFaq(showToken, freeClosed))} />
       <main className={styles.main} id="main-content">
         <Breadcrumbs items={[{ label: "Pricing" }]} />
 
         <header className={styles.masthead}>
           <h1>
-            Start free. <strong className={page.headlineTail}>Connect your own server.</strong>
+            {freeClosed ? (
+              <>
+                Hivra Cloud from {ENTRY_PLAN_PRICE}/month.{" "}
+                <strong className={page.headlineTail}>{cardTrial ? "Try it free for 7 days." : "Or self-host it."}</strong>
+              </>
+            ) : (
+              <>
+                Start free. <strong className={page.headlineTail}>Connect your own server.</strong>
+              </>
+            )}
           </h1>
-          {PRICING_INTRO.map((paragraph) => (
+          {intro.map((paragraph) => (
             <p key={paragraph} className={page.introLine}>
               {paragraph}
             </p>
@@ -118,16 +137,18 @@ export default async function PricingPage() {
             <p>{options.pool}</p>
           </div>
 
-          <div className={page.ownServer}>
-            <div>
-              <h3>{options.ownServer.title}</h3>
-              <p>{options.ownServer.body}</p>
+          {freeClosed ? null : (
+            <div className={page.ownServer}>
+              <div>
+                <h3>{options.ownServer.title}</h3>
+                <p>{options.ownServer.body}</p>
+              </div>
+              <Link className={page.action} href={PRICING_ACTIONS.connectServer.href}>
+                {PRICING_ACTIONS.connectServer.label}
+                <ArrowRight size={18} aria-hidden="true" />
+              </Link>
             </div>
-            <Link className={page.action} href={PRICING_ACTIONS.connectServer.href}>
-              {PRICING_ACTIONS.connectServer.label}
-              <ArrowRight size={18} aria-hidden="true" />
-            </Link>
-          </div>
+          )}
 
           <div className={page.offers}>
             <article className={`${page.offer} ${page.offerSelf}`} aria-labelledby="offer-self-host">
@@ -169,8 +190,9 @@ export default async function PricingPage() {
                 <p key={paragraph}>{paragraph}</p>
               ))}
               <p>{options.entry.goodFor}</p>
+              {cardTrial ? <p className={page.trialNote} data-testid="card-trial-note">{CARD_TRIAL_PRICING.note}</p> : null}
               <Link className={`${page.action} ${page.actionPrimary}`} href={PRICING_ACTIONS.chooseEntry.href}>
-                {PRICING_ACTIONS.chooseEntry.label}
+                {cardTrial ? CARD_TRIAL_PRICING.label : PRICING_ACTIONS.chooseEntry.label}
                 <ArrowRight size={18} aria-hidden="true" />
               </Link>
             </article>
@@ -259,7 +281,8 @@ export default async function PricingPage() {
             {PRICING_FAQ_HEADING}
           </h2>
           <div>
-            {PRICING_FAQ.map((item) => {
+            {PRICING_FAQ.map((faqItem) => {
+              const item = freeClosed ? withFreeClosedAnswer(faqItem) : faqItem;
               const entry = (
                 <details key={item.q} open>
                   <summary>

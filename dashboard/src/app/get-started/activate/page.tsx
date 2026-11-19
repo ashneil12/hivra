@@ -103,7 +103,8 @@ function ActivatePageContent() {
 
   const [status, setStatus] = useState<"loading" | "subscribing" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
-  const triggeredRef = useRef(false);
+  // The plan checkout last started for, so a new plan in the URL starts again.
+  const triggeredRef = useRef<PlanKey | null>(null);
   const isMountedRef = useRef(true);
   const isNavigatingRef = useRef(false);
 
@@ -175,6 +176,15 @@ function ActivatePageContent() {
       return;
     }
 
+    if (result.reason === BILLING_SUBSCRIBE_REASON.FREE_PLAN_CLOSED) {
+      // No free plan for new accounts: go on to the entry plan (and its trial).
+      captureActivationEvent("activation_free_plan_closed", { plan: planKey });
+      // Same page, new query: the component stays mounted, and the new plan
+      // in the URL starts its own checkout.
+      router.replace(`${ACTIVATION_ROUTE}?plan=operator${agentTypeQuery}`);
+      return;
+    }
+
     if (result.reason === BILLING_SUBSCRIBE_REASON.ACTIVE_SUBSCRIPTION) {
       captureActivationEvent("activation_dashboard_reached", {
         plan: planKey,
@@ -194,7 +204,7 @@ function ActivatePageContent() {
     });
     setError(result.message);
     setStatus("error");
-  }, [cadence, isSignedIn, planKey, router, searchParams, wasCanceled]);
+  }, [agentTypeQuery, cadence, isSignedIn, planKey, router, searchParams, wasCanceled]);
 
   useEffect(() => {
     if (wasCanceled) {
@@ -205,8 +215,8 @@ function ActivatePageContent() {
     // No explicit plan in the URL — surface the choice instead of auto-activating
     // Free. The confirm-plan screen drives checkout explicitly via the buttons.
     if (!planExplicit) return;
-    if (triggeredRef.current) return;
-    triggeredRef.current = true;
+    if (triggeredRef.current === planKey) return;
+    triggeredRef.current = planKey;
 
     queueMicrotask(() => {
       if (isMountedRef.current && !isNavigatingRef.current) {
@@ -221,7 +231,7 @@ function ActivatePageContent() {
   }, [isLoaded, isSignedIn, wasCanceled, triggerCheckout, planKey, router, planExplicit]);
 
   function handleRetry() {
-    triggeredRef.current = false;
+    triggeredRef.current = planKey;
     setStatus("subscribing");
     setError(null);
     void triggerCheckout();

@@ -29,6 +29,12 @@ jest.mock("@/lib/posthog", () => ({
   },
 }));
 
+const mockNeedsPlanForFree = jest.fn();
+jest.mock("@/lib/billing/free-plan-closure", () => ({
+  ...jest.requireActual("@/lib/billing/free-plan-closure"),
+  accountNeedsPlanForFree: (...a: unknown[]) => mockNeedsPlanForFree(...a),
+}));
+
 // The token/yearly entitlement short-circuit consults resolveEffectiveSubscription.
 // Default it to null (no token entitlement) so the existing Stripe-path tests are
 // unaffected; the token-holder cases override it per-test.
@@ -58,6 +64,7 @@ describe("POST /api/billing/subscribe", () => {
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: mockUserId });
     (currentUser as jest.Mock).mockResolvedValue(mockCustomer);
     (resolveEffectiveSubscription as jest.Mock).mockResolvedValue(null);
+    mockNeedsPlanForFree.mockResolvedValue(false);
 
     // Mock price IDs
     // @ts-expect-error Mocking for test
@@ -535,6 +542,24 @@ describe("POST /api/billing/subscribe", () => {
 
       expect(body.data).toEqual({ url: "https://stripe.test/launch", resumed: true });
       expect(mockStripeSessionsCreate).not.toHaveBeenCalled();
+    });
+
+    it("does not resume a direct-payment session once the buyer gets the card trial", async () => {
+      process.env.HIVRA_CARD_TRIAL = "on";
+      try {
+        pendingCheckout();
+        mockStripeSessionsList.mockResolvedValueOnce({
+          data: [{ id: "cs_plain", status: "open", url: "https://stripe.test/plain", metadata: { user_id: mockUserId, plan: "operator" } }],
+        });
+
+        const res = await POST(createRequest({ plan: "operator" }));
+        const body = await res.json();
+
+        expect(body.data?.resumed).not.toBe(true);
+        expect(mockStripeSessionsCreate.mock.calls[0][0].subscription_data.trial_period_days).toBe(7);
+      } finally {
+        delete process.env.HIVRA_CARD_TRIAL;
+      }
     });
 
     it("never reuses the idempotency key of a session it just expired", async () => {
@@ -1220,6 +1245,25 @@ describe("POST /api/billing/subscribe", () => {
       process.env = ORIGINAL_ENV;
     });
 
+    it("refuses the Free plan to a new account once it is closed", async () => {
+      mockNeedsPlanForFree.mockResolvedValueOnce(true);
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+      const res = await POST(createRequest({ plan: "free" }));
+      expect(res.status).toBe(403);
+      expect((await res.json()).reason).toBe("FREE_PLAN_CLOSED");
+    });
+
+    it("keeps the Free plan for an existing free account", async () => {
+      mockNeedsPlanForFree.mockResolvedValue(true);
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
+        data: { stripe_customer_id: null, plan: "free", status: "active" },
+        error: null,
+      });
+      const res = await POST(createRequest({ plan: "free" }));
+      expect(res.status).toBe(200);
+      expect(mockNeedsPlanForFree).not.toHaveBeenCalled();
+    });
+
     it("checkout never lets the buyer enter a promotion code", async () => {
       mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
 
@@ -1231,8 +1275,43 @@ describe("POST /api/billing/subscribe", () => {
       expect(params).not.toHaveProperty("discounts");
     });
 
+    it("gives a first-time monthly Pro buyer the 7-day card trial while HIVRA_CARD_TRIAL is on", async () => {
+      process.env.HIVRA_CARD_TRIAL = "on";
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+
+      const res = await POST(createRequest({ plan: "operator" }));
+      expect(res.status).toBe(200);
+
+      const params = mockStripeSessionsCreate.mock.calls[0][0];
+      expect(params.payment_method_collection).toBe("always");
+      expect(params.subscription_data).toMatchObject({
+        trial_period_days: 7,
+        trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
+      });
+      expect(params.subscription_data.metadata.hivra_trial).toBe("card_7d");
+      expect(supabaseAdmin!.from).toHaveBeenCalledWith("hermes_trial_usage");
+    });
+
+    it.each([
+      ["a larger plan", { plan: "fleet" }, null, []],
+      ["yearly billing", { plan: "operator", cadence: "yearly" }, null, []],
+      ["an account that trialed before", { plan: "operator" }, null, [{ id: "t1" }]],
+      ["an account that paid before", { plan: "operator" }, { stripe_customer_id: "cus_123", plan: "free", status: "canceled", upgraded_at: "2026-10-01T00:00:00Z" }, []],
+    ])("gives no trial to %s even with HIVRA_CARD_TRIAL on", async (_name, body, existing, trialRows) => {
+      process.env.HIVRA_CARD_TRIAL = "on";
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: existing, error: null });
+      mockSupabaseQuery.limit.mockResolvedValue({ data: trialRows, error: null });
+
+      const res = await POST(createRequest(body));
+      expect(res.status).toBe(200);
+
+      const params = mockStripeSessionsCreate.mock.calls[0][0];
+      expect(params.subscription_data).not.toHaveProperty("trial_period_days");
+      expect(params.subscription_data.metadata).not.toHaveProperty("hivra_trial");
+    });
+
     it.each(["operator", "fleet", "command"] as const)(
-      "%s checkout never sends trial_period_days, trial_end or trial metadata, even with the retired trial env set",
+      "%s checkout never sends trial_period_days, trial_end or trial metadata, with the card trial switch off and the retired trial env set",
       async (plan) => {
         // The retired experiment env must have no effect any more.
         process.env.TRIAL_EXPERIMENT_ENABLED = "true";

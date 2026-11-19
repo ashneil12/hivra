@@ -169,6 +169,13 @@ describe("launch credit", () => {
     expect(await balance("u5")).toBe(0);
   });
 
+  it("gives nothing to an account still in its free trial", async () => {
+    await redeem("u6");
+    const trial: LaunchFactsDeps = { ...stripeWith([nowSub]), resolveSubscription: async () => ({ plan: "operator", status: "trialing", source: "stripe" }) };
+    expect((await tryGrantLaunchCredit({ userId: "u6", now: NOW, factsDeps: trial }, db)).eligibility?.reason).toBe("no_paid_plan");
+    expect(await balance("u6")).toBe(0);
+  });
+
   it("never exceeds budget or max_grants under concurrent grants", async () => {
     await pg.exec("update public.venice_promo_campaigns set budget_micro_usd = 35000000, max_grants = 70 where slug='venice-launch-2026'");
     const users = Array.from({ length: 8 }, (_, i) => `race${i}`);
@@ -192,6 +199,13 @@ describe("launch credit", () => {
 describe("top-up bonus", () => {
   const session = async (user: string, id: string, amount: number, at: string) => ledger(user, amount, "stripe", "stripe_topup", id, at);
   const deps = { resolveSubscription: subscriber };
+
+  it("gives no top-up bonus to an account still in its free trial", async () => {
+    await session("t9", "cs_9", 30 * M, "2026-11-19T00:00:00Z");
+    const trialDeps = { resolveSubscription: async () => ({ plan: "operator", status: "trialing", source: "stripe" }) };
+    const r = await tryGrantTopupBonus({ userId: "t9", sessionId: "cs_9", amountMicroUsd: 30 * M, now: NOW, deps: trialDeps }, db);
+    expect(r).toMatchObject({ attempted: false, skipped: "not_a_subscriber" });
+  });
 
   it("gives a subscriber's first top-up 50%, capped at $10, once even on replay", async () => {
     await session("t1", "cs_1", 30 * M, "2026-11-19T00:00:00Z");

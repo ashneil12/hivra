@@ -20,6 +20,7 @@ import { applyTierChange } from "@/lib/services/tier-change-service";
 import { tierFromPlanKey } from "@/lib/services/tier-specs";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { log } from "@/lib/logger";
+import { isInCardTrial } from "@/lib/billing/card-trial";
 import { loadPlanLadderTag } from "@/lib/billing/plan-ladder-entitlement";
 import {
   PLAN_LADDER_ID,
@@ -276,9 +277,14 @@ export async function POST(req: NextRequest) {
     const ladderColumns =
       onLadder && ladderConfig ? ladderSubscriptionColumns(ladderConfig, newPlan, ladder.alwaysOnExtras) : null;
 
+    // Changing plan during the card trial ends the trial and charges now, so
+    // the larger plan's limits are never granted unpaid. A failed charge
+    // throws and changes nothing.
+    const endsTrial = await isInCardTrial(clerkUserId);
     const updatedSubscription = await stripe.subscriptions.update(
       sub.stripe_subscription_id,
       {
+        ...(endsTrial ? { trial_end: "now" as const, payment_behavior: "error_if_incomplete" as const } : {}),
         items: [
           {
             id: subscriptionItemId,
@@ -319,6 +325,7 @@ export async function POST(req: NextRequest) {
       total_cpu_budget: targetPlan.totalCpu,
       total_ram_budget: targetPlan.totalRam,
       ...(ladderColumns ?? {}),
+      ...(endsTrial ? { trial_ends_at: null } : {}),
       excess_resources: false,
       updated_at: new Date().toISOString(),
       // Conversion stamp (write-once): only a free->paid transition counts
