@@ -11,8 +11,7 @@ import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { sanitizeHivraAgentRow } from "@/lib/hivra/agent-llm";
-import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
-import { claimPreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
+import { resumePreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
 import { log } from "@/lib/logger";
 import { isOpsAdminUser, verifiedPrimaryEmailOf } from "@/lib/ops-access";
 
@@ -39,8 +38,8 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) return apiError("Invalid request", 400);
     try {
       const operator = isOpsAdminUser({ userId, email: verifiedPrimaryEmailOf(await currentUser()) });
-      const agent = await claimPreparedCanaryComputer({ userId, ...parsed.data, operator });
-      return apiSuccess({ agent: sanitizeHivraAgentRow(agent) }, agent.status === "provisioning" ? 202 : 201);
+      const agent = await resumePreparedCanaryComputer({ userId, profile: parsed.data.profile, operator });
+      return apiSuccess({ agent: sanitizeHivraAgentRow(agent) }, agent.status === "provisioning" ? 202 : 200);
     } catch (error) {
       const raw = error instanceof Error ? error.message : FALLBACK_CLAIM_CODE;
       const code = CLAIM_CODE_PATTERN.test(raw) ? raw : FALLBACK_CLAIM_CODE;
@@ -50,19 +49,11 @@ export async function POST(request: NextRequest) {
       if (code === "prepared_computer_operator_only") {
         return apiError("Prepared computers are limited to operator accounts.", 403, undefined, { code });
       }
-      if (["profile_already_claimed", "prepared_slot_claimed"].includes(code)) {
+      if (code === "prepared_slot_claimed") {
         return apiError("This prepared computer is already claimed.", 409, undefined, { code });
       }
-      if (code === "plan_agent_limit" || code === "plan_access_required") {
-        return apiError(code === "plan_agent_limit"
-          ? "Your plan's agent limit is reached. Upgrade for more slots, or remove an agent first."
-          : "Plan access is required before claiming a computer.", 403, undefined, { code });
-      }
-      if (code === "hosted_compute_requires_plan") {
-        return apiError(HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE, 403, undefined, { code });
-      }
       if (code === "prepared_profile_unavailable") {
-        return apiError("This prepared computer is not configured on this site.", 503, undefined, { code });
+        return apiError("This prepared computer is not available for a new claim.", 503, undefined, { code });
       }
       return apiError("The prepared computer could not be verified and was not claimed.", 503, undefined, { code });
     }

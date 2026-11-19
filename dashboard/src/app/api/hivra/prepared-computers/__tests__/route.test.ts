@@ -9,7 +9,7 @@ jest.mock("@clerk/nextjs/server", () => ({ auth: async () => ({ userId: "user_12
 jest.mock("@/lib/ops-access", () => ({ isOpsAdminUser: () => mockOperator, verifiedPrimaryEmailOf: () => null }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: () => null }));
 jest.mock("@/lib/hivra/prepared-canary-computers", () => ({
-  claimPreparedCanaryComputer: (...args: unknown[]) => claimMock(...args),
+  resumePreparedCanaryComputer: (...args: unknown[]) => claimMock(...args),
 }));
 jest.mock("@/lib/hivra/agent-llm", () => ({ sanitizeHivraAgentRow: (value: unknown) => value }));
 
@@ -34,11 +34,18 @@ it("rejects new Windows prepared-computer claims before lifecycle code", async (
   expect(claimMock).not.toHaveBeenCalled();
 });
 
-it("retains the Omarchy prepared-computer claim route", async () => {
+it("returns the operator's existing Omarchy claim without creating one", async () => {
   claimMock.mockResolvedValue({ id: "agent_123", name: "OMARCHY", status: "running" });
   const response = await POST(request({ profile: "omarchy", name: "OMARCHY" }));
-  expect(response.status).toBe(201);
-  expect(claimMock).toHaveBeenCalledWith({ userId: "user_123", profile: "omarchy", name: "OMARCHY", operator: true });
+  expect(response.status).toBe(200);
+  expect(claimMock).toHaveBeenCalledWith({ userId: "user_123", profile: "omarchy", operator: true });
+});
+
+it("returns a definite refusal when there is no active claim to resume", async () => {
+  claimMock.mockRejectedValue(new Error("prepared_profile_unavailable"));
+  const response = await POST(request({ profile: "omarchy", name: "OMARCHY" }));
+  expect(response.status).toBe(503);
+  expect(await response.json()).toMatchObject({ code: "prepared_profile_unavailable" });
 });
 
 it("never echoes an internal claim error message to the client", async () => {

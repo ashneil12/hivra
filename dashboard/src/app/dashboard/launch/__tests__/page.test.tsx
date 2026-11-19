@@ -175,9 +175,7 @@ const storedDraftJson = () => JSON.parse(window.localStorage.getItem(DRAFT_KEY) 
 
 type TileName = "Codex" | "Ubuntu Desktop" | "Linux Sandbox" | "Windows" | "Omarchy";
 
-// The prepared desktop computer (Omarchy) is offered only where this deployment
-// holds a prepared slot: the page reads that from the same server configuration
-// the claim route reads. Tests opt in exactly the way a deployment does.
+// A configured fixture is not proof that a guest is clean enough to assign.
 const PREPARED_ENV = {
   HIVRA_PREPARED_COMPUTERS_JSON: JSON.stringify({
     omarchy: {
@@ -191,7 +189,7 @@ const PREPARED_ENV = {
 const PRIOR_PREPARED_ENV = Object.fromEntries(
   Object.keys(PREPARED_ENV).map((key) => [key, process.env[key]]),
 ) as Record<keyof typeof PREPARED_ENV, string | undefined>;
-function allowPreparedCanary() {
+function configurePreparedSlot() {
   for (const [key, value] of Object.entries(PREPARED_ENV)) process.env[key] = value;
 }
 afterEach(() => {
@@ -417,7 +415,6 @@ describe("LaunchPage", () => {
   });
 
   it("shows agents and computers on one Choose screen and goes straight to the plan", async () => {
-    allowPreparedCanary();
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
     render(<LaunchPage />);
 
@@ -437,7 +434,6 @@ describe("LaunchPage", () => {
     expect(within(computers).getByText("Needs a server you've connected.", { exact: false })).toBeInTheDocument();
     expect(within(computers).getByRole("link", { name: "Add a server" })).toHaveAttribute("href", "/dashboard/infrastructure");
     expect(within(computers).getByRole("button", { name: /^Windows/ })).toHaveTextContent("Needs your own server");
-    expect(within(computers).getByRole("button", { name: /^Omarchy/ })).toHaveTextContent("Ready to launch");
 
     // Every catalog agent launches here; none hands off to another page.
     expect(within(agents).queryAllByRole("link")).toHaveLength(0);
@@ -674,9 +670,8 @@ describe("LaunchPage", () => {
     expect(screen.getByRole("button", { name: "Resume same launch" })).toBeEnabled();
   });
 
-  it("does not offer the prepared Canary computer where it cannot be claimed", async () => {
-    // Production shape: the Hivra surfaces are on, but no prepared slot exists,
-    // so the claim route answers 503. The tile must not be offered at all.
+  it("does not offer Omarchy while new assignments are paused, even with a configured slot", async () => {
+    configurePreparedSlot();
     render(<LaunchPage />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
@@ -686,8 +681,7 @@ describe("LaunchPage", () => {
     expect(within(computers).getByRole("button", { name: /^Windows/ })).toBeInTheDocument();
   });
 
-  it("launches Ubuntu as a computer and exposes prepared Canary operating systems", async () => {
-    allowPreparedCanary();
+  it("launches Ubuntu as a computer while Windows still requires its own server", async () => {
     createAgentMock.mockResolvedValue({
       id: "44444444-4444-4444-8444-444444444444",
       type: "linux-desktop",
@@ -700,7 +694,6 @@ describe("LaunchPage", () => {
     render(<LaunchPage />);
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
-    expect(screen.getByRole("button", { name: /Omarchy/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /^Windows/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /^Windows/i })).toHaveTextContent("your own ISO on a server you connected");
     expect(screen.getByRole("button", { name: /^Windows/i })).not.toHaveTextContent("Customer capacity");

@@ -1,8 +1,10 @@
 # Prepared Omarchy refresh rollout
 
-This change applies only to a new owner claim of the configured prepared
-Omarchy slot. It does not build a new VM per customer, upgrade existing owner
-opens, or migrate customer data between owners. Never reuse an existing
+New prepared claims are paused. An unassigned slot, a deleted claim, and a
+missing binding tag are not evidence of a clean guest. The claim endpoint can
+only return an existing eligible claim to the same operator; it does not
+reserve, start, or rebind a guest. Existing Omarchy reservations can still
+finish their refresh, and refresh is not a reset. Never reuse an existing
 customer's slot as a disposable acceptance fixture.
 
 ## Compatibility and order
@@ -16,15 +18,15 @@ customer's slot as a disposable acceptance fixture.
 3. Merge through the public repository Git release path. Verify that the exact
    merge revision holds the Canary alias before testing.
 
-The migration deliberately refuses an older dashboard's new Omarchy insertion.
-There can therefore be a short fail-closed launch window between migration and
-matching dashboard deployment. Existing owner opens remain supported. A new
-reservation is a real `provisioning` row and consumes a paid owner slot before
-any updater dispatch. A 202 response is not admission to Desktop.
+The migration deliberately refuses an older dashboard's direct Omarchy
+insertion. Existing owner opens remain supported. An existing reservation is a
+real `provisioning` row and consumes a paid owner slot; a 202 response is not
+admission to Desktop.
 
 ## Acceptance
 
-Use a separately authorized, empty, owner-controlled prepared slot in Canary,
+When a trusted clean reset or rebuild makes new claims possible, verify the
+claim flow on a separately authorized, empty, owner-controlled prepared slot in Canary,
 with its exact host/node/VMID/IP/name/claim configured. Record its original VM
 state and owner rows, expected release pin, operation ID, all created artifacts,
 and cleanup plan before claiming through the normal launch API/UI.
@@ -45,7 +47,8 @@ HTTP client.
 
 Deleting a settled prepared claim (Windows or Omarchy, no refresh in flight)
 follows the same rule: under the slot's VM lock Delete removes only that claim's
-binding tag and keeps the prepared VM for the next claim. It refuses a VM whose
+binding tag and keeps the prepared VM. The guest remains unavailable for new
+claims until a trusted reset or rebuild can be verified. Delete refuses a VM whose
 identity is not the configured slot or that carries another claim's binding, and
 a retry after the tag is gone succeeds unchanged.
 
@@ -64,7 +67,8 @@ same operation path and backups. Requests must keep their original release pin
 and program manifest. Do not edit those manifests to make a retry succeed.
 
 Prefer a forward fix. If reverting dashboard code, retain this migration and
-its guards; new claims may be unavailable until a compatible dashboard returns.
+its guards. Do not restore a dashboard that can assign retained guests without
+verifying a trusted clean reset or rebuild.
 Do not drop the operation table/guards, clear leases, delete reserved rows,
 remove binding tags, or restore snapshots while an updater may still be active.
 First prove the exact guest unit is stopped and the cancellation fence is set,
