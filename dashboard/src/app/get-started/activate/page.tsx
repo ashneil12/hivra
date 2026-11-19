@@ -175,6 +175,14 @@ function ActivatePageContent() {
       return;
     }
 
+    if (result.reason === BILLING_SUBSCRIBE_REASON.FREE_PLAN_CLOSED) {
+      // No free plan for new accounts: go on to the entry plan (and its trial).
+      captureActivationEvent("activation_free_plan_closed", { plan: planKey });
+      isNavigatingRef.current = true;
+      router.replace(`${ACTIVATION_ROUTE}?plan=operator${agentTypeQuery}`);
+      return;
+    }
+
     if (result.reason === BILLING_SUBSCRIBE_REASON.ACTIVE_SUBSCRIPTION) {
       captureActivationEvent("activation_dashboard_reached", {
         plan: planKey,
@@ -194,7 +202,7 @@ function ActivatePageContent() {
     });
     setError(result.message);
     setStatus("error");
-  }, [cadence, isSignedIn, planKey, router, searchParams, wasCanceled]);
+  }, [agentTypeQuery, cadence, isSignedIn, planKey, router, searchParams, wasCanceled]);
 
   useEffect(() => {
     if (wasCanceled) {

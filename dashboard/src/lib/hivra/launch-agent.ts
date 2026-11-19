@@ -29,6 +29,7 @@ import { selectAvoidingCriticalHosts } from "@/lib/hivra/capacity/placement";
 import { GOALS } from "@/lib/hivra/agent-identity";
 import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { applyCardTrialSleep } from "@/lib/billing/card-trial";
+import { FREE_PLAN_CLOSED_CODE, FREE_PLAN_CLOSED_MESSAGE, accountNeedsPlanForFree } from "@/lib/billing/free-plan-closure";
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
@@ -1179,6 +1180,10 @@ export async function launchHivraAgentForUser(
       if (!isTunnelConfigured() && !(isLocalAuthMode() && deployment.mode === "self-managed")) {
         return apiError("Secure model-settings access is not configured on this Hivra installation. Use native sign-in or configure named access before launching with a model key.", 503);
       }
+    }
+
+    if (deployment.mode === "self-managed" && (await accountNeedsPlanForFree(userId))) {
+      return apiError(FREE_PLAN_CLOSED_MESSAGE, 403, undefined, { code: FREE_PLAN_CLOSED_CODE });
     }
 
     if (deployment.mode === "self-managed") {

@@ -21,6 +21,7 @@ import {
   cardTrialCheckoutFields,
   checkoutGetsCardTrial,
 } from "@/lib/billing/card-trial";
+import { FREE_PLAN_CLOSED_MESSAGE, accountNeedsPlanForFree } from "@/lib/billing/free-plan-closure";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { loadPlanLadderTag } from "@/lib/billing/plan-ladder-entitlement";
 import {
@@ -277,6 +278,13 @@ export async function POST(req: NextRequest) {
       if (hasActivePaidSubscription) {
         return apiError("You already have an active subscription.", 400, undefined, {
           reason: BILLING_SUBSCRIBE_REASON.ACTIVE_SUBSCRIPTION,
+        });
+      }
+
+      // Closed to new sign-ups (HIVRA_FREE_PLAN_CLOSED_AT); existing free accounts keep it.
+      if (existingSub?.plan !== "free" && (await accountNeedsPlanForFree(clerkUserId))) {
+        return apiError(FREE_PLAN_CLOSED_MESSAGE, 403, undefined, {
+          reason: BILLING_SUBSCRIBE_REASON.FREE_PLAN_CLOSED,
         });
       }
 

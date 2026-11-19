@@ -5,7 +5,6 @@
 // created before it keep the Free account. Unset, nothing is closed.
 
 import { log } from "@/lib/logger";
-import { isFreeAccountEntitlement } from "@/lib/billing/hosted-compute";
 
 export const FREE_PLAN_CLOSED_CODE = "free_plan_closed" as const;
 
@@ -54,7 +53,7 @@ export async function accountNeedsPlanForFree(userId: string, deps: FreePlanClos
   if (!closedAt) return false;
   try {
     const sub = await (deps.resolveSubscription ?? defaultResolveSubscription)(userId);
-    if (sub && !isFreeAccountEntitlement(sub)) return false;
+    if (sub && !(sub.source === "free" && sub.plan === "free")) return false;
     const createdAt = await (deps.resolveAccountCreatedAt ?? defaultResolveAccountCreatedAt)(userId);
     if (!createdAt) return false;
     return createdAt.getTime() >= closedAt.getTime();

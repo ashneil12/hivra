@@ -13,6 +13,7 @@ import StructuredData from "@/components/StructuredData";
 import { glossify } from "@/components/gloss/glossify";
 import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
 import { isCardTrialEnabled } from "@/lib/billing/card-trial";
+import { isFreePlanClosed } from "@/lib/billing/free-plan-closure";
 import { isPlanLadderEnabled } from "@/lib/subscription/plan-ladder";
 import { getTokenSurfaceView, tokenSurfacesVisible } from "@/lib/compliance/token-surface-view";
 import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
@@ -99,6 +100,9 @@ export default async function PricingPage() {
   const options = PRICING_OPTIONS;
   // Plan-ladder sales never get the trial, so it is not offered while the ladder is on.
   const cardTrial = isCardTrialEnabled() && !isPlanLadderEnabled();
+  // Once the Free plan is closed to new sign-ups, the page stops offering it.
+  const freeClosed = isFreePlanClosed();
+  const intro = freeClosed ? PRICING_INTRO.filter((paragraph) => !paragraph.startsWith("Sign up free")) : PRICING_INTRO;
 
   return (
     <PublicSite className={styles.page} data-page="pricing" tokenSurfaces={showToken}>
@@ -108,9 +112,18 @@ export default async function PricingPage() {
 
         <header className={styles.masthead}>
           <h1>
-            Start free. <strong className={page.headlineTail}>Connect your own server.</strong>
+            {freeClosed ? (
+              <>
+                Hivra Cloud from {ENTRY_PLAN_PRICE}/month.{" "}
+                <strong className={page.headlineTail}>{cardTrial ? "Try it free for 7 days." : "Or self-host it."}</strong>
+              </>
+            ) : (
+              <>
+                Start free. <strong className={page.headlineTail}>Connect your own server.</strong>
+              </>
+            )}
           </h1>
-          {PRICING_INTRO.map((paragraph) => (
+          {intro.map((paragraph) => (
             <p key={paragraph} className={page.introLine}>
               {paragraph}
             </p>
@@ -123,16 +136,18 @@ export default async function PricingPage() {
             <p>{options.pool}</p>
           </div>
 
-          <div className={page.ownServer}>
-            <div>
-              <h3>{options.ownServer.title}</h3>
-              <p>{options.ownServer.body}</p>
+          {freeClosed ? null : (
+            <div className={page.ownServer}>
+              <div>
+                <h3>{options.ownServer.title}</h3>
+                <p>{options.ownServer.body}</p>
+              </div>
+              <Link className={page.action} href={PRICING_ACTIONS.connectServer.href}>
+                {PRICING_ACTIONS.connectServer.label}
+                <ArrowRight size={18} aria-hidden="true" />
+              </Link>
             </div>
-            <Link className={page.action} href={PRICING_ACTIONS.connectServer.href}>
-              {PRICING_ACTIONS.connectServer.label}
-              <ArrowRight size={18} aria-hidden="true" />
-            </Link>
-          </div>
+          )}
 
           <div className={page.offers}>
             <article className={`${page.offer} ${page.offerSelf}`} aria-labelledby="offer-self-host">

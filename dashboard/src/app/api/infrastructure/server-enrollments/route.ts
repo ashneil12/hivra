@@ -6,6 +6,7 @@ export const maxDuration = 30;
 import type { NextRequest } from "next/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
+import { FREE_PLAN_CLOSED_CODE, FREE_PLAN_CLOSED_MESSAGE, accountNeedsPlanForFree } from "@/lib/billing/free-plan-closure";
 import { ServerEnrollmentIssueRequestSchema } from "@/lib/infrastructure/server-enrollment-contracts";
 import { isServerEnrollmentReportReachable } from "@/lib/infrastructure/server-enrollment-readiness";
 import { issueServerEnrollment, listServerEnrollments } from "@/lib/infrastructure/server-enrollment-service";
@@ -33,6 +34,9 @@ export async function POST(request: NextRequest) {
     if ("response" in owner) return owner.response;
     const parsed = ServerEnrollmentIssueRequestSchema.safeParse(owner.body);
     if (!parsed.success) return noStore(apiError("Invalid setup command request.", 400));
+    if (await accountNeedsPlanForFree(owner.userId)) {
+      return noStore(apiError(FREE_PLAN_CLOSED_MESSAGE, 403, undefined, { code: FREE_PLAN_CLOSED_CODE }));
+    }
     const issued = await issueServerEnrollment(owner.userId, parsed.data, { reachable: isServerEnrollmentReportReachable });
     return noStore(apiSuccess(issued, 201));
   } catch (error) {

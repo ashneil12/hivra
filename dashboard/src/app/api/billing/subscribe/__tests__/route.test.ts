@@ -29,6 +29,12 @@ jest.mock("@/lib/posthog", () => ({
   },
 }));
 
+const mockNeedsPlanForFree = jest.fn();
+jest.mock("@/lib/billing/free-plan-closure", () => ({
+  ...jest.requireActual("@/lib/billing/free-plan-closure"),
+  accountNeedsPlanForFree: (...a: unknown[]) => mockNeedsPlanForFree(...a),
+}));
+
 // The token/yearly entitlement short-circuit consults resolveEffectiveSubscription.
 // Default it to null (no token entitlement) so the existing Stripe-path tests are
 // unaffected; the token-holder cases override it per-test.
@@ -58,6 +64,7 @@ describe("POST /api/billing/subscribe", () => {
     (auth as unknown as jest.Mock).mockResolvedValue({ userId: mockUserId });
     (currentUser as jest.Mock).mockResolvedValue(mockCustomer);
     (resolveEffectiveSubscription as jest.Mock).mockResolvedValue(null);
+    mockNeedsPlanForFree.mockResolvedValue(false);
 
     // Mock price IDs
     // @ts-expect-error Mocking for test
@@ -1236,6 +1243,25 @@ describe("POST /api/billing/subscribe", () => {
 
     afterAll(() => {
       process.env = ORIGINAL_ENV;
+    });
+
+    it("refuses the Free plan to a new account once it is closed", async () => {
+      mockNeedsPlanForFree.mockResolvedValueOnce(true);
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+      const res = await POST(createRequest({ plan: "free" }));
+      expect(res.status).toBe(403);
+      expect((await res.json()).reason).toBe("FREE_PLAN_CLOSED");
+    });
+
+    it("keeps the Free plan for an existing free account", async () => {
+      mockNeedsPlanForFree.mockResolvedValue(true);
+      mockSupabaseQuery.maybeSingle.mockResolvedValueOnce({
+        data: { stripe_customer_id: null, plan: "free", status: "active" },
+        error: null,
+      });
+      const res = await POST(createRequest({ plan: "free" }));
+      expect(res.status).toBe(200);
+      expect(mockNeedsPlanForFree).not.toHaveBeenCalled();
     });
 
     it("checkout never lets the buyer enter a promotion code", async () => {
