@@ -122,15 +122,20 @@ export async function publishStatus(request, { repo = DEFAULT_REPO, sha, state, 
 
 /**
  * The pre-Promote gate. Passes when the candidate itself has a green sweep, or
- * when a recently served Canary commit with a green sweep has the same tree, or
- * the same dashboard/ tree (a docs-only difference outside dashboard/ does not
- * change what production builds).
+ * when the newest swept Canary commit with the same tree, or the same
+ * dashboard/ tree (a docs-only difference outside dashboard/ does not change
+ * what production builds), has a green sweep. A red or unfinished sweep on the
+ * candidate, or on the newest swept match, fails it: an older green run never
+ * outweighs a newer result for the same source.
  */
 export async function evaluateGate(request, candidate, repo = DEFAULT_REPO) {
   const target = await commitTrees(request, candidate, repo);
   const own = await sweepStatus(request, target.sha, repo);
   if (own?.state === 'success') {
     return { ok: true, candidate: target.sha, match: 'same commit', swept: target.sha, status: own };
+  }
+  if (own) {
+    return { ok: false, candidate: target.sha, reason: `The candidate's own launch sweep is ${own.state}.`, own, checked: [] };
   }
   const checked = [];
   for (const deployment of await canaryDeployments(request, repo)) {
@@ -139,15 +144,22 @@ export async function evaluateGate(request, candidate, repo = DEFAULT_REPO) {
     const sameDashboard = Boolean(target.dashboardTree) && trees.dashboardTree === target.dashboardTree;
     if (!sameTree && !sameDashboard) continue;
     const status = await sweepStatus(request, trees.sha, repo);
-    checked.push({ sha: trees.sha, match: sameTree ? 'same tree' : 'same dashboard tree', state: status?.state ?? 'none' });
-    if (status?.state === 'success') {
-      return { ok: true, candidate: target.sha, match: checked.at(-1).match, swept: trees.sha, status, checked };
-    }
+    const match = sameTree ? 'same tree' : 'same dashboard tree';
+    checked.push({ sha: trees.sha, match, state: status?.state ?? 'none' });
+    if (!status) continue;
+    if (status.state === 'success') return { ok: true, candidate: target.sha, match, swept: trees.sha, status, checked };
+    return {
+      ok: false,
+      candidate: target.sha,
+      reason: `The newest launch sweep of this source (${trees.sha.slice(0, 8)}) is ${status.state}.`,
+      own: null,
+      checked,
+    };
   }
   const reason = checked.length
-    ? 'Canary served this source, but no green launch sweep is recorded for it.'
+    ? 'Canary served this source, but no launch sweep is recorded for it.'
     : 'No recently served Canary commit has this source tree. Roll it out to Canary and let the sweep run first.';
-  return { ok: false, candidate: target.sha, reason, own: own ?? null, checked };
+  return { ok: false, candidate: target.sha, reason, own: null, checked };
 }
 
 function parseArgs(argv) {

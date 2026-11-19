@@ -84,7 +84,40 @@ test('a candidate whose source Canary never served, or whose sweep failed, does 
   });
   const result = await evaluateGate(failed.request, M);
   assert.equal(result.ok, false);
-  assert.deepEqual(result.checked.map((row) => row.state), ['failure', 'none']);
+  assert.deepEqual(result.checked.map((row) => row.state), ['failure']);
+});
+
+test('an older green sweep does not outweigh a newer red one for the same source', async () => {
+  const { request } = fakeGithub({
+    commits: { [M]: { tree: 't2', dashboard: 'd1' }, [A]: { tree: 't1', dashboard: 'd1' }, [C]: { tree: 't1', dashboard: 'd1' } },
+    deployments: [{ sha: A, state: 'success' }, { sha: C, state: 'success' }],
+    statuses: { [A]: red, [C]: green },
+  });
+  const result = await evaluateGate(request, M);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /newest launch sweep/);
+});
+
+test('an unswept newer deployment of the same source defers to the newest swept one', async () => {
+  const { request } = fakeGithub({
+    commits: { [M]: { tree: 't1', dashboard: 'd1' }, [A]: { tree: 't1', dashboard: 'd1' }, [C]: { tree: 't1', dashboard: 'd1' } },
+    deployments: [{ sha: A, state: 'success' }, { sha: C, state: 'success' }],
+    statuses: { [C]: green },
+  });
+  const result = await evaluateGate(request, M);
+  assert.equal(result.ok, true);
+  assert.equal(result.swept, C);
+});
+
+test('a red or pending status on the candidate itself fails without falling back to Canary', async () => {
+  const { request } = fakeGithub({
+    commits: { [M]: { tree: 't1', dashboard: 'd1' }, [A]: { tree: 't1', dashboard: 'd1' } },
+    deployments: [{ sha: A, state: 'success' }],
+    statuses: { [M]: red, [A]: green },
+  });
+  const result = await evaluateGate(request, M);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /own launch sweep is failure/);
 });
 
 test('a green status on the candidate itself passes without looking at Canary', async () => {
