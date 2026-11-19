@@ -7,7 +7,7 @@ import {
   type PlanKey,
 } from "@/lib/subscription";
 import { getStripe } from "@/lib/stripe";
-import { CARD_TRIAL_LIMITS, CARD_TRIAL_METADATA_KEY, isCardTrialSubscription, recordCardTrialStart } from "@/lib/billing/card-trial";
+import { CARD_TRIAL_LIMITS, CARD_TRIAL_METADATA_KEY, isCardTrialSubscription, recordCardTrialStart, releaseCardTrialSleep } from "@/lib/billing/card-trial";
 import { log } from "@/lib/logger";
 import { posthogClient } from "@/lib/posthog";
 import {
@@ -1128,6 +1128,8 @@ export class StripeWebhookService {
       // ends this trial now, and the resulting paid event activates the plan.
       const { endedEarly } = await recordCardTrialStart({ stripe: getStripe(), subscription, userId });
       if (endedEarly) return;
+    } else if (subscription.metadata?.[CARD_TRIAL_METADATA_KEY] && subscription.status === "active") {
+      await releaseCardTrialSleep(userId);
     }
 
     const nextStatus =

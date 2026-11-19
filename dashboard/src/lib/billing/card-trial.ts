@@ -95,21 +95,26 @@ export async function accountHadCardTrial(userId: string, db: Db | null = supaba
   return Array.isArray(data) && data.length > 0;
 }
 
-/** True while the account's subscription row is inside a card trial. A failed read is false. */
-export async function isInCardTrial(userId: string, db: Db | null = supabaseAdmin, now: Date = new Date()): Promise<boolean> {
-  if (!db) return false;
+/** When the account's running card trial ends (ISO), or null when it is not in one. A failed read is null. */
+export async function readCardTrialEndsAt(userId: string, db: Db | null = supabaseAdmin, now: Date = new Date()): Promise<string | null> {
+  if (!db) return null;
   try {
     const { data, error } = await db
       .from("hermes_subscriptions")
       .select("trial_ends_at")
       .eq("user_id", userId)
       .maybeSingle();
-    if (error || !data) return false;
+    if (error || !data) return null;
     const endsAt = (data as { trial_ends_at?: string | null }).trial_ends_at;
-    return typeof endsAt === "string" && new Date(endsAt).getTime() > now.getTime();
+    return typeof endsAt === "string" && new Date(endsAt).getTime() > now.getTime() ? endsAt : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** True while the account's subscription row is inside a card trial. A failed read is false. */
+export async function isInCardTrial(userId: string, db: Db | null = supabaseAdmin, now: Date = new Date()): Promise<boolean> {
+  return (await readCardTrialEndsAt(userId, db, now)) !== null;
 }
 
 /** Card fingerprint of the subscription's default payment method, or null. */
@@ -158,12 +163,16 @@ export async function recordCardTrialStart(params: {
     reused = Array.isArray(prior) && prior.length > 0;
   }
 
-  const { error: insertError } = await db.from("hermes_trial_usage").insert({
-    user_id: userId,
-    stripe_subscription_id: subscription.id,
-    card_fingerprint: fingerprint,
-  });
-  if (insertError) throw new Error(`trial usage write failed: ${insertError.message}`);
+  if (!reused) {
+    const { error: insertError } = await db.from("hermes_trial_usage").insert({
+      user_id: userId,
+      stripe_subscription_id: subscription.id,
+      card_fingerprint: fingerprint,
+    });
+    // The fingerprint is unique: a concurrent trial on the same card loses here.
+    if (insertError && insertError.code === "23505") reused = true;
+    else if (insertError) throw new Error(`trial usage write failed: ${insertError.message}`);
+  }
 
   if (reused) {
     log.info("card already used for a trial on another account; ending this trial now", {
@@ -172,10 +181,35 @@ export async function recordCardTrialStart(params: {
       userId,
       subscriptionId: subscription.id,
     });
+    // Nothing is recorded for this subscription, so a failed update is
+    // retried by the webhook and checked again.
     await params.stripe.subscriptions.update(subscription.id, { trial_end: "now" });
     return { endedEarly: true };
   }
   return { endedEarly: false };
+}
+
+/**
+ * When a trial converts, its agents go back to the paid default (no forced
+ * sleep). Runs only while the subscription row still carries trial_ends_at,
+ * so a later sleep choice is never undone. Throws on a failed write so the
+ * webhook retries before trial_ends_at is cleared.
+ */
+export async function releaseCardTrialSleep(userId: string, db: Db | null = supabaseAdmin): Promise<boolean> {
+  if (!db) return false;
+  const { data, error } = await db
+    .from("hermes_subscriptions")
+    .select("trial_ends_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error || !(data as { trial_ends_at?: string | null } | null)?.trial_ends_at) return false;
+  const { error: updateError } = await db
+    .from("hivra_agents")
+    .update({ sleep_policy: "off" })
+    .eq("user_id", userId)
+    .eq("sleep_policy", "full");
+  if (updateError) throw new Error(`trial sleep release failed: ${updateError.message}`);
+  return true;
 }
 
 /** Makes a trial account's new Hivra Cloud agent sleep when idle. Best-effort. */
@@ -198,5 +232,8 @@ export async function applyCardTrialSleep(userId: string, agentId: string, db: D
   return true;
 }
 
+export const CARD_TRIAL_UPGRADE_HINT =
+  "Upgrade to full Pro now in Billing for 3 agents, 2 vCPU, 4 GB and Keep awake.";
+
 export const CARD_TRIAL_KEEP_AWAKE_MESSAGE =
-  "During the free trial, agents sleep when idle. Keep awake is available once your plan starts.";
+  `During the free trial, agents sleep when idle. ${CARD_TRIAL_UPGRADE_HINT}`;

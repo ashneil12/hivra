@@ -7,6 +7,7 @@ import {
   isCardTrialSubscription,
   isInCardTrial,
   recordCardTrialStart,
+  releaseCardTrialSleep,
 } from "../card-trial";
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
@@ -63,21 +64,30 @@ describe("isCardTrialSubscription", () => {
 
 type Result = { data: unknown; error: { message: string } | null };
 
-function fakeDb(results: Record<string, Result[]>) {
+function fakeDb(results: Record<string, Result[]>, insertError: { code: string; message: string } | null = null) {
   const inserts: Array<{ table: string; row: unknown }> = [];
+  const updates: Array<{ table: string; patch: unknown }> = [];
   const from = jest.fn((table: string) => {
     const next = () => results[table]?.shift() ?? { data: [], error: null };
     const q: Record<string, unknown> = {};
     for (const m of ["select", "eq", "neq"]) q[m] = () => q;
+    q.update = (patch: unknown) => {
+      updates.push({ table, patch });
+      const u: Record<string, unknown> = {};
+      u.eq = () => u;
+      u.then = (r: (v: unknown) => void) => r({ error: null });
+      return u;
+    };
     q.limit = () => Promise.resolve(next());
     q.maybeSingle = () => Promise.resolve(next());
     q.insert = (row: unknown) => {
+      if (insertError) return Promise.resolve({ error: insertError });
       inserts.push({ table, row });
       return Promise.resolve({ error: null });
     };
     return q;
   });
-  return { db: { from } as never, inserts };
+  return { db: { from } as never, inserts, updates };
 }
 
 function stripeWithCard(fingerprint: string | null) {
@@ -104,8 +114,24 @@ describe("recordCardTrialStart", () => {
     const { db, inserts } = fakeDb({ hermes_trial_usage: [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }] });
     const stripe = stripeWithCard("fp_used");
     await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: true });
-    expect(inserts).toHaveLength(1);
+    // Nothing is recorded, so a failed Stripe update is retried and checked again.
+    expect(inserts).toHaveLength(0);
     expect(stripe.subscriptions.update).toHaveBeenCalledWith("sub_trial", { trial_end: "now" });
+  });
+
+  it("ends the trial when a concurrent trial on the same card recorded first", async () => {
+    const { db } = fakeDb({ hermes_trial_usage: [{ data: [], error: null }, { data: [], error: null }] }, { code: "23505", message: "duplicate" });
+    const stripe = stripeWithCard("fp_race");
+    await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).resolves.toEqual({ endedEarly: true });
+    expect(stripe.subscriptions.update).toHaveBeenCalledWith("sub_trial", { trial_end: "now" });
+  });
+
+  it("does not record the trial when the Stripe update fails, so the retry checks again", async () => {
+    const { db, inserts } = fakeDb({ hermes_trial_usage: [{ data: [], error: null }, { data: [{ user_id: "u0" }], error: null }] });
+    const stripe = stripeWithCard("fp_used");
+    stripe.subscriptions.update.mockRejectedValueOnce(new Error("stripe down"));
+    await expect(recordCardTrialStart({ stripe, subscription: sub, userId: "u1", db })).rejects.toThrow("stripe down");
+    expect(inserts).toHaveLength(0);
   });
 
   it("does nothing on a repeat event for a trial already recorded", async () => {
@@ -132,5 +158,19 @@ describe("isInCardTrial", () => {
   ])("is %s -> %s", async (_name, data, error, expected) => {
     const { db } = fakeDb({ hermes_subscriptions: [{ data, error }] });
     await expect(isInCardTrial("u1", db, now)).resolves.toBe(expected);
+  });
+});
+
+describe("releaseCardTrialSleep", () => {
+  it("returns converted trial agents to the paid default while the row still shows the trial", async () => {
+    const { db, updates } = fakeDb({ hermes_subscriptions: [{ data: { trial_ends_at: "2026-11-25T12:00:00Z" }, error: null }] });
+    await expect(releaseCardTrialSleep("u1", db)).resolves.toBe(true);
+    expect(updates).toEqual([{ table: "hivra_agents", patch: { sleep_policy: "off" } }]);
+  });
+
+  it("leaves sleep settings alone once the trial was already released", async () => {
+    const { db, updates } = fakeDb({ hermes_subscriptions: [{ data: { trial_ends_at: null }, error: null }] });
+    await expect(releaseCardTrialSleep("u1", db)).resolves.toBe(false);
+    expect(updates).toHaveLength(0);
   });
 });

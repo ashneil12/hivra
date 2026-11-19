@@ -9,9 +9,11 @@ process.env.STRIPE_SECRET_KEY = 'sk_test_123';
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 const recordCardTrialStartMock = jest.fn().mockResolvedValue({ endedEarly: false });
+const releaseCardTrialSleepMock = jest.fn().mockResolvedValue(true);
 jest.mock("@/lib/billing/card-trial", () => ({
   ...jest.requireActual("@/lib/billing/card-trial"),
   recordCardTrialStart: (...args: unknown[]) => recordCardTrialStartMock(...args),
+  releaseCardTrialSleep: (...args: unknown[]) => releaseCardTrialSleepMock(...args),
 }));
 
 jest.mock("stripe", () => {
@@ -1480,6 +1482,7 @@ describe("StripeWebhookService", () => {
       await StripeWebhookService.handleSubscriptionChange(trialSub("active"));
 
       expect(recordCardTrialStartMock).not.toHaveBeenCalled();
+      expect(releaseCardTrialSleepMock).toHaveBeenCalledWith("user_1");
       expect(captured.args).toMatchObject({
         status: "active",
         instance_limit: PLANS.operator.maxAgents,

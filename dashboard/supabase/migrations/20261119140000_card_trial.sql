@@ -19,7 +19,8 @@ create unique index if not exists idx_hermes_trial_usage_subscription
   on public.hermes_trial_usage(stripe_subscription_id)
   where stripe_subscription_id is not null;
 
-create index if not exists idx_hermes_trial_usage_card_fingerprint
+-- Unique: two trials started at once on the same card cannot both be recorded.
+create unique index if not exists idx_hermes_trial_usage_card_fingerprint
   on public.hermes_trial_usage(card_fingerprint)
   where card_fingerprint is not null;
 
