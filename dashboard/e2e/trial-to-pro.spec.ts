@@ -1,27 +1,84 @@
 /**
- * TRIAL TO PRO: a new customer starts the 7-day card trial from the pricing
+ * CUSTOMER PATH: a new customer starts the 7-day card trial from the pricing
  * page, pays nothing at Stripe Checkout with a test card, gets the trial's small
  * pool, and becomes a full Pro account when the trial ends and the card is
- * charged. A second account with the same card gets no second trial.
+ * charged. It then launches one reference agent (CUSTOMER_PATH_AGENT, default
+ * claude-code), gets a real reply, sleeps and wakes it, gets another reply and
+ * deletes it. A second account with the same card gets no second trial.
+ *
+ * This is the one full customer path run on every Canary release. Per-agent
+ * checks are separate and cheap, so its cost stays flat as the catalog grows.
  *
  * Canary only, Stripe test mode only, and opt-in: TRIAL_JOURNEY=1. Needs the
  * card trial switched on (HIVRA_CARD_TRIAL=on) and its migration on Canary.
- * Every account, subscription and trial record it makes is deleted at the end.
+ * Every agent, account, subscription and trial record it makes is deleted at the end.
  *
  *   TRIAL_JOURNEY=1 CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… \
  *     LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… TRIAL_JOURNEY_STRIPE_SECRET_KEY=sk_test_… \
  *     npm run test:trial-journey
  */
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
 import { assertNotProduction, auditEmail, newRunId } from './first-run-audit/config';
 import { createAuditUser, deleteAuditUser, mintSignInTicket } from './first-run-audit/clerk-admin';
+import { destroyAllHivraAgents } from './first-run-audit/instances';
 import { establishAuditSession } from './first-run-audit/session';
+import { proveChat } from './launch-sweep/chat';
+import { launchFromTile, openFromLaunch, waitForReady } from './launch-sweep/journey';
+import { SWEEP_TARGETS, type SweepTarget } from './launch-sweep/targets';
 import { accountState, trialLengthOk, type SubscriptionRow } from './trial-to-pro/state';
 import { assertTestKey, cancelSubscription, deleteCustomer, endTrialNow, getSubscription } from './trial-to-pro/stripe';
 
 const ENABLED = process.env.TRIAL_JOURNEY === '1';
 const TEST_CARD = process.env.TRIAL_JOURNEY_CARD?.trim() || '4242424242424242';
+// The one reference agent the paid account launches, uses, sleeps, wakes and
+// deletes. CUSTOMER_PATH_AGENT=none skips that part (trial and billing only).
+const REFERENCE_AGENT = process.env.CUSTOMER_PATH_AGENT?.trim() || 'claude-code';
+const MINUTE = 60_000;
+
+function referenceTarget(): SweepTarget | null {
+  if (REFERENCE_AGENT === 'none') return null;
+  const target = SWEEP_TARGETS.find((row) => row.profileId === REFERENCE_AGENT);
+  if (!target || target.kind !== 'agent') throw new Error(`[trial-journey] CUSTOMER_PATH_AGENT=${REFERENCE_AGENT} is not an agent in e2e/launch-sweep/targets.ts.`);
+  return target;
+}
+
+/** A same-origin call from the signed-in page, as the app's own buttons make it. */
+async function postFromPage(page: Page, path: string, body: unknown): Promise<{ status: number; text: string }> {
+  return page.evaluate(async ([url, payload]) => {
+    const res = await fetch(url as string, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    return { status: res.status, text: (await res.text()).slice(0, 300) };
+  }, [path, body] as const);
+}
+
+/** Launch the reference agent from Launch, get a real reply, sleep it, wake it, get another reply, delete it. */
+async function useReferenceAgent(page: Page, context: BrowserContext, env: JourneyEnv, target: SweepTarget): Promise<void> {
+  const chat = { composerTimeoutMs: 6 * MINUTE, replyTimeoutMs: 6 * MINUTE };
+  const agentId = await test.step(`launch ${target.tile} from Launch`, async () => {
+    await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
+    await launchFromTile(page, target);
+    const outcome = await waitForReady(page, context.request, env.baseUrl, target, 25 * MINUTE);
+    expect(outcome.ready, `${target.tile} said it was ready`).toBe(true);
+    expect(outcome.agentId).toBeTruthy();
+    return outcome.agentId!;
+  });
+  await test.step('it answers', async () => {
+    await openFromLaunch(page);
+    await proveChat(page, target, chat);
+  });
+  await test.step('it sleeps and wakes, then answers again', async () => {
+    const slept = await postFromPage(page, `/api/hivra/agents/${agentId}/sleep`, { tier: 'nap' });
+    expect(slept.status, `sleep: ${slept.text}`).toBeLessThan(300);
+    const woke = await postFromPage(page, `/api/hivra/agents/${agentId}/wake`, {});
+    expect(woke.status, `wake: ${woke.text}`).toBeLessThan(300);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await proveChat(page, target, chat);
+  });
+  await test.step('it is deleted', async () => {
+    const { survived } = await destroyAllHivraAgents(context.request, env.baseUrl, 30, 15_000);
+    expect(survived, 'every agent the account launched is deleted').toEqual([]);
+  });
+}
 
 function journeyEnv() {
   const baseUrl = (process.env.TRIAL_JOURNEY_BASE_URL || process.env.E2E_BASE_URL || 'https://canary.hermesos.cloud').replace(/\/$/, '');
@@ -101,12 +158,16 @@ async function teardown(env: JourneyEnv, userId: string): Promise<void> {
 test.describe('trial to Pro', () => {
   test.skip(!ENABLED, 'TRIAL_JOURNEY=1 is required: this uses Stripe test mode on Canary.');
 
-  test('a new customer trials the entry plan, then becomes Pro when the card is charged; the card gets one trial', async ({ browser }) => {
+  test('a new customer trials the entry plan, becomes Pro when the card is charged, and uses an agent; the card gets one trial', async ({ browser }) => {
+    test.setTimeout(75 * MINUTE);
     const env = journeyEnv();
+    const target = referenceTarget();
     const users: string[] = [];
+    const contexts: BrowserContext[] = [];
     try {
       const first = await newCustomer(browser, env, 'a');
       users.push(first.user.id);
+      contexts.push(first.context);
       const page = await first.context.newPage();
       const started = new Date();
       await test.step('start the trial from the pricing page', () => startTrialFromPricing(page, 'Trial Journey'));
@@ -122,17 +183,22 @@ test.describe('trial to Pro', () => {
         await waitForState(env, first.user.id, 'pro');
         expect((await getSubscription(env.stripeKey, sub.id)).status).toBe('active');
       });
-      await first.context.close();
+
+      if (target) await useReferenceAgent(page, first.context, env, target);
 
       await test.step('a second account with the same card is charged at once, with no trial', async () => {
         const second = await newCustomer(browser, env, 'b');
         users.push(second.user.id);
+        contexts.push(second.context);
         await startTrialFromPricing(await second.context.newPage(), 'Trial Journey Repeat');
         const row = await waitForState(env, second.user.id, 'pro');
         expect((await getSubscription(env.stripeKey, row.stripe_subscription_id!)).status).toBe('active');
-        await second.context.close();
       });
     } finally {
+      for (const context of contexts) {
+        await destroyAllHivraAgents(context.request, env.baseUrl, 30, 15_000).catch(() => undefined);
+        await context.close().catch(() => undefined);
+      }
       for (const userId of users) await teardown(env, userId);
     }
   });

@@ -281,10 +281,12 @@ reported but don't fail the run.
 add it to `targets.ts`, launch it with the sweep, and record its idle use before
 deciding Free or Pro.
 
-# Trial to Pro journey
+# Customer path (trial to Pro, then one agent)
 
-`e2e/trial-to-pro.spec.ts` checks the paid path a new customer takes, in a real
-browser on Canary with Stripe in test mode:
+`e2e/trial-to-pro.spec.ts` is the one full customer path, run on every Canary
+release. Per-agent checks are separate and cheap, so its cost stays flat however
+many agents the catalog has. It runs in a real browser on Canary with Stripe in
+test mode:
 
 1. A throwaway account opens **Pricing** and clicks **Start a 7-day free trial**.
 2. It pays at Stripe Checkout with the `4242…` test card and lands back on Billing.
@@ -292,11 +294,15 @@ browser on Canary with Stripe in test mode:
    ending in 7 days, and Stripe shows it as `trialing` with `hivra_trial=card_7d`.
 4. The trial is ended early in Stripe, so the card is charged, and the account
    becomes full Pro (3 agents, 2 vCPU, 4 GB, no trial end date).
-5. A second account using the same card gets no trial: it is charged at once
+5. The Pro account launches one reference agent from Launch
+   (`CUSTOMER_PATH_AGENT`, default `claude-code`), gets a real reply, sleeps and
+   wakes it, gets another reply, and deletes it. `CUSTOMER_PATH_AGENT=none`
+   skips this part.
+6. A second account using the same card gets no trial: it is charged at once
    and goes straight to full Pro.
 
-Every account, Stripe subscription and customer, and trial record it made is
-deleted at the end, pass or fail. It launches no computers.
+Every agent, account, Stripe subscription and customer, and trial record it made
+is deleted at the end, pass or fail. It launches one computer.
 
 It needs the card trial on Canary (`HIVRA_CARD_TRIAL=on` and its migration) and
 is opt-in: it runs only with `TRIAL_JOURNEY=1`, refuses production and refuses

@@ -140,7 +140,7 @@ export default defineConfig({
           {
             name: 'trial-journey',
             testMatch: /trial-to-pro\.spec\.ts/,
-            timeout: 15 * 60_000,
+            timeout: 80 * 60_000,
             // Never retried: a retry would start a second checkout.
             retries: 0,
             use: { ...devices['Desktop Chrome'], storageState: undefined },
