@@ -108,11 +108,22 @@ export async function mintSignInTicket(
  * Delete the account. Returns false rather than throwing on a 404 — a user that
  * is already gone is the state we wanted, and teardown must be idempotent.
  */
-export async function deleteAuditUser(secretKey: string, userId: string): Promise<boolean> {
-  const res = await clerkFetch(secretKey, `/users/${userId}`, { method: 'DELETE' });
+export async function deleteAuditUser(
+  secretKey: string,
+  userId: string,
+  { verifyDeletion = false } = {},
+): Promise<boolean> {
+  const res = await clerkFetch(secretKey, `/users/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+    ...(verifyDeletion ? { redirect: 'error', signal: AbortSignal.timeout(20_000) } : {}),
+  });
   if (res.status === 404) return false;
   if (!res.ok) {
     throw new Error(`[clerk] delete user ${userId} failed: HTTP ${res.status}`);
+  }
+  if (verifyDeletion) {
+    const body = await res.json().catch(() => null);
+    if (body?.id !== userId || body.deleted !== true) throw new Error('Clerk user deletion not confirmed');
   }
   return true;
 }
