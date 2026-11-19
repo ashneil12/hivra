@@ -221,6 +221,7 @@ describe("seo urls", () => {
       ["/about", "about", false],
       ["/security", "security", false],
       ["/venice", "venice", false],
+      ["/setup", "setup", false],
     ];
 
     it("takes every registry date from lib/seo-lastmod.ts, with the cutover as a floor only for the pages it rewrote", () => {

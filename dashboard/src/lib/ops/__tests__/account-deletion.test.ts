@@ -79,6 +79,11 @@ describe("account deletion safeguards", () => {
   // Slice 13 (T41): setup commands and their observed addresses go with the
   // account. Receipts (the events table) go by cascade from their enrollment:
   // the service role can't delete them directly, so they are not listed.
+  it("deletes setup requests from a coding agent by the person who opened them", () => {
+    const entry = ACCOUNT_DELETION_TABLES.find((table) => table.table === "hivra_agent_setup_requests");
+    expect(entry).toMatchObject({ filterColumn: "user_id", source: "userId", optionalIfMissing: true });
+  });
+
   it("deletes server setup commands by user, and leaves their receipts to the cascade", () => {
     const entry = ACCOUNT_DELETION_TABLES.find((table) => table.table === "infrastructure_server_enrollments");
     expect(entry).toMatchObject({ filterColumn: "user_id", source: "userId" });
