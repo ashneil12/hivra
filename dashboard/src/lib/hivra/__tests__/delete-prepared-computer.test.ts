@@ -23,13 +23,14 @@ jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: (name: string) => mo
 const mockRunHost = jest.fn();
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   runProxmoxHostScript: (...args: unknown[]) => mockRunHost(...args),
-  resolveProxmoxTargetConfiguration: () => ({ env: { SLOT_HOST: "1" } }),
 }));
 const mockMatch = jest.fn();
 jest.mock("@/lib/hivra/prepared-canary-computers", () => ({
-  matchPreparedCanaryComputer: (...args: unknown[]) => mockMatch(...args),
-  preparedCanaryReleaseScript: (profile: string, slot: { vmid: number }, hash: string | null) =>
-    `RELEASE ${profile} ${slot.vmid} ${hash}`,
+  preparedComputerForDelete: (...args: unknown[]) => mockMatch(...args),
+  releasePreparedComputerClaim: async (row: { infrastructure_binding_token_hash: string }, prepared: { profile: string; slot: { vmid: number } }) => {
+    const result = await mockRunHost(`RELEASE ${prepared.profile} ${prepared.slot.vmid} ${row.infrastructure_binding_token_hash}`, { SLOT_HOST: "1" });
+    return result.stdout.includes("HIVRA_PREPARED_BINDING_RELEASED") ? result : { ...result, ok: false };
+  },
 }));
 jest.mock("@/lib/hivra/agent-events", () => ({ logHivraAgentEvent: jest.fn() }));
 jest.mock("@/lib/hivra/agent-delete-cleanup", () => ({ HivraAgentDeleteCleanupError: class extends Error {} }));
@@ -117,7 +118,7 @@ describe("deleteProxmoxHivraAgent and a prepared computer", () => {
 
   it("refuses, touching no VM, when the row does not match a configured prepared slot", async () => {
     mockRow = preparedRow("windows");
-    mockMatch.mockReturnValue(null);
+    mockMatch.mockReturnValue("unconfigured");
 
     const result = await deleteProxmoxHivraAgent("owner", mockRow);
     expect(result).toEqual(expect.objectContaining({ ok: false, status: 409 }));
@@ -127,10 +128,10 @@ describe("deleteProxmoxHivraAgent and a prepared computer", () => {
 
   it("still destroys an ordinary computer's own VM", async () => {
     mockRow = { ...preparedRow("windows"), computer_profile: null, allocation_operation_id: "11111111-1111-4111-8111-111111111111" };
+    mockMatch.mockReturnValue(null);
     mockRunHost.mockResolvedValue({ ok: true, stdout: "", stderr: "" });
 
     expect(await deleteProxmoxHivraAgent("owner", mockRow)).toEqual({ ok: true });
-    expect(mockMatch).not.toHaveBeenCalled();
     expect(mockRunHost.mock.calls[0][0]).toContain("qm destroy");
     expect(mockRunHost.mock.calls[0][1]).toEqual({ CONTEXT_HOST: "1" });
   });

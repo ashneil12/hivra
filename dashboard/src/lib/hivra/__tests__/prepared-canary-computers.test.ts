@@ -8,6 +8,8 @@ import {
   preparedCanaryBindingScript,
   preparedCanaryLifecycleScript,
   preparedCanaryReleaseScript,
+  preparedComputerForDelete,
+  releasePreparedComputerClaim,
   preparedConsoleHostPreparationScript,
   preparedConsoleOrigin,
   preparedProfilesForDeployment,
@@ -454,5 +456,45 @@ esac
     expect(result.stderr).toContain("identity mismatch");
     expect(result.calls.some((call) => call.startsWith("set"))).toBe(false);
     expect(() => preparedCanaryReleaseScript("windows", SLOT, "not-a-hash")).toThrow("prepared_binding_unavailable");
+  });
+});
+
+describe("prepared computer delete routing", () => {
+  const SLOT_ROW = {
+    type: "linux-desktop", managed_provisioner_channel: "canary", proxmox_host: "node-b", vmid: 2098, ip: "10.240.20.98",
+  };
+  beforeEach(() => {
+    process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "canary";
+    process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON = CONFIG;
+    Object.assign(process.env, HOST_ENV);
+  });
+
+  it("releases the configured slot of a Hivra-managed prepared claim", () => {
+    expect(preparedComputerForDelete({ ...SLOT_ROW, computer_profile: "windows", deployment_mode: "hivra-managed" }))
+      .toEqual({ profile: "windows", slot: expect.objectContaining({ vmid: 2098 }) });
+  });
+
+  it("refuses a Hivra-managed prepared claim that matches no configured slot", () => {
+    expect(preparedComputerForDelete({ ...SLOT_ROW, vmid: 2097, computer_profile: "windows", deployment_mode: "hivra-managed" }))
+      .toBe("unconfigured");
+  });
+
+  it("leaves a self-managed Windows computer and ordinary computers to the VM destroy path", () => {
+    expect(preparedComputerForDelete({
+      ...SLOT_ROW, computer_profile: "windows", deployment_mode: "self-managed",
+      proxmox_host: "__hivra_self_managed_no_ambient_authority__",
+    })).toBeNull();
+    expect(preparedComputerForDelete({ ...SLOT_ROW, computer_profile: null, deployment_mode: "hivra-managed" })).toBeNull();
+  });
+
+  it("reports a release that did not print its receipt as failed", async () => {
+    const slot = { host: "node-b", node: "node-b", vmid: 2098, ip: "10.240.20.98", claim: "00000000-0000-4000-8000-000000001005" };
+    const runHost = jest.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "" });
+    const result = await releasePreparedComputerClaim({ infrastructure_binding_token_hash: "a".repeat(64) }, { profile: "windows", slot }, runHost);
+    expect(result.ok).toBe(false);
+    expect(runHost.mock.calls[0][0]).toContain(`hivra-bind-${"a".repeat(32)}`);
+    expect(runHost.mock.calls[0][0]).not.toContain("qm destroy");
+    runHost.mockResolvedValue({ ok: true, stdout: "HIVRA_PREPARED_BINDING_RELEASED\n", stderr: "" });
+    expect((await releasePreparedComputerClaim({ infrastructure_binding_token_hash: "a".repeat(64) }, { profile: "windows", slot }, runHost)).ok).toBe(true);
   });
 });

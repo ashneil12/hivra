@@ -393,6 +393,42 @@ fi
 echo HIVRA_PREPARED_BINDING_RELEASED`;
 }
 
+/**
+ * Which prepared slot a Hivra-managed prepared-profile row's Delete must
+ * release: the matched slot, "unconfigured" when the row matches no slot
+ * configured here (Delete must then keep the VM and refuse), or null for any
+ * other row (including a self-managed Windows computer), which owns its VM.
+ */
+export function preparedComputerForDelete(
+  row: PreparedCanaryComputerRow & { deployment_mode?: unknown },
+  env: NodeJS.ProcessEnv = process.env,
+): { profile: PreparedCanaryProfile; slot: PreparedCanarySlot } | "unconfigured" | null {
+  if (row.deployment_mode !== "hivra-managed") return null;
+  if (row.computer_profile !== "omarchy" && row.computer_profile !== "windows") return null;
+  return matchPreparedCanaryComputer(row, env) ?? "unconfigured";
+}
+
+/** Deleting a prepared claim releases its binding and keeps the VM. */
+export async function releasePreparedComputerClaim(
+  row: { infrastructure_binding_token_hash?: unknown },
+  prepared: { profile: PreparedCanaryProfile; slot: PreparedCanarySlot },
+  runHost: (script: string, slot: PreparedCanarySlot) => Promise<HostScriptResult> = (script, slot) => runProxmoxHostScript(
+    script,
+    resolveProxmoxTargetConfiguration(process.env, slot.host).env,
+    { timeoutMs: 90_000, maxOutputBytes: 16_384 },
+  ),
+): Promise<HostScriptResult> {
+  const bindingHash = typeof row.infrastructure_binding_token_hash === "string"
+    && /^[a-f0-9]{64}$/.test(row.infrastructure_binding_token_hash)
+    ? row.infrastructure_binding_token_hash
+    : null;
+  const result = await runHost(preparedCanaryReleaseScript(prepared.profile, prepared.slot, bindingHash), prepared.slot);
+  if (result.ok && !result.stdout.split(/\r?\n/).includes("HIVRA_PREPARED_BINDING_RELEASED")) {
+    return { ...result, ok: false, error: "prepared computer release was not confirmed" };
+  }
+  return result;
+}
+
 export async function enforcePreparedCanaryBinding(
   row: AgentRow,
   profile: PreparedCanaryProfile,

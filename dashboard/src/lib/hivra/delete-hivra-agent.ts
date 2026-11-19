@@ -29,18 +29,11 @@ import {
 } from "@/lib/hivra/tailscale-private-access";
 import { log } from "@/lib/logger";
 import { wakeForUserAction } from "@/lib/hivra/sleep-aware";
-import { isPreparedProfile } from "@/lib/hivra/lifecycle-support";
 import {
-  matchPreparedCanaryComputer,
-  preparedCanaryReleaseScript,
-  type PreparedCanaryProfile,
-  type PreparedCanarySlot,
+  preparedComputerForDelete,
+  releasePreparedComputerClaim,
 } from "@/lib/hivra/prepared-canary-computers";
-import {
-  resolveProxmoxTargetConfiguration,
-  runProxmoxHostScript,
-  type HostScriptResult,
-} from "@/lib/services/proxmox-instance-service";
+import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export type DeleteHivraAgentResult = { ok: true } | { ok: false; message: string; status: number };
@@ -146,30 +139,6 @@ echo "destroyed $VMID"`;
 }
 
 /**
- * A prepared computer is a long-lived slot, not a per-claim VM: deleting its
- * claim releases the claim's binding tag and keeps the VM for the next claim
- * (docs/release/OMARCHY-PREPARED-REFRESH.md).
- */
-async function releasePreparedComputerClaim(
-  agent: { infrastructure_binding_token_hash?: unknown },
-  prepared: { profile: PreparedCanaryProfile; slot: PreparedCanarySlot },
-): Promise<HostScriptResult> {
-  const bindingHash = typeof agent.infrastructure_binding_token_hash === "string"
-    && /^[a-f0-9]{64}$/.test(agent.infrastructure_binding_token_hash)
-    ? agent.infrastructure_binding_token_hash
-    : null;
-  const result = await runProxmoxHostScript(
-    preparedCanaryReleaseScript(prepared.profile, prepared.slot, bindingHash),
-    resolveProxmoxTargetConfiguration(process.env, prepared.slot.host).env,
-    { timeoutMs: 90_000, maxOutputBytes: 16_384 },
-  );
-  if (result.ok && !result.stdout.split(/\r?\n/).includes("HIVRA_PREPARED_BINDING_RELEASED")) {
-    return { ...result, ok: false, error: "prepared computer release was not confirmed" };
-  }
-  return result;
-}
-
-/**
  * Delete one Proxmox-hosted Hivra computer owned by userId. Never throws for
  * expected refusals; returns the HTTP status and message the route reports.
  */
@@ -245,9 +214,9 @@ export async function deleteProxmoxHivraAgent(
           409,
         );
       }
-      const preparedProfile = isPreparedProfile(agent);
-      const prepared = preparedProfile ? matchPreparedCanaryComputer(agent) : null;
-      if (preparedProfile && !prepared) {
+      const preparedMatch = preparedComputerForDelete(agent);
+      const prepared = preparedMatch === "unconfigured" ? null : preparedMatch;
+      if (preparedMatch === "unconfigured") {
         await releaseHivraAgentOperation({
           ...deleteLease,
           error: "Prepared computer slot is not configured for this deployment.",
