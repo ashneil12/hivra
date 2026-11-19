@@ -41,3 +41,15 @@ describe("docs once the Free plan is closed", () => {
     });
   });
 });
+
+describe("blog articles once the Free plan is closed", () => {
+  it("no article mentions a free account", () => {
+    jest.isolateModules(() => {
+      process.env.HIVRA_FREE_PLAN_CLOSED_AT = "2020-01-01T00:00:00Z";
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { BLOG_ARTICLES } = require("@/lib/blog-data");
+      expect(JSON.stringify(BLOG_ARTICLES)).not.toMatch(/free (hivra )?account/i);
+      delete process.env.HIVRA_FREE_PLAN_CLOSED_AT;
+    });
+  });
+});
