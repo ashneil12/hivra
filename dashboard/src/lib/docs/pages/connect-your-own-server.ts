@@ -5,14 +5,14 @@ export const doc: DocPage = {
   section: "start",
   title: "Run agents on your own server",
   metaTitle: "Connect your own server to Hivra",
-  metaDescription: "Connect a Proxmox VE server with SSH details, or an Ubuntu server with one command for Linux Sandbox. What each runs, and what a free account can do.",
-  summary: "Connect a server you already run and launch onto it with a free account. How much it can run depends on how you connect it.",
+  metaDescription: "Connect a Proxmox VE server with SSH details, or an Ubuntu server with one command for Linux Sandbox. What each can run and how to connect it.",
+  summary: "Connect a server you already run and launch onto it if your account is eligible. How much it can run depends on how you connect it.",
   lastReviewed: "2026-11-17",
   blocks: [
     {
       heading: "What this is and who it is for",
       paragraphs: [
-        "Hivra Cloud runs a computer for each agent on a paid plan. If you would rather use hardware you already control, you can connect a server and launch onto it instead. Connecting a server costs nothing, and a Hivra account is free: the paid plan applies to computers Hivra Cloud runs, not to a server you connect yourself.",
+        "Hivra Cloud runs a computer for each agent on a paid plan. If you would rather use hardware you already control, you can connect a server and launch onto it instead. Your account must be eligible to connect a server. You supply the server and its capacity.",
         "This page is for developers and AI power users who have a Linux server, a rented machine or a Proxmox VE host, and who are comfortable with a terminal and SSH. You get the same Launch flow, but the computer is created on your host and counts against that host's capacity, not a Hivra plan.",
         "Hivra is not a replacement for knowing your server. You own it, you pay your provider for it, and you decide who has access to it. Hivra inspects it, prepares it when you approve, and launches onto it when you ask.",
       ],
@@ -80,9 +80,9 @@ export const doc: DocPage = {
       ],
     },
     {
-      heading: "What a free account can do with it",
+      heading: "What you can do with it",
       paragraphs: [
-        "A free account works with a server you connect yourself. You can connect it, inspect it, prepare it and launch supported agents onto it without a paid plan. The paid plan only applies to computers Hivra Cloud runs. The chooser says the same thing: connecting your own machine costs nothing here. See [what you pay for](/docs/plans-and-billing).",
+        "If your account is eligible to connect a server, you can inspect it, prepare it and launch supported agents on it. Those agents use your server's capacity. See [what you pay for](/docs/plans-and-billing).",
         "What you still pay for is the server itself, to whoever hosts it, and the AI usage your agent consumes, to whoever provides the model. If you launch an agent on Hivra credits, those are separate from the server. See [Models and credits](/docs/models-and-credits).",
         "| Thing | Who pays |\n| --- | --- |\n| Connecting and inspecting the server | Nothing |\n| The server or cloud machine | You, to your provider |\n| Agent model usage on your own key or sign-in | You, to the model provider |\n| A computer run by Hivra Cloud | A paid plan |",
       ],
@@ -134,7 +134,7 @@ export const doc: DocPage = {
   faqs: [
     {
       q: "Do I need a paid plan to use my own server?",
-      a: "No. A Hivra account costs nothing and works with a server you connect yourself. The paid plan applies to computers Hivra Cloud runs. You still pay your own provider for the server and the model provider for AI usage.",
+      a: "You need a Hivra account eligible to connect a server. You still pay your own provider for the server and the model provider for AI usage.",
     },
     {
       q: "Why can my Ubuntu server only run Linux Sandbox?",

@@ -18,7 +18,6 @@
  */
 
 import { PLANS } from "@/lib/subscription/plans";
-import { isFreePlanClosed } from "@/lib/billing/free-plan-cutoff";
 
 function dollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -142,27 +141,13 @@ export function formatPlanSize(plan: PlanSizeKey, style: "prose" | "compact" = "
 /** "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM." */
 export const HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE = `Every computer that Hivra Cloud runs for you needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}.`;
 
-/**
- * What a free account does include. Once the Free plan is closed to new sign-ups
- * (HIVRA_FREE_PLAN_CLOSED_AT has passed, read where the page is rendered), the
- * copy says there is no free plan instead.
- */
-const FREE_PLAN_CLOSED_FOR_COPY = isFreePlanClosed();
-export const FREE_ACCOUNT_SENTENCE = FREE_PLAN_CLOSED_FOR_COPY
-  ? "Hivra Cloud has no free plan; you can self-host the open-source platform at no software cost."
-  : "A free account works with a computer or server you connect yourself.";
-/** Picks the copy for the Free plan's state: open (a free account exists) or closed to new sign-ups. */
-export function freeAccountCopy(openText: string, closedText: string): string {
-  return FREE_PLAN_CLOSED_FOR_COPY ? closedText : openText;
-}
-
-/** The same fact as a clause, after "and". */
-export const FREE_ACCOUNT_CLAUSE = FREE_PLAN_CLOSED_FOR_COPY
-  ? "the open-source platform is free to self-host"
-  : "a free account works with a computer or server you connect yourself";
+/** What a free account does include. */
+export const FREE_ACCOUNT_SENTENCE = "A free account works with a computer or server you connect yourself.";
 
 /** The canonical pair, for the places that have room for both sentences. */
 export const HOSTED_COMPUTE_NEEDS_PLAN = `${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${FREE_ACCOUNT_SENTENCE}`;
+
+export const CONNECTED_SERVER_ELIGIBILITY = "To connect your own server to the Hivra dashboard, your account must be eligible.";
 
 /** The short form, for a clause that cannot carry the price. */
 export const HOSTED_COMPUTE_NEEDS_PLAN_SHORT = "Every Hivra Cloud computer needs a paid plan.";

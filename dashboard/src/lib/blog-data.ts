@@ -60,10 +60,9 @@ import { howToSelfHostAgentZero } from "./blog/articles/how-to-self-host-agent-z
 import { howToInstallCodexCli } from "./blog/articles/how-to-install-codex-cli";
 import { claudeCodeOnWindows } from "./blog/articles/claude-code-on-windows";
 import { claudeCodeOnLinux } from "./blog/articles/claude-code-on-linux";
-import { forFreePlanState } from "@/lib/copy/free-plan-copy";
 
 // SCRIPTURE_ANCHOR: blog-store | Psalm 78:4 | Verse: We will tell the generation to come the praises of Yahweh, his strength, and his wondrous works.
-const ARTICLES_AS_WRITTEN: Record<string, BlogArticle> = {
+export const BLOG_ARTICLES: Record<string, BlogArticle> = {
   "what-is-hermes-agent": whatIsHermesAgent,
   "cost-of-running-ai-agent": costOfRunningAiAgent,
   "ai-agent-automation-examples": aiAgentAutomationExamples,
@@ -126,9 +125,6 @@ const ARTICLES_AS_WRITTEN: Record<string, BlogArticle> = {
   "claude-code-on-windows": claudeCodeOnWindows,
   "claude-code-on-linux": claudeCodeOnLinux,
 };
-
-// Once the Free plan is closed to new sign-ups, articles drop free-account mentions.
-export const BLOG_ARTICLES: Record<string, BlogArticle> = forFreePlanState(ARTICLES_AS_WRITTEN);
 
 export const BLOG_ARTICLES_LIST: BlogArticle[] = Object.values(BLOG_ARTICLES).sort(
   (a, b) => new Date(b.publishedDate).getTime() - new Date(a.publishedDate).getTime()

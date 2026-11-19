@@ -2,7 +2,7 @@ import type { DocPage } from "../types";
 import {
   ENTRY_PLAN_PRICE,
   ENTRY_PLAN_SIZE,
-  FREE_ACCOUNT_SENTENCE,
+  CONNECTED_SERVER_ELIGIBILITY,
   HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
   LARGER_PLAN_PRICE,
   LARGER_PLAN_SIZE,
@@ -14,17 +14,17 @@ export const doc: DocPage = {
   section: "start",
   title: "What you pay for",
   metaTitle: "Hivra plans and billing: what you pay for",
-  metaDescription: "A Hivra account costs nothing. Computers that Hivra Cloud runs need a paid plan, and model usage is paid separately. Here is how each part works.",
-  summary: "The account is free. You pay for the computer when Hivra Cloud runs it, and for model usage when you use Hivra credits.",
+  metaDescription: "Computers that Hivra Cloud runs need a paid plan, and model usage is paid separately. Here is how each part works.",
+  summary: "You pay for the computer when Hivra Cloud runs it, and for model usage when you use Hivra credits.",
   lastReviewed: "2026-11-17",
   blocks: [
     {
       heading: "Three separate things you can pay for",
       paragraphs: [
         "Hivra bills three different things, and they are easy to mix up. Knowing which is which makes the Plan & billing page much easier to read.",
-        "| What | What it pays for | Where you manage it |\n| --- | --- | --- |\n| Your account | Signing in and using Launch. A Hivra account costs nothing. | Settings |\n| A plan | The computer itself when Hivra Cloud runs it: processor, memory and storage. | Plan & billing, Plans view |\n| Model usage | The AI model your agent thinks with, when you use Hivra credits. | Plan & billing, Credits view |",
+        "| What | What it pays for | Where you manage it |\n| --- | --- | --- |\n| Your account | Signing in and using Launch. | Settings |\n| A plan | The computer itself when Hivra Cloud runs it: processor, memory and storage. | Plan & billing, Plans view |\n| Model usage | The AI model your agent thinks with, when you use Hivra credits. | Plan & billing, Credits view |",
         "A plan does not pay for model usage, and credits do not pay for a computer. If you bring your own model key, the provider bills you directly and Hivra credits are not involved at all.",
-        `${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${FREE_ACCOUNT_SENTENCE} This page is for developers and AI power users who want to know exactly what a launch will cost before they press the button.`,
+        `${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY} This page is for developers and AI power users who want to know exactly what a launch will cost before they press the button.`,
       ],
     },
     {
@@ -39,7 +39,7 @@ export const doc: DocPage = {
       heading: "The Plan & billing page at a glance",
       paragraphs: [
         "The page has up to five tabs. The row of tabs is labelled \"Billing sections\".",
-        "| Tab | What you do there |\n| --- | --- |\n| **Overview** | See your current plan, how much of it your computers use, and your credit balances. Change plan, manage your payment method, refresh usage or cancel. |\n| **Plans** | Compare the sizes and subscribe, upgrade or switch. |\n| **Payment methods** | See how your plan is paid. A card plan says Stripe keeps your card on file and has an **Open billing portal** button to update the card, download invoices or cancel. App Store plans show **Manage in the App Store**. A free account sees that no card is on file until checkout. Optional token payment sections appear only where enabled. |\n| **Credits** | Top up and watch your account credits and model credits. |\n| **History** | Recent account movement: ledger, payments, compute, LLM and managed Venice usage. |",
+        "| Tab | What you do there |\n| --- | --- |\n| **Overview** | See your current plan, how much of it your computers use, and your credit balances. Change plan, manage your payment method, refresh usage or cancel. |\n| **Plans** | Compare the sizes and subscribe, upgrade or switch. |\n| **Payment methods** | See how your plan is paid. A card plan says Stripe keeps your card on file and has an **Open billing portal** button to update the card, download invoices or cancel. App Store plans show **Manage in the App Store**. If there is no card on file, the panel says so. Optional token payment sections appear only where enabled. |\n| **Credits** | Top up and watch your account credits and model credits. |\n| **History** | Recent account movement: ledger, payments, compute, LLM and managed Venice usage. |",
         "Which credit tabs appear depends on the deployment. The **Credits** tab shows when billing v2 or crypto billing is on, and **History** and the Model credits panel need billing v2. The card top-up buttons need a separate top-ups setting, so a deployment can show Credits with no top-up buttons, which means it does not offer card top-ups. If you do not see a tab, that deployment does not offer it.",
         "![The Overview view of Plan & billing with a current plan, usage bars for vCPU and memory, and credit cards](/images/docs/dash-billing-overview.webp \"Overview view with sample data: the current plan, how much vCPU and memory your computers use, the Change plan and Manage payment method buttons, the credit tiles below, and an optional backup add-on panel. Backups are not guaranteed, so keep your own copies.\")",
       ],
@@ -48,10 +48,10 @@ export const doc: DocPage = {
       heading: "Choose and start a plan",
       paragraphs: [
         `Every computer that Hivra Cloud runs for you needs a paid plan, whichever agent or computer you pick. There are two sizes on sale: ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, and ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}. Both stay on without being paused for inactivity, so your agent's files and logins are there when you come back.`,
-        "1. Open **Billing** and go to the **Plans** view. With no plan yet, the heading reads \"Choose a plan\".\n2. Read the cards. Each one shows vCPU, memory, how many agents and computers it covers, and its idle behaviour. The card for your current plan is marked \"Current plan\".\n3. If a **Billing** control with **Monthly** and **Yearly** is shown, pick one. A saving chip such as \"Save up to N% yearly\" appears beside it when yearly is cheaper than twelve monthly payments. The control only appears when your choice will go through checkout.\n4. Press **Subscribe** on the card with 2 vCPU and 4 GB (the $9.99 a month one) or the card with 4 vCPU and 8 GB ($19.99 a month). The button reads \"Subscribe\" followed by the price. The Free card's button reads \"Use the free account\".\n5. Complete the hosted checkout. When you return, the page shows \"Activating your subscription...\" while Hivra confirms the payment. You then land back where you started, or on Launch if you came to Plan & billing directly. Open Billing again to see Overview.",
+        "1. Open **Billing** and go to the **Plans** view. With no plan yet, the heading reads \"Choose a plan\".\n2. Read the cards. Each one shows vCPU, memory, how many agents and computers it covers, and its idle behaviour. The card for your current plan is marked \"Current plan\".\n3. If a **Billing** control with **Monthly** and **Yearly** is shown, pick one. A saving chip such as \"Save up to N% yearly\" appears beside it when yearly is cheaper than twelve monthly payments. The control only appears when your choice will go through checkout.\n4. Press **Subscribe** on the card with 2 vCPU and 4 GB (the $9.99 a month one) or the card with 4 vCPU and 8 GB ($19.99 a month). The button reads \"Subscribe\" followed by the price.\n5. Complete the hosted checkout. When you return, the page shows \"Activating your subscription...\" while Hivra confirms the payment. You then land back where you started, or on Launch if you came to Plan & billing directly. Open Billing again to see Overview.",
         "If you arrived from Launch, a **Back to your launch** link at the top returns you to where you were, with your choices kept. After checkout the redirect back happens automatically.",
-        "The **Free** card is not a hosted computer. It reads \"Computer: Your own\" and \"Run by Hivra: No\", and it means a Hivra account that works with a computer or server you connect yourself.",
-        "![The Plans view with Free, Pro and Power cards, the current one marked, and a strip of planned bigger machines](/images/docs/dash-billing-plans.webp \"Plans view with sample data: each card lists vCPU, memory and idle behaviour, and the footer repeats the card-payment guarantee. Look at the planned machines strip near the bottom. The card names in the picture are names in the product; rely on the prices and sizes.\")",
+        "A server you connect uses your own capacity, not Hivra Cloud compute. Your account must be eligible to connect the server.",
+        "![An example of the Plans view with plan sizes and idle behaviour](/images/docs/dash-billing-plans.webp \"This example includes the Free card. It may not be available to a new account. Check Billing for your current options.\")",
         "Under the cards, a strip titled \"Bigger machines are planned\" is tagged \"Planned, not available to buy yet\". Treat those as a roadmap, not an option.",
       ],
     },
@@ -71,7 +71,7 @@ export const doc: DocPage = {
         "- **Confirm Upgrade** changes the subscription in place. The new limits apply right away, and the price difference for the rest of the billing period is added to your next invoice. Plan changes made this way move your subscription to monthly billing. A yearly plan is invoiced today instead, with credit for its unused time.\n- **Open Secure Checkout** is used when the change has to go through the payment provider's checkout. Your current access stays active while checkout is pending, and the new plan access starts once checkout completes.",
         "**Move to a smaller size.** Going down is not self-serve everywhere. Where it is not turned on, the card says \"Moving to a smaller plan isn't self-serve yet\". Where it is, the button reads **Switch to** the smaller size and the dialog offers **Keep** your current plan or confirm. The dialog is titled \"Switch to\" the smaller size and lists what you give up. If you have more agents and computers than the smaller size holds, it warns you, and you should remove some before you launch another. It also has a proration credit note: Stripe credits unused time to your account for later invoices, not back to your card. Nothing is stopped or removed for you.",
         "**Cancel.** On **Overview** press **Cancel subscription** (card plans only). A dialog asks \"What's making you cancel?\" with choices such as \"It's too expensive\" and \"I'm not using it\". Pick a reason or skip it. Some reasons show one suggestion that opens an email to support, and choosing \"Something else\" adds an optional text box. Press \"Never mind, keep my plan\" or close the dialog to keep your plan. **Cancel anyway** opens the billing portal, where the cancellation is completed. Your chosen reason is recorded when you press **Cancel anyway** or use a suggestion. App Store plans are cancelled in the App Store.",
-        "When a plan ends, Hivra stops running your Hivra Cloud computers. Their files are kept, and Hivra emails you before anything is deleted. To carry on later, choose a plan again and press **Start** on the computer. To go back to the Free account, cancel; the Free card says \"To move to Free, cancel your subscription\".",
+        "When a plan ends, Hivra stops running your Hivra Cloud computers. Their files are kept, and Hivra emails you before anything is deleted. To carry on later, choose a plan again and press **Start** on the computer.",
         "**Payment method.** The **Manage payment method** button opens the billing portal, where you update your card or pick up an invoice. Card buttons appear only for card plans. If your plan is billed through the App Store, plan changes and cancellation happen there and the page shows **Manage in the App Store** instead.",
         "You may see a backup add-on on Overview. Backups are not guaranteed, so keep your own copies.",
       ],
@@ -116,15 +116,23 @@ export const doc: DocPage = {
     {
       heading: "What Hivra does and does not do",
       paragraphs: [
-        "- A paid plan covers the computer. It does not cover model usage.\n- Hivra does not run a free computer. A free account works with a server you connect.\n- Hivra does not guarantee backups of what is on a computer. Keep your own copies of anything you cannot lose.\n- Bigger machines are shown as planned, and you cannot buy them yet.\n- Your own server is your hardware and your bill. The paid plan is for computers Hivra Cloud runs.",
+        "- A paid plan covers the computer. It does not cover model usage.\n- Hivra does not run a free computer. You can use your own server if your account is eligible to connect it.\n- Hivra does not guarantee backups of what is on a computer. Keep your own copies of anything you cannot lose.\n- Bigger machines are shown as planned, and you cannot buy them yet.\n- Your own server is your hardware and your bill. The paid plan is for computers Hivra Cloud runs.",
         "For the raw price comparison against self-hosting, see the [pricing page](/pricing).",
       ],
     },
   ],
   faqs: [
     {
-      q: "Is a Hivra account free?",
-      a: "Yes, a Hivra account costs nothing, and it works with a computer or server you connect yourself. Every computer that Hivra Cloud runs for you needs a paid plan.",
+      q: "What can I choose if Free is closed to new accounts?",
+      a: "Existing Free accounts keep their access. New accounts need a plan or an eligible trial to launch a computer or connect a server. Check the pricing page for the options currently offered.",
+    },
+    {
+      q: "How does the Pro trial work if I am offered one?",
+      a: "The trial lasts seven days and requires a card. It includes one agent, a total of 1 vCPU and 2 GB of RAM, idle sleep, and $1 in starter model credits. If you keep the subscription, the card is charged when the trial ends. In Billing you can choose Upgrade to full Pro now to end the trial and pay immediately.",
+    },
+    {
+      q: "What does a Hivra plan cover?",
+      a: "A hosting plan covers the computers Hivra Cloud runs for you. A server you connect uses your capacity, and your account must be eligible to connect it.",
     },
     {
       q: "Does the plan include the AI model?",
@@ -140,7 +148,7 @@ export const doc: DocPage = {
     },
     {
       q: "Can I move to a smaller size?",
-      a: "Not always. Where self-serve downgrades are not turned on, the card says moving to a smaller plan is not self-serve yet. Moving to the Free account is done by cancelling.",
+      a: "Not always. Where self-serve downgrades are not turned on, the card says moving to a smaller plan is not self-serve yet.",
     },
     {
       q: "What is the difference between Credits and Model credits?",

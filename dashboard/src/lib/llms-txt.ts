@@ -18,8 +18,8 @@ import { NON_AFFILIATION_LINE, SITE_DESCRIPTION } from "@/lib/brand-description"
 import {
   ENTRY_PLAN_PRICE,
   ENTRY_PLAN_SIZE,
-  FREE_ACCOUNT_CLAUSE,
-  HOSTED_COMPUTE_NEEDS_PLAN,
+  CONNECTED_SERVER_ELIGIBILITY,
+  HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
   LARGER_PLAN_PRICE,
   LARGER_PLAN_SIZE,
   MONEY_BACK_GUARANTEE,
@@ -67,7 +67,7 @@ export function llmsTxtSections(
         { label: "Home", path: "/", note: "Launch an agent on a computer of its own, or start with a computer and use it yourself, on Hivra Cloud, your own server or self-hosted" },
         { label: "Agents", path: "/agents", note: "Claude Code, Codex, Hermes, OpenClaw, Agent Zero and Aeon, each on a computer of its own, with what each one suits and how its model access works" },
         { label: "Set up from your coding agent", path: "/setup.md", note: "Step-by-step instructions for an AI coding agent (Claude Code, Codex, Cursor) to set its person up with an agent on Hivra, and to carry its current work over" },
-        { label: "Pricing", path: "/pricing", note: `Self-host free, or Hivra Cloud at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE} or ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}, with a ${MONEY_BACK_GUARANTEE}. The plan does not include AI usage. Every Hivra Cloud computer needs a paid plan, and ${FREE_ACCOUNT_CLAUSE}` },
+        { label: "Pricing", path: "/pricing", note: `Self-host the open-source platform at no software cost, or use Hivra Cloud at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE} or ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}, with a ${MONEY_BACK_GUARANTEE}. The plan does not include AI usage. ${CONNECTED_SERVER_ELIGIBILITY}` },
         { label: "Free tools", path: "/tools", note: "Keep-awake commands, a tmux cheat sheet, Claude Code plan and limit-reset calculators, an agent survival check and a hosting cost calculator. Free, with no signup" },
         { label: "Keep a Mac awake (caffeinate)", path: "/tools/keep-mac-awake", note: "Builds the caffeinate (macOS) or systemd-inhibit (Linux) command that keeps a laptop awake while an agent runs, and lists what it does not cover" },
         { label: "tmux cheat sheet", path: "/tools/tmux-cheat-sheet", note: "tmux commands and keys with copy buttons, plus running AI coding agents in named sessions" },
@@ -164,7 +164,7 @@ export function buildLlmsTxt({
   lines.push(`> ${SITE_DESCRIPTION}`);
   lines.push("");
   lines.push(
-    `Available now on Hivra Cloud: launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw, Aeon or DeepSeek Harness (alpha) on a computer of its own, or launch an Ubuntu computer and use it yourself. ${HOSTED_COMPUTE_NEEDS_PLAN} Hermes runs on Hivra Cloud only. You can also self-host the platform on your own server, with no Hivra account${restricted ? "" : " and no token"}.`
+    `Available now on Hivra Cloud: launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw, Aeon or DeepSeek Harness (alpha) on a computer of its own, or launch an Ubuntu computer and use it yourself. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} Hermes runs on Hivra Cloud only. You can also self-host the platform on your own server, with no Hivra account${restricted ? "" : " and no token"}.`
   );
   lines.push("");
   lines.push(
