@@ -195,11 +195,20 @@ test.describe('trial to Pro', () => {
         expect((await getSubscription(env.stripeKey, row.stripe_subscription_id!)).status).toBe('active');
       });
     } finally {
-      for (const context of contexts) {
-        await destroyAllHivraAgents(context.request, env.baseUrl, 30, 15_000).catch(() => undefined);
+      // An account whose agents could not all be deleted is kept, so the
+      // reaper (npm run audit:first-run:cleanup) can still find and delete them.
+      const kept: string[] = [];
+      for (const [i, context] of contexts.entries()) {
+        const left = await destroyAllHivraAgents(context.request, env.baseUrl, 30, 15_000)
+          .then((result) => result.survived.length)
+          .catch(() => 1);
+        if (left > 0) kept.push(users[i]);
         await context.close().catch(() => undefined);
       }
-      for (const userId of users) await teardown(env, userId);
+      for (const userId of users) if (!kept.includes(userId)) await teardown(env, userId);
+      if (kept.length) {
+        throw new Error(`[trial-journey] agents survived cleanup; kept account(s) ${kept.join(', ')} for npm run audit:first-run:cleanup.`);
+      }
     }
   });
 });
