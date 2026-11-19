@@ -1,16 +1,18 @@
-# The launch sweep on a schedule. Copy this file to .github/workflows/ in the
-# private runner repository (see README.md next to it). It is not a workflow of
-# this public repository: the sweep needs Canary admin secrets and launches
-# real, billed computers.
+# Canary release testing on a schedule. Copy this file to .github/workflows/ in
+# the private runner repository (see README.md next to it). It is not a workflow
+# of this public repository: it needs Canary admin and Stripe test secrets and
+# launches real computers.
 #
-#   - nightly: a full sweep of whatever Canary serves;
-#   - after every Canary merge: a poll every 15 minutes starts a sweep when
-#     Canary serves a commit that has no launch-sweep status yet;
-#   - by hand: workflow_dispatch, optionally a subset of targets.
-#
-# Each run records its verdict on the swept commit in ashneil12/hivra as the
-# `launch-sweep` commit status, which the pre-Promote gate reads.
-name: Launch sweep
+# Its cost stays flat as the catalog grows:
+#   - after every Canary merge (a poll every 15 minutes finds a served commit
+#     with no launch-sweep status): the one full customer path, card trial to
+#     Pro and one reference agent (dashboard/e2e/trial-to-pro.spec.ts). Its
+#     verdict is the `launch-sweep` commit status the pre-Promote gate reads;
+#   - nightly: a full launch of a small rotating sample of the Launch tiles,
+#     recorded as the informational `launch-sample` status;
+#   - by hand: workflow_dispatch, either mode; `only` limits a sample run to a
+#     few targets and then records no status at all.
+name: Canary release testing
 
 on:
   schedule:
@@ -18,8 +20,14 @@ on:
     - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'release (customer path) or sample (rotating launch sample)'
+        required: true
+        default: release
+        type: choice
+        options: [release, sample]
       only:
-        description: 'LAUNCH_SWEEP_ONLY: comma-separated profile ids (empty = every target)'
+        description: 'sample mode only: comma-separated profile ids instead of tonight''s sample (records no status)'
         required: false
         default: ''
 
@@ -36,6 +44,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       sha: ${{ steps.pick.outputs.sha }}
+      mode: ${{ steps.pick.outputs.mode }}
       run: ${{ steps.pick.outputs.run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,12 +58,20 @@ jobs:
       - id: pick
         env:
           GITHUB_TOKEN: ${{ secrets.HIVRA_STATUS_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_MODE: ${{ inputs.mode }}
         run: |
           sha="$(node scripts/release/launch-sweep-status.mjs served-sha)"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ github.event.schedule }}" = "*/15 * * * *" ]; then
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "mode=$INPUT_MODE" >> "$GITHUB_OUTPUT"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$SCHEDULE" = "*/15 * * * *" ]; then
+            echo "mode=release" >> "$GITHUB_OUTPUT"
             echo "run=$(node scripts/release/launch-sweep-status.mjs needs-sweep --sha "$sha")" >> "$GITHUB_OUTPUT"
           else
+            echo "mode=sample" >> "$GITHUB_OUTPUT"
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -62,19 +79,24 @@ jobs:
     needs: pick
     if: needs.pick.outputs.run == 'true'
     runs-on: ${{ fromJSON(vars.LAUNCH_SWEEP_RUNS_ON || '["self-hosted","launch-sweep"]') }}
-    timeout-minutes: 360
+    timeout-minutes: 180
     env:
       SHA: ${{ needs.pick.outputs.sha }}
+      MODE: ${{ needs.pick.outputs.mode }}
+      STATUS_CONTEXT: ${{ needs.pick.outputs.mode == 'release' && 'launch-sweep' || 'launch-sample' }}
       GITHUB_TOKEN: ${{ secrets.HIVRA_STATUS_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       LAUNCH_SWEEP_RUN_ID: gh${{ github.run_id }}
       LAUNCH_SWEEP_OUT_DIR: ${{ github.workspace }}/out
       LAUNCH_SWEEP_VERDICT_FILE: ${{ github.workspace }}/out/verdict.json
       LAUNCH_SWEEP_WORKERS: ${{ vars.LAUNCH_SWEEP_WORKERS || '1' }}
+      LAUNCH_SWEEP_SAMPLE_SIZE: ${{ vars.LAUNCH_SWEEP_SAMPLE_SIZE || '3' }}
       LAUNCH_SWEEP_ONLY: ${{ inputs.only || '' }}
+      CUSTOMER_PATH_AGENT: ${{ vars.CUSTOMER_PATH_AGENT || 'claude-code' }}
       CLERK_SECRET_KEY: ${{ secrets.LAUNCH_SWEEP_CLERK_SECRET_KEY }}
       LAUNCH_SWEEP_SUPABASE_URL: ${{ secrets.LAUNCH_SWEEP_SUPABASE_URL }}
       LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY }}
+      TRIAL_JOURNEY_STRIPE_SECRET_KEY: ${{ secrets.TRIAL_JOURNEY_STRIPE_SECRET_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -85,23 +107,30 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
-      # A run limited with `only` checks a few tiles; it never records a
-      # verdict on the commit, so it cannot stand in for a full sweep.
-      - name: Mark the commit as being swept
+      # A run limited with `only` checks a few tiles by hand; it never records
+      # a status on the commit, so it cannot stand in for a full run.
+      - name: Mark the commit as being tested
         if: env.LAUNCH_SWEEP_ONLY == ''
-        run: node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --state pending --description "Sweeping Canary" --target-url "$RUN_URL"
+        run: node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --context "$STATUS_CONTEXT" --state pending --description "Testing on Canary ($MODE)" --target-url "$RUN_URL"
       - name: Install
         working-directory: dashboard
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      - name: Sweep every Launch tile on Canary
+      - name: Run the customer path or tonight's sample on Canary
         id: sweep
         working-directory: dashboard
         continue-on-error: true
-        run: npm run test:launch-sweep
+        run: |
+          if [ "$MODE" = "release" ]; then
+            npm run test:trial-journey
+          else
+            if [ -z "$LAUNCH_SWEEP_ONLY" ]; then export LAUNCH_SWEEP_ONLY="$(npm run -s test:launch-sweep:sample)"; fi
+            echo "Sample: $LAUNCH_SWEEP_ONLY"
+            npm run test:launch-sweep
+          fi
       - name: Summary
-        if: always()
+        if: always() && env.MODE == 'sample'
         working-directory: dashboard
         continue-on-error: true
         run: npm run test:launch-sweep:summary -- "$LAUNCH_SWEEP_RUN_ID"
@@ -111,29 +140,35 @@ jobs:
         working-directory: dashboard
         continue-on-error: true
         run: npm run audit:first-run:cleanup
-      # Green only when the sweep itself exited cleanly (every tile covered,
-      # every target finished), its verdict is green, and the reaper found
-      # nothing left running.
+      # Green only when the run itself exited cleanly (every step finished, and
+      # for a sample every tile covered), a sample's verdict is green, and the
+      # reaper found nothing left running.
       - name: Record the verdict on the commit
         if: always() && env.LAUNCH_SWEEP_ONLY == ''
         env:
           SWEEP_OUTCOME: ${{ steps.sweep.outcome }}
           REAP_OUTCOME: ${{ steps.reap.outcome }}
         run: |
+          publish() { node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --context "$STATUS_CONTEXT" --target-url "$RUN_URL" "$@"; }
           if [ "$SWEEP_OUTCOME" != "success" ]; then
-            node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --state failure --description "The sweep did not finish cleanly ($SWEEP_OUTCOME)" --target-url "$RUN_URL"
+            publish --state failure --description "The $MODE run did not finish cleanly ($SWEEP_OUTCOME)"
           elif [ "$REAP_OUTCOME" != "success" ]; then
-            node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --state failure --description "Cleanup failed: the run may have left computers running" --target-url "$RUN_URL"
+            publish --state failure --description "Cleanup failed: the run may have left computers running"
+          elif [ "$MODE" = "release" ]; then
+            publish --state success --description "Customer path passed: trial, Pro, one agent used, slept, woken, deleted"
           elif [ -f "$LAUNCH_SWEEP_VERDICT_FILE" ]; then
-            node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --verdict "$LAUNCH_SWEEP_VERDICT_FILE" --target-url "$RUN_URL"
+            publish --verdict "$LAUNCH_SWEEP_VERDICT_FILE"
           else
-            node scripts/release/launch-sweep-status.mjs publish --sha "$SHA" --state error --description "The sweep wrote no verdict" --target-url "$RUN_URL"
+            publish --state error --description "The sample wrote no verdict"
           fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: launch-sweep-${{ needs.pick.outputs.sha }}
-          path: out/
+          name: canary-${{ needs.pick.outputs.mode }}-${{ needs.pick.outputs.sha }}
+          path: |
+            out/
+            dashboard/playwright-report/
+            dashboard/test-results/
           retention-days: 30
       - name: Fail the run when cleanup failed
         if: always() && steps.reap.outcome == 'failure'

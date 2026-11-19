@@ -154,7 +154,7 @@ test('the gate command exits 1 on a candidate without a green sweep', async () =
   assert.equal(lines.at(-1), 'true');
 });
 
-test('the runner template records green only for a complete, cleanly reaped sweep', async () => {
+test('the runner template records green only for a complete, cleanly reaped run, and only the customer path gates Promote', async () => {
   const { readFileSync } = await import('node:fs');
   const source = readFileSync(new URL('../../ops/launch-sweep-runner/launch-sweep.yml', import.meta.url), 'utf8');
   const step = (name) => {
@@ -164,7 +164,7 @@ test('the runner template records green only for a complete, cleanly reaped swee
     return source.slice(start, next === -1 ? undefined : next);
   };
   // A run limited with `only` must never write a status on the commit.
-  assert.match(step('Mark the commit as being swept'), /if: env\.LAUNCH_SWEEP_ONLY == ''/);
+  assert.match(step('Mark the commit as being tested'), /if: env\.LAUNCH_SWEEP_ONLY == ''/);
   const record = step('Record the verdict on the commit');
   assert.match(record, /if: always\(\) && env\.LAUNCH_SWEEP_ONLY == ''/);
   // The sweep's own exit and the reaper's result both gate a green verdict.
@@ -172,6 +172,9 @@ test('the runner template records green only for a complete, cleanly reaped swee
   assert.match(record, /REAP_OUTCOME: \$\{\{ steps\.reap\.outcome \}\}/);
   assert.ok(record.indexOf('"$SWEEP_OUTCOME" != "success"') < record.indexOf('--verdict'));
   assert.ok(record.indexOf('"$REAP_OUTCOME" != "success"') < record.indexOf('--verdict'));
-  assert.match(step('Sweep every Launch tile on Canary'), /id: sweep/);
+  assert.match(step("Run the customer path or tonight's sample on Canary"), /id: sweep/);
   assert.match(step('Reap anything a crashed run left'), /id: reap/);
+  // The release run (customer path) writes the gating status; the nightly sample does not.
+  assert.match(source, /STATUS_CONTEXT: \$\{\{ needs\.pick\.outputs\.mode == 'release' && 'launch-sweep' \|\| 'launch-sample' \}\}/);
+  assert.match(source, /npm run test:trial-journey/);
 });

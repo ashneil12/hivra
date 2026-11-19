@@ -1,20 +1,24 @@
-# Launch sweep runner
+# Canary release testing runner
 
-The launch sweep (`dashboard/e2e/launch-sweep.spec.ts`) launches every tile on
-Canary's Launch page as a new customer, chats with it and deletes it. This folder
-holds what runs it automatically, outside this public repository:
+`launch-sweep.yml` is the workflow for a **private** runner repository. Its cost
+stays flat however many agents the catalog has:
 
-- `launch-sweep.yml`: the workflow for a **private** runner repository. It sweeps
-  Canary nightly, and within 15 minutes of Canary serving a new commit (every
-  merge into `canary`). It then records the verdict on that commit in
-  `ashneil12/hivra` as the `launch-sweep` commit status.
-- `scripts/release/launch-sweep-status.mjs` (in this repository): finds the commit
-  Canary serves, writes the status, and runs the pre-Promote gate that reads it.
+- **After every Canary merge** (a poll every 15 minutes finds a served commit
+  with no `launch-sweep` status): the one full customer path,
+  `dashboard/e2e/trial-to-pro.spec.ts`. A new account starts the card trial,
+  becomes Pro when the card is charged, then launches one reference agent
+  (`CUSTOMER_PATH_AGENT`, default `claude-code`), gets a reply, sleeps and wakes
+  it, and deletes it. Its result is the `launch-sweep` status on that commit in
+  `ashneil12/hivra`, which the pre-Promote gate reads.
+- **Nightly:** a full launch of a small rotating sample of the Launch tiles
+  (`LAUNCH_SWEEP_SAMPLE_SIZE`, default 3), so every tile gets a full launch every
+  few nights. It records the informational `launch-sample` status; it does not
+  gate Promote.
+- **By hand:** run the workflow in either mode. `only` limits a sample run to a
+  few targets and then records no status.
 
-The workflow lives in a private repository because the sweep needs Canary admin
-secrets and launches real, billed computers. This repository's workflows stay
-read-only and hold no hosting credentials
-([release process](../../docs/release/MANAGED-HOSTING-RELEASES.md#ci-and-live-credentials)).
+It is not a workflow of the public repository because it needs Canary admin and
+Stripe test secrets, and public run logs would show Canary's internals.
 
 ## Test accounts
 
@@ -64,14 +68,15 @@ anything a crashed run left; the workflow runs it after every sweep.
    | `LAUNCH_SWEEP_CLERK_SECRET_KEY` | Canary's Clerk secret key (`sk_test_…`; a live key is refused) |
    | `LAUNCH_SWEEP_SUPABASE_URL` | Canary's Supabase project URL |
    | `LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY` | Canary's Supabase service-role key |
+   | `TRIAL_JOURNEY_STRIPE_SECRET_KEY` | Canary's Stripe secret key (`sk_test_…`; a live key is refused) |
    | `HIVRA_STATUS_TOKEN` | Fine-grained token for `ashneil12/hivra` only, with **Commit statuses: read and write** and **Deployments: read** |
 
-4. Optional variables: `LAUNCH_SWEEP_WORKERS` (parallel targets, default 1: two launches at once on Canary's single host have failed at kickoff) and
+4. Optional variables: `CUSTOMER_PATH_AGENT` (the reference agent, default `claude-code`), `LAUNCH_SWEEP_SAMPLE_SIZE` (tiles per night, default 3), `LAUNCH_SWEEP_WORKERS` (parallel targets, default 1: two launches at once on Canary's single host have failed at kickoff) and
    `LAUNCH_SWEEP_RUNS_ON` (a JSON list of runner labels).
-5. Run the workflow once by hand with `only` set to `linux-computer` to check
-   the setup; its results are in the run's artifacts. A run limited with `only`
-   records no status. Then run it by hand without `only` and check that the
-   swept commit in `ashneil12/hivra` shows a `launch-sweep` status.
+5. Run the workflow once by hand in `sample` mode with `only` set to
+   `ubuntu-server` to check the setup; its results are in the run's artifacts
+   and it records no status. Then run it in `release` mode and check that the
+   tested commit in `ashneil12/hivra` shows a `launch-sweep` status.
 
 ## Reading a result
 

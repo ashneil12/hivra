@@ -16,7 +16,7 @@ import { pathToFileURL } from 'node:url';
 //   node scripts/release/launch-sweep-status.mjs needs-sweep [--sha <sha>]
 //       Prints `true` when that commit (default: the served one) has no
 //       launch-sweep status yet.
-//   node scripts/release/launch-sweep-status.mjs publish --sha <sha> --state <pending|success|failure|error>
+//   node scripts/release/launch-sweep-status.mjs publish --sha <sha> --state <pending|success|failure|error> [--context launch-sample]
 //       [--verdict <verdict.json>] [--description <text>] [--target-url <url>]
 //       Writes the status. Needs GITHUB_TOKEN with commit statuses: write.
 //   node scripts/release/launch-sweep-status.mjs gate <candidate-sha> [--json]
@@ -106,14 +106,14 @@ export function describeVerdict(verdict) {
   return { state: verdict.ok ? 'success' : 'failure', description: parts.join(', ').slice(0, 140) };
 }
 
-export async function publishStatus(request, { repo = DEFAULT_REPO, sha, state, description, targetUrl }) {
+export async function publishStatus(request, { repo = DEFAULT_REPO, sha, state, description, targetUrl, context = STATUS_CONTEXT }) {
   if (!SHA.test(sha || '')) throw new Error(`publish needs a commit SHA, got "${sha}".`);
   if (!['pending', 'success', 'failure', 'error'].includes(state)) throw new Error(`Unknown state "${state}".`);
   return request(`/repos/${repo}/statuses/${sha}`, {
     method: 'POST',
     body: JSON.stringify({
       state,
-      context: STATUS_CONTEXT,
+      context,
       description: (description || '').slice(0, 140),
       ...(targetUrl ? { target_url: targetUrl } : {}),
     }),
@@ -194,8 +194,9 @@ export async function main(argv = process.argv.slice(2), { request = github(), l
       state = verdict.state;
       description = description || verdict.description;
     }
-    await publishStatus(request, { repo, sha: flags.sha, state, description, targetUrl: flags['target-url'] });
-    log(`${STATUS_CONTEXT}: ${state} on ${flags.sha}${description ? ` (${description})` : ''}`);
+    const context = flags.context || STATUS_CONTEXT;
+    await publishStatus(request, { repo, sha: flags.sha, state, description, targetUrl: flags['target-url'], context });
+    log(`${context}: ${state} on ${flags.sha}${description ? ` (${description})` : ''}`);
     return 0;
   }
   if (command === 'gate') {

@@ -98,12 +98,14 @@ migrations or external side effects; those require a separately reviewed plan.
 
 ## Launch sweep before Promote
 
-The launch sweep launches every tile on Canary's Launch page as a new customer,
-asks it a question, checks the answer and deletes everything
-(`dashboard/e2e/README.md`, LAUNCH SWEEP). A private runner runs it nightly and
-after every merge into `canary`, against the commit Canary serves, and records
-the verdict on that commit as the `launch-sweep` commit status
-([runner setup](../../ops/launch-sweep-runner/README.md)).
+After every merge into `canary`, a private runner runs the one full customer
+path against the commit Canary serves: a new account starts the card trial,
+becomes Pro when the card is charged, then launches one reference agent, gets a
+reply, sleeps and wakes it, and deletes it (`dashboard/e2e/README.md`, Customer
+path). It records the verdict on that commit as the `launch-sweep` commit status
+([runner setup](../../ops/launch-sweep-runner/README.md)). A nightly full launch
+of a small rotating sample of Launch tiles is recorded separately as
+`launch-sample` and does not gate Promote.
 
 The gate (`scripts/release/launch-sweep-status.mjs gate`) reads only those
 statuses, the Canary project's GitHub deployments and commit trees. A candidate
