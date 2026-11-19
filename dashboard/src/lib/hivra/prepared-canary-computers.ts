@@ -447,9 +447,12 @@ export async function enforcePreparedCanaryBinding(
 }
 
 export async function claimPreparedCanaryComputer(
-  input: { userId: string; profile: PreparedCanaryProfile; name: string },
+  input: { userId: string; profile: PreparedCanaryProfile; name: string; operator: boolean },
   dependencies: Partial<Dependencies> = {},
 ): Promise<AgentRow> {
+  // Delete keeps the prepared VM and its guest data for the next claim, and
+  // nothing resets the guest yet, so only operator accounts may claim a slot.
+  if (input.operator !== true) throw new Error("prepared_computer_operator_only");
   const deps = { ...defaults, ...dependencies };
   const slot = readPreparedSlot(input.profile);
   if (!slot) throw new Error("prepared_profile_unavailable");

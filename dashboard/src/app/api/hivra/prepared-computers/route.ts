@@ -3,7 +3,7 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -14,6 +14,7 @@ import { sanitizeHivraAgentRow } from "@/lib/hivra/agent-llm";
 import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
 import { claimPreparedCanaryComputer } from "@/lib/hivra/prepared-canary-computers";
 import { log } from "@/lib/logger";
+import { isOpsAdminUser, verifiedPrimaryEmailOf } from "@/lib/ops-access";
 
 const Body = z.object({ profile: z.literal("omarchy"), name: z.string().trim().min(1).max(80) }).strict();
 
@@ -37,13 +38,17 @@ export async function POST(request: NextRequest) {
     const parsed = Body.safeParse(body.body);
     if (!parsed.success) return apiError("Invalid request", 400);
     try {
-      const agent = await claimPreparedCanaryComputer({ userId, ...parsed.data });
+      const operator = isOpsAdminUser({ userId, email: verifiedPrimaryEmailOf(await currentUser()) });
+      const agent = await claimPreparedCanaryComputer({ userId, ...parsed.data, operator });
       return apiSuccess({ agent: sanitizeHivraAgentRow(agent) }, agent.status === "provisioning" ? 202 : 201);
     } catch (error) {
       const raw = error instanceof Error ? error.message : FALLBACK_CLAIM_CODE;
       const code = CLAIM_CODE_PATTERN.test(raw) ? raw : FALLBACK_CLAIM_CODE;
       if (code !== raw) {
         log.error("prepared computer claim failed", error, { source: "prepared-computers", userId, verboseErrors: true });
+      }
+      if (code === "prepared_computer_operator_only") {
+        return apiError("Prepared computers are limited to operator accounts.", 403, undefined, { code });
       }
       if (["profile_already_claimed", "prepared_slot_claimed"].includes(code)) {
         return apiError("This prepared computer is already claimed.", 409, undefined, { code });

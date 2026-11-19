@@ -4,7 +4,9 @@ import { NextRequest } from "next/server";
 
 const claimMock = jest.fn();
 
-jest.mock("@clerk/nextjs/server", () => ({ auth: async () => ({ userId: "user_123" }) }));
+let mockOperator = true;
+jest.mock("@clerk/nextjs/server", () => ({ auth: async () => ({ userId: "user_123" }), currentUser: async () => null }));
+jest.mock("@/lib/ops-access", () => ({ isOpsAdminUser: () => mockOperator, verifiedPrimaryEmailOf: () => null }));
 jest.mock("@/lib/authenticated-rate-limit", () => ({ enforceAuthenticatedRouteRateLimit: () => null }));
 jest.mock("@/lib/hivra/prepared-canary-computers", () => ({
   claimPreparedCanaryComputer: (...args: unknown[]) => claimMock(...args),
@@ -36,7 +38,7 @@ it("retains the Omarchy prepared-computer claim route", async () => {
   claimMock.mockResolvedValue({ id: "agent_123", name: "OMARCHY", status: "running" });
   const response = await POST(request({ profile: "omarchy", name: "OMARCHY" }));
   expect(response.status).toBe(201);
-  expect(claimMock).toHaveBeenCalledWith({ userId: "user_123", profile: "omarchy", name: "OMARCHY" });
+  expect(claimMock).toHaveBeenCalledWith({ userId: "user_123", profile: "omarchy", name: "OMARCHY", operator: true });
 });
 
 it("never echoes an internal claim error message to the client", async () => {
@@ -47,4 +49,13 @@ it("never echoes an internal claim error message to the client", async () => {
   expect(text).toContain("prepared_guest_unavailable");
   expect(text).not.toContain("ECONNREFUSED");
   expect(text).not.toContain("internal-node-7");
+});
+
+it("passes a non-operator account through as such and reports the operator-only refusal", async () => {
+  mockOperator = false;
+  claimMock.mockReset().mockRejectedValue(new Error("prepared_computer_operator_only"));
+  const response = await POST(request({ profile: "omarchy", name: "OMARCHY" }));
+  expect(response.status).toBe(403);
+  expect(claimMock).toHaveBeenCalledWith(expect.objectContaining({ operator: false }));
+  mockOperator = true;
 });

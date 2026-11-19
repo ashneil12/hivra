@@ -180,7 +180,7 @@ ${transition}`], { encoding: "utf8" });
     const reserveRefresh = jest.fn(async row => ({ ...row, id: "44444444-4444-4444-8444-444444444444" }));
     const advanceRefresh = jest.fn(async (_owner, row) => row);
     const runHost = jest.fn(); const insert = jest.fn();
-    const row = await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY" }, {
+    const row = await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY", operator: true }, {
       findOwnerProfile: async () => null, findSlotOwner: async () => null, runHost, insert: insert as never,
       latestRelease: async () => release, reserveRefresh, advanceRefresh,
     });
@@ -193,7 +193,7 @@ ${transition}`], { encoding: "utf8" });
 
   it("does not reserve or dispatch when the official latest release is unavailable", async () => {
     const reserveRefresh = jest.fn(); const advanceRefresh = jest.fn();
-    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY" }, {
+    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY", operator: true }, {
       findOwnerProfile: async () => null, findSlotOwner: async () => null,
       latestRelease: async () => { throw new Error("upstream unavailable"); }, reserveRefresh, advanceRefresh,
     })).rejects.toThrow("prepared_omarchy_release_unavailable");
@@ -202,7 +202,7 @@ ${transition}`], { encoding: "utf8" });
 
   it("returns the durable pending row when HTTP host dispatch is unconfirmed", async () => {
     const release = { release: "v4.0.6", releaseCommit: "b".repeat(40), isoFilename: "omarchy-4.0.6.iso", isoUrl: "https://iso.omarchy.org/omarchy-4.0.6.iso", isoSha256: "c".repeat(64) };
-    const row = await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY" }, {
+    const row = await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY", operator: true }, {
       findOwnerProfile: async () => null, findSlotOwner: async () => null, latestRelease: async () => release,
       reserveRefresh: async row => ({...row,id:"44444444-4444-4444-8444-444444444444"}) as never,
       advanceRefresh: async () => { throw new Error("HTTP timeout"); },
@@ -214,7 +214,7 @@ ${transition}`], { encoding: "utf8" });
     const prior = { id: "44444444-4444-4444-8444-444444444444", user_id: "owner", computer_profile: "omarchy" as const,
       proxmox_host: "node-b", vmid: 2099, infrastructure_binding_token_hash: "a".repeat(64), infrastructure_binding_token_enforced: true };
     const runHost = jest.fn();
-    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY" }, {
+    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "OMARCHY", operator: true }, {
       findOwnerProfile: async () => prior,
       findSlotOwner: async () => null,
       runHost,
@@ -227,7 +227,7 @@ ${transition}`], { encoding: "utf8" });
     const prior = { id: "44444444-4444-4444-8444-444444444444", user_id: "owner", computer_profile: "windows" as const,
       proxmox_host: "node-b", vmid: 2098, infrastructure_binding_token_hash: "a".repeat(64), infrastructure_binding_token_enforced: true };
     const runHost = jest.fn();
-    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "windows", name: "WINDOWS" }, {
+    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "windows", name: "WINDOWS", operator: true }, {
       findOwnerProfile: async () => prior,
       findSlotOwner: async () => null,
       runHost,
@@ -247,7 +247,7 @@ ${transition}`], { encoding: "utf8" });
     });
     const marked = { ...prior, infrastructure_binding_token_enforced: true };
     const markBindingEnforced = jest.fn(async () => marked);
-    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "windows", name: "WINDOWS" }, {
+    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "windows", name: "WINDOWS", operator: true }, {
       findOwnerProfile: async () => prior,
       findSlotOwner: async () => null,
       runHost,
@@ -267,7 +267,7 @@ ${transition}`], { encoding: "utf8" });
   });
 
   it("does not claim a slot already owned by another user", async () => {
-    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "windows", name: "WINDOWS" }, {
+    await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "windows", name: "WINDOWS", operator: true }, {
       findOwnerProfile: async () => null,
       findSlotOwner: async () => ({ id: "55555555-5555-4555-8555-555555555555", user_id: "other", computer_profile: "windows", proxmox_host: "node-b", vmid: 2098 }),
       runHost: jest.fn(),
@@ -326,7 +326,7 @@ ${transition}`], { encoding: "utf8" });
   it("writes the pending reservation on the deployment's own delivery lane", async () => {
     process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "default";
     const reserveRefresh = jest.fn(async row => ({ ...row, id: "44444444-4444-4444-8444-444444444444" }));
-    await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY" }, {
+    await claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY", operator: true }, {
       findOwnerProfile: async () => null, findSlotOwner: async () => null,
       latestRelease: async () => ({ release: "v4.0.6", releaseCommit: "b".repeat(40), isoFilename: "omarchy-4.0.6.iso", isoUrl: "https://iso.omarchy.org/omarchy-4.0.6.iso", isoSha256: "c".repeat(64) }),
       reserveRefresh, advanceRefresh: async (_owner,row) => row,
@@ -344,7 +344,7 @@ ${transition}`], { encoding: "utf8" });
     const insert = jest.fn();
     const runHost = jest.fn();
     try {
-      await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY" }, {
+      await expect(claimPreparedCanaryComputer({ userId: "owner", profile: "omarchy", name: "MY_OMARCHY", operator: true }, {
         findOwnerProfile: async () => null,
         findSlotOwner: async () => null,
         runHost: runHost as never,
@@ -496,5 +496,16 @@ describe("prepared computer delete routing", () => {
     expect(runHost.mock.calls[0][0]).not.toContain("qm destroy");
     runHost.mockResolvedValue({ ok: true, stdout: "HIVRA_PREPARED_BINDING_RELEASED\n", stderr: "" });
     expect((await releasePreparedComputerClaim({ infrastructure_binding_token_hash: "a".repeat(64) }, { profile: "windows", slot }, runHost)).ok).toBe(true);
+  });
+});
+
+describe("prepared computer claims", () => {
+  it("refuses a claim from an account that is not an operator before touching any slot", async () => {
+    const findOwnerProfile = jest.fn();
+    await expect(claimPreparedCanaryComputer(
+      { userId: "customer", profile: "omarchy", name: "OMARCHY", operator: false },
+      { findOwnerProfile },
+    )).rejects.toThrow("prepared_computer_operator_only");
+    expect(findOwnerProfile).not.toHaveBeenCalled();
   });
 });
