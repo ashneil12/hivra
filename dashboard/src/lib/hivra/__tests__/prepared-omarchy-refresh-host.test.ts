@@ -46,6 +46,8 @@ it.each([
   { name: "missing VM and volumes", cancel: true, proof: "missing", terminal: true },
   { name: "existing VM", cancel: true, proof: "vm", terminal: false },
   { name: "leftover disk", cancel: true, proof: "volume", terminal: false },
+  { name: "disabled image store with a leftover disk", cancel: true, proof: "disabled", terminal: false },
+  { name: "no image storage", cancel: true, proof: "backup-only", terminal: false },
   { name: "unreadable inventory", cancel: true, proof: "error", terminal: false },
   { name: "missing VM without a cancellation", cancel: false, proof: "missing", terminal: false },
 ])("checks cancellation evidence for $name", ({ cancel, proof, terminal }) => {
@@ -63,9 +65,17 @@ case "$2" in
       error) exit 1 ;;
       *) echo '[]' ;;
     esac ;;
-  */storage) echo '[{"storage":"local-lvm","active":1,"enabled":1}]' ;;
+  */storage)
+    if [ "$TEST_PROOF" = disabled ] && [ "$3" != --content ]; then
+      echo '[{"storage":"local-lvm","content":"images,rootdir","active":1,"enabled":1},{"storage":"disabled-lvm","content":"images","active":0,"enabled":0}]'
+    elif [ "$TEST_PROOF" = backup-only ]; then
+      echo '[{"storage":"backup","content":"backup","active":1,"enabled":1}]'
+    else
+      echo '[{"storage":"local-lvm","content":"images,rootdir","active":1,"enabled":1}]'
+    fi ;;
   */storage/local-lvm/content)
     if [ "$TEST_PROOF" = volume ]; then echo '[{"volid":"local-lvm:vm-2099-disk-0"}]'; else echo '[]'; fi ;;
+  */storage/disabled-lvm/content) echo '[{"volid":"disabled-lvm:vm-2099-disk-0"}]' ;;
   *) exit 1 ;;
 esac
 `, { mode: 0o755 });
@@ -88,6 +98,7 @@ esac
       });
     } else {
       expect(status.state).toBe("queued");
+      expect(fs.existsSync(path.join(root, "operations", request.operationId, "cancel-receipt.json"))).toBe(false);
     }
     expect(fs.existsSync(env.TEST_QUEUE)).toBe(!terminal);
   } finally {
