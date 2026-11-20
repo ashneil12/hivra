@@ -515,7 +515,7 @@ describe("LaunchPage", () => {
       "Chat, Codex session, Terminal, Files, Browser (view-only) and Git");
     const model = within(review).getByRole("combobox", { name: "Model" });
     expect(model).toHaveValue("deepseek-v4-1-flash");
-    expect(model).toHaveAccessibleDescription("Recommended");
+    expect(model).toHaveAccessibleDescription("Recommended Private");
     expect(within(review).getByText(/^No extra charge. Uses your Operator plan allowance. Model usage is paid from your Hivra credits/)).toBeInTheDocument();
     expect(within(screen.getByRole("group", { name: "Launch settings" })).queryByText(/Proxmox|KVM|launch request|virtual machine/i)).not.toBeInTheDocument();
     expect(within(screen.getByLabelText("Launch review")).queryByText(/Proxmox|KVM|launch request/i)).not.toBeInTheDocument();

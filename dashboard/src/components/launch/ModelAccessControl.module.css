@@ -216,7 +216,8 @@
   border-radius: var(--hg-radius-sm);
 }
 
-.modelHeading {
+.modelHeading,
+.modelBadges {
   display: flex;
   flex-wrap: wrap;
   align-items: center;

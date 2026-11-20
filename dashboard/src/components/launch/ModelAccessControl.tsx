@@ -46,9 +46,9 @@ type KeyCheck =
   | { state: "invalid" }
   | { state: "unreachable" };
 
-/** A model's name in the picker, with its Private badge when it has one. */
-export function modelOptionLabel(choice: ModelChoice): string {
-  return choice.private ? `${choice.label} · Private` : choice.label;
+function modelOptionLabel(choice: ModelChoice, selected: boolean): string {
+  if (selected) return choice.label;
+  return [choice.label, choice.private && "Private", choice.recommended && "Recommended"].filter(Boolean).join(" · ");
 }
 
 /** How the agent reaches a model, the same three choices for every agent:
@@ -129,6 +129,10 @@ export function ModelAccessControl({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the list first arrives.
   }, [needsLiveModel, firstLive]);
   const selectedModel = models.find(choice => choice.value === model);
+  const modelBadges = [
+    selectedModel?.recommended && "Recommended",
+    selectedModel?.private && "Private",
+  ].filter((badge): badge is string => typeof badge === "string");
   const customModel = model !== "" && !selectedModel;
   const usesVenice = access.mode === "credits" || (access.mode === "api-key" && provider === "venice");
   const setupCall = veniceSetupCallLink(agentName.trim() || null);
@@ -191,17 +195,21 @@ export function ModelAccessControl({
     <div className={styles.field}>
       <div className={styles.modelHeading}>
         <label htmlFor={`${id}-model`}>Model</label>
-        {selectedModel?.recommended ? <small id={`${id}-model-recommended`} className={styles.badge}>Recommended</small> : null}
+        {modelBadges.length > 0 ? (
+          <span id={`${id}-model-badges`} className={styles.modelBadges}>
+            {modelBadges.map(badge => <small key={badge} className={styles.badge}>{badge}</small>)}
+          </span>
+        ) : null}
       </div>
       <select
         id={`${id}-model`}
         className={styles.modelSelect}
-        aria-describedby={selectedModel?.recommended ? `${id}-model-recommended` : undefined}
+        aria-describedby={modelBadges.length > 0 ? `${id}-model-badges` : undefined}
         value={customModel ? "__custom" : model}
         disabled={disabled}
         onChange={event => onChange({ model: event.target.value === "__custom" ? access.model : event.target.value })}
       >
-        {models.map(choice => <option key={choice.value} value={choice.value}>{modelOptionLabel(choice)}</option>)}
+        {models.map(choice => <option key={choice.value} value={choice.value}>{modelOptionLabel(choice, choice === selectedModel)}</option>)}
         {customModel ? <option value="__custom">{model} (entered under Advanced)</option> : null}
       </select>
       <details className={styles.advanced} open={customModel || undefined}>

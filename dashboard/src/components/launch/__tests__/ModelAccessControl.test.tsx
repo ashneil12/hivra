@@ -181,14 +181,27 @@ describe("ModelAccessControl", () => {
     fireEvent.click(choice(/^Hivra credits/));
     const model = screen.getByRole("combobox", { name: "Model" });
     expect(model).toHaveValue("deepseek-v4-1-flash");
-    expect(model).toHaveAccessibleDescription("Recommended");
-    expect(within(model).getByRole("option", { name: "DeepSeek V4.1 Flash · Private" })).toHaveProperty("selected", true);
+    expect(model).toHaveAccessibleDescription("Recommended Private");
+    expect(within(model).getByRole("option", { name: "DeepSeek V4.1 Flash" })).toHaveProperty("selected", true);
     const advanced = screen.getByText("Advanced").closest("details")!;
     expect(advanced).not.toHaveAttribute("open");
     fireEvent.change(within(advanced).getByLabelText("Model ID"), { target: { value: "my-model-1" } });
     expect(latest.access.model).toBe("my-model-1");
     expect(model).toHaveValue("__custom");
     expect(model).not.toHaveAccessibleDescription();
+  });
+
+  it("shows the selected model's privacy outside the dropdown even for a long name", () => {
+    render(<Harness profileId="codex" initial={{ mode: "credits" }} />);
+    const model = screen.getByRole("combobox", { name: "Model" });
+    fireEvent.change(model, { target: { value: "qwen3-235b-a22b-thinking-2507" } });
+    expect(model).toHaveValue("qwen3-235b-a22b-thinking-2507");
+    expect(model).toHaveAccessibleDescription("Private");
+    expect(model).not.toContainElement(screen.getByText("Private"));
+
+    fireEvent.change(model, { target: { value: "claude-opus-4-8" } });
+    expect(model).not.toHaveAccessibleDescription();
+    expect(screen.queryByText("Private")).not.toBeInTheDocument();
   });
 
   it("disables credits at $0 and offers to add some", () => {
@@ -254,7 +267,8 @@ describe("ModelAccessControl", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(screen.getByText("Key works.")).toBeInTheDocument();
       const model = screen.getByRole("combobox", { name: "Model" });
-      expect(within(model).getAllByRole("option").map(option => option.textContent)).toEqual(["Kimi K2.6 · Private", "Claude Sonnet 4.6"]);
+      expect(within(model).getAllByRole("option").map(option => option.textContent)).toEqual(["Kimi K2.6", "Claude Sonnet 4.6"]);
+      expect(model).toHaveAccessibleDescription("Private");
     });
 
     it("says plainly when Venice doesn't accept the key", async () => {
