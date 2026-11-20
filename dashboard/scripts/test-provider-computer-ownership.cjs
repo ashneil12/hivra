@@ -843,6 +843,17 @@ async function main() {
     });
     await db.exec(universalCatalogAdmission);
     assert.deepEqual(await admissionDefinitions(), admittedUniversalCatalog, "re-applying the universal catalog admission changes nothing");
+    const universalCatalogHardenedAdmission = migration("20261120162000_provider_release_admission_2026_11_20_3.sql");
+    await db.exec(universalCatalogHardenedAdmission);
+    const admittedUniversalCatalogHardened = await admissionDefinitions();
+    admittedUniversalCatalogHardened.forEach((definition, index) => {
+      for (const version of ["2026.11.20.2", "2026.11.20.3"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["8ca2ea94e1f70fa13a10da570b087528818386e23486a9b2692780f899f3d007", "83c49cb13db2d3356cb37d802349ed745df64a01a86795945ace8dbc50d61f3c"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(universalCatalogHardenedAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedUniversalCatalogHardened, "re-applying the hardened universal catalog admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

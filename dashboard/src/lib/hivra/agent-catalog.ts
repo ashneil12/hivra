@@ -13,7 +13,7 @@ import {
   getCatalogAppManifest,
   UNIVERSAL_CATALOG_MANIFESTS,
   type UniversalCatalogAppId,
-} from "./catalog-manifests";
+} from "./catalog-manifests/index";
 
 export type AgentId = "hermes" | "claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero" | "openbot" | "nuphos" | "deepseek-harness" | "linux-desktop" | "linux-terminal" | UniversalCatalogAppId;
 export type PlanTier = "free" | "pro" | "power";
