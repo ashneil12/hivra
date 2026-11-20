@@ -327,7 +327,9 @@ def missing_vm_cancel_receipt():
    if state not in ('inactive','failed'):return
    if pathlib.Path('/run/qemu-server',str(vmid)+'.pid').exists():return
    if any(int(vm['vmid'])==vmid for vm in inventory('/cluster/resources','--type','vm')):return
-   stores=inventory('/nodes/'+node+'/storage','--content','images')
+   # The API's content filter hides disabled stores. Node restrictions can
+   # also hide old volumes, so any unavailable image store blocks the receipt.
+   stores=[store for store in inventory('/nodes/'+node+'/storage') if 'images' in store['content'].split(',')]
    if not stores:return
    for store in stores:
     if not store['active'] or not store['enabled']:return
@@ -338,7 +340,7 @@ def missing_vm_cancel_receipt():
    temporary=base/'cancel-receipt.tmp'
    temporary.write_text(json.dumps(receipt));os.chmod(temporary,0o600);os.replace(temporary,base/'cancel-receipt.json')
    return receipt
- except (OSError,subprocess.SubprocessError,ValueError,TypeError,KeyError):
+ except (OSError,subprocess.SubprocessError,ValueError,TypeError,KeyError,AttributeError):
   return
 terminal=base/'cancel-receipt.json' if (base/'cancel-receipt.json').exists() else base/'receipt.json'
 if value['cancel'] and not active and terminal.exists() and terminal.name!='cancel-receipt.json':
