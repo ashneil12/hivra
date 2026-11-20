@@ -298,7 +298,7 @@ export function preparedOmarchyRefreshHostScript(input: OmarchyRefreshRequest, c
   };
   const envelope = { request: encoded(manifest), hash: createHash("sha256").update(manifest).digest("hex"),
     programs: Object.fromEntries(Object.entries(programs).map(([k, v]) => [k, { source: encoded(v), sha256: createHash("sha256").update(v).digest("hex") }])), cancel };
-  const dispatch = String.raw`import base64,fcntl,hashlib,json,os,pathlib,re,subprocess,sys
+  const dispatch = String.raw`import base64,fcntl,hashlib,json,os,pathlib,re,socket,subprocess,sys
 value=json.loads(base64.b64decode(sys.argv[1]));raw=base64.b64decode(value['request']);request=json.loads(raw)
 assert hashlib.sha256(raw).hexdigest()==value['hash']
 operation=request['operationId'];assert re.fullmatch(r'[a-f0-9-]{36}',operation)
@@ -315,11 +315,41 @@ if value['cancel']:(base/'cancel').touch(mode=0o600)
 unit='hivra-prepared-omarchy-'+operation+'.service'
 p=subprocess.run(['systemctl','show',unit,'--property=ActiveState','--value'],capture_output=True,text=True,timeout=4)
 active=p.returncode==0 and p.stdout.strip() in ('active','activating','deactivating','reloading')
+def missing_vm_cancel_receipt():
+ slot=request['slot'];node=slot['node'];vmid=slot['vmid']
+ if socket.gethostname().split('.')[0]!=node:return
+ def inventory(*args):
+  return json.loads(subprocess.check_output(['pvesh','get',*args,'--output-format','json'],text=True,timeout=3))
+ try:
+  with pathlib.Path('/run/lock/hivra-prepared-'+str(vmid)+'.lock').open('a') as vm_lock:
+   fcntl.flock(vm_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+   state=subprocess.check_output(['systemctl','show',unit,'--property=ActiveState','--value'],text=True,timeout=3).strip()
+   if state not in ('inactive','failed'):return
+   if pathlib.Path('/run/qemu-server',str(vmid)+'.pid').exists():return
+   if any(int(vm['vmid'])==vmid for vm in inventory('/cluster/resources','--type','vm')):return
+   stores=inventory('/nodes/'+node+'/storage','--content','images')
+   if not stores:return
+   for store in stores:
+    if not store['active'] or not store['enabled']:return
+    if inventory('/nodes/'+node+'/storage/'+store['storage']+'/content','--vmid',str(vmid))!=[]:return
+   receipt={'version':1,'operationId':operation,'computerId':request['computerId'],'vmid':vmid,
+    'bindingTag':request['bindingTag'],'requestedRelease':request['release'],'guestUpdaterStopped':True,
+    'state':'cancelled','bindingReleased':True}
+   temporary=base/'cancel-receipt.tmp'
+   temporary.write_text(json.dumps(receipt));os.chmod(temporary,0o600);os.replace(temporary,base/'cancel-receipt.json')
+   return receipt
+ except (OSError,subprocess.SubprocessError,ValueError,TypeError,KeyError):
+  return
 terminal=base/'cancel-receipt.json' if (base/'cancel-receipt.json').exists() else base/'receipt.json'
 if value['cancel'] and not active and terminal.exists() and terminal.name!='cancel-receipt.json':
  # The completed updater can be cancelled before admission. Re-enter the same
  # worker with its cancellation fence; it removes only this reservation's tag.
  terminal=None
+if value['cancel'] and not active and not (base/'cancel-receipt.json').exists():
+ missing_receipt=missing_vm_cancel_receipt()
+ if missing_receipt:
+  print('HIVRA_PREPARED_OMARCHY_REFRESH '+json.dumps({'state':'terminal','receipt':missing_receipt}))
+  sys.exit(0)
 if terminal is not None and terminal.exists() and not active:
  result={'state':'terminal','receipt':json.loads(terminal.read_text())}
 elif not active:

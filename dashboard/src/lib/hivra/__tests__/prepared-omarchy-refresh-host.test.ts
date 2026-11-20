@@ -42,6 +42,59 @@ it("queues one durable worker and leaves an immutable manifest across HTTP retri
   } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
 
+it.each([
+  { name: "missing VM and volumes", cancel: true, proof: "missing", terminal: true },
+  { name: "existing VM", cancel: true, proof: "vm", terminal: false },
+  { name: "leftover disk", cancel: true, proof: "volume", terminal: false },
+  { name: "unreadable inventory", cancel: true, proof: "error", terminal: false },
+  { name: "missing VM without a cancellation", cancel: false, proof: "missing", terminal: false },
+])("checks cancellation evidence for $name", ({ cancel, proof, terminal }) => {
+  const root = fs.mkdtempSync(path.join(tmpdir(), "prepared-refresh-cancel-"));
+  try {
+    const bin = path.join(root, "bin");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, "systemctl"), "#!/bin/sh\necho inactive\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, "systemd-run"), "#!/bin/sh\ntouch \"$TEST_QUEUE\"\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, "pvesh"), `#!/bin/sh
+case "$2" in
+  /cluster/resources)
+    case "$TEST_PROOF" in
+      vm) echo '[{"vmid":2099}]' ;;
+      error) exit 1 ;;
+      *) echo '[]' ;;
+    esac ;;
+  */storage) echo '[{"storage":"local-lvm","active":1,"enabled":1}]' ;;
+  */storage/local-lvm/content)
+    if [ "$TEST_PROOF" = volume ]; then echo '[{"volid":"local-lvm:vm-2099-disk-0"}]'; else echo '[]'; fi ;;
+  *) exit 1 ;;
+esac
+`, { mode: 0o755 });
+    fs.writeFileSync(path.join(root, "sitecustomize.py"), 'import socket\nsocket.gethostname = lambda: "node-b"\n');
+    const env = {
+      ...process.env, PATH: bin + ":" + process.env.PATH, PYTHONPATH: root,
+      TEST_PROOF: proof, TEST_QUEUE: path.join(root, "queued"),
+    };
+    const script = preparedOmarchyRefreshHostScript(request, cancel)
+      .replace("/var/lib/hivra/prepared-omarchy-refresh", path.join(root, "operations"))
+      .replace("/run/lock/hivra-prepared-", path.join(root, "lock-"))
+      .replace("/run/qemu-server", path.join(root, "pids"));
+    const result = spawnSync("bash", ["-c", script], { env, encoding: "utf8", timeout: 10_000 });
+    expect(result.status).toBe(0);
+    const status = readOmarchyRefreshHostStatus(result.stdout);
+    if (terminal) {
+      expect(status).toMatchObject({
+        state: "terminal",
+        receipt: { state: "cancelled", bindingReleased: true, guestUpdaterStopped: true, vmid: 2099 },
+      });
+    } else {
+      expect(status.state).toBe("queued");
+    }
+    expect(fs.existsSync(env.TEST_QUEUE)).toBe(!terminal);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it("uses narrow native updater privileges and refuses deferred migrations instead of root-running home migrations", () => {
   expect(OMARCHY_REFRESH_GUEST_STAGE).toContain("sudo -n /usr/bin/omarchy-update-keyring");
   expect(OMARCHY_REFRESH_GUEST_STAGE).toContain("sudo -n /usr/bin/omarchy-update-system-pkgs");
