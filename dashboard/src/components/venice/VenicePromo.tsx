@@ -1,14 +1,13 @@
 import { ArrowRight } from "lucide-react";
 import CopyPromoCode from "@/components/venice/CopyPromoCode";
-import { isVenicePromoEnabled } from "@/lib/venice/promo-flag";
+import { isVenicePromoBannerEnabled } from "@/lib/venice/promo-flag";
 import { buildVeniceLaunchHref } from "@/lib/venice/launch-link";
 import styles from "./venice-promo.module.css";
 
 export const VENICE_PROMO_CODE = "VENICE";
 
-/** The launch offer. Renders nothing unless NEXT_PUBLIC_HIVRA_VENICE_PROMO_ENABLED is "true". */
 export default function VenicePromo() {
-  if (!isVenicePromoEnabled()) return null;
+  if (!isVenicePromoBannerEnabled()) return null;
   return (
     <aside className={styles.promo} data-venice-promo="" aria-labelledby="venice-promo-title">
       <div className={styles.offer}>

@@ -22,7 +22,7 @@ export const metadata: Metadata = {
   ...buildWebsiteMetadata({ path: "/venice", title: TITLE, description: DESCRIPTION }),
 };
 
-// The promo flag is read at request time (computed env key), not frozen at build.
+// The promo checks the deployment's environment at request time.
 export const dynamic = "force-dynamic";
 
 const TILES = [
