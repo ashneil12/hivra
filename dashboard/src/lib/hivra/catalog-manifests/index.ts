@@ -95,6 +95,7 @@ export function catalogAppToAgentDef(
     badge: manifest.badge,
     accent: manifest.accent,
     available: enabled,
+    ...(manifest.runtime.kind === "cli-web" && manifest.runtime.cliChat ? { cliKind: "generic" as const } : {}),
     surface: webSurface ? "dashboard" : "chat",
     floor: { ...manifest.floor },
     ...(hostPort !== null ? { dashboardPort: hostPort } : {}),
