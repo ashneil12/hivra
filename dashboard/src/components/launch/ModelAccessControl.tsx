@@ -1,5 +1,6 @@
 "use client";
 
+import { Check, CircleUserRound, Coins, KeyRound } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 
 import type { Provider } from "@/lib/models";
@@ -8,8 +9,10 @@ import {
   bothWalletsFunded,
   choicesFromVeniceKeyCheck,
   choosesModel,
+  creditsAvailableMicroUsd,
   effectiveModel,
   effectiveProvider,
+  formatCredits,
   modelChoices,
   providerName,
   requiresSavedKey,
@@ -29,6 +32,12 @@ import type { VeniceKeyCheckResult } from "@/app/api/launch/venice-key-check/rou
 import styles from "./ModelAccessControl.module.css";
 
 const KEY_CHECK_DELAY_MS = 600;
+
+const CONNECTION_ICONS = {
+  native: CircleUserRound,
+  "api-key": KeyRound,
+  credits: Coins,
+};
 
 type KeyCheck =
   | { state: "idle" }
@@ -119,9 +128,14 @@ export function ModelAccessControl({
     if (needsLiveModel && firstLive) onChange({ model: firstLive });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the list first arrives.
   }, [needsLiveModel, firstLive]);
-  const customModel = model !== "" && !models.some(choice => choice.value === model);
+  const selectedModel = models.find(choice => choice.value === model);
+  const customModel = model !== "" && !selectedModel;
   const usesVenice = access.mode === "credits" || (access.mode === "api-key" && provider === "venice");
   const setupCall = veniceSetupCallLink(agentName.trim() || null);
+  const availableCredits = creditsAvailableMicroUsd(access, balance);
+  const creditsLabel = availableCredits === null
+    ? balance.state === "loading" ? "Checking balance…" : "Balance unavailable"
+    : `${formatCredits(availableCredits)} available`;
 
   const chooseMode = (mode: LaunchModelAccess["mode"]) => {
     if (mode === access.mode) return;
@@ -175,9 +189,14 @@ export function ModelAccessControl({
     </div>
   ) : (
     <div className={styles.field}>
-      <label htmlFor={`${id}-model`}>Model</label>
+      <div className={styles.modelHeading}>
+        <label htmlFor={`${id}-model`}>Model</label>
+        {selectedModel?.recommended ? <small id={`${id}-model-recommended`} className={styles.badge}>Recommended</small> : null}
+      </div>
       <select
         id={`${id}-model`}
+        className={styles.modelSelect}
+        aria-describedby={selectedModel?.recommended ? `${id}-model-recommended` : undefined}
         value={customModel ? "__custom" : model}
         disabled={disabled}
         onChange={event => onChange({ model: event.target.value === "__custom" ? access.model : event.target.value })}
@@ -208,23 +227,40 @@ export function ModelAccessControl({
 
   return (
     <div className={styles.control}>
-      <p className={styles.question}>{AI_CONNECTION_QUESTION}</p>
-      <div className={styles.options} role="group" aria-label="Model access">
+      <p id={`${id}-question`} className={styles.question}>{AI_CONNECTION_QUESTION}</p>
+      <div className={styles.connections} role="group" aria-label="Model access" aria-describedby={`${id}-question`}>
         {options.map(option => {
           const selected = access.mode === option.mode;
+          const Icon = CONNECTION_ICONS[option.mode];
+          const optionId = `${id}-${option.mode}`;
+          const showBalance = option.mode === "credits" && (!option.unavailable || option.offerAddCredit);
           return (
-            <div key={option.mode} className={styles.option}>
+            <div key={option.mode} className={styles.connection}>
               <button
                 type="button"
+                className={styles.connectionButton}
                 aria-pressed={selected}
+                aria-labelledby={optionId}
+                aria-describedby={showBalance ? `${optionId}-detail ${optionId}-balance` : `${optionId}-detail`}
                 // The chosen option is never shown pressed but disabled; the
                 // problem line below says what to change.
                 disabled={disabled || (Boolean(option.unavailable) && !selected)}
                 onClick={() => chooseMode(option.mode)}
               >
-                <strong>{option.title}</strong>
-                <small>{option.unavailable ?? option.detail}</small>
-                {option.mode === "credits" && option.detail ? <small>Powered by Venice</small> : null}
+                <span className={styles.connectionIcon}><Icon size={17} aria-hidden="true" /></span>
+                <span className={styles.connectionCopy}>
+                  <span className={styles.connectionHeading}>
+                    <strong id={optionId}>{option.title}</strong>
+                    {showBalance ? <span id={`${optionId}-balance`} className={styles.badge}>{creditsLabel}</span> : null}
+                  </span>
+                  <small id={`${optionId}-detail`}>
+                    {option.offerAddCredit ? "Powered by Venice. " : null}
+                    {option.unavailable ?? option.detail}
+                  </small>
+                </span>
+                <span className={styles.selection} aria-hidden="true">
+                  {selected ? <Check size={12} strokeWidth={2.5} /> : null}
+                </span>
               </button>
               {option.offerAddCredit ? (
                 <button type="button" className={styles.inlineAction} disabled={disabled} onClick={onAddCredit}>
@@ -370,15 +406,13 @@ export function ModelAccessControl({
               </select>
             </div>
           ) : null}
-          <p className={styles.note}>
-            Models come from Venice through Hivra, so you don&apos;t need a Venice account. Usage comes out of your Hivra credits. Models marked Private don&apos;t keep your prompts.
-          </p>
           {profileId === "aeon" ? (
             <p className={styles.note}>Aeon adds the credits to its model settings when you connect GitHub. You can change this choice there.</p>
           ) : profileId === "openclaw" || profileId === "agent-zero" || profileId === "openbot" || profileId === "hermes-computer" ? (
             <p className={styles.note}>You can change its provider later in its own settings.</p>
           ) : null}
           {modelPicker}
+          {modelPicker ? <p className={styles.note}>Venice says models marked Private don&apos;t retain your prompts.</p> : null}
         </div>
       ) : null}
 

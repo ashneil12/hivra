@@ -93,7 +93,9 @@ describe("LaunchJourney", () => {
 
     await screen.findByRole("heading", { name: "Review and launch Hermes 1" });
     const options = within(screen.getByRole("group", { name: "Model access" }));
-    expect(options.getByRole("button", { name: /^Hivra credits.*Powered by Venice/ })).toHaveAttribute("aria-pressed", "true");
+    const credits = options.getByRole("button", { name: "Hivra credits" });
+    expect(credits).toHaveAttribute("aria-pressed", "true");
+    expect(credits).toHaveAccessibleDescription(/Powered by Venice/);
     expect(attributionAtPrepare).toHaveBeenCalledWith({ ref: "venice", code: "VENICE" });
   });
 
@@ -343,11 +345,11 @@ describe("LaunchJourney", () => {
     await screen.findByRole("heading", { name: "Review and launch Codex 1" });
 
     const group = within(screen.getByRole("group", { name: "Model access" }));
-    expect(screen.queryByLabelText(/API key$/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Venice AI API key")).not.toBeInTheDocument();
     fireEvent.click(group.getByRole("button", { name: /^Use my/ }));
-    expect(await screen.findByLabelText(/API key$/)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Venice AI API key")).toBeInTheDocument();
     fireEvent.click(group.getByRole("button", { name: /^Hivra credits/ }));
-    expect(screen.queryByLabelText(/API key$/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Venice AI API key")).not.toBeInTheDocument();
   });
 
   it("turns the browser on or off with one click, and Memory has no browser switch", async () => {

@@ -10,7 +10,6 @@ import {
   modelAccessModes,
   modelAccessOptions,
   modelAccessProblem,
-  modelAccessSummary,
   modelChoices,
   modelCostNote,
   recommendedModelAccessMode,
@@ -64,7 +63,7 @@ describe("the model access choices", () => {
     const options = modelAccessOptions("deepseek-harness", CONTEXT);
     expect(options.map(option => option.mode)).toEqual(["api-key", "credits"]);
     expect(byMode("deepseek-harness").credits.unavailable).toBeNull();
-    expect(byMode("deepseek-harness")["api-key"]).toMatchObject({ unavailable: null, detail: "Connect a supported AI provider using your own API key. A Venice API key. Venice bills your model usage." });
+    expect(byMode("deepseek-harness")["api-key"]).toMatchObject({ unavailable: null, detail: "Connect with a Venice key. Venice bills your usage." });
     const ready = { name: "DeepSeek Harness 1", pastedKey: "", savedKeys: [], options };
     expect(modelAccessProblem("deepseek-harness", access({ mode: "credits" }), ready)).toBeNull();
     // A stale draft that chose its own sign-in can't launch.
@@ -73,8 +72,6 @@ describe("the model access choices", () => {
     expect(modelAccessProblem("deepseek-harness", access({ mode: "api-key" }), { ...ready, pastedKey: "synthetic-venice-key" })).toBeNull();
     expect(modelAccessProblem("deepseek-harness", access({ mode: "api-key" }), { ...ready, pastedKey: "short" }))
       .toBe("Check the key: it should be one line of 8 to 256 characters.");
-    expect(modelAccessSummary("deepseek-harness", access({ mode: "credits" }), { name: "DeepSeek Harness 1", balance: FUNDED, savedKeys: [] }))
-      .toBe("Hivra credits ($4.25 available) · DeepSeek V4.1 Flash");
     expect(modelCostNote("deepseek-harness", access({ mode: "credits" }))).toBe("Model usage is paid from your Hivra credits at provider rates.");
   });
 
@@ -121,8 +118,6 @@ describe("the model access choices", () => {
     expect(modelAccessProblem("claude-code", credits, { name: "Claude Code 1", pastedKey: "", savedKeys: [], options })).toBeNull();
     expect(modelAccessProblem("claude-code", access({ mode: "credits", model: "deepseek-v4-pro" }), { name: "Claude Code 1", pastedKey: "", savedKeys: [], options }))
       .toBe("Choose a model from the list, or enter a valid model ID.");
-    expect(modelAccessSummary("claude-code", credits, { name: "Claude Code 1", balance: FUNDED, savedKeys: [] }))
-      .toBe("Hivra credits ($4.25 available) · Claude Sonnet 4.6 (via Venice)");
   });
 
   it("offers no model choice for computers", () => {
@@ -130,12 +125,12 @@ describe("the model access choices", () => {
     expect(modelAccessOptions("windows", CONTEXT)).toEqual([]);
   });
 
-  it("shows the credit balance, and at $0 asks for credit and offers to add some", () => {
-    expect(byMode("hermes").credits).toMatchObject({ detail: "Use supported AI models through Hivra without configuring a separate model provider API key. $4.25 available. Model usage is paid from your credits at provider rates.", unavailable: null, offerAddCredit: false });
+  it("offers to add credits only when a known balance is empty", () => {
+    expect(byMode("hermes").credits).toMatchObject({ unavailable: null, offerAddCredit: false });
     expect(byMode("hermes", { ...CONTEXT, balance: EMPTY }).credits).toMatchObject({ unavailable: "Add credit to start chatting.", offerAddCredit: true });
     // A balance that couldn't be read is not $0.
     expect(byMode("hermes", { ...CONTEXT, balance: { state: "unknown" } }).credits).toMatchObject({ unavailable: null, offerAddCredit: false });
-    expect(byMode("hermes", { ...CONTEXT, balance: { state: "loading" } }).credits.detail).toBe("Use supported AI models through Hivra without configuring a separate model provider API key. Checking your Hivra credits…");
+    expect(byMode("hermes", { ...CONTEXT, balance: { state: "loading" } }).credits).toMatchObject({ unavailable: null, offerAddCredit: false });
   });
 
   it("has no Hivra credits to offer on a self-hosted installation", () => {
@@ -276,7 +271,7 @@ describe("what a model access choice needs before launch", () => {
   });
 });
 
-describe("models, wallets and plain-words summaries", () => {
+describe("models, wallets and cost notes", () => {
   it("lists models from a dropdown, with Codex's default and Hermes' first listed model", () => {
     expect(effectiveModel("codex", access({ mode: "credits" }))).toBe("deepseek-v4-1-flash");
     expect(effectiveModel("hermes", access({ mode: "credits" }))).toBe(modelChoices("hermes", access({ mode: "credits" }))[0].value);
@@ -295,22 +290,7 @@ describe("models, wallets and plain-words summaries", () => {
     expect(formatCredits(-1)).toBe("$0.00");
   });
 
-  it("says in plain words what the launch will do", () => {
-    const summary = (profileId: LaunchProfileId, choice: LaunchModelAccess, savedKeys: SavedModelKey[] = []) =>
-      modelAccessSummary(profileId, choice, { name: "Codex 1", balance: FUNDED, savedKeys });
-    expect(summary("codex", access({ mode: "native" }))).toBe("Sign in to ChatGPT inside Codex after it opens.");
-    expect(summary("codex", access({ mode: "api-key", keySource: "saved", vaultKeyId: VENICE_KEY.id }), [VENICE_KEY]))
-      .toBe("Your saved Venice AI key ••3f2a, sent to Codex 1's computer · DeepSeek V4.1 Flash (via Venice · recommended)");
-    expect(summary("codex", access({ mode: "api-key", keySource: "paste", saveKey: true })))
-      .toBe("The Venice AI key you pasted, sent to Codex 1's computer and saved in your Vault · DeepSeek V4.1 Flash (via Venice · recommended)");
-    // The Vault keeps one key per provider, so Review says which saved key a save replaces.
-    expect(summary("codex", access({ mode: "api-key", keySource: "paste", saveKey: true }), [VENICE_KEY]))
-      .toBe("The Venice AI key you pasted, sent to Codex 1's computer and saved in your Vault, replacing ••3f2a · DeepSeek V4.1 Flash (via Venice · recommended)");
-    expect(summary("codex", access({ mode: "api-key", keySource: "paste", saveKey: false }), [VENICE_KEY]))
-      .toBe("The Venice AI key you pasted, sent to Codex 1's computer · DeepSeek V4.1 Flash (via Venice · recommended)");
-    expect(summary("hermes", access({ mode: "credits" }))).toMatch(/^Hivra credits \(\$4\.25 available\) · /);
-    expect(summary("aeon", access({ mode: "credits" }))).toBe("Hivra credits ($4.25 available). Aeon sets them up when you connect GitHub.");
-    expect(summary("ubuntu-desktop", access())).toBeNull();
+  it("says who bills usage in the Cost row", () => {
     expect(modelCostNote("codex", access({ mode: "api-key" }))).toBe("Venice AI bills your model usage.");
     expect(modelCostNote("hermes", access({ mode: "credits" }))).toBe("Model usage is paid from your Hivra credits at provider rates.");
     expect(modelCostNote("claude-code", access({ mode: "native" }))).toBeNull();
