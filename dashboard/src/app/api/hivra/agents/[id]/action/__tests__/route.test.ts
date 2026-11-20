@@ -781,15 +781,17 @@ ${start}
     expect(mockSupabaseRpc.mock.calls.some(([rpc]) => rpc === "continue_hivra_agent_resize_operation")).toBe(false);
   });
 
-  it("keeps Linux desktop resize free of agent-container cgroup commands", async () => {
-    mockAgent.type = "linux-desktop";
+  it.each(["linux-desktop", "agent-zero"])("resizes the %s VM using its VM resource envelope", async (type) => {
+    mockAgent.type = type;
     const response = await POST(
       makeRequest({ action: "resize", cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 }) as never,
       { params: Promise.resolve({ id: "agent-1" }) },
     );
 
     expect(response.status).toBe(200);
-    expect(mockRunProxmoxHostScript.mock.calls[0][0]).not.toContain("CGROUP_SCRIPT_B64");
+    const script = mockRunProxmoxHostScript.mock.calls[0][0] as string;
+    expect(script).toContain("qm set 1090 --cores 4 --cpulimit 4 --memory 8192 --balloon 4096");
+    expect(script).not.toContain("CGROUP_SCRIPT_B64");
   });
 
   it.each([
