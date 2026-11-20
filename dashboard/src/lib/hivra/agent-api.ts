@@ -206,10 +206,14 @@ export type HivraLaunchReceipt =
 /** Read the owner-bound receipt without submitting another launch. A missing
  * row is deliberately distinct from a failed launch: the original POST may
  * still be reaching the server. */
-export async function findHivraLaunchReceipt(launchRequestId: string): Promise<HivraLaunchReceipt | null> {
+export async function findHivraLaunchReceipt(launchRequestId: string, signal?: AbortSignal): Promise<HivraLaunchReceipt | null> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 10_000);
+  const abort = () => controller.abort();
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  const timeout = window.setTimeout(abort, 10_000);
   let r: Response;
+  let j: Awaited<ReturnType<typeof readJson>>;
   try {
     r = await fetch(`/api/hivra/agent-launches/${encodeURIComponent(launchRequestId)}`, {
       method: "GET",
@@ -218,11 +222,12 @@ export async function findHivraLaunchReceipt(launchRequestId: string): Promise<H
       redirect: "error",
       signal: controller.signal,
     });
+    if (r.status === 404) return null;
+    j = await readJson(r);
   } finally {
     window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
   }
-  if (r.status === 404) return null;
-  const j = await readJson(r);
   const data = j?.data as {
     launchRequestId?: unknown;
     phase?: unknown;
