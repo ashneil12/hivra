@@ -34,6 +34,7 @@ const MODULES: Record<string, string> = {
 describe("Agent Zero mounted module graph", () => {
   let gateway: http.Server;
   let upstream: http.Server;
+  let desktopBroker: http.Server;
   let port: number;
   let moduleGraph = false;
   let requireNativeCsrf = false;
@@ -107,6 +108,8 @@ describe("Agent Zero mounted module graph", () => {
   }
 
   beforeAll(async () => {
+    desktopBroker = http.createServer((_req, res) => { res.writeHead(403); res.end("desktop broker"); });
+    track(desktopBroker); desktopBroker.listen(0, "127.0.0.1"); await once(desktopBroker, "listening");
     upstream = http.createServer((req, res) => {
       let body = ""; req.setEncoding("utf8"); req.on("data", chunk => { body += chunk; });
       req.on("end", () => {
@@ -264,6 +267,7 @@ describe("Agent Zero mounted module graph", () => {
         throw new Error(`Unexpected dependency ${name}`);
       },
       process: { env: { HIVRA_CHAT_PORT: "0", HIVRA_AGENT_KIND: "agent-zero",
+        HIVRA_REMOTE_DESKTOP_BROKER_PORT: String((desktopBroker.address() as AddressInfo).port),
         AGENT_ZERO_PORT: String((upstream.address() as AddressInfo).port) } },
       __dirname: path.dirname(serverPath), Buffer, URL, URLSearchParams, setTimeout, clearTimeout,
       console: { log() {}, warn(...values: unknown[]) { warnings.push(values.join(" ")); }, error() {} },
@@ -276,7 +280,7 @@ describe("Agent Zero mounted module graph", () => {
     for (const client of wsServer.clients) client.terminate();
     wsServer.close();
     for (const socket of sockets) socket.destroy();
-    await Promise.all([gateway, upstream].map(server => new Promise<void>((resolve, reject) => {
+    await Promise.all([gateway, upstream, desktopBroker].map(server => new Promise<void>((resolve, reject) => {
       server.close(error => error ? reject(error) : resolve());
     })));
   });
@@ -288,6 +292,39 @@ describe("Agent Zero mounted module graph", () => {
     const secondUrl = new URL("./second.js", ORIGIN + "/js/first.js?v=1").pathname;
     expect(secondUrl).toBe("/js/second.js");
     expect(await request(secondUrl, { ref: "/js/first.js" })).toMatchObject({ status: 200, body: "export const ready = true;" });
+  });
+
+  const browserPath = "/desktop/session/browser-" + "a".repeat(32) + "/";
+  it("serves the Xpra iframe, assets and session info from their original root URLs", async () => {
+    const cookie = await sessionCookie();
+    for (const [url, ref] of [
+      [browserPath + "index.html?path=" + encodeURIComponent(browserPath), "/agent-zero/"],
+      [browserPath + "js/Client.js", browserPath + "index.html"],
+      [browserPath + "Info", undefined],
+    ] as const) {
+      const before = dispatched.length;
+      expect(await request(url, { ref, auth: false })).toMatchObject({ status: 401 });
+      expect(await request(url, { ref, auth: false, cookie })).toMatchObject({ status: 200, location: undefined });
+      expect(dispatched.slice(before)).toEqual([expect.objectContaining({ method: "GET", path: url })]);
+      expect(dispatched.at(-1)?.cookie ?? "").not.toContain(cookie);
+    }
+    for (const url of ["/desktop/handoff", "/desktop/sessions/test/", "/desktop/session/browser-no-match/"]) {
+      expect(await request(url, { cookie })).toMatchObject({ status: 403, body: "desktop broker" });
+    }
+  });
+
+  it("routes the Xpra WebSocket with the same owner session and Origin checks as the native app", async () => {
+    const cookie = await sessionCookie();
+    const before = upgrades.length;
+    const url = browserPath + "?encoding=jpeg";
+    await request("/agent-zero/api/csrf_token", { cookie });
+    try {
+      expect(await upgrade(url, {})).toBe(401);
+      expect(await upgrade(url, { Cookie: cookie })).toBe(401);
+      expect(await upgrade(url, { Cookie: cookie, Origin: ORIGIN, "Sec-WebSocket-Protocol": "binary" })).toBe(101);
+      expect(upgrades.slice(before)).toEqual([expect.objectContaining({ path: url,
+        headers: expect.objectContaining({ cookie: `${NATIVE_COOKIE}; native_aux=retained; csrf_token_${RUNTIME_ID}=${CSRF_TOKEN}`, "sec-websocket-protocol": "binary" }) })]);
+    } finally { await request("/agent-zero/fixture/clear-all"); }
   });
 
   it.each(Object.keys(EDITOR_FIXTURES))("transforms only the pinned native editor at root and mounted paths: %s", async asset => {
@@ -449,6 +486,41 @@ describe("Agent Zero mounted module graph", () => {
     expect(dispatched).toHaveLength(before);
   });
 
+  it("routes the A0 CLI's root connector calls to the native backend for a signed-in web session only", async () => {
+    const cookie = await sessionCookie();
+    const chats = "/api/plugins/_a0_connector/v1/chats_list";
+    const probe = "/api/plugins/_a0_connector/v1/capabilities";
+    // The capability probe is public discovery; everything else needs the session.
+    let before = dispatched.length;
+    expect(await request(probe, { method: "POST", auth: false, body: "{}" })).toMatchObject({ status: 200 });
+    expect(dispatched).toHaveLength(before + 1);
+    expect(dispatched.at(-1)?.path).toBe(probe);
+    expect(dispatched.at(-1)?.authorization).toBeUndefined();
+    before = dispatched.length;
+    expect(await request(probe, { auth: false })).toMatchObject({ status: 401 });
+    expect(await request(chats, { method: "POST", auth: false, body: "{}" })).toMatchObject({ status: 401 });
+    expect(await request("/api/csrf_token", { auth: false })).toMatchObject({ status: 401 });
+    // A browser write from another site (Origin or Sec-Fetch-Site present) cannot ride the cookie.
+    expect(await request(chats, { method: "POST", auth: false, cookie, headers: { Origin: "https://other.hivra.test" }, body: "{}" })).toMatchObject({ status: 401 });
+    expect(await request(chats, { method: "POST", auth: false, cookie, headers: { "Sec-Fetch-Site": "cross-site" }, body: "{}" })).toMatchObject({ status: 401 });
+    expect(dispatched).toHaveLength(before);
+    // A non-browser client sends the session cookie with no Origin.
+    expect(await request(chats, { method: "POST", auth: false, cookie, body: "{}" })).toMatchObject({ status: 200 });
+    expect(dispatched.at(-1)?.path).toBe(chats);
+    expect(dispatched.at(-1)?.body).toBe("{}");
+    expect(dispatched.at(-1)?.cookie ?? "").not.toContain("hivra_auth");
+    expect(dispatched.at(-1)?.authorization).toBeUndefined();
+    loginFixture = "ready";
+    expect(await request("/api/csrf_token", { auth: false, cookie })).toMatchObject({ status: 200 });
+    loginFixture = "absent";
+    await request("/agent-zero/fixture/clear-all");
+    await resetNativeCsrf();
+    // Neighbouring paths stay with the gateway.
+    before = dispatched.length;
+    expect(await request("/api/load_webui_extensions", { method: "POST", auth: false, cookie, body: "{}" })).toMatchObject({ status: 404 });
+    expect(dispatched).toHaveLength(before);
+  });
+
   it("never forwards browser backend cookies or management bearer on a native upgrade without a cached session", async () => {
     expect(await upgrade("/socket.io/?EIO=4&transport=websocket", { Authorization: `Bearer ${TOKEN}`, Cookie: "session=untrusted" })).toBe(101);
     expect(upgrades.at(-1)?.headers.cookie).toBeUndefined();
@@ -494,10 +566,28 @@ describe("Agent Zero mounted module graph", () => {
     for (const origin of [undefined, "https://other.hivra.test"])
       expect(await request(url, { method: "POST", auth: false, cookie, headers: origin ? { Origin: origin } : {} })).toMatchObject({ status: 401 });
     expect(await request(url, { method: "POST", auth: false, cookie, headers: { Origin: ORIGIN }, body: "fixture-packet" })).toMatchObject({ status: 200 });
-    for (const path of ["/socket.io", "/socket.io/other", "/socket.io-other/", "/ws"])
+    for (const path of ["/socket.io/other", "/socket.io-other/", "/ws"])
       expect(await request(path)).toMatchObject({ status: 404 });
     expect(await request(url, { method: "PUT", body: "fixture-packet" })).toMatchObject({ status: 404 });
     expect(dispatched).toHaveLength(before + 2);
+  });
+
+  it("accepts the A0 CLI polling probe and forwards its query with the Socket.IO trailing slash", async () => {
+    const cookie = await sessionCookie();
+    const url = "/socket.io?transport=polling&EIO=4";
+    const before = dispatched.length;
+    expect(await request(url, { auth: false, headers: { Origin: ORIGIN } })).toMatchObject({ status: 401 });
+    const headers = { "X-Forwarded-Host": "other.hivra.test", "X-Forwarded-Proto": "http" };
+    expect(await request(url, { auth: false, cookie, headers: { ...headers, Origin: ORIGIN } })).toMatchObject({ status: 200 });
+    expect(dispatched.slice(before)).toEqual([expect.objectContaining({
+      method: "GET", path: "/socket.io/?transport=polling&EIO=4", cookie: PRIVATE_COOKIE,
+      headers: expect.objectContaining({ "x-forwarded-host": new URL(ORIGIN).host, "x-forwarded-proto": "https" }),
+    })]);
+    expect(await request(url, { method: "POST", auth: false, cookie, headers: { Origin: "https://other.hivra.test" } }))
+      .toMatchObject({ status: 401 });
+    await request(url, { auth: false, cookie, headers: { ...headers, Origin: "https://other.hivra.test" } });
+    expect(dispatched.at(-1)?.headers["x-forwarded-host"]).toBeUndefined();
+    expect(dispatched.at(-1)?.headers["x-forwarded-proto"]).toBeUndefined();
   });
 
   it("upgrades only the exact root Socket.IO endpoint with owner session and same-box Origin", async () => {
@@ -510,9 +600,14 @@ describe("Agent Zero mounted module graph", () => {
     expect(upgrades.slice(before)).toEqual([expect.objectContaining({ path: url })]);
     expect(upgrades.at(-1)?.headers.cookie).toBe(PRIVATE_COOKIE);
     expect(upgrades.at(-1)?.headers.authorization).toBeUndefined();
-    for (const path of ["/socket.io", "/socket.io/other", "/socket.io-other/", "/ws", "/api/socket"])
+    for (const path of ["/socket.io/other", "/socket.io-other/", "/ws", "/api/socket"])
       expect(await upgrade(path, { Authorization: `Bearer ${TOKEN}` })).toBe(0);
     expect(upgrades).toHaveLength(before + 1);
+    const cliUrl = "/socket.io?EIO=4&transport=websocket";
+    expect(await upgrade(cliUrl, { Cookie: cookie, Origin: "https://other.hivra.test" })).toBe(401);
+    expect(await upgrade(cliUrl, { Cookie: cookie, Origin: ORIGIN, "X-Forwarded-Host": "other.hivra.test", "X-Forwarded-Proto": "http" })).toBe(101);
+    expect(upgrades.at(-1)?.path).toBe(url);
+    expect(upgrades.at(-1)?.headers).toMatchObject({ "x-forwarded-host": new URL(ORIGIN).host, "x-forwarded-proto": "https" });
   });
 
   it("activates a native WebSocket handler only after binding the exact CSRF JSON to its private session", async () => {

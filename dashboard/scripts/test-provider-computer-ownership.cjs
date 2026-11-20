@@ -793,6 +793,45 @@ async function main() {
     });
     await db.exec(NO_BOOT_UPGRADE_ADMISSION);
     assert.deepEqual(await admissionDefinitions(), admittedNoBootUpgrade, "re-applying the 2026.11.18.4 admission changes nothing");
+    // 2026.11.18.5 anchors on the 2026.11.18.4 entry; idempotent too.
+    const CLI_CONNECTOR_ADMISSION = migration("20261118230000_provider_release_admission_2026_11_18_5.sql");
+    await db.exec(CLI_CONNECTOR_ADMISSION);
+    const admittedCliConnector = await admissionDefinitions();
+    admittedCliConnector.forEach((definition, index) => {
+      for (const version of ["2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5"]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1, `${admissionFunctions[index]} admits ${version} once`);
+      }
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, "7728d82d75d26e95ab4b9ed61ae5f267bed89825618d252b6699701f0819de6c"), 1,
+          `${admissionFunctions[index]} admits the 2026.11.18.5 digest once`);
+        assert.equal(occurrences(definition, "4eff220ba9a6b103e0a7892204aeccced297674749d0a269916f71736810b6d3"), 1,
+          `${admissionFunctions[index]} keeps the 2026.11.18.4 digest`);
+      }
+    });
+    await db.exec(CLI_CONNECTOR_ADMISSION);
+    assert.deepEqual(await admissionDefinitions(), admittedCliConnector, "re-applying the 2026.11.18.5 admission changes nothing");
+    const xpraBrowserAdmission = migration("20261119151000_provider_release_admission_2026_11_19_1.sql");
+    await db.exec(xpraBrowserAdmission);
+    const admittedXpraBrowser = await admissionDefinitions();
+    admittedXpraBrowser.forEach((definition, index) => {
+      for (const version of ["2026.11.18.5", "2026.11.19.1"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["7728d82d75d26e95ab4b9ed61ae5f267bed89825618d252b6699701f0819de6c", "c8e4bbf72a7e39b1d8c5ddd4f42ee9390fded2925e6c7c1ebb9f61ecde00ba03"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(xpraBrowserAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedXpraBrowser, "re-applying the Xpra browser admission changes nothing");
+    const cliTransportAdmission = migration("20261120140000_provider_release_admission_2026_11_20_1.sql");
+    await db.exec(cliTransportAdmission);
+    const admittedCliTransport = await admissionDefinitions();
+    admittedCliTransport.forEach((definition, index) => {
+      for (const version of ["2026.11.19.1", "2026.11.20.1"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["c8e4bbf72a7e39b1d8c5ddd4f42ee9390fded2925e6c7c1ebb9f61ecde00ba03", "4f88c13c76732bc5779afda1d8199e012200fcd653567f7f700f8c3611e8e21a"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(cliTransportAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedCliTransport, "re-applying the CLI transport admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

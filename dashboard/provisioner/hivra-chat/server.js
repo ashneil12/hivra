@@ -2605,6 +2605,43 @@ function a0Login(cb, isCurrent) {
   r.write(body); r.end();
   return r;
 }
+// The A0 CLI (agent0ai/a0-connector) talks to the host's ROOT, not to a mount:
+// POST /api/plugins/_a0_connector/v1/*, GET /api/csrf_token, the file/upload
+// helpers it uses, and /socket.io. It signs in once through POST /login with a
+// Connect app grant, then holds the ordinary surface cookie. A non-browser
+// client does not send an Origin header on those calls, which the cookie gate
+// for mutations requires, so this narrow path set accepts the same cookie
+// without one. A browser always sends Origin (and Sec-Fetch-Site) on a write, so
+// a page on another site still cannot ride the cookie. The capability probe is
+// A0's own public discovery endpoint and needs no sign-in.
+const A0_CONNECTOR_REQS = new WeakSet();
+// Agent Zero gives Xpra a root-absolute path for both its assets and its
+// stream. Only its browser sessions belong to A0, not the desktop broker.
+function a0BrowserSession(pathname) {
+  return AGENT_KIND === "agent-zero" && /^\/desktop\/session\/browser-[a-f0-9]{32}(?:\/|$)/.test(pathname);
+}
+function a0SocketIoPath(pathname) {
+  return AGENT_KIND === "agent-zero" && (pathname === "/socket.io" || pathname === "/socket.io/");
+}
+function a0SocketIoUrl(url) {
+  return "/socket.io/" + url.slice("/socket.io".length).replace(/^\//, "");
+}
+function a0SocketIoForwardedOrigin(req) {
+  // Engine.IO sees loopback HTTP. Give it the public origin only after it
+  // matches the box, without trusting incoming proxy headers.
+  return sameBoxOrigin(req) ? { "x-forwarded-host": new URL(req.headers.origin).host, "x-forwarded-proto": "https" } : {};
+}
+const A0_CONNECTOR_PROBE = "/api/plugins/_a0_connector/v1/capabilities";
+const A0_CONNECTOR_CORE_API = new Set(["/api/csrf_token", "/api/image_get", "/api/download_work_dir_file", "/api/chat_files_path_get", "/api/get_work_dir_files"]);
+function a0ConnectorRootPath(req, u) {
+  if (u.startsWith("/api/plugins/") || A0_CONNECTOR_CORE_API.has(u)) return true;
+  // The gateway's own /api/upload takes the management bearer; the CLI sends the web session and a CSRF header.
+  return u === "/api/upload" && Boolean(req.headers["x-csrf-token"]) && !bearerAuthed(req);
+}
+function a0ConnectorRootAuthed(req) {
+  if (authed(req)) return true;
+  return validAuthSession(cookieVal(req, AUTH_COOKIE)) && !req.headers["origin"] && !req.headers["sec-fetch-site"];
+}
 // Proxy to Agent Zero with the login session injected. On a cache miss — or when
 // the container rotates the session and 302s back to /login — (re)log in and retry
 // the (GET) request once, so the owner never sees Agent Zero's own login screen.
@@ -2622,7 +2659,7 @@ function a0CanonicalEntryHtml(html) {
   return seen["index.js"] === 1 && seen["js/initFw.js"] === 1 ? rewritten : null;
 }
 function a0Proxy(req, res, retried, csrfContext, editorContext) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req) && !A0_CONNECTOR_REQS.has(req)) return denyHtml(res);
   if (!retried && isAgentAppPort(AGENT_ZERO_PORT) && agentAppHold(req, res)) return;
   let apath = req.url.slice("/agent-zero".length); if (!apath.startsWith("/")) apath = "/" + apath;
   // Newer Agent Zero serves a splash bootstrap at / that installs the real
@@ -2693,6 +2730,11 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     if (csrf && csrf.done) return;
     if (csrf && csrf.attempt !== _a0CsrfAttempt) return rejectCsrf("session-changed");
     const headers = Object.assign({}, req.headers, { host: "127.0.0.1:" + AGENT_ZERO_PORT });
+    if (a0SocketIoPath(apath.split("?")[0])) {
+      delete headers["x-forwarded-host"];
+      delete headers["x-forwarded-proto"];
+      Object.assign(headers, a0SocketIoForwardedOrigin(req));
+    }
     const requestSessionRevision = _a0SessionRevision;
     const entryDocument = (req.method === "GET" || req.method === "HEAD") && ["/", "/index.html"].includes(apath.split("?")[0]);
     // Newer Agent Zero serves a splash bootstrap at / and the pinned app
@@ -4605,11 +4647,15 @@ const server = http.createServer((req, res) => {
   // in-app request (Referer is the /agent-zero surface) back under /agent-zero, where
   // the mount below strips the prefix before forwarding to the container.
   if (AGENT_KIND === "agent-zero" && !u.startsWith("/agent-zero")) {
-    // The native Socket.IO client uses its default root transport path for
-    // both polling and WebSocket upgrades. Keep that one exact endpoint at
-    // root; a0Proxy applies the same owner/Origin gate as mounted native RPC.
-    if (u === "/socket.io/" && (req.method === "GET" || req.method === "POST")) {
+    if (a0BrowserSession(u) && (req.method === "GET" || req.method === "HEAD")) {
       req.url = "/agent-zero" + req.url;
+      return a0Proxy(req, res);
+    }
+    // The native Socket.IO client uses its default root transport path for
+    // both polling and WebSocket upgrades. The CLI's polling probe omits the
+    // trailing slash. Keep both forms behind the native owner/Origin gate.
+    if (a0SocketIoPath(u) && (req.method === "GET" || req.method === "POST")) {
+      req.url = "/agent-zero" + a0SocketIoUrl(req.url);
       return a0Proxy(req, res);
     }
     let refPath = "";
@@ -4638,6 +4684,12 @@ const server = http.createServer((req, res) => {
         res.writeHead(307, { Location: "/agent-zero" + req.url, "Cache-Control": "no-store" });
         return res.end();
       }
+      req.url = "/agent-zero" + req.url;
+      return a0Proxy(req, res);
+    }
+    if (a0ConnectorRootPath(req, u)) {
+      if (!(req.method === "POST" && u === A0_CONNECTOR_PROBE) && !a0ConnectorRootAuthed(req)) return jsonRes(res, 401, { error: "unauthorized" });
+      A0_CONNECTOR_REQS.add(req);
       req.url = "/agent-zero" + req.url;
       return a0Proxy(req, res);
     }
@@ -4777,7 +4829,9 @@ server.on("upgrade", (req, socket, head) => {
   // the one WebSocket that passes without the Hivra gate, and it never counts
   // as use of the app through Hivra.
   const nuphosAcp = AGENT_KIND === "nuphos" && u === NUPHOS_ACP;
-  const remoteDesktopUpgrade = u.startsWith("/desktop/");
+  const a0BrowserUpgrade = a0BrowserSession(u);
+  const a0SocketIoUpgrade = a0SocketIoPath(u);
+  const remoteDesktopUpgrade = !a0BrowserUpgrade && u.startsWith("/desktop/");
   // The ttyd/noVNC websockets carry the actual terminal/VNC I/O — gate them too.
   // The browser sends the hivra_auth cookie (set on the iframe's first load) on
   // the upgrade handshake automatically.
@@ -4792,7 +4846,7 @@ server.on("upgrade", (req, socket, head) => {
   else if (u.startsWith("/aeon")) port = AEON_PORT; // Next.js HMR ws (dev); no strip (basePath=/aeon)
   else if (u.startsWith("/openclaw")) { port = OPENCLAW_PORT; strip = openclawStrip(); } // gateway WS control/RPC (at its basePath, or at root on an older computer)
   else if (u.startsWith("/agent-zero")) { port = AGENT_ZERO_PORT; strip = "/agent-zero"; } // Agent Zero WS (served at root)
-  else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
+  else if (a0BrowserUpgrade || a0SocketIoUpgrade) port = AGENT_ZERO_PORT;
   else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)
   else if (AGENT_KIND === "openbot" && !openbotGatewayPath(u)) port = OPENBOT_PORT; // OpenBot's WebSockets (served at the root)
   else if (AGENT_KIND === "nuphos" && !nuphosGatewayPath(u)) port = NUPHOS_PORT; // the runtime's /acp and console sockets
@@ -4816,7 +4870,7 @@ server.on("upgrade", (req, socket, head) => {
     socket.once("end", closed);
     socket.once("close", closed);
   }
-  let fwdUrl = req.url;
+  let fwdUrl = a0SocketIoUpgrade ? a0SocketIoUrl(req.url) : req.url;
   if (strip) { fwdUrl = req.url.slice(strip.length); if (!fwdUrl.startsWith("/")) fwdUrl = "/" + fwdUrl; }
   // Agent Zero's WS also rides its form-login session (the browser never holds one —
   // we inject our managed cookie), so its live chat/canvas connect behind our gate.
@@ -4844,6 +4898,7 @@ server.on("upgrade", (req, socket, head) => {
     for (const [k, raw] of Object.entries(req.headers)) {
       const key = k.toLowerCase();
       if (a0Ws && key === "cookie") continue;
+      if (a0SocketIoUpgrade && (key === "x-forwarded-host" || key === "x-forwarded-proto")) continue;
       if (hermesWs && (key === "host" || key in hermesSet)) continue;
       if (openbotWs && (key === "host" || key in openbotSet)) continue;
       if (nuphosWs && key in NUPHOS_SET_HEADERS) continue;
@@ -4872,6 +4927,9 @@ server.on("upgrade", (req, socket, head) => {
     }
     const nativeCookie = a0Ws ? a0UpstreamCookie() : null;
     if (nativeCookie) hdr += "cookie: " + nativeCookie + "\r\n";
+    if (a0SocketIoUpgrade) {
+      for (const [name, value] of Object.entries(a0SocketIoForwardedOrigin(req))) hdr += name + ": " + value + "\r\n";
+    }
     hdr += "\r\n";
     proxy.write(hdr);
     if (head && head.length) proxy.write(head);
