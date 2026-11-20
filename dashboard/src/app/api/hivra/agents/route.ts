@@ -97,10 +97,12 @@ export async function GET() {
     // One read of the stored software observations, never the computers
     // themselves: the list tags agents whose Claude Code / Codex is behind.
     const covered = new Set(rows.filter((row) => agentSoftwareSubject(row) !== null).map((row) => String(row.id)));
-    const software = await readAgentSoftwareRecords(userId, [...covered]);
-    const now = Date.now();
     // What each agent is waiting on its owner for (empty while the inbox switch is off).
-    const prompts = await openPromptsFor(rows.map((row) => String(row.id)));
+    const [software, prompts] = await Promise.all([
+      readAgentSoftwareRecords(userId, [...covered]),
+      openPromptsFor(rows.map((row) => String(row.id))),
+    ]);
+    const now = Date.now();
     const agents = rows.map((row) => {
       const prompt = prompts[String(row.id)];
       const agent = prompt ? { ...sanitizeHivraAgentRow(row), inbox_prompt: prompt } : sanitizeHivraAgentRow(row);
