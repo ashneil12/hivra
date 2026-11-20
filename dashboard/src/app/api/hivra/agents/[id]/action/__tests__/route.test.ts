@@ -662,6 +662,32 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     );
   });
 
+  it("keeps the resize allocation lock in the host shell and out of both VM starts", async () => {
+    const response = await POST(
+      makeRequest({ action: "resize", cpu: 2, ram: 4 }) as never,
+      { params: Promise.resolve({ id: "agent-1" }) },
+    );
+    expect(response.status).toBe(200);
+
+    const script: string = mockRunProxmoxHostScript.mock.calls[0][0];
+    const starts = [...script.matchAll(/\b(qm start 1090[^;|\n]*)/g)].map((match) => match[1]);
+    expect(starts).toHaveLength(2);
+    for (const start of starts) {
+      const result = spawnSync("bash", ["-ec", `
+exec 8>/dev/null
+qm() {
+  if ( : >&8 ) 2>/dev/null; then
+    echo 'VM start inherited the allocation lock descriptor' >&2
+    return 1
+  fi
+}
+${start}
+: >&8
+`], { encoding: "utf8" });
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+    }
+  });
+
   it("resizes an explicit envelope with the maximum as quota and guarantee as balloon floor", async () => {
     const response = await POST(
       makeRequest({ action: "resize", cpu: 0.5, ram: 1, maximumCpu: 2, maximumRam: 4 }) as never,
