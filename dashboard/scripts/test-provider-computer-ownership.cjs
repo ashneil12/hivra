@@ -821,6 +821,17 @@ async function main() {
     });
     await db.exec(xpraBrowserAdmission);
     assert.deepEqual(await admissionDefinitions(), admittedXpraBrowser, "re-applying the Xpra browser admission changes nothing");
+    const cliTransportAdmission = migration("20261120140000_provider_release_admission_2026_11_20_1.sql");
+    await db.exec(cliTransportAdmission);
+    const admittedCliTransport = await admissionDefinitions();
+    admittedCliTransport.forEach((definition, index) => {
+      for (const version of ["2026.11.19.1", "2026.11.20.1"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["c8e4bbf72a7e39b1d8c5ddd4f42ee9390fded2925e6c7c1ebb9f61ecde00ba03", "4f88c13c76732bc5779afda1d8199e012200fcd653567f7f700f8c3611e8e21a"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(cliTransportAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedCliTransport, "re-applying the CLI transport admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
