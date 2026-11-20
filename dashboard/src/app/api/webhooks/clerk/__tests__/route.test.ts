@@ -167,6 +167,22 @@ describe("POST /api/webhooks/clerk", () => {
     expect(mockedWelcome).not.toHaveBeenCalled();
   });
 
+  it("does not send a welcome email to a Canary Clerk test fixture", async () => {
+    process.env.HERMES_DEPLOY_CHANNEL = "canary";
+    const user = {
+      id: "user_fixture",
+      primary_email_address_id: "email_fixture",
+      email_addresses: [
+        { id: "email_fixture", email_address: "fixture+clerk_test@example.com", verification: { status: "verified" } },
+      ],
+    };
+
+    const response = await POST(makeRequest({ type: "user.created", data: user }));
+
+    expect(response.status).toBe(200);
+    expect(mockedWelcome).not.toHaveBeenCalled();
+  });
+
   it("welcomes the verified secondary address when the primary is unverified", async () => {
     const user = {
       id: "user_mixed",
