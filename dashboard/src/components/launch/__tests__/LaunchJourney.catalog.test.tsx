@@ -127,7 +127,7 @@ describe("every catalog agent launches in the Launch journey", () => {
     expect(modelChoice(/^Hivra credits/)).toHaveTextContent("$4.25 available");
 
     const review = await reviewLaunch();
-    expect(review.getByText(/^Hivra credits \(\$4\.25 available\) · DeepSeek V4\.1 Flash/)).toBeInTheDocument();
+    expect(review.getByRole("combobox", { name: "Model" })).toHaveValue("deepseek-v4-1-flash");
     expect(review.getByText("Chat, a terminal, files and skills on its own computer.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
 
@@ -202,7 +202,8 @@ describe("every catalog agent launches in the Launch journey", () => {
 
     fireEvent.click(modelChoice(/^Set up inside Hermes after it opens/));
     const review = await reviewLaunch();
-    expect(review.getByText("Choose a model provider inside Hermes after it opens.")).toBeInTheDocument();
+    expect(review.getByRole("button", { name: "Set up inside Hermes after it opens" })).toHaveAttribute("aria-pressed", "true");
+    expect(review.queryByRole("combobox", { name: "Model" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
     await waitFor(() => expect(instanceBodies).toHaveLength(1));
     expect(instanceBodies[0]).toMatchObject({ unconfigured: true });
@@ -216,7 +217,7 @@ describe("every catalog agent launches in the Launch journey", () => {
     const wallet = screen.getByRole("combobox", { name: "Pay from" });
     fireEvent.change(wallet, { target: { value: "hermesos" } });
     const review = await reviewLaunch();
-    expect(review.getByText(/^Hivra credits \(\$2\.00 available\)/)).toBeInTheDocument();
+    expect(review.getByRole("button", { name: "Hivra credits" })).toHaveAccessibleDescription(/\$2\.00 available/);
     fireEvent.click(screen.getByRole("button", { name: "Launch Hermes" }));
     await waitFor(() => expect(instanceBodies).toHaveLength(1));
     expect(instanceBodies[0]).toMatchObject({ managedVenice: { enabled: true, walletType: "hermesos" } });
@@ -284,7 +285,8 @@ describe("every catalog agent launches in the Launch journey", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /Send this key to Codex 1's computer/ }));
 
     const review = await reviewLaunch();
-    expect(review.getByText("Your saved Venice AI key ••3f2a, sent to Codex 1's computer · DeepSeek V4.1 Flash (via Venice · recommended)")).toBeInTheDocument();
+    expect(review.getByRole("checkbox", { name: /Send this key to Codex 1's computer/ })).toBeChecked();
+    expect(review.getByRole("combobox", { name: "Model" })).toHaveValue("deepseek-v4-1-flash");
     fireEvent.click(screen.getByRole("button", { name: "Launch Codex" }));
 
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
@@ -316,7 +318,9 @@ describe("every catalog agent launches in the Launch journey", () => {
     await waitFor(() => expect(modelChoice(/^Hivra credits/)).toBeEnabled());
     fireEvent.click(modelChoice(/^Hivra credits/));
     const review = await reviewLaunch();
-    expect(review.getByText("Hivra credits ($4.25 available)")).toBeInTheDocument();
+    const credits = review.getByRole("button", { name: "Hivra credits" });
+    expect(credits).toHaveAttribute("aria-pressed", "true");
+    expect(credits).toHaveAccessibleDescription(/\$4\.25 available/);
     fireEvent.click(screen.getByRole("button", { name: "Launch OpenClaw" }));
 
     await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
@@ -341,7 +345,8 @@ describe("every catalog agent launches in the Launch journey", () => {
     expect(modelChoice(/^Use my own API key/)).not.toBeDisabled();
     expect(screen.queryByRole("button", { name: /^Sign in|^Set up inside|^Add your key inside/ })).not.toBeInTheDocument();
     const review = await reviewLaunch();
-    expect(review.getByText(/^Hivra credits \(\$4\.25 available\) · DeepSeek V4\.1 Flash/)).toBeInTheDocument();
+    expect(review.getByRole("button", { name: "Hivra credits" })).toHaveAccessibleDescription(/\$4\.25 available/);
+    expect(review.getByRole("combobox", { name: "Model" })).toHaveValue("deepseek-v4-1-flash");
     // It runs on Hivra Cloud only, with no browser and no maxima to choose.
     expect(screen.queryByRole("button", { name: /Set up your own capacity/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Launch DeepSeek Harness" }));

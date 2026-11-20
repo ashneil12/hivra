@@ -99,7 +99,6 @@ import {
   hasModelAccess,
   modelAccessOptions,
   modelAccessProblem,
-  modelAccessSummary,
   modelCostNote,
   recommendedModelAccessMode,
   savedKeyHint,
@@ -1673,10 +1672,8 @@ export function LaunchJourney(
         options: modelOptions,
       });
   const keyProviders = draft.profileId ? apiKeyProviders(draft.profileId, savedKeys) : [];
-  const modelSummary = digitalOceanLane && digitalOceanHarness
+  const digitalOceanSummary = digitalOceanLane && digitalOceanHarness
     ? digitalOceanModelSummary(digitalOceanHarness, draft.digitalOcean, savedKeys)
-    : draft.profileId
-    ? modelAccessSummary(draft.profileId, draft.modelAccess, { name: draft.name, balance: creditsBalance, savedKeys })
     : null;
   // Hermes' memory can use the owner's saved Honcho key. Like a model key, it
   // is sent to the agent's computer only when the owner ticks it for this
@@ -2650,10 +2647,10 @@ export function LaunchJourney(
                   <span className={styles.planLabel}>Size</span>
                   <span className={styles.planSummary}><strong>{summarySize}</strong></span>
                 </div>
-                {modelSummary ? (
+                {digitalOceanSummary ? (
                   <div className={styles.planRow}>
                     <span className={styles.planLabel}>Model access</span>
-                    <span className={styles.planSummary}><strong>{modelSummary}</strong></span>
+                    <span className={styles.planSummary}><strong>{digitalOceanSummary}</strong></span>
                   </div>
                 ) : null}
               </>) : null) : (<>
@@ -2781,25 +2778,22 @@ export function LaunchJourney(
               ) : null}
 
               {modelAccessShown && draft.profileId ? (
-                <div className={styles.planRow}>
+                <div className={`${styles.planRow} ${styles.modelAccessRow}`}>
                   <span className={styles.planLabel} aria-hidden>Model access</span>
-                  <span className={styles.planValue}>
-                    {modelSummary ? <span className={styles.planSummary}><strong>{modelSummary}</strong></span> : null}
-                    <ModelAccessControl
-                      profileId={draft.profileId}
-                      agentName={draft.name}
-                      access={draft.modelAccess}
-                      options={modelOptions}
-                      onChange={updateModelAccess}
-                      pastedKey={currentPastedKey}
-                      onPastedKeyChange={setCurrentPastedKey}
-                      savedKeys={savedKeys}
-                      providers={keyProviders}
-                      balance={creditsBalance}
-                      onAddCredit={() => setDepositOpen(true)}
-                      problem={modelProblem}
-                    />
-                  </span>
+                  <ModelAccessControl
+                    profileId={draft.profileId}
+                    agentName={draft.name}
+                    access={draft.modelAccess}
+                    options={modelOptions}
+                    onChange={updateModelAccess}
+                    pastedKey={currentPastedKey}
+                    onPastedKeyChange={setCurrentPastedKey}
+                    savedKeys={savedKeys}
+                    providers={keyProviders}
+                    balance={creditsBalance}
+                    onAddCredit={() => setDepositOpen(true)}
+                    problem={modelProblem}
+                  />
                 </div>
               ) : null}
               {hermes ? (

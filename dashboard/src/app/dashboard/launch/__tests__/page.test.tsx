@@ -513,7 +513,9 @@ describe("LaunchPage", () => {
     // page's tabs and the note Hivra gives the agent (ATT-15).
     expect(within(review).getByText("You can see its work in").nextElementSibling).toHaveTextContent(
       "Chat, Codex session, Terminal, Files, Browser (view-only) and Git");
-    expect(within(review).getByText(/^Hivra credits.* · DeepSeek V4\.1 Flash \(via Venice · recommended\)$/)).toBeInTheDocument();
+    const model = within(review).getByRole("combobox", { name: "Model" });
+    expect(model).toHaveValue("deepseek-v4-1-flash");
+    expect(model).toHaveAccessibleDescription("Recommended Private");
     expect(within(review).getByText(/^No extra charge. Uses your Operator plan allowance. Model usage is paid from your Hivra credits/)).toBeInTheDocument();
     expect(within(screen.getByRole("group", { name: "Launch settings" })).queryByText(/Proxmox|KVM|launch request|virtual machine/i)).not.toBeInTheDocument();
     expect(within(screen.getByLabelText("Launch review")).queryByText(/Proxmox|KVM|launch request/i)).not.toBeInTheDocument();
