@@ -46,10 +46,11 @@ export interface AgentDef {
   provisionKind?: "claude" | "linux-desktop";
   /**
    * Which CLI the box runs — selects the chat stream parser + login flow.
+   * "generic" = a catalog cli-web app whose box emits plain `_text` events.
    * Omitted for non-CLI agents (e.g. Aeon, which hosts a web dashboard and has
    * no chat surface).
    */
-  cliKind?: "claude" | "codex";
+  cliKind?: "claude" | "codex" | "generic";
   /**
    * What the per-box page renders. "chat" = the HivraChat CLI-agent surface
    * (default). "dashboard" = embed a web dashboard the box hosts (iframe), no

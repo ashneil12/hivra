@@ -94,6 +94,11 @@ describe("universal catalog manifests", () => {
 
       const enabledDef = catalogAppToAgentDef(manifest, true);
       expect(enabledDef.available).toBe(true);
+      // cli-web manifests with a chat surface must select the generic stream
+      // adapter ("_text" events); every other shape stays undefined so the
+      // default parser is never silently engaged for plain-text CLIs.
+      const wantsGeneric = manifest.runtime.kind === "cli-web" && Boolean(manifest.runtime.cliChat);
+      expect(enabledDef.cliKind).toBe(wantsGeneric ? "generic" : undefined);
       const managedCopy = hostingDisclaimer(enabledDef, "hivra-managed");
       expect(managedCopy).toContain("Hivra administrators retain infrastructure access");
       expect(managedCopy).not.toMatch(/[\u2013\u2014]/);
