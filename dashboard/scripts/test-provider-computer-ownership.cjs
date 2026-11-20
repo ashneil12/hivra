@@ -854,6 +854,17 @@ async function main() {
     });
     await db.exec(universalCatalogHardenedAdmission);
     assert.deepEqual(await admissionDefinitions(), admittedUniversalCatalogHardened, "re-applying the hardened universal catalog admission changes nothing");
+    const cliSetupAdmission = migration("20261120163000_provider_release_admission_2026_11_20_4.sql");
+    await db.exec(cliSetupAdmission);
+    const admittedCliSetup = await admissionDefinitions();
+    admittedCliSetup.forEach((definition, index) => {
+      for (const version of ["2026.11.20.3", "2026.11.20.4"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["83c49cb13db2d3356cb37d802349ed745df64a01a86795945ace8dbc50d61f3c", "06d38a6e4baedfe8ae7ce029f39c6cdaf30fa842c186d6f430d06db5a08f3d4a"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(cliSetupAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedCliSetup, "re-applying the cli-web setup admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

@@ -59,6 +59,26 @@ describe("provisioner hivra-catalog-app.py validator", () => {
     };
     expect(runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(badArgs)).status).not.toBe(0);
   });
+
+  it("accepts bounded cli-web setup commands and rejects malformed setup", () => {
+    const base = buildCatalogAppLaunchSpec(UNIVERSAL_CATALOG_MANIFESTS.find((m) => m.id === "zeroclaw")!);
+    if (base.runtime.kind !== "cli-web") throw new Error("expected cli-web");
+    expect(base.runtime.setup?.commands.length).toBeGreaterThan(0);
+    expect(runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(base)).status).toBe(0);
+
+    const badSetups = [
+      { commands: ["line1\nline2"] },
+      { commands: ["x".repeat(2001)] },
+      { commands: [] },
+      { commands: Array.from({ length: 17 }, () => "true") },
+      { commands: "echo hi" },
+      { commands: ["echo hi"], extra: true },
+    ];
+    for (const setup of badSetups) {
+      const bad = { ...base, runtime: { ...base.runtime, setup } };
+      expect(runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(bad)).status).not.toBe(0);
+    }
+  });
 });
 
 describe("hivra-install-agent.py launch document v5", () => {

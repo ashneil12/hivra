@@ -113,8 +113,22 @@ const RAW_MANIFESTS: readonly CatalogAppManifest[] = [
         assetArm64: "zeroclaw-aarch64-unknown-linux-gnu.tar.gz",
       },
       cliChat: {
-        args: ["agent", "-m"],
+        args: ["agent", "--agent", "hivra", "-m"],
         promptVia: "arg",
+      },
+      setup: {
+        // `zeroclaw agent` requires a configured [agents.<alias>] plus resolvable
+        // risk/runtime profile entries; created headlessly via `config set`
+        // (quickstart is interactive-only). Provider wiring is skipped when the
+        // launch picked no model.
+        commands: [
+          "zeroclaw agents create hivra 2>/dev/null || true",
+          "zeroclaw config init risk_profiles.default",
+          "zeroclaw config init runtime_profiles.default",
+          'if [ -n "$OPENAI_API_KEY" ] && [ -n "$OPENAI_BASE_URL" ] && [ -n "$OPENAI_MODEL" ]; then zeroclaw config set --no-interactive providers.models.openai.default.uri "$OPENAI_BASE_URL" && zeroclaw config set --no-interactive providers.models.openai.default.model "$OPENAI_MODEL" && zeroclaw config set --no-interactive providers.models.openai.default.api_key "$OPENAI_API_KEY" && zeroclaw config set --no-interactive agents.hivra.model_provider openai.default; fi',
+          "zeroclaw config set --no-interactive agents.hivra.risk_profile default",
+          "zeroclaw config set --no-interactive agents.hivra.runtime_profile default",
+        ],
       },
       modelEnv: {
         apiKeyVar: "OPENAI_API_KEY",
