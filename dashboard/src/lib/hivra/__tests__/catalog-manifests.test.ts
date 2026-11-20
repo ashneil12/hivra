@@ -116,4 +116,19 @@ describe("universal catalog manifests", () => {
       expect(spec.runtime).toEqual(manifest.runtime);
     }
   });
+
+  it("pins ZeroClaw to its configured-agent CLI shape and headless setup", () => {
+    // Regression for the live Canary launch: `zeroclaw agent` requires a named
+    // --agent alias plus configured risk/runtime/provider profiles, which the
+    // setup commands create headlessly (quickstart is interactive-only).
+    const zeroclaw = getCatalogAppManifest("zeroclaw");
+    expect(zeroclaw?.runtime.kind).toBe("cli-web");
+    if (zeroclaw?.runtime.kind !== "cli-web") return;
+    expect(zeroclaw.runtime.cliChat?.args).toEqual(["agent", "--agent", "hivra", "-m"]);
+    expect(zeroclaw.runtime.cliChat?.promptVia).toBe("arg");
+    expect(zeroclaw.runtime.setup?.commands.length).toBeGreaterThanOrEqual(4);
+    expect(zeroclaw.runtime.setup?.commands.join("\n")).toContain("agents create hivra");
+    expect(zeroclaw.runtime.setup?.commands.join("\n")).toContain("agents.hivra.model_provider");
+    expect(zeroclaw.runtime.setup?.commands.join("\n")).toContain("$OPENAI_API_KEY");
+  });
 });

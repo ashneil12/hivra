@@ -170,6 +170,18 @@ export const CliInstallerSchema = z.discriminatedUnion("method", [
     .strict(),
 ]);
 
+const SETUP_COMMAND_RE = /^[\x20-\x7e]{1,2000}$/;
+
+export const CliSetupSchema = z
+  .object({
+    /** Shell commands run once as the agent user after the CLI installs, in
+     * order, with the merged static + model env loaded. For headless upstream
+     * configuration env vars alone cannot express (e.g. `zeroclaw config set`).
+     * Must be idempotent: the update path re-runs the install. */
+    commands: z.array(z.string().regex(SETUP_COMMAND_RE, "Setup command must be printable ASCII, at most 2000 chars")).min(1).max(16),
+  })
+  .strict();
+
 export const CliWebRuntimeBaseSchema = z
   .object({
     kind: z.literal("cli-web"),
@@ -191,6 +203,7 @@ export const CliWebRuntimeBaseSchema = z
       })
       .strict()
       .optional(),
+    setup: CliSetupSchema.optional(),
     env: EnvMapSchema.optional(),
     modelEnv: ModelEnvBindingSchema.optional(),
   })

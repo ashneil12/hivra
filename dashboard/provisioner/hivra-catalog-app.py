@@ -106,6 +106,20 @@ def _validate_env_map(value):
     return cleaned
 
 
+def _validate_setup(value):
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"commands"}:
+        raise CatalogAppError("invalid catalog app setup")
+    commands = value.get("commands")
+    if not isinstance(commands, list) or not (1 <= len(commands) <= 16):
+        raise CatalogAppError("invalid setup commands")
+    for command in commands:
+        if not _printable_str(command, 2000):
+            raise CatalogAppError("invalid setup command")
+    return {"commands": list(commands)}
+
+
 def _validate_model_env(value):
     if value is None:
         return None
@@ -213,7 +227,7 @@ def validate_catalog_app_spec(spec):
         }
 
     if kind == "cli-web":
-        allowed = {"kind", "installer", "webService", "cliChat", "env", "modelEnv"}
+        allowed = {"kind", "installer", "webService", "cliChat", "setup", "env", "modelEnv"}
         if not set(runtime).issubset(allowed):
             raise CatalogAppError("unexpected cli-web field")
         inst = runtime.get("installer")
@@ -296,6 +310,7 @@ def validate_catalog_app_spec(spec):
 
         env = _validate_env_map(runtime.get("env"))
         model_env = _validate_model_env(runtime.get("modelEnv"))
+        setup = _validate_setup(runtime.get("setup"))
         return {
             "appId": app_id,
             "name": name.strip(),
@@ -304,6 +319,7 @@ def validate_catalog_app_spec(spec):
                 "installer": norm_inst,
                 "webService": norm_web,
                 "cliChat": norm_chat,
+                "setup": setup,
                 "env": env,
                 "modelEnv": model_env,
             },
@@ -332,7 +348,7 @@ def _write_atomic(path: Path, data: bytes, mode: int, uid: int = 0, gid: int = 0
             pass
 
 
-def _build_env_lines(static_env, model_env, model_key, model_base_url, model_name):
+def _merged_env_map(static_env, model_env, model_key, model_base_url, model_name):
     merged = dict(static_env or {})
     if model_env and model_key and model_base_url:
         for k, v in (model_env.get("extraEnv") or {}).items():
@@ -341,6 +357,11 @@ def _build_env_lines(static_env, model_env, model_key, model_base_url, model_nam
         merged[model_env["baseUrlVar"]] = model_base_url
         if model_env.get("modelVar") and model_name:
             merged[model_env["modelVar"]] = model_name
+    return merged
+
+
+def _build_env_lines(static_env, model_env, model_key, model_base_url, model_name):
+    merged = _merged_env_map(static_env, model_env, model_key, model_base_url, model_name)
     lines = []
     for key in sorted(merged):
         val = str(merged[key]).replace("\r", "").replace("\n", "")
@@ -616,6 +637,16 @@ def install_cli_web(spec, model_key="", model_base_url="", model_name=""):
             uid=uid,
             gid=gid,
         )
+
+    setup_commands = (rt.get("setup") or {}).get("commands") or []
+    if setup_commands:
+        # Headless upstream configuration env vars alone cannot express (e.g.
+        # `zeroclaw config set`). Commands come from the curated manifest, run
+        # as the unprivileged agent user with the merged env loaded, and must
+        # be idempotent because the update path re-runs this install.
+        merged_env = _merged_env_map(rt.get("env"), rt.get("modelEnv"), model_key, model_base_url, model_name)
+        for command in setup_commands:
+            _as_agent(["/bin/bash", "-c", command], env_extra=merged_env, timeout=300)
 
     unit_name = None
     if ws is not None:

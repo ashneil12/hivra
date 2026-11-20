@@ -547,6 +547,14 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.20.4` extends the `cli-web` catalog runtime with a bounded,
+idempotent `setup` contract: curated shell commands run once as the agent user
+after the CLI installs, with the merged static and model env loaded, for headless
+upstream configuration env vars alone cannot express (for example ZeroClaw's
+named agent alias and provider profile). Commands are printable-ASCII, at most
+16 entries and 2000 bytes each, validated inside the sealed spec, and re-run
+safely by the update path.
+
 Release `2026.11.20.2` adds the generic `catalog-app` runtime (`hivra-catalog-app.py`,
 launch document v5, gateway `/app/` proxy, and generic update/rollback support) so
 manifest-driven open-source agents and self-hosted apps can be installed, updated,
