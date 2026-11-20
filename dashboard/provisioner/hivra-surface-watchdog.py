@@ -71,6 +71,7 @@ SURFACES = {
     "openclaw": {"unit": "bux-openclaw.service", "probe": "/openclaw/", "check": "entry"},
     "openbot": {"unit": "hivra-openbot.service", "probe": "/openbot/", "check": "entry"},
     "nuphos": {"unit": "hivra-nuphos.service", "probe": "/nuphos/", "check": "entry"},
+    "catalog-app": {"unit": "hivra-catalog-app.service", "probe": "/app/", "check": "entry"},
     "hermes": {"unit": "bux-hermes.service", "probe": "/hermes/", "check": "entry"},
 }
 

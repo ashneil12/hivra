@@ -547,6 +547,11 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.20.2` adds the generic `catalog-app` runtime (`hivra-catalog-app.py`,
+launch document v5, gateway `/app/` proxy, and generic update/rollback support) so
+manifest-driven open-source agents and self-hosted apps can be installed, updated,
+and served behind Hivra's authenticated gateway without a per-app provisioner release.
+
 Release `2026.11.20.1` accepts both A0 CLI Socket.IO path forms and forwards
 the verified public origin to Engine.IO. The transport query, owner session
 requirements, and existing Origin checks are preserved.

@@ -9,6 +9,7 @@
 
 import type { AgentLlmInput, CreateAgentInput } from "@/lib/hivra/agent-api";
 import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
+import { getCatalogAppManifest, type UniversalCatalogAppId } from "@/lib/hivra/catalog-manifests";
 import { getManagedVeniceProxyBaseUrl } from "@/lib/venice/managed-endpoints";
 import { buildWelcomeAgentSettings } from "@/lib/welcome-deploy";
 
@@ -56,7 +57,7 @@ export function nativeCliAgentRequest(input: {
  * the `llm` block they are given (credits or the owner's Venice key); Hermes
  * set up inside itself sends none. */
 export function dashboardAgentRequest(input: {
-  type: "openclaw" | "agent-zero" | "openbot" | "nuphos" | "aeon" | "deepseek-harness" | "hermes";
+  type: "openclaw" | "agent-zero" | "openbot" | "nuphos" | "aeon" | "deepseek-harness" | "hermes" | UniversalCatalogAppId;
   name: string;
   cpu: number;
   ram: number;
@@ -67,19 +68,25 @@ export function dashboardAgentRequest(input: {
   /** DeepSeek Harness and Hermes: their model access, when they have one. */
   llm?: AgentLlmInput;
 }): CreateAgentInput {
+  const catalogManifest = getCatalogAppManifest(input.type);
+  const autoVenice = input.type === "openclaw"
+    || input.type === "agent-zero"
+    || input.type === "openbot"
+    || Boolean(catalogManifest?.managedVenice);
   const llm: AgentLlmInput | undefined = input.type === "deepseek-harness" || input.type === "hermes"
     ? input.llm
-    : (input.type === "openclaw" || input.type === "agent-zero" || input.type === "openbot") && input.credits
+    : autoVenice && input.credits
       ? { provider: "venice", mode: "managed", walletType: input.credits.walletType }
       : undefined;
+  const allowsManagedVenice = catalogManifest ? catalogManifest.managedVenice : input.type !== "nuphos";
   return {
     type: input.type,
     name: input.name.trim(),
     cpu: input.cpu,
     ram: input.ram,
     browser: input.browser,
-    // Nuphos never uses Hivra models: it signs in to the owner's own Claude account.
-    managedVenice: input.type !== "nuphos" && Boolean(input.credits),
+    // Nuphos and non-AI catalog apps never use Hivra models.
+    managedVenice: allowsManagedVenice && Boolean(input.credits),
     ...(llm ? { llm } : {}),
     deployment: input.deployment,
   };

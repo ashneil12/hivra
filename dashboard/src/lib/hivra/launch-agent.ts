@@ -9,6 +9,13 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { isOpenBotAgentEnabled } from "@/lib/hivra/openbot-flag";
+import { isUniversalCatalogEnabled } from "@/lib/hivra/universal-catalog-flag";
+import {
+  buildCatalogAppLaunchSpec,
+  getCatalogAppManifest,
+  UNIVERSAL_CATALOG_IDS,
+  type CatalogAppLaunchSpec,
+} from "@/lib/hivra/catalog-manifests";
 import { posthogClient } from "@/lib/posthog";
 import { getManagedVeniceAnthropicBaseUrl, getManagedVeniceProxyBaseUrl } from "@/lib/venice/managed-endpoints";
 import {
@@ -131,7 +138,10 @@ const emittedBoxCreatedAgentIds = new Set<string>();
 // Catalog agent ids this route can provision as a Hivra box. claude-code/codex
 // run the bux image; aeon + openclaw host a web dashboard/Control UI. The box
 // selects its runtime from agentKind. Hermes is a separate lane (/api/instances).
-const LAUNCHABLE_BOX_TYPES: ReadonlySet<string> = new Set(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes", "deepseek-harness", "linux-desktop"]);
+const LAUNCHABLE_BOX_TYPES: ReadonlySet<string> = new Set([
+  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes", "deepseek-harness", "linux-desktop",
+  ...UNIVERSAL_CATALOG_IDS,
+]);
 
 // Printed by phase 1 only after it wrote the reporter credential into the
 // handoff file for a host bundle that consumes it (the start path uses the
@@ -272,6 +282,8 @@ function phase1Script(params: {
   capacityPolicy: ProxmoxHostCapacityPolicy;
   // Travels only in the root-only secret handoff file, never argv or logs.
   activityTelemetry?: ActivityCollectorCredential | null;
+  /** Validated manifest runtime spec for agentKind === "catalog-app". */
+  catalogAppSpec?: CatalogAppLaunchSpec | null;
 }): string {
   const runtime = params.portableRuntime ?? null;
   const runtimePaths = runtime ?? params.managedRuntimePaths;
@@ -413,6 +425,7 @@ chmod 0700 "$QM_WRAPPER"
   export HIVRA_MODEL_BASE_URL="$(read_secret_b64 HIVRA_MODEL_BASE_URL_B64)"
   export HIVRA_HERMES_MODEL="$(read_secret_b64 HIVRA_HERMES_MODEL_B64)"
   export HIVRA_ACTIVITY_TELEMETRY="$(read_secret_b64 HIVRA_ACTIVITY_TELEMETRY_B64)"
+  export HIVRA_CATALOG_APP="$(read_secret_b64 HIVRA_CATALOG_APP_B64)"
   rm -f -- "$SECRET_ENV_FILE"
   exec env PATH="$WRAPPER_DIR:\${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}" HIVRA_REAL_QM="$REAL_QM" HIVRA_EXPECTED_VMID="$VMID" HIVRA_PID_FILE="$PIDFILE" HIVRA_OPERATION_ID=${shellQuote(params.operationId)} HIVRA_OPERATION_TAG=${shellQuote(operationTag)} HIVRA_BINDING_TAG=${shellQuote(params.infrastructureBindingTag)} ${hostEnvironment}HIVRA_WANT_BROWSER=${shellQuote(wantBrowserEnvValue)} HIVRA_SUBNET_PREFIX=${shellQuote(params.subnetPrefix)} HIVRA_GW=${shellQuote(params.gateway)} bash ${shellQuote(provisionerDirectory)}/hivra-provision-on-host.sh "$VMID" "$OCTET" "${params.cpu}" "${params.memMb}" "${params.agentKind}"
 ) >> "$LOG" 2>&1 < /dev/null &
@@ -577,6 +590,7 @@ write_secret_b64() { printf '%s' "$1" | base64 -w 0; printf '\n'; }
   printf 'HIVRA_MODEL_BASE_URL_B64='; write_secret_b64 ${shellQuote(params.modelBaseUrl ?? "")}
   printf 'HIVRA_HERMES_MODEL_B64='; write_secret_b64 ${shellQuote(params.model ?? "")}
   ${activityTelemetryHandoff}
+  ${params.catalogAppSpec ? `printf 'HIVRA_CATALOG_APP_B64='; write_secret_b64 ${shellQuote(JSON.stringify(params.catalogAppSpec))}` : ""}
 } > "$SECRET_ENV_FILE"
 if [ "$HIVRA_ACTIVITY_STAGE" = 1 ]; then echo ${ACTIVITY_CREDENTIAL_STAGED}; fi
 ${kickoff}
@@ -1055,7 +1069,10 @@ export async function launchHivraAgentForUser(
     // or not-yet-available agent can't provision a box. Hermes launches here only
     // while the Hermes computer lane is on for this deployment (Canary first);
     // otherwise it stays on its own lane, /api/instances, as it always was.
-    if (!def || !def.available || !LAUNCHABLE_BOX_TYPES.has(type) || (type === "openbot" && !isOpenBotAgentEnabled())) {
+    const catalogManifest = getCatalogAppManifest(type);
+    if (!def || !def.available || !LAUNCHABLE_BOX_TYPES.has(type)
+      || (type === "openbot" && !isOpenBotAgentEnabled())
+      || (catalogManifest && !isUniversalCatalogEnabled())) {
       return apiError("That agent isn't launchable yet", 400);
     }
     // DeepSeek Harness has acceptance only on Hivra's managed Proxmox hosts, with
@@ -1070,13 +1087,16 @@ export async function launchHivraAgentForUser(
         return apiError(`${def.name} requires this Hivra installation's named HTTPS access.`, 503);
       }
     }
-    // The runtime the box provisions: the chat CLI for claude-code/codex, or the
+    // The runtime the box provisions: the chat CLI for claude-code/codex, the
+    // universal "catalog-app" runner for manifest-driven apps/agents, or the
     // dashboard host kind for aeon/openclaw (no cliKind). Passed to the host script.
-    const agentKind = headless ? "linux-server" : def.provisionKind ?? def.cliKind ?? (type === "aeon" ? "aeon" : type === "openclaw" ? "openclaw"
+    const agentKind = headless ? "linux-server" : catalogManifest ? "catalog-app" : def.provisionKind ?? def.cliKind ?? (type === "aeon" ? "aeon" : type === "openclaw" ? "openclaw"
       : type === "agent-zero" ? "agent-zero" : type === "openbot" ? "openbot" : type === "nuphos" ? "nuphos" : type === "hermes" ? "hermes" : type === "deepseek-harness" ? "deepseek-harness" : "claude");
     // A Linux computer without a desktop is a new provisioner kind and placement
-    // key, so a host bundle that predates it cannot run it by accident.
-    const compatibilityRuntimeId = headless ? "linux-server" : type;
+    // key, so a host bundle that predates it cannot run it by accident. Every
+    // universal catalog manifest shares the single "catalog-app" placement key.
+    const compatibilityRuntimeId = headless ? "linux-server" : catalogManifest ? "catalog-app" : type;
+    const catalogAppSpec = catalogManifest ? buildCatalogAppLaunchSpec(catalogManifest) : null;
     const desktopControlOrigin = type === "linux-desktop" ? activityControlOrigin() : null;
     if (type === "linux-desktop" && (!desktopControlOrigin || !isTunnelConfigured())) {
       return apiError(
@@ -2025,6 +2045,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       controlOrigin: desktopControlOrigin ?? undefined,
       capacityPolicy,
       activityTelemetry,
+      catalogAppSpec,
     }), env, { earlyFinishMarker: "HIVRA_PROVISION_RESULT" });
     const activityCredentialStaged = activityTelemetry !== null
       && (result.stdout || "").split(/\r?\n/).some(line => line.trim() === ACTIVITY_CREDENTIAL_STAGED);

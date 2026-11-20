@@ -10,6 +10,7 @@
  */
 
 import { PROVIDERS, type Provider } from "@/lib/models";
+import { getCatalogAppManifest } from "@/lib/hivra/catalog-manifests";
 import { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
 import { supportsHermesAuthProvider } from "@/lib/provider-auth";
 import { validateProviderKeyShape } from "@/lib/provider-key-shape";
@@ -75,8 +76,11 @@ export function modelAccessModes(profileId: LaunchProfileId): LaunchModelAccessM
     // gives it a model at launch: credits first, or the owner's Venice key.
     case "deepseek-harness":
       return ["credits", "api-key"];
-    default:
+    default: {
+      const catalogManifest = getCatalogAppManifest(profileId);
+      if (catalogManifest) return catalogManifest.managedVenice ? ["native", "credits"] : [];
       return [];
+    }
   }
 }
 
@@ -183,8 +187,16 @@ function nativeCopy(profileId: LaunchProfileId): { title: string; detail: string
         title: "Use the key on your GitHub fork",
         detail: "Aeon runs on your GitHub Actions with the AI provider key you set on your fork.",
       };
-    default:
+    default: {
+      const catalogManifest = getCatalogAppManifest(profileId);
+      if (catalogManifest) {
+        return {
+          title: `Set up inside ${catalogManifest.name} after it opens`,
+          detail: `Choose a model provider in ${catalogManifest.name}'s own settings.`,
+        };
+      }
       return { title: `Set up inside ${name}`, detail: "" };
+    }
   }
 }
 

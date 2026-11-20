@@ -134,7 +134,9 @@ extension HivraWorkspaceRouteGrammar {
         /// LaunchProfileId (launch/contracts.ts).
         static let launchProfile = Value.oneOf(["claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "openbot", "nuphos", "aeon",
                                                 "deepseek-harness", "ubuntu-desktop", "ubuntu-server",
-                                                "linux-terminal", "omarchy", "windows"])
+                                                "linux-terminal", "omarchy", "windows",
+                                                "nanobot", "zeroclaw", "picoclaw", "opencode", "goose", "openhands",
+                                                "anythingllm", "activepieces", "uptime-kuma", "gitea"])
         /// Launch history stages, including the names used before Choose merged its steps (LaunchJourney).
         static let launchStage = Value.mapped(["choose": "choose", "plan": "plan", "review": "review",
                                                "type": "choose", "profile": "choose", "capacity": "plan"])
@@ -142,6 +144,8 @@ extension HivraWorkspaceRouteGrammar {
         static let launchUpgrade = Value.oneOf(["1", "operator", "fleet", "command"])
         /// PortableLaunchResourceId (hivra/launch-navigation.ts).
         static let portableLaunchResource = Value.oneOf(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos",
+                                                         "nanobot", "zeroclaw", "picoclaw", "opencode", "goose", "openhands",
+                                                         "anythingllm", "activepieces", "uptime-kuma", "gitea",
                                                          "linux-desktop", "linux-terminal", "windows"])
     }
 

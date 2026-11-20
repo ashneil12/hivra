@@ -47,8 +47,8 @@ umask 022
 NAME="${1:-}"
 TARGET="${2:-}"
 case "$NAME" in
-  aeon|openclaw|agent-zero|hermes|openbot|nuphos) ;;
-  *) echo "usage: hivra-agent-app-update.sh aeon|openclaw|agent-zero|hermes|openbot|nuphos latest" >&2; exit 64 ;;
+  aeon|openclaw|agent-zero|hermes|openbot|nuphos|catalog-app) ;;
+  *) echo "usage: hivra-agent-app-update.sh aeon|openclaw|agent-zero|hermes|openbot|nuphos|catalog-app latest" >&2; exit 64 ;;
 esac
 # Hivra pins no app version: every update goes to the newest release upstream
 # publishes at that moment, and only when the owner asks for it. The status
@@ -138,6 +138,12 @@ case "$NAME" in
     NU_PORT="${HIVRA_NUPHOS_PORT:-3102}"
     NU_VOLUME_DIR="${HIVRA_NUPHOS_VOLUME_DIR:-/var/lib/docker/volumes/hivra-nuphos-home/_data}"
     NU_HOME_BACKUP="$NU_ROOT/home.hivra-update-backup"
+    NEED_FREE_MB=4096
+    ;;
+  catalog-app)
+    CATALOG_META="${HIVRA_CATALOG_APP_META:-/etc/hivra/catalog-app.json}"
+    CATALOG_ROOT="${HIVRA_CATALOG_APP_ROOT:-/opt/hivra-app}"
+    UNIT=hivra-catalog-app.service
     NEED_FREE_MB=4096
     ;;
 esac
@@ -917,9 +923,127 @@ run_nuphos() {
   exit 1
 }
 
+catalog_app_write_image() {
+  printf '%s\n' "$1" > "$CATALOG_ROOT/image.next"
+  chmod 0600 "$CATALOG_ROOT/image.next"
+  mv -f -- "$CATALOG_ROOT/image.next" "$CATALOG_ROOT/image"
+}
+catalog_app_healthy() {
+  local unit="$1" port="$2" health_path="$3" deadline=$(( $(date +%s) + HEALTH_SECONDS )) code
+  while :; do
+    if systemctl is-active --quiet "$unit"; then
+      if [ -z "$port" ]; then return 0; fi
+      code="$(http_code "http://127.0.0.1:${port}${health_path}")"
+      if [[ "$code" =~ ^[23][0-9][0-9]$ ]]; then return 0; fi
+    fi
+    [ "$(date +%s)" -lt "$deadline" ] || return 1
+    sleep "$HEALTH_POLL_SECONDS"
+  done
+}
+run_catalog_app() {
+  local app_id kind image_repo image_tag host_port health_path unit old_image new_image new_digest
+  [ -f "$CATALOG_META" ] || { write_status failed not_installed; exit 1; }
+  IFS=$'\t' read -r app_id kind image_repo image_tag host_port health_path unit < <(python3 -I -c '
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+print("\t".join([
+    str(doc.get("appId") or ""),
+    str(doc.get("kind") or ""),
+    str(doc.get("imageRepo") or ""),
+    str(doc.get("imageTag") or ""),
+    "" if doc.get("hostPort") is None else str(doc.get("hostPort")),
+    str(doc.get("healthPath") or "/"),
+    str(doc.get("unit") or ""),
+]))
+' "$CATALOG_META")
+  [ -n "$app_id" ] || { write_status failed not_installed; exit 1; }
+  NAME="$app_id"
+  FROM="$(python3 -I -c '
+import json, sys
+try: print(json.load(open(sys.argv[1], encoding="utf-8")).get("version") or "")
+except Exception: pass
+' "$RECORD")"
+  if [ "$kind" = docker-web ]; then
+    UNIT="${unit:-hivra-catalog-app.service}"
+    UNIT_FILE="$SYSTEMD_DIR/$UNIT"
+    [ -f "$UNIT_FILE" ] || { write_status failed not_installed; exit 1; }
+    old_image="$(head -n 1 "$CATALOG_ROOT/image" 2>/dev/null || true)"
+    if [ "$(free_mb "$CATALOG_ROOT")" -lt "$NEED_FREE_MB" ]; then write_status failed no_space; exit 1; fi
+    write_status downloading
+    if ! bounded 3600 docker pull "${image_repo}:${image_tag}" >/dev/null 2>&1 </dev/null; then
+      write_status failed download_failed; exit 1
+    fi
+    new_image="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${image_repo}:${image_tag}" 2>/dev/null \
+      | grep -m1 -E '@sha256:[0-9a-f]{64}$' || true)"
+    new_digest="${new_image##*@}"
+    if [ -z "$new_image" ] || ! [[ "$new_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      write_status failed download_failed; exit 1
+    fi
+    if [ "$new_image" = "$old_image" ]; then
+      write_record "$FROM"
+      write_status done
+      exit 0
+    fi
+    write_status waiting
+    wait_until_idle
+    write_status installing
+    systemctl stop "$UNIT" || true
+    catalog_app_write_image "$new_image"
+    systemctl start "$UNIT" || true
+    if catalog_app_healthy "$UNIT" "$host_port" "$health_path"; then
+      release_lock
+      if [ -n "$old_image" ] && [ "$old_image" != "$new_image" ]; then docker image rm "$old_image" >/dev/null 2>&1 || true; fi
+      write_record "$new_digest"
+      write_status done
+      exit 0
+    fi
+    systemctl stop "$UNIT" || true
+    [ -z "$old_image" ] || catalog_app_write_image "$old_image"
+    systemctl start "$UNIT" || true
+    release_lock
+    if [ -n "$FROM" ] && catalog_app_healthy "$UNIT" "$host_port" "$health_path"; then
+      write_record "$FROM"
+      write_status rolled_back install_failed
+    else
+      write_status failed install_failed
+    fi
+    exit 1
+  fi
+  # cli-web: upgrade package via uv or npm, then restart web unit if configured.
+  local method pkg bin_path new_version
+  IFS=$'\t' read -r method pkg bin_path < <(python3 -I -c '
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+inst = doc.get("installer") or {}
+print("\t".join([str(inst.get("method") or ""), str(inst.get("packageName") or ""), str(doc.get("binPath") or "")]))
+' "$CATALOG_META")
+  write_status waiting
+  wait_until_idle
+  write_status installing
+  if [ "$method" = uv-tool ] && [ -n "$pkg" ]; then
+    as_agent uv tool upgrade "$pkg" >/dev/null 2>&1 || { release_lock; write_status failed install_failed; exit 1; }
+  elif [ "$method" = npm-global ] && [ -n "$pkg" ]; then
+    as_agent npm install -g "${pkg}@latest" >/dev/null 2>&1 || { release_lock; write_status failed install_failed; exit 1; }
+  fi
+  if [ -n "$unit" ]; then
+    systemctl restart "$unit" || { release_lock; write_status failed install_failed; exit 1; }
+    if ! catalog_app_healthy "$unit" "$host_port" "$health_path"; then
+      release_lock
+      write_status failed install_failed
+      exit 1
+    fi
+  fi
+  release_lock
+  new_version="$(as_agent "$bin_path" --version 2>&1 | grep -oE '[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}' | head -n 1 || echo latest)"
+  write_record "${new_version:-latest}"
+  write_status done
+  exit 0
+}
+
 [ "$NAME" != hermes ] || run_hermes
 [ "$NAME" != openbot ] || run_openbot
 [ "$NAME" != nuphos ] || run_nuphos
+[ "$NAME" != catalog-app ] || run_catalog_app
 
 # A swap cut short (a reboot) left its journal behind. If the new version is
 # the one running and it answers, the swap finished in all but name: keep it.
