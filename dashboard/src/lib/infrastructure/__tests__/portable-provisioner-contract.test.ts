@@ -126,6 +126,11 @@ describe("portable provisioner source contract", () => {
     expect(portableProvisionerSupportsCatalogRuntime("2026.09.22.1", "linux-desktop")).toBe(true);
     expect(provisionerSupportsWindowsInstaller("2026.09.22.1")).toBe(true);
   });
+
+  it("continues to admit the Agent Zero browser release for provider VM agents", () => {
+    expect(isCompatibleProviderVmProvisionerVersion("2026.11.19.1")).toBe(true);
+    expect(providerProvisionerSupportsCatalogRuntime("2026.11.19.1", "codex")).toBe(true);
+  });
   it("does not confuse native launch compatibility with model-settings delivery", () => {
     expect(supportsModelSettingsProvisionerVersion("2026.08.28.2")).toBe(true);
     expect(supportsModelSettingsProvisionerVersion("2026.08.28.3")).toBe(true);
