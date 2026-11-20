@@ -214,21 +214,24 @@ export function ModelAccessControl({
       </select>
       <details className={styles.advanced} open={customModel || undefined}>
         <summary>Advanced</summary>
-        <label htmlFor={`${id}-model-id`}>Model ID</label>
-        <input
-          id={`${id}-model-id`}
-          value={access.model}
-          disabled={disabled}
-          maxLength={128}
-          autoCapitalize="none"
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-          enterKeyHint="done"
-          placeholder={models[0]?.value ?? "model-id"}
-          onChange={event => onChange({ model: event.target.value.trim() })}
-        />
-        <small>Leave it empty to use the model chosen above.</small>
+        <div className={styles.field}>
+          <label htmlFor={`${id}-model-id`}>Model ID</label>
+          <input
+            id={`${id}-model-id`}
+            aria-describedby={`${id}-model-id-help`}
+            value={access.model}
+            disabled={disabled}
+            maxLength={128}
+            autoCapitalize="none"
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+            enterKeyHint="done"
+            placeholder={models[0]?.value ?? "model-id"}
+            onChange={event => onChange({ model: event.target.value.trim() })}
+          />
+          <small id={`${id}-model-id-help`}>Leave it empty to use the model chosen above.</small>
+        </div>
       </details>
     </div>
   );

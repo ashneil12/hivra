@@ -95,9 +95,10 @@
 .selection {
   display: grid;
   place-items: center;
+  box-sizing: border-box;
   width: 17px;
   aspect-ratio: 1;
-  border: 1px solid var(--hg-stroke-strong);
+  border: 2px solid var(--text-secondary);
   border-radius: 50%;
 }
 
@@ -192,8 +193,7 @@
 }
 
 .field > label:not(.checkbox),
-.modelHeading label,
-.advanced label {
+.modelHeading label {
   color: var(--text-secondary);
   font: 600 0.8rem var(--font-sans);
   letter-spacing: 0;
@@ -202,8 +202,7 @@
 
 .field input:not([type="checkbox"]),
 .field select,
-.field textarea,
-.advanced input {
+.field textarea {
   width: 100%;
   min-width: 0;
   max-width: 28rem;
@@ -230,7 +229,6 @@
 }
 
 .field small,
-.advanced small,
 .note {
   color: var(--text-secondary);
   font-size: 0.78rem;
@@ -289,8 +287,6 @@
 .consent small { color: var(--text-secondary); font-size: 0.78rem; line-height: 1.45; }
 .checkbox span { color: var(--text-secondary); font-size: 0.8rem; line-height: 1.45; }
 
-.advanced { display: grid; gap: 0.35rem; }
-
 .advanced summary {
   min-height: 44px;
   display: flex;
@@ -317,7 +313,6 @@
 .field input:not([type="checkbox"]):focus-visible,
 .field select:focus-visible,
 .field textarea:focus-visible,
-.advanced input:focus-visible,
 .consent input:focus-visible,
 .checkbox input:focus-visible {
   outline: 2px solid var(--launch-accent, var(--hg-fg));

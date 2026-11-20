@@ -185,7 +185,10 @@ describe("ModelAccessControl", () => {
     expect(within(model).getByRole("option", { name: "DeepSeek V4.1 Flash" })).toHaveProperty("selected", true);
     const advanced = screen.getByText("Advanced").closest("details")!;
     expect(advanced).not.toHaveAttribute("open");
-    fireEvent.change(within(advanced).getByLabelText("Model ID"), { target: { value: "my-model-1" } });
+    fireEvent.click(within(advanced).getByText("Advanced"));
+    const modelId = within(advanced).getByRole("textbox", { name: "Model ID" });
+    expect(modelId).toHaveAccessibleDescription("Leave it empty to use the model chosen above.");
+    fireEvent.change(modelId, { target: { value: "my-model-1" } });
     expect(latest.access.model).toBe("my-model-1");
     expect(model).toHaveValue("__custom");
     expect(model).not.toHaveAccessibleDescription();
