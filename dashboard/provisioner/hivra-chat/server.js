@@ -107,6 +107,7 @@ const AGENT_KIND = _agentKindRaw === "codex" ? "codex"
   : _agentKindRaw === "hermes" ? "hermes"
   : _agentKindRaw === "openbot" ? "openbot"
   : _agentKindRaw === "nuphos" ? "nuphos"
+  : _agentKindRaw === "catalog-app" ? "catalog-app"
   : _agentKindRaw === "deepseek-harness" ? "deepseek-harness"
   : _agentKindRaw === "linux-desktop" ? "linux-desktop"
   : _agentKindRaw === "linux-server" ? "linux-server"
@@ -222,18 +223,47 @@ function agentCliUpdateRefusal() {
 // is asked for its version like the CLIs (the agent's user owns its npm
 // prefix); Aeon's dashboard build and Agent Zero's image are only ever changed
 // by root, which records them in a root-owned file.
+const CATALOG_APP_META_FILE = process.env.HIVRA_CATALOG_APP_META || "/etc/hivra/catalog-app.json";
+function readCatalogAppMeta() {
+  if (AGENT_KIND !== "catalog-app") return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(CATALOG_APP_META_FILE, "utf8"));
+    if (!raw || typeof raw !== "object") return null;
+    if (typeof raw.appId !== "string" || !/^[a-z][a-z0-9-]{1,38}[a-z0-9]$/.test(raw.appId)) return null;
+    const hostPort = Number.isInteger(raw.hostPort) && raw.hostPort >= 3200 && raw.hostPort <= 3999 ? raw.hostPort : null;
+    const healthPath = typeof raw.healthPath === "string" && raw.healthPath.startsWith("/") ? raw.healthPath : "/";
+    const proxyMode = raw.proxyMode === "loopback-origin" ? "loopback-origin" : "standard";
+    return {
+      appId: raw.appId,
+      name: typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : raw.appId,
+      kind: raw.kind === "cli-web" ? "cli-web" : "docker-web",
+      hostPort,
+      healthPath,
+      proxyMode,
+      cliChat: raw.cliChat && typeof raw.cliChat === "object" ? raw.cliChat : null,
+    };
+  } catch {
+    return null;
+  }
+}
+const CATALOG_APP = readCatalogAppMeta();
+const CATALOG_APP_VERSION_RE = /^(?:sha256:[0-9a-f]{64}|v?\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[A-Za-z0-9._-]{1,32})?|latest)$/;
 const AGENT_APP = AGENT_KIND === "aeon" ? { name: "aeon", label: "Aeon", ports: [AEON_PORT] }
   : AGENT_KIND === "openclaw" ? { name: "openclaw", label: "OpenClaw", ports: [OPENCLAW_PORT] }
   : AGENT_KIND === "agent-zero" ? { name: "agent-zero", label: "Agent Zero", ports: [AGENT_ZERO_PORT] }
   : AGENT_KIND === "hermes" ? { name: "hermes", label: "Hermes", ports: [HERMES_PORT, HERMES_WEBAPP_PORT] }
   : AGENT_KIND === "openbot" ? { name: "openbot", label: "OpenBot", ports: [OPENBOT_PORT] }
-  : AGENT_KIND === "nuphos" ? { name: "nuphos", label: "Nuphos", ports: [NUPHOS_PORT] } : null;
+  : AGENT_KIND === "nuphos" ? { name: "nuphos", label: "Nuphos", ports: [NUPHOS_PORT] }
+  : AGENT_KIND === "catalog-app" && CATALOG_APP ? { name: CATALOG_APP.appId, label: CATALOG_APP.name, ports: CATALOG_APP.hostPort ? [CATALOG_APP.hostPort] : [] } : null;
 const AGENT_APP_RECORD = process.env.HIVRA_AGENT_APP_RECORD || "/var/lib/hivra/agent-app.json";
 const AGENT_APP_STATUS = process.env.HIVRA_AGENT_APP_STATUS || "/var/lib/hivra/agent-app-update.json";
 const AGENT_APP_LOCK = process.env.HIVRA_AGENT_APP_LOCK || "/run/hivra-agent-app-update.lock";
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/bux/.npm-global/bin/openclaw";
 const HERMES_BIN = process.env.HERMES_BIN || "/home/bux/.local/bin/hermes";
-const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, openbot: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, nuphos: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
+const AGENT_APP_VERSION = Object.assign(
+  { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, openbot: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, nuphos: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ },
+  CATALOG_APP ? { [CATALOG_APP.appId]: CATALOG_APP_VERSION_RE } : {},
+);
 // What an update status may name as its target: always the word "latest",
 // since every update goes to whatever upstream publishes as newest.
 const AGENT_APP_TARGET = /^latest$/;
@@ -2242,9 +2272,9 @@ function chatEffortAdvertised() {
 // `effort` is a level already checked by chatEffortLevel(), or null.
 function resolveChatSpawn(message, sessionId, images, effort) {
   if (COMPUTER_PROFILE) return { error: "this computer has no agent chat surface" };
-  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos") {
-    // Aeon + OpenClaw + Agent Zero + Hermes + OpenBot + Nuphos are hosted dashboards, not chat-CLI agents — no
-    // /api/chat surface; the user works in the agent's own web UI behind the gate.
+  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos"
+    || (AGENT_KIND === "catalog-app" && (!CATALOG_APP || CATALOG_APP.hostPort))) {
+    // Hosted dashboard runtimes have no /api/chat surface; the user works in the app's own web UI behind the gate.
     return { error: "this agent has no chat surface" };
   }
   const restrict = readRestrict();
@@ -2303,11 +2333,25 @@ function resolveChatSpawn(message, sessionId, images, effort) {
       : ["exec", ...flags, "-C", AGENT_WORKDIR, message];
     return { bin: CODEX, args, useStdin: false, textMode: false, env: llmEnv };
   }
-  if (AGENT_KIND === "generic") {
+  if (AGENT_KIND === "generic" || AGENT_KIND === "catalog-app") {
     const cmd = readGenericCmd();
     if (!cmd) return { error: "no generic agent command configured (~/.hivra/agent-cmd.json)" };
     const args = cmd.promptVia === "arg" ? [...cmd.args, message] : [...cmd.args];
-    return { bin: cmd.bin, args, useStdin: cmd.promptVia !== "arg", textMode: true };
+    let extraEnv = null;
+    if (cmd.envFile && typeof cmd.envFile === "string") {
+      try {
+        const parsedEnv = {};
+        for (const line of fs.readFileSync(cmd.envFile, "utf8").split(/\r?\n/)) {
+          const idx = line.indexOf("=");
+          if (idx > 0) {
+            const k = line.slice(0, idx).trim();
+            if (/^[A-Z][A-Z0-9_]{0,63}$/.test(k)) parsedEnv[k] = line.slice(idx + 1);
+          }
+        }
+        extraEnv = Object.assign({}, chatSpawnEnv(), parsedEnv);
+      } catch {}
+    }
+    return { bin: cmd.bin, args, useStdin: cmd.promptVia !== "arg", textMode: true, env: extraEnv };
   }
   // claude: restrict=readonly drops the permission skip (headless print mode then
   // auto-denies mutating tools); limited keeps it but disallows the shell.
@@ -2324,7 +2368,9 @@ function resolveChatSpawn(message, sessionId, images, effort) {
 // Chat turns run detached from the HTTP request that starts them (see
 // ./chat-runs.cjs): the request starts a run and tails its log, so closing the
 // browser no longer ends the agent's work. Only chat runtimes load the store.
-const CHAT_RUNS_MODULE = !COMPUTER_PROFILE && ["claude", "codex", "generic"].includes(AGENT_KIND) ? require("./chat-runs.cjs") : null;
+const CHAT_RUNS_MODULE = !COMPUTER_PROFILE && (["claude", "codex", "generic"].includes(AGENT_KIND)
+  || (AGENT_KIND === "catalog-app" && CATALOG_APP && !CATALOG_APP.hostPort && Boolean(CATALOG_APP.cliChat)))
+  ? require("./chat-runs.cjs") : null;
 const CHAT_RUNS = CHAT_RUNS_MODULE ? CHAT_RUNS_MODULE.createChatRunStore({ root: path.join(HOME, ".hivra", "chat-runs") }) : null;
 function logChatStreamError(error) {
   console.error("hivra-chat: chat run stream failed: " + ((error && error.stack) || error));
@@ -3254,6 +3300,72 @@ function nuphosProxy(req, res) {
   return proxyHttp(req, res, NUPHOS_PORT, null, false, nuphosHeaders(req));
 }
 
+// ---- Universal catalog app at the box root (/app/ entry) -------------------
+const CATALOG_APP_ENTRY = "/app";
+const CATALOG_APP_GATEWAY_PATHS = OPENBOT_GATEWAY_PATHS.filter((p) => p !== OPENBOT_ENTRY).concat([CATALOG_APP_ENTRY]);
+function catalogAppGatewayPath(u) {
+  return CATALOG_APP_GATEWAY_PATHS.some((prefix) => u === prefix || u.startsWith(prefix + "/"));
+}
+function escapeHtmlSimple(text) {
+  return String(text || "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]));
+}
+function catalogAppHeaders(req) {
+  if (!CATALOG_APP || !CATALOG_APP.hostPort) return {};
+  if (CATALOG_APP.proxyMode === "loopback-origin") {
+    const set = {};
+    for (const name of OPENBOT_DROPPED_HEADERS) set[name] = null;
+    if (req.headers.origin !== undefined) {
+      let own = false;
+      try { own = new URL(String(req.headers.origin)).host.toLowerCase() === String(req.headers.host || "").trim().toLowerCase(); } catch {}
+      if (own) set.origin = "http://127.0.0.1:" + CATALOG_APP.hostPort;
+    }
+    return set;
+  }
+  return nuphosHeaders(req);
+}
+function catalogAppAnswers(done) {
+  if (!CATALOG_APP || !CATALOG_APP.hostPort) return done(false);
+  let settled = false;
+  const finish = (up) => { if (!settled) { settled = true; done(up); } };
+  const probe = http.request({
+    host: "127.0.0.1",
+    port: CATALOG_APP.hostPort,
+    method: "GET",
+    path: CATALOG_APP.healthPath || "/",
+    headers: { host: "127.0.0.1:" + CATALOG_APP.hostPort, accept: "text/html,*/*" },
+    timeout: 3000,
+  }, (pr) => {
+    pr.resume();
+    finish(pr.statusCode >= 200 && pr.statusCode < 400);
+  });
+  probe.on("timeout", () => probe.destroy());
+  probe.on("error", () => finish(false));
+  probe.end();
+}
+function catalogAppEntry(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  if (!CATALOG_APP || !CATALOG_APP.hostPort) return jsonRes(res, 404, { error: "no web surface configured" });
+  if (agentAppHold(req, res)) return;
+  const safeName = escapeHtmlSimple(CATALOG_APP.name);
+  catalogAppAnswers((up) => {
+    if (up) { res.writeHead(303, { Location: "/", "Cache-Control": "no-store" }); return res.end(); }
+    return openbotPage(
+      res,
+      200,
+      "Starting " + safeName,
+      "<h1>Starting " + safeName + "…</h1><p>" + safeName + " is starting on its computer. This page opens automatically when it is ready.</p>",
+      5,
+      CATALOG_APP_ENTRY,
+    );
+  });
+}
+function catalogAppProxy(req, res) {
+  if (!authed(req)) return denyHtml(res);
+  if (!CATALOG_APP || !CATALOG_APP.hostPort) return jsonRes(res, 404, { error: "no web surface configured" });
+  if (agentAppHold(req, res)) return;
+  return proxyHttp(req, res, CATALOG_APP.hostPort, null, false, catalogAppHeaders(req));
+}
+
 // ---- terminals on owner-only unix sockets -----------------------------------
 // ttyd serves the agent terminal and the computer's shell on unix sockets owned
 // by bux in bux-owned 0700 runtime folders, so no other local user or service
@@ -3434,7 +3546,7 @@ function handleLoginStatus(res) {
   // so report logged-in to avoid gating the chat behind a login it doesn't have.
   // OpenClaw manages its own model credentials inside its Control UI, so there is
   // no box-managed login to gate on — report connected like a generic agent.
-  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
+  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos" || AGENT_KIND === "catalog-app") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
   if (AGENT_KIND === "aeon") {
     // "Connected" = gh is authenticated (the dashboard can drive the user's repo
     // + Actions). Runs as the box user, so no sudo. gh prints to stderr.
@@ -4614,6 +4726,10 @@ const server = http.createServer((req, res) => {
     if (u === NUPHOS_ENTRY || u.startsWith(NUPHOS_ENTRY + "/")) return nuphosEntry(req, res);
     if (!nuphosGatewayPath(u)) return nuphosProxy(req, res);
   }
+  if (AGENT_KIND === "catalog-app" && CATALOG_APP && CATALOG_APP.hostPort && !ATTACHED) {
+    if (u === CATALOG_APP_ENTRY || u.startsWith(CATALOG_APP_ENTRY + "/")) return catalogAppEntry(req, res);
+    if (!catalogAppGatewayPath(u)) return catalogAppProxy(req, res);
+  }
   // Aeon dashboard client code issues root-absolute requests (fetch("/api/strategy"),
   // <img src="/...">): Next's basePath only rewrites URLs the router/asset pipeline
   // controls, so these land on the box root — this chat server — and die as 404s.
@@ -4759,8 +4875,8 @@ const server = http.createServer((req, res) => {
     }
   }
   if (req.method === "GET" && u === "/api/login/status") return authed(req) ? handleLoginStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "POST" && u === "/api/login/start") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") ? jsonRes(res, 400, { error: "login not required for this agent" }) : AGENT_KIND === "aeon" ? jsonRes(res, 400, { error: "GitHub connect has no start step" }) : AGENT_KIND === "codex" ? handleLoginStartCodex(res) : handleLoginStart(res)) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "POST" && u === "/api/login/complete") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") ? jsonRes(res, 200, { ok: true }) : AGENT_KIND === "aeon" ? readBody(req, (b) => handleLoginCompleteAeon(res, b)) : AGENT_KIND === "codex" ? handleLoginCompleteCodex(res) : readBody(req, (b) => handleLoginComplete(res, b))) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/login/start") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "catalog-app") ? jsonRes(res, 400, { error: "login not required for this agent" }) : AGENT_KIND === "aeon" ? jsonRes(res, 400, { error: "GitHub connect has no start step" }) : AGENT_KIND === "codex" ? handleLoginStartCodex(res) : handleLoginStart(res)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/login/complete") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "catalog-app") ? jsonRes(res, 200, { ok: true }) : AGENT_KIND === "aeon" ? readBody(req, (b) => handleLoginCompleteAeon(res, b)) : AGENT_KIND === "codex" ? handleLoginCompleteCodex(res) : readBody(req, (b) => handleLoginComplete(res, b))) : jsonRes(res, 401, { error: "unauthorized" });
   // Introspection endpoints (token-gated): chat history, file browser, skills.
   if (req.method === "GET" && (u === "/api/sessions" || u.startsWith("/api/sessions/"))) {
     if (!authed(req)) return jsonRes(res, 401, { error: "unauthorized" });
@@ -4850,6 +4966,7 @@ server.on("upgrade", (req, socket, head) => {
   else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)
   else if (AGENT_KIND === "openbot" && !openbotGatewayPath(u)) port = OPENBOT_PORT; // OpenBot's WebSockets (served at the root)
   else if (AGENT_KIND === "nuphos" && !nuphosGatewayPath(u)) port = NUPHOS_PORT; // the runtime's /acp and console sockets
+  else if (AGENT_KIND === "catalog-app" && CATALOG_APP && CATALOG_APP.hostPort && !catalogAppGatewayPath(u)) port = CATALOG_APP.hostPort; // universal catalog app WebSockets
   if (!port) { socket.destroy(); return; }
   // The app's WebSockets count as use for as long as they stay open.
   if (isAgentAppPort(port) && !nuphosAcp) {

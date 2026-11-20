@@ -28,6 +28,7 @@ import {
 import { IDLE_PROBE_PROGRAM } from "../../sleep/idle-probe-program";
 import { channelGatePerl, coverableProbeTags, DISCORD_CHANNEL_SPEC, EMAIL_CHANNEL_SPEC, MATRIX_CHANNEL_SPEC, TELEGRAM_CHANNEL_SPEC } from "../../channel-wake/registry";
 import { telegramCoverageBlockers } from "../../telegram-wake/coverage";
+import { UNIVERSAL_CATALOG_IDS } from "../../catalog-manifests";
 import { shellQuote } from "../../proxmox-target";
 
 const ON = { HIVRA_AGENT_PROFILES: "on" };
@@ -35,7 +36,7 @@ const ON = { HIVRA_AGENT_PROFILES: "on" };
 describe("the registry", () => {
   it("has a profile for every agent type in the catalog, and nothing else", () => {
     const catalog = readFileSync(path.join(__dirname, "../../agent-catalog.ts"), "utf8");
-    const ids = [...catalog.matchAll(/^\s{4}id: "([a-z-]+)",$/gm)].map((m) => m[1]).sort();
+    const ids = [...new Set([...catalog.matchAll(/^\s{4}id: "([a-z-]+)",$/gm)].map((m) => m[1]).concat([...UNIVERSAL_CATALOG_IDS]))].sort();
     expect(ids.length).toBeGreaterThanOrEqual(11);
     expect(AGENT_WAKE_PROFILES.map((p) => p.type).sort()).toEqual(ids);
   });

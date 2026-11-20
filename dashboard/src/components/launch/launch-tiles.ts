@@ -3,11 +3,15 @@
 // same words Launch does.
 
 import {
+  Activity,
   AppWindow,
   Bot,
   Boxes,
   Code2,
   Cpu,
+  GitBranch,
+  Globe,
+  Layers,
   Monitor,
   Orbit,
   Terminal,
@@ -15,12 +19,29 @@ import {
   Triangle,
   Users,
   Waves,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 
 import { getAgent } from "@/lib/hivra/agent-catalog";
+import {
+  UNIVERSAL_CATALOG_MANIFESTS,
+  type CatalogAppIconKey,
+} from "@/lib/hivra/catalog-manifests";
 import { HERMES_LAUNCH_PROFILE } from "@/lib/hermes-computer/launch-lane";
 import { PROFILE_DETAILS, type LaunchProfileId } from "@/lib/launch/contracts";
+
+const CATALOG_ICON_MAP: Record<CatalogAppIconKey, LucideIcon> = {
+  bot: Bot,
+  code: Code2,
+  cpu: Cpu,
+  globe: Globe,
+  layers: Layers,
+  terminal: Terminal,
+  workflow: Workflow,
+  git: GitBranch,
+  activity: Activity,
+};
 
 export type ChooseTile = { id: LaunchProfileId; name: string; description: string; icon: LucideIcon | null };
 
@@ -36,6 +57,12 @@ export const AGENT_TILES: readonly ChooseTile[] = ([
   { id: "nuphos", name: "Nuphos", description: "Claude Code your team chats with from the Nuphos app, on its own computer.", icon: Users },
   { id: "aeon", name: "Aeon", description: "An agent framework that runs its work on your GitHub.", icon: Triangle },
   { id: "deepseek-harness", name: "DeepSeek Harness", description: "DeepSeek's coding agent, in its own interface. Runs on DeepSeek V4.1 Flash.", icon: Waves },
+  ...UNIVERSAL_CATALOG_MANIFESTS.map((manifest) => ({
+    id: manifest.id as LaunchProfileId,
+    name: manifest.name,
+    description: manifest.description,
+    icon: CATALOG_ICON_MAP[manifest.icon],
+  })),
 ] satisfies ChooseTile[]).filter(tile => getAgent(PROFILE_DETAILS[tile.id].runtimeId)?.available === true);
 
 export const COMPUTER_TILES: readonly ChooseTile[] = [

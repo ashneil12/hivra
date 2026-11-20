@@ -832,6 +832,17 @@ async function main() {
     });
     await db.exec(cliTransportAdmission);
     assert.deepEqual(await admissionDefinitions(), admittedCliTransport, "re-applying the CLI transport admission changes nothing");
+    const universalCatalogAdmission = migration("20261120161000_provider_release_admission_2026_11_20_2.sql");
+    await db.exec(universalCatalogAdmission);
+    const admittedUniversalCatalog = await admissionDefinitions();
+    admittedUniversalCatalog.forEach((definition, index) => {
+      for (const version of ["2026.11.20.1", "2026.11.20.2"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["4f88c13c76732bc5779afda1d8199e012200fcd653567f7f700f8c3611e8e21a", "8ca2ea94e1f70fa13a10da570b087528818386e23486a9b2692780f899f3d007"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(universalCatalogAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedUniversalCatalog, "re-applying the universal catalog admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

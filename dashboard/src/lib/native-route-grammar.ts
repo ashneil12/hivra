@@ -1,3 +1,4 @@
+import { UNIVERSAL_CATALOG_IDS } from "@/lib/hivra/catalog-manifests";
 import type { PortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
 import type { LaunchProfileId, LaunchStage } from "@/lib/launch/contracts";
 import type { PlanKey } from "@/lib/subscription/plans";
@@ -54,6 +55,7 @@ const RESOURCE_ID = /^[A-Za-z0-9_-]{1,256}$/;
 export const NATIVE_LAUNCH_PROFILES = everyMember<LaunchProfileId>()([
   "claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "openbot", "nuphos", "aeon", "deepseek-harness",
   "ubuntu-desktop", "ubuntu-server", "linux-terminal", "omarchy", "windows",
+  ...UNIVERSAL_CATALOG_IDS,
 ]);
 /** Launch history stages, and the names used before Choose merged its steps
  * (LaunchJourney parseHistoryStage). The launch step itself is never history. */
@@ -65,7 +67,9 @@ const LAUNCH_STAGE = mapped({
 /** The paid plans an upgrade can return with (PLAN_ORDER without free). */
 export const NATIVE_UPGRADE_PLANS = ["operator", "fleet", "command"] as const satisfies readonly PlanKey[];
 export const PORTABLE_LAUNCH_RESOURCES = everyMember<PortableLaunchResourceId>()([
-  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "linux-desktop", "linux-terminal", "windows",
+  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos",
+  ...UNIVERSAL_CATALOG_IDS,
+  "linux-desktop", "linux-terminal", "windows",
 ]);
 
 const TAB: Parameter = { name: "tab", value: SURFACE };
