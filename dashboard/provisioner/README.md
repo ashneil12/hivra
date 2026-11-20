@@ -579,6 +579,10 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **Agent Zero CLI transport (`2026.11.20.1`).** The connection service
+  accepts both Socket.IO path forms and forwards the verified origin for
+  the CLI’s polling and WebSocket connections.
+
 - **Agent Zero built-in browser (`2026.11.19.1`).** Xpra’s assets and live
   connection now share the same authenticated browser-session route. Existing
   guests need **Update connection service** after the new bundle is available.

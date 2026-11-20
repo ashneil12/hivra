@@ -1250,7 +1250,10 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         policy: capacityPolicy,
         allowReduction: reductionOnly,
       });
-      const strictContainerCgroup = String(agent.type) !== "linux-desktop"
+      // Agent Zero runs in a dedicated VM without a separate Docker ceiling.
+      // The VM quota and memory envelope enforce the selected limits.
+      const usesVmEnvelopeOnly = agent.type === "linux-desktop" || agent.type === "agent-zero";
+      const strictContainerCgroup = !usesVmEnvelopeOnly
         ? Buffer.from(buildAgentContainerCgroupScript({
             memoryMb: ramEnvelope.ceilingMb,
             cpus: maximumCpu,
