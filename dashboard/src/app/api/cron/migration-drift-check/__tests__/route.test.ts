@@ -1,6 +1,10 @@
 import { NextRequest } from "next/server";
 
 import { GET } from "../route";
+import {
+  recordCronHeartbeat,
+  runCronHeartbeatWatchdog,
+} from "@/lib/cron-heartbeat";
 import { runMigrationDriftCheck } from "@/lib/migration-drift";
 import { reportOpsEvent } from "@/lib/ops-events";
 
@@ -17,6 +21,10 @@ jest.mock("@/lib/ops-events", () => ({
 }));
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
+jest.mock("@/lib/cron-heartbeat", () => ({
+  recordCronHeartbeat: jest.fn(),
+  runCronHeartbeatWatchdog: jest.fn().mockResolvedValue({ checked: 1, stale: [] }),
+}));
 
 function buildReq(headers: Record<string, string> = {}) {
   return new NextRequest("https://example/api/cron/migration-drift-check", {
@@ -40,6 +48,7 @@ describe("GET /api/cron/migration-drift-check", () => {
     const res = await GET(buildReq());
     expect(res.status).toBe(401);
     expect(runMigrationDriftCheck).not.toHaveBeenCalled();
+    expect(runCronHeartbeatWatchdog).not.toHaveBeenCalled();
   });
 
   it("rejects when CRON_SECRET is unset with 500", async () => {
@@ -47,6 +56,7 @@ describe("GET /api/cron/migration-drift-check", () => {
     const res = await GET(buildReq({ authorization: "Bearer anything" }));
     expect(res.status).toBe(500);
     expect(runMigrationDriftCheck).not.toHaveBeenCalled();
+    expect(runCronHeartbeatWatchdog).not.toHaveBeenCalled();
   });
 
   it("returns success with no ops events when there is no drift", async () => {
@@ -64,7 +74,9 @@ describe("GET /api/cron/migration-drift-check", () => {
     const body = await res.json();
     expect(body.success).toBe(true);
     expect(body.data.missing).toEqual([]);
+    expect(body.data.cronWatchdog).toEqual({ checked: 1, stale: [] });
     expect(reportOpsEvent).not.toHaveBeenCalled();
+    expect(recordCronHeartbeat).toHaveBeenCalledWith("migration-drift-check");
   });
 
   it("emits one fatal ops event per missing migration", async () => {
@@ -118,7 +130,7 @@ describe("GET /api/cron/migration-drift-check", () => {
     expect(res.status).toBe(200);
   });
 
-  it("returns 500 when the drift check itself throws", async () => {
+  it("still checks cron heartbeats when the migration ledger is unavailable", async () => {
     (runMigrationDriftCheck as jest.Mock).mockRejectedValue(
       new Error("Database not configured")
     );
@@ -126,6 +138,30 @@ describe("GET /api/cron/migration-drift-check", () => {
     const res = await GET(buildReq({ authorization: "Bearer cron-secret" }));
 
     expect(res.status).toBe(500);
+    expect(runCronHeartbeatWatchdog).toHaveBeenCalledTimes(1);
+    expect(recordCronHeartbeat).not.toHaveBeenCalled();
     expect(reportOpsEvent).not.toHaveBeenCalled();
+  });
+
+  it("still reports drift when the watchdog is unavailable", async () => {
+    (runMigrationDriftCheck as jest.Mock).mockResolvedValue({
+      totalLocal: 1,
+      totalApplied: 0,
+      missing: [{ version: "20260101000000", name: "alpha" }],
+      unexpected: [],
+      versionMismatched: [],
+    });
+    jest.mocked(runCronHeartbeatWatchdog).mockRejectedValueOnce(
+      new Error("watchdog down")
+    );
+
+    const res = await GET(buildReq({ authorization: "Bearer cron-secret" }));
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.cronWatchdog).toBeNull();
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ severity: "fatal" })
+    );
+    expect(recordCronHeartbeat).toHaveBeenCalledWith("migration-drift-check");
   });
 });
