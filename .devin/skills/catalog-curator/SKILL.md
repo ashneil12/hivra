@@ -22,7 +22,7 @@ app pass. If the verifier is wrong, stop and write that down in the pass notes
 
 Change only these paths:
 - `dashboard/src/lib/hivra/catalog-manifests/manifests/*.ts` (category files; add entries, do not edit or remove someone else's entry except to remove one you added this pass)
-- `dashboard/catalog-curation/candidates.jsonl`
+- `apps/shared/native-contract/route-grammar.v1.json` (the two value-set cases per app: `profile=<slug>&stage=choose` and `infrastructure?launch=<slug>`, next to the other catalog slugs)
 - `dashboard/catalog-curation/evidence/*.json` (written by the verifier only)
 
 Never touch the schema, the licence list, the mount policy, the guest runner,
@@ -84,6 +84,10 @@ Copy the shape of a similar existing entry in the right category file. Rules:
 - `containerPort` and `volumes` from the upstream docs. Stateless apps still
   need one volume on a harmless documented path.
 - Also add the slug to `UNIVERSAL_CATALOG_IDS` in
+  `manifests/index.ts` at the position matching the category file order,
+  and add the two value-set cases to
+  `apps/shared/native-contract/route-grammar.v1.json`. Wait, that file is
+  already listed above — follow the existing komga entries' shape.
   `manifests/index.ts`, at the same position the entry has in the
   concatenated category files (the test compares the two lists in order).
 - `hostPort`: the next free port in 3200-3999 (one higher than the current
