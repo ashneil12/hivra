@@ -943,7 +943,10 @@ async function verifyOne(spec, { force = false } = {}) {
     reasons: failed.map((c) => `${c.name}: ${c.detail ?? "failed"}`),
   };
   mkdirSync(EVIDENCE_DIR, { recursive: true });
-  writeFileSync(evidencePath, JSON.stringify(doc, null, 2) + "\n");
+  // Container/bridge addresses in raw tool output trip the public-tree hygiene
+  // gate; loopback is the only address evidence needs to keep.
+  const serialized = JSON.stringify(doc, null, 2).replace(/\b(?!127\.)(?:\d{1,3}\.){3}\d{1,3}\b/g, "<redacted-ip>");
+  writeFileSync(evidencePath, serialized + "\n");
   return { slug, verdict, skipped: false, reasons: doc.reasons, evidencePath };
 }
 
