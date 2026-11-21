@@ -865,6 +865,17 @@ async function main() {
     });
     await db.exec(cliSetupAdmission);
     assert.deepEqual(await admissionDefinitions(), admittedCliSetup, "re-applying the cli-web setup admission changes nothing");
+    const catalogStackAdmission = migration("20261121100000_provider_release_admission_2026_11_20_5.sql");
+    await db.exec(catalogStackAdmission);
+    const admittedCatalogStack = await admissionDefinitions();
+    admittedCatalogStack.forEach((definition, index) => {
+      for (const version of ["2026.11.20.4", "2026.11.20.5"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["06d38a6e4baedfe8ae7ce029f39c6cdaf30fa842c186d6f430d06db5a08f3d4a", "4a567238a31067773d0e74d3184c97b983044c330a4b075f7c484bfd06b7100f"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(catalogStackAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedCatalogStack, "re-applying the docker-stack admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

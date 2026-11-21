@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
@@ -79,6 +81,121 @@ describe("provisioner hivra-catalog-app.py validator", () => {
       expect(runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(bad)).status).not.toBe(0);
     }
   });
+
+  it("accepts declared placeholders and rejects unknown ones", () => {
+    const base = buildCatalogAppLaunchSpec(UNIVERSAL_CATALOG_MANIFESTS.find((m) => m.id === "gitea")!);
+    if (base.runtime.kind !== "docker-web") throw new Error("expected docker-web");
+    const withPlaceholders = {
+      ...base,
+      runtime: {
+        ...base.runtime,
+        env: { ...base.runtime.env, APP_URL: "${HIVRA_PUBLIC_ORIGIN}/", PUBLIC_HOST: "${HIVRA_PUBLIC_HOST}" },
+      },
+    };
+    expect(runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(withPlaceholders)).status).toBe(0);
+
+    const badCases = [
+      { ...withPlaceholders, runtime: { ...withPlaceholders.runtime, env: { LEAK: "${HIVRA_PUBLIC_ORIGIN}${UNKNOWN_THING}" } } },
+      { ...withPlaceholders, runtime: { ...withPlaceholders.runtime, env: { LEAK: "${NOT_A_SECRET}" } } },
+      { ...withPlaceholders, runtime: { ...withPlaceholders.runtime, env: { LEAK: "prefix ${HIVRA_PUBLIC_ORIGIN" } } },
+      { ...withPlaceholders, runtime: { ...withPlaceholders.runtime, generatedSecrets: ["MY_SECRET"], env: { LEAK: "${MY_SECRET} ${OTHER_SECRET}" } } },
+      { ...withPlaceholders, runtime: { ...withPlaceholders.runtime, generatedSecrets: ["MY_SECRET", "MY_SECRET"] } },
+      { ...withPlaceholders, runtime: { ...withPlaceholders.runtime, generatedSecrets: ["lowercase"] } },
+      { ...withPlaceholders, runtime: { ...withPlaceholders.runtime, generatedSecrets: Array.from({ length: 9 }, (_, i) => `SECRET_${i}`) } },
+    ];
+    for (const bad of badCases) {
+      expect(runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(bad)).status).not.toBe(0);
+    }
+
+    const withSecret = {
+      ...base,
+      runtime: { ...base.runtime, generatedSecrets: ["GITEA_SECRET_KEY"], env: { ...withPlaceholders.runtime.env, SECRET: "${GITEA_SECRET_KEY}" } },
+    };
+    expect(runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(withSecret)).status).toBe(0);
+  });
+
+  it("validates docker-stack specs and renders a hardened compose file", () => {
+    const stackSpec = {
+      appId: "verify-stack",
+      name: "Verify Stack",
+      runtime: {
+        kind: "docker-stack",
+        services: [
+          { name: "db", imageRepo: "postgres", imageTag: "16-alpine", volumes: [{ name: "data", mountPath: "/var/lib/postgresql/data" }] },
+          { name: "web", imageRepo: "postgres", imageTag: "16-alpine", env: { APP_URL: "${HIVRA_PUBLIC_ORIGIN}/" }, generatedSecrets: ["APP_SECRET"], dependsOn: ["db"] },
+        ],
+        web: { service: "web", containerPort: 8080, hostPort: 3210, healthPath: "/", proxyMode: "standard" },
+      },
+    };
+    const valid = runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(stackSpec));
+    expect(valid.status).toBe(0);
+
+    const badSpecs = [
+      { ...stackSpec, runtime: { ...stackSpec.runtime, services: [stackSpec.runtime.services[0]] } },
+      { ...stackSpec, runtime: { ...stackSpec.runtime, services: [...stackSpec.runtime.services, { name: "extra", imageRepo: "redis", imageTag: "7", }, { name: "extra2", imageRepo: "redis", imageTag: "7" }, { name: "extra3", imageRepo: "redis", imageTag: "7" }, { name: "extra4", imageRepo: "redis", imageTag: "7" }, { name: "extra5", imageRepo: "redis", imageTag: "7" }, { name: "extra6", imageRepo: "redis", imageTag: "7" }] } },
+      { ...stackSpec, runtime: { ...stackSpec.runtime, services: stackSpec.runtime.services.map((s, i) => i === 0 ? { ...s, imageTag: "latest" } : s) } },
+      { ...stackSpec, runtime: { ...stackSpec.runtime, services: stackSpec.runtime.services.map((s) => ({ ...s, env: { BAD: "${UNDECLARED}" } })) } },
+      { ...stackSpec, runtime: { ...stackSpec.runtime, services: stackSpec.runtime.services.map((s, i) => i === 0 ? { ...s, dependsOn: ["web"] } : s) } },
+      { ...stackSpec, runtime: { ...stackSpec.runtime, web: { ...stackSpec.runtime.web, service: "missing" } } },
+      { ...stackSpec, runtime: { ...stackSpec.runtime, services: stackSpec.runtime.services.map((s) => ({ ...s, volumes: [{ name: "x", mountPath: "/etc/passwd" }] })) } },
+    ];
+    for (const bad of badSpecs) {
+      expect(runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(bad)).status).not.toBe(0);
+    }
+
+    // --render-only writes the same files install would, with fake secrets.
+    const work = mkdtempSync(path.join(tmpdir(), "hivra-render-test-"));
+    try {
+      const specFile = path.join(work, "spec.json");
+      const outDir = path.join(work, "out");
+      writeFileSync(specFile, JSON.stringify({ spec: stackSpec, publicOrigin: "https://box-verify.example.test" }));
+      const res = spawnSync("python3", ["-I", "-B", CATALOG_APP_SCRIPT, "render-only", specFile, outDir], { encoding: "utf8", timeout: 30_000 });
+      expect(res.status).toBe(0);
+      const compose = readFileSync(path.join(outDir, "compose.yaml"), "utf8");
+      // Exactly one ports: entry, on the web service only, loopback-bound.
+      const portLines = compose.split("\n").filter((l) => l.includes("ports:") || l.includes("127.0.0.1:"));
+      expect(compose.match(/127\.0\.0\.1:/g)).toHaveLength(1);
+      expect(compose).toContain("127.0.0.1:3210:8080");
+      // No bind mounts, no privileged/devices/host networking anywhere.
+      expect(compose).not.toMatch(/type:\s*bind|source:|privileged|network_mode|pid:\s*["']?host/);
+      expect(compose).toContain("no-new-privileges:true");
+      expect(compose).toContain("hivra-app-verify-stack-");
+      // Web service env file carries the substituted origin + fake secret.
+      const webEnv = readFileSync(path.join(outDir, "env", "web.env"), "utf8");
+      expect(webEnv).toContain("APP_URL=https://box-verify.example.test/");
+      expect(webEnv).toContain("APP_SECRET=render-only-app_secret");
+      const meta = JSON.parse(readFileSync(path.join(outDir, "meta.json"), "utf8"));
+      expect(meta.kind).toBe("docker-stack");
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses generated secret values across renders instead of rotating them", () => {
+    const secretsFile = path.join(mkdtempSync(path.join(tmpdir(), "hivra-secrets-")), "secrets");
+    const code = [
+      "import importlib.util, json, os",
+      `spec = importlib.util.spec_from_file_location('runner', ${JSON.stringify(CATALOG_APP_SCRIPT)})`,
+      "mod = importlib.util.module_from_spec(spec)",
+      "spec.loader.exec_module(mod)",
+      "first = mod._load_or_create_secrets(['MY_KEY'], __import__('pathlib').Path(os.environ['SECRETS_FILE']))",
+      "second = mod._load_or_create_secrets(['MY_KEY'], __import__('pathlib').Path(os.environ['SECRETS_FILE']))",
+      "print(json.dumps({'same': first['MY_KEY'] == second['MY_KEY'], 'len': len(first['MY_KEY'])}))",
+    ].join("\n");
+    const res = spawnSync("python3", ["-I", "-B", "-c", code], {
+      encoding: "utf8",
+      timeout: 30_000,
+      env: { ...process.env, SECRETS_FILE: secretsFile },
+    });
+    expect(res.status).toBe(0);
+    const out = JSON.parse(res.stdout);
+    expect(out.same).toBe(true);
+    expect(out.len).toBeGreaterThanOrEqual(40);
+    // The store is root-only shaped: KEY=VALUE lines, no value in stdout.
+    const stored = readFileSync(secretsFile, "utf8");
+    expect(stored).toMatch(/^MY_KEY=\S+\n$/);
+    expect(res.stdout).not.toContain(stored.trim().split("=")[1]);
+  });
 });
 
 describe("hivra-install-agent.py launch document v5", () => {
@@ -94,6 +211,7 @@ describe("hivra-install-agent.py launch document v5", () => {
       model: "",
       tunnelToken: "tok_test_12345",
       accessHostname: null,
+      publicOrigin: "https://box-verify.example.test",
       catalogApp: spec,
     };
     const code = [
@@ -125,6 +243,7 @@ describe("hivra-install-agent.py launch document v5", () => {
       model: "",
       tunnelToken: "tok_test_12345",
       accessHostname: null,
+      publicOrigin: "https://box-verify.example.test",
       catalogApp: spec,
     };
     const code = [

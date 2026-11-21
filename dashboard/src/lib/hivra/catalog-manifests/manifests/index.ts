@@ -85,6 +85,7 @@ export const UNIVERSAL_CATALOG_IDS = [
   "calibre-web",
   "suwayomi",
   "komga",
+  "umami",
 ] as const;
 
 export type UniversalCatalogAppId = (typeof UNIVERSAL_CATALOG_IDS)[number];

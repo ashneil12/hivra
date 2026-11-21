@@ -43,6 +43,9 @@ export const DEV_TOOL_MANIFESTS: readonly CatalogAppManifest[] = [
       env: {
         USER_UID: "1000",
         USER_GID: "1000",
+        // Without an explicit ROOT_URL Gitea builds absolute links from the
+        // loopback Host the gateway forwards, so every page leaks 127.0.0.1.
+        GITEA__SERVER__ROOT_URL: "${HIVRA_PUBLIC_ORIGIN}/",
       },
       proxyMode: "standard",
     },

@@ -21,6 +21,7 @@ from pathlib import Path
 import platform
 import pwd
 import re
+import secrets
 import shlex
 import shutil
 import stat
@@ -28,6 +29,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -48,6 +50,9 @@ GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 RELEASE_ASSET_RE = re.compile(r"^[A-Za-z0-9._-]{1,120}\.(?:tar\.gz|tgz|tar\.bz2|tar\.xz|zip)$")
 SAFE_ARG_RE = re.compile(r"^[A-Za-z0-9._:/=,@+-]{1,128}$")
 SEMVER_RE = re.compile(r"\b(\d{1,6}\.\d{1,6}\.\d{1,6})\b")
+PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+PUBLIC_PLACEHOLDERS = ("HIVRA_PUBLIC_ORIGIN", "HIVRA_PUBLIC_HOST")
+STACK_SERVICE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,23}$")
 
 PORT_MIN = 3200
 PORT_MAX = 3999
@@ -61,6 +66,8 @@ FORBIDDEN_MOUNT_PREFIXES = (
 METADATA_PATH = Path(os.environ.get("HIVRA_CATALOG_APP_META", "/etc/hivra/catalog-app.json"))
 DOCKER_ENV_PATH = Path(os.environ.get("HIVRA_CATALOG_APP_ENV", "/etc/hivra/catalog-app.env"))
 APP_ROOT = Path(os.environ.get("HIVRA_CATALOG_APP_ROOT", "/opt/hivra-app"))
+SECRETS_PATH = Path(os.environ.get("HIVRA_CATALOG_APP_SECRETS", "/etc/hivra/catalog-app.secrets"))
+COMPOSE_PATH = APP_ROOT / "compose.yaml"
 RECORD_PATH = Path(os.environ.get("HIVRA_AGENT_APP_RECORD", "/var/lib/hivra/agent-app.json"))
 AGENT_USER = os.environ.get("HIVRA_AGENT_USER", "bux")
 AGENT_HOME = Path(os.environ.get("HIVRA_AGENT_HOME", "/home/bux"))
@@ -104,6 +111,43 @@ def _validate_env_map(value):
             raise CatalogAppError("invalid catalog app env entry")
         cleaned[key] = item
     return cleaned
+
+
+def _validate_generated_secrets(value):
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 8:
+        raise CatalogAppError("invalid generatedSecrets")
+    for name in value:
+        if not isinstance(name, str) or not ENV_KEY_RE.fullmatch(name):
+            raise CatalogAppError("invalid generatedSecrets entry")
+    if len(set(value)) != len(value):
+        raise CatalogAppError("generatedSecrets must be unique")
+    return list(value)
+
+
+def _env_placeholders_ok(value, secret_names):
+    """Mirror of the schema rule: ${HIVRA_PUBLIC_ORIGIN}, ${HIVRA_PUBLIC_HOST}
+    and ${NAME} for a declared generated secret are the only placeholders."""
+    if not isinstance(value, str):
+        return False
+    allowed = set(PUBLIC_PLACEHOLDERS) | set(secret_names)
+    stripped = PLACEHOLDER_RE.sub("", value)
+    if "${" in stripped:
+        return False
+    return all(match.group(1) in allowed for match in PLACEHOLDER_RE.finditer(value))
+
+
+def _env_map_placeholders_ok(env, secret_names):
+    if not env:
+        return True
+    return all(_env_placeholders_ok(item, secret_names) for item in env.values())
+
+
+def _check_runtime_env_placeholders(runtime, secret_names):
+    for env in (runtime.get("env"), (runtime.get("modelEnv") or {}).get("extraEnv")):
+        if env and not _env_map_placeholders_ok(env, secret_names):
+            raise CatalogAppError("env value uses an undeclared placeholder")
 
 
 def _validate_setup(value):
@@ -161,8 +205,8 @@ def validate_catalog_app_spec(spec):
     if kind == "docker-web":
         allowed = {
             "kind", "imageRepo", "imageTag", "containerPort", "hostPort",
-            "healthPath", "volumes", "env", "modelEnv", "dropAllCaps",
-            "stopTimeoutSeconds", "proxyMode",
+            "healthPath", "volumes", "env", "generatedSecrets", "modelEnv",
+            "dropAllCaps", "stopTimeoutSeconds", "proxyMode",
         }
         if not set(runtime).issubset(allowed):
             raise CatalogAppError("unexpected docker-web field")
@@ -206,28 +250,33 @@ def validate_catalog_app_spec(spec):
         if type(stop_timeout) is not int or not (5 <= stop_timeout <= 120):
             raise CatalogAppError("invalid stopTimeoutSeconds")
         env = _validate_env_map(runtime.get("env"))
+        generated_secrets = _validate_generated_secrets(runtime.get("generatedSecrets"))
         model_env = _validate_model_env(runtime.get("modelEnv"))
+        norm_runtime = {
+            "kind": "docker-web",
+            "imageRepo": repo,
+            "imageTag": tag,
+            "containerPort": cport,
+            "hostPort": hport,
+            "healthPath": hpath,
+            "volumes": norm_vols,
+            "env": env,
+            "modelEnv": model_env,
+            "dropAllCaps": drop_caps,
+            "stopTimeoutSeconds": stop_timeout,
+            "proxyMode": proxy_mode,
+        }
+        if generated_secrets:
+            norm_runtime["generatedSecrets"] = generated_secrets
+        _check_runtime_env_placeholders(norm_runtime, generated_secrets)
         return {
             "appId": app_id,
             "name": name.strip(),
-            "runtime": {
-                "kind": "docker-web",
-                "imageRepo": repo,
-                "imageTag": tag,
-                "containerPort": cport,
-                "hostPort": hport,
-                "healthPath": hpath,
-                "volumes": norm_vols,
-                "env": env,
-                "modelEnv": model_env,
-                "dropAllCaps": drop_caps,
-                "stopTimeoutSeconds": stop_timeout,
-                "proxyMode": proxy_mode,
-            },
+            "runtime": norm_runtime,
         }
 
     if kind == "cli-web":
-        allowed = {"kind", "installer", "webService", "cliChat", "setup", "env", "modelEnv"}
+        allowed = {"kind", "installer", "webService", "cliChat", "setup", "env", "generatedSecrets", "modelEnv"}
         if not set(runtime).issubset(allowed):
             raise CatalogAppError("unexpected cli-web field")
         inst = runtime.get("installer")
@@ -309,19 +358,140 @@ def validate_catalog_app_spec(spec):
             raise CatalogAppError("cli-web requires webService or cliChat")
 
         env = _validate_env_map(runtime.get("env"))
+        generated_secrets = _validate_generated_secrets(runtime.get("generatedSecrets"))
         model_env = _validate_model_env(runtime.get("modelEnv"))
         setup = _validate_setup(runtime.get("setup"))
+        norm_runtime = {
+            "kind": "cli-web",
+            "installer": norm_inst,
+            "webService": norm_web,
+            "cliChat": norm_chat,
+            "setup": setup,
+            "env": env,
+            "modelEnv": model_env,
+        }
+        if generated_secrets:
+            norm_runtime["generatedSecrets"] = generated_secrets
+        _check_runtime_env_placeholders(norm_runtime, generated_secrets)
+        return {
+            "appId": app_id,
+            "name": name.strip(),
+            "runtime": norm_runtime,
+        }
+
+    if kind == "docker-stack":
+        allowed = {"kind", "services", "web", "stopTimeoutSeconds"}
+        if not set(runtime).issubset(allowed):
+            raise CatalogAppError("unexpected docker-stack field")
+        services = runtime.get("services")
+        web = runtime.get("web")
+        stop_timeout = runtime.get("stopTimeoutSeconds", 25)
+        if not isinstance(services, list) or not (2 <= len(services) <= 6):
+            raise CatalogAppError("invalid docker-stack services")
+        if type(stop_timeout) is not int or not (5 <= stop_timeout <= 120):
+            raise CatalogAppError("invalid stopTimeoutSeconds")
+        if not isinstance(web, dict) or not set(web).issubset({"service", "containerPort", "hostPort", "healthPath", "proxyMode"}):
+            raise CatalogAppError("invalid docker-stack web")
+        w_service = web.get("service")
+        w_cport = web.get("containerPort")
+        w_hport = web.get("hostPort")
+        w_hpath = web.get("healthPath")
+        w_proxy = web.get("proxyMode")
+        if not isinstance(w_service, str) or not STACK_SERVICE_NAME_RE.fullmatch(w_service):
+            raise CatalogAppError("invalid docker-stack web service")
+        if type(w_cport) is not int or not (1 <= w_cport <= 65535):
+            raise CatalogAppError("invalid docker-stack containerPort")
+        if type(w_hport) is not int or not (PORT_MIN <= w_hport <= PORT_MAX):
+            raise CatalogAppError("invalid docker-stack hostPort")
+        if not _safe_health_path(w_hpath):
+            raise CatalogAppError("invalid docker-stack healthPath")
+        if w_proxy not in ("standard", "loopback-origin"):
+            raise CatalogAppError("invalid docker-stack proxyMode")
+
+        norm_services = []
+        seen_names = set()
+        all_secret_names = set()
+        for index, svc in enumerate(services):
+            if not isinstance(svc, dict) or not set(svc).issubset(
+                {"name", "imageRepo", "imageTag", "env", "generatedSecrets", "volumes", "dropAllCaps", "dependsOn"}
+            ):
+                raise CatalogAppError("invalid docker-stack service")
+            sname = svc.get("name")
+            if not isinstance(sname, str) or not STACK_SERVICE_NAME_RE.fullmatch(sname) or sname in seen_names:
+                raise CatalogAppError("invalid or duplicate docker-stack service name")
+            seen_names.add(sname)
+            srepo = svc.get("imageRepo")
+            stag = svc.get("imageTag")
+            if not isinstance(srepo, str) or not IMAGE_REPO_RE.fullmatch(srepo):
+                raise CatalogAppError("invalid docker-stack imageRepo")
+            if not isinstance(stag, str) or not IMAGE_TAG_RE.fullmatch(stag):
+                raise CatalogAppError("invalid docker-stack imageTag")
+            # Non-web services must not track a moving tag: a `latest` pull on
+            # update could silently change a database major version.
+            if sname != w_service and stag == "latest":
+                raise CatalogAppError("docker-stack non-web service must not use the latest tag")
+            senv = _validate_env_map(svc.get("env"))
+            ssecrets = _validate_generated_secrets(svc.get("generatedSecrets"))
+            all_secret_names.update(ssecrets)
+            svols = svc.get("volumes") or []
+            if not isinstance(svols, list) or len(svols) > 8:
+                raise CatalogAppError("invalid docker-stack service volumes")
+            norm_vols = []
+            seen_vols = set()
+            for vol in svols:
+                if not isinstance(vol, dict) or set(vol) != {"name", "mountPath"}:
+                    raise CatalogAppError("invalid docker-stack volume entry")
+                vname, vmount = vol["name"], vol["mountPath"]
+                if not isinstance(vname, str) or not VOLUME_NAME_RE.fullmatch(vname) or vname in seen_vols:
+                    raise CatalogAppError("invalid docker-stack volume name")
+                if not _safe_mount_path(vmount):
+                    raise CatalogAppError("unsafe docker-stack volume mountPath")
+                seen_vols.add(vname)
+                norm_vols.append({"name": vname, "mountPath": vmount})
+            sdrop = svc.get("dropAllCaps", False)
+            if type(sdrop) is not bool:
+                raise CatalogAppError("invalid docker-stack dropAllCaps")
+            sdeps = svc.get("dependsOn") or []
+            if not isinstance(sdeps, list) or len(sdeps) > 5 or not all(
+                isinstance(d, str) and STACK_SERVICE_NAME_RE.fullmatch(d) for d in sdeps
+            ):
+                raise CatalogAppError("invalid docker-stack dependsOn")
+            norm_services.append({
+                "name": sname,
+                "imageRepo": srepo,
+                "imageTag": stag,
+                "env": senv,
+                "generatedSecrets": ssecrets,
+                "volumes": norm_vols,
+                "dropAllCaps": sdrop,
+                "dependsOn": list(sdeps),
+            })
+        if w_service not in seen_names:
+            raise CatalogAppError("docker-stack web service is not declared")
+        earlier = set()
+        for svc in norm_services:
+            for dep in svc["dependsOn"]:
+                if dep not in earlier:
+                    raise CatalogAppError("docker-stack dependsOn must reference an earlier service")
+            earlier.add(svc["name"])
+        # Placeholders resolve against the app-wide secret set (one root-only
+        # secrets file shared by every service env file).
+        for svc in norm_services:
+            _check_runtime_env_placeholders(svc, all_secret_names)
         return {
             "appId": app_id,
             "name": name.strip(),
             "runtime": {
-                "kind": "cli-web",
-                "installer": norm_inst,
-                "webService": norm_web,
-                "cliChat": norm_chat,
-                "setup": setup,
-                "env": env,
-                "modelEnv": model_env,
+                "kind": "docker-stack",
+                "services": norm_services,
+                "web": {
+                    "service": w_service,
+                    "containerPort": w_cport,
+                    "hostPort": w_hport,
+                    "healthPath": w_hpath,
+                    "proxyMode": w_proxy,
+                },
+                "stopTimeoutSeconds": stop_timeout,
             },
         }
 
@@ -348,6 +518,78 @@ def _write_atomic(path: Path, data: bytes, mode: int, uid: int = 0, gid: int = 0
             pass
 
 
+def _valid_public_origin(value):
+    """Mirror of install-agent's canonical_origin: https:// plus a dotted,
+    label-safe hostname with no port, path or credentials."""
+    if not isinstance(value, str) or not value.startswith("https://") or len(value) > 261:
+        return False
+    hostname = value[len("https://"):]
+    if "." not in hostname:
+        return False
+    tld = hostname.rsplit(".", 1)[1]
+    if not re.fullmatch(r"[a-z]{2,63}", tld):
+        return False
+    return all(
+        not label.startswith("xn--") and re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+        for label in hostname.split(".")
+    )
+
+
+def _public_origin_parts(public_origin):
+    origin = str(public_origin or "").strip()
+    host = urllib.parse.urlparse(origin).hostname or ""
+    return origin, host
+
+
+def _load_or_create_secrets(names, secrets_path=SECRETS_PATH):
+    """Root-only KEY=VALUE store. Existing values are reused verbatim so a
+    reinstall or update never silently rotates a secret the app already stored
+    (sessions, encrypted fields). Returns {name: value} for the requested
+    names; secret values are never logged."""
+    existing = {}
+    try:
+        info = secrets_path.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            raise CatalogAppError("catalog app secrets path is not a regular file")
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
+            raise CatalogAppError("catalog app secrets file has unsafe ownership or mode")
+        for line in secrets_path.read_text(encoding="utf-8").splitlines():
+            if "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            if ENV_KEY_RE.fullmatch(key):
+                existing[key] = val
+    except FileNotFoundError:
+        pass
+    merged = dict(existing)
+    changed = False
+    for name in names:
+        if name not in merged:
+            merged[name] = secrets.token_urlsafe(32)
+            changed = True
+    if changed or not secrets_path.exists():
+        lines = [f"{key}={merged[key]}" for key in sorted(merged)]
+        _write_atomic(secrets_path, ("\n".join(lines) + "\n").encode("utf-8"), 0o600)
+    return {name: merged[name] for name in names}
+
+
+def _substitute_env_value(value, secret_map, public_origin, public_host):
+    def repl(match):
+        name = match.group(1)
+        if name == "HIVRA_PUBLIC_ORIGIN":
+            if not _valid_public_origin(public_origin):
+                raise CatalogAppError("manifest uses ${HIVRA_PUBLIC_ORIGIN} but no valid publicOrigin was provided")
+            return public_origin
+        if name == "HIVRA_PUBLIC_HOST":
+            if not _valid_public_origin(public_origin):
+                raise CatalogAppError("manifest uses ${HIVRA_PUBLIC_HOST} but no valid publicOrigin was provided")
+            return public_host
+        if name in secret_map:
+            return secret_map[name]
+        raise CatalogAppError(f"env placeholder ${{{name}}} has no generated secret value")
+    return PLACEHOLDER_RE.sub(repl, value)
+
+
 def _merged_env_map(static_env, model_env, model_key, model_base_url, model_name):
     merged = dict(static_env or {})
     if model_env and model_key and model_base_url:
@@ -360,8 +602,13 @@ def _merged_env_map(static_env, model_env, model_key, model_base_url, model_name
     return merged
 
 
-def _build_env_lines(static_env, model_env, model_key, model_base_url, model_name):
+def _build_env_lines(static_env, model_env, model_key, model_base_url, model_name,
+                     secret_map=None, public_origin="", public_host="", raw_secrets=None):
     merged = _merged_env_map(static_env, model_env, model_key, model_base_url, model_name)
+    for key, value in merged.items():
+        merged[key] = _substitute_env_value(str(value), secret_map or {}, public_origin, public_host)
+    for key, value in (raw_secrets or {}).items():
+        merged[key] = value
     lines = []
     for key in sorted(merged):
         val = str(merged[key]).replace("\r", "").replace("\n", "")
@@ -437,7 +684,7 @@ def _pull_and_resolve_digest(repo: str, tag: str) -> str:
     raise CatalogAppError("unable to resolve pulled docker image digest")
 
 
-def install_docker_web(spec, model_key="", model_base_url="", model_name=""):
+def install_docker_web(spec, model_key="", model_base_url="", model_name="", public_origin=""):
     app_id = spec["appId"]
     name = spec["name"]
     rt = spec["runtime"]
@@ -449,7 +696,14 @@ def install_docker_web(spec, model_key="", model_base_url="", model_name=""):
     os.chmod(APP_ROOT, 0o700)
     _write_atomic(APP_ROOT / "image", (pinned_image + "\n").encode("utf-8"), 0o600)
 
-    env_bytes = _build_env_lines(rt.get("env"), rt.get("modelEnv"), model_key, model_base_url, model_name)
+    secret_names = rt.get("generatedSecrets") or []
+    secret_map = _load_or_create_secrets(secret_names) if secret_names else {}
+    public_origin, public_host = _public_origin_parts(public_origin)
+    env_bytes = _build_env_lines(
+        rt.get("env"), rt.get("modelEnv"), model_key, model_base_url, model_name,
+        secret_map=secret_map, public_origin=public_origin, public_host=public_host,
+        raw_secrets={name: secret_map[name] for name in secret_names},
+    )
     _write_atomic(DOCKER_ENV_PATH, env_bytes, 0o600)
 
     meta = {
@@ -581,7 +835,7 @@ def _probe_cli_version(bin_path: str) -> str:
     return "latest"
 
 
-def install_cli_web(spec, model_key="", model_base_url="", model_name=""):
+def install_cli_web(spec, model_key="", model_base_url="", model_name="", public_origin=""):
     app_id = spec["appId"]
     name = spec["name"]
     rt = spec["runtime"]
@@ -616,8 +870,15 @@ def install_cli_web(spec, model_key="", model_base_url="", model_name=""):
     else:
         raise CatalogAppError("unsupported cli installer method")
 
+    secret_names = rt.get("generatedSecrets") or []
+    secret_map = _load_or_create_secrets(secret_names) if secret_names else {}
+    public_origin, public_host = _public_origin_parts(public_origin)
     env_path = AGENT_HOME / ".hivra" / "catalog-app-model.env"
-    env_bytes = _build_env_lines(rt.get("env"), rt.get("modelEnv"), model_key, model_base_url, model_name)
+    env_bytes = _build_env_lines(
+        rt.get("env"), rt.get("modelEnv"), model_key, model_base_url, model_name,
+        secret_map=secret_map, public_origin=public_origin, public_host=public_host,
+        raw_secrets={name: secret_map[name] for name in secret_names},
+    )
     _write_atomic(env_path, env_bytes, 0o600, uid=uid, gid=gid)
 
     ws = rt.get("webService")
@@ -645,6 +906,11 @@ def install_cli_web(spec, model_key="", model_base_url="", model_name=""):
         # as the unprivileged agent user with the merged env loaded, and must
         # be idempotent because the update path re-runs this install.
         merged_env = _merged_env_map(rt.get("env"), rt.get("modelEnv"), model_key, model_base_url, model_name)
+        merged_env = {
+            key: _substitute_env_value(str(value), secret_map, public_origin, public_host)
+            for key, value in merged_env.items()
+        }
+        merged_env.update({name: secret_map[name] for name in secret_names})
         for command in setup_commands:
             _as_agent(["/bin/bash", "-c", command], env_extra=merged_env, timeout=300)
 
@@ -693,15 +959,291 @@ def install_cli_web(spec, model_key="", model_base_url="", model_name=""):
     return {"bin": resolved_bin, "version": version}
 
 
+def _ensure_compose():
+    """docker compose v2 is required for docker-stack runtimes. On the guest
+    image it may be absent; install the distro package and verify."""
+    try:
+        subprocess.run(
+            ["/usr/bin/docker", "compose", "version"],
+            check=True, timeout=30, capture_output=True, stdin=subprocess.DEVNULL,
+        )
+        return
+    except Exception:
+        pass
+    env = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "DEBIAN_FRONTEND": "noninteractive"}
+    subprocess.run(
+        ["/usr/bin/apt-get", "-o", "Acquire::Retries=3", "update"],
+        check=True, timeout=300, stdin=subprocess.DEVNULL, env=env,
+    )
+    subprocess.run(
+        ["/usr/bin/apt-get", "-o", "Acquire::Retries=3", "install", "-y", "--no-install-recommends", "docker-compose-v2"],
+        check=True, timeout=600, stdin=subprocess.DEVNULL, env=env,
+    )
+    subprocess.run(
+        ["/usr/bin/docker", "compose", "version"],
+        check=True, timeout=30, capture_output=True, stdin=subprocess.DEVNULL,
+    )
+
+
+def _yaml_scalar(value):
+    """Double-quote a scalar for the rendered compose file. Restricted charset
+    keeps JSON escaping identical to YAML double-quoted scalars."""
+    return json.dumps(str(value))
+
+
+def _compose_service_block(service, pinned_image, env_dir, app_id):
+    lines = [f"  {_yaml_scalar(service['name'])}:"]
+    lines.append(f"    image: {_yaml_scalar(pinned_image)}")
+    lines.append("    restart: unless-stopped")
+    lines.append("    security_opt:")
+    lines.append('      - "no-new-privileges:true"')
+    if service.get("dropAllCaps"):
+        lines.append("    cap_drop:")
+        lines.append('      - "ALL"')
+    env_path = Path(env_dir) / f"{service['name']}.env"
+    lines.append("    env_file:")
+    lines.append(f"      - {_yaml_scalar(str(env_path))}")
+    volumes = service.get("volumes") or []
+    if volumes:
+        lines.append("    volumes:")
+        for vol in volumes:
+            key = f"hivra-app-{app_id}-{vol['name']}"
+            lines.append(f"      - {_yaml_scalar(key + ':' + vol['mountPath'])}")
+    deps = service.get("dependsOn") or []
+    if deps:
+        lines.append("    depends_on:")
+        for dep in deps:
+            lines.append(f"      - {_yaml_scalar(dep)}")
+    return lines
+
+
+def _compose_yaml(app_id, runtime, resolve_image, env_dir):
+    """Single composer for install, --render-only and the update path. The
+    manifest never supplies YAML. `resolve_image(service_name)` returns the
+    image ref to pin (repo@sha256:... on real installs)."""
+    web = runtime["web"]
+    lines = ["name: hivra-app", "services:"]
+    volume_keys = []
+    for service in runtime["services"]:
+        pinned = resolve_image(service["name"])
+        if not pinned:
+            raise CatalogAppError(f"missing image for service {service['name']}")
+        lines.extend(_compose_service_block(service, pinned, env_dir, app_id))
+        if service["name"] == web["service"]:
+            port_spec = "127.0.0.1:%s:%s" % (web["hostPort"], web["containerPort"])
+            lines.append("    ports:")
+            lines.append(f"      - {_yaml_scalar(port_spec)}")
+        for vol in service.get("volumes") or []:
+            key = f"hivra-app-{app_id}-{vol['name']}"
+            if key not in volume_keys:
+                volume_keys.append(key)
+    if volume_keys:
+        lines.append("volumes:")
+        for key in volume_keys:
+            lines.append(f"  {_yaml_scalar(key)}:")
+            lines.append("    name: " + _yaml_scalar(key))
+    lines.append("networks:")
+    lines.append("  default: {}")
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def render_compose_yaml(app_id, runtime, digests, env_dir):
+    """Install/update rendering: every image must be a pulled digest pin."""
+    def resolve(name):
+        pinned = digests.get(name)
+        if not pinned or "@sha256:" not in pinned:
+            raise CatalogAppError(f"missing pinned digest for service {name}")
+        return pinned
+    return _compose_yaml(app_id, runtime, resolve, env_dir)
+
+
+def _stack_secret_names(runtime):
+    names = []
+    for service in runtime["services"]:
+        for name in service.get("generatedSecrets") or []:
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def _stack_env_bytes(service, secret_map, public_origin, public_host):
+    static = service.get("env") or {}
+    substituted = {
+        key: _substitute_env_value(str(value), secret_map, public_origin, public_host)
+        for key, value in static.items()
+    }
+    for name in service.get("generatedSecrets") or []:
+        substituted[name] = secret_map[name]
+    lines = [f"{key}={str(substituted[key]).replace(chr(13), '').replace(chr(10), '')}" for key in sorted(substituted)]
+    return ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8")
+
+
+def install_docker_stack(spec, public_origin=""):
+    app_id = spec["appId"]
+    name = spec["name"]
+    rt = spec["runtime"]
+    _ensure_docker()
+    _ensure_compose()
+
+    public_origin, public_host = _public_origin_parts(public_origin)
+    secret_names = _stack_secret_names(rt)
+    secret_map = _load_or_create_secrets(secret_names) if secret_names else {}
+
+    APP_ROOT.mkdir(parents=True, exist_ok=True)
+    os.chmod(APP_ROOT, 0o700)
+    env_dir = APP_ROOT / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(env_dir, 0o700)
+
+    digests = {}
+    for service in rt["services"]:
+        pinned = _pull_and_resolve_digest(service["imageRepo"], service["imageTag"])
+        digests[service["name"]] = pinned
+        env_bytes = _stack_env_bytes(service, secret_map, public_origin, public_host)
+        _write_atomic(env_dir / f"{service['name']}.env", env_bytes, 0o600)
+
+    compose_bytes = render_compose_yaml(app_id, rt, digests, str(env_dir))
+    _write_atomic(COMPOSE_PATH, compose_bytes, 0o600)
+
+    web = rt["web"]
+    meta = {
+        "schema": 1,
+        "appId": app_id,
+        "name": name,
+        "kind": "docker-stack",
+        "runtime": rt,
+        "digests": digests,
+        "composeFile": str(COMPOSE_PATH),
+        "hostPort": web["hostPort"],
+        "healthPath": web["healthPath"],
+        "proxyMode": web["proxyMode"],
+        "unit": "hivra-catalog-app.service",
+    }
+    _write_atomic(METADATA_PATH, (json.dumps(meta, indent=2) + "\n").encode("utf-8"), 0o644)
+
+    stop_timeout = rt.get("stopTimeoutSeconds", 25)
+    unit_text = (
+        "[Unit]\n"
+        f"Description=Hivra Catalog App ({name} stack on 127.0.0.1:{web['hostPort']})\n"
+        "After=network-online.target docker.service\n"
+        "Requires=docker.service\n"
+        "[Service]\n"
+        "TimeoutStartSec=0\n"
+        f"TimeoutStopSec={stop_timeout + 30}\n"
+        "Restart=always\n"
+        "RestartSec=5\n"
+        f"ExecStart=/usr/bin/docker compose -p hivra-app -f {shlex.quote(str(COMPOSE_PATH))} up\n"
+        f"ExecStop=-/usr/bin/docker compose -p hivra-app -f {shlex.quote(str(COMPOSE_PATH))} down\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+    _write_atomic(Path("/etc/systemd/system/hivra-catalog-app.service"), unit_text.encode("utf-8"), 0o644)
+    subprocess.run(["/usr/bin/systemctl", "daemon-reload"], check=True, timeout=30, stdin=subprocess.DEVNULL)
+    subprocess.run(["/usr/bin/systemctl", "enable", "--now", "hivra-catalog-app.service"], check=True, timeout=60, stdin=subprocess.DEVNULL)
+    primary = digests[web["service"]]
+    _record_app_version(app_id, primary.rsplit("@", 1)[1])
+    return {"images": digests, "version": primary.rsplit("@", 1)[1]}
+
+
+def render_only(spec_path, out_dir):
+    """Write exactly what install would write, minus pulls/systemd: the env
+    file(s), compose.yaml and metadata under out_dir, with a fake publicOrigin
+    (payload may override) and deterministic fake secrets so output is stable
+    for the verifier and tests."""
+    payload = json.loads(Path(spec_path).read_text(encoding="utf-8"))
+    spec = validate_catalog_app_spec(payload.get("spec") if isinstance(payload, dict) and "spec" in payload else payload)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    rt = spec["runtime"]
+    public_origin = str(payload.get("publicOrigin") or "https://box-verify.example.test")
+    if not _valid_public_origin(public_origin):
+        raise CatalogAppError("render-only publicOrigin must be a valid https origin")
+    public_origin, public_host = _public_origin_parts(public_origin)
+    if rt["kind"] == "docker-web":
+        names = rt.get("generatedSecrets") or []
+        fake = {name: f"render-only-{name.lower()}" for name in names}
+        env = _build_env_lines(
+            rt.get("env"), rt.get("modelEnv"), "", "", "",
+            secret_map=fake, public_origin=public_origin, public_host=public_host,
+            raw_secrets=fake,
+        )
+        _write_atomic(out / "env", env, 0o600)
+        meta = {"schema": 1, "appId": spec["appId"], "name": spec["name"], "kind": "docker-web",
+                "hostPort": rt["hostPort"], "healthPath": rt["healthPath"], "proxyMode": rt["proxyMode"],
+                "image": f"{rt['imageRepo']}:{rt['imageTag']}"}
+        _write_atomic(out / "meta.json", (json.dumps(meta, indent=2) + "\n").encode("utf-8"), 0o644)
+    elif rt["kind"] == "cli-web":
+        names = rt.get("generatedSecrets") or []
+        fake = {name: f"render-only-{name.lower()}" for name in names}
+        env = _build_env_lines(
+            rt.get("env"), rt.get("modelEnv"), "", "", "",
+            secret_map=fake, public_origin=public_origin, public_host=public_host,
+            raw_secrets=fake,
+        )
+        _write_atomic(out / "env", env, 0o600)
+    else:
+        env_dir = out / "env"
+        env_dir.mkdir(parents=True, exist_ok=True)
+        all_fake = {name: f"render-only-{name.lower()}" for name in _stack_secret_names(rt)}
+        for service in rt["services"]:
+            _write_atomic(env_dir / f"{service['name']}.env",
+                          _stack_env_bytes(service, all_fake, public_origin, public_host), 0o600)
+        refs = {service["name"]: f"{service['imageRepo']}:{service['imageTag']}" for service in rt["services"]}
+        # Tag refs, not digests: render-only performs no pull. The verifier
+        # pulls through compose itself; install pins digests instead.
+        compose = _compose_yaml(spec["appId"], rt, lambda name: refs[name], str(env_dir))
+        _write_atomic(out / "compose.yaml", compose, 0o600)
+        web = rt["web"]
+        meta = {"schema": 1, "appId": spec["appId"], "name": spec["name"], "kind": "docker-stack",
+                "hostPort": web["hostPort"], "healthPath": web["healthPath"], "proxyMode": web["proxyMode"],
+                "composeFile": str(out / "compose.yaml"), "envDir": str(env_dir)}
+        _write_atomic(out / "meta.json", (json.dumps(meta, indent=2) + "\n").encode("utf-8"), 0o644)
+    return {"outDir": str(out)}
+
+
+def render_compose_for_update(meta_path, digests):
+    """Re-render /opt/hivra-app/compose.yaml with new pinned digests for the
+    updater. Env files and the secrets store are untouched: generated values
+    are stable across updates by design."""
+    meta = json.loads(Path(meta_path).read_text(encoding="utf-8"))
+    if meta.get("kind") != "docker-stack" or not isinstance(meta.get("runtime"), dict):
+        raise CatalogAppError("catalog app meta is not a docker-stack install")
+    runtime = meta["runtime"]
+    env_dir = str(APP_ROOT / "env")
+    compose = render_compose_yaml(meta["appId"], runtime, digests, env_dir)
+    _write_atomic(COMPOSE_PATH, compose, 0o600)
+    return {"composeFile": str(COMPOSE_PATH)}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Hivra generic catalog app runner")
-    parser.add_argument("action", choices=("validate", "install", "meta"))
+    parser.add_argument("action", choices=("validate", "install", "meta", "render-only", "render-compose"))
+    parser.add_argument("spec_file", nargs="?")
+    parser.add_argument("out_dir", nargs="?")
     args = parser.parse_args()
 
     if args.action == "meta":
         if not METADATA_PATH.is_file():
             sys.exit(1)
         sys.stdout.write(METADATA_PATH.read_text(encoding="utf-8"))
+        return
+
+    if args.action == "render-only":
+        if not args.spec_file or not args.out_dir:
+            raise CatalogAppError("render-only requires <spec.json> <outdir>")
+        result = render_only(args.spec_file, args.out_dir)
+        sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
+        return
+
+    if args.action == "render-compose":
+        raw = sys.stdin.buffer.read(MAX_SPEC_BYTES + 1)
+        if not raw or len(raw) > MAX_SPEC_BYTES:
+            raise CatalogAppError("catalog app payload exceeds size bound")
+        digests = json.loads(raw.decode("utf-8"))
+        if not isinstance(digests, dict):
+            raise CatalogAppError("render-compose expects a service->image map")
+        result = render_compose_for_update(METADATA_PATH, digests)
+        sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
         return
 
     raw = sys.stdin.buffer.read(MAX_SPEC_BYTES + 1)
@@ -720,10 +1262,14 @@ def main():
     model_key = str(payload.get("modelKey") or "")
     model_base_url = str(payload.get("modelBaseUrl") or "")
     model_name = str(payload.get("model") or "")
-    if spec["runtime"]["kind"] == "docker-web":
-        result = install_docker_web(spec, model_key, model_base_url, model_name)
+    public_origin = str(payload.get("publicOrigin") or "")
+    kind = spec["runtime"]["kind"]
+    if kind == "docker-web":
+        result = install_docker_web(spec, model_key, model_base_url, model_name, public_origin)
+    elif kind == "docker-stack":
+        result = install_docker_stack(spec, public_origin)
     else:
-        result = install_cli_web(spec, model_key, model_base_url, model_name)
+        result = install_cli_web(spec, model_key, model_base_url, model_name, public_origin)
     sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
 
 
