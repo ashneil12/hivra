@@ -1,7 +1,7 @@
 {
   "slug": "wallos",
-  "checkedAt": "2026-11-21T04:10:42.891Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:18:29.803Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -33,16 +33,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 2.1s",
+      "detail": "health / -> 200 in 139.1s",
       "evidence": {
-        "container": "hivra-verify-wallos-xg959g",
+        "container": "hivra-verify-wallos-ypwjwo",
         "hostPort": 3224,
         "image": "bellamy/wallos:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-wallos-xg959g",
+          "hivra-verify-wallos-ypwjwo",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -50,18 +50,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-wallos-xg959g-data:/var/www/html/db",
+          "hivra-verify-wallos-ypwjwo-data:/var/www/html/db",
           "bellamy/wallos:latest"
         ],
-        "runStdout": "c2146d74d1e33f28aff878d8653ddde43ed17318bdebf9e346aadc984787009d",
+        "runStdout": "0443dfac06b866fdb129f3084d446828d3a9d452943fb014349ef97db2b6b3de",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2.1,
-          "attempts": 2
+          "seconds": 139.1,
+          "attempts": 40
         },
-        "memUsage": "32.5MiB / 7.652GiB",
-        "memBytes": 34078720
+        "memUsage": "17.22MiB / 7.652GiB",
+        "memBytes": 18056479
       }
     },
     {
@@ -70,7 +70,7 @@
       "detail": "through gateway: 303 /app/ -> 302 / -> 302 /login.php -> 200 /registration.php; form POST -> 200",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64778,
+        "gatewayPort": 64528,
         "proxyMode": "standard",
         "hops": [
           {
@@ -106,15 +106,19 @@
           "status": 200,
           "location": null,
           "bodyHead": "<!DOCTYPE html>\r\n<html dir=\"ltr\">\r\n\r\n<head>\r\n    <meta charset=\"UTF-8\">\r\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">\r\n    <meta name=\"theme-color\" content=\"#FFFFFF\" id=\"theme-color\" />\r\n    <meta name=\"apple-mobile-web-app-title\" content=\"Wallos\">\r\n    <title>Wallos - Subscription Tracker</title>\r\n    <link rel=\"icon\" type=\"image/"
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<html>\r\n<head><title>404 Not Found</title></head>\r\n<body>\r\n<center><h1>404 Not Found</h1></center>\r\n<hr><center>nginx/1.30.7</center>\r\n</body>\r\n</html>\r\n"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 32.5MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 17.2MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 34078720,
+        "memBytes": 18056479,
         "floorRamGb": 1
       }
     }

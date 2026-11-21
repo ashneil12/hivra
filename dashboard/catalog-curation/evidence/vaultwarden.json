@@ -1,7 +1,7 @@
 {
   "slug": "vaultwarden",
-  "checkedAt": "2026-11-21T04:10:49.817Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:18:55.446Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -35,16 +35,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health /alive -> 200 in 2s",
+      "detail": "health /alive -> 200 in 4.4s",
       "evidence": {
-        "container": "hivra-verify-vaultwarden-z8n877",
+        "container": "hivra-verify-vaultwarden-lj405i",
         "hostPort": 3228,
         "image": "vaultwarden/server:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-vaultwarden-z8n877",
+          "hivra-verify-vaultwarden-lj405i",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -52,18 +52,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-vaultwarden-z8n877-data:/data",
+          "hivra-verify-vaultwarden-lj405i-data:/data",
           "vaultwarden/server:latest"
         ],
-        "runStdout": "063af3b742db6a4f0696a59b312faa263ed1622e47a924dc3b76fe5e73457dac",
+        "runStdout": "a596c1acc4c2002f5042423e30ebfd9faa35347677a3325b5bae59dbbc9ddff8",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2,
-          "attempts": 2
+          "seconds": 4.4,
+          "attempts": 3
         },
-        "memUsage": "29.59MiB / 7.652GiB",
-        "memBytes": 31027364
+        "memUsage": "8.156MiB / 7.652GiB",
+        "memBytes": 8552186
       }
     },
     {
@@ -72,7 +72,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64842,
+        "gatewayPort": 64660,
         "proxyMode": "standard",
         "hops": [
           {
@@ -93,15 +93,19 @@
         "bodyHead": "<!doctype html><html class=\"theme_light\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=1010\"/><meta name=\"theme-color\" content=\"#175DDC\"/><title page-title>Vaultwarden Web</title><link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"images/apple-touch-icon.png\"/><link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"images/favicon-32x32.png\"/><link rel=\"icon\" type=\"image/png\" sizes",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta http-equiv=\"content-type\" content=\"text/html; charset=UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, shrink-to-fit=no\" />\n    <meta name=\"robots\" content=\"noindex,nofollow\" />\n    <link rel=\"icon\" type=\"image/png\" h"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 29.6MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 8.2MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 31027364,
+        "memBytes": 8552186,
         "floorRamGb": 1
       }
     }

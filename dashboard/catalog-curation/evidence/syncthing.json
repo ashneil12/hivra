@@ -1,7 +1,7 @@
 {
   "slug": "syncthing",
-  "checkedAt": "2026-11-21T04:10:38.989Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:17:18.442Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -19,7 +19,7 @@
       "detail": "linuxserver/syncthing:latest linux/amd64 + linux/arm64",
       "evidence": {
         "ref": "linuxserver/syncthing:latest",
-        "digest": "sha256:c4207d8f5b66d5f67eedb636b75500b5a04898e9f33299d252f4b966c41a4128",
+        "digest": "sha256:91e5a75d719b4f9919fc5332c7350d1477cf07bd62143506cec88694e94fbbc9",
         "platforms": [
           "linux/amd64",
           "unknown/unknown",
@@ -33,14 +33,14 @@
       "status": "pass",
       "detail": "health / -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-syncthing-8kv7oo",
+        "container": "hivra-verify-syncthing-x7yzww",
         "hostPort": 3257,
         "image": "linuxserver/syncthing:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-syncthing-8kv7oo",
+          "hivra-verify-syncthing-x7yzww",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -48,18 +48,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-syncthing-8kv7oo-config:/config",
+          "hivra-verify-syncthing-x7yzww-config:/config",
           "linuxserver/syncthing:latest"
         ],
-        "runStdout": "399d274485631222cfa7bb9428d4bdd91eda74b9f22ba21a73aa69cdb474d23b",
+        "runStdout": "e9113f0e8af9564b3af091516b08009762b6da0d077d38c26bdd75fcfbfc4036",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 2,
           "attempts": 2
         },
-        "memUsage": "56.67MiB / 7.652GiB",
-        "memBytes": 59422802
+        "memUsage": "25.47MiB / 7.652GiB",
+        "memBytes": 26707231
       }
     },
     {
@@ -68,7 +68,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64731,
+        "gatewayPort": 63986,
         "proxyMode": "standard",
         "hops": [
           {
@@ -89,15 +89,19 @@
         "bodyHead": "<!DOCTYPE html>\n<!--\n// Copyright (C) 2014 The Syncthing Authors.\n//\n// This Source Code Form is subject to the terms of the Mozilla Public\n// License, v. 2.0. If a copy of the MPL was not distributed with this file,\n// You can obtain one at https://mozilla.org/MPL/2.0/.\n\n-->\n<html lang=\"en\" ng-app=\"syncthing\" ng-controller=\"SyncthingController\">\n<head>\n  <meta charset=\"utf-8\"/>\n  <meta http-equiv",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "404 page not found\n"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 56.7MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 25.5MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 59422802,
+        "memBytes": 26707231,
         "floorRamGb": 1
       }
     }

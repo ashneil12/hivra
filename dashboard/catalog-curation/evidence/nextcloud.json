@@ -1,7 +1,7 @@
 {
   "slug": "nextcloud",
-  "checkedAt": "2026-11-21T04:11:01.599Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:22:16.365Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -43,16 +43,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health /status.php -> 200 in 6.1s",
+      "detail": "health /status.php -> 200 in 117.5s",
       "evidence": {
-        "container": "hivra-verify-nextcloud-t193rs",
+        "container": "hivra-verify-nextcloud-lyr28e",
         "hostPort": 3233,
         "image": "nextcloud:apache",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-nextcloud-t193rs",
+          "hivra-verify-nextcloud-lyr28e",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -60,18 +60,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-nextcloud-t193rs-data:/var/www/html",
+          "hivra-verify-nextcloud-lyr28e-data:/var/www/html",
           "nextcloud:apache"
         ],
-        "runStdout": "4a374a93085c58df8d34065f425c9e007af8715f98461c5d98970d4435bf6607",
+        "runStdout": "dbd00e3eb21d8842f495e5fff7d48f0d2d12bd7e4c006028168f818615564f52",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 6.1,
-          "attempts": 4
+          "seconds": 117.5,
+          "attempts": 52
         },
-        "memUsage": "202.5MiB / 7.652GiB",
-        "memBytes": 212336640
+        "memUsage": "274.2MiB / 7.652GiB",
+        "memBytes": 287519539
       }
     },
     {
@@ -80,7 +80,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64951,
+        "gatewayPort": 65391,
         "proxyMode": "standard",
         "hops": [
           {
@@ -98,18 +98,22 @@
         ],
         "finalStatus": 200,
         "finalPath": "/",
-        "bodyHead": "<!DOCTYPE html>\n<html class=\"ng-csp\" data-placeholder-focus=\"false\" lang=\"en\" data-locale=\"en\" translate=\"no\" >\n\t<head\n data-requesttoken=\"X0WB1J8KfKE8wng8qVqoKkNIIaB8OAo5y/VhJ1R6c34=:BiO0rdZAC8cPjFd13XHLHgkLcu5OcFBjspw1URIuGgY=\">\n\t\t<meta charset=\"utf-8\">\n\t\t<title>\n\t\t\tNextcloud\t\t</title>\n\t\t<meta name=\"csp-nonce\" nonce=\"BiO0rdZAC8cPjFd13XHLHgkLcu5OcFBjspw1URIuGgY=\">\n\t\t<meta name=\"viewport\" content=",
+        "bodyHead": "<!DOCTYPE html>\n<html class=\"ng-csp\" data-placeholder-focus=\"false\" lang=\"en\" data-locale=\"en\" translate=\"no\" >\n\t<head\n data-requesttoken=\"PU43X+GtJnU32zzPnV5X9k4B768i4uCgxnn0TSaqNTQ=:VXgCZqfpFA95kk2M/xscwwNAud0apovP9Aq5JHT9XBs=\">\n\t\t<meta charset=\"utf-8\">\n\t\t<title>\n\t\t\tNextcloud\t\t</title>\n\t\t<meta name=\"csp-nonce\" nonce=\"VXgCZqfpFA95kk2M/xscwwNAud0apovP9Aq5JHT9XBs=\">\n\t\t<meta name=\"viewport\" content=",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">\n<html><head>\n<title>404 Not Found</title>\n</head><body>\n<h1>Not Found</h1>\n<p>The requested URL was not found on this server.</p>\n<hr>\n<address>Apache/2.4.71 (Debian) Server at 127.0.0.1 Port 3233</address>\n</"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 202.5MiB vs floor 2GB*0.8=1.6GiB",
+      "detail": "idle memory 274.2MiB vs floor 2GB*0.8=1.6GiB",
       "evidence": {
-        "memBytes": 212336640,
+        "memBytes": 287519539,
         "floorRamGb": 2
       }
     }

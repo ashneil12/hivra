@@ -1,7 +1,7 @@
 {
   "slug": "uptime-kuma",
-  "checkedAt": "2026-11-21T04:11:08.628Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:50:53.143Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -33,16 +33,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 2s",
+      "detail": "health / -> 200 in 16.6s",
       "evidence": {
-        "container": "hivra-verify-uptime-kuma-r384zw",
+        "container": "hivra-verify-uptime-kuma-ft0b4z",
         "hostPort": 3207,
         "image": "louislam/uptime-kuma:2",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-uptime-kuma-r384zw",
+          "hivra-verify-uptime-kuma-ft0b4z",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -50,18 +50,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-uptime-kuma-r384zw-data:/app/data",
+          "hivra-verify-uptime-kuma-ft0b4z-data:/app/data",
           "louislam/uptime-kuma:2"
         ],
-        "runStdout": "be84310a438cf27f948adddc9ce7f7780e27acbead7e8e7b170a1dcb21900113",
+        "runStdout": "7f6ae3f56afb314e0b374ed3dbb9895f2133e84bcde08e780181462e2f84db2a",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2,
-          "attempts": 2
+          "seconds": 16.6,
+          "attempts": 9
         },
-        "memUsage": "197.1MiB / 7.652GiB",
-        "memBytes": 206674330
+        "memUsage": "200.8MiB / 7.652GiB",
+        "memBytes": 210554061
       }
     },
     {
@@ -70,7 +70,7 @@
       "detail": "through gateway: 303 /app/ -> 302 / -> 200 /setup-database",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 65015,
+        "gatewayPort": 54567,
         "proxyMode": "standard",
         "hops": [
           {
@@ -97,15 +97,19 @@
         "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\" />\n    <link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple-touch-icon.png\">\n    <link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />\n    <link rel=\"manifest\" href=\"/manifest.json\" />\n    <meta name=\"theme-color\" id=\"theme-colo",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot POST /login</pre>\n</body>\n</html>\n"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 197.1MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 200.8MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 206674330,
+        "memBytes": 210554061,
         "floorRamGb": 1
       }
     }

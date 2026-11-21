@@ -1090,11 +1090,6 @@
     },
     {
       "family": "value-set",
-      "input": "/dashboard/launch?profile=gitea&stage=choose",
-      "expect": "/dashboard/launch?profile=gitea&stage=choose"
-    },
-    {
-      "family": "value-set",
       "input": "/dashboard/launch?profile=aeon&stage=choose",
       "expect": "/dashboard/launch?profile=aeon&stage=choose"
     },
@@ -1310,11 +1305,6 @@
     },
     {
       "family": "value-set",
-      "input": "/dashboard/launch?profile=jellyfin&stage=choose",
-      "expect": "/dashboard/launch?profile=jellyfin&stage=choose"
-    },
-    {
-      "family": "value-set",
       "input": "/dashboard/launch?profile=navidrome&stage=choose",
       "expect": "/dashboard/launch?profile=navidrome&stage=choose"
     },
@@ -1417,11 +1407,6 @@
       "family": "value-set",
       "input": "/dashboard/infrastructure?launch=uptime-kuma",
       "expect": "/dashboard/infrastructure?launch=uptime-kuma"
-    },
-    {
-      "family": "value-set",
-      "input": "/dashboard/infrastructure?launch=gitea",
-      "expect": "/dashboard/infrastructure?launch=gitea"
     },
     {
       "family": "value-set",
@@ -1620,11 +1605,6 @@
     },
     {
       "family": "value-set",
-      "input": "/dashboard/infrastructure?launch=jellyfin",
-      "expect": "/dashboard/infrastructure?launch=jellyfin"
-    },
-    {
-      "family": "value-set",
       "input": "/dashboard/infrastructure?launch=navidrome",
       "expect": "/dashboard/infrastructure?launch=navidrome"
     },
@@ -1707,6 +1687,116 @@
       "family": "value-set",
       "input": "/dashboard/infrastructure?launch=traccar",
       "expect": "/dashboard/infrastructure?launch=traccar"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=jenkins&stage=choose",
+      "expect": "/dashboard/launch?profile=jenkins&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=jenkins",
+      "expect": "/dashboard/infrastructure?launch=jenkins"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=miniflux&stage=choose",
+      "expect": "/dashboard/launch?profile=miniflux&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=miniflux",
+      "expect": "/dashboard/infrastructure?launch=miniflux"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=docmost&stage=choose",
+      "expect": "/dashboard/launch?profile=docmost&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=docmost",
+      "expect": "/dashboard/infrastructure?launch=docmost"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=wiki-js&stage=choose",
+      "expect": "/dashboard/launch?profile=wiki-js&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=wiki-js",
+      "expect": "/dashboard/infrastructure?launch=wiki-js"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=linkwarden&stage=choose",
+      "expect": "/dashboard/launch?profile=linkwarden&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=linkwarden",
+      "expect": "/dashboard/infrastructure?launch=linkwarden"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=hedgedoc&stage=choose",
+      "expect": "/dashboard/launch?profile=hedgedoc&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=hedgedoc",
+      "expect": "/dashboard/infrastructure?launch=hedgedoc"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=openobserve&stage=choose",
+      "expect": "/dashboard/launch?profile=openobserve&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=openobserve",
+      "expect": "/dashboard/infrastructure?launch=openobserve"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=immich&stage=choose",
+      "expect": "/dashboard/launch?profile=immich&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=immich",
+      "expect": "/dashboard/infrastructure?launch=immich"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=gogs&stage=choose",
+      "expect": "/dashboard/launch?profile=gogs&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=gogs",
+      "expect": "/dashboard/infrastructure?launch=gogs"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=clickhouse&stage=choose",
+      "expect": "/dashboard/launch?profile=clickhouse&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=clickhouse",
+      "expect": "/dashboard/infrastructure?launch=clickhouse"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=appsmith&stage=choose",
+      "expect": "/dashboard/launch?profile=appsmith&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=appsmith",
+      "expect": "/dashboard/infrastructure?launch=appsmith"
     }
   ]
 }

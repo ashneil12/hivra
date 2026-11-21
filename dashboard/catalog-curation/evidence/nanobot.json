@@ -1,7 +1,7 @@
 {
   "slug": "nanobot",
-  "checkedAt": "2026-11-21T04:09:51.236Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:14:49.568Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -16,9 +16,9 @@
     {
       "name": "package",
       "status": "pass",
-      "detail": "PyPI nanobot-ai 0.4.1",
+      "detail": "PyPI nanobot-ai 0.4.2",
       "evidence": {
-        "version": "0.4.1"
+        "version": "0.4.2"
       }
     },
     {
@@ -33,7 +33,7 @@
       "evidence": {
         "mode": "--version",
         "status": 0,
-        "head": "🐈 nanobot v0.4.1\n\n"
+        "head": "🐈 nanobot v0.4.2\n\n"
       }
     },
     {

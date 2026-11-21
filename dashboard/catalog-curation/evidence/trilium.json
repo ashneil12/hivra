@@ -1,7 +1,7 @@
 {
   "slug": "trilium",
-  "checkedAt": "2026-11-21T04:10:52.858Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:20:21.322Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -35,16 +35,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 2s",
+      "detail": "health / -> 200 in 34.3s",
       "evidence": {
-        "container": "hivra-verify-trilium-yvu690",
+        "container": "hivra-verify-trilium-s62t8e",
         "hostPort": 3231,
         "image": "ghcr.io/triliumnext/notes:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-trilium-yvu690",
+          "hivra-verify-trilium-s62t8e",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -52,18 +52,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-trilium-yvu690-data:/home/node/trilium-data",
+          "hivra-verify-trilium-s62t8e-data:/home/node/trilium-data",
           "ghcr.io/triliumnext/notes:latest"
         ],
-        "runStdout": "5b9aa3ee7b897bbf78df238ab5e666692218956224fb1eee39ea802e0d184188",
+        "runStdout": "609d986e8ca6fb79c7b4ef492ed264d600e35e0a89276022bd9bcdff34c5e7cf",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2,
-          "attempts": 2
+          "seconds": 34.3,
+          "attempts": 14
         },
-        "memUsage": "139.7MiB / 7.652GiB",
-        "memBytes": 146486067
+        "memUsage": "142.2MiB / 7.652GiB",
+        "memBytes": 149107507
       }
     },
     {
@@ -72,7 +72,7 @@
       "detail": "through gateway: 303 /app/ -> 302 / -> 200 /setup",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64875,
+        "gatewayPort": 65017,
         "proxyMode": "standard",
         "hops": [
           {
@@ -99,15 +99,19 @@
         "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1\">\n    <meta id=\"syncInProgress\" content=\"0\" />\n    <title>Setup</title>\n\n    \n    <link rel=\"stylesheet\" href=\"assets/v0.95.0/src/bootstrap.css\">\n\n    <style>\n        .lds-ring {\n            display: inline-block;\n            position: relative;",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 500,
+          "bodyHead": "{\"message\":\"no such table: entity_changes\"}"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 139.7MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 142.2MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 146486067,
+        "memBytes": 149107507,
         "floorRamGb": 1
       }
     }

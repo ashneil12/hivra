@@ -1,7 +1,7 @@
 {
   "slug": "suwayomi",
-  "checkedAt": "2026-11-21T04:11:34.985Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:33:50.831Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -35,16 +35,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 6.1s",
+      "detail": "health / -> 200 in 151s",
       "evidence": {
-        "container": "hivra-verify-suwayomi-pf44f1",
+        "container": "hivra-verify-suwayomi-bxiuvr",
         "hostPort": 3252,
         "image": "ghcr.io/suwayomi/tachidesk:stable",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-suwayomi-pf44f1",
+          "hivra-verify-suwayomi-bxiuvr",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -52,18 +52,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-suwayomi-pf44f1-data:/home/suwayomi/.local/share/Tachidesk",
+          "hivra-verify-suwayomi-bxiuvr-data:/home/suwayomi/.local/share/Tachidesk",
           "ghcr.io/suwayomi/tachidesk:stable"
         ],
-        "runStdout": "fe15e654ead39337635a169ad3f6127d34b7a240d0e9a82a7ccac3bcfc6d9a76",
+        "runStdout": "b0fad86aa6d77056607ae177b7c94ab325a53751c7144221e6864246242f40c4",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 6.1,
-          "attempts": 4
+          "seconds": 151,
+          "attempts": 56
         },
-        "memUsage": "928.9MiB / 7.652GiB",
-        "memBytes": 974022246
+        "memUsage": "795MiB / 7.652GiB",
+        "memBytes": 833617920
       }
     },
     {
@@ -72,7 +72,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 65271,
+        "gatewayPort": 51530,
         "proxyMode": "standard",
         "hops": [
           {
@@ -93,15 +93,19 @@
         "bodyHead": "<!doctype html>\n<html>\n    <head>\n      <base href=\"/\">\n\n      <script type=\"module\" crossorigin src=\"./assets/polyfills-DTazDQbv.js\"></script>\n\n        <title>Suwayomi</title>\n        <meta name=\"apple-mobile-web-app-title\" content=\"Suwayomi\" />\n        <meta name=\"description\" content=\"A manga reader that runs tachiyomi's extensions\" />\n\n        <meta charset=\"utf-8\" />\n\n        <meta name=\"view",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "Endpoint POST /login not found"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 928.9MiB vs floor 2GB*0.8=1.6GiB",
+      "detail": "idle memory 795.0MiB vs floor 2GB*0.8=1.6GiB",
       "evidence": {
-        "memBytes": 974022246,
+        "memBytes": 833617920,
         "floorRamGb": 2
       }
     }

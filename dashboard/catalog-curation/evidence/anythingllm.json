@@ -1,7 +1,7 @@
 {
   "slug": "anythingllm",
-  "checkedAt": "2026-11-21T04:10:11.664Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:54:09.572Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -31,16 +31,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health /api/ping -> 200 in 8s",
+      "detail": "health /api/ping -> 200 in 51.3s",
       "evidence": {
-        "container": "hivra-verify-anythingllm-q1tijk",
+        "container": "hivra-verify-anythingllm-f4ibng",
         "hostPort": 3205,
         "image": "mintplexlabs/anythingllm:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-anythingllm-q1tijk",
+          "hivra-verify-anythingllm-f4ibng",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -48,18 +48,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-anythingllm-q1tijk-storage:/app/server/storage",
+          "hivra-verify-anythingllm-f4ibng-storage:/app/server/storage",
           "mintplexlabs/anythingllm:latest"
         ],
-        "runStdout": "bdc415565d3b26722f3a6938c10286e100fee9c51b48aaa3f378736216e02389",
+        "runStdout": "0fe8a5915a902b665c3d142a1319f004677ca334923c66c4502eab7243dd16f6",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 8,
-          "attempts": 5
+          "seconds": 51.3,
+          "attempts": 25
         },
-        "memUsage": "494MiB / 7.652GiB",
-        "memBytes": 517996544
+        "memUsage": "466.9MiB / 7.652GiB",
+        "memBytes": 489580134
       }
     },
     {
@@ -68,7 +68,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64260,
+        "gatewayPort": 55111,
         "proxyMode": "standard",
         "hops": [
           {
@@ -89,15 +89,19 @@
         "bodyHead": "\n       <!DOCTYPE html>\n        <html lang=\"en\">\n          <head>\n            <meta charset=\"UTF-8\" />\n            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n            <link type=\"image/svg+xml\" href=\"/favicon.png\" >\n<title >AnythingLLM | Your personal LLM trained on anything</title>\n<meta name=\"title\" content=\"AnythingLLM | Your personal LLM trained on anything\" >\n",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 200,
+          "bodyHead": "\n       <!DOCTYPE html>\n        <html lang=\"en\">\n          <head>\n            <meta charset=\"UTF-8\" />\n            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n            <link type=\"image/svg+xml\" href=\"/favicon.png\" >\n<title >AnythingLLM | Your personal LLM trained on "
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 494.0MiB vs floor 2GB*0.8=1.6GiB",
+      "detail": "idle memory 466.9MiB vs floor 2GB*0.8=1.6GiB",
       "evidence": {
-        "memBytes": 517996544,
+        "memBytes": 489580134,
         "floorRamGb": 2
       }
     }

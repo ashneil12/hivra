@@ -1,7 +1,7 @@
 {
   "slug": "actual-budget",
-  "checkedAt": "2026-11-21T04:10:45.837Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:19:08.071Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -31,16 +31,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 2s",
+      "detail": "health / -> 200 in 16.6s",
       "evidence": {
-        "container": "hivra-verify-actual-budget-baxdnl",
+        "container": "hivra-verify-actual-budget-vz3578",
         "hostPort": 3226,
         "image": "actualbudget/actual-server:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-actual-budget-baxdnl",
+          "hivra-verify-actual-budget-vz3578",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -48,18 +48,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-actual-budget-baxdnl-data:/data",
+          "hivra-verify-actual-budget-vz3578-data:/data",
           "actualbudget/actual-server:latest"
         ],
-        "runStdout": "b41ea610fb7741eef8f750ef5586cfb595c849a018fb4a8b9a89a1f570c52a0e",
+        "runStdout": "e63af9746ce69d3706c3a7c664b934717198b9eafc20d7b7d3d89205f371e9d8",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2,
-          "attempts": 2
+          "seconds": 16.6,
+          "attempts": 9
         },
-        "memUsage": "304MiB / 7.652GiB",
-        "memBytes": 318767104
+        "memUsage": "298.9MiB / 7.652GiB",
+        "memBytes": 313419366
       }
     },
     {
@@ -68,7 +68,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64807,
+        "gatewayPort": 64713,
         "proxyMode": "standard",
         "hops": [
           {
@@ -89,15 +89,19 @@
         "bodyHead": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta\n      name=\"viewport\"\n      content=\"width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover\"\n    />\n    <title>Actual</title>\n    <link rel=\"shortcut icon\" href=\"/favicon.ico\" />\n    <link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple-touch-icon.png\" />\n    <l",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot POST /login</pre>\n</body>\n</html>\n"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 304.0MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 298.9MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 318767104,
+        "memBytes": 313419366,
         "floorRamGb": 1
       }
     }

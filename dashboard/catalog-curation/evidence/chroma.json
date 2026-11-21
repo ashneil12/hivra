@@ -1,7 +1,7 @@
 {
   "slug": "chroma",
-  "checkedAt": "2026-11-21T04:19:32.964Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:54:30.875Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -31,16 +31,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health /api/v2/heartbeat -> 200 in 2s",
+      "detail": "health /api/v2/heartbeat -> 200 in 2.1s",
       "evidence": {
-        "container": "hivra-verify-chroma-vylc1m",
+        "container": "hivra-verify-chroma-bharcb",
         "hostPort": 3210,
         "image": "chromadb/chroma:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-chroma-vylc1m",
+          "hivra-verify-chroma-bharcb",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -48,18 +48,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-chroma-vylc1m-data:/data",
+          "hivra-verify-chroma-bharcb-data:/data",
           "chromadb/chroma:latest"
         ],
-        "runStdout": "e7394dda55eb67769d30cb486719898a228cd4b9756cd721006093a34911d8ce",
+        "runStdout": "fa27480367bc3921753ef0d955be80a4f8ed777e5a882b05aa4f56a4ec54f55a",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2,
+          "seconds": 2.1,
           "attempts": 2
         },
-        "memUsage": "11.14MiB / 7.652GiB",
-        "memBytes": 11681137
+        "memUsage": "35.91MiB / 7.652GiB",
+        "memBytes": 37654364
       }
     },
     {
@@ -68,7 +68,7 @@
       "detail": "API-only surface: / -> 404, /api/v2/heartbeat -> 200 through gateway",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 50131,
+        "gatewayPort": 55166,
         "proxyMode": "standard",
         "hops": [
           {
@@ -96,9 +96,9 @@
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 11.1MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 35.9MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 11681137,
+        "memBytes": 37654364,
         "floorRamGb": 1
       }
     }

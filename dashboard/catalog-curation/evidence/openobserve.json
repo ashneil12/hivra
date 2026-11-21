@@ -1,7 +1,7 @@
 {
   "slug": "openobserve",
-  "checkedAt": "2026-11-21T04:14:21.531Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:30:15.827Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -28,51 +28,88 @@
     },
     {
       "name": "boot",
-      "status": "fail",
-      "detail": "health /healthz never returned <400 (last status none)",
+      "status": "pass",
+      "detail": "health /healthz -> 200 in 42.8s",
       "evidence": {
-        "container": "hivra-verify-openobserve-cyk3fw",
-        "hostPort": 3260,
+        "container": "hivra-verify-openobserve-820wwh",
+        "hostPort": 3267,
         "image": "openobserve/openobserve:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-openobserve-cyk3fw",
+          "hivra-verify-openobserve-820wwh",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:3260:5080",
+          "127.0.0.1:3267:5080",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-openobserve-cyk3fw-data:/data",
+          "hivra-verify-openobserve-820wwh-data:/data",
           "openobserve/openobserve:latest"
         ],
-        "runStdout": "b8ce6441e968dcd9d011b61efbd8e98612eda027652dbf01b11fc944ffabe67c",
+        "runStdout": "e7561afab9b4844e93dff0301c04b9eef5a1572519ebc17a0dee889000ea70d5",
         "health": {
-          "ok": false,
-          "status": null,
-          "seconds": 240.1,
-          "attempts": 120,
-          "error": "fetch failed"
+          "ok": true,
+          "status": 200,
+          "seconds": 42.8,
+          "attempts": 21
         },
-        "logsTail": "tivy::indexer::index_writer: Prepared commit 243\n2026-11-21T04:10:23.836592881+00:00 INFO tantivy::indexer::prepared_commit: committing 243\n2026-11-21T04:10:23.836635339+00:00 INFO tantivy::indexer::segment_updater: save metas\n2026-11-21T04:10:23.836681672+00:00 INFO tantivy::indexer::segment_updater: Running garbage collection\n2026-11-21T04:10:23.836684547+00:00 INFO tantivy::directory::managed_directory: Garbage collect\n2026-11-21T04:10:23.836887131+00:00 INFO openobserve_mcp::tools: Built tool search index for 242 tools in 11.873667ms\n2026-11-21T04:10:23.837150256+00:00 INFO openobserve_mcp::tools: Loaded 16 summary_fields configs for response filtering\n2026-11-21T04:10:23.838330797+00:00 INFO openobserve: Initialized MCP tools\n2026-11-21T04:10:23.839363589+00:00 INFO ingester: Start ingester init\n2026-11-21T04:10:23.839697839+00:00 INFO ingester::wal: Scanning lock files from \"./data/openobserve/wal/logs\"\n2026-11-21T04:10:23.840079172+00:00 INFO ingester::wal: Found 0 lock files\n2026-11-21T04:10:23.840084839+00:00 INFO ingester::wal: Check uncompleted lock files done\n2026-11-21T04:10:23.840409381+00:00 INFO ingester: Ingesters init done\n2026-11-21T04:10:23.840664131+00:00 INFO ingester::wal: Clean orphan par files done\n2026-11-21T04:10:23.840695339+00:00 INFO ingester: Scanning wal files from \"./data/openobserve/wal/logs\"\n2026-11-21T04:10:23.840814589+00:00 INFO ingester: Found 0 wal files to replay\n2026-11-21T04:10:23.840867381+00:00 INFO ingester: Replay wal files done\n"
+        "memUsage": "158.7MiB / 7.652GiB",
+        "memBytes": 166409011
       }
     },
     {
       "name": "gateway",
-      "status": "skipped",
-      "detail": "health check failed"
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 308 / -> 200 /web/",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 50527,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 308,
+            "location": "/web/"
+          },
+          {
+            "hop": 2,
+            "path": "/web/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/web/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <script>self[\"MonacoEnvironment\"] = (function (paths) {\n          return {\n            globalAPI: false,\n            getWorkerUrl : function (moduleId, label) {\n              var result =  paths[label];\n              if (/^((http:)|(https:)|(file:)|(\\/\\/))/.test(result)) {\n                var currentUrl = String(window.location);\n                var cu",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 401,
+          "bodyHead": "{\"code\":401,\"message\":\"Unauthorized Access\"}"
+        }
+      }
     },
     {
       "name": "floor",
-      "status": "skipped",
-      "detail": "no floor.ram in spec or no memory reading"
+      "status": "pass",
+      "detail": "idle memory 158.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 166409011,
+        "floorRamGb": 1
+      }
     }
   ],
-  "verdict": "fail",
-  "reasons": [
-    "boot: health /healthz never returned <400 (last status none)"
-  ]
+  "verdict": "pass",
+  "reasons": []
 }

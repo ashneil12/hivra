@@ -1,7 +1,7 @@
 {
   "slug": "jellyfin",
-  "checkedAt": "2026-11-21T04:11:24.035Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:57:21.989Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -29,16 +29,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health /health -> 200 in 2.1s",
+      "detail": "health /health -> 200 in 4.4s",
       "evidence": {
-        "container": "hivra-verify-jellyfin-jisw5x",
+        "container": "hivra-verify-jellyfin-z95z5c",
         "hostPort": 3247,
         "image": "jellyfin/jellyfin:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-jellyfin-jisw5x",
+          "hivra-verify-jellyfin-z95z5c",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -46,56 +46,61 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-jellyfin-jisw5x-config:/config",
+          "hivra-verify-jellyfin-z95z5c-config:/config",
           "-v",
-          "hivra-verify-jellyfin-jisw5x-cache:/cache",
+          "hivra-verify-jellyfin-z95z5c-cache:/cache",
           "jellyfin/jellyfin:latest"
         ],
-        "runStdout": "087354202ca604997e54b5f33fa7a2a8ee3708337c0d55ad06108f4dcdf86143",
+        "runStdout": "26ee18dc3b4ed3603530c20dc2242ead69e78153832e7c9a81a111c3bed71907",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2.1,
-          "attempts": 2
+          "seconds": 4.4,
+          "attempts": 3
         },
-        "memUsage": "342.5MiB / 7.652GiB",
-        "memBytes": 359137280
+        "memUsage": "76.9MiB / 7.652GiB",
+        "memBytes": 80635494
       }
     },
     {
       "name": "gateway",
-      "status": "pass",
-      "detail": "through gateway: 200 /app/",
+      "status": "fail",
+      "detail": "final status 503 after 2 hop(s)",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 65179,
-        "proxyMode": "standard",
+        "gatewayPort": 55734,
+        "proxyMode": "loopback-origin",
         "hops": [
           {
             "hop": 0,
             "path": "/app/",
-            "status": 200,
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 503,
             "location": null
           }
         ],
-        "finalStatus": 200,
-        "finalPath": "/app/",
-        "bodyHead": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"refresh\" content=\"5;url=/app/\"><title>Starting Jellyfin</title><style>:root{color-scheme:light dark;--bg:#fafafa;--fg:#161616;--muted:#6b6b6b;--line:#e2e2e2;--accent:#6e56cf}@media (prefers-color-scheme:dark){:root{--bg:#111;--fg:#ededed;--muted:#9a9a9a;--",
-        "formPost": {
-          "found": false
-        }
+        "finalStatus": 503,
+        "finalPath": "/",
+        "bodyHead": "﻿<!DOCTYPE html>\n<html lang=\"en\">\n\n<head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <meta name=\"color-scheme\" content=\"dark\" />\n    <meta name=\"theme-color\" content=\"#202020\" />\n    <title>\n        \n        Jellyfin\n    </title>\n    <style>\n        /* Noto Sans (latin), matching the Jellyfin web client font. Embedded so the page ren"
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 342.5MiB vs floor 2GB*0.8=1.6GiB",
+      "detail": "idle memory 76.9MiB vs floor 2GB*0.8=1.6GiB",
       "evidence": {
-        "memBytes": 359137280,
+        "memBytes": 80635494,
         "floorRamGb": 2
       }
     }
   ],
-  "verdict": "pass",
-  "reasons": []
+  "verdict": "fail",
+  "reasons": [
+    "gateway: final status 503 after 2 hop(s)"
+  ]
 }

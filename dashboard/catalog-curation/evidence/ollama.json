@@ -1,7 +1,7 @@
 {
   "slug": "ollama",
-  "checkedAt": "2026-11-21T04:10:16.542Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:15:34.863Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -29,16 +29,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health /api/version -> 200 in 2s",
+      "detail": "health /api/version -> 200 in 2.1s",
       "evidence": {
-        "container": "hivra-verify-ollama-vub047",
+        "container": "hivra-verify-ollama-nqb4xw",
         "hostPort": 3211,
         "image": "ollama/ollama:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-ollama-vub047",
+          "hivra-verify-ollama-nqb4xw",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -46,18 +46,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-ollama-vub047-models:/root/.ollama",
+          "hivra-verify-ollama-nqb4xw-models:/root/.ollama",
           "ollama/ollama:latest"
         ],
-        "runStdout": "3cb5a8f9e8260717348cf1d8dbe58161843b0ad2a8089ab357293a9658dd614c",
+        "runStdout": "5beaccfd422df063be0891d72c75314b53e5d7e82e13e611bd5d78303dbe6624",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2,
+          "seconds": 2.1,
           "attempts": 2
         },
-        "memUsage": "46.36MiB / 7.652GiB",
-        "memBytes": 48611983
+        "memUsage": "46.87MiB / 7.652GiB",
+        "memBytes": 49146757
       }
     },
     {
@@ -66,7 +66,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64351,
+        "gatewayPort": 63674,
         "proxyMode": "standard",
         "hops": [
           {
@@ -87,15 +87,19 @@
         "bodyHead": "Ollama is running",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "404 page not found"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 46.4MiB vs floor 2GB*0.8=1.6GiB",
+      "detail": "idle memory 46.9MiB vs floor 2GB*0.8=1.6GiB",
       "evidence": {
-        "memBytes": 48611983,
+        "memBytes": 49146757,
         "floorRamGb": 2
       }
     }

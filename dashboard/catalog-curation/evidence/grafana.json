@@ -1,7 +1,7 @@
 {
   "slug": "grafana",
-  "checkedAt": "2026-11-21T05:04:29.594Z",
-  "gitSha": "867b5f90fad9108897e53f09d6026ac8226a6fc3",
+  "checkedAt": "2026-11-21T14:49:48.324Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -30,16 +30,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health /api/health -> 200 in 10s",
+      "detail": "health /api/health -> 200 in 53.3s",
       "evidence": {
-        "container": "hivra-verify-grafana-0ql9dl",
+        "container": "hivra-verify-grafana-1mpu2n",
         "hostPort": 3242,
         "image": "grafana/grafana:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-grafana-0ql9dl",
+          "hivra-verify-grafana-1mpu2n",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -47,18 +47,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-grafana-0ql9dl-data:/var/lib/grafana",
+          "hivra-verify-grafana-1mpu2n-data:/var/lib/grafana",
           "grafana/grafana:latest"
         ],
-        "runStdout": "455d63d2c0b70933ad0e2cd82c11b404af064f75ccaf6bfb8cba2f9fac7fc331",
+        "runStdout": "785bcf7a62a24a5908b98aca2be2c783db17fbb84b826a301a18a7bac6693150",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 10,
-          "attempts": 6
+          "seconds": 53.3,
+          "attempts": 26
         },
-        "memUsage": "346.1MiB / 7.652GiB",
-        "memBytes": 362912154
+        "memUsage": "305.1MiB / 7.652GiB",
+        "memBytes": 319920538
       }
     },
     {
@@ -67,8 +67,8 @@
       "detail": "through gateway: 303 /app/ -> 302 / -> 200 /login",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 62578,
-        "proxyMode": "standard",
+        "gatewayPort": 54367,
+        "proxyMode": "loopback-origin",
         "hops": [
           {
             "hop": 0,
@@ -104,9 +104,9 @@
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 346.1MiB vs floor 2GB*0.8=1.6GiB",
+      "detail": "idle memory 305.1MiB vs floor 2GB*0.8=1.6GiB",
       "evidence": {
-        "memBytes": 362912154,
+        "memBytes": 319920538,
         "floorRamGb": 2
       }
     }

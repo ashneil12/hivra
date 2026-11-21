@@ -1,7 +1,7 @@
 {
   "slug": "kroki",
-  "checkedAt": "2026-11-21T04:10:36.974Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:18:28.635Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -31,16 +31,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 2.1s",
+      "detail": "health / -> 200 in 136.1s",
       "evidence": {
-        "container": "hivra-verify-kroki-yp89o6",
+        "container": "hivra-verify-kroki-y7yg3l",
         "hostPort": 3221,
         "image": "yuzutech/kroki:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-kroki-yp89o6",
+          "hivra-verify-kroki-y7yg3l",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -48,18 +48,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-kroki-yp89o6-tmp:/tmp",
+          "hivra-verify-kroki-y7yg3l-tmp:/tmp",
           "yuzutech/kroki:latest"
         ],
-        "runStdout": "84a53c1c0c4cf91ef4c8637a6ea9a210f4c97c0369e2242da141e6c6a7e857d1",
+        "runStdout": "0013f07e5e776084d1a2ed7d9509972a0c2aa8009a523c4b16dc953fed0bc11f",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2.1,
-          "attempts": 2
+          "seconds": 136.1,
+          "attempts": 29
         },
-        "memUsage": "153MiB / 7.652GiB",
-        "memBytes": 160432128
+        "memUsage": "174.2MiB / 7.652GiB",
+        "memBytes": 182661939
       }
     },
     {
@@ -68,7 +68,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64676,
+        "gatewayPort": 64514,
         "proxyMode": "standard",
         "hops": [
           {
@@ -89,15 +89,19 @@
         "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n    <title>Kroki!</title>\n    <style>@-webkit-keyframes spinAround {\n  from {\n    -webkit-transform: rotate(0deg);\n            transform: rotate(0deg);\n  }\n  to {\n    -webkit-transform: rotate(359deg);\n            transform: rotate(359deg);\n  }\n}\n\n@keyframes",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n    <title>Kroki!</title>\n    <style>@-webkit-keyframes spinAround {\n  from {\n    -webkit-transform: rotate(0deg);\n            transform: rotate(0deg);\n  }\n  "
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 153.0MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 174.2MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 160432128,
+        "memBytes": 182661939,
         "floorRamGb": 1
       }
     }

@@ -1,7 +1,7 @@
 {
   "slug": "shiori",
-  "checkedAt": "2026-11-21T04:10:43.791Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:18:53.201Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -33,16 +33,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 2s",
+      "detail": "health / -> 200 in 4.6s",
       "evidence": {
-        "container": "hivra-verify-shiori-i94hb4",
+        "container": "hivra-verify-shiori-joo83g",
         "hostPort": 3225,
         "image": "ghcr.io/go-shiori/shiori:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-shiori-i94hb4",
+          "hivra-verify-shiori-joo83g",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -50,18 +50,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-shiori-i94hb4-data:/opt/shiori/data",
+          "hivra-verify-shiori-joo83g-data:/opt/shiori/data",
           "ghcr.io/go-shiori/shiori:latest"
         ],
-        "runStdout": "85cee795e21c99292ffe5dd484c0739b2e4332b1b02381d248b2ac6778d42ded",
+        "runStdout": "1c69153f70aeb84fff2aaaec36eb9bca40bfa8031894e1d4e94ff98feffdf64e",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2,
-          "attempts": 2
+          "seconds": 4.6,
+          "attempts": 3
         },
-        "memUsage": "24.89MiB / 7.652GiB",
-        "memBytes": 26099057
+        "memUsage": "9.809MiB / 7.652GiB",
+        "memBytes": 10285482
       }
     },
     {
@@ -70,7 +70,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64786,
+        "gatewayPort": 64633,
         "proxyMode": "standard",
         "hops": [
           {
@@ -91,15 +91,19 @@
         "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n\n<head>\n\t<base href=\"/\">\n\t<title>Shiori - Bookmarks Manager</title>\n\n\t<meta charset=\"UTF-8\">\n\t<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\">\n\n\t<link rel=\"apple-touch-icon-precomposed\" sizes=\"152x152\" href=\"assets/res/apple-touch-icon-152x152.png\">\n\t<link rel=\"apple-touch-icon-precomposed\" sizes=\"144x144\" href=\"assets/res/",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 200,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n\n<head>\n\t<base href=\"/\">\n\t<title>Shiori - Bookmarks Manager</title>\n\n\t<meta charset=\"UTF-8\">\n\t<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\">\n\n\t<link rel=\"apple-touch-icon-precomposed\" sizes=\"152x152\" href=\"assets/res/apple-"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 24.9MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 9.8MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 26099057,
+        "memBytes": 10285482,
         "floorRamGb": 1
       }
     }

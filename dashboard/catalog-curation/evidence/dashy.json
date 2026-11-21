@@ -1,7 +1,7 @@
 {
   "slug": "dashy",
-  "checkedAt": "2026-11-21T04:11:00.155Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:20:35.577Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -29,16 +29,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 2s",
+      "detail": "health / -> 200 in 8.9s",
       "evidence": {
-        "container": "hivra-verify-dashy-lmegpg",
+        "container": "hivra-verify-dashy-9bq9rj",
         "hostPort": 3234,
         "image": "lissy93/dashy:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-dashy-lmegpg",
+          "hivra-verify-dashy-9bq9rj",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -46,18 +46,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-dashy-lmegpg-config:/app/public",
+          "hivra-verify-dashy-9bq9rj-config:/app/public",
           "lissy93/dashy:latest"
         ],
-        "runStdout": "d30b57182489b0c0c019df668e8f6a6f1951af794e3176987e71f9cb12e03b6f",
+        "runStdout": "2726e67e08f22962785a7787e20fa37fb457a797dd14f31fa9d310e87cbb682b",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2,
-          "attempts": 2
+          "seconds": 8.9,
+          "attempts": 5
         },
-        "memUsage": "49.1MiB / 7.652GiB",
-        "memBytes": 51485082
+        "memUsage": "41.73MiB / 7.652GiB",
+        "memBytes": 43757076
       }
     },
     {
@@ -66,7 +66,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64942,
+        "gatewayPort": 65070,
         "proxyMode": "standard",
         "hops": [
           {
@@ -87,15 +87,19 @@
         "bodyHead": "<!DOCTYPE html>\r\n<html lang=\"en\">\r\n<head>\r\n  <!-- Encoding and Viewport -->\r\n  <meta charset=\"utf-8\">\r\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\">\r\n  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">\r\n  <meta name=\"referrer\" content=\"no-referrer\">\r\n  <!-- Favicon, App Icon -->\r\n  <link rel=\"icon\" type=\"image/png\" sizes=\"64x64\" href=\"/web-icons/favicon-64x64.png\">\r\n ",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE html>\r\n<html lang=\"en\">\r\n<head>\r\n  <!-- Encoding and Viewport -->\r\n  <meta charset=\"utf-8\">\r\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\">\r\n  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">\r\n  <meta name=\"referrer\" content=\"no-referrer\">\r\n  <!-- Favicon, App"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 49.1MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 41.7MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 51485082,
+        "memBytes": 43757076,
         "floorRamGb": 1
       }
     }
