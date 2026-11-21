@@ -1,7 +1,7 @@
 {
   "slug": "openhands",
-  "checkedAt": "2026-11-21T03:10:58.757Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:07.852Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -31,45 +31,81 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 8s",
+      "detail": "health / -> 200 in 14s",
       "evidence": {
-        "container": "hivra-verify-openhands-disvtv",
-        "hostPort": 51709,
+        "container": "hivra-verify-openhands-kr6no4",
+        "hostPort": 3204,
         "image": "ghcr.io/openhands/agent-canvas:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-openhands-disvtv",
+          "hivra-verify-openhands-kr6no4",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:51709:8000",
+          "127.0.0.1:3204:8000",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-openhands-disvtv-state:/home/openhands/.openhands",
+          "hivra-verify-openhands-kr6no4-state:/home/openhands/.openhands",
           "-v",
-          "hivra-verify-openhands-disvtv-projects:/projects",
+          "hivra-verify-openhands-kr6no4-projects:/projects",
           "ghcr.io/openhands/agent-canvas:latest"
         ],
-        "runStdout": "27ed19c041d828ea03477864433daec9715c7c0692c932c39b273ff4a07c741b",
+        "runStdout": "c037fe48898a37f69c85172fa38d7a2596f539010aa3d2ed89deb1f387a1e19b",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 8,
-          "attempts": 5
+          "seconds": 14,
+          "attempts": 8
         },
-        "memUsage": "797.1MiB / 7.652GiB",
-        "memBytes": 835819930
+        "memUsage": "909.4MiB / 7.652GiB",
+        "memBytes": 953575014
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 308 / -> 200 /canvas/",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64219,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 308,
+            "location": "/canvas/"
+          },
+          {
+            "hop": 2,
+            "path": "/canvas/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/canvas/",
+        "bodyHead": "<!DOCTYPE html><html lang=\"en\"><head><meta charSet=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\"/><title>OpenHands</title><meta name=\"description\" content=\"Let&#x27;s Start Building!\"/><link rel=\"icon\" type=\"image/svg+xml\" href=\"/canvas/favicon.svg\"/><link rel=\"manifest\" href=\"/canvas/site.webmanifest\"/><link rel=\"modulepreload\" href=\"/canvas/asse",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 797.1MiB vs floor 4GB*0.8=3.2GiB",
+      "detail": "idle memory 909.4MiB vs floor 4GB*0.8=3.2GiB",
       "evidence": {
-        "memBytes": 835819930,
+        "memBytes": 953575014,
         "floorRamGb": 4
       }
     }

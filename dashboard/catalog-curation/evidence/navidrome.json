@@ -1,7 +1,7 @@
 {
   "slug": "navidrome",
-  "checkedAt": "2026-11-21T03:25:07.204Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:11:24.892Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -41,45 +41,119 @@
       "status": "pass",
       "detail": "health /ping -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-navidrome-tgo4yf",
-        "hostPort": 55980,
+        "container": "hivra-verify-navidrome-sbzw5t",
+        "hostPort": 3248,
         "image": "deluan/navidrome:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-navidrome-tgo4yf",
+          "hivra-verify-navidrome-sbzw5t",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:55980:4533",
+          "127.0.0.1:3248:4533",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-navidrome-tgo4yf-data:/data",
+          "hivra-verify-navidrome-sbzw5t-data:/data",
           "deluan/navidrome:latest"
         ],
-        "runStdout": "391f7d8a83cc784ef4aa695e08f88166fc7c0da441bf423c5d667345c86ce102",
+        "runStdout": "d4dbe8c5c27d12bb43ecec6ed2e6399e08660f71b261c7f8d89715b4ff6e5d4e",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 2,
           "attempts": 2
         },
-        "memUsage": "24.71MiB / 7.652GiB",
-        "memBytes": 25910313
+        "memUsage": "54.65MiB / 7.652GiB",
+        "memBytes": 57304678
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "redirect chain exceeded 10 hops",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65191,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/app/"
+          },
+          {
+            "hop": 2,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 3,
+            "path": "/",
+            "status": 302,
+            "location": "/app/"
+          },
+          {
+            "hop": 4,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 5,
+            "path": "/",
+            "status": 302,
+            "location": "/app/"
+          },
+          {
+            "hop": 6,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 7,
+            "path": "/",
+            "status": 302,
+            "location": "/app/"
+          },
+          {
+            "hop": 8,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 9,
+            "path": "/",
+            "status": 302,
+            "location": "/app/"
+          }
+        ]
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 24.7MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 54.6MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 25910313,
+        "memBytes": 57304678,
         "floorRamGb": 1
       }
     }
   ],
-  "verdict": "pass",
-  "reasons": []
+  "verdict": "fail",
+  "reasons": [
+    "gateway: redirect chain exceeded 10 hops"
+  ]
 }

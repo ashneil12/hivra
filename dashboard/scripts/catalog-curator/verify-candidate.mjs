@@ -15,8 +15,9 @@
 // dashboard/catalog-curation/evidence/<slug>.json and the process exits
 // non-zero on failure so an unattended loop can gate on it.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync, statSync } from "node:fs";
+import http from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -49,6 +50,10 @@ const DUMMY_MODEL_ENV = {
   baseUrl: "http://127.0.0.1:9/v1",
   model: "verify-model",
 };
+
+const GATEWAY_SERVER = path.join(DASHBOARD_DIR, "provisioner", "hivra-chat", "server.js");
+const GATEWAY_PUBLIC_HOST = "box-verify.example.test";
+const GATEWAY_TOKEN = "a".repeat(64);
 
 function shOut(cmd, args, opts = {}) {
   const res = spawnSync(cmd, args, {
@@ -208,6 +213,22 @@ function freePort() {
   });
 }
 
+// The box gateway only proxies catalog apps whose hostPort sits in the
+// catalog range (server.js readCatalogAppMeta), so the verify container must
+// publish on the manifest's own hostPort — exactly what production binds.
+async function freeCatalogPort() {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const port = 3200 + Math.floor(Math.random() * 800);
+    const busy = await new Promise((resolve) => {
+      const srv = createServer();
+      srv.once("error", () => resolve(true));
+      srv.listen(port, "127.0.0.1", () => srv.close(() => resolve(false)));
+    });
+    if (!busy) return port;
+  }
+  throw new Error("no free catalog port in 3200-3999");
+}
+
 function mergedDockerEnv(runtime) {
   const env = { ...(runtime.env ?? {}) };
   const modelEnv = runtime.modelEnv;
@@ -255,6 +276,289 @@ function parseMemUsage(text) {
   return Math.round(value * mult);
 }
 
+// ── Gateway check ───────────────────────────────────────────────────────────
+// Boots the real provisioner/hivra-chat/server.js as AGENT_KIND=catalog-app
+// against the running app container, then walks the user path a browser takes:
+// /app/ -> 303 -> / -> app, all through catalogAppProxy with the standard
+// forwarded-header contract. Catches apps that build absolute redirects from
+// Host, enforce trusted domains, or do Origin-vs-Host CSRF checks.
+
+function gwRequest(gwPort, { method = "GET", reqPath = "/", headers = {}, body = null } = {}) {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        host: "127.0.0.1",
+        port: gwPort,
+        method,
+        path: reqPath,
+        headers: {
+          host: GATEWAY_PUBLIC_HOST,
+          authorization: `Bearer ${GATEWAY_TOKEN}`,
+          accept: "text/html,application/xhtml+xml,*/*",
+          ...headers,
+        },
+        timeout: 20_000,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode ?? 0,
+            headers: res.headers,
+            body: Buffer.concat(chunks).toString("utf8"),
+          }),
+        );
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error("gateway request timeout")));
+    req.on("error", (err) => resolve({ status: 0, error: String(err?.message ?? err), headers: {}, body: "" }));
+    if (body !== null) req.write(body);
+    req.end();
+  });
+}
+
+function gwCookies(jar, setCookies) {
+  for (const sc of setCookies ?? []) {
+    const pair = String(sc).split(";")[0].trim();
+    const eq = pair.indexOf("=");
+    if (eq > 0) jar[pair.slice(0, eq)] = pair.slice(eq + 1);
+  }
+}
+function gwCookieHeader(jar) {
+  const entries = Object.entries(jar);
+  return entries.length ? entries.map(([k, v]) => `${k}=${v}`).join("; ") : null;
+}
+
+/** Returns the path+query to request next, or { fail } when the redirect
+ * leaves the public host or points at loopback. */
+function gwRedirectTarget(location, currentPath) {
+  if (!location) return null;
+  const loc = String(location).trim();
+  if (loc.startsWith("//")) {
+    try {
+      const u = new URL(`http:${loc}`);
+      return u.hostname === GATEWAY_PUBLIC_HOST ? u.pathname + u.search : { fail: `protocol-relative redirect to ${u.host}` };
+    } catch {
+      return { fail: `unparseable redirect ${loc.slice(0, 120)}` };
+    }
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(loc)) {
+    let u;
+    try {
+      u = new URL(loc);
+    } catch {
+      return { fail: `unparseable redirect ${loc.slice(0, 120)}` };
+    }
+    const host = u.hostname.toLowerCase();
+    if (host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]") {
+      return { fail: `redirect to loopback ${u.host}${u.pathname}` };
+    }
+    if (host !== GATEWAY_PUBLIC_HOST) return { fail: `redirect to foreign host ${u.host}${u.pathname}` };
+    return u.pathname + u.search;
+  }
+  // Relative reference: resolve against the current path.
+  try {
+    return new URL(loc, `http://${GATEWAY_PUBLIC_HOST}${currentPath}`).pathname +
+      new URL(loc, `http://${GATEWAY_PUBLIC_HOST}${currentPath}`).search;
+  } catch {
+    return { fail: `unparseable redirect ${loc.slice(0, 120)}` };
+  }
+}
+
+async function gatewayCheck(spec, hostPort) {
+  const rt = spec.runtime;
+  const work = mkdtempSync(path.join(tmpdir(), `hivra-gw-${spec.id}-`));
+  const home = path.join(work, "home");
+  const metaFile = path.join(work, "catalog-app.json");
+  const evidence = { publicHost: GATEWAY_PUBLIC_HOST };
+  let child = null;
+  try {
+    mkdirSync(path.join(home, ".hivra"), { recursive: true });
+    writeFileSync(path.join(home, ".hivra", "api-token"), GATEWAY_TOKEN + "\n", { mode: 0o600 });
+    writeFileSync(
+      metaFile,
+      JSON.stringify({
+        appId: spec.id,
+        name: spec.name ?? spec.id,
+        kind: "docker-web",
+        hostPort,
+        healthPath: rt.healthPath ?? "/",
+        proxyMode: rt.proxyMode ?? "standard",
+      }),
+    );
+    const gwPort = await freePort();
+    evidence.gatewayPort = gwPort;
+    evidence.proxyMode = rt.proxyMode ?? "standard";
+    child = spawn(process.execPath, [GATEWAY_SERVER], {
+      env: {
+        ...process.env,
+        HOME: home,
+        HIVRA_CHAT_PORT: String(gwPort),
+        HIVRA_AGENT_KIND: "catalog-app",
+        HIVRA_CATALOG_APP_META: metaFile,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let gwErr = "";
+    child.stderr.on("data", (c) => (gwErr += c));
+    child.stdout.on("data", () => {});
+
+    // Wait for the gateway to answer its own health route.
+    const gwDeadline = Date.now() + 20_000;
+    let gwUp = false;
+    while (Date.now() < gwDeadline) {
+      const probe = await gwRequest(gwPort, { reqPath: "/healthz", headers: { authorization: "" } });
+      if (probe.status === 200) {
+        gwUp = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    if (!gwUp) {
+      evidence.gatewayStderr = gwErr.slice(-800);
+      return check("gateway", "fail", "hivra-chat gateway did not start", evidence);
+    }
+
+    // Walk /app/ -> app through the gateway, following redirects by hand.
+    const jar = {};
+    const hops = [];
+    let reqPath = "/app/";
+    let final = null;
+    let redirectFail = null;
+    for (let hop = 0; hop < 10; hop += 1) {
+      const cookie = gwCookieHeader(jar);
+      const res = await gwRequest(gwPort, {
+        reqPath,
+        headers: cookie ? { cookie } : {},
+      });
+      gwCookies(jar, res.headers["set-cookie"]);
+      hops.push({ hop, path: reqPath, status: res.status, location: res.headers.location ?? null });
+      if (res.status >= 300 && res.status < 400 && res.headers.location) {
+        const next = gwRedirectTarget(res.headers.location, reqPath);
+        if (next && next.fail) {
+          redirectFail = next.fail;
+          break;
+        }
+        if (next) {
+          reqPath = next;
+          continue;
+        }
+      }
+      final = res;
+      break;
+    }
+    evidence.hops = hops;
+    if (redirectFail) {
+      evidence.finalStatus = final?.status ?? null;
+      return check("gateway", "fail", redirectFail, evidence);
+    }
+    if (!final) {
+      return check("gateway", "fail", "redirect chain exceeded 10 hops", evidence);
+    }
+    evidence.finalStatus = final.status;
+    evidence.finalPath = reqPath;
+    const body = final.body ?? "";
+    evidence.bodyHead = body.slice(0, 400);
+    if (final.status >= 400) {
+      // API-only apps have no page at "/": their surface is the REST API the
+      // gateway proxies verbatim. Accept a clean 4xx at "/" when the app's own
+      // healthPath answers through the same gateway — redirect loops, loopback
+      // references and CSRF rejections above still fail.
+      const hp = rt.healthPath && rt.healthPath !== "/" ? rt.healthPath : null;
+      if (hp && final.status >= 400 && final.status < 500) {
+        const cookie = gwCookieHeader(jar);
+        const hpRes = await gwRequest(gwPort, { reqPath: hp, headers: cookie ? { cookie } : {} });
+        evidence.healthPathProbe = { path: hp, status: hpRes.status };
+        if (hpRes.status > 0 && hpRes.status < 400) {
+          const hpBody = hpRes.body ?? "";
+          if (/127\.0\.0\.1|localhost/.test(hpBody)) {
+            return check("gateway", "fail", `healthPath ${hp} body references loopback`, evidence);
+          }
+          return check(
+            "gateway",
+            "pass",
+            `API-only surface: / -> ${final.status}, ${hp} -> ${hpRes.status} through gateway`,
+            evidence,
+          );
+        }
+      }
+      return check("gateway", "fail", `final status ${final.status} after ${hops.length} hop(s)`, evidence);
+    }
+    const loopbackRef = new RegExp(`(127\\.0\\.0\\.1|localhost):${hostPort}`).test(body);
+    if (loopbackRef) {
+      return check("gateway", "fail", `final HTML references loopback ${hostPort}`, evidence);
+    }
+
+    // Login/setup form probe: POST it empty through the same gateway origin.
+    const formMatch = /<form[^>]*>/i.exec(body);
+    const isPostForm = formMatch && /method\s*=\s*["']?post/i.test(formMatch[0]);
+    if (isPostForm) {
+      const actionMatch = /action\s*=\s*["']([^"']*)["']/i.exec(formMatch[0]);
+      let postPath = reqPath;
+      if (actionMatch && actionMatch[1]) {
+        const resolved = gwRedirectTarget(actionMatch[1], reqPath);
+        if (resolved && resolved.fail) {
+          evidence.formPost = { action: actionMatch[1], fail: resolved.fail };
+          return check("gateway", "fail", `login form action ${resolved.fail}`, evidence);
+        }
+        if (resolved) postPath = resolved;
+      }
+      const cookie = gwCookieHeader(jar);
+      const post = await gwRequest(gwPort, {
+        method: "POST",
+        reqPath: postPath,
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "content-length": "0",
+          origin: `https://${GATEWAY_PUBLIC_HOST}`,
+          ...(cookie ? { cookie } : {}),
+        },
+        body: "",
+      });
+      gwCookies(jar, post.headers["set-cookie"]);
+      evidence.formPost = {
+        path: postPath,
+        status: post.status,
+        location: post.headers.location ?? null,
+        bodyHead: (post.body ?? "").slice(0, 400),
+      };
+      // A rejection is a 4xx/5xx whose body names the mechanism, or Nextcloud's
+      // dedicated untrusted-domain page at any status. A 200 re-render of the
+      // login form (which legitimately mentions csrf tokens) is not a rejection.
+      const postBody = post.body ?? "";
+      const rejected =
+        /untrusted domain/i.test(postBody) ||
+        (post.status >= 400 && /origin|csrf|trusted|host|forbidden/i.test(postBody));
+      if (rejected) {
+        return check("gateway", "fail", `login form POST rejected as origin/host/CSRF issue (status ${post.status})`, evidence);
+      }
+    } else {
+      evidence.formPost = { found: false };
+    }
+
+    const hopDesc = hops.map((h) => `${h.status} ${h.path}`).join(" -> ");
+    return check(
+      "gateway",
+      "pass",
+      `through gateway: ${hopDesc}${isPostForm ? `; form POST -> ${evidence.formPost.status}` : ""}`,
+      evidence,
+    );
+  } finally {
+    if (child) {
+      try {
+        child.kill("SIGTERM");
+      } catch {}
+      setTimeout(() => {
+        try {
+          child.kill("SIGKILL");
+        } catch {}
+      }, 3000).unref();
+    }
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
 async function bootDockerWeb(spec, platforms) {
   const rt = spec.runtime;
   const ref = `${rt.imageRepo}:${rt.imageTag}`;
@@ -265,7 +569,7 @@ async function bootDockerWeb(spec, platforms) {
   const env = mergedDockerEnv(rt);
   writeFileSync(envFile, Object.entries(env).map(([k, v]) => `${k}=${v}`).join("\n") + "\n", { mode: 0o600 });
 
-  const hostPort = await freePort();
+  const hostPort = Number.isInteger(rt.hostPort) ? rt.hostPort : await freeCatalogPort();
   const hasArm64 = platforms.some((p) => p.startsWith("linux/arm64"));
   const args = [
     "run", "-d",
@@ -291,7 +595,7 @@ async function bootDockerWeb(spec, platforms) {
     evidence.runStdout = runRes.stdout.trim().slice(0, 300);
     if (runRes.status !== 0) {
       evidence.runStderr = runRes.stderr.slice(0, 600);
-      return { check: check("boot", "fail", `docker run failed: ${runRes.stderr.slice(0, 300)}`, evidence), memBytes };
+      return { checks: [check("boot", "fail", `docker run failed: ${runRes.stderr.slice(0, 300)}`, evidence), check("gateway", "skipped", "container did not start")], memBytes };
     }
 
     const health = await pollHealth(hostPort, rt.healthPath, BOOT_TIMEOUT_MS);
@@ -299,7 +603,7 @@ async function bootDockerWeb(spec, platforms) {
     if (!health.ok) {
       const logs = shOut("docker", ["logs", "--tail", "40", name], { timeout: 30_000 });
       evidence.logsTail = logs.stdout.slice(-1500);
-      return { check: check("boot", "fail", `health ${rt.healthPath} never returned <400 (last status ${health.status ?? "none"})`, evidence), memBytes };
+      return { checks: [check("boot", "fail", `health ${rt.healthPath} never returned <400 (last status ${health.status ?? "none"})`, evidence), check("gateway", "skipped", "health check failed")], memBytes };
     }
 
     const stats = shOut("docker", ["stats", "--no-stream", "--format", "{{.MemUsage}}", name], { timeout: 30_000 });
@@ -307,7 +611,9 @@ async function bootDockerWeb(spec, platforms) {
     memBytes = parseMemUsage(memText);
     evidence.memUsage = memText;
     evidence.memBytes = memBytes;
-    return { check: check("boot", "pass", `health ${rt.healthPath} -> ${health.status} in ${health.seconds}s`, evidence), memBytes };
+    const bootCheck = check("boot", "pass", `health ${rt.healthPath} -> ${health.status} in ${health.seconds}s`, evidence);
+    const gateway = await gatewayCheck(spec, hostPort);
+    return { checks: [bootCheck, gateway], memBytes };
   } finally {
     shOut("docker", ["rm", "-f", name], { timeout: 60_000 });
     const vols = rt.volumes.map((v) => `${name}-${v.name}`);
@@ -454,7 +760,7 @@ async function bootCliWeb(spec) {
       const binDir = path.join(work, "bin");
       mkdirSync(toolDir, { recursive: true });
       mkdirSync(binDir, { recursive: true });
-      const env = { ...process.env, UV_TOOL_DIR: toolDir, UV_TOOL_BIN_DIR: binDir };
+      const env = { ...process.env, UV_TOOL_DIR: toolDir, UV_TOOL_BIN_DIR: binDir, UV_PYTHON: "3.12" };
       const inst = await runCliProbe("uv", ["tool", "install", installer.packageName], { env, timeout: 300_000 });
       evidence.installStdout = inst.stdout.slice(0, 500);
       if (inst.status !== 0) {
@@ -597,13 +903,13 @@ async function verifyOne(spec, { force = false } = {}) {
   checks.push(imageCheck);
 
   if (licenseFailed || imageCheck.status === "fail") {
-    for (const name of ["boot", "floor"]) {
+    for (const name of ["boot", "gateway", "floor"]) {
       checks.push(check(name, "skipped", "earlier gate failed"));
     }
   } else if (spec.runtime.kind === "docker-web") {
     const platforms = imageCheck.evidence?.platforms ?? [];
     const bootResult = await bootDockerWeb(spec, platforms);
-    checks.push(bootResult.check);
+    checks.push(...bootResult.checks);
 
     // Floor check: measured idle memory must fit under 80% of the floor.
     const floorRamGb = spec.floor?.ram;

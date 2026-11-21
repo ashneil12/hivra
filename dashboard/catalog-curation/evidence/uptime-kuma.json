@@ -1,7 +1,7 @@
 {
   "slug": "uptime-kuma",
-  "checkedAt": "2026-11-21T03:12:28.885Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:11:08.628Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -35,41 +35,77 @@
       "status": "pass",
       "detail": "health / -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-uptime-kuma-yo3ia5",
-        "hostPort": 52326,
+        "container": "hivra-verify-uptime-kuma-r384zw",
+        "hostPort": 3207,
         "image": "louislam/uptime-kuma:2",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-uptime-kuma-yo3ia5",
+          "hivra-verify-uptime-kuma-r384zw",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:52326:3001",
+          "127.0.0.1:3207:3001",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-uptime-kuma-yo3ia5-data:/app/data",
+          "hivra-verify-uptime-kuma-r384zw-data:/app/data",
           "louislam/uptime-kuma:2"
         ],
-        "runStdout": "0a95533f38f2f787694e7e31b028bc53c5b2c428d59366a5e30136e89f521fde",
+        "runStdout": "be84310a438cf27f948adddc9ce7f7780e27acbead7e8e7b170a1dcb21900113",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 2,
           "attempts": 2
         },
-        "memUsage": "143.3MiB / 7.652GiB",
-        "memBytes": 150260941
+        "memUsage": "197.1MiB / 7.652GiB",
+        "memBytes": 206674330
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /setup-database",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65015,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/setup-database"
+          },
+          {
+            "hop": 2,
+            "path": "/setup-database",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/setup-database",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\" />\n    <link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple-touch-icon.png\">\n    <link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />\n    <link rel=\"manifest\" href=\"/manifest.json\" />\n    <meta name=\"theme-color\" id=\"theme-colo",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 143.3MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 197.1MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 150260941,
+        "memBytes": 206674330,
         "floorRamGb": 1
       }
     }

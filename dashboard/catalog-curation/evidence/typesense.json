@@ -1,7 +1,7 @@
 {
   "slug": "typesense",
-  "checkedAt": "2026-11-21T03:50:50.725Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:26:55.538Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -15,22 +15,64 @@
     },
     {
       "name": "image",
-      "status": "fail",
-      "detail": "typesense/typesense:latest: ERROR: unexpected status from HEAD request to https://registry-1.docker.io/v2/typesense/typesense/manifests/latest: 429 Too Many Requests\n"
+      "status": "pass",
+      "detail": "typesense/typesense:27.1 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "typesense/typesense:27.1",
+        "digest": "sha256:5c12af89130b8ee0be11541321ba8a3a7c7a538d7c6cd95e0409dc2d75ca6455",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
     },
     {
       "name": "boot",
+      "status": "fail",
+      "detail": "health /health never returned <400 (last status none)",
+      "evidence": {
+        "container": "hivra-verify-typesense-ooh5yg",
+        "hostPort": 3263,
+        "image": "typesense/typesense:27.1",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-typesense-ooh5yg",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3263:8108",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-typesense-ooh5yg-data:/data",
+          "typesense/typesense:27.1"
+        ],
+        "runStdout": "fe5f425dbaa2e70b2635c054a55f182b89e7186e7beb34e822c20e2b5b9f3b28",
+        "health": {
+          "ok": false,
+          "status": null,
+          "seconds": 240.1,
+          "attempts": 120,
+          "error": "fetch failed"
+        },
+        "logsTail": ""
+      }
+    },
+    {
+      "name": "gateway",
       "status": "skipped",
-      "detail": "earlier gate failed"
+      "detail": "health check failed"
     },
     {
       "name": "floor",
       "status": "skipped",
-      "detail": "earlier gate failed"
+      "detail": "no floor.ram in spec or no memory reading"
     }
   ],
   "verdict": "fail",
   "reasons": [
-    "image: typesense/typesense:latest: ERROR: unexpected status from HEAD request to https://registry-1.docker.io/v2/typesense/typesense/manifests/latest: 429 Too Many Requests\n"
+    "boot: health /health never returned <400 (last status none)"
   ]
 }

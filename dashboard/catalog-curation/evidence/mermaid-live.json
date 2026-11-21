@@ -1,7 +1,7 @@
 {
   "slug": "mermaid-live",
-  "checkedAt": "2026-11-21T03:24:34.513Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:24.282Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -31,43 +31,73 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 0s",
+      "detail": "health / -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-mermaid-live-m3qcc8",
-        "hostPort": 55823,
+        "container": "hivra-verify-mermaid-live-2nrvwa",
+        "hostPort": 3215,
         "image": "ghcr.io/mermaid-js/mermaid-live-editor:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-mermaid-live-m3qcc8",
+          "hivra-verify-mermaid-live-2nrvwa",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:55823:8080",
+          "127.0.0.1:3215:8080",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-mermaid-live-m3qcc8-tmp:/tmp",
+          "hivra-verify-mermaid-live-2nrvwa-tmp:/tmp",
           "ghcr.io/mermaid-js/mermaid-live-editor:latest"
         ],
-        "runStdout": "1c98596f5fcf44d9f06db0ed34cce1fe390a1eaf65df61dd9dbfed278588e228",
+        "runStdout": "a27a776de8e9d02e2f4f82663a854abd535c32febcf5c7b6a45f7d44f9213f0b",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 0,
-          "attempts": 1
+          "seconds": 2,
+          "attempts": 2
         },
-        "memUsage": "11.68MiB / 7.652GiB",
-        "memBytes": 12247368
+        "memUsage": "18.02MiB / 7.652GiB",
+        "memBytes": 18895340
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64474,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>Online FlowChart &amp; Diagrams Editor - Mermaid Live Editor</title>\n    <meta name=\"og:image\" content=\"./favicon.svg\" />\n    <meta\n      name=\"description\"\n      content=\"Simplify documentation and avoid heavy tools. Open source Visio Alterna",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 11.7MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 18.0MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 12247368,
+        "memBytes": 18895340,
         "floorRamGb": 1
       }
     }

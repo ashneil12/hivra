@@ -1,7 +1,7 @@
 {
   "slug": "it-tools",
-  "checkedAt": "2026-11-21T03:19:46.225Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:50.866Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -31,43 +31,73 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 0s",
+      "detail": "health / -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-it-tools-qb56k9",
-        "hostPort": 54395,
+        "container": "hivra-verify-it-tools-6n1yuo",
+        "hostPort": 3230,
         "image": "corentinth/it-tools:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-it-tools-qb56k9",
+          "hivra-verify-it-tools-6n1yuo",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:54395:80",
+          "127.0.0.1:3230:80",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-it-tools-qb56k9-tmp:/tmp",
+          "hivra-verify-it-tools-6n1yuo-tmp:/tmp",
           "corentinth/it-tools:latest"
         ],
-        "runStdout": "da642004736777bc3b451b8d324101dcdfb17c92568ef02502961e0e2695f7b5",
+        "runStdout": "03d37612133ee2853964dc79d2300c2333ea0d68b2da947316f51557a25965bd",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 0,
-          "attempts": 1
+          "seconds": 2,
+          "attempts": 2
         },
-        "memUsage": "11.67MiB / 7.652GiB",
-        "memBytes": 12236882
+        "memUsage": "18.72MiB / 7.652GiB",
+        "memBytes": 19629343
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64855,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <link rel=\"icon\" href=\"favicon.ico\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>IT Tools - Handy online tools for developers</title>\n    <meta itemprop=\"name\" content=\"IT Tools - Handy online tools for developers\" />\n    <meta\n      name=\"description\"\n      content=\"Collection ",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 11.7MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 18.7MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 12236882,
+        "memBytes": 19629343,
         "floorRamGb": 1
       }
     }

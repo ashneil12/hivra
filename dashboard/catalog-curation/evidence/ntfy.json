@@ -1,7 +1,7 @@
 {
   "slug": "ntfy",
-  "checkedAt": "2026-11-21T03:53:54.661Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:14:39.553Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -15,22 +15,66 @@
     },
     {
       "name": "image",
-      "status": "fail",
-      "detail": "binwiederhier/ntfy:latest: ERROR: unexpected status from HEAD request to https://registry-1.docker.io/v2/binwiederhier/ntfy/manifests/latest: 429 Too Many Requests\n"
+      "status": "pass",
+      "detail": "binwiederhier/ntfy:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "binwiederhier/ntfy:latest",
+        "digest": "sha256:038da2be5e668fee6d36a62884eea48975e1b71c29a56964e5298c1b9165a573",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v6",
+          "linux/arm/v7"
+        ]
+      }
     },
     {
       "name": "boot",
+      "status": "fail",
+      "detail": "health / never returned <400 (last status none)",
+      "evidence": {
+        "container": "hivra-verify-ntfy-um5u4p",
+        "hostPort": 3259,
+        "image": "binwiederhier/ntfy:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-ntfy-um5u4p",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3259:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-ntfy-um5u4p-data:/var/lib/ntfy",
+          "binwiederhier/ntfy:latest"
+        ],
+        "runStdout": "a1c3663e2214242c0f3dd908432209e26cad59f576ad103efa834eadf7d31064",
+        "health": {
+          "ok": false,
+          "status": null,
+          "seconds": 240.2,
+          "attempts": 120,
+          "error": "fetch failed"
+        },
+        "logsTail": "                disable the date/time prefix (default: false) [$NTFY_NO_LOG_DATES]\n   --log-level value, --log_level value                                                                                   set log level (default: \"INFO\") [$NTFY_LOG_LEVEL]\n   --log-level-overrides value, --log_level_overrides value [ --log-level-overrides value, --log_level_overrides value ]  set log level overrides [$NTFY_LOG_LEVEL_OVERRIDES]\n   --log-format value, --log_format value                                                                                 set log format (default: \"text\") [$NTFY_LOG_FORMAT]\n   --log-file value, --log_file value                                                                                     set log file, default is STDOUT [$NTFY_LOG_FILE]\n   --help, -h                                                                                                             show help\n   --version, -v                                                                                                          print the version\n\nTry 'ntfy COMMAND --help' or https://ntfy.sh/docs/ for more information.\n\nTo report a bug, open an issue on GitHub: https://github.com/binwiederhier/ntfy/issues.\nIf you want to chat, simply join the Discord server (https://discord.gg/cT7ECsZj9w), or\nthe Matrix room (https://matrix.to/#/#ntfy:matrix.org).\n\nntfy 2.38.1 (7d7dc4f), runtime go1.27.4, built at 2026-11-16T11:04:19Z\nCopyright (C) Philipp C. Heckel, licensed under Apache License 2.0 & GPLv2\n"
+      }
+    },
+    {
+      "name": "gateway",
       "status": "skipped",
-      "detail": "earlier gate failed"
+      "detail": "health check failed"
     },
     {
       "name": "floor",
       "status": "skipped",
-      "detail": "earlier gate failed"
+      "detail": "no floor.ram in spec or no memory reading"
     }
   ],
   "verdict": "fail",
   "reasons": [
-    "image: binwiederhier/ntfy:latest: ERROR: unexpected status from HEAD request to https://registry-1.docker.io/v2/binwiederhier/ntfy/manifests/latest: 429 Too Many Requests\n"
+    "boot: health / never returned <400 (last status none)"
   ]
 }

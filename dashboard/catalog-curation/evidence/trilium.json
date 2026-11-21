@@ -1,7 +1,7 @@
 {
   "slug": "trilium",
-  "checkedAt": "2026-11-21T03:27:28.320Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:52.858Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -35,43 +35,79 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 2.1s",
+      "detail": "health / -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-trilium-4epq0i",
-        "hostPort": 56689,
+        "container": "hivra-verify-trilium-yvu690",
+        "hostPort": 3231,
         "image": "ghcr.io/triliumnext/notes:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-trilium-4epq0i",
+          "hivra-verify-trilium-yvu690",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:56689:8080",
+          "127.0.0.1:3231:8080",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-trilium-4epq0i-data:/home/node/trilium-data",
+          "hivra-verify-trilium-yvu690-data:/home/node/trilium-data",
           "ghcr.io/triliumnext/notes:latest"
         ],
-        "runStdout": "0238c17aa3366dacc29b68bacb953b34ee316f47d5e881934592d1a399c6229c",
+        "runStdout": "5b9aa3ee7b897bbf78df238ab5e666692218956224fb1eee39ea802e0d184188",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2.1,
+          "seconds": 2,
           "attempts": 2
         },
-        "memUsage": "202.2MiB / 7.652GiB",
-        "memBytes": 212022067
+        "memUsage": "139.7MiB / 7.652GiB",
+        "memBytes": 146486067
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /setup",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64875,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "setup"
+          },
+          {
+            "hop": 2,
+            "path": "/setup",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/setup",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1\">\n    <meta id=\"syncInProgress\" content=\"0\" />\n    <title>Setup</title>\n\n    \n    <link rel=\"stylesheet\" href=\"assets/v0.95.0/src/bootstrap.css\">\n\n    <style>\n        .lds-ring {\n            display: inline-block;\n            position: relative;",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 202.2MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 139.7MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 212022067,
+        "memBytes": 146486067,
         "floorRamGb": 1
       }
     }

@@ -1,7 +1,7 @@
 {
   "slug": "flame",
-  "checkedAt": "2026-11-21T03:28:41.794Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:11:10.634Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -28,45 +28,75 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 4.1s",
+      "detail": "health / -> 200 in 4s",
       "evidence": {
-        "container": "hivra-verify-flame-cs86vg",
-        "hostPort": 57145,
+        "container": "hivra-verify-flame-5kbuzf",
+        "hostPort": 3237,
         "image": "pawelmalak/flame:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-flame-cs86vg",
+          "hivra-verify-flame-5kbuzf",
           "--security-opt",
           "no-new-privileges",
           "--platform",
           "linux/amd64",
           "-p",
-          "127.0.0.1:57145:5005",
+          "127.0.0.1:3237:5005",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-flame-cs86vg-data:/app/data",
+          "hivra-verify-flame-5kbuzf-data:/app/data",
           "pawelmalak/flame:latest"
         ],
-        "runStdout": "a59c1f66bcf990a47e5d7d0c35501ba54ec7e705e30ab2bad40e33a0798822ac",
+        "runStdout": "52f0443de58cba6ae4fa6a3901175091954de3bafdbc7f479421b78cb1a0e682",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 4.1,
+          "seconds": 4,
           "attempts": 3
         },
-        "memUsage": "106.7MiB / 7.652GiB",
-        "memBytes": 111883059
+        "memUsage": "163.8MiB / 7.652GiB",
+        "memBytes": 171756749
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65046,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/><link rel=\"icon\" href=\"/icons/favicon.ico\"/><link rel=\"apple-touch-icon\" href=\"/icons/apple-touch-icon.png\"/><link rel=\"apple-touch-icon\" sizes=\"57x57\" href=\"/icons/apple-touch-icon-57x57.png\"/><link rel=\"apple-touch-icon\" sizes=\"72x72\" href=\"/icons/apple-touch-icon-72x72.png\"/><link rel=\"apple-touch-icon\" sizes=\"76x76\" href=\"/icons/apple",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 106.7MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 163.8MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 111883059,
+        "memBytes": 171756749,
         "floorRamGb": 1
       }
     }

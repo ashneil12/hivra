@@ -1,7 +1,7 @@
 {
   "slug": "actual-budget",
-  "checkedAt": "2026-11-21T03:15:47.642Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:45.837Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -33,41 +33,71 @@
       "status": "pass",
       "detail": "health / -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-actual-budget-0ocxyz",
-        "hostPort": 52708,
+        "container": "hivra-verify-actual-budget-baxdnl",
+        "hostPort": 3226,
         "image": "actualbudget/actual-server:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-actual-budget-0ocxyz",
+          "hivra-verify-actual-budget-baxdnl",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:52708:5006",
+          "127.0.0.1:3226:5006",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-actual-budget-0ocxyz-data:/data",
+          "hivra-verify-actual-budget-baxdnl-data:/data",
           "actualbudget/actual-server:latest"
         ],
-        "runStdout": "216fe2a60ed056fcb05f07d19b8af7dd0d6ed9b3c50b08ed98a49c6808ad20a1",
+        "runStdout": "b41ea610fb7741eef8f750ef5586cfb595c849a018fb4a8b9a89a1f570c52a0e",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 2,
           "attempts": 2
         },
-        "memUsage": "237.9MiB / 7.652GiB",
-        "memBytes": 249456230
+        "memUsage": "304MiB / 7.652GiB",
+        "memBytes": 318767104
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64807,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta\n      name=\"viewport\"\n      content=\"width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover\"\n    />\n    <title>Actual</title>\n    <link rel=\"shortcut icon\" href=\"/favicon.ico\" />\n    <link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple-touch-icon.png\" />\n    <l",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 237.9MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 304.0MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 249456230,
+        "memBytes": 318767104,
         "floorRamGb": 1
       }
     }

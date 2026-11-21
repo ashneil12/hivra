@@ -1,7 +1,7 @@
 {
   "slug": "nextcloud",
-  "checkedAt": "2026-11-21T03:26:01.185Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:11:01.599Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -45,42 +45,72 @@
       "status": "pass",
       "detail": "health /status.php -> 200 in 6.1s",
       "evidence": {
-        "container": "hivra-verify-nextcloud-mcchnn",
-        "hostPort": 56160,
+        "container": "hivra-verify-nextcloud-t193rs",
+        "hostPort": 3233,
         "image": "nextcloud:apache",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-nextcloud-mcchnn",
+          "hivra-verify-nextcloud-t193rs",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:56160:80",
+          "127.0.0.1:3233:80",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-nextcloud-mcchnn-data:/var/www/html",
+          "hivra-verify-nextcloud-t193rs-data:/var/www/html",
           "nextcloud:apache"
         ],
-        "runStdout": "9c99b80ae9abcee1087a9e4ae777d106ba4c36c590cbd02fef1e694a8a205175",
+        "runStdout": "4a374a93085c58df8d34065f425c9e007af8715f98461c5d98970d4435bf6607",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 6.1,
           "attempts": 4
         },
-        "memUsage": "187.7MiB / 7.652GiB",
-        "memBytes": 196817715
+        "memUsage": "202.5MiB / 7.652GiB",
+        "memBytes": 212336640
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64951,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html class=\"ng-csp\" data-placeholder-focus=\"false\" lang=\"en\" data-locale=\"en\" translate=\"no\" >\n\t<head\n data-requesttoken=\"X0WB1J8KfKE8wng8qVqoKkNIIaB8OAo5y/VhJ1R6c34=:BiO0rdZAC8cPjFd13XHLHgkLcu5OcFBjspw1URIuGgY=\">\n\t\t<meta charset=\"utf-8\">\n\t\t<title>\n\t\t\tNextcloud\t\t</title>\n\t\t<meta name=\"csp-nonce\" nonce=\"BiO0rdZAC8cPjFd13XHLHgkLcu5OcFBjspw1URIuGgY=\">\n\t\t<meta name=\"viewport\" content=",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 187.7MiB vs floor 4GB*0.8=3.2GiB",
+      "detail": "idle memory 202.5MiB vs floor 2GB*0.8=1.6GiB",
       "evidence": {
-        "memBytes": 196817715,
-        "floorRamGb": 4
+        "memBytes": 212336640,
+        "floorRamGb": 2
       }
     }
   ],

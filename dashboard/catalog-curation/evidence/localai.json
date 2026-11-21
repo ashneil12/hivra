@@ -1,7 +1,7 @@
 {
   "slug": "localai",
-  "checkedAt": "2026-11-21T03:22:19.417Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:17.693Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -31,45 +31,119 @@
       "status": "pass",
       "detail": "health /readyz -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-localai-7b5qfc",
-        "hostPort": 55336,
+        "container": "hivra-verify-localai-u5k4m0",
+        "hostPort": 3212,
         "image": "localai/localai:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-localai-7b5qfc",
+          "hivra-verify-localai-u5k4m0",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:55336:8080",
+          "127.0.0.1:3212:8080",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-localai-7b5qfc-models:/models",
+          "hivra-verify-localai-u5k4m0-models:/models",
           "localai/localai:latest"
         ],
-        "runStdout": "7d107e16576e202174f9746c77f0396cc8f0dc4bb71768a363e3824c5336e637",
+        "runStdout": "8d3d1d66d29aa0834ad93d32f015267d46a49c71c1a81ce5a400d15ab0a5455c",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 2,
           "attempts": 2
         },
-        "memUsage": "159MiB / 7.652GiB",
-        "memBytes": 166723584
+        "memUsage": "260.8MiB / 7.652GiB",
+        "memBytes": 273468621
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "redirect chain exceeded 10 hops",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64383,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 301,
+            "location": "/app"
+          },
+          {
+            "hop": 2,
+            "path": "/app",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 3,
+            "path": "/",
+            "status": 301,
+            "location": "/app"
+          },
+          {
+            "hop": 4,
+            "path": "/app",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 5,
+            "path": "/",
+            "status": 301,
+            "location": "/app"
+          },
+          {
+            "hop": 6,
+            "path": "/app",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 7,
+            "path": "/",
+            "status": 301,
+            "location": "/app"
+          },
+          {
+            "hop": 8,
+            "path": "/app",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 9,
+            "path": "/",
+            "status": 301,
+            "location": "/app"
+          }
+        ]
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 159.0MiB vs floor 4GB*0.8=3.2GiB",
+      "detail": "idle memory 260.8MiB vs floor 2GB*0.8=1.6GiB",
       "evidence": {
-        "memBytes": 166723584,
-        "floorRamGb": 4
+        "memBytes": 273468621,
+        "floorRamGb": 2
       }
     }
   ],
-  "verdict": "pass",
-  "reasons": []
+  "verdict": "fail",
+  "reasons": [
+    "gateway: redirect chain exceeded 10 hops"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "slug": "grocy",
-  "checkedAt": "2026-11-21T03:49:40.435Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:59.209Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -31,47 +31,74 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 3s",
+      "detail": "health / -> 200 in 3.3s",
       "evidence": {
-        "container": "hivra-verify-grocy-h4dl9q",
-        "hostPort": 61055,
+        "container": "hivra-verify-grocy-kdreh2",
+        "hostPort": 3266,
         "image": "linuxserver/grocy:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-grocy-h4dl9q",
+          "hivra-verify-grocy-kdreh2",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:61055:80",
+          "127.0.0.1:3266:80",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-grocy-h4dl9q-config:/config",
+          "hivra-verify-grocy-kdreh2-config:/config",
           "linuxserver/grocy:latest"
         ],
-        "runStdout": "e09f6e5a448d04678512deea02ac293a3bee944f96b8285bbb11e06e8a2af43f",
+        "runStdout": "b402cd060d5493f3875e6b9a69bfb596dfe553c2d2872d650b872b9b88daea67",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 3,
+          "seconds": 3.3,
           "attempts": 2
         },
-        "memUsage": "43.29MiB / 7.652GiB",
-        "memBytes": 45392855
+        "memUsage": "56.05MiB / 7.652GiB",
+        "memBytes": 58772685
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "redirect to loopback 127.0.0.1:3266/stockoverview",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64932,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "https://127.0.0.1:3266/stockoverview"
+          }
+        ],
+        "finalStatus": null
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 43.3MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 56.1MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 45392855,
+        "memBytes": 58772685,
         "floorRamGb": 1
       }
     }
   ],
-  "verdict": "pass",
-  "reasons": []
+  "verdict": "fail",
+  "reasons": [
+    "gateway: redirect to loopback 127.0.0.1:3266/stockoverview"
+  ]
 }

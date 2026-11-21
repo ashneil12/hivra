@@ -1,7 +1,7 @@
 {
   "slug": "libretranslate",
-  "checkedAt": "2026-11-21T03:50:49.148Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:14:12.871Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -15,22 +15,66 @@
     },
     {
       "name": "image",
-      "status": "fail",
-      "detail": "libretranslate/libretranslate:latest: ERROR: unexpected status from HEAD request to https://registry-1.docker.io/v2/libretranslate/libretranslate/manifests/latest: 429 Too Many Requests\n"
+      "status": "pass",
+      "detail": "libretranslate/libretranslate:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "libretranslate/libretranslate:latest",
+        "digest": "sha256:6f03f063a10d120cdb5986e8995d4524729d14125269bc6c49f791e49789aec8",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
     },
     {
       "name": "boot",
+      "status": "fail",
+      "detail": "health / never returned <400 (last status none)",
+      "evidence": {
+        "container": "hivra-verify-libretranslate-e3l7yb",
+        "hostPort": 3262,
+        "image": "libretranslate/libretranslate:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-libretranslate-e3l7yb",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3262:5000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-libretranslate-e3l7yb-models:/home/libretranslate/.local/share/argos-translate",
+          "libretranslate/libretranslate:latest"
+        ],
+        "runStdout": "a88be917985f0828f4933a30bd22b8c4a0d7d7ffc7b8c9870ea072e13744820b",
+        "health": {
+          "ok": false,
+          "status": null,
+          "seconds": 240.1,
+          "attempts": 120,
+          "error": "fetch failed"
+        },
+        "logsTail": ""
+      }
+    },
+    {
+      "name": "gateway",
       "status": "skipped",
-      "detail": "earlier gate failed"
+      "detail": "health check failed"
     },
     {
       "name": "floor",
       "status": "skipped",
-      "detail": "earlier gate failed"
+      "detail": "no floor.ram in spec or no memory reading"
     }
   ],
   "verdict": "fail",
   "reasons": [
-    "image: libretranslate/libretranslate:latest: ERROR: unexpected status from HEAD request to https://registry-1.docker.io/v2/libretranslate/libretranslate/manifests/latest: 429 Too Many Requests\n"
+    "boot: health / never returned <400 (last status none)"
   ]
 }

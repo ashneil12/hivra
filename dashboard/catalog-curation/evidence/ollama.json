@@ -1,7 +1,7 @@
 {
   "slug": "ollama",
-  "checkedAt": "2026-11-21T03:27:02.849Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:16.542Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -19,7 +19,7 @@
       "detail": "ollama/ollama:latest linux/amd64 + linux/arm64",
       "evidence": {
         "ref": "ollama/ollama:latest",
-        "digest": "sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592",
+        "digest": "sha256:ccc42bcd3d5fcf7ab0d532b300382154e1a4da56fc666bdb313b78ebdd912754",
         "platforms": [
           "linux/amd64",
           "linux/arm64"
@@ -31,42 +31,72 @@
       "status": "pass",
       "detail": "health /api/version -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-ollama-c9yms4",
-        "hostPort": 56231,
+        "container": "hivra-verify-ollama-vub047",
+        "hostPort": 3211,
         "image": "ollama/ollama:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-ollama-c9yms4",
+          "hivra-verify-ollama-vub047",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:56231:11434",
+          "127.0.0.1:3211:11434",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-ollama-c9yms4-models:/root/.ollama",
+          "hivra-verify-ollama-vub047-models:/root/.ollama",
           "ollama/ollama:latest"
         ],
-        "runStdout": "2881f7f705fcf0f30e4a558d100c53bd21169b73a5db6d937989095299af6b68",
+        "runStdout": "3cb5a8f9e8260717348cf1d8dbe58161843b0ad2a8089ab357293a9658dd614c",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 2,
           "attempts": 2
         },
-        "memUsage": "31.04MiB / 7.652GiB",
-        "memBytes": 32547799
+        "memUsage": "46.36MiB / 7.652GiB",
+        "memBytes": 48611983
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64351,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "Ollama is running",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 31.0MiB vs floor 4GB*0.8=3.2GiB",
+      "detail": "idle memory 46.4MiB vs floor 2GB*0.8=1.6GiB",
       "evidence": {
-        "memBytes": 32547799,
-        "floorRamGb": 4
+        "memBytes": 48611983,
+        "floorRamGb": 2
       }
     }
   ],

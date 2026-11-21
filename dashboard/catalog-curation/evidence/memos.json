@@ -1,7 +1,7 @@
 {
   "slug": "memos",
-  "checkedAt": "2026-11-21T03:28:35.325Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:39.929Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -35,41 +35,71 @@
       "status": "pass",
       "detail": "health /healthz -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-memos-gwdhrh",
-        "hostPort": 57226,
+        "container": "hivra-verify-memos-ighmuv",
+        "hostPort": 3222,
         "image": "neosmemo/memos:stable",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-memos-gwdhrh",
+          "hivra-verify-memos-ighmuv",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:57226:5230",
+          "127.0.0.1:3222:5230",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-memos-gwdhrh-data:/var/opt/memos",
+          "hivra-verify-memos-ighmuv-data:/var/opt/memos",
           "neosmemo/memos:stable"
         ],
-        "runStdout": "4a34261f7e57545088b963fd642030de42e1229d3712424ddcac0c1701b200b0",
+        "runStdout": "6deab4e3b61fc8a98840b2545ac45d8c0c075cc091955b80e572b94f82b685da",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 2,
           "attempts": 2
         },
-        "memUsage": "21.6MiB / 7.652GiB",
-        "memBytes": 22649242
+        "memUsage": "17.02MiB / 7.652GiB",
+        "memBytes": 17846764
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64749,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"color-scheme\" content=\"light dark\" />\n    <meta http-equiv=\"Cache-Control\" content=\"no-cache, no-store, must-revalidate\" />\n    <meta http-equiv=\"Pragma\" content=\"no-cache\" />\n    <meta http-equiv=\"Expires\" content=\"0\" />\n    <link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple-touch-icon.png?v=celadon\" />\n",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 21.6MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 17.0MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 22649242,
+        "memBytes": 17846764,
         "floorRamGb": 1
       }
     }

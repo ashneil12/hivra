@@ -1,7 +1,7 @@
 {
   "slug": "chroma",
-  "checkedAt": "2026-11-21T03:15:54.111Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:19:32.964Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -31,43 +31,74 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health /api/v2/heartbeat -> 200 in 0s",
+      "detail": "health /api/v2/heartbeat -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-chroma-05260p",
-        "hostPort": 52714,
+        "container": "hivra-verify-chroma-vylc1m",
+        "hostPort": 3210,
         "image": "chromadb/chroma:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-chroma-05260p",
+          "hivra-verify-chroma-vylc1m",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:52714:8000",
+          "127.0.0.1:3210:8000",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-chroma-05260p-data:/data",
+          "hivra-verify-chroma-vylc1m-data:/data",
           "chromadb/chroma:latest"
         ],
-        "runStdout": "3aef3c59e45282e98cb3cf741ffc0287ac93472e0f7d7f59d7ce650dfa9df46f",
+        "runStdout": "e7394dda55eb67769d30cb486719898a228cd4b9756cd721006093a34911d8ce",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 0,
-          "attempts": 1
+          "seconds": 2,
+          "attempts": 2
         },
-        "memUsage": "11.16MiB / 7.652GiB",
-        "memBytes": 11702108
+        "memUsage": "11.14MiB / 7.652GiB",
+        "memBytes": 11681137
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "API-only surface: / -> 404, /api/v2/heartbeat -> 200 through gateway",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 50131,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 404,
+            "location": null
+          }
+        ],
+        "finalStatus": 404,
+        "finalPath": "/",
+        "bodyHead": "",
+        "healthPathProbe": {
+          "path": "/api/v2/heartbeat",
+          "status": 200
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 11.2MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 11.1MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 11702108,
+        "memBytes": 11681137,
         "floorRamGb": 1
       }
     }

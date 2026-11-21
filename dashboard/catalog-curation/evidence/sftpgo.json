@@ -1,7 +1,7 @@
 {
   "slug": "sftpgo",
-  "checkedAt": "2026-11-21T03:50:50.746Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:32.504Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -15,22 +15,108 @@
     },
     {
       "name": "image",
-      "status": "fail",
-      "detail": "drakkan/sftpgo:latest: ERROR: unexpected status from HEAD request to https://registry-1.docker.io/v2/drakkan/sftpgo/manifests/latest: 429 Too Many Requests\n"
+      "status": "pass",
+      "detail": "drakkan/sftpgo:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "drakkan/sftpgo:latest",
+        "digest": "sha256:1edd28d80de2a008863fbfc58c8ff7db47b1b410bae48d4e6076192337809b11",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/ppc64le",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
     },
     {
       "name": "boot",
-      "status": "skipped",
-      "detail": "earlier gate failed"
+      "status": "pass",
+      "detail": "health /healthz -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-sftpgo-ap2gb7",
+        "hostPort": 3259,
+        "image": "drakkan/sftpgo:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-sftpgo-ap2gb7",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3259:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-sftpgo-ap2gb7-data:/var/lib/sftpgo",
+          "drakkan/sftpgo:latest"
+        ],
+        "runStdout": "e4cf266e87bf9fa3e6a032519cd7ce88f8b1ae2a0f5d7d99c2f3cb3b23dc4a67",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "25.15MiB / 7.652GiB",
+        "memBytes": 26371686
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "login form POST rejected as origin/host/CSRF issue (status 403)",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64602,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/web/admin/setup"
+          },
+          {
+            "hop": 2,
+            "path": "/web/admin/setup",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/web/admin/setup",
+        "bodyHead": "\n<!DOCTYPE html>\n<html lang=\"en\">\n    <head>\n\t\t<title></title>\n\t\t<meta charset=\"utf-8\" />\n\t\t<meta name=\"description\" content=\"\" />\n\t\t<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n\t\t<meta name=\"robots\" content=\"noindex\">\n\t\t<link rel=\"icon\" type=\"image/png\" href=\"/static/favicon.png\" />\n<style nonce=\"\">\n     \n    @font-face {\n        font-family: 'Inter';\n        font-style:",
+        "formPost": {
+          "path": "/web/admin/setup",
+          "status": 403,
+          "location": null,
+          "bodyHead": "\n\n<!DOCTYPE html>\n<html lang=\"en\">\n    <head>\n        <title></title>\n        <meta charset=\"utf-8\" />\n        <meta name=\"description\" content=\"\" />\n        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n        <meta name=\"robots\" content=\"noindex\">\n        <link rel=\"icon\" type=\"image/png\" href=\"/static/favicon.png\" />\n<style nonce=\"\">\n     \n    @font-face {\n        font"
+        }
+      }
     },
     {
       "name": "floor",
-      "status": "skipped",
-      "detail": "earlier gate failed"
+      "status": "pass",
+      "detail": "idle memory 25.1MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 26371686,
+        "floorRamGb": 1
+      }
     }
   ],
   "verdict": "fail",
   "reasons": [
-    "image: drakkan/sftpgo:latest: ERROR: unexpected status from HEAD request to https://registry-1.docker.io/v2/drakkan/sftpgo/manifests/latest: 429 Too Many Requests\n"
+    "gateway: login form POST rejected as origin/host/CSRF issue (status 403)"
   ]
 }

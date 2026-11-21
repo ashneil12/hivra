@@ -1,7 +1,7 @@
 {
   "slug": "node-red",
-  "checkedAt": "2026-11-21T03:25:54.594Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:31.491Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -33,41 +33,71 @@
       "status": "pass",
       "detail": "health / -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-node-red-35fkyv",
-        "hostPort": 56204,
+        "container": "hivra-verify-node-red-oleowb",
+        "hostPort": 3218,
         "image": "nodered/node-red:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-node-red-35fkyv",
+          "hivra-verify-node-red-oleowb",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:56204:1880",
+          "127.0.0.1:3218:1880",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-node-red-35fkyv-data:/data",
+          "hivra-verify-node-red-oleowb-data:/data",
           "nodered/node-red:latest"
         ],
-        "runStdout": "57401aa27c3e0da90f15895697318a34e5bb1bb4e0f71d661d66d5f255ef7e2f",
+        "runStdout": "558ce4f3b76ae548f79b11a2dda474678fee726305af0f43e7e75294ee9d96fd",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 2,
           "attempts": 2
         },
-        "memUsage": "92.4MiB / 7.652GiB",
-        "memBytes": 96888422
+        "memUsage": "99.93MiB / 7.652GiB",
+        "memBytes": 104784200
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64586,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta name=\"apple-mobile-web-app-capable\" content=\"yes\">\n<meta name=\"mobile-web-app-capable\" content=\"yes\">\n<!--\n  Copyright OpenJS Foundation and other contributors, https://openjsf.org/\n\n  Licensed under the Apac",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 92.4MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 99.9MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 96888422,
+        "memBytes": 104784200,
         "floorRamGb": 1
       }
     }

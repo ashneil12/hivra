@@ -1,7 +1,7 @@
 {
   "slug": "grafana",
-  "checkedAt": "2026-11-21T03:17:18.152Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:11:17.391Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -32,41 +32,77 @@
       "status": "pass",
       "detail": "health /api/health -> 200 in 6s",
       "evidence": {
-        "container": "hivra-verify-grafana-oqzq1z",
-        "hostPort": 53455,
+        "container": "hivra-verify-grafana-px5pby",
+        "hostPort": 3242,
         "image": "grafana/grafana:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-grafana-oqzq1z",
+          "hivra-verify-grafana-px5pby",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:53455:3000",
+          "127.0.0.1:3242:3000",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-grafana-oqzq1z-data:/var/lib/grafana",
+          "hivra-verify-grafana-px5pby-data:/var/lib/grafana",
           "grafana/grafana:latest"
         ],
-        "runStdout": "b9f368daa05a3882fe9dffbcc4cfe45bc427c43c667253c95633e6f9b730f3ca",
+        "runStdout": "5b2667e69a2c63bd649015eefdd119f8346e0546c6e0b83018a1e8ce9518a2d8",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 6,
           "attempts": 4
         },
-        "memUsage": "300.4MiB / 7.652GiB",
-        "memBytes": 314992230
+        "memUsage": "304.3MiB / 7.652GiB",
+        "memBytes": 319081677
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /login",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65116,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/login"
+          },
+          {
+            "hop": 2,
+            "path": "/login",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/login",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en-US\">\n  <head>\n    \n    <meta charset=\"utf-8\" />\n    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge,chrome=1\" />\n    <meta name=\"viewport\" content=\"width=device-width\" />\n    <meta name=\"theme-color\" content=\"#000\" />\n\n    <title>Grafana</title>\n\n    <base href=\"/\" />\n\n    <link rel=\"icon\" type=\"image/png\" href=\"public/build/img/fav32.png\" />\n    <link rel=\"apple",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 300.4MiB vs floor 2GB*0.8=1.6GiB",
+      "detail": "idle memory 304.3MiB vs floor 2GB*0.8=1.6GiB",
       "evidence": {
-        "memBytes": 314992230,
+        "memBytes": 319081677,
         "floorRamGb": 2
       }
     }

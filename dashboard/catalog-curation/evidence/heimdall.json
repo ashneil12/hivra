@@ -1,7 +1,7 @@
 {
   "slug": "heimdall",
-  "checkedAt": "2026-11-21T03:28:35.053Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:11:09.241Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -31,47 +31,76 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 8.3s",
+      "detail": "health / -> 200 in 8.4s",
       "evidence": {
-        "container": "hivra-verify-heimdall-i46h3h",
-        "hostPort": 57132,
+        "container": "hivra-verify-heimdall-o8zkxk",
+        "hostPort": 3235,
         "image": "linuxserver/heimdall:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-heimdall-i46h3h",
+          "hivra-verify-heimdall-o8zkxk",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:57132:80",
+          "127.0.0.1:3235:80",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-heimdall-i46h3h-config:/config",
+          "hivra-verify-heimdall-o8zkxk-config:/config",
           "linuxserver/heimdall:latest"
         ],
-        "runStdout": "7c9ccfdf771a04214a11d965106635adb25ff814e7d7e341732e90199cead3ff",
+        "runStdout": "fe34dc236c90c732e7958845e3ee4588ed19fa6c7cb4c8fee88749f6223a127c",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 8.3,
+          "seconds": 8.4,
           "attempts": 5
         },
-        "memUsage": "152.7MiB / 7.652GiB",
-        "memBytes": 160117555
+        "memUsage": "154.8MiB / 7.652GiB",
+        "memBytes": 162319565
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "final HTML references loopback 3235",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65016,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\">\n        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\n        <title>Heimdall</title>\n        <link rel=\"apple-touch-icon\" sizes=\"57x57\" href=\"https://127.0.0.1:3235/apple-icon-57x57.png\">\n        <link rel=\"apple-touch-icon\" sizes=\"60x60\""
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 152.7MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 154.8MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 160117555,
+        "memBytes": 162319565,
         "floorRamGb": 1
       }
     }
   ],
-  "verdict": "pass",
-  "reasons": []
+  "verdict": "fail",
+  "reasons": [
+    "gateway: final HTML references loopback 3235"
+  ]
 }

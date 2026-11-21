@@ -1,7 +1,7 @@
 {
   "slug": "qdrant",
-  "checkedAt": "2026-11-21T03:26:47.603Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:10.577Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -31,43 +31,73 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health /readyz -> 200 in 0.1s",
+      "detail": "health /readyz -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-qdrant-pg7ykk",
-        "hostPort": 56409,
+        "container": "hivra-verify-qdrant-c2w1ny",
+        "hostPort": 3209,
         "image": "qdrant/qdrant:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-qdrant-pg7ykk",
+          "hivra-verify-qdrant-c2w1ny",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:56409:6333",
+          "127.0.0.1:3209:6333",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-qdrant-pg7ykk-storage:/qdrant/storage",
+          "hivra-verify-qdrant-c2w1ny-storage:/qdrant/storage",
           "qdrant/qdrant:latest"
         ],
-        "runStdout": "0052af3d398196ca59c3c59a5548ca4f2e04ba09c8d33a9427f5d3436a577fa3",
+        "runStdout": "dfd22de295d81bb4a2d47464140a9c90941cdf492769a41850401b8252322822",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 0.1,
-          "attempts": 1
+          "seconds": 2,
+          "attempts": 2
         },
-        "memUsage": "91.45MiB / 7.652GiB",
-        "memBytes": 95892275
+        "memUsage": "117.6MiB / 7.652GiB",
+        "memBytes": 123312538
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64246,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "{\"title\":\"qdrant - vector search engine\",\"version\":\"1.20.2\",\"commit\":\"23065a0bf6857c3e5da45f6c8939cc746cc0580e\"}",
+        "formPost": {
+          "found": false
+        }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 91.4MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 117.6MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 95892275,
+        "memBytes": 123312538,
         "floorRamGb": 1
       }
     }

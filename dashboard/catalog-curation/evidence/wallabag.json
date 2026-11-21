@@ -1,7 +1,7 @@
 {
   "slug": "wallabag",
-  "checkedAt": "2026-11-21T03:50:49.051Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:09:58.651Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -15,22 +15,92 @@
     },
     {
       "name": "image",
-      "status": "fail",
-      "detail": "wallabag/wallabag:latest: ERROR: unexpected status from HEAD request to https://registry-1.docker.io/v2/wallabag/wallabag/manifests/latest: 429 Too Many Requests\n"
+      "status": "pass",
+      "detail": "wallabag/wallabag:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "wallabag/wallabag:latest",
+        "digest": "sha256:9055d92d6e7973abea2d902ecb5459f6063fce05595eaef37f6750e49ff8cdee",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
     },
     {
       "name": "boot",
-      "status": "skipped",
-      "detail": "earlier gate failed"
+      "status": "pass",
+      "detail": "health / -> 200 in 8.4s",
+      "evidence": {
+        "container": "hivra-verify-wallabag-vhz1c5",
+        "hostPort": 3227,
+        "image": "wallabag/wallabag:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-wallabag-vhz1c5",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3227:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-wallabag-vhz1c5-data:/var/www/wallabag/data",
+          "wallabag/wallabag:latest"
+        ],
+        "runStdout": "fb248f71ba7b178cd8ed0e448de4f5f612566beaad22f8019842e8ff6e476d10",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 8.4,
+          "attempts": 5
+        },
+        "memUsage": "67.44MiB / 7.652GiB",
+        "memBytes": 70715965
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "redirect to loopback 127.0.0.1:3227/login",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64119,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "https://127.0.0.1:3227/login"
+          }
+        ],
+        "finalStatus": null
+      }
     },
     {
       "name": "floor",
-      "status": "skipped",
-      "detail": "earlier gate failed"
+      "status": "pass",
+      "detail": "idle memory 67.4MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 70715965,
+        "floorRamGb": 1
+      }
     }
   ],
   "verdict": "fail",
   "reasons": [
-    "image: wallabag/wallabag:latest: ERROR: unexpected status from HEAD request to https://registry-1.docker.io/v2/wallabag/wallabag/manifests/latest: 429 Too Many Requests\n"
+    "gateway: redirect to loopback 127.0.0.1:3227/login"
   ]
 }

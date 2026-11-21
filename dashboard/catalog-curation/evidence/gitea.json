@@ -1,7 +1,7 @@
 {
   "slug": "gitea",
-  "checkedAt": "2026-11-21T03:12:33.923Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T04:10:17.602Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
   "checks": [
     {
       "name": "license",
@@ -35,45 +35,74 @@
       "status": "pass",
       "detail": "health /api/healthz -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-gitea-14my6n",
-        "hostPort": 52423,
+        "container": "hivra-verify-gitea-3s8z2o",
+        "hostPort": 3208,
         "image": "docker.gitea.com/gitea:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-gitea-14my6n",
+          "hivra-verify-gitea-3s8z2o",
           "--security-opt",
           "no-new-privileges",
           "-p",
-          "127.0.0.1:52423:3000",
+          "127.0.0.1:3208:3000",
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-gitea-14my6n-data:/data",
+          "hivra-verify-gitea-3s8z2o-data:/data",
           "docker.gitea.com/gitea:latest"
         ],
-        "runStdout": "380d3190c5bd541af24c64704495225248e727dad520be88d052a4b735889eb4",
+        "runStdout": "678e130ca77a47c2de245989d81bb02f3cc347f3ec915458965f7f4e257145f7",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 2,
           "attempts": 2
         },
-        "memUsage": "154.8MiB / 7.652GiB",
-        "memBytes": 162319565
+        "memUsage": "151MiB / 7.652GiB",
+        "memBytes": 158334976
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "final HTML references loopback 3208",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64382,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en-US\" data-theme=\"gitea-auto\">\n<head>\n\t<meta http-equiv=\"Content-Security-Policy\" content=\"default-src * data: blob:;script-src * 'nonce-5f1c7d9d28efd22bdbe3331d9ec3b198';style-src * 'unsafe-inline';\">\n\t<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\t<title>Installation - Gitea: Git with a cup of tea</title>\n\t<link rel=\"manifest\" href=\"/assets/sit"
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 154.8MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 151.0MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 162319565,
+        "memBytes": 158334976,
         "floorRamGb": 1
       }
     }
   ],
-  "verdict": "pass",
-  "reasons": []
+  "verdict": "fail",
+  "reasons": [
+    "gateway: final HTML references loopback 3208"
+  ]
 }
