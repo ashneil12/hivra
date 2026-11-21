@@ -547,6 +547,16 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.21.1` adds direct sign-in to the guest gateway: an
+unauthenticated browser navigation to a box now redirects to a gateway-served
+`/login` page instead of a bare 401, and the owner can set a sign-in password
+through the bearer-only `/api/signin-password` (a salted digest kept
+owner-only under `~/.hivra`, atomically replaced). `POST /login` redeems the
+owner password or an existing connect-grant pair into the same surface cookie,
+failed sign-ins delay the next answer exponentially, and `catalog-app` boxes
+keep their own `/login` and the plain 401. Non-browser clients and the
+credential endpoints are unchanged.
+
 Release `2026.11.20.5` adds the `docker-stack` catalog runtime and env
 placeholders: manifests may declare `generatedSecrets` whose values the guest
 generates once into a root-only store and never rotates, and env values may

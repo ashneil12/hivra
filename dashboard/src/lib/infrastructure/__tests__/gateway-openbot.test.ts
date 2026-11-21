@@ -264,7 +264,9 @@ describe("gateway OpenBot at the box root", () => {
 
   it("refuses OpenBot without the Hivra token, HTTP and WebSocket", async () => {
     const { app, port } = await withKey();
-    expect((await request(port, "/", { Accept: "text/html" }, { auth: false })).status).toBe(401);
+    const page = await request(port, "/", { Accept: "text/html" }, { auth: false });
+    expect(page.status).toBe(303);
+    expect(page.headers.location).toBe("/login?next=%2F");
     expect((await request(port, "/api/channels", {}, { auth: false })).status).toBe(401);
     expect(await upgrade(port, "/api/channels/events", {})).toMatch(/^HTTP\/1\.1 401/);
     expect(app.http).toEqual([]);
