@@ -1727,6 +1727,16 @@
       "family": "value-set",
       "input": "/dashboard/infrastructure?launch=adguard-home",
       "expect": "/dashboard/infrastructure?launch=adguard-home"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=clickhouse&stage=choose",
+      "expect": "/dashboard/launch?profile=clickhouse&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=clickhouse",
+      "expect": "/dashboard/infrastructure?launch=clickhouse"
     }
   ]
 }
