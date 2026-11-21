@@ -1,0 +1,111 @@
+{
+  "slug": "clickhouse",
+  "checkedAt": "2026-11-21T14:53:57.358Z",
+  "gitSha": "7c233ef05b9e127563fa689d4d1316a5578cff69",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "ClickHouse/ClickHouse is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "ClickHouse/ClickHouse",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "clickhouse/clickhouse-server:24.12 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "clickhouse/clickhouse-server:24.12",
+        "digest": "sha256:a65ca89ddbe8e04a05036dd7d7110a203256293b407b9359130ed5e4333f45ff",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /ping -> 200 in 9.4s",
+      "evidence": {
+        "container": "hivra-verify-clickhouse-hcvjdk",
+        "hostPort": 3266,
+        "image": "clickhouse/clickhouse-server:24.12",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-clickhouse-hcvjdk",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3266:8123",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-clickhouse-hcvjdk-data:/var/lib/clickhouse",
+          "clickhouse/clickhouse-server:24.12"
+        ],
+        "runStdout": "06bc5dfa6f862a4808e3fa03a494730909161ef76985ee0f2c114e1d2670e7b5",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 9.4,
+          "attempts": 5
+        },
+        "memUsage": "160.2MiB / 7.652GiB",
+        "memBytes": 167981875
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 55049,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "Ok.\n",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "There is no handle /login\n\nUse / or /ping for health checks.\nOr /replicas_status for more sophisticated health checks.\n\nSend queries from your program with POST method or GET /?query=...\n\nUse clickhouse-client:\n\nFor interactive data analysis:\n    clickhouse-client\n\nFor batch query processing:\n    cl"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 160.2MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 167981875,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

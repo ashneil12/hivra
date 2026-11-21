@@ -61,6 +61,7 @@ export const UNIVERSAL_CATALOG_IDS = [
   "kanboard",
   "kroki",
   "syncthing",
+  "clickhouse",
   "memos",
   "wallos",
   "shiori",
