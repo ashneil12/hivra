@@ -1,7 +1,7 @@
 {
   "slug": "umami",
-  "checkedAt": "2026-11-21T05:07:31.866Z",
-  "gitSha": "867b5f90fad9108897e53f09d6026ac8226a6fc3",
+  "checkedAt": "2026-11-21T14:31:01.070Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -59,34 +59,34 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "stack up; health / -> 200 in 10.2s across 2 container(s)",
+      "detail": "stack up; health / -> 200 in 123s across 2 container(s)",
       "evidence": {
-        "project": "hivra-verify-umami-bu7xz6",
-        "composeFile": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-umami-dYjWmS/rendered/compose.yaml",
-        "renderedDir": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-umami-dYjWmS/rendered",
-        "renderStdout": "{\"outDir\":\"/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-umami-dYjWmS/rendered\"}",
+        "project": "hivra-verify-umami-sdozm3",
+        "composeFile": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-umami-ianOpw/rendered/compose.yaml",
+        "renderedDir": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-umami-ianOpw/rendered",
+        "renderStdout": "{\"outDir\":\"/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-umami-ianOpw/rendered\"}",
         "defaultPlatform": "host",
         "upStdout": "",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 10.2,
-          "attempts": 6
+          "seconds": 123,
+          "attempts": 55
         },
         "containerCount": 2,
         "perContainerMem": [
           {
-            "id": "16d946b5f0bd",
-            "memUsage": "256.4MiB / 7.652GiB",
-            "memBytes": 268854886
+            "id": "2356aa11cf32",
+            "memUsage": "244MiB / 7.652GiB",
+            "memBytes": 255852544
           },
           {
-            "id": "40bea78a78b5",
-            "memUsage": "25.02MiB / 7.652GiB",
-            "memBytes": 26235372
+            "id": "ad2c7a8be673",
+            "memUsage": "26.43MiB / 7.652GiB",
+            "memBytes": 27713864
           }
         ],
-        "memBytes": 295090258
+        "memBytes": 283566408
       }
     },
     {
@@ -95,7 +95,7 @@
       "detail": "through gateway: 303 /app/ -> 307 / -> 200 /dashboard",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 63860,
+        "gatewayPort": 50717,
         "proxyMode": "standard",
         "hops": [
           {
@@ -132,9 +132,9 @@
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 281.4MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 270.4MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 295090258,
+        "memBytes": 283566408,
         "floorRamGb": 1
       }
     }

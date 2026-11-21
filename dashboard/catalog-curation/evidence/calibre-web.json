@@ -1,7 +1,7 @@
 {
   "slug": "calibre-web",
-  "checkedAt": "2026-11-21T04:11:33.070Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:33:52.398Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -31,16 +31,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 4.2s",
+      "detail": "health / -> 200 in 151.2s",
       "evidence": {
-        "container": "hivra-verify-calibre-web-jx6da3",
+        "container": "hivra-verify-calibre-web-eu60h5",
         "hostPort": 3251,
         "image": "linuxserver/calibre-web:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-calibre-web-jx6da3",
+          "hivra-verify-calibre-web-eu60h5",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -48,27 +48,27 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-calibre-web-jx6da3-config:/config",
+          "hivra-verify-calibre-web-eu60h5-config:/config",
           "linuxserver/calibre-web:latest"
         ],
-        "runStdout": "4669740a0510539e209462c7541f7eaaded9433b03b46053a3a82a928704206b",
+        "runStdout": "be7affc2cf659dfd8ab90bfbd5d6d78c9cee87cc1ac55e83a7112bfad1d7681b",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 4.2,
-          "attempts": 3
+          "seconds": 151.2,
+          "attempts": 61
         },
-        "memUsage": "249.2MiB / 7.652GiB",
-        "memBytes": 261305139
+        "memUsage": "176.6MiB / 7.652GiB",
+        "memBytes": 185178522
       }
     },
     {
       "name": "gateway",
       "status": "pass",
-      "detail": "through gateway: 303 /app/ -> 302 / -> 302 /admin/dbconfig -> 200 /login?next=%2Fadmin%2Fdbconfig; form POST -> 401",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 302 /admin/dbconfig -> 200 /login?next=%2Fadmin%2Fdbconfig; form POST -> 400",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 65258,
+        "gatewayPort": 51541,
         "proxyMode": "standard",
         "hops": [
           {
@@ -101,18 +101,22 @@
         "bodyHead": "\n\n<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <title>Calibre-Web | Login</title>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge,chrome=1\">\n    <meta name=\"mobile-web-app-capable\" content=\"yes\">\n    \n    <!-- Bootstrap -->\n    <link rel=\"apple-touch-icon\" sizes=\"140x140\" href=\"/static/fa",
         "formPost": {
           "path": "/login?next=%2Fadmin%2Fdbconfig",
-          "status": 401,
+          "status": 400,
           "location": null,
-          "bodyHead": "<body style=\"font-family:monospace;background:#0c0c0c;color:#8a8a8a;padding:28px\">401 — this box is private. Open it from your Hivra dashboard.</body>"
+          "bodyHead": "<!DOCTYPE html>\n<html class=\"http-error\">\n  <head>\n    <title>Calibre-Web | HTTP Error (Error 400)</title>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge,chrome=1\">\n    <meta name=\"mobile-web-app-capable\" content=\"yes\">\n        \n\n    <!-- Bootstrap -->\n    <link rel=\"apple-touch-icon\" siz"
+        },
+        "loginProbe": {
+          "status": 400,
+          "bodyHead": "<!DOCTYPE html>\n<html class=\"http-error\">\n  <head>\n    <title>Calibre-Web | HTTP Error (Error 400)</title>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge,chrome=1\">\n    <meta name=\"mobile-w"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 249.2MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 176.6MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 261305139,
+        "memBytes": 185178522,
         "floorRamGb": 1
       }
     }

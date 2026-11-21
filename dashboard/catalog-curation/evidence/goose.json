@@ -1,7 +1,7 @@
 {
   "slug": "goose",
-  "checkedAt": "2026-11-21T04:10:09.134Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:53:01.829Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",

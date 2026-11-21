@@ -83,7 +83,7 @@ describe("provisioner hivra-catalog-app.py validator", () => {
   });
 
   it("accepts declared placeholders and rejects unknown ones", () => {
-    const base = buildCatalogAppLaunchSpec(UNIVERSAL_CATALOG_MANIFESTS.find((m) => m.id === "gitea")!);
+    const base = buildCatalogAppLaunchSpec(UNIVERSAL_CATALOG_MANIFESTS.find((m) => m.id === "uptime-kuma")!);
     if (base.runtime.kind !== "docker-web") throw new Error("expected docker-web");
     const withPlaceholders = {
       ...base,
@@ -109,7 +109,7 @@ describe("provisioner hivra-catalog-app.py validator", () => {
 
     const withSecret = {
       ...base,
-      runtime: { ...base.runtime, generatedSecrets: ["GITEA_SECRET_KEY"], env: { ...withPlaceholders.runtime.env, SECRET: "${GITEA_SECRET_KEY}" } },
+      runtime: { ...base.runtime, generatedSecrets: ["KUMA_SECRET_KEY"], env: { ...withPlaceholders.runtime.env, SECRET: "${KUMA_SECRET_KEY}" } },
     };
     expect(runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(withSecret)).status).toBe(0);
   });

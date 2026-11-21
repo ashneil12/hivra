@@ -1,7 +1,7 @@
 {
   "slug": "drawio",
-  "checkedAt": "2026-11-21T04:10:22.049Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:15:45.661Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -31,16 +31,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 2.2s",
+      "detail": "health / -> 200 in 12.7s",
       "evidence": {
-        "container": "hivra-verify-drawio-l9e34f",
+        "container": "hivra-verify-drawio-2r2q5h",
         "hostPort": 3213,
         "image": "jgraph/drawio:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-drawio-l9e34f",
+          "hivra-verify-drawio-2r2q5h",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -48,18 +48,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-drawio-l9e34f-tmp:/tmp",
+          "hivra-verify-drawio-2r2q5h-tmp:/tmp",
           "jgraph/drawio:latest"
         ],
-        "runStdout": "780279dfd02082041b501c1913e6eadbddc4d54d4fd8f38c77abe8754ed796d3",
+        "runStdout": "415d841d03c0c016978a90cca5072d7dd18fadd320d4b4faa3b5b8426f8374f2",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2.2,
-          "attempts": 2
+          "seconds": 12.7,
+          "attempts": 6
         },
-        "memUsage": "276.4MiB / 7.652GiB",
-        "memBytes": 289826406
+        "memUsage": "246MiB / 7.652GiB",
+        "memBytes": 257949696
       }
     },
     {
@@ -68,7 +68,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64451,
+        "gatewayPort": 63747,
         "proxyMode": "standard",
         "hops": [
           {
@@ -89,15 +89,19 @@
         "bodyHead": "<!DOCTYPE html>\n<html>\n<head>\n    <title>Flowchart Maker &amp; Online Diagram Software</title>\n    <meta charset=\"utf-8\">\n    <meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\">\n    <meta name=\"Description\" content=\"draw.io is free online diagram software for making flowcharts, process diagrams, org charts, UML, ER and network diagrams\">\n    <meta name=\"Keywords\" content=\"drawio, d",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!doctype html><html lang=\"en\"><head><title>HTTP Status 404 – Not Found</title><style type=\"text/css\">body {font-family:Tahoma,Arial,sans-serif;} h1, h2, h3, b {color:white;background-color:#525D76;} h1 {font-size:22px;} h2 {font-size:16px;} h3 {font-size:14px;} p {font-size:12px;} a {color:black;} "
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 276.4MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 246.0MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 289826406,
+        "memBytes": 257949696,
         "floorRamGb": 1
       }
     }

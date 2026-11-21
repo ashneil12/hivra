@@ -1,0 +1,111 @@
+{
+  "slug": "appsmith",
+  "checkedAt": "2026-11-21T15:15:14.100Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "appsmithorg/appsmith is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "appsmithorg/appsmith",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "appsmith/appsmith-ce:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "appsmith/appsmith-ce:latest",
+        "digest": "sha256:1f456089b75edec495c005f0e94858aa5c6d1408fcac5f7c1e2d85d69bd1592d",
+        "platforms": [
+          "linux/arm64",
+          "unknown/unknown",
+          "linux/amd64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 4.1s",
+      "evidence": {
+        "container": "hivra-verify-appsmith-29u7jh",
+        "hostPort": 3280,
+        "image": "appsmith/appsmith-ce:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-appsmith-29u7jh",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3280:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-appsmith-29u7jh-stacks:/appsmith-stacks",
+          "appsmith/appsmith-ce:latest"
+        ],
+        "runStdout": "a60fcca2c93c59ee5b111033fcd718825b0e16d1997559480f4b7891e86a299b",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 4.1,
+          "attempts": 3
+        },
+        "memUsage": "203MiB / 7.652GiB",
+        "memBytes": 212860928
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 58430,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\" translate=\"no\">\n  <head>\n    <meta charset=\"utf-8\" http-equiv=\"refresh\" content=\"3\"/>\n    <meta name=\"google\" content=\"notranslate\" />\n    <link\n      rel=\"shortcut icon\"\n      href=\"https://assets.appsmith.com/appsmith-favicon-orange.ico\"\n    />\n    <meta\n      name=\"viewport\"\n      content=\"width=device-width, initial-scale=1, shrink-to-fit=no\"\n    />\n    <title>A",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 405,
+          "bodyHead": "405 Method Not Allowed"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 203.0MiB vs floor 4GB*0.8=3.2GiB",
+      "evidence": {
+        "memBytes": 212860928,
+        "floorRamGb": 4
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

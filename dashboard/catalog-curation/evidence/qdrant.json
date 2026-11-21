@@ -1,7 +1,7 @@
 {
   "slug": "qdrant",
-  "checkedAt": "2026-11-21T04:10:10.577Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:15:35.095Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -31,16 +31,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health /readyz -> 200 in 2s",
+      "detail": "health /readyz -> 200 in 3.3s",
       "evidence": {
-        "container": "hivra-verify-qdrant-c2w1ny",
+        "container": "hivra-verify-qdrant-03hey4",
         "hostPort": 3209,
         "image": "qdrant/qdrant:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-qdrant-c2w1ny",
+          "hivra-verify-qdrant-03hey4",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -48,18 +48,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-qdrant-c2w1ny-storage:/qdrant/storage",
+          "hivra-verify-qdrant-03hey4-storage:/qdrant/storage",
           "qdrant/qdrant:latest"
         ],
-        "runStdout": "dfd22de295d81bb4a2d47464140a9c90941cdf492769a41850401b8252322822",
+        "runStdout": "6b37f9cc85c502388cc2a2a84147531bd32a36a8559bb966bccda0a869fec88b",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2,
+          "seconds": 3.3,
           "attempts": 2
         },
-        "memUsage": "117.6MiB / 7.652GiB",
-        "memBytes": 123312538
+        "memUsage": "111.1MiB / 7.652GiB",
+        "memBytes": 116496794
       }
     },
     {
@@ -68,7 +68,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64246,
+        "gatewayPort": 63673,
         "proxyMode": "standard",
         "hops": [
           {
@@ -89,15 +89,19 @@
         "bodyHead": "{\"title\":\"qdrant - vector search engine\",\"version\":\"1.20.2\",\"commit\":\"23065a0bf6857c3e5da45f6c8939cc746cc0580e\"}",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": ""
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 117.6MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 111.1MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 123312538,
+        "memBytes": 116496794,
         "floorRamGb": 1
       }
     }

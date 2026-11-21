@@ -1,7 +1,7 @@
 {
   "slug": "homepage",
-  "checkedAt": "2026-11-21T04:11:05.663Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:21:34.319Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -29,16 +29,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 2.2s",
+      "detail": "health / -> 200 in 76.2s",
       "evidence": {
-        "container": "hivra-verify-homepage-u4z62k",
+        "container": "hivra-verify-homepage-fefzhn",
         "hostPort": 3236,
         "image": "ghcr.io/gethomepage/homepage:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-homepage-u4z62k",
+          "hivra-verify-homepage-fefzhn",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -46,18 +46,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-homepage-u4z62k-config:/app/config",
+          "hivra-verify-homepage-fefzhn-config:/app/config",
           "ghcr.io/gethomepage/homepage:latest"
         ],
-        "runStdout": "10b5e2e43f5f12d0fc30d0dad8dca2c4cc523b0da5ec8b1c36aa4168b6293a63",
+        "runStdout": "f0dd12075a473f0169990298bb10e39e4cad7c6d8386758b757f7fc6f7117ecb",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2.2,
-          "attempts": 2
+          "seconds": 76.2,
+          "attempts": 12
         },
-        "memUsage": "172MiB / 7.652GiB",
-        "memBytes": 180355072
+        "memUsage": "163.2MiB / 7.652GiB",
+        "memBytes": 171127603
       }
     },
     {
@@ -66,7 +66,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 64993,
+        "gatewayPort": 65269,
         "proxyMode": "standard",
         "hops": [
           {
@@ -87,15 +87,19 @@
         "bodyHead": "<!DOCTYPE html><html lang=\"en\"><head><meta charSet=\"utf-8\" data-next-head=\"\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no\" data-next-head=\"\"/><title data-next-head=\"\">Homepage</title><meta name=\"description\" content=\"A highly customizable homepage (or startpage / application dashboard) with Docker and service API inte",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE html><html lang=\"en\"><head><meta charSet=\"utf-8\" data-next-head=\"\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no\" data-next-head=\"\"/><title data-next-head=\"\">404: This page could not be found</title><meta name="
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 172.0MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 163.2MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 180355072,
+        "memBytes": 171127603,
         "floorRamGb": 1
       }
     }

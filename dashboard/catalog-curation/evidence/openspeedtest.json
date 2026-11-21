@@ -1,7 +1,7 @@
 {
   "slug": "openspeedtest",
-  "checkedAt": "2026-11-21T04:11:16.301Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:23:16.725Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -39,16 +39,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 2s",
+      "detail": "health / -> 200 in 3.8s",
       "evidence": {
-        "container": "hivra-verify-openspeedtest-9c6cu8",
+        "container": "hivra-verify-openspeedtest-a88kvu",
         "hostPort": 3244,
         "image": "openspeedtest/latest:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-openspeedtest-9c6cu8",
+          "hivra-verify-openspeedtest-a88kvu",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -56,18 +56,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-openspeedtest-9c6cu8-data:/var/www/html/results",
+          "hivra-verify-openspeedtest-a88kvu-data:/var/www/html/results",
           "openspeedtest/latest:latest"
         ],
-        "runStdout": "4c377787cdf0ae044553a369ad1e47c9e0bca158f3365b0659242d88bcf54159",
+        "runStdout": "913548bbee703328b4c9f12300c072f21b16bd180c697d138533ec6a0cbc4e8b",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 2,
+          "seconds": 3.8,
           "attempts": 2
         },
-        "memUsage": "20.77MiB / 7.652GiB",
-        "memBytes": 21778924
+        "memUsage": "19.87MiB / 7.652GiB",
+        "memBytes": 20835205
       }
     },
     {
@@ -76,7 +76,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 65102,
+        "gatewayPort": 49153,
         "proxyMode": "standard",
         "hops": [
           {
@@ -97,15 +97,19 @@
         "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <title>SpeedTest by OpenSpeedTest™</title>\n  <meta name=\"description\"\n    content=\"Test your network speed now. HTML5 Network Performance Estimation Tool. Self-Hosted SpeedTest by OpenSpeedTest™\"/>\n  <link href=\"assets/css/app.css\" rel=\"stylesheet\" type=\"text/css\" />\n  <script> window.matchMedia&&window.matchMedia(\"(prefers-color-scheme: dark)\").matches&&(",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<html>\r\n<head><title>404 Not Found</title></head>\r\n<body>\r\n<center><h1>404 Not Found</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 20.8MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 19.9MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 21778924,
+        "memBytes": 20835205,
         "floorRamGb": 1
       }
     }

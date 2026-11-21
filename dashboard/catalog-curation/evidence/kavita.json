@@ -1,7 +1,7 @@
 {
   "slug": "kavita",
-  "checkedAt": "2026-11-21T04:11:36.996Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T14:34:13.024Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
   "checks": [
     {
       "name": "license",
@@ -33,16 +33,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health /api/health -> 200 in 10.1s",
+      "detail": "health /api/health -> 200 in 173.8s",
       "evidence": {
-        "container": "hivra-verify-kavita-03awf9",
+        "container": "hivra-verify-kavita-cp0p64",
         "hostPort": 3250,
         "image": "jvmilazz0/kavita:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-kavita-03awf9",
+          "hivra-verify-kavita-cp0p64",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -50,18 +50,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-kavita-03awf9-config:/kavita/config",
+          "hivra-verify-kavita-cp0p64-config:/kavita/config",
           "jvmilazz0/kavita:latest"
         ],
-        "runStdout": "8ac1d657bca63a58e88893dd33485f704780a10be0c4efa84d1eefe240fe4387",
+        "runStdout": "3ce9cc76c58fc3b56002bd0eb584a97d960d4e6f53b7438c5615170b795add3f",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 10.1,
-          "attempts": 6
+          "seconds": 173.8,
+          "attempts": 75
         },
-        "memUsage": "377.1MiB / 7.652GiB",
-        "memBytes": 395418010
+        "memUsage": "374.9MiB / 7.652GiB",
+        "memBytes": 393111142
       }
     },
     {
@@ -70,7 +70,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 65283,
+        "gatewayPort": 51631,
         "proxyMode": "standard",
         "hops": [
           {
@@ -91,15 +91,19 @@
         "bodyHead": "﻿<!doctype html>\n<html lang=\"en\" role=\"main\" data-beasties-container>\n<head>\n  <meta charset=\"utf-8\">\n  <title>Kavita</title>\n  <base href=\"/\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"assets/icons/apple-touch-icon.png\">\n  <link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"assets/icons/favicon-32x32.png\">\n  <link",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 200,
+          "bodyHead": "﻿<!doctype html>\n<html lang=\"en\" role=\"main\" data-beasties-container>\n<head>\n  <meta charset=\"utf-8\">\n  <title>Kavita</title>\n  <base href=\"/\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"assets/icons/apple-touch-icon.pn"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 377.1MiB vs floor 2GB*0.8=1.6GiB",
+      "detail": "idle memory 374.9MiB vs floor 2GB*0.8=1.6GiB",
       "evidence": {
-        "memBytes": 395418010,
+        "memBytes": 393111142,
         "floorRamGb": 2
       }
     }

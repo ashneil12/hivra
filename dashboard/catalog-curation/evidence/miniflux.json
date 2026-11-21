@@ -1,7 +1,7 @@
 {
   "slug": "miniflux",
-  "checkedAt": "2026-11-21T03:28:40.011Z",
-  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checkedAt": "2026-11-21T13:57:15.929Z",
+  "gitSha": "dfc2edaf7b8a61099a9b8e03fba4394503e50079",
   "checks": [
     {
       "name": "license",
@@ -16,66 +16,132 @@
     {
       "name": "image",
       "status": "pass",
-      "detail": "miniflux/miniflux:latest linux/amd64 + linux/arm64",
+      "detail": "2 service images have linux/amd64",
       "evidence": {
-        "ref": "miniflux/miniflux:latest",
-        "digest": "sha256:8fd6c3c434ecc3d4083306f83e03c0bb74c632e0f8378da5ead7e1773b0b89c9",
-        "platforms": [
-          "linux/amd64",
-          "linux/arm/v6",
-          "linux/arm/v7",
-          "linux/arm64",
-          "linux/riscv64",
-          "unknown/unknown",
-          "unknown/unknown",
-          "unknown/unknown",
-          "unknown/unknown",
-          "unknown/unknown"
+        "services": [
+          {
+            "name": "db",
+            "ref": "postgres:16-alpine",
+            "digest": "sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857",
+            "platforms": [
+              "linux/amd64",
+              "unknown/unknown",
+              "linux/arm/v6",
+              "unknown/unknown",
+              "linux/arm/v7",
+              "unknown/unknown",
+              "linux/arm64/v8",
+              "unknown/unknown",
+              "linux/386",
+              "unknown/unknown",
+              "linux/ppc64le",
+              "unknown/unknown",
+              "linux/riscv64",
+              "unknown/unknown",
+              "linux/s390x",
+              "unknown/unknown"
+            ]
+          },
+          {
+            "name": "miniflux",
+            "ref": "miniflux/miniflux:latest",
+            "digest": "sha256:8fd6c3c434ecc3d4083306f83e03c0bb74c632e0f8378da5ead7e1773b0b89c9",
+            "platforms": [
+              "linux/amd64",
+              "linux/arm/v6",
+              "linux/arm/v7",
+              "linux/arm64",
+              "linux/riscv64",
+              "unknown/unknown",
+              "unknown/unknown",
+              "unknown/unknown",
+              "unknown/unknown",
+              "unknown/unknown"
+            ]
+          }
         ]
       }
     },
     {
       "name": "boot",
-      "status": "fail",
-      "detail": "health /healthcheck never returned <400 (last status none)",
+      "status": "pass",
+      "detail": "stack up; health /healthcheck -> 200 in 6.2s across 2 container(s)",
       "evidence": {
-        "container": "hivra-verify-miniflux-u2t6om",
-        "hostPort": 55879,
-        "image": "miniflux/miniflux:latest",
-        "runArgs": [
-          "run",
-          "-d",
-          "--name",
-          "hivra-verify-miniflux-u2t6om",
-          "--security-opt",
-          "no-new-privileges",
-          "-p",
-          "127.0.0.1:55879:8080",
-          "--env-file",
-          "<env-file>",
-          "-v",
-          "hivra-verify-miniflux-u2t6om-data:/miniflux/data",
-          "miniflux/miniflux:latest"
-        ],
-        "runStdout": "935667bb4ceffd7009d03aa0181c6a93126ecbe84dd6ed9a952a9e8733044d27",
+        "project": "hivra-verify-miniflux-xf1nzv",
+        "composeFile": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-miniflux-j2SO5F/rendered/compose.yaml",
+        "renderedDir": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-miniflux-j2SO5F/rendered",
+        "renderStdout": "{\"outDir\":\"/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-miniflux-j2SO5F/rendered\"}",
+        "defaultPlatform": "host",
+        "upStdout": "",
         "health": {
-          "ok": false,
-          "status": null,
-          "seconds": 240.2,
-          "attempts": 120,
-          "error": "fetch failed"
+          "ok": true,
+          "status": 200,
+          "seconds": 6.2,
+          "attempts": 4
         },
-        "logsTail": ""
+        "containerCount": 2,
+        "perContainerMem": [
+          {
+            "id": "6017973403c9",
+            "memUsage": "14.87MiB / 7.652GiB",
+            "memBytes": 15592325
+          },
+          {
+            "id": "5814acd7c07c",
+            "memUsage": "42.9MiB / 7.652GiB",
+            "memBytes": 44983910
+          }
+        ],
+        "memBytes": 60576235
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /; form POST -> 302",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 60329,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "\n<!DOCTYPE html>\n<html lang=\"en-US\">\n<head>\n    <meta charset=\"utf-8\">\n    <title>Sign In - Miniflux</title>\n\n    <meta name=\"apple-mobile-web-app-title\" content=\"Miniflux\">\n    <meta name=\"googlebot\" content=\"notranslate\">\n    <meta name=\"mobile-web-app-capable\" content=\"yes\">\n    <meta name=\"referrer\" content=\"no-referrer\">\n    <meta name=\"robots\" content=\"noindex,nofollow\">\n    <meta name=\"view",
+        "formPost": {
+          "path": "/login",
+          "status": 302,
+          "location": "/",
+          "bodyHead": ""
+        },
+        "loginProbe": {
+          "status": 302,
+          "bodyHead": ""
+        }
       }
     },
     {
       "name": "floor",
-      "status": "skipped",
-      "detail": "no floor.ram in spec or no memory reading"
+      "status": "pass",
+      "detail": "idle memory 57.8MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 60576235,
+        "floorRamGb": 1
+      }
     }
   ],
-  "verdict": "fail",
-  "reasons": [
-    "boot: health /healthcheck never returned <400 (last status none)"
-  ]
+  "verdict": "pass",
+  "reasons": []
 }
