@@ -29,6 +29,16 @@ fi
 export CURATOR_WORKTREE="$WORKTREE"
 cd "$WORKTREE"
 log="$STATE/pass-$(date -u +%Y%m%dT%H%M%SZ).log"
-devin -p "Run the catalog-curator skill (.devin/skills/catalog-curator/SKILL.md) for one pass in $WORKTREE on branch $branch." \
-  ${CURATOR_MODEL:+--model "$CURATOR_MODEL"} \
-  --permission-mode dangerous --respect-workspace-trust false >"$log" 2>&1 || echo "pass exited $?" >>"$log"
+prompt="Run the catalog-curator skill (.devin/skills/catalog-curator/SKILL.md) for one pass in $WORKTREE on branch $branch. Follow it exactly."
+# CURATOR_AGENT: devin (default when its CLI is signed in) or codex.
+agent="${CURATOR_AGENT:-}"
+if [ -z "$agent" ]; then
+  if ! devin auth status 2>&1 | grep -q "Not logged in"; then agent=devin; else agent=codex; fi
+fi
+case "$agent" in
+  devin) devin -p "$prompt" ${CURATOR_MODEL:+--model "$CURATOR_MODEL"} \
+           --permission-mode dangerous --respect-workspace-trust false >"$log" 2>&1 ;;
+  codex) codex exec ${CURATOR_MODEL:+-m "$CURATOR_MODEL"} --skip-git-repo-check \
+           --dangerously-bypass-approvals-and-sandbox -C "$WORKTREE" "$prompt" >"$log" 2>&1 ;;
+  *) echo "unknown CURATOR_AGENT=$agent" >"$log"; exit 1 ;;
+esac || echo "pass exited $? (agent=$agent)" >>"$log"

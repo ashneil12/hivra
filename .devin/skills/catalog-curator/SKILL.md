@@ -58,8 +58,11 @@ Slugs follow `^[a-z][a-z0-9-]{1,38}[a-z0-9]$`.
 
 ## 2. Triage fast, before writing anything
 
-Take up to 10 pending candidates, highest GitHub stars first. Reject early and
-record the status and a one-line reason:
+Work through pending candidates until 5 are accepted, 25 have been triaged,
+or 90 minutes have passed, whichever comes first. Do not just go by stars:
+big platforms usually need a database. Try first the ones whose docs show a
+single `docker run` with SQLite or file storage. Reject early and record the
+status and a one-line reason:
 - `rejected`: licence not in `CATALOG_OSI_LICENSES` (check
   `gh api repos/<o>/<r> --jq .license.spdx_id`; NOASSERTION and Other count as
   rejected), archived repo, no official container image and no installable
@@ -118,7 +121,10 @@ When the batch has at least one accepted app:
    `gh pr merge <n> --merge --delete-branch`. Otherwise leave the PR open and
    say why in the pass notes.
 
-When nothing was accepted, commit only the ledger changes in the same way.
+When nothing was accepted, still ship the ledger changes the same way
+(commit, push, PR, merge when green). A pass that leaves its ledger only on
+the local branch loses its work, because the next pass starts from
+`origin/canary`.
 
 ## Finish
 
