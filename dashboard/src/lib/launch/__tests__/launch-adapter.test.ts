@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 
 import { launchResultHref, submitLaunchDraft } from "../launch-adapter";
-import { createAgent, findHivraLaunchReceipt } from "@/lib/hivra/agent-api";
+import { createAgent, findHivraLaunchReceipt, HivraLaunchCorrectableError, HivraLaunchInProgressError } from "@/lib/hivra/agent-api";
 
 jest.mock("@/lib/hivra/agent-api", () => {
   const actual = jest.requireActual("@/lib/hivra/agent-api");
@@ -33,6 +33,49 @@ describe("bounded launch receipt reconciliation", () => {
   });
 
   afterEach(() => jest.useRealTimers());
+
+  it("acknowledges the launch when the POST succeeds, even while its receipt read is pending", async () => {
+    jest.mocked(createAgent).mockImplementation(() => new Promise(resolve => {
+      setTimeout(() => resolve(accepted), 80);
+    }));
+    jest.mocked(findHivraLaunchReceipt).mockImplementation(() => new Promise(resolve => {
+      setTimeout(() => resolve(null), 1_000);
+    }));
+
+    const startedAt = Date.now();
+    const result = submitLaunchDraft(draft as never, { mode: "hivra-managed" })
+      .then(agent => ({ agent, elapsedMs: Date.now() - startedAt }));
+    await jest.advanceTimersByTimeAsync(1_000);
+
+    await expect(result).resolves.toEqual({ agent: accepted, elapsedMs: 80 });
+    expect(createAgent).toHaveBeenCalledTimes(1);
+    expect(findHivraLaunchReceipt).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(findHivraLaunchReceipt).mock.calls[0][1]?.aborted).toBe(true);
+  });
+
+  it("reports a definite POST rejection without waiting for the receipt", async () => {
+    const failure = new HivraLaunchCorrectableError("Change the requested size.", 409);
+    jest.mocked(createAgent).mockRejectedValue(failure);
+    jest.mocked(findHivraLaunchReceipt).mockReturnValue(new Promise(() => undefined));
+
+    await expect(submitLaunchDraft(draft as never, { mode: "hivra-managed" })).rejects.toBe(failure);
+    expect(createAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("ends the observation window even when a read and the POST are both stuck", async () => {
+    jest.mocked(createAgent).mockReturnValue(new Promise(() => undefined));
+    jest.mocked(findHivraLaunchReceipt).mockReturnValue(new Promise(() => undefined));
+    const result = submitLaunchDraft(draft as never, { mode: "hivra-managed" });
+    const rejected = expect(result).rejects.toMatchObject({
+      name: HivraLaunchInProgressError.name,
+      launchRequestId: requestId,
+    });
+
+    await jest.advanceTimersByTimeAsync(195_000);
+    await rejected;
+    expect(createAgent).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(findHivraLaunchReceipt).mock.calls[0][1]?.aborted).toBe(true);
+  });
 
   it("accepts a receipt after the former 30-second limit without repeating the launch POST", async () => {
     jest.mocked(createAgent).mockReturnValue(new Promise(() => undefined));

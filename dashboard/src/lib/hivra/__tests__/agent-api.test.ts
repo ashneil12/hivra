@@ -8,6 +8,7 @@ import {
   HivraLaunchCorrectableError,
   HivraLaunchInProgressError,
   HivraLaunchRejectedError,
+  findHivraLaunchReceipt,
   confirmProviderResize,
   getProviderResizeState,
   listBoxSessions,
@@ -28,6 +29,38 @@ import {
   wakeAgent,
 } from "../agent-api";
 import { boxLoginStartRaw, getBoxChatMeta } from "../agent-api";
+
+describe("launch receipt read cancellation", () => {
+  const originalFetch = global.fetch;
+  const requestId = "11111111-1111-4111-8111-111111111111";
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    jest.useRealTimers();
+  });
+
+  it.each(["observer", "receipt timeout"])("cancels a pending receipt body via %s", async source => {
+    jest.useFakeTimers();
+    const observer = new AbortController();
+    const readingBody = jest.fn();
+    global.fetch = jest.fn(async (_url: RequestInfo | URL, init?: RequestInit) => ({
+      status: 200,
+      ok: true,
+      json: () => new Promise((_, reject) => {
+        readingBody();
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      }),
+    }) as Response);
+    const result = findHivraLaunchReceipt(requestId, observer.signal);
+    const checked = expect(result).rejects.toThrow("The saved launch receipt could not be checked.");
+    await Promise.resolve();
+    expect(readingBody).toHaveBeenCalledTimes(1);
+
+    if (source === "observer") observer.abort();
+    else await jest.advanceTimersByTimeAsync(10_000);
+    await checked;
+  });
+});
 
 describe("listBoxSessions", () => {
   const originalFetch = global.fetch;
