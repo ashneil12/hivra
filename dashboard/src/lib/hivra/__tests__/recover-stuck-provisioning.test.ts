@@ -12,7 +12,11 @@ import { reconcileBankrEnvAfterHivraBoot } from "@/lib/agent-wallets/hivra-lane"
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
 import { captureHivraAgentComputerReady } from "@/lib/hivra/agent-ready-telemetry";
 import { deleteBoxTunnel } from "@/lib/services/cloudflare-tunnel";
-import { prepareHivraTailscaleForDelete } from "@/lib/hivra/tailscale-private-access";
+import {
+  hivraPrivateAccessAuthority,
+  prepareHivraTailscaleForDelete,
+  type HivraPrivateAccessAgentRow,
+} from "@/lib/hivra/tailscale-private-access";
 import {
   checkHivraAgentRecoveryAuthority,
   resolveHivraAgentExecutionContext,
@@ -65,6 +69,7 @@ jest.mock("@/lib/services/cloudflare-tunnel", () => ({
 }));
 
 jest.mock("@/lib/hivra/tailscale-private-access", () => ({
+  ...jest.requireActual("@/lib/hivra/tailscale-private-access"),
   prepareHivraTailscaleForDelete: jest.fn(),
 }));
 
@@ -211,14 +216,17 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
 
   function installSupabase(
     rows: Array<Record<string, unknown>>,
-    opts: { updateMatches?: boolean } = {},
+    opts: {
+      updateMatches?: boolean;
+      privateAccess?: { data: { authority: unknown } | null; error: { message: string } | null };
+    } = {},
   ) {
     // Guarded updates (.eq("status","provisioning")) report the rows they
     // actually flipped via .select(). updateMatches=false simulates losing the
     // race to a concurrent poll: the update lands on zero rows.
     const updateMatches = opts.updateMatches !== false;
     updates = [];
-    mockedFrom.mockImplementation(() => {
+    mockedFrom.mockImplementation((table) => {
       const filters: Array<[string, unknown]> = [];
       let updateFields: Record<string, unknown> | null = null;
       let candidateLimit = Infinity;
@@ -267,6 +275,11 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
       });
       chain.single = jest.fn(() =>
         Promise.resolve({ data: singleResultFactory ? singleResultFactory(filters) : null, error: null }));
+      chain.maybeSingle = jest.fn(async () => {
+        expect(table).toBe("hivra_private_access_connections");
+        expect(filters).toEqual([["agent_id", rows[0].id], ["user_id", rows[0].user_id]]);
+        return opts.privateAccess ?? { data: null, error: null };
+      });
       chain.then = (resolve: (v: unknown) => unknown) => {
         if (updateFields) {
           updates.push({ fields: updateFields, filters });
@@ -792,7 +805,15 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     );
   });
 
-  it("finishes a stale delete of a prepared computer by releasing its binding, never destroying the VM", async () => {
+  it.each([
+    { connection: "absent", receipt: true, triesRelease: true, cancelled: 1, checksLogout: false },
+    { connection: "absent", receipt: false, triesRelease: true, cancelled: 0, checksLogout: false },
+    { connection: "mismatched", receipt: true, triesRelease: true, cancelled: 1, checksLogout: false },
+    { connection: "matching", receipt: true, triesRelease: false, cancelled: 0, checksLogout: true },
+    { connection: "unverified", receipt: true, triesRelease: false, cancelled: 0, checksLogout: false },
+  ])("handles stale prepared delete with $connection private-access authority and release receipt=$receipt", async ({
+    connection, receipt, triesRelease, cancelled, checksLogout,
+  }) => {
     const prior = { ...process.env };
     process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "canary";
     process.env.HIVRA_CANARY_PREPARED_COMPUTERS_JSON = JSON.stringify({
@@ -802,22 +823,35 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     process.env.PROXMOX_NODE_B_SSH_USER = "root";
     try {
       (resolveProxmoxTargetConfiguration as jest.Mock).mockReturnValue({ env: { SLOT: "node-b" } });
-      installSupabase([buildStuckRow({
+      const row = buildStuckRow({
         type: "linux-desktop", computer_profile: "windows", managed_provisioner_channel: "canary",
         proxmox_host: "node-b", vmid: 2098, ip: "10.240.20.98",
         status: "stopped", desired_state: "deleted", operation_kind: "delete", allocation_operation_id: null,
-      })]);
+      });
+      const authority = hivraPrivateAccessAuthority(row as HivraPrivateAccessAgentRow);
+      installSupabase([row], {
+        privateAccess: {
+          data: connection === "matching" ? { authority } : connection === "mismatched" ? {
+            authority: { ...authority, vmid: 2099 },
+          } : null,
+          error: connection === "unverified" ? { message: "Database unavailable" } : null,
+        },
+      });
       mockedRunScript.mockResolvedValue({
-        ok: true, stdout: "HIVRA_PREPARED_BINDING_RELEASED\n", stderr: "",
+        ok: true, stdout: receipt ? "HIVRA_PREPARED_BINDING_RELEASED\n" : "", stderr: "",
       } as Awaited<ReturnType<typeof runProxmoxHostScript>>);
+      mockedPreparePrivateAccess.mockResolvedValue({
+        ok: false, disposition: "unconfirmed", failureCode: "binding_unavailable",
+      });
 
       const summary = await runRecoverStuckHivraProvisioningSweep();
 
-      expect(summary).toMatchObject({ cancelled: 1 });
+      expect(summary).toMatchObject({ cancelled, skipped: 1 - cancelled });
       const scripts = mockedRunScript.mock.calls.map(([script]) => script);
-      expect(scripts.some((script) => script.includes("HIVRA_PREPARED_BINDING_RELEASED"))).toBe(true);
+      expect(scripts.some((script) => script.includes("HIVRA_PREPARED_BINDING_RELEASED"))).toBe(triesRelease);
       expect(scripts.some((script) => script.includes("qm destroy"))).toBe(false);
-      expect(mockedCompleteDelete).toHaveBeenCalled();
+      expect(mockedCompleteDelete).toHaveBeenCalledTimes(cancelled);
+      expect(mockedPreparePrivateAccess).toHaveBeenCalledTimes(Number(checksLogout));
     } finally {
       for (const key of Object.keys(process.env)) if (!(key in prior)) delete process.env[key];
       Object.assign(process.env, prior);
