@@ -2,7 +2,6 @@ import {
   codeMatches,
   evaluateLaunchEligibility,
   isCampaignGrantable,
-  isVenicePromoEnabled,
   normalizePromoCode,
   promoExpiryRemovalMicroUsd,
   promoLineLabel,
@@ -10,6 +9,7 @@ import {
   type LaunchEligibilityFacts,
   type PromoCampaign,
 } from "../core";
+import { isVenicePromoEnabled } from "../../promo-flag";
 
 const NOW = new Date("2026-12-01T00:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -87,18 +87,34 @@ describe("expiry math", () => {
   });
 });
 
-describe("flag, codes, campaign window, labels", () => {
+describe("promo deployment gate", () => {
+  it.each([
+    { VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud" },
+    { VERCEL_PROJECT_PRODUCTION_URL: "hermesos-canary.vercel.app" },
+    { NODE_ENV: "development" },
+  ])("allows an explicit opt-in in %j", (env) => {
+    expect(isVenicePromoEnabled(env)).toBe(false);
+    expect(isVenicePromoEnabled({ ...env, HIVRA_VENICE_PROMO_ENABLED: "1" })).toBe(false);
+    expect(isVenicePromoEnabled({ ...env, HIVRA_VENICE_PROMO_ENABLED: "true" })).toBe(true);
+  });
+
+  it.each([
+    { VERCEL_PROJECT_PRODUCTION_URL: "hivra.cloud", VERCEL_ENV: "production" },
+    { VERCEL_PROJECT_PRODUCTION_URL: "hermesos.vercel.app", VERCEL_GIT_COMMIT_REF: "canary", VERCEL_ENV: "preview" },
+    { VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud.example.com" },
+    { VERCEL: "1", NODE_ENV: "development" },
+    { NODE_ENV: "production", NEXT_PUBLIC_APP_URL: "https://canary.hermesos.cloud", HERMES_DEPLOY_CHANNEL: "canary" },
+  ])("fails closed outside the Canary project in %j", (env) => {
+    expect(isVenicePromoEnabled({ ...env, HIVRA_VENICE_PROMO_ENABLED: "true" })).toBe(false);
+  });
+});
+
+describe("codes, campaign window, labels", () => {
   const campaign: PromoCampaign = {
     id: "c", slug: "s", kind: "launch_credit", code: "VENICE", enabled: true,
     startsAt: "2026-11-01T00:00:00Z", endsAt: "2027-01-01T00:00:00Z", grantCutoffAt: "2026-12-31T00:00:00Z",
     budgetMicroUsd: 1, perUserCapMicroUsd: 1, bonusBps: null, maxGrants: 1, grantExpiryDays: 30,
   };
-
-  it("is off unless exactly 'true'", () => {
-    expect(isVenicePromoEnabled({})).toBe(false);
-    expect(isVenicePromoEnabled({ HIVRA_VENICE_PROMO_ENABLED: "1" })).toBe(false);
-    expect(isVenicePromoEnabled({ HIVRA_VENICE_PROMO_ENABLED: "true" })).toBe(true);
-  });
 
   it("matches codes case-insensitively and rejects junk", () => {
     expect(normalizePromoCode("  venice ")).toBe("VENICE");

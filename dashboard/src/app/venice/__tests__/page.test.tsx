@@ -3,7 +3,6 @@ import "@testing-library/jest-dom";
 import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import VenicePage, { metadata } from "../page";
-import VenicePromo from "@/components/venice/VenicePromo";
 import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
 
 jest.mock("@/components/public-site/PublicSite", () => ({
@@ -11,12 +10,12 @@ jest.mock("@/components/public-site/PublicSite", () => ({
   default: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
-const FLAG = "NEXT_PUBLIC_HIVRA_VENICE_PROMO_ENABLED";
-const original = process.env[FLAG];
-afterEach(() => {
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
-});
+const promoFlags = {
+  NEXT_PUBLIC_HIVRA_VENICE_PROMO_ENABLED: "true",
+  HIVRA_VENICE_PROMO_ENABLED: "true",
+};
+
+afterEach(() => jest.restoreAllMocks());
 
 describe("/venice", () => {
   it("renders the headline, three agents and the right deep links", () => {
@@ -61,18 +60,25 @@ describe("/venice", () => {
     expect(metadata.openGraph).toBeDefined();
   });
 
-  it("hides the promo when the flag is off and shows it when on", () => {
-    delete process.env[FLAG];
-    const { unmount } = render(<VenicePage />);
-    expect(screen.queryByText(/VENICE/, { selector: "strong" })).not.toBeInTheDocument();
+  it.each([
+    ["on production with both flags on", "hivra.cloud", promoFlags],
+    ["on Canary with the server flag off", "canary.hermesos.cloud", { ...promoFlags, HIVRA_VENICE_PROMO_ENABLED: "false" }],
+    ["on Canary with the banner flag off", "canary.hermesos.cloud", { ...promoFlags, NEXT_PUBLIC_HIVRA_VENICE_PROMO_ENABLED: "false" }],
+  ])("hides the promo %s", (_scenario, domain, flags) => {
+    jest.replaceProperty(process, "env", { ...process.env, VERCEL_PROJECT_PRODUCTION_URL: domain, ...flags });
+    render(<VenicePage />);
     expect(document.querySelector("[data-venice-promo]")).toBeNull();
-    unmount();
-    process.env[FLAG] = "false";
-    const off = render(<VenicePromo />);
-    expect(off.container).toBeEmptyDOMElement();
-    off.unmount();
-    process.env[FLAG] = "true";
-    render(<VenicePromo />);
+    expect(screen.getByRole("link", { name: "Launch with Hivra credits" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Launch with my key" })).toBeInTheDocument();
+  });
+
+  it("shows the claim link on Canary when both flags are on", () => {
+    jest.replaceProperty(process, "env", {
+      ...process.env,
+      VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+      ...promoFlags,
+    });
+    render(<VenicePage />);
     expect(screen.getByRole("heading", { name: /\$10\s*of Venice inference, on us/ })).toBeInTheDocument();
     expect(screen.getByText("VENICE", { selector: "strong" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy code VENICE" })).toBeInTheDocument();
