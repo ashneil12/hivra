@@ -76,11 +76,18 @@ Do not overwrite Canary experiments with a blanket reset to main.
    `hermesos-canary`, a retired private repository, or a feature worktree). That
    build must not move any domain; it only stages a candidate for step 4. Canary is
    never CLI-deployed. Keep credentials out of GitHub PRs, logs, and source control.
-4. Review the exact candidate and approve production separately. In Vercel select
+4. Check that the candidate has a green launch sweep:
+   `node scripts/release/launch-sweep-status.mjs gate <candidate-sha>` (the
+   **Launch sweep gate** check on `main` runs the same). It passes only when the
+   candidate, or a Canary commit with the same source tree, has a green
+   `launch-sweep` status (see "Launch sweep before Promote" below). Do not
+   Promote a candidate that fails it; a skip is the owner's explicit decision,
+   recorded in the Promote packet with the reason.
+5. Review the exact candidate and approve production separately. In Vercel select
    the `hermesos` deployment and **Promote**. A trusted operator may instead use
    `vercel promote <verified-deployment-id>`. This action changes live traffic;
    merging a PR, passing CI, or preparing a candidate does not authorize it.
-5. Confirm the custom domain points to that deployment, then verify the affected
+6. Confirm the custom domain points to that deployment, then verify the affected
    authenticated user workflow and preservation of existing state. If it regresses,
    use the [rollback decision](#rollback-decision) before switching traffic back.
 
@@ -88,6 +95,28 @@ A source/tree match is necessary but insufficient: production environment values
 can differ from Canary. Check changed configuration and migration compatibility.
 Keep the previous deployment available. Vercel rollback does not undo database
 migrations or external side effects; those require a separately reviewed plan.
+
+## Launch sweep before Promote
+
+While live managed-hosting audits are paused, do not run the sweep or enable
+the proposed gate. Enablement requires a verified isolated runner, an approved
+authentication path, and a passing sweep on the exact served Canary revision.
+
+When the private runner sees a new served Canary commit, it runs the full
+customer path against it: a new account starts the card trial,
+becomes Pro when the card is charged, then launches one reference agent, gets a
+reply, sleeps and wakes it, and deletes it (`dashboard/e2e/README.md`, Customer
+path). It records the verdict on that commit as the `launch-sweep` commit status
+([runner setup](../../ops/launch-sweep-runner/README.md)). A nightly full launch
+of a small rotating sample of Launch tiles is recorded separately as
+`launch-sample` and does not gate Promote.
+
+The gate (`scripts/release/launch-sweep-status.mjs gate`) reads only those
+statuses, the Canary project's GitHub deployments and commit trees. A candidate
+matches a Canary commit when the whole tree is the same, or the `dashboard/` tree
+is (a docs-only difference outside `dashboard/` does not change what production
+builds). It changes nothing in Vercel and is not a substitute for checking
+production configuration and migrations.
 
 ## Rollback decision
 
