@@ -737,9 +737,22 @@ const DEEPSEEK_BROKER = DEEPSEEK_CONFIG ? require("./deepseek-harness/native-bro
 // owner-bound session authority; the long-lived Hivra management token is
 // deliberately not an alternate login path for /desktop.
 const REMOTE_DESKTOP_BROKER_PORT = Number(process.env.HIVRA_REMOTE_DESKTOP_BROKER_PORT || 8090);
-function denyHtml(res) {
+function denyHtml(req, res) {
+  // Callers on credential endpoints pass only res — those keep the plain 401.
+  if (!res) { res = req; req = null; }
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
+  // A browser navigation gets the sign-in page: opening the box's URL directly
+  // shows the same door the dashboard opens, instead of a bare refusal. The
+  // credential endpoints and non-HTML clients keep the plain 401.
+  const u = req && req.url ? req.url.split("?")[0] : "";
+  const navigates = req && (req.method === "GET" || req.method === "HEAD")
+    && AGENT_KIND !== "catalog-app"
+    && (/text\/html/i.test(String(req.headers.accept || "")) || String(req.headers["sec-fetch-mode"] || "") === "navigate");
+  if (navigates && u !== "/login" && !u.startsWith("/connect/") && u !== "/auth/bootstrap") {
+    res.writeHead(303, { Location: "/login?next=" + encodeURIComponent(req.url) });
+    return res.end();
+  }
   res.writeHead(401, { "Content-Type": "text/html; charset=utf-8" });
   res.end("<body style=\"font-family:monospace;background:#0c0c0c;color:#8a8a8a;padding:28px\">401 — this box is private. Open it from your Hivra dashboard.</body>");
 }
@@ -897,6 +910,123 @@ function redeemConnectGrant(username, password) {
   if (!grant || grant.e <= Date.now()) return null;
   return grant.d;
 }
+// ---- Owner sign-in password ----
+// POST /api/signin-password (management bearer only, set by the dashboard's
+// "Direct sign-in" action) registers a password whose sha256 digest is kept in
+// ~/.hivra/signin-password: owner-only 0600, replaced atomically. DELETE
+// clears it. It redeems through POST /login — the form GET /login serves —
+// minting the same ordinary surface cookie a connect grant does.
+const SIGNIN_PASSWORD_FILE = path.join(HOME, ".hivra", "signin-password");
+const SIGNIN_PASSWORD_RULE = /^[\x21-\x7e]{8,128}$/;
+let SIGNIN_PASSWORD_HASH = "";
+function signinPasswordDigest(password) {
+  return crypto.createHash("sha256").update("signin:" + String(password)).digest("hex");
+}
+(function loadSigninPassword() {
+  if (!authStoreDirectoryTrusted()) return;
+  let fd = null;
+  try {
+    fd = fs.openSync(SIGNIN_PASSWORD_FILE, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0 || stat.size > 128) {
+      authStoreWarn("sign-in password: the saved file is not a private regular file of this user");
+      return;
+    }
+    const raw = fs.readFileSync(fd, "utf8").trim();
+    if (!/^[a-f0-9]{64}$/.test(raw)) { authStoreWarn("sign-in password: the saved file is not a digest"); return; }
+    SIGNIN_PASSWORD_HASH = raw;
+  } catch (error) {
+    if (error && error.code !== "ENOENT") authStoreWarn("sign-in password: " + ((error.code || error.message) || "unreadable"));
+  } finally { if (fd !== null) { try { fs.closeSync(fd); } catch {} } }
+})();
+function writeSigninPassword() {
+  if (!authStoreDirectoryTrusted()) return false;
+  const directory = path.dirname(SIGNIN_PASSWORD_FILE);
+  const temp = path.join(directory, ".signin-password." + crypto.randomBytes(8).toString("hex") + ".tmp");
+  let fd = null;
+  try {
+    fd = fs.openSync(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, SIGNIN_PASSWORD_HASH + "\n");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(temp, SIGNIN_PASSWORD_FILE);
+    return true;
+  } catch (error) {
+    authStoreWarn("sign-in password: cannot save: " + ((error && (error.code || error.message)) || "write failed"));
+    if (fd !== null) { try { fs.closeSync(fd); } catch {} }
+    try { fs.unlinkSync(temp); } catch {}
+    return false;
+  }
+}
+function handleSigninPasswordStatus(res) {
+  return jsonRes(res, 200, { set: Boolean(SIGNIN_PASSWORD_HASH) });
+}
+function handleSigninPasswordSet(req, res) {
+  readBody(req, (body) => {
+    let parsed = null;
+    try { parsed = JSON.parse(body); } catch {}
+    const password = parsed && typeof parsed.password === "string" ? parsed.password : "";
+    if (!SIGNIN_PASSWORD_RULE.test(password)) {
+      return jsonRes(res, 400, { error: "password must be 8-128 printable characters, no spaces" });
+    }
+    SIGNIN_PASSWORD_HASH = signinPasswordDigest(password);
+    return jsonRes(res, 200, { ok: true, set: true, persisted: writeSigninPassword() });
+  });
+}
+function handleSigninPasswordClear(res) {
+  SIGNIN_PASSWORD_HASH = "";
+  try { fs.unlinkSync(SIGNIN_PASSWORD_FILE); } catch (error) {
+    if (error && error.code !== "ENOENT") authStoreWarn("sign-in password: cannot remove: " + (error.code || error.message || "unwritable"));
+  }
+  return jsonRes(res, 200, { ok: true, set: false });
+}
+// A human-chosen password is guessable where a 64-hex grant is not, so failed
+// sign-ins slow down. Every connection arrives through the tunnel's own
+// loopback, so the delay is global rather than per-address; a real owner who
+// mistypes waits a few seconds, a guessing script waits much longer.
+const LOGIN_FAIL_UNIT_MS = 1500;
+const LOGIN_FAIL_CAP_MS = 30000;
+let loginFails = 0;
+let loginBlockedUntil = 0;
+function loginPage(destination, error) {
+  const notice = error ? "<p style=\"color:#c96f5f;margin:0 0 14px\">" + error + "</p>" : "";
+  const hint = SIGNIN_PASSWORD_HASH || CONNECT_GRANTS.size
+    ? "This computer is private. Sign in with its password."
+    : "This computer is private. Set a sign-in password from your Hivra dashboard, or open it from there.";
+  return "<!doctype html><body style=\"font-family:monospace;background:#0c0c0c;color:#8a8a8a;padding:28px;max-width:340px\">"
+    + "<p style=\"margin:0 0 14px\">" + hint + "</p>"
+    + notice
+    + "<form method=\"POST\" action=\"/login\" style=\"display:flex;gap:8px\">"
+    + "<input type=\"hidden\" name=\"next\" value=\"" + escapeHtml(destination) + "\">"
+    + "<input name=\"password\" type=\"password\" autocomplete=\"current-password\" autofocus "
+    + "style=\"flex:1;min-width:0;background:#161616;border:1px solid #333;color:#dedede;padding:9px 10px;font-family:inherit;font-size:14px\">"
+    + "<button type=\"submit\" style=\"background:#dedede;border:0;color:#0c0c0c;padding:9px 14px;font-family:inherit;font-size:14px;cursor:pointer\">Sign in</button>"
+    + "</form></body>";
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[c]);
+}
+function serveLoginPage(res, destination, error, status) {
+  const target = safeBootstrapDestination(destination) || "/";
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'");
+  res.writeHead(status || 200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(loginPage(target, error));
+}
+// GET /login — the sign-in page an unauthenticated surface navigation is sent
+// to. An already signed-in browser goes straight to its destination.
+function handleLoginPage(req, res, q) {
+  const next = safeBootstrapDestination(q && q.get("next")) || "/";
+  if (authed(req)) {
+    res.setHeader("Cache-Control", "no-store");
+    res.writeHead(303, { Location: next });
+    return res.end();
+  }
+  return serveLoginPage(res, next, null);
+}
 function answerConnectSession(res, destination) {
   const session = createAuthSession();
   res.setHeader("Set-Cookie", AUTH_COOKIE + "=" + session + "; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=" + Math.floor(AUTH_SESSION_TTL_MS / 1000));
@@ -944,7 +1074,9 @@ function handleConnectRedeem(req, res, rawCode) {
 // A0 desktop app) POSTs {username, password, next} exactly as it would to a
 // self-hosted Agent Zero; here the pair is checked against this box's connect
 // grants instead of Agent Zero's own login, which the /agent-zero proxy logs
-// into upstream already.
+// into upstream already. The same endpoint serves the sign-in page GET /login
+// shows: a password-only post tries the dashboard's minted username against the
+// grants, then the owner's sign-in password.
 function handleConnectLogin(req, res) {
   let body = ""; let tooBig = false;
   req.on("data", (chunk) => {
@@ -953,14 +1085,46 @@ function handleConnectLogin(req, res) {
   });
   req.on("end", () => {
     if (tooBig) return;
-    const form = new URLSearchParams(body);
-    const granted = redeemConnectGrant(String(form.get("username") || "").trim(), String(form.get("password") || ""));
-    if (!granted) return denyHtml(res);
-    // Agent Zero's own semantics: honour the form's `next` when it points at a
-    // real path on this box; its default "/" (what a self-hosted A0 root would
-    // be) means the surface the grant was minted for.
-    const next = safeBootstrapDestination(form.get("next"));
-    return answerConnectSession(res, next && next !== "/" ? next : granted);
+    let username = "", password = "", next = null;
+    if (/json/i.test(String(req.headers["content-type"] || ""))) {
+      try {
+        const parsed = JSON.parse(body);
+        username = String(parsed && parsed.username || "").trim();
+        password = String(parsed && parsed.password || "");
+        next = safeBootstrapDestination(parsed && parsed.next);
+      } catch {}
+    } else {
+      const form = new URLSearchParams(body);
+      username = String(form.get("username") || "").trim();
+      password = String(form.get("password") || "");
+      next = safeBootstrapDestination(form.get("next"));
+    }
+    // A failed guess delays the next answer rather than rejecting it outright:
+    // a script's attempts stay throttled while a real owner who mistyped once
+    // only waits a moment before the right password goes through.
+    const process = () => {
+      if (res.writableEnded) return;
+      // The dashboard only ever mints the username "hivra", so a password-only
+      // post still redeems a grant; an explicit different username is honoured.
+      const granted = redeemConnectGrant(username || "hivra", password);
+      if (granted) {
+        loginFails = 0;
+        // Agent Zero's own semantics: honour the form's `next` when it points at a
+        // real path on this box; its default "/" (what a self-hosted A0 root would
+        // be) means the surface the grant was minted for.
+        return answerConnectSession(res, next && next !== "/" ? next : granted);
+      }
+      if (SIGNIN_PASSWORD_HASH && safeEq(signinPasswordDigest(password), SIGNIN_PASSWORD_HASH)) {
+        loginFails = 0;
+        return answerConnectSession(res, next || "/");
+      }
+      loginFails += 1;
+      loginBlockedUntil = Date.now() + Math.min(loginFails * LOGIN_FAIL_UNIT_MS, LOGIN_FAIL_CAP_MS);
+      return serveLoginPage(res, next || "/", "Wrong password.", 401);
+    };
+    const wait = loginBlockedUntil - Date.now();
+    if (wait > 0) return setTimeout(process, wait);
+    return process();
   });
 }
 
@@ -2705,7 +2869,7 @@ function a0CanonicalEntryHtml(html) {
   return seen["index.js"] === 1 && seen["js/initFw.js"] === 1 ? rewritten : null;
 }
 function a0Proxy(req, res, retried, csrfContext, editorContext) {
-  if (!authed(req) && !A0_CONNECTOR_REQS.has(req)) return denyHtml(res);
+  if (!authed(req) && !A0_CONNECTOR_REQS.has(req)) return denyHtml(req, res);
   if (!retried && isAgentAppPort(AGENT_ZERO_PORT) && agentAppHold(req, res)) return;
   let apath = req.url.slice("/agent-zero".length); if (!apath.startsWith("/")) apath = "/" + apath;
   // Newer Agent Zero serves a splash bootstrap at / that installs the real
@@ -3004,7 +3168,7 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
 // iframe first POSTs its bearer to /auth/bootstrap, which replaces it with a
 // short-lived HttpOnly cookie before navigating here with a clean URL.
 function gateProxy(req, res, port, strip) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   if (isAgentAppPort(port) && agentAppHold(req, res)) return;
   return proxyHttp(req, res, port, strip, false, openclawPort(port) ? OPENCLAW_SET_HEADERS : null);
 }
@@ -3095,7 +3259,7 @@ function hermesPort() {
 // browser never sends to a server. Without the Webapp, /hermes is the dashboard.
 const HERMES_LAUNCH_FRAGMENT = /\/webapp\/launch#(ticket=[A-Za-z0-9_-]{43}(?:&[A-Za-z0-9_.~%=&+-]{0,512})?)(?:\s|$)/;
 function hermesSignIn(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   const go = (location) => {
     res.writeHead(303, { Location: location, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
       "Content-Security-Policy": "default-src 'none'" });
@@ -3115,7 +3279,7 @@ function hermesSignIn(req, res) {
   });
 }
 function hermesProxy(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   if (agentAppHold(req, res)) return;
   const port = hermesPort();
   return proxyHttp(req, res, port, HERMES_MOUNT, false, hermesHeaders(Boolean(req.headers.origin), port));
@@ -3205,7 +3369,7 @@ function openbotSetupForm(res, error) {
 // OpenBot starts, then OpenBot itself at /. GET /openbot/setup always shows the
 // form (to replace the key).
 function openbotEntry(req, res, u) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   if (req.method !== "GET" && req.method !== "HEAD") return jsonRes(res, 405, { error: "method not allowed" });
   if (u === OPENBOT_SETUP || u === OPENBOT_SETUP + "/" || !openbotKeySaved()) return openbotSetupForm(res, null);
   if (agentAppHold(req, res)) return;
@@ -3215,7 +3379,7 @@ function openbotEntry(req, res, u) {
   });
 }
 function openbotSaveKey(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   let body = ""; let tooBig = false;
   req.on("data", (chunk) => { body += chunk; if (body.length > 4096) { tooBig = true; req.destroy(); } });
   req.on("end", () => {
@@ -3242,7 +3406,7 @@ function openbotSaveKey(req, res) {
   });
 }
 function openbotProxy(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   // Before the key is saved OpenBot is not running: a page load goes to setup.
   if ((req.method === "GET" || req.method === "HEAD") && String(req.headers.accept || "").includes("text/html") && !openbotKeySaved()) {
     res.writeHead(303, { Location: OPENBOT_ENTRY + "/", "Cache-Control": "no-store" });
@@ -3286,7 +3450,7 @@ function nuphosAnswers(done) {
 }
 // GET /nuphos/: the runtime's console at / once it answers, a short wait before.
 function nuphosEntry(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   if (agentAppHold(req, res)) return;
   nuphosAnswers((up) => {
     if (up) { res.writeHead(303, { Location: "/", "Cache-Control": "no-store" }); return res.end(); }
@@ -3295,7 +3459,7 @@ function nuphosEntry(req, res) {
   });
 }
 function nuphosProxy(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   if (agentAppHold(req, res)) return;
   return proxyHttp(req, res, NUPHOS_PORT, null, false, nuphosHeaders(req));
 }
@@ -3343,7 +3507,7 @@ function catalogAppAnswers(done) {
   probe.end();
 }
 function catalogAppEntry(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   if (!CATALOG_APP || !CATALOG_APP.hostPort) return jsonRes(res, 404, { error: "no web surface configured" });
   if (agentAppHold(req, res)) return;
   const safeName = escapeHtmlSimple(CATALOG_APP.name);
@@ -3360,7 +3524,7 @@ function catalogAppEntry(req, res) {
   });
 }
 function catalogAppProxy(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   if (!CATALOG_APP || !CATALOG_APP.hostPort) return jsonRes(res, 404, { error: "no web surface configured" });
   if (agentAppHold(req, res)) return;
   return proxyHttp(req, res, CATALOG_APP.hostPort, null, false, catalogAppHeaders(req));
@@ -3399,7 +3563,7 @@ function terminalUpstream(port) {
   return terminalUnitUsesSocket(port) ? { unavailable: true } : { port };
 }
 function terminalGate(req, res, port) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   const upstream = terminalUpstream(port);
   if (upstream.unavailable) {
     res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "2" });
@@ -4722,6 +4886,15 @@ const server = http.createServer((req, res) => {
   // catalog app never sees stay reserved: /healthz, /auth/bootstrap,
   // /connect/grant (mint/revoke), GET /connect/<pair>, the whole /api/*
   // management surface and the /app entry — everything else proxies through.
+  if (req.method === "GET" && u === "/login"
+    && !(AGENT_KIND === "catalog-app" && CATALOG_APP && CATALOG_APP.hostPort && !ATTACHED)) return handleLoginPage(req, res, q);
+  // Direct sign-in password: set/cleared/read with the management bearer only
+  // (the dashboard's "Direct sign-in" action); never echoed.
+  if (u === "/api/signin-password") {
+    if (req.method === "GET") return bearerAuthed(req) ? handleSigninPasswordStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
+    if (req.method === "POST") return bearerAuthed(req) ? handleSigninPasswordSet(req, res) : jsonRes(res, 401, { error: "unauthorized" });
+    if (req.method === "DELETE") return bearerAuthed(req) ? handleSigninPasswordClear(res) : jsonRes(res, 401, { error: "unauthorized" });
+  }
   if (req.method === "POST" && u === "/login"
     && !(AGENT_KIND === "catalog-app" && CATALOG_APP && CATALOG_APP.hostPort && !ATTACHED)) return handleConnectLogin(req, res);
   if (AGENT_KIND === "openbot" && !ATTACHED) {
@@ -4800,7 +4973,7 @@ const server = http.createServer((req, res) => {
       return a0Proxy(req, res);
     }
     if (refPath === "/agent-zero" || refPath.startsWith("/agent-zero/")) {
-      if (!authed(req)) return denyHtml(res);
+      if (!authed(req)) return denyHtml(req, res);
       // Other document-origin requests retain the existing mounted route;
       // only the explicit static namespaces above use canonical root URLs.
       if (req.method === "GET" || req.method === "HEAD") {
