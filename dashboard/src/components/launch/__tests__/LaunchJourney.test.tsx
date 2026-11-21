@@ -3,6 +3,9 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
+import { setupLaunchPath } from "@/lib/agent-setup/core";
+import { createLaunchDraft, readLaunchDraft, writeLaunchDraft } from "@/lib/launch/draft-store";
+import { readVeniceAttribution, VENICE_ATTRIBUTION_COOKIE } from "@/lib/venice/attribution";
 import { LaunchJourney } from "../LaunchJourney";
 
 const routerPushMock = jest.fn();
@@ -70,6 +73,30 @@ describe("LaunchJourney", () => {
 
   afterEach(() => {
     delete (window as { matchMedia?: unknown }).matchMedia;
+    document.cookie = `${VENICE_ATTRIBUTION_COOKIE}=; Max-Age=0; Path=/`;
+  });
+
+  it("opens Hermes with Venice credits and carries the claim code into launch preparation", async () => {
+    const query = new URLSearchParams("agent=hermes&inference=venice&ref=venice&code=VENICE");
+    searchParamsGetMock.mockImplementation(key => query.get(key));
+    const mockFetch = jest.mocked(fetch);
+    const attributionAtPrepare = jest.fn();
+    const originalFetch = mockFetch.getMockImplementation()!;
+    mockFetch.mockImplementation((...args) => {
+      if (args[0] === "/api/billing/venice-promo?prepareLaunch=1") {
+        attributionAtPrepare(readVeniceAttribution());
+      }
+      return originalFetch(...args);
+    });
+
+    render(<LaunchJourney />);
+
+    await screen.findByRole("heading", { name: "Review and launch Hermes 1" });
+    const options = within(screen.getByRole("group", { name: "Model access" }));
+    const credits = options.getByRole("button", { name: "Hivra credits" });
+    expect(credits).toHaveAttribute("aria-pressed", "true");
+    expect(credits).toHaveAccessibleDescription(/Powered by Venice/);
+    expect(attributionAtPrepare).toHaveBeenCalledWith({ ref: "venice", code: "VENICE" });
   });
 
   function renderAtCapacity() {
@@ -80,6 +107,68 @@ describe("LaunchJourney", () => {
     } as Record<string, string>)[key] ?? null);
     render(<LaunchJourney legacyHermesLane />);
   }
+
+  function openSetupLink(href: string) {
+    window.history.replaceState(null, "", href);
+    searchParamsGetMock.mockImplementation((key: string) => new URLSearchParams(window.location.search).get(key));
+    render(<LaunchJourney />);
+  }
+
+  it("keeps the Venice key from a Hermes setup link on the current Hermes launch profile", async () => {
+    openSetupLink(setupLaunchPath("hermes", "venice-key"));
+
+    await screen.findByRole("heading", { name: "Review and launch Hermes 1" });
+    expect(screen.getByRole("button", { name: /^Use my own API key/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it.each([null, "venice-key"] as const)("restores a legacy Hermes draft into the active profile (inference: %s)", async (inference) => {
+    const draft = createLaunchDraft();
+    writeLaunchDraft({ ...draft, stage: "review", resourceKind: "agent", profileId: "hermes", name: "My saved Hermes" }, "user_123");
+    openSetupLink(setupLaunchPath("hermes", inference));
+
+    if (inference) {
+      fireEvent.click(await screen.findByRole("button", { name: "Continue Hermes launch" }));
+    }
+    await screen.findByRole("heading", { name: "Review and launch My saved Hermes" });
+    expect(readLaunchDraft("user_123")).toMatchObject({ profileId: "hermes-computer", launchRequestId: draft.launchRequestId });
+  });
+
+  function saveCodexDraft() {
+    const draft = createLaunchDraft();
+    writeLaunchDraft({
+      ...draft, stage: "review", resourceKind: "agent", profileId: "codex", name: "My saved Codex",
+      modelAccess: { ...draft.modelAccess, mode: "native", source: "custom" },
+    }, "user_123");
+  }
+
+  it("offers to start with the linked model access instead of silently reusing a conflicting draft", async () => {
+    saveCodexDraft();
+    openSetupLink(setupLaunchPath("codex", "venice-key"));
+
+    await screen.findByRole("heading", { name: "Continue your Codex launch, or start a new one?" });
+    fireEvent.click(screen.getByRole("button", { name: "Start a new Codex launch" }));
+    expect(screen.getByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Use my own API key/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it.each([
+    ["returning to Review", setupLaunchPath("codex", "venice-key") + "&stage=review"],
+    ["opening a link without an inference preset", setupLaunchPath("codex", null)],
+  ])("keeps saved model access when %s", async (_label, href) => {
+    saveCodexDraft();
+    openSetupLink(href);
+
+    await screen.findByRole("heading", { name: "Review and launch My saved Codex" });
+    expect(screen.getByRole("button", { name: /^Sign in with my existing account/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("does not preselect a Venice key for a profile that cannot use it", async () => {
+    openSetupLink(setupLaunchPath("claude-code", "venice-key"));
+
+    await screen.findByRole("heading", { name: "Review and launch Claude Code 1" });
+    expect(screen.getByRole("button", { name: /^Use my own API key/ })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: /^Hivra credits/ })).toHaveAttribute("aria-pressed", "true");
+  });
 
   it.each([
     ["phones and touch tablets", TOUCH_QUERY],
@@ -256,11 +345,11 @@ describe("LaunchJourney", () => {
     await screen.findByRole("heading", { name: "Review and launch Codex 1" });
 
     const group = within(screen.getByRole("group", { name: "Model access" }));
-    expect(screen.queryByLabelText(/API key$/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Venice AI API key")).not.toBeInTheDocument();
     fireEvent.click(group.getByRole("button", { name: /^Use my/ }));
-    expect(await screen.findByLabelText(/API key$/)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Venice AI API key")).toBeInTheDocument();
     fireEvent.click(group.getByRole("button", { name: /^Hivra credits/ }));
-    expect(screen.queryByLabelText(/API key$/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Venice AI API key")).not.toBeInTheDocument();
   });
 
   it("turns the browser on or off with one click, and Memory has no browser switch", async () => {

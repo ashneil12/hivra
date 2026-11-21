@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
+import { assertLiveManagedHostingAuditAllowed } from './e2e/first-run-audit/config';
 import { browserLaunchOptions } from './scripts/lib/playwright-launch.cjs';
 
 /**
@@ -9,8 +10,8 @@ import { browserLaunchOptions } from './scripts/lib/playwright-launch.cjs';
  * the runner — matches the qa-e2e agent's approach and keeps CI light. Point it
  * at a Vercel preview URL per-PR later via E2E_BASE_URL.
  *
- * Auth: golden-path specs reuse the verified Clerk sign-in-ticket mechanism
- * (see e2e/global-setup.ts). Public specs need no auth.
+ * Ticket sign-in for golden-path specs is paused (see e2e/global-setup.ts).
+ * Public specs need no auth.
  */
 const BASE_URL = process.env.E2E_BASE_URL || 'https://canary.hermesos.cloud';
 
@@ -37,6 +38,12 @@ const REMOTE_DESKTOP_AUDIT_ENABLED = process.env.REMOTE_DESKTOP_AUDIT === '1';
  * decide how many launch at once (Canary has one host: keep it at 1).
  */
 const LAUNCH_SWEEP_ENABLED = process.env.LAUNCH_SWEEP === '1';
+// The trial-to-Pro journey (e2e/trial-to-pro.spec.ts): Stripe test mode on
+// Canary, opt-in only with TRIAL_JOURNEY=1.
+const TRIAL_JOURNEY_ENABLED = process.env.TRIAL_JOURNEY === '1';
+if (FIRST_RUN_AUDIT_ENABLED || REMOTE_DESKTOP_AUDIT_ENABLED || LAUNCH_SWEEP_ENABLED || TRIAL_JOURNEY_ENABLED) {
+  assertLiveManagedHostingAuditAllowed();
+}
 // One run id shared by every worker (they inherit this process's env).
 if (LAUNCH_SWEEP_ENABLED && !process.env.LAUNCH_SWEEP_RUN_ID) {
   process.env.LAUNCH_SWEEP_RUN_ID = `${new Date().toISOString().slice(0, 10).replace(/-/g, '')}${Math.random().toString(16).slice(2, 6)}`;
@@ -44,8 +51,7 @@ if (LAUNCH_SWEEP_ENABLED && !process.env.LAUNCH_SWEEP_RUN_ID) {
 
 export default defineConfig({
   testDir: './e2e',
-  // global-setup mints a Clerk ticket + saves storage state for authed specs.
-  // It no-ops (skips authed projects) when CLERK_SECRET_KEY / QA_USER_ID absent.
+  // Setup rejects ticket sign-in during the pause and otherwise writes empty state.
   globalSetup: './e2e/global-setup.ts',
   timeout: 60_000,
   expect: {
@@ -129,6 +135,18 @@ export default defineConfig({
               ...devices['Desktop Chrome'],
               storageState: undefined,
             },
+          },
+        ]
+      : []),
+    ...(TRIAL_JOURNEY_ENABLED
+      ? [
+          {
+            name: 'trial-journey',
+            testMatch: /trial-to-pro\.spec\.ts/,
+            timeout: 80 * 60_000,
+            // Never retried: a retry would start a second checkout.
+            retries: 0,
+            use: { ...devices['Desktop Chrome'], storageState: undefined },
           },
         ]
       : []),

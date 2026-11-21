@@ -2,7 +2,12 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import release from "../../../provisioner-releases/2026.11.20.1.json";
+import release from "../../../provisioner-releases/2026.11.21.1.json";
+import catalogStackRuntimeRelease from "../../../provisioner-releases/2026.11.20.5.json";
+import catalogStackRelease from "../../../provisioner-releases/2026.11.20.4.json";
+import universalCatalogHardenedRelease from "../../../provisioner-releases/2026.11.20.3.json";
+import universalCatalogRelease from "../../../provisioner-releases/2026.11.20.2.json";
+import cliTransportRelease from "../../../provisioner-releases/2026.11.20.1.json";
 import xpraBrowserRelease from "../../../provisioner-releases/2026.11.19.1.json";
 import cliConnectorRelease from "../../../provisioner-releases/2026.11.18.5.json";
 import noBootUpgradeRelease from "../../../provisioner-releases/2026.11.18.4.json";
@@ -85,7 +90,7 @@ import { parseProviderDesktopLaunch, type ProviderDesktopLaunch, type ProviderDe
  * cleanup grant BEFORE fresh SSH and record proof against that captured grant.
  * Existing v1 recovery and historical release records deliberately stay intact.
  */
-const VERSION = "2026.11.20.1";
+const VERSION = "2026.11.21.1";
 const PROFILE = "desktop-owned-services-v1";
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const Uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -97,7 +102,7 @@ const rows = release.files.map(file => [file.path, file.sha256, file.bytes,
 const bundleSha256 = hash(JSON.stringify(rows));
 // Python worker.encode adds a newline; the bundle manifest digest does not.
 const closureSha256 = hash(JSON.stringify(rows.filter(row => closurePaths.includes(row[0]))) + "\n");
-function identity(version: "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.21.1" | "2026.09.22.1" | "2026.09.22.2" | "2026.09.24.1" | "2026.09.24.2" | "2026.09.24.3" | "2026.09.24.4" | "2026.10.07.1" | "2026.10.20.1" | "2026.10.20.2" | "2026.11.03.1" | "2026.11.10.1" | "2026.11.10.2" | "2026.11.10.3" | "2026.11.10.4" | "2026.11.10.5" | "2026.11.11.1" | "2026.11.11.2" | "2026.11.11.3" | "2026.11.11.4" | "2026.11.11.5" | "2026.11.11.6" | "2026.11.11.7" | "2026.11.12.1" | "2026.11.12.2" | "2026.11.12.3" | "2026.11.12.4" | "2026.11.12.5" | "2026.11.13.1" | "2026.11.13.2" | "2026.11.13.3" | "2026.11.13.4" | "2026.11.13.5" | "2026.11.13.6" | "2026.11.14.1" | "2026.11.15.1" | "2026.11.15.2" | "2026.11.15.3" | "2026.11.15.5" | "2026.11.15.6" | "2026.11.15.7" | "2026.11.15.8" | "2026.11.17.1" | "2026.11.17.2" | "2026.11.17.3" | "2026.11.17.4" | "2026.11.17.5" | "2026.11.17.6" | "2026.11.17.7" | "2026.11.17.8" | "2026.11.17.9" | "2026.11.18.1" | "2026.11.18.2" | "2026.11.18.3" | "2026.11.18.4" | "2026.11.18.5" | "2026.11.19.1" | "2026.11.20.1", bundle: string) { return z.object({ version: z.literal(3), agentId: Uuid, operationId: Uuid,
+function identity(version: "2026.09.05.6" | "2026.09.05.7" | "2026.09.05.8" | "2026.09.05.9" | "2026.09.05.10" | "2026.09.06.1" | "2026.09.06.2" | "2026.09.06.3" | "2026.09.06.4" | "2026.09.07.1" | "2026.09.08.1" | "2026.09.08.2" | "2026.09.08.3" | "2026.09.15.1" | "2026.09.15.2" | "2026.09.21.1" | "2026.09.22.1" | "2026.09.22.2" | "2026.09.24.1" | "2026.09.24.2" | "2026.09.24.3" | "2026.09.24.4" | "2026.10.07.1" | "2026.10.20.1" | "2026.10.20.2" | "2026.11.03.1" | "2026.11.10.1" | "2026.11.10.2" | "2026.11.10.3" | "2026.11.10.4" | "2026.11.10.5" | "2026.11.11.1" | "2026.11.11.2" | "2026.11.11.3" | "2026.11.11.4" | "2026.11.11.5" | "2026.11.11.6" | "2026.11.11.7" | "2026.11.12.1" | "2026.11.12.2" | "2026.11.12.3" | "2026.11.12.4" | "2026.11.12.5" | "2026.11.13.1" | "2026.11.13.2" | "2026.11.13.3" | "2026.11.13.4" | "2026.11.13.5" | "2026.11.13.6" | "2026.11.14.1" | "2026.11.15.1" | "2026.11.15.2" | "2026.11.15.3" | "2026.11.15.5" | "2026.11.15.6" | "2026.11.15.7" | "2026.11.15.8" | "2026.11.17.1" | "2026.11.17.2" | "2026.11.17.3" | "2026.11.17.4" | "2026.11.17.5" | "2026.11.17.6" | "2026.11.17.7" | "2026.11.17.8" | "2026.11.17.9" | "2026.11.18.1" | "2026.11.18.2" | "2026.11.18.3" | "2026.11.18.4" | "2026.11.18.5" | "2026.11.19.1" | "2026.11.20.1" | "2026.11.20.2" | "2026.11.20.3" | "2026.11.20.4" | "2026.11.20.5" | "2026.11.21.1", bundle: string) { return z.object({ version: z.literal(3), agentId: Uuid, operationId: Uuid,
   bundle: z.object({ version: z.literal(1), state: z.literal("bundle_installed"), scopeSha256: Digest,
     bundleSha256: z.literal(bundle), provisionerVersion: z.literal(version) }).strict(),
   desktopCleanup: z.object({ profile: z.literal(PROFILE), closureSha256: z.literal(closureSha256) }).strict(),
@@ -151,6 +156,11 @@ const Identity = z.union([CurrentIdentity,
   identity("2026.11.18.3", "87177637f262036044be9d3c72fbbe339b80d19061a45d06d766b2531a701a75"),
   identity("2026.11.18.5", "7728d82d75d26e95ab4b9ed61ae5f267bed89825618d252b6699701f0819de6c"),
   identity("2026.11.19.1", "c8e4bbf72a7e39b1d8c5ddd4f42ee9390fded2925e6c7c1ebb9f61ecde00ba03"),
+  identity("2026.11.20.1", "4f88c13c76732bc5779afda1d8199e012200fcd653567f7f700f8c3611e8e21a"),
+  identity("2026.11.20.2", "8ca2ea94e1f70fa13a10da570b087528818386e23486a9b2692780f899f3d007"),
+  identity("2026.11.20.3", "83c49cb13db2d3356cb37d802349ed745df64a01a86795945ace8dbc50d61f3c"),
+  identity("2026.11.20.4", "06d38a6e4baedfe8ae7ce029f39c6cdaf30fa842c186d6f430d06db5a08f3d4a"),
+  identity("2026.11.20.5", "4a567238a31067773d0e74d3184c97b983044c330a4b075f7c484bfd06b7100f"),
   identity("2026.11.18.4", "4eff220ba9a6b103e0a7892204aeccced297674749d0a269916f71736810b6d3"),
   identity("2026.11.11.2", "21d6f9aaed7820ef3c80c5fecc2c237ebe9fdc63bcd7b819dae0b341de81a15f"),
   identity("2026.11.10.5", "152d4137a9f509b4461dd444c43dff214dab3cdf6fc2c6affcf699c77588f993"),
@@ -224,6 +234,11 @@ export function buildProviderDesktopWorkerPlan(input: ProviderDesktopWorkerInput
     if (Buffer.byteLength(raw) > 128 * 1024) throw new Error();
     const recipe = providerGuestWorkerRecipe(identity.bundle.provisionerVersion);
     const boundRelease = identity.bundle.provisionerVersion === VERSION ? release
+      : identity.bundle.provisionerVersion === "2026.11.20.5" ? catalogStackRuntimeRelease
+      : identity.bundle.provisionerVersion === "2026.11.20.4" ? catalogStackRelease
+      : identity.bundle.provisionerVersion === "2026.11.20.3" ? universalCatalogHardenedRelease
+      : identity.bundle.provisionerVersion === "2026.11.20.2" ? universalCatalogRelease
+      : identity.bundle.provisionerVersion === "2026.11.20.1" ? cliTransportRelease
       : identity.bundle.provisionerVersion === "2026.11.19.1" ? xpraBrowserRelease
       : identity.bundle.provisionerVersion === "2026.11.18.5" ? cliConnectorRelease
       : identity.bundle.provisionerVersion === "2026.11.18.4" ? noBootUpgradeRelease

@@ -148,6 +148,13 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
       priority: 0.6,
     },
     {
+      // Set up Hivra by pasting one line into a coding agent.
+      url: `${SITE_URL}/setup`,
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.setup),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
       url: `${SITE_URL}/privacy`,
       lastModified: cutoverPage(PAGE_LAST_MODIFIED.privacy),
       changeFrequency: "monthly",

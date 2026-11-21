@@ -1,6 +1,8 @@
 /**
  * first-run-audit-cleanup — reap orphaned audit accounts and their instances.
  *
+ * Active cleanup is paused because ticket sign-in can send mail. Only --dry-run is available.
+ *
  * A crashed audit run, a killed CI job, or a Playwright timeout can leave a
  * synthetic account owning a REAL, BILLING Proxmox VM. That is exactly the orphan
  * class the fleet just spent a day cleaning up, and this harness must not be a

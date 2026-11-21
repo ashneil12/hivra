@@ -1,5 +1,5 @@
 import type { DocPage } from "../types";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, HOSTED_COMPUTE_NEEDS_PLAN, PLAN_SUMMARY } from "@/lib/blog/plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, PLAN_SUMMARY } from "@/lib/blog/plan-facts";
 
 export const doc: DocPage = {
   slug: "ubuntu-desktop",
@@ -24,7 +24,7 @@ export const doc: DocPage = {
       heading: "Where it runs and what it needs",
       paragraphs: [
         "There are two places an Ubuntu Desktop can run.",
-        "- **Hivra Cloud.** Hivra runs the computer for you. " + HOSTED_COMPUTE_NEEDS_PLAN + "\n- **A Proxmox VE server you connected.** You connect it with SSH details, then launch onto it with a free Hivra account. The computer uses your server's capacity, not a Hivra plan. See [Run agents on your own server](/docs/connect-your-own-server).",
+        "- **Hivra Cloud.** Hivra runs the computer for you. " + HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE + "\n- **A Proxmox VE server you connected.** You connect it with SSH details, then launch onto it if your account is eligible to connect it. The computer uses your server's capacity. See [Run agents on your own server](/docs/connect-your-own-server).",
         "The one-command Ubuntu connect is a different route. It gives you [Linux Sandbox](/docs/linux-sandbox) only and cannot run Ubuntu Desktop.",
         "The computer itself has these requirements, checked before it launches:",
         "| Requirement | Value |\n| --- | --- |\n| Operating system | Ubuntu 22.04 LTS |\n| Minimum CPU | 2 |\n| Minimum memory | 4 GB |\n| Minimum disk | 40 GB |\n| Host architecture | x86 (amd64) |\n| Host virtualization | Proxmox with KVM (hardware virtualization) |\n| Machine type | q35 with UEFI firmware and a virtio display |",
@@ -122,7 +122,7 @@ export const doc: DocPage = {
     {
       heading: "What Hivra does and does not do",
       paragraphs: [
-        "- Hivra creates the computer from an Ubuntu 22.04 LTS image, streams its desktop to your browser behind your sign-in, and gives you Terminal, Files and Manage.\n- Hivra does not promise backups. Restore points are capped at 5 and live on the same host.\n- Hivra does not guarantee that what you run on the computer is safe. Isolation limits what reaches your own machine, not what you install on it.\n- Hivra does not run a free computer. A free account works with a server you connect.\n- Hivra does not offer a native desktop client for this computer, and it cannot run on a server connected with the one-command Ubuntu setup.",
+        "- Hivra creates the computer from an Ubuntu 22.04 LTS image, streams its desktop to your browser behind your sign-in, and gives you Terminal, Files and Manage.\n- Hivra does not promise backups. Restore points are capped at 5 and live on the same host.\n- Hivra does not guarantee that what you run on the computer is safe. Isolation limits what reaches your own machine, not what you install on it.\n- Hivra does not run a free computer. You can use your own server if your account is eligible to connect it.\n- Hivra does not offer a native desktop client for this computer, and it cannot run on a server connected with the one-command Ubuntu setup.",
       ],
     },
   ],
@@ -133,7 +133,7 @@ export const doc: DocPage = {
     },
     {
       q: "Do I need a paid plan?",
-      a: "On Hivra Cloud, yes. Every computer Hivra Cloud runs for you needs a paid plan. A free Hivra account works with a Proxmox server you connect yourself, where the computer uses your own capacity.",
+      a: "On Hivra Cloud, yes. Every computer Hivra Cloud runs for you needs a paid plan. On a connected Proxmox server, the computer uses your own capacity. Your account must be eligible to connect the server.",
     },
     {
       q: "What is the smallest size?",

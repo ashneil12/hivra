@@ -1,8 +1,8 @@
 /**
  * One set of rules for how every launched agent reaches a model: sign in
  * inside the agent after it opens, send the owner's own API key to its
- * computer, or pay with Hivra credits. The Launch journey's Model access row,
- * its Review row and each runtime's launch request all read from here, so
+ * computer, or pay with Hivra credits. The Launch journey's Model access row
+ * and each runtime's launch request read from here, so
  * what the owner is shown is what the launch sends.
  *
  * Nothing here holds a secret. A pasted key is passed in by the caller for the
@@ -10,6 +10,7 @@
  */
 
 import { PROVIDERS, type Provider } from "@/lib/models";
+import { getCatalogAppManifest } from "@/lib/hivra/catalog-manifests";
 import { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
 import { supportsHermesAuthProvider } from "@/lib/provider-auth";
 import { validateProviderKeyShape } from "@/lib/provider-key-shape";
@@ -75,8 +76,11 @@ export function modelAccessModes(profileId: LaunchProfileId): LaunchModelAccessM
     // gives it a model at launch: credits first, or the owner's Venice key.
     case "deepseek-harness":
       return ["credits", "api-key"];
-    default:
+    default: {
+      const catalogManifest = getCatalogAppManifest(profileId);
+      if (catalogManifest) return catalogManifest.managedVenice ? ["native", "credits"] : [];
       return [];
+    }
   }
 }
 
@@ -137,65 +141,62 @@ export function bothWalletsFunded(balance: CreditsBalance): boolean {
 
 /** Ash's wording for the AI connection step (12 Nov 2026), used word for word. */
 export const AI_CONNECTION_QUESTION = "How would you like to connect your agent to AI?";
-const CREDITS_DETAIL = "Use supported AI models through Hivra without configuring a separate model provider API key.";
 const API_KEY_TITLE = "Use my own API key";
-const API_KEY_DETAIL = "Connect a supported AI provider using your own API key.";
-const ACCOUNT_SIGN_IN = {
-  title: "Sign in with my existing account",
-  detail: "Where available, sign in with an eligible Claude or ChatGPT account, subject to the provider's terms.",
-};
+const ACCOUNT_SIGN_IN = "Sign in with my existing account";
 
-function nativeCopy(profileId: LaunchProfileId): { title: string; detail: string; summary: string } {
+function nativeCopy(profileId: LaunchProfileId): { title: string; detail: string } {
   const name = PROFILE_DETAILS[profileId].name;
   switch (profileId) {
     case "codex":
       return {
-        ...ACCOUNT_SIGN_IN,
-        summary: "Sign in to ChatGPT inside Codex after it opens.",
+        title: ACCOUNT_SIGN_IN,
+        detail: "Use an eligible ChatGPT account after Codex opens, subject to OpenAI’s terms.",
       };
     case "claude-code":
       return {
-        ...ACCOUNT_SIGN_IN,
-        summary: "Sign in with your Anthropic account inside Claude Code after it opens.",
+        title: ACCOUNT_SIGN_IN,
+        detail: "Use an eligible Claude account after Claude Code opens, subject to Anthropic’s terms.",
       };
     case "hermes":
       return {
         title: "Set up inside Hermes after it opens",
         detail: "Hermes asks which model provider to use before your first chat.",
-        summary: "Choose a model provider inside Hermes after it opens.",
       };
     case "hermes-computer":
       return {
         title: "Set up inside Hermes after it opens",
         detail: "Choose a model provider in Hermes's own settings.",
-        summary: "Choose a model provider in Hermes's own settings after it opens.",
       };
     case "openclaw":
       return {
         title: "Set up inside OpenClaw after it opens",
         detail: "Choose a model provider in its Control UI.",
-        summary: "Choose a model provider in OpenClaw's Control UI after it opens.",
       };
     case "agent-zero":
       return {
         title: "Set up inside Agent Zero after it opens",
         detail: "Choose a model provider in its Settings.",
-        summary: "Choose a model provider in Agent Zero's Settings after it opens.",
       };
     case "openbot":
       return {
         title: "Set up inside OpenBot after it opens",
         detail: "Choose a model provider in OpenBot's own settings.",
-        summary: "Choose a model provider in OpenBot's own settings after it opens.",
       };
     case "aeon":
       return {
         title: "Use the key on your GitHub fork",
         detail: "Aeon runs on your GitHub Actions with the AI provider key you set on your fork.",
-        summary: "Aeon uses the AI provider key on your GitHub fork after you connect GitHub.",
       };
-    default:
-      return { title: `Set up inside ${name}`, detail: "", summary: "" };
+    default: {
+      const catalogManifest = getCatalogAppManifest(profileId);
+      if (catalogManifest) {
+        return {
+          title: `Set up inside ${catalogManifest.name} after it opens`,
+          detail: `Choose a model provider in ${catalogManifest.name}'s own settings.`,
+        };
+      }
+      return { title: `Set up inside ${name}`, detail: "" };
+    }
   }
 }
 
@@ -239,29 +240,22 @@ export function modelAccessOptions(profileId: LaunchProfileId, context: ModelAcc
         return {
           mode,
           title: API_KEY_TITLE,
-          // Some agents only take a Venice key; the existing line says so after Ash's sentence.
           detail: profileId === "codex" || profileId === "deepseek-harness" || profileId === "hermes-computer"
-            ? `${API_KEY_DETAIL} A Venice API key. Venice bills your model usage.`
-            : API_KEY_DETAIL,
+            ? "Connect with a Venice key. Venice bills your usage."
+            : "Connect with a key from a supported provider. The provider bills your usage.",
           unavailable: codexKeyGap,
           offerAddCredit: false,
         };
       }
-      const total = totalMicroUsd(context.balance);
-      const balanceLine = context.balance.state === "loading"
-        ? "Checking your Hivra credits…"
-        : context.balance.state === "unknown"
-          ? "Couldn't check your balance. Model usage is paid from your credits."
-          : `${formatCredits(total ?? 0)} available. Model usage is paid from your credits at provider rates.`;
-      const detail = `${CREDITS_DETAIL} ${balanceLine}`;
       const providerGap = context.providerComputer && profileId !== "codex"
         ? `Hivra credits can't be set up for ${PROFILE_DETAILS[profileId].name} on a computer in your own cloud yet.`
         : null;
-      const empty = context.balance.state === "known" && (total ?? 0) <= 0;
+      const total = totalMicroUsd(context.balance);
+      const empty = total !== null && total <= 0;
       return {
         mode,
         title: "Hivra credits",
-        detail,
+        detail: "Powered by Venice. No separate account or API key needed.",
         unavailable: codexKeyGap ?? providerGap ?? (empty ? "Add credit to start chatting." : null),
         offerAddCredit: !codexKeyGap && !providerGap && empty,
       };
@@ -328,13 +322,23 @@ export function apiKeyProviders(profileId: LaunchProfileId, savedKeys: readonly 
 export type ModelChoice = {
   value: string;
   label: string;
+  recommended?: boolean;
   /** A Venice model that keeps no record of the chats: shown with a Private badge. */
   private?: boolean;
 };
 
 /** A model list for the Venice provider, each with its Private flag. */
 export function veniceModelChoices(models: readonly { value: string; label: string }[]): ModelChoice[] {
-  return models.map(model => ({ ...model, private: isPrivateVeniceModel(model.value) }));
+  const recommendation = " (via Venice · recommended)";
+  return models.map(model => {
+    const recommended = model.label.endsWith(recommendation);
+    return {
+      ...model,
+      label: recommended ? model.label.slice(0, -recommendation.length) : model.label,
+      recommended,
+      private: isPrivateVeniceModel(model.value),
+    };
+  });
 }
 
 /** The choices from a Venice key check: the owner's own key lists what it can
@@ -395,11 +399,6 @@ export function effectiveModel(profileId: LaunchProfileId, access: LaunchModelAc
 
 function usesCustomEndpoint(profileId: LaunchProfileId, access: LaunchModelAccess): boolean {
   return profileId === "hermes" && access.mode === "api-key" && access.provider === "custom_llm";
-}
-
-export function modelLabel(profileId: LaunchProfileId, access: LaunchModelAccess): string {
-  const model = effectiveModel(profileId, access);
-  return modelChoices(profileId, access).find(choice => choice.value === model)?.label ?? model;
 }
 
 /** The provider this launch uses: Venice for credits and outside Hermes. */
@@ -503,36 +502,6 @@ function modelIsValid(profileId: LaunchProfileId, model: string): boolean {
 }
 
 /** The Review row, in plain words. */
-export function modelAccessSummary(
-  profileId: LaunchProfileId,
-  access: LaunchModelAccess,
-  {
-    name,
-    balance,
-    savedKeys,
-  }: { name: string; balance: CreditsBalance; savedKeys: readonly SavedModelKey[] },
-): string | null {
-  if (!hasModelAccess(profileId)) return null;
-  const agentName = name.trim() || PROFILE_DETAILS[profileId].name;
-  const model = choosesModel(profileId, access.mode) ? ` · ${modelLabel(profileId, access)}` : "";
-  if (access.mode === "native") return nativeCopy(profileId).summary;
-  if (access.mode === "credits") {
-    const available = creditsAvailableMicroUsd(access, balance);
-    const funds = available === null ? "" : ` (${formatCredits(available)} available)`;
-    if (profileId === "aeon") return `Hivra credits${funds}. Aeon sets them up when you connect GitHub.`;
-    return `Hivra credits${funds}${model}`;
-  }
-  const provider = providerName(effectiveProvider(profileId, access));
-  if (access.keySource === "saved" || requiresSavedKey(profileId, access)) {
-    const key = savedKeysFor(profileId, access, savedKeys).find(candidate => candidate.id === access.vaultKeyId);
-    return `Your saved ${provider} key${key ? ` ${savedKeyHint(key)}` : ""}, sent to ${agentName}'s computer${model}`;
-  }
-  const replaced = access.saveKey ? savedKeysFor(profileId, access, savedKeys)[0] ?? null : null;
-  const saving = !access.saveKey ? ""
-    : replaced ? ` and saved in your Vault, replacing ${savedKeyHint(replaced)}` : " and saved in your Vault";
-  return `The ${provider} key you pasted, sent to ${agentName}'s computer${saving}${model}`;
-}
-
 /** The Cost row's model line, or null when the model isn't paid through Hivra. */
 export function modelCostNote(profileId: LaunchProfileId, access: LaunchModelAccess): string | null {
   if (!hasModelAccess(profileId)) return null;

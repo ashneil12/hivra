@@ -9,6 +9,7 @@ import {
   type AgentComputerOperation,
   type AgentComputerSurface,
 } from "./contracts";
+import { UNIVERSAL_CATALOG_IDS } from "@/lib/hivra/catalog-manifests";
 import { computerHasDesktop } from "@/lib/hivra/resource-landing";
 
 export interface HermesLegacyComputerRecord {
@@ -44,6 +45,7 @@ const HIVRA_CLI_TYPES = new Set([
   "agent-zero",
   "openbot",
   "nuphos",
+  ...UNIVERSAL_CATALOG_IDS,
 ]);
 const HIVRA_DASHBOARD_TYPES = new Set(["aeon", "deepseek-harness"]);
 const HIVRA_COMPUTER_TYPES = new Set(["linux-desktop"]);

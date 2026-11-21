@@ -1,5 +1,5 @@
 import type { DocPage } from "../types";
-import { HOSTED_COMPUTE_NEEDS_PLAN, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
 import { SERVER_SIDE_AGENTS_KEEP_WORKING } from "@/lib/blog/runtime-facts";
 
 export const doc: DocPage = {
@@ -25,8 +25,8 @@ export const doc: DocPage = {
     {
       heading: "Before you start",
       paragraphs: [
-        "- **A Hivra account.** An account costs nothing, but Hermes runs on Hivra Cloud only, and every computer Hivra Cloud runs needs a paid plan. Hermes does not run on a server you connect. A free account works with a server you connect yourself, which is the route for other supported agents, not this one.",
-        `- **A paid plan.** ${HOSTED_COMPUTE_NEEDS_PLAN} See [plans and billing](/docs/plans-and-billing) for what the plan covers and what it does not.`,
+        "- **A Hivra account.** Hermes runs on Hivra Cloud only, and every computer Hivra Cloud runs needs a paid plan. Hermes does not run on a server you connect.",
+        `- **A paid plan.** ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} See [plans and billing](/docs/plans-and-billing) for what the plan covers and what it does not.`,
         "- **Enough size.** Hermes needs at least 1 vCPU and 2 GB of RAM. The official installer builds Hermes's web UI on the computer, and that step is what needs the memory. Launch only offers sizes Hermes can run on: up to 8 CPU and 16 GB, limited by your plan.",
         "- **A way to pay for the model.** Either Hivra credits (if you have both card credits and token credits, Review asks which to use), a Venice API key of your own, or a provider you choose inside Hermes after it opens. The plan pays for the computer. It does not pay for model usage. [Choose how your agent gets its model](/docs/models-and-credits) compares the options.",
         "- **Hivra's runtime release.** Hermes needs a host on a recent enough Hivra runtime. New Hivra Cloud launches use one. On an existing computer, open **Settings** > **Updates** and use **Update connection service**. (Settings is called Manage in some Hivra internal copy; this page says Settings, which is the label on the agent page.)",
@@ -119,7 +119,7 @@ export const doc: DocPage = {
     },
     {
       q: "Can I run Hermes on my own server?",
-      a: "Not through Hivra today. Hermes runs on Hivra Cloud only, which needs a paid plan. A free Hivra account works with a server you connect yourself, but Hermes is not one of the agents that runs there.",
+      a: "Not through Hivra today. Hermes runs on Hivra Cloud only, which needs a paid plan.",
     },
     {
       q: "Which model does it use?",

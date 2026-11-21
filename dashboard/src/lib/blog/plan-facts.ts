@@ -147,5 +147,7 @@ export const FREE_ACCOUNT_SENTENCE = "A free account works with a computer or se
 /** The canonical pair, for the places that have room for both sentences. */
 export const HOSTED_COMPUTE_NEEDS_PLAN = `${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${FREE_ACCOUNT_SENTENCE}`;
 
+export const CONNECTED_SERVER_ELIGIBILITY = "To connect your own server to the Hivra dashboard, your account must be eligible.";
+
 /** The short form, for a clause that cannot carry the price. */
 export const HOSTED_COMPUTE_NEEDS_PLAN_SHORT = "Every Hivra Cloud computer needs a paid plan.";

@@ -21,6 +21,7 @@ import {
   countAlwaysOnAgents,
   loadLadderEntitlement,
 } from "@/lib/billing/plan-ladder-entitlement";
+import { CARD_TRIAL_KEEP_AWAKE_MESSAGE, isInCardTrial } from "@/lib/billing/card-trial";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -50,6 +51,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       patch.sleep_policy = body.sleep_policy;
     }
     if (Object.keys(patch).length === 0) return apiError("Send the settings to change.", 400);
+
+    // A trial's agents always sleep when idle; that is what keeps the trial cheap.
+    if ((patch.always_on === true || patch.sleep_policy === "off") && (await isInCardTrial(userId))) {
+      return apiError(CARD_TRIAL_KEEP_AWAKE_MESSAGE, 403, undefined, { reason: "card_trial_sleep_required" });
+    }
 
     // Plans bought on the plan ladder include a set number of agents kept
     // awake. Plans from before the ladder have no such limit.

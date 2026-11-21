@@ -53,6 +53,7 @@ import {
 } from "@/lib/services/instance-orchestrator";
 import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import {
+  HetznerCloudApiError,
   powerOnServer,
   shutdownServer,
   getServer,
@@ -84,6 +85,7 @@ import {
   type MemorySystemConfig,
 } from "@/lib/instance-settings";
 import { buildHostTimeSyncRepairScript } from "@/lib/services/hetzner-instance-builders";
+import { provisionedHetznerServerId } from "@/lib/hetzner/creation-receipt";
 import { orchestrateColdRestore } from "@/lib/services/cold-storage-restore-orchestrator";
 import { loadGlobalHermesSettingsForUser } from "@/lib/clerk-hermes-settings";
 import { recordInstanceUserActivity } from "@/lib/instance-activity";
@@ -370,10 +372,12 @@ export function isAdvancedCloudAccessEligible(
     | "hetzner_server_id"
     | "infrastructure_provider"
     | "proxmox_vmid"
-  >
+  > &
+    Partial<Pick<HermesInstanceRow, "gateway_url" | "status">>
 ): boolean {
   if (isProxmoxBackedInstanceRow(instance)) return true;
-  return !instance.host_id && typeof instance.hetzner_server_id === "number";
+  // A creation receipt (server id with no provisioned gateway) is not a runtime yet.
+  return !instance.host_id && provisionedHetznerServerId(instance) !== null;
 }
 
 interface HermesHostRow {
@@ -879,7 +883,7 @@ async function syncAutoUpdateSchedule(params: {
 }): Promise<{ applied: boolean; error: string | null }> {
   const { instance } = params;
 
-  if (!instance.host_id && !instance.hetzner_server_id) {
+  if (!instance.host_id && !provisionedHetznerServerId(instance)) {
     return {
       applied: false,
       error: "Settings were saved, but this instance has no host yet so the auto-update schedule was not installed.",
@@ -1399,9 +1403,11 @@ export async function GET(
             trigger: "poll_provision_promote",
           });
         }
-      } else if (instance!.hetzner_server_id) {
-        // Standard Hetzner-level sync for provisioning / running states
-        const hs = await getHetznerInstanceStatus(instance!.hetzner_server_id);
+      } else if (provisionedHetznerServerId(instance!) !== null) {
+        // Standard Hetzner-level sync for provisioning / running states. A
+        // creation receipt (provisioning row with no gateway yet) is skipped:
+        // the server is not this instance's live server until the metadata lands (F090).
+        const hs = await getHetznerInstanceStatus(instance!.hetzner_server_id as number);
         // A failed Hetzner lookup is not a server state: keep the stored status
         // (no 'error' write) and skip the readiness probe for this poll.
         if (hs.ipv4) {
@@ -2015,7 +2021,7 @@ export async function PATCH(
 
     // Only disabling can reach here: enabling was refused above.
     if (backupsEnabled === false) {
-      let serverIdToBackup = updated.hetzner_server_id;
+      let serverIdToBackup = provisionedHetznerServerId(updated);
       if (updated.host_id) {
          const { data: host } = await supabaseAdmin!.from("hermes_hosts").select("hetzner_server_id").eq("id", updated.host_id).eq("user_id", userId).single();
          if (host?.hetzner_server_id) serverIdToBackup = host.hetzner_server_id;
@@ -2596,7 +2602,10 @@ export async function DELETE(
           }
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          const alreadyGone = msg.includes("→ 404");
+          // The client throws HetznerCloudApiError with a numeric status; the
+          // message-fragment check covers older error shapes.
+          const alreadyGone =
+            (e instanceof HetznerCloudApiError && e.status === 404) || msg.includes("→ 404");
           if (!alreadyGone) {
             log.error("hetzner delete failed; refusing to mark instance deleted (avoid orphan billable VM)", e, {
               source: "instances",
@@ -3151,7 +3160,9 @@ export async function POST(
     // Resolve the Hetzner server ID and a live server record.
     // In the multi-agent model, stop/start/reboot affect the HOST server, not
     // individual agents. For container-level ops (update, redeploy) we SSH in.
-    let serverId: number | null = instance!.hetzner_server_id ?? null;
+    // A creation receipt is not this instance's server yet, so power and
+    // container actions treat it as "no server attached" (F090).
+    let serverId: number | null = provisionedHetznerServerId(instance!);
     let hostRow: HermesHostRow | null = null;
 
     if (!proxmoxInfra && instance!.host_id) {

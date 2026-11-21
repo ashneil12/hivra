@@ -6,6 +6,7 @@ import { getStripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabase";
 import { StripeWebhookService } from "@/lib/services/stripe-webhook-service";
 import { log } from "@/lib/logger";
+import { CARD_TRIAL_METADATA_KEY } from "@/lib/billing/card-trial";
 
 /**
  * POST /api/billing/confirm-checkout
@@ -93,6 +94,9 @@ export async function POST(req: NextRequest) {
     } else {
       subscription = session.subscription as Stripe.Subscription;
     }
+    if (subscription.status === "canceled" && subscription.metadata?.[CARD_TRIAL_METADATA_KEY]) {
+      return apiError("This trial is no longer available.", 409);
+    }
 
     // Replay-protection: record this checkout session as activated
     // BEFORE running handleSubscriptionChange. The PRIMARY KEY on
@@ -140,9 +144,12 @@ export async function POST(req: NextRequest) {
     // actually activated — defeating the fast-path until the Stripe webhook
     // backstop eventually catches up.
     try {
-      await StripeWebhookService.handleSubscriptionChange(subscription, {
+      const outcome = await StripeWebhookService.handleSubscriptionChange(subscription, {
         source: "confirm_checkout",
       });
+      if (outcome === "trial_rejected") {
+        return apiError("This trial is no longer available.", 409);
+      }
       await StripeWebhookService.captureCheckoutPaymentCompleted({
         session,
         subscription,

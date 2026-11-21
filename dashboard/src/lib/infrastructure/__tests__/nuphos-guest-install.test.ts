@@ -15,9 +15,9 @@ const runner = block.slice(block.indexOf("<<'RUNNER'\n") + "<<'RUNNER'\n".length
 describe("Nuphos guest install", () => {
   it("is an accepted agent kind with its own block and never the box browser stack", () => {
     expect(start).toBeGreaterThan(0);
-    expect(script).toContain("claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|linux-desktop|linux-server) ;;");
+    expect(script).toContain("claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|catalog-app|linux-desktop|linux-server) ;;");
     expect(script).toContain('[ "$AGENT_KIND" = "nuphos" ] && WANT_BROWSER=0');
-    expect(script).toContain('[ "$AGENT_KIND" != "nuphos" ] && ! is_linux_computer; then');
+    expect(script).toContain('[ "$AGENT_KIND" != "nuphos" ] && [ "$AGENT_KIND" != "catalog-app" ] && ! is_linux_computer; then');
   });
 
   it("pulls the latest official runtime, runs it by digest on loopback, and records its release", () => {

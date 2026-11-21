@@ -25,7 +25,7 @@ export const doc: DocPage = {
         "This computer is offered with a condition, and the condition is the whole point of this page. Windows runs only on a Proxmox VE server that you connected, and only from an ISO that you supply under your own licence.",
         "A Windows computer that someone else hosts for you is not offered. The Where it runs choice for it shows a cloud option, and that option is disabled with the note \"Not available for Windows.\" If you do not run a server, this computer is not for you today.",
         "The licence is between you and Microsoft. Before the setup can start you tick a box that reads: \"I accept Microsoft's applicable terms and confirm I have the rights to download, install, and use this image.\" The same box says Hivra does not provide the media, licence, product key, activation, or a compliance determination. The confirmation is sent with the launch request, and the launch is refused without it.",
-        "| | Windows on your server | What is not offered |\n| --- | --- | --- |\n| Where it runs | A Proxmox VE server you connected | A Windows computer hosted for you |\n| Install media | An ISO you choose, already on your server or downloaded to it from Microsoft | Media supplied for you |\n| Licence and activation | Yours, with Microsoft | Supplied for you |\n| Paid plan needed | No, a Hivra account costs nothing | Not applicable |\n| Native desktop client | Not available | Not applicable |",
+        "| | Windows on your server | What is not offered |\n| --- | --- | --- |\n| Where it runs | A Proxmox VE server you connected | A Windows computer hosted for you |\n| Install media | An ISO you choose, already on your server or downloaded to it from Microsoft | Media supplied for you |\n| Licence and activation | Yours, with Microsoft | Supplied for you |\n| Hivra requirement | Account eligible to connect a server | Not applicable |\n| Native desktop client | Not available | Not applicable |",
       ],
     },
     {
@@ -121,7 +121,7 @@ export const doc: DocPage = {
     },
     {
       q: "Do I need a paid plan?",
-      a: "No. A Hivra account costs nothing, and this computer runs on your own server, so it uses your hardware rather than a Hivra plan. The paid plans are for computers Hivra Cloud runs.",
+      a: "Your account needs connected-server access. You supply the Proxmox VE server that runs Windows.",
     },
     {
       q: "What does the server need?",

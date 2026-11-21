@@ -445,11 +445,20 @@ agent_cli_report || true
 AGENT_APP_HELPER=/usr/local/sbin/hivra-agent-app-update
 AGENT_APP_RECORD=/var/lib/hivra/agent-app.json
 agent_app_report() {
-  local name="$KIND_BEFORE" target version state
-  case "$name" in aeon|openclaw|agent-zero|hermes|openbot|nuphos) ;; *) return 0 ;; esac
+  local name="$KIND_BEFORE" report_name="$KIND_BEFORE" target version state
+  case "$name" in aeon|openclaw|agent-zero|hermes|openbot|nuphos|catalog-app) ;; *) return 0 ;; esac
   target=latest
   install -o root -g root -m 0700 "$WORK/hivra-agent-app-update.sh" "$AGENT_APP_HELPER"
   case "$name" in
+    catalog-app)
+      report_name="$(python3 -I -c 'import json, sys
+doc = json.load(open(sys.argv[1]))
+print(doc.get("appId") or "")' /etc/hivra/catalog-app.json 2>/dev/null || true)"
+      [ -n "$report_name" ] || return 0
+      version="$(python3 -I -c 'import json, sys
+doc = json.load(open(sys.argv[1]))
+print(doc.get("version") or "")' "$AGENT_APP_RECORD" 2>/dev/null || true)"
+      ;;
     openclaw)
       version="$(runuser -u bux -- env -i HOME=/home/bux PATH=/home/bux/.npm-global/bin:/usr/local/bin:/usr/bin:/bin \
         timeout -k 5 30 /home/bux/.npm-global/bin/openclaw --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)" || version=""
@@ -505,7 +514,7 @@ print(value)' "$AGENT_APP_RECORD" 2>/dev/null)" || version=""
       state=failed
     fi
   fi
-  printf 'HIVRA_AGENT_APP name=%s version=%s target=%s state=%s\n' "$name" "$version" "$target" "$state"
+  printf 'HIVRA_AGENT_APP name=%s version=%s target=%s state=%s\n' "$report_name" "$version" "$target" "$state"
 }
 agent_app_report || true
 

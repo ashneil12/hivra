@@ -21,6 +21,7 @@
 //   * top-up bonus: tryGrantTopupBonus runs in the Stripe webhook right after
 //     the card top-up is credited.
 
+import { isInCardTrial } from "@/lib/billing/card-trial";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
@@ -275,7 +276,8 @@ export async function loadLaunchEligibilityFacts(
   deps: LaunchFactsDeps
 ): Promise<{ facts: LaunchEligibilityFacts | null; unsupported: boolean }> {
   const sub = await deps.resolveSubscription(userId);
-  const hasActivePaidPlan = Boolean(sub && sub.plan !== "free" && (sub.status === "active" || sub.status === "trialing"));
+  // A trial is not a paying plan: the promo is for accounts that pay.
+  const hasActivePaidPlan = Boolean(sub && sub.plan !== "free" && sub.status === "active");
   if (!sub || !hasActivePaidPlan) {
     return {
       facts: { hasActivePaidPlan: false, currentRunStartedAt: null, hasPriorPaid: false, priorPaidEndedAt: null },
@@ -324,7 +326,10 @@ async function defaultLaunchFactsDeps(db: PromoDb): Promise<LaunchFactsDeps> {
   return {
     resolveSubscription: async (userId) => {
       const sub = await resolveEffectiveSubscription(userId, { throwOnQueryError: true });
-      return sub ? { plan: sub.plan, status: sub.status, source: sub.source } : null;
+      if (!sub) return null;
+      // A card trial is stored as an active plan; report it as the trial it is.
+      const status = sub.status === "active" && (await isInCardTrial(userId)) ? "trialing" : sub.status;
+      return { plan: sub.plan, status, source: sub.source };
     },
     loadStripeHistory: async (userId) => {
       const { data, error } = await q(db, "hermes_subscriptions")
@@ -472,7 +477,7 @@ export async function tryGrantTopupBonus(
     const resolveSubscription =
       params.deps?.resolveSubscription ?? (await defaultLaunchFactsDeps(db)).resolveSubscription;
     const sub = await resolveSubscription(params.userId);
-    const isSubscriber = Boolean(sub && sub.plan !== "free" && (sub.status === "active" || sub.status === "trialing"));
+    const isSubscriber = Boolean(sub && sub.plan !== "free" && sub.status === "active");
     if (!isSubscriber) return { attempted: false, skipped: "not_a_subscriber" };
 
     const { data: first, error } = await q(db, "managed_venice_card_ledger_entries")

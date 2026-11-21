@@ -105,6 +105,11 @@ export const LAPTOP_POST_SLUG_VARIANTS = [
 ] as const;
 
 const nextConfig: NextConfig = {
+  // Next discards test diagnostics only after checking those files. Keep them
+  // in the full npm typecheck, not in the production build's compiler graph.
+  typescript: {
+    tsconfigPath: process.env.NODE_ENV === "production" ? "tsconfig.build.json" : "tsconfig.json",
+  },
   env: {
     NEXT_PUBLIC_BUILD_GENERATED_AT: buildGeneratedAt,
     NEXT_PUBLIC_HIVRA_AUTH_MODE: selfHostAuthEnabled ? "local" : "hosted",

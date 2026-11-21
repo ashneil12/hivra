@@ -19,7 +19,12 @@ import {
 } from "../service";
 import { loadPromoReport } from "../report";
 
-jest.mock("@/lib/supabase", () => ({ supabaseAdmin: null }));
+jest.mock("@/lib/supabase", () => ({ get supabaseAdmin() { return db; } }));
+jest.mock("@/lib/billing/instance-entitlement", () => ({
+  resolveEffectiveSubscription: async () => ({ plan: "operator", status: "active", source: "stripe" }),
+}));
+const mockStripeHistory = jest.fn();
+jest.mock("@/lib/stripe", () => ({ getStripe: () => ({ subscriptions: { list: mockStripeHistory } }) }));
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 
 const M = 1_000_000;
@@ -44,6 +49,7 @@ afterAll(async () => {
 beforeEach(async () => {
   process.env.HIVRA_VENICE_PROMO_ENABLED = "true";
   await pg.exec(`
+    delete from public.hermes_subscriptions;
     delete from public.venice_promo_redemptions;
     delete from public.venice_promo_grants;
     delete from public.managed_venice_usage_events;
@@ -169,6 +175,40 @@ describe("launch credit", () => {
     expect(await balance("u5")).toBe(0);
   });
 
+  it("gives nothing to an account still in its free trial", async () => {
+    await redeem("u6");
+    const trial: LaunchFactsDeps = { ...stripeWith([nowSub]), resolveSubscription: async () => ({ plan: "operator", status: "trialing", source: "stripe" }) };
+    expect((await tryGrantLaunchCredit({ userId: "u6", now: NOW, factsDeps: trial }, db)).eligibility?.reason).toBe("no_paid_plan");
+    expect(await balance("u6")).toBe(0);
+  });
+
+  it("records one claim under retries, blocks a stored active trial, and grants once after conversion", async () => {
+    const userId = "card-trial-claim";
+    const params = { userId, now: NOW };
+    await pg.query(
+      "insert into public.hermes_subscriptions (user_id, status, stripe_customer_id, stripe_subscription_id, trial_ends_at) values ($1, 'active', 'cus_1', 'sub_now', now() + interval '1 day')",
+      [userId],
+    );
+    const redemptions = await Promise.all([
+      recordVeniceAttribution({ ...params, attribution: { ref: "venice", code: "VENICE" } }, db),
+      redeem(userId),
+    ]);
+    expect(redemptions.map(r => r.status).sort()).toEqual(["already_saved", "saved"]);
+
+    mockStripeHistory.mockResolvedValue({ data: [{ id: "sub_now", status: "active", start_date: nowSub.startDate }] });
+    const trial = await tryGrantLaunchCredit(params, db);
+    expect(trial).toMatchObject({ skipped: "not_eligible", eligibility: { reason: "no_paid_plan" } });
+    expect(await balance(userId)).toBe(0);
+
+    await pg.query("update public.hermes_subscriptions set trial_ends_at = null where user_id = $1", [userId]);
+    const results = await Promise.all([tryGrantLaunchCredit(params, db), tryGrantLaunchCredit(params, db)]);
+    expect(results.filter(result => result.outcome?.granted)).toHaveLength(1);
+    expect(results.filter(result => result.skipped === "already_granted" || result.outcome?.status === "already_granted")).toHaveLength(1);
+    expect(await balance(userId)).toBe(10 * M);
+    const grantRows = await pg.query("select eligibility_reason from public.venice_promo_grants where user_id = $1", [userId]);
+    expect(grantRows.rows).toEqual([{ eligibility_reason: "new_subscriber" }]);
+  });
+
   it("never exceeds budget or max_grants under concurrent grants", async () => {
     await pg.exec("update public.venice_promo_campaigns set budget_micro_usd = 35000000, max_grants = 70 where slug='venice-launch-2026'");
     const users = Array.from({ length: 8 }, (_, i) => `race${i}`);
@@ -192,6 +232,13 @@ describe("launch credit", () => {
 describe("top-up bonus", () => {
   const session = async (user: string, id: string, amount: number, at: string) => ledger(user, amount, "stripe", "stripe_topup", id, at);
   const deps = { resolveSubscription: subscriber };
+
+  it("gives no top-up bonus to an account still in its free trial", async () => {
+    await session("t9", "cs_9", 30 * M, "2026-11-19T00:00:00Z");
+    const trialDeps = { resolveSubscription: async () => ({ plan: "operator", status: "trialing", source: "stripe" }) };
+    const r = await tryGrantTopupBonus({ userId: "t9", sessionId: "cs_9", amountMicroUsd: 30 * M, now: NOW, deps: trialDeps }, db);
+    expect(r).toMatchObject({ attempted: false, skipped: "not_a_subscriber" });
+  });
 
   it("gives a subscriber's first top-up 50%, capped at $10, once even on replay", async () => {
     await session("t1", "cs_1", 30 * M, "2026-11-19T00:00:00Z");

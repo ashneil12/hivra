@@ -29,7 +29,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "OpenBot on Hivra is a preview, and it is not in the Launch list yet. That means you cannot pick it from the Launch screen today. Hivra keeps it off by default while it is checked, and it appears in the list only on a deployment where the switch for it is turned on.",
         "Say that plainly to yourself before planning around it. If you need an agent you can launch today, the ones in the Launch list are the ones to use, and the [agents page](/agents) shows what they are. This page describes what OpenBot on Hivra is designed to do, so you know what to expect when it arrives.",
-        "When it is on, it runs only on Hivra Cloud, on a paid plan. A free Hivra account works with a server you connect yourself, but OpenBot is not offered there.",
+        "When it is on, it runs only on Hivra Cloud, on a paid plan. It does not run on connected servers.",
       ],
     },
     {

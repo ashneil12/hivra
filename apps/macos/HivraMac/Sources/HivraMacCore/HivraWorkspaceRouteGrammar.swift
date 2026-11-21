@@ -110,6 +110,11 @@ extension HivraWorkspaceRouteGrammar {
     enum Value: Sendable {
         case matching(String, lowercased: Bool = false)
         case oneOf(Set<String>)
+        /// A fixed set of legacy ids, or any string matching `pattern` outside
+        /// `excluding`. Catalog membership is manifest data a shell cannot
+        /// enumerate, so catalog apps are accepted by slug shape and the page
+        /// re-validates the value.
+        case oneOfOrMatching(Set<String>, pattern: String, excluding: Set<String>)
         /// Accepted spellings and the value each one canonicalizes to.
         case mapped([String: String])
 
@@ -119,6 +124,11 @@ extension HivraWorkspaceRouteGrammar {
                 guard value.range(of: pattern, options: .regularExpression) != nil else { return nil }
                 return lowercased ? value.lowercased() : value
             case .oneOf(let values): return values.contains(value) ? value : nil
+            case .oneOfOrMatching(let values, let pattern, let excluding):
+                if values.contains(value) { return value }
+                guard !excluding.contains(value),
+                      value.range(of: pattern, options: .regularExpression) != nil else { return nil }
+                return value
             case .mapped(let values): return values[value]
             }
         }
@@ -131,18 +141,27 @@ extension HivraWorkspaceRouteGrammar {
         /// A template id, slug or share token (launch-template.ts TEMPLATE_REF).
         static let templateReference = Value.matching("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
         static let resourceID = Value.matching("^[A-Za-z0-9_-]{1,256}$")
-        /// LaunchProfileId (launch/contracts.ts).
-        static let launchProfile = Value.oneOf(["claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "openbot", "nuphos", "aeon",
-                                                "deepseek-harness", "ubuntu-desktop", "ubuntu-server",
-                                                "linux-terminal", "omarchy", "windows"])
+        /// The catalog app slug shape (dashboard CATALOG_APP_SLUG_RE).
+        static let catalogSlugPattern = "^[a-z][a-z0-9-]{1,38}[a-z0-9]$"
+        /// LaunchProfileId (launch/contracts.ts): the legacy profiles plus any
+        /// catalog app slug. 'linux-desktop' is a computer type, not a profile.
+        static let launchProfile = Value.oneOfOrMatching(["claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "openbot", "nuphos", "aeon",
+                                                          "deepseek-harness", "ubuntu-desktop", "ubuntu-server",
+                                                          "linux-terminal", "omarchy", "windows"],
+                                                         pattern: catalogSlugPattern, excluding: ["linux-desktop"])
         /// Launch history stages, including the names used before Choose merged its steps (LaunchJourney).
         static let launchStage = Value.mapped(["choose": "choose", "plan": "plan", "review": "review",
                                                "type": "choose", "profile": "choose", "capacity": "plan"])
         /// "1", or the paid plan an upgrade moved to (subscription PLAN_ORDER without free).
         static let launchUpgrade = Value.oneOf(["1", "operator", "fleet", "command"])
-        /// PortableLaunchResourceId (hivra/launch-navigation.ts).
-        static let portableLaunchResource = Value.oneOf(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos",
-                                                         "linux-desktop", "linux-terminal", "windows"])
+        /// PortableLaunchResourceId (hivra/launch-navigation.ts): the legacy
+        /// resources plus any catalog app slug. Profiles that cannot launch
+        /// portably (Hermes on Hivra Cloud only, computer-only profiles) stay
+        /// rejected even though they are slug-shaped.
+        static let portableLaunchResource = Value.oneOfOrMatching(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos",
+                                                                   "linux-desktop", "linux-terminal", "windows"],
+                                                                  pattern: catalogSlugPattern,
+                                                                  excluding: ["hermes", "hermes-computer", "deepseek-harness", "ubuntu-desktop", "ubuntu-server", "omarchy"])
     }
 
     struct Parameter: Sendable {

@@ -21,10 +21,10 @@ const block = script.slice(start, script.indexOf("\nfi\n", script.indexOf("ok \"
 describe("Hermes guest install", () => {
   it("has a Hermes block, accepted as an agent kind and never given the browser stack", () => {
     expect(start).toBeGreaterThan(0);
-    expect(script).toContain("claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|linux-desktop|linux-server) ;;");
+    expect(script).toContain("claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|catalog-app|linux-desktop|linux-server) ;;");
     expect(script).toContain('[ "$AGENT_KIND" = "hermes" ] && WANT_BROWSER=0');
     // Not given the Hivra clean-assistant prompt rewrite that coding agents get.
-    expect(script).toContain('[ "$AGENT_KIND" != "hermes" ] && [ "$AGENT_KIND" != "openbot" ] && [ "$AGENT_KIND" != "nuphos" ] && ! is_linux_computer; then\nsay "6/7');
+    expect(script).toContain('[ "$AGENT_KIND" != "hermes" ] && [ "$AGENT_KIND" != "openbot" ] && [ "$AGENT_KIND" != "nuphos" ] && [ "$AGENT_KIND" != "catalog-app" ] && ! is_linux_computer; then\nsay "6/7');
   });
 
   it("downloads the official installer over HTTPS to a file and runs it as the agent user, never as root or piped", () => {

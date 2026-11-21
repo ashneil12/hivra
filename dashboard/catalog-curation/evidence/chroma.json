@@ -1,0 +1,108 @@
+{
+  "slug": "chroma",
+  "checkedAt": "2026-11-21T14:54:30.875Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "chroma-core/chroma is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "chroma-core/chroma",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "chromadb/chroma:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "chromadb/chroma:latest",
+        "digest": "sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /api/v2/heartbeat -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-chroma-bharcb",
+        "hostPort": 3210,
+        "image": "chromadb/chroma:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-chroma-bharcb",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3210:8000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-chroma-bharcb-data:/data",
+          "chromadb/chroma:latest"
+        ],
+        "runStdout": "fa27480367bc3921753ef0d955be80a4f8ed777e5a882b05aa4f56a4ec54f55a",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "35.91MiB / 7.652GiB",
+        "memBytes": 37654364
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "API-only surface: / -> 404, /api/v2/heartbeat -> 200 through gateway",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 55166,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 404,
+            "location": null
+          }
+        ],
+        "finalStatus": 404,
+        "finalPath": "/",
+        "bodyHead": "",
+        "healthPathProbe": {
+          "path": "/api/v2/heartbeat",
+          "status": 200
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 35.9MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 37654364,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

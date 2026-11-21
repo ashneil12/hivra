@@ -17,6 +17,7 @@ import {
 import { BASE_FLOOR, BROWSER_ADD, isPoolExempt } from "@/lib/hivra/agent-catalog";
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
 import { loadLadderEntitlement } from "@/lib/billing/plan-ladder-entitlement";
+import { CARD_TRIAL_UPGRADE_HINT, isInCardTrial } from "@/lib/billing/card-trial";
 
 export function isActiveComputeStatus(status: unknown): boolean {
   return status === "provisioning" || status === "running" || status === "stopped";
@@ -182,7 +183,16 @@ export type ValidateResourcesResult = { ok: true } | { ok: false; status: number
 // The authoritative gate. Order mirrors the historical launch gate so launch
 // behavior is byte-for-byte identical when mode === "launch": plan access →
 // browser-on-free → slot count → floor → pool budget → per-agent cap.
+/** The resource gate, with a way out for a card trial that hits the trial's limits. */
 export async function validateAgentResources(params: ValidateResourcesInput): Promise<ValidateResourcesResult> {
+  const result = await validateAgentResourcesForPlan(params);
+  if (!result.ok && "message" in result && typeof result.message === "string" && (await isInCardTrial(params.userId))) {
+    return { ...result, message: `${result.message} ${CARD_TRIAL_UPGRADE_HINT}` };
+  }
+  return result;
+}
+
+async function validateAgentResourcesForPlan(params: ValidateResourcesInput): Promise<ValidateResourcesResult> {
   const agentLabel = params.agentLabel || "this agent";
   const sub = await resolveEffectiveSubscription(params.userId);
   if (!sub) {

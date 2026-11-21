@@ -12,6 +12,11 @@
 // value, never the value.
 
 import type { AgentWakeProfile, ProcessMatch } from "./types";
+import {
+  catalogAppToWakeProfile,
+  UNIVERSAL_CATALOG_APP_PORTS,
+  UNIVERSAL_CATALOG_MANIFESTS,
+} from "@/lib/hivra/catalog-manifests";
 
 const HERMES_GATEWAY: ProcessMatch = { cmdAll: ["hermes", " gateway"] };
 const OPENCLAW_GATEWAY: ProcessMatch = { cmdAll: ["openclaw", " gateway"] };
@@ -45,7 +50,7 @@ export const COMPUTER_PROFILE: AgentWakeProfile = {
       owner: { cgroup: "bux-tg\\.service" } },
   ],
   wake: {},
-  appPorts: [5555, 18789, 50080, 9119, 9120, 3101],
+  appPorts: [5555, 18789, 50080, 9119, 9120, 3101, ...UNIVERSAL_CATALOG_APP_PORTS],
 };
 
 /** The .env keys Hermes reads per platform: [key regex prefix, platform]. */
@@ -232,4 +237,5 @@ const LINUX_TERMINAL: AgentWakeProfile = {
 /** Every profile, keyed by hivra_agents.type. Order matters only for the no-profile union (the probe's old reading order). */
 export const AGENT_WAKE_PROFILES: readonly AgentWakeProfile[] = [
   HERMES, OPENCLAW, AGENT_ZERO, CLAUDE_CODE, CODEX, AEON, OPENBOT, NUPHOS, DEEPSEEK_HARNESS, LINUX_DESKTOP, LINUX_TERMINAL,
+  ...UNIVERSAL_CATALOG_MANIFESTS.map(catalogAppToWakeProfile),
 ];

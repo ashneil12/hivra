@@ -8,6 +8,9 @@
  * missing from this list, so a new agent is never shipped untested.
  */
 
+import { UNIVERSAL_CATALOG_MANIFESTS } from '../../src/lib/hivra/catalog-manifests/manifests/index';
+import { catalogAppHasWebSurface } from '../../src/lib/hivra/catalog-manifests/index';
+
 export type SweepTargetKind = 'agent' | 'computer';
 
 /** How the sweep proves the thing works once it is open. */
@@ -33,6 +36,20 @@ export interface SweepTarget {
   knownBroken?: string;
 }
 
+/**
+ * Universal catalog apps come from the manifest registry, so a new manifest
+ * is covered here without a second per-app list. The proof follows the
+ * runtime: an app with its own web UI is proven inside that UI (the same
+ * check catalogAppHasWebSurface makes); a chat-only CLI is proven in Hivra's
+ * own chat.
+ */
+const CATALOG_TARGETS: readonly SweepTarget[] = UNIVERSAL_CATALOG_MANIFESTS.map((manifest) => ({
+  profileId: manifest.id,
+  tile: manifest.name,
+  kind: 'agent',
+  proof: catalogAppHasWebSurface(manifest) ? 'agent-ui-chat' : 'hivra-chat',
+}));
+
 export const SWEEP_TARGETS: readonly SweepTarget[] = [
   { profileId: 'hermes-computer', tile: 'Hermes', kind: 'agent', proof: 'agent-ui-chat' },
   { profileId: 'claude-code', tile: 'Claude Code', kind: 'agent', proof: 'hivra-chat' },
@@ -54,6 +71,7 @@ export const SWEEP_TARGETS: readonly SweepTarget[] = [
     knownBroken: 'After its console password, Nuphos waits for the owner to pair Nuphos Desktop and sign its agent in, so a fresh account has nowhere to chat yet.',
   },
   { profileId: 'deepseek-harness', tile: 'DeepSeek Harness', kind: 'agent', proof: 'agent-ui-chat' },
+  ...CATALOG_TARGETS,
   {
     profileId: 'aeon',
     tile: 'Aeon',

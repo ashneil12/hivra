@@ -99,7 +99,6 @@ import {
   hasModelAccess,
   modelAccessOptions,
   modelAccessProblem,
-  modelAccessSummary,
   modelCostNote,
   recommendedModelAccessMode,
   savedKeyHint,
@@ -1033,13 +1032,16 @@ export function LaunchJourney(
     if (ownerId === undefined) return;
     // A template link decides once the template has been read.
     if (templateParam && !templateResult) return;
-    const stored = readLaunchDraft(ownerId);
+    const hermesProfile = legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE;
+    const saved = readLaunchDraft(ownerId);
+    const stored = saved ? withHermesLane(saved, hermesProfile) : null;
     const requestedProfileId = isLaunchProfileId(requestedProfileParam) ? requestedProfileParam : null;
     // A deep link to the prepared Canary computer is ignored where it cannot
     // be claimed, so the link lands on Choose instead of an unusable profile.
     // Read directly: this effect only ever runs on the client.
-    const requestedProfile = linkedTemplate?.profileId
+    const linkedProfile = linkedTemplate?.profileId
       ?? (requestedProfileId === "omarchy" && !preparedCanaryAvailable ? null : requestedProfileId);
+    const requestedProfile = linkedProfile === "hermes" || linkedProfile === "hermes-computer" ? hermesProfile : linkedProfile;
     const freshFromIntent = (): LaunchDraft => {
       const next = createLaunchDraft();
       if (!requestedProfile) return next;
@@ -1056,6 +1058,8 @@ export function LaunchJourney(
         template: linkedTemplate ? { id: linkedTemplate.id, name: linkedTemplate.name } : null,
       }, inferenceParam);
     };
+    // A URL already carrying our stage is a return to the journey, not a new preset.
+    const insideJourney = new URLSearchParams(window.location.search).has("stage");
     let initial: LaunchDraft;
     if (stored && (stored.launchState === "uncertain" || stored.launchState === "submitting")) {
       // A launch whose outcome is unknown is never set aside for a new one.
@@ -1064,13 +1068,17 @@ export function LaunchJourney(
       // Back from an upgrade this draft started.
       initial = stored;
     } else if (startParam === "1" || requestedProfile) {
-      if (isUnfinishedLaunchDraft(stored) && startParam !== "1" && stored.profileId === requestedProfile
-        && (stored.template?.id ?? null) === (linkedTemplate?.id ?? null)) {
-        initial = stored;
-      } else if (isUnfinishedLaunchDraft(stored)) {
-        setDraft(null);
-        setResumeChoice({ stored, fresh: withHermesLane(freshFromIntent(), legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE) });
-        return;
+      if (isUnfinishedLaunchDraft(stored)) {
+        const linkedAccess = withVeniceInference(stored, inferenceParam).modelAccess;
+        if (startParam !== "1" && stored.profileId === requestedProfile
+          && (stored.template?.id ?? null) === (linkedTemplate?.id ?? null)
+          && (insideJourney || (stored.modelAccess.mode === linkedAccess.mode && stored.modelAccess.provider === linkedAccess.provider))) {
+          initial = stored;
+        } else {
+          setDraft(null);
+          setResumeChoice({ stored, fresh: freshFromIntent() });
+          return;
+        }
       } else {
         initial = freshFromIntent();
       }
@@ -1078,14 +1086,9 @@ export function LaunchJourney(
       // A plain Launch link names nothing, so it opens Choose with nothing
       // picked, whatever an earlier visit left saved. Only a reload or a
       // history step inside the journey (its URL carries a stage) restores it.
-      const insideJourney = new URLSearchParams(window.location.search).has("stage");
       initial = insideJourney && stored ? stored : createLaunchDraft();
     }
-    // Hermes goes to the lane that applies: a link or draft that names plain
-    // Hermes opens the computer lane where it is on, and a computer-lane draft
-    // restored where it is off goes back to the instances lane.
-    const hermesProfile = legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE;
-    initial = withHermesLane(withCurrentStage(initial), hermesProfile);
+    initial = withCurrentStage(initial);
     setResumeChoice(null);
     writeLaunchDraft(initial, ownerId);
     setDraft(initial);
@@ -1470,6 +1473,7 @@ export function LaunchJourney(
   // below whatever the agent, so this does not decide who needs one.
   // Hermes (and Omarchy) cannot run on a server you connected.
   const ownServerOk = fitSubject?.ownServer !== false;
+  const compatibleOwnServerAvailable = ownServerOk && destination.readyTargets.length > 0;
   const managedPaidRequired = fitSubject !== null && fitSubject.hivraCloud === "plan" && fitSubject.minPlan !== "free";
   const atSlotLimit = Boolean(plan?.usage && plan.usage.agentCount >= plan.maxAgents);
   const managedFits = planCanFit(plan, draft.resources, poolExempt);
@@ -1592,7 +1596,9 @@ export function LaunchJourney(
     // A Free account is the platform, not a computer: it works with the
     // owner's own computer. Hivra-hosted compute is bought.
     capacityBlocker = ownServerOk
-      ? `${currentProfile?.name ?? "This launch"} on Hivra Cloud needs a paid plan. Your free account works with your own server: connect one, or choose a plan. ${ownServerNeeds(draft.profileId)}`
+      ? compatibleOwnServerAvailable
+        ? `${currentProfile?.name ?? "This launch"} on Hivra Cloud needs a paid plan. A compatible server is already connected; choose it to check capacity, or choose a plan.`
+        : `${currentProfile?.name ?? "This launch"} on Hivra Cloud needs a paid plan. Your free account works with your own server: connect one, or choose a plan. ${ownServerNeeds(draft.profileId)}`
       : `${currentProfile?.name ?? "This launch"} runs on Hivra Cloud only, and that needs a paid plan. Choose a plan to launch it.`;
     blockerRemedy = "managed-plan";
     paywall = "paid_profile";
@@ -1666,10 +1672,8 @@ export function LaunchJourney(
         options: modelOptions,
       });
   const keyProviders = draft.profileId ? apiKeyProviders(draft.profileId, savedKeys) : [];
-  const modelSummary = digitalOceanLane && digitalOceanHarness
+  const digitalOceanSummary = digitalOceanLane && digitalOceanHarness
     ? digitalOceanModelSummary(digitalOceanHarness, draft.digitalOcean, savedKeys)
-    : draft.profileId
-    ? modelAccessSummary(draft.profileId, draft.modelAccess, { name: draft.name, balance: creditsBalance, savedKeys })
     : null;
   // Hermes' memory can use the owner's saved Honcho key. Like a model key, it
   // is sent to the agent's computer only when the owner ticks it for this
@@ -2125,10 +2129,14 @@ export function LaunchJourney(
         : blockerRemedy === "check-plan" ? <button type="button" onClick={recheckPlan}>Check again</button>
         : blockerRemedy === "managed-plan" ? <>
           <Link href={upgradeHref} onClick={() => recordUpgradeClick("plan_blocker")}>{upgrade ? `Upgrade to ${upgrade.name}` : "Review plans"}</Link>
-          {ownServerOk ? <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button> : null}
+          {ownServerOk ? compatibleOwnServerAvailable
+            ? <button type="button" onClick={() => chooseDestinationMode("self-managed")}>Use connected server</button>
+            : <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button> : null}
         </> : blockerRemedy === "settle-plan" && planHold ? <>
           <Link href={billingSettleHref(draft.launchRequestId)}>{planHoldAction(planHold)}</Link>
-          {ownServerOk ? <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button> : null}
+          {ownServerOk ? compatibleOwnServerAvailable
+            ? <button type="button" onClick={() => chooseDestinationMode("self-managed")}>Use connected server</button>
+            : <button type="button" onClick={() => setCapacitySheetOpen(true)}>Set up your own capacity</button> : null}
         </> : null}
     </span>
   ) : null;
@@ -2267,6 +2275,7 @@ export function LaunchJourney(
     profileId: draft.profileId,
     substrate,
     planName: plan?.name ?? null,
+    cloudPlanAccess: planChecked && plan?.usage ? isPaidPlan(plan) ? "paid" : "free" : "unknown",
     modelNote: modelCostNote(draft.profileId, draft.modelAccess),
     planOnHold: planHold ? planHold.planName : null,
   }) : "";
@@ -2638,10 +2647,10 @@ export function LaunchJourney(
                   <span className={styles.planLabel}>Size</span>
                   <span className={styles.planSummary}><strong>{summarySize}</strong></span>
                 </div>
-                {modelSummary ? (
+                {digitalOceanSummary ? (
                   <div className={styles.planRow}>
                     <span className={styles.planLabel}>Model access</span>
-                    <span className={styles.planSummary}><strong>{modelSummary}</strong></span>
+                    <span className={styles.planSummary}><strong>{digitalOceanSummary}</strong></span>
                   </div>
                 ) : null}
               </>) : null) : (<>
@@ -2769,25 +2778,22 @@ export function LaunchJourney(
               ) : null}
 
               {modelAccessShown && draft.profileId ? (
-                <div className={styles.planRow}>
+                <div className={`${styles.planRow} ${styles.modelAccessRow}`}>
                   <span className={styles.planLabel} aria-hidden>Model access</span>
-                  <span className={styles.planValue}>
-                    {modelSummary ? <span className={styles.planSummary}><strong>{modelSummary}</strong></span> : null}
-                    <ModelAccessControl
-                      profileId={draft.profileId}
-                      agentName={draft.name}
-                      access={draft.modelAccess}
-                      options={modelOptions}
-                      onChange={updateModelAccess}
-                      pastedKey={currentPastedKey}
-                      onPastedKeyChange={setCurrentPastedKey}
-                      savedKeys={savedKeys}
-                      providers={keyProviders}
-                      balance={creditsBalance}
-                      onAddCredit={() => setDepositOpen(true)}
-                      problem={modelProblem}
-                    />
-                  </span>
+                  <ModelAccessControl
+                    profileId={draft.profileId}
+                    agentName={draft.name}
+                    access={draft.modelAccess}
+                    options={modelOptions}
+                    onChange={updateModelAccess}
+                    pastedKey={currentPastedKey}
+                    onPastedKeyChange={setCurrentPastedKey}
+                    savedKeys={savedKeys}
+                    providers={keyProviders}
+                    balance={creditsBalance}
+                    onAddCredit={() => setDepositOpen(true)}
+                    problem={modelProblem}
+                  />
                 </div>
               ) : null}
               {hermes ? (

@@ -38,7 +38,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "Hivra runs the open-source Agent Zero stack in a container on a Hivra Cloud computer. You do not prepare a VPS, install Docker or expose a port yourself. The dashboard is reached only through Hivra's authenticated gateway, and Agent Zero's own login is set up for you when the computer is created.",
         "The minimum is 1 vCPU and 2 GB of RAM. The project's own guidance recommends 2 vCPU and 4 GB for comfortable use, which is the size of the entry plan: " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + ". Browser use and heavy tasks can grow what it needs.",
-        "Every Hivra Cloud computer needs a paid plan, and paid computers are not paused for inactivity. A free Hivra account works with a server you connect yourself, and Agent Zero is available there too, on a Proxmox server you connected.",
+        "Every Hivra Cloud computer needs a paid plan, and paid computers are not paused for inactivity. Agent Zero also runs on a Proxmox server if your account is eligible to connect it.",
         "For a side-by-side with another popular open-source agent, see [Agent Zero vs OpenClaw hosting](/blog/agent-zero-vs-openclaw-hosting). The setup steps are in [the Agent Zero docs](/docs/agent-zero), and [the Agent Zero page](/agents/agent-zero) shows how to launch it.",
       ],
     },

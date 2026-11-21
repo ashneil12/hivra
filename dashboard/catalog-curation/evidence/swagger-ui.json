@@ -1,0 +1,112 @@
+{
+  "slug": "swagger-ui",
+  "checkedAt": "2026-11-21T14:15:57.636Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "swagger-api/swagger-ui is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "swagger-api/swagger-ui",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "swaggerapi/swagger-ui:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "swaggerapi/swagger-ui:latest",
+        "digest": "sha256:cd314c0a167841dc1c9869ff2df6f949e2e7fa63f8b77f610b7e75878ac2da4e",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v6",
+          "linux/arm64",
+          "linux/386",
+          "linux/ppc64le"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-swagger-ui-stva42",
+        "hostPort": 3217,
+        "image": "swaggerapi/swagger-ui:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-swagger-ui-stva42",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3217:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-swagger-ui-stva42-tmp:/tmp",
+          "swaggerapi/swagger-ui:latest"
+        ],
+        "runStdout": "f354286b56d39a0cf1623bbc8468392d22a3565b2fc6ae68da18339f7b5d8974",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "12.14MiB / 7.652GiB",
+        "memBytes": 12729713
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 63869,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!-- HTML for static distribution bundle build -->\n<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\">\n    <title>Swagger UI</title>\n    <link rel=\"stylesheet\" type=\"text/css\" href=\"./swagger-ui.css\" />\n    <link rel=\"stylesheet\" type=\"text/css\" href=\"index.css\" />\n    <link rel=\"icon\" type=\"image/png\" href=\"./favicon-32x32.png\" sizes=\"32x32\" />\n    <link rel=\"icon\" type=\"image/pn",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<html>\r\n<head><title>404 Not Found</title></head>\r\n<body>\r\n<center><h1>404 Not Found</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 12.1MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 12729713,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

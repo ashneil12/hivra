@@ -23,7 +23,7 @@ export const doc: DocPage = {
     {
       heading: "Before you start",
       paragraphs: [
-        `Every computer that Hivra Cloud runs for you needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. A Hivra account costs nothing, but the Linux computer runs only on Hivra Cloud today and needs a paid plan. For a free terminal workspace on a server you connect yourself, see [Linux Sandbox](/docs/linux-sandbox). See [what you pay for](/docs/plans-and-billing).`,
+        `Every computer that Hivra Cloud runs for you needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. The Linux computer runs only on Hivra Cloud today and needs a paid plan. For a terminal workspace on a server you connect yourself, see [Linux Sandbox](/docs/linux-sandbox). See [what you pay for](/docs/plans-and-billing).`,
         "You need:\n\n- A Hivra account and a paid plan with room left in its CPU and memory pool. A Linux computer's reserved CPU and memory count against that pool.\n- A browser. There is nothing to install on your own machine.\n- Nothing else. No model key and no AI sign-in is asked for, because the computer has no agent on it.",
         "This page describes the Hivra Cloud lane, which is the one Hivra's status page lists for the Linux computer. If you want a terminal workspace on a server of your own, see [Linux Sandbox](/docs/linux-sandbox) and [Run agents on your own server](/docs/connect-your-own-server).",
       ],
@@ -93,7 +93,7 @@ export const doc: DocPage = {
     },
     {
       q: "Is it free?",
-      a: "A Hivra account costs nothing, but the Linux computer runs only on Hivra Cloud today and needs a paid plan. For a free terminal workspace on a server you connect yourself, see Linux Sandbox.",
+      a: "The Linux computer runs only on Hivra Cloud today and needs a paid plan. For a terminal workspace on a server you connect yourself, see Linux Sandbox.",
     },
     {
       q: "How small can it be?",

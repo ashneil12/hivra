@@ -1,5 +1,5 @@
 import type { DocPage } from "../types";
-import { HOSTED_COMPUTE_NEEDS_PLAN } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE } from "@/lib/blog/plan-facts";
 
 export const doc: DocPage = {
   slug: "openbot",
@@ -32,7 +32,7 @@ export const doc: DocPage = {
     {
       heading: "What it needs before you open it",
       paragraphs: [
-        "- **A Hivra Cloud computer on a paid plan.** " + HOSTED_COMPUTE_NEEDS_PLAN,
+        "- **A Hivra Cloud computer on a paid plan.** " + HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
         "- **At least 1 vCPU and 3 GB of RAM.** That is the floor Hivra enforces for OpenBot. See the sizing section below.",
         "- **A CopilotKit Intelligence key.** OpenBot will not start without one. It keeps its conversations and memory in CopilotKit Intelligence, so it needs a key from your CopilotKit project. At the time of writing CopilotKit has a free plan, so getting a key does not mean paying CopilotKit first. Plans and limits are theirs to set and can change, so check CopilotKit's pricing page.",
         "- **A way to pay for model use.** By default models run through Venice on your Hivra credits, which you top up in Hivra. You can switch provider inside OpenBot afterwards. See [models and credits](/docs/models-and-credits).",
@@ -122,7 +122,7 @@ export const doc: DocPage = {
     },
     {
       q: "Can I run OpenBot on my own server?",
-      a: "No. OpenBot is offered on Hivra Cloud only. A free Hivra account works with a server you connect yourself, but OpenBot is not one of the agents that can run there.",
+      a: "No. OpenBot is offered on Hivra Cloud only.",
     },
     {
       q: "How do I update it, and what if the update breaks it?",

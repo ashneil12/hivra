@@ -74,7 +74,7 @@ export const article: BlogArticle = {
       ],
     },
     {
-      heading: "Resume a non-interactive `codex exec` run",
+      heading: "Resume a non-interactive codex exec run",
       paragraphs: [
         `Scripted runs use \`codex exec\` (alias \`codex e\`). To continue one, OpenAI's reference and local help both show a \`resume\` subcommand:`,
         [

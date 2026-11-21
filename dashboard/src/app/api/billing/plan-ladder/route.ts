@@ -10,6 +10,7 @@ import { auth } from "@clerk/nextjs/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { supabaseAdmin } from "@/lib/supabase";
 import { holdsPaidPlan } from "@/lib/billing/subscription-status";
+import { isInCardTrial } from "@/lib/billing/card-trial";
 import { PLAN_LADDER_ID, activePlanLadder, publicPlanLadder, sellsLadderTo } from "@/lib/subscription/plan-ladder";
 import { countAlwaysOnAgents } from "@/lib/billing/plan-ladder-entitlement";
 
@@ -50,6 +51,7 @@ export async function GET() {
     current: onLadder
       ? {
           plan: sub?.plan ?? null,
+          inCardTrial: await isInCardTrial(userId),
           alwaysOnLimit: sub?.always_on_limit ?? null,
           alwaysOnExtra: sub?.always_on_extra ?? 0,
           alwaysOnInUse,

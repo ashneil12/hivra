@@ -579,6 +579,11 @@ update them yet.
   its session homes recently, copies the runtime home aside first and puts the previous
   image and home back if the new release does not answer.
 
+- **Universal catalog app runtime (`2026.11.20.2`).** Adds `hivra-catalog-app.py`,
+  launch document v5 (`agentKind=catalog-app`), root-proxied `/app/` web surfaces,
+  generic CLI chat bindings, and generic in-place app updates with rollback for
+  manifest-driven open-source agents and apps.
+
 - **Agent Zero CLI transport (`2026.11.20.1`).** The connection service
   accepts both Socket.IO path forms and forwards the verified origin for
   the CLI’s polling and WebSocket connections.

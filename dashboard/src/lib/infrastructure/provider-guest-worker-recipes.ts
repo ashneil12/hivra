@@ -590,6 +590,31 @@ const recipes = Object.freeze({
     workerSha256: "4a5cb535fd278d3a1ee0e112098eb7c3d6e7ecc1a57fd9b71312ee6790e4d21a",
     workerSize: 45216,
   }),
+  "2026.11.20.2": Object.freeze({
+    protocol: "v1" as const,
+    workerSha256: "f442bd737824fc6e43c4fc37078954f19f8f90762595feb7079cdcf74c04bda3",
+    workerSize: 45216,
+  }),
+  "2026.11.20.3": Object.freeze({
+    protocol: "v1" as const,
+    workerSha256: "43f957bf282ea01d7eef1f019d285130da35167d4508412f40bc1343e4973f14",
+    workerSize: 45216,
+  }),
+  "2026.11.20.4": Object.freeze({
+    protocol: "v1" as const,
+    workerSha256: "44e1e6d98cf0f271e587d81e963050e4773497053d12324585a5e46de5c75957",
+    workerSize: 45216,
+  }),
+  "2026.11.20.5": Object.freeze({
+    protocol: "v1" as const,
+    workerSha256: "af0165e37957ed653691ea5eab4d7e52060f299f04983f7d8fefbb392439793a",
+    workerSize: 45216,
+  }),
+  "2026.11.21.1": Object.freeze({
+    protocol: "v1" as const,
+    workerSha256: "267b54f6f297cb96a00965806fceb6e66dd26757cbab3d29e89b244c69f213c7",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

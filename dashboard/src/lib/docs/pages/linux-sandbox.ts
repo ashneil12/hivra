@@ -5,7 +5,7 @@ export const doc: DocPage = {
   section: "computers",
   title: "Linux Sandbox",
   metaTitle: "Linux Sandbox: a locked-down terminal on your server",
-  metaDescription: "A small, locked-down Linux and Python workspace isolated with gVisor on an Ubuntu server you connect with one command. A free account is enough.",
+  metaDescription: "A small, locked-down Linux and Python workspace isolated with gVisor on an Ubuntu server you connect with one command.",
   summary: "A small, locked-down Linux and Python workspace on a server you connected, isolated with gVisor.",
   lastReviewed: "2026-11-17",
   status: "available",
@@ -21,8 +21,8 @@ export const doc: DocPage = {
     {
       heading: "Where it runs and what it costs",
       paragraphs: [
-        "Linux Sandbox runs only on a server you connected. Hivra Cloud does not run it. Because the server is yours, a Hivra account costs nothing and no Hivra plan is involved. You pay your own provider for the server. See [what you pay for](/docs/plans-and-billing).",
-        "| | Linux Sandbox | Linux computer | Ubuntu Desktop |\n| --- | --- | --- | --- |\n| Runs on | A server you connected with the one command | Hivra Cloud | Hivra Cloud, or a Proxmox VE server you connected |\n| Needs a paid Hivra plan | No | Yes | Only on Hivra Cloud |\n| Interface | Run a command, with output | Terminal and Files | Desktop |",
+        "Linux Sandbox runs only on a server you connected. Hivra Cloud does not run it. Your account must be eligible to connect the server. You pay your own provider for the server. See [what you pay for](/docs/plans-and-billing).",
+        "| | Linux Sandbox | Linux computer | Ubuntu Desktop |\n| --- | --- | --- | --- |\n| Runs on | A server you connected with the one command | Hivra Cloud | Hivra Cloud, or a Proxmox VE server you connected |\n| Hivra requirement | Account eligible to connect a server | Plan with Hivra Cloud | Plan with Hivra Cloud or eligibility to connect a server |\n| Interface | Run a command, with output | Terminal and Files | Desktop |",
         "The one-command Ubuntu connect gives you Linux Sandbox and nothing more. Claude Code, Codex, OpenClaw, Agent Zero, Aeon and Ubuntu Desktop on your own hardware need a Proxmox VE server connected with SSH details. [Run agents on your own server](/docs/connect-your-own-server) covers both routes.",
       ],
     },
@@ -115,7 +115,7 @@ export const doc: DocPage = {
   faqs: [
     {
       q: "Do I need a paid plan for Linux Sandbox?",
-      a: "No. Linux Sandbox runs on a server you connected, so a Hivra account that costs nothing is enough. You pay your own provider for the server.",
+      a: "Linux Sandbox runs on a server you connected. Your account must be eligible to connect it. You pay your own provider for the server.",
     },
     {
       q: "Can I use it on Hivra Cloud?",

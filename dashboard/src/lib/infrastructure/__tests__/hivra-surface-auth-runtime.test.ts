@@ -549,6 +549,94 @@ describe("Hivra guest surface authentication runtime", () => {
     expect(login.status).toBe(401);
   });
 
+  it("sends an unauthenticated browser navigation to the sign-in page, keeps a 401 for clients", async () => {
+    const navigates = await request("/aeon/", { headers: { Accept: "text/html,application/xhtml+xml" } });
+    expect(navigates.status).toBe(303);
+    expect(navigates.headers.location).toBe("/login?next=%2Faeon%2F");
+    expect(navigates.headers["set-cookie"]).toBeUndefined();
+    // A non-browser client keeps the machine-readable refusal.
+    const client = await request("/aeon/");
+    expect(client.status).toBe(401);
+    expect(client.headers.location).toBeUndefined();
+  });
+
+  it("serves the sign-in page on GET /login and forwards an already signed-in browser", async () => {
+    const page = await request("/login?next=" + encodeURIComponent("/aeon/"));
+    expect(page.status).toBe(200);
+    expect(page.body).toContain('action="/login"');
+    expect(page.body).toContain('name="password"');
+    expect(page.headers["content-security-policy"]).toContain("form-action 'self'");
+    // Unsafe next values are never echoed into the form or honoured.
+    const unsafe = await request("/login?next=" + encodeURIComponent("https://attacker.example/"));
+    expect(unsafe.status).toBe(200);
+    expect(unsafe.body).not.toContain("attacker.example");
+
+    const cookie = await sessionCookie();
+    const signedIn = await request("/login?next=" + encodeURIComponent("/aeon/"), { headers: { Cookie: cookie } });
+    expect(signedIn.status).toBe(303);
+    expect(signedIn.headers.location).toBe("/aeon/");
+  });
+
+  it("lets the management bearer set, read and clear the direct sign-in password only", async () => {
+    const body = JSON.stringify({ password: "a-direct-signin-password" });
+    const headers = { "Content-Type": "application/json" };
+    expect((await request("/api/signin-password", { method: "POST", headers, body })).status).toBe(401);
+    const cookie = await sessionCookie();
+    expect((await request("/api/signin-password", { method: "POST", headers: { ...headers, Cookie: cookie }, body })).status).toBe(401);
+
+    const auth = { ...headers, Authorization: `Bearer ${FIXTURE_TOKEN}` };
+    for (const bad of ["short", "has a space", "x".repeat(129)]) {
+      const rejected = await request("/api/signin-password", { method: "POST", headers: auth, body: JSON.stringify({ password: bad }) });
+      expect(rejected.status).toBe(400);
+    }
+    const set = await request("/api/signin-password", { method: "POST", headers: auth, body });
+    expect(set.status).toBe(200);
+    expect(JSON.parse(set.body)).toMatchObject({ ok: true, set: true });
+    const status = await request("/api/signin-password", { headers: { Authorization: `Bearer ${FIXTURE_TOKEN}` } });
+    expect(JSON.parse(status.body)).toEqual({ set: true });
+  });
+
+  it("signs a browser in with the owner password, then refuses it after removal", async () => {
+    const login = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ password: "a-direct-signin-password", next: "/aeon/" }).toString(),
+    });
+    expect(login.status).toBe(303);
+    expect(login.headers.location).toBe("/aeon/");
+    const cookie = login.headers["set-cookie"]?.[0] ?? "";
+    expect(cookie).toMatch(new RegExp(`^${AUTH_COOKIE}=[a-f0-9]{64};`));
+    const surface = await request("/aeon/", { headers: { Cookie: cookie.split(";")[0] } });
+    expect(surface.status).toBe(200);
+    expect(surface.body).toBe("fixture surface reached");
+
+    // A wrong password gets the page back at 401; the right one still works after.
+    const wrong = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ password: "not-the-password", next: "/aeon/" }).toString(),
+    });
+    expect(wrong.status).toBe(401);
+    expect(wrong.body).toContain("Wrong password.");
+    expect(wrong.headers["set-cookie"]).toBeUndefined();
+    const retried = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ password: "a-direct-signin-password", next: "/aeon/" }).toString(),
+    });
+    expect(retried.status).toBe(303);
+
+    const cleared = await request("/api/signin-password", { method: "DELETE", headers: { Authorization: `Bearer ${FIXTURE_TOKEN}` } });
+    expect(cleared.status).toBe(200);
+    expect(JSON.parse(cleared.body)).toEqual({ ok: true, set: false });
+    const removed = await request("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ password: "a-direct-signin-password", next: "/aeon/" }).toString(),
+    });
+    expect(removed.status).toBe(401);
+  });
+
   it("does not expose Agent Zero root extension or Socket.IO aliases on another runtime", async () => {
     const headers = { Authorization: `Bearer ${FIXTURE_TOKEN}` };
     for (const [pathname, method] of [["/extensions/webui/fixture.js", "GET"], ["/socket.io/?EIO=4&transport=polling", "GET"], ["/socket.io/?EIO=4&transport=polling", "POST"]]) {

@@ -3,213 +3,1820 @@
   "version": 1,
   "description": "Every case is an href a native shell may observe or request. `expect` is the canonical dashboard route, or null when the route must be rejected. The dashboard (native-route-grammar.ts) and every native shell must return exactly `expect`. `shell` holds what a shell derives from the canonical route: the resource tab identity and the sidebar destination.",
   "cases": [
-    { "family": "home", "input": "/dashboard", "expect": "/dashboard", "shell": { "resource": null, "destination": "overview" } },
-    { "family": "home", "input": "/dashboard/", "expect": "/dashboard", "shell": { "resource": null, "destination": "overview" } },
-    { "family": "home", "input": "/dashboard?", "expect": "/dashboard", "shell": { "resource": null, "destination": "overview" } },
-    { "family": "home", "input": "/dashboard?runtimes=1", "expect": "/dashboard", "note": "Asks the web Home for its list instead of auto-resume; the shell owns Home." },
-    { "family": "home", "input": "/dashboard?attention=1", "expect": "/dashboard?attention=1", "shell": { "resource": null, "destination": "overview" } },
-    { "family": "home", "input": "/dashboard?runtimes=1&attention=1", "expect": "/dashboard?attention=1" },
-    { "family": "home", "input": "/dashboard?attention=0", "expect": null },
-    { "family": "home", "input": "/dashboard?hivra=1", "expect": "/dashboard", "note": "The agent page appends this client flag hint when it leaves a resource." },
-    { "family": "home", "input": "/dashboard?tab=files", "expect": "/dashboard?tab=files" },
-    { "family": "home", "input": "/dashboard?agent=x-abc&surface=chat", "expect": null, "note": "The legacy workspace redirect is resolved by the server, not the shell." },
-    { "family": "home", "input": "/dashboard?token=secret", "expect": null },
-
-    { "family": "agents", "input": "/dashboard/agents", "expect": "/dashboard/agents", "shell": { "resource": null, "destination": "agents" } },
-    { "family": "agents", "input": "/dashboard/agents?kind=agent&start=1", "expect": null },
-    { "family": "agents", "input": "/dashboard/chat", "expect": "/dashboard/chat", "shell": { "resource": null, "destination": "agents" } },
-
-    { "family": "computers", "input": "/dashboard/computers", "expect": "/dashboard/computers", "shell": { "resource": null, "destination": "computers" } },
-    { "family": "computers", "input": "/dashboard/computers?targetId=00000000-0000-4E21-8C3A-0D5E7F8A9B1C&launch=1", "expect": "/dashboard/computers?launch=1&targetId=00000000-0000-4e21-8c3a-0d5e7f8a9b1c", "shell": { "resource": null, "destination": "computers" } },
-    { "family": "computers", "input": "/dashboard/computers?launch=true", "expect": null },
-    { "family": "computers", "input": "/dashboard/computers?targetId=server-1", "expect": null },
-    { "family": "computers", "input": "/dashboard/computers?targetId=00000000-0000-4e21-8c3a-0d5e7f8a9b1c&targetId=00000000-0000-4f5e-8a6b-9c0d1e2f3a4b", "expect": null, "note": "Repeated keys are never merged by the shell." },
-    { "family": "computers", "input": "/dashboard/computers/recovery?source=agent_1", "expect": "/dashboard/computers/recovery?source=agent_1", "shell": { "resource": null, "destination": "computers" } },
-    { "family": "computers", "input": "/dashboard/computers/recovery?source=a.b", "expect": null },
-
-    { "family": "launch", "input": "/dashboard/launch", "expect": "/dashboard/launch", "shell": { "resource": null, "destination": "launch" } },
-    { "family": "launch", "input": "/dashboard/launch?start=1&kind=computer", "expect": "/dashboard/launch?kind=computer&start=1", "shell": { "resource": null, "destination": "launch" } },
-    { "family": "launch", "input": "/dashboard/launch?kind=agent", "expect": "/dashboard/launch?kind=agent" },
-    { "family": "launch", "input": "/dashboard/launch?start=1", "expect": "/dashboard/launch?start=1" },
-    { "family": "launch", "input": "/dashboard/launch?kind=agent&start=1&stage=choose", "expect": "/dashboard/launch?kind=agent&start=1&stage=choose", "shell": { "resource": null, "destination": "launch" } },
-    { "family": "launch", "input": "/dashboard/launch?stage=review&profile=codex&kind=agent", "expect": "/dashboard/launch?kind=agent&profile=codex&stage=review" },
-    { "family": "launch", "input": "/dashboard/launch?kind=computer&start=1&profile=windows&targetId=00000000-0000-4E21-8C3A-0D5E7F8A9B1C&stage=plan", "expect": "/dashboard/launch?kind=computer&start=1&profile=windows&targetId=00000000-0000-4e21-8c3a-0d5e7f8a9b1c&stage=plan" },
-    { "family": "launch", "input": "/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=00000000-0000-4f5e-8a6b-9c0d1e2f3a4b", "expect": "/dashboard/launch?kind=computer&start=1&profile=linux-terminal&targetId=00000000-0000-4f5e-8a6b-9c0d1e2f3a4b" },
-    { "family": "launch", "input": "/dashboard/launch?start=1&profile=hermes&kind=agent&templateToken=Share-Token_9&template=tpl_research-01", "expect": "/dashboard/launch?kind=agent&start=1&profile=hermes&template=tpl_research-01&templateToken=Share-Token_9" },
-    { "family": "launch", "input": "/dashboard/launch?draft=00000000-0000-41D2-883F-0016D3CCA427", "expect": "/dashboard/launch?draft=00000000-0000-41d2-883f-0016d3cca427" },
-    { "family": "launch", "input": "/dashboard/launch?upgraded=operator&draft=00000000-0000-41d2-883f-0016d3cca427&stage=plan", "expect": "/dashboard/launch?draft=00000000-0000-41d2-883f-0016d3cca427&upgraded=operator&stage=plan" },
-    { "family": "launch", "input": "/dashboard/launch?upgraded=1", "expect": "/dashboard/launch?upgraded=1" },
-    { "family": "launch", "input": "/dashboard/launch?upgraded=free", "expect": null, "note": "Only a paid plan, or 1, announces an upgrade." },
-    { "family": "launch", "input": "/dashboard/launch?draft=00000000-0000-01d2-883f-0016d3cca427", "expect": null, "note": "Launch draft ids are versioned UUIDs." },
-    { "family": "launch", "input": "/dashboard/launch?stage=capacity", "expect": "/dashboard/launch?stage=plan", "note": "Legacy stage names still restore their merged step." },
-    { "family": "launch", "input": "/dashboard/launch?stage=type", "expect": "/dashboard/launch?stage=choose" },
-    { "family": "launch", "input": "/dashboard/launch?stage=profile", "expect": "/dashboard/launch?stage=choose" },
-    { "family": "launch", "input": "/dashboard/launch?stage=launch", "expect": null, "note": "The launch step is never a history entry." },
-    { "family": "launch", "input": "/dashboard/launch?template=-leading-dash", "expect": null },
-    { "family": "launch", "input": "/dashboard/launch?kind=runtime&start=1", "expect": null },
-    { "family": "launch", "input": "/dashboard/launch?kind=agent&start=0", "expect": null },
-    { "family": "launch", "input": "/dashboard/launch?kind=agent&kind=computer", "expect": null },
-    { "family": "launch", "input": "/dashboard/launch?kind=agent&start=1&token=secret", "expect": null },
-    { "family": "launch", "input": "/dashboard/launch?kind=agent&start=1&profile=private", "expect": null },
-    { "family": "launch", "input": "/dashboard/launch?kind=agent+computer", "expect": null },
-    { "family": "launch", "input": "/dashboard/launch?tab=files", "expect": null, "note": "Launch has no surfaces." },
-    { "family": "launch", "input": "/dashboard/launch?targetId=00000000-0000-4e21-8c3a-0d5e7f8a9b1c&targetId=00000000-0000-4f5e-8a6b-9c0d1e2f3a4b", "expect": null },
-
-    { "family": "agent", "input": "/dashboard/agent/abc", "expect": "/dashboard/agent/abc", "shell": { "resource": "x-abc", "destination": "agents" } },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=desktop", "expect": "/dashboard/agent/abc?tab=desktop", "shell": { "resource": "x-abc", "destination": "agents" } },
-    { "family": "agent", "input": "/dashboard/agent/abc?open=fast&tab=desktop", "expect": "/dashboard/agent/abc?tab=desktop&open=fast" },
-    { "family": "agent", "input": "/dashboard/agent/abc?open=native&tab=desktop", "expect": "/dashboard/agent/abc?tab=desktop&open=native" },
-    { "family": "agent", "input": "/dashboard/agent/abc?welcome=1&tab=terminal", "expect": "/dashboard/agent/abc?tab=terminal", "shell": { "resource": "x-abc", "destination": "agents" }, "note": "A CLI agent's launch result." },
-    { "family": "agent", "input": "/dashboard/agent/abc?welcome=1&tab=aeon", "expect": "/dashboard/agent/abc?tab=aeon", "note": "A dashboard agent's launch result." },
-    { "family": "agent", "input": "/dashboard/agent/abc?welcome=1&tab=manage&section=model#model-settings", "expect": "/dashboard/agent/abc?tab=manage", "shell": { "resource": "x-abc", "destination": "agents" }, "note": "Codex's launch result since Manage gained sections: section is a one-shot arrival parameter like tools." },
-    { "family": "agent", "input": "/dashboard/agent/abc?welcome=1&tab=manage#model-settings", "expect": "/dashboard/agent/abc?tab=manage", "shell": { "resource": "x-abc", "destination": "agents" }, "note": "Codex's launch result with a model key." },
-    { "family": "agent", "input": "/dashboard/agent/abc?welcome=1", "expect": "/dashboard/agent/abc" },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=desktop&welcome=1&open=fast", "expect": "/dashboard/agent/abc?tab=desktop&open=fast" },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=manage&tools=1", "expect": "/dashboard/agent/abc?tab=manage", "note": "Opens the tool picker once, on arrival." },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=desktop&prepare=1", "expect": "/dashboard/agent/abc?tab=desktop" },
-    { "family": "agent", "input": "/dashboard/agent/abc?hivra=1", "expect": "/dashboard/agent/abc" },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=desktop&open=fast&hivra=1", "expect": "/dashboard/agent/abc?tab=desktop&open=fast" },
-    { "family": "agent", "input": "/dashboard/%61gent/abc/?tab=desktop", "expect": "/dashboard/agent/abc?tab=desktop", "shell": { "resource": "x-abc", "destination": "agents" } },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=%66iles", "expect": "/dashboard/agent/abc?tab=files" },
-    { "family": "agent", "input": "/dashboard/agent/abc?t%61b=files", "expect": "/dashboard/agent/abc?tab=files" },
-    { "family": "agent", "input": "/dashboard/agent/abc/manage?tab=terminal", "expect": "/dashboard/agent/abc/manage?tab=terminal", "shell": { "resource": "x-abc", "destination": "agents" } },
-    { "family": "agent", "input": "/dashboard/agent/abc/manage?tab=desktop&open=fast", "expect": null, "note": "Transport renewal belongs to the resource route itself." },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=desktop&open=slow", "expect": null },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=files&open=fast", "expect": null },
-    { "family": "agent", "input": "/dashboard/agent/abc?open=fast", "expect": null },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=desktop&open=fast&token=secret", "expect": null },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=Files", "expect": null },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=", "expect": null },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab", "expect": null },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=https://guest.invalid", "expect": null },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=files&tab=manage", "expect": null },
-    { "family": "agent", "input": "/dashboard/agent/abc?tab=desktop%26open%3Dfast", "expect": null },
-    { "family": "agent", "input": "/dashboard/agent/a.b?tab=desktop", "expect": "/dashboard/agent/a.b?tab=desktop", "shell": { "resource": null, "destination": "agents" }, "note": "Not a resource id, so not a resource tab." },
-    { "family": "agent", "input": "/dashboard/agent/a.b?welcome=1", "expect": null },
-
-    { "family": "instances", "input": "/dashboard/instances/inst-1", "expect": "/dashboard/instances/inst-1", "shell": { "resource": "h-inst-1", "destination": "agents" } },
-    { "family": "instances", "input": "/dashboard/instances/inst-1?surface=chat", "expect": "/dashboard/instances/inst-1?surface=chat", "shell": { "resource": "h-inst-1", "destination": "agents" } },
-    { "family": "instances", "input": "/dashboard/instances/inst-1?surface=chat&welcome=1", "expect": "/dashboard/instances/inst-1?surface=chat", "shell": { "resource": "h-inst-1", "destination": "agents" }, "note": "A Hermes launch result." },
-    { "family": "instances", "input": "/dashboard/instances/inst-1?focus=nous-tool-gateway&surface=chat&welcome=1", "expect": "/dashboard/instances/inst-1?surface=chat" },
-    { "family": "instances", "input": "/dashboard/instances/inst-1?surface=chat&connect=telegram", "expect": "/dashboard/instances/inst-1?surface=chat" },
-    { "family": "instances", "input": "/dashboard/instances/inst-1?connect=channels", "expect": "/dashboard/instances/inst-1" },
-    { "family": "instances", "input": "/dashboard/instances/inst-1?surface=tui", "expect": null, "note": "The terminal is its own route." },
-    { "family": "instances", "input": "/dashboard/instances/inst-1/console?tab=tasks", "expect": "/dashboard/instances/inst-1/console?tab=tasks", "shell": { "resource": "h-inst-1", "destination": "agents" } },
-    { "family": "instances", "input": "/dashboard/instances/inst-1/tui", "expect": "/dashboard/instances/inst-1/tui", "shell": { "resource": "h-inst-1", "destination": "agents" } },
-    { "family": "instances", "input": "/dashboard/instances/inst-1/explorer", "expect": "/dashboard/instances/inst-1/explorer", "shell": { "resource": "h-inst-1", "destination": "agents" } },
-    { "family": "instances", "input": "/dashboard/instances/inst-1/console?welcome=1", "expect": null, "note": "Arrival parameters belong to the instance chat route only." },
-
-    { "family": "capacity", "input": "/dashboard/infrastructure", "expect": "/dashboard/infrastructure", "shell": { "resource": null, "destination": "infrastructure" } },
-    { "family": "capacity", "input": "/dashboard/infrastructure?returnTo=unified-launch&launch=codex", "expect": "/dashboard/infrastructure?launch=codex&returnTo=unified-launch", "shell": { "resource": null, "destination": "infrastructure" } },
-    { "family": "capacity", "input": "/dashboard/infrastructure?launch=linux-desktop", "expect": "/dashboard/infrastructure?launch=linux-desktop" },
-    { "family": "capacity", "input": "/dashboard/infrastructure?launch=hermes", "expect": null, "note": "Hermes runs on Hivra Cloud only." },
-    { "family": "capacity", "input": "/dashboard/infrastructure?returnTo=%2Fdashboard%2Fbilling", "expect": null, "note": "Only the in-launch return is a route parameter." },
-    { "family": "capacity", "input": "/dashboard/infrastructure?replaceToken=00000000-0000-4F5E-8A6B-9C0D1E2F3A4B", "expect": "/dashboard/infrastructure?replaceToken=00000000-0000-4f5e-8a6b-9c0d1e2f3a4b", "note": "Names the connection whose token to replace; it is not a credential." },
-    { "family": "capacity", "input": "/dashboard/infrastructure?replaceToken=dop_v1_secret", "expect": null },
-
-    { "family": "activity", "input": "/dashboard/activity", "expect": "/dashboard/activity", "shell": { "resource": null, "destination": "activity" } },
-    { "family": "activity", "input": "/dashboard/usage", "expect": "/dashboard/usage", "shell": { "resource": null, "destination": "activity" } },
-
-    { "family": "settings", "input": "/dashboard/settings", "expect": "/dashboard/settings", "shell": { "resource": null, "destination": "settings" } },
-    { "family": "settings", "input": "/dashboard/settings/help", "expect": "/dashboard/settings/help", "shell": { "resource": null, "destination": "settings" } },
-    { "family": "settings", "input": "/dashboard/templates/shared/Share-Token_9", "expect": "/dashboard/templates/shared/Share-Token_9", "shell": { "resource": null, "destination": "settings" } },
-
-    { "family": "billing", "input": "/dashboard/billing", "expect": "/dashboard/billing", "shell": { "resource": null, "destination": "settings" } },
-    { "family": "billing", "input": "/dashboard/billing?tab=overview", "expect": "/dashboard/billing?tab=overview", "shell": { "resource": null, "destination": "settings" } },
-    { "family": "billing", "input": "/dashboard/wallet", "expect": "/dashboard/wallet", "shell": { "resource": null, "destination": "settings" } },
-    { "family": "billing", "input": "/dashboard/billing?tab=overview&returnTo=%2Fdashboard%2Flaunch%3Fdraft%3D00000000-0000-41d2-883f-0016d3cca427", "expect": null, "note": "Billing returns and checkout results stay with the page that owns them." },
-    { "family": "billing", "input": "/dashboard/billing?session_id=cs_test_a1B2c3", "expect": null },
-    { "family": "billing", "input": "/dashboard/wallet?from=billing", "expect": null },
-    { "family": "billing", "input": "/dashboard/convert", "expect": "/dashboard/convert", "shell": { "resource": null, "destination": null } },
-
-    { "family": "fragment", "input": "/dashboard#token=secret", "expect": "/dashboard", "note": "Fragments are discarded, never forwarded." },
-    { "family": "fragment", "input": "/dashboard#/../../login", "expect": "/dashboard" },
-    { "family": "fragment", "input": "/dashboard/agent/abc#x?tab=desktop", "expect": "/dashboard/agent/abc", "note": "A query after # belongs to the fragment." },
-    { "family": "fragment", "input": "/dashboard/agent/abc?tab=desktop#", "expect": "/dashboard/agent/abc?tab=desktop" },
-    { "family": "fragment", "input": "/dashboard/agent/abc?tab=manage#resources", "expect": "/dashboard/agent/abc?tab=manage" },
-
-    { "family": "security", "input": "", "expect": null },
-    { "family": "security", "input": "/", "expect": null },
-    { "family": "security", "input": "https://example.test/dashboard", "expect": null },
-    { "family": "security", "input": "http://127.0.0.1:3000/dashboard", "expect": null },
-    { "family": "security", "input": "//example.test/dashboard", "expect": null },
-    { "family": "security", "input": "javascript:alert(1)", "expect": null },
-    { "family": "security", "input": "dashboard/agents", "expect": null },
-    { "family": "security", "input": "/login", "expect": null },
-    { "family": "security", "input": "/sign-in", "expect": null },
-    { "family": "security", "input": "/api/instances", "expect": null },
-    { "family": "security", "input": "/dashboard-evil", "expect": null },
-    { "family": "security", "input": "/DASHBOARD", "expect": null },
-    { "family": "security", "input": "/dashboard/../login", "expect": null },
-    { "family": "security", "input": "/dashboard/%2e%2e/login", "expect": null },
-    { "family": "security", "input": "/dashboard/%252e%252e/login", "expect": null },
-    { "family": "security", "input": "/dashboard/./agents", "expect": null },
-    { "family": "security", "input": "/dashboard//agents", "expect": null },
-    { "family": "security", "input": "/dashboard//", "expect": null },
-    { "family": "security", "input": "/dashboard/agent%2fabc", "expect": null },
-    { "family": "security", "input": "/dashboard/agent%2Fabc", "expect": null },
-    { "family": "security", "input": "/dashboard/agent%5cabc", "expect": null },
-    { "family": "security", "input": "/dashboard/agent%255citem", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/%2569tem", "expect": null },
-    { "family": "security", "input": "/dashboard/agent\\abc", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/..\\api", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/%23fragment", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/%3fquery", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/abc;x=1", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/abc@guest.invalid", "expect": null },
-    { "family": "security", "input": "/dashboard/\nabc", "expect": null },
-    { "family": "security", "input": "/dashboard\t", "expect": null },
-    { "family": "security", "input": "/dashboard /agents", "expect": null },
-    { "family": "security", "input": "/dashboard/\u0000abc", "expect": null },
-    { "family": "security", "input": "/dashboard/%00abc", "expect": null },
-    { "family": "security", "input": "/dashboard/%7Fabc", "expect": null },
-    { "family": "security", "input": "/dashboard/%20abc", "expect": null },
-    { "family": "security", "input": "/dashboard?tab=files\n", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/abc?tab=%0Afiles", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/abc?welcome=%00", "expect": null, "note": "A discarded arrival value is still input." },
-    { "family": "security", "input": "/dashboard/%xx", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/abc?tab=%6", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/abc?tab=%+6", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/é", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/%C3%A9", "expect": null },
-    { "family": "security", "input": "/dashboard/agent/abc?tab=%C3%A9", "expect": null },
-    { "family": "security", "input": "/dashboard?&tab=files", "expect": null },
-    { "family": "security", "input": "/dashboard?tab=files&", "expect": null },
-    { "family": "security", "input": "/dashboard?=files", "expect": null },
-    { "family": "security", "input": "/dashboard?1tab=files", "expect": null },
-    { "family": "security", "input": "/dashboard?tab=files&tab=manage", "expect": null },
-    { "family": "security", "input": "/dashboard?tab=https://guest.invalid", "expect": null },
-
-    { "family": "value-set", "input": "/dashboard/launch?profile=claude-code&stage=choose", "expect": "/dashboard/launch?profile=claude-code&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=codex&stage=choose", "expect": "/dashboard/launch?profile=codex&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=hermes&stage=choose", "expect": "/dashboard/launch?profile=hermes&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=hermes-computer&stage=choose", "expect": "/dashboard/launch?profile=hermes-computer&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=openclaw&stage=choose", "expect": "/dashboard/launch?profile=openclaw&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=agent-zero&stage=choose", "expect": "/dashboard/launch?profile=agent-zero&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=openbot&stage=choose", "expect": "/dashboard/launch?profile=openbot&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=nuphos&stage=choose", "expect": "/dashboard/launch?profile=nuphos&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=aeon&stage=choose", "expect": "/dashboard/launch?profile=aeon&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=deepseek-harness&stage=choose", "expect": "/dashboard/launch?profile=deepseek-harness&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=ubuntu-desktop&stage=choose", "expect": "/dashboard/launch?profile=ubuntu-desktop&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=ubuntu-server&stage=choose", "expect": "/dashboard/launch?profile=ubuntu-server&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=linux-terminal&stage=choose", "expect": "/dashboard/launch?profile=linux-terminal&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=omarchy&stage=choose", "expect": "/dashboard/launch?profile=omarchy&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?profile=windows&stage=choose", "expect": "/dashboard/launch?profile=windows&stage=choose" },
-    { "family": "value-set", "input": "/dashboard/infrastructure?launch=claude-code", "expect": "/dashboard/infrastructure?launch=claude-code" },
-    { "family": "value-set", "input": "/dashboard/infrastructure?launch=codex", "expect": "/dashboard/infrastructure?launch=codex" },
-    { "family": "value-set", "input": "/dashboard/infrastructure?launch=aeon", "expect": "/dashboard/infrastructure?launch=aeon" },
-    { "family": "value-set", "input": "/dashboard/infrastructure?launch=openclaw", "expect": "/dashboard/infrastructure?launch=openclaw" },
-    { "family": "value-set", "input": "/dashboard/infrastructure?launch=agent-zero", "expect": "/dashboard/infrastructure?launch=agent-zero" },
-    { "family": "value-set", "input": "/dashboard/infrastructure?launch=openbot", "expect": "/dashboard/infrastructure?launch=openbot" },
-    { "family": "value-set", "input": "/dashboard/infrastructure?launch=nuphos", "expect": "/dashboard/infrastructure?launch=nuphos" },
-    { "family": "value-set", "input": "/dashboard/infrastructure?launch=linux-desktop", "expect": "/dashboard/infrastructure?launch=linux-desktop" },
-    { "family": "value-set", "input": "/dashboard/infrastructure?launch=linux-terminal", "expect": "/dashboard/infrastructure?launch=linux-terminal" },
-    { "family": "value-set", "input": "/dashboard/infrastructure?launch=windows", "expect": "/dashboard/infrastructure?launch=windows" },
-    { "family": "value-set", "input": "/dashboard/launch?upgraded=operator", "expect": "/dashboard/launch?upgraded=operator" },
-    { "family": "value-set", "input": "/dashboard/launch?upgraded=fleet", "expect": "/dashboard/launch?upgraded=fleet" },
-    { "family": "value-set", "input": "/dashboard/launch?upgraded=command", "expect": "/dashboard/launch?upgraded=command" },
-    { "family": "value-set", "input": "/dashboard/launch?stage=choose", "expect": "/dashboard/launch?stage=choose" },
-    { "family": "value-set", "input": "/dashboard/launch?stage=plan", "expect": "/dashboard/launch?stage=plan" },
-    { "family": "value-set", "input": "/dashboard/launch?stage=review", "expect": "/dashboard/launch?stage=review" }
+    {
+      "family": "home",
+      "input": "/dashboard",
+      "expect": "/dashboard",
+      "shell": {
+        "resource": null,
+        "destination": "overview"
+      }
+    },
+    {
+      "family": "home",
+      "input": "/dashboard/",
+      "expect": "/dashboard",
+      "shell": {
+        "resource": null,
+        "destination": "overview"
+      }
+    },
+    {
+      "family": "home",
+      "input": "/dashboard?",
+      "expect": "/dashboard",
+      "shell": {
+        "resource": null,
+        "destination": "overview"
+      }
+    },
+    {
+      "family": "home",
+      "input": "/dashboard?runtimes=1",
+      "expect": "/dashboard",
+      "note": "Asks the web Home for its list instead of auto-resume; the shell owns Home."
+    },
+    {
+      "family": "home",
+      "input": "/dashboard?attention=1",
+      "expect": "/dashboard?attention=1",
+      "shell": {
+        "resource": null,
+        "destination": "overview"
+      }
+    },
+    {
+      "family": "home",
+      "input": "/dashboard?runtimes=1&attention=1",
+      "expect": "/dashboard?attention=1"
+    },
+    {
+      "family": "home",
+      "input": "/dashboard?attention=0",
+      "expect": null
+    },
+    {
+      "family": "home",
+      "input": "/dashboard?hivra=1",
+      "expect": "/dashboard",
+      "note": "The agent page appends this client flag hint when it leaves a resource."
+    },
+    {
+      "family": "home",
+      "input": "/dashboard?tab=files",
+      "expect": "/dashboard?tab=files"
+    },
+    {
+      "family": "home",
+      "input": "/dashboard?agent=x-abc&surface=chat",
+      "expect": null,
+      "note": "The legacy workspace redirect is resolved by the server, not the shell."
+    },
+    {
+      "family": "home",
+      "input": "/dashboard?token=secret",
+      "expect": null
+    },
+    {
+      "family": "agents",
+      "input": "/dashboard/agents",
+      "expect": "/dashboard/agents",
+      "shell": {
+        "resource": null,
+        "destination": "agents"
+      }
+    },
+    {
+      "family": "agents",
+      "input": "/dashboard/agents?kind=agent&start=1",
+      "expect": null
+    },
+    {
+      "family": "agents",
+      "input": "/dashboard/chat",
+      "expect": "/dashboard/chat",
+      "shell": {
+        "resource": null,
+        "destination": "agents"
+      }
+    },
+    {
+      "family": "computers",
+      "input": "/dashboard/computers",
+      "expect": "/dashboard/computers",
+      "shell": {
+        "resource": null,
+        "destination": "computers"
+      }
+    },
+    {
+      "family": "computers",
+      "input": "/dashboard/computers?targetId=00000000-0000-4E21-8C3A-0D5E7F8A9B1C&launch=1",
+      "expect": "/dashboard/computers?launch=1&targetId=00000000-0000-4e21-8c3a-0d5e7f8a9b1c",
+      "shell": {
+        "resource": null,
+        "destination": "computers"
+      }
+    },
+    {
+      "family": "computers",
+      "input": "/dashboard/computers?launch=true",
+      "expect": null
+    },
+    {
+      "family": "computers",
+      "input": "/dashboard/computers?targetId=server-1",
+      "expect": null
+    },
+    {
+      "family": "computers",
+      "input": "/dashboard/computers?targetId=00000000-0000-4e21-8c3a-0d5e7f8a9b1c&targetId=00000000-0000-4f5e-8a6b-9c0d1e2f3a4b",
+      "expect": null,
+      "note": "Repeated keys are never merged by the shell."
+    },
+    {
+      "family": "computers",
+      "input": "/dashboard/computers/recovery?source=agent_1",
+      "expect": "/dashboard/computers/recovery?source=agent_1",
+      "shell": {
+        "resource": null,
+        "destination": "computers"
+      }
+    },
+    {
+      "family": "computers",
+      "input": "/dashboard/computers/recovery?source=a.b",
+      "expect": null
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch",
+      "expect": "/dashboard/launch",
+      "shell": {
+        "resource": null,
+        "destination": "launch"
+      }
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?start=1&kind=computer",
+      "expect": "/dashboard/launch?kind=computer&start=1",
+      "shell": {
+        "resource": null,
+        "destination": "launch"
+      }
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?kind=agent",
+      "expect": "/dashboard/launch?kind=agent"
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?start=1",
+      "expect": "/dashboard/launch?start=1"
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?kind=agent&start=1&stage=choose",
+      "expect": "/dashboard/launch?kind=agent&start=1&stage=choose",
+      "shell": {
+        "resource": null,
+        "destination": "launch"
+      }
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?stage=review&profile=codex&kind=agent",
+      "expect": "/dashboard/launch?kind=agent&profile=codex&stage=review"
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?kind=computer&start=1&profile=windows&targetId=00000000-0000-4E21-8C3A-0D5E7F8A9B1C&stage=plan",
+      "expect": "/dashboard/launch?kind=computer&start=1&profile=windows&targetId=00000000-0000-4e21-8c3a-0d5e7f8a9b1c&stage=plan"
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?kind=computer&profile=linux-terminal&start=1&targetId=00000000-0000-4f5e-8a6b-9c0d1e2f3a4b",
+      "expect": "/dashboard/launch?kind=computer&start=1&profile=linux-terminal&targetId=00000000-0000-4f5e-8a6b-9c0d1e2f3a4b"
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?start=1&profile=hermes&kind=agent&templateToken=Share-Token_9&template=tpl_research-01",
+      "expect": "/dashboard/launch?kind=agent&start=1&profile=hermes&template=tpl_research-01&templateToken=Share-Token_9"
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?draft=00000000-0000-41D2-883F-0016D3CCA427",
+      "expect": "/dashboard/launch?draft=00000000-0000-41d2-883f-0016d3cca427"
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?upgraded=operator&draft=00000000-0000-41d2-883f-0016d3cca427&stage=plan",
+      "expect": "/dashboard/launch?draft=00000000-0000-41d2-883f-0016d3cca427&upgraded=operator&stage=plan"
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?upgraded=1",
+      "expect": "/dashboard/launch?upgraded=1"
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?upgraded=free",
+      "expect": null,
+      "note": "Only a paid plan, or 1, announces an upgrade."
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?draft=00000000-0000-01d2-883f-0016d3cca427",
+      "expect": null,
+      "note": "Launch draft ids are versioned UUIDs."
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?stage=capacity",
+      "expect": "/dashboard/launch?stage=plan",
+      "note": "Legacy stage names still restore their merged step."
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?stage=type",
+      "expect": "/dashboard/launch?stage=choose"
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?stage=profile",
+      "expect": "/dashboard/launch?stage=choose"
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?stage=launch",
+      "expect": null,
+      "note": "The launch step is never a history entry."
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?template=-leading-dash",
+      "expect": null
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?kind=runtime&start=1",
+      "expect": null
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?kind=agent&start=0",
+      "expect": null
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?kind=agent&kind=computer",
+      "expect": null
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?kind=agent&start=1&token=secret",
+      "expect": null
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?kind=agent&start=1&profile=private",
+      "expect": "/dashboard/launch?kind=agent&start=1&profile=private",
+      "note": "Catalog apps are accepted by slug shape; the page re-validates the id."
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?kind=agent+computer",
+      "expect": null
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?tab=files",
+      "expect": null,
+      "note": "Launch has no surfaces."
+    },
+    {
+      "family": "launch",
+      "input": "/dashboard/launch?targetId=00000000-0000-4e21-8c3a-0d5e7f8a9b1c&targetId=00000000-0000-4f5e-8a6b-9c0d1e2f3a4b",
+      "expect": null
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc",
+      "expect": "/dashboard/agent/abc",
+      "shell": {
+        "resource": "x-abc",
+        "destination": "agents"
+      }
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=desktop",
+      "expect": "/dashboard/agent/abc?tab=desktop",
+      "shell": {
+        "resource": "x-abc",
+        "destination": "agents"
+      }
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?open=fast&tab=desktop",
+      "expect": "/dashboard/agent/abc?tab=desktop&open=fast"
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?open=native&tab=desktop",
+      "expect": "/dashboard/agent/abc?tab=desktop&open=native"
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?welcome=1&tab=terminal",
+      "expect": "/dashboard/agent/abc?tab=terminal",
+      "shell": {
+        "resource": "x-abc",
+        "destination": "agents"
+      },
+      "note": "A CLI agent's launch result."
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?welcome=1&tab=aeon",
+      "expect": "/dashboard/agent/abc?tab=aeon",
+      "note": "A dashboard agent's launch result."
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?welcome=1&tab=manage&section=model#model-settings",
+      "expect": "/dashboard/agent/abc?tab=manage",
+      "shell": {
+        "resource": "x-abc",
+        "destination": "agents"
+      },
+      "note": "Codex's launch result since Manage gained sections: section is a one-shot arrival parameter like tools."
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?welcome=1&tab=manage#model-settings",
+      "expect": "/dashboard/agent/abc?tab=manage",
+      "shell": {
+        "resource": "x-abc",
+        "destination": "agents"
+      },
+      "note": "Codex's launch result with a model key."
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?welcome=1",
+      "expect": "/dashboard/agent/abc"
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=desktop&welcome=1&open=fast",
+      "expect": "/dashboard/agent/abc?tab=desktop&open=fast"
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=manage&tools=1",
+      "expect": "/dashboard/agent/abc?tab=manage",
+      "note": "Opens the tool picker once, on arrival."
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=desktop&prepare=1",
+      "expect": "/dashboard/agent/abc?tab=desktop"
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?hivra=1",
+      "expect": "/dashboard/agent/abc"
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=desktop&open=fast&hivra=1",
+      "expect": "/dashboard/agent/abc?tab=desktop&open=fast"
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/%61gent/abc/?tab=desktop",
+      "expect": "/dashboard/agent/abc?tab=desktop",
+      "shell": {
+        "resource": "x-abc",
+        "destination": "agents"
+      }
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=%66iles",
+      "expect": "/dashboard/agent/abc?tab=files"
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?t%61b=files",
+      "expect": "/dashboard/agent/abc?tab=files"
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc/manage?tab=terminal",
+      "expect": "/dashboard/agent/abc/manage?tab=terminal",
+      "shell": {
+        "resource": "x-abc",
+        "destination": "agents"
+      }
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc/manage?tab=desktop&open=fast",
+      "expect": null,
+      "note": "Transport renewal belongs to the resource route itself."
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=desktop&open=slow",
+      "expect": null
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=files&open=fast",
+      "expect": null
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?open=fast",
+      "expect": null
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=desktop&open=fast&token=secret",
+      "expect": null
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=Files",
+      "expect": null
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=",
+      "expect": null
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab",
+      "expect": null
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=https://guest.invalid",
+      "expect": null
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=files&tab=manage",
+      "expect": null
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/abc?tab=desktop%26open%3Dfast",
+      "expect": null
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/a.b?tab=desktop",
+      "expect": "/dashboard/agent/a.b?tab=desktop",
+      "shell": {
+        "resource": null,
+        "destination": "agents"
+      },
+      "note": "Not a resource id, so not a resource tab."
+    },
+    {
+      "family": "agent",
+      "input": "/dashboard/agent/a.b?welcome=1",
+      "expect": null
+    },
+    {
+      "family": "instances",
+      "input": "/dashboard/instances/inst-1",
+      "expect": "/dashboard/instances/inst-1",
+      "shell": {
+        "resource": "h-inst-1",
+        "destination": "agents"
+      }
+    },
+    {
+      "family": "instances",
+      "input": "/dashboard/instances/inst-1?surface=chat",
+      "expect": "/dashboard/instances/inst-1?surface=chat",
+      "shell": {
+        "resource": "h-inst-1",
+        "destination": "agents"
+      }
+    },
+    {
+      "family": "instances",
+      "input": "/dashboard/instances/inst-1?surface=chat&welcome=1",
+      "expect": "/dashboard/instances/inst-1?surface=chat",
+      "shell": {
+        "resource": "h-inst-1",
+        "destination": "agents"
+      },
+      "note": "A Hermes launch result."
+    },
+    {
+      "family": "instances",
+      "input": "/dashboard/instances/inst-1?focus=nous-tool-gateway&surface=chat&welcome=1",
+      "expect": "/dashboard/instances/inst-1?surface=chat"
+    },
+    {
+      "family": "instances",
+      "input": "/dashboard/instances/inst-1?surface=chat&connect=telegram",
+      "expect": "/dashboard/instances/inst-1?surface=chat"
+    },
+    {
+      "family": "instances",
+      "input": "/dashboard/instances/inst-1?connect=channels",
+      "expect": "/dashboard/instances/inst-1"
+    },
+    {
+      "family": "instances",
+      "input": "/dashboard/instances/inst-1?surface=tui",
+      "expect": null,
+      "note": "The terminal is its own route."
+    },
+    {
+      "family": "instances",
+      "input": "/dashboard/instances/inst-1/console?tab=tasks",
+      "expect": "/dashboard/instances/inst-1/console?tab=tasks",
+      "shell": {
+        "resource": "h-inst-1",
+        "destination": "agents"
+      }
+    },
+    {
+      "family": "instances",
+      "input": "/dashboard/instances/inst-1/tui",
+      "expect": "/dashboard/instances/inst-1/tui",
+      "shell": {
+        "resource": "h-inst-1",
+        "destination": "agents"
+      }
+    },
+    {
+      "family": "instances",
+      "input": "/dashboard/instances/inst-1/explorer",
+      "expect": "/dashboard/instances/inst-1/explorer",
+      "shell": {
+        "resource": "h-inst-1",
+        "destination": "agents"
+      }
+    },
+    {
+      "family": "instances",
+      "input": "/dashboard/instances/inst-1/console?welcome=1",
+      "expect": null,
+      "note": "Arrival parameters belong to the instance chat route only."
+    },
+    {
+      "family": "capacity",
+      "input": "/dashboard/infrastructure",
+      "expect": "/dashboard/infrastructure",
+      "shell": {
+        "resource": null,
+        "destination": "infrastructure"
+      }
+    },
+    {
+      "family": "capacity",
+      "input": "/dashboard/infrastructure?returnTo=unified-launch&launch=codex",
+      "expect": "/dashboard/infrastructure?launch=codex&returnTo=unified-launch",
+      "shell": {
+        "resource": null,
+        "destination": "infrastructure"
+      }
+    },
+    {
+      "family": "capacity",
+      "input": "/dashboard/infrastructure?launch=linux-desktop",
+      "expect": "/dashboard/infrastructure?launch=linux-desktop"
+    },
+    {
+      "family": "capacity",
+      "input": "/dashboard/infrastructure?launch=hermes",
+      "expect": null,
+      "note": "Hermes runs on Hivra Cloud only."
+    },
+    {
+      "family": "capacity",
+      "input": "/dashboard/infrastructure?returnTo=%2Fdashboard%2Fbilling",
+      "expect": null,
+      "note": "Only the in-launch return is a route parameter."
+    },
+    {
+      "family": "capacity",
+      "input": "/dashboard/infrastructure?replaceToken=00000000-0000-4F5E-8A6B-9C0D1E2F3A4B",
+      "expect": "/dashboard/infrastructure?replaceToken=00000000-0000-4f5e-8a6b-9c0d1e2f3a4b",
+      "note": "Names the connection whose token to replace; it is not a credential."
+    },
+    {
+      "family": "capacity",
+      "input": "/dashboard/infrastructure?replaceToken=dop_v1_secret",
+      "expect": null
+    },
+    {
+      "family": "activity",
+      "input": "/dashboard/activity",
+      "expect": "/dashboard/activity",
+      "shell": {
+        "resource": null,
+        "destination": "activity"
+      }
+    },
+    {
+      "family": "activity",
+      "input": "/dashboard/usage",
+      "expect": "/dashboard/usage",
+      "shell": {
+        "resource": null,
+        "destination": "activity"
+      }
+    },
+    {
+      "family": "settings",
+      "input": "/dashboard/settings",
+      "expect": "/dashboard/settings",
+      "shell": {
+        "resource": null,
+        "destination": "settings"
+      }
+    },
+    {
+      "family": "settings",
+      "input": "/dashboard/settings/help",
+      "expect": "/dashboard/settings/help",
+      "shell": {
+        "resource": null,
+        "destination": "settings"
+      }
+    },
+    {
+      "family": "settings",
+      "input": "/dashboard/templates/shared/Share-Token_9",
+      "expect": "/dashboard/templates/shared/Share-Token_9",
+      "shell": {
+        "resource": null,
+        "destination": "settings"
+      }
+    },
+    {
+      "family": "billing",
+      "input": "/dashboard/billing",
+      "expect": "/dashboard/billing",
+      "shell": {
+        "resource": null,
+        "destination": "settings"
+      }
+    },
+    {
+      "family": "billing",
+      "input": "/dashboard/billing?tab=overview",
+      "expect": "/dashboard/billing?tab=overview",
+      "shell": {
+        "resource": null,
+        "destination": "settings"
+      }
+    },
+    {
+      "family": "billing",
+      "input": "/dashboard/wallet",
+      "expect": "/dashboard/wallet",
+      "shell": {
+        "resource": null,
+        "destination": "settings"
+      }
+    },
+    {
+      "family": "billing",
+      "input": "/dashboard/billing?tab=overview&returnTo=%2Fdashboard%2Flaunch%3Fdraft%3D00000000-0000-41d2-883f-0016d3cca427",
+      "expect": null,
+      "note": "Billing returns and checkout results stay with the page that owns them."
+    },
+    {
+      "family": "billing",
+      "input": "/dashboard/billing?session_id=cs_test_a1B2c3",
+      "expect": null
+    },
+    {
+      "family": "billing",
+      "input": "/dashboard/wallet?from=billing",
+      "expect": null
+    },
+    {
+      "family": "billing",
+      "input": "/dashboard/convert",
+      "expect": "/dashboard/convert",
+      "shell": {
+        "resource": null,
+        "destination": null
+      }
+    },
+    {
+      "family": "fragment",
+      "input": "/dashboard#token=secret",
+      "expect": "/dashboard",
+      "note": "Fragments are discarded, never forwarded."
+    },
+    {
+      "family": "fragment",
+      "input": "/dashboard#/../../login",
+      "expect": "/dashboard"
+    },
+    {
+      "family": "fragment",
+      "input": "/dashboard/agent/abc#x?tab=desktop",
+      "expect": "/dashboard/agent/abc",
+      "note": "A query after # belongs to the fragment."
+    },
+    {
+      "family": "fragment",
+      "input": "/dashboard/agent/abc?tab=desktop#",
+      "expect": "/dashboard/agent/abc?tab=desktop"
+    },
+    {
+      "family": "fragment",
+      "input": "/dashboard/agent/abc?tab=manage#resources",
+      "expect": "/dashboard/agent/abc?tab=manage"
+    },
+    {
+      "family": "security",
+      "input": "",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "https://example.test/dashboard",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "http://127.0.0.1:3000/dashboard",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "//example.test/dashboard",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "javascript:alert(1)",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "dashboard/agents",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/login",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/sign-in",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/api/instances",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard-evil",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/DASHBOARD",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/../login",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/%2e%2e/login",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/%252e%252e/login",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/./agents",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard//agents",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard//",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent%2fabc",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent%2Fabc",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent%5cabc",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent%255citem",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/%2569tem",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent\\abc",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/..\\api",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/%23fragment",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/%3fquery",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/abc;x=1",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/abc@guest.invalid",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/\nabc",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard\t",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard /agents",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/\u0000abc",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/%00abc",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/%7Fabc",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/%20abc",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard?tab=files\n",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/abc?tab=%0Afiles",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/abc?welcome=%00",
+      "expect": null,
+      "note": "A discarded arrival value is still input."
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/%xx",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/abc?tab=%6",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/abc?tab=%+6",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/\u00e9",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/%C3%A9",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard/agent/abc?tab=%C3%A9",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard?&tab=files",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard?tab=files&",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard?=files",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard?1tab=files",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard?tab=files&tab=manage",
+      "expect": null
+    },
+    {
+      "family": "security",
+      "input": "/dashboard?tab=https://guest.invalid",
+      "expect": null
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=claude-code&stage=choose",
+      "expect": "/dashboard/launch?profile=claude-code&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=codex&stage=choose",
+      "expect": "/dashboard/launch?profile=codex&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=hermes&stage=choose",
+      "expect": "/dashboard/launch?profile=hermes&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=hermes-computer&stage=choose",
+      "expect": "/dashboard/launch?profile=hermes-computer&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=openclaw&stage=choose",
+      "expect": "/dashboard/launch?profile=openclaw&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=agent-zero&stage=choose",
+      "expect": "/dashboard/launch?profile=agent-zero&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=openbot&stage=choose",
+      "expect": "/dashboard/launch?profile=openbot&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=nuphos&stage=choose",
+      "expect": "/dashboard/launch?profile=nuphos&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=nanobot&stage=choose",
+      "expect": "/dashboard/launch?profile=nanobot&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=zeroclaw&stage=choose",
+      "expect": "/dashboard/launch?profile=zeroclaw&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=picoclaw&stage=choose",
+      "expect": "/dashboard/launch?profile=picoclaw&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=opencode&stage=choose",
+      "expect": "/dashboard/launch?profile=opencode&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=goose&stage=choose",
+      "expect": "/dashboard/launch?profile=goose&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=openhands&stage=choose",
+      "expect": "/dashboard/launch?profile=openhands&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=anythingllm&stage=choose",
+      "expect": "/dashboard/launch?profile=anythingllm&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=activepieces&stage=choose",
+      "expect": "/dashboard/launch?profile=activepieces&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=uptime-kuma&stage=choose",
+      "expect": "/dashboard/launch?profile=uptime-kuma&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=aeon&stage=choose",
+      "expect": "/dashboard/launch?profile=aeon&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=deepseek-harness&stage=choose",
+      "expect": "/dashboard/launch?profile=deepseek-harness&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=ubuntu-desktop&stage=choose",
+      "expect": "/dashboard/launch?profile=ubuntu-desktop&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=ubuntu-server&stage=choose",
+      "expect": "/dashboard/launch?profile=ubuntu-server&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=linux-terminal&stage=choose",
+      "expect": "/dashboard/launch?profile=linux-terminal&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=omarchy&stage=choose",
+      "expect": "/dashboard/launch?profile=omarchy&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=windows&stage=choose",
+      "expect": "/dashboard/launch?profile=windows&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=aider&stage=choose",
+      "expect": "/dashboard/launch?profile=aider&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=qwen-code&stage=choose",
+      "expect": "/dashboard/launch?profile=qwen-code&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=qdrant&stage=choose",
+      "expect": "/dashboard/launch?profile=qdrant&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=chroma&stage=choose",
+      "expect": "/dashboard/launch?profile=chroma&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=ollama&stage=choose",
+      "expect": "/dashboard/launch?profile=ollama&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=localai&stage=choose",
+      "expect": "/dashboard/launch?profile=localai&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=drawio&stage=choose",
+      "expect": "/dashboard/launch?profile=drawio&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=excalidraw&stage=choose",
+      "expect": "/dashboard/launch?profile=excalidraw&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=mermaid-live&stage=choose",
+      "expect": "/dashboard/launch?profile=mermaid-live&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=cyberchef&stage=choose",
+      "expect": "/dashboard/launch?profile=cyberchef&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=swagger-ui&stage=choose",
+      "expect": "/dashboard/launch?profile=swagger-ui&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=node-red&stage=choose",
+      "expect": "/dashboard/launch?profile=node-red&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=jenkins&stage=choose",
+      "expect": "/dashboard/launch?profile=jenkins&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=kanboard&stage=choose",
+      "expect": "/dashboard/launch?profile=kanboard&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=kroki&stage=choose",
+      "expect": "/dashboard/launch?profile=kroki&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=syncthing&stage=choose",
+      "expect": "/dashboard/launch?profile=syncthing&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=memos&stage=choose",
+      "expect": "/dashboard/launch?profile=memos&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=wallos&stage=choose",
+      "expect": "/dashboard/launch?profile=wallos&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=shiori&stage=choose",
+      "expect": "/dashboard/launch?profile=shiori&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=actual-budget&stage=choose",
+      "expect": "/dashboard/launch?profile=actual-budget&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=mealie&stage=choose",
+      "expect": "/dashboard/launch?profile=mealie&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=vaultwarden&stage=choose",
+      "expect": "/dashboard/launch?profile=vaultwarden&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=it-tools&stage=choose",
+      "expect": "/dashboard/launch?profile=it-tools&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=trilium&stage=choose",
+      "expect": "/dashboard/launch?profile=trilium&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=freshrss&stage=choose",
+      "expect": "/dashboard/launch?profile=freshrss&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=nextcloud&stage=choose",
+      "expect": "/dashboard/launch?profile=nextcloud&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=grocy&stage=choose",
+      "expect": "/dashboard/launch?profile=grocy&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=dashy&stage=choose",
+      "expect": "/dashboard/launch?profile=dashy&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=heimdall&stage=choose",
+      "expect": "/dashboard/launch?profile=heimdall&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=homepage&stage=choose",
+      "expect": "/dashboard/launch?profile=homepage&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=flame&stage=choose",
+      "expect": "/dashboard/launch?profile=flame&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=grafana&stage=choose",
+      "expect": "/dashboard/launch?profile=grafana&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=beszel&stage=choose",
+      "expect": "/dashboard/launch?profile=beszel&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=openspeedtest&stage=choose",
+      "expect": "/dashboard/launch?profile=openspeedtest&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=changedetection&stage=choose",
+      "expect": "/dashboard/launch?profile=changedetection&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=netdata&stage=choose",
+      "expect": "/dashboard/launch?profile=netdata&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=navidrome&stage=choose",
+      "expect": "/dashboard/launch?profile=navidrome&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=audiobookshelf&stage=choose",
+      "expect": "/dashboard/launch?profile=audiobookshelf&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=kavita&stage=choose",
+      "expect": "/dashboard/launch?profile=kavita&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=calibre-web&stage=choose",
+      "expect": "/dashboard/launch?profile=calibre-web&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=suwayomi&stage=choose",
+      "expect": "/dashboard/launch?profile=suwayomi&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=claude-code",
+      "expect": "/dashboard/infrastructure?launch=claude-code"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=codex",
+      "expect": "/dashboard/infrastructure?launch=codex"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=aeon",
+      "expect": "/dashboard/infrastructure?launch=aeon"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=openclaw",
+      "expect": "/dashboard/infrastructure?launch=openclaw"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=agent-zero",
+      "expect": "/dashboard/infrastructure?launch=agent-zero"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=openbot",
+      "expect": "/dashboard/infrastructure?launch=openbot"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=nuphos",
+      "expect": "/dashboard/infrastructure?launch=nuphos"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=nanobot",
+      "expect": "/dashboard/infrastructure?launch=nanobot"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=zeroclaw",
+      "expect": "/dashboard/infrastructure?launch=zeroclaw"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=picoclaw",
+      "expect": "/dashboard/infrastructure?launch=picoclaw"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=opencode",
+      "expect": "/dashboard/infrastructure?launch=opencode"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=goose",
+      "expect": "/dashboard/infrastructure?launch=goose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=openhands",
+      "expect": "/dashboard/infrastructure?launch=openhands"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=anythingllm",
+      "expect": "/dashboard/infrastructure?launch=anythingllm"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=activepieces",
+      "expect": "/dashboard/infrastructure?launch=activepieces"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=uptime-kuma",
+      "expect": "/dashboard/infrastructure?launch=uptime-kuma"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=linux-desktop",
+      "expect": "/dashboard/infrastructure?launch=linux-desktop"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=linux-terminal",
+      "expect": "/dashboard/infrastructure?launch=linux-terminal"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=windows",
+      "expect": "/dashboard/infrastructure?launch=windows"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=aider",
+      "expect": "/dashboard/infrastructure?launch=aider"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=qwen-code",
+      "expect": "/dashboard/infrastructure?launch=qwen-code"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=qdrant",
+      "expect": "/dashboard/infrastructure?launch=qdrant"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=chroma",
+      "expect": "/dashboard/infrastructure?launch=chroma"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=ollama",
+      "expect": "/dashboard/infrastructure?launch=ollama"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=localai",
+      "expect": "/dashboard/infrastructure?launch=localai"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=drawio",
+      "expect": "/dashboard/infrastructure?launch=drawio"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=excalidraw",
+      "expect": "/dashboard/infrastructure?launch=excalidraw"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=mermaid-live",
+      "expect": "/dashboard/infrastructure?launch=mermaid-live"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=cyberchef",
+      "expect": "/dashboard/infrastructure?launch=cyberchef"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=swagger-ui",
+      "expect": "/dashboard/infrastructure?launch=swagger-ui"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=node-red",
+      "expect": "/dashboard/infrastructure?launch=node-red"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=jenkins",
+      "expect": "/dashboard/infrastructure?launch=jenkins"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=kanboard",
+      "expect": "/dashboard/infrastructure?launch=kanboard"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=kroki",
+      "expect": "/dashboard/infrastructure?launch=kroki"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=syncthing",
+      "expect": "/dashboard/infrastructure?launch=syncthing"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=memos",
+      "expect": "/dashboard/infrastructure?launch=memos"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=wallos",
+      "expect": "/dashboard/infrastructure?launch=wallos"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=shiori",
+      "expect": "/dashboard/infrastructure?launch=shiori"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=actual-budget",
+      "expect": "/dashboard/infrastructure?launch=actual-budget"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=mealie",
+      "expect": "/dashboard/infrastructure?launch=mealie"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=vaultwarden",
+      "expect": "/dashboard/infrastructure?launch=vaultwarden"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=it-tools",
+      "expect": "/dashboard/infrastructure?launch=it-tools"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=trilium",
+      "expect": "/dashboard/infrastructure?launch=trilium"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=freshrss",
+      "expect": "/dashboard/infrastructure?launch=freshrss"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=nextcloud",
+      "expect": "/dashboard/infrastructure?launch=nextcloud"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=grocy",
+      "expect": "/dashboard/infrastructure?launch=grocy"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=dashy",
+      "expect": "/dashboard/infrastructure?launch=dashy"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=heimdall",
+      "expect": "/dashboard/infrastructure?launch=heimdall"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=homepage",
+      "expect": "/dashboard/infrastructure?launch=homepage"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=flame",
+      "expect": "/dashboard/infrastructure?launch=flame"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=grafana",
+      "expect": "/dashboard/infrastructure?launch=grafana"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=beszel",
+      "expect": "/dashboard/infrastructure?launch=beszel"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=openspeedtest",
+      "expect": "/dashboard/infrastructure?launch=openspeedtest"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=changedetection",
+      "expect": "/dashboard/infrastructure?launch=changedetection"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=netdata",
+      "expect": "/dashboard/infrastructure?launch=netdata"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=navidrome",
+      "expect": "/dashboard/infrastructure?launch=navidrome"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=audiobookshelf",
+      "expect": "/dashboard/infrastructure?launch=audiobookshelf"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=kavita",
+      "expect": "/dashboard/infrastructure?launch=kavita"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=calibre-web",
+      "expect": "/dashboard/infrastructure?launch=calibre-web"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=suwayomi",
+      "expect": "/dashboard/infrastructure?launch=suwayomi"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?upgraded=operator",
+      "expect": "/dashboard/launch?upgraded=operator"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?upgraded=fleet",
+      "expect": "/dashboard/launch?upgraded=fleet"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?upgraded=command",
+      "expect": "/dashboard/launch?upgraded=command"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?stage=choose",
+      "expect": "/dashboard/launch?stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?stage=plan",
+      "expect": "/dashboard/launch?stage=plan"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?stage=review",
+      "expect": "/dashboard/launch?stage=review"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=komga&stage=choose",
+      "expect": "/dashboard/launch?profile=komga&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=komga",
+      "expect": "/dashboard/infrastructure?launch=komga"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=traccar&stage=choose",
+      "expect": "/dashboard/launch?profile=traccar&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=umami&stage=choose",
+      "expect": "/dashboard/launch?profile=umami&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=umami",
+      "expect": "/dashboard/infrastructure?launch=umami"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=traccar",
+      "expect": "/dashboard/infrastructure?launch=traccar"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=jenkins&stage=choose",
+      "expect": "/dashboard/launch?profile=jenkins&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=jenkins",
+      "expect": "/dashboard/infrastructure?launch=jenkins"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=miniflux&stage=choose",
+      "expect": "/dashboard/launch?profile=miniflux&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=miniflux",
+      "expect": "/dashboard/infrastructure?launch=miniflux"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=docmost&stage=choose",
+      "expect": "/dashboard/launch?profile=docmost&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=docmost",
+      "expect": "/dashboard/infrastructure?launch=docmost"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=wiki-js&stage=choose",
+      "expect": "/dashboard/launch?profile=wiki-js&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=wiki-js",
+      "expect": "/dashboard/infrastructure?launch=wiki-js"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=linkwarden&stage=choose",
+      "expect": "/dashboard/launch?profile=linkwarden&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=linkwarden",
+      "expect": "/dashboard/infrastructure?launch=linkwarden"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=hedgedoc&stage=choose",
+      "expect": "/dashboard/launch?profile=hedgedoc&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=hedgedoc",
+      "expect": "/dashboard/infrastructure?launch=hedgedoc"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=openobserve&stage=choose",
+      "expect": "/dashboard/launch?profile=openobserve&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=openobserve",
+      "expect": "/dashboard/infrastructure?launch=openobserve"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=immich&stage=choose",
+      "expect": "/dashboard/launch?profile=immich&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=immich",
+      "expect": "/dashboard/infrastructure?launch=immich"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=gogs&stage=choose",
+      "expect": "/dashboard/launch?profile=gogs&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=gogs",
+      "expect": "/dashboard/infrastructure?launch=gogs"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=clickhouse&stage=choose",
+      "expect": "/dashboard/launch?profile=clickhouse&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=clickhouse",
+      "expect": "/dashboard/infrastructure?launch=clickhouse"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=appsmith&stage=choose",
+      "expect": "/dashboard/launch?profile=appsmith&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=appsmith",
+      "expect": "/dashboard/infrastructure?launch=appsmith"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=new-api&stage=choose",
+      "expect": "/dashboard/launch?profile=new-api&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=new-api",
+      "expect": "/dashboard/infrastructure?launch=new-api"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=adguard-home&stage=choose",
+      "expect": "/dashboard/launch?profile=adguard-home&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=adguard-home",
+      "expect": "/dashboard/infrastructure?launch=adguard-home"
+    }
   ]
 }

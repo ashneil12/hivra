@@ -1,0 +1,107 @@
+{
+  "slug": "new-api",
+  "checkedAt": "2026-11-21T11:41:31.645Z",
+  "gitSha": "838d2bd14ad9dca344549c10b4dad208688c40d1",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "QuantumNous/new-api is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "QuantumNous/new-api",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "calciumion/new-api:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "calciumion/new-api:latest",
+        "digest": "sha256:d6effcdbc58175494765c0cc5954bdacb2300516eec79ba1a9c61f9b9fae7b49",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-new-api-jmbi0a",
+        "hostPort": 3262,
+        "image": "calciumion/new-api:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-new-api-jmbi0a",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3262:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-new-api-jmbi0a-data:/data",
+          "calciumion/new-api:latest"
+        ],
+        "runStdout": "6355015e48338c7a3369beacc85651857d24f480aa55aeee156e9f0abba3d0c4",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "32.54MiB / 7.652GiB",
+        "memBytes": 34120663
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 52646,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <meta name=\"google\" content=\"notranslate\" />\n\n    <!-- Primary Meta Tags -->\n    <title>New API</title>\n    <meta name=\"title\" content=\"New API\" />\n    <meta\n      name=\"description\"\n      content=\"Unified AI API gateway and admin dashboard.\"\n    /",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 32.5MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 34120663,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

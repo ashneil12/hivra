@@ -17,6 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 
 import {
   isProxmoxProvisioningConfigured,
@@ -645,6 +646,7 @@ exit 10
 // resolves from the private credential store), mirroring runtime-process.cjs.
 export const DEEPSEEK_ASK_PROMPT = "Reply with exactly the word pong";
 export const DEEPSEEK_ASK_TIMEOUT_SECONDS = 240;
+const DEEPSEEK_ASK_MAX_REPLY_BYTES = 16_384;
 const GUEST_ASK_HOME = "/home/bux/.hivra/deepseek";
 const GUEST_ASK_RUNTIME = "/opt/hivra/deepseek-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js";
 export function deepSeekAskGuestCommand(): string {
@@ -654,7 +656,7 @@ export function deepSeekAskGuestCommand(): string {
 }
 
 // Prints the reply base64-encoded so no byte of it can forge a marker. The guest
-// command's stderr is discarded: only its exit status and stdout are reported.
+// command's stderr is discarded. An extra byte lets the evaluator reject truncation.
 export function buildDeepSeekAskScript(ledger: DeepSeekCanaryLedger): string {
   return `#!/usr/bin/env bash
 set -euo pipefail
@@ -682,10 +684,10 @@ timeout --kill-after=10s ${DEEPSEEK_ASK_TIMEOUT_SECONDS}s "\${GSSH[@]}" "ubuntu@
   > "$GUEST_SSH_IDENTITY_DIR/reply" 2>/dev/null
 status=$?
 set -e
-reply="$(head -c 16384 "$GUEST_SSH_IDENTITY_DIR/reply")"
+reply_b64="$(head -c ${DEEPSEEK_ASK_MAX_REPLY_BYTES + 1} "$GUEST_SSH_IDENTITY_DIR/reply" | base64 -w 0)"
 elapsed_ms=$(( ($(date +%s%N) - started_ns) / 1000000 ))
 printf 'HIVRA_DEEPSEEK_ASK {"vmid":%s,"exitCode":%s,"elapsedMs":%s,"replyB64":"%s"}\n' \
-  "$VMID" "$status" "$elapsed_ms" "$(printf '%s' "$reply" | base64 -w 0)"
+  "$VMID" "$status" "$elapsed_ms" "$reply_b64"
 `;
 }
 
@@ -772,17 +774,22 @@ printf 'HIVRA_DEEPSEEK_CLEAN {"vmid":%s,"operationId":"%s","vmAbsent":true,"volu
 
 export interface DeepSeekAskOutcome { passed: boolean; exitCode: number; elapsedMs: number; reply: string }
 
-/** Passes only for a clean exit whose reply contains "pong". The reply is the
- * model's own text (the key never reaches the guest command), shown trimmed. */
+/** A clean exit and standalone answer, not a diagnostic that quotes the prompt. */
 export function evaluateDeepSeekAsk(receipt: Record<string, unknown>): DeepSeekAskOutcome {
   const { exitCode, elapsedMs, replyB64 } = receipt;
   if (typeof exitCode !== "number" || typeof elapsedMs !== "number" || typeof replyB64 !== "string"
     || !/^[A-Za-z0-9+/]*={0,2}$/.test(replyB64)) {
     throw new Error("Host returned an invalid ask receipt.");
   }
-  // eslint-disable-next-line no-control-regex
-  const reply = Buffer.from(replyB64, "base64").toString("utf8").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim();
-  return { passed: exitCode === 0 && /pong/i.test(reply), exitCode, elapsedMs, reply: reply.slice(0, 2000) };
+  const bytes = Buffer.from(replyB64, "base64");
+  const normalized = stripVTControlCharacters(bytes.toString("utf8")).trim();
+  const reply = normalized.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").slice(0, 2000);
+  return {
+    passed: exitCode === 0 && bytes.length <= DEEPSEEK_ASK_MAX_REPLY_BYTES && /^pong\.?$/i.test(normalized),
+    exitCode,
+    elapsedMs,
+    reply,
+  };
 }
 
 function resultJson(stdout: string, marker: string): Record<string, unknown> {

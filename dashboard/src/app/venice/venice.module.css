@@ -1,5 +1,4 @@
 .hero h1 { max-width: 900px; }
-.promo { display: inline-block; margin: 0 0 28px; padding: 10px 16px; border: 1px solid var(--gold-leaf); color: var(--ink-black); font: 13px/1.6 var(--font-sans); }
 .section { margin-top: 64px; }
 .sectionTitle { margin: 0 0 24px; }
 .section h2, .sectionTitle { margin: 0 0 24px; font-size: clamp(24px, 2.6vw, 34px); line-height: 1.15; font-weight: 500; letter-spacing: -.04em; }

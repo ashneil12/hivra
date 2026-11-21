@@ -3,7 +3,7 @@
 // computer, and a ready connected server is the default over a paid-plan wall.
 
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import type { DeploymentTargetDto } from "@/lib/infrastructure/contracts";
 import { PORTABLE_HIVRA_PROVISIONER_VERSION, PORTABLE_HIVRA_RUNTIME_COMPATIBILITY } from "@/lib/infrastructure/portable-provisioner-contract";
@@ -110,4 +110,30 @@ it("opens a free account on its ready connected server instead of the paid-plan 
   expect(await screen.findAllByText("New Proxmox / pve-01")).not.toHaveLength(0);
   await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
   expect(screen.queryByText(/on Hivra Cloud needs a paid plan/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Change where it runs" }));
+  expect(screen.getByRole("button", { name: /^My infrastructure/ })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.queryByRole("link", { name: /Upgrade to/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("offers a connected server separately from the paid Hivra Cloud path", async () => {
+  targets = [SERVER];
+  render(<LaunchJourney legacyHermesLane />);
+  await screen.findByRole("heading", { name: "What do you want to launch?" });
+  fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
+  await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
+
+  fireEvent.click(screen.getByRole("button", { name: "Change where it runs" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Hivra Cloud/ }));
+
+  const blocker = await screen.findByRole("alert");
+  expect(blocker).toHaveTextContent("A compatible server is already connected; choose it to check capacity");
+  const cost = screen.getByLabelText("Cost", { selector: "dl" });
+  expect(cost).toHaveTextContent("Requires a paid plan to launch on Hivra Cloud.");
+  expect(cost).not.toHaveTextContent(/Free plan allowance/);
+  fireEvent.click(within(blocker).getByRole("button", { name: "Use connected server" }));
+
+  expect(screen.getByRole("button", { name: /^My infrastructure/ })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
 });

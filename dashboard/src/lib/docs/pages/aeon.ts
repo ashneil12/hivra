@@ -1,5 +1,5 @@
 import type { DocPage } from "../types";
-import { HOSTED_COMPUTE_NEEDS_PLAN } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE } from "@/lib/blog/plan-facts";
 import { SERVER_SIDE_AGENTS_KEEP_WORKING } from "@/lib/blog/runtime-facts";
 
 export const doc: DocPage = {
@@ -26,7 +26,7 @@ export const doc: DocPage = {
       heading: "Before you start",
       paragraphs: [
         "You need three things.",
-        "- **A Hivra account.** It costs nothing to create.\n- **Somewhere for the dashboard to run.** " + HOSTED_COMPUTE_NEEDS_PLAN + " Aeon is available on Hivra Cloud or on a Proxmox server you connected. See [Run agents on your own server](/docs/connect-your-own-server) for the server route.\n- **A GitHub account.** Aeon's tasks run as GitHub Actions workflows in your fork, so GitHub applies its own Actions limits and may charge for usage beyond what your account includes. Hivra cannot change that.",
+        "- **A Hivra account.** Create one or sign in.\n- **Somewhere for the dashboard to run.** " + HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE + " Aeon is available on Hivra Cloud or on a Proxmox server you connected. See [Run agents on your own server](/docs/connect-your-own-server) for the server route.\n- **A GitHub account.** Aeon's tasks run as GitHub Actions workflows in your fork, so GitHub applies its own Actions limits and may charge for usage beyond what your account includes. Hivra cannot change that.",
         "The dashboard is light. Hivra's catalog gives Aeon a floor of 0.5 vCPU and 1 GB of RAM, because the dashboard is a web app that needs about 1 GB to build and run. The real work happens on GitHub, so you do not need a big computer for it.",
         "Also decide where the model comes from. Aeon cannot take an API key at launch. Either you set the AI provider key on your GitHub fork, or you choose Hivra credits at launch and Hivra wires them in when you connect GitHub. See [How Aeon gets its model](#how-aeon-gets-its-model) below.",
       ],
@@ -83,7 +83,7 @@ export const doc: DocPage = {
       heading: "Costs",
       paragraphs: [
         "There are up to four separate costs, and none of them replaces another.",
-        "- **The dashboard computer.** " + HOSTED_COMPUTE_NEEDS_PLAN + " On a server you connect, there is no Hivra hosting charge, and you carry the server's own costs. See [Run agents on your own server](/docs/connect-your-own-server).\n- **GitHub Actions.** Billed or limited by GitHub for the minutes your tasks use.\n- **The model.** Your provider if you use your own key, or Hivra credits at provider rates.\n- **Anything your tasks connect to.** Third-party services and data sources have their own terms.",
+        "- **The dashboard computer.** " + HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE + " On a server you connect, there is no Hivra hosting charge, and you carry the server's own costs. See [Run agents on your own server](/docs/connect-your-own-server).\n- **GitHub Actions.** Billed or limited by GitHub for the minutes your tasks use.\n- **The model.** Your provider if you use your own key, or Hivra credits at provider rates.\n- **Anything your tasks connect to.** Third-party services and data sources have their own terms.",
         "See [Plans and billing](/docs/plans-and-billing) for the plans.",
       ],
     },

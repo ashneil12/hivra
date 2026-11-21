@@ -7,7 +7,9 @@ import {
   type PlanKey,
 } from "@/lib/subscription";
 import { getStripe } from "@/lib/stripe";
+import { CARD_TRIAL_LIMITS, CARD_TRIAL_METADATA_KEY, isCardTrialSubscription, recordCardTrialStart, releaseCardTrialSleep } from "@/lib/billing/card-trial";
 import { log } from "@/lib/logger";
+import { provisionedHetznerServerId } from "@/lib/hetzner/creation-receipt";
 import { posthogClient } from "@/lib/posthog";
 import {
   grantStripeTopUpCredits,
@@ -336,7 +338,8 @@ export class StripeWebhookService {
 
       try {
         const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-        await this.handleSubscriptionChange(subscription);
+        const outcome = await this.handleSubscriptionChange(subscription);
+        if (outcome === "trial_rejected") return;
         log.info("activated subscription from checkout.session.completed", {
           source: LOG_SOURCE,
           subscriptionId,
@@ -519,7 +522,7 @@ export class StripeWebhookService {
 
     const { data: instance, error: instanceErr } = await supabaseAdmin
       .from("hermes_instances")
-      .select("id, name, hetzner_server_id, disk_size_gb, disk_upgraded, status")
+      .select("id, name, hetzner_server_id, gateway_url, disk_size_gb, disk_upgraded, status")
       .eq("id", instanceId)
       .eq("user_id", userId)
       .maybeSingle();
@@ -569,7 +572,9 @@ export class StripeWebhookService {
     // showing "upgraded" but no actual disk, AND the early-return guard
     // at the top of this method would prevent re-attempts on retry.
     // The user paid for storage they don't have.
-    if (!instance.hetzner_server_id) {
+    // A creation receipt is not a provisioned server yet. Taking the no-Hetzner
+    // branch keeps the irreversible disk expansion off a booting server (F090).
+    if (!provisionedHetznerServerId(instance)) {
       log.warn("instance has no hetzner_server_id — recording storage addon without Hetzner resize", {
         source: LOG_SOURCE,
         failureType: "storage_addon_no_hetzner_server",
@@ -799,6 +804,10 @@ export class StripeWebhookService {
       return;
     }
 
+    if (subscription.status === "canceled" && subscription.metadata[CARD_TRIAL_METADATA_KEY]) {
+      return "trial_rejected" as const;
+    }
+
     const userId = subscription.metadata.user_id;
     const planKey = subscription.metadata.plan as PlanKey;
 
@@ -847,12 +856,17 @@ export class StripeWebhookService {
       ladder.isLadder && ladderConfig && ladder.plan
         ? ladderSubscriptionColumns(ladderConfig, ladder.plan.planKey, ladder.alwaysOnExtras)
         : null;
-    const plan = {
-      maxAgents: ladderLimits?.maxAgents ?? legacyPlan.maxAgents,
-      totalCpu: ladderLimits?.totalCpu ?? legacyPlan.totalCpu,
-      totalRam: ladderLimits?.totalRam ?? legacyPlan.totalRam,
-      priority: legacyPlan.priority,
-    };
+    // A card trial gets the trial's small pool until Stripe charges the card;
+    // the first paid event writes the plan's own limits.
+    const cardTrial = isCardTrialSubscription(subscription);
+    const plan = cardTrial
+      ? { ...CARD_TRIAL_LIMITS, priority: legacyPlan.priority }
+      : {
+          maxAgents: ladderLimits?.maxAgents ?? legacyPlan.maxAgents,
+          totalCpu: ladderLimits?.totalCpu ?? legacyPlan.totalCpu,
+          totalRam: ladderLimits?.totalRam ?? legacyPlan.totalRam,
+          priority: legacyPlan.priority,
+        };
 
     // Cross-check `metadata.plan` against the actual price the customer is
     // paying for. Stripe's metadata is authoritative for the platform but
@@ -1117,6 +1131,14 @@ export class StripeWebhookService {
       );
     }
 
+    let releasedTrialSleep = false;
+    if (cardTrial) {
+      const { endedEarly } = await recordCardTrialStart({ stripe: getStripe(), subscription, userId });
+      if (endedEarly) return "trial_rejected" as const;
+    } else if (subscription.status === "active") {
+      releasedTrialSleep = await releaseCardTrialSleep(userId);
+    }
+
     const nextStatus =
       subscription.status === "active" || subscription.status === "trialing"
         ? "active"
@@ -1166,10 +1188,27 @@ export class StripeWebhookService {
                 upgrade_source: source,
               }
             : {}),
+          ...(ladderColumns ?? {}),
           instance_limit: plan.maxAgents,
           total_cpu_budget: plan.totalCpu,
           total_ram_budget: plan.totalRam,
-          ...(ladderColumns ?? {}),
+          // Keep the ladder's identity but not its paid limits while trialing.
+          ...(cardTrial && ladderColumns
+            ? {
+                always_on_limit: 0,
+                always_on_extra: 0,
+                ai_allowance_micro_usd: 0,
+              }
+            : {}),
+          // Clear the trial marker on payment, including a new paid subscription.
+          ...(releasedTrialSleep || subscription.metadata?.[CARD_TRIAL_METADATA_KEY]
+            ? {
+                trial_ends_at:
+                  cardTrial && subscription.trial_end
+                    ? new Date(subscription.trial_end * 1000).toISOString()
+                    : null,
+              }
+            : {}),
           excess_resources: false,
           current_period_start: periodStart
             ? new Date(periodStart * 1000).toISOString()
@@ -1218,7 +1257,7 @@ export class StripeWebhookService {
       await grantPlanAllowanceForUser(userId);
     }
 
-    if (subscription.status === "active" || subscription.status === "trialing") {
+    if (!cardTrial && (subscription.status === "active" || subscription.status === "trialing")) {
       // Bump every running instance to the new tier (DB tier_key + live VM
       // resize for Proxmox VMs). Webhook continues even if any individual
       // resize fails — the DB write is the source of truth, and warden's

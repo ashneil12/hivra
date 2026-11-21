@@ -832,6 +832,61 @@ async function main() {
     });
     await db.exec(cliTransportAdmission);
     assert.deepEqual(await admissionDefinitions(), admittedCliTransport, "re-applying the CLI transport admission changes nothing");
+    const universalCatalogAdmission = migration("20261120161000_provider_release_admission_2026_11_20_2.sql");
+    await db.exec(universalCatalogAdmission);
+    const admittedUniversalCatalog = await admissionDefinitions();
+    admittedUniversalCatalog.forEach((definition, index) => {
+      for (const version of ["2026.11.20.1", "2026.11.20.2"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["4f88c13c76732bc5779afda1d8199e012200fcd653567f7f700f8c3611e8e21a", "8ca2ea94e1f70fa13a10da570b087528818386e23486a9b2692780f899f3d007"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(universalCatalogAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedUniversalCatalog, "re-applying the universal catalog admission changes nothing");
+    const universalCatalogHardenedAdmission = migration("20261120162000_provider_release_admission_2026_11_20_3.sql");
+    await db.exec(universalCatalogHardenedAdmission);
+    const admittedUniversalCatalogHardened = await admissionDefinitions();
+    admittedUniversalCatalogHardened.forEach((definition, index) => {
+      for (const version of ["2026.11.20.2", "2026.11.20.3"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["8ca2ea94e1f70fa13a10da570b087528818386e23486a9b2692780f899f3d007", "83c49cb13db2d3356cb37d802349ed745df64a01a86795945ace8dbc50d61f3c"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(universalCatalogHardenedAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedUniversalCatalogHardened, "re-applying the hardened universal catalog admission changes nothing");
+    const cliSetupAdmission = migration("20261120163000_provider_release_admission_2026_11_20_4.sql");
+    await db.exec(cliSetupAdmission);
+    const admittedCliSetup = await admissionDefinitions();
+    admittedCliSetup.forEach((definition, index) => {
+      for (const version of ["2026.11.20.3", "2026.11.20.4"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["83c49cb13db2d3356cb37d802349ed745df64a01a86795945ace8dbc50d61f3c", "06d38a6e4baedfe8ae7ce029f39c6cdaf30fa842c186d6f430d06db5a08f3d4a"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(cliSetupAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedCliSetup, "re-applying the cli-web setup admission changes nothing");
+    const catalogStackAdmission = migration("20261121100000_provider_release_admission_2026_11_20_5.sql");
+    await db.exec(catalogStackAdmission);
+    const admittedCatalogStack = await admissionDefinitions();
+    admittedCatalogStack.forEach((definition, index) => {
+      for (const version of ["2026.11.20.4", "2026.11.20.5"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["06d38a6e4baedfe8ae7ce029f39c6cdaf30fa842c186d6f430d06db5a08f3d4a", "4a567238a31067773d0e74d3184c97b983044c330a4b075f7c484bfd06b7100f"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(catalogStackAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedCatalogStack, "re-applying the docker-stack admission changes nothing");
+    const signinAdmission = migration("20261121170000_provider_release_admission_2026_11_21_1.sql");
+    await db.exec(signinAdmission);
+    const admittedSignin = await admissionDefinitions();
+    admittedSignin.forEach((definition, index) => {
+      for (const version of ["2026.11.20.5", "2026.11.21.1"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["4a567238a31067773d0e74d3184c97b983044c330a4b075f7c484bfd06b7100f", "0ca520a62c0f85664cbb1577c3125eef6371f03e9715eab714fc4118f6c018bf"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(signinAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedSignin, "re-applying the direct sign-in admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
