@@ -175,7 +175,7 @@ export const AI_INFRA_MANIFESTS: readonly CatalogAppManifest[] = [
       imageRepo: "calciumion/new-api",
       imageTag: "latest",
       containerPort: 3000,
-      hostPort: 3262,
+      hostPort: 3265,
       healthPath: "/",
       volumes: [{ name: "data", mountPath: "/data" }],
       proxyMode: "standard",
