@@ -1,8 +1,11 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { AGENTS, ALL_AGENTS, getAgent, hostingDisclaimer, resizeFloor } from "@/lib/hivra/agent-catalog";
 import {
   buildCatalogAppLaunchSpec,
   CATALOG_APP_PORT_MAX,
   CATALOG_APP_PORT_MIN,
+  CATALOG_OSI_LICENSES,
   catalogAppHostPort,
   catalogAppToAgentDef,
   CatalogAppManifestSchema,
@@ -49,21 +52,22 @@ describe("universal catalog manifests", () => {
     }
   });
 
-  it("covers all four Wave 1 categories with permissive OSI licenses only", () => {
+  it("covers all four Wave 1 categories with OSI-approved open-source licenses only", () => {
     const categories = new Set(UNIVERSAL_CATALOG_MANIFESTS.map((m) => m.category));
     expect(categories).toEqual(new Set(["agent", "app"]));
     for (const manifest of UNIVERSAL_CATALOG_MANIFESTS) {
-      expect(["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "MIT OR Apache-2.0"]).toContain(manifest.license);
+      expect(CATALOG_OSI_LICENSES).toContain(manifest.license);
       expect(manifest.sourceUrl).toMatch(/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/);
       expect(isCatalogAppId(manifest.id)).toBe(true);
       expect(getCatalogAppManifest(manifest.id)).toBe(manifest);
     }
   });
 
-  it("rejects commercial/source-available licenses and unsafe container mount paths", () => {
+  it("rejects source-available licenses and unsafe container mount paths", () => {
     const base = UNIVERSAL_CATALOG_MANIFESTS.find((m) => m.id === "anythingllm")!;
     expect(() => CatalogAppManifestSchema.parse({ ...base, license: "BUSL-1.1" })).toThrow();
-    expect(() => CatalogAppManifestSchema.parse({ ...base, license: "AGPL-3.0" })).toThrow();
+    expect(() => CatalogAppManifestSchema.parse({ ...base, license: "SSPL-1.0" })).toThrow();
+    expect(() => CatalogAppManifestSchema.parse({ ...base, license: "NOASSERTION" })).toThrow();
     expect(() => CatalogAppManifestSchema.parse({
       ...base,
       runtime: {
@@ -119,6 +123,33 @@ describe("universal catalog manifests", () => {
       const spec = buildCatalogAppLaunchSpec(manifest);
       expect(spec.appId).toBe(id);
       expect(spec.runtime).toEqual(manifest.runtime);
+    }
+  });
+
+  it("has passing curator evidence for every manifest added after Wave 1", () => {
+    // Wave 1 entries predate the deterministic verifier
+    // (scripts/catalog-curator/verify-candidate.mjs); activepieces is
+    // grandfathered with honestly failing evidence (GitHub reports
+    // NOASSERTION). Every later manifest must carry a committed pass.
+    const WAVE_1_IDS = new Set([
+      "nanobot",
+      "zeroclaw",
+      "picoclaw",
+      "opencode",
+      "goose",
+      "openhands",
+      "anythingllm",
+      "activepieces",
+      "uptime-kuma",
+      "gitea",
+    ]);
+    const evidenceDir = resolve(__dirname, "../../../../catalog-curation/evidence");
+    for (const manifest of UNIVERSAL_CATALOG_MANIFESTS) {
+      if (WAVE_1_IDS.has(manifest.id)) continue;
+      const evidencePath = join(evidenceDir, `${manifest.id}.json`);
+      expect(existsSync(evidencePath)).toBe(true);
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as { verdict?: string };
+      expect(evidence.verdict).toBe("pass");
     }
   });
 

@@ -1,0 +1,77 @@
+{
+  "slug": "actual-budget",
+  "checkedAt": "2026-11-21T03:15:47.642Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "actualbudget/actual is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "actualbudget/actual",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "actualbudget/actual-server:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "actualbudget/actual-server:latest",
+        "digest": "sha256:06cf186569cf58d93e12659ff1a517b65b5b0ebee7050a3991d4bd8a1d398da6",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-actual-budget-0ocxyz",
+        "hostPort": 52708,
+        "image": "actualbudget/actual-server:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-actual-budget-0ocxyz",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:52708:5006",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-actual-budget-0ocxyz-data:/data",
+          "actualbudget/actual-server:latest"
+        ],
+        "runStdout": "216fe2a60ed056fcb05f07d19b8af7dd0d6ed9b3c50b08ed98a49c6808ad20a1",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "237.9MiB / 7.652GiB",
+        "memBytes": 249456230
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 237.9MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 249456230,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

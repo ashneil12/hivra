@@ -1,0 +1,81 @@
+{
+  "slug": "suwayomi",
+  "checkedAt": "2026-11-21T03:36:33.261Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "Suwayomi/Suwayomi-Server is MPL-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "Suwayomi/Suwayomi-Server",
+        "spdx_id": "MPL-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/suwayomi/tachidesk:stable linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/suwayomi/tachidesk:stable",
+        "digest": "sha256:1fac27c387dc2ea9949e1a01ad7f6d6de9d72d3988338a95476748e5c45c4582",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/ppc64le",
+          "linux/s390x",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 4.1s",
+      "evidence": {
+        "container": "hivra-verify-suwayomi-92vwve",
+        "hostPort": 59179,
+        "image": "ghcr.io/suwayomi/tachidesk:stable",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-suwayomi-92vwve",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:59179:4567",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-suwayomi-92vwve-data:/home/suwayomi/.local/share/Tachidesk",
+          "ghcr.io/suwayomi/tachidesk:stable"
+        ],
+        "runStdout": "a6e5acc8d95194d3474a002656369c865cc4ba6f9e0ad1f9bda4911be075ee7c",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 4.1,
+          "attempts": 3
+        },
+        "memUsage": "726.7MiB / 7.652GiB",
+        "memBytes": 762000179
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 726.7MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 762000179,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

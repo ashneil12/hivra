@@ -1,0 +1,85 @@
+{
+  "slug": "openspeedtest",
+  "checkedAt": "2026-11-21T03:26:14.687Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "openspeedtest/Speed-Test is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "openspeedtest/Speed-Test",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "openspeedtest/latest:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "openspeedtest/latest:latest",
+        "digest": "sha256:1127de0693c36bcf8c297c73d09891df8ec243680d027a6b6fab13fa0954ff46",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/ppc64le",
+          "linux/s390x",
+          "linux/386",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 0s",
+      "evidence": {
+        "container": "hivra-verify-openspeedtest-52nv5w",
+        "hostPort": 56273,
+        "image": "openspeedtest/latest:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-openspeedtest-52nv5w",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:56273:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-openspeedtest-52nv5w-data:/var/www/html/results",
+          "openspeedtest/latest:latest"
+        ],
+        "runStdout": "0439d2eb9a3f2bbb975f69ee9a0fcc1be59ef21c810556048185ffc052f94384",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 0,
+          "attempts": 1
+        },
+        "memUsage": "26.51MiB / 7.652GiB",
+        "memBytes": 27797750
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 26.5MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 27797750,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

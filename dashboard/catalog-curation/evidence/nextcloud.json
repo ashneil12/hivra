@@ -1,0 +1,89 @@
+{
+  "slug": "nextcloud",
+  "checkedAt": "2026-11-21T03:26:01.185Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "nextcloud/server is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "nextcloud/server",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "nextcloud:apache linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "nextcloud:apache",
+        "digest": "sha256:8de31d1ba6d670b1e60052e8a2b4715a3cf5c05fc69baf3786f265703efe285e",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm/v5",
+          "unknown/unknown",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "linux/arm64/v8",
+          "unknown/unknown",
+          "linux/386",
+          "unknown/unknown",
+          "linux/ppc64le",
+          "unknown/unknown",
+          "linux/riscv64",
+          "unknown/unknown",
+          "linux/s390x",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /status.php -> 200 in 6.1s",
+      "evidence": {
+        "container": "hivra-verify-nextcloud-mcchnn",
+        "hostPort": 56160,
+        "image": "nextcloud:apache",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-nextcloud-mcchnn",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:56160:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-nextcloud-mcchnn-data:/var/www/html",
+          "nextcloud:apache"
+        ],
+        "runStdout": "9c99b80ae9abcee1087a9e4ae777d106ba4c36c590cbd02fef1e694a8a205175",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 6.1,
+          "attempts": 4
+        },
+        "memUsage": "187.7MiB / 7.652GiB",
+        "memBytes": 196817715
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 187.7MiB vs floor 4GB*0.8=3.2GiB",
+      "evidence": {
+        "memBytes": 196817715,
+        "floorRamGb": 4
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

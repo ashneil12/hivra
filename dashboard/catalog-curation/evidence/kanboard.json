@@ -1,0 +1,81 @@
+{
+  "slug": "kanboard",
+  "checkedAt": "2026-11-21T03:20:25.286Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "kanboard/kanboard is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "kanboard/kanboard",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "kanboard/kanboard:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "kanboard/kanboard:latest",
+        "digest": "sha256:637989624e5362af2b97bfb4be1936fb6b111ea7cbdffea0ae8bd3068dc84125",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v6",
+          "linux/arm/v7",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.3s",
+      "evidence": {
+        "container": "hivra-verify-kanboard-bfkyki",
+        "hostPort": 54706,
+        "image": "kanboard/kanboard:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-kanboard-bfkyki",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:54706:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-kanboard-bfkyki-data:/var/www/html/data",
+          "kanboard/kanboard:latest"
+        ],
+        "runStdout": "186b6fa18eb937c2b38e5a5044d1745d4c59647ec7b0d5d585dbc6f073f39974",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.3,
+          "attempts": 2
+        },
+        "memUsage": "30.12MiB / 7.652GiB",
+        "memBytes": 31583109
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 30.1MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 31583109,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

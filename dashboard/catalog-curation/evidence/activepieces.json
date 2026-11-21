@@ -1,0 +1,46 @@
+{
+  "slug": "activepieces",
+  "checkedAt": "2026-11-21T03:11:58.760Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "fail",
+      "detail": "spdx_id NOASSERTION not in allowlist",
+      "evidence": {
+        "archived": false,
+        "full_name": "activepieces/activepieces",
+        "spdx_id": "NOASSERTION"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "activepieces/activepieces:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "activepieces/activepieces:latest",
+        "digest": "sha256:65ea85f5e7ea236416b342eef0d2dbade8da51247aaea495d191eb027095805a",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "skipped",
+      "detail": "earlier gate failed"
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "earlier gate failed"
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "license: spdx_id NOASSERTION not in allowlist"
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "slug": "wallos",
+  "checkedAt": "2026-11-21T03:27:34.590Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "ellite/Wallos is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "ellite/Wallos",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "bellamy/wallos:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "bellamy/wallos:latest",
+        "digest": "sha256:84c3b218e144a1292b2be6ad2f0b9d620277e860d307c3cfa5aff3ee629aae17",
+        "platforms": [
+          "linux/arm/v7",
+          "unknown/unknown",
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-wallos-6ygdru",
+        "hostPort": 56843,
+        "image": "bellamy/wallos:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-wallos-6ygdru",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:56843:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-wallos-6ygdru-data:/var/www/html/db",
+          "bellamy/wallos:latest"
+        ],
+        "runStdout": "9bc49666477a0a13ebc5a80235cdb8472deba29a61a91214cd64d3106b77bd3d",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "16.23MiB / 7.652GiB",
+        "memBytes": 17018388
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 16.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 17018388,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

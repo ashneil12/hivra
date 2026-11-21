@@ -1,0 +1,78 @@
+{
+  "slug": "swagger-ui",
+  "checkedAt": "2026-11-21T03:27:07.288Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "swagger-api/swagger-ui is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "swagger-api/swagger-ui",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "swaggerapi/swagger-ui:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "swaggerapi/swagger-ui:latest",
+        "digest": "sha256:cd314c0a167841dc1c9869ff2df6f949e2e7fa63f8b77f610b7e75878ac2da4e",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v6",
+          "linux/arm64",
+          "linux/386",
+          "linux/ppc64le"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-swagger-ui-niwy78",
+        "hostPort": 56691,
+        "image": "swaggerapi/swagger-ui:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-swagger-ui-niwy78",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:56691:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-swagger-ui-niwy78-tmp:/tmp",
+          "swaggerapi/swagger-ui:latest"
+        ],
+        "runStdout": "88bab6084fb03d0bb7161575b6b6dd1d13213f7c19bc0cded3242045ad38e033",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "17.05MiB / 7.652GiB",
+        "memBytes": 17878221
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 17.1MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 17878221,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

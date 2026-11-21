@@ -1,0 +1,75 @@
+{
+  "slug": "homepage",
+  "checkedAt": "2026-11-21T03:28:28.475Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "gethomepage/homepage is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "gethomepage/homepage",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/gethomepage/homepage:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/gethomepage/homepage:latest",
+        "digest": "sha256:019d8f063a7299e7c1c51ee4a70b692291809af3244894fbec2c2ac7d1f71b18",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.4s",
+      "evidence": {
+        "container": "hivra-verify-homepage-fgdj4h",
+        "hostPort": 57122,
+        "image": "ghcr.io/gethomepage/homepage:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-homepage-fgdj4h",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:57122:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-homepage-fgdj4h-config:/app/config",
+          "ghcr.io/gethomepage/homepage:latest"
+        ],
+        "runStdout": "c895e213cdbdd6d0ee2cdbac7704c86e2fda3638068a4a4d07b5cc8d29fab8af",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.4,
+          "attempts": 2
+        },
+        "memUsage": "155.9MiB / 7.652GiB",
+        "memBytes": 163472998
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 155.9MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 163472998,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

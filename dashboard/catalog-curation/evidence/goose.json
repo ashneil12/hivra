@@ -1,0 +1,99 @@
+{
+  "slug": "goose",
+  "checkedAt": "2026-11-21T03:13:19.104Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "aaif-goose/goose is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "aaif-goose/goose",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "package",
+      "status": "pass",
+      "detail": "release v1.60.2 has 47 assets",
+      "evidence": {
+        "assets": [
+          "download_cli.sh",
+          "Goose-1.60.2-1.arm64-vulkan.rpm",
+          "Goose-1.60.2-1.arm64.rpm",
+          "Goose-1.60.2-1.x86_64-vulkan.rpm",
+          "Goose-1.60.2-1.x86_64.rpm",
+          "goose-aarch64-apple-darwin.tar.bz2",
+          "goose-aarch64-apple-darwin.tar.gz",
+          "goose-aarch64-unknown-linux-gnu-vulkan.tar.bz2",
+          "goose-aarch64-unknown-linux-gnu-vulkan.tar.gz",
+          "goose-aarch64-unknown-linux-gnu.tar.bz2",
+          "goose-aarch64-unknown-linux-gnu.tar.gz",
+          "goose-aarch64-unknown-linux-musl.tar.bz2",
+          "goose-aarch64-unknown-linux-musl.tar.gz",
+          "goose-acp-aarch64-apple-darwin.tar.gz",
+          "goose-acp-aarch64-unknown-linux-gnu.tar.gz",
+          "goose-acp-x86_64-apple-darwin.tar.gz",
+          "goose-acp-x86_64-pc-windows-msvc.zip",
+          "goose-acp-x86_64-unknown-linux-gnu.tar.gz",
+          "Goose-darwin-arm64.zip",
+          "Goose-darwin-x64.zip",
+          "goose-source-v1.60.2.tar.gz",
+          "goose-source-v1.60.2.zip",
+          "Goose-win32-x64-cuda.zip",
+          "Goose-win32-x64-setup.exe",
+          "Goose-win32-x64.zip",
+          "goose-x86_64-apple-darwin.tar.bz2",
+          "goose-x86_64-apple-darwin.tar.gz",
+          "goose-x86_64-pc-windows-msvc-cuda.zip",
+          "goose-x86_64-pc-windows-msvc.zip",
+          "goose-x86_64-unknown-linux-gnu-vulkan.tar.bz2",
+          "goose-x86_64-unknown-linux-gnu-vulkan.tar.gz",
+          "goose-x86_64-unknown-linux-gnu.tar.bz2",
+          "goose-x86_64-unknown-linux-gnu.tar.gz",
+          "goose-x86_64-unknown-linux-musl.tar.bz2",
+          "goose-x86_64-unknown-linux-musl.tar.gz",
+          "Goose.zip",
+          "goose_1.60.2_amd64-vulkan.deb",
+          "goose_1.60.2_amd64.deb",
+          "goose_1.60.2_arm64-vulkan.deb",
+          "goose_1.60.2_arm64.deb",
+          "Goose_intel_mac.zip",
+          "installer.yml",
+          "io.github.block.Goose_stable_aarch64-vulkan.flatpak",
+          "io.github.block.Goose_stable_aarch64.flatpak",
+          "io.github.block.Goose_stable_x86_64-vulkan.flatpak",
+          "io.github.block.Goose_stable_x86_64.flatpak",
+          "mac-update-requirements.json"
+        ],
+        "tag_name": "v1.60.2"
+      }
+    },
+    {
+      "name": "install",
+      "status": "pass",
+      "detail": "release v1.60.2 asset goose-aarch64-unknown-linux-gnu.tar.bz2 executed --help in linux/arm64"
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "release binary ran --help inside linux container",
+      "evidence": {
+        "exitStatus": 0
+      }
+    },
+    {
+      "name": "cli-flags",
+      "status": "pass",
+      "detail": "help mentions --text"
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "cli-web installs a CLI; no resident service to measure"
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

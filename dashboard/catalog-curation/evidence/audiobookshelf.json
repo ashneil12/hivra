@@ -1,0 +1,79 @@
+{
+  "slug": "audiobookshelf",
+  "checkedAt": "2026-11-21T03:28:28.417Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "advplyr/audiobookshelf is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "advplyr/audiobookshelf",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "advplyr/audiobookshelf:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "advplyr/audiobookshelf:latest",
+        "digest": "sha256:60064c23f32fd9099fd39e82c5132c51701d1221135bbca04cd099b589e1edc3",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /healthcheck -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-audiobookshelf-s0nvop",
+        "hostPort": 57136,
+        "image": "advplyr/audiobookshelf:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-audiobookshelf-s0nvop",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:57136:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-audiobookshelf-s0nvop-config:/config",
+          "-v",
+          "hivra-verify-audiobookshelf-s0nvop-metadata:/metadata",
+          "advplyr/audiobookshelf:latest"
+        ],
+        "runStdout": "72d4b6614a41b047fb32f2c4b0827325e2a6edd412181735a44751860c783b12",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "82.83MiB / 7.652GiB",
+        "memBytes": 86853550
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 82.8MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 86853550,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -1,0 +1,75 @@
+{
+  "slug": "dokuwiki",
+  "checkedAt": "2026-11-21T03:40:44.603Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "dokuwiki/dokuwiki is GPL-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "dokuwiki/dokuwiki",
+        "spdx_id": "GPL-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/dokuwiki/dokuwiki:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/dokuwiki/dokuwiki:latest",
+        "digest": "sha256:463bcf631edb06d312a7009d422ac7b1b92816c6ef279ad08dc990107f5b91a8",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "fail",
+      "detail": "health / never returned <400 (last status none)",
+      "evidence": {
+        "container": "hivra-verify-dokuwiki-vm1v6t",
+        "hostPort": 59271,
+        "image": "ghcr.io/dokuwiki/dokuwiki:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-dokuwiki-vm1v6t",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:59271:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-dokuwiki-vm1v6t-data:/var/www/html/data",
+          "ghcr.io/dokuwiki/dokuwiki:latest"
+        ],
+        "runStdout": "a2944ba3f3d30a2b164c537ec7c307615e36f3df17e799a3a9b49d35bffd7331",
+        "health": {
+          "ok": false,
+          "status": null,
+          "seconds": 240.4,
+          "attempts": 120,
+          "error": "fetch failed"
+        },
+        "logsTail": "172.17.0.3:80 127.0.0.1 - - [21/Nov/2026:03:37:14 +0000] \"GET /health.php HTTP/1.1\" 200 371 \"-\" \"curl/8.14.1\"\n172.17.0.3:80 127.0.0.1 - - [21/Nov/2026:03:37:44 +0000] \"GET /health.php HTTP/1.1\" 200 371 \"-\" \"curl/8.14.1\"\n172.17.0.3:80 127.0.0.1 - - [21/Nov/2026:03:38:14 +0000] \"GET /health.php HTTP/1.1\" 200 371 \"-\" \"curl/8.14.1\"\n172.17.0.3:80 127.0.0.1 - - [21/Nov/2026:03:38:44 +0000] \"GET /health.php HTTP/1.1\" 200 371 \"-\" \"curl/8.14.1\"\n172.17.0.3:80 127.0.0.1 - - [21/Nov/2026:03:39:14 +0000] \"GET /health.php HTTP/1.1\" 200 371 \"-\" \"curl/8.14.1\"\n172.17.0.3:80 127.0.0.1 - - [21/Nov/2026:03:39:44 +0000] \"GET /health.php HTTP/1.1\" 200 371 \"-\" \"curl/8.14.1\"\n172.17.0.3:80 127.0.0.1 - - [21/Nov/2026:03:40:14 +0000] \"GET /health.php HTTP/1.1\" 200 371 \"-\" \"curl/8.14.1\"\n"
+      }
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "no floor.ram in spec or no memory reading"
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "boot: health / never returned <400 (last status none)"
+  ]
+}

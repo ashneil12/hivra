@@ -1,0 +1,77 @@
+{
+  "slug": "syncthing",
+  "checkedAt": "2026-11-21T03:29:08.563Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "syncthing/syncthing is MPL-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "syncthing/syncthing",
+        "spdx_id": "MPL-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "linuxserver/syncthing:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "linuxserver/syncthing:latest",
+        "digest": "sha256:c4207d8f5b66d5f67eedb636b75500b5a04898e9f33299d252f4b966c41a4128",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-syncthing-33uzjw",
+        "hostPort": 57320,
+        "image": "linuxserver/syncthing:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-syncthing-33uzjw",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:57320:8384",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-syncthing-33uzjw-config:/config",
+          "linuxserver/syncthing:latest"
+        ],
+        "runStdout": "bb64f177b8abbd8d75fca4c4b7442b0f7b0afe461a0510bcef4abfaf77929c48",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "23.79MiB / 7.652GiB",
+        "memBytes": 24945623
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 23.8MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 24945623,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

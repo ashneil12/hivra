@@ -1,0 +1,77 @@
+{
+  "slug": "qdrant",
+  "checkedAt": "2026-11-21T03:26:47.603Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "qdrant/qdrant is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "qdrant/qdrant",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "qdrant/qdrant:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "qdrant/qdrant:latest",
+        "digest": "sha256:d277592721d2e3b73f9b797b53cf05e6a5bb2134f6d13fdbda4ca51782afbcac",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /readyz -> 200 in 0.1s",
+      "evidence": {
+        "container": "hivra-verify-qdrant-pg7ykk",
+        "hostPort": 56409,
+        "image": "qdrant/qdrant:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-qdrant-pg7ykk",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:56409:6333",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-qdrant-pg7ykk-storage:/qdrant/storage",
+          "qdrant/qdrant:latest"
+        ],
+        "runStdout": "0052af3d398196ca59c3c59a5548ca4f2e04ba09c8d33a9427f5d3436a577fa3",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 0.1,
+          "attempts": 1
+        },
+        "memUsage": "91.45MiB / 7.652GiB",
+        "memBytes": 95892275
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 91.4MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 95892275,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

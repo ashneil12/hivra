@@ -1,0 +1,72 @@
+{
+  "slug": "zeroclaw",
+  "checkedAt": "2026-11-21T03:13:12.253Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "zeroclaw-labs/zeroclaw is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "zeroclaw-labs/zeroclaw",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "package",
+      "status": "pass",
+      "detail": "release v0.9.0 has 20 assets",
+      "evidence": {
+        "assets": [
+          "install.sh",
+          "SHA256SUMS",
+          "zeroclaw-aarch64-apple-darwin.tar.gz",
+          "zeroclaw-aarch64-linux-android.tar.gz",
+          "zeroclaw-aarch64-unknown-linux-gnu.tar.gz",
+          "zeroclaw-aarch64-unknown-linux-musl.tar.gz",
+          "zeroclaw-arm-unknown-linux-gnueabihf.tar.gz",
+          "zeroclaw-armv7-unknown-linux-gnueabihf.tar.gz",
+          "ZeroClaw-linux-amd64.deb",
+          "ZeroClaw-linux-x86_64.AppImage",
+          "zeroclaw-v0.9.0-sbom.cdx.json",
+          "zeroclaw-v0.9.0-sbom.spdx.json",
+          "zeroclaw-v0.9.0-verification.tar.gz",
+          "ZeroClaw-windows-x64-setup.exe",
+          "ZeroClaw-windows-x64.msi",
+          "zeroclaw-x86_64-apple-darwin.tar.gz",
+          "zeroclaw-x86_64-pc-windows-msvc.zip",
+          "zeroclaw-x86_64-unknown-linux-gnu.tar.gz",
+          "zeroclaw-x86_64-unknown-linux-musl.tar.gz",
+          "ZeroClaw.dmg"
+        ],
+        "tag_name": "v0.9.0"
+      }
+    },
+    {
+      "name": "install",
+      "status": "pass",
+      "detail": "release v0.9.0 asset zeroclaw-aarch64-unknown-linux-gnu.tar.gz executed --help in linux/arm64"
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "release binary ran --help inside linux container",
+      "evidence": {
+        "exitStatus": 0
+      }
+    },
+    {
+      "name": "cli-flags",
+      "status": "pass",
+      "detail": "help mentions --agent, -m"
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "cli-web installs a CLI; no resident service to measure"
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

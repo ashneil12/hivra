@@ -1,0 +1,81 @@
+{
+  "slug": "changedetection",
+  "checkedAt": "2026-11-21T03:15:51.981Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "dgtlmoon/changedetection.io is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "dgtlmoon/changedetection.io",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/dgtlmoon/changedetection.io:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/dgtlmoon/changedetection.io:latest",
+        "digest": "sha256:b6aae2572a0bf1a671b1b202365ddcfe16a31fa8a60be89df606705731b55f8b",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "linux/arm/v8",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-changedetection-fko5l8",
+        "hostPort": 52695,
+        "image": "ghcr.io/dgtlmoon/changedetection.io:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-changedetection-fko5l8",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:52695:5000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-changedetection-fko5l8-data:/datastore",
+          "ghcr.io/dgtlmoon/changedetection.io:latest"
+        ],
+        "runStdout": "2ecbb525556bc3a83882694c9583e2fc7ea8007edae88ea432c12dd0725bb6f2",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "100.3MiB / 7.652GiB",
+        "memBytes": 105172173
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 100.3MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 105172173,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

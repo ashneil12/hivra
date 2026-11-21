@@ -1,0 +1,75 @@
+{
+  "slug": "localai",
+  "checkedAt": "2026-11-21T03:22:19.417Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "mudler/LocalAI is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "mudler/LocalAI",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "localai/localai:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "localai/localai:latest",
+        "digest": "sha256:7240f75f2b7f00eeb4e77ff2921c25f77ab265b4e5888933e702e0c3b49d876d",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /readyz -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-localai-7b5qfc",
+        "hostPort": 55336,
+        "image": "localai/localai:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-localai-7b5qfc",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:55336:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-localai-7b5qfc-models:/models",
+          "localai/localai:latest"
+        ],
+        "runStdout": "7d107e16576e202174f9746c77f0396cc8f0dc4bb71768a363e3824c5336e637",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "159MiB / 7.652GiB",
+        "memBytes": 166723584
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 159.0MiB vs floor 4GB*0.8=3.2GiB",
+      "evidence": {
+        "memBytes": 166723584,
+        "floorRamGb": 4
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

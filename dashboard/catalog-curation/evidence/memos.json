@@ -1,0 +1,79 @@
+{
+  "slug": "memos",
+  "checkedAt": "2026-11-21T03:28:35.325Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "usememos/memos is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "usememos/memos",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "neosmemo/memos:stable linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "neosmemo/memos:stable",
+        "digest": "sha256:5dcd6e6b973a55b964f2fe2ccdaa33319463ab448a23404ebb5d2acbd19299ba",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown",
+          "linux/arm/v7",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /healthz -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-memos-gwdhrh",
+        "hostPort": 57226,
+        "image": "neosmemo/memos:stable",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-memos-gwdhrh",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:57226:5230",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-memos-gwdhrh-data:/var/opt/memos",
+          "neosmemo/memos:stable"
+        ],
+        "runStdout": "4a34261f7e57545088b963fd642030de42e1229d3712424ddcac0c1701b200b0",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "21.6MiB / 7.652GiB",
+        "memBytes": 22649242
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 21.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 22649242,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

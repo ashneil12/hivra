@@ -1,0 +1,75 @@
+{
+  "slug": "dashy",
+  "checkedAt": "2026-11-21T03:16:37.112Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "lissy93/dashy is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "lissy93/dashy",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "lissy93/dashy:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "lissy93/dashy:latest",
+        "digest": "sha256:f623433bda0ac65777dbbf179225300e11a554d88c8be2ebf0f964b12d06b9d6",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-dashy-5fyhh5",
+        "hostPort": 53029,
+        "image": "lissy93/dashy:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-dashy-5fyhh5",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:53029:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-dashy-5fyhh5-config:/app/public",
+          "lissy93/dashy:latest"
+        ],
+        "runStdout": "6bb6219257b3b7362f1b416e24f3563cc4ddedcad968d1cd52ed876197f3e26f",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "45.43MiB / 7.652GiB",
+        "memBytes": 47636808
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 45.4MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 47636808,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

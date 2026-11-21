@@ -1,0 +1,77 @@
+{
+  "slug": "mermaid-live",
+  "checkedAt": "2026-11-21T03:24:34.513Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "mermaid-js/mermaid-live-editor is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "mermaid-js/mermaid-live-editor",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/mermaid-js/mermaid-live-editor:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/mermaid-js/mermaid-live-editor:latest",
+        "digest": "sha256:34c61d9a8c12b6a4f6d5ae0bceb4a82c811202f4cd0397ffe81ed46ef0823bc6",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 0s",
+      "evidence": {
+        "container": "hivra-verify-mermaid-live-m3qcc8",
+        "hostPort": 55823,
+        "image": "ghcr.io/mermaid-js/mermaid-live-editor:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-mermaid-live-m3qcc8",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:55823:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-mermaid-live-m3qcc8-tmp:/tmp",
+          "ghcr.io/mermaid-js/mermaid-live-editor:latest"
+        ],
+        "runStdout": "1c98596f5fcf44d9f06db0ed34cce1fe390a1eaf65df61dd9dbfed278588e228",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 0,
+          "attempts": 1
+        },
+        "memUsage": "11.68MiB / 7.652GiB",
+        "memBytes": 12247368
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 11.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 12247368,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

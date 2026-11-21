@@ -1,0 +1,76 @@
+{
+  "slug": "grafana",
+  "checkedAt": "2026-11-21T03:17:18.152Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "grafana/grafana is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "grafana/grafana",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "grafana/grafana:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "grafana/grafana:latest",
+        "digest": "sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /api/health -> 200 in 6s",
+      "evidence": {
+        "container": "hivra-verify-grafana-oqzq1z",
+        "hostPort": 53455,
+        "image": "grafana/grafana:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-grafana-oqzq1z",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:53455:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-grafana-oqzq1z-data:/var/lib/grafana",
+          "grafana/grafana:latest"
+        ],
+        "runStdout": "b9f368daa05a3882fe9dffbcc4cfe45bc427c43c667253c95633e6f9b730f3ca",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 6,
+          "attempts": 4
+        },
+        "memUsage": "300.4MiB / 7.652GiB",
+        "memBytes": 314992230
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 300.4MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 314992230,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

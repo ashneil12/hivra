@@ -1,0 +1,77 @@
+{
+  "slug": "heimdall",
+  "checkedAt": "2026-11-21T03:28:35.053Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "linuxserver/Heimdall is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "linuxserver/Heimdall",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "linuxserver/heimdall:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "linuxserver/heimdall:latest",
+        "digest": "sha256:51693bcb3a46e619592a4f7aad65d6610f8bda80c3b167d03254a96a944e8aed",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 8.3s",
+      "evidence": {
+        "container": "hivra-verify-heimdall-i46h3h",
+        "hostPort": 57132,
+        "image": "linuxserver/heimdall:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-heimdall-i46h3h",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:57132:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-heimdall-i46h3h-config:/config",
+          "linuxserver/heimdall:latest"
+        ],
+        "runStdout": "7c9ccfdf771a04214a11d965106635adb25ff814e7d7e341732e90199cead3ff",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 8.3,
+          "attempts": 5
+        },
+        "memUsage": "152.7MiB / 7.652GiB",
+        "memBytes": 160117555
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 152.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 160117555,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

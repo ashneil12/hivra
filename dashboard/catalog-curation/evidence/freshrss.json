@@ -1,0 +1,79 @@
+{
+  "slug": "freshrss",
+  "checkedAt": "2026-11-21T03:16:51.832Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "FreshRSS/FreshRSS is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "FreshRSS/FreshRSS",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/freshrss/freshrss:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/freshrss/freshrss:latest",
+        "digest": "sha256:af44385229541bee24aa9148d0ff8f3b40e095373c63a2c0f74e09a27d3c59df",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v7",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-freshrss-r9w0py",
+        "hostPort": 53411,
+        "image": "ghcr.io/freshrss/freshrss:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-freshrss-r9w0py",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:53411:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-freshrss-r9w0py-data:/var/www/FreshRSS/data",
+          "ghcr.io/freshrss/freshrss:latest"
+        ],
+        "runStdout": "897b1cc8574c7d3bd438368ee0ccf3fbc7ddacbab2cf49fa62dd5d27646ac34f",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "21.21MiB / 7.652GiB",
+        "memBytes": 22240297
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 21.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 22240297,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

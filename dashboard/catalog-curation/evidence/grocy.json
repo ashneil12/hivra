@@ -1,0 +1,77 @@
+{
+  "slug": "grocy",
+  "checkedAt": "2026-11-21T03:49:40.435Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "grocy/grocy is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "grocy/grocy",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "linuxserver/grocy:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "linuxserver/grocy:latest",
+        "digest": "sha256:ef5ea5094aa2ed32df74528c4bdd94713679038c97add02045d881550c2a59a8",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 3s",
+      "evidence": {
+        "container": "hivra-verify-grocy-h4dl9q",
+        "hostPort": 61055,
+        "image": "linuxserver/grocy:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-grocy-h4dl9q",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:61055:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-grocy-h4dl9q-config:/config",
+          "linuxserver/grocy:latest"
+        ],
+        "runStdout": "e09f6e5a448d04678512deea02ac293a3bee944f96b8285bbb11e06e8a2af43f",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 3,
+          "attempts": 2
+        },
+        "memUsage": "43.29MiB / 7.652GiB",
+        "memBytes": 45392855
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 43.3MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 45392855,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

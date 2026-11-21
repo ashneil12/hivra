@@ -1,0 +1,77 @@
+{
+  "slug": "it-tools",
+  "checkedAt": "2026-11-21T03:19:46.225Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "CorentinTh/it-tools is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "CorentinTh/it-tools",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "corentinth/it-tools:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "corentinth/it-tools:latest",
+        "digest": "sha256:8b8128748339583ca951af03dfe02a9a4d7363f61a216226fc28030731a5a61f",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 0s",
+      "evidence": {
+        "container": "hivra-verify-it-tools-qb56k9",
+        "hostPort": 54395,
+        "image": "corentinth/it-tools:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-it-tools-qb56k9",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:54395:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-it-tools-qb56k9-tmp:/tmp",
+          "corentinth/it-tools:latest"
+        ],
+        "runStdout": "da642004736777bc3b451b8d324101dcdfb17c92568ef02502961e0e2695f7b5",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 0,
+          "attempts": 1
+        },
+        "memUsage": "11.67MiB / 7.652GiB",
+        "memBytes": 12236882
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 11.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 12236882,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

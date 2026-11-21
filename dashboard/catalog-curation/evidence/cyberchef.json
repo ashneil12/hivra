@@ -1,0 +1,79 @@
+{
+  "slug": "cyberchef",
+  "checkedAt": "2026-11-21T03:28:26.571Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "gchq/CyberChef is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "gchq/CyberChef",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/gchq/cyberchef:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/gchq/cyberchef:latest",
+        "digest": "sha256:847b3a20804815014babe9cfa628a1fd1980d92f98240f48cfc6c8e2f5ff7a14",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 0s",
+      "evidence": {
+        "container": "hivra-verify-cyberchef-w5hsl9",
+        "hostPort": 57125,
+        "image": "ghcr.io/gchq/cyberchef:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-cyberchef-w5hsl9",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:57125:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-cyberchef-w5hsl9-tmp:/tmp",
+          "ghcr.io/gchq/cyberchef:latest"
+        ],
+        "runStdout": "6c492e601812996e3c762d949a060c020be0e2d46e756d482f2ae578f33c0d6f",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 0,
+          "attempts": 1
+        },
+        "memUsage": "11.9MiB / 7.652GiB",
+        "memBytes": 12478054
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 11.9MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 12478054,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

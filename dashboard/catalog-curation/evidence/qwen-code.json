@@ -1,0 +1,52 @@
+{
+  "slug": "qwen-code",
+  "checkedAt": "2026-11-21T03:20:39.324Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "QwenLM/qwen-code is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "QwenLM/qwen-code",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "package",
+      "status": "pass",
+      "detail": "npm @qwen-code/qwen-code 0.28.3",
+      "evidence": {
+        "version": "0.28.3"
+      }
+    },
+    {
+      "name": "install",
+      "status": "pass",
+      "detail": "npm install --prefix @qwen-code/qwen-code"
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "binary --version ran (exit 0)",
+      "evidence": {
+        "mode": "--version",
+        "status": 0,
+        "head": "0.28.3\n\n"
+      }
+    },
+    {
+      "name": "cli-flags",
+      "status": "pass",
+      "detail": "help mentions --yolo"
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "cli-web installs a CLI; no resident service to measure"
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

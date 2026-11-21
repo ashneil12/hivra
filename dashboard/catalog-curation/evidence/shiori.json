@@ -1,0 +1,79 @@
+{
+  "slug": "shiori",
+  "checkedAt": "2026-11-21T03:26:48.488Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "go-shiori/shiori is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "go-shiori/shiori",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/go-shiori/shiori:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/go-shiori/shiori:latest",
+        "digest": "sha256:d3bdfc1b68b8f267a04cf74d73b8a0e1d99ac71c3a9047375e97202f079eb1f6",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-shiori-znb8v0",
+        "hostPort": 56544,
+        "image": "ghcr.io/go-shiori/shiori:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-shiori-znb8v0",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:56544:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-shiori-znb8v0-data:/opt/shiori/data",
+          "ghcr.io/go-shiori/shiori:latest"
+        ],
+        "runStdout": "ee1e1198bd9e1d5cddccf15847ba6c6d7487589fd1b509ace93633f207cdafb7",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "6.871MiB / 7.652GiB",
+        "memBytes": 7204766
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 6.9MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 7204766,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

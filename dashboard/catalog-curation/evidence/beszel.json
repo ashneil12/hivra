@@ -1,0 +1,81 @@
+{
+  "slug": "beszel",
+  "checkedAt": "2026-11-21T03:15:47.563Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "henrygd/beszel is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "henrygd/beszel",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "henrygd/beszel:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "henrygd/beszel:latest",
+        "digest": "sha256:b0be90bd4aee2993fde763032a5098ce4386fba43cfe5031ec017b8d9e8c97a2",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v6",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-beszel-he5kv1",
+        "hostPort": 52715,
+        "image": "henrygd/beszel:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-beszel-he5kv1",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:52715:8090",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-beszel-he5kv1-data:/beszel_data",
+          "henrygd/beszel:latest"
+        ],
+        "runStdout": "03faba24d9fc02769ff5fb9c1a484eb5c98a32fa316dc7cbb99062ea4b7a6557",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "13.17MiB / 7.652GiB",
+        "memBytes": 13809746
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 13.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 13809746,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

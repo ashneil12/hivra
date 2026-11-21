@@ -1,0 +1,81 @@
+{
+  "slug": "trilium",
+  "checkedAt": "2026-11-21T03:27:28.320Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "TriliumNext/Trilium is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "TriliumNext/Trilium",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/triliumnext/notes:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/triliumnext/notes:latest",
+        "digest": "sha256:611a430016585d35b170eb9a0fa300ce76318f04a8ec0067549c4c52561b0c36",
+        "platforms": [
+          "linux/arm64",
+          "unknown/unknown",
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "linux/arm/v8",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-trilium-4epq0i",
+        "hostPort": 56689,
+        "image": "ghcr.io/triliumnext/notes:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-trilium-4epq0i",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:56689:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-trilium-4epq0i-data:/home/node/trilium-data",
+          "ghcr.io/triliumnext/notes:latest"
+        ],
+        "runStdout": "0238c17aa3366dacc29b68bacb953b34ee316f47d5e881934592d1a399c6229c",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "202.2MiB / 7.652GiB",
+        "memBytes": 212022067
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 202.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 212022067,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

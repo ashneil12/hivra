@@ -1,0 +1,79 @@
+{
+  "slug": "kavita",
+  "checkedAt": "2026-11-21T03:20:53.734Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "Kareadita/Kavita is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "Kareadita/Kavita",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "jvmilazz0/kavita:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "jvmilazz0/kavita:latest",
+        "digest": "sha256:31181a32f0dda73cae68721867028a7253d57881b58bea5754cd9e578e75421a",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v7",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /api/health -> 200 in 10.1s",
+      "evidence": {
+        "container": "hivra-verify-kavita-xu6pbd",
+        "hostPort": 54896,
+        "image": "jvmilazz0/kavita:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-kavita-xu6pbd",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:54896:5000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-kavita-xu6pbd-config:/kavita/config",
+          "jvmilazz0/kavita:latest"
+        ],
+        "runStdout": "5eba1def76e44a0598f080e2ff2ad46b7d817a3ec36af46cae68401c1ddf75e2",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 10.1,
+          "attempts": 6
+        },
+        "memUsage": "378.3MiB / 7.652GiB",
+        "memBytes": 396676301
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 378.3MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 396676301,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

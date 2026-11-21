@@ -1,0 +1,79 @@
+{
+  "slug": "gitea",
+  "checkedAt": "2026-11-21T03:12:33.923Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "go-gitea/gitea is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "go-gitea/gitea",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "docker.gitea.com/gitea:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "docker.gitea.com/gitea:latest",
+        "digest": "sha256:aa90e8f00b755b0d665214ab9c14447ea44d3190dbe6b6d0cb46cd9c4f55d309",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/riscv64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /api/healthz -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-gitea-14my6n",
+        "hostPort": 52423,
+        "image": "docker.gitea.com/gitea:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-gitea-14my6n",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:52423:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-gitea-14my6n-data:/data",
+          "docker.gitea.com/gitea:latest"
+        ],
+        "runStdout": "380d3190c5bd541af24c64704495225248e727dad520be88d052a4b735889eb4",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "154.8MiB / 7.652GiB",
+        "memBytes": 162319565
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 154.8MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 162319565,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

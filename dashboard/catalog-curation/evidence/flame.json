@@ -1,0 +1,76 @@
+{
+  "slug": "flame",
+  "checkedAt": "2026-11-21T03:28:41.794Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "pawelmalak/flame is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "pawelmalak/flame",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "pawelmalak/flame:latest linux/amd64 only",
+      "evidence": {
+        "ref": "pawelmalak/flame:latest",
+        "digest": "sha256:7a5edc859235486a82871eb624f03048e44f603cba42ea3f60dc7cfe60ca6b3f",
+        "platforms": [
+          "linux/amd64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 4.1s",
+      "evidence": {
+        "container": "hivra-verify-flame-cs86vg",
+        "hostPort": 57145,
+        "image": "pawelmalak/flame:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-flame-cs86vg",
+          "--security-opt",
+          "no-new-privileges",
+          "--platform",
+          "linux/amd64",
+          "-p",
+          "127.0.0.1:57145:5005",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-flame-cs86vg-data:/app/data",
+          "pawelmalak/flame:latest"
+        ],
+        "runStdout": "a59c1f66bcf990a47e5d7d0c35501ba54ec7e705e30ab2bad40e33a0798822ac",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 4.1,
+          "attempts": 3
+        },
+        "memUsage": "106.7MiB / 7.652GiB",
+        "memBytes": 111883059
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 106.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 111883059,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -1,0 +1,77 @@
+{
+  "slug": "chroma",
+  "checkedAt": "2026-11-21T03:15:54.111Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "chroma-core/chroma is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "chroma-core/chroma",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "chromadb/chroma:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "chromadb/chroma:latest",
+        "digest": "sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /api/v2/heartbeat -> 200 in 0s",
+      "evidence": {
+        "container": "hivra-verify-chroma-05260p",
+        "hostPort": 52714,
+        "image": "chromadb/chroma:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-chroma-05260p",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:52714:8000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-chroma-05260p-data:/data",
+          "chromadb/chroma:latest"
+        ],
+        "runStdout": "3aef3c59e45282e98cb3cf741ffc0287ac93472e0f7d7f59d7ce650dfa9df46f",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 0,
+          "attempts": 1
+        },
+        "memUsage": "11.16MiB / 7.652GiB",
+        "memBytes": 11702108
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 11.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 11702108,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

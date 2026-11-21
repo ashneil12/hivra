@@ -1,0 +1,85 @@
+{
+  "slug": "navidrome",
+  "checkedAt": "2026-11-21T03:25:07.204Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "navidrome/navidrome is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "navidrome/navidrome",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "deluan/navidrome:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "deluan/navidrome:latest",
+        "digest": "sha256:38dc2727bfcfd5ede290f8ada114fc90368146f265ae4701ddddbcbe2a44ee52",
+        "platforms": [
+          "linux/riscv64",
+          "unknown/unknown",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "linux/arm/v6",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown",
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/386",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /ping -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-navidrome-tgo4yf",
+        "hostPort": 55980,
+        "image": "deluan/navidrome:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-navidrome-tgo4yf",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:55980:4533",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-navidrome-tgo4yf-data:/data",
+          "deluan/navidrome:latest"
+        ],
+        "runStdout": "391f7d8a83cc784ef4aa695e08f88166fc7c0da441bf423c5d667345c86ce102",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "24.71MiB / 7.652GiB",
+        "memBytes": 25910313
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 24.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 25910313,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

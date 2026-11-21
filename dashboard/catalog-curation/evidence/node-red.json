@@ -1,0 +1,77 @@
+{
+  "slug": "node-red",
+  "checkedAt": "2026-11-21T03:25:54.594Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "node-red/node-red is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "node-red/node-red",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "nodered/node-red:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "nodered/node-red:latest",
+        "digest": "sha256:3622786c15b6f57f61bf1d0ece59d06a18b742c5c8955f588d189b6bee8dc97d",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-node-red-35fkyv",
+        "hostPort": 56204,
+        "image": "nodered/node-red:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-node-red-35fkyv",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:56204:1880",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-node-red-35fkyv-data:/data",
+          "nodered/node-red:latest"
+        ],
+        "runStdout": "57401aa27c3e0da90f15895697318a34e5bb1bb4e0f71d661d66d5f255ef7e2f",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "92.4MiB / 7.652GiB",
+        "memBytes": 96888422
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 92.4MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 96888422,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

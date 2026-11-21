@@ -1,0 +1,79 @@
+{
+  "slug": "excalidraw",
+  "checkedAt": "2026-11-21T03:16:44.958Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "excalidraw/excalidraw is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "excalidraw/excalidraw",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "excalidraw/excalidraw:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "excalidraw/excalidraw:latest",
+        "digest": "sha256:f7ee194addd607bf831d2af0f0a34463dd4225e426cf35199ef0b12a803398e9",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 0s",
+      "evidence": {
+        "container": "hivra-verify-excalidraw-p7gx7q",
+        "hostPort": 53113,
+        "image": "excalidraw/excalidraw:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-excalidraw-p7gx7q",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:53113:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-excalidraw-p7gx7q-tmp:/tmp",
+          "excalidraw/excalidraw:latest"
+        ],
+        "runStdout": "663d478ad45b1414a8154271e9e0824211bf642e17ab99e413b344390cba2f81",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 0,
+          "attempts": 1
+        },
+        "memUsage": "11.56MiB / 7.652GiB",
+        "memBytes": 12121539
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 11.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 12121539,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

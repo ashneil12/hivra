@@ -1,0 +1,77 @@
+{
+  "slug": "kroki",
+  "checkedAt": "2026-11-21T03:29:18.248Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "yuzutech/kroki is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "yuzutech/kroki",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "yuzutech/kroki:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "yuzutech/kroki:latest",
+        "digest": "sha256:de0f2fdc42e926d54706ac962aa5cfb38c5c387035a1b30d07ce297bbc37057b",
+        "platforms": [
+          "linux/arm64",
+          "unknown/unknown",
+          "linux/amd64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-kroki-c3e2xj",
+        "hostPort": 57319,
+        "image": "yuzutech/kroki:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-kroki-c3e2xj",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:57319:8000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-kroki-c3e2xj-tmp:/tmp",
+          "yuzutech/kroki:latest"
+        ],
+        "runStdout": "881b5e4111b6ffe2729b4f5dd8ff765707dea50645709fd00a1034817d3694bb",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "146.4MiB / 7.652GiB",
+        "memBytes": 153511526
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 146.4MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 153511526,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

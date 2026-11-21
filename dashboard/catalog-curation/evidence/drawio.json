@@ -1,0 +1,77 @@
+{
+  "slug": "drawio",
+  "checkedAt": "2026-11-21T03:16:48.301Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "jgraph/drawio is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "jgraph/drawio",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "jgraph/drawio:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "jgraph/drawio:latest",
+        "digest": "sha256:3e3281733f69416b2b632adad05c9c07d434ebb775e01070d55e9f3247cebe31",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-drawio-rwg0cq",
+        "hostPort": 53052,
+        "image": "jgraph/drawio:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-drawio-rwg0cq",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:53052:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-drawio-rwg0cq-tmp:/tmp",
+          "jgraph/drawio:latest"
+        ],
+        "runStdout": "391f154ead0e60d0015489a204bcbbba06c3f9f5f50a93cf6fa79a02202fdc89",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "235.4MiB / 7.652GiB",
+        "memBytes": 246834790
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 235.4MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 246834790,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -16,17 +16,24 @@ export const CATALOG_APP_SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 export const CATALOG_APP_PORT_MIN = 3200;
 export const CATALOG_APP_PORT_MAX = 3999;
 
-/** Permissive OSI licenses vetted for unmodified upstream single-tenant hosting.
- * Source-available and commercial-hosting-restricted licenses are intentionally
- * excluded so they fail schema validation before any launch work begins. */
-export const PERMISSIVE_OSI_LICENSES = [
+/** OSI-approved open-source licenses vetted for unmodified upstream
+ * single-tenant hosting, permissive and copyleft alike. Source-available and
+ * commercial-hosting-restricted licenses are intentionally excluded so they
+ * fail schema validation before any launch work begins. */
+export const CATALOG_OSI_LICENSES = [
   "MIT",
   "Apache-2.0",
   "BSD-3-Clause",
   "ISC",
   "MIT OR Apache-2.0",
+  "GPL-2.0",
+  "GPL-3.0",
+  "AGPL-3.0",
+  "LGPL-2.1",
+  "LGPL-3.0",
+  "MPL-2.0",
 ] as const;
-export type PermissiveOsiLicense = (typeof PERMISSIVE_OSI_LICENSES)[number];
+export type CatalogOsiLicense = (typeof CATALOG_OSI_LICENSES)[number];
 
 export const CATALOG_APP_CATEGORIES = ["agent", "app"] as const;
 export type CatalogAppCategory = (typeof CATALOG_APP_CATEGORIES)[number];
@@ -241,7 +248,7 @@ export const CatalogAppManifestSchema = z
     name: z.string().min(2).max(60),
     vendor: z.string().min(2).max(60),
     category: z.enum(CATALOG_APP_CATEGORIES),
-    license: z.enum(PERMISSIVE_OSI_LICENSES),
+    license: z.enum(CATALOG_OSI_LICENSES),
     sourceUrl: z.string().regex(/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/),
     tagline: z.string().min(10).max(180).refine((s) => !/[\u2013\u2014]/.test(s), "No em or en dashes"),
     description: z.string().min(10).max(200).refine((s) => !/[\u2013\u2014]/.test(s), "No em or en dashes"),

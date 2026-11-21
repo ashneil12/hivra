@@ -1,0 +1,36 @@
+{
+  "slug": "traccar",
+  "checkedAt": "2026-11-21T03:53:54.402Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "traccar/traccar is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "traccar/traccar",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "fail",
+      "detail": "traccar/traccar:latest: ERROR: unexpected status from HEAD request to https://registry-1.docker.io/v2/traccar/traccar/manifests/latest: 429 Too Many Requests\n"
+    },
+    {
+      "name": "boot",
+      "status": "skipped",
+      "detail": "earlier gate failed"
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "earlier gate failed"
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "image: traccar/traccar:latest: ERROR: unexpected status from HEAD request to https://registry-1.docker.io/v2/traccar/traccar/manifests/latest: 429 Too Many Requests\n"
+  ]
+}

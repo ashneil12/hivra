@@ -1,0 +1,77 @@
+{
+  "slug": "calibre-web",
+  "checkedAt": "2026-11-21T03:16:01.742Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "janeczku/calibre-web is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "janeczku/calibre-web",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "linuxserver/calibre-web:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "linuxserver/calibre-web:latest",
+        "digest": "sha256:adb69d75b9c252e580fc691096f858833b901b5d106ae4080fb476bab104d946",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.2s",
+      "evidence": {
+        "container": "hivra-verify-calibre-web-6igroi",
+        "hostPort": 52707,
+        "image": "linuxserver/calibre-web:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-calibre-web-6igroi",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:52707:8083",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-calibre-web-6igroi-config:/config",
+          "linuxserver/calibre-web:latest"
+        ],
+        "runStdout": "0c244254449d19ea772d18e95df97753c8b544c8a2cfdeed81c72639f1f32d81",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.2,
+          "attempts": 2
+        },
+        "memUsage": "193.2MiB / 7.652GiB",
+        "memBytes": 202584883
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 193.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 202584883,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

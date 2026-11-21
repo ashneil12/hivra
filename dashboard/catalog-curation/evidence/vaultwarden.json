@@ -1,0 +1,81 @@
+{
+  "slug": "vaultwarden",
+  "checkedAt": "2026-11-21T03:27:09.665Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "dani-garcia/vaultwarden is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "dani-garcia/vaultwarden",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "vaultwarden/server:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "vaultwarden/server:latest",
+        "digest": "sha256:4fe17f415f90087377d37c755e0ea3cf189dcc6794e49cdd2a9adbb4937d9e1f",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "linux/arm/v6",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /alive -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-vaultwarden-fwxzs6",
+        "hostPort": 56696,
+        "image": "vaultwarden/server:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-vaultwarden-fwxzs6",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:56696:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-vaultwarden-fwxzs6-data:/data",
+          "vaultwarden/server:latest"
+        ],
+        "runStdout": "0862e468a4a2c3c04b0aa25bb20fef27a1542d18b57683fa19955b9869ce84a6",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "14.46MiB / 7.652GiB",
+        "memBytes": 15162409
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 14.5MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 15162409,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

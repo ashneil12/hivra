@@ -1,0 +1,77 @@
+{
+  "slug": "mealie",
+  "checkedAt": "2026-11-21T03:22:44.294Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "mealie-recipes/mealie is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "mealie-recipes/mealie",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/mealie-recipes/mealie:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/mealie-recipes/mealie:latest",
+        "digest": "sha256:97e21ac96e9a8d1ee15aaf558ba3f14998936b9d6f334e40ebb4c6c2127dc12f",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /api/app/about -> 200 in 3s",
+      "evidence": {
+        "container": "hivra-verify-mealie-89ty6c",
+        "hostPort": 55424,
+        "image": "ghcr.io/mealie-recipes/mealie:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-mealie-89ty6c",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:55424:9000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-mealie-89ty6c-data:/app/data",
+          "ghcr.io/mealie-recipes/mealie:latest"
+        ],
+        "runStdout": "4f7895f7ff944c03534e706fc13d5e4eec08997ec747b7f3fd25cf4a5901c070",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 3,
+          "attempts": 2
+        },
+        "memUsage": "267.8MiB / 7.652GiB",
+        "memBytes": 280808653
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 267.8MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 280808653,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -1,0 +1,77 @@
+{
+  "slug": "anythingllm",
+  "checkedAt": "2026-11-21T03:11:55.967Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "Mintplex-Labs/anything-llm is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "Mintplex-Labs/anything-llm",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "mintplexlabs/anythingllm:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "mintplexlabs/anythingllm:latest",
+        "digest": "sha256:e98c38142741a5ca77900d3153cb8847464f0cdadaad618802ffeaa1290db818",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /api/ping -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-anythingllm-3354jn",
+        "hostPort": 52118,
+        "image": "mintplexlabs/anythingllm:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-anythingllm-3354jn",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:52118:3001",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-anythingllm-3354jn-storage:/app/server/storage",
+          "mintplexlabs/anythingllm:latest"
+        ],
+        "runStdout": "4415f9950387f66cc085eddb921b4c110ea274d96d411676c8c446a3fc72067e",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "558.2MiB / 7.652GiB",
+        "memBytes": 585315123
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 558.2MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 585315123,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}
