@@ -79,13 +79,13 @@ export const UNIVERSAL_CATALOG_IDS = [
   "openspeedtest",
   "netdata",
   "traccar",
+  "umami",
   "jellyfin",
   "audiobookshelf",
   "kavita",
   "calibre-web",
   "suwayomi",
   "komga",
-  "umami",
 ] as const;
 
 export type UniversalCatalogAppId = (typeof UNIVERSAL_CATALOG_IDS)[number];

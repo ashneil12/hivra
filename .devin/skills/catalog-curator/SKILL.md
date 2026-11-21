@@ -83,6 +83,9 @@ Copy the shape of a similar existing entry in the right category file. Rules:
   over `latest` when upstream publishes one.
 - `containerPort` and `volumes` from the upstream docs. Stateless apps still
   need one volume on a harmless documented path.
+- Also add the slug to `UNIVERSAL_CATALOG_IDS` in
+  `manifests/index.ts`, at the same position the entry has in the
+  concatenated category files (the test compares the two lists in order).
 - `hostPort`: the next free port in 3200-3999 (one higher than the current
   maximum in the registry).
 - Static env only when upstream documents it and it has a safe default. No
