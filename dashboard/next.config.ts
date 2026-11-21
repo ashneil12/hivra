@@ -285,6 +285,7 @@ const nextConfig: NextConfig = {
       { source: "/roadmap/HermesOS_Roadmap_2026.pdf", destination: "/roadmap", permanent: true },
       // Keep the static document's relative assets under /docs/litepaper/.
       // trailingSlash:false normalizes the directory URL before this redirect.
+      { source: "/litepaper", destination: "/docs/litepaper/index.html", permanent: false },
       { source: "/docs/litepaper", destination: "/docs/litepaper/index.html", permanent: false },
     ];
   },
