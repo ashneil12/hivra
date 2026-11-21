@@ -1707,6 +1707,26 @@
       "family": "value-set",
       "input": "/dashboard/infrastructure?launch=traccar",
       "expect": "/dashboard/infrastructure?launch=traccar"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=new-api&stage=choose",
+      "expect": "/dashboard/launch?profile=new-api&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=new-api",
+      "expect": "/dashboard/infrastructure?launch=new-api"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=adguard-home&stage=choose",
+      "expect": "/dashboard/launch?profile=adguard-home&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=adguard-home",
+      "expect": "/dashboard/infrastructure?launch=adguard-home"
     }
   ]
 }
