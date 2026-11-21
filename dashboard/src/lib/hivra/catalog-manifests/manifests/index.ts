@@ -81,6 +81,7 @@ export const UNIVERSAL_CATALOG_IDS = [
   "netdata",
   "traccar",
   "adguard-home",
+  "umami",
   "jellyfin",
   "audiobookshelf",
   "kavita",

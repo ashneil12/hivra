@@ -940,6 +940,98 @@ catalog_app_healthy() {
     sleep "$HEALTH_POLL_SECONDS"
   done
 }
+# docker-stack update: pull every service tag, re-pin digests into the
+# rendered compose file, restart the unit and health-check the web port.
+# Any unhealthy result re-renders the previous digests and starts again,
+# mirroring the docker-web branch's status writes.
+run_catalog_stack() {
+  local unit host_port health_path app_id
+  unit="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("unit") or "hivra-catalog-app.service")' "$CATALOG_META")"
+  IFS=$'\t' read -r host_port health_path < <(python3 -I -c '
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+print("\t".join([str(doc.get("hostPort") or ""), str(doc.get("healthPath") or "/")]))
+' "$CATALOG_META")
+  UNIT_FILE="$SYSTEMD_DIR/$unit"
+  [ -f "$UNIT_FILE" ] || { write_status failed not_installed; exit 1; }
+  if [ "$(free_mb "$CATALOG_ROOT")" -lt "$NEED_FREE_MB" ]; then write_status failed no_space; exit 1; fi
+
+  # Resolve every service's new pinned image; bail before touching the stack.
+  local digests_json old_digests_json
+  digests_json="$(python3 -I -c '
+import json, subprocess, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+out = {}
+for svc in doc.get("runtime", {}).get("services", []):
+    ref = f"{svc[\"imageRepo\"]}:{svc[\"imageTag\"]}"
+    subprocess.run(["docker", "pull", ref], check=True, timeout=3600,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    inspected = subprocess.run(
+        ["docker", "image", "inspect", "--format",
+         "{{range .RepoDigests}}{{println .}}{{end}}", ref],
+        check=True, capture_output=True, text=True).stdout
+    pinned = ""
+    for line in inspected.splitlines():
+        line = line.strip()
+        if "@sha256:" in line and len(line.rsplit("@", 1)[1]) == 71:
+            pinned = line
+            break
+    if not pinned:
+        raise SystemExit(f"no digest for {ref}")
+    out[svc["name"]] = pinned
+print(json.dumps(out))
+' "$CATALOG_META")" || { write_status failed download_failed; exit 1; }
+
+  old_digests_json="$(python3 -I -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("digests") or {}))' "$CATALOG_META")"
+  if [ "$digests_json" = "$old_digests_json" ]; then
+    write_record "$FROM"
+    write_status done
+    exit 0
+  fi
+
+  write_status waiting
+  wait_until_idle
+  write_status installing
+  systemctl stop "$unit" || true
+  # Persist the new digest map into meta BEFORE re-render so a crash mid-update
+  # still describes what compose.yaml was last rendered with.
+  python3 -I -c '
+import json, sys
+path = sys.argv[1]
+doc = json.load(open(path, encoding="utf-8"))
+doc["digests"] = json.loads(sys.argv[2])
+open(path + ".next", "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+' "$CATALOG_META" "$digests_json" && mv -f -- "$CATALOG_META.next" "$CATALOG_META"
+  printf '%s' "$digests_json" | python3 -I -B /usr/local/sbin/hivra-catalog-app.py render-compose \
+    || { write_status failed install_failed; exit 1; }
+  systemctl start "$unit" || true
+  if catalog_app_healthy "$unit" "$host_port" "$health_path"; then
+    release_lock
+    primary="$(python3 -I -c 'import json,sys; d=json.loads(sys.argv[1]); doc=json.load(open(sys.argv[2])); print(d.get(doc["runtime"]["web"]["service"], "").rsplit("@",1)[-1])' "$digests_json" "$CATALOG_META")"
+    write_record "$primary"
+    write_status done
+    exit 0
+  fi
+  systemctl stop "$unit" || true
+  # Roll back: restore the old digest map and re-render.
+  python3 -I -c '
+import json, sys
+path = sys.argv[1]
+doc = json.load(open(path, encoding="utf-8"))
+doc["digests"] = json.loads(sys.argv[2])
+open(path + ".next", "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+' "$CATALOG_META" "$old_digests_json" && mv -f -- "$CATALOG_META.next" "$CATALOG_META"
+  printf '%s' "$old_digests_json" | python3 -I -B /usr/local/sbin/hivra-catalog-app.py render-compose || true
+  systemctl start "$unit" || true
+  release_lock
+  if [ -n "$FROM" ] && catalog_app_healthy "$unit" "$host_port" "$health_path"; then
+    write_record "$FROM"
+    write_status rolled_back install_failed
+  else
+    write_status failed install_failed
+  fi
+  exit 1
+}
 run_catalog_app() {
   local app_id kind image_repo image_tag host_port health_path unit old_image new_image new_digest
   [ -f "$CATALOG_META" ] || { write_status failed not_installed; exit 1; }
@@ -963,6 +1055,10 @@ import json, sys
 try: print(json.load(open(sys.argv[1], encoding="utf-8")).get("version") or "")
 except Exception: pass
 ' "$RECORD")"
+  if [ "$kind" = docker-stack ]; then
+    run_catalog_stack || exit $?
+    return
+  fi
   if [ "$kind" = docker-web ]; then
     UNIT="${unit:-hivra-catalog-app.service}"
     UNIT_FILE="$SYSTEMD_DIR/$UNIT"

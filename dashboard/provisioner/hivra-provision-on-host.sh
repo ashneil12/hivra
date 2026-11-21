@@ -589,7 +589,7 @@ try:
         "wantBrowser": None if values[1] == "" else values[1] == "1", "modelKey": values[2],
         "modelBaseUrl": values[3], "model": values[4], "tunnelToken": values[5] or None,
         "accessHostname": None}
-    if native or desktop:
+    if native or desktop or catalog_app:
         document["publicOrigin"] = values[6]
     if desktop:
         document["computerId"] = values[7]

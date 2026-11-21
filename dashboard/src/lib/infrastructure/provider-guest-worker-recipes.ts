@@ -605,6 +605,11 @@ const recipes = Object.freeze({
     workerSha256: "44e1e6d98cf0f271e587d81e963050e4773497053d12324585a5e46de5c75957",
     workerSize: 45216,
   }),
+  "2026.11.20.5": Object.freeze({
+    protocol: "v1" as const,
+    workerSha256: "af0165e37957ed653691ea5eab4d7e52060f299f04983f7d8fefbb392439793a",
+    workerSize: 45216,
+  }),
 });
 
 type Version = keyof typeof recipes;

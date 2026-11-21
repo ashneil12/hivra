@@ -9,6 +9,7 @@
  */
 
 import { UNIVERSAL_CATALOG_MANIFESTS } from '../../src/lib/hivra/catalog-manifests/manifests/index';
+import { catalogAppHasWebSurface } from '../../src/lib/hivra/catalog-manifests/index';
 
 export type SweepTargetKind = 'agent' | 'computer';
 
@@ -46,7 +47,7 @@ const CATALOG_TARGETS: readonly SweepTarget[] = UNIVERSAL_CATALOG_MANIFESTS.map(
   profileId: manifest.id,
   tile: manifest.name,
   kind: 'agent',
-  proof: manifest.runtime.kind === 'docker-web' || manifest.runtime.webService ? 'agent-ui-chat' : 'hivra-chat',
+  proof: catalogAppHasWebSurface(manifest) ? 'agent-ui-chat' : 'hivra-chat',
 }));
 
 export const SWEEP_TARGETS: readonly SweepTarget[] = [

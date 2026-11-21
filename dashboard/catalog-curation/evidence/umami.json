@@ -1,0 +1,144 @@
+{
+  "slug": "umami",
+  "checkedAt": "2026-11-21T05:07:31.866Z",
+  "gitSha": "867b5f90fad9108897e53f09d6026ac8226a6fc3",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "umami-software/umami is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "umami-software/umami",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "2 service images have linux/amd64",
+      "evidence": {
+        "services": [
+          {
+            "name": "db",
+            "ref": "postgres:16-alpine",
+            "digest": "sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857",
+            "platforms": [
+              "linux/amd64",
+              "unknown/unknown",
+              "linux/arm/v6",
+              "unknown/unknown",
+              "linux/arm/v7",
+              "unknown/unknown",
+              "linux/arm64/v8",
+              "unknown/unknown",
+              "linux/386",
+              "unknown/unknown",
+              "linux/ppc64le",
+              "unknown/unknown",
+              "linux/riscv64",
+              "unknown/unknown",
+              "linux/s390x",
+              "unknown/unknown"
+            ]
+          },
+          {
+            "name": "umami",
+            "ref": "ghcr.io/umami-software/umami:postgresql-v2",
+            "digest": "sha256:950133e4158949061b84fa29ce1a87f734655dca5a49a08e727eb23c4e3582cd",
+            "platforms": [
+              "linux/amd64",
+              "linux/arm64",
+              "unknown/unknown",
+              "unknown/unknown"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "stack up; health / -> 200 in 10.2s across 2 container(s)",
+      "evidence": {
+        "project": "hivra-verify-umami-bu7xz6",
+        "composeFile": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-umami-dYjWmS/rendered/compose.yaml",
+        "renderedDir": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-umami-dYjWmS/rendered",
+        "renderStdout": "{\"outDir\":\"/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-umami-dYjWmS/rendered\"}",
+        "defaultPlatform": "host",
+        "upStdout": "",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 10.2,
+          "attempts": 6
+        },
+        "containerCount": 2,
+        "perContainerMem": [
+          {
+            "id": "16d946b5f0bd",
+            "memUsage": "256.4MiB / 7.652GiB",
+            "memBytes": 268854886
+          },
+          {
+            "id": "40bea78a78b5",
+            "memUsage": "25.02MiB / 7.652GiB",
+            "memBytes": 26235372
+          }
+        ],
+        "memBytes": 295090258
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 307 / -> 200 /dashboard",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 63860,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 307,
+            "location": "/dashboard"
+          },
+          {
+            "hop": 2,
+            "path": "/dashboard",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/dashboard",
+        "bodyHead": "<!DOCTYPE html><!--gYqOHqCgyBIJR347T3q5F--><html lang=\"en\" data-scroll=\"0\"><head><meta charSet=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><link rel=\"stylesheet\" href=\"/_next/static/css/51692e3b2180fe3b.css\" data-precedence=\"next\"/><link rel=\"stylesheet\" href=\"/_next/static/css/396f6a3b52675793.css\" data-precedence=\"next\"/><link rel=\"stylesheet\" href=\"/_next/stati",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 405,
+          "bodyHead": "Method Not Allowed"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 281.4MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 295090258,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}
