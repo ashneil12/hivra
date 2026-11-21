@@ -547,6 +547,15 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.20.5` adds the `docker-stack` catalog runtime and env
+placeholders: manifests may declare `generatedSecrets` whose values the guest
+generates once into a root-only store and never rotates, and env values may
+reference `${HIVRA_PUBLIC_ORIGIN}`, `${HIVRA_PUBLIC_HOST}` or a declared secret
+name. Multi-service apps render a hardened compose file on the guest (digest
+pins, one internal network, loopback-only web port, no bind mounts) with a
+systemd unit and updater rollback, and the launch document v5 carries the
+public origin so manifests can template absolute URLs.
+
 Release `2026.11.20.4` extends the `cli-web` catalog runtime with a bounded,
 idempotent `setup` contract: curated shell commands run once as the agent user
 after the CLI installs, with the merged static and model env loaded, for headless

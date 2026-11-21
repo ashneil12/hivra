@@ -114,7 +114,7 @@ def parse_launch(raw, *, provider_desktop=False):
         expected_fields = (FIELDS if version == 1 else FIELDS | {"publicOrigin"} if version == 2
                            else LINUX_DESKTOP_FIELDS if version == 3
                            else FIELDS | {"activityTelemetry"} if version == 4
-                           else FIELDS | {"catalogApp"})
+                           else FIELDS | {"catalogApp", "publicOrigin"})
         if type(version) is not int or version not in (1, 2, 3, 4, 5) or set(value) != expected_fields:
             raise ValueError()
         if ((version == 1 and value["agentKind"] not in KINDS)
@@ -156,11 +156,16 @@ def parse_launch(raw, *, provider_desktop=False):
             raise ValueError()
         if value["computerSubstrate"] != "provider-vm" and hostname is not None:
             raise ValueError()
-        if version in (2, 3):
+        if version in (2, 3, 5):
             # Native runtimes require one pre-journaled HTTPS authority. Provider
             # VMs may use named or direct access; Proxmox uses a named tunnel and
-            # must never fall back to an unbound quick-tunnel hostname.
-            if not canonical_origin(value["publicOrigin"]):
+            # must never fall back to an unbound quick-tunnel hostname. Catalog
+            # apps (v5) carry it too so manifests can template their public URL;
+            # it may be empty on a substrate without one, and the runner then
+            # fails only if the manifest actually uses a public-origin placeholder.
+            if version == 5 and not value["publicOrigin"]:
+                pass
+            elif not canonical_origin(value["publicOrigin"]):
                 raise ValueError()
             if value["computerSubstrate"] == "proxmox-kvm" and (token is None or hostname is not None):
                 raise ValueError()
@@ -172,7 +177,9 @@ def parse_launch(raw, *, provider_desktop=False):
             if version == 2:
                 if not valid_native_model(value["modelKey"], value["modelBaseUrl"], value["model"]):
                     raise ValueError()
-            elif any(value[key] for key in ("modelKey", "modelBaseUrl", "model")):
+            elif version == 3 and any(value[key] for key in ("modelKey", "modelBaseUrl", "model")):
+                # Linux computers take no model; catalog apps (v5) do — cli-web
+                # runtimes bind modelEnv to these launch fields.
                 raise ValueError()
         if version == 3:
             if value["computerSubstrate"] != ("provider-vm" if provider_desktop else "proxmox-kvm") or value["wantBrowser"] is not None:
@@ -536,6 +543,7 @@ def install_agent(launch, source, *, provider_desktop=None):
             "modelKey": launch["modelKey"],
             "modelBaseUrl": launch["modelBaseUrl"],
             "model": launch["model"],
+            "publicOrigin": launch.get("publicOrigin") or "",
         }, separators=(",", ":")).encode("utf-8")
         subprocess.run(
             ["/usr/bin/python3", "-I", "-B", str(source / "hivra-catalog-app.py"), "install"],

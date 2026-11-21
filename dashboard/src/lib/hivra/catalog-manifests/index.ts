@@ -64,12 +64,13 @@ export function isCatalogAppId(id: unknown): id is UniversalCatalogAppId {
 
 /** True when this catalog app renders its own web UI behind Hivra's token gate. */
 export function catalogAppHasWebSurface(manifest: CatalogAppManifest): boolean {
-  return manifest.runtime.kind === "docker-web" || Boolean(manifest.runtime.webService);
+  return manifest.runtime.kind === "docker-web" || manifest.runtime.kind === "docker-stack" || Boolean(manifest.runtime.webService);
 }
 
 /** Loopback port the guest app listens on, or null for CLI-only apps. */
 export function catalogAppHostPort(manifest: CatalogAppManifest): number | null {
   if (manifest.runtime.kind === "docker-web") return manifest.runtime.hostPort;
+  if (manifest.runtime.kind === "docker-stack") return manifest.runtime.web.hostPort;
   return manifest.runtime.webService?.hostPort ?? null;
 }
 
@@ -112,8 +113,8 @@ export function catalogAppHostingDisclaimer(
   const credentialNotice = deploymentMode === "self-managed"
     ? "Credentials may be stored on the agent computer. Whoever controls the connected host can access its infrastructure; Hivra does not become the host operator."
     : "Credentials may be stored on the agent computer. Hivra administrators retain infrastructure access on Hivra-managed hosts.";
-  const upstreamMethod = manifest.runtime.kind === "docker-web"
-    ? `pulls the official ${manifest.name} container image (${manifest.license}) unmodified`
+  const upstreamMethod = manifest.runtime.kind === "docker-web" || manifest.runtime.kind === "docker-stack"
+    ? `pulls the official ${manifest.name} container image${manifest.runtime.kind === "docker-stack" ? "s" : ""} (${manifest.license}) unmodified`
     : `installs the official ${manifest.name} release (${manifest.license}) unmodified`;
   const surfaceText = catalogAppHasWebSurface(manifest)
     ? `and serves ${manifest.name}'s own interface through Hivra's authenticated gateway`
@@ -130,7 +131,7 @@ export function catalogAppToWakeProfile(manifest: CatalogAppManifest): AgentWake
   return {
     type: manifest.id,
     busy: [],
-    agentProcesses: manifest.runtime.kind === "docker-web"
+    agentProcesses: manifest.runtime.kind === "docker-web" || manifest.runtime.kind === "docker-stack"
       ? [{ cgroup: "docker" }]
       : manifest.runtime.webService
         ? [{ cgroup: "bux-catalog-app\\.service" }]

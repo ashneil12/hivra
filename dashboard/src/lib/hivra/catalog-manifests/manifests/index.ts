@@ -79,6 +79,7 @@ export const UNIVERSAL_CATALOG_IDS = [
   "openspeedtest",
   "netdata",
   "traccar",
+  "umami",
   "jellyfin",
   "audiobookshelf",
   "kavita",

@@ -1,7 +1,7 @@
 {
   "slug": "grafana",
-  "checkedAt": "2026-11-21T04:11:17.391Z",
-  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checkedAt": "2026-11-21T05:04:29.594Z",
+  "gitSha": "867b5f90fad9108897e53f09d6026ac8226a6fc3",
   "checks": [
     {
       "name": "license",
@@ -30,16 +30,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health /api/health -> 200 in 6s",
+      "detail": "health /api/health -> 200 in 10s",
       "evidence": {
-        "container": "hivra-verify-grafana-px5pby",
+        "container": "hivra-verify-grafana-0ql9dl",
         "hostPort": 3242,
         "image": "grafana/grafana:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-grafana-px5pby",
+          "hivra-verify-grafana-0ql9dl",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -47,18 +47,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-grafana-px5pby-data:/var/lib/grafana",
+          "hivra-verify-grafana-0ql9dl-data:/var/lib/grafana",
           "grafana/grafana:latest"
         ],
-        "runStdout": "5b2667e69a2c63bd649015eefdd119f8346e0546c6e0b83018a1e8ce9518a2d8",
+        "runStdout": "455d63d2c0b70933ad0e2cd82c11b404af064f75ccaf6bfb8cba2f9fac7fc331",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 6,
-          "attempts": 4
+          "seconds": 10,
+          "attempts": 6
         },
-        "memUsage": "304.3MiB / 7.652GiB",
-        "memBytes": 319081677
+        "memUsage": "346.1MiB / 7.652GiB",
+        "memBytes": 362912154
       }
     },
     {
@@ -67,7 +67,7 @@
       "detail": "through gateway: 303 /app/ -> 302 / -> 200 /login",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 65116,
+        "gatewayPort": 62578,
         "proxyMode": "standard",
         "hops": [
           {
@@ -94,15 +94,19 @@
         "bodyHead": "<!DOCTYPE html>\n<html lang=\"en-US\">\n  <head>\n    \n    <meta charset=\"utf-8\" />\n    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge,chrome=1\" />\n    <meta name=\"viewport\" content=\"width=device-width\" />\n    <meta name=\"theme-color\" content=\"#000\" />\n\n    <title>Grafana</title>\n\n    <base href=\"/\" />\n\n    <link rel=\"icon\" type=\"image/png\" href=\"public/build/img/fav32.png\" />\n    <link rel=\"apple",
         "formPost": {
           "found": false
+        },
+        "loginProbe": {
+          "status": 400,
+          "bodyHead": "{\"statusCode\":400,\"messageId\":\"form-auth.invalid\",\"message\":\"bad login data\"}"
         }
       }
     },
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 304.3MiB vs floor 2GB*0.8=1.6GiB",
+      "detail": "idle memory 346.1MiB vs floor 2GB*0.8=1.6GiB",
       "evidence": {
-        "memBytes": 319081677,
+        "memBytes": 362912154,
         "floorRamGb": 2
       }
     }

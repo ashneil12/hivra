@@ -1695,6 +1695,16 @@
     },
     {
       "family": "value-set",
+      "input": "/dashboard/launch?profile=umami&stage=choose",
+      "expect": "/dashboard/launch?profile=umami&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=umami",
+      "expect": "/dashboard/infrastructure?launch=umami"
+    },
+    {
+      "family": "value-set",
       "input": "/dashboard/infrastructure?launch=traccar",
       "expect": "/dashboard/infrastructure?launch=traccar"
     }

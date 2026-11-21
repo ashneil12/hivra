@@ -53,7 +53,36 @@ const DUMMY_MODEL_ENV = {
 
 const GATEWAY_SERVER = path.join(DASHBOARD_DIR, "provisioner", "hivra-chat", "server.js");
 const GATEWAY_PUBLIC_HOST = "box-verify.example.test";
+const GATEWAY_PUBLIC_ORIGIN = `https://${GATEWAY_PUBLIC_HOST}`;
 const GATEWAY_TOKEN = "a".repeat(64);
+const CATALOG_APP_RUNNER = path.join(DASHBOARD_DIR, "provisioner", "hivra-catalog-app.py");
+
+// Deterministic stand-ins for the guest's generated secrets: the runner's
+// --render-only mode uses the same `render-only-<name>` values, so boot and
+// gateway checks see identical env either way. Never real secrets.
+const FAKE_SECRET_PREFIX = "render-only-";
+
+function fakeSecretValue(name) {
+  return `${FAKE_SECRET_PREFIX}${name.toLowerCase()}`;
+}
+
+/** Mirror of the guest substitution: ${HIVRA_PUBLIC_ORIGIN},
+ * ${HIVRA_PUBLIC_HOST} and ${NAME} for declared generatedSecrets. Throws on
+ * any other placeholder, exactly like hivra-catalog-app.py. */
+function substituteEnvValue(value, secretNames) {
+  return String(value).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (whole, name) => {
+    if (name === "HIVRA_PUBLIC_ORIGIN") return GATEWAY_PUBLIC_ORIGIN;
+    if (name === "HIVRA_PUBLIC_HOST") return GATEWAY_PUBLIC_HOST;
+    if (secretNames.has(name)) return fakeSecretValue(name);
+    throw new Error(`env placeholder \${${name}} is not declared`);
+  });
+}
+
+function substituteEnvMap(env, secretNames) {
+  const out = {};
+  for (const [key, value] of Object.entries(env ?? {})) out[key] = substituteEnvValue(value, secretNames);
+  return out;
+}
 
 function shOut(cmd, args, opts = {}) {
   const res = spawnSync(cmd, args, {
@@ -130,8 +159,54 @@ function imageDigest(repo, tag) {
   return { ok: true, digest, inspect: res.stdout.slice(0, 800) };
 }
 
+async function inspectDockerImage(repo, tag) {
+  const ref = `${repo}:${tag}`;
+  const digestInfo = imageDigest(repo, tag);
+  if (!digestInfo.ok) return { ok: false, detail: `${ref}: ${digestInfo.stderr}`, evidence: { ref } };
+
+  let platforms = [];
+  const raw = shOut("docker", ["buildx", "imagetools", "inspect", "--raw", ref], { timeout: 60_000 });
+  if (raw.status === 0) platforms = parseImagePlatforms(raw.stdout);
+  if (platforms.length === 0) {
+    // Single-manifest images carry no platform list; imagetools resolves the
+    // image config and reports os/architecture for the one variant it serves.
+    const fmt = shOut("docker", ["buildx", "imagetools", "inspect", "--format", "{{json .}}", ref], { timeout: 60_000 });
+    if (fmt.status === 0) {
+      try {
+        const doc = JSON.parse(fmt.stdout);
+        if (doc.image?.os && doc.image?.architecture) platforms = [`${doc.image.os}/${doc.image.architecture}`];
+      } catch {
+        /* not json */
+      }
+    }
+  }
+  if (platforms.length === 0) {
+    const man = shOut("docker", ["manifest", "inspect", ref], { timeout: 60_000 });
+    if (man.status === 0) platforms = parseImagePlatforms(man.stdout);
+  }
+  const evidence = { ref, digest: digestInfo.digest, platforms: platforms.length ? platforms : ["unknown"] };
+  if (platforms.length === 0) return { ok: false, detail: `${ref}: could not determine platforms`, evidence };
+  if (!platforms.some((p) => p.startsWith("linux/amd64"))) {
+    return { ok: false, detail: `${ref}: no linux/amd64 variant (platforms: ${platforms.join(", ")})`, evidence };
+  }
+  const hasArm64 = platforms.some((p) => p.startsWith("linux/arm64"));
+  return { ok: true, detail: `${ref} linux/amd64${hasArm64 ? " + linux/arm64" : " only"}`, evidence };
+}
+
 async function checkImage(spec) {
   const rt = spec.runtime;
+  if (rt.kind === "docker-stack") {
+    const services = [];
+    const failures = [];
+    for (const svc of rt.services) {
+      const res = await inspectDockerImage(svc.imageRepo, svc.imageTag);
+      services.push({ name: svc.name, ...res.evidence });
+      if (!res.ok) failures.push(`${svc.name}: ${res.detail}`);
+    }
+    const evidence = { services };
+    if (failures.length) return check("image", "fail", failures.join("; "), evidence);
+    return check("image", "pass", `${services.length} service images have linux/amd64`, evidence);
+  }
   if (rt.kind !== "docker-web") {
     // cli-web: the package or release asset must exist upstream.
     const installer = rt.installer;
@@ -167,37 +242,8 @@ async function checkImage(spec) {
     return check("package", "pass", `release ${info.tag_name} has ${info.assets.length} assets`, info);
   }
 
-  const ref = `${rt.imageRepo}:${rt.imageTag}`;
-  const digestInfo = imageDigest(rt.imageRepo, rt.imageTag);
-  if (!digestInfo.ok) return check("image", "fail", `${ref}: ${digestInfo.stderr}`);
-
-  let platforms = [];
-  const raw = shOut("docker", ["buildx", "imagetools", "inspect", "--raw", ref], { timeout: 60_000 });
-  if (raw.status === 0) platforms = parseImagePlatforms(raw.stdout);
-  if (platforms.length === 0) {
-    // Single-manifest images carry no platform list; imagetools resolves the
-    // image config and reports os/architecture for the one variant it serves.
-    const fmt = shOut("docker", ["buildx", "imagetools", "inspect", "--format", "{{json .}}", ref], { timeout: 60_000 });
-    if (fmt.status === 0) {
-      try {
-        const doc = JSON.parse(fmt.stdout);
-        if (doc.image?.os && doc.image?.architecture) platforms = [`${doc.image.os}/${doc.image.architecture}`];
-      } catch {
-        /* not json */
-      }
-    }
-  }
-  if (platforms.length === 0) {
-    const man = shOut("docker", ["manifest", "inspect", ref], { timeout: 60_000 });
-    if (man.status === 0) platforms = parseImagePlatforms(man.stdout);
-  }
-  const evidence = { ref, digest: digestInfo.digest, platforms: platforms.length ? platforms : ["unknown"] };
-  if (platforms.length === 0) return check("image", "fail", `${ref}: could not determine platforms`, evidence);
-  if (!platforms.some((p) => p.startsWith("linux/amd64"))) {
-    return check("image", "fail", `${ref}: no linux/amd64 variant (platforms: ${platforms.join(", ")})`, evidence);
-  }
-  const hasArm64 = platforms.some((p) => p.startsWith("linux/arm64"));
-  return check("image", "pass", `${ref} linux/amd64${hasArm64 ? " + linux/arm64" : " only"}`, evidence);
+  const res = await inspectDockerImage(rt.imageRepo, rt.imageTag);
+  return check("image", res.ok ? "pass" : "fail", res.detail, res.evidence);
 }
 
 // ── Check 3: boot ───────────────────────────────────────────────────────────
@@ -230,14 +276,18 @@ async function freeCatalogPort() {
 }
 
 function mergedDockerEnv(runtime) {
-  const env = { ...(runtime.env ?? {}) };
+  const secretNames = new Set(runtime.generatedSecrets ?? []);
+  const env = substituteEnvMap(runtime.env, secretNames);
   const modelEnv = runtime.modelEnv;
   if (modelEnv) {
-    for (const [k, v] of Object.entries(modelEnv.extraEnv ?? {})) env[k] = v;
+    for (const [k, v] of Object.entries(modelEnv.extraEnv ?? {})) env[k] = substituteEnvValue(v, secretNames);
     env[modelEnv.apiKeyVar] = DUMMY_MODEL_ENV.apiKey;
     env[modelEnv.baseUrlVar] = DUMMY_MODEL_ENV.baseUrl;
     if (modelEnv.modelVar) env[modelEnv.modelVar] = DUMMY_MODEL_ENV.model;
   }
+  // The guest injects each declared secret as a raw env var last, so a secret
+  // name wins over any static or model binding that happens to collide.
+  for (const name of secretNames) env[name] = fakeSecretValue(name);
   return env;
 }
 
@@ -366,8 +416,13 @@ function gwRedirectTarget(location, currentPath) {
   }
 }
 
-async function gatewayCheck(spec, hostPort) {
+async function gatewayCheck(spec, hostPort, route = null) {
   const rt = spec.runtime;
+  // docker-stack publishes through runtime.web; everything else uses the
+  // top-level hostPort/healthPath/proxyMode like docker-web.
+  const healthPath = route?.healthPath ?? rt.healthPath ?? rt.web?.healthPath ?? "/";
+  const proxyMode = route?.proxyMode ?? rt.proxyMode ?? rt.web?.proxyMode ?? "standard";
+  const kind = route?.kind ?? (rt.kind === "docker-stack" ? "docker-stack" : "docker-web");
   const work = mkdtempSync(path.join(tmpdir(), `hivra-gw-${spec.id}-`));
   const home = path.join(work, "home");
   const metaFile = path.join(work, "catalog-app.json");
@@ -381,15 +436,15 @@ async function gatewayCheck(spec, hostPort) {
       JSON.stringify({
         appId: spec.id,
         name: spec.name ?? spec.id,
-        kind: "docker-web",
+        kind,
         hostPort,
-        healthPath: rt.healthPath ?? "/",
-        proxyMode: rt.proxyMode ?? "standard",
+        healthPath,
+        proxyMode,
       }),
     );
     const gwPort = await freePort();
     evidence.gatewayPort = gwPort;
-    evidence.proxyMode = rt.proxyMode ?? "standard";
+    evidence.proxyMode = proxyMode;
     child = spawn(process.execPath, [GATEWAY_SERVER], {
       env: {
         ...process.env,
@@ -465,7 +520,7 @@ async function gatewayCheck(spec, hostPort) {
       // gateway proxies verbatim. Accept a clean 4xx at "/" when the app's own
       // healthPath answers through the same gateway — redirect loops, loopback
       // references and CSRF rejections above still fail.
-      const hp = rt.healthPath && rt.healthPath !== "/" ? rt.healthPath : null;
+      const hp = healthPath && healthPath !== "/" ? healthPath : null;
       if (hp && final.status >= 400 && final.status < 500) {
         const cookie = gwCookieHeader(jar);
         const hpRes = await gwRequest(gwPort, { reqPath: hp, headers: cookie ? { cookie } : {} });
@@ -535,6 +590,21 @@ async function gatewayCheck(spec, hostPort) {
       }
     } else {
       evidence.formPost = { found: false };
+    }
+
+    // Reserved-path collision probe: the gateway owns POST /login for its
+    // connect flow on every agent kind except catalog-app, whose apps post
+    // their own login there. If the answer is the gateway's deny page the
+    // app's login can never work (the Grafana live defect).
+    const loginProbe = await gwRequest(gwPort, {
+      method: "POST",
+      reqPath: "/login",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "verify", password: "verify" }),
+    });
+    evidence.loginProbe = { status: loginProbe.status, bodyHead: (loginProbe.body ?? "").slice(0, 300) };
+    if (/this box is private/i.test(loginProbe.body ?? "")) {
+      return check("gateway", "fail", "POST /login answered by the gateway deny page (reserved-path collision)", evidence);
     }
 
     const hopDesc = hops.map((h) => `${h.status} ${h.path}`).join(" -> ");
@@ -618,6 +688,98 @@ async function bootDockerWeb(spec, platforms) {
     shOut("docker", ["rm", "-f", name], { timeout: 60_000 });
     const vols = rt.volumes.map((v) => `${name}-${v.name}`);
     if (vols.length) shOut("docker", ["volume", "rm", ...vols], { timeout: 60_000 });
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+// docker-stack: render through the guest runner's own --render-only mode so
+// the verifier exercises exactly what install writes, then bring the compose
+// project up and check the web service through the real gateway.
+async function bootDockerStack(spec, imageEvidence) {
+  const rt = spec.runtime;
+  const web = rt.web;
+  const slug = spec.id;
+  const work = mkdtempSync(path.join(tmpdir(), `hivra-verify-stack-${slug}-`));
+  const outDir = path.join(work, "rendered");
+  const specFile = path.join(work, "spec.json");
+  const project = `hivra-verify-${slug}-${Math.random().toString(36).slice(2, 8)}`;
+  const composeFile = path.join(outDir, "compose.yaml");
+  const evidence = { project, composeFile, renderedDir: outDir };
+  let memBytes = null;
+
+  // The runner validates the launch-spec envelope {appId,name,runtime}; the
+  // publicOrigin rides alongside it exactly like the guest install payload.
+  writeFileSync(
+    specFile,
+    JSON.stringify({
+      spec: { appId: slug, name: spec.name ?? slug, runtime: rt },
+      publicOrigin: GATEWAY_PUBLIC_ORIGIN,
+    }),
+  );
+  const render = spawnSync("python3", ["-I", "-B", CATALOG_APP_RUNNER, "render-only", specFile, outDir], {
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  try {
+    if (render.error || render.status !== 0) {
+      evidence.renderStderr = (render.stderr || render.error?.message || "").slice(0, 600);
+      return { checks: [check("boot", "fail", `runner --render-only failed: ${evidence.renderStderr}`, evidence), check("gateway", "skipped", "render failed")], memBytes };
+    }
+    evidence.renderStdout = (render.stdout || "").trim().slice(0, 300);
+
+    // Match the guest's linux/amd64 target when any service lacks arm64.
+    const services = imageEvidence?.services ?? [];
+    const allArm64 = services.length > 0 && services.every((s) => (s.platforms ?? []).some((p) => p.startsWith("linux/arm64")));
+    const composeEnv = { ...process.env, ...(allArm64 ? {} : { DOCKER_DEFAULT_PLATFORM: "linux/amd64" }) };
+    evidence.defaultPlatform = allArm64 ? "host" : "linux/amd64";
+
+    const up = shOut("docker", ["compose", "-p", project, "-f", composeFile, "up", "-d"], { timeout: 600_000, env: composeEnv });
+    evidence.upStdout = up.stdout.slice(-800);
+    if (up.status !== 0) {
+      evidence.upStderr = up.stderr.slice(-1200);
+      const logs = shOut("docker", ["compose", "-p", project, "-f", composeFile, "logs", "--tail", "60"], { timeout: 60_000, env: composeEnv });
+      evidence.logsTail = (logs.stdout + logs.stderr).slice(-2000);
+      return { checks: [check("boot", "fail", `docker compose up failed: ${up.stderr.slice(0, 300)}`, evidence), check("gateway", "skipped", "stack did not start")], memBytes };
+    }
+
+    const hostPort = web.hostPort;
+    const health = await pollHealth(hostPort, web.healthPath, BOOT_TIMEOUT_MS);
+    evidence.health = health;
+    if (!health.ok) {
+      const logs = shOut("docker", ["compose", "-p", project, "-f", composeFile, "logs", "--tail", "80"], { timeout: 60_000, env: composeEnv });
+      evidence.logsTail = (logs.stdout + logs.stderr).slice(-2500);
+      return { checks: [check("boot", "fail", `health ${web.healthPath} never returned <400 (last status ${health.status ?? "none"})`, evidence), check("gateway", "skipped", "health check failed")], memBytes };
+    }
+
+    // Whole-stack idle memory: sum docker stats across the project's containers.
+    const ps = shOut("docker", ["ps", "-q", "--filter", `label=com.docker.compose.project=${project}`], { timeout: 30_000 });
+    const ids = ps.stdout.split(/\s+/).filter(Boolean);
+    evidence.containerCount = ids.length;
+    let total = 0;
+    let sawStats = false;
+    const perContainer = [];
+    for (const id of ids) {
+      const stats = shOut("docker", ["stats", "--no-stream", "--format", "{{.MemUsage}}", id], { timeout: 30_000 });
+      const text = stats.stdout.trim();
+      const bytes = parseMemUsage(text);
+      perContainer.push({ id: id.slice(0, 12), memUsage: text, memBytes: bytes });
+      if (bytes !== null) {
+        total += bytes;
+        sawStats = true;
+      }
+    }
+    evidence.perContainerMem = perContainer;
+    if (sawStats) memBytes = total;
+    evidence.memBytes = memBytes;
+
+    const bootCheck = check("boot", "pass", `stack up; health ${web.healthPath} -> ${health.status} in ${health.seconds}s across ${ids.length} container(s)`, evidence);
+    const gateway = await gatewayCheck(spec, web.hostPort);
+    return { checks: [bootCheck, gateway], memBytes };
+  } finally {
+    shOut("docker", ["compose", "-p", project, "-f", composeFile, "down", "-v", "--remove-orphans"], { timeout: 120_000 });
+    const vols = shOut("docker", ["volume", "ls", "-q", "--filter", `name=hivra-app-${slug}-`], { timeout: 30_000 });
+    const volNames = vols.stdout.split(/\s+/).filter(Boolean);
+    if (volNames.length) shOut("docker", ["volume", "rm", ...volNames], { timeout: 60_000 });
     rmSync(work, { recursive: true, force: true });
   }
 }
@@ -906,9 +1068,11 @@ async function verifyOne(spec, { force = false } = {}) {
     for (const name of ["boot", "gateway", "floor"]) {
       checks.push(check(name, "skipped", "earlier gate failed"));
     }
-  } else if (spec.runtime.kind === "docker-web") {
-    const platforms = imageCheck.evidence?.platforms ?? [];
-    const bootResult = await bootDockerWeb(spec, platforms);
+  } else if (spec.runtime.kind === "docker-web" || spec.runtime.kind === "docker-stack") {
+    const platforms = imageCheck.evidence?.platforms ?? imageCheck.evidence?.services?.flatMap((s) => s.platforms ?? []) ?? [];
+    const bootResult = spec.runtime.kind === "docker-stack"
+      ? await bootDockerStack(spec, imageCheck.evidence)
+      : await bootDockerWeb(spec, platforms);
     checks.push(...bootResult.checks);
 
     // Floor check: measured idle memory must fit under 80% of the floor.

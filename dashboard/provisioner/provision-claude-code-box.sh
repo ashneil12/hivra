@@ -175,6 +175,9 @@ record_agent_app() {
   chmod 0644 /var/lib/hivra/agent-app.json.next
   mv -f -- /var/lib/hivra/agent-app.json.next /var/lib/hivra/agent-app.json
   install -o root -g root -m 0700 "$SRC_DIR/hivra-agent-app-update.sh" /usr/local/sbin/hivra-agent-app-update
+  # The catalog-app updater re-renders compose files through the same runner
+  # the installer used, so it must exist at a stable root-only path.
+  [ ! -f "$SRC_DIR/hivra-catalog-app.py" ] || install -o root -g root -m 0700 "$SRC_DIR/hivra-catalog-app.py" /usr/local/sbin/hivra-catalog-app.py
 }
 
 [ "$(id -u)" -eq 0 ] || die 'must run as root (use sudo)'

@@ -118,6 +118,38 @@ const EnvMapSchema = z
   .record(z.string().regex(ENV_KEY_RE), z.string().refine(isPrintableEnvValue, "Env value must be printable ASCII/UTF-8 without control chars"))
   .refine((obj) => Object.keys(obj).length <= 32, "At most 32 static env vars");
 
+/** Secret names a runtime may ask the guest to generate once (32 random bytes,
+ * root-only file, reused across reinstalls). Values are substituted into env
+ * placeholders at install; the names themselves travel in the launch spec. */
+const GeneratedSecretsSchema = z
+  .array(z.string().regex(ENV_KEY_RE))
+  .max(8)
+  .refine((names) => new Set(names).size === names.length, "generatedSecrets must be unique");
+
+/** Env values may reference the launch document's public origin pieces and the
+ * runtime's declared generated secrets — nothing else. The guest substitutes
+ * them when it writes the env file(s); secret values never enter the spec. */
+export const CATALOG_ENV_PUBLIC_PLACEHOLDERS = ["HIVRA_PUBLIC_ORIGIN", "HIVRA_PUBLIC_HOST"] as const;
+const ENV_PLACEHOLDER_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+function envValuePlaceholdersOk(value: string, secretNames: ReadonlySet<string>): boolean {
+  const allowed = new Set<string>([...CATALOG_ENV_PUBLIC_PLACEHOLDERS, ...secretNames]);
+  for (const match of value.matchAll(ENV_PLACEHOLDER_RE)) {
+    if (!allowed.has(match[1])) return false;
+  }
+  // A "${" that does not form one of the allowed placeholders is rejected so a
+  // typo can never ship a literal placeholder string to the app.
+  return !value.replace(ENV_PLACEHOLDER_RE, "").includes("${");
+}
+
+function envMapPlaceholdersOk(
+  env: Record<string, string> | undefined,
+  secretNames: ReadonlySet<string>,
+): boolean {
+  if (!env) return true;
+  return Object.values(env).every((value) => envValuePlaceholdersOk(value, secretNames));
+}
+
 export const ModelEnvBindingSchema = z
   .object({
     apiKeyVar: z.string().regex(ENV_KEY_RE),
@@ -144,6 +176,7 @@ export const DockerWebRuntimeSchema = z
     healthPath: z.string().refine(isSafeHealthPath, "Invalid health path"),
     volumes: z.array(DockerVolumeSchema).min(1).max(8),
     env: EnvMapSchema.optional(),
+    generatedSecrets: GeneratedSecretsSchema.optional(),
     modelEnv: ModelEnvBindingSchema.optional(),
     dropAllCaps: z.boolean().optional(),
     stopTimeoutSeconds: z.number().int().min(5).max(120).optional(),
@@ -212,6 +245,7 @@ export const CliWebRuntimeBaseSchema = z
       .optional(),
     setup: CliSetupSchema.optional(),
     env: EnvMapSchema.optional(),
+    generatedSecrets: GeneratedSecretsSchema.optional(),
     modelEnv: ModelEnvBindingSchema.optional(),
   })
   .strict();
@@ -221,11 +255,108 @@ export const CliWebRuntimeSchema = CliWebRuntimeBaseSchema.refine(
   { message: "cli-web runtime must define webService, cliChat, or both" },
 );
 
-export const CatalogAppRuntimeSchema = z
-  .discriminatedUnion("kind", [DockerWebRuntimeSchema, CliWebRuntimeBaseSchema])
-  .refine((runtime) => runtime.kind !== "cli-web" || Boolean(runtime.webService || runtime.cliChat), {
-    message: "cli-web runtime must define webService, cliChat, or both",
-  });
+const STACK_SERVICE_NAME_RE = /^[a-z][a-z0-9-]{0,23}$/;
+
+/** One container in a docker-stack runtime. Image refs are tags in the spec;
+ * the guest pins each pulled digest into the rendered compose file. */
+export const DockerStackServiceSchema = z
+  .object({
+    name: z.string().regex(STACK_SERVICE_NAME_RE),
+    imageRepo: z.string().regex(IMAGE_REPO_RE),
+    imageTag: z.string().regex(IMAGE_TAG_RE),
+    env: EnvMapSchema.optional(),
+    generatedSecrets: GeneratedSecretsSchema.optional(),
+    volumes: z.array(DockerVolumeSchema).max(8).optional(),
+    dropAllCaps: z.boolean().optional(),
+    dependsOn: z.array(z.string().regex(STACK_SERVICE_NAME_RE)).max(5).optional(),
+  })
+  .strict();
+export type DockerStackService = z.infer<typeof DockerStackServiceSchema>;
+
+/** Multi-container catalog app: the guest renders a compose file itself
+ * (never raw YAML from a manifest) with digest-pinned images, one internal
+ * network, named volumes, no-new-privileges and the only published port on
+ * the web service's loopback hostPort. */
+export const DockerStackRuntimeSchema = z
+  .object({
+    kind: z.literal("docker-stack"),
+    services: z.array(DockerStackServiceSchema).min(2).max(6),
+    web: z
+      .object({
+        service: z.string().regex(STACK_SERVICE_NAME_RE),
+        containerPort: z.number().int().min(1).max(65535),
+        hostPort: z.number().int().min(CATALOG_APP_PORT_MIN).max(CATALOG_APP_PORT_MAX),
+        healthPath: z.string().refine(isSafeHealthPath, "Invalid health path"),
+        proxyMode: z.enum(["standard", "loopback-origin"]),
+      })
+      .strict(),
+    stopTimeoutSeconds: z.number().int().min(5).max(120).optional(),
+  })
+  .strict();
+
+const CatalogRuntimeFieldsSchema = z.discriminatedUnion("kind", [
+  DockerWebRuntimeSchema,
+  CliWebRuntimeBaseSchema,
+  DockerStackRuntimeSchema,
+]);
+
+type CatalogRuntimeFields = z.infer<typeof CatalogRuntimeFieldsSchema>;
+
+const STACK_PLACEHOLDER_MESSAGE =
+  "Env values may only use ${HIVRA_PUBLIC_ORIGIN}, ${HIVRA_PUBLIC_HOST} or declared generatedSecrets";
+
+function catalogRuntimeRefinement(runtime: CatalogRuntimeFields, ctx: z.RefinementCtx) {
+  if (runtime.kind === "docker-web" || runtime.kind === "cli-web") {
+    const secrets = new Set(runtime.generatedSecrets ?? []);
+    if (!envMapPlaceholdersOk(runtime.env, secrets) || !envMapPlaceholdersOk(runtime.modelEnv?.extraEnv, secrets)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: STACK_PLACEHOLDER_MESSAGE });
+    }
+    return;
+  }
+  if (runtime.kind !== "docker-stack") return;
+
+  // Secrets are app-wide (one root-only file): every service may reference
+  // any declared name via ${NAME}, and a service receives the raw value only
+  // for the names it declares itself.
+  const allSecrets = new Set<string>(
+    runtime.services.flatMap((service) => service.generatedSecrets ?? []),
+  );
+  for (const service of runtime.services) {
+    if (!envMapPlaceholdersOk(service.env, allSecrets)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${STACK_PLACEHOLDER_MESSAGE} (service ${service.name})` });
+      return;
+    }
+  }
+
+  const names = runtime.services.map((service) => service.name);
+  if (new Set(names).size !== names.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "docker-stack service names must be unique" });
+  }
+  if (!names.includes(runtime.web.service)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: `docker-stack web.service ${runtime.web.service} is not a declared service` });
+  }
+  for (const service of runtime.services) {
+    // Non-web services must not track a moving tag: a `latest` pull on update
+    // could silently change the database major version under existing data.
+    if (service.name !== runtime.web.service && service.imageTag === "latest") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `docker-stack non-web service ${service.name} must not use the latest tag` });
+    }
+  }
+  const seen = new Set<string>();
+  for (const service of runtime.services) {
+    for (const dep of service.dependsOn ?? []) {
+      if (!seen.has(dep)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `docker-stack service ${service.name} dependsOn ${dep} which is not an earlier service` });
+      }
+    }
+    seen.add(service.name);
+  }
+}
+
+export const CatalogAppRuntimeSchema = CatalogRuntimeFieldsSchema.superRefine(catalogRuntimeRefinement).refine(
+  (runtime) => runtime.kind !== "cli-web" || Boolean(runtime.webService || runtime.cliChat),
+  { message: "cli-web runtime must define webService, cliChat, or both" },
+);
 export type CatalogAppRuntime = z.infer<typeof CatalogAppRuntimeSchema>;
 
 const StarterSchema = z

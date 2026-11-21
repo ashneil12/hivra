@@ -236,7 +236,7 @@ function readCatalogAppMeta() {
     return {
       appId: raw.appId,
       name: typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : raw.appId,
-      kind: raw.kind === "cli-web" ? "cli-web" : "docker-web",
+      kind: raw.kind === "cli-web" ? "cli-web" : raw.kind === "docker-stack" ? "docker-stack" : "docker-web",
       hostPort,
       healthPath,
       proxyMode,
@@ -4716,7 +4716,14 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && u === "/connect/grant") return bearerAuthed(req) ? handleConnectGrantCreate(req, res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "DELETE" && u === "/connect/grant") return bearerAuthed(req) ? handleConnectGrantRevoke(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "GET" && u.startsWith("/connect/")) return handleConnectRedeem(req, res, u.slice("/connect/".length));
-  if (req.method === "POST" && u === "/login") return handleConnectLogin(req, res);
+  // POST /login is Agent Zero's own sign-in form. A catalog app's login form
+  // posts to the same path, so for catalog-app the request belongs to the app;
+  // connect links still redeem through GET /connect/<pair> above. The paths a
+  // catalog app never sees stay reserved: /healthz, /auth/bootstrap,
+  // /connect/grant (mint/revoke), GET /connect/<pair>, the whole /api/*
+  // management surface and the /app entry — everything else proxies through.
+  if (req.method === "POST" && u === "/login"
+    && !(AGENT_KIND === "catalog-app" && CATALOG_APP && CATALOG_APP.hostPort && !ATTACHED)) return handleConnectLogin(req, res);
   if (AGENT_KIND === "openbot" && !ATTACHED) {
     if (req.method === "POST" && u === OPENBOT_SETUP) return openbotSaveKey(req, res);
     if (u === OPENBOT_ENTRY || u.startsWith(OPENBOT_ENTRY + "/")) return openbotEntry(req, res, u);
