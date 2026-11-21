@@ -99,10 +99,10 @@
 {"slug": "odoo", "name": "Odoo", "sourceUrl": "https://github.com/odoo/odoo", "status": "compose-needed", "reason": "Upstream deployment requires PostgreSQL", "checkedAt": "2026-11-21"}
 {"slug": "metabase", "name": "Metabase", "sourceUrl": "https://github.com/metabase/metabase", "status": "rejected", "reason": "GitHub reports SPDX NOASSERTION, outside the catalog licence allowlist", "checkedAt": "2026-11-21"}
 {"slug": "discourse", "name": "Discourse", "sourceUrl": "https://github.com/discourse/discourse", "status": "compose-needed", "reason": "Upstream deployment requires PostgreSQL and Redis", "checkedAt": "2026-11-21"}
-{"slug": "glance", "name": "Glance", "sourceUrl": "https://github.com/glanceapp/glance", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "glance", "name": "Glance", "sourceUrl": "https://github.com/glanceapp/glance", "status": "rejected", "reason": "boot: health / never returned <400 (requires initial glance.yml)", "checkedAt": "2026-11-21"}
 {"slug": "siyuan", "name": "SiYuan", "sourceUrl": "https://github.com/siyuan-note/siyuan", "status": "rejected", "reason": "image requires `serve` subcommand since v3.7.0; docker-web runtime has no command field", "checkedAt": "2026-11-21"}
-{"slug": "gogs", "name": "Gogs", "sourceUrl": "https://github.com/gogs/gogs", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
-{"slug": "new-api", "name": "New API", "sourceUrl": "https://github.com/QuantumNous/new-api", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "gogs", "name": "Gogs", "sourceUrl": "https://github.com/gogs/gogs", "status": "rejected", "reason": "image: gogs/gogs:latest pull timed out", "checkedAt": "2026-11-21"}
+{"slug": "new-api", "name": "New API", "sourceUrl": "https://github.com/QuantumNous/new-api", "status": "accepted", "reason": "evidence catalog-curation/evidence/new-api.json", "checkedAt": "2026-11-21"}
 {"slug": "khoj", "name": "Khoj", "sourceUrl": "https://github.com/khoj-ai/khoj", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
 {"slug": "reactive-resume", "name": "Reactive Resume", "sourceUrl": "https://github.com/reactive-resume/reactive-resume", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
 {"slug": "appsmith", "name": "Appsmith", "sourceUrl": "https://github.com/appsmithorg/appsmith", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
@@ -111,3 +111,13 @@
 {"slug": "clickhouse", "name": "ClickHouse", "sourceUrl": "https://github.com/ClickHouse/ClickHouse", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
 {"slug": "qwenpaw", "name": "QwenPaw", "sourceUrl": "https://github.com/agentscope-ai/QwenPaw", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
 {"slug": "casaos", "name": "CasaOS", "sourceUrl": "https://github.com/IceWhaleTech/CasaOS", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "aastro", "name": "Aastro", "sourceUrl": "https://github.com/voidrunner3074/aastro", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "accent", "name": "Accent", "sourceUrl": "https://github.com/mirego/accent", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "adguard-home", "name": "AdGuard Home", "sourceUrl": "https://github.com/AdguardTeam/AdGuardHome", "status": "accepted", "reason": "evidence catalog-curation/evidence/adguard-home.json", "checkedAt": "2026-11-21"}
+{"slug": "admidio", "name": "admidio", "sourceUrl": "https://github.com/Admidio/admidio", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "adventurelog", "name": "AdventureLog", "sourceUrl": "https://github.com/seanmorley15/AdventureLog", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "agenta", "name": "Agenta", "sourceUrl": "https://github.com/agenta-ai/agenta", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "airtrail", "name": "AirTrail", "sourceUrl": "https://github.com/johanohly/AirTrail", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "aleph", "name": "Aleph", "sourceUrl": "https://github.com/alephdata/aleph", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "algernon", "name": "Algernon", "sourceUrl": "https://github.com/xyproto/algernon", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "aliasvault", "name": "AliasVault", "sourceUrl": "https://github.com/aliasvault/aliasvault", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
