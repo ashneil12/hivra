@@ -114,3 +114,13 @@
 {"slug":"qwenpaw","name":"QwenPaw","sourceUrl":"https://github.com/agentscope-ai/QwenPaw","status":"pending","reason":"deferred: AgentScope agent harness (Apache-2.0); needs an agent-kind manifest + install-flow verification outside this wave's docker path","checkedAt":"2026-11-21"}
 {"slug":"casaos","name":"CasaOS","sourceUrl":"https://github.com/IceWhaleTech/CasaOS","status":"rejected","reason":"rejected: CasaOS requires --privileged, host bind mounts and host networking to manage the host OS; not expressible in the catalog runtime model","checkedAt":"2026-11-21"}
 {"slug":"umami","name":"Umami","sourceUrl":"https://github.com/umami-software/umami","status":"accepted","reason":"docker-stack manifest; verifier pass incl /login probe; evidence catalog-curation/evidence/umami.json","checkedAt":"2026-11-21"}
+{"slug": "aastro", "name": "Aastro", "sourceUrl": "https://github.com/voidrunner3074/aastro", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "accent", "name": "Accent", "sourceUrl": "https://github.com/mirego/accent", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "adguard-home", "name": "AdGuard Home", "sourceUrl": "https://github.com/AdguardTeam/AdGuardHome", "status": "accepted", "reason": "evidence catalog-curation/evidence/adguard-home.json", "checkedAt": "2026-11-21"}
+{"slug": "admidio", "name": "admidio", "sourceUrl": "https://github.com/Admidio/admidio", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "adventurelog", "name": "AdventureLog", "sourceUrl": "https://github.com/seanmorley15/AdventureLog", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "agenta", "name": "Agenta", "sourceUrl": "https://github.com/agenta-ai/agenta", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "airtrail", "name": "AirTrail", "sourceUrl": "https://github.com/johanohly/AirTrail", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "aleph", "name": "Aleph", "sourceUrl": "https://github.com/alephdata/aleph", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "algernon", "name": "Algernon", "sourceUrl": "https://github.com/xyproto/algernon", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "aliasvault", "name": "AliasVault", "sourceUrl": "https://github.com/aliasvault/aliasvault", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}

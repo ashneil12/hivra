@@ -525,7 +525,7 @@ export const PRODUCTIVITY_MANIFESTS: readonly CatalogAppManifest[] = [
       web: {
         service: "miniflux",
         containerPort: 8080,
-        hostPort: 3264,
+        hostPort: 3281,
         healthPath: "/healthcheck",
         proxyMode: "standard",
       },
