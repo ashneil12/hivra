@@ -1,0 +1,119 @@
+{
+  "slug": "nextcloud",
+  "checkedAt": "2026-11-21T04:11:01.599Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "nextcloud/server is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "nextcloud/server",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "nextcloud:apache linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "nextcloud:apache",
+        "digest": "sha256:8de31d1ba6d670b1e60052e8a2b4715a3cf5c05fc69baf3786f265703efe285e",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm/v5",
+          "unknown/unknown",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "linux/arm64/v8",
+          "unknown/unknown",
+          "linux/386",
+          "unknown/unknown",
+          "linux/ppc64le",
+          "unknown/unknown",
+          "linux/riscv64",
+          "unknown/unknown",
+          "linux/s390x",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /status.php -> 200 in 6.1s",
+      "evidence": {
+        "container": "hivra-verify-nextcloud-t193rs",
+        "hostPort": 3233,
+        "image": "nextcloud:apache",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-nextcloud-t193rs",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3233:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-nextcloud-t193rs-data:/var/www/html",
+          "nextcloud:apache"
+        ],
+        "runStdout": "4a374a93085c58df8d34065f425c9e007af8715f98461c5d98970d4435bf6607",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 6.1,
+          "attempts": 4
+        },
+        "memUsage": "202.5MiB / 7.652GiB",
+        "memBytes": 212336640
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64951,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html class=\"ng-csp\" data-placeholder-focus=\"false\" lang=\"en\" data-locale=\"en\" translate=\"no\" >\n\t<head\n data-requesttoken=\"X0WB1J8KfKE8wng8qVqoKkNIIaB8OAo5y/VhJ1R6c34=:BiO0rdZAC8cPjFd13XHLHgkLcu5OcFBjspw1URIuGgY=\">\n\t\t<meta charset=\"utf-8\">\n\t\t<title>\n\t\t\tNextcloud\t\t</title>\n\t\t<meta name=\"csp-nonce\" nonce=\"BiO0rdZAC8cPjFd13XHLHgkLcu5OcFBjspw1URIuGgY=\">\n\t\t<meta name=\"viewport\" content=",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 202.5MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 212336640,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

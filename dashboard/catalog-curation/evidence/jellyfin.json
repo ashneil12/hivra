@@ -1,0 +1,101 @@
+{
+  "slug": "jellyfin",
+  "checkedAt": "2026-11-21T04:11:24.035Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "jellyfin/jellyfin is GPL-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "jellyfin/jellyfin",
+        "spdx_id": "GPL-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "jellyfin/jellyfin:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "jellyfin/jellyfin:latest",
+        "digest": "sha256:fea863d0cd9ec445985d9c75fc6ed64e38a1d2766cf0c250a33d553f4fc1b771",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /health -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-jellyfin-jisw5x",
+        "hostPort": 3247,
+        "image": "jellyfin/jellyfin:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-jellyfin-jisw5x",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3247:8096",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-jellyfin-jisw5x-config:/config",
+          "-v",
+          "hivra-verify-jellyfin-jisw5x-cache:/cache",
+          "jellyfin/jellyfin:latest"
+        ],
+        "runStdout": "087354202ca604997e54b5f33fa7a2a8ee3708337c0d55ad06108f4dcdf86143",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "342.5MiB / 7.652GiB",
+        "memBytes": 359137280
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 200 /app/",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65179,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/app/",
+        "bodyHead": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"refresh\" content=\"5;url=/app/\"><title>Starting Jellyfin</title><style>:root{color-scheme:light dark;--bg:#fafafa;--fg:#161616;--muted:#6b6b6b;--line:#e2e2e2;--accent:#6e56cf}@media (prefers-color-scheme:dark){:root{--bg:#111;--fg:#ededed;--muted:#9a9a9a;--",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 342.5MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 359137280,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

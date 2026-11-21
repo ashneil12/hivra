@@ -1,0 +1,75 @@
+{
+  "slug": "code-server",
+  "checkedAt": "2026-11-21T03:20:11.620Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "coder/code-server is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "coder/code-server",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "codercom/code-server:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "codercom/code-server:latest",
+        "digest": "sha256:fc708b18f6c613b5a9d00f1d1801e58376d3df9c5b5de77f5c02d67b711f99c9",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "fail",
+      "detail": "health /healthz never returned <400 (last status none)",
+      "evidence": {
+        "container": "hivra-verify-code-server-w4oxh7",
+        "hostPort": 52976,
+        "image": "codercom/code-server:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-code-server-w4oxh7",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:52976:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-code-server-w4oxh7-config:/home/coder/.config",
+          "codercom/code-server:latest"
+        ],
+        "runStdout": "35006e71a28c9943c4e81509cb9162dc8154de4546168a1c7f11e0be1d036fe0",
+        "health": {
+          "ok": false,
+          "status": null,
+          "seconds": 240.2,
+          "attempts": 120,
+          "error": "fetch failed"
+        },
+        "logsTail": ""
+      }
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "no floor.ram in spec or no memory reading"
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "boot: health /healthz never returned <400 (last status none)"
+  ]
+}

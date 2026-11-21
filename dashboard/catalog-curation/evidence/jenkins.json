@@ -1,0 +1,112 @@
+{
+  "slug": "jenkins",
+  "checkedAt": "2026-11-21T04:10:36.034Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "jenkinsci/jenkins is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "jenkinsci/jenkins",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "jenkins/jenkins:lts-jdk21 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "jenkins/jenkins:lts-jdk21",
+        "digest": "sha256:74401de6a6f92e1afe1b02d1c8e3d0c33f263bfb5275dd8813f9150355f2367b",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/s390x",
+          "linux/ppc64le",
+          "linux/riscv64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /login -> 200 in 6.8s",
+      "evidence": {
+        "container": "hivra-verify-jenkins-16x1oe",
+        "hostPort": 3219,
+        "image": "jenkins/jenkins:lts-jdk21",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-jenkins-16x1oe",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3219:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-jenkins-16x1oe-jenkins-home:/var/jenkins_home",
+          "jenkins/jenkins:lts-jdk21"
+        ],
+        "runStdout": "b12f8571703e022952847128b5c9b54e7e3ba1f4bd0dfdbf99a057d6f24d7f66",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 6.8,
+          "attempts": 4
+        },
+        "memUsage": "554.2MiB / 7.652GiB",
+        "memBytes": 581120819
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "final status 403 after 2 hop(s)",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64654,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 403,
+            "location": null
+          }
+        ],
+        "finalStatus": 403,
+        "finalPath": "/",
+        "bodyHead": "<html><head><meta http-equiv='refresh' content='1;url=/login?from=%2F'/><script id='redirect' data-redirect-url='/login?from=%2F' src='/static/5d254d6f/scripts/redirect.js'></script></head><body style='background-color:white; color:white;'>\nAuthentication required\n<!--\nYou are authenticated as: anonymous\nGroups that you are in:\n  anonymous\nPermission you need to have (but didn't): hudson.model.Hud"
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 554.2MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 581120819,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "gateway: final status 403 after 2 hop(s)"
+  ]
+}

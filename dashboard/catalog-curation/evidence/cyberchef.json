@@ -1,0 +1,109 @@
+{
+  "slug": "cyberchef",
+  "checkedAt": "2026-11-21T04:10:24.163Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "gchq/CyberChef is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "gchq/CyberChef",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/gchq/cyberchef:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/gchq/cyberchef:latest",
+        "digest": "sha256:847b3a20804815014babe9cfa628a1fd1980d92f98240f48cfc6c8e2f5ff7a14",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-cyberchef-afwzqz",
+        "hostPort": 3216,
+        "image": "ghcr.io/gchq/cyberchef:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-cyberchef-afwzqz",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3216:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-cyberchef-afwzqz-tmp:/tmp",
+          "ghcr.io/gchq/cyberchef:latest"
+        ],
+        "runStdout": "832732cd8b7c3f09d5f974a295e30e633b326400a0e85baaf5556952c2ad8165",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "11.7MiB / 7.652GiB",
+        "memBytes": 12268339
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64472,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html><html lang=en class=classic><head><meta charset=UTF-8><title>CyberChef</title><meta name=copyright content=\"Crown Copyright 2016-2026\"><meta name=description content=\"The Cyber Swiss Army Knife - a web app for encryption, encoding, compression and data analysis\"><meta name=keywords content=\"base64, hex, decode, encode, encrypt, decrypt, compress, decompress, regex, regular expressio",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 11.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 12268339,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

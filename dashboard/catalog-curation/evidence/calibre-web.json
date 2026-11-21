@@ -1,0 +1,122 @@
+{
+  "slug": "calibre-web",
+  "checkedAt": "2026-11-21T04:11:33.070Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "janeczku/calibre-web is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "janeczku/calibre-web",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "linuxserver/calibre-web:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "linuxserver/calibre-web:latest",
+        "digest": "sha256:adb69d75b9c252e580fc691096f858833b901b5d106ae4080fb476bab104d946",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 4.2s",
+      "evidence": {
+        "container": "hivra-verify-calibre-web-jx6da3",
+        "hostPort": 3251,
+        "image": "linuxserver/calibre-web:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-calibre-web-jx6da3",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3251:8083",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-calibre-web-jx6da3-config:/config",
+          "linuxserver/calibre-web:latest"
+        ],
+        "runStdout": "4669740a0510539e209462c7541f7eaaded9433b03b46053a3a82a928704206b",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 4.2,
+          "attempts": 3
+        },
+        "memUsage": "249.2MiB / 7.652GiB",
+        "memBytes": 261305139
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 302 /admin/dbconfig -> 200 /login?next=%2Fadmin%2Fdbconfig; form POST -> 401",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65258,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/admin/dbconfig"
+          },
+          {
+            "hop": 2,
+            "path": "/admin/dbconfig",
+            "status": 302,
+            "location": "/login?next=%2Fadmin%2Fdbconfig"
+          },
+          {
+            "hop": 3,
+            "path": "/login?next=%2Fadmin%2Fdbconfig",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/login?next=%2Fadmin%2Fdbconfig",
+        "bodyHead": "\n\n<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <title>Calibre-Web | Login</title>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge,chrome=1\">\n    <meta name=\"mobile-web-app-capable\" content=\"yes\">\n    \n    <!-- Bootstrap -->\n    <link rel=\"apple-touch-icon\" sizes=\"140x140\" href=\"/static/fa",
+        "formPost": {
+          "path": "/login?next=%2Fadmin%2Fdbconfig",
+          "status": 401,
+          "location": null,
+          "bodyHead": "<body style=\"font-family:monospace;background:#0c0c0c;color:#8a8a8a;padding:28px\">401 — this box is private. Open it from your Hivra dashboard.</body>"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 249.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 261305139,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -1,0 +1,115 @@
+{
+  "slug": "uptime-kuma",
+  "checkedAt": "2026-11-21T04:11:08.628Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "louislam/uptime-kuma is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "louislam/uptime-kuma",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "louislam/uptime-kuma:2 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "louislam/uptime-kuma:2",
+        "digest": "sha256:8e4b6bef96417ec98a35dc103c99cc64fc229a01e584e56d95d9004d2003c02a",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-uptime-kuma-r384zw",
+        "hostPort": 3207,
+        "image": "louislam/uptime-kuma:2",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-uptime-kuma-r384zw",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3207:3001",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-uptime-kuma-r384zw-data:/app/data",
+          "louislam/uptime-kuma:2"
+        ],
+        "runStdout": "be84310a438cf27f948adddc9ce7f7780e27acbead7e8e7b170a1dcb21900113",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "197.1MiB / 7.652GiB",
+        "memBytes": 206674330
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /setup-database",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65015,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/setup-database"
+          },
+          {
+            "hop": 2,
+            "path": "/setup-database",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/setup-database",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\" />\n    <link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple-touch-icon.png\">\n    <link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />\n    <link rel=\"manifest\" href=\"/manifest.json\" />\n    <meta name=\"theme-color\" id=\"theme-colo",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 197.1MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 206674330,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

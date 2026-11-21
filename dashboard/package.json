@@ -38,6 +38,8 @@
     "lint": "eslint",
     "audit:upstream": "node scripts/hermes-upstream-audit.cjs",
     "audit:upstream:check": "node scripts/check-hermes-upstream-audit.cjs",
+    "catalog:dump": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only scripts/catalog-curator/dump-manifest.ts",
+    "catalog:verify": "node scripts/catalog-curator/verify-candidate.mjs",
     "guard:hot-surfaces": "node scripts/check-risk-surface-coverage.cjs",
     "verify:plan": "node scripts/recommend-verification.cjs",
     "backfill:chat-encryption": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/backfill-chat-encryption.ts",

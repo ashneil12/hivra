@@ -1,0 +1,111 @@
+{
+  "slug": "vaultwarden",
+  "checkedAt": "2026-11-21T04:10:49.817Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "dani-garcia/vaultwarden is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "dani-garcia/vaultwarden",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "vaultwarden/server:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "vaultwarden/server:latest",
+        "digest": "sha256:4fe17f415f90087377d37c755e0ea3cf189dcc6794e49cdd2a9adbb4937d9e1f",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "linux/arm/v6",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /alive -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-vaultwarden-z8n877",
+        "hostPort": 3228,
+        "image": "vaultwarden/server:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-vaultwarden-z8n877",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3228:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-vaultwarden-z8n877-data:/data",
+          "vaultwarden/server:latest"
+        ],
+        "runStdout": "063af3b742db6a4f0696a59b312faa263ed1622e47a924dc3b76fe5e73457dac",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "29.59MiB / 7.652GiB",
+        "memBytes": 31027364
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64842,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html><html class=\"theme_light\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=1010\"/><meta name=\"theme-color\" content=\"#175DDC\"/><title page-title>Vaultwarden Web</title><link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"images/apple-touch-icon.png\"/><link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"images/favicon-32x32.png\"/><link rel=\"icon\" type=\"image/png\" sizes",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 29.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 31027364,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

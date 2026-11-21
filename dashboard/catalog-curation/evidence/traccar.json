@@ -1,0 +1,107 @@
+{
+  "slug": "traccar",
+  "checkedAt": "2026-11-21T04:19:36.360Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "traccar/traccar is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "traccar/traccar",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "traccar/traccar:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "traccar/traccar:latest",
+        "digest": "sha256:b32d9346adf46df7c33c58577e17ad60f6feadd1f3cd87c876041f6c79317ef1",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 4.1s",
+      "evidence": {
+        "container": "hivra-verify-traccar-uwmkzv",
+        "hostPort": 3260,
+        "image": "traccar/traccar:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-traccar-uwmkzv",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3260:8082",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-traccar-uwmkzv-data:/opt/traccar/data",
+          "traccar/traccar:latest"
+        ],
+        "runStdout": "5e8c628f6cc681dd281a4cfa56e21f06608733c25e21c62b470a7185f2812ca1",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 4.1,
+          "attempts": 3
+        },
+        "memUsage": "247.6MiB / 7.652GiB",
+        "memBytes": 259627418
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 50149,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <base href=\"/\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <meta name=\"theme-color\" content=\"#1a237e\" />\n    <meta name=\"description\" content=\"Traccar GPS Tracking System\" />\n    <link rel=\"icon\" href=\"favicon.ico\" />\n    <link rel=\"apple-touch-icon\" href=\"apple-touch-icon-180x180.png\" ",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 247.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 259627418,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

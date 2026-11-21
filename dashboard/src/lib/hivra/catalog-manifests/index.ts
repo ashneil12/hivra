@@ -13,29 +13,29 @@ import {
   CATALOG_APP_PORT_MAX,
   CATALOG_APP_PORT_MIN,
   CATALOG_APP_SLUG_RE,
+  CATALOG_OSI_LICENSES,
   CatalogAppManifestSchema,
-  PERMISSIVE_OSI_LICENSES,
   type CatalogAppCategory,
   type CatalogAppIconKey,
   type CatalogAppJobId,
   type CatalogAppLaunchSpec,
   type CatalogAppManifest,
   type CatalogAppRuntime,
-  type PermissiveOsiLicense,
+  type CatalogOsiLicense,
 } from "./schema";
 import {
   UNIVERSAL_CATALOG_IDS,
   UNIVERSAL_CATALOG_MANIFESTS,
   type UniversalCatalogAppId,
-} from "./manifests";
+} from "./manifests/index";
 
 export {
   buildCatalogAppLaunchSpec,
   CATALOG_APP_PORT_MAX,
   CATALOG_APP_PORT_MIN,
   CATALOG_APP_SLUG_RE,
+  CATALOG_OSI_LICENSES,
   CatalogAppManifestSchema,
-  PERMISSIVE_OSI_LICENSES,
   UNIVERSAL_CATALOG_IDS,
   UNIVERSAL_CATALOG_MANIFESTS,
 };
@@ -46,7 +46,7 @@ export type {
   CatalogAppLaunchSpec,
   CatalogAppManifest,
   CatalogAppRuntime,
-  PermissiveOsiLicense,
+  CatalogOsiLicense,
   UniversalCatalogAppId,
 };
 

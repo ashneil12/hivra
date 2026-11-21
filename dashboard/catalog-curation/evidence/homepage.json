@@ -1,0 +1,105 @@
+{
+  "slug": "homepage",
+  "checkedAt": "2026-11-21T04:11:05.663Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "gethomepage/homepage is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "gethomepage/homepage",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/gethomepage/homepage:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/gethomepage/homepage:latest",
+        "digest": "sha256:019d8f063a7299e7c1c51ee4a70b692291809af3244894fbec2c2ac7d1f71b18",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.2s",
+      "evidence": {
+        "container": "hivra-verify-homepage-u4z62k",
+        "hostPort": 3236,
+        "image": "ghcr.io/gethomepage/homepage:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-homepage-u4z62k",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3236:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-homepage-u4z62k-config:/app/config",
+          "ghcr.io/gethomepage/homepage:latest"
+        ],
+        "runStdout": "10b5e2e43f5f12d0fc30d0dad8dca2c4cc523b0da5ec8b1c36aa4168b6293a63",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.2,
+          "attempts": 2
+        },
+        "memUsage": "172MiB / 7.652GiB",
+        "memBytes": 180355072
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64993,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html><html lang=\"en\"><head><meta charSet=\"utf-8\" data-next-head=\"\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no\" data-next-head=\"\"/><title data-next-head=\"\">Homepage</title><meta name=\"description\" content=\"A highly customizable homepage (or startpage / application dashboard) with Docker and service API inte",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 172.0MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 180355072,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

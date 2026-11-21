@@ -1,0 +1,110 @@
+{
+  "slug": "changedetection",
+  "checkedAt": "2026-11-21T04:11:17.286Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "dgtlmoon/changedetection.io is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "dgtlmoon/changedetection.io",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/dgtlmoon/changedetection.io:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/dgtlmoon/changedetection.io:latest",
+        "digest": "sha256:b6aae2572a0bf1a671b1b202365ddcfe16a31fa8a60be89df606705731b55f8b",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "linux/arm/v8",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-changedetection-obycs6",
+        "hostPort": 3245,
+        "image": "ghcr.io/dgtlmoon/changedetection.io:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-changedetection-obycs6",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3245:5000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-changedetection-obycs6-data:/datastore",
+          "ghcr.io/dgtlmoon/changedetection.io:latest"
+        ],
+        "runStdout": "7af7658d340d3a0a67f6a13116d6a9c0cbb37508e88c445a30a375546f1affe9",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "128.6MiB / 7.652GiB",
+        "memBytes": 134846874
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "final HTML references loopback 3245",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65115,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en-GB\" data-darkmode=\"auto\">\n\n  <head>\n    <meta charset=\"utf-8\" >\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" >\n    <meta name=\"description\" content=\"Self hosted website change detection.\" >\n    <meta name=\"robots\" content=\"noindex\">\n    <title>Change Detection</title>\n    \n        <link rel=\"alternate\" type=\"application/rss+xml\" title=\"Ch"
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 128.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 134846874,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "gateway: final HTML references loopback 3245"
+  ]
+}

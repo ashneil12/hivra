@@ -1,0 +1,109 @@
+{
+  "slug": "komga",
+  "checkedAt": "2026-11-21T04:19:40.952Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "gotson/komga is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "gotson/komga",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "gotson/komga:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "gotson/komga:latest",
+        "digest": "sha256:d43bb3b57aeeafd274ea805214f5da71ff9306accf012fb14cc13dedc3307212",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v7",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 10.2s",
+      "evidence": {
+        "container": "hivra-verify-komga-acnpy0",
+        "hostPort": 3261,
+        "image": "gotson/komga:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-komga-acnpy0",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3261:25600",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-komga-acnpy0-config:/config",
+          "gotson/komga:latest"
+        ],
+        "runStdout": "e41b517883932d7247211ab139396681652f76de6572a4bc28660818a3ef6e5f",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 10.2,
+          "attempts": 6
+        },
+        "memUsage": "560.5MiB / 7.652GiB",
+        "memBytes": 587726848
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 50172,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Komga</title><link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple-touch-icon.png\"><link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/favicon-32x32.png\"><link rel=\"icon\" type=\"image/png\" sizes=\"16x16\" href=\"/favicon-16x16.png\"><link rel=\"manifest\" href=\"/mani",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 560.5MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 587726848,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

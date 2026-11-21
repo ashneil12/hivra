@@ -1,0 +1,109 @@
+{
+  "slug": "shiori",
+  "checkedAt": "2026-11-21T04:10:43.791Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "go-shiori/shiori is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "go-shiori/shiori",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/go-shiori/shiori:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/go-shiori/shiori:latest",
+        "digest": "sha256:d3bdfc1b68b8f267a04cf74d73b8a0e1d99ac71c3a9047375e97202f079eb1f6",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-shiori-i94hb4",
+        "hostPort": 3225,
+        "image": "ghcr.io/go-shiori/shiori:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-shiori-i94hb4",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3225:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-shiori-i94hb4-data:/opt/shiori/data",
+          "ghcr.io/go-shiori/shiori:latest"
+        ],
+        "runStdout": "85cee795e21c99292ffe5dd484c0739b2e4332b1b02381d248b2ac6778d42ded",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "24.89MiB / 7.652GiB",
+        "memBytes": 26099057
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64786,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n\n<head>\n\t<base href=\"/\">\n\t<title>Shiori - Bookmarks Manager</title>\n\n\t<meta charset=\"UTF-8\">\n\t<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\">\n\n\t<link rel=\"apple-touch-icon-precomposed\" sizes=\"152x152\" href=\"assets/res/apple-touch-icon-152x152.png\">\n\t<link rel=\"apple-touch-icon-precomposed\" sizes=\"144x144\" href=\"assets/res/",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 24.9MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 26099057,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

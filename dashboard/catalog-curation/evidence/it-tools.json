@@ -1,0 +1,107 @@
+{
+  "slug": "it-tools",
+  "checkedAt": "2026-11-21T04:10:50.866Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "CorentinTh/it-tools is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "CorentinTh/it-tools",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "corentinth/it-tools:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "corentinth/it-tools:latest",
+        "digest": "sha256:8b8128748339583ca951af03dfe02a9a4d7363f61a216226fc28030731a5a61f",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-it-tools-6n1yuo",
+        "hostPort": 3230,
+        "image": "corentinth/it-tools:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-it-tools-6n1yuo",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3230:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-it-tools-6n1yuo-tmp:/tmp",
+          "corentinth/it-tools:latest"
+        ],
+        "runStdout": "03d37612133ee2853964dc79d2300c2333ea0d68b2da947316f51557a25965bd",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "18.72MiB / 7.652GiB",
+        "memBytes": 19629343
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64855,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <link rel=\"icon\" href=\"favicon.ico\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>IT Tools - Handy online tools for developers</title>\n    <meta itemprop=\"name\" content=\"IT Tools - Handy online tools for developers\" />\n    <meta\n      name=\"description\"\n      content=\"Collection ",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 18.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 19629343,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

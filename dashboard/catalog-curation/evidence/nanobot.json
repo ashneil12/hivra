@@ -1,0 +1,47 @@
+{
+  "slug": "nanobot",
+  "checkedAt": "2026-11-21T04:09:51.236Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "HKUDS/nanobot is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "HKUDS/nanobot",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "package",
+      "status": "pass",
+      "detail": "PyPI nanobot-ai 0.4.1",
+      "evidence": {
+        "version": "0.4.1"
+      }
+    },
+    {
+      "name": "install",
+      "status": "pass",
+      "detail": "uv tool install nanobot-ai"
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "binary --version ran (exit 0)",
+      "evidence": {
+        "mode": "--version",
+        "status": 0,
+        "head": "🐈 nanobot v0.4.1\n\n"
+      }
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "cli-web installs a CLI; no resident service to measure"
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

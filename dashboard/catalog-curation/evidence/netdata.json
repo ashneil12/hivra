@@ -1,0 +1,111 @@
+{
+  "slug": "netdata",
+  "checkedAt": "2026-11-21T04:11:21.917Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "netdata/netdata is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "netdata/netdata",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "netdata/netdata:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "netdata/netdata:latest",
+        "digest": "sha256:b8fd62bd05dcc1434b73911628ab9f8ee50d3088970f2e60e7efe0d4934b9c10",
+        "platforms": [
+          "linux/arm64",
+          "unknown/unknown",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "linux/amd64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /api/v1/info -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-netdata-v2wdkv",
+        "hostPort": 3246,
+        "image": "netdata/netdata:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-netdata-v2wdkv",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3246:19999",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-netdata-v2wdkv-cache:/var/cache/netdata",
+          "-v",
+          "hivra-verify-netdata-v2wdkv-data:/var/lib/netdata",
+          "netdata/netdata:latest"
+        ],
+        "runStdout": "aed9724bdb3403cd9458b2ff9bf6dd89ba52b0aa9101edd05d3212ddb9b8fa46",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "314.2MiB / 7.652GiB",
+        "memBytes": 329462579
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65164,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html><html lang=\"en\" dir=\"ltr\"><head><meta charset=\"utf-8\"/><title>Netdata</title><script>const CONFIG = {\n      cache: {\n        agentInfo: false,\n        cloudToken: true,\n        agentToken: true,\n      }\n    }\n\n    // STATE MANAGEMENT ======================================================================== //\n    const state = {\n      loading: {\n        spaces: false,\n        rooms: ",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 314.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 329462579,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

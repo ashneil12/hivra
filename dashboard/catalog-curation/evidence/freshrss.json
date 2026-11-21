@@ -1,0 +1,118 @@
+{
+  "slug": "freshrss",
+  "checkedAt": "2026-11-21T04:10:55.207Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "FreshRSS/FreshRSS is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "FreshRSS/FreshRSS",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/freshrss/freshrss:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/freshrss/freshrss:latest",
+        "digest": "sha256:af44385229541bee24aa9148d0ff8f3b40e095373c63a2c0f74e09a27d3c59df",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v7",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-freshrss-g12mew",
+        "hostPort": 3232,
+        "image": "ghcr.io/freshrss/freshrss:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-freshrss-g12mew",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3232:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-freshrss-g12mew-data:/var/www/FreshRSS/data",
+          "ghcr.io/freshrss/freshrss:latest"
+        ],
+        "runStdout": "03f5d69820d7839ebf9248933f807f35c322e17003802522e9db136048712db6",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "64.03MiB / 7.652GiB",
+        "memBytes": 67140321
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /i/?rid=6b0119cec1774; form POST -> 200",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64898,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/i/?rid=6b0119cec1774"
+          },
+          {
+            "hop": 2,
+            "path": "/i/?rid=6b0119cec1774",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/i/?rid=6b0119cec1774",
+        "bodyHead": "<!DOCTYPE html>\n<html >\n\t<head>\n\t\t<meta charset=\"UTF-8\" />\n\t\t<meta name=\"viewport\" content=\"initial-scale=1.0\" />\n\t\t<script id=\"jsonVars\" type=\"application/json\">{}</script>\n\t\t<title>Installation · FreshRSS: step 1</title>\n\t\t<link rel=\"stylesheet\" href=\"../themes/base-theme/frss.css?1792615573\" />\n\t\t<link rel=\"stylesheet\" href=\"../themes/Origine/origine.css?1792615573\" />\n\t\t<link rel=\"shortcut ico",
+        "formPost": {
+          "path": "/i/index.php?step=0",
+          "status": 200,
+          "location": null,
+          "bodyHead": "<!DOCTYPE html>\n<html >\n\t<head>\n\t\t<meta charset=\"UTF-8\" />\n\t\t<meta name=\"viewport\" content=\"initial-scale=1.0\" />\n\t\t<script id=\"jsonVars\" type=\"application/json\">{}</script>\n\t\t<title>Installation · FreshRSS: step 1</title>\n\t\t<link rel=\"stylesheet\" href=\"../themes/base-theme/frss.css?1792615573\" />\n\t\t<link rel=\"stylesheet\" href=\"../themes/Origine/origine.css?1792615573\" />\n\t\t<link rel=\"shortcut ico"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 64.0MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 67140321,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

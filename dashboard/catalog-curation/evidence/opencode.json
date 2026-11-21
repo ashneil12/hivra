@@ -1,0 +1,47 @@
+{
+  "slug": "opencode",
+  "checkedAt": "2026-11-21T04:09:49.573Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "anomalyco/opencode is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "anomalyco/opencode",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "package",
+      "status": "pass",
+      "detail": "npm @opencode/cli 2.3.2",
+      "evidence": {
+        "version": "2.3.2"
+      }
+    },
+    {
+      "name": "install",
+      "status": "pass",
+      "detail": "npm install --prefix @opencode/cli"
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "binary --version ran (exit 0)",
+      "evidence": {
+        "mode": "--version",
+        "status": 0,
+        "head": "opencode v2.3.2\n\n"
+      }
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "cli-web installs a CLI; no resident service to measure"
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}
