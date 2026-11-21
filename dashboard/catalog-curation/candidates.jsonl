@@ -94,8 +94,20 @@
 {"slug": "plane", "name": "Plane", "sourceUrl": "https://github.com/makeplane/plane", "status": "compose-needed", "reason": "Community Edition requires PostgreSQL, Redis and additional containers", "checkedAt": "2026-11-21"}
 {"slug": "penpot", "name": "penpot", "sourceUrl": "https://github.com/penpot/penpot", "status": "compose-needed", "reason": "Upstream Docker deployment requires PostgreSQL and separate frontend and backend containers", "checkedAt": "2026-11-21"}
 {"slug": "twenty", "name": "Twenty", "sourceUrl": "https://github.com/twentyhq/twenty", "status": "rejected", "reason": "GitHub reports SPDX NOASSERTION, outside the catalog licence allowlist", "checkedAt": "2026-11-21"}
-{"slug": "meilisearch", "name": "MeiliSearch", "sourceUrl": "https://github.com/meilisearch/MeiliSearch", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
-{"slug": "appwrite", "name": "Appwrite", "sourceUrl": "https://github.com/appwrite/appwrite", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
-{"slug": "odoo", "name": "Odoo", "sourceUrl": "https://github.com/odoo/odoo", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
-{"slug": "metabase", "name": "Metabase", "sourceUrl": "https://github.com/metabase/metabase", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
-{"slug": "discourse", "name": "Discourse", "sourceUrl": "https://github.com/discourse/discourse", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "meilisearch", "name": "MeiliSearch", "sourceUrl": "https://github.com/meilisearch/MeiliSearch", "status": "rejected", "reason": "GitHub reports SPDX NOASSERTION, outside the catalog licence allowlist", "checkedAt": "2026-11-21"}
+{"slug": "appwrite", "name": "Appwrite", "sourceUrl": "https://github.com/appwrite/appwrite", "status": "compose-needed", "reason": "Upstream deployment requires MariaDB, Redis and multiple containers", "checkedAt": "2026-11-21"}
+{"slug": "odoo", "name": "Odoo", "sourceUrl": "https://github.com/odoo/odoo", "status": "compose-needed", "reason": "Upstream deployment requires PostgreSQL", "checkedAt": "2026-11-21"}
+{"slug": "metabase", "name": "Metabase", "sourceUrl": "https://github.com/metabase/metabase", "status": "rejected", "reason": "GitHub reports SPDX NOASSERTION, outside the catalog licence allowlist", "checkedAt": "2026-11-21"}
+{"slug": "discourse", "name": "Discourse", "sourceUrl": "https://github.com/discourse/discourse", "status": "compose-needed", "reason": "Upstream deployment requires PostgreSQL and Redis", "checkedAt": "2026-11-21"}
+{"slug": "glance", "name": "Glance", "sourceUrl": "https://github.com/glanceapp/glance", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "siyuan", "name": "SiYuan", "sourceUrl": "https://github.com/siyuan-note/siyuan", "status": "rejected", "reason": "image requires `serve` subcommand since v3.7.0; docker-web runtime has no command field", "checkedAt": "2026-11-21"}
+{"slug": "gogs", "name": "Gogs", "sourceUrl": "https://github.com/gogs/gogs", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "new-api", "name": "New API", "sourceUrl": "https://github.com/QuantumNous/new-api", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "khoj", "name": "Khoj", "sourceUrl": "https://github.com/khoj-ai/khoj", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "reactive-resume", "name": "Reactive Resume", "sourceUrl": "https://github.com/reactive-resume/reactive-resume", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "appsmith", "name": "Appsmith", "sourceUrl": "https://github.com/appsmithorg/appsmith", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "tooljet", "name": "ToolJet", "sourceUrl": "https://github.com/ToolJet/ToolJet", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "coolify", "name": "Coolify", "sourceUrl": "https://github.com/coollabsio/coolify", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "clickhouse", "name": "ClickHouse", "sourceUrl": "https://github.com/ClickHouse/ClickHouse", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "qwenpaw", "name": "QwenPaw", "sourceUrl": "https://github.com/agentscope-ai/QwenPaw", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
+{"slug": "casaos", "name": "CasaOS", "sourceUrl": "https://github.com/IceWhaleTech/CasaOS", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
