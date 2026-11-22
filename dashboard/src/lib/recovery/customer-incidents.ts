@@ -121,6 +121,7 @@ export interface OpenIncidentRow {
   source: string;
   title: string;
   incidentKey: string | null;
+  subjectKind: string | null;
 }
 
 export interface CustomerSubscriptionSnapshot {
@@ -626,6 +627,7 @@ async function collectOpenIncidentRows(db: DbClient): Promise<OpenIncidentRow[]>
       source: String(row.source ?? ""),
       title: String(row.title ?? ""),
       incidentKey: strOrNull(metadata.incident_key),
+      subjectKind: strOrNull(metadata.subject_kind),
     });
   }
   return rows;
@@ -1001,7 +1003,7 @@ export interface CustomerIncidentScanDeps {
   /** Page admins for new incidents + send resolved notices. Defaults to the production-deployment check. */
   pagingEnabled?: boolean;
   /** Archive an incident row by id; returns true when this call won the archive. */
-  archiveIncident?: (rowId: string) => Promise<boolean>;
+  archiveIncident?: (rowId: string, options?: { closedReason?: string }) => Promise<boolean>;
   /** Send the one resolved notice through the admin transport. */
   notifyResolved?: (input: ResolvedNoticeInput) => Promise<void>;
 }
@@ -1011,6 +1013,8 @@ export interface CustomerIncidentScanSummary {
   opened: number;
   stillOpen: number;
   resolved: number;
+  /** Open incidents archived without a resolved notice (aged out unresolved). */
+  expired: number;
   unknown: number;
   /** Subject data we could not read — incidents for them are neither opened nor resolved this pass. */
   degraded: number;
@@ -1018,13 +1022,39 @@ export interface CustomerIncidentScanSummary {
 }
 
 function emptySummary(): CustomerIncidentScanSummary {
-  return { findings: 0, opened: 0, stillOpen: 0, resolved: 0, unknown: 0, degraded: 0, failed: 0 };
+  return { findings: 0, opened: 0, stillOpen: 0, resolved: 0, expired: 0, unknown: 0, degraded: 0, failed: 0 };
 }
 
-async function defaultArchiveIncident(db: DbClient, rowId: string): Promise<boolean> {
+async function defaultArchiveIncident(
+  db: DbClient,
+  rowId: string,
+  options?: { closedReason?: string },
+): Promise<boolean> {
+  const update: Record<string, unknown> = {
+    archived_at: new Date().toISOString(),
+    archived_by_user_id: null,
+  };
+  if (options?.closedReason) {
+    // Merge into the existing metadata so the archive records why it closed
+    // silently. ops_events.metadata is write-once in practice, so a
+    // read-modify-write here cannot lose concurrent fields.
+    const { data: existing, error: readError } = await db
+      .from("ops_events")
+      .select("metadata")
+      .eq("id", rowId)
+      .maybeSingle();
+    if (readError) throw new Error(readError.message || "archive incident metadata read failed");
+    const prior = (existing as { metadata?: unknown } | null)?.metadata;
+    update.metadata = {
+      ...(prior && typeof prior === "object" && !Array.isArray(prior)
+        ? (prior as Record<string, unknown>)
+        : {}),
+      closed_reason: options.closedReason,
+    };
+  }
   const { data, error } = await db
     .from("ops_events")
-    .update({ archived_at: new Date().toISOString(), archived_by_user_id: null })
+    .update(update)
     .eq("id", rowId)
     .is("archived_at", null)
     .select("id");
@@ -1048,6 +1078,87 @@ async function defaultNotifyResolved(input: ResolvedNoticeInput): Promise<void> 
     userId: input.userId,
     metadata: input.metadata,
   });
+}
+
+const LAUNCH_FAILED_SUBJECT_PREFIX = "launch_failed:";
+
+type LaunchFailedExpiry = "resolved" | "expired" | "unknown";
+
+/**
+ * A launch_failed incident only fires while its subject is inside the rule's
+ * 24h window, so an open row eventually stops producing a finding even though
+ * the launch may still be failed. Before closing such a row, read the
+ * subject's current state: "resolved" (launch succeeded or the owner deleted
+ * it — worth a resolved notice) vs "expired" (still failed, archive silently)
+ * vs "unknown" (could not read — leave the row open for the next pass).
+ */
+async function classifyLaunchFailedExpiry(
+  db: DbClient,
+  row: OpenIncidentRow,
+): Promise<LaunchFailedExpiry> {
+  const subjectId = row.incidentKey?.slice(LAUNCH_FAILED_SUBJECT_PREFIX.length);
+  if (!subjectId) return "expired";
+  const kind = row.subjectKind;
+
+  if (kind === "hivra_agent" || kind == null) {
+    const { data, error } = await db
+      .from("hivra_agents")
+      .select("id,status,provisioned_at")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (error) {
+      log.warn("customer-incidents: launch_failed subject lookup failed", {
+        source: "customer-incidents",
+        failureType: "launch_failed_subject_lookup_failed",
+        opsEventId: row.id,
+        subjectId,
+        errorMessage: error.message,
+      });
+      return "unknown";
+    }
+    if (data) {
+      const agent = data as { status?: string | null; provisioned_at?: string | null };
+      return agent.provisioned_at != null ||
+        agent.status === "running" ||
+        agent.status === "deleted"
+        ? "resolved"
+        : "expired";
+    }
+    if (kind === "hivra_agent") return "expired";
+  }
+
+  if (kind === "hermes_instance" || kind == null) {
+    const { data, error } = await db
+      .from("hermes_instances")
+      .select("id,status,lifecycle_state")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (error) {
+      log.warn("customer-incidents: launch_failed subject lookup failed", {
+        source: "customer-incidents",
+        failureType: "launch_failed_subject_lookup_failed",
+        opsEventId: row.id,
+        subjectId,
+        errorMessage: error.message,
+      });
+      return "unknown";
+    }
+    if (data) {
+      const instance = data as { status?: string | null; lifecycle_state?: string | null };
+      const launched =
+        instance.status === "running" ||
+        instance.status === "deleted" ||
+        instance.lifecycle_state === "active" ||
+        instance.lifecycle_state === "stopped" ||
+        instance.lifecycle_state === "paused" ||
+        instance.lifecycle_state === "cold_archived" ||
+        instance.lifecycle_state === "deleted";
+      return launched ? "resolved" : "expired";
+    }
+  }
+
+  // The subject row is gone entirely — nothing left to recover, close quietly.
+  return "expired";
 }
 
 /**
@@ -1074,7 +1185,9 @@ export async function runCustomerIncidentScan(
   const cronSchedules = deps.cronSchedules ?? VERCEL_CRONS;
   const pagingEnabled = deps.pagingEnabled ?? incidentPagingEnabled();
   const archiveIncident =
-    deps.archiveIncident ?? ((rowId: string) => (db ? defaultArchiveIncident(db, rowId) : Promise.resolve(false)));
+    deps.archiveIncident ??
+    ((rowId: string, options?: { closedReason?: string }) =>
+      db ? defaultArchiveIncident(db, rowId, options) : Promise.resolve(false));
   const notifyResolved = deps.notifyResolved ?? defaultNotifyResolved;
 
   if (!db) {
@@ -1220,9 +1333,33 @@ export async function runCustomerIncidentScan(
     if (!row.incidentKey) continue;
     if (findingKeys.has(row.incidentKey)) continue;
     if (evaluation.unknownKeys.has(row.incidentKey)) continue;
+    // launch_failed rows age out of the rule's 24h subject window, so the rule
+    // stops emitting a finding while the launch may still be failed. Read the
+    // subject's current state: archive-with-notice only when it actually
+    // launched or was deleted; archive silently when it aged out unresolved.
+    let expiredUnresolved = false;
+    if (row.incidentKey.startsWith(LAUNCH_FAILED_SUBJECT_PREFIX)) {
+      let disposition: LaunchFailedExpiry;
+      try {
+        disposition = await classifyLaunchFailedExpiry(db, row);
+      } catch (err) {
+        log.warn("customer-incidents: launch_failed expiry check failed; leaving row open", {
+          source: "customer-incidents",
+          failureType: "launch_failed_expiry_check_failed",
+          opsEventId: row.id,
+          incidentKey: row.incidentKey,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
+      if (disposition === "unknown") continue;
+      expiredUnresolved = disposition === "expired";
+    }
     let archived = false;
     try {
-      archived = await archiveIncident(row.id);
+      archived = expiredUnresolved
+        ? await archiveIncident(row.id, { closedReason: "expired_unresolved" })
+        : await archiveIncident(row.id);
     } catch (err) {
       summary.failed += 1;
       log.error("customer-incidents: incident archive failed", err, {
@@ -1234,6 +1371,12 @@ export async function runCustomerIncidentScan(
       continue;
     }
     if (!archived) continue; // another invocation already resolved it
+    if (expiredUnresolved) {
+      // Aged out of the rule's window still failed — close the row without a
+      // "resolved" notice; nothing actually recovered.
+      summary.expired += 1;
+      continue;
+    }
     summary.resolved += 1;
     if (!pagingEnabled) continue; // non-production: archive only, no admin mail
     try {

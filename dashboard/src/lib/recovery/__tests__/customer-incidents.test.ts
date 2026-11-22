@@ -521,6 +521,8 @@ interface FakeDbConfig {
   watchdogByAgent?: Record<string, Row[]>;
   /** When true, per-agent watchdog event queries fail (box_down goes unknown). */
   watchdogFetchFails?: boolean;
+  /** When true, single-row subject lookups (launch_failed expiry checks) fail. */
+  subjectLookupFails?: boolean;
 }
 
 /** Thenable query-builder fake: records the chain, resolves per table on await. */
@@ -530,6 +532,14 @@ function fakeIncidentDb(config: FakeDbConfig) {
     calls: unknown[][],
   ): { data: Row[] | null; error: { message: string } | null } => {
     const ok = (data: Row[]) => ({ data, error: null });
+    const singleLookup = calls.some((c) => c[0] === "maybeSingle" || c[0] === "single");
+    if (
+      config.subjectLookupFails &&
+      singleLookup &&
+      (table === "hivra_agents" || table === "hermes_instances")
+    ) {
+      return { data: null, error: { message: "subject lookup failed" } };
+    }
     if (table === "hivra_agents") return ok(config.agents ?? []);
     if (table === "hermes_instances") return ok(config.instances ?? []);
     if (table === "ops_cron_heartbeats") return ok(config.heartbeats ?? []);
@@ -552,21 +562,37 @@ function fakeIncidentDb(config: FakeDbConfig) {
     from(table: string) {
       const calls: unknown[][] = [];
       const chain: Record<string, unknown> = {};
+      let terminal: "none" | "single" | "maybe" = "none";
       for (const method of ["select", "eq", "is", "not", "gte", "in", "like", "order", "limit", "range"]) {
         chain[method] = (...args: unknown[]) => {
           calls.push([method, ...args]);
           return chain;
         };
       }
+      chain.single = () => {
+        terminal = "single";
+        calls.push(["single"]);
+        return chain;
+      };
+      chain.maybeSingle = () => {
+        terminal = "maybe";
+        calls.push(["maybeSingle"]);
+        return chain;
+      };
       const resolve = (): { data: unknown; error: { message: string } | null } => {
         const result = resolveTable(table, calls);
         if (result.error || !result.data) return { data: result.data, error: result.error };
+        let rows = result.data;
         const rangeCall = calls.find((c) => c[0] === "range");
-        if (!rangeCall) return { data: result.data, error: null };
-        return {
-          data: result.data.slice(Number(rangeCall[1]), Number(rangeCall[2]) + 1),
-          error: null,
-        };
+        if (rangeCall) {
+          rows = rows.slice(Number(rangeCall[1]), Number(rangeCall[2]) + 1);
+        }
+        if (terminal !== "none") {
+          const idCall = calls.find((c) => c[0] === "eq" && c[1] === "id");
+          if (idCall) rows = rows.filter((r) => r.id === idCall[2]);
+          return { data: rows[0] ?? null, error: null };
+        }
+        return { data: rows, error: null };
       };
       chain.then = (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
         Promise.resolve(resolve()).then(onFulfilled, onRejected);
@@ -745,7 +771,7 @@ describe("runCustomerIncidentScan", () => {
         agents: [agentDbRow()],
         subscriptions: [{ user_id: "user-1", plan: "pro", status: "active" }],
         watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
-        openIncidents: [incidentDbRow({ id: "evt-resolved-1", metadata: { incident_key: "launch_failed:gone" } })],
+        openIncidents: [incidentDbRow({ id: "evt-resolved-1", metadata: { incident_key: "box_down:gone-1" } })],
       }),
     });
     const summary = await runCustomerIncidentScan(deps as never);
@@ -849,6 +875,82 @@ describe("runCustomerIncidentScan", () => {
     });
     const summary = await runCustomerIncidentScan(deps as never);
     expect(summary).toMatchObject({ opened: 0, failed: 1 });
+  });
+
+  it("archives an aged-out launch_failed incident silently when the subject is still failed", async () => {
+    const deps = scanDeps({
+      db: fakeIncidentDb({
+        agents: [
+          agentDbRow({
+            id: "agent-still-broken",
+            status: "error",
+            provisioned_at: null,
+            // Outside the 24h rule window — the rule emits no finding.
+            created_at: iso(30 * 24 * 60 * MIN),
+          }),
+        ],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-lf-1",
+            source: "incident.launch_failed",
+            metadata: {
+              incident_key: "launch_failed:agent-still-broken",
+              subject_kind: "hivra_agent",
+            },
+          }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary).toMatchObject({ expired: 1, resolved: 0 });
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-lf-1", {
+      closedReason: "expired_unresolved",
+    });
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("resolves an aged-out launch_failed incident with a notice when the subject now runs", async () => {
+    const deps = scanDeps({
+      db: fakeIncidentDb({
+        agents: [agentDbRow({ id: "agent-recovered" })],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-lf-2",
+            source: "incident.launch_failed",
+            metadata: {
+              incident_key: "launch_failed:agent-recovered",
+              subject_kind: "hivra_agent",
+            },
+          }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary).toMatchObject({ expired: 0, resolved: 1 });
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-lf-2");
+    expect(deps.notifyResolved as jest.Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves an aged-out launch_failed incident open when the subject lookup fails", async () => {
+    const deps = scanDeps({
+      db: fakeIncidentDb({
+        agents: [agentDbRow({ id: "agent-unknown" })],
+        subjectLookupFails: true,
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-lf-3",
+            source: "incident.launch_failed",
+            metadata: {
+              incident_key: "launch_failed:agent-unknown",
+              subject_kind: "hivra_agent",
+            },
+          }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary).toMatchObject({ expired: 0, resolved: 0 });
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
   });
 });
 
