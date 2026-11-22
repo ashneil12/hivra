@@ -134,15 +134,32 @@ describe("opsEventForWatchdogEvent", () => {
 
 type Row = Record<string, unknown>;
 
-function fakeDb(rows: Row[] | Error) {
-  const chain: Record<string, unknown> = {};
+/**
+ * Table-aware fake: hivra_agents returns `rows` for the candidate query;
+ * ops_events answers the relay-dedupe lookup from `storedTitles` — the set a
+ * real reportOpsEvent INSERT would have written. Tests populate it via the
+ * `report` mock so a second sweep sees the same receipts as already stored.
+ */
+function fakeDb(rows: Row[] | Error, opts: { storedTitles?: Set<string> } = {}) {
+  const storedTitles = opts.storedTitles ?? new Set<string>();
+  const agentChain: Record<string, unknown> = {};
   for (const method of ["select", "eq", "is", "not", "order"]) {
-    chain[method] = () => chain;
+    agentChain[method] = () => agentChain;
   }
-  chain.limit = async () => rows instanceof Error
+  agentChain.limit = async () => rows instanceof Error
     ? { data: null, error: { message: rows.message } }
     : { data: rows, error: null };
-  return { from: () => chain };
+
+  const opsChain: Record<string, unknown> = {};
+  for (const method of ["select", "eq"]) {
+    opsChain[method] = () => opsChain;
+  }
+  opsChain.in = async (_column: string, values: string[]) => ({
+    data: values.filter((title) => storedTitles.has(title)).map((title) => ({ title })),
+    error: null,
+  });
+
+  return { from: (table: string) => (table === "ops_events" ? opsChain : agentChain) };
 }
 
 const agentRow = (id: string, extra: Row = {}): Row => ({
@@ -195,6 +212,49 @@ describe("runSurfaceWatchdogSweep", () => {
     const titles = reportedOps.map((ops) => (ops as { title: string }).title);
     expect(titles[0]).toContain("e1-6");
     expect(titles[9]).toContain("e1-15");
+  });
+
+  it("relays each box event once — a second sweep over the same receipts makes zero reportOpsEvent calls", async () => {
+    // Regression: the relay re-read the box's whole receipt list every sweep
+    // and each re-read took reportOpsEvent's UPDATE branch, bumping
+    // last_seen_at + occurrence_count so an old outage looked current.
+    const storedTitles = new Set<string>();
+    mockDb.current = fakeDb([agentRow("a1")], { storedTitles });
+    const events = [
+      event("e7-1", "unit_restart", { unit: "hivra-agent-zero.service", attempt: 1, ok: true }),
+      event("e7-2", "recovered", { unit: "hivra-agent-zero.service" }),
+    ];
+    const report = jest.fn(async (ops: { title: string }) => {
+      storedTitles.add(ops.title);
+      return { fingerprint: "x" };
+    });
+    const read = async () => reported(events);
+
+    const first = await runSurfaceWatchdogSweep({ read, report });
+    expect(first).toMatchObject({ reported: 1, relayed: 2, failed: 0 });
+
+    const second = await runSurfaceWatchdogSweep({ read, report });
+    expect(second).toMatchObject({ reported: 1, relayed: 0, failed: 0 });
+    expect(report).toHaveBeenCalledTimes(2);
+  });
+
+  it("still relays when the dedupe lookup itself fails (delivery over count accuracy)", async () => {
+    mockDb.current = {
+      from: (table: string) => {
+        if (table !== "ops_events") return fakeDb([agentRow("a1")]).from(table);
+        const chain: Record<string, unknown> = {};
+        for (const method of ["select", "eq"]) chain[method] = () => chain;
+        chain.in = async () => ({ data: null, error: { message: "lookup boom" } });
+        return chain;
+      },
+    };
+    const report = jest.fn(async () => ({ fingerprint: "x" }));
+    const summary = await runSurfaceWatchdogSweep({
+      read: async () => reported([event("e8-1", "unit_failing", { unit: "x.service" })]),
+      report,
+    });
+    expect(summary.relayed).toBe(1);
+    expect(report).toHaveBeenCalledTimes(1);
   });
 
   it("treats a gateway without the endpoint as not_installed and emits no ops row", async () => {

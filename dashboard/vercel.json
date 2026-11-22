@@ -129,6 +129,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/customer-incidents",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/probe-instance-egress",
       "schedule": "*/5 * * * *"
     },

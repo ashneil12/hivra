@@ -26,6 +26,13 @@ export interface OpsEventInput {
   profileName?: string | null;
   metadata?: Record<string, unknown>;
   sampleStack?: string | null;
+  /**
+   * Page an admin on first sighting even when severity is below fatal. Same
+   * dedupe rules as fatal: pages on the INSERT branch, and again only after the
+   * row has been archived and the fingerprint recurs. Use for customer-impact
+   * incidents that are errors, not process-fatal.
+   */
+  page?: boolean;
 }
 
 export interface ArchiveOpsEventsInput {
@@ -124,6 +131,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
   const severity = input.severity || 'error';
   const fingerprint = buildOpsEventFingerprint(input);
   const now = new Date().toISOString();
+  const shouldPage = severity === 'fatal' || input.page === true;
 
   const payload = {
     fingerprint,
@@ -144,7 +152,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
   try {
     const { data: existing, error: lookupError } = await supabaseAdmin
       .from('ops_events')
-      .select('id, occurrence_count')
+      .select('id, occurrence_count, archived_at')
       .eq('fingerprint', fingerprint)
       .maybeSingle();
 
@@ -153,6 +161,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
     }
 
     if (existing?.id) {
+      const wasArchived = existing.archived_at != null;
       const { data } = await supabaseAdmin
         .from('ops_events')
         .update({
@@ -165,6 +174,22 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
         .eq('id', existing.id)
         .select('id')
         .single();
+
+      // A recurrence of an ARCHIVED fingerprint un-archives the row above —
+      // that is a fresh incident, so it pages once more. An still-open row
+      // takes this branch every report and must not re-page.
+      if (shouldPage && wasArchived) {
+        await dispatchAdminPageAlert({
+          fingerprint,
+          source: payload.source,
+          title: payload.title,
+          message: payload.message,
+          route: payload.route,
+          instanceId: payload.instance_id,
+          userId: payload.user_id,
+          metadata: payload.metadata,
+        });
+      }
 
       return {
         id: data?.id,
@@ -183,15 +208,17 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
       .select('id')
       .single();
 
-    // First sighting of a FATAL fingerprint: page an admin once. The INSERT
-    // branch is the dedupe — an extended outage that keeps re-reporting the
-    // same fingerprint takes the UPDATE branch above and never re-pages, so a
-    // prolonged incident notifies exactly once instead of every cron tick.
+    // First sighting of a pageable fingerprint (fatal, or page:true): page an
+    // admin once. The INSERT branch is the dedupe — an extended outage that
+    // keeps re-reporting the same fingerprint takes the UPDATE branch above
+    // and never re-pages, so a prolonged incident notifies exactly once
+    // instead of every cron tick. The one exception is a recurrence after the
+    // row was archived, handled on the UPDATE branch.
     // Best-effort and fire-and-forget: the alert transport is awaited but its
     // own try/catch swallows everything, so a Resend/Telegram hiccup can never
     // mask the event write or throw out of reportOpsEvent.
-    if (severity === 'fatal') {
-      await dispatchFatalAdminAlert({
+    if (shouldPage) {
+      await dispatchAdminPageAlert({
         fingerprint,
         source: payload.source,
         title: payload.title,
@@ -199,6 +226,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
         route: payload.route,
         instanceId: payload.instance_id,
         userId: payload.user_id,
+        metadata: payload.metadata,
       });
     }
 
@@ -212,12 +240,12 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
 }
 
 /**
- * Page an admin for a first-sighting fatal event. Isolated so the dynamic
- * import of the (Resend-pulling) transport stays off the hot path of non-fatal
- * events, and so a transport failure is contained to a logged warning. Never
- * throws.
+ * Page an admin for a first-sighting pageable event (fatal severity or
+ * page:true). Isolated so the dynamic import of the (Resend-pulling)
+ * transport stays off the hot path of non-paging events, and so a transport
+ * failure is contained to a logged warning. Never throws.
  */
-async function dispatchFatalAdminAlert(input: {
+async function dispatchAdminPageAlert(input: {
   fingerprint: string;
   source: string;
   title: string;
@@ -225,6 +253,7 @@ async function dispatchFatalAdminAlert(input: {
   route: string | null;
   instanceId: string | null;
   userId: string | null;
+  metadata: Record<string, unknown>;
 }): Promise<void> {
   try {
     const { sendOpsFatalAdminAlert } = await import('@/lib/email/ops-fatal-admin');

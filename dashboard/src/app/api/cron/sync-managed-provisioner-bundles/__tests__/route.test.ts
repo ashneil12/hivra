@@ -4,6 +4,7 @@ const mockProbe = jest.fn();
 const mockSync = jest.fn();
 const mockLoadBundle = jest.fn();
 const mockFrom = jest.fn();
+const mockHeartbeat = jest.fn();
 
 jest.mock("@/lib/hivra/managed-provisioner-bundle-sync", () => ({
   ...jest.requireActual("@/lib/hivra/managed-provisioner-bundle-sync"),
@@ -15,6 +16,9 @@ jest.mock("@/lib/infrastructure/connection-preparation", () => ({
 }));
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: (...args: unknown[]) => mockFrom(...args) } }));
 jest.mock("@/lib/ops-events", () => ({ reportOpsEvent: jest.fn() }));
+jest.mock("@/lib/cron-heartbeat", () => ({
+  recordCronHeartbeat: (...args: unknown[]) => mockHeartbeat(...args),
+}));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 import { GET } from "../route";
@@ -161,5 +165,22 @@ describe("GET /api/cron/sync-managed-provisioner-bundles", () => {
       ["error", "Provisioner bundle on fixturenode11 (default) needs attention: sync_failed"],
       ["error", "Provisioner bundle on fixturenode21 (default) needs attention: sync_failed"],
     ]);
+    // Hosts needing a human mean the run did not fully do its job — the
+    // heartbeat must record ok:false, not a clean run.
+    expect(mockHeartbeat).toHaveBeenCalledWith("sync-managed-provisioner-bundles", {
+      ok: false,
+      detail: "hosts_needing_attention=2",
+    });
+  });
+
+  it("records a plain heartbeat when no host needs attention", async () => {
+    mockSync.mockResolvedValue({
+      ok: true, targetId: "fixturenode21", channel: "test", requestedVersion: PORTABLE_HIVRA_PROVISIONER_VERSION,
+      changed: true, observedVersion: PORTABLE_HIVRA_PROVISIONER_VERSION, error: null,
+    });
+
+    await GET(request());
+
+    expect(mockHeartbeat).toHaveBeenCalledWith("sync-managed-provisioner-bundles", undefined);
   });
 });
