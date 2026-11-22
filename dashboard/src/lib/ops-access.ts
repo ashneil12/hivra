@@ -21,6 +21,15 @@ function getConfiguredOpsAdmin(): { email: string | null; userId: string | null 
 }
 
 /**
+ * EVERY user id named in OPS_ADMIN_USER_IDS (the env is a comma-separated
+ * list; isOpsAdminUser above only honors the first entry). Customer-facing
+ * sweeps use this to exclude all operators, not just the first configured id.
+ */
+export function configuredOpsAdminUserIds(): Set<string> {
+  return new Set(parseAllowlist(process.env.OPS_ADMIN_USER_IDS));
+}
+
+/**
  * Whether OPS_ADMIN_EMAILS names an admin, so a caller that only has a user ID
  * can skip looking up that user's email when no email could match.
  */
