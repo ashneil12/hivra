@@ -1,7 +1,7 @@
 {
   "slug": "ezbookkeeping",
-  "checkedAt": "2026-11-22T15:30:53.216Z",
-  "gitSha": "ae8dbbd512dabfdf73fd6b119655f93f4aebd567",
+  "checkedAt": "2026-11-22T22:35:40.248Z",
+  "gitSha": "bee3f2131c035f6b21270634e7bd440c85b421e0",
   "checks": [
     {
       "name": "license",
@@ -37,14 +37,14 @@
       "status": "pass",
       "detail": "health / -> 200 in 2s",
       "evidence": {
-        "container": "hivra-verify-ezbookkeeping-mln34w",
+        "container": "hivra-verify-ezbookkeeping-peb4e0",
         "hostPort": 3286,
         "image": "mayswind/ezbookkeeping:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-ezbookkeeping-mln34w",
+          "hivra-verify-ezbookkeeping-peb4e0",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -52,18 +52,20 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-ezbookkeeping-mln34w-data:/ezbookkeeping/data",
+          "hivra-verify-ezbookkeeping-peb4e0-data:/ezbookkeeping/data",
+          "-v",
+          "hivra-verify-ezbookkeeping-peb4e0-storage:/ezbookkeeping/storage",
           "mayswind/ezbookkeeping:latest"
         ],
-        "runStdout": "6ec580cfdfc3d0a0d32c0ed31d005f6d9de38f0bba155c05fa5e41c7dad89352",
+        "runStdout": "5add15d8c5756923f62d206093af2c29262bf82323c6383dee13eb59240c50d2",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 2,
           "attempts": 2
         },
-        "memUsage": "9.57MiB / 7.652GiB",
-        "memBytes": 10034872
+        "memUsage": "39.11MiB / 7.652GiB",
+        "memBytes": 41009807
       }
     },
     {
@@ -72,7 +74,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 61233,
+        "gatewayPort": 63613,
         "proxyMode": "standard",
         "hops": [
           {
@@ -103,9 +105,9 @@
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 9.6MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 39.1MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 10034872,
+        "memBytes": 41009807,
         "floorRamGb": 1
       }
     }
