@@ -1,7 +1,7 @@
 {
   "slug": "dufs",
-  "checkedAt": "2026-11-22T22:35:31.955Z",
-  "gitSha": "bee3f2131c035f6b21270634e7bd440c85b421e0",
+  "checkedAt": "2026-11-22T23:33:50.680Z",
+  "gitSha": "26fb7b6a151f074d00e1481a361f5270e5cd383a",
   "checks": [
     {
       "name": "license",
@@ -35,14 +35,14 @@
       "status": "pass",
       "detail": "health / -> 200 in 0s",
       "evidence": {
-        "container": "hivra-verify-dufs-hwbbqg",
+        "container": "hivra-verify-dufs-5o8diw",
         "hostPort": 3283,
         "image": "sigoden/dufs:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-dufs-hwbbqg",
+          "hivra-verify-dufs-5o8diw",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -50,18 +50,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-dufs-hwbbqg-data:/data",
+          "hivra-verify-dufs-5o8diw-data:/data",
           "sigoden/dufs:latest"
         ],
-        "runStdout": "3dc38ca789bfe9a9aea171e95a6a9619ad20bae21ce6c73a9f590d47dee8b162",
+        "runStdout": "40f41728eba6350ab2425ada77bf5d713e1f702344791753b4ae7a20be0a6f1c",
         "health": {
           "ok": true,
           "status": 200,
           "seconds": 0,
           "attempts": 1
         },
-        "memUsage": "5.137MiB / 7.652GiB",
-        "memBytes": 5386535
+        "memUsage": "2.777MiB / 7.652GiB",
+        "memBytes": 2911896
       }
     },
     {
@@ -70,7 +70,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 63585,
+        "gatewayPort": 60017,
         "proxyMode": "standard",
         "hops": [
           {
@@ -101,9 +101,9 @@
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 5.1MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 2.8MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 5386535,
+        "memBytes": 2911896,
         "floorRamGb": 1
       }
     }

@@ -647,8 +647,10 @@ export const DEV_TOOL_MANIFESTS: readonly CatalogAppManifest[] = [
       hostPort: 3283,
       healthPath: "/",
       volumes: [{ name: "data", mountPath: "/data" }],
-      // Uploads are off by default upstream; the starter task needs them.
-      env: { DUFS_ALLOW_UPLOAD: "true" },
+      // Uploads are off by default upstream; the starter task needs them, and
+      // the serve root must be the persistent volume (the image has no WORKDIR,
+      // so the default serve path "." would be "/").
+      env: { DUFS_ALLOW_UPLOAD: "true", DUFS_SERVE_PATH: "/data" },
       proxyMode: "standard",
     },
     seo: {

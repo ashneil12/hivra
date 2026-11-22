@@ -1680,13 +1680,13 @@
     },
     {
       "name": "catalog-dagu-launch",
-      "kind": "value-set",
+      "family": "value-set",
       "input": "/dashboard/launch?profile=dagu&stage=choose",
       "expect": "/dashboard/launch?profile=dagu&stage=choose"
     },
     {
       "name": "catalog-dagu-infra",
-      "kind": "value-set",
+      "family": "value-set",
       "input": "/dashboard/infrastructure?launch=dagu",
       "expect": "/dashboard/infrastructure?launch=dagu"
     },
