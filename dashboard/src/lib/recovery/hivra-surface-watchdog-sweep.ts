@@ -18,8 +18,12 @@
  * times) emits `unit_failing` once per cooldown instead of failing forever
  * without a signal.
  *
- * Dedup is free: each box event carries a unique id, so an event's ops row has
- * a unique fingerprint and re-reads of it only bump occurrence_count.
+ * Dedup: each box event carries a unique id that lands in its ops row's title
+ * (`...[<event id>]`) and metadata.event_id. Before relaying a box's events
+ * the sweep batch-looks-up which of those titles already have an ops_events
+ * row and relays only the new ones — a re-read of the receipt list must not
+ * touch last_seen_at or occurrence_count (re-reads used to make an old outage
+ * look current, with counts in the hundreds).
  */
 
 import { log } from "@/lib/logger";
@@ -129,24 +133,69 @@ async function inPool<T>(items: T[], concurrency: number, work: (item: T) => Pro
   }));
 }
 
+type SweepDb = NonNullable<typeof supabaseAdmin>;
+
+/**
+ * The subset of `titles` that already have an ops_events row for this
+ * instance. Matching on the deterministic title — which embeds the box event
+ * id — is equivalent to matching metadata.event_id without a JSON-path
+ * filter, and archived rows count as stored (an operator archived them on
+ * purpose; the relay must not resurrect them). Returns null when the lookup
+ * itself fails so the caller can decide; the sweep treats null as "unknown"
+ * and still relays (delivery beats count accuracy for one tick, and the
+ * failure is logged loudly).
+ */
+export async function lookupRelayedWatchdogTitles(
+  db: SweepDb,
+  instanceId: string,
+  titles: string[],
+): Promise<Set<string> | null> {
+  if (titles.length === 0) return new Set();
+  const { data, error } = await db
+    .from("ops_events")
+    .select("title")
+    .eq("instance_id", instanceId)
+    .in("title", titles);
+  if (error) {
+    log.error("surface watchdog relay dedupe lookup failed", error, {
+      source: SOURCE,
+      failureType: "watchdog_relay_dedupe_lookup_failed",
+      instanceId,
+    });
+    return null;
+  }
+  return new Set(
+    ((data ?? []) as Array<{ title: string | null }>)
+      .map((row) => row.title)
+      .filter((title): title is string => typeof title === "string"),
+  );
+}
+
 export interface SurfaceWatchdogSweepOptions {
   now?: () => number;
   read?: typeof readSurfaceWatchdogFromBox;
   report?: typeof reportOpsEvent;
+  /** Test hook: which of a box's event titles are already stored. Defaults to a real ops_events lookup. */
+  lookupRelayedTitles?: (instanceId: string, titles: string[]) => Promise<Set<string>>;
 }
 
 export async function runSurfaceWatchdogSweep(options: SurfaceWatchdogSweepOptions = {}): Promise<SurfaceWatchdogSweepSummary> {
-  const now = options.now ?? Date.now;
-  const read = options.read ?? readSurfaceWatchdogFromBox;
-  const report = options.report ?? reportOpsEvent;
-  const summary = emptySummary();
   const db = supabaseAdmin;
   if (!db) {
     log.error("supabaseAdmin not configured; skipping surface watchdog sweep", new Error("supabaseAdmin missing"), {
       source: SOURCE, failureType: "supabase_admin_unavailable",
     });
-    return summary;
+    return emptySummary();
   }
+
+  const now = options.now ?? Date.now;
+  const read = options.read ?? readSurfaceWatchdogFromBox;
+  const report = options.report ?? reportOpsEvent;
+  const lookupRelayedTitles =
+    options.lookupRelayedTitles ??
+    ((instanceId: string, titles: string[]) =>
+      lookupRelayedWatchdogTitles(db, instanceId, titles).then((found) => found ?? new Set<string>()));
+  const summary = emptySummary();
 
   const { data, error } = await db
     .from("hivra_agents")
@@ -201,9 +250,19 @@ export async function runSurfaceWatchdogSweep(options: SurfaceWatchdogSweepOptio
     summary.reported += 1;
     // Newest-cap keeps a long-unswept box from bursting ops rows; the rest
     // stay in the box's events file and dedupe when they surface later.
-    for (const event of reading.report.events.slice(-MAX_RELAY_PER_BOX)) {
+    const pending = reading.report.events.slice(-MAX_RELAY_PER_BOX).map((event) =>
+      opsEventForWatchdogEvent(row, event),
+    );
+    // One batch lookup per box: events whose ops row already exists are skipped
+    // entirely so a re-read never bumps last_seen_at / occurrence_count.
+    const alreadyRelayed = await lookupRelayedTitles(
+      row.id,
+      pending.map((ops) => ops.title),
+    );
+    for (const ops of pending) {
+      if (alreadyRelayed.has(ops.title)) continue;
       try {
-        await report(opsEventForWatchdogEvent(row, event));
+        await report(ops);
         summary.relayed += 1;
       } catch (error) {
         summary.failed += 1;
