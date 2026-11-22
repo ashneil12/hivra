@@ -911,6 +911,18 @@ async function main() {
     });
     await db.exec(credentialSync);
     assert.deepEqual(await admissionDefinitions(), admittedCredentialSync, "re-applying Agent Zero credential sync admission changes nothing");
+
+    const staleFailedUnits = migration("20261122210000_provider_release_admission_2026_11_22_3.sql");
+    await db.exec(staleFailedUnits);
+    const admittedStaleFailedUnits = await admissionDefinitions();
+    admittedStaleFailedUnits.forEach((definition, index) => {
+      for (const version of ["2026.11.22.2", "2026.11.22.3"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["75e7434c68839e0bc362d8cf5f52408dfc0c31301c5f8389e96656bac1cda39d", "9263f24c362351b874a52bb727700e6361495da4b75ad7a467aecd6c1c96f2d7"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(staleFailedUnits);
+    assert.deepEqual(await admissionDefinitions(), admittedStaleFailedUnits, "re-applying the stale failed-unit admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

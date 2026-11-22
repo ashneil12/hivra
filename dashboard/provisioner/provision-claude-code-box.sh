@@ -647,6 +647,12 @@ if systemctl list-unit-files 2>/dev/null | grep -q '^bux-browser-keeper\.service
 else
   ok "cloud keeper already absent"
 fi
+# The keeper can already sit in `systemctl --failed` (it exits non-zero at
+# boot before this runs); deleting the unit file alone leaves that state
+# loaded forever and the surface watchdog reports it every cooldown. Clear
+# it whether or not the file was still present this run.
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl reset-failed bux-browser-keeper.service >/dev/null 2>&1 || true
 
 if [ "$WANT_BROWSER" = 1 ]; then
 
