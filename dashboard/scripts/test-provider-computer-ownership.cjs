@@ -899,6 +899,18 @@ async function main() {
     });
     await db.exec(desktopConnectAdmission);
     assert.deepEqual(await admissionDefinitions(), admittedDesktopConnect, "re-applying Hermes Desktop admission changes nothing");
+
+    const credentialSync = migration("20261122162000_provider_release_admission_2026_11_22_2.sql");
+    await db.exec(credentialSync);
+    const admittedCredentialSync = await admissionDefinitions();
+    admittedCredentialSync.forEach((definition, index) => {
+      for (const version of ["2026.11.22.1", "2026.11.22.2"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["d7f6f75bc3c79435c4b4c72158cd57b9cafcd1e5809f0f1d858f01d12d262f4d", "75e7434c68839e0bc362d8cf5f52408dfc0c31301c5f8389e96656bac1cda39d"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(credentialSync);
+    assert.deepEqual(await admissionDefinitions(), admittedCredentialSync, "re-applying Agent Zero credential sync admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

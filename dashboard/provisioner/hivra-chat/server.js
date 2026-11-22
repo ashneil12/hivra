@@ -2763,7 +2763,7 @@ function proxyHttp(req, res, port, strip, preserveAuthority = false, setHeaders 
 // Agent Zero always gates its OWN web UI with a form login (username/password ->
 // session cookie; no basic-auth, no open-loopback mode). Since our token gate
 // already authenticates the box owner, that second login is pure friction — so we
-// log in transparently with the credential seeded at provision and inject the
+// log in transparently with the credential synced by the watchdog and inject the
 // session cookie, and the user only ever passes our gate.
 let _a0Cookie = null;
 let _a0SessionName = null, _a0SessionRevision = 0, _a0CsrfAttempt = 0, _a0Csrf = null;
@@ -2798,6 +2798,18 @@ function retainA0Cookies(setCookies) {
   _a0Cookie = [...cookies].map(([name, value]) => name + "=" + value).join("; ") || null;
 }
 function readA0Creds() {
+  let fd;
+  try {
+    fd = fs.openSync(path.join(HOME, ".hivra", "agent-zero-runtime-login.json"),
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const file = fs.fstatSync(fd);
+    if (file.isFile() && file.uid === process.getuid() && (file.mode & 0o077) === 0 && file.size <= 1024 * 1024) {
+      const synced = JSON.parse(fs.readFileSync(fd, "utf8"));
+      if (typeof synced?.login === "string" && synced.login && typeof synced.password === "string" && synced.password) return synced;
+    }
+  } catch {}
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+  // The provisioned credential still works before the first watchdog pass.
   try {
     const raw = fs.readFileSync(path.join(HOME, ".hivra", "agent-zero-login"), "utf8");
     const login = (raw.match(/^AUTH_LOGIN=(.*)$/m) || [])[1];
