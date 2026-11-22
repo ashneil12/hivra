@@ -40,7 +40,7 @@ export interface MemoryDbError {
   message: string;
 }
 
-type FilterOp = "eq" | "neq" | "in" | "lt" | "lte" | "gt" | "gte" | "is";
+type FilterOp = "eq" | "neq" | "in" | "lt" | "lte" | "gt" | "gte" | "is" | "not";
 
 interface Filter {
   column: string;
@@ -197,7 +197,7 @@ function readColumn(row: MemoryRow, column: string): unknown {
   return typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
-function rowMatches(row: MemoryRow, filter: Filter) {
+function rowMatches(row: MemoryRow, filter: Filter): boolean {
   const value = readColumn(row, filter.column);
   switch (filter.op) {
     case "eq":
@@ -216,6 +216,11 @@ function rowMatches(row: MemoryRow, filter: Filter) {
       return value != null && compareValues(value, filter.value) >= 0;
     case "is":
       return filter.value === null ? value == null : value === filter.value;
+    case "not": {
+      // .not(column, op, value) stores the inner predicate in value.
+      const inner = filter.value as { op: FilterOp; value: unknown };
+      return !rowMatches(row, { column: filter.column, op: inner.op, value: inner.value });
+    }
   }
 }
 
@@ -301,6 +306,7 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
     const filters: Filter[] = [];
     const orders: Order[] = [];
     let rowLimit: number | null = null;
+    let rowRange: { from: number; to: number } | null = null;
 
     const run = () => {
       const failure = takeFailure(tableName, "select", {});
@@ -309,7 +315,9 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
         readRows().filter((row) => filters.every((filter) => rowMatches(row, filter))),
         orders
       );
-      return { rows: (rowLimit === null ? selected : selected.slice(0, rowLimit)).map(clone), error: null };
+      const limited = rowLimit === null ? selected : selected.slice(0, rowLimit);
+      const ranged = rowRange === null ? limited : limited.slice(rowRange.from, rowRange.to + 1);
+      return { rows: ranged.map(clone), error: null };
     };
 
     const query: Record<string, unknown> = {};
@@ -319,6 +327,10 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
         return query;
       };
     }
+    query.not = (column: string, op: FilterOp, value: unknown) => {
+      filters.push({ column, op: "not", value: { op, value } });
+      return query;
+    };
     query.select = () => query;
     query.order = (column: string, options?: { ascending?: boolean }) => {
       orders.push({ column, ascending: options?.ascending !== false });
@@ -326,6 +338,10 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
     };
     query.limit = (count: number) => {
       rowLimit = count;
+      return query;
+    };
+    query.range = (from: number, to: number) => {
+      rowRange = { from: Number(from), to: Number(to) };
       return query;
     };
     query.maybeSingle = async () => {

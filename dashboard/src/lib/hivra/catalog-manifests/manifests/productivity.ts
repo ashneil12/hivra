@@ -919,7 +919,12 @@ export const PRODUCTIVITY_MANIFESTS: readonly CatalogAppManifest[] = [
       containerPort: 8080,
       hostPort: 3286,
       healthPath: "/",
-      volumes: [{ name: "data", mountPath: "/ezbookkeeping/data" }],
+      // Upstream documents two persistent paths: the SQLite database and the
+      // local-filesystem object storage for uploaded pictures/avatars.
+      volumes: [
+        { name: "data", mountPath: "/ezbookkeeping/data" },
+        { name: "storage", mountPath: "/ezbookkeeping/storage" },
+      ],
       proxyMode: "standard",
     },
     seo: {

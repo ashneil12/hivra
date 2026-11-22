@@ -95,7 +95,11 @@ function formatTime(value: string): string {
  */
 function opsEventOccurredAt(event: OpsEventRow): string | null {
   const value = event.metadata?.event_at;
-  return typeof value === 'string' && value.length > 0 ? value : null;
+  if (typeof value !== 'string' || value.length === 0) return null;
+  // Only a parseable timestamp may replace last_seen_at — an unparseable
+  // event_at would render "Invalid Date" (or throw in Intl format) instead of
+  // falling back to the relay time.
+  return Number.isFinite(Date.parse(value)) ? value : null;
 }
 
 function formatMetadata(value: Record<string, unknown> | null): string | null {

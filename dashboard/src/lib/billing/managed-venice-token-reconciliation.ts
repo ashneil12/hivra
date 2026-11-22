@@ -18,6 +18,7 @@ import {
   settleManagedVeniceTokenQuote,
   surfaceManagedVeniceTokenReviewTrigger,
   surfaceManagedVeniceTokenTransfer,
+  TOKEN_DEPOSIT_LOT_SOURCES,
   MANAGED_VENICE_MAX_OVERSEND_NUMERATOR,
   MANAGED_VENICE_MAX_OVERSEND_DENOMINATOR,
   MANAGED_VENICE_TOKEN_DEPOSIT_REASONS,
@@ -68,13 +69,16 @@ type QueryError = { code?: string; message?: string } | null;
 type DbQuery = {
   select: (...args: unknown[]) => DbQuery;
   eq: (...args: unknown[]) => DbQuery;
+  neq: (...args: unknown[]) => DbQuery;
   in: (...args: unknown[]) => DbQuery;
+  not: (...args: unknown[]) => DbQuery;
   gt: (...args: unknown[]) => DbQuery;
   lt: (...args: unknown[]) => DbQuery;
   lte: (...args: unknown[]) => DbQuery;
   is: (...args: unknown[]) => DbQuery;
   order: (...args: unknown[]) => DbQuery;
   limit: (...args: unknown[]) => DbQuery;
+  range: (...args: unknown[]) => DbQuery;
   then: Promise<{ data?: unknown; error: QueryError }>["then"];
 };
 
@@ -1018,13 +1022,52 @@ function quoteCandidates(data: unknown) {
     .filter((candidate): candidate is { id: string; userId: string } => Boolean(candidate));
 }
 
+// Every quote_id holding a token deposit lot. managed_venice_token_lots has
+// no FK to quotes, so PostgREST cannot join — the ids are fetched here and
+// filtered on quotes by the caller. The read is paged with .range() and
+// unbounded on purpose: a .limit() would let old settled lots fill the page
+// and starve open lot-holding quotes out of the recovery path, and an
+// unpaged read silently truncates at max_rows.
+const LOT_ID_PAGE_SIZE = 1000;
+// PostgREST .in() lists stay small enough to keep the URL and plan sane.
+const LOT_HELD_ID_CHUNK = 200;
+
+async function loadDepositLotQuoteIds(db: SupabaseLike) {
+  const ids = new Set<string>();
+  for (let from = 0; ; from += LOT_ID_PAGE_SIZE) {
+    const { data, error } = await (db.from("managed_venice_token_lots") as DbQuery)
+      .select("quote_id")
+      .in("source", [...TOKEN_DEPOSIT_LOT_SOURCES])
+      .not("quote_id", "is", null)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + LOT_ID_PAGE_SIZE - 1);
+
+    if (error) {
+      throw new Error(error.message || "Failed to load managed Venice token deposit lot quote ids");
+    }
+    const page = Array.isArray(data) ? data : [];
+    for (const row of page) {
+      const id = (row as { quote_id?: unknown }).quote_id;
+      if (typeof id === "string" && id.length > 0) ids.add(id);
+    }
+    if (page.length < LOT_ID_PAGE_SIZE) return [...ids];
+  }
+}
+
 async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
   db: SupabaseLike;
   limit: number;
   // Quotes whose stored expiry is at or before this are handled by the
-  // stale-expiry pass instead of a scan (see expireStaleUnpaidQuotes).
+  // stale-expiry pass instead of a scan (see expireStaleUnpaidQuotes) — but
+  // only while they are unclaimed and lot-free (see below).
   expiresAfterIso: string;
 }) {
+  const openQuotes = () =>
+    (params.db.from("managed_venice_token_quotes") as DbQuery)
+      .select("id, user_id, status")
+      .in("status", ["active", "expired"]);
+
   // Newest first: a fresh payment is always inside the batch, whatever older
   // quotes are still open. Older quotes leave the set by settling, going to
   // review, retiring once their window + grace has been fully scanned, or
@@ -1033,17 +1076,59 @@ async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
   // for legacy short-lived rows) within the quote lifetime — close enough
   // that a quote can only be skipped for scan a few minutes early at worst,
   // and the stale pass re-checks the exact window before expiring.
-  const { data, error } = await (params.db.from("managed_venice_token_quotes") as DbQuery)
-    .select("id, user_id, status")
-    .in("status", ["active", "expired"])
+  const fresh = await openQuotes()
     .gt("expires_at", params.expiresAfterIso)
     .order("created_at", { ascending: false })
     .limit(params.limit);
 
-  if (error) {
-    throw new Error(error.message || "Failed to load pending managed Venice token quotes");
+  if (fresh.error) {
+    throw new Error(fresh.error.message || "Failed to load pending managed Venice token quotes");
   }
-  return quoteCandidates(data);
+
+  // The expiry bound must not drop a quote that already claimed a transfer or
+  // holds a deposit lot: both mean settlement started and crashed part-way,
+  // and the per-quote recovery branch is the only automatic path that finishes
+  // it — at any age. Claimed quotes are matched on transaction_hash; lot
+  // holders on their lot rows (no FK, so ids are fetched separately).
+  const claimed = await openQuotes()
+    .not("transaction_hash", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(params.limit);
+
+  if (claimed.error) {
+    throw new Error(claimed.error.message || "Failed to load claimed managed Venice token quotes");
+  }
+
+  const lotQuoteIds = await loadDepositLotQuoteIds(params.db);
+  // Filter the lot ids down to still-open quotes here (no FK to join on).
+  // The id list can be long, so the .in() filter is chunked; each chunk
+  // query is limited to what the tick still has room for, keeping the total
+  // lot-held candidates bounded like the fresh and claimed queries.
+  const lotHeldCandidates: Array<{ id: string; userId: string }> = [];
+  for (
+    let offset = 0;
+    offset < lotQuoteIds.length && lotHeldCandidates.length < params.limit;
+    offset += LOT_HELD_ID_CHUNK
+  ) {
+    const { data, error } = await openQuotes()
+      .in("id", lotQuoteIds.slice(offset, offset + LOT_HELD_ID_CHUNK))
+      .order("created_at", { ascending: true })
+      .limit(params.limit - lotHeldCandidates.length);
+    if (error) {
+      throw new Error(error.message || "Failed to load lot-holding managed Venice token quotes");
+    }
+    lotHeldCandidates.push(...quoteCandidates(data));
+  }
+
+  const byId = new Map<string, { id: string; userId: string }>();
+  for (const candidate of [
+    ...quoteCandidates(fresh.data),
+    ...quoteCandidates(claimed.data),
+    ...lotHeldCandidates,
+  ]) {
+    byId.set(candidate.id, candidate);
+  }
+  return [...byId.values()];
 }
 
 // Settled / in-review quotes whose flip set transfer_surfacing_pending and

@@ -76,6 +76,50 @@ function transferAt(rpc: BaseRpcFake, overrides: Partial<Parameters<BaseRpcFake[
   });
 }
 
+/**
+ * Wraps the memory db so payment_transactions selects shaped like the
+ * stale-intent count (.select("id") combined with .lt("created_at", …)) fail,
+ * while every other query passes through untouched. The stale count only feeds
+ * the run summary; its failure must not reject the batch.
+ */
+function dbWithFailingStaleCount(memory: BillingMemoryDb) {
+  return {
+    ...memory.db,
+    from(table: string) {
+      const source = memory.db.from(table);
+      if (table !== "payment_transactions") return source;
+      return {
+        ...source,
+        select: (...args: unknown[]) => {
+          const query = source.select();
+          const state = { idSelect: args[0] === "id", staleLt: false };
+          const wrapNode = (node: unknown): unknown =>
+            new Proxy(node as Record<string, unknown>, {
+              get(target, prop) {
+                if (prop === "then") {
+                  return (resolve?: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+                    state.idSelect && state.staleLt
+                      ? Promise.resolve({
+                          data: null,
+                          error: { code: "XX000", message: "injected stale count failure" },
+                        }).then(resolve as (v: unknown) => unknown, reject as (e: unknown) => unknown)
+                      : (target.then as (a?: unknown, b?: unknown) => unknown)(resolve, reject);
+                }
+                const value = Reflect.get(target, prop);
+                if (typeof value !== "function") return value;
+                return (...methodArgs: unknown[]) => {
+                  if (prop === "lt" && methodArgs[0] === "created_at") state.staleLt = true;
+                  return wrapNode(Reflect.apply(value as (...a: unknown[]) => unknown, target, methodArgs));
+                };
+              },
+            });
+          return wrapNode(query);
+        },
+      };
+    },
+  };
+}
+
 describe("crypto top-up reconciliation", () => {
   it("encodes ERC-20 transfer recipient topics for Base log scans", () => {
     expect(encodeErc20TransferToTopic(depositAddressOne)).toBe(
@@ -587,5 +631,18 @@ describe("stale crypto top-up exclusion", () => {
 
     expect(result.checked).toBe(1);
     expect(result.staleExcluded).toBe(1);
+  });
+
+  it("still settles intents and reports staleExcluded unavailable when the stale-count query fails", async () => {
+    const { memory, rpc } = setup([makePayment()]);
+    transferAt(rpc, { at: "2026-04-24T11:55:00.000Z" });
+
+    const result = await run(memory, rpc, { db: dbWithFailingStaleCount(memory) as never });
+
+    // The count is summary-only: its failure must not reject the batch —
+    // settlement still ran and the summary reports the count as unavailable.
+    expect(result).toEqual(
+      expect.objectContaining({ checked: 1, settled: 1, failed: 0, staleExcluded: null })
+    );
   });
 });

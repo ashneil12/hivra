@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { log } from "@/lib/logger";
 import { metadataRecord, requireDb } from "@/lib/billing/db-utils";
 import { normalizeEvmAddress } from "@/lib/billing/token-holdings";
 import {
@@ -574,7 +575,17 @@ export async function reconcilePendingCryptoTopUps(params: {
 
   const [intents, staleExcluded] = await Promise.all([
     listOpenCryptoTopUps(db, limit, staleCutoffIso),
-    countStaleOpenCryptoTopUps(db, staleCutoffIso),
+    // The stale count only feeds the run summary — a failure here must not
+    // reject the batch and skip settlement, claim recovery, or the caller's
+    // treasury sweeps. Report it as unavailable instead.
+    countStaleOpenCryptoTopUps(db, staleCutoffIso).catch((error: unknown) => {
+      log.warn("stale crypto top-up count failed; continuing without it", {
+        source: "crypto-reconciliation",
+        failureType: "stale_topup_count_failed",
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }),
   ]);
   await markCheckedThisRun(db, intents, now);
   for (const row of intents) {

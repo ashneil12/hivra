@@ -337,6 +337,33 @@ describe("evaluateCustomerIncidents cron_unhealthy", () => {
     }));
     expect(result.findings).toHaveLength(0);
   });
+
+  it("uses last_run_at as the staleness reference when the cron never succeeded", () => {
+    // Ran once an hour ago and failed; never recorded a success. Without the
+    // fallback, last_success_at stays null and the cron looks healthy forever.
+    const stale = evaluateCustomerIncidents(evalInput({
+      heartbeats: [heartbeat({
+        cronName: "test-cron",
+        lastRunAt: iso(60 * MIN),
+        lastSuccessAt: null,
+        consecutiveFailures: 1,
+      })],
+      cronSchedules: schedules,
+    }));
+    expect(stale.findings.map((f) => f.key)).toEqual(["cron_unhealthy:test-cron"]);
+
+    // A first failure inside the grace window still gets the regular grace.
+    const fresh = evaluateCustomerIncidents(evalInput({
+      heartbeats: [heartbeat({
+        cronName: "test-cron",
+        lastRunAt: iso(4 * MIN),
+        lastSuccessAt: null,
+        consecutiveFailures: 1,
+      })],
+      cronSchedules: schedules,
+    }));
+    expect(fresh.findings).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -494,6 +521,8 @@ interface FakeDbConfig {
   watchdogByAgent?: Record<string, Row[]>;
   /** When true, per-agent watchdog event queries fail (box_down goes unknown). */
   watchdogFetchFails?: boolean;
+  /** When true, single-row subject lookups (launch_failed expiry checks) fail. */
+  subjectLookupFails?: boolean;
 }
 
 /** Thenable query-builder fake: records the chain, resolves per table on await. */
@@ -503,6 +532,14 @@ function fakeIncidentDb(config: FakeDbConfig) {
     calls: unknown[][],
   ): { data: Row[] | null; error: { message: string } | null } => {
     const ok = (data: Row[]) => ({ data, error: null });
+    const singleLookup = calls.some((c) => c[0] === "maybeSingle" || c[0] === "single");
+    if (
+      config.subjectLookupFails &&
+      singleLookup &&
+      (table === "hivra_agents" || table === "hermes_instances")
+    ) {
+      return { data: null, error: { message: "subject lookup failed" } };
+    }
     if (table === "hivra_agents") return ok(config.agents ?? []);
     if (table === "hermes_instances") return ok(config.instances ?? []);
     if (table === "ops_cron_heartbeats") return ok(config.heartbeats ?? []);
@@ -525,14 +562,40 @@ function fakeIncidentDb(config: FakeDbConfig) {
     from(table: string) {
       const calls: unknown[][] = [];
       const chain: Record<string, unknown> = {};
-      for (const method of ["select", "eq", "is", "not", "gte", "in", "like", "order", "limit"]) {
+      let terminal: "none" | "single" | "maybe" = "none";
+      for (const method of ["select", "eq", "is", "not", "gte", "in", "like", "order", "limit", "range"]) {
         chain[method] = (...args: unknown[]) => {
           calls.push([method, ...args]);
           return chain;
         };
       }
+      chain.single = () => {
+        terminal = "single";
+        calls.push(["single"]);
+        return chain;
+      };
+      chain.maybeSingle = () => {
+        terminal = "maybe";
+        calls.push(["maybeSingle"]);
+        return chain;
+      };
+      const resolve = (): { data: unknown; error: { message: string } | null } => {
+        const result = resolveTable(table, calls);
+        if (result.error || !result.data) return { data: result.data, error: result.error };
+        let rows = result.data;
+        const rangeCall = calls.find((c) => c[0] === "range");
+        if (rangeCall) {
+          rows = rows.slice(Number(rangeCall[1]), Number(rangeCall[2]) + 1);
+        }
+        if (terminal !== "none") {
+          const idCall = calls.find((c) => c[0] === "eq" && c[1] === "id");
+          if (idCall) rows = rows.filter((r) => r.id === idCall[2]);
+          return { data: rows[0] ?? null, error: null };
+        }
+        return { data: rows, error: null };
+      };
       chain.then = (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
-        Promise.resolve(resolveTable(table, calls)).then(onFulfilled, onRejected);
+        Promise.resolve(resolve()).then(onFulfilled, onRejected);
       return chain;
     },
   };
@@ -542,7 +605,7 @@ function scanDeps(over: Record<string, unknown> = {}) {
   return {
     now: () => NOW,
     adminUserIds: new Set<string>(),
-    report: jest.fn(async () => ({ fingerprint: "fp" })),
+    report: jest.fn(async () => ({ id: "evt-new-1", fingerprint: "fp" })),
     probe: jest.fn(async () => ({ status: 200, latencyMs: 9, error: null })),
     archiveIncident: jest.fn(async () => true),
     notifyResolved: jest.fn(async () => undefined),
@@ -708,7 +771,7 @@ describe("runCustomerIncidentScan", () => {
         agents: [agentDbRow()],
         subscriptions: [{ user_id: "user-1", plan: "pro", status: "active" }],
         watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
-        openIncidents: [incidentDbRow({ id: "evt-resolved-1", metadata: { incident_key: "launch_failed:gone" } })],
+        openIncidents: [incidentDbRow({ id: "evt-resolved-1", metadata: { incident_key: "box_down:gone-1" } })],
       }),
     });
     const summary = await runCustomerIncidentScan(deps as never);
@@ -726,7 +789,7 @@ describe("runCustomerIncidentScan", () => {
     const failingDb = {
       from() {
         const chain: Record<string, unknown> = {};
-        for (const m of ["select", "eq", "is", "not", "gte", "in", "like", "order", "limit"]) {
+        for (const m of ["select", "eq", "is", "not", "gte", "in", "like", "order", "limit", "range"]) {
           chain[m] = () => chain;
         }
         chain.then = (onFulfilled: (v: unknown) => unknown) =>
@@ -740,6 +803,154 @@ describe("runCustomerIncidentScan", () => {
     expect(deps.report as jest.Mock).not.toHaveBeenCalled();
     expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
     expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("pages subject queries past the PostgREST max_rows cap", async () => {
+    // 1000 healthy fillers + the failing agent on the second page: without
+    // range pagination the subject query truncates at 1000 and the incident
+    // never opens.
+    const fillers = Array.from({ length: 1000 }, (_, i) =>
+      agentDbRow({
+        id: `agent-fill-${i}`,
+        status: "running",
+        provisioned_at: iso(30 * 24 * 60 * MIN),
+        created_at: iso(30 * 24 * 60 * MIN),
+      }),
+    );
+    const failing = agentDbRow({
+      id: "agent-page-2",
+      status: "error",
+      provisioned_at: null,
+      created_at: iso(2 * 60 * MIN),
+    });
+    const deps = scanDeps({
+      db: fakeIncidentDb({ agents: [...fillers, failing] }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary.opened).toBe(1);
+    const ops = (deps.report as jest.Mock).mock.calls[0][0];
+    expect(ops.metadata.incident_key).toBe("launch_failed:agent-page-2");
+  });
+
+  it("marks remaining probes as skipped once the scan probe budget is exhausted", async () => {
+    let tick = 0;
+    const deps = scanDeps({
+      clock: () => (tick += 100_000), // each read jumps past the 90s budget
+      probeBudgetMs: 90_000,
+      db: fakeIncidentDb({
+        agents: [agentDbRow()],
+        watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary.opened).toBe(1);
+    expect(deps.probe as jest.Mock).not.toHaveBeenCalled();
+    const ops = (deps.report as jest.Mock).mock.calls[0][0];
+    const probes = ops.metadata.probes as Array<{ error: string | null }>;
+    expect(probes.length).toBeGreaterThan(0);
+    expect(probes.every((p) => p.error === "skipped: scan budget")).toBe(true);
+  });
+
+  it("counts watchdog fetch failures as degraded without resolving their incidents", async () => {
+    const deps = scanDeps({
+      db: fakeIncidentDb({
+        agents: [agentDbRow()],
+        watchdogFetchFails: true,
+        openIncidents: [incidentDbRow()],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary.degraded).toBe(1);
+    // The open box_down row stays open — a failed read never resolves it.
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("counts an incident as failed, not opened, when the report persists no id", async () => {
+    const deps = scanDeps({
+      report: jest.fn(async () => null),
+      db: fakeIncidentDb({
+        agents: [agentDbRow()],
+        watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary).toMatchObject({ opened: 0, failed: 1 });
+  });
+
+  it("archives an aged-out launch_failed incident silently when the subject is still failed", async () => {
+    const deps = scanDeps({
+      db: fakeIncidentDb({
+        agents: [
+          agentDbRow({
+            id: "agent-still-broken",
+            status: "error",
+            provisioned_at: null,
+            // Outside the 24h rule window — the rule emits no finding.
+            created_at: iso(30 * 24 * 60 * MIN),
+          }),
+        ],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-lf-1",
+            source: "incident.launch_failed",
+            metadata: {
+              incident_key: "launch_failed:agent-still-broken",
+              subject_kind: "hivra_agent",
+            },
+          }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary).toMatchObject({ expired: 1, resolved: 0 });
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-lf-1", {
+      closedReason: "expired_unresolved",
+    });
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("resolves an aged-out launch_failed incident with a notice when the subject now runs", async () => {
+    const deps = scanDeps({
+      db: fakeIncidentDb({
+        agents: [agentDbRow({ id: "agent-recovered" })],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-lf-2",
+            source: "incident.launch_failed",
+            metadata: {
+              incident_key: "launch_failed:agent-recovered",
+              subject_kind: "hivra_agent",
+            },
+          }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary).toMatchObject({ expired: 0, resolved: 1 });
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-lf-2");
+    expect(deps.notifyResolved as jest.Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves an aged-out launch_failed incident open when the subject lookup fails", async () => {
+    const deps = scanDeps({
+      db: fakeIncidentDb({
+        agents: [agentDbRow({ id: "agent-unknown" })],
+        subjectLookupFails: true,
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-lf-3",
+            source: "incident.launch_failed",
+            metadata: {
+              incident_key: "launch_failed:agent-unknown",
+              subject_kind: "hivra_agent",
+            },
+          }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary).toMatchObject({ expired: 0, resolved: 0 });
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
   });
 });
 

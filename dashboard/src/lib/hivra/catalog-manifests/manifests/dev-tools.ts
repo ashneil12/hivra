@@ -647,6 +647,8 @@ export const DEV_TOOL_MANIFESTS: readonly CatalogAppManifest[] = [
       hostPort: 3283,
       healthPath: "/",
       volumes: [{ name: "data", mountPath: "/data" }],
+      // Uploads are off by default upstream; the starter task needs them.
+      env: { DUFS_ALLOW_UPLOAD: "true" },
       proxyMode: "standard",
     },
     seo: {

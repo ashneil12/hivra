@@ -121,6 +121,7 @@ export interface OpenIncidentRow {
   source: string;
   title: string;
   incidentKey: string | null;
+  subjectKind: string | null;
 }
 
 export interface CustomerSubscriptionSnapshot {
@@ -356,11 +357,15 @@ export function evaluateCustomerIncidents(input: IncidentEvaluationInput): Incid
     if (!schedule) continue;
     const periodMinutes = schedule.periodMinutes;
     const streak = heartbeat.consecutiveFailures ?? 0;
-    const lastSuccessMs = parseTimeMs(heartbeat.lastSuccessAt);
+    // A cron that ran but never succeeded has no last_success_at — use
+    // last_run_at as the staleness reference so a silent-after-first-failure
+    // cron is still caught. The same 3x grace applies from the last run.
+    const referenceMs =
+      parseTimeMs(heartbeat.lastSuccessAt) ?? parseTimeMs(heartbeat.lastRunAt);
     const stale =
       periodMinutes != null &&
-      lastSuccessMs != null &&
-      now - lastSuccessMs > CRON_STALE_PERIOD_MULTIPLIER * periodMinutes * 60 * 1000;
+      referenceMs != null &&
+      now - referenceMs > CRON_STALE_PERIOD_MULTIPLIER * periodMinutes * 60 * 1000;
     if (streak < CRON_FAILURE_STREAK && !stale) continue;
     findings.push({
       key: `cron_unhealthy:${heartbeat.cronName}`,
@@ -516,33 +521,64 @@ function watchdogEventFromOpsRow(row: WatchdogOpsRow): WatchdogEventSnapshot {
   };
 }
 
+// PostgREST caps every response at max_rows (1000 in this project) and says
+// nothing when it truncates — an unpaged subject query silently drops rows,
+// which for this scan means a customer incident that never opens or a stale
+// one that resolves early. Page every subject read until a short page.
+const SUBJECT_PAGE_SIZE = 1000;
+
+async function selectAllPages<RowT>(
+  label: string,
+  build: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: unknown; error: { message?: string } | null }>,
+): Promise<RowT[]> {
+  const rows: RowT[] = [];
+  for (let from = 0; ; from += SUBJECT_PAGE_SIZE) {
+    const { data, error } = await build(from, from + SUBJECT_PAGE_SIZE - 1);
+    if (error) throw new Error(error.message || `${label} query failed`);
+    const page = (data ?? []) as RowT[];
+    rows.push(...page);
+    if (page.length < SUBJECT_PAGE_SIZE) return rows;
+  }
+}
+
 async function collectAgents(db: DbClient, now: number): Promise<HivraAgentSnapshot[]> {
   const cutoff24 = new Date(now - LAUNCH_FAILED_WINDOW_MS).toISOString();
   // Three bounded queries merged by id: unprovisioned-recent (launch_failed),
   // running (box_down), and in-flight operations (lifecycle_stuck — the stuck
   // op may sit on a non-running status like provisioning/deleting).
   const [unprovisioned, running, inFlight] = await Promise.all([
-    db
-      .from("hivra_agents")
-      .select(AGENT_SELECT)
-      .is("provisioned_at", null)
-      .gte("created_at", cutoff24),
-    db.from("hivra_agents").select(AGENT_SELECT).eq("status", "running"),
-    db
-      .from("hivra_agents")
-      .select(AGENT_SELECT)
-      .not("operation_kind", "is", null)
-      .not("operation_started_at", "is", null),
+    selectAllPages<AgentDbRow>("hivra_agents unprovisioned", (from, to) =>
+      db
+        .from("hivra_agents")
+        .select(AGENT_SELECT)
+        .is("provisioned_at", null)
+        .gte("created_at", cutoff24)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    selectAllPages<AgentDbRow>("hivra_agents running", (from, to) =>
+      db
+        .from("hivra_agents")
+        .select(AGENT_SELECT)
+        .eq("status", "running")
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    selectAllPages<AgentDbRow>("hivra_agents in-flight", (from, to) =>
+      db
+        .from("hivra_agents")
+        .select(AGENT_SELECT)
+        .not("operation_kind", "is", null)
+        .not("operation_started_at", "is", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
-  for (const result of [unprovisioned, running, inFlight]) {
-    if (result.error) throw new Error(result.error.message || "hivra_agents query failed");
-  }
   const byId = new Map<string, HivraAgentSnapshot>();
-  for (const row of [
-    ...((unprovisioned.data ?? []) as unknown as AgentDbRow[]),
-    ...((running.data ?? []) as unknown as AgentDbRow[]),
-    ...((inFlight.data ?? []) as unknown as AgentDbRow[]),
-  ]) {
+  for (const row of [...unprovisioned, ...running, ...inFlight]) {
     byId.set(row.id, toAgentSnapshot(row));
   }
   return [...byId.values()];
@@ -550,31 +586,40 @@ async function collectAgents(db: DbClient, now: number): Promise<HivraAgentSnaps
 
 async function collectHermesInstances(db: DbClient, now: number): Promise<HermesInstanceSnapshot[]> {
   const cutoff24 = new Date(now - LAUNCH_FAILED_WINDOW_MS).toISOString();
-  const { data, error } = await db
-    .from("hermes_instances")
-    .select("id,user_id,name,status,lifecycle_state,gateway_url,created_at")
-    .gte("created_at", cutoff24);
-  if (error) throw new Error(error.message || "hermes_instances query failed");
-  return ((data ?? []) as HermesInstanceDbRow[]).map(toInstanceSnapshot);
+  const rows = await selectAllPages<HermesInstanceDbRow>("hermes_instances", (from, to) =>
+    db
+      .from("hermes_instances")
+      .select("id,user_id,name,status,lifecycle_state,gateway_url,created_at")
+      .gte("created_at", cutoff24)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  return rows.map(toInstanceSnapshot);
 }
 
 async function collectHeartbeats(db: DbClient): Promise<CronHeartbeatSnapshot[]> {
-  const { data, error } = await db
-    .from("ops_cron_heartbeats")
-    .select("cron_name,last_run_at,last_success_at,run_count,ok_count,consecutive_failures,last_detail");
-  if (error) throw new Error(error.message || "ops_cron_heartbeats query failed");
-  return ((data ?? []) as HeartbeatDbRow[]).map(toHeartbeatSnapshot);
+  const rows = await selectAllPages<HeartbeatDbRow>("ops_cron_heartbeats", (from, to) =>
+    db
+      .from("ops_cron_heartbeats")
+      .select("cron_name,last_run_at,last_success_at,run_count,ok_count,consecutive_failures,last_detail")
+      .order("cron_name", { ascending: true })
+      .range(from, to),
+  );
+  return rows.map(toHeartbeatSnapshot);
 }
 
 async function collectOpenIncidentRows(db: DbClient): Promise<OpenIncidentRow[]> {
-  const { data, error } = await db
-    .from("ops_events")
-    .select("id,fingerprint,title,source,metadata")
-    .like("source", "incident.%")
-    .is("archived_at", null);
-  if (error) throw new Error(error.message || "open incident rows query failed");
+  const data = await selectAllPages<Record<string, unknown>>("open incident rows", (from, to) =>
+    db
+      .from("ops_events")
+      .select("id,fingerprint,title,source,metadata")
+      .like("source", "incident.%")
+      .is("archived_at", null)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   const rows: OpenIncidentRow[] = [];
-  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+  for (const row of data) {
     const metadata = (row.metadata ?? {}) as Record<string, unknown>;
     rows.push({
       id: String(row.id),
@@ -582,6 +627,7 @@ async function collectOpenIncidentRows(db: DbClient): Promise<OpenIncidentRow[]>
       source: String(row.source ?? ""),
       title: String(row.title ?? ""),
       incidentKey: strOrNull(metadata.incident_key),
+      subjectKind: strOrNull(metadata.subject_kind),
     });
   }
   return rows;
@@ -633,21 +679,27 @@ async function collectSubscriptions(
 ): Promise<Map<string, CustomerSubscriptionSnapshot>> {
   const map = new Map<string, CustomerSubscriptionSnapshot>();
   if (userIds.length === 0) return map;
-  const { data, error } = await db
-    .from("hermes_subscriptions")
-    .select("user_id,plan,status")
-    .in("user_id", userIds);
-  if (error) {
+  try {
+    const rows = await selectAllPages<{ user_id: string; plan: string | null; status: string | null }>(
+      "hermes_subscriptions",
+      (from, to) =>
+        db
+          .from("hermes_subscriptions")
+          .select("user_id,plan,status")
+          .in("user_id", userIds)
+          .order("user_id", { ascending: true })
+          .range(from, to),
+    );
+    for (const row of rows) {
+      map.set(row.user_id, { plan: row.plan, status: row.status });
+    }
+  } catch (err) {
     // Diagnosis enrichment only — never block incident detection on it.
     log.warn("customer-incidents: subscription lookup failed", {
       source: "customer-incidents",
       failureType: "subscription_lookup_failed",
-      errorMessage: error.message,
+      errorMessage: err instanceof Error ? err.message : String(err),
     });
-    return map;
-  }
-  for (const row of (data ?? []) as Array<{ user_id: string; plan: string | null; status: string | null }>) {
-    map.set(row.user_id, { plan: row.plan, status: row.status });
   }
   return map;
 }
@@ -726,6 +778,11 @@ export interface ProbeFn {
 
 const PROBE_TIMEOUT_MS = 5000;
 
+// One scan can open many incidents at once; without a shared budget a slow box
+// fleet could spend the whole maxDuration budget probing and never reach the
+// resolve pass or the heartbeat. Remaining probes are recorded as skipped.
+const SCAN_PROBE_BUDGET_MS = 90_000;
+
 async function defaultProbe(url: string): Promise<{ status: number | null; latencyMs: number | null; error: string | null }> {
   const started = Date.now();
   try {
@@ -735,8 +792,9 @@ async function defaultProbe(url: string): Promise<{ status: number | null; laten
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
       headers: { "user-agent": "hivra-customer-incidents/1.0", accept: "*/*" },
     });
-    // Drain a bounded prefix so the socket is reused; we only need the status.
-    await res.arrayBuffer().catch(() => undefined);
+    // We only need the status — cancel the body instead of buffering it so a
+    // large or slow response cannot stall the scan.
+    await res.body?.cancel().catch(() => undefined);
     return { status: res.status, latencyMs: Date.now() - started, error: null };
   } catch (err) {
     return {
@@ -762,6 +820,7 @@ function safePublicUrl(raw: string | null | undefined): string | null {
 export async function probeAgentPublicSurface(
   agent: Pick<HivraAgentSnapshot, "cfHostname" | "chatUrl">,
   probe: ProbeFn = defaultProbe,
+  budget?: { deadlineAt: number; now?: () => number },
 ): Promise<PublicProbeResult[]> {
   const targets: Array<{ name: string; url: string }> = [];
   const healthzHost = agent.cfHostname?.trim().toLowerCase();
@@ -772,8 +831,19 @@ export async function probeAgentPublicSurface(
   if (entryUrl && !targets.some((t) => t.url === entryUrl)) {
     targets.push({ name: "entry", url: entryUrl });
   }
+  const clock = budget?.now ?? Date.now;
   const results: PublicProbeResult[] = [];
   for (const target of targets) {
+    if (budget && clock() >= budget.deadlineAt) {
+      results.push({
+        name: target.name,
+        url: target.url,
+        status: null,
+        latencyMs: null,
+        error: "skipped: scan budget",
+      });
+      continue;
+    }
     const outcome = await probe(target.url);
     results.push({ name: target.name, url: target.url, ...outcome });
   }
@@ -922,6 +992,10 @@ export function incidentPagingEnabled(
 export interface CustomerIncidentScanDeps {
   db?: DbClient | null;
   now?: () => number;
+  /** Monotonic-ish clock for the scan-wide probe budget. Defaults to Date.now. */
+  clock?: () => number;
+  /** Total wall-clock budget for all public probes in one scan. */
+  probeBudgetMs?: number;
   report?: typeof reportOpsEvent;
   probe?: ProbeFn;
   adminUserIds?: ReadonlySet<string>;
@@ -929,7 +1003,7 @@ export interface CustomerIncidentScanDeps {
   /** Page admins for new incidents + send resolved notices. Defaults to the production-deployment check. */
   pagingEnabled?: boolean;
   /** Archive an incident row by id; returns true when this call won the archive. */
-  archiveIncident?: (rowId: string) => Promise<boolean>;
+  archiveIncident?: (rowId: string, options?: { closedReason?: string }) => Promise<boolean>;
   /** Send the one resolved notice through the admin transport. */
   notifyResolved?: (input: ResolvedNoticeInput) => Promise<void>;
 }
@@ -939,18 +1013,48 @@ export interface CustomerIncidentScanSummary {
   opened: number;
   stillOpen: number;
   resolved: number;
+  /** Open incidents archived without a resolved notice (aged out unresolved). */
+  expired: number;
   unknown: number;
+  /** Subject data we could not read — incidents for them are neither opened nor resolved this pass. */
+  degraded: number;
   failed: number;
 }
 
 function emptySummary(): CustomerIncidentScanSummary {
-  return { findings: 0, opened: 0, stillOpen: 0, resolved: 0, unknown: 0, failed: 0 };
+  return { findings: 0, opened: 0, stillOpen: 0, resolved: 0, expired: 0, unknown: 0, degraded: 0, failed: 0 };
 }
 
-async function defaultArchiveIncident(db: DbClient, rowId: string): Promise<boolean> {
+async function defaultArchiveIncident(
+  db: DbClient,
+  rowId: string,
+  options?: { closedReason?: string },
+): Promise<boolean> {
+  const update: Record<string, unknown> = {
+    archived_at: new Date().toISOString(),
+    archived_by_user_id: null,
+  };
+  if (options?.closedReason) {
+    // Merge into the existing metadata so the archive records why it closed
+    // silently. ops_events.metadata is write-once in practice, so a
+    // read-modify-write here cannot lose concurrent fields.
+    const { data: existing, error: readError } = await db
+      .from("ops_events")
+      .select("metadata")
+      .eq("id", rowId)
+      .maybeSingle();
+    if (readError) throw new Error(readError.message || "archive incident metadata read failed");
+    const prior = (existing as { metadata?: unknown } | null)?.metadata;
+    update.metadata = {
+      ...(prior && typeof prior === "object" && !Array.isArray(prior)
+        ? (prior as Record<string, unknown>)
+        : {}),
+      closed_reason: options.closedReason,
+    };
+  }
   const { data, error } = await db
     .from("ops_events")
-    .update({ archived_at: new Date().toISOString(), archived_by_user_id: null })
+    .update(update)
     .eq("id", rowId)
     .is("archived_at", null)
     .select("id");
@@ -976,6 +1080,87 @@ async function defaultNotifyResolved(input: ResolvedNoticeInput): Promise<void> 
   });
 }
 
+const LAUNCH_FAILED_SUBJECT_PREFIX = "launch_failed:";
+
+type LaunchFailedExpiry = "resolved" | "expired" | "unknown";
+
+/**
+ * A launch_failed incident only fires while its subject is inside the rule's
+ * 24h window, so an open row eventually stops producing a finding even though
+ * the launch may still be failed. Before closing such a row, read the
+ * subject's current state: "resolved" (launch succeeded or the owner deleted
+ * it — worth a resolved notice) vs "expired" (still failed, archive silently)
+ * vs "unknown" (could not read — leave the row open for the next pass).
+ */
+async function classifyLaunchFailedExpiry(
+  db: DbClient,
+  row: OpenIncidentRow,
+): Promise<LaunchFailedExpiry> {
+  const subjectId = row.incidentKey?.slice(LAUNCH_FAILED_SUBJECT_PREFIX.length);
+  if (!subjectId) return "expired";
+  const kind = row.subjectKind;
+
+  if (kind === "hivra_agent" || kind == null) {
+    const { data, error } = await db
+      .from("hivra_agents")
+      .select("id,status,provisioned_at")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (error) {
+      log.warn("customer-incidents: launch_failed subject lookup failed", {
+        source: "customer-incidents",
+        failureType: "launch_failed_subject_lookup_failed",
+        opsEventId: row.id,
+        subjectId,
+        errorMessage: error.message,
+      });
+      return "unknown";
+    }
+    if (data) {
+      const agent = data as { status?: string | null; provisioned_at?: string | null };
+      return agent.provisioned_at != null ||
+        agent.status === "running" ||
+        agent.status === "deleted"
+        ? "resolved"
+        : "expired";
+    }
+    if (kind === "hivra_agent") return "expired";
+  }
+
+  if (kind === "hermes_instance" || kind == null) {
+    const { data, error } = await db
+      .from("hermes_instances")
+      .select("id,status,lifecycle_state")
+      .eq("id", subjectId)
+      .maybeSingle();
+    if (error) {
+      log.warn("customer-incidents: launch_failed subject lookup failed", {
+        source: "customer-incidents",
+        failureType: "launch_failed_subject_lookup_failed",
+        opsEventId: row.id,
+        subjectId,
+        errorMessage: error.message,
+      });
+      return "unknown";
+    }
+    if (data) {
+      const instance = data as { status?: string | null; lifecycle_state?: string | null };
+      const launched =
+        instance.status === "running" ||
+        instance.status === "deleted" ||
+        instance.lifecycle_state === "active" ||
+        instance.lifecycle_state === "stopped" ||
+        instance.lifecycle_state === "paused" ||
+        instance.lifecycle_state === "cold_archived" ||
+        instance.lifecycle_state === "deleted";
+      return launched ? "resolved" : "expired";
+    }
+  }
+
+  // The subject row is gone entirely — nothing left to recover, close quietly.
+  return "expired";
+}
+
 /**
  * One evaluation pass: collect customer-impact inputs, evaluate the rules,
  * page newly-open incidents with a diagnosis bundle, and resolve incidents
@@ -989,13 +1174,20 @@ export async function runCustomerIncidentScan(
   const summary = emptySummary();
   const db = deps.db === undefined ? supabaseAdmin : deps.db;
   const now = deps.now?.() ?? Date.now();
+  const clock = deps.clock ?? Date.now;
+  // Probe budget is measured from scan start so collection time counts against
+  // it — the scan must finish inside maxDuration with room to resolve rows and
+  // write the heartbeat.
+  const probeDeadlineAt = clock() + (deps.probeBudgetMs ?? SCAN_PROBE_BUDGET_MS);
   const report = deps.report ?? reportOpsEvent;
   const probe = deps.probe ?? defaultProbe;
   const adminUserIds = deps.adminUserIds ?? configuredOpsAdminUserIds();
   const cronSchedules = deps.cronSchedules ?? VERCEL_CRONS;
   const pagingEnabled = deps.pagingEnabled ?? incidentPagingEnabled();
   const archiveIncident =
-    deps.archiveIncident ?? ((rowId: string) => (db ? defaultArchiveIncident(db, rowId) : Promise.resolve(false)));
+    deps.archiveIncident ??
+    ((rowId: string, options?: { closedReason?: string }) =>
+      db ? defaultArchiveIncident(db, rowId, options) : Promise.resolve(false));
   const notifyResolved = deps.notifyResolved ?? defaultNotifyResolved;
 
   if (!db) {
@@ -1067,6 +1259,9 @@ export async function runCustomerIncidentScan(
   summary.unknown = [...evaluation.unknownKeys].filter((key) =>
     openIncidentRows.some((row) => row.incidentKey === key),
   ).length;
+  // Watchdog fetch failures mean we could not evaluate box_down for those
+  // agents — count them so the heartbeat records the pass as degraded.
+  summary.degraded = unknownAgentIds.size;
 
   const openByKey = new Map<string, OpenIncidentRow>();
   for (const row of openIncidentRows) {
@@ -1089,7 +1284,10 @@ export async function runCustomerIncidentScan(
     let probes: PublicProbeResult[] = [];
     if (finding.agent) {
       try {
-        probes = await probeAgentPublicSurface(finding.agent, probe);
+        probes = await probeAgentPublicSurface(finding.agent, probe, {
+          deadlineAt: probeDeadlineAt,
+          now: clock,
+        });
       } catch (err) {
         log.warn("customer-incidents: public probe failed", {
           source: "customer-incidents",
@@ -1102,8 +1300,23 @@ export async function runCustomerIncidentScan(
     const subscription = finding.userId ? subscriptions.get(finding.userId) ?? null : null;
     const metadata = buildIncidentMetadata(finding, { subscription, probes });
     try {
-      await report(incidentOpsEvent(finding, metadata, pagingEnabled));
-      summary.opened += 1;
+      const reported = await report(incidentOpsEvent(finding, metadata, pagingEnabled));
+      // Only a persisted row counts as opened — an insert that returned no id
+      // (or null on lookup failure) means nothing was recorded.
+      if (reported?.id) {
+        summary.opened += 1;
+      } else {
+        summary.failed += 1;
+        log.error(
+          "customer-incidents: incident report returned no persisted id",
+          new Error("reportOpsEvent returned no row id"),
+          {
+            source: "customer-incidents",
+            failureType: "incident_report_unconfirmed",
+            incidentKey: finding.key,
+          },
+        );
+      }
     } catch (err) {
       summary.failed += 1;
       log.error("customer-incidents: incident report failed", err, {
@@ -1120,9 +1333,33 @@ export async function runCustomerIncidentScan(
     if (!row.incidentKey) continue;
     if (findingKeys.has(row.incidentKey)) continue;
     if (evaluation.unknownKeys.has(row.incidentKey)) continue;
+    // launch_failed rows age out of the rule's 24h subject window, so the rule
+    // stops emitting a finding while the launch may still be failed. Read the
+    // subject's current state: archive-with-notice only when it actually
+    // launched or was deleted; archive silently when it aged out unresolved.
+    let expiredUnresolved = false;
+    if (row.incidentKey.startsWith(LAUNCH_FAILED_SUBJECT_PREFIX)) {
+      let disposition: LaunchFailedExpiry;
+      try {
+        disposition = await classifyLaunchFailedExpiry(db, row);
+      } catch (err) {
+        log.warn("customer-incidents: launch_failed expiry check failed; leaving row open", {
+          source: "customer-incidents",
+          failureType: "launch_failed_expiry_check_failed",
+          opsEventId: row.id,
+          incidentKey: row.incidentKey,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
+      if (disposition === "unknown") continue;
+      expiredUnresolved = disposition === "expired";
+    }
     let archived = false;
     try {
-      archived = await archiveIncident(row.id);
+      archived = expiredUnresolved
+        ? await archiveIncident(row.id, { closedReason: "expired_unresolved" })
+        : await archiveIncident(row.id);
     } catch (err) {
       summary.failed += 1;
       log.error("customer-incidents: incident archive failed", err, {
@@ -1134,6 +1371,12 @@ export async function runCustomerIncidentScan(
       continue;
     }
     if (!archived) continue; // another invocation already resolved it
+    if (expiredUnresolved) {
+      // Aged out of the rule's window still failed — close the row without a
+      // "resolved" notice; nothing actually recovered.
+      summary.expired += 1;
+      continue;
+    }
     summary.resolved += 1;
     if (!pagingEnabled) continue; // non-production: archive only, no admin mail
     try {
