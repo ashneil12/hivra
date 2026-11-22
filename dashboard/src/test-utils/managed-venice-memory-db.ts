@@ -197,7 +197,7 @@ function readColumn(row: MemoryRow, column: string): unknown {
   return typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
-function rowMatches(row: MemoryRow, filter: Filter) {
+function rowMatches(row: MemoryRow, filter: Filter): boolean {
   const value = readColumn(row, filter.column);
   switch (filter.op) {
     case "eq":

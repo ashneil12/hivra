@@ -532,13 +532,13 @@ async function selectAllPages<RowT>(
   build: (
     from: number,
     to: number,
-  ) => PromiseLike<{ data: RowT[] | null; error: { message?: string } | null }>,
+  ) => PromiseLike<{ data: unknown; error: { message?: string } | null }>,
 ): Promise<RowT[]> {
   const rows: RowT[] = [];
   for (let from = 0; ; from += SUBJECT_PAGE_SIZE) {
     const { data, error } = await build(from, from + SUBJECT_PAGE_SIZE - 1);
     if (error) throw new Error(error.message || `${label} query failed`);
-    const page = data ?? [];
+    const page = (data ?? []) as RowT[];
     rows.push(...page);
     if (page.length < SUBJECT_PAGE_SIZE) return rows;
   }
