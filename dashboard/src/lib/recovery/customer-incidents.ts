@@ -166,6 +166,14 @@ const WATCHDOG_TIMELINE_LIMIT = 10;
 
 const BOX_DOWN_EVENT_TYPES = new Set(["gateway_down", "unit_restart", "recovery_exhausted"]);
 const BOX_RECOVERY_EVENT_TYPES = new Set(["recovered", "gateway_recovered"]);
+// Only surface failure/recovery receipts decide open/resolve state.
+// unit_failing and watchdog_error are diagnostic noise for this rule — a
+// unit_failing emitted after recovery_exhausted must not clear a live
+// outage, and they stay in the diagnosis timeline either way.
+const BOX_SURFACE_EVENT_TYPES = new Set([
+  ...BOX_DOWN_EVENT_TYPES,
+  ...BOX_RECOVERY_EVENT_TYPES,
+]);
 const LAUNCH_FAILED_AGENT_STATUSES = new Set(["error", "deleted"]);
 const LAUNCH_FAILED_INSTANCE_STATUSES = new Set(["failed", "error"]);
 
@@ -264,7 +272,11 @@ export function evaluateCustomerIncidents(input: IncidentEvaluationInput): Incid
       continue;
     }
     const events = sortWatchdogEventsByEventAt(input.watchdogEventsByAgent.get(agent.id) ?? []);
-    const latest = events[0];
+    // Newest SURFACE event decides state; unrelated event types are ignored
+    // for open/resolve (they remain in watchdogTimeline for diagnosis).
+    const latest = events.find(
+      (event) => event.eventType != null && BOX_SURFACE_EVENT_TYPES.has(event.eventType),
+    );
     if (!latest?.eventType) continue;
     if (BOX_RECOVERY_EVENT_TYPES.has(latest.eventType)) continue;
     if (!BOX_DOWN_EVENT_TYPES.has(latest.eventType)) continue;

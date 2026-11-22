@@ -199,6 +199,36 @@ describe("evaluateCustomerIncidents box_down", () => {
     expect(result.findings).toHaveLength(0);
   });
 
+  it("ignores non-surface events when picking the newest: unit_failing cannot clear an outage", () => {
+    const a = agent();
+    // recovery_exhausted 30m ago, then a unit_failing receipt 5m ago. The
+    // unit_failing is newer by event_at but is not a surface state change —
+    // the box is still down.
+    const result = evaluateCustomerIncidents(evalInput({
+      agents: [a],
+      watchdogEventsByAgent: new Map([[a.id, [
+        watchdogEvent({ eventType: "unit_failing", eventAt: iso(5 * MIN), eventId: "e4-2" }),
+        watchdogEvent({ eventType: "recovery_exhausted", eventAt: iso(30 * MIN), eventId: "e4-1" }),
+      ]]]),
+    }));
+    expect(result.findings.map((f) => f.rule)).toEqual(["box_down"]);
+    // The ignored event is still in the diagnosis timeline.
+    expect(result.findings[0].watchdogTimeline.map((e) => e.eventType)).toEqual([
+      "unit_failing",
+      "recovery_exhausted",
+    ]);
+
+    // Same shape with a watchdog_error on top of an old gateway_down.
+    const noisy = evaluateCustomerIncidents(evalInput({
+      agents: [agent({ id: "a-noisy" })],
+      watchdogEventsByAgent: new Map([["a-noisy", [
+        watchdogEvent({ eventType: "watchdog_error", eventAt: iso(2 * MIN), eventId: "e5-2" }),
+        watchdogEvent({ eventType: "gateway_down", eventAt: iso(45 * MIN), eventId: "e5-1" }),
+      ]]]),
+    }));
+    expect(noisy.findings.map((f) => f.key)).toEqual(["box_down:a-noisy"]);
+  });
+
   it("does not fire for sleeping or non-running agents, and skips admin users", () => {
     const sleeping = agent({ id: "a-sleep", sleepState: "sleeping" });
     const stopped = agent({ id: "a-stop", status: "stopped" });
