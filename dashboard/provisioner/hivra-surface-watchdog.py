@@ -26,14 +26,18 @@
 #
 # Stdlib only; runs under `python3 -I -B`.
 
+import hashlib
+import http.client
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 POLL_S = int(os.environ.get("HIVRA_SURFACE_WATCHDOG_POLL_S") or 30)
@@ -60,6 +64,25 @@ WATCH_UNIT_PREFIXES = ("bux-", "hivra-")
 HTTP_TIMEOUT_S = 8
 GATEWAY_PORT = os.environ.get("HIVRA_CHAT_PORT") or "8080"
 GATEWAY_ORIGIN = "http://127.0.0.1:%s" % GATEWAY_PORT
+AGENT_ZERO_LOGIN = "agent-zero-runtime-login.json"
+AGENT_ZERO_CONFIG_LIMIT = 1024 * 1024
+AGENT_ZERO_DOTENV = """
+import io
+import json
+import os
+import stat
+from dotenv import dotenv_values
+
+with os.fdopen(os.open("/a0/usr/.env", os.O_RDONLY | os.O_NONBLOCK), "rb") as source:
+    if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+        raise SystemExit(1)
+    config = source.read(1024 * 1024 + 1)
+    if len(config) > 1024 * 1024:
+        raise SystemExit(1)
+values = dotenv_values(stream=io.StringIO(config.decode("utf-8")))
+print(json.dumps({"login": values.get("AUTH_LOGIN"), "password": values.get("AUTH_PASSWORD")}, ensure_ascii=False))
+"""
+agent_zero_synced_digest = None
 
 # Each agent-app kind's real user path through the gateway and the unit that
 # owns it. agent-zero is the deep check (login -> entry -> CSRF contract); the
@@ -216,6 +239,98 @@ def gateway_up(http=http_get):
     return status == 200 and body.strip() == b"ok"
 
 
+def agent_zero_docker(*args):
+    # The upstream dotenv parser runs inside the managed container. Host root
+    # never follows a path from the container's writable settings directory.
+    result = subprocess.run(
+        ["/usr/bin/docker", *args], capture_output=True, text=True, timeout=5, check=False,
+    )
+    return result.stdout if result.returncode == 0 and len(result.stdout.encode()) <= AGENT_ZERO_CONFIG_LIMIT else ""
+
+
+def read_agent_zero_runtime_login():
+    return agent_zero_docker(
+        "exec", "hivra-agent-zero", "/bin/sh", "-c",
+        'if [ -x /opt/venv-a0/bin/python ]; then exec /opt/venv-a0/bin/python "$@"; fi; exec /opt/venv/bin/python "$@"',
+        "hivra-agent-zero-credentials", "-I", "-B", "-c", AGENT_ZERO_DOTENV,
+    )
+
+
+def agent_zero_login_accepted(port, pair):
+    body = urllib.parse.urlencode({"username": pair["login"], "password": pair["password"], "next": "/"})
+    client = http.client.HTTPConnection("127.0.0.1", port, timeout=4)
+    try:
+        client.request("POST", "/login", body, {"Content-Type": "application/x-www-form-urlencoded"})
+        response = client.getresponse()
+        return (
+            response.status in (302, 303)
+            and response.getheader("Location") == "/"
+            and any(
+                name.lower() == "set-cookie" and re.match(r"^session(?:_[0-9a-f]{16})?=[^;\s]+", value)
+                for name, value in response.getheaders()
+            )
+        )
+    finally:
+        client.close()
+
+
+def sync_agent_zero_login():
+    global agent_zero_synced_digest
+    try:
+        raw = read_agent_zero_runtime_login()
+        digest = hashlib.sha256(raw.encode()).digest()
+        if digest == agent_zero_synced_digest:
+            return
+        pair = json.loads(raw)
+        if (not isinstance(pair, dict) or set(pair) != {"login", "password"}
+                or any(not isinstance(value, str) or not value for value in pair.values())):
+            return
+        # Check that the expected, loopback-only port is published, then prove
+        # the running app accepts this pair. A partial settings save may not.
+        mapping = agent_zero_docker("port", "hivra-agent-zero", "80/tcp").strip()
+        port = re.fullmatch(r"127\.0\.0\.1:(\d{1,5})", mapping)
+        if not port or not 0 < int(port[1]) <= 65535 or not agent_zero_login_accepted(int(port[1]), pair):
+            return
+        if lock_fresh() or raw != read_agent_zero_runtime_login():
+            return
+        write_agent_zero_login(pair)
+        agent_zero_synced_digest = digest
+    except (OSError, ValueError, subprocess.SubprocessError, http.client.HTTPException):
+        # Fail closed and try the next normal poll. Exception payloads can
+        # contain a fragment of an upstream response or parsed credential.
+        return
+
+
+def write_agent_zero_login(pair):
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY
+    home = os.open(AGENT_HOME, flags)
+    try:
+        directory = os.open(".hivra", flags, dir_fd=home)
+        try:
+            owner = os.fstat(directory)
+            if owner.st_uid != os.fstat(home).st_uid or owner.st_mode & 0o022:
+                raise PermissionError("unsafe Agent Zero credential directory")
+            temp = ".agent-zero-login-" + secrets.token_hex(8)
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    os.fchown(handle.fileno(), owner.st_uid, owner.st_gid)
+                    json.dump(pair, handle, ensure_ascii=False)
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp, AGENT_ZERO_LOGIN, src_dir_fd=directory, dst_dir_fd=directory)
+            finally:
+                try:
+                    os.unlink(temp, dir_fd=directory)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(directory)
+    finally:
+        os.close(home)
+
+
 def probe_surface(kind, cfg, token, http=http_get):
     """ProbeResult: "ok" | (why it failed). Never raises."""
     status, body, error = http(GATEWAY_ORIGIN + cfg["probe"], token)
@@ -348,6 +463,8 @@ def tick(state, now, kind, cfg, token, http=http_get, runner=subprocess.run):
         scan_units(state, events, now, runner)
         return
 
+    if kind == "agent-zero":
+        sync_agent_zero_login()
     reason = probe_surface(kind, cfg, token, http)
 
     if reason == "ok":

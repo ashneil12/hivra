@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "hivra-surface-watchdog.py"
@@ -93,6 +94,70 @@ class WatchdogTest(unittest.TestCase):
         watchdog.tick(state, NOW + 1000, "agent-zero", CFG, TOKEN, http=http, runner=FakeRunner())
         self.assertEqual(state["surface"]["status"], "ok")
         self.assertEqual(state["pendingEvents"], [])
+
+    def test_agent_zero_updates_verified_credentials_before_probing_and_retries_a_partial_save(self):
+        with tempfile.TemporaryDirectory() as home:
+            private = Path(home) / ".hivra"
+            private.mkdir(mode=0o700)
+            mirror = private / watchdog.AGENT_ZERO_LOGIN
+            legacy = private / "agent-zero-login"
+            legacy.write_text("AUTH_LOGIN=initial\nAUTH_PASSWORD=initial\n")
+            candidate = {"login": "first", "password": "first password"}
+            runtime = candidate.copy()
+            native_attempts = []
+
+            def docker(action, *args):
+                self.assertEqual(args[0], "hivra-agent-zero")
+                if action == "exec":
+                    return json.dumps(candidate)
+                self.assertEqual((action, args[1]), ("port", "80/tcp"))
+                return "127.0.0.1:50080"
+
+            def login(port, pair):
+                self.assertEqual(port, 50080)
+                native_attempts.append(pair)
+                return pair == runtime
+
+            def gateway(url, token, timeout=8):
+                if url.endswith("/healthz"):
+                    return 200, b"ok", None
+                self.assertEqual(json.loads(mirror.read_text()), runtime)
+                return 200, CSRF, None
+
+            state = base_state()
+            runner = FakeRunner()
+            with patch.multiple(watchdog, AGENT_HOME=home, agent_zero_synced_digest=None), \
+                    patch.object(watchdog, "agent_zero_docker", docker), \
+                    patch.object(watchdog, "agent_zero_login_accepted", login), \
+                    patch.object(watchdog, "lock_fresh", return_value=False):
+                watchdog.tick(state, NOW, "agent-zero", CFG, TOKEN, http=gateway, runner=runner)
+                self.assertEqual(mirror.stat().st_mode & 0o777, 0o600)
+
+                candidate = {"login": "renamed user", "password": """new '" password  """}
+                watchdog.tick(state, NOW + 30, "agent-zero", CFG, TOKEN, http=gateway, runner=runner)
+                self.assertEqual(json.loads(mirror.read_text()), runtime)
+
+                runtime = candidate
+                watchdog.tick(state, NOW + 60, "agent-zero", CFG, TOKEN, http=gateway, runner=runner)
+                verified_inode = mirror.stat().st_ino
+                watchdog.tick(state, NOW + 90, "agent-zero", CFG, TOKEN, http=gateway, runner=runner)
+                self.assertEqual(len(native_attempts), 3)
+                self.assertEqual(mirror.stat().st_ino, verified_inode)
+                self.assertEqual(legacy.read_text(), "AUTH_LOGIN=initial\nAUTH_PASSWORD=initial\n")
+                self.assertEqual(runner.restarted, [])
+
+    def test_credential_replacement_does_not_follow_a_symlink_destination(self):
+        with tempfile.TemporaryDirectory() as home:
+            private = Path(home) / ".hivra"
+            private.mkdir(mode=0o700)
+            target = Path(home) / "unrelated"
+            target.write_text("unchanged")
+            mirror = private / watchdog.AGENT_ZERO_LOGIN
+            mirror.symlink_to(target)
+            with patch.object(watchdog, "AGENT_HOME", home):
+                watchdog.write_agent_zero_login({"login": "owner", "password": "fixture"})
+            self.assertFalse(mirror.is_symlink())
+            self.assertEqual(target.read_text(), "unchanged")
 
     def test_update_lock_pauses_failure_counting(self):
         http = http_ok()
