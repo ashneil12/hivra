@@ -101,7 +101,7 @@
 {"slug": "odoo", "name": "Odoo", "sourceUrl": "https://github.com/odoo/odoo", "status": "rejected", "reason": "rejected: verifier license check reports GitHub SPDX NOASSERTION not in allowlist; docker-stack manifest and id removed; evidence catalog-curation/evidence/odoo.json", "checkedAt": "2026-11-21"}
 {"slug": "metabase", "name": "Metabase", "sourceUrl": "https://github.com/metabase/metabase", "status": "rejected", "reason": "GitHub reports SPDX NOASSERTION, outside the catalog licence allowlist", "checkedAt": "2026-11-21"}
 {"slug": "discourse", "name": "Discourse", "sourceUrl": "https://github.com/discourse/discourse", "status": "rejected", "reason": "upstream deploys via discourse_docker launcher (its own container orchestration), not a plain image or compose stack", "checkedAt": "2026-11-21"}
-{"slug": "glance", "name": "Glance", "sourceUrl": "https://github.com/glanceapp/glance", "status": "rejected", "reason": "rejected: requires a seeded /app/config/glance.yml which cannot be supplied under the catalog safe-mount policy", "checkedAt": "2026-11-21"}
+{"slug": "glance", "name": "Glance", "sourceUrl": "https://github.com/glanceapp/glance", "status": "rejected", "reason": "needs pre-populated /app/config/glance.yml to boot", "checkedAt": "2026-11-22"}
 {"slug": "siyuan", "name": "SiYuan", "sourceUrl": "https://github.com/siyuan-note/siyuan", "status": "rejected", "reason": "image requires `serve` subcommand since v3.7.0; docker-web runtime has no command field", "checkedAt": "2026-11-21"}
 {"slug": "gogs", "name": "Gogs", "sourceUrl": "https://github.com/gogs/gogs", "status": "accepted", "reason": " | accepted: verifier pass incl /login probe; evidence catalog-curation/evidence/gogs.json", "checkedAt": "2026-11-21"}
 {"slug": "new-api", "name": "New API", "sourceUrl": "https://github.com/QuantumNous/new-api", "status": "pending", "reason": "pending: manifest+evidence lives on the fix-pr643-grammar branch (parallel curation); not duplicated here", "checkedAt": "2026-11-21"}
@@ -140,3 +140,11 @@
 {"slug": "rsshub", "name": "RSSHub", "sourceUrl": "https://github.com/DIYgod/RSSHub", "status": "accepted", "reason": "evidence catalog-curation/evidence/rsshub.json", "checkedAt": "2026-11-22"}
 {"slug": "etherpad", "name": "Etherpad", "sourceUrl": "https://github.com/ether/etherpad-lite", "status": "rejected", "reason": "gateway: final HTML references loopback 3286 (persisted after proxyMode loopback-origin)", "checkedAt": "2026-11-22"}
 {"slug": "miniserve", "name": "Miniserve", "sourceUrl": "https://github.com/svenstaro/miniserve", "status": "rejected", "reason": "boot: health / never returned <400 (last status none)", "checkedAt": "2026-11-22"}
+{"slug": "termix", "name": "Termix", "sourceUrl": "https://github.com/Termix-SSH/Termix", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
+{"slug": "ezbookkeeping", "name": "ezBookkeeping", "sourceUrl": "https://github.com/mayswind/ezbookkeeping", "status": "accepted", "reason": "evidence catalog-curation/evidence/ezbookkeeping.json", "checkedAt": "2026-11-22"}
+{"slug": "sun-panel", "name": "Sun-Panel", "sourceUrl": "https://github.com/hslr-s/sun-panel", "status": "accepted", "reason": "evidence catalog-curation/evidence/sun-panel.json", "checkedAt": "2026-11-22"}
+{"slug": "pulse", "name": "Pulse", "sourceUrl": "https://github.com/rcourtman/Pulse", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
+{"slug": "zoraxy", "name": "Zoraxy", "sourceUrl": "https://github.com/tobychui/zoraxy", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
+{"slug": "dawarich", "name": "Dawarich", "sourceUrl": "https://github.com/Freika/dawarich", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
+{"slug": "pairdrop", "name": "PairDrop", "sourceUrl": "https://github.com/schlagmichdoch/PairDrop", "status": "accepted", "reason": "evidence catalog-curation/evidence/pairdrop.json", "checkedAt": "2026-11-22"}
+{"slug": "convertx", "name": "ConvertX", "sourceUrl": "https://github.com/C4illin/ConvertX", "status": "accepted", "reason": "evidence catalog-curation/evidence/convertx.json", "checkedAt": "2026-11-22"}

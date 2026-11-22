@@ -1680,6 +1680,46 @@
     },
     {
       "family": "value-set",
+      "input": "/dashboard/launch?profile=ezbookkeeping&stage=choose",
+      "expect": "/dashboard/launch?profile=ezbookkeeping&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=ezbookkeeping",
+      "expect": "/dashboard/infrastructure?launch=ezbookkeeping"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=convertx&stage=choose",
+      "expect": "/dashboard/launch?profile=convertx&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=convertx",
+      "expect": "/dashboard/infrastructure?launch=convertx"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=sun-panel&stage=choose",
+      "expect": "/dashboard/launch?profile=sun-panel&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=sun-panel",
+      "expect": "/dashboard/infrastructure?launch=sun-panel"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=pairdrop&stage=choose",
+      "expect": "/dashboard/launch?profile=pairdrop&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=pairdrop",
+      "expect": "/dashboard/infrastructure?launch=pairdrop"
+    },
+    {
+      "family": "value-set",
       "input": "/dashboard/launch?profile=dufs&stage=choose",
       "expect": "/dashboard/launch?profile=dufs&stage=choose"
     },
