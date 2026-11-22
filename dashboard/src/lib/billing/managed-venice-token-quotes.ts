@@ -2206,6 +2206,53 @@ export async function retireManagedVeniceTokenQuote(
   return { status: current?.quote.status ?? quote.status };
 }
 
+// Expire an unpaid quote whose expiry + post-expiry grace has long passed
+// without a matching transfer: active|expired -> 'expired' with the reason
+// recorded, only while nothing is claimed and no lot exists. Unlike
+// 'cancelled' (a completed clean scan), 'expired' stays settleable: an
+// on-demand check still scans the quote's window, so a late in-window
+// deposit found that way can still credit. The cron uses this to stop paying
+// a full log scan every tick for quotes whose windows closed long ago.
+export async function expireUnpaidManagedVeniceTokenQuote(
+  params: { quoteId: string; closedAt?: Date },
+  db: SupabaseLike | null | undefined = supabaseAdmin
+): Promise<{ status: ManagedVeniceTokenQuoteStatus; transitioned: boolean }> {
+  const client = requireDb(db);
+  const record = await loadManagedVeniceTokenQuoteRecord(client, params.quoteId);
+  if (!record) {
+    throw new Error("Managed Venice token quote not found");
+  }
+  const { quote } = record;
+  const alreadyExpired =
+    quote.status === "expired" && record.metadata.closedReason === "no_deposit_after_grace";
+  if (alreadyExpired) return { status: quote.status, transitioned: false };
+  if ((quote.status !== "active" && quote.status !== "expired") || quote.transactionHash) {
+    return { status: quote.status, transitioned: false };
+  }
+  if (await loadDepositLot(client, quote.id)) {
+    return { status: quote.status, transitioned: false };
+  }
+
+  const closedAt = (params.closedAt ?? new Date()).toISOString();
+  const { data, error } = await table(client, "managed_venice_token_quotes")
+    .update({
+      status: "expired" satisfies ManagedVeniceTokenQuoteStatus,
+      updated_at: new Date().toISOString(),
+      metadata: { ...record.metadata, closedReason: "no_deposit_after_grace", closedAt },
+    })
+    .eq("id", quote.id)
+    .in("status", OPEN_QUOTE_STATUSES)
+    .is("transaction_hash", null)
+    .select("id");
+
+  if (error) {
+    throw new Error(error.message || "Failed to expire managed Venice token quote");
+  }
+  if (affectedRowCount(data) === 1) return { status: "expired", transitioned: true };
+  const current = await loadManagedVeniceTokenQuoteRecord(client, quote.id);
+  return { status: current?.quote.status ?? quote.status, transitioned: false };
+}
+
 // Clear a terminal quote's transfer-surfacing obligation once the reconciler
 // has surfaced every transfer in its fully confirmed attribution range. A
 // compare-and-set on the flag, so a concurrent pass clearing it is harmless.
