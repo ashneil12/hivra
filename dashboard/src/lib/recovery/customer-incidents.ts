@@ -776,6 +776,11 @@ export interface ProbeFn {
 
 const PROBE_TIMEOUT_MS = 5000;
 
+// One scan can open many incidents at once; without a shared budget a slow box
+// fleet could spend the whole maxDuration budget probing and never reach the
+// resolve pass or the heartbeat. Remaining probes are recorded as skipped.
+const SCAN_PROBE_BUDGET_MS = 90_000;
+
 async function defaultProbe(url: string): Promise<{ status: number | null; latencyMs: number | null; error: string | null }> {
   const started = Date.now();
   try {
@@ -785,8 +790,9 @@ async function defaultProbe(url: string): Promise<{ status: number | null; laten
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
       headers: { "user-agent": "hivra-customer-incidents/1.0", accept: "*/*" },
     });
-    // Drain a bounded prefix so the socket is reused; we only need the status.
-    await res.arrayBuffer().catch(() => undefined);
+    // We only need the status — cancel the body instead of buffering it so a
+    // large or slow response cannot stall the scan.
+    await res.body?.cancel().catch(() => undefined);
     return { status: res.status, latencyMs: Date.now() - started, error: null };
   } catch (err) {
     return {
@@ -812,6 +818,7 @@ function safePublicUrl(raw: string | null | undefined): string | null {
 export async function probeAgentPublicSurface(
   agent: Pick<HivraAgentSnapshot, "cfHostname" | "chatUrl">,
   probe: ProbeFn = defaultProbe,
+  budget?: { deadlineAt: number; now?: () => number },
 ): Promise<PublicProbeResult[]> {
   const targets: Array<{ name: string; url: string }> = [];
   const healthzHost = agent.cfHostname?.trim().toLowerCase();
@@ -822,8 +829,19 @@ export async function probeAgentPublicSurface(
   if (entryUrl && !targets.some((t) => t.url === entryUrl)) {
     targets.push({ name: "entry", url: entryUrl });
   }
+  const clock = budget?.now ?? Date.now;
   const results: PublicProbeResult[] = [];
   for (const target of targets) {
+    if (budget && clock() >= budget.deadlineAt) {
+      results.push({
+        name: target.name,
+        url: target.url,
+        status: null,
+        latencyMs: null,
+        error: "skipped: scan budget",
+      });
+      continue;
+    }
     const outcome = await probe(target.url);
     results.push({ name: target.name, url: target.url, ...outcome });
   }
@@ -972,6 +990,10 @@ export function incidentPagingEnabled(
 export interface CustomerIncidentScanDeps {
   db?: DbClient | null;
   now?: () => number;
+  /** Monotonic-ish clock for the scan-wide probe budget. Defaults to Date.now. */
+  clock?: () => number;
+  /** Total wall-clock budget for all public probes in one scan. */
+  probeBudgetMs?: number;
   report?: typeof reportOpsEvent;
   probe?: ProbeFn;
   adminUserIds?: ReadonlySet<string>;
@@ -1039,6 +1061,11 @@ export async function runCustomerIncidentScan(
   const summary = emptySummary();
   const db = deps.db === undefined ? supabaseAdmin : deps.db;
   const now = deps.now?.() ?? Date.now();
+  const clock = deps.clock ?? Date.now;
+  // Probe budget is measured from scan start so collection time counts against
+  // it — the scan must finish inside maxDuration with room to resolve rows and
+  // write the heartbeat.
+  const probeDeadlineAt = clock() + (deps.probeBudgetMs ?? SCAN_PROBE_BUDGET_MS);
   const report = deps.report ?? reportOpsEvent;
   const probe = deps.probe ?? defaultProbe;
   const adminUserIds = deps.adminUserIds ?? configuredOpsAdminUserIds();
@@ -1139,7 +1166,10 @@ export async function runCustomerIncidentScan(
     let probes: PublicProbeResult[] = [];
     if (finding.agent) {
       try {
-        probes = await probeAgentPublicSurface(finding.agent, probe);
+        probes = await probeAgentPublicSurface(finding.agent, probe, {
+          deadlineAt: probeDeadlineAt,
+          now: clock,
+        });
       } catch (err) {
         log.warn("customer-incidents: public probe failed", {
           source: "customer-incidents",

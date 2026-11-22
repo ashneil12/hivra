@@ -805,6 +805,25 @@ describe("runCustomerIncidentScan", () => {
     const ops = (deps.report as jest.Mock).mock.calls[0][0];
     expect(ops.metadata.incident_key).toBe("launch_failed:agent-page-2");
   });
+
+  it("marks remaining probes as skipped once the scan probe budget is exhausted", async () => {
+    let tick = 0;
+    const deps = scanDeps({
+      clock: () => (tick += 100_000), // each read jumps past the 90s budget
+      probeBudgetMs: 90_000,
+      db: fakeIncidentDb({
+        agents: [agentDbRow()],
+        watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary.opened).toBe(1);
+    expect(deps.probe as jest.Mock).not.toHaveBeenCalled();
+    const ops = (deps.report as jest.Mock).mock.calls[0][0];
+    const probes = ops.metadata.probes as Array<{ error: string | null }>;
+    expect(probes.length).toBeGreaterThan(0);
+    expect(probes.every((p) => p.error === "skipped: scan budget")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
