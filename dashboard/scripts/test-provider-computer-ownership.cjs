@@ -912,7 +912,7 @@ async function main() {
     await db.exec(credentialSync);
     assert.deepEqual(await admissionDefinitions(), admittedCredentialSync, "re-applying Agent Zero credential sync admission changes nothing");
 
-    const staleFailedUnits = migration("20261122210000_provider_release_admission_2026_11_22_3.sql");
+    const staleFailedUnits = migration("20261123000000_provider_release_admission_2026_11_22_3.sql");
     await db.exec(staleFailedUnits);
     const admittedStaleFailedUnits = await admissionDefinitions();
     admittedStaleFailedUnits.forEach((definition, index) => {
