@@ -1442,3 +1442,8 @@ Release `2026.11.22.1` adds the Hermes Desktop connection endpoint behind a dedi
 per-computer session token. Browser sign-in opens Hermes or Agent Zero
 directly, and the gateway returns an error when Agent Zero rejects its
 managed runtime credentials. Existing sealed releases remain available.
+
+Release `2026.11.22.2` synchronizes changed Agent Zero runtime login credentials through
+the existing surface watchdog. The watchdog checks the pair against the running
+native login before replacing the gateway credential. The Hivra password and
+existing connect grants remain separate.
