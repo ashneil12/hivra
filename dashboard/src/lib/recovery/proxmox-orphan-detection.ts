@@ -584,7 +584,7 @@ export async function loadDbVmidsForHost(
   }
   // Hivra agent computers (hivra-cc-*/Agent Zero VMs) live in hivra_agents,
   // not hermes_instances — without this union every running agent VM was
-  // reported as an orphan (prod 2026-11: 9 "orphans" on pve11, all owned).
+  // reported as an orphan (prod 2026-11: 9 "orphans" on one host, all owned).
   const { data: agentRows, error: agentError } = await supabase
     .from("hivra_agents")
     .select("vmid")

@@ -106,7 +106,7 @@ describe("managed provisioner bundle convergence", () => {
   });
 
   it("counts only VMID-bound, non-error computers as held by a host", async () => {
-    // Prod 2026-11: pve21 reported 46 "live computers" that were mostly
+    // Prod 2026-11: one host reported 46 "live computers" that were mostly
     // deleted/error/VMID-less bookkeeping rows, which kept a dead host
     // paging as error severity every 10 minutes.
     const summary = await runManagedProvisionerBundleConvergence({

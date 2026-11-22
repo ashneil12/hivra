@@ -148,7 +148,7 @@ async function loadLiveComputersByHost(
       // "Holds computers" means a VMID-bound row that is not torn down or
       // errored. Deleted is already excluded in the query; error rows and
       // rows that never got a VMID do not hold a computer on the host
-      // (prod 2026-11: pve21 reported 46 "live" computers that were mostly
+      // (prod 2026-11: one host reported 46 "live" computers that were mostly
       // deleted/error/VMID-less bookkeeping rows).
       if (row.vmid == null || row.status === "deleted" || row.status === "error") continue;
       // Same rule the execution context applies: null is the historical

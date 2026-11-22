@@ -551,14 +551,14 @@ describe("loadDbVmidsForHost", () => {
   }
 
   it("unions hermes_instances and hivra_agents VMIDs so agent computers are not orphans", async () => {
-    // Prod 2026-11: pve11 reported 9 "running VMs with no matching
+    // Prod 2026-11: one host reported 9 "running VMs with no matching
     // hermes_instances row" — every one was a live hivra_agents computer.
     const { supabase, calls } = fakeSupabase({
       hermes_instances: [{ proxmox_vmid: 401 }],
       hivra_agents: [{ vmid: 407 }, { vmid: null }, { vmid: "not-a-number" }],
     });
 
-    const vmids = await loadDbVmidsForHost(supabase, "pve11", [401, 407, 999]);
+    const vmids = await loadDbVmidsForHost(supabase, "fixturenode11", [401, 407, 999]);
 
     expect(vmids.sort()).toEqual([401, 407]);
     expect(calls.map((call) => call.table).sort()).toEqual(["hermes_instances", "hivra_agents"]);
@@ -570,7 +570,7 @@ describe("loadDbVmidsForHost", () => {
 
   it("returns an empty list without querying when there are no live VMIDs", async () => {
     const { supabase } = fakeSupabase({});
-    await expect(loadDbVmidsForHost(supabase, "pve11", [])).resolves.toEqual([]);
+    await expect(loadDbVmidsForHost(supabase, "fixturenode11", [])).resolves.toEqual([]);
     expect((supabase as unknown as { from: jest.Mock }).from).not.toHaveBeenCalled();
   });
 });
