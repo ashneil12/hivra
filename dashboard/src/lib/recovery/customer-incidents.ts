@@ -86,6 +86,8 @@ export interface CronHeartbeatSnapshot {
   okCount: number | null;
   consecutiveFailures: number | null;
   lastDetail: string | null;
+  /** Row creation time — the dead-man reference for a cron that never succeeded. */
+  createdAt: string | null;
 }
 
 export interface CronScheduleInfo {
@@ -158,6 +160,7 @@ const LAUNCH_FAILED_WINDOW_MS = 24 * 60 * 60 * 1000;
 const LAUNCH_FAILED_STUCK_MS = 25 * 60 * 1000;
 const LIFECYCLE_STUCK_MS = 15 * 60 * 1000;
 const CRON_STALE_PERIOD_MULTIPLIER = 3;
+const CRON_NEVER_SUCCEEDED_PERIOD_MULTIPLIER = 3;
 const CRON_FAILURE_STREAK = 3;
 const WATCHDOG_TIMELINE_LIMIT = 10;
 
@@ -366,7 +369,18 @@ export function evaluateCustomerIncidents(input: IncidentEvaluationInput): Incid
       periodMinutes != null &&
       referenceMs != null &&
       now - referenceMs > CRON_STALE_PERIOD_MULTIPLIER * periodMinutes * 60 * 1000;
-    if (streak < CRON_FAILURE_STREAK && !stale) continue;
+    // A cron that ran but never succeeded keeps refreshing last_run_at on
+    // every failure, so the staleness check above can never see it. Mirror
+    // the independent watchdog: run_count > 0, no success ever, and the row
+    // is older than 3x its period means the cron has been dead since birth.
+    const neverSucceededMs = parseTimeMs(heartbeat.createdAt);
+    const neverSucceededStale =
+      periodMinutes != null &&
+      heartbeat.lastSuccessAt == null &&
+      (heartbeat.runCount ?? 0) > 0 &&
+      neverSucceededMs != null &&
+      now - neverSucceededMs > CRON_NEVER_SUCCEEDED_PERIOD_MULTIPLIER * periodMinutes * 60 * 1000;
+    if (streak < CRON_FAILURE_STREAK && !stale && !neverSucceededStale) continue;
     findings.push({
       key: `cron_unhealthy:${heartbeat.cronName}`,
       rule: "cron_unhealthy",
@@ -433,6 +447,7 @@ interface HeartbeatDbRow {
   ok_count: number | null;
   consecutive_failures: number | null;
   last_detail: string | null;
+  created_at: string | null;
 }
 
 interface WatchdogOpsRow {
@@ -491,6 +506,7 @@ function toHeartbeatSnapshot(row: HeartbeatDbRow): CronHeartbeatSnapshot {
     okCount: row.ok_count,
     consecutiveFailures: row.consecutive_failures,
     lastDetail: row.last_detail,
+    createdAt: row.created_at,
   };
 }
 
@@ -601,7 +617,7 @@ async function collectHeartbeats(db: DbClient): Promise<CronHeartbeatSnapshot[]>
   const rows = await selectAllPages<HeartbeatDbRow>("ops_cron_heartbeats", (from, to) =>
     db
       .from("ops_cron_heartbeats")
-      .select("cron_name,last_run_at,last_success_at,run_count,ok_count,consecutive_failures,last_detail")
+      .select("cron_name,last_run_at,last_success_at,run_count,ok_count,consecutive_failures,last_detail,created_at")
       .order("cron_name", { ascending: true })
       .range(from, to),
   );
@@ -907,6 +923,7 @@ function cronDiagnosisFields(finding: IncidentFinding): Record<string, unknown> 
     period_minutes: schedule.periodMinutes,
     last_run_at: heartbeat.lastRunAt,
     last_success_at: heartbeat.lastSuccessAt,
+    created_at: heartbeat.createdAt,
     run_count: heartbeat.runCount,
     ok_count: heartbeat.okCount,
     consecutive_failures: heartbeat.consecutiveFailures,

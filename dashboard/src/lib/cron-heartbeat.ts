@@ -122,6 +122,7 @@ interface CronHeartbeatRow {
   last_run_at: string | null;
   ok_count: number | null;
   run_count: number | null;
+  created_at: string | null;
 }
 
 export interface CronHeartbeatWatchdogResult {
@@ -133,6 +134,10 @@ export interface CronHeartbeatWatchdogResult {
 // without a successful run. 2x absorbs one missed tick + a slow run before it
 // pages — matches the brief's "> 2x its period" bar.
 const STALE_PERIOD_MULTIPLIER = 2;
+// Never-succeeded crons get a slightly wider window: their first runs may
+// legitimately fail while a fix deploys, but 3 missed periods without ANY
+// success is a dead cron, not a rough start.
+const NEVER_SUCCEEDED_PERIOD_MULTIPLIER = 3;
 
 /**
  * Dead-man check across CRON_REGISTRY. For each registered cron that has been
@@ -149,7 +154,7 @@ export async function runCronHeartbeatWatchdog(): Promise<CronHeartbeatWatchdogR
 
   const { data, error } = await db
     .from("ops_cron_heartbeats")
-    .select("cron_name, last_success_at, last_run_at, ok_count, run_count");
+    .select("cron_name, last_success_at, last_run_at, ok_count, run_count, created_at");
   if (error) {
     throw new Error(error.message || "Failed to read cron heartbeats");
   }
@@ -165,13 +170,22 @@ export async function runCronHeartbeatWatchdog(): Promise<CronHeartbeatWatchdogR
   for (const def of CRON_REGISTRY) {
     const row = byName.get(def.name);
     // Never-seen cron: no baseline. Skip — wiring may trail the registry.
-    if (!row || !row.last_success_at) continue;
+    if (!row) continue;
 
-    const lastSuccessMs = new Date(row.last_success_at).getTime();
-    if (!Number.isFinite(lastSuccessMs)) continue;
+    // A cron that ran but never succeeded has no last_success_at, and failing
+    // runs keep refreshing last_run_at — staleness alone can never see it (the
+    // route 500s every tick forever while looking "fresh"). When run_count > 0
+    // with no success ever, age the dead-man budget from the row's creation:
+    // 3x its period without a single success is just as dead as 2x without a
+    // recent one.
+    const neverSucceeded =
+      row.last_success_at == null && (row.run_count ?? 0) > 0;
+    const referenceRaw = neverSucceeded ? row.created_at : row.last_success_at;
+    const referenceMs = referenceRaw ? new Date(referenceRaw).getTime() : NaN;
+    if (!Number.isFinite(referenceMs)) continue;
 
-    const staleMinutes = (now - lastSuccessMs) / 60000;
-    const budgetMinutes = def.periodMinutes * STALE_PERIOD_MULTIPLIER;
+    const staleMinutes = (now - referenceMs) / 60000;
+    const budgetMinutes = def.periodMinutes * (neverSucceeded ? NEVER_SUCCEEDED_PERIOD_MULTIPLIER : STALE_PERIOD_MULTIPLIER);
     if (staleMinutes <= budgetMinutes) continue;
 
     stale.push({
@@ -211,6 +225,7 @@ export async function runCronHeartbeatWatchdog(): Promise<CronHeartbeatWatchdogR
         cronName: def.name,
         periodMinutes: def.periodMinutes,
         budgetMinutes,
+        neverSucceeded,
         staleMinutes: Math.round(staleMinutes),
         lastSuccessAt: row.last_success_at,
         lastRunAt: row.last_run_at,

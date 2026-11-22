@@ -96,6 +96,7 @@ function heartbeat(over: Partial<CronHeartbeatSnapshot> = {}): CronHeartbeatSnap
     okCount: 100,
     consecutiveFailures: 0,
     lastDetail: null,
+    createdAt: null,
     ...over,
   };
 }
@@ -363,6 +364,40 @@ describe("evaluateCustomerIncidents cron_unhealthy", () => {
       cronSchedules: schedules,
     }));
     expect(fresh.findings).toHaveLength(0);
+  });
+
+  it("fires for a cron that ran but never succeeded once its row is 3x its period old", () => {
+    // test-cron runs every 5 min → never-succeeded budget is 15 min. The row
+    // was created an hour ago and has failed every run since; last_run_at
+    // stays fresh on each failure so only created_at exposes the dead cron.
+    const dead = evaluateCustomerIncidents(evalInput({
+      heartbeats: [heartbeat({
+        cronName: "test-cron",
+        lastRunAt: iso(1 * MIN),
+        lastSuccessAt: null,
+        runCount: 50,
+        okCount: 0,
+        consecutiveFailures: 50,
+        createdAt: iso(60 * MIN),
+      })],
+      cronSchedules: schedules,
+    }));
+    expect(dead.findings.map((f) => f.key)).toEqual(["cron_unhealthy:test-cron"]);
+
+    // Same failing shape but the heartbeat row is only 10 minutes old —
+    // inside the 15-minute never-succeeded grace, sub-streak, fresh last run.
+    const grace = evaluateCustomerIncidents(evalInput({
+      heartbeats: [heartbeat({
+        cronName: "test-cron",
+        lastRunAt: iso(1 * MIN),
+        lastSuccessAt: null,
+        runCount: 2,
+        consecutiveFailures: 2,
+        createdAt: iso(10 * MIN),
+      })],
+      cronSchedules: schedules,
+    }));
+    expect(grace.findings).toHaveLength(0);
   });
 });
 
