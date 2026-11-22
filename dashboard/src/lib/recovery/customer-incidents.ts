@@ -723,17 +723,36 @@ async function collectOpenIncidentRows(db: DbClient): Promise<OpenIncidentRow[]>
 
 const WATCHDOG_FETCH_CONCURRENCY = 8;
 const WATCHDOG_EVENTS_PER_AGENT_LIMIT = 30;
+// The per-agent watchdog reads are the scan's least bounded loop: with no
+// deadline, (agents ÷ 8) × per-query latency can exceed the route's
+// maxDuration and the invocation dies before reporting, resolving or the
+// heartbeat write. Agents not reached before this deadline are unknown —
+// never resolved on partial data — and count as degraded.
+const SCAN_WATCHDOG_READ_BUDGET_MS = 60_000;
 
 async function collectWatchdogEvents(
   db: DbClient,
   agentIds: string[],
+  options?: { deadlineAt?: number; clock?: () => number },
 ): Promise<{ byAgent: Map<string, WatchdogEventSnapshot[]>; unknownAgentIds: Set<string> }> {
   const byAgent = new Map<string, WatchdogEventSnapshot[]>();
   const unknownAgentIds = new Set<string>();
   const queue = [...agentIds];
+  const clock = options?.clock ?? Date.now;
+  const deadlineAt = options?.deadlineAt;
+  const markRestUnknown = (currentId: string | undefined) => {
+    if (currentId !== undefined) unknownAgentIds.add(currentId);
+    for (let rest = queue.shift(); rest !== undefined; rest = queue.shift()) {
+      unknownAgentIds.add(rest);
+    }
+  };
   await Promise.all(
     Array.from({ length: Math.min(WATCHDOG_FETCH_CONCURRENCY, queue.length) }, async () => {
       for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+        if (deadlineAt != null && clock() >= deadlineAt) {
+          markRestUnknown(id);
+          return;
+        }
         const { data, error } = await db
           .from("ops_events")
           .select("id,title,first_seen_at,metadata")
@@ -1089,6 +1108,8 @@ export interface CustomerIncidentScanDeps {
   clock?: () => number;
   /** Total wall-clock budget for all public probes in one scan. */
   probeBudgetMs?: number;
+  /** Total wall-clock budget for the watchdog read loop in one scan. */
+  watchdogBudgetMs?: number;
   report?: typeof reportOpsEvent;
   probe?: ProbeFn;
   adminUserIds?: ReadonlySet<string>;
@@ -1272,6 +1293,7 @@ export async function runCustomerIncidentScan(
   // it — the scan must finish inside maxDuration with room to resolve rows and
   // write the heartbeat.
   const probeDeadlineAt = clock() + (deps.probeBudgetMs ?? SCAN_PROBE_BUDGET_MS);
+  const watchdogDeadlineAt = clock() + (deps.watchdogBudgetMs ?? SCAN_WATCHDOG_READ_BUDGET_MS);
   const report = deps.report ?? reportOpsEvent;
   const probe = deps.probe ?? defaultProbe;
   const adminUserIds = normalizeAdminIdSet(deps.adminUserIds ?? configuredOpsAdminUserIds());
@@ -1335,6 +1357,7 @@ export async function runCustomerIncidentScan(
   const { byAgent: watchdogEventsByAgent, unknownAgentIds } = await collectWatchdogEvents(
     db,
     boxDownCandidates.map((agent) => agent.id),
+    { deadlineAt: watchdogDeadlineAt, clock },
   );
 
   // ---- evaluate ------------------------------------------------------------

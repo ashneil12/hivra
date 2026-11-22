@@ -1130,6 +1130,9 @@ describe("runCustomerIncidentScan", () => {
     const deps = scanDeps({
       clock: () => (tick += 100_000), // each read jumps past the 90s budget
       probeBudgetMs: 90_000,
+      // The watchdog read deadline shares the same clock; keep it far away
+      // so only the probe budget is exercised here.
+      watchdogBudgetMs: 24 * 60 * 60 * 1000,
       db: fakeIncidentDb({
         agents: [agentDbRow()],
         watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
@@ -1142,6 +1145,32 @@ describe("runCustomerIncidentScan", () => {
     const probes = ops.metadata.probes as Array<{ error: string | null }>;
     expect(probes.length).toBeGreaterThan(0);
     expect(probes.every((p) => p.error === "skipped: scan budget")).toBe(true);
+  });
+
+  it("marks agents the watchdog deadline never reached as unknown and degraded", async () => {
+    // clock: the two scan-start deadline reads return 0; the per-agent
+    // deadline check for the second agent jumps past the 60s budget, so
+    // agent-2's receipts are never read — it must be unknown, not resolved.
+    const times = [0, 0, 0, 200_000];
+    let tick = 0;
+    const clock = () => times[Math.min(tick++, times.length - 1)];
+    const deps = scanDeps({
+      clock,
+      watchdogBudgetMs: 60_000,
+      db: fakeIncidentDb({
+        agents: [agentDbRow({ id: "agent-1" }), agentDbRow({ id: "agent-2" })],
+        watchdogByAgent: { "agent-1": [watchdogDbRow("recovered", 20 * MIN)] },
+        openIncidents: [
+          incidentDbRow({ id: "evt-dl-1", metadata: { incident_key: "box_down:agent-2" } }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary.degraded).toBe(1);
+    expect(summary.unknown).toBe(1);
+    // agent-2's open box_down incident is neither resolved nor re-reported.
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
   it("counts watchdog fetch failures as degraded without resolving their incidents", async () => {
