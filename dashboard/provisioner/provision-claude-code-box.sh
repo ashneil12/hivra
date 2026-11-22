@@ -1836,6 +1836,15 @@ else
 fi
 
 # Hermes's own web UI on loopback. The box gateway is the only public path.
+HERMES_DESKTOP_TOKEN="${AGENT_HOME}/.hivra/hermes-desktop-token"
+sudo -u "${AGENT_USER}" -H python3 -I -B - "${HERMES_DESKTOP_TOKEN}" <<'PY' || die "could not prepare the Hermes Desktop token"
+import os, secrets, sys
+try:
+    with os.fdopen(os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+        f.write(secrets.token_hex(32) + "\n")
+except FileExistsError:
+    pass
+PY
 cat > /etc/systemd/system/bux-hermes.service <<UNIT
 [Unit]
 Description=Hivra Hermes Agent dashboard (Hermes web UI on 127.0.0.1:${HERMES_PORT}, mounted at /hermes)
@@ -1847,6 +1856,7 @@ Group=${AGENT_USER}
 WorkingDirectory=${AGENT_HOME}
 Environment=HOME=${AGENT_HOME}
 Environment=HERMES_HOME=${HERMES_DIR}
+Environment=HERMES_DASHBOARD_SESSION_TOKEN=file:${HERMES_DESKTOP_TOKEN}
 Environment=PATH=${AGENT_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=${HERMES_BIN} dashboard --host 127.0.0.1 --port ${HERMES_PORT} --no-open
 Restart=on-failure

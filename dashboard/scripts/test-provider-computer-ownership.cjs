@@ -887,6 +887,18 @@ async function main() {
     });
     await db.exec(signinAdmission);
     assert.deepEqual(await admissionDefinitions(), admittedSignin, "re-applying the direct sign-in admission changes nothing");
+
+    const desktopConnectAdmission = migration("20261122004000_provider_release_admission_2026_11_22_1.sql");
+    await db.exec(desktopConnectAdmission);
+    const admittedDesktopConnect = await admissionDefinitions();
+    admittedDesktopConnect.forEach((definition, index) => {
+      for (const version of ["2026.11.21.1", "2026.11.22.1"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["0ca520a62c0f85664cbb1577c3125eef6371f03e9715eab714fc4118f6c018bf", "d7f6f75bc3c79435c4b4c72158cd57b9cafcd1e5809f0f1d858f01d12d262f4d"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(desktopConnectAdmission);
+    assert.deepEqual(await admissionDefinitions(), admittedDesktopConnect, "re-applying Hermes Desktop admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

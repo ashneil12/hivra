@@ -763,6 +763,15 @@ function safeBootstrapDestination(raw) {
   if (destination.length > 4096 || /[\u0000-\u001f\u007f]/.test(destination)) return null;
   return destination;
 }
+function nativeBoxHome() {
+  if (AGENT_KIND === "agent-zero") return "/agent-zero/";
+  if (AGENT_KIND === "hermes") return "/hermes/";
+  return "/";
+}
+function directSigninDestination(destination) {
+  const target = destination === "/" ? nativeBoxHome() : destination;
+  return hermesEntry(target) ? HERMES_SIGN_IN : target;
+}
 function handleAuthBootstrap(req, res) {
   let body = ""; let tooBig = false;
   req.on("data", (chunk) => {
@@ -1022,7 +1031,7 @@ function handleLoginPage(req, res, q) {
   const next = safeBootstrapDestination(q && q.get("next")) || "/";
   if (authed(req)) {
     res.setHeader("Cache-Control", "no-store");
-    res.writeHead(303, { Location: next });
+    res.writeHead(303, { Location: directSigninDestination(next) });
     return res.end();
   }
   return serveLoginPage(res, next, null);
@@ -1033,7 +1042,7 @@ function answerConnectSession(res, destination) {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("Content-Security-Policy", "default-src 'none'");
-  res.writeHead(303, { Location: destination });
+  res.writeHead(303, { Location: directSigninDestination(destination) });
   res.end();
 }
 function handleConnectGrantCreate(req, res) {
@@ -2995,8 +3004,15 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
         pr.destroy(); return rejectCsrf("session-changed");
       }
       const loc = String(pr.headers["location"] || "");
-      if (pr.statusCode === 302 && /\/login(\?|$)/.test(loc) && !retried && (req.method === "GET" || editorAsset)) {
+      if (pr.statusCode === 302 && /\/login(\?|$)/.test(loc) && (req.method === "GET" || editorAsset)) {
         if (csrf || editor) pr.destroy(); else pr.resume();
+        if (retried) {
+          if (csrf) return rejectCsrf("upstream-login");
+          if (editor) return editor.settle("upstream-login");
+          console.warn("Agent Zero refused the managed runtime login");
+          res.writeHead(502, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
+          return res.end("Agent Zero could not sign in to its runtime.");
+        }
         _a0Cookie = null; _a0SessionName = null; _a0SessionRevision++; _a0Csrf = null;
         return loginThen(() => a0Proxy(req, res, true, csrf, editor));
       }
@@ -3206,9 +3222,10 @@ function openclawStrip() {
 // could steer Hermes's idea of its public address is dropped.
 const HERMES_MOUNT = "/hermes";
 const HERMES_SIGN_IN = "/hermes-sign-in";
+const HERMES_DESKTOP_MOUNT = "/hermes-desktop";
 const HERMES_DROPPED_HEADERS = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port", "x-real-ip"];
-function hermesHeaders(origin, port) {
-  const set = { "x-forwarded-prefix": HERMES_MOUNT };
+function hermesHeaders(origin, port, mount = HERMES_MOUNT) {
+  const set = { "x-forwarded-prefix": mount };
   for (const name of HERMES_DROPPED_HEADERS) set[name] = null;
   set.origin = origin ? "http://127.0.0.1:" + port : null;
   return set;
@@ -3283,6 +3300,74 @@ function hermesProxy(req, res) {
   if (agentAppHold(req, res)) return;
   const port = hermesPort();
   return proxyHttp(req, res, port, HERMES_MOUNT, false, hermesHeaders(Boolean(req.headers.origin), port));
+}
+
+// The installed Desktop client speaks the dashboard API on 9119. The browser
+// Webapp on 9120 uses different sign-in and must keep its own Hivra cookie gate.
+function hermesDashboardToken() {
+  let fd;
+  try {
+    fd = fs.openSync(path.join(HOME, ".hivra", "hermes-desktop-token"),
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const file = fs.fstatSync(fd);
+    if (!file.isFile() || file.uid !== process.getuid() || (file.mode & 0o077) !== 0 || file.size !== 65) return "";
+    const token = fs.readFileSync(fd, "utf8").trim();
+    return /^[a-f0-9]{64}$/.test(token) ? token : "";
+  } catch { return ""; }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+function hermesDesktopToken(dashboardToken) {
+  // The loopback dashboard may embed its own token in its browser HTML.
+  // A browser sign-in must never disclose the independently scoped remote key.
+  return dashboardToken && crypto.createHmac("sha256", API_TOKEN)
+    .update("hermes-desktop:v1:" + dashboardToken).digest("hex");
+}
+function hermesDesktopMounted(pathname) {
+  return AGENT_KIND === "hermes" && pathname.startsWith(HERMES_DESKTOP_MOUNT + "/api/");
+}
+function hermesDesktopAuthed(req, token, queryToken = "") {
+  return Boolean(token && [req.headers["x-hermes-session-token"], queryToken].some(
+    value => typeof value === "string" && safeEq(value, token)));
+}
+function hermesDesktopReady(token, done) {
+  // The initial unauthenticated probe discovers the auth mode. Do not relay
+  // the dashboard's full status, which contains local paths and profile data.
+  let completed = false;
+  const finish = (healthy) => {
+    if (completed) return;
+    completed = true;
+    done(healthy);
+  };
+  const probe = http.get({
+    host: "127.0.0.1", port: HERMES_PORT, path: "/api/auth/me", timeout: 3000,
+    headers: { "x-hermes-session-token": token },
+  }, upstream => {
+    upstream.resume();
+    finish(upstream.statusCode === 200);
+  });
+  probe.on("timeout", () => probe.destroy());
+  probe.on("error", () => finish(false));
+}
+function hermesDesktopProxy(req, res, pathname, query) {
+  res.setHeader("Cache-Control", "no-store");
+  const dashboardToken = hermesDashboardToken();
+  if (!dashboardToken) return jsonRes(res, 404, { error: "Hermes Desktop is unavailable" });
+  const queryToken = pathname === HERMES_DESKTOP_MOUNT + "/api/files/download" ? query.get("token") : "";
+  if (!hermesDesktopAuthed(req, hermesDesktopToken(dashboardToken), queryToken)) {
+    if (req.method === "GET" && pathname === HERMES_DESKTOP_MOUNT + "/api/status"
+      && !req.headers["x-hermes-session-token"]) {
+      return hermesDesktopReady(dashboardToken, healthy => healthy
+        ? jsonRes(res, 200, { auth_required: false })
+        : jsonRes(res, 503, { error: "Hermes Desktop backend unavailable" }));
+    }
+    return jsonRes(res, 401, { error: "unauthorized" });
+  }
+  if (agentAppHold(req, res)) return;
+  const headers = hermesHeaders(Boolean(req.headers.origin), HERMES_PORT, HERMES_DESKTOP_MOUNT);
+  return proxyHttp(req, res, HERMES_PORT, HERMES_DESKTOP_MOUNT, false, {
+    ...headers, authorization: null, cookie: null,
+    "x-hermes-session-token": dashboardToken,
+  });
 }
 
 // ---- OpenBot (CopilotKit) at the box root --------------------------------
@@ -4820,7 +4905,7 @@ function syncAeonFork(reason, attempt) {
 
 function managementCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hermes-Session-Token");
   res.setHeader("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
 }
 // Opt-in only from the installed computer service. Historical/managed guests
@@ -4874,6 +4959,16 @@ const server = http.createServer((req, res) => {
     res.writeHead(ready ? 200 : 503); return res.end(ready ? "ok" : "native runtime not ready");
   }
   if (req.method === "POST" && u === "/auth/bootstrap") return handleAuthBootstrap(req, res);
+  if (AGENT_KIND === "hermes" && req.method === "GET" && u === "/api/hermes-desktop-connection") {
+    res.setHeader("Cache-Control", "no-store");
+    if (!bearerAuthed(req)) return jsonRes(res, 401, { error: "unauthorized" });
+    const dashboardToken = hermesDashboardToken();
+    if (!dashboardToken) return jsonRes(res, 404, { error: "Hermes Desktop is unavailable" });
+    return hermesDesktopReady(dashboardToken, healthy => healthy
+      ? jsonRes(res, 200, { path: HERMES_DESKTOP_MOUNT, token: hermesDesktopToken(dashboardToken) })
+      : jsonRes(res, 503, { error: "Hermes Desktop backend unavailable" }));
+  }
+  if (hermesDesktopMounted(u)) return hermesDesktopProxy(req, res, u, q);
   // Connect links: minted/revoked with the bearer only (the dashboard's
   // "Connect app" action); redeemed without one — the pair in the URL or the
   // sign-in form is the credential until its expiry.
@@ -5034,9 +5129,15 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && u === "/api/mcp") return authed(req) ? handleMcpList(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/mcp") return authed(req) ? readBody(req, (b) => handleMcpAdd(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "DELETE" && u.startsWith("/api/mcp/")) return authed(req) ? handleMcpRemove(res, decodeURIComponent(u.slice("/api/mcp/".length))) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "GET" && (u === "/" || u === "/index.html")) return COMPUTER_PROFILE
-    ? jsonRes(res, 404, { error: "agent chat is unavailable for this computer" })
-    : serveFile(res, "index.html", "text/html; charset=utf-8");
+  if (req.method === "GET" && (u === "/" || u === "/index.html")) {
+    if (COMPUTER_PROFILE) return jsonRes(res, 404, { error: "agent chat is unavailable for this computer" });
+    const home = nativeBoxHome();
+    if (home !== "/") {
+      res.writeHead(303, { Location: home, "Cache-Control": "no-store" });
+      return res.end();
+    }
+    return serveFile(res, "index.html", "text/html; charset=utf-8");
+  }
   if (req.method === "GET" && u === "/app.js") return serveFile(res, "app.js", "application/javascript; charset=utf-8");
   // Code execution + account login are token-gated (was: open to anyone with the URL).
   if (req.method === "POST" && u === "/api/chat") return authed(req)
@@ -5128,12 +5229,23 @@ server.on("upgrade", (req, socket, head) => {
   const a0BrowserUpgrade = a0BrowserSession(u);
   const a0SocketIoUpgrade = a0SocketIoPath(u);
   const remoteDesktopUpgrade = !a0BrowserUpgrade && u.startsWith("/desktop/");
+  const hermesDesktopUpgrade = hermesDesktopMounted(u);
+  let hermesDesktopUpstreamUrl = null;
+  if (hermesDesktopUpgrade && ["/api/ws", "/api/pty"].some(p => u === HERMES_DESKTOP_MOUNT + p)) {
+    const query = new URLSearchParams(req.url.split("?").slice(1).join("?"));
+    const dashboardToken = hermesDashboardToken();
+    const token = hermesDesktopToken(dashboardToken);
+    if (token && safeEq(query.get("token") || "", token)) {
+      query.set("token", dashboardToken);
+      hermesDesktopUpstreamUrl = u.slice(HERMES_DESKTOP_MOUNT.length) + "?" + query;
+    }
+  }
   // The ttyd/noVNC websockets carry the actual terminal/VNC I/O — gate them too.
   // The browser sends the hivra_auth cookie (set on the iframe's first load) on
   // the upgrade handshake automatically.
   // /desktop has a separate short-lived session cookie and must never accept
   // the management bearer/cookie as equivalent authority.
-  if (!remoteDesktopUpgrade && !nuphosAcp && !authed(req)) { try { socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); } catch (e) {} socket.destroy(); return; }
+  if (!remoteDesktopUpgrade && !nuphosAcp && !(hermesDesktopUpgrade ? hermesDesktopUpstreamUrl : authed(req))) { try { socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); } catch (e) {} socket.destroy(); return; }
   let port = null, strip = null;
   if (remoteDesktopUpgrade) port = REMOTE_DESKTOP_BROKER_PORT;
   else if (u.startsWith("/terminal")) port = 7681;
@@ -5143,6 +5255,7 @@ server.on("upgrade", (req, socket, head) => {
   else if (u.startsWith("/openclaw")) { port = OPENCLAW_PORT; strip = openclawStrip(); } // gateway WS control/RPC (at its basePath, or at root on an older computer)
   else if (u.startsWith("/agent-zero")) { port = AGENT_ZERO_PORT; strip = "/agent-zero"; } // Agent Zero WS (served at root)
   else if (a0BrowserUpgrade || a0SocketIoUpgrade) port = AGENT_ZERO_PORT;
+  else if (hermesDesktopUpgrade) { port = HERMES_PORT; strip = HERMES_DESKTOP_MOUNT; }
   else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)
   else if (AGENT_KIND === "openbot" && !openbotGatewayPath(u)) port = OPENBOT_PORT; // OpenBot's WebSockets (served at the root)
   else if (AGENT_KIND === "nuphos" && !nuphosGatewayPath(u)) port = NUPHOS_PORT; // the runtime's /acp and console sockets
@@ -5169,13 +5282,14 @@ server.on("upgrade", (req, socket, head) => {
   }
   let fwdUrl = a0SocketIoUpgrade ? a0SocketIoUrl(req.url) : req.url;
   if (strip) { fwdUrl = req.url.slice(strip.length); if (!fwdUrl.startsWith("/")) fwdUrl = "/" + fwdUrl; }
+  if (hermesDesktopUpstreamUrl) fwdUrl = hermesDesktopUpstreamUrl;
   // Agent Zero's WS also rides its form-login session (the browser never holds one —
   // we inject our managed cookie), so its live chat/canvas connect behind our gate.
   const a0Ws = port === AGENT_ZERO_PORT;
   // Hermes accepts a WebSocket only from its own loopback Host and Origin (or
   // none) and reads its path prefix from X-Forwarded-Prefix.
-  const hermesWs = hermesMounted(u);
-  const hermesSet = hermesWs ? hermesHeaders(Boolean(req.headers.origin), port) : null;
+  const hermesWs = hermesMounted(u) || hermesDesktopUpgrade;
+  const hermesSet = hermesWs ? hermesHeaders(Boolean(req.headers.origin), port, strip) : null;
   // OpenBot's live sockets present its own loopback Host and (from this origin) Origin.
   const openbotWs = AGENT_KIND === "openbot" && port === OPENBOT_PORT;
   const openbotSet = openbotWs ? openbotHeaders(req) : null;
@@ -5197,6 +5311,7 @@ server.on("upgrade", (req, socket, head) => {
       if (a0Ws && key === "cookie") continue;
       if (a0SocketIoUpgrade && (key === "x-forwarded-host" || key === "x-forwarded-proto")) continue;
       if (hermesWs && (key === "host" || key in hermesSet)) continue;
+      if (hermesDesktopUpgrade && (key === "cookie" || key === "authorization" || key === "x-hermes-session-token")) continue;
       if (openbotWs && (key === "host" || key in openbotSet)) continue;
       if (nuphosWs && key in NUPHOS_SET_HEADERS) continue;
       if (openclawWs && key in OPENCLAW_SET_HEADERS) continue;
