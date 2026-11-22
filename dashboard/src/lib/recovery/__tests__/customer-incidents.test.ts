@@ -216,6 +216,23 @@ describe("evaluateCustomerIncidents box_down", () => {
     expect(result.findings).toHaveLength(0);
   });
 
+  it("matches admin users regardless of id casing on either side", () => {
+    // Stored user ids keep their database casing; configured admin ids are
+    // lowercased by the allowlist parser. Both directions must normalize.
+    const mixedCaseStored = agent({ id: "a-case-1", userId: "User_Admin-1" });
+    const lowerStored = agent({ id: "a-case-2", userId: "admin-2" });
+    const result = evaluateCustomerIncidents(evalInput({
+      agents: [mixedCaseStored, lowerStored],
+      // Uppercase entry exercises normalization of the configured side too.
+      adminUserIds: new Set(["user_admin-1", "ADMIN-2"]),
+      watchdogEventsByAgent: new Map([
+        ["a-case-1", [watchdogEvent({ eventAt: iso(60 * MIN) })]],
+        ["a-case-2", [watchdogEvent({ eventAt: iso(60 * MIN) })]],
+      ]),
+    }));
+    expect(result.findings).toHaveLength(0);
+  });
+
   it("marks box_down unknown (never resolved) when the watchdog fetch failed for that agent", () => {
     const a = agent();
     const result = evaluateCustomerIncidents(evalInput({

@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 
 import { log } from "@/lib/logger";
 import { reportOpsEvent, type OpsEventInput } from "@/lib/ops-events";
-import { configuredOpsAdminUserIds } from "@/lib/ops-access";
+import { configuredOpsAdminUserIds, normalizeOpsUserId } from "@/lib/ops-access";
 import { isCanaryDeployment } from "@/lib/deployment-channel";
 import { supabaseAdmin } from "@/lib/supabase";
 import vercelConfig from "../../../vercel.json";
@@ -176,7 +176,23 @@ function parseTimeMs(value: string | null | undefined): number | null {
 }
 
 function isAdminUser(userId: string | null | undefined, adminUserIds: ReadonlySet<string>): boolean {
-  return !!userId && adminUserIds.has(userId);
+  const normalized = normalizeOpsUserId(userId);
+  return normalized != null && adminUserIds.has(normalized);
+}
+
+/**
+ * Admin ids arrive from OPS_ADMIN_USER_IDS (already lowercased) or an injected
+ * dep; stored user ids come from the database with their original casing.
+ * Normalize BOTH sides with the same rule isOpsAdminUser uses so a casing
+ * difference can never turn an operator's box into a customer page.
+ */
+function normalizeAdminIdSet(ids: ReadonlySet<string>): ReadonlySet<string> {
+  const normalized = new Set<string>();
+  for (const id of ids) {
+    const value = normalizeOpsUserId(id);
+    if (value) normalized.add(value);
+  }
+  return normalized;
 }
 
 /** Newest-first ordering by the box-reported event_at; falls back to first_seen_at. */
@@ -230,7 +246,8 @@ function cronUnhealthyMessage(cronName: string): string {
 export function evaluateCustomerIncidents(input: IncidentEvaluationInput): IncidentEvaluation {
   const findings: IncidentFinding[] = [];
   const unknownKeys = new Set<string>();
-  const { now, adminUserIds } = input;
+  const { now } = input;
+  const adminUserIds = normalizeAdminIdSet(input.adminUserIds);
 
   // ---- box_down -----------------------------------------------------------
   // A running, awake hivra_agent whose LATEST watchdog event by event_at is a
@@ -1198,7 +1215,7 @@ export async function runCustomerIncidentScan(
   const probeDeadlineAt = clock() + (deps.probeBudgetMs ?? SCAN_PROBE_BUDGET_MS);
   const report = deps.report ?? reportOpsEvent;
   const probe = deps.probe ?? defaultProbe;
-  const adminUserIds = deps.adminUserIds ?? configuredOpsAdminUserIds();
+  const adminUserIds = normalizeAdminIdSet(deps.adminUserIds ?? configuredOpsAdminUserIds());
   const cronSchedules = deps.cronSchedules ?? VERCEL_CRONS;
   const pagingEnabled = deps.pagingEnabled ?? incidentPagingEnabled();
   const archiveIncident =
@@ -1243,7 +1260,7 @@ export async function runCustomerIncidentScan(
     ...new Set(
       [...agents, ...hermesInstances]
         .map((row) => row.userId)
-        .filter((id): id is string => typeof id === "string" && id.length > 0 && !adminUserIds.has(id)),
+        .filter((id): id is string => typeof id === "string" && id.length > 0 && !isAdminUser(id, adminUserIds)),
     ),
   ];
   const subscriptions = await collectSubscriptions(db, customerUserIds);

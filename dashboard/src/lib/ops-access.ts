@@ -61,9 +61,20 @@ export function verifiedPrimaryEmailOf(user: ClerkUserWithPrimaryEmail | null | 
   return email ? email : null;
 }
 
+/**
+ * The single normalization every ops-admin user-id comparison uses: trim +
+ * lowercase, matching what parseAllowlist already does to configured ids.
+ * Stored user ids and configured ids must both pass through this before
+ * comparing, or casing differences silently defeat the admin filter.
+ */
+export function normalizeOpsUserId(userId: string | null | undefined): string | null {
+  const trimmed = userId?.trim();
+  return trimmed ? trimmed.toLowerCase() : null;
+}
+
 export function isOpsAdminUser(identity: OpsAdminIdentity): boolean {
   const email = identity.email?.trim().toLowerCase() || null;
-  const userId = identity.userId?.trim() || null;
+  const userId = normalizeOpsUserId(identity.userId);
   const configuredAdmin = getConfiguredOpsAdmin();
 
   if (email && configuredAdmin.email && email === configuredAdmin.email) {
