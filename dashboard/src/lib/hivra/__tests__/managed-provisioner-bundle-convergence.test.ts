@@ -39,10 +39,19 @@ function hostEnv(...ids: string[]) {
   }));
 }
 
-type AgentRow = { id: string; proxmox_host: string | null; managed_provisioner_channel: string | null };
+type AgentRow = {
+  id: string;
+  vmid?: number | null;
+  status?: string | null;
+  proxmox_host: string | null;
+  managed_provisioner_channel: string | null;
+};
 
 /** Just enough PostgREST for the two reads the convergence makes. */
 function fakeSupabase(agents: AgentRow[], hosts: Array<{ id: string; status: string }>) {
+  // Rows default to a live VMID-bound computer; tests that exercise the
+  // "holds computers" predicate pass explicit vmid/status overrides.
+  const rows = agents.map((agent) => ({ vmid: 500, status: "running", ...agent }));
   const from = jest.fn((table: string) => {
     if (table === "proxmox_hosts") {
       return { select: () => Promise.resolve({ data: hosts, error: null }) };
@@ -52,7 +61,7 @@ function fakeSupabase(agents: AgentRow[], hosts: Array<{ id: string; status: str
       eq: () => builder,
       neq: () => builder,
       order: () => builder,
-      range: (start: number, end: number) => Promise.resolve({ data: agents.slice(start, end + 1), error: null }),
+      range: (start: number, end: number) => Promise.resolve({ data: rows.slice(start, end + 1), error: null }),
     };
     return builder;
   });
@@ -94,6 +103,36 @@ describe("managed provisioner bundle convergence", () => {
     expect(loadBundle).not.toHaveBeenCalled();
     expect(probe).not.toHaveBeenCalled();
     expect(sync).not.toHaveBeenCalled();
+  });
+
+  it("counts only VMID-bound, non-error computers as held by a host", async () => {
+    // Prod 2026-11: pve21 reported 46 "live computers" that were mostly
+    // deleted/error/VMID-less bookkeeping rows, which kept a dead host
+    // paging as error severity every 10 minutes.
+    const summary = await runManagedProvisionerBundleConvergence({
+      supabase: fakeSupabase(
+        [
+          { id: "live", proxmox_host: "fixturenode21", managed_provisioner_channel: null },
+          { id: "stopped", vmid: 501, status: "stopped", proxmox_host: "fixturenode21", managed_provisioner_channel: null },
+          { id: "no-vmid", vmid: null, proxmox_host: "fixturenode21", managed_provisioner_channel: null },
+          { id: "errored", status: "error", proxmox_host: "fixturenode21", managed_provisioner_channel: null },
+          { id: "deleted", status: "deleted", proxmox_host: "fixturenode21", managed_provisioner_channel: null },
+        ],
+        [],
+      ),
+      env: {},
+      channel: "default",
+      dryRun: true,
+      dependencies: {
+        loadBundle: jest.fn().mockResolvedValue(bundle()),
+        probe: jest.fn(async (_channel: string, targetId: string) =>
+          present(targetId, PORTABLE_HIVRA_PROVISIONER_VERSION, true)),
+      },
+    });
+
+    expect(summary.hosts).toEqual([
+      expect.objectContaining({ targetId: "fixturenode21", liveComputers: 2 }),
+    ]);
   });
 
   // The real probe script runs in bash against a temporary provisioner
