@@ -1,0 +1,115 @@
+{
+  "slug": "ezbookkeeping",
+  "checkedAt": "2026-11-22T15:30:53.216Z",
+  "gitSha": "ae8dbbd512dabfdf73fd6b119655f93f4aebd567",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "mayswind/ezbookkeeping is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "mayswind/ezbookkeeping",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "mayswind/ezbookkeeping:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "mayswind/ezbookkeeping:latest",
+        "digest": "sha256:3ffc7b62ac20ccafa6c09c4cd69ba197e257c0dc0adaa0655a0532264c41f982",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "linux/arm/v6",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-ezbookkeeping-mln34w",
+        "hostPort": 3286,
+        "image": "mayswind/ezbookkeeping:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-ezbookkeeping-mln34w",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3286:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-ezbookkeeping-mln34w-data:/ezbookkeeping/data",
+          "mayswind/ezbookkeeping:latest"
+        ],
+        "runStdout": "6ec580cfdfc3d0a0d32c0ed31d005f6d9de38f0bba155c05fa5e41c7dad89352",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "9.57MiB / 7.652GiB",
+        "memBytes": 10034872
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 61233,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html>\n<head>\n    <meta charset=\"utf-8\">\n    <meta http-equiv=\"Content-Type\" content=\"text/html;charset=utf-8\"/>\n    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, minimal-ui, viewport-fit=cover\">\n    <meta name=\"mobile-web-app-capable\" content=\"yes\">\n    <meta name=\"ap",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "{\"errorCode\":100001,\"errorMessage\":\"api not found\",\"path\":\"/login\",\"success\":false}"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 9.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 10034872,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}
