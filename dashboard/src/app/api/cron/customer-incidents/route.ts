@@ -38,11 +38,15 @@ export async function GET(req: NextRequest) {
 
   try {
     const summary = await runCustomerIncidentScan();
-    // A pass that aborted on a collection failure recorded nothing — that is a
-    // failed run, not a clean one.
+    // A pass that aborted on a collection failure or could not read some
+    // subjects' watchdog events recorded an incomplete picture — that is a
+    // degraded run, not a clean one.
+    const problems: string[] = [];
+    if (summary.failed > 0) problems.push(`failed=${summary.failed}`);
+    if (summary.degraded > 0) problems.push(`degraded=${summary.degraded}`);
     await recordCronHeartbeat(
       "customer-incidents",
-      summary.failed > 0 ? { ok: false, detail: `failed=${summary.failed}` } : undefined,
+      problems.length > 0 ? { ok: false, detail: problems.join(" ") } : undefined,
     );
     return apiSuccess(summary);
   } catch (err) {

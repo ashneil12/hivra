@@ -1012,11 +1012,13 @@ export interface CustomerIncidentScanSummary {
   stillOpen: number;
   resolved: number;
   unknown: number;
+  /** Subject data we could not read — incidents for them are neither opened nor resolved this pass. */
+  degraded: number;
   failed: number;
 }
 
 function emptySummary(): CustomerIncidentScanSummary {
-  return { findings: 0, opened: 0, stillOpen: 0, resolved: 0, unknown: 0, failed: 0 };
+  return { findings: 0, opened: 0, stillOpen: 0, resolved: 0, unknown: 0, degraded: 0, failed: 0 };
 }
 
 async function defaultArchiveIncident(db: DbClient, rowId: string): Promise<boolean> {
@@ -1144,6 +1146,9 @@ export async function runCustomerIncidentScan(
   summary.unknown = [...evaluation.unknownKeys].filter((key) =>
     openIncidentRows.some((row) => row.incidentKey === key),
   ).length;
+  // Watchdog fetch failures mean we could not evaluate box_down for those
+  // agents — count them so the heartbeat records the pass as degraded.
+  summary.degraded = unknownAgentIds.size;
 
   const openByKey = new Map<string, OpenIncidentRow>();
   for (const row of openIncidentRows) {

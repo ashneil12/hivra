@@ -824,6 +824,20 @@ describe("runCustomerIncidentScan", () => {
     expect(probes.length).toBeGreaterThan(0);
     expect(probes.every((p) => p.error === "skipped: scan budget")).toBe(true);
   });
+
+  it("counts watchdog fetch failures as degraded without resolving their incidents", async () => {
+    const deps = scanDeps({
+      db: fakeIncidentDb({
+        agents: [agentDbRow()],
+        watchdogFetchFails: true,
+        openIncidents: [incidentDbRow()],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary.degraded).toBe(1);
+    // The open box_down row stays open — a failed read never resolves it.
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

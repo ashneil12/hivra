@@ -62,6 +62,16 @@ describe("GET /api/cron/customer-incidents", () => {
     });
   });
 
+  it("records ok:false when the scan reports degraded subject reads", async () => {
+    mockScan.mockResolvedValue({ findings: 0, opened: 0, stillOpen: 0, resolved: 0, expired: 0, unknown: 0, degraded: 2, failed: 0 });
+    const response = await GET(request());
+    expect(response.status).toBe(200);
+    expect(mockHeartbeat).toHaveBeenCalledWith("customer-incidents", {
+      ok: false,
+      detail: "degraded=2",
+    });
+  });
+
   it("records an ok:false heartbeat and still returns 500 when the scan throws", async () => {
     mockScan.mockRejectedValue(new Error("collection exploded"));
     const response = await GET(request());
