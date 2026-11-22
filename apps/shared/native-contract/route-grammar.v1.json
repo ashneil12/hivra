@@ -1670,6 +1670,46 @@
     },
     {
       "family": "value-set",
+      "input": "/dashboard/launch?profile=homer&stage=choose",
+      "expect": "/dashboard/launch?profile=homer&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=homer",
+      "expect": "/dashboard/infrastructure?launch=homer"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=dufs&stage=choose",
+      "expect": "/dashboard/launch?profile=dufs&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=dufs",
+      "expect": "/dashboard/infrastructure?launch=dufs"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=gotenberg&stage=choose",
+      "expect": "/dashboard/launch?profile=gotenberg&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=gotenberg",
+      "expect": "/dashboard/infrastructure?launch=gotenberg"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=rsshub&stage=choose",
+      "expect": "/dashboard/launch?profile=rsshub&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=rsshub",
+      "expect": "/dashboard/infrastructure?launch=rsshub"
+    },
+    {
+      "family": "value-set",
       "input": "/dashboard/launch?profile=traccar&stage=choose",
       "expect": "/dashboard/launch?profile=traccar&stage=choose"
     },

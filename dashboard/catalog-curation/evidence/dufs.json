@@ -1,0 +1,113 @@
+{
+  "slug": "dufs",
+  "checkedAt": "2026-11-22T12:12:02.420Z",
+  "gitSha": "abcf0b7fb7806118e670e5d27ab7d999858f626b",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "sigoden/dufs is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "sigoden/dufs",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "sigoden/dufs:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "sigoden/dufs:latest",
+        "digest": "sha256:e5152c04e41d5a9d785546278b632bf035c8a08c52d7e8d35f4b59681f5ff35a",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 0s",
+      "evidence": {
+        "container": "hivra-verify-dufs-libsed",
+        "hostPort": 3283,
+        "image": "sigoden/dufs:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-dufs-libsed",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3283:5000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-dufs-libsed-data:/data",
+          "sigoden/dufs:latest"
+        ],
+        "runStdout": "1d042e7c67e8b392637b458b4d17f1914e42b2ff2ed7a025f4162572d34a0045",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 0,
+          "attempts": 1
+        },
+        "memUsage": "1.703MiB / 7.652GiB",
+        "memBytes": 1785725
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 59697,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en-US\">\n\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width\" />\n  <noscript>\n    <meta http-equiv=\"refresh\" content=\"0; url=?noscript\">\n  </noscript>\n  <link rel=\"icon\" type=\"image/x-icon\" href=\"/__dufs_v0.47.0__/favicon.ico\">\n  <link rel=\"stylesheet\" href=\"/__dufs_v0.47.0__/index.css\">\n</head>\n\n<body>\n  <div class=\"head\">\n    <div cla",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 405,
+          "bodyHead": ""
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 1.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 1785725,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}
