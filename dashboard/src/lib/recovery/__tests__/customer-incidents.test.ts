@@ -1469,6 +1469,36 @@ describe("runCustomerIncidentScan", () => {
     expect(deps.notifyResolved as jest.Mock).toHaveBeenCalledTimes(1);
   });
 
+  it("sends a distinct resolved notice for each archive transition of the same incident", async () => {
+    const mkRow = (count: number, seenAgo: number) =>
+      incidentDbRow({
+        id: "evt-recurring",
+        occurrence_count: count,
+        last_seen_at: iso(seenAgo),
+        metadata: { incident_key: "box_down:gone-recurring" },
+      });
+
+    // Transition 1: the incident resolves on this tick.
+    const deps1 = scanDeps({
+      db: fakeIncidentDb({ agents: [], openIncidents: [mkRow(1, 10 * MIN)] }),
+    });
+    await runCustomerIncidentScan(deps1 as never);
+    const first = (deps1.notifyResolved as jest.Mock).mock.calls[0][0].fingerprint;
+
+    // reportOpsEvent un-archives the row on recurrence (occurrence 2); it
+    // resolves again one tick later.
+    const deps2 = scanDeps({
+      now: () => NOW + 5 * MIN,
+      db: fakeIncidentDb({ agents: [], openIncidents: [mkRow(2, 5 * MIN)] }),
+    });
+    await runCustomerIncidentScan(deps2 as never);
+    const second = (deps2.notifyResolved as jest.Mock).mock.calls[0][0].fingerprint;
+
+    expect(first).toBeTruthy();
+    expect(second).toBeTruthy();
+    expect(second).not.toBe(first);
+  });
+
   // ---- public probe signal (box_unreachable) -------------------------------
 
   describe("public probe signal", () => {

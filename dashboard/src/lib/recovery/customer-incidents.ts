@@ -1560,8 +1560,16 @@ async function defaultArchiveIncident(
   return (data?.length ?? 0) > 0;
 }
 
-function resolvedNoticeFingerprint(incidentFingerprint: string): string {
-  return createHash("sha256").update(`incident-resolved:${incidentFingerprint}`).digest("hex");
+/**
+ * Idempotency key for the resolved notice. The incident row id + the
+ * resolution time make every archive TRANSITION unique: the same incident
+ * row can recur (un-archived by reportOpsEvent) and resolve again, and the
+ * second resolution must page admins just like the first.
+ */
+function resolvedNoticeFingerprint(row: OpenIncidentRow, resolvedAtMs: number): string {
+  return createHash("sha256")
+    .update(`incident-resolved:${row.id}:${resolvedAtMs}:${row.fingerprint}`)
+    .digest("hex");
 }
 
 async function defaultNotifyResolved(input: ResolvedNoticeInput): Promise<void> {
@@ -1936,7 +1944,7 @@ export async function runCustomerIncidentScan(
     if (!pagingEnabled) continue; // non-production: archive only, no admin mail
     try {
       await notifyResolved({
-        fingerprint: resolvedNoticeFingerprint(row.fingerprint),
+        fingerprint: resolvedNoticeFingerprint(row, now),
         source: row.source,
         title: `Resolved: ${row.title}`,
         message:
