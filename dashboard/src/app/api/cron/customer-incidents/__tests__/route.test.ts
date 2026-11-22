@@ -61,4 +61,14 @@ describe("GET /api/cron/customer-incidents", () => {
       detail: "failed=1",
     });
   });
+
+  it("records an ok:false heartbeat and still returns 500 when the scan throws", async () => {
+    mockScan.mockRejectedValue(new Error("collection exploded"));
+    const response = await GET(request());
+    expect(response.status).toBe(500);
+    expect(mockHeartbeat).toHaveBeenCalledWith("customer-incidents", {
+      ok: false,
+      detail: "scan threw",
+    });
+  });
 });

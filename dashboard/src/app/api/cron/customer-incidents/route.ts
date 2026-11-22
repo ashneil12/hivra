@@ -52,6 +52,10 @@ export async function GET(req: NextRequest) {
       method: "GET",
       failureType: "customer_incident_scan_failed",
     });
+    // A thrown scan recorded nothing — count it as a failed run so repeated
+    // exceptions advance the heartbeat's failure streak. recordCronHeartbeat
+    // never throws.
+    await recordCronHeartbeat("customer-incidents", { ok: false, detail: "scan threw" });
     const message = err instanceof Error ? err.message : "Customer incident scan failed";
     return apiError(message, 500);
   }
