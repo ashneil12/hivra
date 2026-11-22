@@ -410,12 +410,35 @@ function AuthenticatedSurface({
   const [connectBusy, setConnectBusy] = useState<"mint" | "revoke" | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connectCopied, setConnectCopied] = useState<string | null>(null);
-  const [connectPair, setConnectPair] = useState<{ url: string; username: string; password: string } | null>(null);
-  const mintConnect = useCallback(async () => {
+  const [connection, setConnection] = useState<
+    | { kind: "grant"; url: string; username: string; password: string }
+    | { kind: "hermes-desktop"; url: string; sessionToken: string }
+    | null
+  >(null);
+  const connectPair = connection?.kind === "grant" ? connection : null;
+  const mintConnect = useCallback(async (mode = connectName === "Hermes" ? "desktop" : "browser") => {
     if (!surfaceOrigin || !destination || !token) return;
     setConnectBusy("mint");
     setConnectError(null);
     try {
+      if (mode === "desktop") {
+        const response = await fetch(`${surfaceOrigin}/api/hermes-desktop-connection`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        if (response.status === 503) {
+          setConnectError("The Hermes Desktop backend is unavailable. In Manage, update Hermes and then update the connection service.");
+          return;
+        }
+        if (!response.ok) throw new Error(String(response.status));
+        const details: unknown = await response.json();
+        if (!details || typeof details !== "object" || !("path" in details) || details.path !== "/hermes-desktop"
+          || !("token" in details) || typeof details.token !== "string" || !/^[a-f0-9]{64}$/.test(details.token)) {
+          throw new Error("Invalid Hermes Desktop connection details");
+        }
+        setConnection({ kind: "hermes-desktop", url: `${surfaceOrigin}${details.path}`, sessionToken: details.token });
+        return;
+      }
       const username = "hivra";
       const password = Array.from(crypto.getRandomValues(new Uint8Array(32))).map((b) => b.toString(16).padStart(2, "0")).join("");
       const answer = await fetch(`${surfaceOrigin}/connect/grant`, {
@@ -425,7 +448,8 @@ function AuthenticatedSurface({
         cache: "no-store",
       });
       if (!answer.ok) throw new Error(String(answer.status));
-      setConnectPair({
+      setConnection({
+        kind: "grant",
         url: `${surfaceOrigin}${destination}`,
         username,
         password,
@@ -435,13 +459,17 @@ function AuthenticatedSurface({
     } finally {
       setConnectBusy(null);
     }
-  }, [surfaceOrigin, destination, token]);
+  }, [surfaceOrigin, destination, token, connectName]);
   const revokeConnect = useCallback(async () => {
     if (!surfaceOrigin || !token) return;
     setConnectBusy("revoke");
+    setConnectError(null);
     try {
-      await fetch(`${surfaceOrigin}/connect/grant`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
-      setConnectPair(null);
+      const response = await fetch(`${surfaceOrigin}/connect/grant`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+      if (!response.ok) throw new Error(String(response.status));
+      setConnection(current => current?.kind === "grant" ? null : current);
+    } catch {
+      setConnectError("Couldn’t revoke browser links. Try again.");
     } finally {
       setConnectBusy(null);
     }
@@ -552,7 +580,7 @@ function AuthenticatedSurface({
             icon: "link" as const,
             onSelect: () => {
               setConnectOpen(true);
-              if (!connectPair && connectBusy !== "mint") void mintConnect();
+              if (!connection && connectBusy !== "mint") void mintConnect();
             },
             disabled: accessStatus !== "ready",
           }]
@@ -568,7 +596,7 @@ function AuthenticatedSurface({
         disabled: accessStatus !== "ready",
       },
     ],
-    [openInNewTab, accessStatus, connectName, connectPair, connectBusy, mintConnect, signinSet, signinBusy, loadSigninStatus],
+    [openInNewTab, accessStatus, connectName, connection, connectBusy, mintConnect, signinSet, signinBusy, loadSigninStatus],
   );
   const { published: actionsLifted } = useSurfaceAction(
     surfaceId,
@@ -588,7 +616,22 @@ function AuthenticatedSurface({
         >
           <div style={{ background: "var(--bg-surface)", border: "1px solid var(--etched-border)", boxShadow: "0 18px 50px rgba(0,0,0,0.35)", maxWidth: 520, width: "100%", padding: "22px 24px", color: "var(--ink-black)" }}>
             <div className="serif" style={{ fontSize: 20, marginBottom: 4 }}>Connect the {connectName} app</div>
-            {connectPair ? (
+            {connection?.kind === "hermes-desktop" ? (
+              <>
+                <p className="mono" style={{ fontSize: 12, lineHeight: 1.7 }}>In Hermes Desktop, open Settings → Gateways → Remote gateway. Enter the Remote URL and session token, then choose Save and reconnect.</p>
+                {([
+                  ["Remote URL", connection.url],
+                  ["Session token", connection.sessionToken],
+                ] as const).map(([field, value]) => (
+                  <div key={field} className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 8 }}>
+                    <span style={{ width: 96, color: "var(--ink-soft)" }}>{field}</span>
+                    <code style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</code>
+                    <button type="button" onClick={() => void copyConnect(field, value)}>{connectCopied === field ? "Copied ✓" : "Copy"}</button>
+                  </div>
+                ))}
+                <p style={{ fontSize: 12, color: "var(--ink-soft)" }}>Keep the session token private. It grants access to this Hermes computer.</p>
+              </>
+            ) : connectPair ? (
               <>
                 <ol className="mono" style={{ fontSize: 12, lineHeight: 1.7, margin: "8px 0 14px", paddingLeft: 18, color: "var(--ink-soft)" }}>
                   <li>Open the {connectName} app on your computer.</li>
@@ -635,15 +678,21 @@ function AuthenticatedSurface({
             ) : (
               <p style={{ fontSize: 13, lineHeight: 1.6, margin: "8px 0 0" }}>{connectBusy === "revoke" ? "Disconnecting…" : "Creating your sign-in…"}</p>
             )}
+            {connection && connectError ? <p style={{ color: "var(--danger)", fontSize: 12 }}>{connectError}</p> : null}
             <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
-              {connectPair ? (
-                <button type="button" className="mono" onClick={() => void mintConnect()} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
-                  New link
+              {connectName === "Hermes" ? (
+                <button type="button" className="mono" onClick={() => void mintConnect(connectPair ? "desktop" : "browser")} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                  {connectPair ? "Show Desktop connection" : "Create browser link"}
                 </button>
               ) : null}
               {connectPair ? (
+                <button type="button" className="mono" onClick={() => void mintConnect("browser")} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                  New link
+                </button>
+              ) : null}
+              {connectPair || connectName === "Hermes" ? (
                 <button type="button" className="mono" onClick={() => void revokeConnect()} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
-                  Disconnect
+                  {connectName === "Hermes" ? "Revoke browser links" : "Disconnect"}
                 </button>
               ) : null}
               <button type="button" className="mono" onClick={() => setConnectOpen(false)} style={{ marginLeft: "auto", border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>

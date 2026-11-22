@@ -545,6 +545,48 @@ if ! hermes_gateway_report; then
   echo "WARNING: Hermes gateway could not be installed or started; scheduled tasks and chat channels will not run until: hermes gateway install" >&2
 fi
 
+hermes_desktop_report() {
+  [ "$KIND_BEFORE" = hermes ] || return 0
+  local token=/home/bux/.hivra/hermes-desktop-token
+  local dropin=/etc/systemd/system/bux-hermes.service.d/30-hivra-desktop-token.conf
+  local probe='import pathlib, sys, urllib.request
+token = pathlib.Path(sys.argv[1]).read_text().strip()
+req = urllib.request.Request("http://127.0.0.1:9119/api/auth/me", headers={"X-Hermes-Session-Token": token})
+with urllib.request.urlopen(req, timeout=2) as response:
+    if response.status != 200:
+        raise SystemExit(1)'
+  # A fresh provision already supplies the service setting. Leave a working
+  # dashboard alone, including its token and any current connections.
+  if runuser -u bux -- python3 -I -B -c "$probe" "$token" >/dev/null 2>&1; then return 0; fi
+  [ ! -e "$dropin" ] && [ ! -L "$dropin" ] || return 1
+  systemctl is-active --quiet bux-hermes.service || return 1
+  if ! runuser -u bux -- python3 -I -B - "$token" <<'PY'
+import os, secrets, sys
+try:
+    with os.fdopen(os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+        f.write(secrets.token_hex(32) + "\n")
+except FileExistsError:
+    pass
+PY
+  then return 1; fi
+  install -d -m 0755 "${dropin%/*}" || return 1
+  printf '[Service]\nEnvironment=HERMES_DASHBOARD_SESSION_TOKEN=file:%s\n' "$token" > "$WORK/hermes-desktop.conf" || return 1
+  install -m 0644 "$WORK/hermes-desktop.conf" "$dropin" || return 1
+  if systemctl daemon-reload && systemctl restart bux-hermes.service; then
+    for _ in $(seq 1 12); do
+      if runuser -u bux -- python3 -I -B -c "$probe" "$token" >/dev/null 2>&1; then return 0; fi
+      sleep 1
+    done
+  fi
+  rm -f -- "$dropin"
+  systemctl daemon-reload
+  systemctl restart bux-hermes.service
+  return 1
+}
+if ! hermes_desktop_report; then
+  echo "WARNING: Hermes Desktop remote sign-in was not enabled; the existing dashboard configuration is retained" >&2
+fi
+
 # Agent browser (computers with the browser stack). A computer provisioned before
 # 2026.11.03.1 still runs a keeper that launches Chrome with --no-sandbox, which
 # Chrome answers with an "unsupported command-line flag" infobar, and a pinned

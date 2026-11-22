@@ -63,6 +63,7 @@ describe("Hivra guest surface authentication runtime", () => {
     const fixtureFs = {
       readFileSync: (filename: string) => {
         if (filename === "/home/bux/.hivra/api-token") return FIXTURE_TOKEN;
+        if (filename === "/home/bux/.hivra/agent-zero-login") return "AUTH_LOGIN=fixture\nAUTH_PASSWORD=fixture\n";
         throw Object.assign(new Error("Fixture file does not exist"), { code: "ENOENT" });
       },
     };
@@ -707,6 +708,49 @@ describe("Hivra guest surface authentication runtime", () => {
     // path was fetched instead.
     expect(seen).toContain("GET /index.html");
     await close(a0);
+  });
+
+  it("opens the native Agent Zero sign-in from the bare box URL", async () => {
+    const seen: string[] = [];
+    const { a0, port } = await agentZeroGateway("direct", seen);
+    const entry = await request("/", { port, headers: { Accept: "text/html" } });
+    expect(entry.status).toBe(303);
+    expect(entry.headers.location).toBe("/agent-zero/");
+    const signIn = await request("/agent-zero/", { port, headers: { Accept: "text/html" } });
+    expect(signIn.headers.location).toBe("/login?next=%2Fagent-zero%2F");
+    const password = "agent-zero-owner-fixture";
+    const saved = await request("/api/signin-password", { port, method: "POST",
+      headers: { Authorization: `Bearer ${FIXTURE_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ password }) });
+    expect(saved.status).toBe(200);
+    const accepted = await request("/login", { port, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ password, next: "/agent-zero/" }).toString() });
+    expect(accepted.status).toBe(303);
+    expect(accepted.headers.location).toBe("/agent-zero/");
+    const cookie = accepted.headers["set-cookie"]?.[0]?.split(";")[0];
+    if (!cookie) throw new Error("Direct sign-in did not set a cookie");
+    const native = await request("/agent-zero/", { port, headers: { Cookie: cookie } });
+    expect(native.body).toContain('src="/js/initFw.js"');
+    await close(a0);
+  });
+
+  it("keeps an Agent Zero runtime login failure from redirecting to the gateway's sign-in again", async () => {
+    const upstream = http.createServer((req, res) => {
+      if (req.method === "POST") return res.writeHead(401).end();
+      return res.writeHead(302, { Location: "/login?next=/" }).end();
+    });
+    trackSockets(upstream);
+    const upstreamPort = await listen(upstream);
+    const agentZero = await evaluateGuest({ HIVRA_AGENT_KIND: "agent-zero", AGENT_ZERO_PORT: String(upstreamPort) });
+    extraGateways.push(agentZero);
+    const port = (agentZero.address() as AddressInfo).port;
+    try {
+      const native = await request("/agent-zero/", { port, headers: { Authorization: `Bearer ${FIXTURE_TOKEN}` } });
+      expect(native.status).toBe(502);
+      expect(native.headers.location).toBeUndefined();
+    } finally {
+      await close(upstream);
+    }
   });
 
   it("still serves the pinned Agent Zero document directly on the older layout", async () => {
