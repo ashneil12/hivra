@@ -579,7 +579,7 @@ function scanDeps(over: Record<string, unknown> = {}) {
   return {
     now: () => NOW,
     adminUserIds: new Set<string>(),
-    report: jest.fn(async () => ({ fingerprint: "fp" })),
+    report: jest.fn(async () => ({ id: "evt-new-1", fingerprint: "fp" })),
     probe: jest.fn(async () => ({ status: 200, latencyMs: 9, error: null })),
     archiveIncident: jest.fn(async () => true),
     notifyResolved: jest.fn(async () => undefined),
@@ -837,6 +837,18 @@ describe("runCustomerIncidentScan", () => {
     expect(summary.degraded).toBe(1);
     // The open box_down row stays open — a failed read never resolves it.
     expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("counts an incident as failed, not opened, when the report persists no id", async () => {
+    const deps = scanDeps({
+      report: jest.fn(async () => null),
+      db: fakeIncidentDb({
+        agents: [agentDbRow()],
+        watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary).toMatchObject({ opened: 0, failed: 1 });
   });
 });
 

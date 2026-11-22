@@ -1187,8 +1187,23 @@ export async function runCustomerIncidentScan(
     const subscription = finding.userId ? subscriptions.get(finding.userId) ?? null : null;
     const metadata = buildIncidentMetadata(finding, { subscription, probes });
     try {
-      await report(incidentOpsEvent(finding, metadata, pagingEnabled));
-      summary.opened += 1;
+      const reported = await report(incidentOpsEvent(finding, metadata, pagingEnabled));
+      // Only a persisted row counts as opened — an insert that returned no id
+      // (or null on lookup failure) means nothing was recorded.
+      if (reported?.id) {
+        summary.opened += 1;
+      } else {
+        summary.failed += 1;
+        log.error(
+          "customer-incidents: incident report returned no persisted id",
+          new Error("reportOpsEvent returned no row id"),
+          {
+            source: "customer-incidents",
+            failureType: "incident_report_unconfirmed",
+            incidentKey: finding.key,
+          },
+        );
+      }
     } catch (err) {
       summary.failed += 1;
       log.error("customer-incidents: incident report failed", err, {
