@@ -488,3 +488,104 @@ describe("crypto top-up reconcile queue", () => {
     await expect(run(memory, rpc)).rejects.toThrow("Failed to advance the crypto top-up reconcile queue");
   });
 });
+
+describe("stale crypto top-up exclusion", () => {
+  // `now` is 2026-04-24T12:00:00Z, so the 14-day cutoff is 2026-04-10T12:00:00Z.
+  const staleCreatedAt = "2026-04-01T00:00:00.000Z";
+  const recentCreatedAt = "2026-04-20T00:00:00.000Z";
+
+  function stalePayment(overrides: MemoryRow = {}): MemoryRow {
+    return makePayment({
+      id: "payment_stale",
+      provider_reference_id: "bankr_crypto_topup:stale",
+      created_at: staleCreatedAt,
+      updated_at: staleCreatedAt,
+      metadata: {
+        type: "crypto_topup_intent",
+        depositAddress: normalizedDepositAddressOne,
+        createdAt: staleCreatedAt,
+        sessionExpiresAt: "2026-04-01T00:20:00.000Z",
+      },
+      ...overrides,
+    });
+  }
+
+  it("does not scan an open intent older than 14 days and counts it in the summary", async () => {
+    const { memory, rpc } = setup([stalePayment()]);
+
+    const result = await run(memory, rpc);
+
+    expect(result.checked).toBe(0);
+    expect(result.staleExcluded).toBe(1);
+    expect(result.results).toEqual([]);
+    // No chain work at all: the intent never reached a scan.
+    expect(rpc.methodCount("eth_getLogs")).toBe(0);
+    // And it was not mutated: still open for an on-demand check.
+    expect(memory.tables.payment_transactions[0].status).toBe("pending");
+  });
+
+  it("still scans an intent inside the 14-day window", async () => {
+    const { memory, rpc } = setup([
+      stalePayment({
+        id: "payment_recent",
+        provider_reference_id: "bankr_crypto_topup:recent",
+        created_at: recentCreatedAt,
+        updated_at: recentCreatedAt,
+        metadata: {
+          type: "crypto_topup_intent",
+          depositAddress: normalizedDepositAddressOne,
+          createdAt: recentCreatedAt,
+          sessionExpiresAt: "2026-04-20T00:20:00.000Z",
+        },
+      }),
+    ]);
+
+    const result = await run(memory, rpc);
+
+    expect(result.checked).toBe(1);
+    expect(result.staleExcluded).toBe(0);
+  });
+
+  it("excludes and counts a stale failed session-expired intent the same way", async () => {
+    const { memory, rpc } = setup([
+      stalePayment({
+        status: "failed",
+        metadata: {
+          type: "crypto_topup_intent",
+          depositAddress: normalizedDepositAddressOne,
+          createdAt: staleCreatedAt,
+          sessionExpiresAt: "2026-04-01T00:20:00.000Z",
+          failureType: "crypto_payment_session_expired",
+        },
+      }),
+    ]);
+
+    const result = await run(memory, rpc);
+
+    expect(result.checked).toBe(0);
+    expect(result.staleExcluded).toBe(1);
+  });
+
+  it("counts only the stale rows when fresh and stale intents are open together", async () => {
+    const { memory, rpc } = setup([
+      stalePayment(),
+      makePayment({
+        id: "payment_fresh",
+        provider_reference_id: "bankr_crypto_topup:fresh",
+        created_at: recentCreatedAt,
+        updated_at: recentCreatedAt,
+        metadata: {
+          type: "crypto_topup_intent",
+          depositAddress: normalizedDepositAddressTwo,
+          createdAt: recentCreatedAt,
+          sessionExpiresAt: "2026-04-20T00:20:00.000Z",
+        },
+      }),
+    ]);
+
+    const result = await run(memory, rpc);
+
+    expect(result.checked).toBe(1);
+    expect(result.staleExcluded).toBe(1);
+  });
+});

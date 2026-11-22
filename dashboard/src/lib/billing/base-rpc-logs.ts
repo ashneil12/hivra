@@ -2,19 +2,37 @@
 //
 // Base's public RPC (https://mainnet.base.org, the default when neither
 // HERMES_BASE_RPC_URL nor BASE_RPC_URL is set) rejects any eth_getLogs range
-// wider than 2,000 blocks with HTTP 413 / JSON-RPC -32614 ("eth_getLogs is
-// limited to a 2,000 range"). The managed-Venice reconciler was fixed for this
-// with its own chunk loop, but the USDC top-up reconciler kept one 5,000-block
-// call, so every pending top-up failed every cron tick while the cron still
-// returned 200. Every Base log scan goes through getLogsInBlockChunks so the
-// limit lives in one place; a guard test fails if any other module issues
-// eth_getLogs directly.
+// wider than its live cap — HTTP 413 / JSON-RPC -32614 ("eth_getLogs is
+// limited to a N range"). The cap moves: it was 2,000 blocks, then 1,000,
+// then a few hundred. MAX_BASE_RPC_LOG_RANGE_BLOCKS stays the configured
+// ceiling; when a provider refuses a range the stated cap is parsed from the
+// error and the remaining range is re-tiled at that size, remembered for the
+// process so later scans start there instead of paying one refused request
+// per chunk.
+//
+// The managed-Venice reconciler was fixed for this with its own chunk loop,
+// but the USDC top-up reconciler kept one 5,000-block call, so every pending
+// top-up failed every cron tick while the cron still returned 200. Every
+// Base log scan goes through getLogsInBlockChunks so the limit lives in one
+// place; a guard test fails if any other module issues eth_getLogs directly.
 //
 // Transport-agnostic: callers pass their own single-request RPC function, which
 // owns retry (withRpcRetry from @/lib/billing/base-rpc-retry). Retrying here as
 // well would multiply attempts. Read-only — no crediting logic lives here.
 
 export const MAX_BASE_RPC_LOG_RANGE_BLOCKS = 2_000;
+
+// The smallest span this process has had to fall back to after a provider
+// range-cap refusal. Never grows back within the process: a provider that
+// once refused 500-block ranges is assumed to keep refusing them, so scans
+// start at the discovered size rather than re-learning it per call.
+let discoveredLogRangeCapBlocks: number | null = null;
+
+// Test hook: the discovered cap is process state and would otherwise leak
+// between cases in the same worker.
+export function resetDiscoveredBaseLogRangeCap() {
+  discoveredLogRangeCapBlocks = null;
+}
 
 export type BaseRpcCall = <T>(method: string, params: unknown[]) => Promise<T>;
 
@@ -42,6 +60,35 @@ function isOversizedLogResult(error: unknown): boolean {
   return /more than \d+ results|too many results|query returned more than|response size|result window|log response size exceeded|-32005/i.test(
     error.message
   );
+}
+
+// A provider refusing a range because the SPAN itself is too wide. The public
+// endpoint answers HTTP 413 whose body is a JSON-RPC -32614 error, surfaced
+// through the callers' RPC wrappers as text like "Base RPC eth_getLogs failed
+// with status 413: eth_getLogs is limited to a 200 range" or "Base RPC
+// eth_getLogs returned an error: eth_getLogs is limited to a 1,000 range".
+// The stated number is parsed when present (the cap moves, so trusting the
+// configured ceiling alone fails); without one the range is halved, matching
+// the reference probe in the money-path triage tooling.
+function matchLogRangeCap(error: unknown): { statedBlocks: number | null } | null {
+  if (!(error instanceof Error)) return null;
+  const message = error.message;
+  const stated = /limited to a ([\d,]+) range/i.exec(message);
+  if (stated) {
+    const blocks = Number(stated[1].replace(/,/g, ""));
+    return { statedBlocks: Number.isSafeInteger(blocks) && blocks > 0 ? blocks : null };
+  }
+  // Unstated cap: the JSON-RPC range-limit code, or "limited to a ... range"
+  // phrased without a number. "limited to a" alone is not enough — rate-limit
+  // messages use it too ("limited to a certain number of requests").
+  if (/-32614\b/.test(message) || /limited to a\b[^.;]*\brange\b/i.test(message)) {
+    return { statedBlocks: null };
+  }
+  return null;
+}
+
+function noteDiscoveredLogRangeCap(blocks: number) {
+  discoveredLogRangeCapBlocks = Math.min(discoveredLogRangeCapBlocks ?? blocks, blocks);
 }
 
 /**
@@ -82,6 +129,28 @@ export async function getLogsInBlockChunks<TLog>(params: {
         const mid = from + Math.floor((to - from) / 2);
         return [...(await fetchRange(from, mid)), ...(await fetchRange(mid + 1, to))];
       }
+      // A range-cap refusal re-tiles the SAME range at the discovered (or
+      // halved) span: contiguous tile-sized subranges cover it exactly once,
+      // so no block is skipped or fetched twice, and the process remembers
+      // the smaller span for every later chunk and scan.
+      const cap = to > from ? matchLogRangeCap(error) : null;
+      if (cap) {
+        const span = to - from + 1;
+        const tile =
+          cap.statedBlocks !== null && cap.statedBlocks < span
+            ? cap.statedBlocks
+            : Math.floor(span / 2);
+        if (tile < 1) throw error;
+        noteDiscoveredLogRangeCap(tile);
+        const retiled: TLog[] = [];
+        let subStart = from;
+        while (subStart <= to) {
+          const subEnd = Math.min(to, subStart + tile - 1);
+          retiled.push(...(await fetchRange(subStart, subEnd)));
+          subStart = subEnd + 1;
+        }
+        return retiled;
+      }
       throw error;
     }
     // A successful eth_getLogs always returns an array. Anything else is a
@@ -93,17 +162,19 @@ export async function getLogsInBlockChunks<TLog>(params: {
   };
 
   const logs: TLog[] = [];
-  for (
-    let chunkStart = params.fromBlock;
-    chunkStart <= params.toBlock;
-    chunkStart += MAX_BASE_RPC_LOG_RANGE_BLOCKS
-  ) {
-    const chunkEnd = Math.min(
-      params.toBlock,
-      chunkStart + MAX_BASE_RPC_LOG_RANGE_BLOCKS - 1
+  let chunkStart = params.fromBlock;
+  while (chunkStart <= params.toBlock) {
+    // The configured ceiling, shrunk to the cap this process discovered on an
+    // earlier refusal, so later chunks never pay for a request we know the
+    // provider will reject.
+    const chunkBlocks = Math.min(
+      MAX_BASE_RPC_LOG_RANGE_BLOCKS,
+      discoveredLogRangeCapBlocks ?? MAX_BASE_RPC_LOG_RANGE_BLOCKS
     );
+    const chunkEnd = Math.min(params.toBlock, chunkStart + chunkBlocks - 1);
     const chunkLogs = await fetchRange(chunkStart, chunkEnd);
     logs.push(...chunkLogs);
+    chunkStart = chunkEnd + 1;
   }
 
   return logs;

@@ -629,3 +629,106 @@ describe("managed Venice reconciliation tick time budget", () => {
     expect(summary.deferred).toEqual({ open: 0, surfacing: 0 });
   });
 });
+
+describe("stale unpaid quote expiry", () => {
+  const staleNow = new Date("2026-05-20T00:00:00.000Z");
+
+  function staleQuoteRow(overrides: Row = {}): Row {
+    return managedVeniceQuoteRow({
+      id: "quote_stale",
+      quoted_at: "2026-05-01T10:00:00.000Z",
+      expires_at: "2026-05-01T10:20:00.000Z",
+      created_at: "2026-05-01T10:00:00.000Z",
+      updated_at: "2026-05-01T10:00:00.000Z",
+      ...overrides,
+    });
+  }
+
+  function runBatch(memory: ReturnType<typeof createManagedVeniceMemoryDb>["db"], chain = makeChain()) {
+    return reconcilePendingManagedVeniceTokenQuotes({
+      db: memory,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote: jest.fn(async () => ({ status: "settled" as const, quoteId: "quote_stale" })),
+      now: staleNow,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+  }
+
+  it("expires a quote more than 7 days past expiry without spending a log scan", async () => {
+    const memory = createManagedVeniceMemoryDb({ managed_venice_token_quotes: [staleQuoteRow()] });
+    const chain = makeChain();
+
+    const summary = await runBatch(memory.db, chain);
+
+    expect(summary.checked).toBe(0);
+    expect(summary.expiredAfterGrace).toBe(1);
+    expect(summary.failed).toBe(0);
+    expect(summary.results).toEqual([
+      expect.objectContaining({ quoteId: "quote_stale", status: "expired" }),
+    ]);
+    // No chain work: the stale quote never reached a scan.
+    expect(chain.methodCount("eth_getLogs")).toBe(0);
+
+    const row = memory.tables.managed_venice_token_quotes[0];
+    expect(row.status).toBe("expired");
+    expect((row.metadata as Row).closedReason).toBe("no_deposit_after_grace");
+    expect((row.metadata as Row).closedAt).toBe(staleNow.toISOString());
+  });
+
+  it("skips an already-expired stale quote on the next tick", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [
+        {
+          ...staleQuoteRow(),
+          status: "expired",
+          metadata: {
+            ...(staleQuoteRow().metadata as Row),
+            closedReason: "no_deposit_after_grace",
+          },
+        },
+      ],
+    });
+    const chain = makeChain();
+
+    const summary = await runBatch(memory.db, chain);
+
+    expect(summary.expiredAfterGrace).toBe(0);
+    expect(summary.checked).toBe(0);
+    expect(chain.methodCount("eth_getLogs")).toBe(0);
+  });
+
+  it("still scans a quote inside the 7-day grace", async () => {
+    // Expires an hour before `now`: inside the grace, so it must be scanned
+    // like any open quote.
+    const graceQuote = staleQuoteRow({
+      id: "quote_grace",
+      quoted_at: "2026-05-19T22:40:00.000Z",
+      expires_at: "2026-05-19T23:00:00.000Z",
+      created_at: "2026-05-19T22:40:00.000Z",
+    });
+    const memory = createManagedVeniceMemoryDb({ managed_venice_token_quotes: [graceQuote] });
+    const chain = makeChain([], { block: 900, time: "2026-05-20T00:00:00.000Z" });
+
+    const summary = await runBatch(memory.db, chain);
+
+    expect(summary.expiredAfterGrace).toBe(0);
+    expect(summary.checked).toBe(1);
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+  });
+
+  it("does not expire a stale quote that already carries a transaction hash", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow({ transaction_hash: "0xclaimed" })],
+    });
+    const chain = makeChain();
+
+    const summary = await runBatch(memory.db, chain);
+
+    expect(summary.expiredAfterGrace).toBe(0);
+    expect(summary.checked).toBe(0);
+    expect(memory.tables.managed_venice_token_quotes[0].status).toBe("active");
+  });
+});
