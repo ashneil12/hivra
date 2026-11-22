@@ -386,6 +386,13 @@ def unit_restarts(name, runner=subprocess.run):
         return None
 
 
+def unit_load_state(name, runner=subprocess.run):
+    rc, out = run_systemctl(["show", name, "--property=LoadState", "--value"], runner)
+    if rc != 0:
+        return None
+    return out.strip() or None
+
+
 def watched_units(runner=subprocess.run):
     """Watched hivra/bux units that exist on this box."""
     rc, out = run_systemctl(["list-unit-files", "--no-legend", "--plain"], runner)
@@ -401,6 +408,13 @@ def scan_units(state, events, now, runner=subprocess.run):
     """Failed units and still-climbing restart counters -> unit_failing events."""
     known = state.setdefault("units", {})
     failing = set(failed_units(runner))
+    # A unit file removed while the unit sat in the failed state stays in
+    # `systemctl --failed` forever (LoadState=not-found, ActiveState=failed):
+    # it cannot be restarted, so reporting it every cooldown is pure noise.
+    # Provisioning clears it with reset-failed; this covers every other
+    # removal path. An unreadable LoadState keeps the unit reportable.
+    for name in [n for n in failing if unit_load_state(n, runner) == "not-found"]:
+        failing.discard(name)
     for name in sorted(watched_units(runner) | failing):
         restarts = unit_restarts(name, runner)
         previous = known.get(name) or {}
