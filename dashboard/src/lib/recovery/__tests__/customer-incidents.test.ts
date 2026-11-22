@@ -10,6 +10,7 @@ import {
   cronSchedulesFromVercel,
   evaluateCustomerIncidents,
   incidentOpsEvent,
+  incidentPagingEnabled,
   probeAgentPublicSurface,
   runCustomerIncidentScan,
   sortWatchdogEventsByEventAt,
@@ -50,7 +51,7 @@ function agent(over: Partial<HivraAgentSnapshot> = {}): HivraAgentSnapshot {
     chatUrl: "https://box-1.hivra.example/",
     proxmoxHost: "pve-1",
     vmid: 101,
-    ip: "10.0.0.5",
+    ip: "192.0.2.5",
     ...over,
   };
 }
@@ -451,7 +452,7 @@ function agentDbRow(over: Row = {}): Row {
     chat_url: "https://box-1.hivra.example/",
     proxmox_host: "pve-1",
     vmid: 101,
-    ip: "10.0.0.5",
+    ip: "192.0.2.5",
     ...over,
   };
 }
@@ -548,6 +549,9 @@ function scanDeps(over: Record<string, unknown> = {}) {
     cronSchedules: new Map<string, CronScheduleInfo>([
       ["test-cron", { periodMinutes: 5, path: "/api/cron/test-cron" }],
     ]),
+    // Tests exercise the paging path explicitly; the production-origin gate
+    // has its own cases below.
+    pagingEnabled: true,
     ...over,
   };
 }
@@ -697,6 +701,27 @@ describe("runCustomerIncidentScan", () => {
     expect(ops.metadata.cron.consecutive_failures).toBe(3);
   });
 
+  it("writes incidents with page:false and skips resolved notices when paging is disabled", async () => {
+    const deps = scanDeps({
+      pagingEnabled: false,
+      db: fakeIncidentDb({
+        agents: [agentDbRow()],
+        subscriptions: [{ user_id: "user-1", plan: "pro", status: "active" }],
+        watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+        openIncidents: [incidentDbRow({ id: "evt-resolved-1", metadata: { incident_key: "launch_failed:gone" } })],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.opened).toBe(1);
+    const ops = (deps.report as jest.Mock).mock.calls[0][0];
+    expect(ops.page).toBe(false);
+    // The stale open row for a different key still resolves (archive) but no
+    // resolved notice is sent off-production.
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-resolved-1");
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+  });
+
   it("aborts the whole pass when a core collection query fails", async () => {
     const failingDb = {
       from() {
@@ -715,6 +740,23 @@ describe("runCustomerIncidentScan", () => {
     expect(deps.report as jest.Mock).not.toHaveBeenCalled();
     expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
     expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// incidentPagingEnabled — production-only admin paging
+// ---------------------------------------------------------------------------
+
+describe("incidentPagingEnabled", () => {
+  it("enables paging only for the production app origin", () => {
+    expect(incidentPagingEnabled("https://hivra.cloud")).toBe(true);
+    expect(incidentPagingEnabled("https://hivra.cloud/")).toBe(true);
+    expect(incidentPagingEnabled("https://hivra.cloud/some/path")).toBe(true);
+    expect(incidentPagingEnabled("https://canary.hermesos.cloud")).toBe(false);
+    expect(incidentPagingEnabled("https://hivra.cloud.evil.example")).toBe(false);
+    expect(incidentPagingEnabled("http://localhost:3000")).toBe(false);
+    expect(incidentPagingEnabled(undefined)).toBe(false);
+    expect(incidentPagingEnabled("not a url")).toBe(false);
   });
 });
 

@@ -875,11 +875,12 @@ export function buildIncidentMetadata(
 export function incidentOpsEvent(
   finding: IncidentFinding,
   metadata: Record<string, unknown>,
+  page = true,
 ): OpsEventInput {
   return {
     source: `incident.${finding.rule}`,
     severity: "error",
-    page: true,
+    page,
     title: finding.title,
     message: finding.message,
     route: finding.route ?? undefined,
@@ -902,6 +903,23 @@ export interface ResolvedNoticeInput {
   metadata: Record<string, unknown>;
 }
 
+/**
+ * Customer incidents page admins only from the production deployment.
+ * Canary runs the same crons against its own database — whose fixtures fail
+ * on purpose — and also reports VERCEL_ENV=production, so the deployment's
+ * public app origin is the only reliable discriminator. Everywhere else the
+ * scan still writes the incident ops events (the ops feed shows them) but
+ * with page:false, and resolved notices are skipped.
+ */
+export function incidentPagingEnabled(appUrl: string | null | undefined): boolean {
+  if (!appUrl) return false;
+  try {
+    return new URL(appUrl).hostname === "hivra.cloud";
+  } catch {
+    return false;
+  }
+}
+
 export interface CustomerIncidentScanDeps {
   db?: DbClient | null;
   now?: () => number;
@@ -909,6 +927,8 @@ export interface CustomerIncidentScanDeps {
   probe?: ProbeFn;
   adminUserIds?: ReadonlySet<string>;
   cronSchedules?: ReadonlyMap<string, CronScheduleInfo>;
+  /** Page admins for new incidents + send resolved notices. Defaults to the production-origin check. */
+  pagingEnabled?: boolean;
   /** Archive an incident row by id; returns true when this call won the archive. */
   archiveIncident?: (rowId: string) => Promise<boolean>;
   /** Send the one resolved notice through the admin transport. */
@@ -974,6 +994,8 @@ export async function runCustomerIncidentScan(
   const probe = deps.probe ?? defaultProbe;
   const adminUserIds = deps.adminUserIds ?? configuredOpsAdminUserIds();
   const cronSchedules = deps.cronSchedules ?? VERCEL_CRONS;
+  const pagingEnabled =
+    deps.pagingEnabled ?? incidentPagingEnabled(process.env.NEXT_PUBLIC_APP_URL);
   const archiveIncident =
     deps.archiveIncident ?? ((rowId: string) => (db ? defaultArchiveIncident(db, rowId) : Promise.resolve(false)));
   const notifyResolved = deps.notifyResolved ?? defaultNotifyResolved;
@@ -1082,7 +1104,7 @@ export async function runCustomerIncidentScan(
     const subscription = finding.userId ? subscriptions.get(finding.userId) ?? null : null;
     const metadata = buildIncidentMetadata(finding, { subscription, probes });
     try {
-      await report(incidentOpsEvent(finding, metadata));
+      await report(incidentOpsEvent(finding, metadata, pagingEnabled));
       summary.opened += 1;
     } catch (err) {
       summary.failed += 1;
@@ -1114,6 +1136,8 @@ export async function runCustomerIncidentScan(
       continue;
     }
     if (!archived) continue; // another invocation already resolved it
+    summary.resolved += 1;
+    if (!pagingEnabled) continue; // non-production: archive only, no admin mail
     try {
       await notifyResolved({
         fingerprint: resolvedNoticeFingerprint(row.fingerprint),
@@ -1132,7 +1156,6 @@ export async function runCustomerIncidentScan(
           detected_by: "cron:customer-incidents",
         },
       });
-      summary.resolved += 1;
     } catch (err) {
       // The row is archived either way — a missed notice must not unresolve it.
       summary.failed += 1;
@@ -1146,7 +1169,18 @@ export async function runCustomerIncidentScan(
   }
 
   if (summary.opened > 0 || summary.resolved > 0 || summary.failed > 0) {
-    log.info("customer incident scan complete", { source: "customer-incidents", ...summary });
+    log.info("customer incident scan complete", {
+      source: "customer-incidents",
+      pagingEnabled,
+      ...summary,
+    });
+  }
+  if (!pagingEnabled && evaluation.findings.length > 0) {
+    log.warn("customer-incidents: incidents present but admin paging is disabled on this deployment", {
+      source: "customer-incidents",
+      failureType: "incident_paging_disabled",
+      findings: evaluation.findings.length,
+    });
   }
   return summary;
 }
