@@ -900,6 +900,40 @@ describe("stale unpaid quote expiry", () => {
     expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
   });
 
+  it("drains a stale backlog above the 250-row limit across two ticks", async () => {
+    // 260 stale unpaid quotes > STALE_QUOTE_EXPIRE_LIMIT (250). Without the
+    // DB-level exclusion, tick 2 re-selects the same 250 already-expired rows
+    // (status 'expired' still matches) and the remaining 10 never expire.
+    const quotes = Array.from({ length: 260 }, (_, index) =>
+      staleQuoteRow({
+        id: `quote_stale_${index}`,
+        // Deterministic expires_at ordering: oldest first.
+        quoted_at: new Date(Date.parse("2026-05-01T10:00:00.000Z") + index * 1000).toISOString(),
+        expires_at: new Date(Date.parse("2026-05-01T10:20:00.000Z") + index * 1000).toISOString(),
+        created_at: new Date(Date.parse("2026-05-01T10:00:00.000Z") + index * 1000).toISOString(),
+        updated_at: new Date(Date.parse("2026-05-01T10:00:00.000Z") + index * 1000).toISOString(),
+      })
+    );
+    const memory = createManagedVeniceMemoryDb({ managed_venice_token_quotes: quotes });
+    const chain = makeChain();
+
+    const first = await runBatch(memory.db, chain);
+    expect(first.expiredAfterGrace).toBe(250);
+
+    const second = await runBatch(memory.db, chain);
+    expect(second.expiredAfterGrace).toBe(10);
+
+    const rows = memory.tables.managed_venice_token_quotes;
+    expect(rows).toHaveLength(260);
+    expect(rows.every((row) => row.status === "expired")).toBe(true);
+    expect(
+      rows.every(
+        (row) =>
+          (row.metadata as Row).closedReason === "no_deposit_after_grace"
+      )
+    ).toBe(true);
+  });
+
   it("does not expire a stale quote that already carries a transaction hash", async () => {
     const memory = createManagedVeniceMemoryDb({
       managed_venice_token_quotes: [staleQuoteRow({ transaction_hash: "0xclaimed" })],

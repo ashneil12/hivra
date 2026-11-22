@@ -40,11 +40,18 @@ export interface MemoryDbError {
   message: string;
 }
 
-type FilterOp = "eq" | "neq" | "in" | "lt" | "lte" | "gt" | "gte" | "is" | "not";
+type FilterOp = "eq" | "neq" | "in" | "lt" | "lte" | "gt" | "gte" | "is" | "not" | "or";
 
 interface Filter {
   column: string;
   op: FilterOp;
+  value: unknown;
+}
+
+// One `col.op.value` term inside a PostgREST or(...) expression.
+interface OrTerm {
+  column: string;
+  op: Exclude<FilterOp, "not" | "or">;
   value: unknown;
 }
 
@@ -197,7 +204,49 @@ function readColumn(row: MemoryRow, column: string): unknown {
   return typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
+// Parse a PostgREST or(...) body: comma-separated `column.op.value` terms,
+// commas inside parentheses (in.(...)) do not split. Enough of the grammar
+// for the filters the codebase actually sends.
+function parseOrExpression(expression: string): OrTerm[] {
+  const terms: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const char of expression) {
+    if (char === "(") depth += 1;
+    if (char === ")") depth -= 1;
+    if (char === "," && depth === 0) {
+      terms.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  if (current.trim()) terms.push(current);
+  return terms.map((term) => {
+    const firstDot = term.indexOf(".");
+    const secondDot = term.indexOf(".", firstDot + 1);
+    const column = term.slice(0, firstDot).trim();
+    const op = term.slice(firstDot + 1, secondDot).trim() as OrTerm["op"];
+    let raw = term.slice(secondDot + 1).trim();
+    if (raw.startsWith('"') && raw.endsWith('"')) raw = raw.slice(1, -1);
+    let value: unknown = raw === "null" ? null : raw;
+    if (op === "in" && raw.startsWith("(") && raw.endsWith(")")) {
+      value = raw
+        .slice(1, -1)
+        .split(",")
+        .map((entry) => entry.trim().replace(/^"|"$/g, ""));
+    }
+    return { column, op, value };
+  });
+}
+
 function rowMatches(row: MemoryRow, filter: Filter): boolean {
+  if (filter.op === "or") {
+    const alternatives = filter.value as OrTerm[];
+    return alternatives.some((term) =>
+      rowMatches(row, { column: term.column, op: term.op, value: term.value })
+    );
+  }
   const value = readColumn(row, filter.column);
   switch (filter.op) {
     case "eq":
@@ -329,6 +378,10 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
     }
     query.not = (column: string, op: FilterOp, value: unknown) => {
       filters.push({ column, op: "not", value: { op, value } });
+      return query;
+    };
+    query.or = (expression: string) => {
+      filters.push({ column: "", op: "or", value: parseOrExpression(expression) });
       return query;
     };
     query.select = () => query;
