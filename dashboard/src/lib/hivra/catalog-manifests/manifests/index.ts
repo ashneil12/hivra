@@ -66,6 +66,7 @@ export const UNIVERSAL_CATALOG_IDS = [
   "dufs",
   "gotenberg",
   "convertx",
+  "termix",
   "memos",
   "wallos",
   "shiori",

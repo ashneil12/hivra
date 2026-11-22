@@ -1670,6 +1670,16 @@
     },
     {
       "family": "value-set",
+      "input": "/dashboard/launch?profile=termix&stage=choose",
+      "expect": "/dashboard/launch?profile=termix&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=termix",
+      "expect": "/dashboard/infrastructure?launch=termix"
+    },
+    {
+      "family": "value-set",
       "input": "/dashboard/launch?profile=homer&stage=choose",
       "expect": "/dashboard/launch?profile=homer&stage=choose"
     },
