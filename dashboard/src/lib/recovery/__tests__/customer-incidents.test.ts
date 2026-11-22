@@ -1049,7 +1049,9 @@ describe("runCustomerIncidentScan", () => {
     const summary = await runCustomerIncidentScan(deps as never);
 
     expect(summary).toMatchObject({ opened: 0, resolved: 1, failed: 0 });
-    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-open-1");
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "evt-open-1" }),
+    );
     expect(deps.notifyResolved as jest.Mock).toHaveBeenCalledTimes(1);
     const notice = (deps.notifyResolved as jest.Mock).mock.calls[0][0];
     expect(notice.title).toBe("Resolved: Customer incident: agent box down");
@@ -1126,7 +1128,9 @@ describe("runCustomerIncidentScan", () => {
     expect(ops.page).toBe(false);
     // The stale open row for a different key still resolves (archive) but no
     // resolved notice is sent off-production.
-    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-resolved-1");
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "evt-resolved-1" }),
+    );
     expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
@@ -1315,9 +1319,10 @@ describe("runCustomerIncidentScan", () => {
     });
     const summary = await runCustomerIncidentScan(deps as never);
     expect(summary).toMatchObject({ expired: 1, resolved: 0 });
-    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-lf-1", {
-      closedReason: "expired_unresolved",
-    });
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "evt-lf-1" }),
+      { closedReason: "expired_unresolved" },
+    );
     expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
@@ -1339,7 +1344,9 @@ describe("runCustomerIncidentScan", () => {
     });
     const summary = await runCustomerIncidentScan(deps as never);
     expect(summary).toMatchObject({ expired: 0, resolved: 1 });
-    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-lf-2");
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "evt-lf-2" }),
+    );
     expect(deps.notifyResolved as jest.Mock).toHaveBeenCalledTimes(1);
   });
 
@@ -1394,6 +1401,72 @@ describe("runCustomerIncidentScan", () => {
     expect(summary).toMatchObject({ expired: 0, resolved: 0 });
     expect(summary.degraded).toBe(1);
     expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("does not archive an incident row whose occurrence moved after the snapshot", async () => {
+    const racedRow = incidentDbRow({
+      id: "evt-raced",
+      occurrence_count: 3,
+      last_seen_at: iso(2 * MIN),
+      metadata: { incident_key: "box_down:gone-race" },
+    });
+    const deps = scanDeps({
+      // No archiveIncident dep — the real defaultArchiveIncident runs against
+      // the fake DB so the occurrence guard is exercised end to end.
+      archiveIncident: undefined,
+      report: jest.fn(async () => {
+        // A concurrent re-report lands between the snapshot read and the
+        // archive: occurrence_count and last_seen_at move, so the observed
+        // occurrence is no longer the row's current state.
+        racedRow.occurrence_count = 4;
+        racedRow.last_seen_at = iso(0);
+        return { id: "evt-new-1", fingerprint: "fp" };
+      }),
+      db: fakeIncidentDb({
+        agents: [],
+        heartbeats: [
+          {
+            cron_name: "test-cron",
+            last_run_at: iso(5 * MIN),
+            last_success_at: iso(5 * MIN),
+            run_count: 30,
+            ok_count: 20,
+            consecutive_failures: 3,
+            last_detail: "failed=2",
+          },
+        ],
+        openIncidents: [racedRow],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    // The cron_unhealthy finding still opens; the raced row stays open and
+    // unarchived — the next pass re-evaluates the fresh occurrence.
+    expect(summary.opened).toBe(1);
+    expect(summary.resolved).toBe(0);
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+    expect(racedRow.archived_at).toBeUndefined();
+  });
+
+  it("archives normally when the observed occurrence is still current", async () => {
+    const deps = scanDeps({
+      archiveIncident: undefined,
+      db: fakeIncidentDb({
+        agents: [],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-current",
+            occurrence_count: 2,
+            last_seen_at: iso(4 * MIN),
+            metadata: { incident_key: "box_down:gone-current" },
+          }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.resolved).toBe(1);
+    expect(deps.notifyResolved as jest.Mock).toHaveBeenCalledTimes(1);
   });
 
   // ---- public probe signal (box_unreachable) -------------------------------
@@ -1488,7 +1561,9 @@ describe("runCustomerIncidentScan", () => {
 
       expect(summary.resolved).toBe(1);
       expect(opsUpdates(db).some((c) => (c[1] as Row).archived_at != null)).toBe(true);
-      expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-unreach-1");
+      expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "evt-unreach-1" }),
+      );
       expect(deps.notifyResolved as jest.Mock).toHaveBeenCalledTimes(1);
       expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
     });

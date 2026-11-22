@@ -129,6 +129,13 @@ export interface OpenIncidentRow {
   title: string;
   incidentKey: string | null;
   subjectKind: string | null;
+  /**
+   * The occurrence this snapshot observed. reportOpsEvent bumps both fields
+   * on every re-report, so an archive that still matches them cannot close a
+   * recurrence that landed after the scan read the row.
+   */
+  occurrenceCount: number | null;
+  lastSeenAt: string | null;
 }
 
 export interface CustomerSubscriptionSnapshot {
@@ -772,6 +779,9 @@ async function collectOpenIncidentRows(db: DbClient): Promise<OpenIncidentRow[]>
       title: String(row.title ?? ""),
       incidentKey: strOrNull(metadata.incident_key),
       subjectKind: strOrNull(metadata.subject_kind),
+      occurrenceCount:
+        typeof row.occurrence_count === "number" ? row.occurrence_count : null,
+      lastSeenAt: typeof row.last_seen_at === "string" ? row.last_seen_at : null,
     });
   }
   return rows;
@@ -1478,8 +1488,8 @@ export interface CustomerIncidentScanDeps {
   cronSchedules?: ReadonlyMap<string, CronScheduleInfo>;
   /** Page admins for new incidents + send resolved notices. Defaults to the production-deployment check. */
   pagingEnabled?: boolean;
-  /** Archive an incident row by id; returns true when this call won the archive. */
-  archiveIncident?: (rowId: string, options?: { closedReason?: string }) => Promise<boolean>;
+  /** Archive the observed incident row; returns true when this call won the archive. */
+  archiveIncident?: (row: OpenIncidentRow, options?: { closedReason?: string }) => Promise<boolean>;
   /** Send the one resolved notice through the admin transport. */
   notifyResolved?: (input: ResolvedNoticeInput) => Promise<void>;
 }
@@ -1503,9 +1513,10 @@ function emptySummary(): CustomerIncidentScanSummary {
 
 async function defaultArchiveIncident(
   db: DbClient,
-  rowId: string,
+  row: OpenIncidentRow,
   options?: { closedReason?: string },
 ): Promise<boolean> {
+  const rowId = row.id;
   const update: Record<string, unknown> = {
     archived_at: new Date().toISOString(),
     archived_by_user_id: null,
@@ -1528,12 +1539,23 @@ async function defaultArchiveIncident(
       closed_reason: options.closedReason,
     };
   }
-  const { data, error } = await db
+  let query = db
     .from("ops_events")
     .update(update)
     .eq("id", rowId)
-    .is("archived_at", null)
-    .select("id");
+    .is("archived_at", null);
+  // The scan closes the occurrence it OBSERVED, not whatever the row has
+  // become since: a re-report bumps occurrence_count and last_seen_at, and an
+  // archive that ignores the drift would resolve an incident that recurred
+  // after the snapshot. Matching the observed values makes the update a
+  // no-op in that case — the next pass re-evaluates the fresh occurrence.
+  if (row.occurrenceCount != null) {
+    query = query.eq("occurrence_count", row.occurrenceCount);
+  }
+  if (row.lastSeenAt != null) {
+    query = query.eq("last_seen_at", row.lastSeenAt);
+  }
+  const { data, error } = await query.select("id");
   if (error) throw new Error(error.message || "archive incident failed");
   return (data?.length ?? 0) > 0;
 }
@@ -1663,8 +1685,8 @@ export async function runCustomerIncidentScan(
   const pagingEnabled = deps.pagingEnabled ?? incidentPagingEnabled();
   const archiveIncident =
     deps.archiveIncident ??
-    ((rowId: string, options?: { closedReason?: string }) =>
-      db ? defaultArchiveIncident(db, rowId, options) : Promise.resolve(false));
+    ((row: OpenIncidentRow, options?: { closedReason?: string }) =>
+      db ? defaultArchiveIncident(db, row, options) : Promise.resolve(false));
   const notifyResolved = deps.notifyResolved ?? defaultNotifyResolved;
 
   if (!db) {
@@ -1891,8 +1913,8 @@ export async function runCustomerIncidentScan(
     let archived = false;
     try {
       archived = expiredUnresolved
-        ? await archiveIncident(row.id, { closedReason: "expired_unresolved" })
-        : await archiveIncident(row.id);
+        ? await archiveIncident(row, { closedReason: "expired_unresolved" })
+        : await archiveIncident(row);
     } catch (err) {
       summary.failed += 1;
       log.error("customer-incidents: incident archive failed", err, {
