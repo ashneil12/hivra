@@ -337,6 +337,33 @@ describe("evaluateCustomerIncidents cron_unhealthy", () => {
     }));
     expect(result.findings).toHaveLength(0);
   });
+
+  it("uses last_run_at as the staleness reference when the cron never succeeded", () => {
+    // Ran once an hour ago and failed; never recorded a success. Without the
+    // fallback, last_success_at stays null and the cron looks healthy forever.
+    const stale = evaluateCustomerIncidents(evalInput({
+      heartbeats: [heartbeat({
+        cronName: "test-cron",
+        lastRunAt: iso(60 * MIN),
+        lastSuccessAt: null,
+        consecutiveFailures: 1,
+      })],
+      cronSchedules: schedules,
+    }));
+    expect(stale.findings.map((f) => f.key)).toEqual(["cron_unhealthy:test-cron"]);
+
+    // A first failure inside the grace window still gets the regular grace.
+    const fresh = evaluateCustomerIncidents(evalInput({
+      heartbeats: [heartbeat({
+        cronName: "test-cron",
+        lastRunAt: iso(4 * MIN),
+        lastSuccessAt: null,
+        consecutiveFailures: 1,
+      })],
+      cronSchedules: schedules,
+    }));
+    expect(fresh.findings).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

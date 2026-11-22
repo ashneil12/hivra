@@ -356,11 +356,15 @@ export function evaluateCustomerIncidents(input: IncidentEvaluationInput): Incid
     if (!schedule) continue;
     const periodMinutes = schedule.periodMinutes;
     const streak = heartbeat.consecutiveFailures ?? 0;
-    const lastSuccessMs = parseTimeMs(heartbeat.lastSuccessAt);
+    // A cron that ran but never succeeded has no last_success_at — use
+    // last_run_at as the staleness reference so a silent-after-first-failure
+    // cron is still caught. The same 3x grace applies from the last run.
+    const referenceMs =
+      parseTimeMs(heartbeat.lastSuccessAt) ?? parseTimeMs(heartbeat.lastRunAt);
     const stale =
       periodMinutes != null &&
-      lastSuccessMs != null &&
-      now - lastSuccessMs > CRON_STALE_PERIOD_MULTIPLIER * periodMinutes * 60 * 1000;
+      referenceMs != null &&
+      now - referenceMs > CRON_STALE_PERIOD_MULTIPLIER * periodMinutes * 60 * 1000;
     if (streak < CRON_FAILURE_STREAK && !stale) continue;
     findings.push({
       key: `cron_unhealthy:${heartbeat.cronName}`,
