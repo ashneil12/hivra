@@ -296,6 +296,91 @@ describe("managed Venice token quote reconciliation", () => {
     // One head fetch per batch, shared by both quotes.
     expect(chain.methodCount("eth_blockNumber")).toBe(1);
   });
+
+  it("keeps old claimed and lot-holding quotes eligible for recovery while old unclaimed quotes are not scanned", async () => {
+    // All three expired well past the stale cutoff. Only the claimed and
+    // lot-holding ones may reach the per-quote recovery branch — the unclaimed
+    // one is left to the stale-expiry pass.
+    const oldExpiry = "2026-05-01T00:00:00.000Z";
+    const claimed = managedVeniceQuoteRow({
+      id: "quote_claimed",
+      user_id: "user_claimed",
+      transaction_hash: "0xclaimedbeef",
+      quoted_at: "2026-04-30T00:00:00.000Z",
+      expires_at: oldExpiry,
+      created_at: "2026-04-30T00:00:00.000Z",
+      deposit_address: "0x000000000000000000000000000000000000c1a1",
+    });
+    const lotHeld = managedVeniceQuoteRow({
+      id: "quote_lot",
+      user_id: "user_lot",
+      transaction_hash: null,
+      quoted_at: "2026-04-30T00:00:00.000Z",
+      expires_at: oldExpiry,
+      created_at: "2026-04-30T00:00:00.000Z",
+      deposit_address: "0x000000000000000000000000000000000000c0de",
+    });
+    const unclaimed = managedVeniceQuoteRow({
+      id: "quote_unclaimed",
+      user_id: "user_unclaimed",
+      transaction_hash: null,
+      quoted_at: "2026-04-30T00:00:00.000Z",
+      expires_at: oldExpiry,
+      created_at: "2026-04-30T00:00:00.000Z",
+      deposit_address: "0x000000000000000000000000000000000000dead",
+    });
+    const lot = {
+      id: "lot_1",
+      account_id: "account_lot",
+      user_id: "user_lot",
+      quote_id: "quote_lot",
+      source: "hermesos_deposit",
+      token_amount_raw: "1000000000000000000000",
+      remaining_token_amount_raw: "1000000000000000000000",
+      snapshot_price_usd: "0.05",
+      original_value_micro_usd: 50_000_000,
+      remaining_value_micro_usd: 50_000_000,
+      quote_source: "dexscreener",
+      quoted_at: "2026-04-30T00:00:00.000Z",
+      quote_expires_at: oldExpiry,
+      transaction_hash: "0xlotpaidcafe",
+      status: "active",
+      metadata: { observedAt: "2026-04-30T00:05:00.000Z" },
+      created_at: "2026-04-30T00:05:00.000Z",
+      updated_at: "2026-04-30T00:05:00.000Z",
+    };
+    const settleQuote = jest.fn(async (transfer: { quoteId?: string }) => ({
+      status: "settled" as const,
+      quoteId: transfer?.quoteId ?? "quote_unknown",
+    }));
+    const chain = makeChain();
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: createManagedVeniceMemoryDb({
+        managed_venice_token_quotes: [claimed, lotHeld, unclaimed],
+        managed_venice_token_lots: [lot],
+      }).db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote,
+      now: new Date("2026-05-16T10:22:00.000Z"),
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    // The two recovery candidates were checked and settled on their claimed /
+    // lot transaction without a log scan; the unclaimed stale quote was left
+    // to the expiry pass and never reached the scan loop.
+    expect(summary.checked).toBe(2);
+    expect(summary.settled).toBe(2);
+    expect(summary.expiredAfterGrace).toBe(1);
+    const settledHashes = settleQuote.mock.calls.map(
+      (call) => (call[0] as { transactionHash?: string }).transactionHash
+    );
+    expect(settledHashes).toEqual(expect.arrayContaining(["0xclaimedbeef", "0xlotpaidcafe"]));
+    expect(settledHashes).toHaveLength(2);
+  });
 });
 
 describe("Base RPC 429 resilience (issue #362)", () => {
@@ -728,7 +813,9 @@ describe("stale unpaid quote expiry", () => {
     const summary = await runBatch(memory.db, chain);
 
     expect(summary.expiredAfterGrace).toBe(0);
-    expect(summary.checked).toBe(0);
+    // A claimed quote stays eligible for the scan at any age: the recovery
+    // branch is the only automatic path that finishes a crashed settlement.
+    expect(summary.checked).toBe(1);
     expect(memory.tables.managed_venice_token_quotes[0].status).toBe("active");
   });
 });

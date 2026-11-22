@@ -40,7 +40,7 @@ export interface MemoryDbError {
   message: string;
 }
 
-type FilterOp = "eq" | "neq" | "in" | "lt" | "lte" | "gt" | "gte" | "is";
+type FilterOp = "eq" | "neq" | "in" | "lt" | "lte" | "gt" | "gte" | "is" | "not";
 
 interface Filter {
   column: string;
@@ -216,6 +216,11 @@ function rowMatches(row: MemoryRow, filter: Filter) {
       return value != null && compareValues(value, filter.value) >= 0;
     case "is":
       return filter.value === null ? value == null : value === filter.value;
+    case "not": {
+      // .not(column, op, value) stores the inner predicate in value.
+      const inner = filter.value as { op: FilterOp; value: unknown };
+      return !rowMatches(row, { column: filter.column, op: inner.op, value: inner.value });
+    }
   }
 }
 
@@ -319,6 +324,10 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
         return query;
       };
     }
+    query.not = (column: string, op: FilterOp, value: unknown) => {
+      filters.push({ column, op: "not", value: { op, value } });
+      return query;
+    };
     query.select = () => query;
     query.order = (column: string, options?: { ascending?: boolean }) => {
       orders.push({ column, ascending: options?.ascending !== false });

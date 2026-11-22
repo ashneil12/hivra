@@ -702,7 +702,7 @@ function asDepositLot(row: DepositLotRow): ManagedVeniceTokenDepositLot {
 }
 
 // Lots created by a token deposit settlement, in either platform token.
-const TOKEN_DEPOSIT_LOT_SOURCES = ["hermesos_deposit", "hivra_deposit"];
+export const TOKEN_DEPOSIT_LOT_SOURCES = ["hermesos_deposit", "hivra_deposit"];
 
 function depositLotSource(token: Pick<PlatformToken, "key">) {
   return token.key === "hivra" ? "hivra_deposit" : "hermesos_deposit";
