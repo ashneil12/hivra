@@ -173,6 +173,13 @@ export async function GET(req: NextRequest) {
       method: "GET",
       failureType: "managed_venice_token_reconciliation_cron_failed",
     });
+    // The run threw — record the failure on the heartbeat so cron_unhealthy
+    // sees it now instead of after the staleness window. Auth failures return
+    // above and never reach this branch.
+    await recordCronHeartbeat("managed-venice-token-reconciliation", {
+      ok: false,
+      detail: `exception: ${error instanceof Error ? error.name : typeof error}`,
+    });
     return apiError("Failed to reconcile managed Venice token deposits", 500);
   }
 }

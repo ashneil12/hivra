@@ -5,6 +5,7 @@ import { reconcilePendingCryptoTopUps } from "@/lib/billing/crypto-reconciliatio
 import { sweepPendingCreditDepositReceipts } from "@/lib/billing/credit-deposit-sweep";
 import { sweepPendingManagedVeniceTokenQuotes } from "@/lib/billing/managed-venice-token-sweep";
 import { reportOpsEvent } from "@/lib/ops-events";
+import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 
 jest.mock("@/lib/billing/crypto-reconciliation", () => ({
   reconcilePendingCryptoTopUps: jest.fn(),
@@ -21,6 +22,10 @@ jest.mock("@/lib/billing/managed-venice-token-sweep", () => ({
 jest.mock("@/lib/ops-events", () => ({
   ...jest.requireActual("@/lib/ops-events"),
   reportOpsEvent: jest.fn(async () => null),
+}));
+
+jest.mock("@/lib/cron-heartbeat", () => ({
+  recordCronHeartbeat: jest.fn(async () => undefined),
 }));
 
 describe("GET /api/cron/reconcile-crypto-topups", () => {
@@ -246,5 +251,71 @@ describe("GET /api/cron/reconcile-crypto-topups", () => {
     expect(JSON.stringify(consoleErrorSpy.mock.calls)).not.toContain("rpc-url-secret");
 
     consoleErrorSpy.mockRestore();
+  });
+
+  it("records an ok:false heartbeat when the run throws, and never on auth failures", async () => {
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    (reconcilePendingCryptoTopUps as jest.Mock).mockRejectedValueOnce(
+      new Error("reconciliation exploded")
+    );
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(500);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "reconcile-crypto-topups",
+      expect.objectContaining({ ok: false, detail: expect.stringContaining("exception") })
+    );
+
+    // A 401 is not a failed run — it must not touch the heartbeat.
+    (recordCronHeartbeat as jest.Mock).mockClear();
+    const unauthorized = await GET(makeRequest("Bearer wrong"));
+    expect(unauthorized.status).toBe(401);
+    expect(recordCronHeartbeat).not.toHaveBeenCalled();
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("records an ok:false heartbeat when credit sweeps need operator review", async () => {
+    (sweepPendingCreditDepositReceipts as jest.Mock).mockResolvedValueOnce({
+      ...sweepPayload,
+      failed: 0,
+      inDoubt: 1,
+      needsOperator: 1,
+      results: [
+        {
+          receiptId: "receipt-1",
+          userId: "user-1",
+          outcome: "in_doubt",
+          needsOperator: true,
+        },
+      ],
+    });
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "reconcile-crypto-topups",
+      expect.objectContaining({ ok: false, detail: expect.stringContaining("credit_sweep_op_review=1") })
+    );
+  });
+
+  it("keeps a clean heartbeat when in_doubt sweeps can still self-heal", async () => {
+    (sweepPendingCreditDepositReceipts as jest.Mock).mockResolvedValueOnce({
+      ...sweepPayload,
+      failed: 0,
+      inDoubt: 2,
+      needsOperator: 0,
+      results: [
+        { receiptId: "receipt-1", userId: "user-1", outcome: "in_doubt" },
+        { receiptId: "receipt-2", userId: "user-2", outcome: "in_doubt" },
+      ],
+    });
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith("reconcile-crypto-topups", undefined);
   });
 });

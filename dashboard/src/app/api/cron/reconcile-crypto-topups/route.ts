@@ -156,9 +156,16 @@ export async function GET(req: NextRequest) {
     }
 
     // Honest heartbeat: per-intent failures and sweep failures used to leave
-    // the run looking 100% ok. Record ok:false so the streak is countable.
+    // the run looking 100% ok. in_doubt sweeps count only when they need an
+    // operator — the rest resolve themselves from chain evidence.
+    const creditSweepNeedsOperator =
+      "needsOperator" in sweep && typeof sweep.needsOperator === "number"
+        ? sweep.needsOperator
+        : 0;
     const creditSweepItemFailures =
-      "failed" in sweep && typeof sweep.failed === "number" ? sweep.failed : 0;
+      "failed" in sweep && typeof sweep.failed === "number"
+        ? sweep.failed + creditSweepNeedsOperator
+        : 0;
     const managedVeniceItemFailures =
       !("error" in managedVeniceSweep) && typeof managedVeniceSweep.failed === "number"
         ? managedVeniceSweep.failed + (managedVeniceSweep.needsOperator ?? 0)
@@ -177,6 +184,7 @@ export async function GET(req: NextRequest) {
             detail:
               `recon_failed=${reconciliation.failed} ` +
               `credit_sweep=${creditSweepFailed ? "threw" : creditSweepItemFailures} ` +
+              `credit_sweep_op_review=${creditSweepNeedsOperator} ` +
               `mv_sweep=${managedVeniceSweepFailed ? "threw" : managedVeniceItemFailures}`,
           }
         : undefined,
@@ -199,6 +207,13 @@ export async function GET(req: NextRequest) {
       route: "/api/cron/reconcile-crypto-topups",
       method: "GET",
       failureType: "crypto_topup_reconciliation_failed",
+    });
+    // The run threw — record the failure on the heartbeat so cron_unhealthy
+    // sees it now instead of after the staleness window. Auth failures return
+    // above and never reach this branch.
+    await recordCronHeartbeat("reconcile-crypto-topups", {
+      ok: false,
+      detail: `exception: ${error instanceof Error ? error.name : typeof error}`,
     });
     return apiError("Failed to reconcile crypto top-ups", 500, {
       failureType: "crypto_topup_reconciliation_failed",

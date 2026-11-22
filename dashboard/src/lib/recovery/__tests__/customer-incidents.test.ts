@@ -663,6 +663,8 @@ interface FakeDbConfig {
   watchdogFetchFails?: boolean;
   /** When true, single-row subject lookups (launch_failed expiry checks) fail. */
   subjectLookupFails?: boolean;
+  /** When true, single-row subject lookups throw instead of returning an error. */
+  subjectLookupThrows?: boolean;
   /** When set, queries against this table fail from the second keyset page on. */
   failKeysetPageFor?: string;
 }
@@ -872,6 +874,13 @@ function fakeIncidentDb(config: FakeDbConfig) {
         const isWatchdogQuery =
           table === "ops_events" &&
           calls.some((c) => c[0] === "eq" && c[1] === "instance_id");
+        if (
+          config.subjectLookupThrows &&
+          terminal !== "none" &&
+          (table === "hivra_agents" || table === "hermes_instances")
+        ) {
+          throw new Error("subject lookup exploded");
+        }
         if (
           config.subjectLookupFails &&
           terminal !== "none" &&
@@ -1353,6 +1362,37 @@ describe("runCustomerIncidentScan", () => {
     });
     const summary = await runCustomerIncidentScan(deps as never);
     expect(summary).toMatchObject({ expired: 0, resolved: 0 });
+    expect(summary.degraded).toBe(1);
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("counts a thrown launch_failed subject lookup as degraded and leaves the row open", async () => {
+    const deps = scanDeps({
+      db: fakeIncidentDb({
+        agents: [
+          agentDbRow({
+            id: "agent-thrown",
+            status: "error",
+            provisioned_at: null,
+            created_at: iso(30 * 24 * 60 * MIN),
+          }),
+        ],
+        subjectLookupThrows: true,
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-lf-t",
+            source: "incident.launch_failed",
+            metadata: {
+              incident_key: "launch_failed:agent-thrown",
+              subject_kind: "hivra_agent",
+            },
+          }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary).toMatchObject({ expired: 0, resolved: 0 });
+    expect(summary.degraded).toBe(1);
     expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
   });
 

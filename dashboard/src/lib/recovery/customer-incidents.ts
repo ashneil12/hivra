@@ -1870,6 +1870,7 @@ export async function runCustomerIncidentScan(
       try {
         disposition = await classifyLaunchFailedExpiry(db, row);
       } catch (err) {
+        summary.degraded += 1;
         log.warn("customer-incidents: launch_failed expiry check failed; leaving row open", {
           source: "customer-incidents",
           failureType: "launch_failed_expiry_check_failed",
@@ -1879,7 +1880,12 @@ export async function runCustomerIncidentScan(
         });
         continue;
       }
-      if (disposition === "unknown") continue;
+      if (disposition === "unknown") {
+        // The subject lookup failed — the row stays open for the next pass,
+        // but the pass is degraded so the heartbeat does not read clean.
+        summary.degraded += 1;
+        continue;
+      }
       expiredUnresolved = disposition === "expired";
     }
     let archived = false;

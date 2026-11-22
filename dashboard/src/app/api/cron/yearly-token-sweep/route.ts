@@ -85,6 +85,13 @@ export async function GET(req: NextRequest) {
       method: "GET",
       failureType: "yearly_token_sweep_quotes_load_failed",
     });
+    // The run threw — record the failure on the heartbeat so cron_unhealthy
+    // sees it now instead of after the staleness window. Auth failures return
+    // above and never reach this branch.
+    await recordCronHeartbeat("yearly-token-sweep", {
+      ok: false,
+      detail: `exception: ${error instanceof Error ? error.name : typeof error}`,
+    });
     return apiError("Failed to load yearly quotes", 500);
   }
 
@@ -117,6 +124,11 @@ export async function GET(req: NextRequest) {
       route: "/api/cron/yearly-token-sweep",
       method: "GET",
       failureType: "yearly_token_sweep_pending_load_failed",
+    });
+    // Same honest-heartbeat rule as the reconcile pass above.
+    await recordCronHeartbeat("yearly-token-sweep", {
+      ok: false,
+      detail: `exception: ${error instanceof Error ? error.name : typeof error}`,
     });
     return apiError("Failed to load pending sweeps", 500);
   }

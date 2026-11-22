@@ -190,6 +190,12 @@ export interface CreditDepositSweepResult {
   txHash?: string | null;
   amountSweptDisplay?: string;
   error?: string;
+  /**
+   * The outcome cannot resolve itself from later chain evidence — an
+   * operator must look (wrong transfer mined, or no transfer inside the
+   * evidence window). in_doubt results WITHOUT this flag still self-heal.
+   */
+  needsOperator?: boolean;
 }
 
 interface SweepOptions {
@@ -485,7 +491,8 @@ async function settleSubmittedSweep(
         await reportForReview(receipt, "credit_deposit_sweep_transfer_mismatch", `${error}.`, {
           sweepTxHash: txHash,
         });
-        return result("in_doubt", { txHash, error });
+        // A mined tx moved the wrong thing — no later evidence can fix it.
+        return result("in_doubt", { txHash, error, needsOperator: true });
       }
       minedAt = Number(parseQuantity(tx.blockNumber, "receipt block number"));
     } else {
@@ -513,6 +520,9 @@ async function settleSubmittedSweep(
             "sweep_status to 'failed' to retry it, or record the sweep tx hash if it was swept another way.",
           { claimBlock: String(receipt.sweep_claim_block) }
         );
+        // The evidence window is exhausted — only an operator can move this
+        // receipt now. Before the window this same in_doubt self-heals.
+        return result("in_doubt", { needsOperator: true });
       }
       return result("in_doubt");
     }
@@ -809,6 +819,8 @@ export async function sweepPendingCreditDepositReceipts(
   confirmed: number;
   awaitingConfirmation: number;
   inDoubt: number;
+  /** in_doubt results that need an operator — the rest self-heal from chain evidence. */
+  needsOperator: number;
   failed: number;
   skipped: number;
   noTreasury: number;
@@ -849,6 +861,7 @@ export async function sweepPendingCreditDepositReceipts(
     confirmed: count("confirmed"),
     awaitingConfirmation: count("awaiting_confirmation"),
     inDoubt: count("in_doubt"),
+    needsOperator: results.filter((entry) => entry.needsOperator === true).length,
     failed: count("released", "no_credentials", "gas_topup_failed", "transfer_failed", "error"),
     skipped: count("held_for_review"),
     noTreasury: count("no_treasury_configured"),
