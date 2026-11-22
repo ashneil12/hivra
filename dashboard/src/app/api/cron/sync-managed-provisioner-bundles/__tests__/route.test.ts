@@ -37,12 +37,23 @@ function request(token = "expected-secret", query = "") {
   });
 }
 
-function tables(agents: Array<{ id: string; proxmox_host: string; managed_provisioner_channel: string | null }>) {
+type AgentRow = {
+  id: string;
+  vmid?: number | null;
+  status?: string | null;
+  proxmox_host: string;
+  managed_provisioner_channel: string | null;
+};
+
+function tables(agents: AgentRow[]) {
+  // Rows default to a live VMID-bound computer; tests exercising the
+  // "holds computers" predicate pass explicit vmid/status overrides.
+  const rows = agents.map((agent) => ({ vmid: 500, status: "running", ...agent }));
   mockFrom.mockImplementation((table: string) => {
     if (table === "proxmox_hosts") return { select: () => Promise.resolve({ data: [], error: null }) };
     const builder = {
       select: () => builder, eq: () => builder, neq: () => builder, order: () => builder,
-      range: () => Promise.resolve({ data: agents, error: null }),
+      range: () => Promise.resolve({ data: rows, error: null }),
     };
     return builder;
   });

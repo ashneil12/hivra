@@ -99,6 +99,72 @@ describe("GET /api/cron/reconcile-subscription-state", () => {
     );
   });
 
+  it("stays quiet when only standing observations exist and nothing changed", async () => {
+    // Prod 2026-11: the same 5 operator-grant manualReview rows re-fired a
+    // warn every 15 minutes forever (one ops row, 11k+ occurrences). Standing
+    // backlog is not a change — only mutations and errors should emit.
+    (reconcileSubscriptionState as jest.Mock).mockResolvedValue({
+      scanned: 55,
+      pendingReset: 0,
+      paidAccessReset: 0,
+      pendingActivatedFromStripe: 0,
+      canceledTerminalStripe: 0,
+      skippedOpenCheckout: 0,
+      skippedRecentPending: 0,
+      skippedStripeGrant: 50,
+      skippedStaleRow: 0,
+      manualReview: 5,
+      runtimeRowsUpdated: 0,
+      runtimeRowsChanged: 0,
+      errors: 0,
+      entries: [
+        {
+          userId: "user_manual",
+          plan: "operator",
+          status: "active",
+          stripeSubscriptionId: "manual_123",
+          stripeCustomerId: "cus_manual",
+          action: "manual_review",
+        },
+      ],
+    });
+
+    const response = await GET(request());
+
+    expect(response.status).toBe(200);
+    expect(reportOpsEvent).not.toHaveBeenCalled();
+  });
+
+  it("still warns when the reconcile changed state even with a standing backlog", async () => {
+    (reconcileSubscriptionState as jest.Mock).mockResolvedValue({
+      scanned: 4,
+      pendingReset: 0,
+      paidAccessReset: 0,
+      pendingActivatedFromStripe: 0,
+      canceledTerminalStripe: 0,
+      skippedOpenCheckout: 0,
+      skippedRecentPending: 0,
+      skippedStripeGrant: 0,
+      skippedStaleRow: 0,
+      manualReview: 5,
+      runtimeRowsUpdated: 0,
+      runtimeRowsChanged: 2,
+      errors: 0,
+      entries: [],
+    });
+
+    const response = await GET(request());
+
+    expect(response.status).toBe(200);
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "subscription-state-reconciler",
+        severity: "warn",
+        metadata: expect.objectContaining({ manualReview: 5, runtimeRowsChanged: 2 }),
+      })
+    );
+  });
+
   it("rejects unauthorized cron calls", async () => {
     const response = await GET(request("wrong"));
 

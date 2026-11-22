@@ -57,13 +57,13 @@ export async function GET(req: NextRequest) {
         stripeCustomerId: entry.stripeCustomerId,
       }));
 
-    if (
-      changed > 0 ||
-      result.manualReview > 0 ||
-      result.skippedStaleRow > 0 ||
-      result.runtimeRowsChanged > 0 ||
-      result.errors > 0
-    ) {
+    // Warn only when the reconcile actually changed something or errored.
+    // manualReview/skippedStaleRow are standing observations (the same
+    // operator-grant backlog is re-reported every 15 min forever — prod
+    // 2026-11: one warn row with 11k+ occurrences and nothing new in it),
+    // not changes; they still ride along in metadata whenever a real
+    // change does fire the event.
+    if (changed > 0 || result.runtimeRowsChanged > 0 || result.errors > 0) {
       // Raise severity to 'error' when genuine reconcile failures occurred —
       // previously all outcomes (routine resets, manual review, errors) shared
       // 'warn', so an errored run looked like a normal one on the feed.
