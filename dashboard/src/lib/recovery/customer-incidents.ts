@@ -570,22 +570,34 @@ function watchdogEventFromOpsRow(row: WatchdogOpsRow): WatchdogEventSnapshot {
 // nothing when it truncates — an unpaged subject query silently drops rows,
 // which for this scan means a customer incident that never opens or a stale
 // one that resolves early. Page every subject read until a short page.
+//
+// Keyset, not offsets: an offset read skips whichever row moves across the
+// page boundary between requests (an agent that stops running mid-scan
+// shifts every later row up one slot), and the resolver would then archive
+// that subject's open incident as recovered. Ordering by the unique column
+// and resuming `.gt(col, last)` can neither skip nor repeat a row. An error
+// mid-read throws — the caller aborts the pass, so partial data is never
+// treated as evidence of recovery.
 const SUBJECT_PAGE_SIZE = 1000;
 
 async function selectAllPages<RowT>(
   label: string,
   build: (
-    from: number,
-    to: number,
+    cursor: string | null,
   ) => PromiseLike<{ data: unknown; error: { message?: string } | null }>,
+  cursorOf: (row: RowT) => string | null,
 ): Promise<RowT[]> {
   const rows: RowT[] = [];
-  for (let from = 0; ; from += SUBJECT_PAGE_SIZE) {
-    const { data, error } = await build(from, from + SUBJECT_PAGE_SIZE - 1);
+  let cursor: string | null = null;
+  for (;;) {
+    const { data, error } = await build(cursor);
     if (error) throw new Error(error.message || `${label} query failed`);
     const page = (data ?? []) as RowT[];
     rows.push(...page);
     if (page.length < SUBJECT_PAGE_SIZE) return rows;
+    const tail = cursorOf(page[page.length - 1]);
+    if (tail == null) throw new Error(`${label} pagination cursor missing`);
+    cursor = tail;
   }
 }
 
@@ -595,31 +607,46 @@ async function collectAgents(db: DbClient, now: number): Promise<HivraAgentSnaps
   // running (box_down), and in-flight operations (lifecycle_stuck — the stuck
   // op may sit on a non-running status like provisioning/deleting).
   const [unprovisioned, running, inFlight] = await Promise.all([
-    selectAllPages<AgentDbRow>("hivra_agents unprovisioned", (from, to) =>
-      db
-        .from("hivra_agents")
-        .select(AGENT_SELECT)
-        .is("provisioned_at", null)
-        .gte("created_at", cutoff24)
-        .order("id", { ascending: true })
-        .range(from, to),
+    selectAllPages<AgentDbRow>(
+      "hivra_agents unprovisioned",
+      (cursor) => {
+        let query = db
+          .from("hivra_agents")
+          .select(AGENT_SELECT)
+          .is("provisioned_at", null)
+          .gte("created_at", cutoff24)
+          .order("id", { ascending: true });
+        if (cursor != null) query = query.gt("id", cursor);
+        return query.limit(SUBJECT_PAGE_SIZE);
+      },
+      (row) => row.id,
     ),
-    selectAllPages<AgentDbRow>("hivra_agents running", (from, to) =>
-      db
-        .from("hivra_agents")
-        .select(AGENT_SELECT)
-        .eq("status", "running")
-        .order("id", { ascending: true })
-        .range(from, to),
+    selectAllPages<AgentDbRow>(
+      "hivra_agents running",
+      (cursor) => {
+        let query = db
+          .from("hivra_agents")
+          .select(AGENT_SELECT)
+          .eq("status", "running")
+          .order("id", { ascending: true });
+        if (cursor != null) query = query.gt("id", cursor);
+        return query.limit(SUBJECT_PAGE_SIZE);
+      },
+      (row) => row.id,
     ),
-    selectAllPages<AgentDbRow>("hivra_agents in-flight", (from, to) =>
-      db
-        .from("hivra_agents")
-        .select(AGENT_SELECT)
-        .not("operation_kind", "is", null)
-        .not("operation_started_at", "is", null)
-        .order("id", { ascending: true })
-        .range(from, to),
+    selectAllPages<AgentDbRow>(
+      "hivra_agents in-flight",
+      (cursor) => {
+        let query = db
+          .from("hivra_agents")
+          .select(AGENT_SELECT)
+          .not("operation_kind", "is", null)
+          .not("operation_started_at", "is", null)
+          .order("id", { ascending: true });
+        if (cursor != null) query = query.gt("id", cursor);
+        return query.limit(SUBJECT_PAGE_SIZE);
+      },
+      (row) => row.id,
     ),
   ]);
   const byId = new Map<string, HivraAgentSnapshot>();
@@ -631,37 +658,53 @@ async function collectAgents(db: DbClient, now: number): Promise<HivraAgentSnaps
 
 async function collectHermesInstances(db: DbClient, now: number): Promise<HermesInstanceSnapshot[]> {
   const cutoff24 = new Date(now - LAUNCH_FAILED_WINDOW_MS).toISOString();
-  const rows = await selectAllPages<HermesInstanceDbRow>("hermes_instances", (from, to) =>
-    db
-      .from("hermes_instances")
-      .select("id,user_id,name,status,lifecycle_state,gateway_url,created_at")
-      .gte("created_at", cutoff24)
-      .order("id", { ascending: true })
-      .range(from, to),
+  const rows = await selectAllPages<HermesInstanceDbRow>(
+    "hermes_instances",
+    (cursor) => {
+      let query = db
+        .from("hermes_instances")
+        .select("id,user_id,name,status,lifecycle_state,gateway_url,created_at")
+        .gte("created_at", cutoff24)
+        .order("id", { ascending: true });
+      if (cursor != null) query = query.gt("id", cursor);
+      return query.limit(SUBJECT_PAGE_SIZE);
+    },
+    (row) => row.id,
   );
   return rows.map(toInstanceSnapshot);
 }
 
 async function collectHeartbeats(db: DbClient): Promise<CronHeartbeatSnapshot[]> {
-  const rows = await selectAllPages<HeartbeatDbRow>("ops_cron_heartbeats", (from, to) =>
-    db
-      .from("ops_cron_heartbeats")
-      .select("cron_name,last_run_at,last_success_at,run_count,ok_count,consecutive_failures,last_detail,created_at")
-      .order("cron_name", { ascending: true })
-      .range(from, to),
+  const rows = await selectAllPages<HeartbeatDbRow>(
+    "ops_cron_heartbeats",
+    (cursor) => {
+      // cron_name is the table's primary key — the keyset cursor column.
+      let query = db
+        .from("ops_cron_heartbeats")
+        .select("cron_name,last_run_at,last_success_at,run_count,ok_count,consecutive_failures,last_detail,created_at")
+        .order("cron_name", { ascending: true });
+      if (cursor != null) query = query.gt("cron_name", cursor);
+      return query.limit(SUBJECT_PAGE_SIZE);
+    },
+    (row) => row.cron_name,
   );
   return rows.map(toHeartbeatSnapshot);
 }
 
 async function collectOpenIncidentRows(db: DbClient): Promise<OpenIncidentRow[]> {
-  const data = await selectAllPages<Record<string, unknown>>("open incident rows", (from, to) =>
-    db
-      .from("ops_events")
-      .select("id,fingerprint,title,source,metadata")
-      .like("source", "incident.%")
-      .is("archived_at", null)
-      .order("id", { ascending: true })
-      .range(from, to),
+  const data = await selectAllPages<Record<string, unknown>>(
+    "open incident rows",
+    (cursor) => {
+      let query = db
+        .from("ops_events")
+        .select("id,fingerprint,title,source,metadata,occurrence_count,last_seen_at")
+        .like("source", "incident.%")
+        .is("archived_at", null)
+        .order("id", { ascending: true });
+      if (cursor != null) query = query.gt("id", cursor);
+      return query.limit(SUBJECT_PAGE_SIZE);
+    },
+    (row) => (typeof row.id === "string" ? row.id : null),
   );
   const rows: OpenIncidentRow[] = [];
   for (const row of data) {
@@ -727,13 +770,17 @@ async function collectSubscriptions(
   try {
     const rows = await selectAllPages<{ user_id: string; plan: string | null; status: string | null }>(
       "hermes_subscriptions",
-      (from, to) =>
-        db
+      (cursor) => {
+        // user_id is UNIQUE — the keyset cursor column.
+        let query = db
           .from("hermes_subscriptions")
           .select("user_id,plan,status")
           .in("user_id", userIds)
-          .order("user_id", { ascending: true })
-          .range(from, to),
+          .order("user_id", { ascending: true });
+        if (cursor != null) query = query.gt("user_id", cursor);
+        return query.limit(SUBJECT_PAGE_SIZE);
+      },
+      (row) => row.user_id,
     );
     for (const row of rows) {
       map.set(row.user_id, { plan: row.plan, status: row.status });

@@ -601,51 +601,200 @@ interface FakeDbConfig {
   subscriptions?: Row[];
   openIncidents?: Row[];
   watchdogByAgent?: Record<string, Row[]>;
+  /** Open box.public_probe.* rows (public-reachability signal rows). */
+  probeRows?: Row[];
   /** When true, per-agent watchdog event queries fail (box_down goes unknown). */
   watchdogFetchFails?: boolean;
   /** When true, single-row subject lookups (launch_failed expiry checks) fail. */
   subjectLookupFails?: boolean;
+  /** When set, queries against this table fail from the second keyset page on. */
+  failKeysetPageFor?: string;
 }
 
-/** Thenable query-builder fake: records the chain, resolves per table on await. */
-function fakeIncidentDb(config: FakeDbConfig) {
-  const resolveTable = (
-    table: string,
-    calls: unknown[][],
-  ): { data: Row[] | null; error: { message: string } | null } => {
-    const ok = (data: Row[]) => ({ data, error: null });
-    const singleLookup = calls.some((c) => c[0] === "maybeSingle" || c[0] === "single");
-    if (
-      config.subjectLookupFails &&
-      singleLookup &&
-      (table === "hivra_agents" || table === "hermes_instances")
-    ) {
-      return { data: null, error: { message: "subject lookup failed" } };
+// PostgREST caps every response at max_rows even when the query asks for
+// more — the fake applies the same cap so a scan that stops paginating
+// silently loses rows exactly like production would.
+const FAKE_POSTGREST_MAX_ROWS = 1000;
+
+function fakeColumnValue(row: Row, column: string): unknown {
+  if (column.includes("->>")) {
+    const [base, key] = column.split("->>");
+    const container = row[base.trim()];
+    if (!container || typeof container !== "object") return undefined;
+    return (container as Row)[key.trim()];
+  }
+  return row[column];
+}
+
+function fakeCompare(a: unknown, b: unknown): number {
+  const sa = String(a);
+  const sb = String(b);
+  const na = Number(a);
+  const nb = Number(b);
+  if (
+    sa.trim() !== "" &&
+    sb.trim() !== "" &&
+    Number.isFinite(na) &&
+    Number.isFinite(nb)
+  ) {
+    return na - nb;
+  }
+  return sa < sb ? -1 : sa > sb ? 1 : 0;
+}
+
+function fakeValuesEqual(a: unknown, b: unknown): boolean {
+  if (a == null || b == null) return false;
+  return a === b || String(a) === String(b);
+}
+
+const FAKE_FILTER_METHODS = new Set([
+  "eq",
+  "neq",
+  "is",
+  "not",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "in",
+  "like",
+]);
+
+function fakeRowMatches(row: Row, call: unknown[]): boolean {
+  const [method, a1, a2, a3] = call as [string, string, unknown, unknown];
+  switch (method) {
+    case "eq":
+    case "neq": {
+      const matched = fakeValuesEqual(fakeColumnValue(row, a1), a2);
+      return method === "eq" ? matched : !matched;
     }
-    if (table === "hivra_agents") return ok(config.agents ?? []);
-    if (table === "hermes_instances") return ok(config.instances ?? []);
-    if (table === "ops_cron_heartbeats") return ok(config.heartbeats ?? []);
-    if (table === "hermes_subscriptions") return ok(config.subscriptions ?? []);
-    if (table === "ops_events") {
-      const isIncidentFeed = calls.some(
-        (c) => c[0] === "like" && c[1] === "source" && String(c[2]).startsWith("incident"),
-      );
-      if (isIncidentFeed) return ok(config.openIncidents ?? []);
-      const instanceCall = calls.find((c) => c[0] === "eq" && c[1] === "instance_id");
-      const agentId = instanceCall ? String(instanceCall[2]) : null;
-      if (config.watchdogFetchFails) {
-        return { data: null, error: { message: "watchdog events query failed" } };
+    case "is":
+      return a2 === null
+        ? fakeColumnValue(row, a1) == null
+        : fakeColumnValue(row, a1) === a2;
+    case "not": {
+      // .not(column, op, value)
+      const column = a1;
+      const op = a2 as string;
+      const value = a3;
+      if (op === "is") {
+        return value === null
+          ? fakeColumnValue(row, column) != null
+          : fakeColumnValue(row, column) !== value;
       }
-      return ok(agentId ? config.watchdogByAgent?.[agentId] ?? [] : []);
+      if (op === "eq") {
+        return !fakeValuesEqual(fakeColumnValue(row, column), value);
+      }
+      return true;
     }
-    return ok([]);
+    case "gt":
+    case "gte":
+    case "lt":
+    case "lte": {
+      const value = fakeColumnValue(row, a1);
+      if (value == null) return false;
+      const cmp = fakeCompare(value, a2);
+      if (method === "gt") return cmp > 0;
+      if (method === "gte") return cmp >= 0;
+      if (method === "lt") return cmp < 0;
+      return cmp <= 0;
+    }
+    case "in":
+      return (
+        Array.isArray(a2) &&
+        a2.some((candidate) => fakeValuesEqual(fakeColumnValue(row, a1), candidate))
+      );
+    case "like": {
+      const value = fakeColumnValue(row, a1);
+      if (typeof value !== "string") return false;
+      const pattern = String(a2);
+      if (pattern.endsWith("%") && !pattern.slice(0, -1).includes("%")) {
+        return value.startsWith(pattern.slice(0, -1));
+      }
+      return value === pattern;
+    }
+    default:
+      return true;
+  }
+}
+
+function fakeApplyOrder(rows: Row[], orderCalls: unknown[][]): Row[] {
+  if (orderCalls.length === 0) return rows;
+  const keys = orderCalls.map((call) => {
+    const options = call[2] as { ascending?: boolean } | undefined;
+    return {
+      column: String(call[1]),
+      ascending: options?.ascending !== false,
+    };
+  });
+  return [...rows].sort((left, right) => {
+    for (const key of keys) {
+      const a = fakeColumnValue(left, key.column);
+      const b = fakeColumnValue(right, key.column);
+      if (a == null && b == null) continue;
+      if (a == null) return key.ascending ? 1 : -1;
+      if (b == null) return key.ascending ? -1 : 1;
+      const cmp = fakeCompare(a, b);
+      if (cmp !== 0) return key.ascending ? cmp : -cmp;
+    }
+    return 0;
+  });
+}
+
+/** Thenable query-builder fake: applies filters, ordering and the row cap. */
+function fakeIncidentDb(config: FakeDbConfig) {
+  // ops_events holds every event-ish row: open incident rows, relayed
+  // watchdog receipts (keyed to their agent) and public-probe rows. The
+  // source/instance filters pick the right subset per query, like production.
+  const opsEventRows: Row[] = [
+    ...(config.openIncidents ?? []),
+    ...(config.probeRows ?? []),
+    ...Object.entries(config.watchdogByAgent ?? {}).flatMap(([agentId, rows]) =>
+      rows.map((row) => ({
+        source: "box.surface_watchdog.event",
+        instance_id: agentId,
+        ...row,
+      })),
+    ),
+  ];
+  const rowsFor = (table: string): Row[] => {
+    switch (table) {
+      case "hivra_agents":
+        return config.agents ?? [];
+      case "hermes_instances":
+        return config.instances ?? [];
+      case "ops_cron_heartbeats":
+        return config.heartbeats ?? [];
+      case "hermes_subscriptions":
+        return config.subscriptions ?? [];
+      case "ops_events":
+        return opsEventRows;
+      default:
+        return [];
+    }
   };
+  const recordedCalls: Array<{ table: string; calls: unknown[][] }> = [];
   return {
+    calls: recordedCalls,
     from(table: string) {
       const calls: unknown[][] = [];
       const chain: Record<string, unknown> = {};
       let terminal: "none" | "single" | "maybe" = "none";
-      for (const method of ["select", "eq", "is", "not", "gte", "in", "like", "order", "limit", "range"]) {
+      for (const method of [
+        "select",
+        "eq",
+        "is",
+        "not",
+        "gte",
+        "gt",
+        "lt",
+        "lte",
+        "in",
+        "like",
+        "order",
+        "limit",
+        "range",
+      ]) {
         chain[method] = (...args: unknown[]) => {
           calls.push([method, ...args]);
           return chain;
@@ -662,16 +811,43 @@ function fakeIncidentDb(config: FakeDbConfig) {
         return chain;
       };
       const resolve = (): { data: unknown; error: { message: string } | null } => {
-        const result = resolveTable(table, calls);
-        if (result.error || !result.data) return { data: result.data, error: result.error };
-        let rows = result.data;
+        recordedCalls.push({ table, calls: [...calls] });
+        const isWatchdogQuery =
+          table === "ops_events" &&
+          calls.some((c) => c[0] === "eq" && c[1] === "instance_id");
+        if (
+          config.subjectLookupFails &&
+          terminal !== "none" &&
+          (table === "hivra_agents" || table === "hermes_instances")
+        ) {
+          return { data: null, error: { message: "subject lookup failed" } };
+        }
+        if (config.watchdogFetchFails && isWatchdogQuery) {
+          return { data: null, error: { message: "watchdog events query failed" } };
+        }
+        if (config.failKeysetPageFor === table && calls.some((c) => c[0] === "gt")) {
+          return { data: null, error: { message: "keyset page two failed" } };
+        }
+        let rows = rowsFor(table).filter((row) =>
+          calls
+            .filter((c) => FAKE_FILTER_METHODS.has(String(c[0])))
+            .every((call) => fakeRowMatches(row, call)),
+        );
+        rows = fakeApplyOrder(
+          rows,
+          calls.filter((c) => c[0] === "order"),
+        );
+        const limitCall = calls.find((c) => c[0] === "limit");
+        const cap = Math.min(
+          limitCall ? Number(limitCall[1]) : FAKE_POSTGREST_MAX_ROWS,
+          FAKE_POSTGREST_MAX_ROWS,
+        );
+        rows = rows.slice(0, cap);
         const rangeCall = calls.find((c) => c[0] === "range");
         if (rangeCall) {
           rows = rows.slice(Number(rangeCall[1]), Number(rangeCall[2]) + 1);
         }
         if (terminal !== "none") {
-          const idCall = calls.find((c) => c[0] === "eq" && c[1] === "id");
-          if (idCall) rows = rows.filter((r) => r.id === idCall[2]);
           return { data: rows[0] ?? null, error: null };
         }
         return { data: rows, error: null };
@@ -887,31 +1063,66 @@ describe("runCustomerIncidentScan", () => {
     expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
-  it("pages subject queries past the PostgREST max_rows cap", async () => {
-    // 1000 healthy fillers + the failing agent on the second page: without
-    // range pagination the subject query truncates at 1000 and the incident
-    // never opens.
+  it("pages subject queries by keyset past the PostgREST row cap", async () => {
+    // 1000 eligible unprovisioned rows sorting before the failing row fill
+    // the first page exactly. Without keyset pagination the failing row is
+    // never read and the incident never opens; the fake applies the real
+    // filters and the 1000-row cap, so removing pagination fails this test.
+    // Fillers are young provisioning rows: collected, but inside no rule's
+    // firing condition (under 25 minutes, not a failed status).
     const fillers = Array.from({ length: 1000 }, (_, i) =>
       agentDbRow({
-        id: `agent-fill-${i}`,
-        status: "running",
-        provisioned_at: iso(30 * 24 * 60 * MIN),
-        created_at: iso(30 * 24 * 60 * MIN),
+        id: `agent-fill-${String(i).padStart(4, "0")}`,
+        status: "provisioning",
+        provisioned_at: null,
+        created_at: iso(20 * MIN),
       }),
     );
     const failing = agentDbRow({
-      id: "agent-page-2",
+      id: "agent-zz-fail",
       status: "error",
       provisioned_at: null,
       created_at: iso(2 * 60 * MIN),
     });
-    const deps = scanDeps({
-      db: fakeIncidentDb({ agents: [...fillers, failing] }),
-    });
+    const db = fakeIncidentDb({ agents: [...fillers, failing] });
+    const deps = scanDeps({ db });
     const summary = await runCustomerIncidentScan(deps as never);
+
     expect(summary.opened).toBe(1);
     const ops = (deps.report as jest.Mock).mock.calls[0][0];
-    expect(ops.metadata.incident_key).toBe("launch_failed:agent-page-2");
+    expect(ops.metadata.incident_key).toBe("launch_failed:agent-zz-fail");
+    // The second page was actually requested: a .gt keyset cursor on id.
+    const agentQueries = db.calls.filter((entry) => entry.table === "hivra_agents");
+    expect(
+      agentQueries.some((entry) =>
+        entry.calls.some((call) => call[0] === "gt" && call[1] === "id"),
+      ),
+    ).toBe(true);
+  });
+
+  it("aborts the pass when a keyset page fails mid-read — partial data never resolves", async () => {
+    const fillers = Array.from({ length: 1000 }, (_, i) =>
+      agentDbRow({
+        id: `agent-fill-${String(i).padStart(4, "0")}`,
+        status: "provisioning",
+        provisioned_at: null,
+        created_at: iso(20 * MIN),
+      }),
+    );
+    const deps = scanDeps({
+      db: fakeIncidentDb({
+        agents: [...fillers, agentDbRow({ id: "agent-zz-fail", status: "error", provisioned_at: null, created_at: iso(2 * 60 * MIN) })],
+        failKeysetPageFor: "hivra_agents",
+        openIncidents: [incidentDbRow()],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    // Page two errored → the whole collection aborts → nothing opens,
+    // resolves or archives on incomplete subject data.
+    expect(summary.failed).toBe(1);
+    expect(deps.report as jest.Mock).not.toHaveBeenCalled();
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
   it("marks remaining probes as skipped once the scan probe budget is exhausted", async () => {
