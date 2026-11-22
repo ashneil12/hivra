@@ -25,6 +25,13 @@ export interface OpsFatalAdminAlertInput {
   route?: string | null;
   instanceId?: string | null;
   userId?: string | null;
+  /**
+   * Already-sanitized ops-event metadata (reportOpsEvent runs it through
+   * sanitizeOpsMetadata first). Rendered as a compact Details block so a page
+   * carries its diagnosis bundle — customer/box context, timeline, probe
+   * results — instead of making the receiver open the ops feed first.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 export interface OpsFatalAdminAlertResult {
@@ -34,7 +41,25 @@ export interface OpsFatalAdminAlertResult {
 
 const SUBJECT_PREFIX = "[hermes-fatal]";
 
+// Diagnosis bundles are meant to be read on a phone lock screen, so keep the
+// rendered metadata compact: single-line JSON, hard-capped.
+const EMAIL_METADATA_LIMIT = 2400;
+const TELEGRAM_METADATA_LIMIT = 900;
+
+function formatAlertMetadata(metadata: Record<string, unknown> | undefined, limit: number): string | null {
+  if (!metadata) return null;
+  let json: string;
+  try {
+    json = JSON.stringify(metadata);
+  } catch {
+    return null;
+  }
+  if (!json || json === "{}") return null;
+  return json.length > limit ? `${json.slice(0, limit)}…` : json;
+}
+
 function buildEmailText(input: OpsFatalAdminAlertInput): string {
+  const metadataBlock = formatAlertMetadata(input.metadata, EMAIL_METADATA_LIMIT);
   return [
     `${SUBJECT_PREFIX} ${input.source}: ${input.title}`,
     "",
@@ -44,6 +69,7 @@ function buildEmailText(input: OpsFatalAdminAlertInput): string {
     input.route ? `Route: ${input.route}` : null,
     input.instanceId ? `Instance: ${input.instanceId}` : null,
     input.userId ? `User: ${input.userId}` : null,
+    metadataBlock ? `Details: ${metadataBlock}` : null,
     `Fingerprint: ${input.fingerprint}`,
     "",
     `Ops feed: ${SITE_URL}/dashboard/ops`,
@@ -111,9 +137,11 @@ async function sendTelegram(input: OpsFatalAdminAlertInput): Promise<boolean> {
     return false;
   }
 
+  const metadataBlock = formatAlertMetadata(input.metadata, TELEGRAM_METADATA_LIMIT);
   const text =
     `🚨 ${SUBJECT_PREFIX} ${input.source}\n${input.title}\n\n${input.message}` +
     (input.instanceId ? `\n\nInstance: ${input.instanceId}` : "") +
+    (metadataBlock ? `\n\nDetails: ${metadataBlock}` : "") +
     `\n${SITE_URL}/dashboard/ops`;
 
   try {
