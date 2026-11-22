@@ -748,15 +748,37 @@ describe("runCustomerIncidentScan", () => {
 // ---------------------------------------------------------------------------
 
 describe("incidentPagingEnabled", () => {
-  it("enables paging only for the production app origin", () => {
-    expect(incidentPagingEnabled("https://hivra.cloud")).toBe(true);
-    expect(incidentPagingEnabled("https://hivra.cloud/")).toBe(true);
-    expect(incidentPagingEnabled("https://hivra.cloud/some/path")).toBe(true);
-    expect(incidentPagingEnabled("https://canary.hermesos.cloud")).toBe(false);
-    expect(incidentPagingEnabled("https://hivra.cloud.evil.example")).toBe(false);
-    expect(incidentPagingEnabled("http://localhost:3000")).toBe(false);
-    expect(incidentPagingEnabled(undefined)).toBe(false);
-    expect(incidentPagingEnabled("not a url")).toBe(false);
+  it("pages from a production Vercel env that is not the Canary deployment", () => {
+    // Prod's NEXT_PUBLIC_APP_URL reads back empty, so the gate keys on
+    // VERCEL_ENV plus the deployment channel — no app URL required.
+    expect(incidentPagingEnabled({ VERCEL_ENV: "production" })).toBe(true);
+    expect(
+      incidentPagingEnabled({
+        VERCEL_ENV: "production",
+        VERCEL_PROJECT_PRODUCTION_URL: "hivra.cloud",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not page from Canary even though it also reports VERCEL_ENV=production", () => {
+    expect(
+      incidentPagingEnabled({
+        VERCEL_ENV: "production",
+        HERMES_DEPLOY_CHANNEL: "canary",
+      }),
+    ).toBe(false);
+    expect(
+      incidentPagingEnabled({
+        VERCEL_ENV: "production",
+        VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not page from previews, local runs, or missing env", () => {
+    expect(incidentPagingEnabled({ VERCEL_ENV: "preview" })).toBe(false);
+    expect(incidentPagingEnabled({ VERCEL_ENV: "development" })).toBe(false);
+    expect(incidentPagingEnabled({})).toBe(false);
   });
 });
 

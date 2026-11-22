@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { log } from "@/lib/logger";
 import { reportOpsEvent, type OpsEventInput } from "@/lib/ops-events";
 import { configuredOpsAdminUserIds } from "@/lib/ops-access";
+import { isCanaryDeployment } from "@/lib/deployment-channel";
 import { supabaseAdmin } from "@/lib/supabase";
 import vercelConfig from "../../../vercel.json";
 
@@ -906,18 +907,16 @@ export interface ResolvedNoticeInput {
 /**
  * Customer incidents page admins only from the production deployment.
  * Canary runs the same crons against its own database — whose fixtures fail
- * on purpose — and also reports VERCEL_ENV=production, so the deployment's
- * public app origin is the only reliable discriminator. Everywhere else the
- * scan still writes the incident ops events (the ops feed shows them) but
- * with page:false, and resolved notices are skipped.
+ * on purpose — and also reports VERCEL_ENV=production, so the deployment
+ * channel is the discriminator: page only when Vercel says production AND
+ * the deployment is not Canary. Everywhere else the scan still writes the
+ * incident ops events (the ops feed shows them) but with page:false, and
+ * resolved notices are skipped.
  */
-export function incidentPagingEnabled(appUrl: string | null | undefined): boolean {
-  if (!appUrl) return false;
-  try {
-    return new URL(appUrl).hostname === "hivra.cloud";
-  } catch {
-    return false;
-  }
+export function incidentPagingEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env.VERCEL_ENV === "production" && !isCanaryDeployment(env);
 }
 
 export interface CustomerIncidentScanDeps {
@@ -927,7 +926,7 @@ export interface CustomerIncidentScanDeps {
   probe?: ProbeFn;
   adminUserIds?: ReadonlySet<string>;
   cronSchedules?: ReadonlyMap<string, CronScheduleInfo>;
-  /** Page admins for new incidents + send resolved notices. Defaults to the production-origin check. */
+  /** Page admins for new incidents + send resolved notices. Defaults to the production-deployment check. */
   pagingEnabled?: boolean;
   /** Archive an incident row by id; returns true when this call won the archive. */
   archiveIncident?: (rowId: string) => Promise<boolean>;
@@ -994,8 +993,7 @@ export async function runCustomerIncidentScan(
   const probe = deps.probe ?? defaultProbe;
   const adminUserIds = deps.adminUserIds ?? configuredOpsAdminUserIds();
   const cronSchedules = deps.cronSchedules ?? VERCEL_CRONS;
-  const pagingEnabled =
-    deps.pagingEnabled ?? incidentPagingEnabled(process.env.NEXT_PUBLIC_APP_URL);
+  const pagingEnabled = deps.pagingEnabled ?? incidentPagingEnabled();
   const archiveIncident =
     deps.archiveIncident ?? ((rowId: string) => (db ? defaultArchiveIncident(db, rowId) : Promise.resolve(false)));
   const notifyResolved = deps.notifyResolved ?? defaultNotifyResolved;
