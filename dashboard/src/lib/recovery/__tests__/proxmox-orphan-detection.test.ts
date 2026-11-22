@@ -9,6 +9,7 @@ import {
   isOrphanLvReapEnabled,
   isRestoreCloneReaperEnabled,
   isSafeVgLvPath,
+  loadDbVmidsForHost,
   loadInstanceRowsByIds,
   parseLiveVmsFromHostScript,
   parseOrphanLvReapOutput,
@@ -519,5 +520,57 @@ describe("isRestoreCloneReaperEnabled", () => {
     expect(isRestoreCloneReaperEnabled({ HERMES_RESTORE_CLONE_REAPER_ENABLED: "1" })).toBe(false);
     expect(isRestoreCloneReaperEnabled({ HERMES_RESTORE_CLONE_REAPER_ENABLED: "true" })).toBe(true);
     expect(isRestoreCloneReaperEnabled({ HERMES_RESTORE_CLONE_REAPER_ENABLED: " TRUE " })).toBe(true);
+  });
+});
+
+describe("loadDbVmidsForHost", () => {
+  // Minimal PostgREST chain: from(t).select().eq().in().neq() -> rows.
+  function fakeSupabase(tables: Record<string, Array<Record<string, unknown>>>) {
+    const calls: Array<{ table: string; inColumn: string; inValues: unknown[]; neq: Array<[string, unknown]> }> = [];
+    const from = jest.fn((table: string) => {
+      const call = { table, inColumn: "", inValues: [] as unknown[], neq: [] as Array<[string, unknown]> };
+      calls.push(call);
+      const builder = {
+        select: () => builder,
+        eq: () => builder,
+        in: (column: string, values: unknown[]) => {
+          call.inColumn = column;
+          call.inValues = values;
+          return builder;
+        },
+        neq: (column: string, value: unknown) => {
+          call.neq.push([column, value]);
+          return builder;
+        },
+        then: (resolve: (value: { data: unknown; error: null }) => unknown) =>
+          resolve({ data: tables[table] ?? [], error: null }),
+      };
+      return builder;
+    });
+    return { supabase: { from } as never, calls };
+  }
+
+  it("unions hermes_instances and hivra_agents VMIDs so agent computers are not orphans", async () => {
+    // Prod 2026-11: pve11 reported 9 "running VMs with no matching
+    // hermes_instances row" — every one was a live hivra_agents computer.
+    const { supabase, calls } = fakeSupabase({
+      hermes_instances: [{ proxmox_vmid: 401 }],
+      hivra_agents: [{ vmid: 407 }, { vmid: null }, { vmid: "not-a-number" }],
+    });
+
+    const vmids = await loadDbVmidsForHost(supabase, "pve11", [401, 407, 999]);
+
+    expect(vmids.sort()).toEqual([401, 407]);
+    expect(calls.map((call) => call.table).sort()).toEqual(["hermes_instances", "hivra_agents"]);
+    const agentCall = calls.find((call) => call.table === "hivra_agents");
+    expect(agentCall?.inColumn).toBe("vmid");
+    expect(agentCall?.inValues).toEqual([401, 407, 999]);
+    expect(agentCall?.neq).toContainEqual(["status", "deleted"]);
+  });
+
+  it("returns an empty list without querying when there are no live VMIDs", async () => {
+    const { supabase } = fakeSupabase({});
+    await expect(loadDbVmidsForHost(supabase, "pve11", [])).resolves.toEqual([]);
+    expect((supabase as unknown as { from: jest.Mock }).from).not.toHaveBeenCalled();
   });
 });
