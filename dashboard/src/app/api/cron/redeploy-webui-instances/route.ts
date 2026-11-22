@@ -821,9 +821,19 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Dead-man heartbeat: the sweep ran to completion (per-VM failures are in
-  // `results`, not a route-level failure). Best-effort.
-  await recordCronHeartbeat("redeploy-webui-instances");
+  // Dead-man heartbeat: the sweep ran to completion, but per-VM failures are
+  // real failures — record ok:false so the run does not look clean. Best-effort.
+  await recordCronHeartbeat(
+    "redeploy-webui-instances",
+    failed > 0
+      ? {
+          ok: false,
+          detail:
+            `failed=${failed} of ${rows.length} attempted ` +
+            `(launched=${launched} skipped=${skipped} deferred=${deferred})`,
+        }
+      : undefined,
+  );
 
   return apiSuccess({
     mode: "fleet-sync",

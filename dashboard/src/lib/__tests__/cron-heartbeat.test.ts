@@ -29,11 +29,38 @@ function minutesAgoIso(minutes: number): string {
 describe("recordCronHeartbeat", () => {
   afterEach(() => jest.clearAllMocks());
 
-  it("calls the record_cron_heartbeat RPC with the cron name", async () => {
+  it("calls the record_cron_heartbeat RPC with just the cron name when no outcome is given", async () => {
     const rpc = jest.fn().mockResolvedValue({ error: null });
     mockSupabaseAdmin.value = { rpc };
     await recordCronHeartbeat("probe-instance-health");
+    // One-arg shape keeps working against BOTH the pre-migration
+    // record_cron_heartbeat(text) and the outcome-aware function's defaults.
     expect(rpc).toHaveBeenCalledWith("record_cron_heartbeat", { p_cron_name: "probe-instance-health" });
+  });
+
+  it("passes ok:false + detail through for a run with per-item failures", async () => {
+    const rpc = jest.fn().mockResolvedValue({ error: null });
+    mockSupabaseAdmin.value = { rpc };
+    await recordCronHeartbeat("reconcile-crypto-topups", {
+      ok: false,
+      detail: "recon_failed=2 credit_sweep=0 mv_sweep=0",
+    });
+    expect(rpc).toHaveBeenCalledWith("record_cron_heartbeat", {
+      p_cron_name: "reconcile-crypto-topups",
+      p_ok: false,
+      p_detail: "recon_failed=2 credit_sweep=0 mv_sweep=0",
+    });
+  });
+
+  it("passes p_ok:true + null detail for an explicit ok outcome", async () => {
+    const rpc = jest.fn().mockResolvedValue({ error: null });
+    mockSupabaseAdmin.value = { rpc };
+    await recordCronHeartbeat("purge-expired", { ok: true });
+    expect(rpc).toHaveBeenCalledWith("record_cron_heartbeat", {
+      p_cron_name: "purge-expired",
+      p_ok: true,
+      p_detail: null,
+    });
   });
 
   it("never throws when the RPC errors (best-effort)", async () => {

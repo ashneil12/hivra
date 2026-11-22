@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
+import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { reconcilePendingManagedVeniceTokenQuotes } from "@/lib/billing/managed-venice-token-reconciliation";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
@@ -95,6 +96,7 @@ export async function GET(req: NextRequest) {
         noMatch: summary.noMatch,
         manualReview: summary.manualReview,
         cancelled: summary.cancelled,
+        expiredAfterGrace: summary.expiredAfterGrace,
         skipped: summary.skipped,
         failed: summary.failed,
         transferSurfacing: summary.transferSurfacing,
@@ -134,6 +136,7 @@ export async function GET(req: NextRequest) {
               manualReview: summary.manualReview,
               noMatch: summary.noMatch,
               underconfirmed: summary.underconfirmed,
+              expiredAfterGrace: summary.expiredAfterGrace,
               skipped: summary.skipped,
               deferred,
               failedQuotes: failedQuotes.slice(0, 25),
@@ -148,6 +151,19 @@ export async function GET(req: NextRequest) {
         }
       }
     }
+
+    // Honest heartbeat: failed/manual-review quotes are real deposits awaiting
+    // credit — the same condition that files the ops event above must not
+    // record a clean run. Deferred quotes are a delay, not a failure.
+    await recordCronHeartbeat(
+      "managed-venice-token-reconciliation",
+      summary.failed > 0 || summary.manualReview > 0
+        ? {
+            ok: false,
+            detail: `failed=${summary.failed} manualReview=${summary.manualReview} deferred=${deferredCount}`,
+          }
+        : undefined,
+    );
 
     return apiSuccess(summary);
   } catch (error) {

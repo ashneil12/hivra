@@ -40,7 +40,18 @@ export async function GET(req: NextRequest) {
 
   try {
     const summary = await runSurfaceWatchdogSweep();
-    await recordCronHeartbeat("hivra-surface-watchdog");
+    // Honest heartbeat: read/relay failures mean boxes went unswept this tick.
+    await recordCronHeartbeat(
+      "hivra-surface-watchdog",
+      summary.failed > 0
+        ? {
+            ok: false,
+            detail:
+              `failed=${summary.failed} notReached=${summary.notReached} ` +
+              `unreachable=${summary.unreachable} notInstalled=${summary.notInstalled}`,
+          }
+        : undefined,
+    );
     return apiSuccess(summary);
   } catch (err) {
     log.error("surface watchdog sweep failed", err, {
