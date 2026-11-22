@@ -26,6 +26,7 @@ import { NextRequest } from "next/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
+import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
@@ -119,6 +120,27 @@ export async function GET(req: NextRequest) {
     });
     return apiError("Failed to load pending sweeps", 500);
   }
+
+  // Honest heartbeat: reconciliation/manual-review/sweep failures are real
+  // money awaiting credit or operator action — a run that logged them is not ok.
+  const heartbeatFailed =
+    reconciliation.failed > 0 ||
+    reconciliation.manualReview > 0 ||
+    sweep.failed > 0 ||
+    (sweep.needsOperator ?? 0) > 0 ||
+    "error" in veniceReviewConflicts;
+  await recordCronHeartbeat(
+    "yearly-token-sweep",
+    heartbeatFailed
+      ? {
+          ok: false,
+          detail:
+            `recon_failed=${reconciliation.failed} manual_review=${reconciliation.manualReview} ` +
+            `sweep_failed=${sweep.failed} needs_operator=${sweep.needsOperator ?? 0} ` +
+            `venice_cross_check=${"error" in veniceReviewConflicts ? "error" : "ok"}`,
+        }
+      : undefined,
+  );
 
   return apiSuccess({
     ranAt: now.toISOString(),

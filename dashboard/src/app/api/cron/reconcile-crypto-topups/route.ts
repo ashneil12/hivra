@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
+import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { reconcilePendingCryptoTopUps } from "@/lib/billing/crypto-reconciliation";
 import { sweepPendingCreditDepositReceipts } from "@/lib/billing/credit-deposit-sweep";
 import { sweepPendingManagedVeniceTokenQuotes } from "@/lib/billing/managed-venice-token-sweep";
@@ -149,6 +150,33 @@ export async function GET(req: NextRequest) {
             : String(managedVeniceSweepError),
       };
     }
+
+    // Honest heartbeat: per-intent failures and sweep failures used to leave
+    // the run looking 100% ok. Record ok:false so the streak is countable.
+    const creditSweepItemFailures =
+      "failed" in sweep && typeof sweep.failed === "number" ? sweep.failed : 0;
+    const managedVeniceItemFailures =
+      !("error" in managedVeniceSweep) && typeof managedVeniceSweep.failed === "number"
+        ? managedVeniceSweep.failed + (managedVeniceSweep.needsOperator ?? 0)
+        : 0;
+    const heartbeatFailed =
+      reconciliation.failed > 0 ||
+      creditSweepFailed ||
+      creditSweepItemFailures > 0 ||
+      managedVeniceSweepFailed ||
+      managedVeniceItemFailures > 0;
+    await recordCronHeartbeat(
+      "reconcile-crypto-topups",
+      heartbeatFailed
+        ? {
+            ok: false,
+            detail:
+              `recon_failed=${reconciliation.failed} ` +
+              `credit_sweep=${creditSweepFailed ? "threw" : creditSweepItemFailures} ` +
+              `mv_sweep=${managedVeniceSweepFailed ? "threw" : managedVeniceItemFailures}`,
+          }
+        : undefined,
+    );
 
     // Honest top-level flag: an operator polling only HTTP status (200) won't
     // see the soft per-sweep {error} fields; expose a single boolean so a
