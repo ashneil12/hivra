@@ -520,33 +520,64 @@ function watchdogEventFromOpsRow(row: WatchdogOpsRow): WatchdogEventSnapshot {
   };
 }
 
+// PostgREST caps every response at max_rows (1000 in this project) and says
+// nothing when it truncates — an unpaged subject query silently drops rows,
+// which for this scan means a customer incident that never opens or a stale
+// one that resolves early. Page every subject read until a short page.
+const SUBJECT_PAGE_SIZE = 1000;
+
+async function selectAllPages<RowT>(
+  label: string,
+  build: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: RowT[] | null; error: { message?: string } | null }>,
+): Promise<RowT[]> {
+  const rows: RowT[] = [];
+  for (let from = 0; ; from += SUBJECT_PAGE_SIZE) {
+    const { data, error } = await build(from, from + SUBJECT_PAGE_SIZE - 1);
+    if (error) throw new Error(error.message || `${label} query failed`);
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < SUBJECT_PAGE_SIZE) return rows;
+  }
+}
+
 async function collectAgents(db: DbClient, now: number): Promise<HivraAgentSnapshot[]> {
   const cutoff24 = new Date(now - LAUNCH_FAILED_WINDOW_MS).toISOString();
   // Three bounded queries merged by id: unprovisioned-recent (launch_failed),
   // running (box_down), and in-flight operations (lifecycle_stuck — the stuck
   // op may sit on a non-running status like provisioning/deleting).
   const [unprovisioned, running, inFlight] = await Promise.all([
-    db
-      .from("hivra_agents")
-      .select(AGENT_SELECT)
-      .is("provisioned_at", null)
-      .gte("created_at", cutoff24),
-    db.from("hivra_agents").select(AGENT_SELECT).eq("status", "running"),
-    db
-      .from("hivra_agents")
-      .select(AGENT_SELECT)
-      .not("operation_kind", "is", null)
-      .not("operation_started_at", "is", null),
+    selectAllPages<AgentDbRow>("hivra_agents unprovisioned", (from, to) =>
+      db
+        .from("hivra_agents")
+        .select(AGENT_SELECT)
+        .is("provisioned_at", null)
+        .gte("created_at", cutoff24)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    selectAllPages<AgentDbRow>("hivra_agents running", (from, to) =>
+      db
+        .from("hivra_agents")
+        .select(AGENT_SELECT)
+        .eq("status", "running")
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    selectAllPages<AgentDbRow>("hivra_agents in-flight", (from, to) =>
+      db
+        .from("hivra_agents")
+        .select(AGENT_SELECT)
+        .not("operation_kind", "is", null)
+        .not("operation_started_at", "is", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
-  for (const result of [unprovisioned, running, inFlight]) {
-    if (result.error) throw new Error(result.error.message || "hivra_agents query failed");
-  }
   const byId = new Map<string, HivraAgentSnapshot>();
-  for (const row of [
-    ...((unprovisioned.data ?? []) as unknown as AgentDbRow[]),
-    ...((running.data ?? []) as unknown as AgentDbRow[]),
-    ...((inFlight.data ?? []) as unknown as AgentDbRow[]),
-  ]) {
+  for (const row of [...unprovisioned, ...running, ...inFlight]) {
     byId.set(row.id, toAgentSnapshot(row));
   }
   return [...byId.values()];
@@ -554,31 +585,40 @@ async function collectAgents(db: DbClient, now: number): Promise<HivraAgentSnaps
 
 async function collectHermesInstances(db: DbClient, now: number): Promise<HermesInstanceSnapshot[]> {
   const cutoff24 = new Date(now - LAUNCH_FAILED_WINDOW_MS).toISOString();
-  const { data, error } = await db
-    .from("hermes_instances")
-    .select("id,user_id,name,status,lifecycle_state,gateway_url,created_at")
-    .gte("created_at", cutoff24);
-  if (error) throw new Error(error.message || "hermes_instances query failed");
-  return ((data ?? []) as HermesInstanceDbRow[]).map(toInstanceSnapshot);
+  const rows = await selectAllPages<HermesInstanceDbRow>("hermes_instances", (from, to) =>
+    db
+      .from("hermes_instances")
+      .select("id,user_id,name,status,lifecycle_state,gateway_url,created_at")
+      .gte("created_at", cutoff24)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  return rows.map(toInstanceSnapshot);
 }
 
 async function collectHeartbeats(db: DbClient): Promise<CronHeartbeatSnapshot[]> {
-  const { data, error } = await db
-    .from("ops_cron_heartbeats")
-    .select("cron_name,last_run_at,last_success_at,run_count,ok_count,consecutive_failures,last_detail");
-  if (error) throw new Error(error.message || "ops_cron_heartbeats query failed");
-  return ((data ?? []) as HeartbeatDbRow[]).map(toHeartbeatSnapshot);
+  const rows = await selectAllPages<HeartbeatDbRow>("ops_cron_heartbeats", (from, to) =>
+    db
+      .from("ops_cron_heartbeats")
+      .select("cron_name,last_run_at,last_success_at,run_count,ok_count,consecutive_failures,last_detail")
+      .order("cron_name", { ascending: true })
+      .range(from, to),
+  );
+  return rows.map(toHeartbeatSnapshot);
 }
 
 async function collectOpenIncidentRows(db: DbClient): Promise<OpenIncidentRow[]> {
-  const { data, error } = await db
-    .from("ops_events")
-    .select("id,fingerprint,title,source,metadata")
-    .like("source", "incident.%")
-    .is("archived_at", null);
-  if (error) throw new Error(error.message || "open incident rows query failed");
+  const data = await selectAllPages<Record<string, unknown>>("open incident rows", (from, to) =>
+    db
+      .from("ops_events")
+      .select("id,fingerprint,title,source,metadata")
+      .like("source", "incident.%")
+      .is("archived_at", null)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   const rows: OpenIncidentRow[] = [];
-  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+  for (const row of data) {
     const metadata = (row.metadata ?? {}) as Record<string, unknown>;
     rows.push({
       id: String(row.id),
@@ -637,21 +677,27 @@ async function collectSubscriptions(
 ): Promise<Map<string, CustomerSubscriptionSnapshot>> {
   const map = new Map<string, CustomerSubscriptionSnapshot>();
   if (userIds.length === 0) return map;
-  const { data, error } = await db
-    .from("hermes_subscriptions")
-    .select("user_id,plan,status")
-    .in("user_id", userIds);
-  if (error) {
+  try {
+    const rows = await selectAllPages<{ user_id: string; plan: string | null; status: string | null }>(
+      "hermes_subscriptions",
+      (from, to) =>
+        db
+          .from("hermes_subscriptions")
+          .select("user_id,plan,status")
+          .in("user_id", userIds)
+          .order("user_id", { ascending: true })
+          .range(from, to),
+    );
+    for (const row of rows) {
+      map.set(row.user_id, { plan: row.plan, status: row.status });
+    }
+  } catch (err) {
     // Diagnosis enrichment only — never block incident detection on it.
     log.warn("customer-incidents: subscription lookup failed", {
       source: "customer-incidents",
       failureType: "subscription_lookup_failed",
-      errorMessage: error.message,
+      errorMessage: err instanceof Error ? err.message : String(err),
     });
-    return map;
-  }
-  for (const row of (data ?? []) as Array<{ user_id: string; plan: string | null; status: string | null }>) {
-    map.set(row.user_id, { plan: row.plan, status: row.status });
   }
   return map;
 }

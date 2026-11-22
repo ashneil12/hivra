@@ -552,14 +552,24 @@ function fakeIncidentDb(config: FakeDbConfig) {
     from(table: string) {
       const calls: unknown[][] = [];
       const chain: Record<string, unknown> = {};
-      for (const method of ["select", "eq", "is", "not", "gte", "in", "like", "order", "limit"]) {
+      for (const method of ["select", "eq", "is", "not", "gte", "in", "like", "order", "limit", "range"]) {
         chain[method] = (...args: unknown[]) => {
           calls.push([method, ...args]);
           return chain;
         };
       }
+      const resolve = (): { data: unknown; error: { message: string } | null } => {
+        const result = resolveTable(table, calls);
+        if (result.error || !result.data) return { data: result.data, error: result.error };
+        const rangeCall = calls.find((c) => c[0] === "range");
+        if (!rangeCall) return { data: result.data, error: null };
+        return {
+          data: result.data.slice(Number(rangeCall[1]), Number(rangeCall[2]) + 1),
+          error: null,
+        };
+      };
       chain.then = (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
-        Promise.resolve(resolveTable(table, calls)).then(onFulfilled, onRejected);
+        Promise.resolve(resolve()).then(onFulfilled, onRejected);
       return chain;
     },
   };
@@ -753,7 +763,7 @@ describe("runCustomerIncidentScan", () => {
     const failingDb = {
       from() {
         const chain: Record<string, unknown> = {};
-        for (const m of ["select", "eq", "is", "not", "gte", "in", "like", "order", "limit"]) {
+        for (const m of ["select", "eq", "is", "not", "gte", "in", "like", "order", "limit", "range"]) {
           chain[m] = () => chain;
         }
         chain.then = (onFulfilled: (v: unknown) => unknown) =>
@@ -767,6 +777,33 @@ describe("runCustomerIncidentScan", () => {
     expect(deps.report as jest.Mock).not.toHaveBeenCalled();
     expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
     expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("pages subject queries past the PostgREST max_rows cap", async () => {
+    // 1000 healthy fillers + the failing agent on the second page: without
+    // range pagination the subject query truncates at 1000 and the incident
+    // never opens.
+    const fillers = Array.from({ length: 1000 }, (_, i) =>
+      agentDbRow({
+        id: `agent-fill-${i}`,
+        status: "running",
+        provisioned_at: iso(30 * 24 * 60 * MIN),
+        created_at: iso(30 * 24 * 60 * MIN),
+      }),
+    );
+    const failing = agentDbRow({
+      id: "agent-page-2",
+      status: "error",
+      provisioned_at: null,
+      created_at: iso(2 * 60 * MIN),
+    });
+    const deps = scanDeps({
+      db: fakeIncidentDb({ agents: [...fillers, failing] }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary.opened).toBe(1);
+    const ops = (deps.report as jest.Mock).mock.calls[0][0];
+    expect(ops.metadata.incident_key).toBe("launch_failed:agent-page-2");
   });
 });
 
