@@ -560,7 +560,7 @@ async function loadActiveProxmoxHosts(
   return (data ?? []) as ProxmoxHostRow[];
 }
 
-async function loadDbVmidsForHost(
+export async function loadDbVmidsForHost(
   supabase: SupabaseAdmin,
   hostId: string,
   liveVmids: number[],
@@ -580,6 +580,23 @@ async function loadDbVmidsForHost(
   for (const row of rows) {
     if (typeof row.proxmox_vmid === "number" && Number.isFinite(row.proxmox_vmid)) {
       vmids.push(row.proxmox_vmid);
+    }
+  }
+  // Hivra agent computers (hivra-cc-*/Agent Zero VMs) live in hivra_agents,
+  // not hermes_instances — without this union every running agent VM was
+  // reported as an orphan (prod 2026-11: 9 "orphans" on one host, all owned).
+  const { data: agentRows, error: agentError } = await supabase
+    .from("hivra_agents")
+    .select("vmid")
+    .eq("proxmox_host", hostId)
+    .in("vmid", liveVmids)
+    .neq("status", "deleted");
+  if (agentError) {
+    throw new Error(`hivra_agents query failed: ${agentError.message}`);
+  }
+  for (const row of (agentRows ?? []) as Array<{ vmid: number | null }>) {
+    if (typeof row.vmid === "number" && Number.isFinite(row.vmid)) {
+      vmids.push(row.vmid);
     }
   }
   return vmids;

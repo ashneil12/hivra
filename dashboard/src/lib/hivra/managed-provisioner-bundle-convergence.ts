@@ -132,14 +132,25 @@ async function loadLiveComputersByHost(
   for (let from = 0; ; from += AGENT_PAGE_SIZE) {
     const { data, error } = await supabase
       .from("hivra_agents")
-      .select("id, proxmox_host, managed_provisioner_channel")
+      .select("id, vmid, status, proxmox_host, managed_provisioner_channel")
       .eq("deployment_mode", "hivra-managed")
       .neq("status", "deleted")
       .order("id", { ascending: true })
       .range(from, from + AGENT_PAGE_SIZE - 1);
     if (error) throw new Error(`hivra_agents host read failed: ${error.message}`);
-    const rows = (data ?? []) as Array<{ proxmox_host: string | null; managed_provisioner_channel: unknown }>;
+    const rows = (data ?? []) as Array<{
+      vmid: number | null;
+      status: string | null;
+      proxmox_host: string | null;
+      managed_provisioner_channel: unknown;
+    }>;
     for (const row of rows) {
+      // "Holds computers" means a VMID-bound row that is not torn down or
+      // errored. Deleted is already excluded in the query; error rows and
+      // rows that never got a VMID do not hold a computer on the host
+      // (prod 2026-11: one host reported 46 "live" computers that were mostly
+      // deleted/error/VMID-less bookkeeping rows).
+      if (row.vmid == null || row.status === "deleted" || row.status === "error") continue;
       // Same rule the execution context applies: null is the historical
       // default lane, anything unknown is not ours to serve.
       if (persistedManagedHivraProvisionerChannel(row.managed_provisioner_channel) !== channel) continue;

@@ -41,6 +41,7 @@ type DbQuery = {
   in: (...args: unknown[]) => DbQuery;
   is: (...args: unknown[]) => DbQuery;
   gt: (...args: unknown[]) => DbQuery;
+  lt: (...args: unknown[]) => DbQuery;
   order: (...args: unknown[]) => DbQuery;
   limit: (...args: unknown[]) => DbQuery;
   then: Promise<{ data?: unknown; error: QueryError }>["then"];
@@ -60,6 +61,13 @@ const DEFAULT_LIMIT = 50;
 // Batch slots always left for intents the old session helper failed without a
 // chain check, so that finite backlog drains even while many intents are open.
 const MIN_UNCHECKED_EXPIRED_SHARE = 5;
+// An open intent older than this is no longer scanned every run: its session
+// window + late-payment grace closed weeks ago, so each tick would only
+// re-scan a dead range on the shared public RPC. On-demand settlement
+// (reconcileCryptoTopUpByReference) still checks it if the user asks.
+const STALE_INTENT_MAX_AGE_MS = 14 * 24 * 60 * 60_000;
+// Bound on the stale-intent count query; the real backlog is single digits.
+const STALE_INTENT_COUNT_LIMIT = 500;
 // The reconcile queue: `payment_transactions.reconcile_queued_at` is when an
 // intent joined the back of the queue (its insert, then every check). See
 // listOpenCryptoTopUps.
@@ -180,14 +188,15 @@ function takeFairly(
  * Intents the old session helper failed without a chain check keep a share of
  * every batch, in queue order, until they are closed.
  */
-async function listOpenCryptoTopUps(db: SupabaseLike, limit: number) {
+async function listOpenCryptoTopUps(db: SupabaseLike, limit: number, createdAfterIso: string) {
   const lookahead = Math.min(MAX_QUEUE_LOOKAHEAD, limit * QUEUE_LOOKAHEAD_FACTOR);
   const freshShare = Math.floor(limit / FRESH_LANE_DIVISOR);
   const intents = () =>
     table(db, "payment_transactions")
       .select(PAYMENT_COLUMNS)
       .eq("provider", "bankr")
-      .eq("asset", CRYPTO_TOPUP_ASSETS.usdc_base.key);
+      .eq("asset", CRYPTO_TOPUP_ASSETS.usdc_base.key)
+      .gt("created_at", createdAfterIso);
   const inQueueOrder = (query: DbQuery) =>
     query
       .order(QUEUE_COLUMN, { ascending: true, nullsFirst: true })
@@ -225,6 +234,37 @@ async function listOpenCryptoTopUps(db: SupabaseLike, limit: number) {
   const uncheckedShare = Math.max(MIN_UNCHECKED_EXPIRED_SHARE, limit - pendingRows.length);
   const uncheckedRows = takeFairly(rowsOf(uncheckedExpired), uncheckedShare, perUser);
   return [...pendingRows, ...uncheckedRows];
+}
+
+// How many open intents the age cutoff just excluded this run, so the summary
+// shows the backlog is being skipped on purpose rather than silently absent.
+async function countStaleOpenCryptoTopUps(db: SupabaseLike, createdBeforeIso: string) {
+  const base = () =>
+    table(db, "payment_transactions")
+      .select("id")
+      .eq("provider", "bankr")
+      .eq("asset", CRYPTO_TOPUP_ASSETS.usdc_base.key)
+      .lt("created_at", createdBeforeIso);
+  const [pending, uncheckedExpired] = await Promise.all([
+    base().eq("status", "pending").limit(STALE_INTENT_COUNT_LIMIT),
+    base()
+      .eq("status", "failed")
+      .eq("metadata->>failureType", CRYPTO_TOPUP_SESSION_EXPIRED_FAILURE)
+      .is("metadata->>reconciliationClosedAt", null)
+      .limit(STALE_INTENT_COUNT_LIMIT),
+  ]);
+  for (const result of [pending, uncheckedExpired]) {
+    if (result.error) {
+      throw new Error(result.error.message || "Failed to count stale crypto top-ups");
+    }
+  }
+  const ids = new Set(
+    [pending.data, uncheckedExpired.data]
+      .flatMap((data) => (Array.isArray(data) ? data : []))
+      .map((row) => (row as { id?: unknown }).id)
+      .filter((id): id is string => typeof id === "string")
+  );
+  return ids.size;
 }
 
 /**
@@ -503,6 +543,7 @@ export async function reconcilePendingCryptoTopUps(params: {
   const minConfirmations = normalizeMinConfirmations(params.minConfirmations);
   const settle = params.settleIntent ?? settleCryptoTopUpIntent;
   const now = params.now ?? new Date();
+  const staleCutoffIso = new Date(now.getTime() - STALE_INTENT_MAX_AGE_MS).toISOString();
   // One reader per batch: the head and block timestamps are fetched once.
   const chain = createBaseChainReader({
     rpcUrl: params.rpcUrl,
@@ -531,7 +572,10 @@ export async function reconcilePendingCryptoTopUps(params: {
     });
   };
 
-  const intents = await listOpenCryptoTopUps(db, limit);
+  const [intents, staleExcluded] = await Promise.all([
+    listOpenCryptoTopUps(db, limit, staleCutoffIso),
+    countStaleOpenCryptoTopUps(db, staleCutoffIso),
+  ]);
   await markCheckedThisRun(db, intents, now);
   for (const row of intents) {
     try {
@@ -569,6 +613,9 @@ export async function reconcilePendingCryptoTopUps(params: {
 
   return {
     checked: intents.length,
+    // Open intents older than STALE_INTENT_MAX_AGE_MS that this run skipped
+    // instead of scanning; they remain settleable on demand.
+    staleExcluded,
     ...counts,
     results,
   };

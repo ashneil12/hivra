@@ -135,7 +135,15 @@ function applyFleetSyncEligibility<T>(query: T): T {
   // result types (rows vs {count}) intact at both call sites.
   const filtered = (query as unknown as FleetSyncFilterable)
       .in("backend", WEBFREE_BACKENDS)
-      .or("lifecycle_state.in.(active,failed),status.eq.running")
+      // lifecycle_state='failed' is deliberately NOT eligible on its own: a
+      // failed-lifecycle row whose status is also failed/error has no VM the
+      // redeploy can reach (prod 2026-11: daily "launch failed" events for
+      // powered-off VMs, archived rows the mutation guard refuses, and boxes
+      // with no IP — every tick, forever). A failed row whose VM is genuinely
+      // up still enters through the status='running' arm, so nothing live is
+      // ejected; the lifecycle-failed rows that remain are the ones this
+      // sweep can never help.
+      .or("lifecycle_state.eq.active,status.eq.running")
       .not("lifecycle_state", "in", FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST)
       // Never sweep a row armed for teardown. The orphan sweep (Mon 09:00)
       // powers the VM off and sets this status with a 72h grace; this sweep ran
@@ -560,10 +568,13 @@ async function requeueDeferredRows(ids: string[]): Promise<void> {
  *
  * Selection criteria:
  *   - backend in WEBFREE_BACKENDS ('webui' | 'gateway')
- *   - lifecycle_state in ('active', 'running', 'provisioned') OR status =
- *     'running' — the OR is load-bearing: a lifecycle_state-only filter
- *     permanently starves a healthy box whose lifecycle_state has drifted
- *     (see the comment on the query below)
+ *   - lifecycle_state = 'active' OR status = 'running' — the OR is
+ *     load-bearing: a lifecycle_state-only filter permanently starves a
+ *     healthy box whose lifecycle_state has drifted (see the comment on the
+ *     query below). lifecycle_state='failed' alone is NOT eligible: with a
+ *     non-running status there is no reachable VM to redeploy, so sweeping it
+ *     only manufactures a guaranteed daily failure; a failed row whose VM is
+ *     actually up is still rescued by the status='running' arm.
  *   - minus rows armed for teardown (status='scheduled_for_deletion')
  *   - ordered by last_sync_attempt_at NULLS FIRST so the longest-unattempted
  *     VMs get picked up first; ties broken by id for determinism
@@ -810,9 +821,19 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Dead-man heartbeat: the sweep ran to completion (per-VM failures are in
-  // `results`, not a route-level failure). Best-effort.
-  await recordCronHeartbeat("redeploy-webui-instances");
+  // Dead-man heartbeat: the sweep ran to completion, but per-VM failures are
+  // real failures — record ok:false so the run does not look clean. Best-effort.
+  await recordCronHeartbeat(
+    "redeploy-webui-instances",
+    failed > 0
+      ? {
+          ok: false,
+          detail:
+            `failed=${failed} of ${rows.length} attempted ` +
+            `(launched=${launched} skipped=${skipped} deferred=${deferred})`,
+        }
+      : undefined,
+  );
 
   return apiSuccess({
     mode: "fleet-sync",

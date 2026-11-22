@@ -343,6 +343,116 @@ describe('ops-events helper', () => {
     expect(mockedFatalAlert).not.toHaveBeenCalled();
   });
 
+  it('pages an admin on first sighting of a page:true non-fatal event, with metadata carried to the alert', async () => {
+    const maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    const eq = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const single = jest.fn().mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
+    const insert = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq, maybeSingle })
+      .mockReturnValueOnce({ insert, select, single });
+
+    await reportOpsEvent({
+      source: 'incident.box_down',
+      severity: 'error',
+      page: true,
+      title: 'Customer incident: agent box down',
+      message: 'A customer box is down',
+      instanceId: 'agent_1',
+      metadata: { incident_key: 'box_down:agent_1', rule: 'box_down' },
+    });
+
+    expect(mockedFatalAlert).toHaveBeenCalledTimes(1);
+    expect(mockedFatalAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'incident.box_down',
+        title: 'Customer incident: agent box down',
+        metadata: expect.objectContaining({ incident_key: 'box_down:agent_1' }),
+      }),
+    );
+  });
+
+  it('does NOT re-page a page:true event while its row is still open (update branch, archived_at null)', async () => {
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: { id: 'evt_incident', occurrence_count: 3, archived_at: null },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const updateEq = jest.fn().mockReturnThis();
+    const updateSingle = jest.fn().mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
+    const update = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
+      .mockReturnValueOnce({ update, eq: updateEq, select, single: updateSingle });
+
+    await reportOpsEvent({
+      source: 'incident.box_down',
+      severity: 'error',
+      page: true,
+      title: 'Customer incident: agent box down',
+      message: 'A customer box is down',
+    });
+
+    expect(mockedFatalAlert).not.toHaveBeenCalled();
+  });
+
+  it('pages AGAIN when a page:true fingerprint recurs after its row was archived', async () => {
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: { id: 'evt_incident', occurrence_count: 9, archived_at: '2026-11-20T00:00:00Z' },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const updateEq = jest.fn().mockReturnThis();
+    const updateSingle = jest.fn().mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
+    const update = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
+      .mockReturnValueOnce({ update, eq: updateEq, select, single: updateSingle });
+
+    await reportOpsEvent({
+      source: 'incident.box_down',
+      severity: 'error',
+      page: true,
+      title: 'Customer incident: agent box down',
+      message: 'A customer box is down',
+    });
+
+    // The update un-archived the row; the recurrence is a fresh incident.
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ archived_at: null }));
+    expect(mockedFatalAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT page a plain error event even when its archived row recurs', async () => {
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: { id: 'evt_plain', occurrence_count: 2, archived_at: '2026-11-20T00:00:00Z' },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const updateEq = jest.fn().mockReturnThis();
+    const updateSingle = jest.fn().mockResolvedValue({ data: { id: 'evt_plain' }, error: null });
+    const update = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
+      .mockReturnValueOnce({ update, eq: updateEq, select, single: updateSingle });
+
+    await reportOpsEvent({
+      source: 'api',
+      severity: 'error',
+      title: 'Responses proxy failed',
+      message: 'Gateway unreachable',
+    });
+
+    expect(mockedFatalAlert).not.toHaveBeenCalled();
+  });
+
   it('soft-archives the requested events for the current operator', async () => {
     const inMock = jest.fn().mockReturnThis();
     const select = jest.fn().mockReturnThis();

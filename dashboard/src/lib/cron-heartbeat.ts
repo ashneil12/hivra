@@ -52,20 +52,52 @@ export const CRON_REGISTRY: readonly CronHeartbeatDefinition[] = [
   // vercel.json: "30 2 * * *" and "0 4 * * *" — daily, so 1440.
   { name: "daily-vm-backups", periodMinutes: 1440 },
   { name: "daily-instance-backups", periodMinutes: 1440 },
+  // The incident evaluator watches every other cron's heartbeat — if IT dies,
+  // nothing evaluates incidents, including its own. Registering it here lets
+  // migration-drift-check's independent watchdog page on its silence (2x5min).
+  { name: "customer-incidents", periodMinutes: 5 },
 ];
 
 /**
- * Stamp a successful cron run. Upserts the heartbeat row: bumps last_run_at +
- * last_success_at to now and increments the counters. Best-effort — a
- * heartbeat write failing must NEVER fail the cron it's instrumenting, so this
- * swallows all errors and only logs a warning.
+ * How a cron run ended. Default (or `ok: true`) is a fully clean run. Pass
+ * `{ ok: false, detail }` when the handler completed but its own summary shows
+ * per-item failures: run_count still bumps, but ok_count and last_success_at
+ * do NOT move and consecutive_failures increments — so a cron that fails every
+ * tick stops looking 100% healthy to the ops feed and the customer-incidents
+ * cron_unhealthy rule.
  */
-export async function recordCronHeartbeat(name: string): Promise<void> {
+export interface CronHeartbeatOutcome {
+  ok?: boolean;
+  /** Short operator-facing reason (counts only, no secrets). Stored in last_detail. */
+  detail?: string;
+}
+
+/**
+ * Stamp a cron run. Upserts the heartbeat row: bumps last_run_at, and on a
+ * fully-ok run also bumps last_success_at and resets consecutive_failures.
+ * Best-effort — a heartbeat write failing must NEVER fail the cron it's
+ * instrumenting, so this swallows all errors and only logs a warning.
+ */
+export async function recordCronHeartbeat(
+  name: string,
+  outcome?: CronHeartbeatOutcome,
+): Promise<void> {
   const db = supabaseAdmin;
   if (!db) return;
 
+  const ok = outcome?.ok !== false;
   try {
-    const { error } = await db.rpc("record_cron_heartbeat", { p_cron_name: name });
+    // Callers that pass no outcome keep the original one-argument RPC shape:
+    // it resolves against both the pre-migration record_cron_heartbeat(text)
+    // and the outcome-aware (text, boolean, text) whose extra params default.
+    // Passing p_ok/p_detail unconditionally would break every heartbeat write
+    // in the window between deploy and migration apply.
+    const { error } = await db.rpc(
+      "record_cron_heartbeat",
+      outcome === undefined
+        ? { p_cron_name: name }
+        : { p_cron_name: name, p_ok: ok, p_detail: outcome.detail ?? null },
+    );
     if (error) {
       log.warn("recordCronHeartbeat failed", {
         source: "cron-heartbeat",

@@ -502,21 +502,15 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
     expect(body.data.failed).toBe(0);
     // Confirms we queried for the right shape — webfree-backend set + active-ish lifecycle.
     expect(query.backendInMock).toHaveBeenCalledWith("backend", ["webui", "gateway"]);
-    // Every lifecycle literal we filter on MUST be a member of the column's
-    // CHECK vocabulary. The original filter used STATUS words ('running',
-    // 'provisioned') that the constraint does not allow, so it silently
-    // collapsed to lifecycle_state='active' and starved everything else.
     const orArg = String(query.orMock.mock.calls[0][0]);
-    const lifecycleLiterals = (orArg.match(/lifecycle_state\.in\.\(([^)]*)\)/)?.[1] ?? "")
-      .split(",")
-      .filter(Boolean);
-    expect(lifecycleLiterals.length).toBeGreaterThan(0);
-    for (const literal of lifecycleLiterals) {
-      expect(LIFECYCLE_CHECK_STATES).toContain(literal);
-    }
-    // 'failed' must be eligible: a dispatch failure stamps lifecycle_state=
-    // 'failed', so excluding it EJECTS a box from the sweep permanently.
-    expect(lifecycleLiterals).toContain("failed");
+    // lifecycle_state='active' is the only lifecycle arm: 'failed' is NOT
+    // eligible on its own because a failed row with a non-running status has
+    // no VM the redeploy can reach — sweeping it manufactures a guaranteed
+    // daily failure (prod 2026-11). A failed row whose VM is genuinely up is
+    // still rescued by the status='running' arm, so nothing live is ejected.
+    expect(orArg).toContain("lifecycle_state.eq.active");
+    expect(orArg).not.toContain("failed");
+    expect(LIFECYCLE_CHECK_STATES).toContain("active");
     // The status arm rescues boxes whose lifecycle_state drifted...
     expect(orArg).toContain("status.eq.running");
     // ...and the deny-list is what keeps that arm from redeploying a destroyed

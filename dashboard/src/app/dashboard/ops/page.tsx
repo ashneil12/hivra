@@ -87,6 +87,17 @@ function formatTime(value: string): string {
   }).format(new Date(value));
 }
 
+/**
+ * Box-reported event time for watchdog rows (metadata.event_at). last_seen_at
+ * is when WE last recorded the row — for box.surface_watchdog.* events the
+ * truth the operator needs is when the box says it happened, so the feed shows
+ * event_at when present instead of the relay time.
+ */
+function opsEventOccurredAt(event: OpsEventRow): string | null {
+  const value = event.metadata?.event_at;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
 function formatMetadata(value: Record<string, unknown> | null): string | null {
   if (!value || Object.keys(value).length === 0) return null;
 
@@ -125,6 +136,7 @@ async function fetchTopUnarchivedOpsEvents(): Promise<{
 function buildOpsFeedCopyText(events: DecoratedOpsEvent[]): string {
   const sections = events.map((event, index) => {
     const metadata = formatMetadata(event.metadata);
+    const occurredAt = opsEventOccurredAt(event);
     const lines = [
       `Incident ${index + 1}`,
       `Title: ${event.title}`,
@@ -139,6 +151,7 @@ function buildOpsFeedCopyText(events: DecoratedOpsEvent[]): string {
       `Occurrences: ${event.occurrence_count}`,
       `First seen: ${event.first_seen_at}`,
       `Last seen: ${event.last_seen_at}`,
+      occurredAt ? `Event at: ${occurredAt}` : null,
       `Message: ${event.message}`,
       metadata ? `Metadata:\n${metadata}` : null,
       event.sample_stack ? `Stack Sample:\n${event.sample_stack}` : null,
@@ -473,6 +486,7 @@ export default async function OpsPage(props: {
               <OpsSourceGroup key={source} source={source} incidentCount={sourceEvents.length}>
                 {sourceEvents.map((event) => {
                     const metadata = formatMetadata(event.metadata);
+                    const occurredAt = opsEventOccurredAt(event);
                     const severityStyle = severityStyles[event.severity];
                     const bucketStyle = bucketStyles[event.bucket];
                     const failureAlert = buildInstanceFailureAlertFromOpsEvent({
@@ -543,7 +557,7 @@ export default async function OpsPage(props: {
                                 {bucketStyle.label}
                               </span>
                               <span className="mono" style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                                seen {formatTime(event.last_seen_at)}
+                                {occurredAt ? `event ${formatTime(occurredAt)}` : `seen ${formatTime(event.last_seen_at)}`}
                               </span>
                             </div>
                             <h3 className="serif" style={{ fontSize: '1.45rem', marginTop: '0.9rem', color: 'var(--ink-black)', overflowWrap: 'anywhere', minWidth: 0 }}>
