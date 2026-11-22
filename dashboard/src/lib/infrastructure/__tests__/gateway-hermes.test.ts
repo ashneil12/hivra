@@ -23,6 +23,7 @@ const WS_NONCE = Buffer.from("the sample nonce").toString("base64");
 // upstreams.
 
 const TOKEN = "d".repeat(64);
+const DASHBOARD_TOKEN = "e".repeat(64);
 const SERVER_PATH = path.join(process.cwd(), "provisioner/hivra-chat/server.js");
 const SERVER_SOURCE = fs.readFileSync(SERVER_PATH, "utf8");
 
@@ -245,6 +246,55 @@ describe("gateway Hermes mount", () => {
     expect(await upgrade(port, "/hermes/api/pty", { Authorization: "Bearer nope" })).toMatch(/^HTTP\/1\.1 401/);
     expect(app.http).toEqual([]);
     expect(app.ws).toEqual([]);
+  });
+
+  it("discovers the Desktop backend without credentials, then requires its own token for HTTP and WebSocket", async () => {
+    const dashboard = await upstream({ type: "text/html", body: `<script>window.__HERMES_SESSION_TOKEN__="${DASHBOARD_TOKEN}";</script>` });
+    const browser = await webapp();
+    const port = await boot("hermes", { HERMES_DASHBOARD_PORT: String(dashboard.port), HERMES_WEBAPP_PORT: String(browser.port) });
+    const discovery = "/hermes-desktop/api/status";
+    expect((await request(port, discovery, {}, { auth: false })).status).toBe(404);
+    fs.writeFileSync(path.join(home, ".hivra", "hermes-desktop-token"), DASHBOARD_TOKEN + "\n", { mode: 0o600 });
+    const publicStatus = await request(port, discovery, {}, { auth: false });
+    expect(publicStatus.status).toBe(200);
+    expect(publicStatus.json).toEqual({ auth_required: false });
+    expect((await request(port, "/api/hermes-desktop-connection", {}, { auth: false })).status).toBe(401);
+    const connection = (await request(port, "/api/hermes-desktop-connection")).json;
+    expect(connection.path).toBe("/hermes-desktop");
+    const desktopToken = connection.token;
+    if (typeof desktopToken !== "string") throw new Error("Missing Desktop token");
+    expect(desktopToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(desktopToken).not.toBe(DASHBOARD_TOKEN);
+    expect((await request(port, "/hermes-desktop/api/sessions")).status).toBe(401);
+    expect((await request(port, "/hermes-desktop/api/sessions?token=" + desktopToken, {}, { auth: false })).status).toBe(401);
+    expect((await request(port, "/hermes-desktop/api/sessions", { "X-Hermes-Session-Token": DASHBOARD_TOKEN }, { auth: false })).status).toBe(401);
+    expect((await request(port, "/hermes-desktop/api/sessions", { "X-Hermes-Session-Token": desktopToken })).status).toBe(200);
+    expect(dashboard.http.find(entry => entry.url === "/api/sessions")?.headers).toMatchObject({
+      "x-hermes-session-token": DASHBOARD_TOKEN,
+      "x-forwarded-prefix": "/hermes-desktop",
+    });
+    expect(dashboard.http.find(entry => entry.url === "/api/sessions")?.headers.authorization).toBeUndefined();
+    expect(browser.http.some(entry => entry.url === "/api/sessions")).toBe(false);
+    expect(await upgrade(port, "/hermes-desktop/api/ws?token=wrong", {})).toMatch(/^HTTP\/1\.1 401/);
+    expect(await upgrade(port, "/hermes-desktop/api/ws?token=" + DASHBOARD_TOKEN, {})).toMatch(/^HTTP\/1\.1 401/);
+    expect(await upgrade(port, "/hermes-desktop/api/ws?token=" + desktopToken, {})).toMatch(/^HTTP\/1\.1 101/);
+    expect(dashboard.ws.map(entry => entry.url)).toEqual(["/api/ws?token=" + DASHBOARD_TOKEN]);
+    expect(browser.ws).toHaveLength(0);
+  });
+
+  it("sends bare browser sign-in to the Hermes Webapp's own sign-in", async () => {
+    const app = await webapp();
+    const port = await boot("hermes", { HERMES_DASHBOARD_PORT: String(await closedPort()), HERMES_WEBAPP_PORT: String(app.port) });
+    expect((await request(port, "/", { Accept: "text/html" }, { auth: false })).headers.location).toBe("/hermes/");
+    const signin = await request(port, "/login", { "Content-Type": "application/x-www-form-urlencoded" },
+      { auth: false, method: "POST", body: new URLSearchParams({ password: "fixture-password" }).toString() });
+    expect(signin.status).toBe(401);
+    expect((await request(port, "/api/signin-password", { "Content-Type": "application/json" },
+      { method: "POST", body: JSON.stringify({ password: "fixture-password" }) })).status).toBe(200);
+    const accepted = await request(port, "/login?next=/hermes/", { "Content-Type": "application/x-www-form-urlencoded" },
+      { auth: false, method: "POST", body: new URLSearchParams({ password: "fixture-password", next: "/hermes/" }).toString() });
+    expect(accepted.status).toBe(303);
+    expect(accepted.headers.location).toBe("/hermes-sign-in");
   });
 
   it.each(["/hermes/api/ws?channel=a", "/hermes/api/pty"])("proxies the WebSocket %s with Hermes's own Host and Origin", async (pathname) => {

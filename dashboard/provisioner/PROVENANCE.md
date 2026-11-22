@@ -1438,3 +1438,7 @@ this release into reporting. The runtime receipt does not list the reporter,
 because it is written before the reporter is installed. This is agent-reported
 evidence, not an operating-system audit, and this source release does not
 deploy, install, or establish Canary acceptance.
+Release `2026.11.22.1` adds the Hermes Desktop connection endpoint behind a dedicated
+per-computer session token. Browser sign-in opens Hermes or Agent Zero
+directly, and the gateway returns an error when Agent Zero rejects its
+managed runtime credentials. Existing sealed releases remain available.
