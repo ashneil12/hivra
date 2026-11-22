@@ -381,6 +381,102 @@ describe("managed Venice token quote reconciliation", () => {
     expect(settledHashes).toEqual(expect.arrayContaining(["0xclaimedbeef", "0xlotpaidcafe"]));
     expect(settledHashes).toHaveLength(2);
   });
+
+  it("still reaches an open lot-holding quote when settled lots outnumber the scan limit", async () => {
+    // limit=10 but 15 older settled lots fill a naive .limit() read: the open
+    // quote's lot is newest, so it must be found by paging all lot ids and
+    // filtering to open quotes — not by truncating the lot list.
+    const oldExpiry = "2026-05-01T00:00:00.000Z";
+    const settledQuotes = Array.from({ length: 15 }, (_, i) =>
+      managedVeniceQuoteRow({
+        id: `quote_settled_${i}`,
+        user_id: `user_settled_${i}`,
+        status: "settled",
+        settled_at: "2026-05-02T00:00:00.000Z",
+        quoted_at: "2026-04-30T00:00:00.000Z",
+        expires_at: oldExpiry,
+        created_at: "2026-04-30T00:00:00.000Z",
+      })
+    );
+    const settledLots = settledQuotes.map((quote, i) => ({
+      id: `lot_settled_${i}`,
+      account_id: `account_settled_${i}`,
+      user_id: `user_settled_${i}`,
+      quote_id: quote.id,
+      source: "hermesos_deposit",
+      token_amount_raw: "1000000000000000000000",
+      remaining_token_amount_raw: "0",
+      snapshot_price_usd: "0.05",
+      original_value_micro_usd: 50_000_000,
+      remaining_value_micro_usd: 0,
+      quote_source: "dexscreener",
+      quoted_at: "2026-04-30T00:00:00.000Z",
+      quote_expires_at: oldExpiry,
+      transaction_hash: `0xsettled${i}`,
+      status: "settled",
+      metadata: {},
+      created_at: `2026-04-30T00:0${i % 10}:00.000Z`,
+      updated_at: `2026-04-30T00:0${i % 10}:00.000Z`,
+    }));
+    const openQuote = managedVeniceQuoteRow({
+      id: "quote_open_lot",
+      user_id: "user_open_lot",
+      transaction_hash: null,
+      quoted_at: "2026-04-30T00:00:00.000Z",
+      expires_at: oldExpiry,
+      created_at: "2026-04-30T00:00:00.000Z",
+      deposit_address: "0x000000000000000000000000000000000000c0de",
+    });
+    const openLot = {
+      id: "lot_open",
+      account_id: "account_open",
+      user_id: "user_open_lot",
+      quote_id: "quote_open_lot",
+      source: "hermesos_deposit",
+      token_amount_raw: "1000000000000000000000",
+      remaining_token_amount_raw: "1000000000000000000000",
+      snapshot_price_usd: "0.05",
+      original_value_micro_usd: 50_000_000,
+      remaining_value_micro_usd: 50_000_000,
+      quote_source: "dexscreener",
+      quoted_at: "2026-04-30T00:00:00.000Z",
+      quote_expires_at: oldExpiry,
+      transaction_hash: "0xopenlotpaid",
+      status: "active",
+      metadata: { observedAt: "2026-04-30T00:05:00.000Z" },
+      // Newest lot: a bounded oldest-first lot read never reaches it.
+      created_at: "2026-05-10T00:00:00.000Z",
+      updated_at: "2026-05-10T00:00:00.000Z",
+    };
+    const settleQuote = jest.fn(async (transfer: { quoteId?: string }) => ({
+      status: "settled" as const,
+      quoteId: transfer?.quoteId ?? "quote_unknown",
+    }));
+    const chain = makeChain();
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: createManagedVeniceMemoryDb({
+        managed_venice_token_quotes: [...settledQuotes, openQuote],
+        managed_venice_token_lots: [...settledLots, openLot],
+      }).db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote,
+      now: new Date("2026-05-16T10:22:00.000Z"),
+      limit: 10,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    // Only the open quote is a candidate; it settles on its lot's tx.
+    expect(summary.checked).toBe(1);
+    expect(summary.settled).toBe(1);
+    const settledHashes = settleQuote.mock.calls.map(
+      (call) => (call[0] as { transactionHash?: string }).transactionHash
+    );
+    expect(settledHashes).toEqual(["0xopenlotpaid"]);
+  });
 });
 
 describe("Base RPC 429 resilience (issue #362)", () => {

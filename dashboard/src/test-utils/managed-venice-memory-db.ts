@@ -306,6 +306,7 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
     const filters: Filter[] = [];
     const orders: Order[] = [];
     let rowLimit: number | null = null;
+    let rowRange: { from: number; to: number } | null = null;
 
     const run = () => {
       const failure = takeFailure(tableName, "select", {});
@@ -314,7 +315,9 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
         readRows().filter((row) => filters.every((filter) => rowMatches(row, filter))),
         orders
       );
-      return { rows: (rowLimit === null ? selected : selected.slice(0, rowLimit)).map(clone), error: null };
+      const limited = rowLimit === null ? selected : selected.slice(0, rowLimit);
+      const ranged = rowRange === null ? limited : limited.slice(rowRange.from, rowRange.to + 1);
+      return { rows: ranged.map(clone), error: null };
     };
 
     const query: Record<string, unknown> = {};
@@ -335,6 +338,10 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
     };
     query.limit = (count: number) => {
       rowLimit = count;
+      return query;
+    };
+    query.range = (from: number, to: number) => {
+      rowRange = { from: Number(from), to: Number(to) };
       return query;
     };
     query.maybeSingle = async () => {

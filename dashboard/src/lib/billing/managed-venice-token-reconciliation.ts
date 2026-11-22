@@ -78,6 +78,7 @@ type DbQuery = {
   is: (...args: unknown[]) => DbQuery;
   order: (...args: unknown[]) => DbQuery;
   limit: (...args: unknown[]) => DbQuery;
+  range: (...args: unknown[]) => DbQuery;
   then: Promise<{ data?: unknown; error: QueryError }>["then"];
 };
 
@@ -1021,27 +1022,37 @@ function quoteCandidates(data: unknown) {
     .filter((candidate): candidate is { id: string; userId: string } => Boolean(candidate));
 }
 
-// Quote ids holding a deposit lot, oldest lot first so a crashed-settlement
-// backlog drains across ticks. managed_venice_token_lots has no FK to quotes,
-// so PostgREST cannot join — the ids are fetched here and filtered on quotes.
-async function loadDepositLotQuoteIds(db: SupabaseLike, limit: number) {
-  const { data, error } = await (db.from("managed_venice_token_lots") as DbQuery)
-    .select("quote_id")
-    .in("source", [...TOKEN_DEPOSIT_LOT_SOURCES])
-    .not("quote_id", "is", null)
-    .order("created_at", { ascending: true })
-    .limit(limit);
+// Every quote_id holding a token deposit lot. managed_venice_token_lots has
+// no FK to quotes, so PostgREST cannot join — the ids are fetched here and
+// filtered on quotes by the caller. The read is paged with .range() and
+// unbounded on purpose: a .limit() would let old settled lots fill the page
+// and starve open lot-holding quotes out of the recovery path, and an
+// unpaged read silently truncates at max_rows.
+const LOT_ID_PAGE_SIZE = 1000;
+// PostgREST .in() lists stay small enough to keep the URL and plan sane.
+const LOT_HELD_ID_CHUNK = 200;
 
-  if (error) {
-    throw new Error(error.message || "Failed to load managed Venice token deposit lot quote ids");
+async function loadDepositLotQuoteIds(db: SupabaseLike) {
+  const ids = new Set<string>();
+  for (let from = 0; ; from += LOT_ID_PAGE_SIZE) {
+    const { data, error } = await (db.from("managed_venice_token_lots") as DbQuery)
+      .select("quote_id")
+      .in("source", [...TOKEN_DEPOSIT_LOT_SOURCES])
+      .not("quote_id", "is", null)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + LOT_ID_PAGE_SIZE - 1);
+
+    if (error) {
+      throw new Error(error.message || "Failed to load managed Venice token deposit lot quote ids");
+    }
+    const page = Array.isArray(data) ? data : [];
+    for (const row of page) {
+      const id = (row as { quote_id?: unknown }).quote_id;
+      if (typeof id === "string" && id.length > 0) ids.add(id);
+    }
+    if (page.length < LOT_ID_PAGE_SIZE) return [...ids];
   }
-  return [
-    ...new Set(
-      (Array.isArray(data) ? data : [])
-        .map((row) => (row as { quote_id?: unknown }).quote_id)
-        .filter((id): id is string => typeof id === "string" && id.length > 0)
-    ),
-  ];
 }
 
 async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
@@ -1088,24 +1099,32 @@ async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
     throw new Error(claimed.error.message || "Failed to load claimed managed Venice token quotes");
   }
 
-  const lotQuoteIds = await loadDepositLotQuoteIds(params.db, params.limit);
-  const lotHeld =
-    lotQuoteIds.length === 0
-      ? { data: [] as unknown[], error: null }
-      : await openQuotes()
-          .in("id", lotQuoteIds)
-          .order("created_at", { ascending: true })
-          .limit(params.limit);
-
-  if (lotHeld.error) {
-    throw new Error(lotHeld.error.message || "Failed to load lot-holding managed Venice token quotes");
+  const lotQuoteIds = await loadDepositLotQuoteIds(params.db);
+  // Filter the lot ids down to still-open quotes here (no FK to join on).
+  // The id list can be long, so the .in() filter is chunked; each chunk
+  // query is limited to what the tick still has room for, keeping the total
+  // lot-held candidates bounded like the fresh and claimed queries.
+  const lotHeldCandidates: Array<{ id: string; userId: string }> = [];
+  for (
+    let offset = 0;
+    offset < lotQuoteIds.length && lotHeldCandidates.length < params.limit;
+    offset += LOT_HELD_ID_CHUNK
+  ) {
+    const { data, error } = await openQuotes()
+      .in("id", lotQuoteIds.slice(offset, offset + LOT_HELD_ID_CHUNK))
+      .order("created_at", { ascending: true })
+      .limit(params.limit - lotHeldCandidates.length);
+    if (error) {
+      throw new Error(error.message || "Failed to load lot-holding managed Venice token quotes");
+    }
+    lotHeldCandidates.push(...quoteCandidates(data));
   }
 
   const byId = new Map<string, { id: string; userId: string }>();
   for (const candidate of [
     ...quoteCandidates(fresh.data),
     ...quoteCandidates(claimed.data),
-    ...quoteCandidates(lotHeld.data),
+    ...lotHeldCandidates,
   ]) {
     byId.set(candidate.id, candidate);
   }
