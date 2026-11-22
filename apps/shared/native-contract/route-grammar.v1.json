@@ -1679,6 +1679,18 @@
       "expect": "/dashboard/infrastructure?launch=termix"
     },
     {
+      "name": "catalog-dagu-launch",
+      "kind": "value-set",
+      "input": "/dashboard/launch?profile=dagu&stage=choose",
+      "expect": "/dashboard/launch?profile=dagu&stage=choose"
+    },
+    {
+      "name": "catalog-dagu-infra",
+      "kind": "value-set",
+      "input": "/dashboard/infrastructure?launch=dagu",
+      "expect": "/dashboard/infrastructure?launch=dagu"
+    },
+    {
       "family": "value-set",
       "input": "/dashboard/launch?profile=homer&stage=choose",
       "expect": "/dashboard/launch?profile=homer&stage=choose"
