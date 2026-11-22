@@ -53,6 +53,9 @@ export async function GET(req: NextRequest) {
         method: "GET",
         failureType: "crypto_topup_reconciliation_intent_failed",
         failed: reconciliation.failed,
+        // Open intents past the stale cutoff this run skipped on purpose —
+        // context so a nonzero count is not mistaken for missing work.
+        staleExcluded: reconciliation.staleExcluded,
       });
       await reportOpsEvent({
         source: "cron.reconcile-crypto-topups",
@@ -65,6 +68,7 @@ export async function GET(req: NextRequest) {
         metadata: {
           failureType: "crypto_topup_reconciliation_intent_failed",
           failed: reconciliation.failed,
+          staleExcluded: reconciliation.staleExcluded,
           sample: failures.slice(0, 5).map((result) => ({
             referenceId: result.referenceId,
             errorName: "errorName" in result ? result.errorName : undefined,
