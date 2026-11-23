@@ -237,3 +237,63 @@ export async function runCronHeartbeatWatchdog(): Promise<CronHeartbeatWatchdogR
 
   return { checked: CRON_REGISTRY.length, stale };
 }
+
+type CronHeartbeatDayQuery = {
+  select: (columns: string) => CronHeartbeatDayQuery;
+  eq: (column: string, value: string) => CronHeartbeatDayQuery;
+  limit: (count: number) => CronHeartbeatDayQuery;
+  then: Promise<{ data?: unknown; error: { message?: string } | null }>["then"];
+};
+
+function utcDayKey(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * True when `now` lands on a later UTC calendar day than the cron's previous
+ * recorded run — this tick is the first of a new UTC day. Batch jobs use it
+ * to run once-a-day work (retrying rows the per-tick age cutoff excluded) on
+ * exactly one tick. It requires an observed previous tick: no heartbeat row,
+ * an unreadable last_run_at, or a failed read all answer false, because
+ * "exactly one tick per UTC day" cannot be proven without the previous
+ * tick's timestamp.
+ */
+export async function isFirstCronTickOfUtcDay(
+  db: { from: (name: string) => unknown } | null | undefined,
+  cronName: string,
+  now: Date,
+): Promise<boolean> {
+  if (!db) return false;
+  let lastRunAt: string | null = null;
+  try {
+    const { data, error } = await (
+      db.from("ops_cron_heartbeats") as unknown as CronHeartbeatDayQuery
+    )
+      .select("last_run_at")
+      .eq("cron_name", cronName)
+      .limit(1);
+    if (error) {
+      log.warn("cron heartbeat day check failed; treating tick as same-day", {
+        source: "cron-heartbeat",
+        failureType: "cron_heartbeat_day_check_failed",
+        cronName,
+        errorMessage: error.message ?? "unknown",
+      });
+      return false;
+    }
+    const row = Array.isArray(data) ? (data[0] as { last_run_at?: unknown } | undefined) : undefined;
+    lastRunAt = typeof row?.last_run_at === "string" ? row.last_run_at : null;
+  } catch (error) {
+    log.warn("cron heartbeat day check threw; treating tick as same-day", {
+      source: "cron-heartbeat",
+      failureType: "cron_heartbeat_day_check_threw",
+      cronName,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+  if (!lastRunAt) return false;
+  const previousMs = Date.parse(lastRunAt);
+  if (!Number.isFinite(previousMs)) return false;
+  return utcDayKey(now) !== utcDayKey(new Date(previousMs));
+}

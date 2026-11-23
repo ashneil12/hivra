@@ -300,7 +300,8 @@ describe("managed Venice token quote reconciliation", () => {
   it("keeps old claimed and lot-holding quotes eligible for recovery while old unclaimed quotes are not scanned", async () => {
     // All three expired well past the stale cutoff. Only the claimed and
     // lot-holding ones may reach the per-quote recovery branch — the unclaimed
-    // one is left to the stale-expiry pass.
+    // one is left for the once-a-day stale pass (this tick has no heartbeat
+    // row, so it is not the day's first and nothing expires sight-unseen).
     const oldExpiry = "2026-05-01T00:00:00.000Z";
     const claimed = managedVeniceQuoteRow({
       id: "quote_claimed",
@@ -371,10 +372,9 @@ describe("managed Venice token quote reconciliation", () => {
 
     // The two recovery candidates were checked and settled on their claimed /
     // lot transaction without a log scan; the unclaimed stale quote was left
-    // to the expiry pass and never reached the scan loop.
+    // for the daily stale pass and never reached the scan loop or the expiry.
     expect(summary.checked).toBe(2);
     expect(summary.settled).toBe(2);
-    expect(summary.expiredAfterGrace).toBe(1);
     const settledHashes = settleQuote.mock.calls.map(
       (call) => (call[0] as { transactionHash?: string }).transactionHash
     );
@@ -813,6 +813,10 @@ describe("managed Venice reconciliation tick time budget", () => {
 
 describe("stale unpaid quote expiry", () => {
   const staleNow = new Date("2026-05-20T00:00:00.000Z");
+  const VENICE_CRON = "managed-venice-token-reconciliation";
+  // last_run_at on a previous UTC day makes staleNow the day's first tick.
+  const heartbeatYesterday = { cron_name: VENICE_CRON, last_run_at: "2026-05-19T12:00:00.000Z" };
+  const heartbeatSameDay = { cron_name: VENICE_CRON, last_run_at: "2026-05-20T06:00:00.000Z" };
 
   function staleQuoteRow(overrides: Row = {}): Row {
     return managedVeniceQuoteRow({
@@ -825,41 +829,92 @@ describe("stale unpaid quote expiry", () => {
     });
   }
 
-  function runBatch(memory: ReturnType<typeof createManagedVeniceMemoryDb>["db"], chain = makeChain()) {
+  // A chain head far enough back that the May-1 quote window maps to real
+  // blocks (the shared HEAD_BLOCK=110 anchor cannot reach it).
+  function staleChain() {
+    return createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: staleNow.toISOString() });
+  }
+
+  function runBatch(
+    memory: ReturnType<typeof createManagedVeniceMemoryDb>["db"],
+    chain = makeChain(),
+    now: Date = staleNow
+  ) {
     return reconcilePendingManagedVeniceTokenQuotes({
       db: memory,
       rpcUrl: "https://base.test",
       fetchImpl: chain.fetchImpl,
       minConfirmations: 2,
       settleQuote: jest.fn(async () => ({ status: "settled" as const, quoteId: "quote_stale" })),
-      now: staleNow,
+      now,
       interQuoteDelayMs: 0,
       rpcSleepImpl: async () => {},
     });
   }
 
-  it("expires a quote more than 7 days past expiry without spending a log scan", async () => {
-    const memory = createManagedVeniceMemoryDb({ managed_venice_token_quotes: [staleQuoteRow()] });
-    const chain = makeChain();
+  it("log-scans a stale quote before expiring it on the first tick of a new UTC day", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow()],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+
+    const summary = await runBatch(memory.db, chain);
+
+    expect(summary.failed).toBe(0);
+    // The closure was preceded by a real log scan of the quote's window —
+    // a clean fully-scanned window retires the quote itself.
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+    expect(summary.cancelled).toBe(1);
+    expect(summary.results).toEqual([
+      expect.objectContaining({ quoteId: "quote_stale", status: "cancelled" }),
+    ]);
+
+    const row = memory.tables.managed_venice_token_quotes[0];
+    expect(row.status).toBe("cancelled");
+    expect((row.metadata as Row).closedReason).toBe("expired_unpaid");
+  });
+
+  it("settles a stale quote whose deposit the daily scan finds instead of expiring it", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow()],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    chain.addTransfer(
+      transferAt(
+        chain.blockAt("2026-05-01T10:10:00.000Z"),
+        BigInt(staleQuoteRow().token_amount_raw as string),
+        "0xstalepaid"
+      )
+    );
+
+    const summary = await runBatch(memory.db, chain);
+
+    // The scan found the deposit: the quote settles instead of closing unpaid.
+    expect(summary.settled).toBe(1);
+    expect(summary.checked).toBe(1);
+    expect(summary.results).toEqual([
+      expect.objectContaining({ quoteId: "quote_stale", status: "settled" }),
+    ]);
+  });
+
+  it("does no stale work on a tick that is not the day's first", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow()],
+      ops_cron_heartbeats: [heartbeatSameDay],
+    });
+    const chain = staleChain();
 
     const summary = await runBatch(memory.db, chain);
 
     expect(summary.checked).toBe(0);
-    expect(summary.expiredAfterGrace).toBe(1);
-    expect(summary.failed).toBe(0);
-    expect(summary.results).toEqual([
-      expect.objectContaining({ quoteId: "quote_stale", status: "expired" }),
-    ]);
-    // No chain work: the stale quote never reached a scan.
+    expect(summary.cancelled).toBe(0);
     expect(chain.methodCount("eth_getLogs")).toBe(0);
-
-    const row = memory.tables.managed_venice_token_quotes[0];
-    expect(row.status).toBe("expired");
-    expect((row.metadata as Row).closedReason).toBe("no_deposit_after_grace");
-    expect((row.metadata as Row).closedAt).toBe(staleNow.toISOString());
+    expect(memory.tables.managed_venice_token_quotes[0].status).toBe("active");
   });
 
-  it("skips an already-expired stale quote on the next tick", async () => {
+  it("skips an already-expired stale quote even on the day-rollover tick", async () => {
     const memory = createManagedVeniceMemoryDb({
       managed_venice_token_quotes: [
         {
@@ -871,13 +926,14 @@ describe("stale unpaid quote expiry", () => {
           },
         },
       ],
+      ops_cron_heartbeats: [heartbeatYesterday],
     });
-    const chain = makeChain();
+    const chain = staleChain();
 
     const summary = await runBatch(memory.db, chain);
 
-    expect(summary.expiredAfterGrace).toBe(0);
     expect(summary.checked).toBe(0);
+    expect(summary.cancelled).toBe(0);
     expect(chain.methodCount("eth_getLogs")).toBe(0);
   });
 
@@ -895,16 +951,15 @@ describe("stale unpaid quote expiry", () => {
 
     const summary = await runBatch(memory.db, chain);
 
-    expect(summary.expiredAfterGrace).toBe(0);
     expect(summary.checked).toBe(1);
     expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
   });
 
-  it("drains a stale backlog above the 250-row limit across two ticks", async () => {
-    // 260 stale unpaid quotes > STALE_QUOTE_EXPIRE_LIMIT (250). Without the
-    // DB-level exclusion, tick 2 re-selects the same 250 already-expired rows
-    // (status 'expired' still matches) and the remaining 10 never expire.
-    const quotes = Array.from({ length: 260 }, (_, index) =>
+  it("drains a stale backlog a bounded scan-and-expire batch per UTC day", async () => {
+    // 30 stale unpaid quotes > STALE_QUOTE_DAILY_SCAN_LIMIT (25). Each daily
+    // pass log-scans its batch before expiring it; closed rows are excluded
+    // from later selects so the backlog keeps moving.
+    const quotes = Array.from({ length: 30 }, (_, index) =>
       staleQuoteRow({
         id: `quote_stale_${index}`,
         // Deterministic expires_at ordering: oldest first.
@@ -914,22 +969,34 @@ describe("stale unpaid quote expiry", () => {
         updated_at: new Date(Date.parse("2026-05-01T10:00:00.000Z") + index * 1000).toISOString(),
       })
     );
-    const memory = createManagedVeniceMemoryDb({ managed_venice_token_quotes: quotes });
-    const chain = makeChain();
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: quotes,
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
 
-    const first = await runBatch(memory.db, chain);
-    expect(first.expiredAfterGrace).toBe(250);
+    const day1 = await runBatch(memory.db, chain);
+    expect(day1.cancelled).toBe(25);
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
 
-    const second = await runBatch(memory.db, chain);
-    expect(second.expiredAfterGrace).toBe(10);
+    // A later tick the same UTC day does no stale work at all.
+    memory.tables.ops_cron_heartbeats[0].last_run_at = "2026-05-20T00:30:00.000Z";
+    const sameDay = await runBatch(memory.db, chain);
+    expect(sameDay.checked).toBe(0);
+    expect(sameDay.cancelled).toBe(0);
+
+    // The next UTC day's first tick scans and closes the remaining 5.
+    memory.tables.ops_cron_heartbeats[0].last_run_at = "2026-05-20T23:30:00.000Z";
+    const day2 = await runBatch(memory.db, chain, new Date("2026-05-21T00:00:00.000Z"));
+    expect(day2.cancelled).toBe(5);
 
     const rows = memory.tables.managed_venice_token_quotes;
-    expect(rows).toHaveLength(260);
-    expect(rows.every((row) => row.status === "expired")).toBe(true);
+    expect(rows).toHaveLength(30);
+    expect(rows.every((row) => row.status === "cancelled")).toBe(true);
     expect(
       rows.every(
         (row) =>
-          (row.metadata as Row).closedReason === "no_deposit_after_grace"
+          (row.metadata as Row).closedReason === "expired_unpaid"
       )
     ).toBe(true);
   });
@@ -942,7 +1009,6 @@ describe("stale unpaid quote expiry", () => {
 
     const summary = await runBatch(memory.db, chain);
 
-    expect(summary.expiredAfterGrace).toBe(0);
     // A claimed quote stays eligible for the scan at any age: the recovery
     // branch is the only automatic path that finishes a crashed settlement.
     expect(summary.checked).toBe(1);
