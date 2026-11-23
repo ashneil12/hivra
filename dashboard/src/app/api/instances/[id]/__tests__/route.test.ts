@@ -1048,7 +1048,7 @@ describe("POST /api/instances/[id]", () => {
                       provider: "proxmox",
                       node: "fixturenode11",
                       vmid: 1148,
-                      privateIpv4: "10.250.20.98",
+                      privateIpv4: "192.0.2.98",
                       gatewayHost: "example.test",
                     },
                   },
@@ -5279,7 +5279,7 @@ describe("DELETE /api/instances/[id] for an archived runtime", () => {
     const { update } = mockArchiveRow();
     locate.mockResolvedValue({
       status: "found",
-      found: { hostSlug: "fixturenode4", vmid: 222, privateIpv4: "10.0.0.7", gatewayFqdn: "agent.test" },
+      found: { hostSlug: "fixturenode4", vmid: 222, privateIpv4: "192.0.2.7", gatewayFqdn: "agent.test" },
     });
     expect((await remove()).status).toBe(409);
     expect(deleteProxmoxInstance).not.toHaveBeenCalled();

@@ -1562,8 +1562,8 @@ describe("purgeArchive", () => {
     const result = await restoreInstance(supabase as never, VALID_INSTANCE_ID, {
       destinationHostSlug: "fixturenode5",
       destinationVmid: 216,
-      destinationIp: "10.0.0.10",
-      destinationGateway: "10.0.0.1",
+      destinationIp: "192.0.2.10",
+      destinationGateway: "192.0.2.1",
       templateVmid: 9000,
     }, deps);
     expect(result).toMatchObject({ ok: false, reason: "instance_not_restorable" });
