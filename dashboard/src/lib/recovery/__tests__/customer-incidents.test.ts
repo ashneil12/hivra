@@ -2366,6 +2366,222 @@ describe("runCustomerIncidentScan", () => {
     expect(row.last_seen_at).toBe(iso(10 * MIN));
     expect(deps.report as jest.Mock).not.toHaveBeenCalled();
   });
+
+  it("does not let a same-kind backlog burst crowd the newest failure out of the receipt window", async () => {
+    // The box's newest SURFACE event is a gateway_down 15m ago — a live
+    // outage — but a backlog relay then re-delivered 12 stale failure
+    // receipts (event_at 40m+, first_seen_at 2m). A per-kind window ordered
+    // ONLY by recorded time fills with the late copies and drops the real
+    // failure; the recovery at 25m then wins the cross-kind comparison and
+    // the live incident silently resolves. Each kind is read under BOTH
+    // orderings — recorded time and event time — so the burst cannot hide
+    // the newest event.
+    const staleBurst = Array.from({ length: 12 }, (_, i) =>
+      watchdogDbRow("unit_restart", 2 * MIN, {
+        event_id: `stale-${i}`,
+        event_at: iso((40 + i) * MIN),
+      }),
+    );
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: {
+        "agent-1": [
+          // The genuinely newest effective receipt — failure 15m ago,
+          // recorded 45m ago, so the burst evicts it from a
+          // first_seen_at-ordered window.
+          watchdogDbRow("gateway_down", 45 * MIN, {
+            event_id: "down-now",
+            event_at: iso(15 * MIN),
+          }),
+          watchdogDbRow("recovered", 25 * MIN, { event_id: "rec-before" }),
+          ...staleBurst,
+        ],
+      },
+      openIncidents: [incidentDbRow()],
+    });
+    const deps = scanDeps({ db });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.stillOpen).toBe(1);
+    expect(summary.resolved).toBe(0);
+    expect(deps.archiveIncident).not.toHaveBeenCalled();
+    expect(deps.notifyResolved).not.toHaveBeenCalled();
+    // The event-time window exists per kind, ordered by metadata.event_at
+    // with nulls excluded (a null event_at sorts first under DESC and
+    // would waste window slots on receipts the recorded-time window
+    // already covers).
+    const eventTimeWindows = db.calls.filter(
+      (entry) =>
+        entry.table === "ops_events" &&
+        entry.calls.some((c) => c[0] === "order" && c[1] === "metadata->>event_at") &&
+        entry.calls.some((c) => c[0] === "in" && c[1] === "metadata->>event_type"),
+    );
+    expect(eventTimeWindows).toHaveLength(2);
+    for (const entry of eventTimeWindows) {
+      expect(
+        entry.calls.some(
+          (c) => c[0] === "not" && c[1] === "metadata->>event_at" && c[2] === "is" && c[3] === null,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("reports a new finding before still-open refreshes when the report budget admits only one item", async () => {
+    // Evaluator order puts the still-open box_down first and the new
+    // cron_unhealthy last; a shared head-first queue lets the still-open
+    // refresh consume the whole report budget and the new page never
+    // fires. New findings report first; the refresh keeps what is left.
+    const row = incidentDbRow({
+      id: "evt-prio-1",
+      occurrence_count: 2,
+      last_seen_at: iso(10 * MIN),
+      metadata: { incident_key: "box_down:agent-1" },
+    });
+    const report: jest.Mock = jest.fn(async () => ({ id: "evt-new-1", fingerprint: "fp" }));
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+      openIncidents: [row],
+      heartbeats: [
+        {
+          cron_name: "cron-new",
+          last_run_at: iso(5 * MIN),
+          last_success_at: iso(5 * MIN),
+          run_count: 30,
+          ok_count: 20,
+          consecutive_failures: 3,
+        },
+      ],
+    });
+    // The report deadline lapses as soon as ONE report-pass item has been
+    // processed — either the new incident's report call or a still-open
+    // refresh's update write.
+    const reportPassWorked = () =>
+      report.mock.calls.length > 0 ||
+      db.calls.some(
+        (entry) =>
+          entry.table === "ops_events" && entry.calls.some((c) => c[0] === "update"),
+      );
+    const deps = scanDeps({
+      db,
+      report,
+      clock: () => (reportPassWorked() ? 1e15 : 0),
+      cronSchedules: new Map<string, CronScheduleInfo>([
+        ["cron-new", { periodMinutes: 5, path: "/api/cron/cron-new" }],
+      ]),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.opened).toBe(1);
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(report.mock.calls[0][0].source).toBe("incident.cron_unhealthy");
+    // The still-open refresh lost the single slot this pass — the row's
+    // guarded version stays as observed and the skipped item is degraded.
+    expect(row.last_seen_at).toBe(iso(10 * MIN));
+    expect(summary.stillOpen).toBe(0);
+    // Degraded twice: the skipped refresh in the report pass, and the same
+    // row's resolve-pass check — the lapsed clock is also past the resolve
+    // deadline, so the row stays open unprocessed for the next pass.
+    expect(summary.degraded).toBe(2);
+  });
+
+  it("rotates new findings across ticks when the report budget admits only one per pass", async () => {
+    // Three new findings and a budget that admits one report per scan: a
+    // fixed order would page the same finding every tick and starve the
+    // rest forever; the scan-tick rotation walks the list like the probe
+    // candidate order does.
+    const heartbeats = ["cron-a", "cron-b", "cron-c"].map((name) => ({
+      cron_name: name,
+      last_run_at: iso(5 * MIN),
+      last_success_at: iso(5 * MIN),
+      run_count: 30,
+      ok_count: 20,
+      consecutive_failures: 3,
+    }));
+    const reportedKeys = async (nowMs: number): Promise<Set<string>> => {
+      const report: jest.Mock = jest.fn(async () => ({ id: "evt-new-1", fingerprint: "fp" }));
+      const deps = scanDeps({
+        db: fakeIncidentDb({ heartbeats }),
+        now: () => nowMs,
+        clock: () => (report.mock.calls.length >= 1 ? 1e15 : 0),
+        report,
+        cronSchedules: new Map<string, CronScheduleInfo>([
+          ["cron-a", { periodMinutes: 5, path: "/api/cron/cron-a" }],
+          ["cron-b", { periodMinutes: 5, path: "/api/cron/cron-b" }],
+          ["cron-c", { periodMinutes: 5, path: "/api/cron/cron-c" }],
+        ]),
+      });
+      await runCustomerIncidentScan(deps as never);
+      return new Set(report.mock.calls.map((c) => String(c[0].metadata.incident_key)));
+    };
+
+    const tickMs = 5 * 60 * 1000;
+    const union = new Set<string>();
+    for (let t = 0; t < 3; t += 1) {
+      for (const key of await reportedKeys(NOW + t * tickMs)) union.add(key);
+    }
+    expect(union).toEqual(
+      new Set([
+        "cron_unhealthy:cron-a",
+        "cron_unhealthy:cron-b",
+        "cron_unhealthy:cron-c",
+      ]),
+    );
+  });
+
+  it("skips the whole resolve pass once its deadline has already passed", async () => {
+    // resolveDeadlineAt = reportDeadlineAt + resolveBudgetMs, chained after
+    // probe (90s) + probe-write (60s) + report (60s) budgets. A budget that
+    // puts it in the past must stop every row — the remaining margin is
+    // reserved for the heartbeat write; unprocessed rows stay open for the
+    // next pass.
+    const deps = scanDeps({
+      resolveBudgetMs: -(90_000 + 60_000 + 60_000 + 60_000 + 60_000),
+      db: fakeIncidentDb({
+        agents: [],
+        openIncidents: [
+          incidentDbRow({ id: "evt-rd-1", metadata: { incident_key: "box_down:gone-1" } }),
+          incidentDbRow({ id: "evt-rd-2", metadata: { incident_key: "box_down:gone-2" } }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.resolved).toBe(0);
+    expect(summary.expired).toBe(0);
+    expect(summary.degraded).toBe(2);
+    expect(deps.archiveIncident).not.toHaveBeenCalled();
+    expect(deps.notifyResolved).not.toHaveBeenCalled();
+  });
+
+  it("stops resolving mid-pass once the resolve deadline lapses and counts the rest as degraded", async () => {
+    // Thirty resolvable rows and a deadline that lapses as soon as the
+    // first archive lands: in-flight rows finish but nothing new starts —
+    // the leftovers stay open (no archive) and count as degraded. Thirty
+    // exceeds any sane resolve concurrency so the pass cannot finish.
+    const archive = jest.fn(async () => true);
+    const deps = scanDeps({
+      archiveIncident: archive,
+      clock: () => (archive.mock.calls.length > 0 ? 1e15 : 0),
+      db: fakeIncidentDb({
+        agents: [],
+        openIncidents: Array.from({ length: 30 }, (_, i) =>
+          incidentDbRow({
+            id: `evt-rm-${i}`,
+            metadata: { incident_key: `box_down:gone-${i}` },
+          }),
+        ),
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    const archivedCount = archive.mock.calls.length;
+    expect(archivedCount).toBeGreaterThan(0);
+    expect(archivedCount).toBeLessThan(30);
+    expect(summary.resolved).toBe(archivedCount);
+    expect(summary.degraded).toBe(30 - archivedCount);
+    expect((deps.notifyResolved as jest.Mock).mock.calls.length).toBe(archivedCount);
+  });
 });
 
 // ---------------------------------------------------------------------------
