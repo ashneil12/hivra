@@ -364,7 +364,7 @@ export function ConvertPanel({
             </p>
           )}
         </header>
-        {access.kind === "switch-available" ? <SwitchAccessStep carryover={access.carryover} /> : null}
+        {access.kind === "switch-available" ? <SwitchAccessStep key={JSON.stringify(access.carryover?.tiers)} carryover={access.carryover} /> : null}
         <Section id="holder-claim" title="Claiming tokens">
           <p style={body}>The Sablier claim is a separate wallet transaction. Switching access leaves your claim eligibility unchanged.</p>
           {airdropLookupHref ? <Link href={airdropLookupHref}>Check your token claim</Link> : null}

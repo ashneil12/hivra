@@ -14,6 +14,7 @@ export function SwitchAccessStep({ carryover }: { carryover?: HolderTierCarryove
   const router = useRouter();
   const confirmId = useId();
   const [confirmed, setConfirmed] = useState(false);
+  const [requiresReview, setRequiresReview] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,13 +25,22 @@ export function SwitchAccessStep({ carryover }: { carryover?: HolderTierCarryove
       const response = await fetch("/api/billing/token-access", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "convert" }),
+        body: JSON.stringify(carryover ? {
+          action: "carry_over_holder",
+          tiers: carryover.tiers.map(({ tier, amountRaw }) => ({ tier, amountRaw })),
+        } : { action: "convert" }),
       });
       const payload = (await response.json().catch(() => null)) as { success?: boolean; error?: unknown; code?: string } | null;
       if (response.status === 409 && payload?.code === "already_converted") {
         // Already switched (another tab) or already on $HIVRA: the page's
         // current state is stale, so re-render it instead of showing an error.
         router.refresh();
+        return;
+      }
+      if (response.status === 409 && payload?.code === "tier_changed") {
+        setConfirmed(false);
+        setRequiresReview(true);
+        setError("Your switch options have changed. Reload this page to review them before confirming.");
         return;
       }
       if (!response.ok || payload?.success !== true) {
@@ -81,6 +91,7 @@ export function SwitchAccessStep({ carryover }: { carryover?: HolderTierCarryove
           id={confirmId}
           type="checkbox"
           checked={confirmed}
+          disabled={requiresReview}
           onChange={(event) => setConfirmed(event.target.checked)}
           style={{ marginTop: 3 }}
         />
@@ -108,6 +119,7 @@ export function SwitchAccessStep({ carryover }: { carryover?: HolderTierCarryove
       {error ? (
         <p role="alert" style={{ margin: 0, fontSize: 14, color: "var(--red)" }}>
           {error}
+          {requiresReview && <>{" "}<button type="button" className="underline" onClick={() => window.location.reload()}>Reload holder access</button></>}
         </p>
       ) : null}
     </div>

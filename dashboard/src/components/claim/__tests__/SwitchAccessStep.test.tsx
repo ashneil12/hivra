@@ -45,6 +45,25 @@ describe("SwitchAccessStep", () => {
     });
   });
 
+  it.each([{ tiers: [] }, { tiers: [{ tier: "pro" as const, amountRaw: "120000000000000000000", amountDisplay: "120" }] }])(
+    "binds holder consent to the displayed tiers and requires fresh review after a change", async ({ tiers }) => {
+      const fetchMock = mockFetch(409, { success: false, code: "tier_changed" });
+      render(<SwitchAccessStep carryover={{ tiers }} />);
+      const confirm = screen.getByRole("checkbox");
+      const submit = screen.getByRole("button", { name: "Switch my access to $HIVRA" });
+      fireEvent.click(confirm);
+      fireEvent.click(submit);
+      expect(await screen.findByRole("alert")).toHaveTextContent("Reload this page to review");
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+        action: "carry_over_holder", tiers: tiers.map(({ tier, amountRaw }) => ({ tier, amountRaw })),
+      });
+      expect(confirm).not.toBeChecked();
+      expect(confirm).toBeDisabled();
+      expect(submit).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Reload holder access" })).toBeVisible();
+    },
+  );
+
   it("shows the server's reason and does not refresh when the switch fails", async () => {
     mockFetch(503, {
       success: false,
