@@ -46,12 +46,31 @@ import { clearTierBreachHold, evaluateAndRecordTokenTierEligibility, holdTierBre
 
 type Row = Record<string, unknown> & { id: string; user_id: string; tier: string };
 
+const GF_COHORT = { user_id: "old", converted_at: null, conversion_grace_ends_at: null, metadata: {} };
+
 class FakeDb {
   beforeFilteredUpdate?: () => void;
   rows: Row[] = [];
+  /** Cohort rows the access re-read serves, keyed by user_id. Mirrors the
+   *  `grandfathered` snapshot below so the re-read returns the same truth. */
+  cohortRows: Record<string, { converted_at: string | null; conversion_grace_ends_at: string | null; metadata: Record<string, unknown> | null }> = {
+    old: { converted_at: GF_COHORT.converted_at, conversion_grace_ends_at: GF_COHORT.conversion_grace_ends_at, metadata: GF_COHORT.metadata },
+  };
   /** Runs after each row read: lets a test change the row under the evaluator. */
   afterLoad: ((row: Row) => void) | null = null;
-  from() {
+  from(name?: string) {
+    if (name === "token_grandfather_cohort") {
+      return {
+        select: () => ({
+          eq: (_c: string, userId: string) => ({
+            maybeSingle: async () => {
+              const cohort = this.cohortRows[userId];
+              return { data: cohort ? { user_id: userId, ...cohort } : null, error: null };
+            },
+          }),
+        }),
+      };
+    }
     return {
       select: () => ({
         eq: (_c1: string, userId: string) => ({
@@ -124,11 +143,7 @@ function thresholdsFor(token: { key: string }) {
 }
 
 const newUser = computeUserTokenAccess({ phase: "active", cohort: null, now: NOW });
-const grandfathered = computeUserTokenAccess({
-  phase: "active",
-  cohort: { user_id: "old", converted_at: null, conversion_grace_ends_at: null, metadata: {} },
-  now: NOW,
-});
+const grandfathered = computeUserTokenAccess({ phase: "active", cohort: GF_COHORT, now: NOW });
 function converted(at: Date, now: Date) {
   return computeUserTokenAccess({
     phase: "active",
@@ -666,5 +681,31 @@ describe("earned 1:1 holder switches", () => {
     });
     expect(result.pro).toMatchObject({currentlyEligible: false, transition: "unchanged"});
     expect(db.rows[0].token_key).toBe("hermesos");
+  });
+
+  it("counts a conversion that committed between the access snapshot and the row read", async () => {
+    const db = new FakeDb();
+    const original = hermesosProRow();
+    db.rows.push({...original, token_key: "hivra", metadata: {
+      holder_carryover: {qualifiedAt: original.qualified_at, amount: original.qualifying_quantity},
+    }});
+    const during = new Date(NOW.getTime() + 24 * HOUR_MS);
+    // The caller's snapshot predates the conversion; the cohort row does not.
+    db.cohortRows.old = {
+      converted_at: NOW.toISOString(),
+      conversion_grace_ends_at: new Date(NOW.getTime() + 72 * HOUR_MS).toISOString(),
+      metadata: { conversion: { source: "earned_holder_1_to_1", hivraThresholds: {
+        pro: { amount: HIVRA_PRO_AT_CONVERSION.toString(), code: "PRO_STANDARD" },
+        power: { amount: (2n * HIVRA_PRO_AT_CONVERSION).toString(), code: "POWER_STANDARD" },
+      }}},
+    };
+    const result = await evaluateAndRecordTokenTierEligibility({
+      userId: "old", balances: { hermesos: HERMESOS_PRO, hivra: 0n }, now: during,
+      access: grandfathered, db: db as unknown as DbCast,
+    });
+    // Without the cohort re-read the pre-switch snapshot hides the carry:
+    // the legacy balance would not count and the row would breach in grace.
+    expect(result.pro).toMatchObject({ transition: "unchanged", currentlyEligible: true });
+    expect(db.rows[0].last_breach_at).toBeNull();
   });
 });

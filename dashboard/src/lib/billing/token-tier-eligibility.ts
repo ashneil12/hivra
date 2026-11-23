@@ -95,6 +95,7 @@ import {
 import { platformTokenByKey, type PlatformTokenKey } from "./token-registry";
 import {
   conversionDue,
+  reReadUserTokenAccess,
   resolveUserTokenAccess,
   tierRowTokenCounts,
   type TokenAccessDb,
@@ -679,8 +680,17 @@ async function moveRowToHivra(
 }
 
 async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationResult> {
-  const { db, userId, tier, access, balances, now, warnings } = ctx;
+  const { db, userId, tier, balances, now, warnings } = ctx;
   let row = await loadRow(db, userId, tier);
+  // The caller's access snapshot can predate this row read; a conversion
+  // that committed between them would leave the move, carry and grace
+  // checks below reading a pre-switch snapshot for a post-switch row.
+  // Conversion state is append-only, so a snapshot already showing
+  // convertedAt cannot be stale on the fields this guard consults.
+  const access =
+    row && ctx.access.phase === "active" && !ctx.access.convertedAt
+      ? await reReadUserTokenAccess(userId, { db: db as unknown as TokenAccessDb, now })
+      : ctx.access;
   const activeQuote = await loadActiveQuote(ctx);
 
   if (!row) return evaluateFirstQualification(ctx, activeQuote);
