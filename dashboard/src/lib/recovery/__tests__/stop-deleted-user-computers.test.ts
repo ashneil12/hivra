@@ -7,20 +7,22 @@ import { revokeRemoteDesktopCapability } from "@/lib/remote-computers/session-br
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: jest.fn() } }));
 jest.mock("@/lib/hivra/agent-operation-store", () => ({ claimHivraAgentOperation: jest.fn(), completeHivraAgentOperation: jest.fn(), recordHivraAgentOperationFailure: jest.fn() }));
 jest.mock("@/lib/hivra/agent-execution-context", () => ({ resolveHivraAgentExecutionContext: jest.fn() }));
-jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScript: jest.fn() }));
+jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScript: jest.fn(), normalizeProxmoxTargetId: (value: string | null | undefined) => value?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || null }));
 jest.mock("@/lib/remote-computers/session-broker", () => ({ revokeRemoteDesktopCapability: jest.fn() }));
 const mockMarkAwake = jest.fn();
 jest.mock("@/lib/hivra/sleep-aware", () => ({ markAgentAwake: (...args: unknown[]) => mockMarkAwake(...args) }));
 const single = jest.fn();
 let operationId: string | null;
 let hostRow: { status: string; decommissioned_at: string | null } | null;
+let registryHostId: string;
 const baseAgent = { id: "computer", user_id: "user_gone", status: "running", vmid: 123, computer_substrate: "proxmox-kvm" };
 beforeEach(() => {
   jest.clearAllMocks();
   hostRow = null;
+  registryHostId = "fixture_host";
   (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) =>
     table === "proxmox_hosts"
-      ? { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: hostRow, error: null }) }) }) }
+      ? { select: () => ({ eq: (_col: string, id: string) => ({ maybeSingle: async () => ({ data: id === registryHostId ? hostRow : null, error: null }) }) }) }
       : { select: () => ({ eq: () => ({ eq: () => ({ single }) }) }) });
   operationId = null;
   single.mockImplementation(async () => ({ data: { ...baseAgent, ...(operationId ? { operation_id: operationId, operation_kind: "stop", desired_state: "stopped" } : {}) }, error: null }));
@@ -104,6 +106,13 @@ describe("a computer on a decommissioned host", () => {
     await expect(stopDeletedUserComputer("user_gone", "computer")).rejects.toThrow("revocation is incomplete");
     expect(runProxmoxHostScript).not.toHaveBeenCalled();
     expect(completeHivraAgentOperation).not.toHaveBeenCalled();
+  });
+
+  it("finds the registry row for a mixed-case stored host", async () => {
+    (resolveHivraAgentExecutionContext as jest.Mock).mockResolvedValue({ kind: "managed", host: "Fixture-HOST", infrastructureBindingTagEnforced: true, infrastructureBindingTag: "hivra-bind-fixture", env: {} });
+    await stopDeletedUserComputer("user_gone", "computer");
+    expect(runProxmoxHostScript).not.toHaveBeenCalled();
+    expect(completeHivraAgentOperation).toHaveBeenCalledWith(expect.objectContaining({ expectedDesiredState: "stopped", status: "stopped" }));
   });
 });
 
