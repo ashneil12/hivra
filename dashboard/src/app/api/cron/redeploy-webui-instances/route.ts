@@ -9,6 +9,7 @@ import {
   FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST,
   isAwaitingTeardown,
   isPausedLifecycleState,
+  LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
 } from "@/lib/instance-lifecycle";
 import { extractGlobalHermesSettings } from "@/lib/instance-settings";
 import { log } from "@/lib/logger";
@@ -135,15 +136,25 @@ function applyFleetSyncEligibility<T>(query: T): T {
   // result types (rows vs {count}) intact at both call sites.
   const filtered = (query as unknown as FleetSyncFilterable)
       .in("backend", WEBFREE_BACKENDS)
-      // lifecycle_state='failed' is deliberately NOT eligible on its own: a
+      // lifecycle_state='failed' is NOT eligible on its own: a
       // failed-lifecycle row whose status is also failed/error has no VM the
       // redeploy can reach (prod 2026-11: daily "launch failed" events for
       // powered-off VMs, archived rows the mutation guard refuses, and boxes
-      // with no IP — every tick, forever). A failed row whose VM is genuinely
-      // up still enters through the status='running' arm, so nothing live is
-      // ejected; the lifecycle-failed rows that remain are the ones this
-      // sweep can never help.
-      .or("lifecycle_state.eq.active,status.eq.running")
+      // with no IP — every tick, forever). But the status='running' rescue
+      // arm is not enough either: applyLiveUpdate's failure write stamps BOTH
+      // status and lifecycle_state 'failed', so an update that died ON the
+      // box (image pull, update script, health wait) orphaned the row —
+      // recover-stuck can restart the VM but never re-applies the release.
+      // The third arm re-admits exactly that case: the failure write records
+      // in lifecycle_substate whether the launch got a command onto the
+      // guest (live_update_failed_vm_reached), so a reachable-but-failed box
+      // stays in the retry queue while a launch refused before the guest
+      // (unreachable marker, or no marker at all — powered off, wrong VMID,
+      // dead agent channel) stays out and keeps belonging to recovery.
+      .or(
+        `lifecycle_state.eq.active,status.eq.running,` +
+        `and(lifecycle_state.eq.failed,lifecycle_substate.eq.${LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE})`
+      )
       .not("lifecycle_state", "in", FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST)
       // Never sweep a row armed for teardown. The orphan sweep (Mon 09:00)
       // powers the VM off and sets this status with a 72h grace; this sweep ran

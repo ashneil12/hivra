@@ -72,7 +72,11 @@ export interface MemoryDbCall {
 export interface InjectedFailure {
   table: string;
   op: MutationKind;
-  /** Only fail when the insert row / update patch matches. */
+  /**
+   * Only fail when the insert row / update patch matches. For `select` ops
+   * the payload is `{ filters }` — the query's filter list — so a test can
+   * fail one specific SELECT in a flow that issues several.
+   */
   match?: (payload: MemoryRow) => boolean;
   error?: MemoryDbError;
   /** How many matching operations fail before the rule is spent (default 1). */
@@ -358,7 +362,7 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
     let rowRange: { from: number; to: number } | null = null;
 
     const run = () => {
-      const failure = takeFailure(tableName, "select", {});
+      const failure = takeFailure(tableName, "select", { filters: [...filters] });
       if (failure) return { rows: null, error: failure };
       const selected = sortRows(
         readRows().filter((row) => filters.every((filter) => rowMatches(row, filter))),

@@ -87,6 +87,28 @@ export const FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST = `("${FLEET_SYNC_SKIP_LIFECYCLE_
   '","'
 )}")`;
 
+// `lifecycle_substate` values stamped by applyLiveUpdate's launch-failure
+// write (instance-orchestrator). The failed lifecycle patch alone says
+// nothing about whether the update ever reached the box — and that is the
+// distinction the fleet-sync sweep needs:
+//
+//   - REACHED: the launch script got a command onto the guest and failed
+//     there (image pull, update script, health wait). The VM is alive, so
+//     the next sweep's redeploy is a real retry, not a guaranteed error.
+//   - UNREACHABLE (and any row with no marker at all): the launch never got
+//     a command on a guest — powered off, wrong/missing VMID, dead agent
+//     channel, or the host itself unreachable. The recovery crons own that
+//     row (recover-stuck probes the gateway and restarts the VM); sweeping
+//     it would manufacture the same guaranteed daily failure the sweep's
+//     live-only filter exists to prevent.
+//
+// Every applyLiveUpdate launch failure re-stamps the value, so it always
+// describes the LAST failed update attempt: a box that dies after a
+// reachable failure is reclassified by its next attempt and drops back out
+// of the sweep.
+export const LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE = "live_update_failed_vm_reached";
+export const LIVE_UPDATE_FAILED_VM_UNREACHABLE_SUBSTATE = "live_update_failed_vm_unreachable";
+
 const LEGACY_STATUS_TO_LIFECYCLE: Record<string, InstanceLifecycleState> = {
   provisioning: "provisioning",
   redeploying: "provisioning",

@@ -1264,4 +1264,71 @@ describe("stale unpaid quote expiry", () => {
       "active",
     ]);
   });
+
+  it("still runs the regular lanes when the daily stale pass cannot load its candidates", async () => {
+    // The stale pass's candidate SELECT is the first quotes read of the daily
+    // tick. If it fails, the batch must not go down with it: the open loop and
+    // the transfer-surfacing pass still run, and the summary reports the
+    // failure so the route's ops event and heartbeat read a degraded tick —
+    // not a clean one that simply found nothing stale.
+    const freshQuote = staleQuoteRow({
+      id: "quote_fresh",
+      deposit_address: `0x${"9".repeat(40)}`,
+      quoted_at: "2026-05-19T22:40:00.000Z",
+      expires_at: "2026-05-19T23:00:00.000Z",
+      created_at: "2026-05-19T22:40:00.000Z",
+      updated_at: "2026-05-19T22:40:00.000Z",
+    });
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow(), freshQuote],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    memory.failNext({ table: "managed_venice_token_quotes", op: "select" });
+
+    const summary = await runBatch(memory.db, chain);
+
+    // Reported, not thrown — the pass retries on the next day's first tick.
+    expect(summary.staleScanLoadFailed).toBe(true);
+    // The stale quote was never scanned: still open, not expired sight-unseen.
+    const stale = memory.tables.managed_venice_token_quotes.find((row) => row.id === "quote_stale");
+    expect(stale?.status).toBe("active");
+    // The regular open lane still ran: the in-grace fresh quote got its real
+    // log scan and outcome instead of dying with the stale pass.
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+    expect(summary.checked).toBe(1);
+    expect(summary.results.map((result) => result.quoteId)).toEqual(["quote_fresh"]);
+  });
+
+  it("scans the stale batch before regular candidate discovery runs", async () => {
+    // Discovery (the fresh/claimed/lot-held SELECTs) is the slow part of a
+    // daily tick — the lot-held lookup pages the open quotes. Running it
+    // before the stale pass would charge its time — or its failure — to the
+    // day before the stale pass ever started. Failing ONLY the discovery
+    // SELECT proves the order: the batch still rejects on the main lane, but
+    // the stale quote was already scanned and retired ahead of it.
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow()],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    memory.failNext({
+      table: "managed_venice_token_quotes",
+      op: "select",
+      // The stale loader bounds expires_at with `lte`; only the regular
+      // candidate SELECT bounds it with `gt`.
+      match: (payload) =>
+        ((payload.filters as Array<{ column: string; op: string }> | undefined) ?? []).some(
+          (filter) => filter.column === "expires_at" && filter.op === "gt"
+        ),
+    });
+
+    await expect(runBatch(memory.db, chain)).rejects.toThrow();
+
+    // The batch died on discovery — but the day's one stale pass had already
+    // done its real log scan and retired the quote, instead of waiting
+    // behind the failed select.
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+    expect(memory.tables.managed_venice_token_quotes[0].status).toBe("cancelled");
+  });
 });
