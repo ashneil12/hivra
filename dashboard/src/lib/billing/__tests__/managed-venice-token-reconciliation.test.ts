@@ -1234,18 +1234,18 @@ describe("stale unpaid quote expiry", () => {
     expect(row.updated_at).toBe(staleNow.toISOString());
 
     // The next day's first tick re-selects the same row: a partial no_match
-    // never discharges the one-scan obligation. Day 1's checkpoint already
-    // covers the head-bounded range end to end — immutable history — so the
-    // re-scan spends no new RPC, yet the row STILL must not be marked: the
-    // head remains behind the grace end and the unscanned tail can still
-    // hold the payment.
+    // never discharges the one-scan obligation. Day 1's checkpoint covered
+    // the head-bounded range — but only the blocks the finality margin puts
+    // beyond a reorg are trusted as immutable, so the re-scan pays exactly
+    // one more request for the still-non-final tail (FINALITY_MARGIN_BLOCKS
+    // behind the head) instead of the whole range.
     const day2 = await runBatch(
       memory.db,
       chain,
       new Date("2026-05-21T00:00:00.000Z")
     );
     expect(day2.checked).toBe(1);
-    expect(chain.methodCount("eth_getLogs")).toBe(scannedAt);
+    expect(chain.methodCount("eth_getLogs")).toBe(scannedAt + 1);
     row = memory.tables.managed_venice_token_quotes[0];
     expect(row.status).toBe("expired");
     expect((row.metadata as Row).graceWindowScannedAt).toBeUndefined();
@@ -2013,5 +2013,294 @@ describe("stale unpaid quote expiry", () => {
       expect.objectContaining({ quoteId: "quote_probe_4", transactionHash: "0xlotpaiddeep" }),
       expect.anything()
     );
+  });
+
+  it("persists resolved transfer timestamps in the checkpoint so a resumed pass never re-pays the lookup", async () => {
+    // The resume used to re-run a serial timestamp pass from an empty
+    // per-batch cache: every checkpointed transfer's block was re-read one
+    // RPC at a time before the scan itself, enough to eat a day's whole
+    // 60 s slice before reaching the uncovered tail — the scan starved at
+    // the same place forever. Resolved stamps now ride the coverage record:
+    // day 2 seeds them from the checkpoint and spends zero timestamp reads
+    // on covered work.
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow()],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    const paymentBlock = chain.blockAt("2026-05-01T10:10:00.000Z");
+    chain.addTransfer(
+      transferAt(paymentBlock, BigInt(staleQuoteRow().token_amount_raw as string), "0xprefixpaid")
+    );
+    let nowMs = 0;
+    const inner = chain.fetchImpl.getMockImplementation()!;
+    chain.fetchImpl.mockImplementation(async (url: string, init: { body: string }) => {
+      if ((JSON.parse(init.body) as { method: string }).method === "eth_getLogs") nowMs += 50_000;
+      return inner(url, init);
+    });
+    const settleQuote = jest.fn(async (transfer: { quoteId?: string }) => ({
+      status: "settled" as const,
+      quoteId: transfer?.quoteId ?? "quote_stale",
+    }));
+    const run = (now: Date) =>
+      reconcilePendingManagedVeniceTokenQuotes({
+        db: memory.db,
+        rpcUrl: "https://base.test",
+        fetchImpl: chain.fetchImpl,
+        minConfirmations: 2,
+        settleQuote,
+        now,
+        clock: () => nowMs,
+        staleScanBudgetMs: 60_000,
+        interQuoteDelayMs: 0,
+        rpcSleepImpl: async () => {},
+      });
+    const blockReadsFor = (block: number) =>
+      chain.requests.filter(
+        (request) =>
+          request.method === "eth_getBlockByNumber" &&
+          request.params[0] === `0x${block.toString(16)}`
+      ).length;
+
+    const day1 = await run(staleNow);
+    expect(day1.deferred.open).toBe(1);
+    // Day 1 resolved the stamp inside the scan — and wrote it into the
+    // coverage record.
+    const day1Reads = blockReadsFor(paymentBlock);
+    expect(day1Reads).toBeGreaterThanOrEqual(1);
+    const day1Progress = (memory.tables.managed_venice_token_quotes[0].metadata as Row)
+      .depositScanProgress as Record<
+      string,
+      { transfers: Array<{ transactionHash: string; logTimestampSec: number | null }> }
+    >;
+    const stamped = day1Progress?.[HERMESOS_TOKEN_ADDRESS.toLowerCase()]?.transfers?.[0];
+    expect(stamped).toEqual(
+      expect.objectContaining({
+        transactionHash: "0xprefixpaid",
+        logTimestampSec: Math.floor(Date.parse(chain.blockTimestamp(paymentBlock)) / 1000),
+      })
+    );
+
+    const day2 = await run(new Date("2026-05-21T00:00:00.000Z"));
+
+    expect(day2.settled).toBe(1);
+    // The seeded stamp made the resume's timestamp resolution a no-op: the
+    // payment's block was NOT re-read on day 2, so the slice went to the
+    // uncovered tail instead of another serial timestamp pass.
+    expect(blockReadsFor(paymentBlock)).toBe(day1Reads);
+  });
+
+  it("checkpoints only final coverage and re-scans the non-final tail on resume", async () => {
+    // A resumable scan running close behind the head used to persist every
+    // covered block — including ones a reorg could still replace. The record
+    // is authoritative (the tail is never refetched once it is in the mark),
+    // so a transfer mined into a replaced block would stay missed forever
+    // and the quote could retire over it. Only coverage the finality margin
+    // puts beyond a reorg is checkpointed; the still-non-final tail is
+    // re-scanned on every attempt until it finalizes.
+    const chain = makeChain();
+    const nonFinalBlock = HEAD_BLOCK - 10; // inside the 30-block margin
+    const finalBlock = HEAD_BLOCK - 50; // outside it
+    chain.addTransfer(
+      transferAt(finalBlock, BigInt(quoteRow.token_amount_raw as string), "0xfinalpaid")
+    );
+    chain.addTransfer(
+      transferAt(nonFinalBlock, BigInt(quoteRow.token_amount_raw as string), "0xnonfinalpaid")
+    );
+    const recorded: Array<{
+      scannedThroughBlock: number;
+      transfers: Array<{ transactionHash: string; blockNumber: number }>;
+    }> = [];
+    const settleQuote = jest.fn(async () => ({ status: "settled" as const, quoteId: "quote_1" }));
+    const reconcileWith = (
+      saved: unknown,
+      sink: typeof recorded
+    ) =>
+      reconcileManagedVeniceTokenQuote({
+        quoteId: "quote_1",
+        userId: "user_1",
+        db: createMemoryDb([quoteRow]),
+        rpcUrl: "https://base.test",
+        fetchImpl: chain.fetchImpl,
+        minConfirmations: 2,
+        settleQuote,
+        now: new Date("2026-05-16T10:22:00.000Z"),
+        scanProgress: { saved, checkpoint: async (scan) => void sink.push(scan) },
+      });
+
+    await reconcileWith({}, recorded);
+
+    // The scan covered through the head, but the persisted mark stops at the
+    // finality margin — and so does the persisted transfer set.
+    expect(recorded.length).toBeGreaterThan(0);
+    const persisted = recorded[recorded.length - 1];
+    expect(persisted.scannedThroughBlock).toBe(HEAD_BLOCK - 30);
+    expect(persisted.transfers.map((t) => t.transactionHash)).toEqual(["0xfinalpaid"]);
+
+    // Resume off that record: the non-final tail — including the second
+    // transfer's block — is re-read, never trusted from coverage.
+    const requestsBefore = chain.requests.length;
+    await reconcileWith(
+      { [HERMESOS_TOKEN_ADDRESS.toLowerCase()]: persisted },
+      []
+    );
+    const resumeRanges = chain.requests
+      .slice(requestsBefore)
+      .filter((request) => request.method === "eth_getLogs")
+      .map((request) => request.params[0] as { fromBlock: string; toBlock: string });
+    expect(resumeRanges.length).toBeGreaterThan(0);
+    expect(Number.parseInt(resumeRanges[0].fromBlock, 16)).toBe(HEAD_BLOCK - 30 + 1);
+    expect(
+      Number.parseInt(resumeRanges[resumeRanges.length - 1].toBlock, 16)
+    ).toBeGreaterThanOrEqual(nonFinalBlock);
+  });
+
+  it("never stamps the grace-scan marker over a settlement claim that landed mid-scan", async () => {
+    // A stale row's catch-up scan runs while a competing worker claims the
+    // quote: the claim CAS writes transaction_hash plus the claim payload in
+    // metadata.settlementClaim. The marker write that used to follow rewrote
+    // the SELECTION-time metadata — erasing settlementClaim while leaving
+    // transaction_hash — and recovery then read a paid quote as
+    // claimed-but-claimless and sent it to manual review. The marker's
+    // transaction_hash IS NULL guard (the same one the scan checkpoint
+    // writes carry) makes the write a no-op instead.
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [
+        {
+          ...staleQuoteRow(),
+          status: "expired",
+          metadata: {
+            ...(staleQuoteRow().metadata as Row),
+            closedReason: "no_deposit_after_grace",
+          },
+        },
+      ],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    const liveRow = memory.tables.managed_venice_token_quotes[0];
+    // The claim lands between the pass's selection read and its post-scan
+    // marker write — hook the first log request for a deterministic point.
+    const inner = chain.fetchImpl.getMockImplementation()!;
+    let claimed = false;
+    chain.fetchImpl.mockImplementation(async (url: string, init: { body: string }) => {
+      const response = await inner(url, init);
+      if (!claimed && (JSON.parse(init.body) as { method: string }).method === "eth_getLogs") {
+        claimed = true;
+        liveRow.transaction_hash = "0xclaimedmidscan";
+        liveRow.metadata = {
+          ...(liveRow.metadata as Row),
+          settlementClaim: { claimedAt: "2026-05-20T00:00:00.000Z", transactionHash: "0xclaimedmidscan" },
+        };
+      }
+      return response;
+    });
+
+    const summary = await runBatch(memory.db, chain);
+
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+    // The claim survived intact: hash AND claim payload both present.
+    expect(liveRow.transaction_hash).toBe("0xclaimedmidscan");
+    expect((liveRow.metadata as Row).settlementClaim).toEqual(
+      expect.objectContaining({ transactionHash: "0xclaimedmidscan" })
+    );
+    // The marker write refused to touch a claimed row: no grace stamp, and
+    // the selection-read metadata did not overwrite the claim's.
+    expect((liveRow.metadata as Row).graceWindowScannedAt).toBeUndefined();
+    expect(summary.checked).toBeGreaterThanOrEqual(1);
+  });
+
+  it("still stamps the grace-scan marker on an unclaimed row after its proved catch-up scan", async () => {
+    // The transaction_hash guard refuses claimed rows — it must not refuse
+    // unclaimed ones: a grace-expired row whose catch-up scan proves an
+    // empty window still gets its marker, or it re-consumes the daily batch
+    // forever. Here the outcome is 'expired' because a deposit lot lands
+    // mid-scan (the retire re-read finds it and refuses to cancel the row) —
+    // a lot is not a claim, so the marker's guards all pass and the row is
+    // discharged from the pass's one-scan obligation.
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [
+        {
+          ...staleQuoteRow(),
+          status: "expired",
+          metadata: {
+            ...(staleQuoteRow().metadata as Row),
+            closedReason: "no_deposit_after_grace",
+          },
+        },
+      ],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    const inner = chain.fetchImpl.getMockImplementation()!;
+    let landed = false;
+    chain.fetchImpl.mockImplementation(async (url: string, init: { body: string }) => {
+      const response = await inner(url, init);
+      if (!landed && (JSON.parse(init.body) as { method: string }).method === "eth_getLogs") {
+        landed = true;
+        memory.insertRow("managed_venice_token_lots", {
+          id: "lot_midscan",
+          account_id: "account_1",
+          user_id: "user_1",
+          quote_id: "quote_stale",
+          source: "hermesos_deposit",
+          token_amount_raw: "1000000000000000000000",
+          remaining_token_amount_raw: "1000000000000000000000",
+          snapshot_price_usd: "0.05",
+          original_value_micro_usd: 50_000_000,
+          remaining_value_micro_usd: 50_000_000,
+          quote_source: "dexscreener",
+          quoted_at: "2026-05-01T10:00:00.000Z",
+          quote_expires_at: "2026-05-01T10:20:00.000Z",
+          transaction_hash: "0xlotpaidmidscan",
+          status: "active",
+          metadata: {},
+        });
+      }
+      return response;
+    });
+
+    await runBatch(memory.db, chain);
+
+    const row = memory.tables.managed_venice_token_quotes[0];
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+    expect(row.status).toBe("expired");
+    expect(row.transaction_hash).toBeNull();
+    expect((row.metadata as Row).graceWindowScannedAt).toBe("2026-05-20T00:00:00.000Z");
+  });
+
+  it("degrades the tick — but still runs the regular lanes — when the day's claim write fails", async () => {
+    // claimCronUtcDay collapses "another run holds today" and "the claim
+    // write failed" into one false: the first is a clean skip, the second
+    // means the once-daily pass ran on NO tick while the route could stamp
+    // a clean heartbeat. A failed claim now flags the summary so the route
+    // degrades — while the regular lanes are completely unaffected.
+    const freshQuote = staleQuoteRow({
+      id: "quote_fresh",
+      deposit_address: `0x${"9".repeat(40)}`,
+      quoted_at: "2026-05-19T22:40:00.000Z",
+      expires_at: "2026-05-19T23:00:00.000Z",
+      created_at: "2026-05-19T22:40:00.000Z",
+      updated_at: "2026-05-19T22:40:00.000Z",
+    });
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow(), freshQuote],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    memory.failNext({ table: "ops_cron_heartbeats", op: "update" });
+
+    const summary = await runBatch(memory.db, chain);
+
+    expect(summary.staleScanClaimFailed).toBe(true);
+    expect(summary.staleScanLoadFailed).toBe(false);
+    // The stale quote was never scanned: still open, not expired sight-unseen.
+    const stale = memory.tables.managed_venice_token_quotes.find((row) => row.id === "quote_stale");
+    expect(stale?.status).toBe("active");
+    // The regular open lane still ran: the in-grace fresh quote got its real
+    // log scan and outcome instead of dying with the claim.
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+    expect(summary.checked).toBe(1);
+    expect(summary.results.map((result) => result.quoteId)).toEqual(["quote_fresh"]);
   });
 });

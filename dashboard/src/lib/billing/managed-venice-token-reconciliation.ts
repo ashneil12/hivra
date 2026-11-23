@@ -1,4 +1,4 @@
-import { claimCronUtcDay } from "@/lib/cron-heartbeat";
+import { claimCronUtcDayOutcome } from "@/lib/cron-heartbeat";
 import { livePlatformTokens } from "@/lib/billing/token-registry";
 import { requireDb } from "@/lib/billing/db-utils";
 import { log } from "@/lib/logger";
@@ -282,6 +282,12 @@ export interface ManagedVeniceTokenQuoteBatchReconciliationResult {
   // reconciler's staleRetryLoadFailed pattern). The pass retries on the next
   // day's first tick.
   staleScanLoadFailed: boolean;
+  // The stale pass's once-a-day slot could not even be claimed: the claim
+  // WRITE failed (as opposed to another run already holding the day, which
+  // is a clean skip). Without this flag a tick whose claim keeps failing
+  // records a clean heartbeat while the stale pass runs on NO tick. The
+  // pass stays deferred — not lost — and retries on the next tick.
+  staleScanClaimFailed: boolean;
   results: Array<{
     quoteId: string;
     userId: string;
@@ -731,7 +737,10 @@ function readPersistedTokenScanProgress(
       !isBlock(t.blockNumber) ||
       typeof t.amount !== "string" ||
       !/^\d+$/.test(t.amount) ||
-      !(t.logTimestampSec === null || isBlock(t.logTimestampSec))
+      // Records written before inline stamps simply lack the field: absent
+      // means "unresolved" (null), never malformed — the coverage is still
+      // valid and only the stamp is re-fetched.
+      !(t.logTimestampSec === undefined || t.logTimestampSec === null || isBlock(t.logTimestampSec))
     ) {
       return null;
     }
@@ -740,7 +749,10 @@ function readPersistedTokenScanProgress(
       logIndex: t.logIndex,
       blockNumber: t.blockNumber,
       amount: t.amount,
-      logTimestampSec: t.logTimestampSec === null ? null : (t.logTimestampSec as number),
+      logTimestampSec:
+        t.logTimestampSec === undefined || t.logTimestampSec === null
+          ? null
+          : (t.logTimestampSec as number),
     });
   }
   return {
@@ -753,11 +765,19 @@ function readPersistedTokenScanProgress(
   };
 }
 
+// The persisted transfer set for a coverage record that claims blocks up to
+// `throughBlock`: only transfers inside the covered range may be persisted.
+// Anything beyond it (a scan that saw a non-final block it could not yet
+// checkpoint — see persistProgress in scanQuoteTransfers) stays only in the
+// in-memory result, never in a record a later attempt would treat as
+// already-covered.
 function serializeScannedTransfers(
-  parsed: Map<string, DepositTransferLog & { confirmations: number }>
+  parsed: Map<string, DepositTransferLog & { confirmations: number }>,
+  throughBlock: number
 ): PersistedScannedTransfer[] | null {
-  if (parsed.size > MAX_PERSISTED_SCAN_TRANSFERS) return null;
-  return [...parsed.values()].map((entry) => ({
+  const covered = [...parsed.values()].filter((entry) => entry.blockNumber <= throughBlock);
+  if (covered.length > MAX_PERSISTED_SCAN_TRANSFERS) return null;
+  return covered.map((entry) => ({
     transactionHash: entry.transactionHash,
     logIndex: entry.logIndex,
     blockNumber: entry.blockNumber,
@@ -845,8 +865,88 @@ async function scanQuoteTransfers(params: {
     addTransfer({ ...entry, amount: BigInt(entry.amount) });
   }
 
-  let dustSkipped = 0;
+  // The last block this attempt has provably covered, seeded from the
+  // checkpoint's mark when resuming.
+  let coveredThroughBlock = savedScan ? savedScan.scannedThroughBlock : fromBlock - 1;
+  // Coverage is only persisted for blocks the finality margin already puts
+  // beyond a reorg: a checkpoint that claimed a non-final block could never
+  // be refetched, so a transfer mined into the replaced block would stay
+  // missed forever — and the quote could retire over it. The covered tail
+  // within the margin is re-scanned on the next attempt instead. For a
+  // stale quote the whole anchored range is far behind the head, so this
+  // only ever binds when a resumable scan runs close behind the head.
+  const finalCoveredBlock = latest - FINALITY_MARGIN_BLOCKS;
+  const persistableThroughBlock = () => Math.min(coveredThroughBlock, finalCoveredBlock);
+  // The coverage mark this attempt resumed from: a write may never go below
+  // it (a clamped or regressed head must not erase proven coverage) but MAY
+  // equal it — the same record rewritten with resolved timestamps.
+  const resumedThroughBlock = scanFromBlock - 1;
   let checkpointCapWarned = false;
+  const persistProgress = async () => {
+    if (!params.resume) return;
+    const throughBlock = persistableThroughBlock();
+    if (throughBlock < resumedThroughBlock) return;
+    const transfers = serializeScannedTransfers(parsed, throughBlock);
+    if (transfers === null) {
+      // Over the persisted cap: the scan keeps running correctly but stops
+      // checkpointing, so a later attempt never resumes into a partial set.
+      if (!checkpointCapWarned) {
+        checkpointCapWarned = true;
+        log.warn("managed venice quote scan has too many transfers to persist; resumable coverage disabled for this scan", {
+          source: "managed-venice-token-reconciliation",
+          failureType: "managed_venice_scan_progress_cap",
+          quoteId: params.quote.id,
+        });
+      }
+      return;
+    }
+    try {
+      await params.resume.checkpoint({
+        v: STALE_SCAN_PROGRESS_VERSION,
+        tokenAddress,
+        fromBlock,
+        toBlock,
+        scannedThroughBlock: throughBlock,
+        transfers,
+      });
+    } catch (error) {
+      // Best-effort like every queue writer: a failed checkpoint only means
+      // the next attempt rescans the uncovered prefix — never a wrong answer.
+      log.warn("stale quote scan progress checkpoint failed; the next attempt rescans the uncovered prefix", {
+        source: "managed-venice-token-reconciliation",
+        failureType: "managed_venice_scan_progress_failed",
+        quoteId: params.quote.id,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  // Resolve block times for every still-unstamped qualifying transfer,
+  // including ones a previous attempt's checkpoint seeded without their
+  // stamps. Called inside the scan so the resolution rides the pass's own
+  // deadline instead of a serial post-scan pass that re-ran from an empty
+  // cache every attempt.
+  const resolveMissingTransferTimestamps = async () => {
+    const missing = new Set<number>(
+      [...parsed.values()]
+        .filter((entry) => entry.logTimestampSec === null)
+        .map((entry) => entry.blockNumber)
+    );
+    if (missing.size === 0) return false;
+    const times = await blockTimestampsFor(
+      chain,
+      missing,
+      { block: latest, timestampSec: latestSec },
+      "Managed Venice quote scan"
+    );
+    for (const entry of parsed.values()) {
+      if (entry.logTimestampSec === null) {
+        entry.logTimestampSec = times.get(entry.blockNumber) ?? null;
+      }
+    }
+    return true;
+  };
+
+  let dustSkipped = 0;
   // Parse + dust-filter per chunk. A tx's logs all sit in one block and a
   // chunk never splits a block, so the tx-level rule ("a tx with one real
   // log keeps all its logs") applied per chunk is identical to applying it
@@ -869,38 +969,15 @@ async function scanQuoteTransfers(params: {
     }
     for (const transfer of chunkParsed.values()) addTransfer(transfer);
     if (!params.resume) return;
-    const transfers = serializeScannedTransfers(parsed);
-    if (transfers === null) {
-      // Over the persisted cap: the scan keeps running correctly but stops
-      // checkpointing, so a later attempt never resumes into a partial set.
-      if (!checkpointCapWarned) {
-        checkpointCapWarned = true;
-        log.warn("managed venice quote scan has too many transfers to persist; resumable coverage disabled for this scan", {
-          source: "managed-venice-token-reconciliation",
-          failureType: "managed_venice_scan_progress_cap",
-          quoteId: params.quote.id,
-        });
-      }
-      return;
-    }
-    try {
-      await params.resume.checkpoint({
-        v: STALE_SCAN_PROGRESS_VERSION,
-        tokenAddress,
-        fromBlock,
-        toBlock,
-        scannedThroughBlock: chunkEndBlock,
-        transfers,
-      });
-    } catch (error) {
-      // Best-effort like every queue writer: a failed checkpoint only means
-      // the next attempt rescans the uncovered prefix — never a wrong answer.
-      log.warn("stale quote scan progress checkpoint failed; the next attempt rescans the uncovered prefix", {
-        source: "managed-venice-token-reconciliation",
-        failureType: "managed_venice_scan_progress_failed",
-        quoteId: params.quote.id,
-        errorMessage: error instanceof Error ? error.message : String(error),
-      });
+    coveredThroughBlock = chunkEndBlock;
+    // Coverage first: the tile's blocks are checkpointed even if the
+    // timestamp resolution below dies on the scan's deadline.
+    await persistProgress();
+    // Stamp the resolved timestamps into the same coverage record, so a
+    // resumed attempt finds them inline and never re-pays a serial
+    // timestamp pass on an empty cache.
+    if (await resolveMissingTransferTimestamps()) {
+      await persistProgress();
     }
   };
 
@@ -938,6 +1015,23 @@ async function scanQuoteTransfers(params: {
     { block: latest, timestampSec: latestSec },
     "Managed Venice quote scan"
   );
+  // Stamp the resolved block times back onto the entries and — for a
+  // resume-armed scan — into the coverage record they belong to. A
+  // checkpointed transfer with no inline timestamp made every later attempt
+  // re-run this serial lookup from an empty cache; persisting the stamps
+  // keeps the next pass inside its budget.
+  let resolvedAfterScan = false;
+  for (const entry of parsed.values()) {
+    if (entry.logTimestampSec === null) {
+      const stamp = blockTimes.get(entry.blockNumber);
+      if (stamp === undefined) continue;
+      entry.logTimestampSec = stamp;
+      resolvedAfterScan = true;
+    }
+  }
+  if (resolvedAfterScan) {
+    await persistProgress();
+  }
   // A tx's logs share one block, so they are always scanned (and in range,
   // and confirmed) together.
   const logsByTx = new Map<string, Array<{ logIndex: number; amount: bigint }>>();
@@ -1611,14 +1705,20 @@ function staleQuoteScanProgress(
 
 // Record that a no_deposit_after_grace row got its one catch-up window scan:
 // stamp GRACE_WINDOW_SCANNED_KEY into metadata (and bump the rotation
-// cursor). Guarded on the row still being open and still carrying the
-// no_deposit_after_grace reason — a scan that settled, reviewed or retired
-// the quote changed its status, so the write is a no-op there by design.
-// `metadata` is the row the selection just read; a rare concurrent metadata
-// writer between selection and mark could drop a key it added, but every
-// writer that matters also changes the fields the guards check. Best-effort:
-// a failed mark leaves the row eligible for one more scan tomorrow, which is
-// the safe side.
+// cursor). Guarded on the row still being open, still carrying the
+// no_deposit_after_grace reason, AND still unclaimed — a scan that settled,
+// reviewed or retired the quote changed its status, so the write is a no-op
+// there by design. The transaction_hash guard is the same one the scan
+// checkpoint writes carry: a settlement claim landing between selection and
+// this write sets transaction_hash plus the claim in metadata, and a marker
+// that rewrote the selection-read metadata would erase the claim while
+// leaving the hash — recovery would send a paid quote to manual review
+// instead of crediting it. With the guard the write simply no-ops and the
+// claim's own recovery path runs. `metadata` is the row the selection just
+// read; a rare concurrent metadata writer between selection and mark could
+// drop a key it added, but every writer that matters also changes the
+// fields the guards check. Best-effort: a failed mark leaves the row
+// eligible for one more scan tomorrow, which is the safe side.
 async function markStaleQuoteGraceScanned(
   db: SupabaseLike,
   quoteId: string,
@@ -1634,6 +1734,7 @@ async function markStaleQuoteGraceScanned(
     })
     .eq("id", quoteId)
     .eq("metadata->>closedReason", "no_deposit_after_grace")
+    .is("transaction_hash", null)
     .in("status", ["active", "expired"]);
   if (error) {
     log.warn("stale grace-scan marker write failed; the row is re-selected once more tomorrow", {
@@ -2308,6 +2409,7 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
     transferSurfacing: { checked: 0, complete: 0, pending: 0, failed: 0 },
     deferred: { open: 0, surfacing: 0 },
     staleScanLoadFailed: false,
+    staleScanClaimFailed: false,
     results: [],
   };
 
@@ -2345,13 +2447,24 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
   // the new day's pass entirely. The claim row keys the pass to the day it
   // RAN, and the guarded update also decides between overlapping invocations
   // (the read-only day check let two of them both run it).
-  const ownsStaleScanDay = await claimCronUtcDay(
+  // The claim outcome distinguishes "another run holds today" (a clean
+  // skip) from "the claim write itself failed" — the latter leaves the day
+  // unclaimed AND the pass unrun, so the tick is reported degraded instead
+  // of recording a clean heartbeat while the stale pass runs on no tick.
+  const staleScanClaim = await claimCronUtcDayOutcome(
     db,
     MANAGED_VENICE_TOKEN_RECONCILIATION_CRON,
     batchNow,
     { claimKey: "stale-scan" }
   );
-  if (ownsStaleScanDay) {
+  if (staleScanClaim === "failed") {
+    summary.staleScanClaimFailed = true;
+    log.warn("daily stale quote pass could not claim its utc-day slot; regular lanes still ran", {
+      source: "managed-venice-token-reconciliation",
+      failureType: "managed_venice_stale_scan_claim_failed",
+    });
+  }
+  if (staleScanClaim === "claimed") {
     staleScanDeadlineArmed = true;
     try {
       // Only the pass's candidate SELECT is caught inside (loadFailed); a

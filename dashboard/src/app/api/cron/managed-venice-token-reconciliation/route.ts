@@ -74,13 +74,15 @@ export async function GET(req: NextRequest) {
       surfacing: summary.deferred?.surfacing ?? 0,
     };
     const deferredCount = deferred.open + deferred.surfacing;
-    // The once-a-day stale pass failing to LOAD produces no per-quote
-    // failure, so it rides its own flag — like the crypto reconciler's
-    // staleRetryLoadFailed — or the day's one pass would read as a clean
-    // tick that simply found nothing.
+    // The once-a-day stale pass failing to LOAD or to claim its day
+    // produces no per-quote failure, so each rides its own flag — like the
+    // crypto reconciler's staleRetryLoadFailed — or the day's one pass
+    // would read as a clean tick that simply found nothing.
     const staleScanLoadFailed = summary.staleScanLoadFailed === true;
+    const staleScanClaimFailed = summary.staleScanClaimFailed === true;
+    const stalePassFailed = staleScanLoadFailed || staleScanClaimFailed;
 
-    if (summary.failed > 0 || summary.manualReview > 0 || deferredCount > 0 || staleScanLoadFailed) {
+    if (summary.failed > 0 || summary.manualReview > 0 || deferredCount > 0 || stalePassFailed) {
       const failedQuotes = summary.results
         .filter((result) => result.status === "failed")
         .map((result) => ({
@@ -107,6 +109,7 @@ export async function GET(req: NextRequest) {
         // Quotes the tick's time budget left for a later tick.
         deferred,
         staleScanLoadFailed,
+        staleScanClaimFailed,
         failedQuotes,
       });
 
@@ -117,7 +120,7 @@ export async function GET(req: NextRequest) {
       // (otherwise successful) reconciliation. A deferral alone is a delay
       // (a later tick picks those quotes up), so it is logged above, not
       // filed.
-      if (summary.failed > 0 || summary.manualReview > 0 || staleScanLoadFailed) {
+      if (summary.failed > 0 || summary.manualReview > 0 || stalePassFailed) {
         try {
           await reportOpsEvent({
             source: SOURCE,
@@ -125,15 +128,16 @@ export async function GET(req: NextRequest) {
             title:
               `Managed Venice token reconciliation: ${summary.failed} failed, ` +
               `${summary.manualReview} need manual review` +
-              (staleScanLoadFailed ? ", stale pass could not load" : ""),
+              (stalePassFailed ? ", stale pass did not run" : ""),
             message:
               `Checked ${summary.checked} pending token deposit quote(s): ` +
               `${summary.settled} settled, ${summary.failed} failed, ` +
               `${summary.manualReview} flagged for manual review, ` +
               `${summary.noMatch} no on-chain match, ${summary.underconfirmed} underconfirmed. ` +
-              (staleScanLoadFailed
-                ? `The once-a-day stale quote pass failed to load its candidates and ` +
-                  `produced no scans; it retries on the next day's first tick. ` +
+              (stalePassFailed
+                ? `The once-a-day stale quote pass could not ` +
+                  (staleScanClaimFailed ? `claim its utc-day slot` : `load its candidates`) +
+                  ` and produced no scans; it retries on the next tick. ` +
                   `Failed/manual-review quotes represent real deposits awaiting credit — ` +
                   `inspect the per-quote details in logs and settle manually if needed.`
                 : `Failed/manual-review quotes represent real deposits awaiting credit — ` +
@@ -151,6 +155,7 @@ export async function GET(req: NextRequest) {
                     skipped: summary.skipped,
               deferred,
               staleScanLoadFailed,
+              staleScanClaimFailed,
               failedQuotes: failedQuotes.slice(0, 25),
             },
           });
@@ -167,16 +172,18 @@ export async function GET(req: NextRequest) {
     // Honest heartbeat: failed/manual-review quotes are real deposits awaiting
     // credit — the same condition that files the ops event above must not
     // record a clean run. Deferred quotes are a delay, not a failure; a stale
-    // pass that never loaded is a missed day, not a clean skip.
+    // pass that never ran (its day-claim write or its candidate load failed)
+    // is a missed day, not a clean skip.
     await recordCronHeartbeat(
       "managed-venice-token-reconciliation",
-      summary.failed > 0 || summary.manualReview > 0 || staleScanLoadFailed
+      summary.failed > 0 || summary.manualReview > 0 || stalePassFailed
         ? {
             ok: false,
             detail:
               `failed=${summary.failed} manualReview=${summary.manualReview} ` +
               `deferred=${deferredCount}` +
-              (staleScanLoadFailed ? " stale_scan=load_failed" : ""),
+              (staleScanLoadFailed ? " stale_scan=load_failed" : "") +
+              (staleScanClaimFailed ? " stale_scan=claim_failed" : ""),
           }
         : undefined,
     );

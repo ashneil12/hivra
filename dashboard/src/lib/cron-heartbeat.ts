@@ -397,6 +397,11 @@ type CronHeartbeatClaimTable = {
  * overwrites it at run end), where it explains why the day was skipped.
  * Best-effort like the rest of this module: a failed claim answers false
  * rather than throwing into the cron it guards.
+ *
+ * Callers that must tell a failed claim apart from an already-held day —
+ * a failed write leaves the day unclaimed while the once-daily work never
+ * ran, and reporting it as a clean skip would hide a missed pass — use
+ * claimCronUtcDayOutcome instead.
  */
 export async function claimCronUtcDay(
   db: { from: (name: string) => unknown } | null | undefined,
@@ -404,7 +409,27 @@ export async function claimCronUtcDay(
   now: Date,
   options?: { claimKey?: string },
 ): Promise<boolean> {
-  if (!db) return false;
+  return (await claimCronUtcDayOutcome(db, cronName, now, options)) === "claimed";
+}
+
+export type CronUtcDayClaimOutcome =
+  // This invocation moved last_run_at into today: it owns the day's work.
+  | "claimed"
+  // The guarded update matched nothing: the day is already taken (or there
+  // is no baseline to prove a new day against). A clean skip.
+  | "held"
+  // Any claim write or read failed: ownership is unproven so the day's work
+  // is deferred, but this is NOT a held claim — the once-daily pass did not
+  // run today at all and the caller should surface the tick as degraded.
+  | "failed";
+
+export async function claimCronUtcDayOutcome(
+  db: { from: (name: string) => unknown } | null | undefined,
+  cronName: string,
+  now: Date,
+  options?: { claimKey?: string },
+): Promise<CronUtcDayClaimOutcome> {
+  if (!db) return "held";
   // A claim key owns a dedicated heartbeat row ("<cron>:<key>") so the
   // once-daily slot is claimed by the tick that RAN the work — not by the
   // run's heartbeat. Without it, a tick that starts just before UTC midnight
@@ -433,12 +458,12 @@ export async function claimCronUtcDay(
         cronName: rowName,
         errorMessage: error.message ?? "unknown",
       });
-      return false;
+      return "failed";
     }
-    if (Array.isArray(data) && data.length > 0) return true;
+    if (Array.isArray(data) && data.length > 0) return "claimed";
     // A claim without a key keys off the cron's own heartbeat row: no match
     // means the day is taken (or there is no baseline) — nothing else to do.
-    if (!options?.claimKey) return false;
+    if (!options?.claimKey) return "held";
 
     // A keyed row is dedicated: nothing else creates it, so a miss can also
     // mean it was never planted. Distinguish "claimed today" from "missing"
@@ -456,9 +481,9 @@ export async function claimCronUtcDay(
         cronName: rowName,
         errorMessage: readError.message ?? "unknown",
       });
-      return false;
+      return "failed";
     }
-    if (Array.isArray(existing) && existing.length > 0) return false;
+    if (Array.isArray(existing) && existing.length > 0) return "held";
 
     // First sight: plant the row seeded from the cron's own previous tick
     // when one exists, so a claim key adopted mid-life inherits the same
@@ -479,7 +504,7 @@ export async function claimCronUtcDay(
         cronName: rowName,
         errorMessage: baseError.message ?? "unknown",
       });
-      return false;
+      return "failed";
     }
     const baseRow = Array.isArray(baseRows)
       ? (baseRows[0] as { last_run_at?: unknown } | undefined)
@@ -505,7 +530,7 @@ export async function claimCronUtcDay(
         cronName: rowName,
         errorMessage: plantError.message ?? "unknown",
       });
-      return false;
+      return "failed";
     }
     // Retry the SAME guarded update: a baseline before today claims now, a
     // same-day (or just-planted) baseline defers the pass to tomorrow.
@@ -517,9 +542,9 @@ export async function claimCronUtcDay(
         cronName: rowName,
         errorMessage: retryError.message ?? "unknown",
       });
-      return false;
+      return "failed";
     }
-    return Array.isArray(retryData) && retryData.length > 0;
+    return Array.isArray(retryData) && retryData.length > 0 ? "claimed" : "held";
   } catch (error) {
     log.warn("cron utc-day claim threw; skipping once-daily work", {
       source: "cron-heartbeat",
@@ -527,6 +552,6 @@ export async function claimCronUtcDay(
       cronName: rowName,
       errorMessage: error instanceof Error ? error.message : String(error),
     });
-    return false;
+    return "failed";
   }
 }

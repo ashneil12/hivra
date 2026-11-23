@@ -315,6 +315,75 @@ describe("getLogsInBlockChunks", () => {
       "status 413"
     );
   });
+
+  it("publishes onChunk coverage for each answered tile of a re-tiled chunk before an abort", async () => {
+    // A checkpointing caller used to lose every tile inside a chunk that
+    // died: onChunk only fired after the WHOLE top-level chunk returned, so
+    // a 2,000-block chunk re-tiled at a moved provider cap and aborted on
+    // its third tile left no coverage — the next attempt repeated the same
+    // requests every pass without ever advancing.
+    const covered: number[] = [];
+    const call = (async (_method: string, args: unknown[]) => {
+      const request = args[0] as { fromBlock: string; toBlock: string };
+      const from = Number.parseInt(request.fromBlock, 16);
+      const to = Number.parseInt(request.toBlock, 16);
+      if (to - from + 1 > 500) {
+        const error = new Error("eth_getLogs is limited to a 500 range");
+        (error as { code?: number }).code = -32614;
+        throw error;
+      }
+      // The third tile dies (a cooperative abort would land the same way):
+      // the two tiles before it were answered and must be published.
+      if (from === 1_000) throw new Error("Base RPC request aborted at the stale-scan deadline");
+      return [`logs ${from}-${to}`];
+    }) as unknown as Parameters<typeof getLogsInBlockChunks>[0]["call"];
+
+    await expect(
+      getLogsInBlockChunks<string>({
+        call,
+        filter,
+        fromBlock: 0,
+        toBlock: 1_999,
+        onChunk: (endBlock) => {
+          covered.push(endBlock);
+        },
+      })
+    ).rejects.toThrow("stale-scan deadline");
+
+    // The two contiguous tiles that completed were published in order; the
+    // tile that threw never was.
+    expect(covered).toEqual([499, 999]);
+  });
+
+  it("publishes onChunk coverage for the answered half of an oversized-result split before the other half fails", async () => {
+    const covered: Array<{ endBlock: number; logs: unknown[] }> = [];
+    const call = (async (_method: string, args: unknown[]) => {
+      const request = args[0] as { fromBlock: string; toBlock: string };
+      const from = Number.parseInt(request.fromBlock, 16);
+      const to = Number.parseInt(request.toBlock, 16);
+      // Only the full 2,000-block chunk is refused as oversized; the split
+      // halves are served — except the second, which dies on its request.
+      if (to - from + 1 > 1_500) throw new Error("query returned more than 10000 results");
+      if (from === 1_000) throw new Error("Base RPC request failed with status 500");
+      return [`logs ${from}-${to}`];
+    }) as unknown as Parameters<typeof getLogsInBlockChunks>[0]["call"];
+
+    await expect(
+      getLogsInBlockChunks<string>({
+        call,
+        filter,
+        fromBlock: 0,
+        toBlock: 1_999,
+        onChunk: (endBlock, logs) => {
+          covered.push({ endBlock, logs });
+        },
+      })
+    ).rejects.toThrow("status 500");
+
+    // The split point is mid = 999: the first half published its coverage,
+    // the second's failure published nothing.
+    expect(covered).toEqual([{ endBlock: 999, logs: ["logs 0-999"] }]);
+  });
 });
 
 describe("USDC top-up transfer scan within Base's 2,000-block eth_getLogs limit", () => {

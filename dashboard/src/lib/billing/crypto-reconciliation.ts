@@ -21,7 +21,7 @@ import {
   type CryptoTopUpSettlementResult,
   type CryptoTopUpTransfer,
 } from "@/lib/billing/crypto-topups";
-import { claimCronUtcDay, isFirstCronTickOfUtcDay } from "@/lib/cron-heartbeat";
+import { claimCronUtcDayOutcome, isFirstCronTickOfUtcDay } from "@/lib/cron-heartbeat";
 import {
   createBaseChainReader,
   paymentDustFloor,
@@ -643,9 +643,14 @@ export async function reconcilePendingCryptoTopUps(params: {
   // owns the day's pass; a loser skips it. A winner that then crashes holds
   // the day, deferring the pass to tomorrow — deferral, not loss, which is
   // the right trade for a retry lane that already runs daily.
-  const retryStale =
+  // A failed claim is distinct from an already-claimed day: the day stays
+  // unclaimed while the retry lane never ran, so the run's incident report
+  // and heartbeat must read degraded, not a clean skip.
+  const staleDayClaim =
     (await isFirstCronTickOfUtcDay(db, CRYPTO_TOPUPS_CRON_NAME, now)) &&
-    (await claimCronUtcDay(db, CRYPTO_TOPUPS_CRON_NAME, now));
+    (await claimCronUtcDayOutcome(db, CRYPTO_TOPUPS_CRON_NAME, now));
+  const retryStale = staleDayClaim === "claimed";
+  const staleRetryClaimFailed = staleDayClaim === "failed";
   let staleRetryLoadFailed = false;
   const [intents, staleExcluded, staleRetry] = await Promise.all([
     listOpenCryptoTopUps(db, limit, staleCutoffIso),
@@ -728,6 +733,9 @@ export async function reconcilePendingCryptoTopUps(params: {
     // the pass produced zero rows without running. Surfaced so the caller's
     // incident report and heartbeat read the run as degraded instead of clean.
     staleRetryLoadFailed,
+    // The stale pass's utc-day claim write itself failed — the lane never
+    // ran today, distinct from "another run holds the day" (a clean skip).
+    staleRetryClaimFailed,
     ...counts,
     results,
   };

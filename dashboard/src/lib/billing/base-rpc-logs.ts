@@ -145,13 +145,18 @@ function matchLogRangeCap(error: unknown): { statedBlocks: number | null } | nul
  * to (the provider URL is the natural key); callers that pass none share a
  * single cap, matching the original global behaviour.
  *
- * `onChunk`, when given, is awaited after each top-level chunk is fully
- * answered, in order, with the chunk's inclusive end block and its logs. It
- * exists so a bounded caller can checkpoint resumable coverage: once the
- * callback returns, every block in `fromBlock..chunkEndBlock` has been
- * answered. A chunk that throws — including a cooperative abort raised inside
- * the caller's `call` — never fires the callback, so an interrupted scan's
- * last checkpointed block is always one it actually covered.
+ * `onChunk`, when given, is awaited after EVERY contiguous answered range —
+ * each request the provider served — in order, with that range's inclusive
+ * end block and its logs. It exists so a bounded caller can checkpoint
+ * resumable coverage: once the callback returns, every block in
+ * `fromBlock..tileEndBlock` has been answered. Coverage is published per
+ * answered request, not per top-level chunk: a chunk that had to be
+ * re-tiled (a moved provider cap) or split (an oversized result) and then
+ * dies on a later tile still leaves its completed tiles checkpointed,
+ * instead of re-paying every tile on the next attempt. A range that throws
+ * — including a cooperative abort raised inside the caller's `call` — never
+ * fires the callback, so an interrupted scan's last checkpointed block is
+ * always one it actually covered.
  */
 export async function getLogsInBlockChunks<TLog>(params: {
   call: BaseRpcCall;
@@ -220,6 +225,12 @@ export async function getLogsInBlockChunks<TLog>(params: {
     if (confirmSpanAsCap) {
       noteDiscoveredLogRangeCap(params.endpoint, to - from + 1);
     }
+    // Publish coverage for THIS answered range before anything else is
+    // fetched: tiles are walked strictly in order inside every chunk and a
+    // failure aborts the rest, so the reported end always extends a
+    // contiguous covered prefix — including each tile a re-tiled or split
+    // range completed before its abort.
+    await params.onChunk?.(to, rangeLogs);
     return rangeLogs;
   };
 
@@ -235,7 +246,6 @@ export async function getLogsInBlockChunks<TLog>(params: {
     );
     const chunkEnd = Math.min(params.toBlock, chunkStart + chunkBlocks - 1);
     const chunkLogs = await fetchRange(chunkStart, chunkEnd);
-    await params.onChunk?.(chunkEnd, chunkLogs);
     logs.push(...chunkLogs);
     chunkStart = chunkEnd + 1;
   }
