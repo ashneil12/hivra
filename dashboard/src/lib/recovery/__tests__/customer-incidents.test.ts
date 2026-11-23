@@ -1454,6 +1454,43 @@ describe("runCustomerIncidentScan", () => {
     expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
+  it("reads the open probe rows inside the collection window — a slow watchdog phase cannot starve them", async () => {
+    // Regression: the probe-row read used to begin only after the watchdog
+    // phase, so a watchdog phase slower than the shared collection deadline
+    // left the read deadline-late on arrival — every box's public-probe
+    // eval went unknown exactly when watchdog reads were slow. The read now
+    // starts with the core reads and is awaited before the watchdog phase:
+    // here the watchdog reads hang past the whole 20ms collection window
+    // (their own 40ms deadline still bounds them) yet the probe-row read
+    // already has its result.
+    const deps = scanDeps({
+      collectionBudgetMs: 20,
+      watchdogBudgetMs: 40,
+      db: fakeIncidentDb({
+        agents: [agentDbRow()],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-unreach-wd",
+            source: "incident.box_unreachable",
+            metadata: { incident_key: "box_unreachable:agent-1" },
+          }),
+        ],
+        hangWhen: (table, calls) =>
+          table === "ops_events" &&
+          calls.some((c) => c[0] === "eq" && c[1] === "instance_id"),
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    // The probe rows stayed readable: the probe ran and answered healthy,
+    // so the open box_unreachable incident resolved normally — unknown is
+    // only the watchdog-read degradation, not the probe signal.
+    expect(deps.probe as jest.Mock).toHaveBeenCalledTimes(1);
+    expect(summary.resolved).toBe(1);
+    expect(summary.unknown).toBe(0);
+    expect(summary.degraded).toBe(1);
+  });
+
   it("degrades the diagnosis bundle to missing plan data when the subscription lookup stalls past the collection deadline", async () => {
     // Enrichment shares the collection deadline but fails soft — the same
     // shape as a lookup error: the incident still opens, its metadata just
@@ -1571,12 +1608,12 @@ describe("runCustomerIncidentScan", () => {
   it("marks agents the watchdog deadline never reached as unknown and degraded", async () => {
     // clock: the scan-start deadline reads (probe, watchdog, collection)
     // return 0, as do the three collection-phase races (core reads,
-    // subscriptions, probe rows); agent-1's watchdog admission check and its
+    // subscriptions, probe rows — the probe-row read now runs inside the
+    // collection window); agent-1's watchdog admission check and its
     // in-flight bound read are still inside the 60s budget; the admission
     // check for agent-2 jumps past it, so its receipts are never read — it
-    // must be unknown, not resolved. The probe-row race afterwards lands on
-    // 0 again so the probe rows stay readable.
-    const times = [0, 0, 0, 0, 0, 0, 0, 200_000, 0];
+    // must be unknown, not resolved.
+    const times = [0, 0, 0, 0, 0, 0, 0, 0, 200_000];
     let tick = 0;
     const clock = () => times[Math.min(tick++, times.length - 1)];
     const deps = scanDeps({
@@ -2357,10 +2394,31 @@ describe("runCustomerIncidentScan", () => {
     it("archives the probe row when its version is still what the scan observed", async () => {
       const row = probeRow({ occurrence_count: 4, last_seen_at: iso(10 * MIN) });
       const db = fakeIncidentDb({ agents: [agentDbRow()], probeRows: [row] });
-      const deps = scanDeps({ db }); // default probe answers 200 → up
+      const deps = scanDeps({ db, clock: () => NOW }); // default probe answers 200 → up
       await runCustomerIncidentScan(deps as never);
 
       expect(row.archived_at).toBe(new Date(NOW).toISOString());
+    });
+
+    it("stamps the archive with the healthy probe's observation time, not scan start", async () => {
+      // Verdict timestamps order the outage record by when the observation
+      // was taken: an archived_at stamped at scan start would predate a
+      // stalled down-report observed between scan start and the healthy
+      // probe, letting that obsolete observation satisfy reportOpsEvent's
+      // stale-reopen guard and resurrect the outage the probe just closed.
+      const row = probeRow({ occurrence_count: 4, last_seen_at: iso(10 * MIN) });
+      const probe = jest.fn(async () => ({ status: 200, latencyMs: 9, error: null }));
+      const db = fakeIncidentDb({ agents: [agentDbRow()], probeRows: [row] });
+      const deps = scanDeps({
+        db,
+        // Scan start (deps.now) is NOW; the probe returns 45s later on the
+        // scan clock — the archive must carry THAT time.
+        clock: () => (probe.mock.calls.length > 0 ? NOW + 45_000 : NOW),
+        probe,
+      });
+      await runCustomerIncidentScan(deps as never);
+
+      expect(row.archived_at).toBe(new Date(NOW + 45_000).toISOString());
     });
 
     it("restarts the outage clock when the open probe row predates the box's current runtime", async () => {
@@ -2657,16 +2715,17 @@ describe("runCustomerIncidentScan", () => {
       // degraded — so no box_unreachable opens on the stale stored row
       // and nothing resolves on a maybe.
       const row = probeRow({ first_seen_at: iso(15 * MIN) });
-      // Clock sequence: scan-start deadline reads → 0; watchdog admission
-      // → 1s (inside its 60s budget); probe admission → 2s (inside the 90s
-      // budget); everything after → 149.95s, leaving ~50ms of the 150s
-      // probe-write deadline for the hung archive to race and lose.
+      // Clock sequence: scan-start deadline reads → 0; the collection-phase
+      // races (core reads, subscription, probe-row read) and everything
+      // through the probe-write admission → ~1-2s (inside every budget);
+      // everything after → 149.95s, leaving ~50ms of the 150s probe-write
+      // deadline for the hung archive to race and lose.
       let calls = 0;
       const clock = () => {
         const c = ++calls;
         if (c <= 2) return 0;
         if (c === 3) return 1_000;
-        if (c === 4) return 2_000;
+        if (c <= 11) return 2_000;
         return 149_950;
       };
       const deps = scanDeps({
@@ -2693,6 +2752,49 @@ describe("runCustomerIncidentScan", () => {
       expect(summary.degraded).toBe(1);
       expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
       expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+    });
+
+    it("skips the probe-row archive when the write deadline lapses before the write starts", async () => {
+      // The healthy probe came back inside the budget, but the write
+      // deadline lapsed between the apply's admission and the archive
+      // itself: a subject already counted unprocessed must not have a NEW
+      // write start behind that count — the row stays open for the next
+      // pass, unknown + degraded.
+      const row = probeRow({ first_seen_at: iso(15 * MIN) });
+      // Clock ticks: scan-start deadline reads ×3 → 0; the three
+      // collection-phase races, watchdog admission + in-flight bound,
+      // probe admission + observation stamp, apply admission + bound → 0;
+      // the apply's internal pre-write checkpoint lands on 1e15.
+      const times = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1e15];
+      let tick = 0;
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        probeRows: [row],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-unreach-prew",
+            source: "incident.box_unreachable",
+            metadata: { incident_key: "box_unreachable:agent-1" },
+          }),
+        ],
+      });
+      const deps = scanDeps({
+        clock: () => times[Math.min(tick++, times.length - 1)],
+        db,
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(row.archived_at).toBeUndefined();
+      expect(
+        opsUpdates(db).some((c) => (c[1] as Row).archived_at != null),
+      ).toBe(false);
+      expect(summary.opened).toBe(0);
+      expect(summary.resolved).toBe(0);
+      expect(summary.unknown).toBe(1);
+      // One for the deferred probe-row write, one for the open incident
+      // row the resolve deadline then skips — both left for the next pass.
+      expect(summary.degraded).toBe(2);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
     });
 
     it("stamps the probe's own observation time as observedAt on the down report", async () => {
@@ -2753,9 +2855,10 @@ describe("runCustomerIncidentScan", () => {
     // after the first report: the second is not reported this pass (it
     // re-emits next scan) and the pass is recorded degraded. The clock
     // ticks are: scan-start deadline reads ×3 (probe, watchdog, collection),
-    // the three collection-phase races, the first item's admission check
-    // and its in-flight bound read, then the lapsed read.
-    const times = [0, 0, 0, 0, 0, 0, 0, 0, 1e15];
+    // the three collection-phase races (core reads, subscription, probe
+    // rows), the first item's admission check, its in-flight bound read and
+    // its internal pre-write checkpoint, then the lapsed admission read.
+    const times = [0, 0, 0, 0, 0, 0, 0, 0, 0, 1e15];
     let tick = 0;
     const clock = () => times[Math.min(tick++, times.length - 1)];
     const deps = scanDeps({
@@ -2791,6 +2894,39 @@ describe("runCustomerIncidentScan", () => {
     expect(summary.opened).toBe(1);
     expect(summary.degraded).toBe(1);
     expect(deps.report as jest.Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never starts a report once the deadline lapses inside the admitted item", async () => {
+    // The race admitted the item while budget remained, but the deadline
+    // lapsed before the write itself: the item is counted deferred and NO
+    // report — or page — fires behind a count that already recorded it.
+    const times = [0, 0, 0, 0, 0, 0, 0, 0, 1e15];
+    let tick = 0;
+    const clock = () => times[Math.min(tick++, times.length - 1)];
+    const deps = scanDeps({
+      clock,
+      db: fakeIncidentDb({
+        agents: [],
+        heartbeats: [
+          {
+            cron_name: "cron-a",
+            last_run_at: iso(5 * MIN),
+            last_success_at: iso(5 * MIN),
+            run_count: 30,
+            ok_count: 20,
+            consecutive_failures: 3,
+          },
+        ],
+      }),
+      cronSchedules: new Map<string, CronScheduleInfo>([
+        ["cron-a", { periodMinutes: 5, path: "/api/cron/cron-a" }],
+      ]),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.opened).toBe(0);
+    expect(summary.degraded).toBe(1);
+    expect(deps.report as jest.Mock).not.toHaveBeenCalled();
   });
 
   it("reports nothing once the report deadline has already passed", async () => {
@@ -3133,6 +3269,45 @@ describe("runCustomerIncidentScan", () => {
     expect(summary.resolved).toBe(archivedCount);
     expect(summary.degraded).toBe(30 - archivedCount);
     expect((deps.notifyResolved as jest.Mock).mock.calls.length).toBe(archivedCount);
+  });
+
+  it("never starts an archive once the deadline lapses between the subject read and the write", async () => {
+    // A launch_failed row needs a subject read before its archive: the
+    // deadline lapsing between that read and the archive leaves the row
+    // untouched — counted deferred — instead of resolving behind a count
+    // that already recorded it deferred.
+    const db = fakeIncidentDb({
+      openIncidents: [
+        incidentDbRow({
+          id: "evt-rd-check",
+          source: "incident.launch_failed",
+          metadata: {
+            incident_key: "launch_failed:agent-still-broken",
+            subject_kind: "hivra_agent",
+          },
+        }),
+      ],
+    });
+    const deps = scanDeps({
+      db,
+      // The single-row subject lookup is the last read before the archive —
+      // the clock flips past every deadline once it lands.
+      clock: () =>
+        db.calls.some(
+          (entry) =>
+            entry.table === "hivra_agents" &&
+            entry.calls.some((c) => c[0] === "maybeSingle"),
+        )
+          ? 1e15
+          : 0,
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+    expect(summary.resolved).toBe(0);
+    expect(summary.expired).toBe(0);
+    expect(summary.degraded).toBe(1);
   });
 
   it("bounds an in-flight resolve op by the deadline — timed-out rows stay open and degraded", async () => {
