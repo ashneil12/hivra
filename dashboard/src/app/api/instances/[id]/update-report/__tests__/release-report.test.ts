@@ -12,9 +12,10 @@ jest.mock("@/lib/ops-events", () => ({
   ...jest.requireActual("@/lib/ops-events"),
   reportOpsEvent: jest.fn().mockResolvedValue({}),
 }));
-// The failed-report attempt correlation resolves the release a NEW update
+// The failed-report legacy correlation resolves the release a NEW update
 // would pin. These tests exercise the report contract, not the registry
-// read — the ungoverned answer keeps every case on the write-time bounds.
+// read — the ungoverned answer keeps every legacy case on the write-time
+// bounds, and attempt-stamped reports never read it at all.
 jest.mock("@/lib/hermes-releases/live-update", () => ({
   resolveUpdateImagePolicy: jest.fn(async () => ({ policy: undefined, state: null })),
 }));
@@ -25,6 +26,7 @@ jest.mock("@/lib/supabase", () => ({
 }));
 
 import { reportOpsEvent } from "@/lib/ops-events";
+import { resolveUpdateImagePolicy } from "@/lib/hermes-releases/live-update";
 
 const INSTANCE = "22222222-2222-4222-8222-222222222222";
 const REPO = "ghcr.io/example/agent";
@@ -38,12 +40,15 @@ function withNot<T extends Record<string, unknown>>(query: T): T {
   return query;
 }
 
-function setup(releaseOverrides: Record<string, unknown> = {}) {
+function setup(
+  releaseOverrides: Record<string, unknown> = {},
+  instanceOverrides: Record<string, unknown> = {},
+) {
   const memory = createSupabaseMemoryDb({
     tables: ["hermes_instances", "hermes_releases", "hermes_release_events"],
     seed: {
       hermes_instances: [
-        { id: INSTANCE, user_id: "user-1", api_server_key_encrypted: "secret", status: "redeploying", deleted_at: null },
+        { id: INSTANCE, user_id: "user-1", api_server_key_encrypted: "secret", status: "redeploying", deleted_at: null, ...instanceOverrides },
       ],
       hermes_releases: [
         { id: "rel-1", image_repo: REPO, version: "1.0.1", digest: D1, channel: "stable", rollout_percent: 100, pilot_instance_ids: [], halted: false, promoted_at: "2026-10-01T00:00:00Z", created_at: "2026-10-01T00:00:00Z", ...releaseOverrides },
@@ -152,5 +157,91 @@ describe("update-report release fields", () => {
       params: Promise.resolve({ id: INSTANCE }),
     });
     expect(res.status).toBe(401);
+  });
+
+  it("stamps the failed state for the attempt the report names, even when the registry repinned mid-attempt", async () => {
+    // The failed attempt targeted D1 while the registry has since moved its
+    // pin to D2. With an attempt stamp (`a`) the write predicate itself is
+    // the correlation — the registry is never read — so the valid D1
+    // failure lands its stamp instead of being mistaken for a stale report
+    // and the row is not left stranded at 'redeploying'.
+    const attempt = "2026-04-23T06:00:00.000Z";
+    const memory = setup({}, { last_lifecycle_transition_at: attempt });
+    (resolveUpdateImagePolicy as jest.Mock).mockResolvedValue({
+      policy: { kind: "pinned", ref: `${REPO}@${D2}`, digest: D2 },
+      state: { governed: true },
+    });
+
+    const res = await report(`s=failed&t=manual&r=pull_failed&ti=${D1}&a=${attempt}`);
+
+    expect(res.status).toBe(200);
+    expect(resolveUpdateImagePolicy).not.toHaveBeenCalled();
+    expect(memory.tables.hermes_instances[0]).toMatchObject({
+      status: "failed",
+      lifecycle_substate: "live_update_failed_vm_reached",
+    });
+  });
+
+  it("does not let a delayed report from a superseded attempt stamp a newer attempt's row", async () => {
+    // Attempt A targeted D1 and its report was delayed; attempt B has since
+    // stamped the row for a retry toward the SAME digest. The older
+    // report's `a` names A's transition stamp, which no longer matches the
+    // row — so the failed stamp is refused even though the digest check
+    // alone could not tell the two attempts apart. The report itself is
+    // still durably recorded (release event + ops event), only the stamp
+    // is refused.
+    const attemptA = "2026-04-23T06:00:00.000Z";
+    const attemptB = "2026-04-24T09:30:00.000Z";
+    const memory = setup({}, { last_lifecycle_transition_at: attemptB });
+
+    const res = await report(`s=failed&t=manual&r=pull_failed&ti=${D1}&a=${attemptA}`);
+
+    expect(res.status).toBe(200);
+    expect(memory.tables.hermes_instances[0]).toMatchObject({
+      status: "redeploying",
+      last_lifecycle_transition_at: attemptB,
+    });
+    expect(memory.tables.hermes_instances[0].lifecycle_state).not.toBe("failed");
+    expect(memory.tables.hermes_release_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "failed", release_id: "rel-1", instance_id: INSTANCE }),
+      ])
+    );
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "instance-update-status",
+        title: "Manual update failed",
+        metadata: expect.objectContaining({ attemptStamp: attemptA }),
+      })
+    );
+  });
+
+  it("does not let a delayed success report from a superseded attempt mark a newer attempt's row running", async () => {
+    // Attempt A succeeded on the box but its report was delayed past the
+    // launch of attempt B toward the same digest. Writing 'running' for
+    // the stale report would misstate the in-flight attempt AND block B's
+    // own failed-report stamp (it predicates on 'redeploying'). The `a`
+    // mismatch refuses the write; the report itself is still recorded.
+    const attemptA = "2026-04-23T06:00:00.000Z";
+    const attemptB = "2026-04-24T09:30:00.000Z";
+    const memory = setup({}, { last_lifecycle_transition_at: attemptB });
+
+    const res = await report(`s=succeeded&t=manual&r=completed&i=${D1}&k=updated&a=${attemptA}`);
+
+    expect(res.status).toBe(200);
+    expect(memory.tables.hermes_instances[0]).toMatchObject({
+      status: "redeploying",
+      last_lifecycle_transition_at: attemptB,
+      // The report's own fields still landed — only the status stamp is
+      // attempt-gated.
+      update_health: "ok",
+      agent_image_digest: D1,
+    });
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "instance-update-status",
+        title: "Manual update succeeded",
+      })
+    );
   });
 });

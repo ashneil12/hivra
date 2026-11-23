@@ -198,6 +198,7 @@ describe('ops-events helper', () => {
     const select = jest.fn().mockReturnThis();
     const updateEq = jest.fn().mockReturnThis();
     const updateIs = jest.fn().mockReturnThis();
+    const updateLte = jest.fn().mockReturnThis();
     const updateMaybeSingle = jest.fn().mockResolvedValue({ data: { id: 'evt_123' }, error: null });
     const update = jest.fn().mockReturnThis();
 
@@ -211,11 +212,12 @@ describe('ops-events helper', () => {
         update,
         eq: updateEq,
         is: updateIs,
+        lte: updateLte,
         select,
         maybeSingle: updateMaybeSingle,
       });
 
-    await reportOpsEvent({
+    const result = await reportOpsEvent({
       source: 'api',
       severity: 'error',
       title: 'Responses proxy failed',
@@ -223,6 +225,10 @@ describe('ops-events helper', () => {
       userId: 'user_123',
     });
 
+    // The persisted id is the assertion — without it a broken chain (e.g. a
+    // missing filter method that throws mid-build) still "passes" on the
+    // calls that happened before the throw while the report returned null.
+    expect(result?.id).toBe('evt_123');
     expect(update).toHaveBeenCalledWith(expect.objectContaining({
       occurrence_count: 3,
     }));
@@ -230,6 +236,9 @@ describe('ops-events helper', () => {
     // The refresh is open-only: it cannot silently reopen a row that was
     // archived between the lookup and the write.
     expect(updateIs).toHaveBeenCalledWith('archived_at', null);
+    // And forward-only on the marker: a slower racing refresh must not drag
+    // last_seen_at back under a newer sighting.
+    expect(updateLte).toHaveBeenCalledWith('last_seen_at', expect.any(String));
   });
 
   it('reopens an archived incident when the fingerprint reoccurs', async () => {
@@ -312,6 +321,7 @@ describe('ops-events helper', () => {
     const select = jest.fn().mockReturnThis();
     const updateEq = jest.fn().mockReturnThis();
     const updateIs = jest.fn().mockReturnThis();
+    const updateLte = jest.fn().mockReturnThis();
     const updateMaybeSingle = jest
       .fn()
       .mockResolvedValue({ data: { id: 'evt_fatal' }, error: null });
@@ -323,17 +333,21 @@ describe('ops-events helper', () => {
         update,
         eq: updateEq,
         is: updateIs,
+        lte: updateLte,
         select,
         maybeSingle: updateMaybeSingle,
       });
 
-    await reportOpsEvent({
+    const result = await reportOpsEvent({
       source: 'synthetic.proxmox-host-wedged',
       severity: 'fatal',
       title: 'Host fixturenode2 wedged',
       message: '3 gateways unreachable',
     });
 
+    // The refresh persisted — a chain that throws partway through returns
+    // null and this assertion catches it, not just the dedupe behavior.
+    expect(result?.id).toBe('evt_fatal');
     // Extended outage re-reporting the same fingerprint pages exactly once.
     expect(mockedFatalAlert).not.toHaveBeenCalled();
   });
@@ -399,6 +413,7 @@ describe('ops-events helper', () => {
     const select = jest.fn().mockReturnThis();
     const updateEq = jest.fn().mockReturnThis();
     const updateIs = jest.fn().mockReturnThis();
+    const updateLte = jest.fn().mockReturnThis();
     const updateMaybeSingle = jest
       .fn()
       .mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
@@ -410,11 +425,12 @@ describe('ops-events helper', () => {
         update,
         eq: updateEq,
         is: updateIs,
+        lte: updateLte,
         select,
         maybeSingle: updateMaybeSingle,
       });
 
-    await reportOpsEvent({
+    const result = await reportOpsEvent({
       source: 'incident.box_down',
       severity: 'error',
       page: true,
@@ -422,6 +438,9 @@ describe('ops-events helper', () => {
       message: 'A customer box is down',
     });
 
+    // A still-open row refreshes in place — assert the write actually
+    // persisted (result.id), not merely that no page escaped.
+    expect(result?.id).toBe('evt_incident');
     expect(mockedFatalAlert).not.toHaveBeenCalled();
   });
 
@@ -650,6 +669,7 @@ describe('ops-events helper', () => {
     const select = jest.fn().mockReturnThis();
     const updateEq = jest.fn().mockReturnThis();
     const updateIs = jest.fn().mockReturnThis();
+    const updateLte = jest.fn().mockReturnThis();
     const updateMaybeSingle = jest
       .fn()
       .mockResolvedValue({ data: { id: 'evt_probe' }, error: null });
@@ -661,11 +681,12 @@ describe('ops-events helper', () => {
         update,
         eq: updateEq,
         is: updateIs,
+        lte: updateLte,
         select,
         maybeSingle: updateMaybeSingle,
       });
 
-    await reportOpsEvent({
+    const result = await reportOpsEvent({
       source: 'box.public_probe.unreachable',
       severity: 'warn',
       title: 'Customer box public probe unreachable',
@@ -674,6 +695,9 @@ describe('ops-events helper', () => {
       resetFirstSeenOnReopen: true,
     });
 
+    // Assert the refresh persisted before inspecting its payload — a chain
+    // that throws midway leaves `update` called but the report unrecorded.
+    expect(result?.id).toBe('evt_probe');
     const payload = update.mock.calls[0][0] as Record<string, unknown>;
     expect(payload).not.toHaveProperty('first_seen_at');
   });

@@ -841,6 +841,15 @@ if [ -d /opt/hermes/instances ]; then
 fi
 `
     : "";
+// One identity for this whole update attempt: the wrapper's `ru` callback
+// URL carries it as `a=`, and the 'redeploying' stamp below writes the same
+// value into last_lifecycle_transition_at. The report route can then prove
+// that a failure callback belongs to THIS attempt — a stale callback from
+// an earlier attempt (even toward the same digest, and even when no
+// occurredAt rides along) cannot claw the newer attempt's row back to
+// failed, and a registry that repins mid-attempt cannot make this attempt's
+// valid report look stale.
+const updateAttemptStamp = new Date().toISOString();
 const wrapperScript = `#!/usr/bin/env bash
 set -euo pipefail
 ${buildInstanceUpdateReporterShell({
@@ -848,6 +857,7 @@ ${buildInstanceUpdateReporterShell({
   dashboardUrl: process.env.NEXT_PUBLIC_APP_URL,
   apiServerKey,
   runType: "manual",
+  attemptId: updateAttemptStamp,
 })}
 ${singleTenantGuard}
 ${buildUpdateResultExtrasShell(instance.id)}
@@ -1215,10 +1225,14 @@ fi
   // bump every run would re-roll the same ~50 VMs and the fleet never
   // converges. Every applyLiveUpdate caller (fleet-sync, manual redeploy,
   // resize, recovery) recreates from :stable, so all of them advance the cursor.
+  // The attempt stamp goes down with the lifecycle write: the wrapper's
+  // reports echo it back as `a`, and the update-report route predicates the
+  // failed-state stamp on it matching, so only THIS attempt's callback can
+  // judge this row.
   const { error: redeployStateError } = await supabaseAdmin
     .from("hermes_instances")
     .update({
-      ...buildInstanceLifecyclePatch("redeploying"),
+      ...buildInstanceLifecyclePatch("redeploying", { now: updateAttemptStamp }),
       // Never write null over a good gateway_url — a proxmox row whose safe
       // derivation failed (no subdomain, host env unresolved) must keep its
       // existing value, not get nulled out. This is the exact write that

@@ -2751,15 +2751,37 @@ type IncidentRowTouchOutcome = "touched" | "moved" | "error";
  * cleared. Guarded on the observed version so a row that already moved
  * under this scan is left alone — its fresher state defeats stale archives
  * on its own.
+ *
+ * The marker can only move FORWARD. `lastSeenAtIso` is this scan's `now`,
+ * captured at scan start, so a row whose stored marker is already ahead of
+ * it — stamped by a refresh that used an event time rather than the scan
+ * clock, or any writer with a later clock — would otherwise be overwritten
+ * with an older value. That regression is not cosmetic: the version-guarded
+ * archives and probes match on the stored value, so a stale scan writing
+ * an older marker hands a resolver holding that older version a matching
+ * row it can archive — live incident closed, resolved notice sent. Under
+ * the observed-version predicates below, writing max(scan now, observed +
+ * 1ms) is a compare-and-swap that only advances: a backward write becomes
+ * a bounded +1ms nudge instead, and any concurrent write still fails the
+ * eq match and leaves the row alone.
  */
 async function touchOpenIncidentRow(
   db: DbClient,
   row: OpenIncidentRow,
   lastSeenAtIso: string,
 ): Promise<IncidentRowTouchOutcome> {
+  const scanNowMs = Date.parse(lastSeenAtIso);
+  const observedMs = row.lastSeenAt == null ? null : Date.parse(row.lastSeenAt);
+  const writeIso =
+    observedMs != null &&
+    !Number.isNaN(observedMs) &&
+    !Number.isNaN(scanNowMs) &&
+    scanNowMs <= observedMs
+      ? new Date(observedMs + 1).toISOString()
+      : lastSeenAtIso;
   let query = db
     .from("ops_events")
-    .update({ last_seen_at: lastSeenAtIso })
+    .update({ last_seen_at: writeIso })
     .eq("id", row.id)
     .is("archived_at", null);
   query =

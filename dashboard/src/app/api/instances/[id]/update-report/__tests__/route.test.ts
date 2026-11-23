@@ -232,6 +232,137 @@ describe("POST /api/instances/[id]/update-report", () => {
     );
   });
 
+  it("predicates the failed stamp on the attempt stamp the report echoes back", async () => {
+    // The launcher bakes its attempt id into the wrapper's `ru` URL (`a=`)
+    // and stamps the same value into last_lifecycle_transition_at when it
+    // marks the row 'redeploying'. A report carrying it is correlated by the
+    // write predicate itself: the registry is never read, so a pin that
+    // moved mid-attempt cannot make this attempt's valid report look stale,
+    // and a delayed report naming a superseded stamp fails the match
+    // instead of stamping a newer attempt's row.
+    const attempt = "2026-04-23T06:00:00.000Z";
+    const supersededTarget = `sha256:${"1".repeat(64)}`;
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "failed",
+          runType: "manual",
+          reason: "pull_failed",
+          targetDigest: supersededTarget,
+          attempt,
+        }),
+      }),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+    );
+
+    expect(response.status).toBe(200);
+    // Attempt-stamped reports never consult the registry: the write-time eq
+    // on the transition stamp IS the correlation, so a targetDigest that no
+    // longer matches the current pin cannot mark this report stale.
+    expect(resolveUpdateImagePolicy).not.toHaveBeenCalled();
+    expect(instanceUpdateEq).toHaveBeenCalledWith(
+      "last_lifecycle_transition_at",
+      attempt
+    );
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ attemptStamp: attempt }),
+      })
+    );
+  });
+
+  it("reads the attempt stamp from the GET callback's `a` parameter", async () => {
+    // The box wrapper's `ru` callback is a GET with the attempt stamp baked
+    // in as `&a=` — the same predicate path the POST `attempt` field takes.
+    const attempt = "2026-04-23T06:00:00.000Z";
+    const response = await GET(
+      new NextRequest(
+        `http://localhost/api/u/11111111-1111-4111-8111-111111111111?s=failed&t=manual&r=pull_failed&a=${attempt}`,
+        { headers: { authorization: "Bearer gateway-secret" } }
+      ),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(instanceUpdateEq).toHaveBeenCalledWith(
+      "last_lifecycle_transition_at",
+      attempt
+    );
+  });
+
+  it("predicates the running-state write on the attempt stamp too", async () => {
+    // A delayed SUCCESS callback from a superseded attempt is the same
+    // hole through the other door: writing 'running' over a newer
+    // attempt's 'redeploying' row would also block that attempt's own
+    // failed-report stamp. The same `a` predicate bounds it.
+    const attempt = "2026-04-23T06:00:00.000Z";
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "succeeded",
+          runType: "manual",
+          attempt,
+        }),
+      }),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(instanceUpdateEq).toHaveBeenCalledWith(
+      "last_lifecycle_transition_at",
+      attempt
+    );
+    expect(instanceUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "running" })
+    );
+  });
+
+  it("ignores a malformed attempt stamp and falls back to the legacy correlation", async () => {
+    // A value that cannot be a transition stamp must not reach the
+    // PostgREST filter — it is dropped at normalization, so the report
+    // correlates exactly like one that carried no attempt stamp at all.
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "failed",
+          runType: "manual",
+          reason: "exit_status_1",
+          attempt: "x,not(a)stamp*",
+          targetDigest: `sha256:${"1".repeat(64)}`,
+        }),
+      }),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(instanceUpdateEq).not.toHaveBeenCalledWith(
+      "last_lifecycle_transition_at",
+      expect.anything()
+    );
+    // Legacy path: the named target still drives the registry correlation.
+    expect(resolveUpdateImagePolicy).toHaveBeenCalledWith(
+      supabaseAdmin,
+      "11111111-1111-4111-8111-111111111111",
+      "release"
+    );
+  });
+
   it("stamps the failed state when the report's target is the release a new update would pin", async () => {
     // Attempt correlation: the registry still points this box's release
     // update at the digest the failed attempt moved toward, so the failure
@@ -347,11 +478,14 @@ describe("POST /api/instances/[id]/update-report", () => {
     );
   });
 
-  it("answers a server error when the attempt correlation read fails — the box retries the stamp", async () => {
+  it("records the report and degrades the response when the attempt correlation read fails", async () => {
     // A target-bearing report cannot be judged stale or fresh without the
-    // registry answer. Like the failed write itself, the failed read
-    // answers non-2xx: a silent 200 would claim the report recorded while
-    // dropping the only marker that retries the stamp.
+    // registry answer — but the report itself is already durably on file
+    // (release outcome + ops event) before correlation runs. The box-side
+    // reporter is fire-and-forget: a non-2xx would teach it that a recorded
+    // report was dropped while no retry ever comes, so the missing stamp is
+    // degraded detail on a 200 — and a 'redeploying' row is still recovered
+    // by the normal sweeps, not stranded.
     (resolveUpdateImagePolicy as jest.Mock).mockRejectedValueOnce(
       new Error("release registry read failed")
     );
@@ -374,18 +508,40 @@ describe("POST /api/instances/[id]/update-report", () => {
     );
     const json = await response.json();
 
-    expect(response.status).toBe(500);
-    expect(json).toEqual({ success: false, error: "Failed to update instance status" });
+    expect(response.status).toBe(200);
+    expect(json).toEqual({
+      success: true,
+      data: { recorded: true, degraded: "update_report_correlation_failed" },
+    });
+    // The report's own ops event persisted BEFORE the failed correlation —
+    // the outage is on file even though the stamp could not be attempted.
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "instance-update-status",
+        title: "Auto-update failed",
+      })
+    );
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "instance-update-status",
+        title: "update report received but the attempt correlation failed",
+        severity: "error",
+        metadata: expect.objectContaining({
+          failureType: "update_report_correlation_failed",
+        }),
+      })
+    );
     expect(instanceUpdate).not.toHaveBeenCalledWith(
       expect.objectContaining({ lifecycle_substate: expect.anything() })
     );
   });
 
-  it("answers a server error when the failed-state write fails", async () => {
-    // The stamp is the only retry marker the update sweep sees: a silent
-    // 200 would leave the row 'redeploying' — invisible to the sweep —
-    // while claiming recorded:true. The error answer tells the box the
-    // report was not recorded so its retry can still land the stamp.
+  it("records the report and degrades the response when the failed-state write fails", async () => {
+    // The stamp can still be retried — recover-stuck probes a 'redeploying'
+    // row and the next launch re-stamps a fresh attempt marker — while the
+    // box's single fire-and-forget curl never retries. So the recorded
+    // report answers 200 with the missed stamp named as degraded detail
+    // instead of a 500 that only looks like the report was dropped.
     instanceUpdateIs.mockResolvedValueOnce({ error: { message: "row locked" } });
 
     const response = await POST(
@@ -405,12 +561,20 @@ describe("POST /api/instances/[id]/update-report", () => {
     );
     const json = await response.json();
 
-    expect(response.status).toBe(500);
-    expect(json).toEqual({ success: false, error: "Failed to update instance status" });
-    // The failure report's own ops event was not recorded — the outage is
-    // carried by the error-log mirrors (the write failure plus the API
-    // 500), and the box's retry re-lands the whole report.
+    expect(response.status).toBe(200);
+    expect(json).toEqual({
+      success: true,
+      data: { recorded: true, degraded: "update_report_state_write_failed" },
+    });
+    // The failure report's own ops event persisted first; the second call
+    // is the error-log mirror of the missed stamp.
     expect(reportOpsEvent).toHaveBeenCalledTimes(2);
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "instance-update-status",
+        title: "Manual update failed",
+      })
+    );
     expect(reportOpsEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         source: "instance-update-status",
@@ -420,9 +584,6 @@ describe("POST /api/instances/[id]/update-report", () => {
           failureType: "update_report_state_write_failed",
         }),
       })
-    );
-    expect(reportOpsEvent).not.toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Manual update failed" })
     );
   });
 
