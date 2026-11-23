@@ -44,6 +44,10 @@
  */
 
 import { chunk } from "@/lib/array-utils";
+import {
+  hivraInfrastructureBindingTag,
+  isHivraInfrastructureBindingTokenHash,
+} from "@/lib/hivra/agent-authority";
 import { resolveHivraProxmoxHost } from "@/lib/hivra/proxmox-target";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
@@ -86,6 +90,8 @@ export interface ProxmoxLiveVm {
   name: string | null;
   memoryMb: number | null;
   cores: number | null;
+  /** `qm config` `tags:` entries (`;`-separated on the host). */
+  tags?: string[];
 }
 
 /** A live VM with no matching `hermes_instances` row. */
@@ -198,6 +204,7 @@ export function parseLiveVmsFromHostScript(stdout: string): ProxmoxLiveVm[] {
         name: fields.name?.trim() || null,
         memoryMb: Number.isFinite(memoryRaw) ? memoryRaw : null,
         cores: Number.isFinite(coresRaw) ? coresRaw : null,
+        tags: fields.tags?.split(";").map((tag) => tag.trim()).filter(Boolean) ?? [],
       });
     }
     currentVmid = null;
@@ -224,7 +231,7 @@ export function parseLiveVmsFromHostScript(stdout: string): ProxmoxLiveVm[] {
     if (colon <= 0) continue;
     const key = line.slice(0, colon).trim();
     const value = line.slice(colon + 1).trim();
-    if (key === "name" || key === "memory" || key === "cores") {
+    if (key === "name" || key === "memory" || key === "cores" || key === "tags") {
       fields[key] = value;
     }
   }
@@ -258,12 +265,25 @@ export function computeOrphansForHost(
   hostId: string,
   liveVms: readonly ProxmoxLiveVm[],
   dbVmids: readonly number[],
+  ownLaneBindingTags?: ReadonlySet<string>,
 ): ProxmoxOrphanVm[] {
   const dbSet = new Set(dbVmids);
   const out: ProxmoxOrphanVm[] = [];
   for (const vm of liveVms) {
     if (vm.vmid >= TEMPLATE_VMID_THRESHOLD) continue;
     if (dbSet.has(vm.vmid)) continue;
+    // Canary-lane fixture VMs (guacamole/windows/desktop gateways) share these
+    // hosts and self-declare their lane by name; production naming never ends
+    // in -canary.
+    if (vm.name?.trim().endsWith("-canary")) continue;
+    // A hivra-bind-<hash> tag proves which deployment lane's database owns the
+    // computer. A binding tag derived from none of our rows belongs to the
+    // other lane's deployment — its row lives in a database this sweep cannot
+    // read, so flagging it as an orphan pages on a healthy foreign VM (shared
+    // hosts, prod 2026-11). Untagged VMs fall through to the vmid claim as
+    // before.
+    const bindingTag = vm.tags?.find((tag) => tag.startsWith("hivra-bind-"));
+    if (bindingTag && ownLaneBindingTags && !ownLaneBindingTags.has(bindingTag)) continue;
     out.push({ ...vm, hostId });
   }
   return out;
@@ -273,7 +293,7 @@ export const PROXMOX_ORPHAN_DISCOVERY_SCRIPT = `set -uo pipefail
 qm list 2>/dev/null | awk 'NR>1 && $3=="running" {print $1}' | while read vmid; do
   if [ -z "$vmid" ]; then continue; fi
   echo "BEGIN $vmid"
-  qm config "$vmid" 2>/dev/null | grep -E '^(name|memory|cores):' || true
+  qm config "$vmid" 2>/dev/null | grep -E '^(name|memory|cores|tags):' || true
   echo "END $vmid"
 done
 # Orphan-LV scan: vm-<vmid>-* logical volumes whose VMID has neither a QEMU
@@ -651,6 +671,39 @@ export async function loadDbVmidsForHost(
   return vmids;
 }
 
+/**
+ * The `hivra-bind-*` tag set this deployment's rows can derive — the proof
+ * that an observed VM belongs to THIS lane. Rows of every status contribute:
+ * a soft-deleted row's VM is still this lane's computer (the vmid claim then
+ * flags it as a leaked orphan), while a tag derived from no row at all is the
+ * other lane's deployment, whose database this sweep cannot read.
+ */
+export async function loadLaneBindingTags(
+  supabase: SupabaseAdmin,
+  liveVmids: number[],
+): Promise<Set<string>> {
+  const tags = new Set<string>();
+  if (liveVmids.length === 0) return tags;
+  const rows = await selectVmidClaimPages<{
+    id: string | null;
+    infrastructure_binding_token_hash: string | null;
+  }>("hivra_agents", (cursor) => {
+    let query = supabase
+      .from("hivra_agents")
+      .select("id, infrastructure_binding_token_hash")
+      .in("vmid", liveVmids)
+      .order("id", { ascending: true });
+    if (cursor != null) query = query.gt("id", cursor);
+    return query.limit(VMID_LOOKUP_PAGE_SIZE);
+  });
+  for (const row of rows) {
+    if (isHivraInfrastructureBindingTokenHash(row.infrastructure_binding_token_hash)) {
+      tags.add(hivraInfrastructureBindingTag(row.infrastructure_binding_token_hash));
+    }
+  }
+  return tags;
+}
+
 // PostgREST puts the .in() list in the query string; keep each request well
 // under the gateway's request-line limit (see ARCHIVE_ID_CHUNK_SIZE in
 // instance-health-sweep.ts).
@@ -808,8 +861,12 @@ export async function runProxmoxOrphanSweep(): Promise<ProxmoxOrphanSweepSummary
       ...new Set([...liveVmids, ...discovery.orphanLvs.map((lv) => lv.vmid)]),
     ];
     let dbVmids: number[];
+    let laneBindingTags: Set<string>;
     try {
-      dbVmids = await loadDbVmidsForHost(supabaseAdmin, host.id, observedVmids);
+      [dbVmids, laneBindingTags] = await Promise.all([
+        loadDbVmidsForHost(supabaseAdmin, host.id, observedVmids),
+        loadLaneBindingTags(supabaseAdmin, liveVmids),
+      ]);
     } catch (err) {
       summary.hostsSkipped += 1;
       const reason = err instanceof Error ? err.message : String(err);
@@ -834,7 +891,7 @@ export async function runProxmoxOrphanSweep(): Promise<ProxmoxOrphanSweepSummary
       continue;
     }
 
-    const orphans = computeOrphansForHost(host.id, liveVms, dbVmids);
+    const orphans = computeOrphansForHost(host.id, liveVms, dbVmids, laneBindingTags);
     const orphanLvs = filterUnownedOrphanLvs(discovery.orphanLvs, dbVmids);
     summary.hostsScanned += 1;
     summary.orphansDetected += orphans.length;

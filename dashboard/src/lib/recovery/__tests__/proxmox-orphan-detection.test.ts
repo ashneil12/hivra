@@ -12,6 +12,7 @@ import {
   isSafeVgLvPath,
   loadDbVmidsForHost,
   loadInstanceRowsByIds,
+  loadLaneBindingTags,
   parseLiveVmsFromHostScript,
   parseOrphanLvReapOutput,
   parseOrphanLvsFromHostScript,
@@ -79,9 +80,26 @@ describe("parseLiveVmsFromHostScript", () => {
   it("parses BEGIN/END blocks into typed live VM records", () => {
     const live = parseLiveVmsFromHostScript(SAMPLE_STDOUT);
     expect(live).toEqual([
-      { vmid: 401, name: "hermes-power-1a2b3c4d", memoryMb: 8192, cores: 4 },
-      { vmid: 407, name: "canary-407", memoryMb: 4096, cores: 2 },
-      { vmid: 412, name: "hermes-free-aabbccdd", memoryMb: 1024, cores: 1 },
+      { vmid: 401, name: "hermes-power-1a2b3c4d", memoryMb: 8192, cores: 4, tags: [] },
+      { vmid: 407, name: "canary-407", memoryMb: 4096, cores: 2, tags: [] },
+      { vmid: 412, name: "hermes-free-aabbccdd", memoryMb: 1024, cores: 1, tags: [] },
+    ]);
+  });
+
+  it("captures the VM's qm tags so lane attribution can see them", () => {
+    const live = parseLiveVmsFromHostScript(`
+BEGIN 401
+name: hivra-cc-401
+memory: 4096
+cores: 2
+tags: hivra-bind-${"a".repeat(32)};hivra-op-${"b".repeat(32)}
+END 401
+`);
+    expect(live).toEqual([
+      expect.objectContaining({
+        vmid: 401,
+        tags: [`hivra-bind-${"a".repeat(32)}`, `hivra-op-${"b".repeat(32)}`],
+      }),
     ]);
   });
 
@@ -98,14 +116,14 @@ describe("parseLiveVmsFromHostScript", () => {
   it("tolerates missing optional fields (records null)", () => {
     const stdout = `BEGIN 500\nname: partial-only\nEND 500\n`;
     expect(parseLiveVmsFromHostScript(stdout)).toEqual([
-      { vmid: 500, name: "partial-only", memoryMb: null, cores: null },
+      { vmid: 500, name: "partial-only", memoryMb: null, cores: null, tags: [] },
     ]);
   });
 
   it("ignores unrecognised config keys inside a block", () => {
     const stdout = `BEGIN 501\ncpu: kvm64\nname: with-extras\nmemory: 2048\nboot: order=scsi0\ncores: 2\nEND 501\n`;
     expect(parseLiveVmsFromHostScript(stdout)).toEqual([
-      { vmid: 501, name: "with-extras", memoryMb: 2048, cores: 2 },
+      { vmid: 501, name: "with-extras", memoryMb: 2048, cores: 2, tags: [] },
     ]);
   });
 });
@@ -144,8 +162,41 @@ describe("computeOrphansForHost", () => {
         name: "canary-407",
         memoryMb: 4096,
         cores: 2,
+        tags: [],
       },
     ]);
+  });
+
+  it("never flags the other lane's computers on a shared host", () => {
+    // Prod 2026-11: canary-lane agent VMs sit on the same physical hosts as
+    // production ones. Their hivra-bind tag derives from a row in the OTHER
+    // deployment's database — unreachable here — so the old vmid-only claim
+    // reported every running canary box as an orphan forever.
+    const mine = `hivra-bind-${"a".repeat(32)}`;
+    const foreign = `hivra-bind-${"b".repeat(32)}`;
+    const live = [
+      { vmid: 401, name: "hivra-cc-401", memoryMb: 4096, cores: 2, tags: [foreign, "hivra-op-x"] },
+      { vmid: 402, name: "hivra-cc-402", memoryMb: 4096, cores: 2, tags: [mine, "hivra-op-y"] },
+      { vmid: 403, name: "hivra-cc-403", memoryMb: 4096, cores: 2, tags: [] },
+      { vmid: 404, name: "hivra-guacamole-canary", memoryMb: 2048, cores: 2, tags: [] },
+    ];
+    const orphans = computeOrphansForHost("fixturenode4", live, [], new Set([mine]));
+    // 401 is foreign-lane, 404 is a canary fixture — both are another lane's
+    // business. 402 is ours-but-unclaimed and 403 is unattributed: real orphans.
+    expect(orphans.map((vm) => vm.vmid)).toEqual([402, 403]);
+  });
+
+  it("still flags a VM tagged with our lane when no live row claims its vmid", () => {
+    const mine = `hivra-bind-${"c".repeat(32)}`;
+    const live = [{ vmid: 401, name: "hivra-cc-401", memoryMb: 4096, cores: 2, tags: [mine] }];
+    const orphans = computeOrphansForHost("fixturenode4", live, [], new Set([mine]));
+    expect(orphans.map((vm) => vm.vmid)).toEqual([401]);
+  });
+
+  it("keeps flagging bind-tagged VMs when the lane set is not provided", () => {
+    const live = [{ vmid: 401, name: "hivra-cc-401", memoryMb: 4096, cores: 2, tags: [`hivra-bind-${"d".repeat(32)}`] }];
+    const orphans = computeOrphansForHost("fixturenode4", live, []);
+    expect(orphans.map((vm) => vm.vmid)).toEqual([401]);
   });
 
   it("returns [] when every live VM has a corresponding DB row", () => {
@@ -199,7 +250,7 @@ ORPHAN_LV 1250 vg0/vm-1250-disk-0
     const stdout = `BEGIN 401\nname: x\nEND 401\nORPHAN_LV 1246 vg0/vm-1246-cloudinit\n`;
     // Live-VM parser ignores ORPHAN_LV lines; orphan-LV parser ignores blocks.
     expect(parseLiveVmsFromHostScript(stdout)).toEqual([
-      { vmid: 401, name: "x", memoryMb: null, cores: null },
+      { vmid: 401, name: "x", memoryMb: null, cores: null, tags: [] },
     ]);
     expect(parseOrphanLvsFromHostScript(stdout)).toEqual([
       { vmid: 1246, vgLv: "vg0/vm-1246-cloudinit" },
@@ -696,6 +747,26 @@ describe("loadDbVmidsForHost", () => {
     const vmids = await loadDbVmidsForHost(supabase, defaultHost, [501, 502, 503]);
 
     expect(vmids.sort()).toEqual([501, 502]);
+  });
+
+  it("derives this lane's hivra-bind tag set from every row on the vmid, including deleted ones", async () => {
+    // Rows of every status count for lane attribution: a deleted row's VM is
+    // still our lane's computer (the vmid claim then flags it); only a tag no
+    // row derives belongs to the other deployment lane.
+    const ownHash = "f".repeat(64);
+    const { supabase } = fakeSupabase({
+      hermes_instances: [],
+      hivra_agents: [
+        { id: "agent-live", vmid: 601, status: "running", infrastructure_binding_token_hash: ownHash },
+        { id: "agent-deleted", vmid: 602, status: "deleted", infrastructure_binding_token_hash: "e".repeat(64) },
+        { id: "agent-nohash", vmid: 603, status: "running", infrastructure_binding_token_hash: "not-a-hash" },
+        { id: "agent-unrelated", vmid: 999, status: "running", infrastructure_binding_token_hash: "d".repeat(64) },
+      ],
+    });
+
+    const tags = await loadLaneBindingTags(supabase, [601, 602, 603]);
+
+    expect(tags).toEqual(new Set([`hivra-bind-${ownHash.slice(0, 32)}`, `hivra-bind-${"e".repeat(32)}`]));
   });
 
   it("pages the fleet-wide agent claim read past the PostgREST row cap", async () => {
