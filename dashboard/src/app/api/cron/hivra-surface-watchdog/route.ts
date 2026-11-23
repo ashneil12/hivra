@@ -40,16 +40,17 @@ export async function GET(req: NextRequest) {
 
   try {
     const summary = await runSurfaceWatchdogSweep();
-    // Honest heartbeat: read/relay failures AND budget-skipped boxes mean
-    // boxes went unswept this tick — notReached>0 is an incomplete sweep,
-    // not a clean one.
+    // Honest heartbeat: read/relay failures, budget-skipped boxes AND a
+    // fleet larger than the per-tick window all mean boxes went unswept
+    // this tick — capped>0 is an incomplete sweep, not a clean one.
     await recordCronHeartbeat(
       "hivra-surface-watchdog",
-      summary.failed > 0 || summary.notReached > 0
+      summary.failed > 0 || summary.notReached > 0 || summary.capped > 0
         ? {
             ok: false,
             detail:
               `failed=${summary.failed} notReached=${summary.notReached} ` +
+              `capped=${summary.capped} ` +
               `unreachable=${summary.unreachable} notInstalled=${summary.notInstalled}`,
           }
         : undefined,

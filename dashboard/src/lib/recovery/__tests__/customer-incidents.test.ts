@@ -3733,6 +3733,102 @@ describe("runCustomerIncidentScan", () => {
       expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
       expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
     });
+
+    it("conditions the box_unreachable insert on the probe row still carrying the observed outage at commit", async () => {
+      // The incident report is recorded against the exact outage the
+      // pre-insert re-check read: verdictGuard pins the probe row's
+      // source/instance/first_seen_at so a healthy verdict — or a newer
+      // outage — landing between the re-check and the insert's commit is
+      // compensated, never paged.
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        probeRows: [probeRow()],
+      });
+      const deps = scanDeps({
+        db,
+        probe: jest.fn(async () => ({ status: 503, latencyMs: 80, error: null })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.opened).toBe(1);
+      const incidents = incidentReports(deps.report as jest.Mock);
+      expect(incidents).toHaveLength(1);
+      const stored = db
+        .tableRows("ops_events")
+        .find(
+          (row) =>
+            row.source === "box.public_probe.unreachable" &&
+            row.instance_id === "agent-1",
+        )!;
+      expect(incidents[0].verdictGuard).toEqual({
+        source: "box.public_probe.unreachable",
+        instanceId: "agent-1",
+        firstSeenAt: stored.first_seen_at,
+      });
+      // Every incident report also carries the scan's observation time.
+      expect(incidents[0].observedAt).toBe(new Date(NOW).toISOString());
+    });
+
+    it("does not count an incident report superseded by a moved verdict as opened or failed", async () => {
+      // The verdict moved under the commit — reportOpsEvent compensated the
+      // write and answered superseded: the outage is contested, not opened,
+      // and the pass is not degraded for it.
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        probeRows: [probeRow()],
+      });
+      const deps = scanDeps({
+        db,
+        probe: jest.fn(async () => ({ status: 503, latencyMs: 80, error: null })),
+        // Only the incident report is superseded — the probe-row verdict
+        // write still records the outage normally.
+        report: jest.fn(async (input: OpsEventInput) =>
+          String(input.source).startsWith("incident.")
+            ? { fingerprint: "fp", superseded: true }
+            : { id: "evt-probe", fingerprint: "fp" },
+        ),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.opened).toBe(0);
+      expect(summary.failed).toBe(0);
+      expect(summary.degraded).toBe(0);
+    });
+
+    it("clears a box_unreachable insert whose stored outage predates the box's current runtime", async () => {
+      // The write path resets a stale-runtime first_seen_at when it lands —
+      // this is the in-flight gap it cannot see: the agent's runtime marker
+      // moves BETWEEN the probe-row write and the incident report's
+      // pre-insert re-check. The fresh subject read shows the stored outage
+      // belongs to the previous boot — the new runtime never got its grace
+      // window — so the page is deferred to the next scan's fresh clock.
+      const agent = agentDbRow();
+      const db = fakeIncidentDb({
+        agents: [agent],
+        probeRows: [probeRow()],
+        mutateWhen: (table, calls) => {
+          // The re-check's single-row subject read is the only
+          // maybeSingle against hivra_agents: the box reboots under it.
+          if (
+            table === "hivra_agents" &&
+            calls.some((c) => c[0] === "maybeSingle")
+          ) {
+            agent.operation_kind = "redeploy";
+            agent.operation_started_at = iso(5 * MIN);
+          }
+        },
+      });
+      const deps = scanDeps({
+        db,
+        probe: jest.fn(async () => ({ status: 503, latencyMs: 80, error: null })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      // The recorded outage (15m) predates the fresh operation marker (5m):
+      // cleared, not paged — the new runtime's outage clock starts over.
+      expect(summary.opened).toBe(0);
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+    });
   });
 
   // ---- report pass deadline + still-open version refresh -------------------

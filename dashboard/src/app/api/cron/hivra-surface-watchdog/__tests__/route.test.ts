@@ -16,6 +16,7 @@ jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 const sweepSummary = {
   scanned: 3,
+  capped: 0,
   reported: 1,
   notInstalled: 0,
   unreachable: 0,
@@ -64,6 +65,26 @@ describe("GET /api/cron/hivra-surface-watchdog", () => {
       expect.objectContaining({
         ok: false,
         detail: expect.stringContaining("notReached=4"),
+      }),
+    );
+  });
+
+  it("records ok:false when part of the fleet fell outside the per-tick window", async () => {
+    // A capped sweep is an incomplete one: boxes the window omitted went
+    // entirely unread, so the heartbeat must not read clean.
+    (runSurfaceWatchdogSweep as jest.Mock).mockResolvedValueOnce({
+      ...sweepSummary,
+      capped: 140,
+    });
+
+    const response = await GET(req("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "hivra-surface-watchdog",
+      expect.objectContaining({
+        ok: false,
+        detail: expect.stringContaining("capped=140"),
       }),
     );
   });

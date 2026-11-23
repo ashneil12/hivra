@@ -33,6 +33,7 @@
 
 import { log } from "@/lib/logger";
 import { reportOpsEventOnce, type OpsEventInput } from "@/lib/ops-events";
+import { rotateByScanTick } from "@/lib/recovery/scan-rotation";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   readSurfaceWatchdogFromBox,
@@ -61,6 +62,13 @@ const MAX_RELAY_PER_BOX = 10;
 // origins must not ride into the function ceiling.
 const SOFT_BUDGET_MS = 4 * 60 * 1000;
 const MAX_CANDIDATES = 500;
+// PostgREST caps every response at max_rows even when the query asks for
+// more — the candidate read pages by keyset like the incident scan's
+// subject reads so a fleet past one page is never silently truncated.
+const CANDIDATE_PAGE_SIZE = 1000;
+// The cron's */5-minute schedule in vercel.json — the tick bucket used to
+// rotate which slice of a capped fleet the sweep reads each pass.
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 interface WatchdogCandidateRow {
   id: string;
@@ -73,6 +81,14 @@ interface WatchdogCandidateRow {
 
 export interface SurfaceWatchdogSweepSummary {
   scanned: number;
+  /**
+   * Awake, probeable candidates that fell OUTSIDE this tick's bounded
+   * window — boxes the sweep did not even attempt to read. Distinct from
+   * the per-box failure counts: a fleet larger than MAX_CANDIDATES leaves
+   * a slice unwatched every pass, and that omission must be visible in
+   * the heartbeat rather than reading as a clean sweep.
+   */
+  capped: number;
   reported: number;
   notInstalled: number;
   unreachable: number;
@@ -82,7 +98,7 @@ export interface SurfaceWatchdogSweepSummary {
 }
 
 function emptySummary(): SurfaceWatchdogSweepSummary {
-  return { scanned: 0, reported: 0, notInstalled: 0, unreachable: 0, notReached: 0, relayed: 0, failed: 0 };
+  return { scanned: 0, capped: 0, reported: 0, notInstalled: 0, unreachable: 0, notReached: 0, relayed: 0, failed: 0 };
 }
 
 /**
@@ -207,29 +223,60 @@ export async function runSurfaceWatchdogSweep(options: SurfaceWatchdogSweepOptio
       lookupRelayedWatchdogTitles(db, instanceId, titles).then((found) => found ?? new Set<string>()));
   const summary = emptySummary();
 
-  const { data, error } = await db
-    .from("hivra_agents")
-    .select("id, user_id, type, chat_url, cf_hostname, api_token")
-    .eq("status", "running")
-    // A sleeping computer cannot answer; "unreachable" would be a false alarm.
-    .eq("sleep_state", "awake")
-    .not("chat_url", "is", null)
-    .not("api_token", "is", null)
-    .order("id", { ascending: true })
-    .limit(MAX_CANDIDATES);
-
-  if (error) {
-    log.error("surface watchdog candidate query failed", error, {
-      source: SOURCE, failureType: "watchdog_candidates_unreadable",
-    });
-    summary.failed += 1;
-    return summary;
+  // The full candidate set, paged by keyset — the per-tick bound below caps
+  // how many boxes the sweep READS, not how many it can see. A bare
+  // `.limit(MAX_CANDIDATES)` on the read made the tail invisible: boxes
+  // past the cap were excluded before the sweep counted them, so failed=0
+  // notReached=0 read as a clean heartbeat while part of the fleet went
+  // unwatched every tick.
+  const candidates: WatchdogCandidateRow[] = [];
+  {
+    let cursor: string | null = null;
+    let failed = false;
+    for (;;) {
+      let query = db
+        .from("hivra_agents")
+        .select("id, user_id, type, chat_url, cf_hostname, api_token")
+        .eq("status", "running")
+        // A sleeping computer cannot answer; "unreachable" would be a false alarm.
+        .eq("sleep_state", "awake")
+        .not("chat_url", "is", null)
+        .not("api_token", "is", null)
+        .order("id", { ascending: true })
+        .limit(CANDIDATE_PAGE_SIZE);
+      if (cursor != null) query = query.gt("id", cursor);
+      const { data, error } = await query;
+      if (error) {
+        log.error("surface watchdog candidate query failed", error, {
+          source: SOURCE, failureType: "watchdog_candidates_unreadable",
+        });
+        summary.failed += 1;
+        failed = true;
+        break;
+      }
+      const page = (data as WatchdogCandidateRow[] | null) ?? [];
+      candidates.push(...page);
+      if (page.length < CANDIDATE_PAGE_SIZE) break;
+      cursor = page[page.length - 1].id;
+    }
+    if (failed) return summary;
   }
 
-  const rows = ((data as WatchdogCandidateRow[] | null) ?? [])
-    .filter((row) => typeof row.id === "string" && typeof row.user_id === "string");
-  summary.scanned = rows.length;
   const started = now();
+  // The per-run read bound stays — but the window it admits ROTATES by the
+  // sweep tick so a capped fleet walks its tail across passes instead of the
+  // same boxes being excluded forever. Candidates outside the window are
+  // counted separately from per-box failures: the heartbeat reads them as
+  // an incomplete sweep.
+  const readable = candidates.filter(
+    (row) => typeof row.id === "string" && typeof row.user_id === "string",
+  );
+  const rows = rotateByScanTick(
+    readable,
+    Math.floor(started / SWEEP_INTERVAL_MS),
+  ).slice(0, MAX_CANDIDATES);
+  summary.capped = readable.length - rows.length;
+  summary.scanned = rows.length;
 
   await inPool(rows, READ_CONCURRENCY, async (row) => {
     if (now() - started > SOFT_BUDGET_MS) {
