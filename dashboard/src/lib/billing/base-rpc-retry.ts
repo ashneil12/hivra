@@ -74,6 +74,28 @@ export class RpcHttpError extends Error {
   }
 }
 
+/**
+ * Error for a JSON-RPC error body — deterministic, so callers must NOT wrap
+ * it in the retry layer. The provider's numeric code is preserved twice: as a
+ * structured `code` property AND inside the message, because range-cap
+ * detection in base-rpc-logs matches -32614 even when the message text names
+ * no block count.
+ */
+export function baseRpcPayloadError(
+  method: string,
+  error: { code?: number; message?: string } | undefined,
+): Error {
+  const detail = error?.message || "unknown RPC error";
+  const code = typeof error?.code === "number" && Number.isFinite(error.code) ? error.code : null;
+  const thrown = new Error(
+    `Base RPC ${method} returned an error: ${detail}${code != null ? ` (code ${code})` : ""}`,
+  );
+  if (code != null) {
+    (thrown as Error & { code?: number }).code = code;
+  }
+  return thrown;
+}
+
 // A transient error is one worth retrying: rate-limits (429), server-side
 // faults (5xx), and raw network failures (fetch rejects with a TypeError, no
 // HTTP status at all). Deterministic failures (bad params, decode errors, a

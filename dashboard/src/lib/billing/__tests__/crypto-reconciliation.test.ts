@@ -645,4 +645,122 @@ describe("stale crypto top-up exclusion", () => {
       expect.objectContaining({ checked: 1, settled: 1, failed: 0, staleExcluded: null })
     );
   });
+
+  it("retries a stale intent on the first tick of a new UTC day, then not again that day", async () => {
+    // Just past the 14-day cutoff (2026-04-10T12:00Z) so its window still maps
+    // to real blocks on the fake chain.
+    const retryableStale = stalePayment({
+      created_at: "2026-04-09T11:00:00.000Z",
+      updated_at: "2026-04-09T11:00:00.000Z",
+      metadata: {
+        type: "crypto_topup_intent",
+        depositAddress: normalizedDepositAddressOne,
+        createdAt: "2026-04-09T11:00:00.000Z",
+        sessionExpiresAt: "2026-04-09T11:20:00.000Z",
+      },
+    });
+    const memory = createBillingMemoryDb({
+      payment_transactions: [retryableStale],
+      ops_cron_heartbeats: [
+        // Previous tick ended yesterday UTC: this run is the day's first.
+        { cron_name: "reconcile-crypto-topups", last_run_at: "2026-04-23T11:00:00.000Z" },
+      ],
+    });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+
+    const rollover = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    // The stale intent got its daily retry: it was checked (a real scan ran)
+    // even though the per-tick cutoff still excludes it from the main lanes.
+    expect(rollover.checked).toBe(1);
+    expect(rollover.staleRetried).toBe(1);
+    expect(rollover.staleExcluded).toBe(1);
+    expect(rpc.methodCount("eth_getLogs")).toBeGreaterThan(0);
+
+    // A later tick the same UTC day must not retry it again: the heartbeat's
+    // last_run_at is now today, so there is no new day to compare against.
+    memory.tables.ops_cron_heartbeats[0].last_run_at = "2026-04-24T06:00:00.000Z";
+    const logsAfterRollover = rpc.methodCount("eth_getLogs");
+    const sameDay = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    expect(sameDay.checked).toBe(0);
+    expect(sameDay.staleRetried).toBe(0);
+    // Whatever the rollover scan left open is still counted as stale backlog;
+    // what matters is it was not scanned again.
+    expect(rpc.methodCount("eth_getLogs")).toBe(logsAfterRollover);
+  });
+
+  it("does not retry stale intents on a tick with no new UTC day", async () => {
+    const memory = createBillingMemoryDb({
+      payment_transactions: [stalePayment()],
+      ops_cron_heartbeats: [
+        // Same UTC day as `now` (2026-04-24): an ordinary tick.
+        { cron_name: "reconcile-crypto-topups", last_run_at: "2026-04-24T06:00:00.000Z" },
+      ],
+    });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+
+    const result = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    expect(result.checked).toBe(0);
+    expect(result.staleRetried).toBe(0);
+    expect(result.staleExcluded).toBe(1);
+    expect(rpc.methodCount("eth_getLogs")).toBe(0);
+  });
+
+  it("bounds the daily stale retry to a fixed batch size", async () => {
+    const payments = Array.from({ length: 30 }, (_, index) =>
+      stalePayment({
+        id: `payment_stale_${index}`,
+        provider_reference_id: `bankr_crypto_topup:stale_${index}`,
+        user_id: `user_stale_${index}`,
+        created_at: "2026-04-09T11:00:00.000Z",
+        updated_at: "2026-04-09T11:00:00.000Z",
+        metadata: {
+          type: "crypto_topup_intent",
+          depositAddress: normalizedDepositAddressOne,
+          createdAt: "2026-04-09T11:00:00.000Z",
+          sessionExpiresAt: "2026-04-09T11:20:00.000Z",
+        },
+      })
+    );
+    const memory = createBillingMemoryDb({
+      payment_transactions: payments,
+      ops_cron_heartbeats: [
+        { cron_name: "reconcile-crypto-topups", last_run_at: "2026-04-23T11:00:00.000Z" },
+      ],
+    });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+
+    const result = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    // STALE_DAILY_RETRY_LIMIT is 25: the remaining 5 wait for the next day.
+    expect(result.staleRetried).toBe(25);
+    expect(result.checked).toBe(25);
+    expect(result.staleExcluded).toBe(30);
+  });
 });

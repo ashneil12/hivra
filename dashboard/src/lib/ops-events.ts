@@ -33,6 +33,12 @@ export interface OpsEventInput {
    * incidents that are errors, not process-fatal.
    */
   page?: boolean;
+  /**
+   * On an archived→open reopen, reset first_seen_at to now in the same write.
+   * For rows whose first_seen_at is a domain timestamp (e.g. an outage start)
+   * that must restart when the condition recurs, not keep the first-ever sighting.
+   */
+  resetFirstSeenOnReopen?: boolean;
 }
 
 export interface ArchiveOpsEventsInput {
@@ -162,6 +168,50 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
 
     if (existing?.id) {
       const wasArchived = existing.archived_at != null;
+
+      if (wasArchived) {
+        // Conditional reopen: the write only lands while the row is still
+        // archived, so exactly one racing writer flips it back to open — and
+        // only that writer may page for the fresh incident.
+        const { data: reopened } = await supabaseAdmin
+          .from('ops_events')
+          .update({
+            ...payload,
+            archived_at: null,
+            archived_by_user_id: null,
+            last_seen_at: now,
+            occurrence_count: (existing.occurrence_count || 0) + 1,
+            ...(input.resetFirstSeenOnReopen ? { first_seen_at: now } : {}),
+          })
+          .eq('id', existing.id)
+          .not('archived_at', 'is', null)
+          .select('id')
+          .maybeSingle();
+
+        if (reopened?.id) {
+          // A recurrence of an ARCHIVED fingerprint un-archives the row —
+          // that is a fresh incident, so it pages once more. An still-open
+          // row takes the branch below and must not re-page.
+          if (shouldPage) {
+            await dispatchAdminPageAlert({
+              fingerprint,
+              source: payload.source,
+              title: payload.title,
+              message: payload.message,
+              route: payload.route,
+              instanceId: payload.instance_id,
+              userId: payload.user_id,
+              metadata: payload.metadata,
+            });
+          }
+          return { id: reopened.id, fingerprint };
+        }
+        // Lost the reopen race: another writer already flipped the row open
+        // (and paged if needed). The fingerprint is represented; report the
+        // existing row id.
+        return { id: existing.id, fingerprint };
+      }
+
       const { data } = await supabaseAdmin
         .from('ops_events')
         .update({
@@ -174,22 +224,6 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
         .eq('id', existing.id)
         .select('id')
         .single();
-
-      // A recurrence of an ARCHIVED fingerprint un-archives the row above —
-      // that is a fresh incident, so it pages once more. An still-open row
-      // takes this branch every report and must not re-page.
-      if (shouldPage && wasArchived) {
-        await dispatchAdminPageAlert({
-          fingerprint,
-          source: payload.source,
-          title: payload.title,
-          message: payload.message,
-          route: payload.route,
-          instanceId: payload.instance_id,
-          userId: payload.user_id,
-          metadata: payload.metadata,
-        });
-      }
 
       return {
         id: data?.id,
@@ -209,7 +243,9 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
       .single();
 
     // First sighting of a pageable fingerprint (fatal, or page:true): page an
-    // admin once. The INSERT branch is the dedupe — an extended outage that
+    // admin once — but only after the insert actually persisted an id, so a
+    // failed write can never page for an event that was never stored. The
+    // INSERT branch is the dedupe — an extended outage that
     // keeps re-reporting the same fingerprint takes the UPDATE branch above
     // and never re-pages, so a prolonged incident notifies exactly once
     // instead of every cron tick. The one exception is a recurrence after the
@@ -217,7 +253,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
     // Best-effort and fire-and-forget: the alert transport is awaited but its
     // own try/catch swallows everything, so a Resend/Telegram hiccup can never
     // mask the event write or throw out of reportOpsEvent.
-    if (shouldPage) {
+    if (shouldPage && data?.id) {
       await dispatchAdminPageAlert({
         fingerprint,
         source: payload.source,

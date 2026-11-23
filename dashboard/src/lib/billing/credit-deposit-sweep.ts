@@ -60,6 +60,7 @@ import {
 import { ensureWalletHasGas } from "./treasury-gas";
 import { USDC_BASE_TOKEN_ADDRESS, CRYPTO_TOPUP_ASSETS } from "./crypto-topups";
 import { getLogsInBlockChunks } from "./base-rpc-logs";
+import { baseRpcPayloadError } from "./base-rpc-retry";
 
 const USDC_DECIMALS = CRYPTO_TOPUP_ASSETS.usdc_base.tokenDecimals;
 const ERC20_BALANCE_OF_SELECTOR = "70a08231";
@@ -256,7 +257,7 @@ function createBaseRpc(rpcUrl: string, fetchImpl: JsonRpcFetch) {
     }
     const payload = (await response.json()) as JsonRpcResponse;
     if (payload.error) {
-      throw new Error(payload.error.message || `Base RPC ${method} returned an error`);
+      throw baseRpcPayloadError(method, payload.error);
     }
     return payload.result;
   }

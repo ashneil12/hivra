@@ -1,3 +1,4 @@
+import { resolveHivraProxmoxHost } from "@/lib/hivra/proxmox-target";
 import {
   buildOrphanLvReapScript,
   buildRestoreCloneStopScript,
@@ -555,7 +556,11 @@ describe("loadDbVmidsForHost", () => {
     // hermes_instances row" — every one was a live hivra_agents computer.
     const { supabase, calls } = fakeSupabase({
       hermes_instances: [{ proxmox_vmid: 401 }],
-      hivra_agents: [{ vmid: 407 }, { vmid: null }, { vmid: "not-a-number" }],
+      hivra_agents: [
+        { vmid: 407, proxmox_host: "fixturenode11" },
+        { vmid: null, proxmox_host: "fixturenode11" },
+        { vmid: "not-a-number", proxmox_host: "fixturenode11" },
+      ],
     });
 
     const vmids = await loadDbVmidsForHost(supabase, "fixturenode11", [401, 407, 999]);
@@ -566,6 +571,25 @@ describe("loadDbVmidsForHost", () => {
     expect(agentCall?.inColumn).toBe("vmid");
     expect(agentCall?.inValues).toEqual([401, 407, 999]);
     expect(agentCall?.neq).toContainEqual(["status", "deleted"]);
+  });
+
+  it("owns agent VMIDs by resolved host: an empty proxmox_host counts for the default host", async () => {
+    // resolveHivraProxmoxHost("") falls back to HIVRA_PROXMOX_HOST or "local" —
+    // a raw .eq("proxmox_host", hostId) misses exactly those rows, so an
+    // agent computer on the default host was reported as an orphan.
+    const defaultHost = resolveHivraProxmoxHost(null);
+    const { supabase } = fakeSupabase({
+      hermes_instances: [],
+      hivra_agents: [
+        { vmid: 501, proxmox_host: null },
+        { vmid: 502, proxmox_host: "" },
+        { vmid: 503, proxmox_host: "other-host" },
+      ],
+    });
+
+    const vmids = await loadDbVmidsForHost(supabase, defaultHost, [501, 502, 503]);
+
+    expect(vmids.sort()).toEqual([501, 502]);
   });
 
   it("returns an empty list without querying when there are no live VMIDs", async () => {

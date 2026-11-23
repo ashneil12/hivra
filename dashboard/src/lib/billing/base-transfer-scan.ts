@@ -13,6 +13,7 @@
 import { normalizeEvmAddress } from "@/lib/billing/token-holdings";
 import {
   RpcHttpError,
+  baseRpcPayloadError,
   isRetryableRpcError,
   withRpcRetry,
   type RpcCallOptions,
@@ -220,7 +221,7 @@ async function rpcCallOnce<T>(
 
   const payload = (await response.json()) as JsonRpcResponse;
   if (payload.error) {
-    throw new Error(`Base RPC ${method} returned an error: ${payload.error.message || "unknown RPC error"}`);
+    throw baseRpcPayloadError(method, payload.error);
   }
 
   return payload.result as T;

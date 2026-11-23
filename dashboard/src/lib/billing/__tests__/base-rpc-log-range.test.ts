@@ -636,6 +636,45 @@ describe("getLogsInBlockChunks with a moving provider range cap", () => {
     expectExactTiling(requests, 700, 0, 1_999);
   });
 
+  it("re-tiles when the JSON-RPC error keeps code and message in separate fields", async () => {
+    // The provider answers a 200 JSON-RPC body whose error carries the range
+    // cap as `code: -32614` while the message names no block count. The RPC
+    // wrapper must preserve the code on the thrown error or the scan fails
+    // instead of re-tiling — this drives the real rpcCallOnce + retry path.
+    const cap = 700;
+    const requests: LogRange[] = [];
+    const fetchImpl = jest.fn(async (_input: string, init: { body: string }) => {
+      const request = JSON.parse(init.body) as { method: string; params: unknown[] };
+      if (request.method !== "eth_getLogs") {
+        throw new Error(`Unexpected RPC method ${request.method}`);
+      }
+      const req = request.params[0] as { fromBlock: string; toBlock: string };
+      const range = {
+        fromBlock: Number.parseInt(req.fromBlock, 16),
+        toBlock: Number.parseInt(req.toBlock, 16),
+      };
+      requests.push(range);
+      if (range.toBlock - range.fromBlock + 1 > cap) {
+        return jsonResponse(200, {
+          jsonrpc: "2.0",
+          id: 1,
+          error: { code: -32614, message: "range limit exceeded" },
+        });
+      }
+      return jsonResponse(200, { jsonrpc: "2.0", id: 1, result: [] });
+    });
+    const chain = createBaseChainReader({ rpcUrl: "https://base.test", fetchImpl: fetchImpl as never });
+
+    await getLogsInBlockChunks({
+      call: chain.call,
+      filter,
+      fromBlock: 10_000,
+      toBlock: 11_999,
+    });
+
+    expectExactTiling(requests, cap, 10_000, 11_999);
+  });
+
   it("halves when the stated cap is not below the refused span", async () => {
     const { call, requests } = capLimitedCall(1_500, () => new Error("eth_getLogs is limited to a 5,000 range"));
 

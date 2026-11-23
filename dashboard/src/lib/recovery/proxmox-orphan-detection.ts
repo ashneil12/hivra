@@ -44,6 +44,7 @@
  */
 
 import { chunk } from "@/lib/array-utils";
+import { resolveHivraProxmoxHost } from "@/lib/hivra/proxmox-target";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import {
@@ -585,17 +586,23 @@ export async function loadDbVmidsForHost(
   // Hivra agent computers (hivra-cc-*/Agent Zero VMs) live in hivra_agents,
   // not hermes_instances — without this union every running agent VM was
   // reported as an orphan (prod 2026-11: 9 "orphans" on one host, all owned).
+  // Ownership is resolved per row, not filtered in SQL: an empty proxmox_host
+  // resolves to the default/current host, so a raw .eq would miss exactly the
+  // agents that belong to it.
   const { data: agentRows, error: agentError } = await supabase
     .from("hivra_agents")
-    .select("vmid")
-    .eq("proxmox_host", hostId)
+    .select("vmid, proxmox_host")
     .in("vmid", liveVmids)
     .neq("status", "deleted");
   if (agentError) {
     throw new Error(`hivra_agents query failed: ${agentError.message}`);
   }
-  for (const row of (agentRows ?? []) as Array<{ vmid: number | null }>) {
-    if (typeof row.vmid === "number" && Number.isFinite(row.vmid)) {
+  for (const row of (agentRows ?? []) as Array<{ vmid: number | null; proxmox_host: string | null }>) {
+    if (
+      typeof row.vmid === "number" &&
+      Number.isFinite(row.vmid) &&
+      resolveHivraProxmoxHost(row.proxmox_host) === hostId
+    ) {
       vmids.push(row.vmid);
     }
   }

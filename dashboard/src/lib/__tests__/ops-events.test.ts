@@ -382,12 +382,23 @@ describe('ops-events helper', () => {
     const eqSelect = jest.fn().mockReturnThis();
     const select = jest.fn().mockReturnThis();
     const updateEq = jest.fn().mockReturnThis();
+    const updateNot = jest.fn().mockReturnThis();
     const updateSingle = jest.fn().mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
+    const updateMaybeSingle = jest
+      .fn()
+      .mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
     const update = jest.fn().mockReturnThis();
 
     (supabaseAdmin!.from as jest.Mock)
       .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
-      .mockReturnValueOnce({ update, eq: updateEq, select, single: updateSingle });
+      .mockReturnValueOnce({
+        update,
+        eq: updateEq,
+        not: updateNot,
+        select,
+        single: updateSingle,
+        maybeSingle: updateMaybeSingle,
+      });
 
     await reportOpsEvent({
       source: 'incident.box_down',
@@ -408,12 +419,23 @@ describe('ops-events helper', () => {
     const eqSelect = jest.fn().mockReturnThis();
     const select = jest.fn().mockReturnThis();
     const updateEq = jest.fn().mockReturnThis();
+    const updateNot = jest.fn().mockReturnThis();
     const updateSingle = jest.fn().mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
+    const updateMaybeSingle = jest
+      .fn()
+      .mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
     const update = jest.fn().mockReturnThis();
 
     (supabaseAdmin!.from as jest.Mock)
       .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
-      .mockReturnValueOnce({ update, eq: updateEq, select, single: updateSingle });
+      .mockReturnValueOnce({
+        update,
+        eq: updateEq,
+        not: updateNot,
+        select,
+        single: updateSingle,
+        maybeSingle: updateMaybeSingle,
+      });
 
     await reportOpsEvent({
       source: 'incident.box_down',
@@ -436,12 +458,23 @@ describe('ops-events helper', () => {
     const eqSelect = jest.fn().mockReturnThis();
     const select = jest.fn().mockReturnThis();
     const updateEq = jest.fn().mockReturnThis();
+    const updateNot = jest.fn().mockReturnThis();
     const updateSingle = jest.fn().mockResolvedValue({ data: { id: 'evt_plain' }, error: null });
+    const updateMaybeSingle = jest
+      .fn()
+      .mockResolvedValue({ data: { id: 'evt_plain' }, error: null });
     const update = jest.fn().mockReturnThis();
 
     (supabaseAdmin!.from as jest.Mock)
       .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
-      .mockReturnValueOnce({ update, eq: updateEq, select, single: updateSingle });
+      .mockReturnValueOnce({
+        update,
+        eq: updateEq,
+        not: updateNot,
+        select,
+        single: updateSingle,
+        maybeSingle: updateMaybeSingle,
+      });
 
     await reportOpsEvent({
       source: 'api',
@@ -451,6 +484,133 @@ describe('ops-events helper', () => {
     });
 
     expect(mockedFatalAlert).not.toHaveBeenCalled();
+  });
+
+  it('reopen is conditional on the row still being archived: a lost race does not page', async () => {
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: { id: 'evt_race', occurrence_count: 9, archived_at: '2026-11-20T00:00:00Z' },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const updateEq = jest.fn().mockReturnThis();
+    const updateNot = jest.fn().mockReturnThis();
+    // The conditional update matched zero rows — another writer already
+    // reopened the fingerprint and owns the page for this recurrence.
+    const updateMaybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    const update = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
+      .mockReturnValueOnce({
+        update,
+        eq: updateEq,
+        not: updateNot,
+        select,
+        maybeSingle: updateMaybeSingle,
+      });
+
+    const result = await reportOpsEvent({
+      source: 'incident.box_down',
+      severity: 'error',
+      page: true,
+      title: 'Customer incident: agent box down',
+      message: 'A customer box is down',
+    });
+
+    expect(updateNot).toHaveBeenCalledWith('archived_at', 'is', null);
+    expect(mockedFatalAlert).not.toHaveBeenCalled();
+    expect(result).toEqual({ id: 'evt_race', fingerprint: expect.any(String) });
+  });
+
+  it('does NOT page when the insert returns no persisted id', async () => {
+    const maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    const eq = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const single = jest.fn().mockResolvedValue({ data: null, error: null });
+    const insert = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq, maybeSingle })
+      .mockReturnValueOnce({ insert, select, single });
+
+    const result = await reportOpsEvent({
+      source: 'incident.box_down',
+      severity: 'error',
+      page: true,
+      title: 'Customer incident: agent box down',
+      message: 'A customer box is down',
+    });
+
+    expect(mockedFatalAlert).not.toHaveBeenCalled();
+    expect(result?.id).toBeUndefined();
+  });
+
+  it('resetFirstSeenOnReopen rewrites first_seen_at only on the archived-to-open update', async () => {
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: { id: 'evt_probe', occurrence_count: 4, archived_at: '2026-11-20T00:00:00Z' },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const updateEq = jest.fn().mockReturnThis();
+    const updateNot = jest.fn().mockReturnThis();
+    const updateMaybeSingle = jest
+      .fn()
+      .mockResolvedValue({ data: { id: 'evt_probe' }, error: null });
+    const update = jest.fn().mockReturnThis();
+    const before = Date.now();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
+      .mockReturnValueOnce({
+        update,
+        eq: updateEq,
+        not: updateNot,
+        select,
+        maybeSingle: updateMaybeSingle,
+      });
+
+    await reportOpsEvent({
+      source: 'box.public_probe.unreachable',
+      severity: 'warn',
+      title: 'Customer box public probe unreachable',
+      message: 'probe failing',
+      instanceId: 'agent_1',
+      resetFirstSeenOnReopen: true,
+    });
+
+    const payload = update.mock.calls[0][0] as Record<string, unknown>;
+    expect(typeof payload.first_seen_at).toBe('string');
+    expect(Date.parse(payload.first_seen_at as string)).toBeGreaterThanOrEqual(before - 1000);
+  });
+
+  it('resetFirstSeenOnReopen leaves first_seen_at alone on a still-open row', async () => {
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: { id: 'evt_probe', occurrence_count: 4, archived_at: null },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const updateEq = jest.fn().mockReturnThis();
+    const updateSingle = jest.fn().mockResolvedValue({ data: { id: 'evt_probe' }, error: null });
+    const update = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
+      .mockReturnValueOnce({ update, eq: updateEq, select, single: updateSingle });
+
+    await reportOpsEvent({
+      source: 'box.public_probe.unreachable',
+      severity: 'warn',
+      title: 'Customer box public probe unreachable',
+      message: 'probe failing',
+      instanceId: 'agent_1',
+      resetFirstSeenOnReopen: true,
+    });
+
+    const payload = update.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty('first_seen_at');
   });
 
   it('soft-archives the requested events for the current operator', async () => {
