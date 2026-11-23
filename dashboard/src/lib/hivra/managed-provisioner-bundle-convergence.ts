@@ -82,6 +82,7 @@ export type ManagedBundleConvergenceSummary = {
   channel: ManagedHivraProvisionerChannel;
   requestedVersion: string;
   hosts: ManagedBundleHostReport[];
+  retiredHostReferences: Array<{ targetId: string; computerRecords: number }>;
   synced: string[];
   /** Behind, but left for a later run by the per-run bound (or by dry run). */
   pending: string[];
@@ -139,7 +140,8 @@ async function loadLiveComputersByHost(
       .order("id", { ascending: true })
       .range(from, from + AGENT_PAGE_SIZE - 1);
     if (error) throw new Error(`hivra_agents host read failed: ${error.message}`);
-    const rows = (data ?? []) as Array<{
+    if (!Array.isArray(data)) throw new Error("hivra_agents host read returned no inventory");
+    const rows = data as Array<{
       vmid: number | null;
       status: string | null;
       proxmox_host: string | null;
@@ -170,9 +172,10 @@ async function loadPlacementHosts(
     .from("proxmox_hosts")
     .select("id, status, decommissioned_at");
   if (error) throw new Error(`proxmox_hosts read failed: ${error.message}`);
+  if (!Array.isArray(data)) throw new Error("proxmox_hosts read returned no inventory");
   const placement = new Set<string>();
   const decommissioned = new Set<string>();
-  for (const row of (data ?? []) as Array<{
+  for (const row of data as Array<{
     id: string;
     status: string;
     decommissioned_at: string | null;
@@ -244,6 +247,7 @@ export async function runManagedProvisionerBundleConvergence(params: {
     channel: params.channel,
     requestedVersion: PORTABLE_HIVRA_PROVISIONER_VERSION,
     hosts: [],
+    retiredHostReferences: [],
     synced: [],
     pending: [],
   };
@@ -262,6 +266,10 @@ export async function runManagedProvisionerBundleConvergence(params: {
   // hold rows: the machine is gone, so probing it can only ever report
   // unreachable and page forever (prod 2026-11: a retired host holding 43
   // stopped rows kept the sync flagged as failing).
+  for (const targetId of [...hostRegistry.decommissioned].sort()) {
+    const computerRecords = liveComputers.get(targetId);
+    if (computerRecords) summary.retiredHostReferences.push({ targetId, computerRecords });
+  }
   const hostIds = Array.from(new Set([...liveComputers.keys(), ...hostRegistry.placement]))
     .filter((id) => !hostRegistry.decommissioned.has(id))
     .sort();
