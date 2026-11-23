@@ -370,6 +370,12 @@ type CronHeartbeatClaimQuery = {
 
 type CronHeartbeatClaimTable = {
   update: (patch: Record<string, unknown>) => CronHeartbeatClaimQuery;
+  upsert: (
+    row: Record<string, unknown>,
+    options: { onConflict: string; ignoreDuplicates: boolean },
+  ) => {
+    then: Promise<{ data?: unknown; error: { message?: string } | null }>["then"];
+  };
 };
 
 /**
@@ -396,37 +402,129 @@ export async function claimCronUtcDay(
   db: { from: (name: string) => unknown } | null | undefined,
   cronName: string,
   now: Date,
+  options?: { claimKey?: string },
 ): Promise<boolean> {
   if (!db) return false;
+  // A claim key owns a dedicated heartbeat row ("<cron>:<key>") so the
+  // once-daily slot is claimed by the tick that RAN the work — not by the
+  // run's heartbeat. Without it, a tick that starts just before UTC midnight
+  // claims its start day, then the end-of-run heartbeat lands last_run_at in
+  // the NEW day and the next day's pass is skipped: the day's work is
+  // claimed for the day it ran, on a row the heartbeat never overwrites.
+  const rowName = options?.claimKey ? `${cronName}:${options.claimKey}` : cronName;
   const utcDayStart = new Date(now);
   utcDayStart.setUTCHours(0, 0, 0, 0);
-  try {
-    const { data, error } = await (
-      db.from("ops_cron_heartbeats") as unknown as CronHeartbeatClaimTable
-    )
+  const claim = () =>
+    (db.from("ops_cron_heartbeats") as unknown as CronHeartbeatClaimTable)
       .update({
         last_run_at: now.toISOString(),
         last_detail: `utc day ${utcDayKey(now)} claimed for once-daily work; awaiting run heartbeat`,
         updated_at: now.toISOString(),
       })
-      .eq("cron_name", cronName)
+      .eq("cron_name", rowName)
       .lt("last_run_at", utcDayStart.toISOString())
       .select("cron_name");
+  try {
+    const { data, error } = await claim();
     if (error) {
       log.warn("cron utc-day claim failed; skipping once-daily work", {
         source: "cron-heartbeat",
         failureType: "cron_utc_day_claim_failed",
-        cronName,
+        cronName: rowName,
         errorMessage: error.message ?? "unknown",
       });
       return false;
     }
-    return Array.isArray(data) && data.length > 0;
+    if (Array.isArray(data) && data.length > 0) return true;
+    // A claim without a key keys off the cron's own heartbeat row: no match
+    // means the day is taken (or there is no baseline) — nothing else to do.
+    if (!options?.claimKey) return false;
+
+    // A keyed row is dedicated: nothing else creates it, so a miss can also
+    // mean it was never planted. Distinguish "claimed today" from "missing"
+    // before giving up — an existing row means the guard already decided.
+    const { data: existing, error: readError } = await (
+      db.from("ops_cron_heartbeats") as unknown as CronHeartbeatDayQuery
+    )
+      .select("cron_name")
+      .eq("cron_name", rowName)
+      .limit(1);
+    if (readError) {
+      log.warn("cron utc-day claim row read failed; skipping once-daily work", {
+        source: "cron-heartbeat",
+        failureType: "cron_utc_day_claim_row_read_failed",
+        cronName: rowName,
+        errorMessage: readError.message ?? "unknown",
+      });
+      return false;
+    }
+    if (Array.isArray(existing) && existing.length > 0) return false;
+
+    // First sight: plant the row seeded from the cron's own previous tick
+    // when one exists, so a claim key adopted mid-life inherits the same
+    // "previous day" baseline the heartbeat gave it and does not re-run a
+    // day the old scheme already covered; with no baseline at all the first
+    // observed tick only plants (claim fails below), matching the
+    // day-check's "requires an observed previous tick" contract.
+    const { data: baseRows, error: baseError } = await (
+      db.from("ops_cron_heartbeats") as unknown as CronHeartbeatDayQuery
+    )
+      .select("last_run_at")
+      .eq("cron_name", cronName)
+      .limit(1);
+    if (baseError) {
+      log.warn("cron utc-day claim baseline read failed; skipping once-daily work", {
+        source: "cron-heartbeat",
+        failureType: "cron_utc_day_claim_baseline_failed",
+        cronName: rowName,
+        errorMessage: baseError.message ?? "unknown",
+      });
+      return false;
+    }
+    const baseRow = Array.isArray(baseRows)
+      ? (baseRows[0] as { last_run_at?: unknown } | undefined)
+      : undefined;
+    const baseline =
+      typeof baseRow?.last_run_at === "string" ? baseRow.last_run_at : now.toISOString();
+    const { error: plantError } = await (
+      db.from("ops_cron_heartbeats") as unknown as CronHeartbeatClaimTable
+    ).upsert(
+      {
+        cron_name: rowName,
+        run_count: 0,
+        ok_count: 0,
+        last_run_at: baseline,
+        last_detail: "utc-day claim row planted; first claim pending",
+      },
+      { onConflict: "cron_name", ignoreDuplicates: true },
+    );
+    if (plantError) {
+      log.warn("cron utc-day claim row plant failed; skipping once-daily work", {
+        source: "cron-heartbeat",
+        failureType: "cron_utc_day_claim_row_plant_failed",
+        cronName: rowName,
+        errorMessage: plantError.message ?? "unknown",
+      });
+      return false;
+    }
+    // Retry the SAME guarded update: a baseline before today claims now, a
+    // same-day (or just-planted) baseline defers the pass to tomorrow.
+    const { data: retryData, error: retryError } = await claim();
+    if (retryError) {
+      log.warn("cron utc-day claim retry failed; skipping once-daily work", {
+        source: "cron-heartbeat",
+        failureType: "cron_utc_day_claim_retry_failed",
+        cronName: rowName,
+        errorMessage: retryError.message ?? "unknown",
+      });
+      return false;
+    }
+    return Array.isArray(retryData) && retryData.length > 0;
   } catch (error) {
     log.warn("cron utc-day claim threw; skipping once-daily work", {
       source: "cron-heartbeat",
       failureType: "cron_utc_day_claim_threw",
-      cronName,
+      cronName: rowName,
       errorMessage: error instanceof Error ? error.message : String(error),
     });
     return false;

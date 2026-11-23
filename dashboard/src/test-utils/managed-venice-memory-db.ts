@@ -159,6 +159,7 @@ const DEFAULT_TABLES = [
   "yearly_token_quotes",
   "yearly_token_subscriptions",
   "bankr_deposit_wallet_credentials",
+  "ops_cron_heartbeats",
 ];
 
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;

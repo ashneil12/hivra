@@ -21,6 +21,7 @@ jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 import { claimCronUtcDay, recordCronHeartbeat, runCronHeartbeatWatchdog, CRON_REGISTRY } from "../cron-heartbeat";
 import { reportOpsEvent } from "@/lib/ops-events";
+import { createManagedVeniceMemoryDb } from "@/test-utils/managed-venice-memory-db";
 
 function minutesAgoIso(minutes: number): string {
   return new Date(Date.now() - minutes * 60000).toISOString();
@@ -404,6 +405,97 @@ describe("claimCronUtcDay", () => {
   it("returns false without a db instead of throwing into the cron", async () => {
     await expect(claimCronUtcDay(null, "reconcile-crypto-topups", new Date())).resolves.toBe(false);
     await expect(claimCronUtcDay(undefined, "reconcile-crypto-topups", new Date())).resolves.toBe(false);
+  });
+});
+
+describe("claimCronUtcDay with a claim key", () => {
+  afterEach(() => jest.clearAllMocks());
+
+  // A keyed claim owns a dedicated heartbeat row ("<cron>:<key>") so the
+  // once-daily slot is stamped by the tick that RAN the work — the run's own
+  // heartbeat can land on a later UTC day without masking the next day's
+  // slot. These run against the shared in-memory Supabase so the guarded
+  // update, the planted baseline and the persisted rows are all real.
+
+  it("claims the day on the dedicated row, seeded from the cron's previous heartbeat", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      ops_cron_heartbeats: [{ cron_name: "cron-x", last_run_at: "2026-04-23T23:00:00.000Z" }],
+    });
+    const now = new Date("2026-04-24T00:10:00.000Z");
+
+    await expect(
+      claimCronUtcDay(memory.db, "cron-x", now, { claimKey: "daily" })
+    ).resolves.toBe(true);
+
+    const rows = memory.tables.ops_cron_heartbeats;
+    expect(rows.find((row) => row.cron_name === "cron-x:daily")?.last_run_at).toBe(now.toISOString());
+    // The cron's own heartbeat row is untouched by the claim.
+    expect(rows.find((row) => row.cron_name === "cron-x")?.last_run_at).toBe(
+      "2026-04-23T23:00:00.000Z"
+    );
+  });
+
+  it("defers to tomorrow when the cron's heartbeat already covered today", async () => {
+    // First sight of the claim key: the dedicated row is planted with the
+    // base heartbeat's last_run_at, which is already inside today — the
+    // inherited baseline must not re-run a day the old scheme covered.
+    const memory = createManagedVeniceMemoryDb({
+      ops_cron_heartbeats: [{ cron_name: "cron-x", last_run_at: "2026-04-24T06:00:00.000Z" }],
+    });
+
+    await expect(
+      claimCronUtcDay(memory.db, "cron-x", new Date("2026-04-24T00:10:00.000Z"), {
+        claimKey: "daily",
+      })
+    ).resolves.toBe(false);
+    expect(
+      memory.tables.ops_cron_heartbeats.find((row) => row.cron_name === "cron-x:daily")?.last_run_at
+    ).toBe("2026-04-24T06:00:00.000Z");
+
+    // The next UTC day claims normally off the planted row.
+    await expect(
+      claimCronUtcDay(memory.db, "cron-x", new Date("2026-04-25T00:10:00.000Z"), {
+        claimKey: "daily",
+      })
+    ).resolves.toBe(true);
+  });
+
+  it("is claimed for the day the tick ran even when the run heartbeat lands on the next day", async () => {
+    // The midnight edge the key exists for: tick starts 23:59, claims 04-23;
+    // the run finishes after midnight so its heartbeat lands 04-24. 04-24's
+    // first tick must still get its claim — the keyed row holds 04-23.
+    const memory = createManagedVeniceMemoryDb({
+      ops_cron_heartbeats: [{ cron_name: "cron-x", last_run_at: "2026-04-22T12:00:00.000Z" }],
+    });
+
+    await expect(
+      claimCronUtcDay(memory.db, "cron-x", new Date("2026-04-23T23:59:00.000Z"), {
+        claimKey: "daily",
+      })
+    ).resolves.toBe(true);
+
+    const runRow = memory.tables.ops_cron_heartbeats.find((row) => row.cron_name === "cron-x")!;
+    runRow.last_run_at = "2026-04-24T00:05:00.000Z";
+
+    await expect(
+      claimCronUtcDay(memory.db, "cron-x", new Date("2026-04-24T00:10:00.000Z"), {
+        claimKey: "daily",
+      })
+    ).resolves.toBe(true);
+  });
+
+  it("is exclusive for overlapping same-day claims on the keyed row", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      ops_cron_heartbeats: [{ cron_name: "cron-x", last_run_at: "2026-04-23T12:00:00.000Z" }],
+    });
+    const now = new Date("2026-04-24T00:10:00.000Z");
+
+    await expect(
+      claimCronUtcDay(memory.db, "cron-x", now, { claimKey: "daily" })
+    ).resolves.toBe(true);
+    await expect(
+      claimCronUtcDay(memory.db, "cron-x", now, { claimKey: "daily" })
+    ).resolves.toBe(false);
   });
 });
 

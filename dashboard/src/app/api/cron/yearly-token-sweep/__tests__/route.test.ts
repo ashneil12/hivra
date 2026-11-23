@@ -491,4 +491,37 @@ describe("heartbeat honesty", () => {
     expect(unauthorized.status).toBe(401);
     expect(recordCronHeartbeat).not.toHaveBeenCalled();
   });
+
+  it("records an ok:false heartbeat when the treasury is not configured, even with zero sweep failures", async () => {
+    // A missing/invalid HERMES_TREASURY_ADDRESS parks the subscription's
+    // sweep as treasuryNotConfigured — no per-row sweep failure is counted,
+    // but money is sitting unswept, so the run must read not-ok.
+    const world = setup();
+    delete process.env.HERMES_TREASURY_ADDRESS;
+    world.memory.insertRow(
+      "yearly_token_subscriptions",
+      yearlySubscriptionRow({
+        id: "ys_pending",
+        paid_at: world.at(-1 * MINUTE_MS),
+        expires_at: world.at(YEAR_MS),
+        deposit_tx_hash: txHash(1),
+        deposit_log_index: 0,
+        sweep_status: "pending",
+      })
+    );
+
+    const response = await GET(cronRequest());
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.sweep.treasuryNotConfigured).toBe(1);
+    expect(body.data.sweep.failed).toBe(0);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "yearly-token-sweep",
+      expect.objectContaining({
+        ok: false,
+        detail: expect.stringContaining("treasury_not_configured=1"),
+      })
+    );
+  });
 });

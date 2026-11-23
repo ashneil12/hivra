@@ -1,4 +1,4 @@
-import { isFirstCronTickOfUtcDay } from "@/lib/cron-heartbeat";
+import { claimCronUtcDay } from "@/lib/cron-heartbeat";
 import { livePlatformTokens } from "@/lib/billing/token-registry";
 import { requireDb } from "@/lib/billing/db-utils";
 import { log } from "@/lib/logger";
@@ -41,6 +41,7 @@ import {
   computeBackoffDelayMs,
   isRetryableRpcError,
   normalizeRpcRetryConfig,
+  RpcCallAbortedError,
   RpcHttpError,
   baseRpcPayloadError,
   sleep,
@@ -57,6 +58,7 @@ import { getLogsInBlockChunks } from "@/lib/billing/base-rpc-logs";
 export {
   computeBackoffDelayMs,
   isRetryableRpcError,
+  RpcCallAbortedError,
   RpcHttpError,
 };
 export type { RpcCallOptions, RpcRetryConfig };
@@ -1044,35 +1046,68 @@ function quoteCandidates(data: unknown) {
 // enough to keep the URL and plan sane.
 const OPEN_QUOTE_ID_PAGE_SIZE = 1000;
 const LOT_HELD_ID_CHUNK = 200;
+// How many open quotes the lot probe may inspect per tick. The probe reads a
+// bounded slice — see loadOpenLotHoldingQuoteCandidates — so a large open
+// table can no longer spend the whole open-scan budget paging itself before
+// any fresh work runs.
+const LOT_DISCOVERY_QUOTE_BUDGET = 2 * OPEN_QUOTE_ID_PAGE_SIZE;
 
 /**
  * Open quotes that hold a token deposit lot (a settlement that crashed after
  * its lot insert but before the quote flip). managed_venice_token_lots has no
  * FK to quotes, so PostgREST cannot join — instead of fetching every lot's
  * quote_id (unbounded history: every settled deposit keeps a lot forever) and
- * probing each for an open quote, this pages the OPEN side, which is exactly
+ * probing each for an open quote, this probes the OPEN side, which is exactly
  * the set recovery cares about, and matches lots to it with bounded .in()
  * lookups. The page source being open quotes means the limit applies AFTER
  * filtering to open: an old open quote behind thousands of settled lots is
  * still reached, and a growing lots table never raises the cost of the check.
+ *
+ * The probe is bounded to `probeBudget` rows per tick, longest-expired first:
+ * that end is where the long-stuck quotes this lane exists for sit, while
+ * the fresher end (expires_at inside the last week) is already covered by the
+ * fresh lane every tick. Rows deeper than the slice are no longer paged in
+ * the same tick the way the old walk did — the daily stale pass guarantees
+ * their coverage instead: it scans every unclaimed open quote (bounded per
+ * day, rotating by updated_at) and runs this same lot recovery inside its
+ * reconcile, so an old lot-holding quote is always recovered, just never at
+ * the cost of walking the whole open table ahead of fresh work. expires_at is
+ * used for the order because it never changes after quote creation — unlike
+ * updated_at, which every write (and the daily pass's own cursor touches)
+ * reshuffles.
  */
 async function loadOpenLotHoldingQuoteCandidates(params: {
   db: SupabaseLike;
   openQuotes: () => DbQuery;
   limit: number;
+  probeBudget?: number;
 }) {
+  const probeBudget = Number.isFinite(params.probeBudget)
+    ? Math.max(1, Math.floor(params.probeBudget as number))
+    : LOT_DISCOVERY_QUOTE_BUDGET;
   const candidates: Array<{ id: string; userId: string }> = [];
-  for (let from = 0; candidates.length < params.limit; from += OPEN_QUOTE_ID_PAGE_SIZE) {
+  let probed = 0;
+  for (
+    let from = 0;
+    probed < probeBudget && candidates.length < params.limit;
+    from += OPEN_QUOTE_ID_PAGE_SIZE
+  ) {
+    const pageSize = Math.min(OPEN_QUOTE_ID_PAGE_SIZE, probeBudget - probed);
     const { data, error } = await params
       .openQuotes()
-      .order("created_at", { ascending: true })
+      .order("expires_at", { ascending: true })
       .order("id", { ascending: true })
-      .range(from, from + OPEN_QUOTE_ID_PAGE_SIZE - 1);
+      .range(from, from + pageSize - 1);
     if (error) {
       throw new Error(error.message || "Failed to load open managed Venice token quotes for lot recovery");
     }
     const page = quoteCandidates(data);
-    for (let offset = 0; offset < page.length && candidates.length < params.limit; offset += LOT_HELD_ID_CHUNK) {
+    probed += page.length;
+    for (
+      let offset = 0;
+      offset < page.length && candidates.length < params.limit;
+      offset += LOT_HELD_ID_CHUNK
+    ) {
       const chunk = page.slice(offset, offset + LOT_HELD_ID_CHUNK);
       const { data: lots, error: lotError } = await (params.db.from("managed_venice_token_lots") as DbQuery)
         .select("quote_id")
@@ -1094,7 +1129,7 @@ async function loadOpenLotHoldingQuoteCandidates(params: {
         if (holding.has(candidate.id)) candidates.push(candidate);
       }
     }
-    if (page.length < OPEN_QUOTE_ID_PAGE_SIZE) break;
+    if (page.length < pageSize) break;
   }
   return candidates;
 }
@@ -1106,6 +1141,9 @@ async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
   // stale pass instead of a scan every tick (see runDailyStaleUnpaidQuoteScan)
   // — but only while they are unclaimed and lot-free (see below).
   expiresAfterIso: string;
+  // Bound on how many open quotes the lot probe inspects this tick
+  // (see loadOpenLotHoldingQuoteCandidates).
+  lotProbeBudget?: number;
 }) {
   const openQuotes = () =>
     (params.db.from("managed_venice_token_quotes") as DbQuery)
@@ -1152,6 +1190,7 @@ async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
     db: params.db,
     openQuotes,
     limit: params.limit,
+    probeBudget: params.lotProbeBudget,
   });
 
   const byId = new Map<string, { id: string; userId: string }>();
@@ -1194,6 +1233,15 @@ interface StaleQuoteCandidateRow {
   metadata?: unknown;
 }
 
+// Metadata key stamped on a no_deposit_after_grace row after the daily pass
+// gave it its one catch-up window scan. The historical expire-without-scan
+// pass marked rows closedReason=no_deposit_after_grace without ever reading
+// their deposit window, so each such row owes exactly one real scan: while
+// the key is absent the row stays eligible below; once it is present the row
+// is out for good (it remains 'expired' and settleable on demand — the
+// user's check still scans live).
+const GRACE_WINDOW_SCANNED_KEY = "graceWindowScannedAt";
+
 // Open unclaimed quotes whose stored expiry is at or before `expiresBeforeIso`,
 // least-recently-touched first so a backlog drains across days: every row the
 // daily pass scans has its updated_at cursor advanced (see
@@ -1212,13 +1260,18 @@ async function loadStaleUnpaidQuoteRows(params: {
     .is("transaction_hash", null)
     .lte("expires_at", params.expiresBeforeIso)
     // Rows this pass already expired (metadata.closedReason =
-    // no_deposit_after_grace) must not consume the batch limit again — with a
-    // backlog above `limit` they would be re-selected every day and starve
-    // the rest. `is.null` keeps quotes with missing metadata eligible: a
-    // plain `not.eq` would compare NULL and drop them in Postgres.
+    // no_deposit_after_grace) that ALSO had their one catch-up scan
+    // (metadata.graceWindowScannedAt) must not consume the batch limit again —
+    // with a backlog above `limit` they would be re-selected every day and
+    // starve the rest. A no_deposit_after_grace row WITHOUT the scan marker
+    // is still eligible: it was expired sight-unseen and gets exactly one
+    // real window scan before becoming unrecoverable here. `is.null` keeps
+    // quotes with missing metadata eligible: a plain `not.eq` would compare
+    // NULL and drop them in Postgres.
     .or(
       "metadata->>closedReason.is.null," +
-        "metadata->>closedReason.neq.no_deposit_after_grace"
+        "metadata->>closedReason.neq.no_deposit_after_grace," +
+        `metadata->>${GRACE_WINDOW_SCANNED_KEY}.is.null`
     )
     .order("updated_at", { ascending: true })
     .order("expires_at", { ascending: true })
@@ -1246,6 +1299,42 @@ async function touchStaleQuoteScanCursor(db: SupabaseLike, quoteId: string, nowI
     log.warn("stale quote scan cursor update failed; the row is re-selected first tomorrow", {
       source: "managed-venice-token-reconciliation",
       failureType: "managed_venice_stale_scan_cursor_failed",
+      quoteId,
+      errorMessage: error.message ?? "unknown",
+    });
+  }
+}
+
+// Record that a no_deposit_after_grace row got its one catch-up window scan:
+// stamp GRACE_WINDOW_SCANNED_KEY into metadata (and bump the rotation
+// cursor). Guarded on the row still being open and still carrying the
+// no_deposit_after_grace reason — a scan that settled, reviewed or retired
+// the quote changed its status, so the write is a no-op there by design.
+// `metadata` is the row the selection just read; a rare concurrent metadata
+// writer between selection and mark could drop a key it added, but every
+// writer that matters also changes the fields the guards check. Best-effort:
+// a failed mark leaves the row eligible for one more scan tomorrow, which is
+// the safe side.
+async function markStaleQuoteGraceScanned(
+  db: SupabaseLike,
+  quoteId: string,
+  metadata: unknown,
+  nowIso: string
+) {
+  const merged =
+    metadata && typeof metadata === "object" ? (metadata as Record<string, unknown>) : {};
+  const { error } = await (db.from("managed_venice_token_quotes") as DbTable)
+    .update({
+      updated_at: nowIso,
+      metadata: { ...merged, [GRACE_WINDOW_SCANNED_KEY]: nowIso },
+    })
+    .eq("id", quoteId)
+    .eq("metadata->>closedReason", "no_deposit_after_grace")
+    .in("status", ["active", "expired"]);
+  if (error) {
+    log.warn("stale grace-scan marker write failed; the row is re-selected once more tomorrow", {
+      source: "managed-venice-token-reconciliation",
+      failureType: "managed_venice_grace_scan_marker_failed",
       quoteId,
       errorMessage: error.message ?? "unknown",
     });
@@ -1324,14 +1413,16 @@ async function runDailyStaleUnpaidQuoteScan(params: {
   for (const [position, row] of rows.entries()) {
     const candidate = row as StaleQuoteCandidateRow;
     if (typeof candidate.id !== "string" || typeof candidate.user_id !== "string") continue;
-    // Already closed by an earlier day: skip before paying the per-quote
-    // record load inside reconcileManagedVeniceTokenQuote.
-    const metadata = candidate.metadata;
-    if (
-      metadata &&
-      typeof metadata === "object" &&
-      (metadata as Record<string, unknown>).closedReason === "no_deposit_after_grace"
-    ) {
+    // A row the expire-without-scan era marked no_deposit_after_grace is due
+    // exactly ONE catch-up scan: skip it only once the scan marker is also
+    // present (the selection above filters the same pair; this mirrors it so
+    // the limit is spent on rows the pass will actually scan).
+    const metadata =
+      candidate.metadata && typeof candidate.metadata === "object"
+        ? (candidate.metadata as Record<string, unknown>)
+        : null;
+    const graceExpired = metadata?.closedReason === "no_deposit_after_grace";
+    if (graceExpired && metadata?.[GRACE_WINDOW_SCANNED_KEY] != null) {
       continue;
     }
     // Past the pass's own budget slice the rest wait for the next day's pass.
@@ -1340,6 +1431,7 @@ async function runDailyStaleUnpaidQuoteScan(params: {
       break;
     }
     await params.throttle();
+    let scannedOutcome: ReconcileManagedVeniceTokenQuoteResult | null = null;
     try {
       const result = await reconcileManagedVeniceTokenQuote({
         quoteId: candidate.id,
@@ -1352,8 +1444,17 @@ async function runDailyStaleUnpaidQuoteScan(params: {
         chain: params.chain,
         failOnTransferSurfacingError: true,
       });
+      scannedOutcome = result;
       outcomes.push({ quoteId: candidate.id, userId: candidate.user_id, result });
     } catch (error) {
+      // The scan budget ran out mid-quote: the row was never decided — count
+      // it and everything behind it deferred (not failed) and stop the pass.
+      // A partial scan is never authoritative, so nothing settle/expire
+      // -shaped happened for this row inside the aborted call.
+      if (error instanceof RpcCallAbortedError) {
+        deferred = rows.length - position;
+        break;
+      }
       // A quote that fails to scan is retried on a later day; it does not
       // block the rest of the pass or the scan batch.
       failed.push({
@@ -1362,6 +1463,26 @@ async function runDailyStaleUnpaidQuoteScan(params: {
         errorName: error instanceof Error ? error.name : typeof error,
         errorMessage: error instanceof Error ? error.message : String(error),
       });
+    }
+    if (
+      graceExpired &&
+      (scannedOutcome?.status === "no_match" || scannedOutcome?.status === "expired")
+    ) {
+      // The row's one catch-up scan completed and decided nothing — the
+      // quote stays open but is done here: stamp the marker so tomorrow's
+      // selection skips it. A terminal outcome (settled / review / retired)
+      // took the row out of the open set and needs no marker; anything else
+      // that left the row open — underconfirmed (a pending deposit owes it
+      // another look) or an indecisive status — is NOT marked, so it stays
+      // eligible rather than being excluded with money still in flight.
+      await markStaleQuoteGraceScanned(
+        params.db,
+        candidate.id,
+        candidate.metadata,
+        params.now.toISOString()
+      );
+      // The marker write already advanced the row's updated_at cursor.
+      continue;
     }
     // Rotate the cursor for every scanned row — clean retire, still-open
     // outcome or failure alike — so repeatedly-failing quotes go to the back
@@ -1783,6 +1904,9 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
   openScanBudgetMs?: number;
   surfacingScanBudgetMs?: number;
   staleScanBudgetMs?: number;
+  // Bound on the lot-recovery probe's open-quote reads per tick (see
+  // LOT_DISCOVERY_QUOTE_BUDGET); tests inject a small value.
+  lotProbeBudget?: number;
 } = {}): Promise<ManagedVeniceTokenQuoteBatchReconciliationResult> {
   const clock = params.clock ?? Date.now;
   const startedAtMs = clock();
@@ -1795,11 +1919,17 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
   const batchNow = params.now ?? new Date();
 
   // Build the per-call RPC options once: retry config + injectable sleep/random
-  // ride along with every eth_* call this batch makes.
+  // ride along with every eth_* call this batch makes. shouldStop is armed
+  // only while the daily stale pass runs so a single stale quote's scan —
+  // dozens of serial RPC calls — is interrupted at the slice boundary instead
+  // of overrunning it for minutes; the regular lanes let an in-flight scan
+  // finish (their budgets are honored between quotes).
+  let staleScanDeadlineArmed = false;
   const rpcOptions: RpcCallOptions = {
     retryConfig: normalizeRpcRetryConfig(params.rpcRetryConfig),
     sleepImpl: params.rpcSleepImpl,
     random: params.rpcRandom,
+    shouldStop: () => staleScanDeadlineArmed && elapsedMs() >= staleScanBudgetMs,
   };
   // One chain view per batch: the head and each block timestamp are fetched
   // once and shared by every quote in the tick.
@@ -1845,60 +1975,76 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
     errorMessage: error instanceof Error ? error.message : String(error),
   });
 
-  // Once per UTC day — the first tick whose start lands in a new day — the
-  // stale unclaimed quote pass runs BEFORE the regular open loop AND before
-  // regular candidate discovery below, inside its own slice of the tick
-  // clock. Stale quotes are the oldest unclaimed money, so the day's one
-  // pass gets a guaranteed window: a slow fresh/claimed/lot-held lookup can
-  // never eat the stale budget because discovery has not run yet, and the
-  // shared clock still bounds the slice so the batch keeps its wall-clock
-  // cap. Other ticks do no stale work at all: expiring without a real log
-  // scan of the deposit window is exactly what this pass exists to prevent.
-  const firstTickOfDay = await isFirstCronTickOfUtcDay(
+  // Once per UTC day the stale unclaimed quote pass runs BEFORE the regular
+  // open loop AND before regular candidate discovery below, inside its own
+  // slice of the tick clock. Stale quotes are the oldest unclaimed money, so
+  // the day's one pass gets a guaranteed window: a slow fresh/claimed/
+  // lot-held lookup can never eat the stale budget because discovery has not
+  // run yet, and the shared clock still bounds the slice so the batch keeps
+  // its wall-clock cap. Other ticks do no stale work at all: expiring
+  // without a real log scan of the deposit window is exactly what this pass
+  // exists to prevent.
+  //
+  // The day is claimed atomically on a dedicated heartbeat row
+  // ("<cron>:stale-scan"), not inferred from the run heartbeat's last_run_at:
+  // a tick that starts before UTC midnight and finishes after it stamps the
+  // heartbeat on the NEW day — under the read gate that heartbeat would mask
+  // the new day's pass entirely. The claim row keys the pass to the day it
+  // RAN, and the guarded update also decides between overlapping invocations
+  // (the read-only day check let two of them both run it).
+  const ownsStaleScanDay = await claimCronUtcDay(
     db,
     MANAGED_VENICE_TOKEN_RECONCILIATION_CRON,
-    batchNow
+    batchNow,
+    { claimKey: "stale-scan" }
   );
-  if (firstTickOfDay) {
-    // Only the pass's candidate SELECT is caught inside (loadFailed); a
-    // genuine mid-pass crash still propagates as a batch failure, and
-    // per-quote failures are counted, not thrown.
-    const stale = await runDailyStaleUnpaidQuoteScan({
-      db,
-      now: batchNow,
-      quoteNow: params.now,
-      limit: STALE_QUOTE_DAILY_SCAN_LIMIT,
-      chain,
-      rpcOptions,
-      minConfirmations: params.minConfirmations,
-      settleQuote: params.settleQuote,
-      throttle,
-      elapsedMs,
-      staleScanBudgetMs,
-    });
-    if (stale.loadFailed) summary.staleScanLoadFailed = true;
-    summary.failed += stale.failed.length;
-    summary.deferred.open += stale.deferred;
-    for (const outcome of stale.outcomes) {
-      summary.checked += 1;
-      const result = outcome.result;
-      if (result.status === "settled") summary.settled += 1;
-      else if (result.status === "underconfirmed") summary.underconfirmed += 1;
-      else if (result.status === "no_match") summary.noMatch += 1;
-      else if (result.status === "manual_review_required") summary.manualReview += 1;
-      else if (result.status === "cancelled") summary.cancelled += 1;
-      else summary.skipped += 1;
-
-      summary.results.push({
-        quoteId: outcome.quoteId,
-        userId: outcome.userId,
-        status: result.status,
-        transactionHash: "transactionHash" in result ? result.transactionHash ?? null : null,
-        confirmations: "confirmations" in result ? result.confirmations : undefined,
+  if (ownsStaleScanDay) {
+    staleScanDeadlineArmed = true;
+    try {
+      // Only the pass's candidate SELECT is caught inside (loadFailed); a
+      // genuine mid-pass crash still propagates as a batch failure, and
+      // per-quote failures are counted, not thrown.
+      const stale = await runDailyStaleUnpaidQuoteScan({
+        db,
+        now: batchNow,
+        quoteNow: params.now,
+        limit: STALE_QUOTE_DAILY_SCAN_LIMIT,
+        chain,
+        rpcOptions,
+        minConfirmations: params.minConfirmations,
+        settleQuote: params.settleQuote,
+        throttle,
+        elapsedMs,
+        staleScanBudgetMs,
       });
-    }
-    for (const failure of stale.failed) {
-      summary.results.push({ ...failure, status: "failed" });
+      if (stale.loadFailed) summary.staleScanLoadFailed = true;
+      summary.failed += stale.failed.length;
+      summary.deferred.open += stale.deferred;
+      for (const outcome of stale.outcomes) {
+        summary.checked += 1;
+        const result = outcome.result;
+        if (result.status === "settled") summary.settled += 1;
+        else if (result.status === "underconfirmed") summary.underconfirmed += 1;
+        else if (result.status === "no_match") summary.noMatch += 1;
+        else if (result.status === "manual_review_required") summary.manualReview += 1;
+        else if (result.status === "cancelled") summary.cancelled += 1;
+        else summary.skipped += 1;
+
+        summary.results.push({
+          quoteId: outcome.quoteId,
+          userId: outcome.userId,
+          status: result.status,
+          transactionHash: "transactionHash" in result ? result.transactionHash ?? null : null,
+          confirmations: "confirmations" in result ? result.confirmations : undefined,
+        });
+      }
+      for (const failure of stale.failed) {
+        summary.results.push({ ...failure, status: "failed" });
+      }
+    } finally {
+      // The regular lanes must never see the stale deadline — their budgets
+      // are honored between quotes and an in-flight scan completes.
+      staleScanDeadlineArmed = false;
     }
   }
 
@@ -1906,13 +2052,13 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
   // the stale cutoff is handled by the once-a-day stale pass instead of a
   // scan every tick (the stored expiry approximates the effective expiry
   // within the quote lifetime, and the stale pass re-checks the exact
-  // window). This runs AFTER the stale pass so a slow discovery — the
-  // lot-held lookup can page every open quote — can never starve the day's
-  // one stale pass of its budget slice.
+  // window). This runs AFTER the stale pass so a slow discovery can never
+  // starve the day's one stale pass of its budget slice.
   const candidates = await loadPendingManagedVeniceTokenQuoteCandidates({
     db,
     limit: normalizePendingQuoteLimit(params.limit),
     expiresAfterIso: new Date(batchNow.getTime() - NO_DEPOSIT_AFTER_EXPIRY_GRACE_MS).toISOString(),
+    lotProbeBudget: params.lotProbeBudget,
   });
 
   for (const [position, candidate] of candidates.entries()) {
