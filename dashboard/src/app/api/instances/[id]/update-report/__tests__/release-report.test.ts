@@ -216,6 +216,42 @@ describe("update-report release fields", () => {
     );
   });
 
+  it("correlates an unstamped failure against the pre-report row — a report that stores the target digest still stamps", async () => {
+    // Regression: recordReleaseReport stores the report's `i` digest into
+    // agent_image_digest, and the legacy (no `a`) correlation resolved the
+    // in-flight target AFTER that write. A failure reporting the target as
+    // its running digest — the update applied, then the wrapper failed —
+    // made the resolver read the just-stored digest as the box's current
+    // image: "already on target" → keep → stale → the failed stamp was
+    // skipped and the row stranded at 'redeploying' forever. The
+    // correlation must see the row as it was when the report arrived.
+    const D0 = `sha256:${"0".repeat(64)}`;
+    const memory = setup({}, { agent_image_digest: D0 });
+    let digestSeenByCorrelation: unknown;
+    (resolveUpdateImagePolicy as jest.Mock).mockImplementation(async () => {
+      // Stand-in for decideUpdate over the CURRENT stored digest: the
+      // registry still pins D2, but a box whose stored digest already IS
+      // D2 resolves keep — exactly the verdict the poisoned read produced.
+      digestSeenByCorrelation = memory.tables.hermes_instances[0].agent_image_digest;
+      return digestSeenByCorrelation === D2
+        ? { policy: { kind: "keep" }, state: { governed: true } }
+        : { policy: { kind: "pinned", ref: `${REPO}@${D2}`, digest: D2 }, state: { governed: true } };
+    });
+
+    const res = await report(`s=failed&t=manual&r=verify_failed&i=${D2}&ti=${D2}`);
+
+    expect(res.status).toBe(200);
+    // The correlation read the row BEFORE this report's own digest landed.
+    expect(digestSeenByCorrelation).toBe(D0);
+    // So the valid failure still stamped — while the report's own fields
+    // were recorded all the same.
+    expect(memory.tables.hermes_instances[0]).toMatchObject({
+      status: "failed",
+      lifecycle_substate: "live_update_failed_vm_reached",
+      agent_image_digest: D2,
+    });
+  });
+
   it("does not let a delayed success report from a superseded attempt mark a newer attempt's row running", async () => {
     // Attempt A succeeded on the box but its report was delayed past the
     // launch of attempt B toward the same digest. Writing 'running' for

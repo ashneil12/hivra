@@ -519,7 +519,7 @@ describe('ops-events helper', () => {
     expect(mockedFatalAlert).not.toHaveBeenCalled();
   });
 
-  it('reopen is conditional on the row still being archived: a lost race does not page', async () => {
+  it('reopen is conditional on the row still carrying the observed archive: a lost race does not page', async () => {
     const maybeSingle = jest.fn().mockResolvedValue({
       data: { id: 'evt_race', occurrence_count: 9, archived_at: '2026-11-20T00:00:00Z' },
       error: null,
@@ -527,7 +527,6 @@ describe('ops-events helper', () => {
     const eqSelect = jest.fn().mockReturnThis();
     const select = jest.fn().mockReturnThis();
     const updateEq = jest.fn().mockReturnThis();
-    const updateNot = jest.fn().mockReturnThis();
     // The conditional update matched zero rows — another writer already
     // reopened the fingerprint and owns the page for this recurrence.
     const updateMaybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
@@ -538,7 +537,6 @@ describe('ops-events helper', () => {
       .mockReturnValueOnce({
         update,
         eq: updateEq,
-        not: updateNot,
         select,
         maybeSingle: updateMaybeSingle,
       });
@@ -551,7 +549,7 @@ describe('ops-events helper', () => {
       message: 'A customer box is down',
     });
 
-    expect(updateNot).toHaveBeenCalledWith('archived_at', 'is', null);
+    expect(updateEq).toHaveBeenCalledWith('archived_at', '2026-11-20T00:00:00Z');
     expect(mockedFatalAlert).not.toHaveBeenCalled();
     expect(result).toEqual({ id: 'evt_race', fingerprint: expect.any(String) });
   });
@@ -771,7 +769,7 @@ describe('ops-events helper', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('reopens an archived row whose close predates the observation — with the close-time predicate on the write', async () => {
+  it('reopens an archived row whose close predates the observation — pinned to the observed archive on the write', async () => {
     const maybeSingle = jest.fn().mockResolvedValue({
       data: {
         id: 'evt_probe',
@@ -784,8 +782,6 @@ describe('ops-events helper', () => {
     const eqSelect = jest.fn().mockReturnThis();
     const select = jest.fn().mockReturnThis();
     const updateEq = jest.fn().mockReturnThis();
-    const updateNot = jest.fn().mockReturnThis();
-    const updateLt = jest.fn().mockReturnThis();
     const updateMaybeSingle = jest
       .fn()
       .mockResolvedValue({ data: { id: 'evt_probe' }, error: null });
@@ -796,8 +792,6 @@ describe('ops-events helper', () => {
       .mockReturnValueOnce({
         update,
         eq: updateEq,
-        not: updateNot,
-        lt: updateLt,
         select,
         maybeSingle: updateMaybeSingle,
       });
@@ -812,8 +806,11 @@ describe('ops-events helper', () => {
       observedAt: '2026-11-22T12:00:00.000Z',
     });
 
-    // The row was archived BEFORE the observation → the reopen is current.
-    expect(updateLt).toHaveBeenCalledWith('archived_at', '2026-11-22T12:00:00.000Z');
+    // The row was archived BEFORE the observation → the reopen is current;
+    // pinning the write to that exact archived_at makes a later close a
+    // no-match, which is also what keeps a re-archived row from being
+    // reopened by this stale write.
+    expect(updateEq).toHaveBeenCalledWith('archived_at', '2026-11-22T11:30:00.000Z');
     expect(result).toEqual({ id: 'evt_probe', fingerprint: expect.any(String) });
   });
 
@@ -1036,8 +1033,6 @@ describe('ops-events helper', () => {
       error: null,
     });
     const reopenEq = jest.fn().mockReturnThis();
-    const reopenNot = jest.fn().mockReturnThis();
-    const reopenLt = jest.fn().mockReturnThis();
     const reopenMaybeSingle = jest
       .fn()
       .mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
@@ -1057,8 +1052,6 @@ describe('ops-events helper', () => {
       .mockReturnValueOnce({
         update: reopenUpdate,
         eq: reopenEq,
-        not: reopenNot,
-        lt: reopenLt,
         select,
         maybeSingle: reopenMaybeSingle,
       });
@@ -1075,16 +1068,65 @@ describe('ops-events helper', () => {
 
     // The refresh was open-only…
     expect(updateIs).toHaveBeenCalledWith('archived_at', null);
-    // …the re-read routed through the conditional reopen (still archived,
-    // close predates the observation) — the writer that actually reopens
-    // is the one that pages, so the recurrence keeps its notification.
-    expect(reopenNot).toHaveBeenCalledWith('archived_at', 'is', null);
-    expect(reopenLt).toHaveBeenCalledWith('archived_at', '2026-11-22T12:00:00.000Z');
+    // …the re-read routed through the conditional reopen, pinned to the
+    // exact archive generation the re-read observed (still archived, close
+    // predates the observation) — the writer that actually reopens is the
+    // one that pages, so the recurrence keeps its notification.
+    expect(reopenEq).toHaveBeenCalledWith('archived_at', '2026-11-22T11:55:00.000Z');
     expect(reopenUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ archived_at: null, first_seen_at: expect.any(String) }),
     );
     expect(mockedFatalAlert).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ id: 'evt_incident', fingerprint: expect.any(String) });
+  });
+
+  it('pins the reopen to the archive generation it observed — an intervening re-archive is a no-match', async () => {
+    // Regression: the reopen used to be guarded only by
+    // `archived_at IS NOT NULL`. A stalled report that read the row
+    // archived at T1, paused, and resumed after a second report reopened
+    // the row and an operator archived it AGAIN at T2 still matched "not
+    // null" — it reopened the SECOND close with its older
+    // occurrence_count/last_seen_at and paged on an incident that had
+    // already been resolved a second time. The write now carries the exact
+    // archived_at it observed: a different archive generation is a lost
+    // race, not a reopen.
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: {
+        id: 'evt_gen',
+        occurrence_count: 9,
+        archived_at: '2026-11-20T00:00:00Z',
+        first_seen_at: '2026-11-19T00:00:00Z',
+      },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const updateEq = jest.fn().mockReturnThis();
+    // The row moved on to a second archive generation: zero rows match the
+    // observed archived_at, so nothing reopens and nobody pages.
+    const updateMaybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    const update = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
+      .mockReturnValueOnce({
+        update,
+        eq: updateEq,
+        select,
+        maybeSingle: updateMaybeSingle,
+      });
+
+    const result = await reportOpsEvent({
+      source: 'incident.box_down',
+      severity: 'error',
+      page: true,
+      title: 'Customer incident: agent box down',
+      message: 'A customer box is down',
+    });
+
+    expect(updateEq).toHaveBeenCalledWith('archived_at', '2026-11-20T00:00:00Z');
+    expect(mockedFatalAlert).not.toHaveBeenCalled();
+    expect(result).toEqual({ id: 'evt_gen', fingerprint: expect.any(String) });
   });
 });
 

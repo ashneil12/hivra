@@ -771,57 +771,38 @@ async function selectAllPages<RowT>(
 
 async function collectAgents(db: DbClient, now: number): Promise<HivraAgentSnapshot[]> {
   const cutoff24 = new Date(now - LAUNCH_FAILED_WINDOW_MS).toISOString();
-  // Three bounded queries merged by id: unprovisioned-recent (launch_failed),
-  // running (box_down), and in-flight operations (lifecycle_stuck — the stuck
-  // op may sit on a non-running status like provisioning/deleting).
-  const [unprovisioned, running, inFlight] = await Promise.all([
-    selectAllPages<AgentDbRow>(
-      "hivra_agents unprovisioned",
-      (cursor) => {
-        let query = db
-          .from("hivra_agents")
-          .select(AGENT_SELECT)
-          .is("provisioned_at", null)
-          .gte("created_at", cutoff24)
-          .order("id", { ascending: true });
-        if (cursor != null) query = query.gt("id", cursor);
-        return query.limit(SUBJECT_PAGE_SIZE);
-      },
-      (row) => row.id,
-    ),
-    selectAllPages<AgentDbRow>(
-      "hivra_agents running",
-      (cursor) => {
-        let query = db
-          .from("hivra_agents")
-          .select(AGENT_SELECT)
-          .eq("status", "running")
-          .order("id", { ascending: true });
-        if (cursor != null) query = query.gt("id", cursor);
-        return query.limit(SUBJECT_PAGE_SIZE);
-      },
-      (row) => row.id,
-    ),
-    selectAllPages<AgentDbRow>(
-      "hivra_agents in-flight",
-      (cursor) => {
-        let query = db
-          .from("hivra_agents")
-          .select(AGENT_SELECT)
-          .not("operation_kind", "is", null)
-          .not("operation_started_at", "is", null)
-          .order("id", { ascending: true });
-        if (cursor != null) query = query.gt("id", cursor);
-        return query.limit(SUBJECT_PAGE_SIZE);
-      },
-      (row) => row.id,
-    ),
-  ]);
-  const byId = new Map<string, HivraAgentSnapshot>();
-  for (const row of [...unprovisioned, ...running, ...inFlight]) {
-    byId.set(row.id, toAgentSnapshot(row));
-  }
-  return [...byId.values()];
+  // ONE paged read carrying the union of the three eligibility predicates —
+  // unprovisioned-recent (launch_failed), running (box_down and
+  // box_unreachable), and in-flight operations (lifecycle_stuck — the stuck
+  // op may sit on a non-running status like provisioning/deleting). They
+  // used to be three separate queries merged by id, and a row matching two
+  // of them contributed whichever snapshot its LAST-matching read
+  // captured: an agent that stopped or restarted between the reads could
+  // hand the scan a torn snapshot — non-running to the box rules, so an
+  // open incident resolved (and noticed) without the box ever being
+  // probed. A single read sees each row exactly once, so every snapshot is
+  // internally consistent; a row can still change between pages, but it is
+  // never assembled from two different reads. The evaluator re-tests every
+  // predicate in JS anyway, so the union here only bounds the candidate
+  // set.
+  const rows = await selectAllPages<AgentDbRow>(
+    "hivra_agents",
+    (cursor) => {
+      let query = db
+        .from("hivra_agents")
+        .select(AGENT_SELECT)
+        .or(
+          `and(provisioned_at.is.null,created_at.gte.${cutoff24}),` +
+            "status.eq.running," +
+            "and(operation_kind.not.is.null,operation_started_at.not.is.null)",
+        )
+        .order("id", { ascending: true });
+      if (cursor != null) query = query.gt("id", cursor);
+      return query.limit(SUBJECT_PAGE_SIZE);
+    },
+    (row) => row.id,
+  );
+  return rows.map(toAgentSnapshot);
 }
 
 async function collectHermesInstances(db: DbClient, now: number): Promise<HermesInstanceSnapshot[]> {
@@ -2435,6 +2416,18 @@ async function revalidateIncidentFinding(
       ) {
         return "cleared";
       }
+      // The grace window applies to the CURRENT evidence too, not only the
+      // evaluated snapshot: the outage this finding described can end and a
+      // new one begin between evaluation and this insert — a restart clears
+      // the runtime marker and a fresh failure receipt lands seconds ago.
+      // That new outage has not earned a page yet; the next scan re-ages it
+      // and reports it then. recovery_exhausted keeps its immediate page.
+      if (
+        receipt.eventType !== "recovery_exhausted" &&
+        (receiptMs == null || now - receiptMs < BOX_DOWN_MIN_AGE_MS)
+      ) {
+        return "cleared";
+      }
       return "holds";
     }
     case "box_unreachable": {
@@ -2450,7 +2443,7 @@ async function revalidateIncidentFinding(
       // job, not this stale insert's.
       const { data: probeRow, error: probeRowError } = await db
         .from("ops_events")
-        .select("id,archived_at")
+        .select("id,archived_at,first_seen_at")
         .eq("source", PUBLIC_PROBE_SOURCE)
         .eq("instance_id", finding.subjectId)
         .maybeSingle();
@@ -2461,6 +2454,17 @@ async function revalidateIncidentFinding(
       // observation. Only a 200 is confirmed recovery; a failed, skipped or
       // absent probe keeps the recorded outage standing.
       if (healthzProbe?.status === 200) return "cleared";
+      // The grace window applies to the CURRENT outage, not the one the
+      // evaluation snapshot aged: the recorded outage can close and a new
+      // one open between evaluation and this insert — a verdict write
+      // reopens the row with a fresh first_seen_at — so a still-open row is
+      // not by itself an aged outage. An outage younger than the minimum
+      // has not earned a page yet; the next scan re-ages it and reports it
+      // then.
+      const outageStartMs = parseTimeMs(probeRow.first_seen_at);
+      if (outageStartMs == null || now - outageStartMs < BOX_UNREACHABLE_MIN_AGE_MS) {
+        return "cleared";
+      }
       return "holds";
     }
     case "launch_failed": {
