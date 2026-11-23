@@ -94,7 +94,10 @@ describe("update-report release fields", () => {
       agent_version: "1.0.1",
       update_health: "rolled_back",
       update_health_detail: "unhealthy_after_roll",
-      status: "redeploying", // a failed report never flips status
+      // A failed report on a 'redeploying' row stamps the launch-failure shape
+      // so the fleet-sync sweep re-admits it for a release retry.
+      status: "failed",
+      lifecycle_substate: "live_update_failed_vm_reached",
     });
     // rel-2 was at the canary stage, so one failed box halts it.
     expect(memory.tables.hermes_releases.find((r) => r.id === "rel-2")).toMatchObject({ halted: true, halted_by: "auto" });

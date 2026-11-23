@@ -5,6 +5,10 @@ import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { DIGEST_PATTERN } from "@/lib/hermes-releases/policy";
 import { recordBoxOutcome, type BoxOutcome } from "@/lib/hermes-releases/store";
+import {
+  buildInstanceLifecyclePatch,
+  LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
+} from "@/lib/instance-lifecycle";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -272,6 +276,47 @@ async function recordUpdateReport(params: {
 
     if (statusError) {
       return apiError("Failed to update instance status", 500);
+    }
+  }
+
+  if (report.status === "failed") {
+    // The update this report describes ran on the box and failed there —
+    // the callback itself is the reach evidence. A row still stamped
+    // 'redeploying' by the launch sits in a state the fleet-sync sweep
+    // does not admit (its retry list is lifecycle 'failed' carrying the
+    // reached/maybe_reached substates, or a live status/lifecycle), and
+    // recover-stuck can probe and restart the VM but never re-applies the
+    // release — the box would report "update in flight" forever with the
+    // release never retried. Stamp it like a launch failure that reached
+    // the guest: lifecycle 'failed' + the reached substate keeps the row
+    // retry-eligible on the next sweep. The write is predicated on the
+    // status still being 'redeploying': a late or duplicated report must
+    // not claw back a row that already recovered to running (or moved on
+    // to another state), and a box-side roll failure on a live row stays
+    // a release-health signal — recordReleaseReport below covers it —
+    // not a user-facing status change.
+    const { error: failedStateError } = await supabaseAdmin
+      .from("hermes_instances")
+      .update({
+        ...buildInstanceLifecyclePatch("failed"),
+        lifecycle_substate: LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
+      })
+      .eq("id", instance.id)
+      .eq("status", "redeploying")
+      .is("deleted_at", null);
+    if (failedStateError) {
+      // Without the stamp the row is invisible to the update sweep — the
+      // outage is silent. Log loudly rather than let it strand.
+      log.error(
+        "update report received but the failed-state write failed",
+        new Error("update_report_state_write_failed"),
+        {
+          source: "instance-update-status",
+          failureType: "update_report_state_write_failed",
+          instanceId: instance.id,
+          userId: instance.user_id,
+        },
+      );
     }
   }
 

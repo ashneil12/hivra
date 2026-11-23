@@ -3,7 +3,12 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import { log } from "@/lib/logger";
-import { reportOpsEvent, type OpsEventInput } from "@/lib/ops-events";
+import {
+  buildOpsEventFingerprint,
+  reportOpsEvent,
+  sanitizeOpsMetadata,
+  type OpsEventInput,
+} from "@/lib/ops-events";
 import { configuredOpsAdminUserIds, normalizeOpsUserId } from "@/lib/ops-access";
 import { isCanaryDeployment } from "@/lib/deployment-channel";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -1512,6 +1517,181 @@ async function readPublicProbeRowStart(
   };
 }
 
+type ProbeVerdictRecordOutcome = "recorded" | "moved" | "error";
+
+/**
+ * The fingerprint the unreachable report resolves to. The verdict row must
+ * collide with it exactly — a stalled report's lookup is by fingerprint —
+ * so it is hashed from the same event input. The signal's volatile fields
+ * only feed metadata, which is not fingerprinted; the nulls change
+ * nothing.
+ */
+function publicProbeRowFingerprint(agent: HivraAgentSnapshot): string {
+  return buildOpsEventFingerprint(
+    publicProbeUnreachableOpsEvent(agent, {
+      kind: "down",
+      status: null,
+      latencyMs: null,
+      error: null,
+      observedAtMs: 0,
+    }),
+  );
+}
+
+/**
+ * Persist a healthy probe verdict on the agent's probe fingerprint row
+ * even when no outage is open. The row is the probe's durable verdict
+ * record: reportOpsEvent's observedAt guard refuses a down report whose
+ * observation predates the stored archived_at — but only while a row
+ * exists to contradict it (the insert branch is unguarded). Without this
+ * write a stalled down-report INSERT — a deadline-race loser that keeps
+ * running in the background — lands after the healthy observation,
+ * establishes an outage spanning it, and lets the next failed probe page
+ * on that backdated start. An already-archived verdict row stamped at the
+ * observation time closes the hole: the stale report is superseded on
+ * arrival, while a fresh failure observed after the verdict still reopens
+ * the row normally.
+ *
+ * Verdicts move monotonically: an older healthy observation never
+ * regresses a newer stored verdict, an open outage whose recorded start
+ * predates this observation is closed by it, and one established after it
+ * (a newer verdict) is left alone. Consecutive failures are unaffected —
+ * this write only happens on "up", so an outage in progress keeps its
+ * original first_seen_at.
+ */
+async function recordPublicProbeHealthyVerdict(
+  db: DbClient,
+  agent: HivraAgentSnapshot,
+  observedAtMs: number,
+): Promise<ProbeVerdictRecordOutcome> {
+  const observedAtIso = new Date(observedAtMs).toISOString();
+  const fingerprint = publicProbeRowFingerprint(agent);
+  // The second pass covers the insert/fingerprint race: a row that appears
+  // under this write is re-read and handled by the same verdict rules
+  // rather than clobbered or reported as a write failure.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { data, error } = await db
+      .from("ops_events")
+      .select("id, archived_at, first_seen_at")
+      .eq("fingerprint", fingerprint)
+      .maybeSingle();
+    if (error) {
+      log.warn("customer-incidents: public probe verdict read failed", {
+        source: "customer-incidents",
+        failureType: "public_probe_verdict_read_failed",
+        instanceId: agent.id,
+        errorMessage: error.message,
+      });
+      return "error";
+    }
+    const row = data as
+      | { id: string; archived_at?: unknown; first_seen_at?: unknown }
+      | null;
+
+    if (!row) {
+      // No verdict record at all: insert one already closed at the
+      // observation time. The row carries the unreachable report's event
+      // shape so its fingerprint collides; the probe detail in metadata
+      // records that this entry is the healthy verdict, not a sighting.
+      const event = publicProbeUnreachableOpsEvent(agent, {
+        kind: "down",
+        status: null,
+        latencyMs: null,
+        error: null,
+        observedAtMs,
+      });
+      const { error: insertError } = await db.from("ops_events").insert({
+        fingerprint,
+        source: event.source,
+        severity: event.severity ?? "warn",
+        title: event.title,
+        message: event.message,
+        route: event.route ?? null,
+        user_id: agent.userId,
+        instance_id: agent.id,
+        conversation_id: null,
+        profile_name: null,
+        metadata: sanitizeOpsMetadata({
+          ...event.metadata,
+          probe: { verdict: "up", checked_at: observedAtIso },
+        }),
+        sample_stack: null,
+        environment: process.env.NODE_ENV || "unknown",
+        first_seen_at: observedAtIso,
+        last_seen_at: observedAtIso,
+        occurrence_count: 0,
+        archived_at: observedAtIso,
+        archived_by_user_id: null,
+      });
+      if (!insertError) return "recorded";
+      if (attempt === 0) continue; // fingerprint race — re-read the winner
+      log.warn("customer-incidents: public probe verdict write failed", {
+        source: "customer-incidents",
+        failureType: "public_probe_verdict_write_failed",
+        instanceId: agent.id,
+        errorMessage: insertError.message,
+      });
+      return "error";
+    }
+
+    const archivedAtMs = parseTimeMs(row.archived_at as string | null);
+    if (archivedAtMs != null) {
+      // A stored verdict at least as fresh as this observation already
+      // contradicts any stalled report observed before it.
+      if (archivedAtMs >= observedAtMs) return "recorded";
+      // Advance the verdict forward only — the .lt predicate makes a
+      // racing newer verdict (a fresh reopen, or a later healthy write)
+      // win instead of being regressed.
+      const { error: updateError } = await db
+        .from("ops_events")
+        .update({ archived_at: observedAtIso })
+        .eq("id", row.id)
+        .lt("archived_at", observedAtIso);
+      if (updateError) {
+        log.warn("customer-incidents: public probe verdict refresh failed", {
+          source: "customer-incidents",
+          failureType: "public_probe_verdict_refresh_failed",
+          opsEventId: row.id,
+          instanceId: agent.id,
+          errorMessage: updateError.message,
+        });
+        return "error";
+      }
+      return "recorded";
+    }
+
+    // An open fingerprint row that this scan's open-row read did not see:
+    // an outage established between collection and now. Close it only when
+    // its recorded start predates this healthy observation — a start after
+    // it is a NEWER verdict that this stale observation must not touch.
+    // (first_seen_at is the outage's commit time, the closest stored proxy
+    // for the establishing observation; an unverifiable row is left alone.)
+    const firstSeenAtMs = parseTimeMs(row.first_seen_at as string | null);
+    if (firstSeenAtMs == null || firstSeenAtMs > observedAtMs) {
+      return "recorded";
+    }
+    const { data: archived, error: archiveError } = await db
+      .from("ops_events")
+      .update({ archived_at: observedAtIso, archived_by_user_id: null })
+      .eq("id", row.id)
+      .is("archived_at", null)
+      .eq("first_seen_at", row.first_seen_at as string)
+      .select("id");
+    if (archiveError) {
+      log.warn("customer-incidents: public probe verdict archive failed", {
+        source: "customer-incidents",
+        failureType: "public_probe_verdict_archive_failed",
+        opsEventId: row.id,
+        instanceId: agent.id,
+        errorMessage: archiveError.message,
+      });
+      return "error";
+    }
+    return (archived?.length ?? 0) > 0 ? "recorded" : "moved";
+  }
+  return "error";
+}
+
 export interface PublicProbeApplication {
   /** agentId → outage start (ms epoch) for probes currently failing. */
   outageStartedAtMs: Map<string, number>;
@@ -1527,8 +1707,12 @@ export interface PublicProbeApplication {
  * no open row is a NEW outage: reportOpsEvent inserts or un-archives, and
  * un-archiving keeps the OLD row's first_seen_at — so the scan pins
  * first_seen_at to this outage's start or a recurrence would look 10
- * minutes old instantly. An "up" signal archives the open row; a failed
- * archive leaves the outage standing for evaluation. On a box WITH an
+ * minutes old instantly. An "up" signal archives the open row — and with
+ * no open row still writes the verdict to the fingerprint row, so a
+ * stalled down-report observed earlier is refused by reportOpsEvent's
+ * stale-verdict guard instead of establishing an outage spanning the
+ * healthy observation; a failed verdict write leaves the subject unknown.
+ * On a box WITH an
  * observed open row the down-signal report may have REOPENED it after a
  * racing archive — the post-write row's first_seen_at, not the observed
  * snapshot, then decides the outage start. Subjects still queued when the
@@ -1578,7 +1762,35 @@ async function applyPublicProbeSignals(
     }
 
     if (signal.kind === "up") {
-      if (!openRow) return {};
+      if (!openRow) {
+        // No open outage — still persist the healthy verdict. A stalled
+        // down-report write observed before this probe keeps running in
+        // the background after losing its deadline race; with no stored
+        // verdict its INSERT is unguarded and would establish an outage
+        // spanning this observation, letting the next failed probe page
+        // on that backdated start. The verdict row makes the stale write
+        // superseded instead. Same checkpoint rule as the archive below:
+        // a subject whose race was already lost starts no new write.
+        if (pastDeadline()) return { deferred: true };
+        const verdict = await recordPublicProbeHealthyVerdict(
+          db,
+          agent,
+          signal.observedAtMs,
+        );
+        if (verdict === "error") {
+          // The probe answered 200 but the verdict was not persisted — a
+          // stalled down report could still establish an outage this probe
+          // already disproved. Unknown, the same rule as a failed archive:
+          // an existing incident stays open for a later pass to retry.
+          return { unknown: true, degraded: true };
+        }
+        if (verdict === "moved") {
+          // The row changed under this scan — re-evaluate next pass rather
+          // than resolving on a stale snapshot.
+          return { unknown: true };
+        }
+        return {};
+      }
       // The deadline races this whole apply — the checkpoint below keeps a
       // subject whose race was already lost from starting a NEW write after
       // being counted unprocessed. The archive is stamped with the healthy
@@ -2509,29 +2721,24 @@ export async function runCustomerIncidentScan(
   ];
   // Enrichment is bounded like the core reads but fails SOFT: a stalled
   // lookup degrades the diagnosis bundle to missing plan data — the same
-  // shape as its error path — instead of failing the pass.
+  // shape as its error path — instead of failing the pass. It runs in
+  // parallel with the probe-row read below but is awaited AFTER it: plan
+  // data only decorates findings while the probe rows gate box_unreachable
+  // evaluation, so a stalled enrichment must never discard a probe-row
+  // result that already completed inside the collection window.
   let subscriptions = new Map<string, CustomerSubscriptionSnapshot>();
   const subscriptionRead = collectSubscriptions(db, customerUserIds);
-  const subscriptionsDone = await finishedBeforeDeadline(
-    () => subscriptionRead,
-    collectionDeadlineAt,
-    clock,
-  );
-  if (subscriptionsDone) {
-    subscriptions = await subscriptionRead;
-  } else {
-    void subscriptionRead.catch(() => undefined);
-    log.warn("customer-incidents: subscription lookup exceeded the collection deadline; diagnosis will lack plan data", {
-      source: "customer-incidents",
-      failureType: "subscription_lookup_deadline",
-    });
-  }
+  // Swallow rejections eagerly, same as probeRowRead: the read may fail
+  // while the probe-row await below is still settling.
+  void subscriptionRead.catch(() => undefined);
 
-  // The probe-row read races the same shared collection deadline; it was
+  // The probe-row read races the shared collection deadline; it was
   // started with the core reads above so a slow watchdog pass cannot push
-  // it out of window. A read that outlives the deadline — or fails —
-  // degrades to "all candidates unknown" exactly like a failed read:
-  // nothing opens or resolves on missing probe-row data.
+  // it out of window, and it is awaited BEFORE enrichment so its result
+  // counts whenever it finished inside the window — a read that outlives
+  // the deadline, or fails, degrades to "all candidates unknown" exactly
+  // like a failed read: nothing opens or resolves on missing probe-row
+  // data.
   let probeRowsDone = false;
   let probeRowReadError: unknown;
   try {
@@ -2559,6 +2766,20 @@ export async function runCustomerIncidentScan(
       openProbeRowsByAgent.set(row.agentId, row);
     }
     probeRowsReadable = true;
+  }
+
+  const subscriptionsDone = await finishedBeforeDeadline(
+    () => subscriptionRead,
+    collectionDeadlineAt,
+    clock,
+  );
+  if (subscriptionsDone) {
+    subscriptions = await subscriptionRead;
+  } else {
+    log.warn("customer-incidents: subscription lookup exceeded the collection deadline; diagnosis will lack plan data", {
+      source: "customer-incidents",
+      failureType: "subscription_lookup_deadline",
+    });
   }
 
   // Watchdog events are only needed for box_down candidates: running + awake +

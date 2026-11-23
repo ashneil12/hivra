@@ -48,8 +48,11 @@ export interface OpsEventInput {
    * began after this observation. Reopening or refreshing that row would
    * commit stale state. When set, both update branches are predicated on the
    * observation still being current and the report is refused
-   * ({ superseded: true }) instead. The insert branch is unguarded by
-   * necessity: no row exists to contradict the observation.
+   * ({ superseded: true }) instead. The insert branch is unguarded unless
+   * the caller keeps a verdict row current on the same fingerprint (the
+   * public-probe scan writes its healthy verdicts as already-archived
+   * rows): the lookup then finds the row and the reopen predicate refuses
+   * the stale observation.
    */
   observedAt?: string;
 }
