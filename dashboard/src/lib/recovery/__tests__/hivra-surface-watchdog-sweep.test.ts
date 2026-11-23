@@ -140,15 +140,42 @@ type Row = Record<string, unknown>;
  * real reportOpsEventOnce INSERT would have written. Tests populate it via
  * the `insertOnce` mock so a second sweep sees the same receipts as stored.
  */
+/** Keyset-paginated hivra_agents chain: `.gt("id", cursor)` filters,
+ * `.limit(n)` caps, order applies, and the chain awaits like PostgREST. */
+function pagedAgentChain(rows: Row[] | Error) {
+  const calls: unknown[][] = [];
+  const chain: Record<string, unknown> = {};
+  for (const method of ["select", "eq", "is", "not", "order", "gt", "limit"]) {
+    chain[method] = (...args: unknown[]) => {
+      calls.push([method, ...args]);
+      return chain;
+    };
+  }
+  chain.then = (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) => {
+    if (rows instanceof Error) {
+      return Promise.resolve({ data: null, error: { message: rows.message } }).then(onFulfilled, onRejected);
+    }
+    let out = [...rows];
+    for (const call of calls) {
+      if (call[0] === "gt") out = out.filter((row) => String(row[String(call[1])]) > String(call[2]));
+      if (call[0] === "order") {
+        const [, column, options] = call as [string, string, { ascending?: boolean }?];
+        const ascending = options?.ascending !== false;
+        out.sort((a, b) => {
+          const cmp = String(a[column]) < String(b[column]) ? -1 : String(a[column]) > String(b[column]) ? 1 : 0;
+          return ascending ? cmp : -cmp;
+        });
+      }
+      if (call[0] === "limit") out = out.slice(0, Number(call[1]));
+    }
+    return Promise.resolve({ data: out, error: null }).then(onFulfilled, onRejected);
+  };
+  return chain;
+}
+
 function fakeDb(rows: Row[] | Error, opts: { storedTitles?: Set<string> } = {}) {
   const storedTitles = opts.storedTitles ?? new Set<string>();
-  const agentChain: Record<string, unknown> = {};
-  for (const method of ["select", "eq", "is", "not", "order"]) {
-    agentChain[method] = () => agentChain;
-  }
-  agentChain.limit = async () => rows instanceof Error
-    ? { data: null, error: { message: rows.message } }
-    : { data: rows, error: null };
+  const agentChain = pagedAgentChain(rows);
 
   const opsChain: Record<string, unknown> = {};
   for (const method of ["select", "eq"]) {
@@ -181,11 +208,7 @@ const agentRow = (id: string, extra: Row = {}): Row => ({
  * to end instead of a contract-shaped mock.
  */
 function fakeDbWithOpsStore(rows: Row[], stored: Map<string, Row>) {
-  const agentChain: Record<string, unknown> = {};
-  for (const method of ["select", "eq", "is", "not", "order"]) {
-    agentChain[method] = () => agentChain;
-  }
-  agentChain.limit = async () => ({ data: rows, error: null });
+  const agentChain = pagedAgentChain(rows);
   const storedTitles = () => new Set([...stored.values()].map((r) => r.title));
 
   return {
@@ -398,5 +421,63 @@ describe("runSurfaceWatchdogSweep", () => {
   it("does nothing without the admin client", async () => {
     const summary = await runSurfaceWatchdogSweep({ read: async () => { throw new Error("must not be called"); } });
     expect(summary).toMatchObject({ scanned: 0, relayed: 0, failed: 0 });
+  });
+
+  it("counts candidates beyond the per-tick window as capped instead of reading a clean sweep", async () => {
+    // 640 awake, probeable boxes — the sweep only reads 500 a pass. The
+    // omitted 140 used to be invisible: scanned=500 failed=0 notReached=0
+    // read as a clean heartbeat while part of the fleet went unwatched
+    // every tick. They now surface as `capped`.
+    const rows = Array.from({ length: 640 }, (_, i) =>
+      agentRow(`box-${String(i).padStart(4, "0")}`),
+    );
+    mockDb.current = fakeDb(rows);
+    const read = jest.fn(async () => reported([]));
+    const summary = await runSurfaceWatchdogSweep({ read });
+
+    expect(summary.scanned).toBe(500);
+    expect(summary.capped).toBe(140);
+    expect(summary.reported).toBe(500);
+    expect(read).toHaveBeenCalledTimes(500);
+  });
+
+  it("rotates the capped window by the sweep tick so the tail is swept on later passes", async () => {
+    // A fixed ordering would starve the same tail boxes every tick: the
+    // window ROTATES by the 5-minute scan bucket, so consecutive passes
+    // read different slices and every box lands inside it over time.
+    const rows = Array.from({ length: 640 }, (_, i) =>
+      agentRow(`box-${String(i).padStart(4, "0")}`),
+    );
+    mockDb.current = fakeDb(rows);
+
+    const readHosts = async (nowMs: number): Promise<Set<string>> => {
+      const read = jest.fn(async (target: { chatUrl: unknown }) => reported([]));
+      await runSurfaceWatchdogSweep({ now: () => nowMs, read });
+      return new Set(
+        read.mock.calls.map(([target]) => new URL(String(target.chatUrl)).hostname),
+      );
+    };
+
+    const tickMs = 5 * 60 * 1000;
+    const first = await readHosts(0);
+    const second = await readHosts(tickMs);
+    expect(first.size).toBe(500);
+    expect(second.size).toBe(500);
+    expect(second).not.toEqual(first);
+    // The window start advances one slot per tick: the omitted tail (140
+    // boxes) lands inside it over ~140 ticks — well inside a day's sweeps.
+    const union = new Set([...first, ...second]);
+    for (let t = 10; t <= 140; t += 10) {
+      for (const host of await readHosts(t * tickMs)) union.add(host);
+    }
+    expect(union.size).toBe(640);
+  });
+
+  it("does not cap a fleet inside the window — capped stays zero", async () => {
+    mockDb.current = fakeDb([agentRow("a1"), agentRow("a2")]);
+    const summary = await runSurfaceWatchdogSweep({
+      read: async () => reported([]),
+    });
+    expect(summary).toMatchObject({ scanned: 2, capped: 0 });
   });
 });

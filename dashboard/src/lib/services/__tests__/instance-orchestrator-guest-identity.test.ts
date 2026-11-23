@@ -105,9 +105,28 @@ function supabaseStub(): SupabaseClient {
   for (const method of ["eq", "or", "is", "not", "in", "lte", "gte"]) {
     writeChain[method] = jest.fn().mockReturnValue(writeChain);
   }
+  const readChain: Record<string, jest.Mock> = {
+    eq: jest.fn(),
+    is: jest.fn(),
+    or: jest.fn(),
+    maybeSingle: jest.fn().mockResolvedValue({
+      data: {
+        status: "running",
+        lifecycle_state: "active",
+        last_lifecycle_transition_at: "2026-11-23T00:00:00.000Z",
+        paused_reason: null,
+        gateway_url: "https://gateway.example.com",
+      },
+      error: null,
+    }),
+  };
+  readChain.eq.mockReturnValue(readChain);
+  readChain.is.mockReturnValue(readChain);
+  readChain.or.mockReturnValue(readChain);
   return {
     from: jest.fn().mockReturnValue({
       update: jest.fn().mockReturnValue(writeChain),
+      select: jest.fn().mockReturnValue(readChain),
     }),
   } as unknown as SupabaseClient;
 }

@@ -55,6 +55,31 @@ export interface OpsEventInput {
    * the stale observation.
    */
   observedAt?: string;
+  /**
+   * A second ops_events row whose CURRENT state this report is recorded
+   * against — the durable verdict the finding describes (e.g. the open
+   * box.public_probe.unreachable row whose first_seen_at is the outage
+   * start). Where observedAt guards THIS row's branches, verdictGuard
+   * covers the residual window between the caller's last read of the
+   * verdict and this report's own commit: a verdict row that archived
+   * (the outage ended) or restarted (first_seen_at moved to a new
+   * outage) in that gap means the report is stale. Checked AFTER the
+   * write commits and BEFORE any page: a moved verdict then compensates
+   * the committed row back — an insert is archived in place with
+   * closed_reason "superseded_verdict", a reopen restores the archive it
+   * just lifted — and the report returns { superseded: true } with no
+   * page sent. An unreadable verdict row proceeds: same rule as the
+   * re-check "unknown" path — the finding was fresh at evaluation and
+   * the resolve pass owns any false positive a committed row leaves.
+   */
+  verdictGuard?: {
+    /** source of the verdict row (e.g. box.public_probe.unreachable). */
+    source: string;
+    /** instance_id the verdict row is keyed to. */
+    instanceId: string;
+    /** The first_seen_at the verdict row must still carry: the outage start this report observed. */
+    firstSeenAt: string;
+  };
 }
 
 export interface ArchiveOpsEventsInput {
@@ -199,9 +224,34 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
   const payload = buildOpsEventPayload(input, fingerprint);
 
   try {
+    // The verdict-row check (see OpsEventInput.verdictGuard) is the commit-time
+    // half of the caller's pre-insert re-check: the verdict this report was
+    // recorded against must still be open and still carry the observed outage
+    // start. "moved" covers both endings — archived (the outage ended) and a
+    // first_seen_at that now names a different (newer) outage. A failed read
+    // is "unreadable": proceed, same convention as the caller's own unknown.
+    const checkVerdictGuard = async (): Promise<"current" | "moved" | "unreadable"> => {
+      const guard = input.verdictGuard;
+      if (!guard) return "current";
+      // Capture the live binding: the module-level null check cannot narrow
+      // inside a closure.
+      const db = supabaseAdmin;
+      if (!db) return "unreadable";
+      const { data, error } = await db
+        .from('ops_events')
+        .select('id')
+        .eq('source', guard.source)
+        .eq('instance_id', guard.instanceId)
+        .is('archived_at', null)
+        .eq('first_seen_at', guard.firstSeenAt)
+        .limit(1);
+      if (error) return "unreadable";
+      return (data?.length ?? 0) > 0 ? "current" : "moved";
+    };
+
     const { data: existing, error: lookupError } = await supabaseAdmin
       .from('ops_events')
-      .select('id, occurrence_count, archived_at, first_seen_at')
+      .select('id, occurrence_count, archived_at, archived_by_user_id, first_seen_at')
       .eq('fingerprint', fingerprint)
       .maybeSingle();
 
@@ -219,6 +269,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
         id: string;
         occurrence_count: number | null;
         archived_at: string | null;
+        archived_by_user_id: string | null;
       }): Promise<OpsEventReport | null> => {
         // A row closed AT-or-AFTER the observation was resolved by a newer
         // verdict; reopening it from this stale report would resurrect a
@@ -269,6 +320,23 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
         }
 
         if (reopened?.id) {
+          // The verdict this reopen was recorded against may have moved
+          // under the commit — a healthy verdict archived the outage row,
+          // or a newer outage restarted it. Hand the row back the archive
+          // it just lost (guarded on the row still being open under this
+          // reopen, so a later writer's own verdict is never clobbered)
+          // and answer superseded: no page for a verdict already gone.
+          if (input.verdictGuard && (await checkVerdictGuard()) === "moved") {
+            await db
+              .from('ops_events')
+              .update({
+                archived_at: row.archived_at,
+                archived_by_user_id: row.archived_by_user_id ?? null,
+              })
+              .eq('id', row.id)
+              .is('archived_at', null);
+            return { fingerprint, superseded: true };
+          }
           // A recurrence of an ARCHIVED fingerprint un-archives the row —
           // that is a fresh incident, so it pages once more. A still-open
           // row takes the refresh branch below and must not re-page.
@@ -305,6 +373,14 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
       // to a fresher report — this stale one must not bump it.
       const firstSeenAtMs = parseIsoMs(existing.first_seen_at);
       if (hasObservedAt && Number.isFinite(firstSeenAtMs) && firstSeenAtMs > observedAtMs) {
+        return { fingerprint, superseded: true };
+      }
+
+      // A verdict-guarded report that finds the row already open still
+      // answers for the verdict it was recorded against: a moved verdict
+      // makes this sighting stale, so it must not bump the row's
+      // last_seen_at/occurrence_count into looking like fresh evidence.
+      if (input.verdictGuard && (await checkVerdictGuard()) === "moved") {
         return { fingerprint, superseded: true };
       }
 
@@ -354,7 +430,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
       // handled by the same fallback as before).
       const { data: current, error: rereadError } = await supabaseAdmin
         .from('ops_events')
-        .select('id, occurrence_count, archived_at, first_seen_at')
+        .select('id, occurrence_count, archived_at, archived_by_user_id, first_seen_at')
         .eq('fingerprint', fingerprint)
         .maybeSingle();
       if (rereadError) {
@@ -379,6 +455,25 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
       })
       .select('id')
       .single();
+
+    // The verdict this insert was recorded against may have moved under the
+    // commit — the window a pure insert cannot guard: a healthy verdict can
+    // archive the outage row between the caller's verdict read and this
+    // write landing. Compensate the committed row in place — archived with
+    // the refusal recorded, not deleted, so the ops feed still shows the
+    // write — and answer superseded: the report stands down with no page.
+    if (data?.id && input.verdictGuard && (await checkVerdictGuard()) === "moved") {
+      await supabaseAdmin
+        .from('ops_events')
+        .update({
+          archived_at: now,
+          archived_by_user_id: null,
+          metadata: { ...payload.metadata, closed_reason: "superseded_verdict" },
+        })
+        .eq('id', data.id)
+        .is('archived_at', null);
+      return { fingerprint, superseded: true };
+    }
 
     // First sighting of a pageable fingerprint (fatal, or page:true): page an
     // admin once — but only after the insert actually persisted an id, so a

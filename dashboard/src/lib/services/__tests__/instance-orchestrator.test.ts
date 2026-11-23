@@ -147,43 +147,119 @@ function stringifyMockCalls(spy: jest.SpyInstance): string {
     .join(" ");
 }
 
+interface LiveUpdateWrite {
+  patch: Record<string, unknown>;
+  filters: Array<[string, ...unknown[]]>;
+}
+
 /**
- * PostgREST-shaped update chain for the launch-failure stamp: records the
- * patch and every predicate the write is filtered by, then answers
- * maybeSingle. `match: null` simulates the ownership predicates filtering
- * the row out — the row moved under this attempt and the stamp no-ops.
+ * PostgREST-shaped hermes_instances fake for applyLiveUpdate's row writes:
+ * the pre-launch attempt claim (update … .select("id").maybeSingle()), the
+ * launch-failure stamp, the defer-revert and the last_synced_at bump — plus
+ * the pre-claim state snapshot read (select … .eq("id").maybeSingle()).
+ *
+ * - `snapshot` is the row the pre-claim SELECT returns.
+ * - Each `update()` call consumes one `updates` entry: `match` is what the
+ *   chain's maybeSingle/await resolves (`null` simulates the ownership
+ *   predicates filtering the row out — the write no-ops), `error` the
+ *   PostgREST error. Entries repeat the last one once exhausted.
+ */
+function liveUpdateDb(options: {
+  snapshot?: Record<string, unknown> | null;
+  snapshotError?: { message: string } | null;
+  updates?: Array<{ match?: Record<string, unknown> | null; error?: { message: string } | null }>;
+} = {}) {
+  const snapshot =
+    options.snapshot === undefined
+      ? {
+          status: "running",
+          lifecycle_state: "active",
+          last_lifecycle_transition_at: "2026-01-01T00:00:00.000Z",
+          paused_reason: null,
+          gateway_url: "https://agent.example.com",
+        }
+      : options.snapshot;
+  const updateSpecs = options.updates ?? [{ match: { id: "row-1" }, error: null }];
+  const writes: LiveUpdateWrite[] = [];
+  const selectCalls: Array<{ columns: string; filters: Array<[string, ...unknown[]]> }> = [];
+  let updateIdx = 0;
+
+  const makeChain = (
+    record: (method: string, args: unknown[]) => void,
+    resolve: () => { data: unknown; error: unknown },
+  ) => {
+    const chain: Record<string, unknown> = {};
+    for (const method of [
+      "select", "eq", "is", "or", "not", "gt", "gte", "lt", "lte", "in", "neq", "order", "limit",
+    ]) {
+      chain[method] = (...args: unknown[]) => {
+        record(method, args);
+        return chain;
+      };
+    }
+    chain.maybeSingle = jest.fn(async () => resolve());
+    chain.single = chain.maybeSingle;
+    // Bare `await builder` (the revert and the last_synced bump never select):
+    // a PostgREST chain is thenable, so the mock must be too.
+    chain.then = (onFulfilled?: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
+      Promise.resolve(resolve()).then(onFulfilled, onRejected);
+    return chain;
+  };
+
+  const update = jest.fn((patch: Record<string, unknown>) => {
+    const spec = updateSpecs[Math.min(updateIdx++, updateSpecs.length - 1)] ?? {};
+    const write: LiveUpdateWrite = { patch, filters: [] };
+    writes.push(write);
+    return makeChain(
+      (method, args) => write.filters.push([method, ...args]),
+      () => ({ data: spec.match ?? null, error: spec.error ?? null }),
+    );
+  });
+
+  const select = jest.fn((columns: string) => {
+    const call = { columns, filters: [] as Array<[string, ...unknown[]]> };
+    selectCalls.push(call);
+    return makeChain(
+      (method, args) => call.filters.push([method, ...args]),
+      () => ({ data: snapshot, error: options.snapshotError ?? null }),
+    );
+  });
+
+  const captured = {
+    get patch() {
+      return writes[writes.length - 1]?.patch;
+    },
+    get filters() {
+      return writes.flatMap((write) => write.filters);
+    },
+  };
+
+  return {
+    writes,
+    selectCalls,
+    captured,
+    update,
+    supabase: {
+      from: jest.fn(() => ({ select, update })),
+    } as unknown as SupabaseClient,
+  };
+}
+
+/**
+ * The launch-failure stamp fake: the pre-launch claim matches (the attempt
+ * owns the row), and `match`/`error` steer the failed stamp's own write —
+ * `match: null` simulates the ownership predicates filtering the row out.
  */
 function failedStampDb(options: {
   match?: Record<string, unknown> | null;
   error?: { message: string } | null;
 } = {}) {
-  const captured = {
-    patch: undefined as Record<string, unknown> | undefined,
-    filters: [] as Array<[string, ...unknown[]]>,
-  };
-  const match = options.match === undefined ? { id: "row-1" } : options.match;
-  const update = jest.fn((patch: Record<string, unknown>) => {
-    captured.patch = patch;
-    const chain: Record<string, unknown> = {};
-    for (const method of ["eq", "is", "or", "not", "select"]) {
-      chain[method] = (...args: unknown[]) => {
-        captured.filters.push([method, ...args]);
-        return chain;
-      };
-    }
-    chain.maybeSingle = jest.fn(async () => ({
-      data: match,
-      error: options.error ?? null,
-    }));
-    return chain;
+  return liveUpdateDb({
+    updates: [
+      { match: { id: "row-claim" }, error: null },
+      { match: options.match === undefined ? { id: "row-1" } : options.match, error: options.error ?? null },
+    ],
   });
-  return {
-    captured,
-    update,
-    supabase: {
-      from: jest.fn().mockReturnValue({ update }),
-    } as unknown as SupabaseClient,
-  };
 }
 
 function extractEmbeddedScript(script: string, path: string): string {
@@ -267,23 +343,24 @@ describe("applyLiveUpdate", () => {
   it("does not stamp an archive failed when it moved lifecycle during the SSH attempt", async () => {
     (readInstanceLiveMutationBlock as jest.Mock).mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValueOnce("Restore the computer first");
     (sshExec as jest.Mock).mockResolvedValueOnce({ ok: false, stderr: "VM missing", stdout: "" });
-    const from = jest.fn();
+    const { supabase, writes } = liveUpdateDb();
     const result = await applyLiveUpdate({
       id: "archived-during-ssh", user_id: "u1", provider: "openai", api_key_encrypted: "enc-key",
       hetzner_server_id: 1, config: {},
-    }, "127.0.0.1", {}, { from } as unknown as SupabaseClient, { initiator: USER_LIVE_UPDATE });
+    }, "127.0.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE });
     expect(result).toMatchObject({ applied: false, error: "Restore the computer first" });
     expect(sshExec).toHaveBeenCalledTimes(1);
-    expect(from).not.toHaveBeenCalled();
+    // The pre-launch attempt claim is the only write — the completion block
+    // fired before the launch-failure stamp, so nothing marks the row failed
+    // over its new owner.
+    expect(writes).toHaveLength(1);
+    expect(writes[0].patch).toMatchObject({ status: "redeploying" });
   });
 
   it("refuses a stale active snapshot after restoration before decrypting or contacting the old guest", async () => {
     const current = { lifecycle_state: "active", status: "running", proxmox_vmid: 202,
       config: { infrastructure: { provider: "proxmox", vmid: 202, node: "restored-host", privateIpv4: "10.250.0.2" } } };
-    const update = jest.fn();
-    const supabase = { from: jest.fn(() => ({
-      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: current, error: null }) }) }), update,
-    })) } as unknown as SupabaseClient;
+    const { supabase, update } = liveUpdateDb({ snapshot: current });
     (readInstanceLiveMutationBlock as jest.Mock).mockImplementationOnce(
       jest.requireActual("../instance-live-mutation").readInstanceLiveMutationBlock,
     );
@@ -300,10 +377,7 @@ describe("applyLiveUpdate", () => {
 
   it("does not stamp a restored active computer failed from an earlier guest's failed update", async () => {
     const current = { lifecycle_state: "active", status: "running", hetzner_server_id: 2, config: {} };
-    const update = jest.fn();
-    const supabase = { from: jest.fn(() => ({
-      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: current, error: null }) }) }), update,
-    })) } as unknown as SupabaseClient;
+    const { supabase, writes } = liveUpdateDb({ snapshot: current });
     (readInstanceLiveMutationBlock as jest.Mock).mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockImplementationOnce(
       jest.requireActual("../instance-live-mutation").readInstanceLiveMutationBlock,
     );
@@ -312,7 +386,11 @@ describe("applyLiveUpdate", () => {
       id: "moved-during-ssh", user_id: "u1", provider: "openai", api_key_encrypted: "enc-key", hetzner_server_id: 1, config: {},
     }, "127.0.0.1", {}, supabase, { initiator: USER_LIVE_UPDATE });
     expect(result).toMatchObject({ applied: false, error: expect.stringMatching(/moved or was restored/) });
-    expect(update).not.toHaveBeenCalled();
+    // The pre-launch attempt claim is the only write: the completion block
+    // saw the row move before the launch-failure stamp, so nothing marks it
+    // failed over its new owner.
+    expect(writes).toHaveLength(1);
+    expect(writes[0].patch).toMatchObject({ status: "redeploying" });
   });
 
   it("redacts secrets from SSH launch failures before logging them", async () => {
@@ -668,9 +746,11 @@ describe("applyLiveUpdate", () => {
     // The completionBlock read is advisory — a racing update attempt or
     // lifecycle operation can move the row between it and this write, and a
     // stamp by id alone would clobber that newer state (another attempt's
-    // 'redeploying' marker, a restore, a delete). The write mirrors the
-    // boundary read's checks: blocked-lifecycle exclusions plus the exact
-    // state and guest coordinates this attempt loaded before launching.
+    // 'redeploying' marker, a restore, a delete) or resurrect one its owner
+    // already resolved. The write is scoped to the row still in-flight under
+    // THIS attempt: blocked-lifecycle exclusions, status='redeploying' with
+    // this attempt's transition stamp, plus the guest coordinates this
+    // attempt launched against.
     const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     (sshExec as jest.Mock).mockResolvedValue({
       ok: false,
@@ -679,7 +759,7 @@ describe("applyLiveUpdate", () => {
       error: "",
     });
 
-    const { supabase, captured } = failedStampDb();
+    const { supabase, writes } = failedStampDb();
     const result = await applyLiveUpdate(
       {
         id: "inst-owned",
@@ -703,11 +783,31 @@ describe("applyLiveUpdate", () => {
     );
 
     expect(result.applied).toBe(false);
-    expect(captured.patch).toMatchObject({
+    expect(writes).toHaveLength(2);
+    // Write 0 is the pre-launch attempt claim: it verifies the snapshot the
+    // boundary read just confirmed — status, lifecycle, transition and the
+    // guest coordinates — before stamping this attempt's transition marker.
+    const claim = writes[0];
+    expect(claim.patch).toMatchObject({
+      status: "redeploying",
+      lifecycle_state: "provisioning",
+    });
+    expect(claim.filters).toContainEqual(["eq", "status", "running"]);
+    expect(claim.filters).toContainEqual(["eq", "lifecycle_state", "active"]);
+    expect(claim.filters).toContainEqual(["eq", "proxmox_vmid", 201]);
+    expect(claim.filters).toContainEqual(["eq", "proxmox_node", "pve-1"]);
+    expect(claim.filters).toContainEqual(["eq", "host_id", "host-9"]);
+    expect(claim.filters).toContainEqual(["eq", "hetzner_server_id", 7]);
+    expect(claim.filters).toContainEqual(["eq", "ipv4_address", "10.250.0.1"]);
+    const attemptStamp = claim.patch.last_lifecycle_transition_at;
+    expect(typeof attemptStamp).toBe("string");
+
+    const failed = writes[1];
+    expect(failed.patch).toMatchObject({
       status: "failed",
       lifecycle_state: "failed",
     });
-    const filters = captured.filters;
+    const filters = failed.filters;
     // blocksInstanceLiveMutation's exclusions as or-filters: not deleted /
     // scheduled, not in a blocked lifecycle, not a failed-archive row.
     expect(filters).toContainEqual([
@@ -722,10 +822,11 @@ describe("applyLiveUpdate", () => {
       "or",
       "lifecycle_state.neq.failed,archive_uri.is.null,archive_sha256.is.null,proxmox_vmid.not.is.null",
     ]);
-    // The launch-pending state this attempt owns — a move since the load
-    // means that move owns the row.
-    expect(filters).toContainEqual(["eq", "status", "running"]);
-    expect(filters).toContainEqual(["eq", "lifecycle_state", "active"]);
+    // Still in-flight under THIS attempt: redeploying with this attempt's
+    // transition stamp — a box-side callback verdict or another owner that
+    // moved the row rewrote both, so the stamp then stands down.
+    expect(filters).toContainEqual(["eq", "status", "redeploying"]);
+    expect(filters).toContainEqual(["eq", "last_lifecycle_transition_at", attemptStamp]);
     // The guest-identity coordinates the boundary reads compared.
     expect(filters).toContainEqual(["eq", "proxmox_vmid", 201]);
     expect(filters).toContainEqual(["eq", "proxmox_node", "pve-1"]);
@@ -867,14 +968,7 @@ describe("applyLiveUpdate", () => {
       stderr: "",
     });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({
-          eq: updateEq,
-        }),
-      }),
-    } as unknown as SupabaseClient;
+    const { supabase } = liveUpdateDb();
 
     const result = await applyLiveUpdate(
       {
@@ -920,13 +1014,7 @@ describe("applyLiveUpdate", () => {
       stderr: "",
     });
 
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({
-          eq: jest.fn().mockResolvedValue({ error: null }),
-        }),
-      }),
-    } as unknown as SupabaseClient;
+    const { supabase } = liveUpdateDb();
 
     const result = await applyLiveUpdate(
       {
@@ -967,14 +1055,7 @@ describe("applyLiveUpdate", () => {
       stderr: "",
     });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({
-          eq: updateEq,
-        }),
-      }),
-    } as unknown as SupabaseClient;
+    const { supabase } = liveUpdateDb();
 
     const result = await applyLiveUpdate(
       {
@@ -1015,14 +1096,7 @@ describe("applyLiveUpdate", () => {
       stderr: "",
     });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({
-          eq: updateEq,
-        }),
-      }),
-    } as unknown as SupabaseClient;
+    const { supabase } = liveUpdateDb();
 
     const result = await applyLiveUpdate(
       {
@@ -1067,15 +1141,7 @@ describe("applyLiveUpdate", () => {
       .mockReturnValueOnce("gateway-secret");
     (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
 
-    const captured: Array<Record<string, unknown>> = [];
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn((patch: Record<string, unknown>) => {
-          captured.push(patch);
-          return { eq: jest.fn().mockResolvedValue({ error: null }) };
-        }),
-      }),
-    } as unknown as SupabaseClient;
+    const { supabase, writes } = liveUpdateDb();
 
     const result = await applyLiveUpdate(
       {
@@ -1094,21 +1160,155 @@ describe("applyLiveUpdate", () => {
     );
 
     expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
-    expect(captured).toHaveLength(1);
-    expect(captured[0]).toMatchObject({
+    expect(writes).toHaveLength(2);
+    // The pre-launch attempt claim carries the redeploying lifecycle patch —
+    // status AND lifecycle_state from buildInstanceLifecyclePatch — so the
+    // row shows progress before the wrapper can possibly call back.
+    expect(writes[0].patch).toMatchObject({
       status: "redeploying",
       lifecycle_state: "provisioning",
       gateway_url: "https://agent.example.com",
     });
-    expect(captured[0]).toHaveProperty("updated_at");
-    expect(captured[0]).toHaveProperty("last_lifecycle_transition_at");
+    expect(writes[0].patch).toHaveProperty("updated_at");
+    expect(writes[0].patch).toHaveProperty("last_lifecycle_transition_at");
+    // The same attempt stamp the wrapper reports back as `a=` is what the
+    // update-report route matches — the claim must carry it, not a later write.
+    const attemptStamp = writes[0].patch.last_lifecycle_transition_at;
+    expect(typeof attemptStamp).toBe("string");
+    expect(writes[0].filters).toContainEqual(["eq", "last_lifecycle_transition_at", "2026-01-01T00:00:00.000Z"]);
     // Stamp the fleet-sync cursor on launch success so the daily :stable
-    // sweep advances to the next-oldest cohort instead of re-rolling this VM.
-    expect(captured[0]).toHaveProperty("last_synced_at");
-    expect(typeof captured[0].last_synced_at).toBe("string");
+    // sweep advances to the next-oldest cohort instead of re-rolling this
+    // VM — guarded on this attempt still owning the row.
+    expect(writes[1].patch).toEqual({ last_synced_at: expect.any(String) });
+    expect(writes[1].filters).toContainEqual(["eq", "last_lifecycle_transition_at", attemptStamp]);
   });
 
-  it("still reports the launch when the redeploying write fails, and logs the stale row", async () => {
+  it("has the attempt stamp down before launch, matching the wrapper's a= report key", async () => {
+    // The fast-callback race: a wrapper report used to be able to land
+    // while last_lifecycle_transition_at still carried the PREVIOUS
+    // transition — the update-report route matches the report's `a` to
+    // that column, so the callback could never attach to its attempt. The
+    // claim must commit BEFORE the box receives the wrapper, and carry
+    // the exact attempt stamp the callback URL echoes back.
+    (decryptApiKey as jest.Mock)
+      .mockReturnValueOnce("plain-api-key")
+      .mockReturnValueOnce("gateway-secret");
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+
+    const { supabase, writes, update } = liveUpdateDb();
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-attempt-stamp",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
+    // The claim write ran before the launch SSH — its invocation order
+    // strictly precedes sshExec's, so no callback can outrun the stamp.
+    expect(update.mock.invocationCallOrder[0]).toBeLessThan(
+      (sshExec as jest.Mock).mock.invocationCallOrder[0],
+    );
+    const attemptStamp = writes[0].patch.last_lifecycle_transition_at;
+    expect(typeof attemptStamp).toBe("string");
+    // …and it is the same stamp the wrapper reports back as `a`.
+    const innerScript = String((sshExec as jest.Mock).mock.calls[0][2]?.stdin ?? "");
+    const wrapperScript = extractEmbeddedScript(
+      innerScript,
+      "/tmp/hermes-update-wrapper-inst-attempt-stamp.sh"
+    );
+    expect(wrapperScript).toContain(`a=${attemptStamp}`);
+  });
+
+  it("stands down before launch when the attempt claim matches nothing — the row moved under it", async () => {
+    // The claim is a compare-and-swap: a racing attempt's stamp, a restore
+    // or a delete between the snapshot read and this write zero-matches —
+    // and now that the stamp is the pre-launch marker, matching nothing
+    // must stop the launch itself, not just the later writes.
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = jest.spyOn(log, "warn").mockImplementation(() => undefined);
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+
+    const { supabase, writes } = liveUpdateDb({
+      updates: [{ match: null, error: null }],
+    });
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-claim-lost",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result).toEqual({
+      applied: false,
+      error: "This computer moved or was restored since it was loaded. Refresh before updating.",
+      initiator: USER_LIVE_UPDATE,
+    });
+    expect(sshExec).not.toHaveBeenCalled();
+    expect(runProxmoxHostScript).not.toHaveBeenCalled();
+    expect(writes).toHaveLength(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "update attempt stamp matched nothing; the row moved before launch",
+      expect.objectContaining({ failureType: "live_update_state_write_superseded" }),
+    );
+    consoleErrorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("fails before launch when the attempt claim write errors — no un-stamped box gets a callback URL", async () => {
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+
+    const { supabase } = liveUpdateDb({
+      updates: [{ match: null, error: { message: "statement timeout" } }],
+    });
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-claim-error",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result).toEqual({
+      applied: false,
+      error: "statement timeout",
+      initiator: USER_LIVE_UPDATE,
+    });
+    expect(sshExec).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("still reports the launch when the post-launch row write fails, and logs the stale row", async () => {
     const logError = jest.spyOn(log, "error").mockImplementation(() => undefined);
     // Regression for an unchecked write: the update was launched on the box, but a
     // failed row write used to be ignored silently. The launch is real, so the
@@ -1119,13 +1319,13 @@ describe("applyLiveUpdate", () => {
       .mockReturnValueOnce("gateway-secret");
     (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
 
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn(() => ({
-          eq: jest.fn().mockResolvedValue({ error: { message: "statement timeout" } }),
-        })),
-      }),
-    } as unknown as SupabaseClient;
+    const { supabase } = liveUpdateDb({
+      updates: [
+        // The pre-launch claim lands; the last_synced bump's await fails.
+        { match: { id: "row-claim" }, error: null },
+        { match: null, error: { message: "statement timeout" } },
+      ],
+    });
 
     const result = await applyLiveUpdate(
       {
@@ -1145,7 +1345,7 @@ describe("applyLiveUpdate", () => {
 
     expect(result).toMatchObject({ applied: true, initiator: USER_LIVE_UPDATE });
     expect(logError).toHaveBeenCalledWith(
-      "live update launched but the redeploying state write failed",
+      "live update launched but the synced marker write failed",
       expect.any(Error),
       expect.objectContaining({ failureType: "live_update_state_write_failed", instanceId: "inst-state-write-fail" }),
     );
@@ -1162,14 +1362,7 @@ describe("applyLiveUpdate", () => {
       stderr: "",
     });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({
-          eq: updateEq,
-        }),
-      }),
-    } as unknown as SupabaseClient;
+    const { supabase } = liveUpdateDb();
 
     const result = await applyLiveUpdate(
       {
@@ -1219,14 +1412,7 @@ describe("applyLiveUpdate", () => {
       gatewayHost: "agent-proxmox.example.com",
     });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({
-          eq: updateEq,
-        }),
-      }),
-    } as unknown as SupabaseClient;
+    const { supabase, writes } = liveUpdateDb();
 
     const result = await applyLiveUpdate(
       {
@@ -1275,7 +1461,12 @@ describe("applyLiveUpdate", () => {
         fqdn: "localhost",
       })
     );
-    expect(updateEq).toHaveBeenCalledWith("id", "00000000-0000-4000-8000-a8e7efa045b5");
+    // Both row writes (the pre-launch attempt claim and the last_synced bump)
+    // are scoped to this instance.
+    expect(writes.length).toBeGreaterThan(0);
+    for (const write of writes) {
+      expect(write.filters).toContainEqual(["eq", "id", "00000000-0000-4000-8000-a8e7efa045b5"]);
+    }
 
     // Single-tenant VM guard must be present in the wrapper that lands in the guest
     // VM, so a misrouted deploy aborts before it can drop a peer Caddyfile alongside
@@ -1313,13 +1504,7 @@ describe("applyLiveUpdate", () => {
       gatewayHost: "agent-proxmox.example.com",
     });
 
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({
-          eq: jest.fn().mockResolvedValue({ error: null }),
-        }),
-      }),
-    } as unknown as SupabaseClient;
+    const { supabase } = liveUpdateDb();
 
     await applyLiveUpdate(
       {
@@ -1390,12 +1575,8 @@ describe("applyLiveUpdate", () => {
       hostSlug: "fixturenode1",
     });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     await applyLiveUpdate(
       {
@@ -1464,11 +1645,7 @@ describe("applyLiveUpdate", () => {
       );
     });
 
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }),
-      }),
-    } as unknown as SupabaseClient;
+    const { supabase } = liveUpdateDb();
 
     const result = await applyLiveUpdate(
       {
@@ -1507,12 +1684,8 @@ describe("applyLiveUpdate", () => {
       .mockReturnValueOnce("gateway-secret");
     (getProxmoxInfrastructure as jest.Mock).mockReturnValue(null);
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     await applyLiveUpdate(
       {
@@ -1569,12 +1742,8 @@ describe("applyLiveUpdate", () => {
     (getBankrWalletForInstance as jest.Mock).mockResolvedValue({ id: "wallet-row" });
     (buildInstanceBankrAgentConfig as jest.Mock).mockResolvedValue(bankrAgentConfig);
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     const result = await applyLiveUpdate(
       {
@@ -1657,12 +1826,8 @@ describe("applyLiveUpdate", () => {
     expect(beaSoul.trim().length).toBeGreaterThan(500);
     (getRuntimeAgentSettings as jest.Mock).mockReturnValue({ systemPrompt: beaSoul });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     const result = await applyLiveUpdate(
       {
@@ -1711,12 +1876,8 @@ describe("applyLiveUpdate", () => {
     });
     (getRuntimeAgentSettings as jest.Mock).mockReturnValue({ systemPrompt: "" });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     await expect(applyLiveUpdate(
       {
@@ -1760,12 +1921,8 @@ describe("applyLiveUpdate", () => {
     const beaSoul = getPersonaSoulPrompt("bea");
     (getRuntimeAgentSettings as jest.Mock).mockReturnValue({ systemPrompt: beaSoul });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     await applyLiveUpdate(
       {
@@ -1810,12 +1967,8 @@ describe("applyLiveUpdate", () => {
     });
     (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "1\n", stderr: "" });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     await applyLiveUpdate(
       {
@@ -1854,12 +2007,8 @@ describe("applyLiveUpdate", () => {
     });
     (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "1\n", stderr: "" });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     await applyLiveUpdate(
       {
@@ -1903,12 +2052,8 @@ describe("applyLiveUpdate", () => {
     });
     (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "1\n", stderr: "" });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     await applyLiveUpdate(
       {
@@ -1945,12 +2090,8 @@ describe("applyLiveUpdate", () => {
     // getRuntimeAgentSettings defaults to {} in beforeEach → no explicit opt-in.
     (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "1\n", stderr: "" });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     await applyLiveUpdate(
       {
@@ -1983,12 +2124,8 @@ describe("applyLiveUpdate", () => {
     (getRuntimeAgentSettings as jest.Mock).mockReturnValue({ browserSidecarEnabled: false });
     (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "1\n", stderr: "" });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     await applyLiveUpdate(
       {
@@ -2030,12 +2167,8 @@ describe("applyLiveUpdate", () => {
     });
     (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "1\n", stderr: "" });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     await applyLiveUpdate(
       {
@@ -2072,11 +2205,7 @@ describe("applyLiveUpdate", () => {
       .mockReturnValueOnce("plain-api-key")
       .mockReturnValueOnce("gateway-secret");
     (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "1\n", stderr: "" });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }),
-      }),
-    } as unknown as SupabaseClient;
+    const { supabase } = liveUpdateDb();
 
     await applyLiveUpdate(
       {
@@ -2117,12 +2246,8 @@ describe("applyLiveUpdate", () => {
       .mockReturnValueOnce("gateway-secret");
     (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "1\n", stderr: "" });
 
-    const updateEq = jest.fn().mockResolvedValue({ error: null });
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: updateEq }),
-      }),
-    } as unknown as SupabaseClient;
+
+    const { supabase } = liveUpdateDb();
 
     await applyLiveUpdate(
       {
@@ -2188,11 +2313,7 @@ describe("applyLiveUpdate release registry", () => {
     api_server_key_encrypted: "enc-gateway",
     config: {},
   };
-  const supabase = {
-    from: jest.fn().mockReturnValue({
-      update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }),
-    }),
-  } as unknown as SupabaseClient;
+  const { supabase } = liveUpdateDb();
   const digest = `sha256:${"d".repeat(64)}`;
 
   beforeEach(() => {
@@ -2280,16 +2401,8 @@ describe("applyLiveUpdate in-flight turn gate", () => {
   const FLEET_SYNC = systemLiveUpdate("fleet_sync");
 
   function supabaseCapturing() {
-    const patches: Array<Record<string, unknown>> = [];
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn((patch: Record<string, unknown>) => {
-          patches.push(patch);
-          return { eq: jest.fn().mockResolvedValue({ error: null }) };
-        }),
-      }),
-    } as unknown as SupabaseClient;
-    return { supabase, patches };
+    const { supabase, writes } = liveUpdateDb();
+    return { supabase, writes };
   }
 
   const row = (id: string) => ({
@@ -2487,7 +2600,7 @@ describe("applyLiveUpdate in-flight turn gate", () => {
       stderr: "",
     });
     const info = jest.spyOn(log, "info");
-    const { supabase, patches } = supabaseCapturing();
+    const { supabase, writes } = supabaseCapturing();
 
     const result = await applyLiveUpdate(row("inst-busy"), "127.0.0.1", {}, supabase, { initiator: FLEET_SYNC });
 
@@ -2510,8 +2623,18 @@ describe("applyLiveUpdate in-flight turn gate", () => {
         streakSeconds: 900,
       },
     });
-    // No redeploying/failed lifecycle patch and no last_synced_at bump.
-    expect(patches).toEqual([]);
+    // The pre-launch claim stamped the row, then the defer handed it the
+    // snapshot back — net effect: no lifecycle patch and no last_synced_at.
+    expect(writes).toHaveLength(2);
+    expect(writes[0].patch).toMatchObject({ status: "redeploying" });
+    const attemptStamp = writes[0].patch.last_lifecycle_transition_at;
+    expect(writes[1].patch).toMatchObject({
+      status: "running",
+      lifecycle_state: "active",
+      last_lifecycle_transition_at: "2026-01-01T00:00:00.000Z",
+    });
+    expect(writes[1].patch).not.toHaveProperty("last_synced_at");
+    expect(writes[1].filters).toContainEqual(["eq", "last_lifecycle_transition_at", attemptStamp]);
     expect(info).toHaveBeenCalledWith(
       "system live update deferred: agent turn in flight",
       expect.objectContaining({ instanceId: "inst-busy", trigger: "fleet_sync", deferrals: 2 })
@@ -2529,7 +2652,7 @@ describe("applyLiveUpdate in-flight turn gate", () => {
       stderr: "",
     });
     const warn = jest.spyOn(log, "warn");
-    const { supabase, patches } = supabaseCapturing();
+    const { supabase, writes } = supabaseCapturing();
 
     const result = await applyLiveUpdate(row("inst-capped"), "127.0.0.1", {}, supabase, { initiator: FLEET_SYNC });
 
@@ -2538,7 +2661,8 @@ describe("applyLiveUpdate in-flight turn gate", () => {
       initiator: FLEET_SYNC,
       inFlightGate: { action: "proceed", reason: "deferral_cap", deferrals: 2 },
     });
-    expect(patches[0]).toMatchObject({ status: "redeploying", last_synced_at: expect.any(String) });
+    expect(writes[0].patch).toMatchObject({ status: "redeploying" });
+    expect(writes[1].patch).toEqual({ last_synced_at: expect.any(String) });
     expect(warn).toHaveBeenCalledWith(
       "system live update proceeding past the in-flight gate",
       expect.objectContaining({ instanceId: "inst-capped", gateReason: "deferral_cap" })
@@ -2556,7 +2680,7 @@ describe("applyLiveUpdate in-flight turn gate", () => {
     });
     const info = jest.spyOn(log, "info");
     const warn = jest.spyOn(log, "warn");
-    const { supabase, patches } = supabaseCapturing();
+    const { supabase, writes } = supabaseCapturing();
 
     const result = await applyLiveUpdate(row("inst-unknown"), "127.0.0.1", {}, supabase, { initiator: FLEET_SYNC });
 
@@ -2567,7 +2691,14 @@ describe("applyLiveUpdate in-flight turn gate", () => {
       error: expect.stringContaining("could not confirm that no agent turn is running"),
       inFlightGate: { verdict: "unknown", gatewayUnknown: 1 },
     });
-    expect(patches).toEqual([]);
+    // Claim-then-revert: the row's state is what the snapshot read, untouched.
+    expect(writes).toHaveLength(2);
+    expect(writes[0].patch).toMatchObject({ status: "redeploying" });
+    expect(writes[1].patch).toMatchObject({
+      status: "running",
+      lifecycle_state: "active",
+      last_lifecycle_transition_at: "2026-01-01T00:00:00.000Z",
+    });
     // Not a turn in flight: possibly a gateway that is failing, so it is loud.
     expect(warn).toHaveBeenCalledWith(
       "system live update deferred: could not confirm no agent turn is running",
@@ -2593,14 +2724,14 @@ describe("applyLiveUpdate in-flight turn gate", () => {
       stderr: "",
     });
     const warn = jest.spyOn(log, "warn");
-    const { supabase, patches } = supabaseCapturing();
+    const { supabase, writes } = supabaseCapturing();
 
     const result = await applyLiveUpdate(row("inst-recover-unknown"), "127.0.0.1", {}, supabase, {
       initiator: systemLiveUpdate("unhealthy_recovery"),
     });
 
     expect(result).toMatchObject({ applied: true, inFlightGate: { action: "proceed", verdict: "unknown" } });
-    expect(patches[0]).toMatchObject({ status: "redeploying" });
+    expect(writes[0].patch).toMatchObject({ status: "redeploying" });
     expect(warn).toHaveBeenCalledWith(
       "system live update proceeding past the in-flight gate",
       expect.objectContaining({
@@ -2896,11 +3027,7 @@ describe("applyLiveUpdate BANKR_* reconcile flag", () => {
 
   async function webUIParamsFor(setup: () => void): Promise<Record<string, unknown>> {
     setup();
-    const supabase = {
-      from: jest.fn().mockReturnValue({
-        update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }),
-      }),
-    } as unknown as SupabaseClient;
+    const { supabase } = liveUpdateDb();
     const result = await applyLiveUpdate(
       {
         id: "inst-webfree",

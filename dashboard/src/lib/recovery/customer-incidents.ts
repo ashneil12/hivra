@@ -17,6 +17,7 @@ import {
   type OpsAdminDirectoryLookup,
 } from "@/lib/ops-access";
 import { isCanaryDeployment } from "@/lib/deployment-channel";
+import { rotateByScanTick } from "@/lib/recovery/scan-rotation";
 import { supabaseAdmin } from "@/lib/supabase";
 import vercelConfig from "../../../vercel.json";
 
@@ -1247,22 +1248,6 @@ async function finishedBeforeDeadline(
   }
 }
 
-/**
- * Rotate a work list by the scan-tick bucket so budget-bounded loops walk
- * their tail across passes: a fixed order would starve whichever items
- * land outside the window every tick — their incidents could then never
- * open or resolve — while the rotated order periodically brings every
- * item inside it.
- */
-function rotateByScanTick<T>(items: T[], scanTick: number): T[] {
-  return items.length > 1
-    ? [
-        ...items.slice(scanTick % items.length),
-        ...items.slice(0, scanTick % items.length),
-      ]
-    : items;
-}
-
 /** Open box.public_probe.* rows, keyed later by agent id. */
 async function collectOpenProbeRows(db: DbClient): Promise<OpenProbeRow[]> {
   const rows = await selectAllPages<ProbeRowDbRow>(
@@ -2327,7 +2312,20 @@ export function incidentOpsEvent(
   };
 }
 
-type FindingRevalidation = "holds" | "cleared" | "unknown";
+type FindingRevalidationOutcome = "holds" | "cleared" | "unknown";
+
+interface FindingRevalidation {
+  outcome: FindingRevalidationOutcome;
+  /**
+   * box_unreachable only: the first_seen_at the open probe row carried
+   * when this re-check read it — the exact outage start the incident
+   * report is conditioned on. reportOpsEvent's verdictGuard re-checks
+   * this value at commit time, closing the window between this read and
+   * the insert where a healthy verdict could archive the outage (or a
+   * verdict write restart it).
+   */
+  probeRowFirstSeenAt?: string;
+}
 
 /**
  * Re-check a NEW finding's subject against current state immediately before
@@ -2362,8 +2360,10 @@ async function revalidateIncidentFinding(
       instanceId: finding.instanceId,
       errorMessage: errorMessage ?? "unknown",
     });
-    return "unknown";
+    return { outcome: "unknown" };
   };
+  const cleared: FindingRevalidation = { outcome: "cleared" };
+  const holds: FindingRevalidation = { outcome: "holds" };
   const readAgentSubject = async (
     agentId: string,
   ): Promise<{ agent?: HivraAgentSnapshot | null; error?: { message?: string } }> => {
@@ -2398,15 +2398,15 @@ async function revalidateIncidentFinding(
       const subject = await readAgentSubject(finding.subjectId);
       if (subject.error) return revalidateFailed("hivra_agents", subject.error.message);
       const agent = subject.agent;
-      if (!agent || agent.status !== "running" || agent.sleepState !== "awake") return "cleared";
+      if (!agent || agent.status !== "running" || agent.sleepState !== "awake") return cleared;
       const { receipt, error } = await latestSurfaceReceiptForAgent(db, finding.subjectId);
       if (error) return revalidateFailed("surface receipts", error.message);
-      if (!receipt?.eventType || !BOX_SURFACE_EVENT_TYPES.has(receipt.eventType)) return "cleared";
+      if (!receipt?.eventType || !BOX_SURFACE_EVENT_TYPES.has(receipt.eventType)) return cleared;
       const receiptMs = parseTimeMs(receipt.eventAt) ?? parseTimeMs(receipt.firstSeenAt);
       const runtimeMarkerMs = agentRuntimeMarkerMs(agent);
       // A receipt older than the current runtime belongs to a previous boot.
-      if (receiptMs != null && runtimeMarkerMs != null && receiptMs < runtimeMarkerMs) return "cleared";
-      if (!BOX_DOWN_EVENT_TYPES.has(receipt.eventType)) return "cleared";
+      if (receiptMs != null && runtimeMarkerMs != null && receiptMs < runtimeMarkerMs) return cleared;
+      if (!BOX_DOWN_EVENT_TYPES.has(receipt.eventType)) return cleared;
       // A receipt past the stale window whose public probe just answered is
       // stale bookkeeping — the same suppression the evaluator applies.
       if (
@@ -2414,7 +2414,7 @@ async function revalidateIncidentFinding(
         now - receiptMs > BOX_DOWN_STALE_RECEIPT_MS &&
         healthzProbe?.status === 200
       ) {
-        return "cleared";
+        return cleared;
       }
       // The grace window applies to the CURRENT evidence too, not only the
       // evaluated snapshot: the outage this finding described can end and a
@@ -2426,15 +2426,15 @@ async function revalidateIncidentFinding(
         receipt.eventType !== "recovery_exhausted" &&
         (receiptMs == null || now - receiptMs < BOX_DOWN_MIN_AGE_MS)
       ) {
-        return "cleared";
+        return cleared;
       }
-      return "holds";
+      return holds;
     }
     case "box_unreachable": {
       const subject = await readAgentSubject(finding.subjectId);
       if (subject.error) return revalidateFailed("hivra_agents", subject.error.message);
       const agent = subject.agent;
-      if (!agent || agent.status !== "running" || agent.sleepState !== "awake") return "cleared";
+      if (!agent || agent.status !== "running" || agent.sleepState !== "awake") return cleared;
       // The subject's CURRENT recorded outage: a concurrent healthy scan
       // (or a healthy-verdict write) archives the probe row — the stored
       // verdict then says recovered even when this pass's diagnosis probe
@@ -2448,12 +2448,12 @@ async function revalidateIncidentFinding(
         .eq("instance_id", finding.subjectId)
         .maybeSingle();
       if (probeRowError) return revalidateFailed("probe row", probeRowError.message);
-      if (!probeRow || probeRow.archived_at != null) return "cleared";
+      if (!probeRow || probeRow.archived_at != null) return cleared;
       // Still-open stored outage: the diagnosis probes of the subject's own
       // public /healthz just ran for this report — the freshest possible
       // observation. Only a 200 is confirmed recovery; a failed, skipped or
       // absent probe keeps the recorded outage standing.
-      if (healthzProbe?.status === 200) return "cleared";
+      if (healthzProbe?.status === 200) return cleared;
       // The grace window applies to the CURRENT outage, not the one the
       // evaluation snapshot aged: the recorded outage can close and a new
       // one open between evaluation and this insert — a verdict write
@@ -2462,46 +2462,58 @@ async function revalidateIncidentFinding(
       // has not earned a page yet; the next scan re-ages it and reports it
       // then.
       const outageStartMs = parseTimeMs(probeRow.first_seen_at);
-      if (outageStartMs == null || now - outageStartMs < BOX_UNREACHABLE_MIN_AGE_MS) {
-        return "cleared";
+      // The runtime marker applies to the CURRENT outage too: a box that
+      // rebooted between the evaluation snapshot and this re-check leaves
+      // the probe row describing the PREVIOUS runtime's outage — and the
+      // new runtime never got its grace window. The next scan's probe-row
+      // write restarts the row's clock (the same reset applyPublicProbeSignals
+      // performs); this insert defers so the new boot is not paged
+      // instantly on a stale start.
+      const runtimeMarkerMs = agentRuntimeMarkerMs(agent);
+      if (
+        outageStartMs == null ||
+        (runtimeMarkerMs != null && outageStartMs < runtimeMarkerMs) ||
+        now - outageStartMs < BOX_UNREACHABLE_MIN_AGE_MS
+      ) {
+        return cleared;
       }
-      return "holds";
+      return { outcome: "holds", probeRowFirstSeenAt: probeRow.first_seen_at as string };
     }
     case "launch_failed": {
       if (finding.subjectKind === "hermes_instance") {
         const subject = await readInstanceSubject(finding.subjectId);
         if (subject.error) return revalidateFailed("hermes_instances", subject.error.message);
         const instance = subject.instance;
-        if (!instance) return "cleared";
+        if (!instance) return cleared;
         const createdMs = parseTimeMs(instance.createdAt);
         if (createdMs == null || now - createdMs > LAUNCH_FAILED_WINDOW_MS || now - createdMs < 0) {
-          return "cleared";
+          return cleared;
         }
         const failed =
           (instance.status != null && LAUNCH_FAILED_INSTANCE_STATUSES.has(instance.status)) ||
           instance.lifecycleState === "failed";
-        return failed ? "holds" : "cleared";
+        return failed ? holds : cleared;
       }
       const subject = await readAgentSubject(finding.subjectId);
       if (subject.error) return revalidateFailed("hivra_agents", subject.error.message);
       const agent = subject.agent;
-      if (!agent || agent.provisionedAt != null) return "cleared";
+      if (!agent || agent.provisionedAt != null) return cleared;
       const createdMs = parseTimeMs(agent.createdAt);
       if (createdMs == null || now - createdMs > LAUNCH_FAILED_WINDOW_MS || now - createdMs < 0) {
-        return "cleared";
+        return cleared;
       }
       const failedStatus = agent.status != null && LAUNCH_FAILED_AGENT_STATUSES.has(agent.status);
       const stuckAge = now - createdMs > LAUNCH_FAILED_STUCK_MS;
-      return failedStatus || stuckAge ? "holds" : "cleared";
+      return failedStatus || stuckAge ? holds : cleared;
     }
     case "lifecycle_stuck": {
       const subject = await readAgentSubject(finding.subjectId);
       if (subject.error) return revalidateFailed("hivra_agents", subject.error.message);
       const agent = subject.agent;
-      if (!agent || !agent.operationKind || !agent.operationStartedAt) return "cleared";
+      if (!agent || !agent.operationKind || !agent.operationStartedAt) return cleared;
       const startedMs = parseTimeMs(agent.operationStartedAt);
-      if (startedMs == null || now - startedMs < LIFECYCLE_STUCK_MS) return "cleared";
-      return "holds";
+      if (startedMs == null || now - startedMs < LIFECYCLE_STUCK_MS) return cleared;
+      return holds;
     }
     case "cron_unhealthy": {
       const { data, error } = await db
@@ -2510,7 +2522,7 @@ async function revalidateIncidentFinding(
         .eq("cron_name", finding.subjectId)
         .maybeSingle();
       if (error) return revalidateFailed("ops_cron_heartbeats", error.message);
-      if (!data) return "cleared";
+      if (!data) return cleared;
       const heartbeat = toHeartbeatSnapshot(data as HeartbeatDbRow);
       const schedule = finding.cron?.schedule;
       const periodMinutes = schedule?.periodMinutes ?? null;
@@ -2528,11 +2540,11 @@ async function revalidateIncidentFinding(
         (heartbeat.runCount ?? 0) > 0 &&
         neverSucceededMs != null &&
         now - neverSucceededMs > CRON_NEVER_SUCCEEDED_PERIOD_MULTIPLIER * periodMinutes * 60 * 1000;
-      return streak >= CRON_FAILURE_STREAK || stale || neverSucceededStale ? "holds" : "cleared";
+      return streak >= CRON_FAILURE_STREAK || stale || neverSucceededStale ? holds : cleared;
     }
     default:
       // A rule without a re-check reports as evaluated.
-      return "holds";
+      return holds;
   }
 }
 
@@ -3325,7 +3337,7 @@ export async function runCustomerIncidentScan(
     // is the scan's own `now` — the same observation time the evaluator
     // and the resolve pass use — not the real-time deadline clock.
     const revalidation = await revalidateIncidentFinding(db, finding, probes, now);
-    if (revalidation === "cleared") {
+    if (revalidation.outcome === "cleared") {
       log.warn("customer-incidents: skipping incident report; the subject recovered before the insert", {
         source: "customer-incidents",
         failureType: "incident_report_superseded",
@@ -3336,7 +3348,44 @@ export async function runCustomerIncidentScan(
     }
     if (pastReportDeadline()) return { deferred: true };
     try {
-      const reported = await report(incidentOpsEvent(finding, metadata, pagingEnabled));
+      const reported = await report({
+        ...incidentOpsEvent(finding, metadata, pagingEnabled),
+        // The report commits against the state this scan observed: a row
+        // that moved to a newer verdict while this report was in flight —
+        // resolved or restarted after scan start — refuses the stale write
+        // instead of reopening it (observedAt). For box_unreachable the
+        // durable verdict is the probe row itself: the re-check above read
+        // its outage start, and verdictGuard re-verifies exactly that
+        // state at commit time — the residual window between the
+        // re-check's read and this report's own insert/reopen where a
+        // healthy scan could archive the outage (the pure-insert arm the
+        // observedAt guards cannot reach). A moved verdict compensates the
+        // committed row and answers superseded — no page.
+        observedAt: nowIso,
+        ...(revalidation.probeRowFirstSeenAt != null
+          ? {
+              verdictGuard: {
+                source: PUBLIC_PROBE_SOURCE,
+                instanceId: finding.subjectId,
+                firstSeenAt: revalidation.probeRowFirstSeenAt,
+              },
+            }
+          : {}),
+      });
+      if (reported?.superseded) {
+        // The verdict this finding described already ended (or restarted)
+        // by the time the write committed — the report was refused and any
+        // row it opened/reopened was compensated back. Not opened, not
+        // failed: the outage verdict moved, and the next scan re-evaluates
+        // on current state.
+        log.warn("customer-incidents: incident report superseded by a newer verdict at commit", {
+          source: "customer-incidents",
+          failureType: "incident_report_superseded",
+          incidentKey: finding.key,
+          instanceId: finding.instanceId,
+        });
+        return {};
+      }
       // Only a persisted row counts as opened — an insert that returned no id
       // (or null on lookup failure) means nothing was recorded.
       if (reported?.id) {
