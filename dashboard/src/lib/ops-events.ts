@@ -207,15 +207,22 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
     }
 
     if (existing?.id) {
-      const wasArchived = existing.archived_at != null;
-
-      if (wasArchived) {
+      const db = supabaseAdmin;
+      // Reopen a row this report OBSERVED as archived (or that an archive
+      // closed under it). `row` carries the freshest archived_at the caller
+      // saw — the lookup row on the direct path, the post-refresh re-read
+      // when the row moved mid-write.
+      const reopenArchivedRow = async (row: {
+        id: string;
+        occurrence_count: number | null;
+        archived_at: string | null;
+      }): Promise<OpsEventReport | null> => {
         // A row closed AT-or-AFTER the observation was resolved by a newer
         // verdict; reopening it from this stale report would resurrect a
         // state that already ended. Refuse before the write — and predicate
         // the write itself so the same verdict landing between the lookup
         // and the update turns it into a no-op as well.
-        const archivedAtMs = parseIsoMs(existing.archived_at);
+        const archivedAtMs = parseIsoMs(row.archived_at);
         if (hasObservedAt && Number.isFinite(archivedAtMs) && archivedAtMs >= observedAtMs) {
           return { fingerprint, superseded: true };
         }
@@ -223,17 +230,17 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
         // Conditional reopen: the write only lands while the row is still
         // archived, so exactly one racing writer flips it back to open — and
         // only that writer may page for the fresh incident.
-        let reopenQuery = supabaseAdmin
+        let reopenQuery = db
           .from('ops_events')
           .update({
             ...payload,
             archived_at: null,
             archived_by_user_id: null,
             last_seen_at: now,
-            occurrence_count: (existing.occurrence_count || 0) + 1,
+            occurrence_count: (row.occurrence_count || 0) + 1,
             ...(input.resetFirstSeenOnReopen ? { first_seen_at: now } : {}),
           })
-          .eq('id', existing.id)
+          .eq('id', row.id)
           .not('archived_at', 'is', null);
         if (input.observedAt) {
           // Same verdict at the row: the close must still predate the
@@ -254,8 +261,8 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
 
         if (reopened?.id) {
           // A recurrence of an ARCHIVED fingerprint un-archives the row —
-          // that is a fresh incident, so it pages once more. An still-open
-          // row takes the branch below and must not re-page.
+          // that is a fresh incident, so it pages once more. A still-open
+          // row takes the refresh branch below and must not re-page.
           if (shouldPage) {
             await dispatchAdminPageAlert({
               fingerprint,
@@ -278,7 +285,11 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
         if (input.observedAt) {
           return { fingerprint, superseded: true };
         }
-        return { id: existing.id, fingerprint };
+        return { id: row.id, fingerprint };
+      };
+
+      if (existing.archived_at != null) {
+        return reopenArchivedRow(existing);
       }
 
       // An OPEN row that records a start newer than this observation belongs
@@ -288,36 +299,60 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
         return { fingerprint, superseded: true };
       }
 
+      // The refresh lands ONLY while the row is still open. An archive
+      // racing between the lookup and this write used to be silently undone
+      // — the payload's archived_at:null reopened the row WITHOUT the
+      // reopen path's page or first_seen_at reset, so a pageable recurrence
+      // lost its notification. The open-only predicate turns that race into
+      // a no-match, routed through the conditional reopen below instead.
       let refreshQuery = supabaseAdmin
         .from('ops_events')
         .update({
           ...payload,
-          archived_at: null,
-          archived_by_user_id: null,
           last_seen_at: now,
           occurrence_count: (existing.occurrence_count || 0) + 1,
         })
-        .eq('id', existing.id);
+        .eq('id', existing.id)
+        .is('archived_at', null);
       if (input.observedAt) {
-        // Land only while the row has not been closed after the observation
-        // (the update itself can reopen an archived row — an archive landing
-        // between the lookup and this write must not be undone by the stale
-        // report) and does not record a start newer than the observation.
-        refreshQuery = refreshQuery
-          .or(`archived_at.is.null,archived_at.lt."${input.observedAt}"`)
-          .lte('first_seen_at', input.observedAt);
+        // Same verdict at the row: the outage start it records must not be
+        // newer than this observation.
+        refreshQuery = refreshQuery.lte('first_seen_at', input.observedAt);
       }
-      const { data } = await refreshQuery
+      const { data: refreshed, error: refreshError } = await refreshQuery
         .select('id')
-        .single();
+        .maybeSingle();
 
-      if (input.observedAt && !data?.id) {
+      // Same convention as the reopen branch: a failed update is a failed
+      // report (null), not a lost race.
+      if (refreshError) {
+        return null;
+      }
+      if (refreshed?.id) {
+        return { id: refreshed.id, fingerprint };
+      }
+
+      // The refresh matched nothing — the row moved under this report.
+      // Re-read it once to tell the two moves apart: archived rows go
+      // through the conditional reopen so the recurrence keeps its page
+      // and its first_seen_at reset; a still-open row means the
+      // first_seen_at guard refused this stale report (or a deleted row —
+      // handled by the same fallback as before).
+      const { data: current, error: rereadError } = await supabaseAdmin
+        .from('ops_events')
+        .select('id, occurrence_count, archived_at, first_seen_at')
+        .eq('fingerprint', fingerprint)
+        .maybeSingle();
+      if (rereadError) {
+        return null;
+      }
+      if (current?.id && current.archived_at != null) {
+        return reopenArchivedRow(current);
+      }
+      if (input.observedAt) {
         return { fingerprint, superseded: true };
       }
-      return {
-        id: data?.id,
-        fingerprint,
-      };
+      return { id: existing.id, fingerprint };
     }
 
     const { data } = await supabaseAdmin

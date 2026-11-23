@@ -941,8 +941,16 @@ async function collectWatchdogEvents(
   // One agent's reads: the mixed diagnosis timeline plus the bounded
   // per-kind/per-ordering surface-receipt windows. Extracted so the whole
   // unit can race the watchdog deadline — a stalled read must not hold a
-  // worker past the budget the report pass and heartbeat depend on.
-  const readAgent = async (id: string): Promise<void> => {
+  // worker past the budget the report pass and heartbeat depend on. The
+  // unit keeps its results local: the worker applies them to the shared
+  // maps only when the race accepted them, so a read that outlives the
+  // deadline cannot quietly populate state for an agent already counted
+  // unknown.
+  const readAgent = async (id: string): Promise<{
+    events?: WatchdogEventSnapshot[];
+    latestSurface?: WatchdogEventSnapshot;
+    unknown?: boolean;
+  }> => {
     const { data, error } = await db
       .from("ops_events")
       .select("id,title,first_seen_at,metadata")
@@ -951,19 +959,15 @@ async function collectWatchdogEvents(
       .order("metadata->>event_at", { ascending: false })
       .limit(WATCHDOG_EVENTS_PER_AGENT_LIMIT);
     if (error) {
-      unknownAgentIds.add(id);
       log.warn("customer-incidents: watchdog event fetch failed for agent", {
         source: "customer-incidents",
         failureType: "watchdog_events_fetch_failed",
         instanceId: id,
         errorMessage: error.message,
       });
-      return;
+      return { unknown: true };
     }
-    byAgent.set(
-      id,
-      ((data ?? []) as WatchdogOpsRow[]).map(watchdogEventFromOpsRow),
-    );
+    const events = ((data ?? []) as WatchdogOpsRow[]).map(watchdogEventFromOpsRow);
     // The newest surface failure/recovery receipt gets its own bounded
     // reads — THREE ORDERINGS per receipt kind, all in flight at once.
     // The 30-row mixed timeline above is diagnostic context and can be
@@ -1035,15 +1039,16 @@ async function collectWatchdogEvents(
       recoveryNulls.error;
     if (receiptError) {
       // The timeline read succeeded but a deciding receipt did not —
-      // box_down cannot be evaluated for this agent this pass.
-      unknownAgentIds.add(id);
+      // box_down cannot be evaluated for this agent this pass. The timeline
+      // still counts for diagnosis, so it is returned alongside the
+      // unknown mark.
       log.warn("customer-incidents: surface receipt fetch failed for agent", {
         source: "customer-incidents",
         failureType: "surface_receipt_fetch_failed",
         instanceId: id,
         errorMessage: receiptError.message,
       });
-      return;
+      return { events, unknown: true };
     }
     // Pick the newest receipt by EFFECTIVE time (event_at, else
     // first_seen_at) across the union of all six windows — the same
@@ -1067,9 +1072,7 @@ async function collectWatchdogEvents(
     const receipt = sortWatchdogEventsByEventAt(
       [...unionRows.values()].map(watchdogEventFromOpsRow),
     )[0];
-    if (receipt) {
-      latestSurfaceByAgent.set(id, receipt);
-    }
+    return { events, latestSurface: receipt };
   };
   await Promise.all(
     Array.from({ length: Math.min(WATCHDOG_FETCH_CONCURRENCY, queue.length) }, async () => {
@@ -1079,15 +1082,24 @@ async function collectWatchdogEvents(
           return;
         }
         if (deadlineAt == null) {
-          await readAgent(id);
+          const outcome = await readAgent(id);
+          if (outcome.events) byAgent.set(id, outcome.events);
+          if (outcome.latestSurface) latestSurfaceByAgent.set(id, outcome.latestSurface);
+          if (outcome.unknown) unknownAgentIds.add(id);
           continue;
         }
         // Hard deadline on the reads themselves, not just admission: a
         // stalled query must not hold a worker past the budget — the
         // agent is unread (unknown — never resolved on partial data) and
-        // the queue drains for the next pass.
+        // the queue drains for the next pass. The outcome stays local to
+        // the raced unit and is applied only when the phase accepted it,
+        // so a read finishing after its rejection cannot populate state
+        // for an agent already counted unknown.
+        let outcome: Awaited<ReturnType<typeof readAgent>> | undefined;
         const completed = await finishedBeforeDeadline(
-          () => readAgent(id),
+          async () => {
+            outcome = await readAgent(id);
+          },
           deadlineAt,
           clock,
         );
@@ -1100,6 +1112,9 @@ async function collectWatchdogEvents(
           markRestUnknown(id);
           return;
         }
+        if (outcome?.events) byAgent.set(id, outcome.events);
+        if (outcome?.latestSurface) latestSurfaceByAgent.set(id, outcome.latestSurface);
+        if (outcome?.unknown) unknownAgentIds.add(id);
       }
     }),
   );
@@ -1123,7 +1138,19 @@ const PUBLIC_PROBE_WRITE_CONCURRENCY = 8;
 export const PUBLIC_PROBE_SOURCE = "box.public_probe.unreachable";
 
 type PublicProbeSignal =
-  | { kind: "up" }
+  | {
+      kind: "up";
+      /**
+       * Scan clock at the moment the healthy probe returned — the
+       * observation time the probe-row archive is stamped with. Verdict
+       * timestamps order the outage record by when the observation was
+       * taken, not when the write landed: an archived_at later than the
+       * healthy observation would let a stalled down-report observed
+       * in between satisfy the stale-reopen guard and resurrect the
+       * closed outage.
+       */
+      observedAtMs: number;
+    }
   | {
       kind: "down";
       status: number | null;
@@ -1179,8 +1206,10 @@ async function runPool<T>(
  * this codebase exposes no per-query timeout, so the bound is a RACE
  * rather than a cancellation: when the deadline wins, the op keeps
  * running in the background while the scan moves on and still reaches the
- * heartbeat write. That is safe because every write the op can still land
- * is version-guarded (a stale archive/reset no-ops against a row that
+ * heartbeat write. That is safe because the work keeps its own deadline
+ * checkpoints after every preparatory await — a unit that lost the race
+ * never STARTS a new write or notice — every write already in flight is
+ * version-guarded (a stale archive/reset no-ops against a row that
  * moved) or idempotent, and the caller counts the timed-out unit as
  * degraded and treats its subject as unprocessed — rows unarchived and
  * unresolved, retried next pass.
@@ -1307,16 +1336,17 @@ async function collectPublicProbeSignals(
         // Only 200 proves the box itself served /healthz — any other status
         // (including the tunnel catch-all's edge-side 404) is down.
         const healthy = outcome.status === 200;
+        const observedAtMs = budget.clock();
         signals.set(
           agent.id,
           healthy
-            ? { kind: "up" }
+            ? { kind: "up", observedAtMs }
             : {
                 kind: "down",
                 status: outcome.status,
                 latencyMs: outcome.latencyMs,
                 error: outcome.error,
-                observedAtMs: budget.clock(),
+                observedAtMs,
               },
         );
       }
@@ -1505,6 +1535,21 @@ export interface PublicProbeApplication {
  * write deadline passes are left unprocessed — unknown, so their
  * incidents neither open nor resolve on a skipped write.
  */
+interface ProbeApplyOutcome {
+  /** Stored outage start (ms epoch) when this subject's outage was confirmed. */
+  outageStartMs?: number;
+  /** Probe state could not be determined — never resolve this subject. */
+  unknown?: boolean;
+  /** Probe state is degraded this scan (feeds summary.degraded). */
+  degraded?: boolean;
+  /**
+   * The write deadline was reached at a checkpoint inside the apply — the
+   * subject is unprocessed (same handling as a lost deadline race), so no
+   * report/archive/reset started after the phase stopped counting it.
+   */
+  deferred?: boolean;
+}
+
 async function applyPublicProbeSignals(
   db: DbClient,
   agents: HivraAgentSnapshot[],
@@ -1519,23 +1564,35 @@ async function applyPublicProbeSignals(
     degradedAgentIds: new Set(),
   };
   const nowIso = new Date(deps.now).toISOString();
+  const pastDeadline = () => budget.clock() >= budget.deadlineAt;
 
-  const applyToAgent = async (agent: HivraAgentSnapshot): Promise<void> => {
+  const applyToAgent = async (agent: HivraAgentSnapshot): Promise<ProbeApplyOutcome> => {
     const signal: PublicProbeSignal =
       signals.get(agent.id) ?? { kind: "skipped", reason: "budget" };
     const openRow = openRowsByAgent.get(agent.id) ?? null;
 
     if (signal.kind === "skipped") {
-      result.unknownAgentIds.add(agent.id);
       // Only budget exhaustion is scan degradation; a box without a usable
       // public hostname is a standing data gap, not a failed read.
-      if (signal.reason === "budget") result.degradedAgentIds.add(agent.id);
-      return;
+      return { unknown: true, degraded: signal.reason === "budget" };
     }
 
     if (signal.kind === "up") {
-      if (!openRow) return;
-      const archive = await archivePublicProbeRow(db, openRow, nowIso);
+      if (!openRow) return {};
+      // The deadline races this whole apply — the checkpoint below keeps a
+      // subject whose race was already lost from starting a NEW write after
+      // being counted unprocessed. The archive is stamped with the healthy
+      // probe's own observation time (the verdict convention, matching
+      // observedAt on the down report), not scan start: an archive stamped
+      // at scan start would predate a stalled down-report observed between
+      // the two, letting that obsolete observation satisfy the
+      // stale-reopen guard and resurrect the outage this probe closed.
+      if (pastDeadline()) return { deferred: true };
+      const archive = await archivePublicProbeRow(
+        db,
+        openRow,
+        new Date(signal.observedAtMs).toISOString(),
+      );
       if (archive === "error") {
         // The probe just answered 200 but the archive write failed, so the
         // stored outage row is stale data — not evidence of a live outage.
@@ -1543,17 +1600,17 @@ async function applyPublicProbeSignals(
         // for a box that provably answered publicly. Unknown instead: an
         // existing incident stays open for a later pass to retry the
         // archive, and nothing opens from a row we failed to update.
-        result.degradedAgentIds.add(agent.id);
-        result.unknownAgentIds.add(agent.id);
-      } else if (archive === "moved") {
+        return { unknown: true, degraded: true };
+      }
+      if (archive === "moved") {
         // The row changed under this scan (a concurrent failure report or
         // archive landed between the read and the archive): its state is no
         // longer what we observed — re-evaluate next pass rather than
         // resolving on a stale snapshot.
-        result.unknownAgentIds.add(agent.id);
+        return { unknown: true };
       }
       // "archived" means no open outage remains.
-      return;
+      return {};
     }
 
     // signal.kind === "down"
@@ -1565,6 +1622,7 @@ async function applyPublicProbeSignals(
     // verdict older than this probe's: a row closed — or an outage started —
     // after the observation refuses the write entirely. (A pure insert has
     // no stored row to contradict, so that residual window remains.)
+    if (pastDeadline()) return { deferred: true };
     const reported = await deps.report({
       ...publicProbeUnreachableOpsEvent(agent, signal),
       observedAt: new Date(signal.observedAtMs).toISOString(),
@@ -1576,18 +1634,14 @@ async function applyPublicProbeSignals(
       // probe state is contested: mark it unknown rather than claim an
       // outage age this report never established — and never resolve an
       // incident on a write that did not commit.
-      result.unknownAgentIds.add(agent.id);
       log.warn("customer-incidents: probe-row down report superseded by a newer verdict", {
         source: "customer-incidents",
         failureType: "public_probe_report_superseded",
         instanceId: agent.id,
       });
-      return;
+      return { unknown: true };
     }
     if (openRow) {
-      // A failed refresh does not change the outage state, but it is
-      // degraded.
-      if (reported == null) result.degradedAgentIds.add(agent.id);
       // Whether the outage CONTINUED or was REOPENED decides its start —
       // and the observed snapshot cannot tell them apart. A racing scan's
       // healthy-probe archive between this scan's row read and the report
@@ -1599,6 +1653,7 @@ async function applyPublicProbeSignals(
       // confirms the outage the row now records. (The observed row is the
       // outage record — reportOpsEvent dedupes onto it by fingerprint
       // whenever it exists.)
+      if (pastDeadline()) return { deferred: true };
       const stored = await readPublicProbeRowStart(db, openRow.id);
       const storedStartMs =
         stored.outcome === "open" ? parseTimeMs(stored.firstSeenAt) : null;
@@ -1606,11 +1661,15 @@ async function applyPublicProbeSignals(
         // The outage start could not be confirmed: the read failed, the
         // row was archived or deleted under this scan, or it carries no
         // usable timestamp. Unknown — never page on an unverified age.
-        result.unknownAgentIds.add(agent.id);
-        if (stored.outcome === "error" || stored.outcome === "open") {
-          result.degradedAgentIds.add(agent.id);
-        }
-        return;
+        return {
+          unknown: true,
+          degraded:
+            // A failed refresh does not change the outage state, but it is
+            // degraded — as is a failed or unverifiable read-back.
+            reported == null ||
+            stored.outcome === "error" ||
+            stored.outcome === "open",
+        };
       }
       // A stored outage start that predates the current runtime marker
       // (the same provisioned_at / sleep_tier_changed_at /
@@ -1623,39 +1682,41 @@ async function applyPublicProbeSignals(
       // clock.
       const runtimeMarkerMs = agentRuntimeMarkerMs(agent);
       if (runtimeMarkerMs != null && storedStartMs < runtimeMarkerMs) {
+        if (pastDeadline()) return { deferred: true };
         const reset = await resetPublicProbeRowFirstSeen(
           db,
           { ...openRow, firstSeenAt: stored.firstSeenAt },
           nowIso,
         );
         if (reset === "reset") {
-          result.outageStartedAtMs.set(agent.id, deps.now);
-        } else {
-          // The row changed under this scan (or the write failed): its
-          // outage start is no longer what we observed — re-evaluate next
-          // pass.
-          result.unknownAgentIds.add(agent.id);
-          if (reset === "error") result.degradedAgentIds.add(agent.id);
+          // A failed refresh does not change the outage state, but it is
+          // degraded.
+          return { outageStartMs: deps.now, degraded: reported == null };
         }
-        return;
+        // The row changed under this scan (or the write failed): its
+        // outage start is no longer what we observed — re-evaluate next
+        // pass.
+        return { unknown: true, degraded: reported == null || reset === "error" };
       }
-      result.outageStartedAtMs.set(agent.id, storedStartMs);
-      return;
+      return {
+        outageStartMs: storedStartMs,
+        // A failed refresh does not change the outage state, but it is
+        // degraded.
+        degraded: reported == null,
+      };
     }
 
     if (reported?.id == null) {
       // The outage could not be recorded — its state is unknown, and an
       // open incident must not resolve on a guess.
-      result.unknownAgentIds.add(agent.id);
-      result.degradedAgentIds.add(agent.id);
-      return;
+      return { unknown: true, degraded: true };
     }
 
     // Fresh outage (insert, or un-archive of a previously closed row).
     // resetFirstSeenOnReopen pins first_seen_at to this outage's start inside
     // the same write that reopens the row, so the 10-minute rule measures
     // THIS outage, not the first one ever seen.
-    result.outageStartedAtMs.set(agent.id, deps.now);
+    return { outageStartMs: deps.now };
   };
 
   await runPool(agents, PUBLIC_PROBE_WRITE_CONCURRENCY, async (agent) => {
@@ -1671,13 +1732,19 @@ async function applyPublicProbeSignals(
     // The deadline also races work already started: a stalled report or
     // archive leaves the subject unprocessed (unknown + degraded, retried
     // next pass) instead of holding the invocation past the heartbeat
-    // margin. Any write it still lands is version-guarded.
+    // margin. Any write it still lands is version-guarded. The callback's
+    // own checkpoints stop it from STARTING a new write once its race was
+    // lost, and its outcome is applied only when the phase accepted it —
+    // a deferred or timed-out apply never half-counts its subject.
+    let outcome: ProbeApplyOutcome | undefined;
     const completed = await finishedBeforeDeadline(
-      () => applyToAgent(agent),
+      async () => {
+        outcome = await applyToAgent(agent);
+      },
       budget.deadlineAt,
       budget.clock,
     );
-    if (!completed) {
+    if (!completed || outcome == null || outcome.deferred) {
       result.unknownAgentIds.add(agent.id);
       result.degradedAgentIds.add(agent.id);
       log.warn("customer-incidents: probe-row write exceeded the scan deadline", {
@@ -1685,7 +1752,13 @@ async function applyPublicProbeSignals(
         failureType: "probe_row_write_deadline",
         instanceId: agent.id,
       });
+      return;
     }
+    if (outcome.outageStartMs != null) {
+      result.outageStartedAtMs.set(agent.id, outcome.outageStartMs);
+    }
+    if (outcome.unknown) result.unknownAgentIds.add(agent.id);
+    if (outcome.degraded) result.degradedAgentIds.add(agent.id);
   });
 
   return result;
@@ -2381,6 +2454,19 @@ export async function runCustomerIncidentScan(
   let hermesInstances: HermesInstanceSnapshot[];
   let heartbeats: CronHeartbeatSnapshot[];
   let openIncidentRows: OpenIncidentRow[];
+  const openProbeRowsByAgent = new Map<string, OpenProbeRow>();
+  let probeRowsReadable = false;
+  // The open probe-row read starts inside the collection window, in parallel
+  // with the core reads. It used to begin only after the watchdog phase —
+  // whose own 60s budget could then consume the shared 30s collection
+  // deadline before the read even started, sending every box's public-probe
+  // eval to unknown exactly when watchdog reads were slow. Its failure
+  // stays isolated: unknown probes degrade the pass, never a failed scan.
+  const probeRowRead = collectOpenProbeRows(db);
+  // Swallow rejections eagerly: the read may fail while the core awaits are
+  // still settling, and the only listener is the deadline race below — an
+  // otherwise-unobserved rejection would surface as an unhandled error.
+  void probeRowRead.catch(() => undefined);
   try {
     const coreReads = Promise.all([
       collectAgents(db, now),
@@ -2441,6 +2527,40 @@ export async function runCustomerIncidentScan(
     });
   }
 
+  // The probe-row read races the same shared collection deadline; it was
+  // started with the core reads above so a slow watchdog pass cannot push
+  // it out of window. A read that outlives the deadline — or fails —
+  // degrades to "all candidates unknown" exactly like a failed read:
+  // nothing opens or resolves on missing probe-row data.
+  let probeRowsDone = false;
+  let probeRowReadError: unknown;
+  try {
+    probeRowsDone = await finishedBeforeDeadline(
+      () => probeRowRead,
+      collectionDeadlineAt,
+      clock,
+    );
+  } catch (err) {
+    probeRowReadError = err;
+  }
+  if (probeRowReadError !== undefined) {
+    log.warn("customer-incidents: public probe row read failed; box_unreachable unknown", {
+      source: "customer-incidents",
+      failureType: "public_probe_rows_read_failed",
+      errorMessage: probeRowReadError instanceof Error ? probeRowReadError.message : String(probeRowReadError),
+    });
+  } else if (!probeRowsDone) {
+    log.warn("customer-incidents: public probe row read exceeded the collection deadline; box_unreachable unknown", {
+      source: "customer-incidents",
+      failureType: "public_probe_rows_deadline",
+    });
+  } else {
+    for (const row of await probeRowRead) {
+      openProbeRowsByAgent.set(row.agentId, row);
+    }
+    probeRowsReadable = true;
+  }
+
   // Watchdog events are only needed for box_down candidates: running + awake +
   // non-admin. A failed per-agent fetch marks that agent's box_down unknown.
   const boxDownCandidates = agents.filter(
@@ -2474,43 +2594,6 @@ export async function runCustomerIncidentScan(
   const degradedAgentIds = new Set(unknownAgentIds);
   const publicOutageStartedAtMs = new Map<string, number>();
   const publicProbeUnknownAgentIds = new Set<string>();
-  const openProbeRowsByAgent = new Map<string, OpenProbeRow>();
-  let probeRowsReadable = false;
-  // Same shared collection deadline; a read that outlives it — or fails —
-  // degrades to "all candidates unknown" exactly like a failed read did
-  // before the deadline existed: nothing opens or resolves on missing
-  // probe-row data.
-  const probeRowRead = collectOpenProbeRows(db);
-  let probeRowsDone = false;
-  let probeRowReadError: unknown;
-  try {
-    probeRowsDone = await finishedBeforeDeadline(
-      () => probeRowRead,
-      collectionDeadlineAt,
-      clock,
-    );
-  } catch (err) {
-    probeRowReadError = err;
-  }
-  if (probeRowReadError !== undefined) {
-    log.warn("customer-incidents: public probe row read failed; box_unreachable unknown", {
-      source: "customer-incidents",
-      failureType: "public_probe_rows_read_failed",
-      errorMessage: probeRowReadError instanceof Error ? probeRowReadError.message : String(probeRowReadError),
-    });
-  } else if (!probeRowsDone) {
-    void probeRowRead.catch(() => undefined);
-    log.warn("customer-incidents: public probe row read exceeded the collection deadline; box_unreachable unknown", {
-      source: "customer-incidents",
-      failureType: "public_probe_rows_deadline",
-    });
-  } else {
-    for (const row of await probeRowRead) {
-      openProbeRowsByAgent.set(row.agentId, row);
-    }
-    probeRowsReadable = true;
-  }
-
   if (probeRowsReadable) {
     const signals = await collectPublicProbeSignals(scanCandidates, probe, {
       deadlineAt: probeDeadlineAt,
@@ -2611,18 +2694,24 @@ export async function runCustomerIncidentScan(
       (item): ReportItem => ({ kind: "touch", finding: item.finding, row: item.row }),
     ),
   ];
-  const processReportItem = async (item: ReportItem): Promise<void> => {
+  const pastReportDeadline = () => clock() >= reportDeadlineAt;
+  const processReportItem = async (item: ReportItem): Promise<{
+    deferred?: boolean;
+    stillOpen?: number;
+    opened?: number;
+    degraded?: number;
+    failed?: number;
+  }> => {
     if (item.kind === "touch") {
-      summary.stillOpen += 1;
       // The incident still holds and the row is already open — no re-page,
       // but the row's guarded version MUST move: a concurrent scan that
       // decided this incident cleared can otherwise archive a live incident
       // (and send a resolved notice) with the version it read. The guarded
       // refresh makes that stale archive a no-op. "moved" means the row
       // changed under this scan — already safe; "error" is degraded.
+      if (pastReportDeadline()) return { deferred: true };
       const touch = await touchOpenIncidentRow(db, item.row, nowIso);
-      if (touch === "error") summary.degraded += 1;
-      return;
+      return { stillOpen: 1, degraded: touch === "error" ? 1 : 0 };
     }
     const finding = item.finding;
     let probes: PublicProbeResult[] = [];
@@ -2643,31 +2732,35 @@ export async function runCustomerIncidentScan(
     }
     const subscription = finding.userId ? subscriptions.get(finding.userId) ?? null : null;
     const metadata = buildIncidentMetadata(finding, { subscription, probes });
+    // Checkpoint between the preparatory probes and the write: once the
+    // deadline passed, this item is counted deferred — a report (and its
+    // page) must not start now, even though the race cannot recall a write
+    // already in flight.
+    if (pastReportDeadline()) return { deferred: true };
     try {
       const reported = await report(incidentOpsEvent(finding, metadata, pagingEnabled));
       // Only a persisted row counts as opened — an insert that returned no id
       // (or null on lookup failure) means nothing was recorded.
       if (reported?.id) {
-        summary.opened += 1;
-      } else {
-        summary.failed += 1;
-        log.error(
-          "customer-incidents: incident report returned no persisted id",
-          new Error("reportOpsEvent returned no row id"),
-          {
-            source: "customer-incidents",
-            failureType: "incident_report_unconfirmed",
-            incidentKey: finding.key,
-          },
-        );
+        return { opened: 1 };
       }
+      log.error(
+        "customer-incidents: incident report returned no persisted id",
+        new Error("reportOpsEvent returned no row id"),
+        {
+          source: "customer-incidents",
+          failureType: "incident_report_unconfirmed",
+          incidentKey: finding.key,
+        },
+      );
+      return { failed: 1 };
     } catch (err) {
-      summary.failed += 1;
       log.error("customer-incidents: incident report failed", err, {
         source: "customer-incidents",
         failureType: "incident_report_failed",
         incidentKey: finding.key,
       });
+      return { failed: 1 };
     }
   };
   for (let index = 0; index < reportOrder.length; index += 1) {
@@ -2679,13 +2772,19 @@ export async function runCustomerIncidentScan(
     // The deadline also races the item's own work: a report or version
     // refresh that stalls past the budget counts this item and the whole
     // remaining queue as degraded — they re-emit next scan — rather than
-    // pushing the invocation past the resolve pass and the heartbeat.
+    // pushing the invocation past the resolve pass and the heartbeat. The
+    // item's own checkpoints keep it from starting a new write or page
+    // once its race was lost, and its counters are applied only when the
+    // phase accepted its result.
+    let outcome: Awaited<ReturnType<typeof processReportItem>> | undefined;
     const completed = await finishedBeforeDeadline(
-      () => processReportItem(item),
+      async () => {
+        outcome = await processReportItem(item);
+      },
       reportDeadlineAt,
       clock,
     );
-    if (!completed) {
+    if (!completed || outcome == null || outcome.deferred) {
       summary.degraded += reportOrder.length - index;
       log.warn("customer-incidents: report work exceeded the scan deadline; remaining items deferred", {
         source: "customer-incidents",
@@ -2694,6 +2793,10 @@ export async function runCustomerIncidentScan(
       });
       break;
     }
+    summary.stillOpen += outcome.stillOpen ?? 0;
+    summary.opened += outcome.opened ?? 0;
+    summary.degraded += outcome.degraded ?? 0;
+    summary.failed += outcome.failed ?? 0;
   }
 
   // ---- resolve closed incidents ----------------------------------------------
@@ -2713,9 +2816,16 @@ export async function runCustomerIncidentScan(
     ),
     scanTick,
   );
+  const pastResolveDeadline = () => clock() >= resolveDeadlineAt;
   const resolveOpenIncidentRow = async (
     row: OpenIncidentRow & { incidentKey: string },
-  ): Promise<void> => {
+  ): Promise<{
+    deferred?: boolean;
+    resolved?: number;
+    expired?: number;
+    degraded?: number;
+    failed?: number;
+  }> => {
     // A box_down whose newest surface receipt is over 24h old while the
     // box's public /healthz probe succeeded this scan is stale bookkeeping,
     // not a live outage — archive it silently like an aged-out launch. The
@@ -2738,19 +2848,22 @@ export async function runCustomerIncidentScan(
         receiptMs != null &&
         now - receiptMs > BOX_DOWN_STALE_RECEIPT_MS;
     }
-    if (findingKeys.has(row.incidentKey) && !staleBoxDown) return;
-    if (evaluation.unknownKeys.has(row.incidentKey)) return;
+    if (findingKeys.has(row.incidentKey) && !staleBoxDown) return {};
+    if (evaluation.unknownKeys.has(row.incidentKey)) return {};
     // launch_failed rows age out of the rule's 24h subject window, so the rule
     // stops emitting a finding while the launch may still be failed. Read the
     // subject's current state: archive-with-notice only when it actually
     // launched or was deleted; archive silently when it aged out unresolved.
     let expiredUnresolved = false;
     if (row.incidentKey.startsWith(LAUNCH_FAILED_SUBJECT_PREFIX)) {
+      // Checkpoint after the preparatory reads: the row is already counted
+      // deferred once the deadline passed, so the subject lookup (and the
+      // archive behind it) must not start now.
+      if (pastResolveDeadline()) return { deferred: true };
       let disposition: LaunchFailedExpiry;
       try {
         disposition = await classifyLaunchFailedExpiry(db, row);
       } catch (err) {
-        summary.degraded += 1;
         log.warn("customer-incidents: launch_failed expiry check failed; leaving row open", {
           source: "customer-incidents",
           failureType: "launch_failed_expiry_check_failed",
@@ -2758,13 +2871,12 @@ export async function runCustomerIncidentScan(
           incidentKey: row.incidentKey,
           errorMessage: err instanceof Error ? err.message : String(err),
         });
-        return;
+        return { degraded: 1 };
       }
       if (disposition === "unknown") {
         // The subject lookup failed — the row stays open for the next pass,
         // but the pass is degraded so the heartbeat does not read clean.
-        summary.degraded += 1;
-        return;
+        return { degraded: 1 };
       }
       expiredUnresolved = disposition === "expired";
     }
@@ -2773,30 +2885,35 @@ export async function runCustomerIncidentScan(
       : staleBoxDown
         ? "stale_no_new_receipts"
         : null;
+    // Checkpoint before the write: a row whose race already lost stays open
+    // for the next pass — its archive must not commit behind the deferred
+    // count (the version guard still protects any write already in flight).
+    if (pastResolveDeadline()) return { deferred: true };
     let archived = false;
     try {
       archived = silentClosedReason
         ? await archiveIncident(row, { closedReason: silentClosedReason })
         : await archiveIncident(row);
     } catch (err) {
-      summary.failed += 1;
       log.error("customer-incidents: incident archive failed", err, {
         source: "customer-incidents",
         failureType: "incident_archive_failed",
         opsEventId: row.id,
         incidentKey: row.incidentKey,
       });
-      return;
+      return { failed: 1 };
     }
-    if (!archived) return; // another invocation already resolved it
+    if (!archived) return {}; // another invocation already resolved it
     if (silentClosedReason) {
       // Closed without a "resolved" notice: aged out still failed, or a stale
       // box_down record whose box is publicly healthy — nothing recovered.
-      summary.expired += 1;
-      return;
+      return { expired: 1 };
     }
-    summary.resolved += 1;
-    if (!pagingEnabled) return; // non-production: archive only, no admin mail
+    if (!pagingEnabled) return { resolved: 1 }; // non-production: archive only, no admin mail
+    // The archive committed — archive + notice are one unit: skipping the
+    // notice here would leave a permanently silent resolve no later pass
+    // can recover (the row is closed; nothing re-reads it). A late notice
+    // for a committed close beats none.
     try {
       await notifyResolved({
         fingerprint: resolvedNoticeFingerprint(row, now),
@@ -2817,14 +2934,15 @@ export async function runCustomerIncidentScan(
       });
     } catch (err) {
       // The row is archived either way — a missed notice must not unresolve it.
-      summary.failed += 1;
       log.error("customer-incidents: resolved notice failed", err, {
         source: "customer-incidents",
         failureType: "incident_resolved_notice_failed",
         opsEventId: row.id,
         incidentKey: row.incidentKey,
       });
+      return { resolved: 1, failed: 1 };
     }
+    return { resolved: 1 };
   };
   await runPool(resolveRows, SCAN_RESOLVE_CONCURRENCY, async (row) => {
     if (clock() >= resolveDeadlineAt) {
@@ -2835,13 +2953,19 @@ export async function runCustomerIncidentScan(
     // subject lookup, archive or resolved notice that stalls past the
     // budget leaves the row open for the next pass (any write it still
     // lands is version-guarded) instead of running the invocation past
-    // the heartbeat margin.
+    // the heartbeat margin. The callback's own checkpoints stop it from
+    // starting a new lookup or archive once its race was lost, and its
+    // counters are applied only when the phase accepted its result — a
+    // deferred row never half-counts as resolved behind the deferral.
+    let outcome: Awaited<ReturnType<typeof resolveOpenIncidentRow>> | undefined;
     const completed = await finishedBeforeDeadline(
-      () => resolveOpenIncidentRow(row),
+      async () => {
+        outcome = await resolveOpenIncidentRow(row);
+      },
       resolveDeadlineAt,
       clock,
     );
-    if (!completed) {
+    if (!completed || outcome == null || outcome.deferred) {
       summary.degraded += 1;
       log.warn(
         "customer-incidents: resolve work exceeded the scan deadline; row left open",
@@ -2852,7 +2976,12 @@ export async function runCustomerIncidentScan(
           incidentKey: row.incidentKey,
         },
       );
+      return;
     }
+    summary.resolved += outcome.resolved ?? 0;
+    summary.expired += outcome.expired ?? 0;
+    summary.degraded += outcome.degraded ?? 0;
+    summary.failed += outcome.failed ?? 0;
   });
 
   if (summary.opened > 0 || summary.resolved > 0 || summary.failed > 0) {
