@@ -295,7 +295,7 @@ describe("orphan restore claim safety", () => {
     const { update } = mockQueries();
     locate.mockResolvedValue(status === "inconclusive" ? { status } : {
       status,
-      found: { hostSlug: "maintenance-host", vmid: 231, privateIpv4: "10.0.0.4", gatewayFqdn: "fixture.example.com" },
+      found: { hostSlug: "maintenance-host", vmid: 231, privateIpv4: "192.0.2.4", gatewayFqdn: "fixture.example.com" },
     });
     const summary = await runColdRestoreOrphanAdoptionSweep();
     expect(update).not.toHaveBeenCalled();
@@ -312,7 +312,7 @@ describe("orphan restore claim safety", () => {
 
   it("keeps positive adoption and binds both writes to the corresponding claim", async () => {
     const { write, update } = mockQueries();
-    host.mockResolvedValue({ ok: true, stdout: `VMINFO 231 hermes-${ID_A} 10.0.0.4 200`, stderr: "" });
+    host.mockResolvedValue({ ok: true, stdout: `VMINFO 231 hermes-${ID_A} 192.0.2.4 200`, stderr: "" });
     const summary = await runColdRestoreOrphanAdoptionSweep();
     expect(locate).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledTimes(2);

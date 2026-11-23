@@ -2164,7 +2164,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
       ok: true, stdout: "HERMES_PROXMOX_DISCOVERY missing", stderr: "",
     });
     await discoverProxmoxInfrastructureForInstance({
-      instanceId: "12345678-0000-4000-8000-000000001042",
+      instanceId: "00000000-0000-4000-8000-000000001042",
       instanceName,
     }, {
       env: {
@@ -2175,7 +2175,7 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
       runHostScript,
     });
     expect(runHostScript).toHaveBeenCalledTimes(1);
-    expect(runHostScript.mock.calls[0][0]).toContain(`VM_NAME='hermes-${"a".repeat(31)}-12345678'`);
+    expect(runHostScript.mock.calls[0][0]).toContain(`VM_NAME='hermes-${"a".repeat(31)}-00000000'`);
   });
 
   it("recovers infrastructure with the right node slug when PROXMOX_NODE is unset and only HERMES_PROXMOX_TARGET points at the host", async () => {
