@@ -253,7 +253,8 @@ describe("ConvertPanel once $HIVRA is launched", () => {
   it("offers a switch without promising a higher tier when the grandfathered account has none", () => {
     renderState({ ...LIVE, airdrop: OPEN, access: { ...GRANDFATHERED, carryover: { tiers: [] } } });
     expect(screen.getByTestId("convert-switch-access")).toHaveTextContent("no active Pro or Power holder tier");
-    expect(screen.getByText(/at least one \$HIVRA/)).toBeVisible();
+    expect(screen.getByText(/without a verified wallet or a token balance/)).toBeVisible();
+    expect(screen.queryByRole("link", { name: "verified Base wallet" })).not.toBeInTheDocument();
     expect(screen.getByTestId("convert-switch-access")).toHaveTextContent("paid-through date");
   });
 

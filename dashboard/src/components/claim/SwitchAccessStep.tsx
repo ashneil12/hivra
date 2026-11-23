@@ -50,7 +50,7 @@ export function SwitchAccessStep({ carryover }: { carryover?: HolderTierCarryove
       {carryover && carryover.tiers.length === 0 ? (
         <>
           <p>You have no active Pro or Power holder tier to carry over. Any subscription you already paid for keeps its paid-through date. Switching alone grants no new tier.</p>
-          <p>If your current access comes from holding one $HermesOS, hold at least one $HIVRA in your <Link className="underline" href="/dashboard/wallet">verified Base wallet</Link> before switching.</p>
+          <p>You can switch this account without a verified wallet or a token balance.</p>
           <p>Switching access does not transfer or claim tokens.</p>
         </>
       ) : carryover ? (
