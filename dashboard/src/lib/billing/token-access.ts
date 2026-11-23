@@ -576,7 +576,7 @@ export async function convertGrandfatheredUserToHivra(
   const now = params.now ?? new Date();
   const db = (params.db ?? (supabaseAdmin as unknown)) as TokenAccessDb | null;
   if (!db) throw new Error("Database not configured");
-  const access = await resolveUserTokenAccess(userId, { db, now });
+  const access = await resolveUserTokenAccess(userId, { db, now, recordMembership: !holderConsent });
   if (access.phase !== "active") {
     throw new TokenConversionError("hivra_not_active", "$HIVRA is not live yet.");
   }

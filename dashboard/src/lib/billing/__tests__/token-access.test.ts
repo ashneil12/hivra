@@ -365,6 +365,7 @@ describe("optional holder switch", () => {
     if (failure === "tier_breached") db.tiers[0].last_breach_at = NOW.toISOString();
     await expect(convertGrandfatheredUserToHivra("holder", {db, now:NOW, holderConsent})).rejects.toMatchObject({code:errors[failure]});
     expect(db.rpcCalls.map(call => call.name)).not.toContain("switch_grandfathered_holder");
+    expect(db.rpcCalls.map(call => call.name)).not.toContain("ensure_token_grandfather_membership");
     expect(getLiveActiveThresholds).not.toHaveBeenCalled();
   });
   it("switches an account without earned tiers without consulting a wallet or price", async () => {
