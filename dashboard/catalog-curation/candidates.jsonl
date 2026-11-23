@@ -126,14 +126,14 @@
 {"slug": "aliasvault", "name": "AliasVault", "sourceUrl": "https://github.com/aliasvault/aliasvault", "status": "pending", "reason": "", "checkedAt": "2026-11-21"}
 {"slug": "awesome-selfhosted", "name": "awesome-selfhosted", "sourceUrl": "https://github.com/awesome-selfhosted/awesome-selfhosted", "status": "rejected", "reason": "GitHub reports SPDX NOASSERTION, outside the catalog licence allowlist", "checkedAt": "2026-11-22"}
 {"slug": "n8n", "name": "n8n", "sourceUrl": "https://github.com/n8n-io/n8n", "status": "rejected", "reason": "GitHub reports SPDX NOASSERTION, outside the catalog licence allowlist", "checkedAt": "2026-11-22"}
-{"slug": "unsloth", "name": "unsloth", "sourceUrl": "https://github.com/unslothai/unsloth", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
+{"slug": "unsloth", "name": "unsloth", "sourceUrl": "https://github.com/unslothai/unsloth", "status": "rejected", "reason": "Python LLM fine-tuning library requiring GPU, not a self-hosted web app", "checkedAt": "2026-11-23"}
 {"slug": "serviette", "name": "serviette", "sourceUrl": "https://github.com/pathwaycom/serviette", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
 {"slug": "jan", "name": "jan", "sourceUrl": "https://github.com/janhq/jan", "status": "rejected", "reason": "GitHub reports SPDX NOASSERTION, outside the catalog licence allowlist", "checkedAt": "2026-11-22"}
 {"slug": "photoprism", "name": "photoprism", "sourceUrl": "https://github.com/photoprism/photoprism", "status": "rejected", "reason": "GitHub reports SPDX NOASSERTION, outside the catalog licence allowlist", "checkedAt": "2026-11-22"}
 {"slug": "dokploy", "name": "dokploy", "sourceUrl": "https://github.com/Dokploy/dokploy", "status": "rejected", "reason": "GitHub reports SPDX NOASSERTION, outside the catalog licence allowlist", "checkedAt": "2026-11-22"}
 {"slug": "langfuse", "name": "langfuse", "sourceUrl": "https://github.com/langfuse/langfuse", "status": "rejected", "reason": "GitHub reports SPDX NOASSERTION, outside the catalog licence allowlist", "checkedAt": "2026-11-22"}
 {"slug": "awesome-sysadmin", "name": "awesome-sysadmin", "sourceUrl": "https://github.com/awesome-foss/awesome-sysadmin", "status": "rejected", "reason": "GitHub reports SPDX NOASSERTION, outside the catalog licence allowlist", "checkedAt": "2026-11-22"}
-{"slug": "pentagi", "name": "pentagi", "sourceUrl": "https://github.com/vxcontrol/pentagi", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
+{"slug": "pentagi", "name": "pentagi", "sourceUrl": "https://github.com/vxcontrol/pentagi", "status": "compose-needed", "reason": "requires PostgreSQL and docker.sock", "checkedAt": "2026-11-23"}
 {"slug": "homer", "name": "Homer", "sourceUrl": "https://github.com/bastienwirtz/homer", "status": "accepted", "reason": "evidence catalog-curation/evidence/homer.json", "checkedAt": "2026-11-22"}
 {"slug": "dufs", "name": "Dufs", "sourceUrl": "https://github.com/sigoden/dufs", "status": "accepted", "reason": "evidence catalog-curation/evidence/dufs.json", "checkedAt": "2026-11-22"}
 {"slug": "gotenberg", "name": "Gotenberg", "sourceUrl": "https://github.com/gotenberg/gotenberg", "status": "accepted", "reason": "evidence catalog-curation/evidence/gotenberg.json", "checkedAt": "2026-11-22"}
@@ -144,19 +144,19 @@
 {"slug": "ezbookkeeping", "name": "ezBookkeeping", "sourceUrl": "https://github.com/mayswind/ezbookkeeping", "status": "accepted", "reason": "evidence catalog-curation/evidence/ezbookkeeping.json", "checkedAt": "2026-11-22"}
 {"slug": "sun-panel", "name": "Sun-Panel", "sourceUrl": "https://github.com/hslr-s/sun-panel", "status": "accepted", "reason": "evidence catalog-curation/evidence/sun-panel.json", "checkedAt": "2026-11-22"}
 {"slug": "pulse", "name": "Pulse", "sourceUrl": "https://github.com/rcourtman/Pulse", "status": "rejected", "reason": "image: rcourtman/pulse:v6.8.0: spawnSync docker ETIMEDOUT", "checkedAt": "2026-11-22"}
-{"slug": "zoraxy", "name": "Zoraxy", "sourceUrl": "https://github.com/tobychui/zoraxy", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
-{"slug": "dawarich", "name": "Dawarich", "sourceUrl": "https://github.com/Freika/dawarich", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
+{"slug": "zoraxy", "name": "Zoraxy", "sourceUrl": "https://github.com/tobychui/zoraxy", "status": "accepted", "reason": "evidence catalog-curation/evidence/zoraxy.json", "checkedAt": "2026-11-23"}
+{"slug": "dawarich", "name": "Dawarich", "sourceUrl": "https://github.com/Freika/dawarich", "status": "compose-needed", "reason": "requires PostgreSQL/PostGIS and Redis", "checkedAt": "2026-11-23"}
 {"slug": "pairdrop", "name": "PairDrop", "sourceUrl": "https://github.com/schlagmichdoch/PairDrop", "status": "accepted", "reason": "evidence catalog-curation/evidence/pairdrop.json", "checkedAt": "2026-11-22"}
 {"slug": "convertx", "name": "ConvertX", "sourceUrl": "https://github.com/C4illin/ConvertX", "status": "accepted", "reason": "evidence catalog-curation/evidence/convertx.json", "checkedAt": "2026-11-22"}
 {"slug": "scanopy", "name": "Scanopy", "sourceUrl": "https://github.com/scanopy/scanopy", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
 {"slug": "dagu", "name": "Dagu", "sourceUrl": "https://github.com/dagucloud/dagu", "status": "accepted", "reason": "evidence catalog-curation/evidence/dagu.json", "checkedAt": "2026-11-22"}
-{"slug": "wakapi", "name": "Wakapi", "sourceUrl": "https://github.com/muety/wakapi", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
-{"slug": "2fauth", "name": "2FAuth", "sourceUrl": "https://github.com/Bubka/2FAuth", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
+{"slug": "wakapi", "name": "Wakapi", "sourceUrl": "https://github.com/muety/wakapi", "status": "accepted", "reason": "evidence catalog-curation/evidence/wakapi.json", "checkedAt": "2026-11-23"}
+{"slug": "2fauth", "name": "2FAuth", "sourceUrl": "https://github.com/Bubka/2FAuth", "status": "rejected", "reason": "slug starts with digit (violates ^[a-z][a-z0-9-]{1,38}[a-z0-9]$)", "checkedAt": "2026-11-23"}
 {"slug": "13ft", "name": "13ft", "sourceUrl": "https://github.com/wasi-master/13ft", "status": "rejected", "reason": "slug starts with digit, fails ^[a-z][a-z0-9-]{1,38}[a-z0-9]$", "checkedAt": "2026-11-22"}
 {"slug": "pingvin-share", "name": "Pingvin Share", "sourceUrl": "https://github.com/stonith404/pingvin-share", "status": "rejected", "reason": "archived repo", "checkedAt": "2026-11-22"}
-{"slug": "seanime", "name": "Seanime", "sourceUrl": "https://github.com/5rahim/seanime", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
-{"slug": "onyx", "name": "onyx", "sourceUrl": "https://github.com/onyx-dot-app/onyx", "status": "pending", "reason": "", "checkedAt": "2026-11-23"}
+{"slug": "seanime", "name": "Seanime", "sourceUrl": "https://github.com/5rahim/seanime", "status": "rejected", "reason": "ghcr.io/5rahim/seanime:latest returned 403 Forbidden", "checkedAt": "2026-11-23"}
+{"slug": "onyx", "name": "onyx", "sourceUrl": "https://github.com/onyx-dot-app/onyx", "status": "rejected", "reason": "license NOASSERTION not in CATALOG_OSI_LICENSES", "checkedAt": "2026-11-23"}
 {"slug": "meetily", "name": "meetily", "sourceUrl": "https://github.com/Zackriya-Solutions/meetily", "status": "pending", "reason": "", "checkedAt": "2026-11-23"}
-{"slug": "signoz", "name": "signoz", "sourceUrl": "https://github.com/SigNoz/signoz", "status": "pending", "reason": "", "checkedAt": "2026-11-23"}
-{"slug": "dokku", "name": "dokku", "sourceUrl": "https://github.com/dokku/dokku", "status": "pending", "reason": "", "checkedAt": "2026-11-23"}
+{"slug": "signoz", "name": "signoz", "sourceUrl": "https://github.com/SigNoz/signoz", "status": "rejected", "reason": "license NOASSERTION not in CATALOG_OSI_LICENSES", "checkedAt": "2026-11-23"}
+{"slug": "dokku", "name": "dokku", "sourceUrl": "https://github.com/dokku/dokku", "status": "rejected", "reason": "PaaS requiring docker.sock and host-level integration", "checkedAt": "2026-11-23"}
 {"slug": "nanoclaw", "name": "nanoclaw", "sourceUrl": "https://github.com/nanocoai/nanoclaw", "status": "pending", "reason": "", "checkedAt": "2026-11-23"}

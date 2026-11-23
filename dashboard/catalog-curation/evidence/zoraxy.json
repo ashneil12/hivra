@@ -1,0 +1,117 @@
+{
+  "slug": "zoraxy",
+  "checkedAt": "2026-11-23T19:46:21.620Z",
+  "gitSha": "86d16667e99ebad9d39c4de182d9ed0f8c78c3b0",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "tobychui/zoraxy is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "tobychui/zoraxy",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "zoraxydocker/zoraxy:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "zoraxydocker/zoraxy:latest",
+        "digest": "sha256:2dfc5acf4c84e3e477a8f1fcb7d05a600a8c3cd5fd1296a848372375910ae9dd",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-zoraxy-c3tjoi",
+        "hostPort": 3294,
+        "image": "zoraxydocker/zoraxy:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-zoraxy-c3tjoi",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3294:8000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-zoraxy-c3tjoi-config:/opt/zoraxy/config",
+          "zoraxydocker/zoraxy:latest"
+        ],
+        "runStdout": "8d5b685ae92e931215a881918e336bac12676bed8d552e7464082dcbcc4acdee",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "106.5MiB / 7.652GiB",
+        "memBytes": 111673344
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 307 / -> 200 /login.html",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 63561,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 307,
+            "location": "/login.html"
+          },
+          {
+            "hop": 2,
+            "path": "/login.html",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/login.html",
+        "bodyHead": "<!DOCTYPE HTML>\n<html>\n    <head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"robots\" content=\"noindex\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n    <meta name=\"zoraxy.csrf.Token\" content=\"/Sho5sgHvpDmD9aKgzK5fqTkx1MOIWcw9G2zelbPc5awg7Za8exHHuDPd18nHwQGM0Q0InSi6Zojw9LR/wrFQw==\">\n    <link rel=\"icon\" type=\"image/png\" href=\"./favicon.png\" />\n    <title>Login | Zorax",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 403,
+          "bodyHead": "Forbidden - CSRF token not found in request\n"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 106.5MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 111673344,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

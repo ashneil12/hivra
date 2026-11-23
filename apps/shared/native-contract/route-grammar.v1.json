@@ -1919,6 +1919,26 @@
       "family": "value-set",
       "input": "/dashboard/infrastructure?launch=adguard-home",
       "expect": "/dashboard/infrastructure?launch=adguard-home"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=wakapi&stage=choose",
+      "expect": "/dashboard/launch?profile=wakapi&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=wakapi",
+      "expect": "/dashboard/infrastructure?launch=wakapi"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=zoraxy&stage=choose",
+      "expect": "/dashboard/launch?profile=zoraxy&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=zoraxy",
+      "expect": "/dashboard/infrastructure?launch=zoraxy"
     }
   ]
 }
