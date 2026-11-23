@@ -8,13 +8,10 @@
  *
  * ORDER OF OPERATIONS (chosen so a restore can never find a missing archive):
  *
- *   1. Skip rows that are not `cold_archived` right now (restoring / archiving / active ...).
+ *   1. Claim a still-idle `cold_archived` row. Restore and deletion share the claim boundary.
  *   2. Host script `--apply --keep-plain`: download plain, check sha, age-encrypt, upload
  *      `<uri>.age`, verify size + re-download sha, rewrite the manifest. The PLAIN archive is
- *      NOT deleted. The DB row still points at the plain archive, which still exists, so a
- *      restore at any moment in this window works (restore reads the manifest only for
- *      `.age` archives; verifyArchiveIntegrity may report a sha mismatch against the rewritten
- *      manifest in this window, which fails closed and heals at step 3).
+ *      NOT deleted. The DB row still points at the plain archive, which still exists.
  *   3. DB compare-and-set: UPDATE archive_uri/archive_sha256/archive_size_bytes to the
  *      encrypted values WHERE id AND archive_uri = <old uri> AND lifecycle_state =
  *      'cold_archived'. If a restore or archive moved the row meanwhile the update touches
@@ -81,6 +78,8 @@ export const REENCRYPT_MAX_LIMIT = 5;
 const MIN_VIABLE_ROW_MS = 120_000;
 const TAIL_HEADROOM_MS = 45_000;
 const DELETE_STEP_TIMEOUT_MS = 60_000;
+const REENCRYPT_CLAIM = "cold_archive_reencrypt";
+const REENCRYPT_WRITER_EXITED = "HERMES_COLD_REENCRYPT_WRITER_EXITED";
 
 export type ReencryptOutcome =
   | { instanceId: string; status: "would_reencrypt"; archiveUri: string }
@@ -191,20 +190,6 @@ export async function runReencryptSweep(
     }
     if (sweep.mode === "dry") return { instanceId: id, status: "would_reencrypt", archiveUri: uri };
 
-    // Re-read the row right before touching the box: skip anything that is no longer an
-    // idle cold archive (a restore or archive in progress, or the row changed under us).
-    const fresh = await supabase
-      .from("hermes_instances")
-      .select("id, lifecycle_state, archive_uri, archive_sha256")
-      .eq("id", id)
-      .eq("lifecycle_state", "cold_archived")
-      .eq("archive_uri", uri)
-      .is("deleted_at", null)
-      .maybeSingle();
-    if (fresh.error || !fresh.data) {
-      return { instanceId: id, status: "skipped_busy", message: "row is no longer an idle cold_archived row with this archive_uri" };
-    }
-
     const remaining = deadline - now();
     if (remaining < MIN_VIABLE_ROW_MS) {
       return { instanceId: id, status: "skipped_deadline", message: "not enough wall-clock left; retry from this cursor" };
@@ -214,16 +199,45 @@ export async function runReencryptSweep(
       { hostId: null, hostSlug: options.hostSlug, envPrefix: null, failClosed: true },
       env
     );
-    const apply = await runHostScript(
-      buildCommand(sweep.recipient, uri, [`--expected-sha256=${sha}`, "--apply", "--keep-plain"]),
-      hostEnv,
-      { timeoutMs: Math.max(1_000, remaining - TAIL_HEADROOM_MS - DELETE_STEP_TIMEOUT_MS) }
-    );
+    const claimedAt = new Date(now()).toISOString();
+    const claim = await supabase.from("hermes_instances")
+      .update({ lifecycle_substate: REENCRYPT_CLAIM, last_lifecycle_transition_at: claimedAt })
+      .eq("id", id)
+      .eq("lifecycle_state", "cold_archived")
+      .eq("archive_uri", uri)
+      .eq("archive_sha256", sha)
+      .is("lifecycle_substate", null)
+      .is("deleted_at", null)
+      .select("id")
+      .maybeSingle();
+    if (claim.error) return { instanceId: id, status: "db_update_failed", message: "Could not claim this archive for re-encryption." };
+    if (!claim.data) return { instanceId: id, status: "skipped_busy", message: "This archive changed or another operation claimed it." };
+
+    const command = buildCommand(sweep.recipient, uri, [`--expected-sha256=${sha}`, "--apply", "--keep-plain"]);
+    const writerUnconfirmed = "Writer exit unconfirmed; archive claim retained. Confirm the writer stopped before clearing the claim.";
+    let apply: HostScriptResult;
+    try {
+      // A transport timeout alone does not prove a remote upload has stopped.
+      apply = await runHostScript(
+        ["(", command, ")", "writer_status=$?", `echo ${REENCRYPT_WRITER_EXITED}`, 'exit "$writer_status"'].join("\n"),
+        hostEnv,
+        { timeoutMs: Math.max(1_000, remaining - TAIL_HEADROOM_MS - DELETE_STEP_TIMEOUT_MS) }
+      );
+    } catch {
+      return { instanceId: id, status: "host_script_failed", message: writerUnconfirmed };
+    }
     if (!apply.ok) {
+      const writerExited = apply.stdout.split(/\r?\n/).includes(REENCRYPT_WRITER_EXITED);
+      if (writerExited) {
+        const releaseFailure = await releaseKnownStoppedWriter();
+        if (releaseFailure) return releaseFailure;
+      }
       return {
         instanceId: id,
         status: "host_script_failed",
-        message: `re-encrypt script failed; plain copy untouched: ${apply.error ?? apply.stderr ?? "unknown error"}`.slice(0, 500),
+        message: writerExited
+          ? `Re-encryption stopped with the plain copy retained. ${apply.error ?? apply.stderr ?? "Unknown error."}`.slice(0, 500)
+          : writerUnconfirmed,
       };
     }
     const result = parseReencryptResult(apply.stdout);
@@ -241,19 +255,25 @@ export async function runReencryptSweep(
       encSize <= 0 ||
       !isValidColdArchiveUri(encUri)
     ) {
+      const releaseFailure = await releaseKnownStoppedWriter();
+      if (releaseFailure) return releaseFailure;
       return { instanceId: id, status: "bad_result", message: "re-encrypt script result line missing or inconsistent; DB and plain copy untouched" };
     }
 
     // Step 3: compare-and-set. Never clobber a row a restore/archive moved meanwhile.
     const cas = await supabase
       .from("hermes_instances")
-      .update({ archive_uri: encUri, archive_sha256: encSha, archive_size_bytes: encSize })
+      .update({ archive_uri: encUri, archive_sha256: encSha, archive_size_bytes: encSize, lifecycle_substate: null })
       .eq("id", id)
       .eq("archive_uri", uri)
       .eq("lifecycle_state", "cold_archived")
+      .eq("lifecycle_substate", REENCRYPT_CLAIM)
+      .eq("last_lifecycle_transition_at", claimedAt)
       .select("id")
       .maybeSingle();
     if (cas.error) {
+      const releaseFailure = await releaseKnownStoppedWriter();
+      if (releaseFailure) return releaseFailure;
       return { instanceId: id, status: "db_update_failed", message: `DB update failed; plain copy kept: ${cas.error.message}`.slice(0, 500) };
     }
     if (!cas.data) {
@@ -280,5 +300,20 @@ export async function runReencryptSweep(
       encSizeBytes: encSize,
       plainDeleted: del.ok,
     };
+
+    async function releaseKnownStoppedWriter(): Promise<ReencryptOutcome | null> {
+      const release = await supabase.from("hermes_instances")
+        .update({ lifecycle_substate: null })
+        .eq("id", id)
+        .eq("lifecycle_state", "cold_archived")
+        .eq("lifecycle_substate", REENCRYPT_CLAIM)
+        .eq("last_lifecycle_transition_at", claimedAt)
+        .eq("archive_uri", uri)
+        .select("id")
+        .maybeSingle();
+      return release.error
+        ? { instanceId: id, status: "db_update_failed", message: "Writer stopped but its archive claim could not be cleared." }
+        : null;
+    }
   }
 }

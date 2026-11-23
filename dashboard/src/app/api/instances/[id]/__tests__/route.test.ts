@@ -28,6 +28,8 @@ import {
   discoverProxmoxInfrastructureForInstance,
   getProxmoxInstanceStatus,
   rebootProxmoxInstance,
+  resolveProxmoxHostEnv,
+  runProxmoxHostScript,
   shutdownProxmoxInstance,
   startProxmoxInstance,
 } from "@/lib/services/proxmox-instance-service";
@@ -46,7 +48,8 @@ import {
 import { isProTierUser } from "@/lib/billing/pro-tier";
 import { removeBackupAddonBilling } from "@/lib/billing/backup-addon-billing";
 import { recordInstanceUserActivity } from "@/lib/instance-activity";
-import { recoverProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
+import { locateProxmoxInstanceAcrossFleet, recoverProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
+import { COLD_DELETE_STORAGE_RECEIPT } from "@/lib/services/cold-storage-delete-command";
 import { makeJsonRequest } from "@/test-utils";
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());;
@@ -96,6 +99,8 @@ jest.mock("@/lib/services/proxmox-instance-service", () => {
     deleteProxmoxInstance: jest.fn(),
     discoverProxmoxInfrastructureForInstance: jest.fn(),
     getProxmoxInstanceStatus: jest.fn(),
+    resolveProxmoxHostEnv: jest.fn(actual.resolveProxmoxHostEnv),
+    runProxmoxHostScript: jest.fn(),
     startProxmoxInstance: jest.fn(),
     shutdownProxmoxInstance: jest.fn(),
     rebootProxmoxInstance: jest.fn(),
@@ -212,6 +217,7 @@ jest.mock("@/lib/recovery/soul-seed-reconcile", () => ({
 }));
 
 jest.mock("@/lib/recovery/recover-orphan-provisioning", () => ({
+  locateProxmoxInstanceAcrossFleet: jest.fn(),
   recoverProxmoxInstanceAcrossFleet: jest.fn(),
 }));
 
@@ -1011,6 +1017,63 @@ describe("POST /api/instances/[id]", () => {
     expect(restartCommand).not.toContain(
       "docker compose config --services 2>/dev/null | grep -qx gateway"
     );
+  });
+
+  it.each([
+    ["pending_deletion", "restart_gateway", "stopped"],
+    ["cold_archived", "repair_runtime", "stopped"],
+    ["failed", "rebuild_runtime", "error"],
+    ["deleting", "start", "stopped"],
+  ])("refuses %s instances' %s action before attempting live work", async (lifecycleState, action, status) => {
+    const update = jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) });
+    (supabaseAdmin!.from as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        eq: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            neq: jest.fn().mockReturnValue({
+              single: jest.fn().mockResolvedValue({
+                error: null,
+                data: {
+                  id: "inst-123",
+                  user_id: "user_123",
+                  status,
+                  lifecycle_state: lifecycleState,
+                  backend: "gateway",
+                  infrastructure_provider: "proxmox",
+                  archive_uri: "free/inst-123/data-20261101T000000Z.tar.zst",
+                  archive_sha256: "archive-checksum",
+                  proxmox_vmid: null,
+                  config: {
+                    infrastructure: {
+                      provider: "proxmox",
+                      node: "fixturenode11",
+                      vmid: 1148,
+                      privateIpv4: "192.0.2.98",
+                      gatewayHost: "example.test",
+                    },
+                  },
+                },
+              }),
+            }),
+          }),
+        }),
+      }),
+      update,
+    });
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "ok", stderr: "" });
+    (applyLiveUpdate as jest.Mock).mockResolvedValue({ applied: true });
+
+    const response = await POST(
+      makeJsonRequest("http://localhost/api/instances/inst-123", { action }, { method: "POST" }),
+      { params: Promise.resolve({ id: "inst-123" }) },
+    );
+
+    expect(response.status).toBe(409);
+    expect(update).not.toHaveBeenCalled();
+    expect(sshExec).not.toHaveBeenCalled();
+    expect(resolveInstanceIpv4).not.toHaveBeenCalled();
+    expect(applyLiveUpdate).not.toHaveBeenCalled();
+    expect(startProxmoxInstance).not.toHaveBeenCalled();
   });
 
   it("restarts the gateway compose service directly for restart_gateway on gateway-backend (webfree) instances", async () => {
@@ -5104,6 +5167,171 @@ describe("DELETE /api/instances/[id] on a Hetzner server shared by several agent
     expect(json.data).toBeUndefined();
     expect(deleteHetznerServer).not.toHaveBeenCalled();
     expect(rows.find((row) => row.id === "inst-123")?.status).toBe("running");
+  });
+});
+
+describe("DELETE /api/instances/[id] for an archived runtime", () => {
+  const id = "00000000-0000-4000-8000-000000001234";
+  const archiveUri = `free/${id}/data-20261118T090000Z.tar.zst`;
+  const previousTransition = "2026-11-18T10:00:00.000Z";
+  const hostEnv = jest.mocked(resolveProxmoxHostEnv);
+  const locate = jest.mocked(locateProxmoxInstanceAcrossFleet);
+  const storage = jest.mocked(runProxmoxHostScript);
+
+  const archive = {
+    id,
+    user_id: "user_123",
+    status: "error",
+    lifecycle_state: "failed",
+    lifecycle_substate: null,
+    last_lifecycle_transition_at: previousTransition,
+    infrastructure_provider: "proxmox",
+    archive_uri: archiveUri,
+    archive_sha256: "a".repeat(64),
+    host_id: null,
+    ipv4_address: null,
+    hetzner_server_id: null,
+    proxmox_vmid: null,
+    proxmox_node: null,
+    config: { infrastructure: { provider: "proxmox", node: "fixturenode2", vmid: 216 } },
+  };
+  let oldPurgeHost: string | undefined;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    oldPurgeHost = process.env.COLD_STORAGE_PURGE_HOST;
+    process.env.COLD_STORAGE_PURGE_HOST = "fixturenode1";
+    jest.mocked(auth).mockResolvedValue({ userId: "user_123" } as never);
+    hostEnv.mockImplementation((_routing, env) => env ?? {});
+    locate.mockResolvedValue({ status: "gone" });
+    storage.mockResolvedValue({ ok: true, stdout: `${COLD_DELETE_STORAGE_RECEIPT}\n`, stderr: "" });
+  });
+
+  afterEach(() => {
+    if (oldPurgeHost === undefined) delete process.env.COLD_STORAGE_PURGE_HOST;
+    else process.env.COLD_STORAGE_PURGE_HOST = oldPurgeHost;
+    hostEnv.mockImplementation(jest.requireActual("@/lib/services/proxmox-instance-service").resolveProxmoxHostEnv);
+  });
+
+  function mockArchiveRow(overrides: Record<string, unknown> = {}) {
+    const claim = {
+      eq: jest.fn().mockReturnThis(),
+      is: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({ data: { id }, error: null }),
+    };
+    const select = jest.fn()
+      .mockReturnValueOnce(deleteRowSelect({ ...archive, ...overrides }))
+      .mockReturnValue(claim);
+    const update = jest.fn().mockReturnValue(claim);
+    jest.mocked(supabaseAdmin!.from).mockReturnValue({ select, update } as never);
+    return { claim, update };
+  }
+
+  function remove(confirmation = id) {
+    return DELETE(makeJsonRequest(`http://localhost/api/instances/${id}`, { confirmation }, {
+      method: "DELETE",
+    }), { params: Promise.resolve({ id }) });
+  }
+
+  it.each(["cold_archived", "pending_deletion", "failed"])("permanently deletes a %s archive after checking the fleet", async (state) => {
+    const { claim, update } = mockArchiveRow({ lifecycle_state: state });
+    const response = await remove();
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { deleted: true } });
+    expect(locate).toHaveBeenCalledWith(expect.objectContaining({ id, proxmox_vmid: null }));
+    expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+    expect(recoverProxmoxInstanceAcrossFleet).not.toHaveBeenCalled();
+    expect(claim.eq).toHaveBeenCalledWith("last_lifecycle_transition_at", previousTransition);
+    expect(claim.eq).toHaveBeenCalledWith("user_id", "user_123");
+    expect(update).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      lifecycle_state: "deleting", lifecycle_substate: "owner_archive_delete",
+    }));
+    expect(storage).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      status: "deleted", lifecycle_state: "deleted", archive_uri: null, archive_sha256: null, gateway_url: null,
+    }));
+    expect(reportOpsEvent).toHaveBeenCalledWith(expect.objectContaining({
+      source: "instances.delete",
+      instanceId: id,
+      metadata: expect.objectContaining({ cold_storage_removed: true }),
+    }));
+  });
+
+  it("requires typed confirmation before looking up a VM or touching archive data", async () => {
+    const { update } = mockArchiveRow();
+    expect((await remove("different")).status).toBe(400);
+    expect(locate).not.toHaveBeenCalled();
+    expect(storage).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("leaves the archive intact when a fleet scan is inconclusive", async () => {
+    const { update } = mockArchiveRow();
+    locate.mockResolvedValue({ status: "inconclusive" });
+    expect((await remove()).status).toBe(502);
+    expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+    expect(storage).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("leaves data and a located VM intact", async () => {
+    const { update } = mockArchiveRow();
+    locate.mockResolvedValue({
+      status: "found",
+      found: { hostSlug: "fixturenode4", vmid: 222, privateIpv4: "192.0.2.7", gatewayFqdn: "agent.test" },
+    });
+    expect((await remove()).status).toBe(409);
+    expect(deleteProxmoxInstance).not.toHaveBeenCalled();
+    expect(storage).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it.each(["restoring", "archiving"])("leaves a %s instance to the active lifecycle operation", async (state) => {
+    const { update } = mockArchiveRow({ lifecycle_state: state });
+    expect((await remove()).status).toBe(409);
+    expect(locate).not.toHaveBeenCalled();
+    expect(storage).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "free/00000000-0000-4000-8000-000000009876/data-20261118T090000Z.tar.zst",
+    `FREE/${id}/data-20261118T090000Z.tar.zst`,
+  ])("refuses an archive outside the exact paths erased by the storage command (%s)", async (path) => {
+    const { update } = mockArchiveRow({ archive_uri: path });
+    expect((await remove()).status).toBe(409);
+    expect(locate).not.toHaveBeenCalled();
+    expect(storage).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("does not touch storage if another lifecycle operation wins the deletion claim", async () => {
+    const { claim, update } = mockArchiveRow();
+    claim.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+    expect((await remove()).status).toBe(409);
+    expect(storage).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a resumable deletion claim if storage does not confirm absence", async () => {
+    const { update } = mockArchiveRow();
+    storage.mockResolvedValue({ ok: true, stdout: "", stderr: "" });
+    expect((await remove()).status).toBe(502);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(reportOpsEvent).not.toHaveBeenCalled();
+  });
+
+  it("retries the storage purge and finishes a previously claimed deletion", async () => {
+    const { claim, update } = mockArchiveRow({
+      lifecycle_state: "deleting",
+      lifecycle_substate: "owner_archive_delete",
+    });
+    expect((await remove()).status).toBe(200);
+    expect(claim.eq).toHaveBeenCalledWith("last_lifecycle_transition_at", previousTransition);
+    expect(storage).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ status: "deleted", archive_uri: null }));
   });
 });
 

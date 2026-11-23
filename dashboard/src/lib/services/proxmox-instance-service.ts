@@ -793,13 +793,14 @@ function sanitizeDnsLabel(value: string | null | undefined, fallback: string): s
   return label || fallback;
 }
 
-function sanitizeVmName(value: string): string {
-  const safe = value
-    .toLowerCase()
+function hermesVmName(name: string, instanceId: string): string {
+  const suffix = `-${instanceId.slice(0, 8).toLowerCase().replace(/[^a-z0-9-]+/g, "-")}`;
+  // A 48-character legacy name may have been truncated through its ID suffix.
+  const stem = `hermes-${name}`.toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-  return safe || `hermes-${randomBytes(4).toString("hex")}`;
+    .slice(0, 47 - suffix.length)
+    .replace(/-+$/g, "");
+  return `${stem}${suffix}`;
 }
 
 function dashedIpv4(ipv4: string): string {
@@ -1028,9 +1029,7 @@ export async function discoverProxmoxInfrastructureForInstance(
     publicIp,
     dnsDomain: envValue(env, "PROXMOX_GATEWAY_DOMAIN"),
   });
-  const vmName = sanitizeVmName(
-    `hermes-${params.instanceName}-${params.instanceId.slice(0, 8)}`
-  );
+  const vmName = hermesVmName(params.instanceName, params.instanceId);
   const runner = deps.runHostScript ?? ((hostScript: string) => runProxmoxHostScript(hostScript, env));
 
   try {
@@ -2407,7 +2406,7 @@ export async function provisionProxmoxInstance(params: {
     : { reservedVmids: [] as number[], vmidLedger: null };
   const script = buildProxmoxProvisionScript({
     instanceId: params.instanceId,
-    vmName: sanitizeVmName(`hermes-${params.name}-${params.instanceId.slice(0, 8)}`),
+    vmName: hermesVmName(params.name, params.instanceId),
     templateId,
     vmidStart,
     vmidEnd,

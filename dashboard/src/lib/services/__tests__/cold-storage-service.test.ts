@@ -9,6 +9,7 @@
 import {
   archiveInstance,
   buildRestoreCloneTeardownScript,
+  COLD_RESTORE_WRITER_EXITED,
   isValidColdArchiveUri,
   isValidColdTimestampCompact,
   manifestPathFromArchiveUri,
@@ -18,6 +19,7 @@ import {
   verifyArchiveIntegrity,
   type ColdStorageDeps,
 } from "../cold-storage-service";
+import { COLD_RETENTION_TRASH_RECEIPT } from "../cold-storage-delete-command";
 import type { HostScriptResult } from "../proxmox-instance-service";
 
 jest.mock("../proxmox-instance-service", () => {
@@ -107,6 +109,10 @@ function makeSupabase(
       matchers[`is:${column}`] = value;
       return builder;
     });
+    builder.lt = jest.fn((column: string, value: unknown) => {
+      matchers[`lt:${column}`] = value;
+      return builder;
+    });
     builder.maybeSingle = jest.fn(async () => {
       transactions.push({ table, op: stage.op, matchers, payload, result: stage.result });
       stage.capture?.(payload ?? {}, matchers);
@@ -182,15 +188,11 @@ function caddyCleanupOk(): HostScriptResult {
 function restoreInvocationParts(hostScript: string): string[] {
   const lines = hostScript
     .split("\n")
-    // The invocation is the only line that STARTS with the script path. Every
-    // line of the install block (mktemp, base64 -d >, chmod, mv -f) mentions the
-    // path but is indented or prefixed by a command, so anchoring beats
-    // blacklisting — a new install step can't silently slip past this.
-    .filter((l) => l.startsWith("/usr/local/sbin/restore-vm-cold.sh"));
+    .filter((line) => line.startsWith("timeout ") && line.includes(" /usr/local/sbin/restore-vm-cold.sh "));
   // Exactly one invocation, on one line — if a refactor ever splits the args
   // across lines the index-based assertions below would silently stop guarding.
   expect(lines).toHaveLength(1);
-  return lines[0].trim().split(/\s+/);
+  return lines[0].slice(lines[0].indexOf("/usr/local/sbin/restore-vm-cold.sh")).split(/\s+/);
 }
 
 function makeDeps(scripts: HostScriptResult[]): {
@@ -377,6 +379,23 @@ describe("archiveInstance", () => {
 
     const result = await archiveInstance(supabase as never, VALID_INSTANCE_ID, deps);
     expect(result).toMatchObject({ ok: false, reason: "lock_not_acquired", retryable: true });
+  });
+
+  it("does not archive a candidate unless the current pause still predates the cron cutoff", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: baseRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: null, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([]);
+    const pausedBefore = "2026-05-14T12:00:00.000Z";
+    const result = await archiveInstance(supabase as never, VALID_INSTANCE_ID, deps, { pausedBefore });
+    expect(result).toMatchObject({ ok: false, reason: "lock_not_acquired" });
+    expect(supabase.__queue[1].matchers).toMatchObject({
+      "lt:last_lifecycle_transition_at": pausedBefore,
+      "eq:lifecycle_state": "paused",
+      "is:lifecycle_substate": null,
+    });
+    expect(runHostScript).not.toHaveBeenCalled();
   });
 
   it("reverts to paused when the host script fails (no destroy)", async () => {
@@ -795,7 +814,7 @@ describe("restoreInstance", () => {
     // the command string so a regression of "forgot to thread cpuLimit"
     // is caught here, not 4h later by aeon fleet-sweep.
     const restoreCmd = runHostScript.mock.calls[0][0] as string;
-    expect(restoreCmd).toContain("/usr/local/sbin/restore-vm-cold.sh");
+    expect(restoreCmd).toContain("timeout --kill-after=5s 650s /usr/local/sbin/restore-vm-cold.sh");
     // 10 positional args after the script path: instance, archive, sha, vmid,
     // ip, gw, template, disk, cpu_limit, ram_limit_mb
     const parts = restoreInvocationParts(restoreCmd);
@@ -824,6 +843,22 @@ describe("restoreInstance", () => {
       archive_size_bytes: null,
       archived_at: null,
     });
+  });
+
+  it("does not dispatch restore if the archive changed between selection and claim", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: null, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([]);
+    const result = await restoreInstance(supabase as never, VALID_INSTANCE_ID, restoreOptions, deps);
+    expect(result).toMatchObject({ ok: false, reason: "lock_not_acquired" });
+    expect(supabase.__queue[1].matchers).toMatchObject({
+      "eq:archive_uri": VALID_ARCHIVE_URI,
+      "eq:archive_sha256": VALID_SHA,
+      "is:lifecycle_substate": null,
+    });
+    expect(runHostScript).not.toHaveBeenCalled();
   });
 
   it("uses 0.5 cpu_limit default when caller omits cpuLimit option", async () => {
@@ -935,7 +970,7 @@ describe("restoreInstance", () => {
       },
     ]);
     const { deps, runHostScript } = makeDeps([
-      { ok: false, stdout: "[restore] SHA MISMATCH", stderr: "", error: "exit 2" },
+      { ok: false, stdout: `[restore] SHA MISMATCH\n${COLD_RESTORE_WRITER_EXITED} 2`, stderr: "", error: "exit 2" },
       { ok: true, stdout: "TEARDOWN_SKIP_ABSENT 599", stderr: "" }, // guarded teardown
     ]);
 
@@ -967,12 +1002,32 @@ describe("restoreInstance", () => {
       { table: "hermes_instances", op: "update", result: { data: null, error: { message: "connection reset" } } },
     ]);
     const { deps } = makeDeps([
-      { ok: false, stdout: "[restore] SHA MISMATCH", stderr: "", error: "exit 2" },
+      { ok: false, stdout: `[restore] SHA MISMATCH\n${COLD_RESTORE_WRITER_EXITED} 2`, stderr: "", error: "exit 2" },
       { ok: true, stdout: "TEARDOWN_SKIP_ABSENT 599", stderr: "" },
     ]);
 
     const result = await restoreInstance(supabase as never, VALID_INSTANCE_ID, restoreOptions, deps);
     expect(result).toMatchObject({ ok: false, reason: "host_script_failed", revertFailed: true });
+  });
+
+  it.each([null, 124, 137, 2])("retains the restore claim without verified clone removal (writer exit: %s)", async (writerExitCode) => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([
+      {
+        ok: false,
+        stdout: writerExitCode === null ? "" : `${COLD_RESTORE_WRITER_EXITED} ${writerExitCode}`,
+        stderr: "",
+        error: "transport failed",
+      },
+      ...(writerExitCode === 2 ? [{ ok: false, stdout: "TEARDOWN_FAIL 599", stderr: "" }] : []),
+    ]);
+    const result = await restoreInstance(supabase as never, VALID_INSTANCE_ID, restoreOptions, deps);
+    expect(result).toMatchObject({ ok: false, retryable: false, revertFailed: true });
+    expect(supabase.__queue).toHaveLength(2);
+    expect(runHostScript).toHaveBeenCalledTimes(writerExitCode === 2 ? 2 : 1);
   });
 
   it("parks the row health_pending (not reverted) when the script exits 5 with status=health_pending", async () => {
@@ -999,6 +1054,7 @@ describe("restoreInstance", () => {
         stdout: [
           "[restore] gateway never reported healthy after 60s",
           `RESULT status=health_pending instance=${VALID_INSTANCE_ID} vmid=599 host=fixturenode5 ip=10.250.22.199 archive=${VALID_ARCHIVE_URI} sha256=${VALID_SHA} size=${VALID_SIZE}`,
+          `${COLD_RESTORE_WRITER_EXITED} 5`,
         ].join("\n"),
         stderr: "",
       },
@@ -1055,7 +1111,6 @@ describe("restoreInstance", () => {
     const supabase = makeSupabase([
       { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
       { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
-      { table: "hermes_instances", op: "update", result: { data: null, error: null } },
     ]);
     const { deps, runHostScript } = makeDeps([
       {
@@ -1068,6 +1123,7 @@ describe("restoreInstance", () => {
 
     const result = await restoreInstance(supabase as never, VALID_INSTANCE_ID, restoreOptions, deps);
     expect(result).toMatchObject({ ok: false, reason: "result_parse_failed", retryable: false });
+    expect(supabase.__queue).toHaveLength(2);
     // The teardown script's expected name is OUR instance id — a clone that
     // reports some other instance's name is skipped by the run-time guard.
     const teardownScript = runHostScript.mock.calls[1][0] as string;
@@ -1086,7 +1142,7 @@ describe("restoreInstance", () => {
     const { deps, runHostScript } = makeDeps([
       {
         ok: false,
-        stdout: "",
+        stdout: `${COLD_RESTORE_WRITER_EXITED} 1`,
         stderr: "[restore] VMID 599 already exists on fixturenode5",
         error: "exit 1",
       },
@@ -1396,6 +1452,7 @@ describe("purgeArchive", () => {
     let updatePayload: Record<string, unknown> | undefined;
     const supabase = makeSupabase([
       { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
       {
         table: "hermes_instances",
         op: "update",
@@ -1407,7 +1464,7 @@ describe("purgeArchive", () => {
     const deps: ColdStorageDeps = {
       runHostScript: async (script) => {
         invokedCmd = script;
-        return { ok: true, stdout: "", stderr: "" };
+        return { ok: true, stdout: COLD_RETENTION_TRASH_RECEIPT, stderr: "" };
       },
       now: () => new Date("2026-05-16T12:00:00.000Z"),
       env: {},
@@ -1421,11 +1478,16 @@ describe("purgeArchive", () => {
       lifecycle_state: "deleted",
       archive_uri: null,
     });
+    expect(supabase.__queue[1]).toMatchObject({
+      payload: { lifecycle_substate: "retention_archive_purge" },
+      matchers: { "eq:lifecycle_state": "pending_deletion", "is:lifecycle_substate": null },
+    });
   });
 
   it("skipTrash performs a direct rm", async () => {
     const supabase = makeSupabase([
       { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
       { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
     ]);
     let invokedCmd: string | undefined;
@@ -1441,6 +1503,71 @@ describe("purgeArchive", () => {
     expect(result).toMatchObject({ ok: true, trashUri: "" });
     expect(invokedCmd).toContain("rm -rf");
     expect(invokedCmd).not.toContain("trash/");
+  });
+
+  it("makes no storage changes after losing the claim to restoration or explicit deletion", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: null, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([]);
+    const result = await purgeArchive(supabase as never, VALID_INSTANCE_ID, {}, deps);
+    expect(result).toMatchObject({ ok: false, reason: "db_update_failed" });
+    expect(runHostScript).not.toHaveBeenCalled();
+  });
+
+  it("uses the original claim timestamp to resume a trash move", async () => {
+    const supabase = makeSupabase([
+      {
+        table: "hermes_instances",
+        op: "select",
+        result: {
+          data: {
+            ...coldRow,
+            lifecycle_substate: "retention_archive_purge",
+            last_lifecycle_transition_at: "2026-05-16T12:00:00+00:00",
+          },
+          error: null,
+        },
+      },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([{ ok: true, stdout: COLD_RETENTION_TRASH_RECEIPT, stderr: "" }]);
+    const result = await purgeArchive(supabase as never, VALID_INSTANCE_ID, {}, deps);
+    expect(result).toMatchObject({ ok: true, trashUri: `trash/${VALID_INSTANCE_ID}-20260516T120000Z` });
+    expect(runHostScript).toHaveBeenCalledWith(
+      expect.stringContaining(`trash/${VALID_INSTANCE_ID}-20260516T120000Z`),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("does not mark a row deleted when the host omits the trash completion receipt", async () => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
+      { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+    ]);
+    const { deps } = makeDeps([{ ok: true, stdout: "", stderr: "" }]);
+    const result = await purgeArchive(supabase as never, VALID_INSTANCE_ID, {}, deps);
+    expect(result).toMatchObject({ ok: false, reason: "host_script_failed" });
+    expect(supabase.__queue).toHaveLength(2);
+    expect(supabase.__queue[1].payload).toMatchObject({ lifecycle_substate: "retention_archive_purge" });
+  });
+
+  it.each(["retention_archive_purge", "cold_archive_reencrypt"])("restore will not claim an archive during %s", async (substate) => {
+    const supabase = makeSupabase([
+      { table: "hermes_instances", op: "select", result: { data: { ...coldRow, lifecycle_substate: substate }, error: null } },
+    ]);
+    const { deps, runHostScript } = makeDeps([]);
+    const result = await restoreInstance(supabase as never, VALID_INSTANCE_ID, {
+      destinationHostSlug: "fixturenode5",
+      destinationVmid: 216,
+      destinationIp: "192.0.2.10",
+      destinationGateway: "192.0.2.1",
+      templateVmid: 9000,
+    }, deps);
+    expect(result).toMatchObject({ ok: false, reason: "instance_not_restorable" });
+    expect(runHostScript).not.toHaveBeenCalled();
   });
 
   it("SEC-02: fails closed on a poisoned archive_uri without invoking runHostScript", async () => {
@@ -1537,7 +1664,7 @@ describe("age-encrypted cold archives (HERMES_BACKUP_ENCRYPTION)", () => {
     expect(result).toMatchObject({ ok: true, archiveUri: VALID_ARCHIVE_URI });
     const cmd = runHostScript.mock.calls[0][0] as string;
     expect(cmd).not.toContain("HERMES_BACKUP");
-    expect(cmd.split("\n").pop()).toBe(`/usr/local/sbin/archive-vm-cold.sh 216 '${VALID_INSTANCE_ID}'`);
+    expect(cmd.split("\n").pop()).toBe(`timeout --kill-after=5s 890s /usr/local/sbin/archive-vm-cold.sh 216 '${VALID_INSTANCE_ID}'`);
   });
 
   it("encryption on: passes only the public recipient and records the .age uri", async () => {
@@ -1554,7 +1681,7 @@ describe("age-encrypted cold archives (HERMES_BACKUP_ENCRYPTION)", () => {
     expect(result).toMatchObject({ ok: true, archiveUri: AGE_URI, archiveSha256: VALID_SHA });
     const cmd = runHostScript.mock.calls[0][0] as string;
     expect(cmd).toContain(
-      `HERMES_BACKUP_ENCRYPTION=on HERMES_BACKUP_AGE_RECIPIENT=${FAKE_RECIPIENT} /usr/local/sbin/archive-vm-cold.sh 216`
+      `HERMES_BACKUP_ENCRYPTION=on HERMES_BACKUP_AGE_RECIPIENT=${FAKE_RECIPIENT} timeout --kill-after=5s 890s /usr/local/sbin/archive-vm-cold.sh 216`
     );
     expect(cmd).not.toContain(FAKE_IDENTITY);
     const coldUpdate = supabase.__queue.find(
@@ -1618,7 +1745,7 @@ describe("age-encrypted cold archives (HERMES_BACKUP_ENCRYPTION)", () => {
     const invocation = restoreInvocationParts(script);
     expect(invocation.join(" ")).not.toContain("AGE-SECRET-KEY");
     expect(script.indexOf("HERMES_BACKUP_AGE_IDENTITY_FILE")).toBeLessThan(
-      script.indexOf("\n/usr/local/sbin/restore-vm-cold.sh")
+      script.indexOf("\ntimeout --kill-after=5s 650s /usr/local/sbin/restore-vm-cold.sh")
     );
     expect(invocation[2]).toBe(`'${AGE_URI}'`);
   });
@@ -1661,7 +1788,7 @@ describe("age-encrypted cold archives (HERMES_BACKUP_ENCRYPTION)", () => {
     });
     const script = runHostScript.mock.calls[0][0] as string;
     expect(script).not.toContain("AGE");
-    expect(script.startsWith("__tmp=$(mktemp")).toBe(true);
+    expect(script.startsWith("(\n__tmp=$(mktemp")).toBe(true);
   });
 
   it("slice verify of an encrypted archive probes the age header, not zstd", async () => {

@@ -505,4 +505,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261122230000", name: "platform_stats_snapshot_statement_timeout" },
   { version: "20261123000000", name: "provider_release_admission_2026_11_22_3" },
   { version: "20261123120000", name: "provider_release_admission_2026_11_23_1" },
+  { version: "20261123121000", name: "proxmox_hosts_decommissioned_at" },
+  { version: "20261123122000", name: "protect_hermes_archive_lifecycle" },
 ];

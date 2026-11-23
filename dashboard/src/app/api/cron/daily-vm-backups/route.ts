@@ -32,6 +32,10 @@ export const maxDuration = 800;
 // must sit safely BELOW it or a long backup gets truncated mid-flight with no
 // signal. Leave ~100s of margin for the surrounding handler + response.
 const HOST_BACKUP_TIMEOUT_MS = 700_000;
+const HOST_BACKUP_DEADLINE = `timeout --kill-after=10s ${HOST_BACKUP_TIMEOUT_MS / 1000 - 10}s`;
+// Detached backups can exceed the request budget, but must finish before a
+// computer paused for the minimum archive window becomes eligible.
+const DETACHED_BACKUP_DEADLINE = "timeout --kill-after=10s 45m";
 
 const LOG_SOURCE = "cron:daily-vm-backups";
 const ROUTE = "/api/cron/daily-vm-backups";
@@ -166,7 +170,7 @@ LOG=${shellQuote(logPath)}
 if pgrep -f "/usr/local/sbin/backup-vm-daily.sh ${vmid}" >/dev/null 2>&1; then
   echo "ALREADY_RUNNING log=$LOG"
 else
-  ${encryptionPrefix()}nohup /usr/local/sbin/backup-vm-daily.sh ${vmid} ${instanceId} ${tier} --apply >"$LOG" 2>&1 </dev/null &
+  ${encryptionPrefix()}nohup ${DETACHED_BACKUP_DEADLINE} /usr/local/sbin/backup-vm-daily.sh ${vmid} ${instanceId} ${tier} --apply >"$LOG" 2>&1 </dev/null &
   echo "STARTED pid=$! log=$LOG"
 fi
 `;
@@ -665,7 +669,8 @@ async function handle(req: NextRequest) {
         "set -euo pipefail",
         buildInstallDailyBackupScript(),
         [
-          encryptionPrefix() + "/usr/local/sbin/backup-vm-daily.sh",
+          `${encryptionPrefix()}${HOST_BACKUP_DEADLINE}`,
+          "/usr/local/sbin/backup-vm-daily.sh",
           String(row.proxmox_vmid),
           shellQuote(row.id),
           shellQuote(row.resource_tier!),

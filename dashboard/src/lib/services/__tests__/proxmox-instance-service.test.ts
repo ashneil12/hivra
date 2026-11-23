@@ -2158,6 +2158,26 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     });
   });
 
+  it("keeps the instance suffix in long VM names used for discovery", async () => {
+    const instanceName = "a".repeat(55);
+    const runHostScript = jest.fn().mockResolvedValue({
+      ok: true, stdout: "HERMES_PROXMOX_DISCOVERY missing", stderr: "",
+    });
+    await discoverProxmoxInfrastructureForInstance({
+      instanceId: "00000000-0000-4000-8000-000000001042",
+      instanceName,
+    }, {
+      env: {
+        PROXMOX_SSH_HOST: "203.0.113.10",
+        PROXMOX_SSH_KEY_PATH: "/fixture/proxmox-key",
+        PROXMOX_PUBLIC_IP: "203.0.113.10",
+      },
+      runHostScript,
+    });
+    expect(runHostScript).toHaveBeenCalledTimes(1);
+    expect(runHostScript.mock.calls[0][0]).toContain(`VM_NAME='hermes-${"a".repeat(31)}-00000000'`);
+  });
+
   it("recovers infrastructure with the right node slug when PROXMOX_NODE is unset and only HERMES_PROXMOX_TARGET points at the host", async () => {
     // Fixture Customer A / Fixture Customer B incident regression (2026-05-07): production sets
     // HERMES_PROXMOX_TARGET="fixturenodea" but leaves PROXMOX_NODE unset. The

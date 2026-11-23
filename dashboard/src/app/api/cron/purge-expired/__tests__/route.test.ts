@@ -396,7 +396,7 @@ describe("GET /api/cron/purge-expired", () => {
     (resolveEffectiveSubscription as jest.Mock).mockResolvedValue(null);
   });
 
-  it("hands cold-archived rows to the cold-retention pipeline instead of tearing down the (already destroyed) VM", async () => {
+  it.each([true, false])("hands cold-archived rows to retention only when the handoff wins (matched: %s)", async (matched) => {
     // Regression: archiveInstance destroys the VM and nulls the routing
     // columns but leaves config.infrastructure behind. purge-expired used to
     // re-resolve that stale handle and SSH the (possibly decommissioned) host
@@ -413,7 +413,12 @@ describe("GET /api/cron/purge-expired", () => {
     mockedResolveProxmoxLifecycleTarget.mockReturnValue(staleInfra);
     mockedIsProxmoxBackedInstanceRow.mockReturnValue(true);
 
-    const handoffEqLifecycle = jest.fn().mockResolvedValue({ error: null });
+    const handoff = {
+      is: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({ data: matched ? { id: "tincho" } : null, error: null }),
+    };
+    const handoffEqLifecycle = jest.fn().mockReturnValue(handoff);
     const handoffEqId = jest.fn().mockReturnValue({ eq: handoffEqLifecycle });
     const updateMock = jest.fn().mockReturnValue({ eq: handoffEqId });
     mockedSupabaseAdmin.from
@@ -450,7 +455,7 @@ describe("GET /api/cron/purge-expired", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.data.purged).toBe(1);
+    expect(body.data.purged).toBe(matched ? 1 : 0);
     // NEVER touch a provider for a cold-archived row — the VM is already gone.
     expect(mockedDeleteProxmoxInstance).not.toHaveBeenCalled();
     expect(mockedDeleteServer).not.toHaveBeenCalled();
@@ -469,6 +474,8 @@ describe("GET /api/cron/purge-expired", () => {
     );
     expect(handoffEqId).toHaveBeenCalledWith("id", "tincho");
     expect(handoffEqLifecycle).toHaveBeenCalledWith("lifecycle_state", "cold_archived");
+    expect(handoff.is).toHaveBeenCalledWith("lifecycle_substate", null);
+    expect(handoff.is).toHaveBeenCalledWith("deleted_at", null);
   });
 
   it("refuses to purge a stranded-deleted instance whose owner still has an active subscription", async () => {

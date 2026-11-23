@@ -209,6 +209,31 @@ PR (see `Open work` below).
 
 ## Operational notes
 
+- Before releasing the archived-delete changes, apply the archive lifecycle and
+  Proxmox decommission migrations. Verify that older backup, archive, restore,
+  and re-encryption processes have finished, including detached host work.
+  Reconcile the host registry with the configured targets using the
+  [Proxmox retirement runbook](../../docs/self-host/PROXMOX-STORAGE.md#register-a-verified-host-retirement).
+- Explicit dashboard deletion of an archived computer uses `COLD_STORAGE_PURGE_HOST`,
+  or the configured `COLD_STORAGE_AUDIT_HOST` when the purge host is unset. The
+  selected Proxmox host needs its existing `cold` alias, storage key, and a
+  verified Storage Box host key. The deletion records success only after the
+  fleet scan confirms VM absence and the instance's Storage Box paths are gone.
+  If the storage check fails after the deletion claim, retry through the dashboard.
+- A `cold_archive_reencrypt` lifecycle substate remaining after an interrupted
+  operator re-encryption indicates the writer may still be active. Check the
+  archived instance ID and archive path on the configured re-encryption host.
+  Confirm the associated re-encryption, rsync, and Storage Box SSH writer have
+  exited. Then compare the instance ID, substate, and
+  `last_lifecycle_transition_at` before clearing only that substate. Keep the
+  archive pointer and checksum together and retry the intended operation.
+- If a failed restore records `cold_restore_host_unverified`, use its destination
+  host and VMID to investigate while the row remains `restoring`. Confirm the
+  host restore, its Proxmox task, and any child transfer have exited. Verify the
+  actual VM identity and absence across the fleet before releasing the claim to
+  `cold_archived` (or `pending_deletion` when the retention date is already set).
+  If the instance has a restored VM, verify the restore and recover its routing.
+  Keep the archive pointer until either recovery or explicit deletion succeeds.
 - The restricted shell on the Storage Box doesn't support `find`, `du`, `stat`,
   `sha256sum`. Test sha matching by downloading the archive back to a PVE host
   and running `sha256sum` locally (the manifest's `archive_sha256` is the source
