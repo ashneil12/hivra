@@ -266,11 +266,12 @@ export async function runCronHeartbeatWatchdog(): Promise<CronHeartbeatWatchdogR
       title: `Cron stalled: ${def.name}`,
       message: neverReported
         ? `Cron '${def.name}' is expected to run every ${def.periodMinutes} min but has never ` +
-          `recorded a heartbeat — its expected-since marker is ${Math.round(staleMinutes)} min old, ` +
-          `past the ${budgetMinutes} min dead-man budget. It is likely timing out before its first ` +
+          `recorded a heartbeat, and its watchdog-planted expected-since marker is past the ` +
+          `${budgetMinutes} min dead-man budget. It is likely timing out before its first ` +
           `run completes, 500ing before the heartbeat write, or not scheduled at all. Check Vercel ` +
           `Cron + the route logs for /api/cron/${def.name}; a silent prober/recovery cron means ` +
-          `fleet breakage now goes unnoticed.`
+          `fleet breakage now goes unnoticed. Exact marker age and run counts are in this ` +
+          `event's metadata.`
         : `Cron '${def.name}' is expected to run every ${def.periodMinutes} min but has not ` +
           `recorded a successful run within its ${budgetMinutes} min dead-man budget. It is ` +
           `likely 500ing, timing out, or no longer scheduled. Check Vercel Cron + the route ` +
@@ -357,4 +358,77 @@ export async function isFirstCronTickOfUtcDay(
   const previousMs = Date.parse(lastRunAt);
   if (!Number.isFinite(previousMs)) return false;
   return utcDayKey(now) !== utcDayKey(new Date(previousMs));
+}
+
+type CronHeartbeatClaimQuery = {
+  eq: (column: string, value: string) => CronHeartbeatClaimQuery;
+  lt: (column: string, value: string) => CronHeartbeatClaimQuery;
+  select: (columns: string) => {
+    then: Promise<{ data?: unknown; error: { message?: string } | null }>["then"];
+  };
+};
+
+type CronHeartbeatClaimTable = {
+  update: (patch: Record<string, unknown>) => CronHeartbeatClaimQuery;
+};
+
+/**
+ * Atomically claim a cron's once-per-UTC-day slot. isFirstCronTickOfUtcDay is
+ * only a read: two overlapping authorized invocations can both observe
+ * "previous tick was yesterday" before either heartbeats at the end of its
+ * run, so it cannot decide who runs once-a-day work. This update can: the
+ * first writer to move last_run_at into today owns the day. Under READ
+ * COMMITTED a loser blocks on the row lock, then re-evaluates the guard
+ * against the winner's commit — last_run_at is no longer before today, so
+ * its update matches nothing and it skips the daily work.
+ *
+ * Uses the cron's own heartbeat row: no previous run recorded means no
+ * baseline and no claim (last_run_at NULL fails the guard), matching the
+ * day-check's contract. A claimant that crashes before heartbeating leaves
+ * last_run_at inside today, so the day's once-only work defers to tomorrow —
+ * deferral, not loss, which is the right trade for a daily retry. The claim
+ * marker in last_detail survives only on that crash path (a heartbeat
+ * overwrites it at run end), where it explains why the day was skipped.
+ * Best-effort like the rest of this module: a failed claim answers false
+ * rather than throwing into the cron it guards.
+ */
+export async function claimCronUtcDay(
+  db: { from: (name: string) => unknown } | null | undefined,
+  cronName: string,
+  now: Date,
+): Promise<boolean> {
+  if (!db) return false;
+  const utcDayStart = new Date(now);
+  utcDayStart.setUTCHours(0, 0, 0, 0);
+  try {
+    const { data, error } = await (
+      db.from("ops_cron_heartbeats") as unknown as CronHeartbeatClaimTable
+    )
+      .update({
+        last_run_at: now.toISOString(),
+        last_detail: `utc day ${utcDayKey(now)} claimed for once-daily work; awaiting run heartbeat`,
+        updated_at: now.toISOString(),
+      })
+      .eq("cron_name", cronName)
+      .lt("last_run_at", utcDayStart.toISOString())
+      .select("cron_name");
+    if (error) {
+      log.warn("cron utc-day claim failed; skipping once-daily work", {
+        source: "cron-heartbeat",
+        failureType: "cron_utc_day_claim_failed",
+        cronName,
+        errorMessage: error.message ?? "unknown",
+      });
+      return false;
+    }
+    return Array.isArray(data) && data.length > 0;
+  } catch (error) {
+    log.warn("cron utc-day claim threw; skipping once-daily work", {
+      source: "cron-heartbeat",
+      failureType: "cron_utc_day_claim_threw",
+      cronName,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
 }

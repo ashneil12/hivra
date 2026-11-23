@@ -19,7 +19,7 @@ jest.mock("@/lib/supabase", () => ({
 jest.mock("@/lib/ops-events", () => ({ reportOpsEvent: jest.fn() }));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
-import { recordCronHeartbeat, runCronHeartbeatWatchdog, CRON_REGISTRY } from "../cron-heartbeat";
+import { claimCronUtcDay, recordCronHeartbeat, runCronHeartbeatWatchdog, CRON_REGISTRY } from "../cron-heartbeat";
 import { reportOpsEvent } from "@/lib/ops-events";
 
 function minutesAgoIso(minutes: number): string {
@@ -145,6 +145,46 @@ describe("runCronHeartbeatWatchdog", () => {
     // The volatile staleness is preserved — in metadata, which is NOT fingerprinted.
     expect(first.metadata.staleMinutes).not.toBe(second.metadata.staleMinutes);
     expect(first.metadata.staleMinutes).toBeGreaterThanOrEqual(29);
+  });
+
+  it("keeps the never-reported message stable across marker ages so a dead cron pages once", async () => {
+    // Regression companion to the stable-message test above: the never-reported
+    // branch embedded the marker's live age (Math.round(staleMinutes)) in the
+    // message, so every watchdog tick minted a fresh fingerprint and re-paged —
+    // exactly the re-page-every-10-minutes failure the stable-message change
+    // fixed for the stale branch. Two ticks of the same ongoing never-reported
+    // stall must now produce identical fingerprint inputs.
+    mockHeartbeats([
+      {
+        cron_name: "probe-instance-health",
+        last_success_at: null,
+        last_run_at: null,
+        run_count: 0,
+        created_at: minutesAgoIso(30),
+      },
+    ]);
+    await runCronHeartbeatWatchdog();
+    const first = (reportOpsEvent as jest.Mock).mock.calls[0][0];
+
+    jest.clearAllMocks();
+    mockHeartbeats([
+      {
+        cron_name: "probe-instance-health",
+        last_success_at: null,
+        last_run_at: null,
+        run_count: 0,
+        created_at: minutesAgoIso(240),
+      },
+    ]);
+    await runCronHeartbeatWatchdog();
+    const second = (reportOpsEvent as jest.Mock).mock.calls[0][0];
+
+    expect(first.title).toBe(second.title);
+    expect(first.message).toBe(second.message);
+    expect(first.route).toBe(second.route);
+    expect(first.metadata.neverReported).toBe(true);
+    // The marker's live age is preserved — in metadata, outside the fingerprint.
+    expect(first.metadata.staleMinutes).not.toBe(second.metadata.staleMinutes);
   });
 
   it("does NOT page a cron that is within its staleness budget", async () => {
@@ -285,6 +325,85 @@ describe("runCronHeartbeatWatchdog", () => {
 
     expect(result.stale).toHaveLength(0);
     expect(reportOpsEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("claimCronUtcDay", () => {
+  afterEach(() => jest.clearAllMocks());
+
+  // The claim is a single guarded UPDATE on the cron's heartbeat row: move
+  // last_run_at into today, but only while last_run_at is still before today.
+  // A matched row = this invocation owns the day's once-only work.
+  function claimDb(result: { data: unknown; error: { message?: string } | null }) {
+    const calls: Array<{
+      patch: Record<string, unknown>;
+      filters: Array<{ op: string; column: string; value: unknown }>;
+    }> = [];
+    const db = {
+      from: (name: string) => {
+        if (name !== "ops_cron_heartbeats") throw new Error(`unexpected table ${name}`);
+        return {
+          update: (patch: Record<string, unknown>) => {
+            const call = { patch, filters: [] as Array<{ op: string; column: string; value: unknown }> };
+            calls.push(call);
+            const query = {
+              eq: (column: string, value: string) => {
+                call.filters.push({ op: "eq", column, value });
+                return query;
+              },
+              lt: (column: string, value: string) => {
+                call.filters.push({ op: "lt", column, value });
+                return query;
+              },
+              select: () => Promise.resolve(result),
+            };
+            return query;
+          },
+        };
+      },
+    };
+    return { db, calls };
+  }
+
+  it("moves last_run_at into today under a before-today guard and returns true", async () => {
+    const { db, calls } = claimDb({ data: [{ cron_name: "reconcile-crypto-topups" }], error: null });
+    const now = new Date("2026-04-24T12:00:00.000Z");
+
+    await expect(claimCronUtcDay(db, "reconcile-crypto-topups", now)).resolves.toBe(true);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].patch).toEqual(
+      expect.objectContaining({ last_run_at: now.toISOString(), updated_at: now.toISOString() })
+    );
+    // The guard is what makes overlapping invocations exclusive: only a row
+    // whose last_run_at is still before today's UTC start may be moved.
+    expect(calls[0].filters).toEqual([
+      { op: "eq", column: "cron_name", value: "reconcile-crypto-topups" },
+      { op: "lt", column: "last_run_at", value: "2026-04-24T00:00:00.000Z" },
+    ]);
+  });
+
+  it("returns false when the guarded update matches nothing (day already claimed)", async () => {
+    const { db } = claimDb({ data: [], error: null });
+
+    await expect(
+      claimCronUtcDay(db, "reconcile-crypto-topups", new Date("2026-04-24T12:00:00.000Z"))
+    ).resolves.toBe(false);
+  });
+
+  it("returns false when the claim update fails, and never throws", async () => {
+    const { db } = claimDb({ data: null, error: { message: "db exploded" } });
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      claimCronUtcDay(db, "reconcile-crypto-topups", new Date("2026-04-24T12:00:00.000Z"))
+    ).resolves.toBe(false);
+    warnSpy.mockRestore();
+  });
+
+  it("returns false without a db instead of throwing into the cron", async () => {
+    await expect(claimCronUtcDay(null, "reconcile-crypto-topups", new Date())).resolves.toBe(false);
+    await expect(claimCronUtcDay(undefined, "reconcile-crypto-topups", new Date())).resolves.toBe(false);
   });
 });
 
