@@ -273,6 +273,13 @@ export interface ManagedVeniceTokenQuoteBatchReconciliationResult {
     open: number;
     surfacing: number;
   };
+  // The once-a-day stale pass was due but its candidate SELECT failed. No
+  // per-quote failure exists to count in `failed`, so this is reported apart
+  // — the caller's incident report and heartbeat must read the tick as
+  // degraded, not as a clean pass that scanned nothing (the crypto
+  // reconciler's staleRetryLoadFailed pattern). The pass retries on the next
+  // day's first tick.
+  staleScanLoadFailed: boolean;
   results: Array<{
     quoteId: string;
     userId: string;
@@ -1253,6 +1260,11 @@ async function touchStaleQuoteScanCursor(db: SupabaseLike, quoteId: string, nowI
  * inconclusive stays open for the next day. Expiring sight-unseen is
  * exactly what this pass exists to prevent, so there is no separate
  * expiry step: the scan IS the decision.
+ *
+ * `loadFailed` reports the one auxiliary failure — the candidate SELECT —
+ * which is caught here so it cannot abort the regular lanes below; per-quote
+ * failures ride `failed` instead. Any other throw is a genuine crash and
+ * still propagates as a batch failure.
  */
 async function runDailyStaleUnpaidQuoteScan(params: {
   db: SupabaseLike;
@@ -1272,11 +1284,30 @@ async function runDailyStaleUnpaidQuoteScan(params: {
   const expiresBeforeIso = new Date(
     params.now.getTime() - NO_DEPOSIT_AFTER_EXPIRY_GRACE_MS
   ).toISOString();
-  const rows = await loadStaleUnpaidQuoteRows({
-    db: params.db,
-    expiresBeforeIso,
-    limit: params.limit,
-  });
+  let rows: StaleQuoteCandidateRow[];
+  try {
+    rows = await loadStaleUnpaidQuoteRows({
+      db: params.db,
+      expiresBeforeIso,
+      limit: params.limit,
+    });
+  } catch (error) {
+    // The candidate SELECT is this pass's one auxiliary failure (per-quote
+    // failures are counted below and never reach here). It must not reject
+    // the batch — the regular lanes and the transfer-surfacing pass still
+    // progress, and the pass retries on the next day's first tick — but it
+    // must not be INVISIBLE either: the tick produced no stale work at all,
+    // so the outcome carries the failure for the route's incident report and
+    // heartbeat (the crypto reconciler's staleRetryLoadFailed pattern).
+    // Anything else the pass throws still propagates as a batch failure.
+    log.warn("daily stale quote pass could not load its candidates; regular lanes still ran", {
+      source: "managed-venice-token-reconciliation",
+      failureType: "managed_venice_stale_scan_load_failed",
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    return { loadFailed: true, failed: [], outcomes: [], deferred: 0 };
+  }
 
   const failed: Array<{
     quoteId: string;
@@ -1338,7 +1369,7 @@ async function runDailyStaleUnpaidQuoteScan(params: {
     // guard makes this a no-op once the row has left the set).
     await touchStaleQuoteScanCursor(params.db, candidate.id, params.now.toISOString());
   }
-  return { failed, outcomes, deferred };
+  return { loadFailed: false, failed, outcomes, deferred };
 }
 
 // The reconcile result after a settle call, from the quote as it is NOW (it is
@@ -1762,16 +1793,6 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
 
   const db = requireDb(params.db ?? supabaseAdmin);
   const batchNow = params.now ?? new Date();
-  // Scan candidates are bounded below by expires_at: anything at or before
-  // the stale cutoff is handled by the once-a-day stale pass instead of a
-  // scan every tick (the stored expiry approximates the effective expiry
-  // within the quote lifetime, and the stale pass re-checks the exact
-  // window).
-  const candidates = await loadPendingManagedVeniceTokenQuoteCandidates({
-    db,
-    limit: normalizePendingQuoteLimit(params.limit),
-    expiresAfterIso: new Date(batchNow.getTime() - NO_DEPOSIT_AFTER_EXPIRY_GRACE_MS).toISOString(),
-  });
 
   // Build the per-call RPC options once: retry config + injectable sleep/random
   // ride along with every eth_* call this batch makes.
@@ -1803,6 +1824,7 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
     failed: 0,
     transferSurfacing: { checked: 0, complete: 0, pending: 0, failed: 0 },
     deferred: { open: 0, surfacing: 0 },
+    staleScanLoadFailed: false,
     results: [],
   };
 
@@ -1824,20 +1846,23 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
   });
 
   // Once per UTC day — the first tick whose start lands in a new day — the
-  // stale unclaimed quote pass runs BEFORE the regular open loop, inside its
-  // own slice of the tick clock. A regular batch that exhausts the open-scan
-  // budget on that tick must not starve it: stale quotes are the oldest
-  // unclaimed money, so the day's one pass gets a guaranteed window. Other
-  // ticks do no stale work at all: expiring without a real log scan of the
-  // deposit window is exactly what this pass exists to prevent. A failure of
-  // the candidate SELECT propagates (the DB is down and the scan batch would
-  // fail anyway); per-quote failures are counted and retried on a later day.
+  // stale unclaimed quote pass runs BEFORE the regular open loop AND before
+  // regular candidate discovery below, inside its own slice of the tick
+  // clock. Stale quotes are the oldest unclaimed money, so the day's one
+  // pass gets a guaranteed window: a slow fresh/claimed/lot-held lookup can
+  // never eat the stale budget because discovery has not run yet, and the
+  // shared clock still bounds the slice so the batch keeps its wall-clock
+  // cap. Other ticks do no stale work at all: expiring without a real log
+  // scan of the deposit window is exactly what this pass exists to prevent.
   const firstTickOfDay = await isFirstCronTickOfUtcDay(
     db,
     MANAGED_VENICE_TOKEN_RECONCILIATION_CRON,
     batchNow
   );
   if (firstTickOfDay) {
+    // Only the pass's candidate SELECT is caught inside (loadFailed); a
+    // genuine mid-pass crash still propagates as a batch failure, and
+    // per-quote failures are counted, not thrown.
     const stale = await runDailyStaleUnpaidQuoteScan({
       db,
       now: batchNow,
@@ -1851,6 +1876,7 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
       elapsedMs,
       staleScanBudgetMs,
     });
+    if (stale.loadFailed) summary.staleScanLoadFailed = true;
     summary.failed += stale.failed.length;
     summary.deferred.open += stale.deferred;
     for (const outcome of stale.outcomes) {
@@ -1875,6 +1901,19 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
       summary.results.push({ ...failure, status: "failed" });
     }
   }
+
+  // Scan candidates are bounded below by expires_at: anything at or before
+  // the stale cutoff is handled by the once-a-day stale pass instead of a
+  // scan every tick (the stored expiry approximates the effective expiry
+  // within the quote lifetime, and the stale pass re-checks the exact
+  // window). This runs AFTER the stale pass so a slow discovery — the
+  // lot-held lookup can page every open quote — can never starve the day's
+  // one stale pass of its budget slice.
+  const candidates = await loadPendingManagedVeniceTokenQuoteCandidates({
+    db,
+    limit: normalizePendingQuoteLimit(params.limit),
+    expiresAfterIso: new Date(batchNow.getTime() - NO_DEPOSIT_AFTER_EXPIRY_GRACE_MS).toISOString(),
+  });
 
   for (const [position, candidate] of candidates.entries()) {
     // Past the open-scan budget, leave the rest for a later tick so the

@@ -381,8 +381,164 @@ describe("applyLiveUpdate", () => {
     expect(captured[0].patch).toMatchObject({
       status: "failed",
       lifecycle_state: "failed",
+      // The launch never reached the guest, so the fleet-sync sweep's
+      // reachable-failed arm must NOT pick this row up — recovery owns it.
+      lifecycle_substate: "live_update_failed_vm_unreachable",
     });
     expect(captured[0].eqArgs).toEqual(["id", "inst-launch-fail"]);
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("marks a launch failure that reached the guest so the fleet sweep keeps retrying the row", async () => {
+    // An update that died ON the box (image pull, update script, health wait)
+    // leaves a live VM behind. The fleet-sync sweep re-admits exactly that
+    // case on lifecycle_substate='live_update_failed_vm_reached': recover-
+    // stuck can restart the box but never re-applies the release, so the
+    // sweep is the only path that finishes the update.
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: false,
+      stdout: "",
+      // Guest-side output: no refused/unreachable marker, so the command ran
+      // on the box and failed there.
+      stderr: "docker: Error response from daemon: manifest not found",
+      error: "",
+    });
+
+    const captured: Array<{ patch: Record<string, unknown> }> = [];
+    const supabase = {
+      from: jest.fn().mockReturnValue({
+        update: jest.fn((patch: Record<string, unknown>) => ({
+          eq: jest.fn(() => {
+            captured.push({ patch });
+            return Promise.resolve({ error: null });
+          }),
+        })),
+      }),
+    } as unknown as SupabaseClient;
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-guest-fail",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result.applied).toBe(false);
+    expect(captured).toHaveLength(1);
+    expect(captured[0].patch).toMatchObject({
+      status: "failed",
+      lifecycle_state: "failed",
+      lifecycle_substate: "live_update_failed_vm_reached",
+    });
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("treats a transport-level launch failure with no guest output as unreachable", async () => {
+    // sshExec reports a dead channel as `error` with empty stderr — the box
+    // may be fine, but nothing proves the update ran on it, so the sweep
+    // must not sweep it (recovery's gateway probe + restart owns the row).
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: false,
+      stdout: "",
+      stderr: "",
+      error: "All configured authentication methods failed",
+    });
+
+    const captured: Array<{ patch: Record<string, unknown> }> = [];
+    const supabase = {
+      from: jest.fn().mockReturnValue({
+        update: jest.fn((patch: Record<string, unknown>) => ({
+          eq: jest.fn(() => {
+            captured.push({ patch });
+            return Promise.resolve({ error: null });
+          }),
+        })),
+      }),
+    } as unknown as SupabaseClient;
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-transport-fail",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result.applied).toBe(false);
+    expect(captured).toHaveLength(1);
+    expect(captured[0].patch).toMatchObject({
+      lifecycle_substate: "live_update_failed_vm_unreachable",
+    });
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("classifies the VMID-bound refusal marker as never having reached the guest", async () => {
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: false,
+      stdout: "",
+      // The prelude's refusal line — a missing, stopped, or misidentified VM.
+      stderr: "VMID-bound SSH refused: VM 4242 is not running",
+      error: "",
+    });
+
+    const captured: Array<{ patch: Record<string, unknown> }> = [];
+    const supabase = {
+      from: jest.fn().mockReturnValue({
+        update: jest.fn((patch: Record<string, unknown>) => ({
+          eq: jest.fn(() => {
+            captured.push({ patch });
+            return Promise.resolve({ error: null });
+          }),
+        })),
+      }),
+    } as unknown as SupabaseClient;
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-refused",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result.applied).toBe(false);
+    expect(captured[0].patch).toMatchObject({
+      lifecycle_substate: "live_update_failed_vm_unreachable",
+    });
 
     consoleErrorSpy.mockRestore();
   });

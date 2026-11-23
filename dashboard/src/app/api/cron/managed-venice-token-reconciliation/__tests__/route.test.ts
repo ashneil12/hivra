@@ -135,6 +135,51 @@ describe("GET /api/cron/managed-venice-token-reconciliation", () => {
     );
   });
 
+  it("reports a stale pass that could not load as a degraded tick, not a clean one", async () => {
+    // The once-a-day stale pass failing to load produces no per-quote
+    // failure, so without its own signal the day would read as a clean tick
+    // that scanned nothing — the heartbeat stays green and the pass's one
+    // daily chance is silently lost.
+    (reconcilePendingManagedVeniceTokenQuotes as jest.Mock).mockResolvedValueOnce({
+      checked: 3,
+      settled: 2,
+      underconfirmed: 0,
+      noMatch: 1,
+      manualReview: 0,
+      cancelled: 0,
+      skipped: 0,
+      failed: 0,
+      transferSurfacing: { checked: 0, complete: 0, pending: 0, failed: 0 },
+      deferred: { open: 0, surfacing: 0 },
+      staleScanLoadFailed: true,
+      results: [],
+    });
+
+    const response = await GET(req("Bearer cron-secret"));
+
+    // The batch lanes themselves completed — the cron stays 200.
+    expect(response.status).toBe(200);
+    expect(log.warn).toHaveBeenCalledWith(
+      "managed Venice token reconciliation completed with quote failures",
+      expect.objectContaining({ staleScanLoadFailed: true })
+    );
+    // ...but the day's missed stale pass reaches the ops feed...
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: "warn",
+        metadata: expect.objectContaining({ staleScanLoadFailed: true }),
+      })
+    );
+    // ...and the heartbeat records a degraded run, not a clean pass.
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "managed-venice-token-reconciliation",
+      expect.objectContaining({
+        ok: false,
+        detail: expect.stringContaining("stale_scan=load_failed"),
+      })
+    );
+  });
+
   it("allows the same 300 s as the sibling Base-scanning billing cron", () => {
     expect(maxDuration).toBe(300);
   });

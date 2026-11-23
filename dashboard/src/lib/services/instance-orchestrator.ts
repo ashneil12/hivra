@@ -63,6 +63,7 @@ import { getProfileDeploymentState } from "@/lib/profile-deployment";
 import { isIpv4Literal } from "@/lib/network-address";
 import {
   GUEST_SSH_REFUSED_MARKER,
+  GUEST_SSH_UNREACHABLE_MESSAGE,
   buildHermesVmidBoundGuestSshPrelude,
   isHermesInstanceId,
   buildPinnedGuestSshReadinessWait,
@@ -74,7 +75,11 @@ import {
   isBrowserSidecarDeploymentGateEnabled,
   instanceCanFitBrowserSidecar,
 } from "@/lib/browser-sidecar/deployment-gate";
-import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
+import {
+  buildInstanceLifecyclePatch,
+  LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
+  LIVE_UPDATE_FAILED_VM_UNREACHABLE_SUBSTATE,
+} from "@/lib/instance-lifecycle";
 import {
   readInstanceLiveMutationBlock,
   type InstanceLiveMutationState,
@@ -384,6 +389,34 @@ function launchedPid(stdout: string): string {
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("HERMES_INFLIGHT_GATE "));
   return lines[lines.length - 1] ?? "";
+}
+
+/**
+ * Did the failed launch get a command onto the guest before it died?
+ * Positive evidence only, because the fleet-sync sweep retries a failed row
+ * whose last update ran ON the box while the recovery crons own every other
+ * case — classifying a dead VM as reachable would re-create the guaranteed
+ * daily failure the sweep's live-only filter was added to stop.
+ *
+ * The evidence lives in stderr: the guest-bound launch script only writes
+ * to stderr once the VMID-bound prelude and the SSH readiness wait have
+ * passed — a powered-off, missing or wrong VM is refused instead with
+ * GUEST_SSH_REFUSED_MARKER or the readiness wait's unreachable line — and
+ * the direct sshExec path only fills stderr once the command channel ran a
+ * command (transport failures report `error` with an empty stderr). A
+ * non-empty stderr without those markers means the launch reached the box;
+ * anything else — empty output, host timeout, key/fingerprint refusal —
+ * left no proof the VM took the update at all.
+ */
+export function liveUpdateLaunchReachedGuest(result: {
+  stdout?: string;
+  stderr?: string;
+  error?: string;
+}): boolean {
+  const detail = `${result.stderr ?? ""}\n${result.error ?? ""}`;
+  if (detail.includes(GUEST_SSH_REFUSED_MARKER)) return false;
+  if (detail.includes(GUEST_SSH_UNREACHABLE_MESSAGE)) return false;
+  return (result.stderr ?? "").trim().length > 0;
 }
 
 export async function applyLiveUpdate(
@@ -972,9 +1005,23 @@ fi
     // previously-active row is left orphaned with no recovery path — the cause
     // of the 7 stuck instances on 2026-06-09 (a whole fleet-sync wave failed on
     // a shared host and none of the rows ever became recovery candidates).
+    //
+    // The failure also carries WHERE the launch died in lifecycle_substate:
+    // the fleet-sync sweep retries a failed row only when the update actually
+    // ran on the box (an image pull or script failure is a real retry), while
+    // a launch refused before reaching the guest (powered off, wrong VMID,
+    // dead agent) stays with recovery. Both paths converge on the same stamp:
+    // recovery can always re-drive the row, and the sweep reads the substate
+    // to keep unreachable boxes out of its queue.
+    const reachedGuest = liveUpdateLaunchReachedGuest(launchResult);
     const { error: failedStateError } = await supabaseAdmin
       .from("hermes_instances")
-      .update(buildInstanceLifecyclePatch("failed"))
+      .update({
+        ...buildInstanceLifecyclePatch("failed"),
+        lifecycle_substate: reachedGuest
+          ? LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE
+          : LIVE_UPDATE_FAILED_VM_UNREACHABLE_SUBSTATE,
+      })
       .eq("id", instance.id);
     if (failedStateError) {
       // Without this stamp the row is not a recovery candidate; make it visible.
