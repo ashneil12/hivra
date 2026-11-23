@@ -3383,4 +3383,201 @@ describe("stale unpaid quote expiry", () => {
     const markedRow = memory.tables.managed_venice_token_quotes.find((row) => row.id === "quote_marked");
     expect(markedRow?.updated_at).toBe(staleNow.toISOString());
   });
+
+  it("keeps a marked settle from spending the scans' reservation when it overruns in flight", async () => {
+    // The CodeRabbit starvation scenario: a marked attempt's reads finish
+    // inside the lane's share, the deadline check passes, and the settle
+    // itself then spends past the whole slice. Before the fix the settle's
+    // awaited span had no bound, so the scan lane found its budget gone and
+    // deferred every row — and the UTC-day claim suppressed a retry for a
+    // day. The deadline now races the settle's await (an abort leaves the
+    // attempt deferred and any partially-committed work recovery-eligible),
+    // and the scan lane keeps a reservation measured from the lane's close
+    // that a marked overrun cannot consume.
+    const marked = staleQuoteRow({
+      id: "quote_marked",
+      status: "expired",
+      deposit_address: `0x${"7".repeat(40)}`,
+      metadata: {
+        ...(staleQuoteRow().metadata as Row),
+        closedReason: "no_deposit_after_grace",
+        graceWindowScannedAt: "2026-05-19T00:00:00.000Z",
+      },
+    });
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [
+        marked,
+        staleQuoteRow({ id: "quote_scan", deposit_address: `0x${"9".repeat(40)}` }),
+      ],
+      managed_venice_token_lots: [
+        {
+          id: "lot_marked",
+          account_id: "account_1",
+          user_id: "user_1",
+          quote_id: "quote_marked",
+          source: "hermesos_deposit",
+          token_amount_raw: "1000000000000000000000",
+          remaining_token_amount_raw: "1000000000000000000000",
+          snapshot_price_usd: "0.05",
+          original_value_micro_usd: 50_000_000,
+          remaining_value_micro_usd: 50_000_000,
+          quote_source: "dexscreener",
+          quoted_at: "2026-05-01T10:00:00.000Z",
+          quote_expires_at: "2026-05-01T10:20:00.000Z",
+          transaction_hash: "0xmarkedlotpaid",
+          status: "active",
+          metadata: {},
+        },
+      ],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    let nowMs = 0;
+    // The settle itself is the burn: it pushes the attempt past the whole
+    // 60 s slice in one awaited call, then stays in flight long enough for
+    // the deadline poll to interrupt the await.
+    const settleQuote = jest.fn(async () => {
+      nowMs += 62_000;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      return { status: "settled" as const, quoteId: "quote_marked" };
+    });
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote,
+      now: staleNow,
+      clock: () => nowMs,
+      staleScanBudgetMs: 60_000,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    // The stale quote got its real log scan: the marked settle could not
+    // consume the scans' reservation (before the fix the scan lane started
+    // with its 60 s already spent — the row deferred every day).
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+    expect(summary.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ quoteId: "quote_scan", status: "cancelled" }),
+      ])
+    );
+    // The aborted marked attempt was deferred, never failed — and the open
+    // lane's lot probe still recovered the same row inside the tick, so a
+    // slow settle is never lost to the deadline.
+    expect(summary.deferred.open).toBe(1);
+    expect(summary.settled).toBe(1);
+    expect(summary.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ quoteId: "quote_marked", status: "settled" }),
+      ])
+    );
+  });
+
+  it("defers retirement when a deadline-stopped surface leaves items unwritten", async () => {
+    // Confirmed late out-of-band transfers are item-only: they never settle
+    // or review, but each is owed a reconciliation item. When the stale
+    // deadline fires between the surface loop's writes, surfaceTransfers
+    // reports the early stop — and the retirement predicate must honor it.
+    // Retiring over unwritten items cancels the row out of the open set,
+    // so the remainder is never written and never retried.
+    const graceExpired = {
+      ...staleQuoteRow(),
+      status: "expired",
+      metadata: {
+        ...(staleQuoteRow().metadata as Row),
+        closedReason: "no_deposit_after_grace",
+      },
+    };
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [graceExpired],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    // Two late out-of-band transfers inside the grace range, confirmed:
+    // both item-only.
+    const lateAmount = BigInt(staleQuoteRow().token_amount_raw as string) / 2n;
+    chain.addTransfer(transferAt(chain.blockAt("2026-05-01T11:00:00.000Z"), lateAmount, "0xlate0"));
+    chain.addTransfer(transferAt(chain.blockAt("2026-05-01T11:10:00.000Z"), lateAmount, "0xlate1"));
+    // The first item write spends the scan slice: the second write's
+    // deadline check then stops the loop with one item still unwritten.
+    let nowMs = 0;
+    let insertBurned = false;
+    const burningDb = {
+      from(tableName: string) {
+        const builder = memory.db.from(tableName) as {
+          insert: (input: unknown) => unknown;
+        };
+        if (tableName !== "managed_venice_reconciliation_items") return builder;
+        return {
+          ...builder,
+          insert: (input: unknown) => {
+            if (!insertBurned) {
+              insertBurned = true;
+              nowMs += 61_000;
+            }
+            return builder.insert(input);
+          },
+        };
+      },
+    };
+
+    const day1 = await reconcilePendingManagedVeniceTokenQuotes({
+      db: burningDb,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote: jest.fn(async () => ({ status: "settled" as const, quoteId: "quote_stale" })),
+      now: staleNow,
+      clock: () => nowMs,
+      staleScanBudgetMs: 60_000,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    // The deadline stopped the surface loop: one item written, one owed.
+    // The quote must stay open — before the fix it cancelled, stranding the
+    // unwritten item outside every retry path.
+    expect(day1.results).toEqual([
+      expect.objectContaining({ quoteId: "quote_stale", status: "no_match" }),
+    ]);
+    expect(day1.cancelled).toBe(0);
+    let row = memory.tables.managed_venice_token_quotes[0];
+    expect(row.status).toBe("expired");
+    // The dishonest marker is withheld too: an excluded row would never get
+    // its remaining item written.
+    expect((row.metadata as Row).graceWindowScannedAt).toBeUndefined();
+    expect(
+      memory.tables.managed_venice_reconciliation_items.filter(
+        (item) => (item.metadata as Row)?.quoteId === "quote_stale"
+      )
+    ).toHaveLength(1);
+
+    // The durable obligation is the open quote itself: the next day's pass
+    // finishes the owed items and only then retires it.
+    const day2 = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote: jest.fn(async () => ({ status: "settled" as const, quoteId: "quote_stale" })),
+      now: new Date("2026-05-21T00:00:00.000Z"),
+      clock: () => nowMs,
+      staleScanBudgetMs: 60_000,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+    expect(day2.results).toEqual([
+      expect.objectContaining({ quoteId: "quote_stale", status: "cancelled" }),
+    ]);
+    row = memory.tables.managed_venice_token_quotes[0];
+    expect(row.status).toBe("cancelled");
+    expect(
+      memory.tables.managed_venice_reconciliation_items.filter(
+        (item) => (item.metadata as Row)?.quoteId === "quote_stale"
+      )
+    ).toHaveLength(2);
+  });
 });

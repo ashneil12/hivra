@@ -803,6 +803,23 @@ function hermesVmName(name: string, instanceId: string): string {
   return `${stem}${suffix}`;
 }
 
+/**
+ * The provisioner used before `hermesVmName` sanitized the WHOLE
+ * `hermes-<name>-<id8>` string and cut it at 48 chars, so a name at or past
+ * ~32 chars pushed part or all of the id8 suffix off the end (e.g. a 32-char
+ * name kept all 32 chars plus the full suffix; a 40-char name kept no suffix
+ * at all). Those VMs are still out there; discovery probes this spelling too,
+ * gated on the script's ownership check since a suffix-truncated name can
+ * collide across instances.
+ */
+function legacyHermesVmName(name: string, instanceId: string): string {
+  return `hermes-${name}-${instanceId.slice(0, 8)}`
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
 function dashedIpv4(ipv4: string): string {
   if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ipv4)) {
     throw new Error(`Invalid Proxmox public IPv4 address: ${ipv4}`);
@@ -1030,10 +1047,19 @@ export async function discoverProxmoxInfrastructureForInstance(
     dnsDomain: envValue(env, "PROXMOX_GATEWAY_DOMAIN"),
   });
   const vmName = hermesVmName(params.instanceName, params.instanceId);
+  const legacyVmName = legacyHermesVmName(params.instanceName, params.instanceId);
   const runner = deps.runHostScript ?? ((hostScript: string) => runProxmoxHostScript(hostScript, env));
 
   try {
-    const result = await runner(buildProxmoxInfrastructureDiscoveryScript({ vmName }));
+    const result = await runner(buildProxmoxInfrastructureDiscoveryScript({
+      vmName,
+      // Only probe the legacy spelling when it differs — a short name produces
+      // the same VM name under both provisioners. The script itself gates a
+      // legacy hit on the instance-ownership check before reporting it.
+      ...(legacyVmName !== vmName
+        ? { legacyVmName, expectedInstanceId: params.instanceId }
+        : {}),
+    }));
     if (!result.ok) return null;
 
     const discovered = parseProxmoxInfrastructureDiscoveryOutput(result.stdout);

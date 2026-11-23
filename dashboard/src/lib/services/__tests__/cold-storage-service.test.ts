@@ -1030,6 +1030,37 @@ describe("restoreInstance", () => {
     expect(runHostScript).toHaveBeenCalledTimes(writerExitCode === 2 ? 2 : 1);
   });
 
+  it.each(["connect", "ready"] as const)(
+    "reverts the restore claim without teardown when SSH never dispatched the writer (stage=%s)",
+    async (stage) => {
+      // The missing writer receipt at a pre-dispatch stage is explained: the
+      // channel never opened, so nothing ran — no clone exists, no teardown
+      // is owed, and the row must not sit non-retryable in restoring_starting
+      // over a transient SSH failure.
+      let revertedPayload: Record<string, unknown> | undefined;
+      const supabase = makeSupabase([
+        { table: "hermes_instances", op: "select", result: { data: coldRow, error: null } },
+        { table: "hermes_instances", op: "update", result: { data: { id: VALID_INSTANCE_ID }, error: null } },
+        {
+          table: "hermes_instances",
+          op: "update",
+          result: { data: { id: VALID_INSTANCE_ID }, error: null },
+          capture: (payload) => { revertedPayload = payload; },
+        },
+      ]);
+      const { deps, runHostScript } = makeDeps([
+        { ok: false, stdout: "", stderr: "", error: "ssh transport failed", stage },
+      ]);
+
+      const result = await restoreInstance(supabase as never, VALID_INSTANCE_ID, restoreOptions, deps);
+      expect(result).toMatchObject({ ok: false, reason: "host_script_failed", retryable: true });
+      if (result.ok) throw new Error("expected a failed restore result");
+      expect(result.revertFailed).toBeFalsy();
+      expect(revertedPayload).toMatchObject({ lifecycle_state: "cold_archived" });
+      expect(runHostScript).toHaveBeenCalledTimes(1); // no teardown call
+    },
+  );
+
   it("parks the row health_pending (not reverted) when the script exits 5 with status=health_pending", async () => {
     // restore-vm-cold.sh restored the data + booted the VM but the gateway
     // hadn't gone healthy in its window: exit 5 (ok:false) + RESULT

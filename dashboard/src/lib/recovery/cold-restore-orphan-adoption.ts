@@ -339,20 +339,49 @@ async function loadOrphanRestoreCandidates(
   // archive to fall back on, and a populated gateway_url to route. See
   // ORPHAN_RESTORE_CANDIDATE_LIFECYCLE_STATES for why 'provisioning' is in the
   // state list alongside 'restoring' and 'failed'.
-  const { data, error } = await supabase
-    .from("hermes_instances")
-    .select("id, user_id, gateway_url, proxmox_node, config, archive_uri, archive_sha256, last_lifecycle_transition_at")
-    .eq("lifecycle_substate", "restoring_starting")
-    .is("proxmox_vmid", null)
-    .not("gateway_url", "is", null)
-    .not("archive_uri", "is", null)
-    .not("archive_sha256", "is", null)
-    .is("deleted_at", null)
-    .in("lifecycle_state", [...ORPHAN_RESTORE_CANDIDATE_LIFECYCLE_STATES])
-    .lt("last_lifecycle_transition_at", cutoffIso)
-    .limit(MAX_CANDIDATES_PER_SWEEP);
-  if (error) throw new Error(`orphan-restore candidate query failed: ${error.message}`);
-  return (data ?? []).filter(
+  // The sweep processes at most MAX_CANDIDATES_PER_SWEEP rows, and a row that
+  // keeps a stopped clone (or an inconclusive locate) stays a candidate
+  // indefinitely — so a fixed "first 25" starves every row behind it: the same
+  // front of the set loaded every sweep while candidate 26+ was never even
+  // fetched. Rotate the window instead: deterministic order (stalest first,
+  // id tiebreak) plus a page offset derived from the same 2-minute bucket the
+  // absence-check rotation uses, so successive sweeps walk the whole matching
+  // set — the cap still bounds per-sweep fan-out, but it can no longer hide
+  // the tail. The cursor needs no durable state because it is a pure function
+  // of the wall clock.
+  //
+  // `count: "exact"` rides along on the page fetch: page 0 returns its rows
+  // AND the filter's total in one round trip, and a later page only costs a
+  // second query when the rotation actually lands there.
+  const candidatePage = (from: number) =>
+    supabase
+      .from("hermes_instances")
+      .select(
+        "id, user_id, gateway_url, proxmox_node, config, archive_uri, archive_sha256, last_lifecycle_transition_at",
+        { count: "exact" },
+      )
+      .eq("lifecycle_substate", "restoring_starting")
+      .is("proxmox_vmid", null)
+      .not("gateway_url", "is", null)
+      .not("archive_uri", "is", null)
+      .not("archive_sha256", "is", null)
+      .is("deleted_at", null)
+      .in("lifecycle_state", [...ORPHAN_RESTORE_CANDIDATE_LIFECYCLE_STATES])
+      .lt("last_lifecycle_transition_at", cutoffIso)
+      .order("last_lifecycle_transition_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + MAX_CANDIDATES_PER_SWEEP - 1);
+
+  const firstPage = await candidatePage(0);
+  if (firstPage.error) throw new Error(`orphan-restore candidate query failed: ${firstPage.error.message}`);
+  const total = firstPage.count ?? firstPage.data?.length ?? 0;
+  if (total === 0) return [];
+
+  const pageCount = Math.max(1, Math.ceil(total / MAX_CANDIDATES_PER_SWEEP));
+  const pageIndex = Math.floor(Date.now() / (2 * 60_000)) % pageCount;
+  const page = pageIndex === 0 ? firstPage : await candidatePage(pageIndex * MAX_CANDIDATES_PER_SWEEP);
+  if (page.error) throw new Error(`orphan-restore candidate query failed: ${page.error.message}`);
+  return (page.data ?? []).filter(
     (r): r is OrphanRestoreCandidate =>
       typeof (r as OrphanRestoreCandidate).gateway_url === "string" &&
       (r as OrphanRestoreCandidate).gateway_url.trim().length > 0,

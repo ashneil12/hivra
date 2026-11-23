@@ -228,7 +228,16 @@ export async function runReencryptSweep(
     }
     if (!apply.ok) {
       const writerExited = apply.stdout.split(/\r?\n/).includes(REENCRYPT_WRITER_EXITED);
-      if (writerExited) {
+      // "connect" and "ready" are the documented pre-dispatch stages: the
+      // handshake or the channel open failed, so the writer provably never
+      // ran on the host — and with no stdout there is nothing it could have
+      // produced anyway. The claim releases exactly as it does when the
+      // writer sentinel proves the process ended. Only a "command"-stage
+      // failure (dispatched, outcome unknown) or a result with no stage at
+      // all leaves dispatch uncertain and keeps the claim.
+      const neverDispatched =
+        (apply.stage === "connect" || apply.stage === "ready") && apply.stdout.trim() === "";
+      if (writerExited || neverDispatched) {
         const releaseFailure = await releaseKnownStoppedWriter();
         if (releaseFailure) return releaseFailure;
       }
@@ -237,7 +246,9 @@ export async function runReencryptSweep(
         status: "host_script_failed",
         message: writerExited
           ? `Re-encryption stopped with the plain copy retained. ${apply.error ?? apply.stderr ?? "Unknown error."}`.slice(0, 500)
-          : writerUnconfirmed,
+          : neverDispatched
+            ? `Writer never dispatched (SSH stage "${apply.stage}"); archive claim released. ${apply.error ?? apply.stderr ?? ""}`.trim().slice(0, 500)
+            : writerUnconfirmed,
       };
     }
     const result = parseReencryptResult(apply.stdout);

@@ -109,6 +109,9 @@ esac
 
   it("can safely resume retention after data moved and before the manifest moved", () => {
     fixture(`trash/${id}-${timestamp}/data`);
+    // A real resumed state has the archive file inside the moved directory —
+    // the receipt now proves it, not just the directory's existence.
+    writeFileSync(join(root, `trash/${id}-${timestamp}/data/data-${timestamp}.tar.zst`), "fixture");
     fixture(`meta/${id}`);
     const script = buildRetentionArchiveTrashCommand(id, `free/${id}/data-${timestamp}.tar.zst`, timestamp);
     for (const result of [run(script), run(script)]) {
@@ -125,6 +128,18 @@ esac
     fixture(`free/${id}`);
     const script = buildRetentionArchiveTrashCommand(id, `free/${id}/data-${timestamp}.tar.zst`, timestamp);
     const result = run(script, { FAKE_SKIP_MOVE: "yes" });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).not.toContain(COLD_RETENTION_TRASH_RECEIPT);
+  });
+
+  it("withholds the retention receipt when the moved directory lacks the expected archive file", () => {
+    // free/<id> exists but the archive file itself was already gone (partial
+    // upload cleanup, manual deletion): the directory still moves, and without
+    // the file check the receipt let purge mark the row deleted and clear the
+    // pointer — over data that was never in the archive.
+    fixture(`free/${id}`); // contains only the sentinel, not the archive
+    const script = buildRetentionArchiveTrashCommand(id, `free/${id}/data-${timestamp}.tar.zst`, timestamp);
+    const result = run(script);
     expect(result.status).not.toBe(0);
     expect(result.stdout).not.toContain(COLD_RETENTION_TRASH_RECEIPT);
   });

@@ -1321,11 +1321,20 @@ async function scanAttributableTransfers(params: {
     transfer.timestampMs >= quotedAtMs &&
     transfer.timestampMs <= graceEndMs &&
     (boundaryMs === null || transfer.timestampMs < boundaryMs);
+  // False when the phase deadline stopped an extra token's scan or its item
+  // writes short: confirmed wrong-token transfers can then remain unseen and
+  // unsurfaced, so a caller whose gate could close the quote MUST keep it
+  // open (or leave a durable retry obligation) until a later attempt
+  // finishes the loop.
+  let wrongTokenScanComplete = true;
   for (const other of livePlatformTokens(params.now ?? new Date()).filter((token) => token.address !== quote.tokenAddress)) {
     // Past the phase deadline, another token's scan and its surface items
     // are owed to the next attempt — the decision data above is already
     // computed, so stopping here still returns it.
-    if (params.shouldStop?.()) break;
+    if (params.shouldStop?.()) {
+      wrongTokenScanComplete = false;
+      break;
+    }
     const otherScan = await scanQuoteTransfers({
       chain: params.chain,
       quote,
@@ -1342,7 +1351,10 @@ async function scanAttributableTransfers(params: {
     if (confirmedOther.length === 0) continue;
     const { surfaceable } = await partitionByBindings(db, quote, confirmedOther);
     for (const transfer of surfaceable) {
-      if (params.shouldStop?.()) break;
+      if (params.shouldStop?.()) {
+        wrongTokenScanComplete = false;
+        break;
+      }
       await surfaceManagedVeniceTokenTransfer(
         {
           quote,
@@ -1359,6 +1371,7 @@ async function scanAttributableTransfers(params: {
         db
       );
     }
+    if (!wrongTokenScanComplete) break;
   }
 
   const quoted = BigInt(quote.tokenAmountRaw);
@@ -1372,6 +1385,11 @@ async function scanAttributableTransfers(params: {
     // Later logs of a tx already bound on this address: surfaced, never
     // credited, never a settle / review candidate.
     extraLogs,
+    // True only when every other live token's attribution range was scanned
+    // AND its confirmed wrong-token transfers' items were written. When the
+    // phase deadline stopped the loop short, owed items are still out
+    // standing — the quote must not be closed over them.
+    wrongTokenScanComplete,
     confirmedHeadMs: scan.confirmedHeadMs,
     expiresAtMs,
     graceEndMs,
@@ -2144,9 +2162,24 @@ async function runDailyStaleUnpaidQuoteScan(params: {
     params.now.toISOString()
   );
 
-  // The scans own the rest of the slice: the abort boundary moves from the
-  // marked lane's share to the full stale budget.
-  params.setRpcAbortAtMs(params.staleScanBudgetMs);
+  // The scans own the rest of the slice — as a reservation the marked lane
+  // cannot consume, not whatever wall-clock the lane happened to leave. The
+  // armed abort now interrupts an in-flight marked settle at the share (see
+  // settleWithinStaleDeadline), but a settle that spends past the share
+  // inside one awaited step still burns real time before its next
+  // checkpoint: if the scans then ended at the nominal slice end, one slow
+  // settle would leave them a spent window and the UTC-day claim would
+  // suppress a same-day retry. So the scan lane ends at the LATER of the
+  // nominal slice end and a full reservation measured from when the marked
+  // lane closed: a marked overrun is absorbed by the regular lanes' budgets
+  // (bounded — the lane's abort caps it at one in-flight attempt), never by
+  // the day's one stale scan.
+  const scanReservationMs = params.staleScanBudgetMs - markedLotBudgetMs;
+  const scanDeadlineMs = Math.max(
+    params.staleScanBudgetMs,
+    params.elapsedMs() + scanReservationMs
+  );
+  params.setRpcAbortAtMs(scanDeadlineMs);
   for (const [position, row] of rows.entries()) {
     const candidate = row as StaleQuoteCandidateRow;
     if (typeof candidate.id !== "string" || typeof candidate.user_id !== "string") continue;
@@ -2162,8 +2195,8 @@ async function runDailyStaleUnpaidQuoteScan(params: {
     if (graceExpired && metadata?.[GRACE_WINDOW_SCANNED_KEY] != null) {
       continue;
     }
-    // Past the pass's own budget slice the rest wait for the next day's pass.
-    if (params.elapsedMs() >= params.staleScanBudgetMs) {
+    // Past the scan lane's deadline the rest wait for the next day's pass.
+    if (params.elapsedMs() >= scanDeadlineMs) {
       deferred += rows.length - position;
       break;
     }
@@ -2425,7 +2458,11 @@ async function surfaceTerminalQuoteTransfers(params: {
   const fullyConfirmed =
     surfacedAll &&
     scan.confirmedHeadMs >= scan.attributionEndMs + FINALITY_MARGIN_MS &&
-    surfaceable.every(scan.isConfirmed);
+    surfaceable.every(scan.isConfirmed) &&
+    // An extra-token loop stopped by the deadline can still owe confirmed
+    // wrong-token items: the flag is the durable retry obligation and must
+    // not clear while any are unwritten.
+    scan.wrongTokenScanComplete;
   if (!fullyConfirmed) return "pending";
   await completeManagedVeniceTokenTransferSurfacing({ quoteId: quote.id }, db);
   return "complete";
@@ -2557,6 +2594,51 @@ export async function reconcileManagedVeniceTokenQuote(params: {
       throw new RpcCallAbortedError("stale pass deadline reached during non-RPC quote work");
     }
   };
+  // The armed deadline must also bound an in-flight settle's awaited span:
+  // the settle chain is pure DB — no RPC for the retry layer's shouldStop to
+  // reach — so between the cooperative checks a slow or multi-pass settle
+  // could overrun its phase's share unbounded (one ~30 s marked settle once
+  // spent the day's whole stale scan slice). The race abandons only the
+  // AWAIT at the armed boundary: the settle's guarded CAS writes may still
+  // land — exactly the crash-partial state the recovery lanes converge — and
+  // the attempt is reported deferred, never failed, so a slow or partial
+  // settlement stays recovery-eligible. Only the stale pass arms the
+  // deadline (and passes scanProgress), so every other caller awaits the
+  // settle directly as before.
+  const settleWithinStaleDeadline = <T>(start: () => Promise<T>): Promise<T> => {
+    if (!shouldStop || !params.scanProgress) return start();
+    // Enforce the reservation before starting settlement too: an attempt
+    // whose reads already spent the phase's share never starts its settle.
+    throwIfStaleDeadline();
+    let finished = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const aborted = new Promise<never>((_, reject) => {
+      const check = () => {
+        if (finished) return;
+        if (shouldStop()) {
+          finished = true;
+          reject(new RpcCallAbortedError("stale pass deadline reached during settle"));
+          return;
+        }
+        timer = setTimeout(check, 25);
+      };
+      // Poll the armed deadline on a real timer: a settle's awaited steps
+      // are DB calls, and the cooperative checkpoints cannot fire inside
+      // them. 25 ms is far below any phase share and cheap next to a DB
+      // round-trip.
+      timer = setTimeout(check, 25);
+    });
+    const raced = Promise.race([start(), aborted]);
+    const cleanup = () => {
+      finished = true;
+      if (timer) clearTimeout(timer);
+    };
+    // then(cleanup, cleanup) — not finally(): the promise finally() derives
+    // still rejects when raced rejects, and voiding it is an unhandled
+    // rejection. Here the derived promise always resolves.
+    void raced.then(cleanup, cleanup);
+    return raced;
+  };
 
   if (!isOpenQuoteStatus(quote.status)) {
     // Settled / in review since the flag was introduced: the cron's
@@ -2598,7 +2680,7 @@ export async function reconcileManagedVeniceTokenQuote(params: {
     // recovery does not scan for is surfaced by the surface-only pass. A claim
     // with no lot and no readable claim values goes to review in settle.
     const recovery = recoveryTransfer(quote, lot, now);
-    const settlement = await settle(recovery, db);
+    const settlement = await settleWithinStaleDeadline(() => settle(recovery, db));
     return finishSettlement({ db, quote, settlement, transfer: recovery, failOnSurfacingError, shouldStop });
   }
 
@@ -2619,19 +2701,21 @@ export async function reconcileManagedVeniceTokenQuote(params: {
     // below commits. This is the last clean point for the phase deadline
     // to defer the row when the scan's DB tail already spent it.
     throwIfStaleDeadline();
-    const settlement = await settle(
-      {
-        quoteId: quote.id,
-        transactionHash: transfer.transactionHash,
-        // Hand settle the ACTUAL on-chain amount: an accepted over-send is
-        // credited pro-rata for what the user really sent.
-        tokenAmountRaw: transfer.amount.toString(),
-        observedAt: now.toISOString(),
-        blockTimestamp: transfer.observedAt,
-        logIndex: transfer.logIndex,
-        dedupeLogIndex: transfer.dedupeLogIndex,
-      },
-      db
+    const settlement = await settleWithinStaleDeadline(() =>
+      settle(
+        {
+          quoteId: quote.id,
+          transactionHash: transfer.transactionHash,
+          // Hand settle the ACTUAL on-chain amount: an accepted over-send is
+          // credited pro-rata for what the user really sent.
+          tokenAmountRaw: transfer.amount.toString(),
+          observedAt: now.toISOString(),
+          blockTimestamp: transfer.observedAt,
+          logIndex: transfer.logIndex,
+          dedupeLogIndex: transfer.dedupeLogIndex,
+        },
+        db
+      )
     );
     // The other transfers are surfaced only AFTER the settle / review flip,
     // relative to what the quote actually settled with; see finishSettlement.
@@ -2687,10 +2771,16 @@ export async function reconcileManagedVeniceTokenQuote(params: {
 
   // Late out-of-band transfers and later logs of a tx bound on this address
   // never settle or review the quote: item only. A deadline-stopped surface
-  // just owes the dedupe-keyed remainder; the decision below is unaffected.
+  // just owes the dedupe-keyed remainder — but it DOES bound the decision
+  // below: retirement must not close the quote while items are unwritten,
+  // or they are owed to an open set the row no longer belongs to.
   const lateOther = confirmed.filter((transfer) => classOf(transfer) === "late_other");
-  await surfaceTransfers(db, quote, [...lateOther, ...confirmedExtraLogs].sort(byChainOrder), (transfer) =>
-    surfacedTransferReason(quote, transfer, classOf(transfer)), shouldStop
+  const surfacedAll = await surfaceTransfers(
+    db,
+    quote,
+    [...lateOther, ...confirmedExtraLogs].sort(byChainOrder),
+    (transfer) => surfacedTransferReason(quote, transfer, classOf(transfer)),
+    shouldStop
   );
 
   const awaitingConfirmations = attributable.filter(
@@ -2705,10 +2795,20 @@ export async function reconcileManagedVeniceTokenQuote(params: {
   }
 
   // 3. Retire: the whole window + grace is scanned on a chain confirmed past
-  //    it by the finality margin, and nothing left can settle or review this
-  //    quote (every item-only transfer was surfaced above).
+  //    it by the finality margin, nothing left can settle or review this
+  //    quote, and every item the scan owes is written — a deadline-stopped
+  //    surface loop or an incomplete wrong-token pass leaves dedupe-keyed
+  //    items unwritten, and a cancelled quote leaves the open set, so those
+  //    would never be retried. Keep the quote open instead; the next
+  //    attempt's scan resurfaces the remainder.
   const fullyScanned = scan.confirmedHeadMs >= graceEndMs + FINALITY_MARGIN_MS;
-  if (fullyScanned && confirmed.length === lateOther.length && extraLogs.every(isConfirmed)) {
+  const owedItemsWritten = surfacedAll && scan.wrongTokenScanComplete;
+  if (
+    fullyScanned &&
+    owedItemsWritten &&
+    confirmed.length === lateOther.length &&
+    extraLogs.every(isConfirmed)
+  ) {
     const retired = await retireManagedVeniceTokenQuote({ quoteId: quote.id, closedAt: now }, db);
     return {
       status: retired.status,
@@ -2719,12 +2819,13 @@ export async function reconcileManagedVeniceTokenQuote(params: {
   return {
     status: "no_match" as const,
     quote: quotePayload(quote),
-    // Whether the confirmed head provably covered the whole window + grace —
-    // the same bar the retire path above uses. A no_match WITHOUT it only
-    // says "nothing in the scanned prefix": the unscanned tail can still
-    // hold the payment, so callers that exclude a quote on one silent scan
-    // (the daily stale pass's graceWindowScannedAt marker) must read this.
-    windowFullyScanned: fullyScanned,
+    // Whether the confirmed head provably covered the whole window + grace
+    // AND every owed item was written — the same bar the retire path above
+    // uses. A no_match WITHOUT it only says "nothing in the scanned prefix":
+    // the unscanned tail can still hold the payment, or owed items can still
+    // be unwritten, so callers that exclude a quote on one silent scan (the
+    // daily stale pass's graceWindowScannedAt marker) must read this.
+    windowFullyScanned: fullyScanned && owedItemsWritten,
   };
 }
 
