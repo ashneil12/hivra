@@ -3614,6 +3614,46 @@ describe("runCustomerIncidentScan", () => {
       expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
     });
 
+    it("honors a confirmed 200 over a failed probe-row re-read — never reports 'unknown' past a verified recovery", async () => {
+      // Regression: the diagnosis probe's HTTP 200 is itself the freshest
+      // possible recovery verdict, but the re-check used to read the stored
+      // probe row first and answer 'unknown' on a lookup failure — letting
+      // the caller open/page the incident without a verdictGuard. The
+      // confirmed healthy result must be honored before the stored-verdict
+      // read is even attempted. Here the scan probe fails (the candidate
+      // exists), the report-pass probe answers 200, and the probe-row
+      // re-read fails: the incident must not open.
+      const cfg: FakeDbConfig = {
+        agents: [agentDbRow()],
+        probeRows: [probeRow()],
+        mutateWhen: (table, calls) => {
+          // The revalidation re-read is the only maybeSingle probe-row
+          // query — fail it (and only it), leaving the collection read and
+          // the verdict writes intact.
+          if (
+            table === "ops_events" &&
+            calls.some(
+              (c) => c[0] === "eq" && c[1] === "source" && c[2] === "box.public_probe.unreachable",
+            ) &&
+            calls.some((c) => c[0] === "eq" && c[1] === "instance_id") &&
+            calls.some((c) => c[0] === "maybeSingle")
+          ) {
+            cfg.publicProbeRowsFail = true;
+          }
+        },
+      };
+      const probe = jest
+        .fn()
+        .mockResolvedValueOnce({ status: 502, latencyMs: 80, error: null })
+        .mockResolvedValue({ status: 200, latencyMs: 9, error: null });
+      const deps = scanDeps({ db: fakeIncidentDb(cfg), probe });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.opened).toBe(0);
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    });
+
     it("does not page box_unreachable when a concurrent healthy scan already archived the outage", async () => {
       // Same skip, via the stored verdict rather than the live probe: the
       // scan's own probe still fails, but another scan's healthy probe

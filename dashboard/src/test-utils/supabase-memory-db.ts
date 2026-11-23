@@ -26,6 +26,8 @@ interface Filter {
   column: string;
   op: FilterOp;
   value: unknown;
+  /** `not.<op>` inside an or() term — negates rowMatches for this term. */
+  negated?: boolean;
 }
 
 interface Order {
@@ -103,7 +105,7 @@ function valuesEqual(left: unknown, right: unknown) {
   return false;
 }
 
-function rowMatches(row: MemoryRow, filter: Filter) {
+function opMatches(row: MemoryRow, filter: Filter) {
   const value = row[filter.column];
   switch (filter.op) {
     case "eq":
@@ -123,6 +125,49 @@ function rowMatches(row: MemoryRow, filter: Filter) {
     case "is":
       return filter.value === null ? value == null : value === filter.value;
   }
+}
+
+function rowMatches(row: MemoryRow, filter: Filter) {
+  const matched = opMatches(row, filter);
+  return filter.negated ? !matched : matched;
+}
+
+// PostgREST or() syntax: "col.op.value,col.op.value" with parens grouping
+// lists, e.g. "state.in.(a,b),state.is.null". Unsupported shapes throw so a
+// test never passes on a filter the fake silently ignored.
+function parseOrScalar(raw: string): unknown {
+  if (raw === "null") return null;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  if (raw.startsWith('"') && raw.endsWith('"')) return raw.slice(1, -1);
+  return raw;
+}
+
+function parseOrExpression(expression: string): Filter[] {
+  const terms: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < expression.length; i += 1) {
+    const ch = expression[i];
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth -= 1;
+    else if (ch === "," && depth === 0) {
+      terms.push(expression.slice(start, i));
+      start = i + 1;
+    }
+  }
+  terms.push(expression.slice(start));
+  return terms.map((rawTerm) => {
+    const term = rawTerm.trim();
+    const match = /^([A-Za-z_][\w.]*?)\.(not\.)?(eq|neq|in|lt|lte|gt|gte|is)\.(.+)$/.exec(term);
+    if (!match) throw new Error(`memory db cannot parse or() term: ${term}`);
+    const [, column, notPart, op, rawValue] = match;
+    const value =
+      op === "in" && rawValue.startsWith("(") && rawValue.endsWith(")")
+        ? rawValue.slice(1, -1).split(",").map((candidate) => parseOrScalar(candidate.trim()))
+        : parseOrScalar(rawValue);
+    return { column, op: op as FilterOp, value, negated: Boolean(notPart) };
+  });
 }
 
 function sortRows(rows: MemoryRow[], orders: Order[]) {
@@ -218,17 +263,29 @@ export function createSupabaseMemoryDb(options: {
     return stored;
   }
 
-  function filterBuilder(query: Record<string, unknown>, filters: Filter[]) {
+  function filterBuilder(query: Record<string, unknown>, filters: Filter[], orGroups: Filter[][]) {
     for (const op of ["eq", "neq", "in", "lt", "lte", "gt", "gte", "is"] as FilterOp[]) {
       query[op] = (column: string, value: unknown) => {
         filters.push({ column, op, value });
         return query;
       };
     }
+    query.or = (expression: string) => {
+      orGroups.push(parseOrExpression(expression));
+      return query;
+    };
+  }
+
+  function allMatch(row: MemoryRow, filters: Filter[], orGroups: Filter[][]) {
+    return (
+      filters.every((filter) => rowMatches(row, filter)) &&
+      orGroups.every((group) => group.some((filter) => rowMatches(row, filter)))
+    );
   }
 
   function buildSelect(tableName: string, readRows: () => MemoryRow[]) {
     const filters: Filter[] = [];
+    const orGroups: Filter[][] = [];
     const orders: Order[] = [];
     let rowLimit: number | null = null;
 
@@ -236,14 +293,14 @@ export function createSupabaseMemoryDb(options: {
       const failure = takeFailure(tableName, "select", {});
       if (failure) return { rows: null, error: failure };
       const selected = sortRows(
-        readRows().filter((row) => filters.every((filter) => rowMatches(row, filter))),
+        readRows().filter((row) => allMatch(row, filters, orGroups)),
         orders
       );
       return { rows: (rowLimit === null ? selected : selected.slice(0, rowLimit)).map(clone), error: null };
     };
 
     const query: Record<string, unknown> = {};
-    filterBuilder(query, filters);
+    filterBuilder(query, filters, orGroups);
     query.select = () => query;
     query.order = (column: string, orderOptions?: { ascending?: boolean; nullsFirst?: boolean }) => {
       const ascending = orderOptions?.ascending !== false;
@@ -327,6 +384,7 @@ export function createSupabaseMemoryDb(options: {
   function buildUpdate(tableName: string, patch: MemoryRow) {
     const rows = requireTable(tableName);
     const filters: Filter[] = [];
+    const orGroups: Filter[][] = [];
     let result: { data: MemoryRow[] | null; error: MemoryDbError | null } | null = null;
 
     const execute = () => {
@@ -336,7 +394,7 @@ export function createSupabaseMemoryDb(options: {
         result = { data: null, error: failure };
         return result;
       }
-      const targets = rows.filter((row) => filters.every((filter) => rowMatches(row, filter)));
+      const targets = rows.filter((row) => allMatch(row, filters, orGroups));
       const ignore = new Set(targets);
       const updatedTargets: MemoryRow[] = [];
       for (const target of targets) {
@@ -357,7 +415,7 @@ export function createSupabaseMemoryDb(options: {
     };
 
     const query: Record<string, unknown> = {};
-    filterBuilder(query, filters);
+    filterBuilder(query, filters, orGroups);
     query.select = () => {
       const selected: Record<string, unknown> = {};
       selected.single = async () => {

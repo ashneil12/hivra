@@ -178,7 +178,11 @@ describe("update-report release fields", () => {
     expect(resolveUpdateImagePolicy).not.toHaveBeenCalled();
     expect(memory.tables.hermes_instances[0]).toMatchObject({
       status: "failed",
+      lifecycle_state: "failed",
       lifecycle_substate: "live_update_failed_vm_reached",
+      // The attempt stamp survives the failed write — the wrapper can
+      // still settle this attempt with a later success callback.
+      last_lifecycle_transition_at: attempt,
     });
   });
 
@@ -216,35 +220,21 @@ describe("update-report release fields", () => {
     );
   });
 
-  it("correlates an unstamped failure against the pre-report row — a report that stores the target digest still stamps", async () => {
-    // Regression: recordReleaseReport stores the report's `i` digest into
-    // agent_image_digest, and the legacy (no `a`) correlation resolved the
-    // in-flight target AFTER that write. A failure reporting the target as
-    // its running digest — the update applied, then the wrapper failed —
-    // made the resolver read the just-stored digest as the box's current
-    // image: "already on target" → keep → stale → the failed stamp was
-    // skipped and the row stranded at 'redeploying' forever. The
-    // correlation must see the row as it was when the report arrived.
+  it("records a legacy report's digest and stamps the row under write bounds — the registry is never consulted", async () => {
+    // Round-13 regression: the legacy (no `a`) correlation used to read
+    // what a NEW update would pin and treat a pin change as proof the
+    // report's attempt was gone. That read raced the launcher's own
+    // repin: a valid failure was refused its stamp and the row stranded at
+    // 'redeploying' forever. Legacy reports carry no attempt identity —
+    // only the write-time bounds (still redeploying, not deleted,
+    // occurredAt lower bound) arbitrate them.
     const D0 = `sha256:${"0".repeat(64)}`;
     const memory = setup({}, { agent_image_digest: D0 });
-    let digestSeenByCorrelation: unknown;
-    (resolveUpdateImagePolicy as jest.Mock).mockImplementation(async () => {
-      // Stand-in for decideUpdate over the CURRENT stored digest: the
-      // registry still pins D2, but a box whose stored digest already IS
-      // D2 resolves keep — exactly the verdict the poisoned read produced.
-      digestSeenByCorrelation = memory.tables.hermes_instances[0].agent_image_digest;
-      return digestSeenByCorrelation === D2
-        ? { policy: { kind: "keep" }, state: { governed: true } }
-        : { policy: { kind: "pinned", ref: `${REPO}@${D2}`, digest: D2 }, state: { governed: true } };
-    });
 
     const res = await report(`s=failed&t=manual&r=verify_failed&i=${D2}&ti=${D2}`);
 
     expect(res.status).toBe(200);
-    // The correlation read the row BEFORE this report's own digest landed.
-    expect(digestSeenByCorrelation).toBe(D0);
-    // So the valid failure still stamped — while the report's own fields
-    // were recorded all the same.
+    expect(resolveUpdateImagePolicy).not.toHaveBeenCalled();
     expect(memory.tables.hermes_instances[0]).toMatchObject({
       status: "failed",
       lifecycle_substate: "live_update_failed_vm_reached",
@@ -268,10 +258,16 @@ describe("update-report release fields", () => {
     expect(memory.tables.hermes_instances[0]).toMatchObject({
       status: "redeploying",
       last_lifecycle_transition_at: attemptB,
-      // The report's own fields still landed — only the status stamp is
-      // attempt-gated.
-      update_health: "ok",
-      agent_image_digest: D1,
+    });
+    // The report's release fields are attempt-gated too — a stale report
+    // must not overwrite the in-flight attempt's observed state.
+    expect(memory.tables.hermes_instances[0].agent_image_digest).toBeUndefined();
+    expect(memory.tables.hermes_instances[0].update_health).toBeUndefined();
+    // Only the durable outcome ledger and the ops event keep the report.
+    expect(memory.tables.hermes_release_events[0]).toMatchObject({
+      kind: "updated",
+      release_id: "rel-1",
+      instance_id: INSTANCE,
     });
     expect(reportOpsEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -279,5 +275,34 @@ describe("update-report release fields", () => {
         title: "Manual update succeeded",
       })
     );
+  });
+
+  it("lets a delayed success callback settle the same attempt the failed stamp already recorded", async () => {
+    // The launcher saw an SSH timeout after dispatching the wrapper, marked
+    // the attempt failed — but the wrapper was actually running and its
+    // success curl arrives now, echoing the attempt stamp. Because the
+    // failed write preserved last_lifecycle_transition_at, the `a` match
+    // settles this attempt instead of being refused.
+    const attempt = "2026-04-23T06:00:00.000Z";
+    const memory = setup(
+      {},
+      {
+        status: "failed",
+        lifecycle_state: "failed",
+        lifecycle_substate: "live_update_failed_vm_maybe_reached",
+        last_lifecycle_transition_at: attempt,
+      }
+    );
+
+    const res = await report(`s=succeeded&t=manual&r=completed&i=${D1}&k=updated&a=${attempt}`);
+
+    expect(res.status).toBe(200);
+    expect(memory.tables.hermes_instances[0]).toMatchObject({
+      status: "running",
+      lifecycle_state: "active",
+      last_lifecycle_transition_at: attempt,
+      agent_image_digest: D1,
+      update_health: "ok",
+    });
   });
 });
