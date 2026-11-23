@@ -223,13 +223,15 @@ server-side (HTTP 403 `token_not_allowed`) for hold-for-tier, yearly and
 managed-Venice deposits. $HermesOS balances do not count toward their tiers
 or the token base tier.
 
-**Conversion rule** (`POST /api/billing/token-access {"action":"convert"}`,
-used by the /dashboard/convert page):
+**Account conversion.** The dashboard at `/dashboard/convert` submits the
+confirmed choice to `POST /api/billing/token-access`.
 
 The optional holder switch is controlled by `HIVRA_HOLDER_TIER_CARRYOVER=1`.
 With the switch enabled, a grandfathered account can choose when to move to
 $HIVRA in the dashboard. Claiming an airdrop and switching the account are
-separate actions. Neither signing in nor receiving tokens converts the account.
+separate actions. The dashboard submits `carry_over_holder` with the tiers
+and amounts the user reviewed. If those terms change, the user must review
+them again. Neither signing in nor receiving tokens converts the account.
 Existing holders can continue using their grandfathered access indefinitely.
 
 The switch uses each active $HermesOS Pro or Power qualification's recorded
@@ -240,7 +242,7 @@ without an active holder tier can switch without a wallet check. A prepaid
 subscription keeps its original paid-through date. Token payments
 and new tier qualifications still require their normal price and liquidity checks.
 
-With the optional switch disabled, the existing price-based conversion works as follows.
+With the optional switch disabled, the original `convert` action uses a price-based conversion.
 
 1. At conversion, the current $HIVRA thresholds for Pro and Power are locked,
    and a grace of `TOKEN_CONVERSION_GRACE_HOURS` (72 hours) starts. Conversion
