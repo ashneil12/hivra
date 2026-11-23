@@ -453,6 +453,92 @@ describe("managed Venice token quote reconciliation", () => {
     expect(attempted().slice(2)).toEqual(["quote_claimed_0", "quote_claimed_1"]);
   });
 
+  it("reaches claimed recovery candidates ahead of a fresh backlog that would spend the whole scan budget", async () => {
+    // The open loop used to merge fresh candidates first: with a fresh
+    // backlog deep enough to spend the whole open-scan budget, a claimed
+    // quote — a settlement that already claimed its tx and crashed before
+    // finishing — sat behind all of them and could be deferred forever.
+    // Recovery lanes now lead the merge: claimed and lot-held candidates
+    // finish from their already-known transaction evidence WITHOUT a log
+    // scan, so budget-bounded work can never starve them out.
+    const now = new Date("2026-05-20T00:00:00.000Z");
+    const claimed = managedVeniceQuoteRow({
+      id: "quote_claimed",
+      user_id: "user_claimed",
+      transaction_hash: "0xclaimedbeef",
+      // Past the stale cutoff, so it is a claimed-lane candidate, not fresh.
+      quoted_at: "2026-05-01T10:00:00.000Z",
+      expires_at: "2026-05-01T10:20:00.000Z",
+      created_at: "2026-05-01T10:00:00.000Z",
+      updated_at: "2026-05-01T10:00:00.000Z",
+      deposit_address: `0x${"9".repeat(40)}`,
+    });
+    // Three fresh quotes, each costing 50 s of fake-RPC time on a 75 s
+    // budget: under fresh-first order the claim never starts; under
+    // recovery-first it settles before the first scan request is made.
+    const fresh = Array.from({ length: 3 }, (_, index) =>
+      managedVeniceQuoteRow({
+        id: `quote_fresh_${index}`,
+        user_id: `user_fresh_${index}`,
+        deposit_address: `0x${String(index + 1).repeat(40)}`,
+        quoted_at: "2026-05-19T23:00:00.000Z",
+        expires_at: "2026-05-19T23:20:00.000Z",
+        created_at: `2026-05-19T23:00:0${index}.000Z`,
+        updated_at: `2026-05-19T23:00:0${index}.000Z`,
+      })
+    );
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [claimed, ...fresh],
+    });
+    // A head far enough out that the fresh quotes' windows map to blocks.
+    const chain = createBaseRpcFake({
+      latestBlock: 1_000_000,
+      latestTimestamp: "2026-05-20T00:00:00.000Z",
+    });
+    let nowMs = 0;
+    const inner = chain.fetchImpl.getMockImplementation()!;
+    chain.fetchImpl.mockImplementation(async (url: string, init: { body: string }) => {
+      if ((JSON.parse(init.body) as { method: string }).method === "eth_getLogs") nowMs += 50_000;
+      return inner(url, init);
+    });
+    const settleQuote = jest.fn(async (transfer: { quoteId?: string }) => ({
+      status: "settled" as const,
+      quoteId: transfer?.quoteId ?? "quote_unknown",
+    }));
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote,
+      now,
+      clock: () => nowMs,
+      openScanBudgetMs: 75_000,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    // The claim's recovery was the FIRST candidate processed and settled on
+    // its own transaction evidence — before a single fresh scan ran.
+    expect(summary.results[0]).toEqual(
+      expect.objectContaining({ quoteId: "quote_claimed", status: "settled" })
+    );
+    expect(settleQuote.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ quoteId: "quote_claimed", transactionHash: "0xclaimedbeef" })
+    );
+    // The fresh lane still runs newest-first behind the recovery lanes, and
+    // the budget still bounds it: two scans start (0 s and 50 s), the third
+    // would start past the 75 s slice and is deferred, not dropped.
+    expect(summary.results.map((result) => result.quoteId)).toEqual([
+      "quote_claimed",
+      "quote_fresh_2",
+      "quote_fresh_1",
+    ]);
+    expect(summary.deferred.open).toBe(1);
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+  });
+
   it("still reaches an open lot-holding quote when settled lots outnumber the scan limit", async () => {
     // limit=10 but 15 older settled lots fill a naive .limit() read: the open
     // quote's lot is newest, so it must be found by paging all lot ids and
@@ -1147,15 +1233,19 @@ describe("stale unpaid quote expiry", () => {
     // from the back of tomorrow's selection, not from the head.
     expect(row.updated_at).toBe(staleNow.toISOString());
 
-    // The next day's first tick re-selects and re-scans the same row: a
-    // partial no_match never discharges the one-scan obligation.
+    // The next day's first tick re-selects the same row: a partial no_match
+    // never discharges the one-scan obligation. Day 1's checkpoint already
+    // covers the head-bounded range end to end — immutable history — so the
+    // re-scan spends no new RPC, yet the row STILL must not be marked: the
+    // head remains behind the grace end and the unscanned tail can still
+    // hold the payment.
     const day2 = await runBatch(
       memory.db,
       chain,
       new Date("2026-05-21T00:00:00.000Z")
     );
     expect(day2.checked).toBe(1);
-    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(scannedAt);
+    expect(chain.methodCount("eth_getLogs")).toBe(scannedAt);
     row = memory.tables.managed_venice_token_quotes[0];
     expect(row.status).toBe("expired");
     expect((row.metadata as Row).graceWindowScannedAt).toBeUndefined();
@@ -1553,6 +1643,171 @@ describe("stale unpaid quote expiry", () => {
     ).toBe(true);
     expect(rows[1].updated_at).toBe(day2Now.toISOString());
     expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(day2LogsBefore);
+  });
+
+  it("resumes an interrupted stale scan at its checkpoint and settles the deposit it never reached", async () => {
+    // The exact starvation the checkpoint fixes: a stale quote whose window
+    // needs more RPC time than the daily slice aborted at the same chunk
+    // every day — every attempt restarted at the window's first block, so a
+    // payment in the unscanned tail could never be seen. Answered chunks are
+    // now checkpointed on the row (metadata.depositScanProgress) and the next
+    // day's pass resumes at scannedThroughBlock + 1 — while partial coverage
+    // still decides nothing by itself (the row stays open until the whole
+    // window is read).
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow()],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    // The payment sits in the window's LAST chunk — the part day 1's slice
+    // never reaches before the budget runs out (12:15 is inside the grace
+    // end at 12:20).
+    chain.addTransfer(
+      transferAt(
+        chain.blockAt("2026-05-01T12:15:00.000Z"),
+        BigInt(staleQuoteRow().token_amount_raw as string),
+        "0xstalepaid"
+      )
+    );
+    let nowMs = 0;
+    const inner = chain.fetchImpl.getMockImplementation()!;
+    chain.fetchImpl.mockImplementation(async (url: string, init: { body: string }) => {
+      if ((JSON.parse(init.body) as { method: string }).method === "eth_getLogs") nowMs += 50_000;
+      return inner(url, init);
+    });
+    const settleQuote = jest.fn(async (transfer: { quoteId?: string }) => ({
+      status: "settled" as const,
+      quoteId: transfer?.quoteId ?? "quote_stale",
+    }));
+    const run = (now: Date) =>
+      reconcilePendingManagedVeniceTokenQuotes({
+        db: memory.db,
+        rpcUrl: "https://base.test",
+        fetchImpl: chain.fetchImpl,
+        minConfirmations: 2,
+        settleQuote,
+        now,
+        clock: () => nowMs,
+        staleScanBudgetMs: 60_000,
+        interQuoteDelayMs: 0,
+        rpcSleepImpl: async () => {},
+      });
+
+    const day1 = await run(staleNow);
+
+    // Day 1 still dies mid-window — but the two chunks it answered are now
+    // persisted on the row instead of being thrown away.
+    expect(day1.settled).toBe(0);
+    expect(day1.cancelled).toBe(0);
+    expect(day1.deferred.open).toBe(1);
+    expect(settleQuote).not.toHaveBeenCalled();
+    const fromBlock = chain.blockAt("2026-05-01T10:00:00.000Z");
+    const day1Row = memory.tables.managed_venice_token_quotes[0];
+    expect(day1Row.status).toBe("active");
+    expect((day1Row.metadata as Row).graceWindowScannedAt).toBeUndefined();
+    const progress = (day1Row.metadata as Row).depositScanProgress as Record<
+      string,
+      {
+        tokenAddress: string;
+        fromBlock: number;
+        toBlock: number;
+        scannedThroughBlock: number;
+        transfers: unknown[];
+      }
+    >;
+    const tokenProgress = progress?.[HERMESOS_TOKEN_ADDRESS.toLowerCase()];
+    expect(tokenProgress?.fromBlock).toBe(fromBlock);
+    // Two 2,000-block chunks answered before the slice ran out.
+    expect(tokenProgress?.scannedThroughBlock).toBe(fromBlock + 3999);
+    // The tail payment is NOT in the checkpoint — it was never scanned.
+    expect(tokenProgress?.transfers).toEqual([]);
+
+    // Day 2: the same 60 s slice is now enough — the pass resumes inside the
+    // last chunk instead of re-paying for the covered prefix, reaches the
+    // payment day 1 could not, and settles it.
+    const day2RequestsBefore = chain.requests.length;
+    const day2 = await run(new Date("2026-05-21T00:00:00.000Z"));
+
+    expect(day2.settled).toBe(1);
+    expect(settleQuote).toHaveBeenCalledWith(
+      expect.objectContaining({ quoteId: "quote_stale", transactionHash: "0xstalepaid" }),
+      expect.anything()
+    );
+    const day2GetLogs = chain.requests
+      .slice(day2RequestsBefore)
+      .filter((request) => request.method === "eth_getLogs")
+      .map((request) => request.params[0] as { fromBlock: string; toBlock: string });
+    // Exactly one log call — the uncovered tail — not three from the top.
+    expect(day2GetLogs).toHaveLength(1);
+    expect(Number.parseInt(day2GetLogs[0].fromBlock, 16)).toBe(fromBlock + 4000);
+  });
+
+  it("keeps a checkpointed prefix's transfers when the resume finishes the window", async () => {
+    // The other half of the resume contract: a transfer found BEFORE the
+    // abort is checkpointed with the coverage, and the resumed scan must
+    // still see it — a resume that skipped blocks but dropped the persisted
+    // set would read an "empty" window and retire a paid quote.
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow()],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    // In-window payment in the FIRST chunk — day 1 scans it, checkpoints it,
+    // and dies before the tail.
+    chain.addTransfer(
+      transferAt(
+        chain.blockAt("2026-05-01T10:10:00.000Z"),
+        BigInt(staleQuoteRow().token_amount_raw as string),
+        "0xprefixpaid"
+      )
+    );
+    let nowMs = 0;
+    const inner = chain.fetchImpl.getMockImplementation()!;
+    chain.fetchImpl.mockImplementation(async (url: string, init: { body: string }) => {
+      if ((JSON.parse(init.body) as { method: string }).method === "eth_getLogs") nowMs += 50_000;
+      return inner(url, init);
+    });
+    const settleQuote = jest.fn(async (transfer: { quoteId?: string }) => ({
+      status: "settled" as const,
+      quoteId: transfer?.quoteId ?? "quote_stale",
+    }));
+    const run = (now: Date) =>
+      reconcilePendingManagedVeniceTokenQuotes({
+        db: memory.db,
+        rpcUrl: "https://base.test",
+        fetchImpl: chain.fetchImpl,
+        minConfirmations: 2,
+        settleQuote,
+        now,
+        clock: () => nowMs,
+        staleScanBudgetMs: 60_000,
+        interQuoteDelayMs: 0,
+        rpcSleepImpl: async () => {},
+      });
+
+    const day1 = await run(staleNow);
+    expect(day1.deferred.open).toBe(1);
+    const day1Row = memory.tables.managed_venice_token_quotes[0];
+    const progress = (day1Row.metadata as Row).depositScanProgress as Record<
+      string,
+      { scannedThroughBlock: number; transfers: Array<{ transactionHash: string }> }
+    >;
+    const tokenProgress = progress?.[HERMESOS_TOKEN_ADDRESS.toLowerCase()];
+    // The checkpoint carries the prefix's transfer, not just the block mark.
+    expect(tokenProgress?.transfers).toEqual([
+      expect.objectContaining({ transactionHash: "0xprefixpaid" }),
+    ]);
+    expect(settleQuote).not.toHaveBeenCalled();
+
+    const day2 = await run(new Date("2026-05-21T00:00:00.000Z"));
+
+    // Resumed coverage + the persisted transfer = the deposit settles even
+    // though day 2's own RPC only walked the tail.
+    expect(day2.settled).toBe(1);
+    expect(settleQuote).toHaveBeenCalledWith(
+      expect.objectContaining({ quoteId: "quote_stale", transactionHash: "0xprefixpaid" }),
+      expect.anything()
+    );
   });
 
   it("still runs the regular lanes when the daily stale pass cannot load its candidates", async () => {

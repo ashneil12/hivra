@@ -9,6 +9,7 @@ import {
   FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST,
   isAwaitingTeardown,
   isPausedLifecycleState,
+  LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE,
   LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
 } from "@/lib/instance-lifecycle";
 import { extractGlobalHermesSettings } from "@/lib/instance-settings";
@@ -147,13 +148,16 @@ function applyFleetSyncEligibility<T>(query: T): T {
       // recover-stuck can restart the VM but never re-applies the release.
       // The third arm re-admits exactly that case: the failure write records
       // in lifecycle_substate whether the launch got a command onto the
-      // guest (live_update_failed_vm_reached), so a reachable-but-failed box
-      // stays in the retry queue while a launch refused before the guest
-      // (unreachable marker, or no marker at all — powered off, wrong VMID,
-      // dead agent channel) stays out and keeps belonging to recovery.
+      // guest (live_update_failed_vm_reached) or only may have — a
+      // post-connect timeout cannot prove either way
+      // (live_update_failed_vm_maybe_reached), and dropping it would orphan
+      // a box whose update is already running. Both stay in the retry queue
+      // while a launch refused before the guest (unreachable marker, or no
+      // marker at all — powered off, wrong VMID, dead agent channel) stays
+      // out and keeps belonging to recovery.
       .or(
         `lifecycle_state.eq.active,status.eq.running,` +
-        `and(lifecycle_state.eq.failed,lifecycle_substate.eq.${LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE})`
+        `and(lifecycle_state.eq.failed,lifecycle_substate.in.("${LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE}","${LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE}"))`
       )
       .not("lifecycle_state", "in", FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST)
       // Never sweep a row armed for teardown. The orphan sweep (Mon 09:00)

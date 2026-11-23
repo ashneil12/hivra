@@ -77,6 +77,7 @@ import {
 } from "@/lib/browser-sidecar/deployment-gate";
 import {
   buildInstanceLifecyclePatch,
+  LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE,
   LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
   LIVE_UPDATE_FAILED_VM_UNREACHABLE_SUBSTATE,
 } from "@/lib/instance-lifecycle";
@@ -392,31 +393,64 @@ function launchedPid(stdout: string): string {
 }
 
 /**
- * Did the failed launch get a command onto the guest before it died?
- * Positive evidence only, because the fleet-sync sweep retries a failed row
- * whose last update ran ON the box while the recovery crons own every other
- * case — classifying a dead VM as reachable would re-create the guaranteed
- * daily failure the sweep's live-only filter was added to stop.
+ * Did the failed launch get a command onto the guest before it died — and
+ * how sure is the answer?
  *
- * The evidence lives in stderr: the guest-bound launch script only writes
- * to stderr once the VMID-bound prelude and the SSH readiness wait have
- * passed — a powered-off, missing or wrong VM is refused instead with
- * GUEST_SSH_REFUSED_MARKER or the readiness wait's unreachable line — and
- * the direct sshExec path only fills stderr once the command channel ran a
- * command (transport failures report `error` with an empty stderr). A
- * non-empty stderr without those markers means the launch reached the box;
- * anything else — empty output, host timeout, key/fingerprint refusal —
- * left no proof the VM took the update at all.
+ *   - "reached": positive evidence the launch ran on the box — guest-side
+ *     stderr (the guest-bound script only writes there once the VMID-bound
+ *     prelude and the SSH readiness wait passed, and the direct sshExec
+ *     path only fills stderr once a command channel ran), or a remote
+ *     shell exit code, which only a dispatched command produces.
+ *   - "maybe_reached": the transport died without a verdict — the SSH
+ *     attempt's own stage says the session was past connect (the command
+ *     channel had opened, or at least auth had completed), or an
+ *     uninstrumented result reports only an operation timeout or a
+ *     host-side exit. The launch may be running on the guest; nothing
+ *     proves it did not.
+ *   - "unreachable": PROVEN never reached — the prelude refused the target
+ *     or its readiness wait gave up (both print their own marker), the
+ *     connect handshake itself failed (stage "connect"), or a result
+ *     carries no evidence at all (config refusal, bad fingerprint).
+ *
+ * The split matters because the fleet-sync sweep retries a failed row whose
+ * last update ran ON the box while the recovery crons own every other
+ * case — a binary "not proven reached ⇒ unreachable" took a timed-out
+ * launch (the classic channel-hang after dispatch, empty stderr) OUT of the
+ * sweep even though the update may have been running, while stamping a
+ * maybe-reached box as reached would be a claim the evidence cannot
+ * support. MAYBE_REACHED stays sweep-eligible like REACHED; only proven
+ * unreachable drops to recovery.
  */
-export function liveUpdateLaunchReachedGuest(result: {
+export type LiveUpdateLaunchReach = "reached" | "maybe_reached" | "unreachable";
+
+export function liveUpdateLaunchReach(result: {
   stdout?: string;
   stderr?: string;
   error?: string;
-}): boolean {
+  stage?: "connect" | "ready" | "command";
+}): LiveUpdateLaunchReach {
   const detail = `${result.stderr ?? ""}\n${result.error ?? ""}`;
-  if (detail.includes(GUEST_SSH_REFUSED_MARKER)) return false;
-  if (detail.includes(GUEST_SSH_UNREACHABLE_MESSAGE)) return false;
-  return (result.stderr ?? "").trim().length > 0;
+  if (detail.includes(GUEST_SSH_REFUSED_MARKER)) return "unreachable";
+  if (detail.includes(GUEST_SSH_UNREACHABLE_MESSAGE)) return "unreachable";
+  if ((result.stderr ?? "").trim().length > 0) return "reached";
+  if (/^Command exited with code \d+/.test(result.error ?? "")) return "reached";
+  if (result.stage === "ready" || result.stage === "command") return "maybe_reached";
+  // An instrumented connect-phase timeout is the one timeout that is
+  // honest "unreachable": the handshake never completed, so nothing was
+  // dispatched. It must outrank the uninstrumented-timeout arm below.
+  if (result.stage === "connect") return "unreachable";
+  // Results without a stage (the spawned/local host script, early config
+  // refusals, or instrumentation written before the field existed): an
+  // operation timeout or a host-side exit code still cannot prove the
+  // command never ran — the launch may be mid-flight on the box.
+  if (
+    /operation timed out after|host script timed out after|exited with code \d+/.test(
+      result.error ?? ""
+    )
+  ) {
+    return "maybe_reached";
+  }
+  return "unreachable";
 }
 
 export async function applyLiveUpdate(
@@ -1010,17 +1044,24 @@ fi
     // the fleet-sync sweep retries a failed row only when the update actually
     // ran on the box (an image pull or script failure is a real retry), while
     // a launch refused before reaching the guest (powered off, wrong VMID,
-    // dead agent) stays with recovery. Both paths converge on the same stamp:
-    // recovery can always re-drive the row, and the sweep reads the substate
-    // to keep unreachable boxes out of its queue.
-    const reachedGuest = liveUpdateLaunchReachedGuest(launchResult);
+    // dead agent) stays with recovery. The middle stamp keeps a launch whose
+    // transport timed out PAST connect — the script may already be running —
+    // in the sweep's retry queue: claiming it reached would overstate the
+    // evidence, but dropping it to unreachable would orphan a row whose
+    // update is already mid-flight. Both retry-eligible stamps converge with
+    // recovery's own path: it can always re-drive the row, and the sweep
+    // reads the substate to keep unreachable boxes out of its queue.
+    const launchReach = liveUpdateLaunchReach(launchResult);
     const { error: failedStateError } = await supabaseAdmin
       .from("hermes_instances")
       .update({
         ...buildInstanceLifecyclePatch("failed"),
-        lifecycle_substate: reachedGuest
-          ? LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE
-          : LIVE_UPDATE_FAILED_VM_UNREACHABLE_SUBSTATE,
+        lifecycle_substate:
+          launchReach === "reached"
+            ? LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE
+            : launchReach === "maybe_reached"
+              ? LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE
+              : LIVE_UPDATE_FAILED_VM_UNREACHABLE_SUBSTATE,
       })
       .eq("id", instance.id);
     if (failedStateError) {

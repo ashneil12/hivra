@@ -4,7 +4,7 @@ import { SupabaseClient } from "@supabase/supabase-js";
 import { sshExec } from "@/lib/hetzner/ssh";
 import { decryptApiKey } from "@/lib/crypto";
 import { getProxmoxInfrastructure, resolveProxmoxHostEnv, runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
-import { applyLiveUpdate, resolveBankrRuntimeEnvPlanForUpdate, resolveInstanceIpv4 } from "../instance-orchestrator";
+import { applyLiveUpdate, liveUpdateLaunchReach, resolveBankrRuntimeEnvPlanForUpdate, resolveInstanceIpv4 } from "../instance-orchestrator";
 import { getProfileDeploymentState } from "@/lib/profile-deployment";
 import { validateProviderApiKey } from "@/lib/services/provider-validation";
 import { buildAgentDeployScript, getHetznerInstanceStatus, resolveGatewayConfiguration } from "@/lib/services/hetzner-instance-service";
@@ -541,6 +541,227 @@ describe("applyLiveUpdate", () => {
     });
 
     consoleErrorSpy.mockRestore();
+  });
+
+  it("keeps a launch whose SSH timed out past connect retry-eligible for the fleet sweep", async () => {
+    // The reported case: sshExec's global timer can fire AFTER the command
+    // channel opened — the deploy script may already be running on the box
+    // (the classic channel hang: remote exits but the channel waits on
+    // inherited FDs). A binary "not proven reached ⇒ unreachable" stamped
+    // that row unreachable and dropped it out of the redeploy sweep while
+    // its update was mid-flight. With the attempt's own stage carried on the
+    // result, the honest stamp is maybe_reached — which the sweep retries
+    // like a reached box.
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: false,
+      stdout: "",
+      stderr: "",
+      error: "SSH operation timed out after 30000ms",
+      stage: "command",
+    });
+
+    const captured: Array<{ patch: Record<string, unknown> }> = [];
+    const supabase = {
+      from: jest.fn().mockReturnValue({
+        update: jest.fn((patch: Record<string, unknown>) => ({
+          eq: jest.fn(() => {
+            captured.push({ patch });
+            return Promise.resolve({ error: null });
+          }),
+        })),
+      }),
+    } as unknown as SupabaseClient;
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-timeout",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result.applied).toBe(false);
+    expect(captured).toHaveLength(1);
+    expect(captured[0].patch).toMatchObject({
+      status: "failed",
+      lifecycle_state: "failed",
+      // Retry-eligible like "reached": the fleet sweep's failed arm selects
+      // both substates. Claiming reached would overstate the evidence —
+      // the stamp says exactly what the transport could prove.
+      lifecycle_substate: "live_update_failed_vm_maybe_reached",
+    });
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("still stamps an instrumented connect-phase timeout unreachable — the command provably never ran", async () => {
+    // The one timeout that IS honest 'unreachable': the stage says the SSH
+    // handshake never completed, so nothing was dispatched. Recovery owns
+    // the row (it probes the gateway and restarts the VM), and the sweep
+    // must not manufacture its guaranteed daily failure.
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: false,
+      stdout: "",
+      stderr: "",
+      error: "SSH operation timed out after 30000ms",
+      stage: "connect",
+    });
+
+    const captured: Array<{ patch: Record<string, unknown> }> = [];
+    const supabase = {
+      from: jest.fn().mockReturnValue({
+        update: jest.fn((patch: Record<string, unknown>) => ({
+          eq: jest.fn(() => {
+            captured.push({ patch });
+            return Promise.resolve({ error: null });
+          }),
+        })),
+      }),
+    } as unknown as SupabaseClient;
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-connect-timeout",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result.applied).toBe(false);
+    expect(captured[0].patch).toMatchObject({
+      lifecycle_substate: "live_update_failed_vm_unreachable",
+    });
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("keeps an uninstrumented operation timeout retry-eligible instead of claiming unreachability", async () => {
+    // Results without a stage — the spawned host-script path or shapes
+    // written before instrumentation — still cannot prove a bare operation
+    // timeout never dispatched. The safe stamp is maybe_reached, not the
+    // unreachable that removed these rows from the sweep.
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: false,
+      stdout: "",
+      stderr: "",
+      error: "SSH operation timed out after 30000ms",
+    });
+
+    const captured: Array<{ patch: Record<string, unknown> }> = [];
+    const supabase = {
+      from: jest.fn().mockReturnValue({
+        update: jest.fn((patch: Record<string, unknown>) => ({
+          eq: jest.fn(() => {
+            captured.push({ patch });
+            return Promise.resolve({ error: null });
+          }),
+        })),
+      }),
+    } as unknown as SupabaseClient;
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-bare-timeout",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result.applied).toBe(false);
+    expect(captured[0].patch).toMatchObject({
+      lifecycle_substate: "live_update_failed_vm_maybe_reached",
+    });
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("reads the Proxmox host-script timeout by its stage, not by the error string alone", () => {
+    // The Proxmox launch path (runProxmoxHostScript) stamps the same stage
+    // contract: a 90 s cap firing past connect cannot prove the launch
+    // script never ran on the host — while a connect-phase cap can.
+    expect(
+      liveUpdateLaunchReach({
+        stdout: "",
+        stderr: "",
+        error: "Proxmox SSH operation timed out after 90000ms",
+        stage: "command",
+      })
+    ).toBe("maybe_reached");
+    expect(
+      liveUpdateLaunchReach({
+        stdout: "",
+        stderr: "",
+        error: "Proxmox SSH operation timed out after 90000ms",
+        stage: "ready",
+      })
+    ).toBe("maybe_reached");
+    expect(
+      liveUpdateLaunchReach({
+        stdout: "",
+        stderr: "",
+        error: "Proxmox SSH operation timed out after 90000ms",
+        stage: "connect",
+      })
+    ).toBe("unreachable");
+    // A host-script non-zero exit proves the script ran on the HOST — but a
+    // bare exit line without guest stderr cannot prove it got past the
+    // VMID-bound prelude onto the guest, so the honest stamp is
+    // maybe_reached, not reached. (The direct-SSH "Command exited with code"
+    // string IS guest evidence and still reads reached.)
+    expect(
+      liveUpdateLaunchReach({
+        stdout: "",
+        stderr: "",
+        error: "Proxmox host script exited with code 3",
+      })
+    ).toBe("maybe_reached");
+    expect(
+      liveUpdateLaunchReach({
+        stdout: "",
+        stderr: "",
+        error: "Command exited with code 1",
+      })
+    ).toBe("reached");
+    // The refusal markers still outrank everything — they are proof the
+    // launch never got a command on a guest.
+    expect(
+      liveUpdateLaunchReach({
+        stdout: "",
+        stderr: "VMID-bound SSH refused: VM 4242 is not running",
+        error: "",
+        stage: "command",
+      })
+    ).toBe("unreachable");
   });
 
   it("passes Nous vault bundles through live updates without forcing an OPENAI key", async () => {

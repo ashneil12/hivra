@@ -95,18 +95,28 @@ export const FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST = `("${FLEET_SYNC_SKIP_LIFECYCLE_
 //   - REACHED: the launch script got a command onto the guest and failed
 //     there (image pull, update script, health wait). The VM is alive, so
 //     the next sweep's redeploy is a real retry, not a guaranteed error.
-//   - UNREACHABLE (and any row with no marker at all): the launch never got
-//     a command on a guest — powered off, wrong/missing VMID, dead agent
-//     channel, or the host itself unreachable. The recovery crons own that
-//     row (recover-stuck probes the gateway and restarts the VM); sweeping
-//     it would manufacture the same guaranteed daily failure the sweep's
-//     live-only filter exists to prevent.
+//   - MAYBE_REACHED: the transport died after the command was (or may have
+//     been) dispatched — an operation timeout with the session already past
+//     connect, or the channel hanging after dispatch. The launch may be
+//     running on the box right now, so the row stays retry-eligible; the
+//     sweep re-drives it like a reachable failure (a second launch on a box
+//     that already took one is no worse than the retry the sweep exists
+//     for), while claiming it "reached" would be a lie the stamp cannot
+//     support.
+//   - UNREACHABLE (and any row with no marker at all): the launch provably
+//     never got a command on a guest — powered off, wrong/missing VMID,
+//     dead agent channel, a connect-phase refusal, or the host itself
+//     unreachable. The recovery crons own that row (recover-stuck probes
+//     the gateway and restarts the VM); sweeping it would manufacture the
+//     same guaranteed daily failure the sweep's live-only filter exists
+//     to prevent.
 //
 // Every applyLiveUpdate launch failure re-stamps the value, so it always
 // describes the LAST failed update attempt: a box that dies after a
 // reachable failure is reclassified by its next attempt and drops back out
 // of the sweep.
 export const LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE = "live_update_failed_vm_reached";
+export const LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE = "live_update_failed_vm_maybe_reached";
 export const LIVE_UPDATE_FAILED_VM_UNREACHABLE_SUBSTATE = "live_update_failed_vm_unreachable";
 
 const LEGACY_STATUS_TO_LIFECYCLE: Record<string, InstanceLifecycleState> = {

@@ -641,6 +641,131 @@ function callRequiringArrayResults(call: BaseChainReader["call"]): BaseChainRead
   };
 }
 
+// Resumable log-scan coverage, persisted on the quote row under this
+// metadata key (no new column): a per-token map of checkpoints, each proof
+// that blocks fromBlock..scannedThroughBlock of that token's anchored window
+// were fully answered plus the qualifying transfers found in them.
+//
+// A stale quote's scan bounds are fixed PAST blocks (quotedAt and the grace
+// end are both behind the chain), so coverage is cumulative across attempts:
+// the once-a-day stale pass has a bounded slice of the tick clock, and a
+// quote whose window needs more than one slice used to abort mid-scan every
+// day and restart from the first block the next — it could never finish, so
+// a payment in its window was never found. With each answered chunk
+// checkpointed, the next day's pass resumes at scannedThroughBlock + 1, and
+// a fully-covered record makes later passes free. Progress is only proof of
+// coverage, never of an outcome: a quote is still decided only on a scan the
+// confirmed head covers end to end — the unchanged rule.
+const STALE_SCAN_PROGRESS_KEY = "depositScanProgress";
+const STALE_SCAN_PROGRESS_VERSION = 1;
+// A normal quote carries a handful of qualifying transfers; a cap keeps a
+// flood of real transfers to one address from bloating the row. Over the cap
+// the checkpoint is skipped — the scan still completes correctly, it just
+// does not leave resumable coverage for the next attempt.
+const MAX_PERSISTED_SCAN_TRANSFERS = 5_000;
+
+interface PersistedScannedTransfer {
+  transactionHash: string;
+  logIndex: number;
+  blockNumber: number;
+  amount: string;
+  logTimestampSec: number | null;
+}
+
+interface PersistedTokenScan {
+  v: number;
+  tokenAddress: string;
+  fromBlock: number;
+  toBlock: number;
+  /** Inclusive: every block fromBlock..scannedThroughBlock was answered. */
+  scannedThroughBlock: number;
+  /** The scan's qualifying (post-dust-filter) transfers in the covered range. */
+  transfers: PersistedScannedTransfer[];
+}
+
+// A checkpoint handed to a log scan: `saved` is a validated record for this
+// exact token (its fromBlock/toBlock match is checked inside the scan, where
+// the bounds are computed); `checkpoint` is awaited after each fully
+// answered chunk so a mid-scan abort leaves provable coverage behind.
+interface ResumableScanProgress {
+  saved: PersistedTokenScan | null;
+  checkpoint: (scan: PersistedTokenScan) => Promise<void>;
+}
+
+// Validate one token's checkpoint out of the persisted per-token map. Anything
+// malformed or for another version/token is ignored — a bad record must never
+// skip live coverage, so the safe answer to doubt is a full rescan.
+function readPersistedTokenScanProgress(
+  savedByToken: unknown,
+  tokenAddress: string
+): PersistedTokenScan | null {
+  if (!savedByToken || typeof savedByToken !== "object") return null;
+  const raw = (savedByToken as Record<string, unknown>)[tokenAddress.toLowerCase()];
+  if (!raw || typeof raw !== "object") return null;
+  const scan = raw as Record<string, unknown>;
+  const isBlock = (value: unknown): value is number =>
+    Number.isSafeInteger(value) && (value as number) >= 0;
+  if (
+    scan.v !== STALE_SCAN_PROGRESS_VERSION ||
+    scan.tokenAddress !== tokenAddress.toLowerCase() ||
+    !isBlock(scan.fromBlock) ||
+    !isBlock(scan.toBlock) ||
+    !isBlock(scan.scannedThroughBlock) ||
+    // scannedThroughBlock < fromBlock means nothing was covered yet; treating
+    // the record as absent keeps one code path.
+    scan.scannedThroughBlock < scan.fromBlock - 1 ||
+    scan.scannedThroughBlock > scan.toBlock ||
+    !Array.isArray(scan.transfers) ||
+    scan.transfers.length > MAX_PERSISTED_SCAN_TRANSFERS
+  ) {
+    return null;
+  }
+  const transfers: PersistedScannedTransfer[] = [];
+  for (const entry of scan.transfers) {
+    const t = entry as Record<string, unknown> | null;
+    if (
+      !t ||
+      typeof t !== "object" ||
+      typeof t.transactionHash !== "string" ||
+      !isBlock(t.logIndex) ||
+      !isBlock(t.blockNumber) ||
+      typeof t.amount !== "string" ||
+      !/^\d+$/.test(t.amount) ||
+      !(t.logTimestampSec === null || isBlock(t.logTimestampSec))
+    ) {
+      return null;
+    }
+    transfers.push({
+      transactionHash: t.transactionHash,
+      logIndex: t.logIndex,
+      blockNumber: t.blockNumber,
+      amount: t.amount,
+      logTimestampSec: t.logTimestampSec === null ? null : (t.logTimestampSec as number),
+    });
+  }
+  return {
+    v: STALE_SCAN_PROGRESS_VERSION,
+    tokenAddress: tokenAddress.toLowerCase(),
+    fromBlock: scan.fromBlock,
+    toBlock: scan.toBlock,
+    scannedThroughBlock: scan.scannedThroughBlock,
+    transfers,
+  };
+}
+
+function serializeScannedTransfers(
+  parsed: Map<string, DepositTransferLog & { confirmations: number }>
+): PersistedScannedTransfer[] | null {
+  if (parsed.size > MAX_PERSISTED_SCAN_TRANSFERS) return null;
+  return [...parsed.values()].map((entry) => ({
+    transactionHash: entry.transactionHash,
+    logIndex: entry.logIndex,
+    blockNumber: entry.blockNumber,
+    amount: entry.amount.toString(),
+    logTimestampSec: entry.logTimestampSec,
+  }));
+}
+
 async function scanQuoteTransfers(params: {
   chain: BaseChainReader;
   quote: ManagedVeniceTokenQuote;
@@ -655,6 +780,17 @@ async function scanQuoteTransfers(params: {
    * the quote. A tx with one real log keeps all its logs.
    */
   minAmount?: bigint;
+  /**
+   * Resumable coverage for this scan, armed only by the daily stale pass.
+   * A checkpoint is usable only for the identical scan (same token and
+   * anchored range): its transfers seed the result and the RPC walk resumes
+   * at scannedThroughBlock + 1. Every fully answered chunk is checkpointed
+   * before the next request, so a cooperative abort mid-scan leaves provable
+   * coverage instead of losing the whole attempt. Persisted coverage never
+   * decides anything by itself — the settle / review / retire rules below
+   * run on the merged result exactly as after a one-shot scan.
+   */
+  resume?: ResumableScanProgress;
 }) {
   const tokenAddress = (params.tokenAddress ?? params.quote.tokenAddress).toLowerCase();
   const { chain } = params;
@@ -680,45 +816,115 @@ async function scanQuoteTransfers(params: {
     );
   }
 
-  const toTopic = encodeErc20TransferToTopic(params.quote.depositAddress);
-  // Chunked at the public endpoint's 2,000-block eth_getLogs limit (Base's
-  // public RPC answers a wider range with HTTP 413 / JSON-RPC -32614).
-  const logs = await getLogsInBlockChunks<EvmLog>({
-    call: callRequiringArrayResults(chain.call),
-    filter: { address: tokenAddress, topics: [ERC20_TRANSFER_TOPIC, null, toTopic] },
-    fromBlock,
-    toBlock,
-    endpoint: chain.endpoint,
-  });
+  // A checkpoint is trusted only when it covers THIS scan: same token and the
+  // same anchored range. The range is anchored to fixed past blocks (quotedAt
+  // and the grace end), so a stale quote's bounds agree attempt to attempt;
+  // any drift in them — or a malformed/forged-looking record — means a full
+  // rescan, never a hole.
+  const savedScan =
+    params.resume?.saved &&
+    params.resume.saved.fromBlock === fromBlock &&
+    params.resume.saved.toBlock === toBlock
+      ? params.resume.saved
+      : null;
+  const scanFromBlock = savedScan ? savedScan.scannedThroughBlock + 1 : fromBlock;
 
+  const toTopic = encodeErc20TransferToTopic(params.quote.depositAddress);
+  const minAmount = params.minAmount ?? 0n;
   const parsed = new Map<string, DepositTransferLog & { confirmations: number }>();
-  for (const log of logs) {
-    const transfer = parseDepositTransferLog(log, toTopic, tokenAddress);
-    if (!transfer) continue;
+  const addTransfer = (transfer: DepositTransferLog) => {
     parsed.set(`${transfer.transactionHash}:${transfer.logIndex}`, {
       ...transfer,
       confirmations: Math.max(0, latest - transfer.blockNumber + 1),
     });
+  };
+  // Seed the checkpointed prefix's transfers — confirmations are recomputed
+  // against today's head, so a transfer parked underconfirmed yesterday can
+  // still settle on resume.
+  for (const entry of savedScan?.transfers ?? []) {
+    addTransfer({ ...entry, amount: BigInt(entry.amount) });
   }
 
-  const minAmount = params.minAmount ?? 0n;
-  if (minAmount > 0n) {
-    const realTxs = new Set(
-      [...parsed.values()].filter((entry) => entry.amount >= minAmount).map((entry) => entry.transactionHash)
-    );
-    let dustSkipped = 0;
-    for (const [key, entry] of parsed) {
-      if (realTxs.has(entry.transactionHash)) continue;
-      parsed.delete(key);
-      dustSkipped += 1;
+  let dustSkipped = 0;
+  let checkpointCapWarned = false;
+  // Parse + dust-filter per chunk. A tx's logs all sit in one block and a
+  // chunk never splits a block, so the tx-level rule ("a tx with one real
+  // log keeps all its logs") applied per chunk is identical to applying it
+  // to the whole result — and it keeps dust out of the persisted checkpoint.
+  const handleChunk = async (chunkEndBlock: number, chunkLogs: EvmLog[]) => {
+    const chunkParsed = new Map<string, DepositTransferLog>();
+    for (const logEntry of chunkLogs) {
+      const transfer = parseDepositTransferLog(logEntry, toTopic, tokenAddress);
+      if (transfer) chunkParsed.set(`${transfer.transactionHash}:${transfer.logIndex}`, transfer);
     }
-    if (dustSkipped > 0) {
-      log.info("managed venice quote scan skipped dust transfers", {
+    if (minAmount > 0n) {
+      const realTxs = new Set(
+        [...chunkParsed.values()].filter((entry) => entry.amount >= minAmount).map((entry) => entry.transactionHash)
+      );
+      for (const [key, entry] of chunkParsed) {
+        if (realTxs.has(entry.transactionHash)) continue;
+        chunkParsed.delete(key);
+        dustSkipped += 1;
+      }
+    }
+    for (const transfer of chunkParsed.values()) addTransfer(transfer);
+    if (!params.resume) return;
+    const transfers = serializeScannedTransfers(parsed);
+    if (transfers === null) {
+      // Over the persisted cap: the scan keeps running correctly but stops
+      // checkpointing, so a later attempt never resumes into a partial set.
+      if (!checkpointCapWarned) {
+        checkpointCapWarned = true;
+        log.warn("managed venice quote scan has too many transfers to persist; resumable coverage disabled for this scan", {
+          source: "managed-venice-token-reconciliation",
+          failureType: "managed_venice_scan_progress_cap",
+          quoteId: params.quote.id,
+        });
+      }
+      return;
+    }
+    try {
+      await params.resume.checkpoint({
+        v: STALE_SCAN_PROGRESS_VERSION,
+        tokenAddress,
+        fromBlock,
+        toBlock,
+        scannedThroughBlock: chunkEndBlock,
+        transfers,
+      });
+    } catch (error) {
+      // Best-effort like every queue writer: a failed checkpoint only means
+      // the next attempt rescans the uncovered prefix — never a wrong answer.
+      log.warn("stale quote scan progress checkpoint failed; the next attempt rescans the uncovered prefix", {
         source: "managed-venice-token-reconciliation",
+        failureType: "managed_venice_scan_progress_failed",
         quoteId: params.quote.id,
-        dustSkipped,
+        errorMessage: error instanceof Error ? error.message : String(error),
       });
     }
+  };
+
+  // Chunked at the public endpoint's 2,000-block eth_getLogs limit (Base's
+  // public RPC answers a wider range with HTTP 413 / JSON-RPC -32614). A
+  // fully-covered checkpoint leaves scanFromBlock past toBlock: nothing to
+  // fetch, the seeded transfers below are the whole result.
+  if (scanFromBlock <= toBlock) {
+    await getLogsInBlockChunks<EvmLog>({
+      call: callRequiringArrayResults(chain.call),
+      filter: { address: tokenAddress, topics: [ERC20_TRANSFER_TOPIC, null, toTopic] },
+      fromBlock: scanFromBlock,
+      toBlock,
+      endpoint: chain.endpoint,
+      onChunk: handleChunk,
+    });
+  }
+
+  if (dustSkipped > 0) {
+    log.info("managed venice quote scan skipped dust transfers", {
+      source: "managed-venice-token-reconciliation",
+      quoteId: params.quote.id,
+      dustSkipped,
+    });
   }
 
   const blocksToFetch = new Set(
@@ -923,12 +1129,30 @@ async function scanAttributableTransfers(params: {
   quote: ManagedVeniceTokenQuote;
   minConfirmations: number;
   now?: Date;
+  /**
+   * The daily stale pass's resumable-coverage store: the persisted per-token
+   * checkpoint map plus a writer that stamps one token's coverage. See
+   * STALE_SCAN_PROGRESS_KEY — every other caller scans an unbounded,
+   * non-abortable range and passes nothing.
+   */
+  scanProgress?: {
+    saved: unknown;
+    checkpoint: (scan: PersistedTokenScan) => Promise<void>;
+  };
 }) {
   const { db, quote } = params;
   const window = managedVeniceTokenQuoteWindow(quote);
   const quotedAtMs = window.quotedAt.getTime();
   const expiresAtMs = window.effectiveExpiresAt.getTime();
   const graceEndMs = expiresAtMs + LATE_PAYMENT_GRACE_MS;
+
+  const resumeFor = (tokenAddress: string): ResumableScanProgress | undefined =>
+    params.scanProgress
+      ? {
+          saved: readPersistedTokenScanProgress(params.scanProgress.saved, tokenAddress),
+          checkpoint: params.scanProgress.checkpoint,
+        }
+      : undefined;
 
   const scan = await scanQuoteTransfers({
     chain: params.chain,
@@ -937,6 +1161,7 @@ async function scanAttributableTransfers(params: {
     graceEndMs,
     minConfirmations: params.minConfirmations,
     minAmount: paymentDustFloor(BigInt(quote.tokenAmountRaw)),
+    resume: resumeFor(quote.tokenAddress),
   });
   const boundaryMs = await loadAttributionBoundaryMs(db, quote);
   const inRange = scan.transfers.filter(
@@ -963,6 +1188,7 @@ async function scanAttributableTransfers(params: {
       minConfirmations: params.minConfirmations,
       tokenAddress: other.address,
       minAmount: tokenDustFloor(other.decimals),
+      resume: resumeFor(other.address),
     });
     const confirmedOther = otherScan.transfers.filter(
       (transfer) => inAttributionRange(transfer) && transfer.confirmations >= params.minConfirmations
@@ -1203,10 +1429,21 @@ async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
 
   const claimedCandidates = quoteCandidates(claimed.data);
   const byId = new Map<string, { id: string; userId: string }>();
+  // Recovery lanes first: a claimed quote (a settlement that claimed a tx and
+  // crashed before finishing) and a lot-holding one (the lot insert landed,
+  // the quote flip did not) are each finished WITHOUT a log scan, while a
+  // fresh quote's scan is the expensive work the open-scan budget exists to
+  // bound. Fresh-first ordering let a sustained fresh backlog spend the whole
+  // budget before either recovery lane was reached, leaving half-finished
+  // settlements open indefinitely while the provider kept answering. Recovery
+  // candidates are cheap and bounded by `limit`, so they always run ahead of
+  // fresh scans; the fresh lane keeps its newest-first order within itself,
+  // and the claimed lane's updated_at cursor still rotates it behind any
+  // claims never attempted (see the batch loop).
   for (const candidate of [
-    ...quoteCandidates(fresh.data),
     ...claimedCandidates,
     ...lotHeldCandidates,
+    ...quoteCandidates(fresh.data),
   ]) {
     byId.set(candidate.id, candidate);
   }
@@ -1321,6 +1558,55 @@ async function touchQuoteQueueCursor(db: SupabaseLike, quoteId: string, nowIso: 
       errorMessage: error.message ?? "unknown",
     });
   }
+}
+
+// A quote row's resumable scan-coverage store for the stale pass: `saved` is
+// the persisted per-token checkpoint map (from the selection's own read) and
+// `checkpoint` stamps one token's coverage back into it, bumping the
+// updated_at rotation cursor with each write.
+//
+// The merge target is the metadata the selection just read, exactly like
+// markStaleQuoteGraceScanned. The guards make that safe for THIS write's own
+// race too: the only open-quote metadata writer that does not flip status is
+// a settlement claim, and it sets transaction_hash — which this write
+// refuses to touch (.is null), so the claim CAS can never be clobbered by a
+// checkpoint, and a checkpoint landing after a claim simply no-ops (progress
+// is lost, which costs a rescan — never a wrong answer). The claim CAS's own
+// merge can likewise drop a just-written checkpoint; again a rescan, not a
+// wrong answer.
+function staleQuoteScanProgress(
+  db: SupabaseLike,
+  candidate: { id: string; metadata: unknown },
+  nowIso: string
+): { saved: unknown; checkpoint: (scan: PersistedTokenScan) => Promise<void> } {
+  const base =
+    candidate.metadata && typeof candidate.metadata === "object"
+      ? (candidate.metadata as Record<string, unknown>)
+      : {};
+  const existing =
+    base[STALE_SCAN_PROGRESS_KEY] && typeof base[STALE_SCAN_PROGRESS_KEY] === "object"
+      ? (base[STALE_SCAN_PROGRESS_KEY] as Record<string, unknown>)
+      : {};
+  // Live copy of the per-token map: the quote token and each wrong-token scan
+  // checkpoint into the same record within one attempt.
+  const progressByToken: Record<string, unknown> = { ...existing };
+  return {
+    saved: progressByToken,
+    checkpoint: async (scan) => {
+      progressByToken[scan.tokenAddress] = scan;
+      const { error } = await (db.from("managed_venice_token_quotes") as DbTable)
+        .update({
+          updated_at: nowIso,
+          metadata: { ...base, [STALE_SCAN_PROGRESS_KEY]: progressByToken },
+        })
+        .eq("id", candidate.id)
+        .is("transaction_hash", null)
+        .in("status", ["active", "expired"]);
+      if (error) {
+        throw new Error(error.message || "Failed to persist stale scan progress");
+      }
+    },
+  };
 }
 
 // Record that a no_deposit_after_grace row got its one catch-up window scan:
@@ -1449,6 +1735,17 @@ async function runDailyStaleUnpaidQuoteScan(params: {
       break;
     }
     await params.throttle();
+    // Resumable coverage for this row's log scans: a scan that aborts at the
+    // pass's budget boundary leaves its answered chunks checkpointed on the
+    // row, so tomorrow's pass resumes at scannedThroughBlock + 1 instead of
+    // restarting at the window's first block — the difference between a wide
+    // window finishing across days and the same window dying at the same
+    // chunk every day.
+    const scanProgress = staleQuoteScanProgress(
+      params.db,
+      { id: candidate.id, metadata: candidate.metadata },
+      params.now.toISOString()
+    );
     let scannedOutcome: ReconcileManagedVeniceTokenQuoteResult | null = null;
     try {
       const result = await reconcileManagedVeniceTokenQuote({
@@ -1461,6 +1758,7 @@ async function runDailyStaleUnpaidQuoteScan(params: {
         rpcOptions: params.rpcOptions,
         chain: params.chain,
         failOnTransferSurfacingError: true,
+        scanProgress,
       });
       scannedOutcome = result;
       outcomes.push({ quoteId: candidate.id, userId: candidate.user_id, result });
@@ -1748,6 +2046,16 @@ export async function reconcileManagedVeniceTokenQuote(params: {
   // settle / review flip fails, so the batch counts it. Otherwise (the user's
   // check) the failure is logged and the terminal status returned.
   failOnTransferSurfacingError?: boolean;
+  // The daily stale pass only: resumable coverage for the quote's log scans
+  // (see STALE_SCAN_PROGRESS_KEY). The stale pass scans a bounded slice of
+  // the tick clock and can be aborted mid-window; checkpointing coverage on
+  // the quote row lets the next day's pass resume where it stopped instead
+  // of restarting at the window's first block. No other caller scans a
+  // bounded, abortable range, so no other caller passes it.
+  scanProgress?: {
+    saved: unknown;
+    checkpoint: (scan: PersistedTokenScan) => Promise<void>;
+  };
 }) {
   const db = requireDb(params.db ?? supabaseAdmin);
   const quote = await loadManagedVeniceTokenQuoteForUser(
@@ -1807,7 +2115,14 @@ export async function reconcileManagedVeniceTokenQuote(params: {
     return finishSettlement({ db, quote, settlement, transfer: recovery, failOnSurfacingError });
   }
 
-  const scan = await scanAttributableTransfers({ db, chain, quote, minConfirmations, now });
+  const scan = await scanAttributableTransfers({
+    db,
+    chain,
+    quote,
+    minConfirmations,
+    now,
+    scanProgress: params.scanProgress,
+  });
   const { attributable, extraLogs, classOf, isConfirmed, expiresAtMs, graceEndMs } = scan;
   const confirmed = attributable.filter(isConfirmed);
   const confirmedExtraLogs = extraLogs.filter(isConfirmed);
