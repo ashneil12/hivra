@@ -95,6 +95,7 @@ describe("runCronHeartbeatWatchdog", () => {
           })),
           error: null,
         }),
+        upsert: jest.fn().mockResolvedValue({ error: null }),
       }),
     };
   }
@@ -156,13 +157,74 @@ describe("runCronHeartbeatWatchdog", () => {
     expect(reportOpsEvent).not.toHaveBeenCalled();
   });
 
-  it("does NOT page a never-seen cron (no baseline)", async () => {
-    // No rows at all — every registered cron is unseen.
+  it("does NOT page a never-seen cron but plants its expected-since marker", async () => {
+    // No rows at all — every registered cron is unseen. First sighting is not
+    // pageable (wiring may trail the registry), but the watchdog plants a
+    // run_count=0 marker per missing cron so a cron that NEVER writes its
+    // first heartbeat still ages toward a page instead of staying invisible.
     mockHeartbeats([]);
 
     const result = await runCronHeartbeatWatchdog();
 
     expect(result.checked).toBe(CRON_REGISTRY.length);
+    expect(result.stale).toHaveLength(0);
+    expect(reportOpsEvent).not.toHaveBeenCalled();
+    const upsert = (
+      mockSupabaseAdmin.value as { from: (name: string) => { upsert: jest.Mock } }
+    ).from("ops_cron_heartbeats").upsert;
+    expect(upsert).toHaveBeenCalledTimes(CRON_REGISTRY.length);
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ cron_name: expect.any(String), run_count: 0 }),
+      { onConflict: "cron_name", ignoreDuplicates: true },
+    );
+  });
+
+  it("pages a registered cron that never reported once its marker is 3x its period old", async () => {
+    // probe-instance-health runs every 5 min → never-reported budget is 3x =
+    // 15 min. Its watchdog-planted marker row (run_count 0, no run ever) is
+    // 30 min old: the cron always dies before its first heartbeat write —
+    // exactly the invisible-failure case the marker exists for.
+    mockHeartbeats([
+      {
+        cron_name: "probe-instance-health",
+        last_success_at: null,
+        last_run_at: null,
+        run_count: 0,
+        created_at: minutesAgoIso(30),
+      },
+    ]);
+
+    const result = await runCronHeartbeatWatchdog();
+
+    expect(result.stale.map((s) => s.name)).toEqual(["probe-instance-health"]);
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "synthetic.cron-dead-man",
+        severity: "fatal",
+        metadata: expect.objectContaining({
+          cronName: "probe-instance-health",
+          neverReported: true,
+          runCount: 0,
+        }),
+      }),
+    );
+  });
+
+  it("does NOT page a never-reported cron still inside its 3x-period grace", async () => {
+    // Marker only 10 min old on a 5-min cron (15 min budget): the first runs
+    // may still be landing — benefit of the doubt, no page.
+    mockHeartbeats([
+      {
+        cron_name: "probe-instance-health",
+        last_success_at: null,
+        last_run_at: null,
+        run_count: 0,
+        created_at: minutesAgoIso(10),
+      },
+    ]);
+
+    const result = await runCronHeartbeatWatchdog();
+
     expect(result.stale).toHaveLength(0);
     expect(reportOpsEvent).not.toHaveBeenCalled();
   });

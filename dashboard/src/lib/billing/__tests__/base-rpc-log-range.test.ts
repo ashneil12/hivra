@@ -701,6 +701,95 @@ describe("getLogsInBlockChunks with a moving provider range cap", () => {
     ]);
   });
 
+  it("records no cap when the provider refuses every fallback range too", async () => {
+    // The provider is down/degraded for every span — the refusal cascades
+    // down to single-block requests, which fail too. Nothing was CONFIRMED,
+    // so nothing may be remembered: a cap of 1 recorded on the way down would
+    // make a later 2,000-block scan pay 2,000 one-block requests once the
+    // provider recovers.
+    const refusing = jest.fn(async () => {
+      throw new Error("Base RPC eth_getLogs returned an error: -32614 range limit exceeded");
+    });
+
+    await expect(
+      getLogsInBlockChunks({ call: refusing as never, filter, fromBlock: 0, toBlock: 1_999 })
+    ).rejects.toThrow("range limit");
+
+    // Recovered provider: the scan must start at the configured ceiling.
+    const { call, requests } = capLimitedCall(2_000, () => new Error("unreachable"));
+    await getLogsInBlockChunks({ call, filter, fromBlock: 0, toBlock: 3_999 });
+    expect(requests).toEqual([
+      { fromBlock: 0, toBlock: 1_999 },
+      { fromBlock: 2_000, toBlock: 3_999 },
+    ]);
+  });
+
+  it("scopes the confirmed cap to the endpoint that produced it", async () => {
+    const endpointA = capLimitedCall(500, () => new Error("eth_getLogs is limited to a 500 range"));
+    await getLogsInBlockChunks({
+      call: endpointA.call,
+      filter,
+      fromBlock: 0,
+      toBlock: 999,
+      endpoint: "https://a.test",
+    });
+
+    // A different endpoint keeps probing at the configured ceiling — a cap
+    // learned on one provider must not shrink another's scans.
+    const endpointB = capLimitedCall(2_000, () => new Error("unreachable"));
+    await getLogsInBlockChunks({
+      call: endpointB.call,
+      filter,
+      fromBlock: 0,
+      toBlock: 3_999,
+      endpoint: "https://b.test",
+    });
+    expect(endpointB.requests[0]).toEqual({ fromBlock: 0, toBlock: 1_999 });
+
+    // And endpoint A still starts at its own confirmed 500-block cap.
+    const endpointAAgain = capLimitedCall(500, () => new Error("unreachable"));
+    await getLogsInBlockChunks({
+      call: endpointAAgain.call,
+      filter,
+      fromBlock: 0,
+      toBlock: 999,
+      endpoint: "https://a.test",
+    });
+    expect(endpointAAgain.requests).toEqual([
+      { fromBlock: 0, toBlock: 499 },
+      { fromBlock: 500, toBlock: 999 },
+    ]);
+  });
+
+  it("re-probes the ceiling once a confirmed cap outlives its TTL", async () => {
+    const first = capLimitedCall(500, () => new Error("eth_getLogs is limited to a 500 range"));
+    await getLogsInBlockChunks({
+      call: first.call,
+      filter,
+      fromBlock: 0,
+      toBlock: 999,
+      endpoint: "https://a.test",
+    });
+
+    // A cap confirmed during a degraded window is reused for an hour, not
+    // pinned for the life of the process: past the TTL the next scan probes
+    // at the configured ceiling again (and re-learns only on a new refusal).
+    const dateNow = jest.spyOn(Date, "now").mockReturnValue(Date.now() + 61 * 60_000);
+    try {
+      const second = capLimitedCall(2_000, () => new Error("unreachable"));
+      await getLogsInBlockChunks({
+        call: second.call,
+        filter,
+        fromBlock: 0,
+        toBlock: 3_999,
+        endpoint: "https://a.test",
+      });
+      expect(second.requests[0]).toEqual({ fromBlock: 0, toBlock: 1_999 });
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
   it("does not mistake a rate-limit message for a range cap", async () => {
     const call = jest.fn(async () => {
       throw new Error("Base RPC eth_getLogs returned an error: rate limited to a certain number of requests");

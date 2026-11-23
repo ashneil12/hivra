@@ -477,6 +477,95 @@ describe("managed Venice token quote reconciliation", () => {
     );
     expect(settledHashes).toEqual(["0xopenlotpaid"]);
   });
+
+  it("matches deposit lots to paged open quotes instead of probing every historical lot id", async () => {
+    // Regression for the lot-recovery starvation: with ~2,100 historical
+    // deposit lots the old code paged the WHOLE lot id list (three 1,000-row
+    // pages) and then probed each id for an open quote before any fresh work
+    // ran. The check now pages open quote ids and matches lots to them, so
+    // the lots table sees a bounded probe per open-id chunk no matter how
+    // many settled lots accumulate. The settled lots' quotes need no rows —
+    // only their quote_id matters, and the open-side filter excludes them.
+    const oldExpiry = "2026-05-01T00:00:00.000Z";
+    const settledLots = Array.from({ length: 2_100 }, (_, i) => ({
+      id: `lot_settled_${i}`,
+      account_id: `account_settled_${i}`,
+      user_id: `user_settled_${i}`,
+      quote_id: `quote_settled_${i}`,
+      source: "hermesos_deposit",
+      transaction_hash: `0xsettled${i}`,
+      status: "depleted",
+      created_at: `2026-04-${String(1 + (i % 28)).padStart(2, "0")}T00:00:00.000Z`,
+      updated_at: `2026-04-${String(1 + (i % 28)).padStart(2, "0")}T00:00:00.000Z`,
+    }));
+    const openQuote = managedVeniceQuoteRow({
+      id: "quote_open_lot",
+      user_id: "user_open_lot",
+      transaction_hash: null,
+      quoted_at: "2026-04-30T00:00:00.000Z",
+      expires_at: oldExpiry,
+      created_at: "2026-04-30T00:00:00.000Z",
+      deposit_address: "0x000000000000000000000000000000000000c0de",
+    });
+    const openLot = {
+      id: "lot_open",
+      account_id: "account_open",
+      user_id: "user_open_lot",
+      quote_id: "quote_open_lot",
+      source: "hermesos_deposit",
+      token_amount_raw: "1000000000000000000000",
+      remaining_token_amount_raw: "1000000000000000000000",
+      snapshot_price_usd: "0.05",
+      original_value_micro_usd: 50_000_000,
+      remaining_value_micro_usd: 50_000_000,
+      quote_source: "dexscreener",
+      quoted_at: "2026-04-30T00:00:00.000Z",
+      quote_expires_at: oldExpiry,
+      transaction_hash: "0xopenlotpaid",
+      status: "active",
+      metadata: { observedAt: "2026-04-30T00:05:00.000Z" },
+      created_at: "2026-05-10T00:00:00.000Z",
+      updated_at: "2026-05-10T00:00:00.000Z",
+    };
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [openQuote],
+      managed_venice_token_lots: [...settledLots, openLot],
+    });
+    let lotsTableReads = 0;
+    const countingDb = {
+      from: (name: string) => {
+        if (name === "managed_venice_token_lots") lotsTableReads += 1;
+        return memory.db.from(name);
+      },
+    };
+    const settleQuote = jest.fn(async (transfer: { quoteId?: string }) => ({
+      status: "settled" as const,
+      quoteId: transfer?.quoteId ?? "quote_unknown",
+    }));
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: countingDb,
+      rpcUrl: "https://base.test",
+      fetchImpl: makeChain().fetchImpl,
+      minConfirmations: 2,
+      settleQuote,
+      now: new Date("2026-05-16T10:22:00.000Z"),
+      limit: 10,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    // The open quote is still recovered — it settles on its lot's tx.
+    expect(summary.settled).toBe(1);
+    expect(settleQuote).toHaveBeenCalledWith(
+      expect.objectContaining({ quoteId: "quote_open_lot", transactionHash: "0xopenlotpaid" }),
+      expect.anything()
+    );
+    // And the lots table saw at most two reads: the .in() probe on the open
+    // id chunk plus the recovery path's own per-quote lot read — NOT the
+    // three full-history pages + eleven chunks the id-first read would pay.
+    expect(lotsTableReads).toBeLessThanOrEqual(2);
+  });
 });
 
 describe("Base RPC 429 resilience (issue #362)", () => {
@@ -1013,5 +1102,166 @@ describe("stale unpaid quote expiry", () => {
     // branch is the only automatic path that finishes a crashed settlement.
     expect(summary.checked).toBe(1);
     expect(memory.tables.managed_venice_token_quotes[0].status).toBe("active");
+  });
+
+  it("rotates failing stale quotes to the back of the daily selection", async () => {
+    // 26 stale quotes > the 25-row daily batch, and every scan fails (the RPC
+    // answers 500 to everything). Under oldest-expires ordering the same 25
+    // would pin the batch forever. Scanned rows move to the back of the
+    // selection via updated_at, so the 26th is reached on day 2 even though
+    // the other 25 still fail — nothing is permanently lost.
+    const quotes = Array.from({ length: 26 }, (_, index) =>
+      staleQuoteRow({
+        id: `quote_stale_${index}`,
+        quoted_at: new Date(Date.parse("2026-05-01T10:00:00.000Z") + index * 1000).toISOString(),
+        expires_at: new Date(Date.parse("2026-05-01T10:20:00.000Z") + index * 1000).toISOString(),
+        created_at: new Date(Date.parse("2026-05-01T10:00:00.000Z") + index * 1000).toISOString(),
+        updated_at: new Date(Date.parse("2026-05-01T10:00:00.000Z") + index * 1000).toISOString(),
+      })
+    );
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: quotes,
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    // Every RPC call fails fast: the stale scan of each quote errors out.
+    const downFetch = jest.fn(async () => ({ ok: false, status: 500, json: async () => ({}) }));
+    const runDown = (now: Date) =>
+      reconcilePendingManagedVeniceTokenQuotes({
+        db: memory.db,
+        rpcUrl: "https://base.test",
+        fetchImpl: downFetch,
+        minConfirmations: 2,
+        settleQuote: jest.fn(async () => ({ status: "settled" as const, quoteId: "x" })),
+        now,
+        interQuoteDelayMs: 0,
+        rpcRetryConfig: { maxAttempts: 1 },
+        rpcSleepImpl: async () => {},
+      });
+
+    const day1 = await runDown(staleNow);
+    expect(day1.failed).toBe(25);
+    const rows = memory.tables.managed_venice_token_quotes;
+    // The 25 scanned rows were touched (their scan cursor is the batch's own
+    // `now`); the one that did not fit keeps its seeded stamp.
+    expect(rows[25].updated_at).toBe("2026-05-01T10:00:25.000Z");
+    expect(rows.slice(0, 25).every((row) => row.updated_at === staleNow.toISOString())).toBe(true);
+
+    // Next day's first tick: the untouched row is the oldest in the rotation
+    // and is scanned first — the other 25 still fail but it is not starved.
+    memory.tables.ops_cron_heartbeats[0].last_run_at = "2026-05-20T23:30:00.000Z";
+    const day2Now = new Date("2026-05-21T00:00:00.000Z");
+    const day2 = await runDown(day2Now);
+    expect(day2.failed).toBe(25);
+    expect(rows[25].updated_at).toBe(day2Now.toISOString());
+    // One scanned row again waits for tomorrow — this time it is row 24.
+    expect(rows[24].updated_at).toBe(staleNow.toISOString());
+  });
+
+  it("still scans a stale quote on the daily tick when the regular open loop exhausts the budget", async () => {
+    // The daily stale pass runs BEFORE the open loop inside its own slice of
+    // the tick clock, so a regular batch that burns the whole open-scan
+    // budget cannot starve it. Here the fake clock advances 50 s per
+    // eth_getLogs: the stale scan itself pushes elapsed past a 1 ms
+    // open-scan budget, the fresh quote defers — but the stale row is
+    // already scanned and retired.
+    const freshQuote = staleQuoteRow({
+      id: "quote_fresh",
+      deposit_address: `0x${"9".repeat(40)}`,
+      quoted_at: "2026-05-19T22:40:00.000Z",
+      expires_at: "2026-05-19T23:00:00.000Z",
+      created_at: "2026-05-19T22:40:00.000Z",
+      updated_at: "2026-05-19T22:40:00.000Z",
+    });
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow(), freshQuote],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    let nowMs = 0;
+    const inner = chain.fetchImpl.getMockImplementation()!;
+    chain.fetchImpl.mockImplementation(async (url: string, init: { body: string }) => {
+      if ((JSON.parse(init.body) as { method: string }).method === "eth_getLogs") nowMs += 50_000;
+      return inner(url, init);
+    });
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote: jest.fn(async () => ({ status: "settled" as const, quoteId: "x" })),
+      now: staleNow,
+      clock: () => nowMs,
+      openScanBudgetMs: 1,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    // The stale quote got its real log scan (past the open budget) and was
+    // retired; the fresh quote defers to a later tick.
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+    expect(summary.cancelled).toBe(1);
+    expect(summary.results.map((result) => result.quoteId)).toEqual(["quote_stale"]);
+    expect(summary.deferred.open).toBe(1);
+  });
+
+  it("defers the rest of the daily stale batch once its own slice is spent", async () => {
+    // The guaranteed slice is bounded: with each stale scan costing ~150 s
+    // of tick clock, a 60 s stale budget scans the first row and leaves the
+    // remaining two for a later day instead of eating the open loop's share.
+    const quotes = [
+      staleQuoteRow({ id: "quote_stale_0" }),
+      staleQuoteRow({
+        id: "quote_stale_1",
+        deposit_address: `0x${"8".repeat(40)}`,
+        quoted_at: "2026-05-01T11:00:00.000Z",
+        expires_at: "2026-05-01T11:20:00.000Z",
+        created_at: "2026-05-01T11:00:00.000Z",
+        updated_at: "2026-05-01T11:00:00.000Z",
+      }),
+      staleQuoteRow({
+        id: "quote_stale_2",
+        deposit_address: `0x${"7".repeat(40)}`,
+        quoted_at: "2026-05-01T12:00:00.000Z",
+        expires_at: "2026-05-01T12:20:00.000Z",
+        created_at: "2026-05-01T12:00:00.000Z",
+        updated_at: "2026-05-01T12:00:00.000Z",
+      }),
+    ];
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: quotes,
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    let nowMs = 0;
+    const inner = chain.fetchImpl.getMockImplementation()!;
+    chain.fetchImpl.mockImplementation(async (url: string, init: { body: string }) => {
+      if ((JSON.parse(init.body) as { method: string }).method === "eth_getLogs") nowMs += 50_000;
+      return inner(url, init);
+    });
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote: jest.fn(async () => ({ status: "settled" as const, quoteId: "x" })),
+      now: staleNow,
+      clock: () => nowMs,
+      staleScanBudgetMs: 60_000,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    expect(summary.cancelled).toBe(1);
+    expect(summary.results.map((result) => result.quoteId)).toEqual(["quote_stale_0"]);
+    // The two rows the slice could not reach are reported deferred, not lost:
+    // still open, still eligible on the next day.
+    expect(summary.deferred.open).toBe(2);
+    expect(memory.tables.managed_venice_token_quotes.map((row) => row.status)).toEqual([
+      "cancelled",
+      "active",
+      "active",
+    ]);
   });
 });

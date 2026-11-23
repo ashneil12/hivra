@@ -231,6 +231,10 @@ async function rpcCallOnce<T>(
 
 export interface BaseChainReader {
   call<T>(method: string, params: unknown[]): Promise<T>;
+  // The endpoint `call` talks to: getLogsInBlockChunks scopes its discovered
+  // eth_getLogs range cap by this, so one provider's cap never sizes
+  // another's requests.
+  endpoint?: string;
   latestBlock(): Promise<number>;
   // Block timestamp in unix seconds.
   blockTimestamp(block: number): Promise<number>;
@@ -252,6 +256,7 @@ export function createBaseChainReader(params: {
 
   return {
     call,
+    endpoint: rpcUrl,
     latestBlock() {
       if (!latest) {
         latest = call<string>("eth_blockNumber", [])
@@ -393,6 +398,7 @@ export async function scanErc20TransfersInWindow(params: {
     filter: { address: tokenAddress, topics: [ERC20_TRANSFER_TOPIC, null, toTopic] },
     fromBlock,
     toBlock,
+    endpoint: chain.endpoint,
   });
 
   const minAmount = params.minAmount ?? 0n;

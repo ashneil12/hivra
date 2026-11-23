@@ -84,6 +84,10 @@ type DbQuery = {
   then: Promise<{ data?: unknown; error: QueryError }>["then"];
 };
 
+type DbTable = {
+  update: (patch: Record<string, unknown>) => DbQuery;
+};
+
 type JsonRpcFetch = (
   input: string,
   init: {
@@ -159,9 +163,13 @@ const TRANSFER_SURFACING_LIMIT = 25;
 // starts open-quote scans only for the first OPEN_SCAN_BUDGET_MS and
 // surface-only scans only for the first SURFACING_SCAN_BUDGET_MS, and reports
 // what it deferred, so a slow tick still reaches the surface-only pass and
-// its summary instead of being killed mid-batch.
+// its summary instead of being killed mid-batch. On the once-a-day stale
+// tick the stale pass runs FIRST, inside its own STALE_SCAN_BUDGET_MS slice
+// of the same clock: the regular open loop can never starve it, and a stale
+// backlog can only borrow what the open loop would have used.
 const OPEN_SCAN_BUDGET_MS = 150_000;
 const SURFACING_SCAN_BUDGET_MS = 240_000;
+const STALE_SCAN_BUDGET_MS = 60_000;
 
 // ── Quote-anchored scanning ───────────────────────────────────────────────
 // Each quote is scanned over ITS OWN time range, not "the latest N blocks":
@@ -196,9 +204,10 @@ const LATE_PAYMENT_GRACE_MS = 2 * 60 * 60_000;
 // demand) instead of being scanned again.
 const NO_DEPOSIT_AFTER_EXPIRY_GRACE_MS = 7 * 24 * 60 * 60_000;
 // Stale unclaimed quotes scanned (and possibly expired) once per UTC day, on
-// the first tick of a new day, oldest expiry first. Each costs a real log
-// scan, so the batch stays small and shares the open-scan budget; the rest of
-// the backlog waits for the next day.
+// the first tick of a new day, least-recently-scanned first (the updated_at
+// cursor in loadStaleUnpaidQuoteRows). Each costs a real log scan, so the
+// batch stays small and runs inside its own budget slice ahead of the regular
+// open work; the rest of the backlog waits for the next day.
 const STALE_QUOTE_DAILY_SCAN_LIMIT = 25;
 const MANAGED_VENICE_TOKEN_RECONCILIATION_CRON = "managed-venice-token-reconciliation";
 // Base produces a block every 2 s; used to estimate a block from a timestamp.
@@ -400,6 +409,9 @@ async function rpcCall<T>(
 
 interface BaseChainReader {
   call<T>(method: string, params: unknown[]): Promise<T>;
+  // The endpoint `call` talks to: getLogsInBlockChunks scopes its discovered
+  // eth_getLogs range cap by this.
+  endpoint?: string;
   latestBlock(): Promise<number>;
   // Block timestamp in unix seconds.
   blockTimestamp(block: number): Promise<number>;
@@ -417,6 +429,7 @@ function createBaseChainReader(params: {
 
   return {
     call,
+    endpoint: params.rpcUrl,
     latestBlock() {
       if (!latest) {
         latest = call<string>("eth_blockNumber", [])
@@ -666,6 +679,7 @@ async function scanQuoteTransfers(params: {
     filter: { address: tokenAddress, topics: [ERC20_TRANSFER_TOPIC, null, toTopic] },
     fromBlock,
     toBlock,
+    endpoint: chain.endpoint,
   });
 
   const parsed = new Map<string, DepositTransferLog & { confirmations: number }>();
@@ -1019,37 +1033,63 @@ function quoteCandidates(data: unknown) {
     .filter((candidate): candidate is { id: string; userId: string } => Boolean(candidate));
 }
 
-// Every quote_id holding a token deposit lot. managed_venice_token_lots has
-// no FK to quotes, so PostgREST cannot join — the ids are fetched here and
-// filtered on quotes by the caller. The read is paged with .range() and
-// unbounded on purpose: a .limit() would let old settled lots fill the page
-// and starve open lot-holding quotes out of the recovery path, and an
-// unpaged read silently truncates at max_rows.
-const LOT_ID_PAGE_SIZE = 1000;
-// PostgREST .in() lists stay small enough to keep the URL and plan sane.
+// Open quotes paged per lot-recovery sweep; PostgREST .in() lists stay small
+// enough to keep the URL and plan sane.
+const OPEN_QUOTE_ID_PAGE_SIZE = 1000;
 const LOT_HELD_ID_CHUNK = 200;
 
-async function loadDepositLotQuoteIds(db: SupabaseLike) {
-  const ids = new Set<string>();
-  for (let from = 0; ; from += LOT_ID_PAGE_SIZE) {
-    const { data, error } = await (db.from("managed_venice_token_lots") as DbQuery)
-      .select("quote_id")
-      .in("source", [...TOKEN_DEPOSIT_LOT_SOURCES])
-      .not("quote_id", "is", null)
+/**
+ * Open quotes that hold a token deposit lot (a settlement that crashed after
+ * its lot insert but before the quote flip). managed_venice_token_lots has no
+ * FK to quotes, so PostgREST cannot join — instead of fetching every lot's
+ * quote_id (unbounded history: every settled deposit keeps a lot forever) and
+ * probing each for an open quote, this pages the OPEN side, which is exactly
+ * the set recovery cares about, and matches lots to it with bounded .in()
+ * lookups. The page source being open quotes means the limit applies AFTER
+ * filtering to open: an old open quote behind thousands of settled lots is
+ * still reached, and a growing lots table never raises the cost of the check.
+ */
+async function loadOpenLotHoldingQuoteCandidates(params: {
+  db: SupabaseLike;
+  openQuotes: () => DbQuery;
+  limit: number;
+}) {
+  const candidates: Array<{ id: string; userId: string }> = [];
+  for (let from = 0; candidates.length < params.limit; from += OPEN_QUOTE_ID_PAGE_SIZE) {
+    const { data, error } = await params
+      .openQuotes()
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
-      .range(from, from + LOT_ID_PAGE_SIZE - 1);
-
+      .range(from, from + OPEN_QUOTE_ID_PAGE_SIZE - 1);
     if (error) {
-      throw new Error(error.message || "Failed to load managed Venice token deposit lot quote ids");
+      throw new Error(error.message || "Failed to load open managed Venice token quotes for lot recovery");
     }
-    const page = Array.isArray(data) ? data : [];
-    for (const row of page) {
-      const id = (row as { quote_id?: unknown }).quote_id;
-      if (typeof id === "string" && id.length > 0) ids.add(id);
+    const page = quoteCandidates(data);
+    for (let offset = 0; offset < page.length && candidates.length < params.limit; offset += LOT_HELD_ID_CHUNK) {
+      const chunk = page.slice(offset, offset + LOT_HELD_ID_CHUNK);
+      const { data: lots, error: lotError } = await (params.db.from("managed_venice_token_lots") as DbQuery)
+        .select("quote_id")
+        .in("source", [...TOKEN_DEPOSIT_LOT_SOURCES])
+        .in(
+          "quote_id",
+          chunk.map((candidate) => candidate.id)
+        );
+      if (lotError) {
+        throw new Error(lotError.message || "Failed to check managed Venice token deposit lots");
+      }
+      const holding = new Set(
+        (Array.isArray(lots) ? lots : [])
+          .map((row) => (row as { quote_id?: unknown }).quote_id)
+          .filter((id): id is string => typeof id === "string")
+      );
+      for (const candidate of chunk) {
+        if (candidates.length >= params.limit) break;
+        if (holding.has(candidate.id)) candidates.push(candidate);
+      }
     }
-    if (page.length < LOT_ID_PAGE_SIZE) return [...ids];
+    if (page.length < OPEN_QUOTE_ID_PAGE_SIZE) break;
   }
+  return candidates;
 }
 
 async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
@@ -1086,7 +1126,8 @@ async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
   // holds a deposit lot: both mean settlement started and crashed part-way,
   // and the per-quote recovery branch is the only automatic path that finishes
   // it — at any age. Claimed quotes are matched on transaction_hash; lot
-  // holders on their lot rows (no FK, so ids are fetched separately).
+  // holders on their lot rows (no FK, so open quote ids are matched to lots
+  // below instead).
   const claimed = await openQuotes()
     .not("transaction_hash", "is", null)
     .order("created_at", { ascending: true })
@@ -1096,26 +1137,15 @@ async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
     throw new Error(claimed.error.message || "Failed to load claimed managed Venice token quotes");
   }
 
-  const lotQuoteIds = await loadDepositLotQuoteIds(params.db);
-  // Filter the lot ids down to still-open quotes here (no FK to join on).
-  // The id list can be long, so the .in() filter is chunked; each chunk
-  // query is limited to what the tick still has room for, keeping the total
-  // lot-held candidates bounded like the fresh and claimed queries.
-  const lotHeldCandidates: Array<{ id: string; userId: string }> = [];
-  for (
-    let offset = 0;
-    offset < lotQuoteIds.length && lotHeldCandidates.length < params.limit;
-    offset += LOT_HELD_ID_CHUNK
-  ) {
-    const { data, error } = await openQuotes()
-      .in("id", lotQuoteIds.slice(offset, offset + LOT_HELD_ID_CHUNK))
-      .order("created_at", { ascending: true })
-      .limit(params.limit - lotHeldCandidates.length);
-    if (error) {
-      throw new Error(error.message || "Failed to load lot-holding managed Venice token quotes");
-    }
-    lotHeldCandidates.push(...quoteCandidates(data));
-  }
+  // The lot check pages the OPEN quotes and matches lots to them (no FK to
+  // join on): the open set is bounded by what the stale pass drains, while
+  // historical lots grow forever — a backlog of settled lots must not starve
+  // a still-open lot-holding quote out of recovery.
+  const lotHeldCandidates = await loadOpenLotHoldingQuoteCandidates({
+    db: params.db,
+    openQuotes,
+    limit: params.limit,
+  });
 
   const byId = new Map<string, { id: string; userId: string }>();
   for (const candidate of [
@@ -1158,8 +1188,12 @@ interface StaleQuoteCandidateRow {
 }
 
 // Open unclaimed quotes whose stored expiry is at or before `expiresBeforeIso`,
-// oldest expiry first so a backlog drains across days. Selection only — the
-// daily pass decides scan vs expire per row.
+// least-recently-touched first so a backlog drains across days: every row the
+// daily pass scans has its updated_at cursor advanced (see
+// runDailyStaleUnpaidQuoteScan), so a quote whose scan keeps failing moves to
+// the back of the queue instead of occupying every day's batch — it stays
+// eligible, never lost. Selection only — the daily pass decides scan vs
+// expire per row.
 async function loadStaleUnpaidQuoteRows(params: {
   db: SupabaseLike;
   expiresBeforeIso: string;
@@ -1179,6 +1213,7 @@ async function loadStaleUnpaidQuoteRows(params: {
       "metadata->>closedReason.is.null," +
         "metadata->>closedReason.neq.no_deposit_after_grace"
     )
+    .order("updated_at", { ascending: true })
     .order("expires_at", { ascending: true })
     .limit(params.limit);
 
@@ -1186,6 +1221,28 @@ async function loadStaleUnpaidQuoteRows(params: {
     throw new Error(error.message || "Failed to load stale managed Venice token quotes");
   }
   return (Array.isArray(data) ? data : []) as StaleQuoteCandidateRow[];
+}
+
+// Advance a stale row's queue cursor after its scan (whatever the outcome),
+// so the next daily selection takes the rows that have waited longest — the
+// fairness mechanism that keeps repeatedly-failing rows from pinning the
+// batch. updated_at is the state surface: the row's own update trigger would
+// bump it on any write anyway, and the status guard no-ops once the quote
+// has left the open set. Best-effort: a failed touch only means the row
+// keeps its place at the front for tomorrow.
+async function touchStaleQuoteScanCursor(db: SupabaseLike, quoteId: string, nowIso: string) {
+  const { error } = await (db.from("managed_venice_token_quotes") as DbTable)
+    .update({ updated_at: nowIso })
+    .eq("id", quoteId)
+    .in("status", ["active", "expired"]);
+  if (error) {
+    log.warn("stale quote scan cursor update failed; the row is re-selected first tomorrow", {
+      source: "managed-venice-token-reconciliation",
+      failureType: "managed_venice_stale_scan_cursor_failed",
+      quoteId,
+      errorMessage: error.message ?? "unknown",
+    });
+  }
 }
 
 /**
@@ -1208,7 +1265,9 @@ async function runDailyStaleUnpaidQuoteScan(params: {
   settleQuote?: SettleManagedVeniceQuote;
   throttle: () => Promise<void>;
   elapsedMs: () => number;
-  openScanBudgetMs: number;
+  // The pass's own slice of the tick clock (it runs before the regular open
+  // loop on the daily tick), so a slow regular batch can never starve it.
+  staleScanBudgetMs: number;
 }) {
   const expiresBeforeIso = new Date(
     params.now.getTime() - NO_DEPOSIT_AFTER_EXPIRY_GRACE_MS
@@ -1244,8 +1303,8 @@ async function runDailyStaleUnpaidQuoteScan(params: {
     ) {
       continue;
     }
-    // Past the open-scan budget the rest wait for the next day's pass.
-    if (params.elapsedMs() >= params.openScanBudgetMs) {
+    // Past the pass's own budget slice the rest wait for the next day's pass.
+    if (params.elapsedMs() >= params.staleScanBudgetMs) {
       deferred = rows.length - position;
       break;
     }
@@ -1273,6 +1332,11 @@ async function runDailyStaleUnpaidQuoteScan(params: {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
     }
+    // Rotate the cursor for every scanned row — clean retire, still-open
+    // outcome or failure alike — so repeatedly-failing quotes go to the back
+    // of the daily selection instead of pinning its head (the open-status
+    // guard makes this a no-op once the row has left the set).
+    await touchStaleQuoteScanCursor(params.db, candidate.id, params.now.toISOString());
   }
   return { failed, outcomes, deferred };
 }
@@ -1687,12 +1751,14 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
   clock?: () => number;
   openScanBudgetMs?: number;
   surfacingScanBudgetMs?: number;
+  staleScanBudgetMs?: number;
 } = {}): Promise<ManagedVeniceTokenQuoteBatchReconciliationResult> {
   const clock = params.clock ?? Date.now;
   const startedAtMs = clock();
   const elapsedMs = () => clock() - startedAtMs;
   const openScanBudgetMs = normalizeBudgetMs(params.openScanBudgetMs, OPEN_SCAN_BUDGET_MS);
   const surfacingScanBudgetMs = normalizeBudgetMs(params.surfacingScanBudgetMs, SURFACING_SCAN_BUDGET_MS);
+  const staleScanBudgetMs = normalizeBudgetMs(params.staleScanBudgetMs, STALE_SCAN_BUDGET_MS);
 
   const db = requireDb(params.db ?? supabaseAdmin);
   const batchNow = params.now ?? new Date();
@@ -1757,11 +1823,65 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
     errorMessage: error instanceof Error ? error.message : String(error),
   });
 
+  // Once per UTC day — the first tick whose start lands in a new day — the
+  // stale unclaimed quote pass runs BEFORE the regular open loop, inside its
+  // own slice of the tick clock. A regular batch that exhausts the open-scan
+  // budget on that tick must not starve it: stale quotes are the oldest
+  // unclaimed money, so the day's one pass gets a guaranteed window. Other
+  // ticks do no stale work at all: expiring without a real log scan of the
+  // deposit window is exactly what this pass exists to prevent. A failure of
+  // the candidate SELECT propagates (the DB is down and the scan batch would
+  // fail anyway); per-quote failures are counted and retried on a later day.
+  const firstTickOfDay = await isFirstCronTickOfUtcDay(
+    db,
+    MANAGED_VENICE_TOKEN_RECONCILIATION_CRON,
+    batchNow
+  );
+  if (firstTickOfDay) {
+    const stale = await runDailyStaleUnpaidQuoteScan({
+      db,
+      now: batchNow,
+      quoteNow: params.now,
+      limit: STALE_QUOTE_DAILY_SCAN_LIMIT,
+      chain,
+      rpcOptions,
+      minConfirmations: params.minConfirmations,
+      settleQuote: params.settleQuote,
+      throttle,
+      elapsedMs,
+      staleScanBudgetMs,
+    });
+    summary.failed += stale.failed.length;
+    summary.deferred.open += stale.deferred;
+    for (const outcome of stale.outcomes) {
+      summary.checked += 1;
+      const result = outcome.result;
+      if (result.status === "settled") summary.settled += 1;
+      else if (result.status === "underconfirmed") summary.underconfirmed += 1;
+      else if (result.status === "no_match") summary.noMatch += 1;
+      else if (result.status === "manual_review_required") summary.manualReview += 1;
+      else if (result.status === "cancelled") summary.cancelled += 1;
+      else summary.skipped += 1;
+
+      summary.results.push({
+        quoteId: outcome.quoteId,
+        userId: outcome.userId,
+        status: result.status,
+        transactionHash: "transactionHash" in result ? result.transactionHash ?? null : null,
+        confirmations: "confirmations" in result ? result.confirmations : undefined,
+      });
+    }
+    for (const failure of stale.failed) {
+      summary.results.push({ ...failure, status: "failed" });
+    }
+  }
+
   for (const [position, candidate] of candidates.entries()) {
     // Past the open-scan budget, leave the rest for a later tick so the
     // surface-only pass and the summary still run inside maxDuration.
     if (elapsedMs() >= openScanBudgetMs) {
-      summary.deferred.open = candidates.length - position;
+      // Add to whatever the stale pass already deferred on this tick.
+      summary.deferred.open += candidates.length - position;
       break;
     }
     await throttle();
@@ -1796,57 +1916,6 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
     } catch (error) {
       summary.failed += 1;
       summary.results.push(failure(candidate, error));
-    }
-  }
-
-  // Once per UTC day — the first tick whose start lands in a new day —
-  // stale unclaimed quotes get a real log scan of their deposit window
-  // before any of them may expire for no deposit. Other ticks do no stale
-  // work at all: expiring without a scan is exactly what this pass exists
-  // to prevent. A failure of the candidate SELECT propagates (the DB is
-  // down and the scan batch would fail anyway); per-quote failures are
-  // counted and retried on a later day.
-  const firstTickOfDay = await isFirstCronTickOfUtcDay(
-    db,
-    MANAGED_VENICE_TOKEN_RECONCILIATION_CRON,
-    batchNow
-  );
-  if (firstTickOfDay) {
-    const stale = await runDailyStaleUnpaidQuoteScan({
-      db,
-      now: batchNow,
-      quoteNow: params.now,
-      limit: STALE_QUOTE_DAILY_SCAN_LIMIT,
-      chain,
-      rpcOptions,
-      minConfirmations: params.minConfirmations,
-      settleQuote: params.settleQuote,
-      throttle,
-      elapsedMs,
-      openScanBudgetMs,
-    });
-    summary.failed += stale.failed.length;
-    summary.deferred.open += stale.deferred;
-    for (const outcome of stale.outcomes) {
-      summary.checked += 1;
-      const result = outcome.result;
-      if (result.status === "settled") summary.settled += 1;
-      else if (result.status === "underconfirmed") summary.underconfirmed += 1;
-      else if (result.status === "no_match") summary.noMatch += 1;
-      else if (result.status === "manual_review_required") summary.manualReview += 1;
-      else if (result.status === "cancelled") summary.cancelled += 1;
-      else summary.skipped += 1;
-
-      summary.results.push({
-        quoteId: outcome.quoteId,
-        userId: outcome.userId,
-        status: result.status,
-        transactionHash: "transactionHash" in result ? result.transactionHash ?? null : null,
-        confirmations: "confirmations" in result ? result.confirmations : undefined,
-      });
-    }
-    for (const failure of stale.failed) {
-      summary.results.push({ ...failure, status: "failed" });
     }
   }
 
