@@ -914,7 +914,85 @@ const FAKE_FILTER_METHODS = new Set([
   "lte",
   "in",
   "like",
+  "or",
 ]);
+
+/** Split a PostgREST expression list on top-level commas (paren-aware). */
+function splitFilterTerms(expr: string): string[] {
+  const terms: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < expr.length; i += 1) {
+    const ch = expr[i];
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth -= 1;
+    else if (ch === "," && depth === 0) {
+      terms.push(expr.slice(start, i));
+      start = i + 1;
+    }
+  }
+  terms.push(expr.slice(start));
+  return terms.map((term) => term.trim()).filter((term) => term.length > 0);
+}
+
+/** Evaluate one `column.op.value` leaf of a PostgREST expression. */
+function fakeLeafMatches(row: Row, leaf: string): boolean {
+  const firstDot = leaf.indexOf(".");
+  if (firstDot < 0) return true;
+  const column = leaf.slice(0, firstDot);
+  let rest = leaf.slice(firstDot + 1);
+  let negated = false;
+  if (rest.startsWith("not.")) {
+    negated = true;
+    rest = rest.slice(4);
+  }
+  const secondDot = rest.indexOf(".");
+  const op = secondDot < 0 ? rest : rest.slice(0, secondDot);
+  const raw = secondDot < 0 ? "" : rest.slice(secondDot + 1);
+  const value = fakeColumnValue(row, column);
+  let result: boolean;
+  switch (op) {
+    case "is":
+      result = raw === "null" ? value == null : value === raw;
+      break;
+    case "eq":
+      result = fakeValuesEqual(value, raw);
+      break;
+    case "gt":
+    case "gte":
+    case "lt":
+    case "lte": {
+      if (value == null) return negated;
+      const cmp = fakeCompare(value, raw);
+      result =
+        op === "gt" ? cmp > 0 : op === "gte" ? cmp >= 0 : op === "lt" ? cmp < 0 : cmp <= 0;
+      break;
+    }
+    case "in": {
+      const inner = raw.startsWith("(") && raw.endsWith(")") ? raw.slice(1, -1) : raw;
+      result = inner
+        .split(",")
+        .some((candidate) => fakeValuesEqual(value, candidate.trim()));
+      break;
+    }
+    default:
+      result = true;
+  }
+  return negated ? !result : result;
+}
+
+/** Evaluate an `.or(filters)` string: `and(...)`, `or(...)` groups or bare leaves. */
+function fakeOrMatches(row: Row, expr: string): boolean {
+  return splitFilterTerms(expr).some((term) => {
+    if (term.startsWith("and(") && term.endsWith(")")) {
+      return splitFilterTerms(term.slice(4, -1)).every((inner) => fakeLeafMatches(row, inner));
+    }
+    if (term.startsWith("or(") && term.endsWith(")")) {
+      return fakeOrMatches(row, term.slice(3, -1));
+    }
+    return fakeLeafMatches(row, term);
+  });
+}
 
 function fakeRowMatches(row: Row, call: unknown[]): boolean {
   const [method, a1, a2, a3] = call as [string, string, unknown, unknown];
@@ -969,6 +1047,8 @@ function fakeRowMatches(row: Row, call: unknown[]): boolean {
       }
       return value === pattern;
     }
+    case "or":
+      return fakeOrMatches(row, String(a1));
     default:
       return true;
   }
@@ -1050,6 +1130,7 @@ function fakeIncidentDb(config: FakeDbConfig) {
         "lte",
         "in",
         "like",
+        "or",
         "order",
         "limit",
         "range",
@@ -1747,6 +1828,64 @@ describe("runCustomerIncidentScan", () => {
     expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
+  it("reads every agent in one consistent snapshot — a mid-scan restart cannot tear eligibility", async () => {
+    // Regression: the three eligibility predicates ran as separate paged
+    // queries merged by id, last-writer-wins. An agent that stopped between
+    // the running-read and the in-flight-op read contributed the SECOND
+    // snapshot — stopped — so box_down saw no live agent and the open
+    // incident resolved (with a notice) without the box ever being probed.
+    // One union read gives each row exactly one snapshot; here the row is
+    // swapped only if the retired in-flight-op query shape ever runs.
+    const agents = [
+      agentDbRow({
+        status: "running",
+        operation_kind: "restart",
+        // A live op — not yet stuck (10m < 15m) — but recent enough to be
+        // the runtime marker: the failure receipt must postdate it.
+        operation_started_at: iso(10 * MIN),
+      }),
+    ];
+    const db = fakeIncidentDb({
+      agents,
+      openIncidents: [incidentDbRow({ occurrence_count: 1, last_seen_at: iso(4 * MIN) })],
+      watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 5 * MIN)] },
+      mutateWhen: (table, calls) => {
+        // The retired in-flight-op subject read is the only query carrying
+        // this NOT-IS-NULL pair: land the restart there to reproduce the
+        // torn merge. The single union read never issues it.
+        if (
+          table === "hivra_agents" &&
+          calls.some((c) => c[0] === "not" && c[1] === "operation_kind") &&
+          calls.some((c) => c[0] === "not" && c[1] === "operation_started_at")
+        ) {
+          agents[0] = agentDbRow({
+            status: "stopped",
+            operation_kind: "restart",
+            operation_started_at: iso(10 * MIN),
+          });
+        }
+      },
+    });
+    const deps = scanDeps({ db });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    // The read saw the box as it was — running with a fresh gateway_down
+    // receipt — so the open incident holds: touched, not resolved, never
+    // re-paged.
+    expect(summary.resolved).toBe(0);
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    // The subject read itself carries the union in ONE ordered paged
+    // query — no second per-predicate read remains to capture a torn row.
+    const subjectReads = db.calls.filter(
+      (entry) =>
+        entry.table === "hivra_agents" &&
+        entry.calls.some((call) => call[0] === "order" && call[1] === "id"),
+    );
+    expect(subjectReads).toHaveLength(1);
+    expect(subjectReads[0].calls.some((call) => call[0] === "or")).toBe(true);
+  });
+
   it("marks remaining probes as skipped once the scan probe budget is exhausted", async () => {
     let tick = 0;
     const deps = scanDeps({
@@ -2285,6 +2424,92 @@ describe("runCustomerIncidentScan", () => {
     // Not even the still-open version touch: the row is completely
     // untouched this pass.
     expect(row.last_seen_at).toBeUndefined();
+  });
+
+  it("does not page box_down on a failure receipt that only just landed before the insert", async () => {
+    // The evaluation aged a 45-minute-old gateway_down past the grace —
+    // but the outage it described ended and a new one began in the
+    // report gap: the newest receipt at insert time is seconds old and
+    // has not earned a page. The re-check must age the CURRENT receipt,
+    // not reuse the evaluated age.
+    let subjectReRead = false;
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+      mutateWhen: (table, calls) => {
+        // The pre-insert re-check reads the subject, then the receipt
+        // windows: land the fresh failure in that gap. The subject re-read
+        // is the only hivra_agents lookup filtered by id.
+        if (
+          table === "hivra_agents" &&
+          calls.some((c) => c[0] === "eq" && c[1] === "id")
+        ) {
+          subjectReRead = true;
+        }
+        if (
+          subjectReRead &&
+          table === "ops_events" &&
+          calls.some((c) => c[0] === "in" && c[1] === "metadata->>event_type")
+        ) {
+          db.tableRows("ops_events").push({
+            ...watchdogDbRow("gateway_down", 1 * MIN, { event_id: "e2" }),
+            id: "ops-fresh-down",
+            source: "box.surface_watchdog.event",
+            instance_id: "agent-1",
+          });
+          subjectReRead = false;
+        }
+      },
+    });
+    const deps = scanDeps({ db });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.opened).toBe(0);
+    const incidentReports = (deps.report as jest.Mock).mock.calls
+      .map((c) => c[0])
+      .filter((o) => String(o.source).startsWith("incident."));
+    expect(incidentReports).toHaveLength(0);
+  });
+
+  it("pages box_down immediately on a fresh recovery_exhausted receipt, grace aside", async () => {
+    // Same gap, but the new receipt is recovery_exhausted — the box's own
+    // recovery gave up. That verdict keeps its immediate page; the grace
+    // window only holds back receipts that may still be recovering.
+    let subjectReRead = false;
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: { "agent-1": [watchdogDbRow("unit_restart", 45 * MIN)] },
+      mutateWhen: (table, calls) => {
+        if (
+          table === "hivra_agents" &&
+          calls.some((c) => c[0] === "eq" && c[1] === "id")
+        ) {
+          subjectReRead = true;
+        }
+        if (
+          subjectReRead &&
+          table === "ops_events" &&
+          calls.some((c) => c[0] === "in" && c[1] === "metadata->>event_type")
+        ) {
+          db.tableRows("ops_events").push({
+            ...watchdogDbRow("recovery_exhausted", 1 * MIN, { event_id: "e2" }),
+            id: "ops-fresh-exhausted",
+            source: "box.surface_watchdog.event",
+            instance_id: "agent-1",
+          });
+          subjectReRead = false;
+        }
+      },
+    });
+    const deps = scanDeps({ db });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.opened).toBe(1);
+    const incidentReports = (deps.report as jest.Mock).mock.calls
+      .map((c) => c[0])
+      .filter((o) => String(o.source).startsWith("incident."));
+    expect(incidentReports).toHaveLength(1);
+    expect(incidentReports[0].metadata.incident_key).toBe("box_down:agent-1");
   });
 
   // ---- public probe signal (box_unreachable) -------------------------------
@@ -3318,6 +3543,196 @@ describe("runCustomerIncidentScan", () => {
       expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
       expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
     });
+
+    it("keeps the probe-row result when ops-admin email resolution stalls past the collection deadline", async () => {
+      // Regression: the probe-row read raced the shared collection deadline
+      // but its race was armed only when awaited — the ops-admin
+      // directory wait in between consumed the window first, and a result
+      // that had already landed inside it was discarded, sending every
+      // candidate's public probe to unknown. The race is now armed at read
+      // start, so the finished result survives the stalled wait.
+      const prevEmails = process.env.OPS_ADMIN_EMAILS;
+      const prevIds = process.env.OPS_ADMIN_USER_IDS;
+      process.env.OPS_ADMIN_EMAILS = "ops@example.com";
+      delete process.env.OPS_ADMIN_USER_IDS;
+      try {
+        const deps = scanDeps({
+          collectionBudgetMs: 20,
+          db: fakeIncidentDb({
+            agents: [agentDbRow()],
+            probeRows: [probeRow()],
+          }),
+          probe: jest.fn(async () => ({ status: 502, latencyMs: 80, error: null })),
+          opsAdminDirectory: {
+            // The directory never answers — the wait consumes the whole
+            // collection window before the probe-row outcome is awaited.
+            getUserList: jest.fn(() => new Promise<never>(() => {})),
+          },
+        });
+        delete (deps as Record<string, unknown>).adminUserIds;
+        const summary = await runCustomerIncidentScan(deps as never);
+
+        // The probe-row read landed inside the window and still counts: the
+        // probe ran, the 15-minute outage stood, and box_unreachable paged.
+        expect(deps.probe as jest.Mock).toHaveBeenCalled();
+        expect(summary.opened).toBe(1);
+        expect(summary.unknown).toBe(0);
+        const incidents = incidentReports(deps.report as jest.Mock);
+        expect(incidents.map((o) => o.metadata.incident_key)).toEqual([
+          "box_unreachable:agent-1",
+        ]);
+      } finally {
+        if (prevEmails === undefined) delete process.env.OPS_ADMIN_EMAILS;
+        else process.env.OPS_ADMIN_EMAILS = prevEmails;
+        if (prevIds === undefined) delete process.env.OPS_ADMIN_USER_IDS;
+        else process.env.OPS_ADMIN_USER_IDS = prevIds;
+      }
+    });
+
+    it("does not page box_unreachable when the box answers publicly again before the incident insert", async () => {
+      // A delayed report can outlive the scan that produced it and still
+      // reach the write: the subject is re-checked immediately before the
+      // insert, and a box whose /healthz answers again is confirmed
+      // recovery — the stale insert would page an incident nothing is open
+      // for anymore. Here the scan probe fails but the report-pass
+      // diagnosis probe already answers 200.
+      const probe = jest
+        .fn()
+        .mockResolvedValueOnce({ status: 502, latencyMs: 80, error: null })
+        .mockResolvedValue({ status: 200, latencyMs: 9, error: null });
+      const deps = scanDeps({
+        db: fakeIncidentDb({
+          agents: [agentDbRow()],
+          probeRows: [probeRow()],
+        }),
+        probe,
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.opened).toBe(0);
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it("does not page box_unreachable when a concurrent healthy scan already archived the outage", async () => {
+      // Same skip, via the stored verdict rather than the live probe: the
+      // scan's own probe still fails, but another scan's healthy probe
+      // archived the outage row between this pass's collection and its
+      // report write. The stored row is re-read before the insert — an
+      // archived row says the outage already ended.
+      const row = probeRow();
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        probeRows: [row],
+        mutateWhen: (table, calls) => {
+          // The pre-insert probe-row re-read is the only source+instance_id
+          // filtered probe-row query: land the concurrent archive in the
+          // gap it guards.
+          if (
+            table === "ops_events" &&
+            calls.some((c) => c[0] === "eq" && c[1] === "instance_id") &&
+            calls.some(
+              (c) => c[0] === "eq" && c[1] === "source" && c[2] === "box.public_probe.unreachable",
+            )
+          ) {
+            row.archived_at = new Date(NOW).toISOString();
+          }
+        },
+      });
+      const deps = scanDeps({
+        db,
+        probe: jest.fn(async () => ({ status: 502, latencyMs: 80, error: null })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.opened).toBe(0);
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it("does not page box_unreachable when the recorded outage closed and restarted before the insert", async () => {
+      // The evaluation aged the outage from the row's first_seen_at — but
+      // a verdict write can close that outage and reopen the row with a
+      // FRESH start between evaluation and the report insert. The
+      // re-check must age the CURRENT outage start, not reuse the
+      // evaluated snapshot's: a seconds-old new outage has not earned a
+      // page yet.
+      const row = probeRow(); // first_seen_at: iso(15 * MIN) — aged at eval
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        probeRows: [row],
+        mutateWhen: (table, calls) => {
+          // The pre-insert probe-row re-read is the only source+instance_id
+          // filtered probe-row query: a racing verdict closes the old
+          // outage and starts a new one in the gap it guards.
+          if (
+            table === "ops_events" &&
+            calls.some((c) => c[0] === "eq" && c[1] === "instance_id") &&
+            calls.some(
+              (c) => c[0] === "eq" && c[1] === "source" && c[2] === "box.public_probe.unreachable",
+            )
+          ) {
+            row.first_seen_at = iso(2 * MIN);
+          }
+        },
+      });
+      const deps = scanDeps({
+        db,
+        probe: jest.fn(async () => ({ status: 502, latencyMs: 80, error: null })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.opened).toBe(0);
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+      // The outage record still fails the probe — it is simply too young
+      // to page; the next scan re-ages and reports it.
+    });
+
+    it("does not resolve a live incident when a newer outage row appears under the healthy verdict write", async () => {
+      // The scan's collection saw no open probe row and the probe answered
+      // 200, so the verdict write went to persist that healthy observation —
+      // but a delayed down report committed a NEWER outage in between (its
+      // first_seen is after this probe ran). Recording healthy over it
+      // would archive a live box_unreachable incident: the verdict must
+      // come back "moved", leaving the subject unknown and the open
+      // incident for a later pass.
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-unreach-verdict-race",
+            source: "incident.box_unreachable",
+            metadata: { incident_key: "box_unreachable:agent-1" },
+          }),
+        ],
+        mutateWhen: (table, calls) => {
+          if (table !== "ops_events") return;
+          // The verdict write's fingerprint lookup is the only
+          // fingerprint-filtered read: land the delayed outage there.
+          const fp = calls.find((c) => c[0] === "eq" && c[1] === "fingerprint");
+          if (!fp) return;
+          db.tableRows("ops_events").push(
+            probeRow({
+              id: "probe-row-late",
+              fingerprint: String(fp[2]),
+              // Committed after the healthy observation — this probe cannot
+              // disprove an outage it predates. The observation timestamp is
+              // the real clock (scanDeps does not inject `clock`), so the
+              // "newer" outage must postdate real now, not fixture NOW.
+              first_seen_at: new Date(Date.now() + 10 * MIN).toISOString(),
+              last_seen_at: new Date(Date.now() + 10 * MIN).toISOString(),
+            }),
+          );
+        },
+      });
+      const deps = scanDeps({ db }); // default probe answers 200 → up
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.resolved).toBe(0);
+      expect(summary.unknown).toBe(1);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+      expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+    });
   });
 
   // ---- report pass deadline + still-open version refresh -------------------
@@ -3329,9 +3744,9 @@ describe("runCustomerIncidentScan", () => {
     // ticks are: scan-start deadline reads ×3 (probe, watchdog, collection),
     // the four collection-phase races (core reads, ops-admin id resolution,
     // probe rows, subscription), the first item's admission check, its
-    // in-flight bound read and its internal pre-write checkpoint, then the
-    // lapsed admission read.
-    const times = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1e15];
+    // in-flight bound read, its internal pre-write checkpoint and its
+    // post-revalidation checkpoint, then the lapsed admission read.
+    const times = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1e15];
     let tick = 0;
     const clock = () => times[Math.min(tick++, times.length - 1)];
     const deps = scanDeps({
@@ -3464,6 +3879,57 @@ describe("runCustomerIncidentScan", () => {
     expect(
       chain.some((c) => c[0] === "is" && c[1] === "archived_at" && c[2] === null),
     ).toBe(true);
+  });
+
+  it("never moves the guarded version backward when the stored marker is ahead of this scan's now", async () => {
+    // The scan's `now` is captured at scan start. A row whose stored marker
+    // is already ahead of it — e.g. a refresh stamped from an event time
+    // rather than the scan clock — used to be overwritten with the OLDER
+    // scan-start value. That regression handed any resolver holding the
+    // older version a matching row to archive: live incident closed,
+    // resolved notice sent. The refresh is a compare-and-swap that only
+    // advances: it writes observed+1ms under the observed-version
+    // predicates, so the version still moves (stale archives still no-op)
+    // but never retreats.
+    const ahead = iso(-5 * MIN); // five minutes past this scan's `now`
+    const row = incidentDbRow({
+      id: "evt-so-fwd",
+      occurrence_count: 2,
+      last_seen_at: ahead,
+      metadata: { incident_key: "box_down:agent-1" },
+    });
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+      openIncidents: [row],
+    });
+    const deps = scanDeps({ db, archiveIncident: undefined });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.stillOpen).toBe(1);
+    // The marker advanced past the stored value — never back to this
+    // scan's older `now` — and still moved, so a resolver holding the
+    // observed version cannot match it.
+    expect(row.last_seen_at).toBe(new Date(Date.parse(ahead) + 1).toISOString());
+    expect(Date.parse(row.last_seen_at as string)).toBeGreaterThan(Date.parse(ahead));
+    const touchCalls = db.calls.filter(
+      (entry) =>
+        entry.table === "ops_events" &&
+        entry.calls.some(
+          (c) => c[0] === "update" && typeof (c[1] as Row).last_seen_at === "string",
+        ),
+    );
+    expect(touchCalls).toHaveLength(1);
+    const chain = touchCalls[0].calls;
+    // Guarded on the version this scan observed — a concurrent write
+    // between read and touch still no-ops the refresh entirely.
+    expect(
+      chain.some((c) => c[0] === "eq" && c[1] === "occurrence_count" && c[2] === 2),
+    ).toBe(true);
+    expect(
+      chain.some((c) => c[0] === "eq" && c[1] === "last_seen_at" && c[2] === ahead),
+    ).toBe(true);
+    expect(deps.report as jest.Mock).not.toHaveBeenCalled();
   });
 
   it("a stale archive cannot close a live incident once a still-open refresh moved its version", async () => {

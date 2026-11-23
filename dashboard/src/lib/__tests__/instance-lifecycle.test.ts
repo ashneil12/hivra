@@ -143,7 +143,7 @@ describe("instance lifecycle helpers", () => {
     const fs = jest.requireActual("fs") as typeof import("fs");
     const path = jest.requireActual("path") as typeof import("path");
     const sql = fs.readFileSync(
-      path.join(__dirname, "../../../supabase/migrations/20261123110000_protect_hermes_archive_lifecycle.sql"),
+      path.join(__dirname, "../../../supabase/migrations/20261123122000_protect_hermes_archive_lifecycle.sql"),
       "utf8"
     );
     const body = sql.slice(0, sql.indexOf("$$;"));

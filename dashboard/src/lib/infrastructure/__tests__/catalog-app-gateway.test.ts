@@ -133,4 +133,38 @@ describe("catalog-app gateway /login routing", () => {
     expect((await request(port, "GET", "/dashboard")).json.upstream).toBe(true);
     expect(hits.map((h) => h.url)).toEqual(["/dashboard"]);
   });
+
+  it("proxies /app/<path> to the catalog app; only the bare entry URLs redirect", async () => {
+    // A Dufs upload of a file under a share folder literally named "app"
+    // sends PUT /app/report.txt. The gateway used to intercept the whole
+    // /app/* prefix and answer the entry's 303 to /; the browser followed
+    // it as a GET, read the root page's 200 and reported a successful
+    // upload that never reached Dufs. The entry owns only its two exact
+    // URLs; everything deeper is the app's own URL space.
+    const port = await boot();
+    const put = await request(port, "PUT", "/app/report.txt", "report-body");
+    expect(put.status).toBe(200);
+    expect(put.json.upstream).toBe(true);
+    expect(hits).toEqual([{ method: "PUT", url: "/app/report.txt", body: "report-body" }]);
+
+    // Read-back under the same folder, plus an ordinary filename.
+    hits = [];
+    expect((await request(port, "GET", "/app/report.txt")).json.upstream).toBe(true);
+    expect((await request(port, "PUT", "/report.txt", "x")).json.upstream).toBe(true);
+    expect(hits.map((h) => ({ method: h.method, url: h.url }))).toEqual([
+      { method: "GET", url: "/app/report.txt" },
+      { method: "PUT", url: "/report.txt" },
+    ]);
+
+    // The entry keeps exactly its two URLs: /app and /app/ still land on the
+    // gateway (303 to / once the app answers its health probe — which is the
+    // one upstream hit this block produces).
+    hits = [];
+    expect((await request(port, "GET", "/app")).status).toBe(303);
+    expect((await request(port, "GET", "/app/")).status).toBe(303);
+    expect(hits).toEqual([
+      { method: "GET", url: "/", body: "" },
+      { method: "GET", url: "/", body: "" },
+    ]);
+  });
 });

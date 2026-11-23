@@ -230,10 +230,22 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
           return { fingerprint, superseded: true };
         }
 
-        // Conditional reopen: the write only lands while the row is still
-        // archived, so exactly one racing writer flips it back to open — and
-        // only that writer may page for the fresh incident.
-        let reopenQuery = db
+        // Conditional reopen: the write only lands while the row still
+        // carries the exact archive generation this report observed — not
+        // merely "still archived". Between the read and this write another
+        // report may reopen the row and an operator (or a verdict write)
+        // archive it AGAIN: the second close carries a different
+        // archived_at, so a bare `archived_at IS NOT NULL` match would
+        // reopen the newer close with this report's stale
+        // occurrence_count/last_seen_at — and page on an incident that was
+        // already resolved a second time. Pinning the observed value makes
+        // that a no-match, so exactly one racing writer flips an archive
+        // generation back to open — and only that writer may page for the
+        // fresh incident. The eq also subsumes the guarded
+        // close-predates-observation bound: a row still holding this
+        // archived_at predates the observation by construction (the
+        // superseded pre-check above verified it).
+        const { data: reopened, error: reopenError } = await db
           .from('ops_events')
           .update({
             ...payload,
@@ -244,13 +256,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
             ...(input.resetFirstSeenOnReopen ? { first_seen_at: now } : {}),
           })
           .eq('id', row.id)
-          .not('archived_at', 'is', null);
-        if (input.observedAt) {
-          // Same verdict at the row: the close must still predate the
-          // observation, or the reopen is the stale commit.
-          reopenQuery = reopenQuery.lt('archived_at', input.observedAt);
-        }
-        const { data: reopened, error: reopenError } = await reopenQuery
+          .eq('archived_at', row.archived_at)
           .select('id')
           .maybeSingle();
 
@@ -308,6 +314,10 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
       // reopen path's page or first_seen_at reset, so a pageable recurrence
       // lost its notification. The open-only predicate turns that race into
       // a no-match, routed through the conditional reopen below instead.
+      // last_seen_at also moves forward only: two racing refreshes write
+      // their own `now`, and the slower one must not drag the marker back —
+      // the healthy-verdict path reads last_seen_at as the newest down
+      // sighting, so a regressed value lets an archive close a live outage.
       let refreshQuery = supabaseAdmin
         .from('ops_events')
         .update({
@@ -316,7 +326,8 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
           occurrence_count: (existing.occurrence_count || 0) + 1,
         })
         .eq('id', existing.id)
-        .is('archived_at', null);
+        .is('archived_at', null)
+        .lte('last_seen_at', now);
       if (input.observedAt) {
         // Same verdict at the row: the outage start it records must not be
         // newer than this observation.

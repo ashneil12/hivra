@@ -38,7 +38,7 @@ it("enforces archive transitions in Postgres", () => {
         await db.close();
       }
     })().catch((error) => { console.error(error); process.exitCode = 1; });
-  `, join(__dirname, "../../../supabase/migrations/20261123110000_protect_hermes_archive_lifecycle.sql")], {
+  `, join(__dirname, "../../../supabase/migrations/20261123122000_protect_hermes_archive_lifecycle.sql")], {
     cwd: join(__dirname, "../../.."),
     timeout: 30_000,
   });

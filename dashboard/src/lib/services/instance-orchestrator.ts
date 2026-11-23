@@ -82,6 +82,8 @@ import {
   LIVE_UPDATE_FAILED_VM_UNREACHABLE_SUBSTATE,
 } from "@/lib/instance-lifecycle";
 import {
+  LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST,
+  LIVE_MUTATION_NOT_FAILED_ARCHIVE_FILTER,
   readInstanceLiveMutationBlock,
   type InstanceLiveMutationState,
 } from "@/lib/services/instance-live-mutation";
@@ -839,6 +841,15 @@ if [ -d /opt/hermes/instances ]; then
 fi
 `
     : "";
+// One identity for this whole update attempt: the wrapper's `ru` callback
+// URL carries it as `a=`, and the 'redeploying' stamp below writes the same
+// value into last_lifecycle_transition_at. The report route can then prove
+// that a failure callback belongs to THIS attempt — a stale callback from
+// an earlier attempt (even toward the same digest, and even when no
+// occurredAt rides along) cannot claw the newer attempt's row back to
+// failed, and a registry that repins mid-attempt cannot make this attempt's
+// valid report look stale.
+const updateAttemptStamp = new Date().toISOString();
 const wrapperScript = `#!/usr/bin/env bash
 set -euo pipefail
 ${buildInstanceUpdateReporterShell({
@@ -846,6 +857,7 @@ ${buildInstanceUpdateReporterShell({
   dashboardUrl: process.env.NEXT_PUBLIC_APP_URL,
   apiServerKey,
   runType: "manual",
+  attemptId: updateAttemptStamp,
 })}
 ${singleTenantGuard}
 ${buildUpdateResultExtrasShell(instance.id)}
@@ -1052,7 +1064,14 @@ fi
     // recovery's own path: it can always re-drive the row, and the sweep
     // reads the substate to keep unreachable boxes out of its queue.
     const launchReach = liveUpdateLaunchReach(launchResult);
-    const { error: failedStateError } = await supabaseAdmin
+    // The completionBlock read above is advisory — between it and this write a
+    // racing update attempt or lifecycle operation can move the row, and
+    // stamping by id alone would clobber that newer state (an overlapping
+    // attempt's 'redeploying' marker, a restore, a delete) or resurrect one
+    // its owner already resolved. Mirror the boundary read's checks on the
+    // write itself: the stamp may land only on the row — same state, same
+    // guest identity — this attempt verified before it launched.
+    let failedStampQuery = supabaseAdmin
       .from("hermes_instances")
       .update({
         ...buildInstanceLifecyclePatch("failed"),
@@ -1063,7 +1082,46 @@ fi
               ? LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE
               : LIVE_UPDATE_FAILED_VM_UNREACHABLE_SUBSTATE,
       })
-      .eq("id", instance.id);
+      .eq("id", instance.id)
+      // blocksInstanceLiveMutation's exclusions. The or-form keeps the same
+      // NULL semantics the read applies — an unset status/lifecycle is not
+      // blocked, where a plain not.in would refuse NULL rows outright.
+      .or('status.is.null,status.not.in.("deleted","scheduled_for_deletion")')
+      .or(`lifecycle_state.is.null,lifecycle_state.not.in.${LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST}`)
+      .or(LIVE_MUTATION_NOT_FAILED_ARCHIVE_FILTER);
+    // The launch-pending state this attempt owns: the row must still carry
+    // the status/lifecycle the caller loaded. Any move since — another
+    // attempt's redeploying stamp, a pause, a recovery verdict — means that
+    // move owns the row and this stale failure stands down.
+    if (instance.status !== undefined) {
+      failedStampQuery = instance.status === null
+        ? failedStampQuery.is("status", null)
+        : failedStampQuery.eq("status", instance.status);
+    }
+    if (instance.lifecycle_state !== undefined) {
+      failedStampQuery = instance.lifecycle_state === null
+        ? failedStampQuery.is("lifecycle_state", null)
+        : failedStampQuery.eq("lifecycle_state", instance.lifecycle_state);
+    }
+    // The same guest-identity coordinates the boundary reads compared: this
+    // failure may only stamp the box this attempt actually launched
+    // against. Coordinates the caller never loaded stay unchecked — exactly
+    // like instanceLiveMutationCoordinatesChanged.
+    for (const [column, value] of [
+      ["proxmox_vmid", instance.proxmox_vmid],
+      ["proxmox_node", instance.proxmox_node],
+      ["host_id", instance.host_id],
+      ["hetzner_server_id", instance.hetzner_server_id],
+      ["ipv4_address", instance.ipv4_address],
+    ] as const) {
+      if (value === undefined) continue;
+      failedStampQuery = value === null
+        ? failedStampQuery.is(column, null)
+        : failedStampQuery.eq(column, value);
+    }
+    const { data: failedStamp, error: failedStateError } = await failedStampQuery
+      .select("id")
+      .maybeSingle();
     if (failedStateError) {
       // Without this stamp the row is not a recovery candidate; make it visible.
       log.error("update launch failed and the failed state write also failed", new Error("live_update_state_write_failed"), {
@@ -1072,6 +1130,17 @@ fi
         instanceId: instance.id,
         userId: instance.user_id,
         redactedMessage: redactSensitiveCommandOutput(failedStateError.message, 600),
+      });
+    } else if (!failedStamp) {
+      // Error-free zero-match: the row moved to a state or guest identity
+      // this attempt no longer owns — another attempt's stamp, a restore,
+      // a delete. The launch failure is already logged above; the stale
+      // stamp must not land over the row's new owner.
+      log.warn("update launch failed but the row moved before the failed stamp; leaving the row's new owner alone", {
+        source: LOG_SOURCE,
+        failureType: "live_update_state_write_superseded",
+        instanceId: instance.id,
+        userId: instance.user_id,
       });
     }
     return {
@@ -1156,10 +1225,14 @@ fi
   // bump every run would re-roll the same ~50 VMs and the fleet never
   // converges. Every applyLiveUpdate caller (fleet-sync, manual redeploy,
   // resize, recovery) recreates from :stable, so all of them advance the cursor.
+  // The attempt stamp goes down with the lifecycle write: the wrapper's
+  // reports echo it back as `a`, and the update-report route predicates the
+  // failed-state stamp on it matching, so only THIS attempt's callback can
+  // judge this row.
   const { error: redeployStateError } = await supabaseAdmin
     .from("hermes_instances")
     .update({
-      ...buildInstanceLifecyclePatch("redeploying"),
+      ...buildInstanceLifecyclePatch("redeploying", { now: updateAttemptStamp }),
       // Never write null over a good gateway_url — a proxmox row whose safe
       // derivation failed (no subdomain, host env unresolved) must keep its
       // existing value, not get nulled out. This is the exact write that
