@@ -3015,6 +3015,106 @@ describe("stale unpaid quote expiry", () => {
     expect(cursorWrites.length).toBeLessThanOrEqual(2);
   });
 
+  it("bounds the marked-lot lane to a share of the stale slice so the day's scans still run", async () => {
+    // Each marked lot-holder's recovery attempt burns ~35 s of tick clock
+    // inside its settle. Two of them used to consume the whole 60 s stale
+    // slice ahead of the first ordinary stale scan — the budget was only
+    // checked between attempts — and the UTC-day claim blocks a same-day
+    // retry, so a persistently slow marked set starved the day's scans
+    // every day. The lane is now bounded to a share of the slice: the
+    // second holder is deferred out of the pass and the stale quote gets
+    // its scan.
+    const markedRow = (index: number) =>
+      staleQuoteRow({
+        id: `quote_marked_${index}`,
+        status: "expired",
+        deposit_address: `0x${String(index + 16).padStart(40, "0")}`,
+        metadata: {
+          ...(staleQuoteRow().metadata as Row),
+          closedReason: "no_deposit_after_grace",
+          graceWindowScannedAt: "2026-05-19T00:00:00.000Z",
+        },
+        // Probe order: least-recently-touched first, so marked_0 attempts
+        // ahead of marked_1.
+        updated_at: `2026-05-01T10:0${index}:00.000Z`,
+      });
+    const marked = [markedRow(0), markedRow(1)];
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [
+        ...marked,
+        staleQuoteRow({ id: "quote_scan", deposit_address: `0x${"9".repeat(40)}` }),
+      ],
+      managed_venice_token_lots: marked.map((row, index) => ({
+        id: `lot_marked_${index}`,
+        account_id: "account_1",
+        user_id: "user_1",
+        quote_id: row.id,
+        source: "hermesos_deposit",
+        token_amount_raw: "1000000000000000000000",
+        remaining_token_amount_raw: "1000000000000000000000",
+        snapshot_price_usd: "0.05",
+        original_value_micro_usd: 50_000_000,
+        remaining_value_micro_usd: 50_000_000,
+        quote_source: "dexscreener",
+        quoted_at: "2026-05-01T10:00:00.000Z",
+        quote_expires_at: "2026-05-01T10:20:00.000Z",
+        transaction_hash: `0xmarkedlotpaid${index}`,
+        status: "active",
+        metadata: {},
+      })),
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    // The fake clock moves only inside a settle call: 35 s per marked
+    // attempt, the starvation scenario.
+    let nowMs = 0;
+    const settleQuote = jest.fn(async (transfer: { quoteId?: string }) => {
+      nowMs += 35_000;
+      return { status: "settled" as const, quoteId: transfer.quoteId ?? "unknown" };
+    });
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote,
+      now: staleNow,
+      clock: () => nowMs,
+      staleScanBudgetMs: 60_000,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    // The stale quote got its real log scan inside the window the marked
+    // lane can never take: before the fix both attempts ran (70 s), the
+    // scan loop found the slice already spent, and the row deferred to
+    // tomorrow — every day the marked set stayed slow (eth_getLogs: 0).
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+    expect(summary.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ quoteId: "quote_scan", status: "cancelled" }),
+      ])
+    );
+    // One marked attempt fit inside the lane's share; the second was
+    // deferred out of the pass — then the open lane's own lot probe
+    // reached it and settled it later in the same tick, so no owed
+    // settlement was lost to the bound.
+    expect(summary.deferred.open).toBe(1);
+    expect(summary.settled).toBe(2);
+    // The deferred holder keeps the front of tomorrow's probe: only the
+    // attempted row's queue cursor advanced.
+    const markedRows = memory.tables.managed_venice_token_quotes.filter((row) =>
+      (row.id as string).startsWith("quote_marked_")
+    );
+    expect(markedRows.find((row) => row.id === "quote_marked_0")?.updated_at).toBe(
+      staleNow.toISOString()
+    );
+    expect(markedRows.find((row) => row.id === "quote_marked_1")?.updated_at).toBe(
+      "2026-05-01T10:01:00.000Z"
+    );
+  });
+
   it("degrades the tick — but still runs the regular lanes — when the day's claim write fails", async () => {
     // claimCronUtcDay collapses "another run holds today" and "the claim
     // write failed" into one false: the first is a clean skip, the second
