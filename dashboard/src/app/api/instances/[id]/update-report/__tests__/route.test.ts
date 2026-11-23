@@ -45,7 +45,14 @@ describe("POST /api/instances/[id]/update-report", () => {
     lookupError = null;
     instanceUpdateIs = jest.fn().mockResolvedValue({ error: null });
     instanceUpdateNot = jest.fn().mockReturnValue({ is: instanceUpdateIs });
-    instanceUpdateEq = jest.fn().mockReturnValue({ not: instanceUpdateNot });
+    // The success write chains .eq().not().is(); the failed-report stamp
+    // chains .eq().eq().is() — one result object serves both.
+    const eqResult: Record<string, unknown> = {
+      not: instanceUpdateNot,
+      is: instanceUpdateIs,
+    };
+    instanceUpdateEq = jest.fn().mockReturnValue(eqResult);
+    eqResult.eq = instanceUpdateEq;
     instanceUpdate = jest.fn().mockReturnValue({ eq: instanceUpdateEq });
 
     instanceFixture = {
@@ -131,6 +138,71 @@ describe("POST /api/instances/[id]/update-report", () => {
           recoveryAction: "open_console",
         }),
       })
+    );
+  });
+
+  it("stamps a failed+reached state on a failed report so the row stays sweep-retryable", async () => {
+    // Regression: a failed report used to write no status at all, so a row
+    // the launch left at 'redeploying' kept status='redeploying' +
+    // lifecycle_state='provisioning' — a pair the fleet-sync sweep admits
+    // in neither arm (live status/lifecycle, or failed+reached substate).
+    // Recover-stuck probes and restarts the VM but never re-applies the
+    // release, so the update was never retried. The report is itself proof
+    // the update ran on the box, so it is stamped like a launch failure
+    // that reached the guest — but only while the row still shows the
+    // update in flight.
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "failed",
+          runType: "manual",
+          reason: "exit_status_1",
+        }),
+      }),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(instanceUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        lifecycle_state: "failed",
+        lifecycle_substate: "live_update_failed_vm_reached",
+      })
+    );
+    // The write is predicated on the row still being mid-update: a late or
+    // duplicated report cannot claw back a row that already moved on
+    // (recovered to running, deleted, rescheduled).
+    expect(instanceUpdateEq).toHaveBeenCalledWith("id", "11111111-1111-4111-8111-111111111111");
+    expect(instanceUpdateEq).toHaveBeenCalledWith("status", "redeploying");
+    expect(instanceUpdateIs).toHaveBeenCalledWith("deleted_at", null);
+  });
+
+  it("does not stamp the failed state on a succeeded report", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ status: "succeeded", runType: "manual" }),
+      }),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(instanceUpdate).toHaveBeenCalledTimes(1);
+    expect(instanceUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "running" })
+    );
+    expect(instanceUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ lifecycle_substate: expect.anything() })
     );
   });
 

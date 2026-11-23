@@ -4,6 +4,8 @@ const mockDb: { current: unknown } = { current: null };
 jest.mock("@/lib/supabase", () => ({ get supabaseAdmin() { return mockDb.current; } }));
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 
+import { reportOpsEvent, type OpsEventInput } from "@/lib/ops-events";
+
 import {
   buildIncidentMetadata,
   cronPeriodMinutes,
@@ -1024,6 +1026,7 @@ function fakeIncidentDb(config: FakeDbConfig) {
   const recordedCalls: Array<{ table: string; calls: unknown[][] }> = [];
   return {
     calls: recordedCalls,
+    tableRows: rowsFor,
     from(table: string) {
       const calls: unknown[][] = [];
       const chain: Record<string, unknown> = {};
@@ -1031,6 +1034,7 @@ function fakeIncidentDb(config: FakeDbConfig) {
       for (const method of [
         "select",
         "update",
+        "insert",
         "eq",
         "is",
         "not",
@@ -1097,6 +1101,38 @@ function fakeIncidentDb(config: FakeDbConfig) {
             .filter((c) => FAKE_FILTER_METHODS.has(String(c[0])))
             .every((call) => fakeRowMatches(row, call)),
         );
+        const insertCall = calls.find((c) => c[0] === "insert");
+        if (insertCall) {
+          // .insert(payload)[.select(...)]: append the row like production,
+          // honouring the unique fingerprint constraint reportOpsEvent and
+          // the probe-verdict writer rely on for their races.
+          const payload = insertCall[1] as Row | Row[];
+          const inserted: Row[] = (Array.isArray(payload) ? payload : [payload]).map(
+            (row, index) => ({ id: `inserted-${recordedCalls.length}-${index}`, ...row }),
+          );
+          const tableRows = rowsFor(table);
+          const conflict = inserted.find(
+            (row) =>
+              row.fingerprint != null &&
+              tableRows.some((existing) => existing.fingerprint === row.fingerprint),
+          );
+          if (conflict) {
+            return {
+              data: null,
+              error: {
+                message: `duplicate key value violates unique constraint "ops_events_fingerprint_key"`,
+              },
+            };
+          }
+          for (const row of inserted) tableRows.push(row);
+          if (terminal !== "none") {
+            return { data: inserted[0] ?? null, error: null };
+          }
+          if (calls.some((c) => c[0] === "select")) {
+            return { data: inserted, error: null };
+          }
+          return { data: null, error: null };
+        }
         const updateCall = calls.find((c) => c[0] === "update");
         if (updateCall) {
           if (
@@ -1517,6 +1553,39 @@ describe("runCustomerIncidentScan", () => {
       plan: null,
       subscription_status: null,
     });
+  });
+
+  it("keeps a completed probe-row read when subscription enrichment stalls past the collection deadline", async () => {
+    // Regression: the probe-row read raced the shared collection deadline
+    // but was awaited AFTER subscription enrichment — a stalled lookup
+    // consumed the window and the already-finished probe-row result was
+    // discarded, sending every candidate's public probe to unknown. The
+    // probe rows gate incident correctness and enrichment only decorates
+    // it, so the read is now awaited first: here the probe still resolves
+    // the open box_unreachable while plan data degrades.
+    const deps = scanDeps({
+      collectionBudgetMs: 20,
+      db: fakeIncidentDb({
+        agents: [agentDbRow()],
+        subscriptions: [{ user_id: "user-1", plan: "pro", status: "active" }],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-unreach-enrich",
+            source: "incident.box_unreachable",
+            metadata: { incident_key: "box_unreachable:agent-1" },
+          }),
+        ],
+        watchdogByAgent: { "agent-1": [watchdogDbRow("recovered", 20 * MIN)] },
+        hangWhen: (table) => table === "hermes_subscriptions",
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    // The probe-row result landed in-budget: the probe ran, answered
+    // healthy, and the open incident resolved normally.
+    expect(deps.probe as jest.Mock).toHaveBeenCalledTimes(1);
+    expect(summary.resolved).toBe(1);
+    expect(summary.unknown).toBe(0);
   });
 
   it("pages subject queries by keyset past the PostgREST row cap", async () => {
@@ -2419,6 +2488,152 @@ describe("runCustomerIncidentScan", () => {
       await runCustomerIncidentScan(deps as never);
 
       expect(row.archived_at).toBe(new Date(NOW + 45_000).toISOString());
+    });
+
+    it("persists the healthy verdict on the probe fingerprint row when no outage is open", async () => {
+      // A healthy scan used to write nothing when no probe row was open —
+      // leaving a stalled down-report INSERT nothing to contradict. The
+      // scan now stamps an already-archived verdict row at the healthy
+      // observation time, so reportOpsEvent's stale-verdict guard can
+      // refuse the late write on arrival.
+      const db = fakeIncidentDb({ agents: [agentDbRow()] });
+      const deps = scanDeps({ db, clock: () => NOW }); // default probe answers 200 → up
+      await runCustomerIncidentScan(deps as never);
+
+      const rows = db
+        .tableRows("ops_events")
+        .filter(
+          (row) =>
+            row.source === "box.public_probe.unreachable" &&
+            row.instance_id === "agent-1",
+        );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].archived_at).toBe(new Date(NOW).toISOString());
+      expect(rows[0].occurrence_count).toBe(0);
+      expect((rows[0].metadata as Row).probe).toEqual({
+        verdict: "up",
+        checked_at: new Date(NOW).toISOString(),
+      });
+      // A real down report shares this row's fingerprint: the scan's own
+      // deps.report is mocked, so the fingerprint collision is proven by
+      // the superseded-refusal test below.
+      expect(String(rows[0].fingerprint)).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it("refuses a stalled down-report observed before the healthy verdict — no phantom outage", async () => {
+      // The whole bug: a probe-row write that loses the deadline race
+      // keeps running in the background and can commit after a later
+      // healthy observation. Before the verdict row, that INSERT was
+      // unguarded and established an outage spanning the healthy probe.
+      const captured: OpsEventInput[] = [];
+      const db = fakeIncidentDb({ agents: [agentDbRow()] });
+      // Scan 1: probe fails — the report is captured (the "stalled" write)
+      // and never commits inside this scan.
+      await runCustomerIncidentScan(
+        scanDeps({
+          db,
+          clock: () => NOW,
+          probe: jest.fn(async () => ({ status: 503, latencyMs: 10, error: null })),
+          report: jest.fn(async (input: OpsEventInput) => {
+            captured.push(input);
+            return { id: "evt-stalled", fingerprint: "fp-stalled" };
+          }),
+        }) as never,
+      );
+      const stalled = captured.find((o) => o.source === "box.public_probe.unreachable");
+      expect(stalled?.observedAt).toBe(new Date(NOW).toISOString());
+
+      // Scan 2, five minutes later: probe healthy — the verdict persists.
+      await runCustomerIncidentScan(
+        scanDeps({ db, now: () => NOW + 5 * MIN, clock: () => NOW + 5 * MIN }) as never,
+      );
+
+      // The stalled write lands now, through the REAL reportOpsEvent
+      // (supabaseAdmin points at the same fake db).
+      mockDb.current = db;
+      const landed = await reportOpsEvent(stalled!);
+      expect(landed?.superseded).toBe(true);
+
+      // No outage was established: the fingerprint row is still archived
+      // at the healthy observation, not reopened by the stale report.
+      const rows = db
+        .tableRows("ops_events")
+        .filter(
+          (row) =>
+            row.source === "box.public_probe.unreachable" &&
+            row.instance_id === "agent-1",
+        );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].archived_at).toBe(new Date(NOW + 5 * MIN).toISOString());
+    });
+
+    it("reopens the verdict row for a fresh outage, then keeps its start across consecutive failures", async () => {
+      // A verdict row must not block a real outage: a down report observed
+      // AFTER the healthy verdict reopens it and gets a fresh clock, and
+      // consecutive failures on the same outage keep the original
+      // first_seen_at (the 10-minute rule is not restarted by refresh).
+      // The runtime marker (provisioned_at) is pinned to the distant past
+      // so the stored outage start — real clock — always postdates it and
+      // the pre-runtime reset branch stays out of the assertion.
+      const db = fakeIncidentDb({
+        agents: [
+          agentDbRow({
+            created_at: "2020-01-01T00:00:00.000Z",
+            provisioned_at: "2020-01-01T00:05:00.000Z",
+          }),
+        ],
+      });
+      // The verdict and the reports must stay ordered by the timestamps
+      // reportOpsEvent compares — but Date.now() has 1ms resolution and
+      // the >= guard treats equal times as superseded, so a monotonic tick
+      // clock keeps each observation strictly after the last.
+      let tick = Date.now();
+      const tickClock = () => (tick += 100);
+      const realDeps = (down: boolean) =>
+        scanDeps({
+          db,
+          now: () => tick,
+          clock: tickClock,
+          report: reportOpsEvent,
+          probe: jest.fn(async () =>
+            down
+              ? { status: 503, latencyMs: 10, error: null }
+              : { status: 200, latencyMs: 9, error: null },
+          ),
+        });
+      mockDb.current = db;
+
+      // Healthy scan persists the verdict.
+      await runCustomerIncidentScan(realDeps(false) as never);
+      const readRow = () =>
+        db
+          .tableRows("ops_events")
+          .filter(
+            (row) =>
+              row.source === "box.public_probe.unreachable" &&
+              row.instance_id === "agent-1",
+          );
+
+      // First real failure: the archived verdict reopens — fresh outage.
+      await runCustomerIncidentScan(realDeps(true) as never);
+      const afterFirst = readRow();
+      expect(afterFirst).toHaveLength(1);
+      expect(afterFirst[0].archived_at).toBeNull();
+      const outageStart = afterFirst[0].first_seen_at;
+      expect(typeof outageStart).toBe("string");
+      // The fake's rows are live references — capture before the next
+      // scan mutates them.
+      const firstCount = Number(afterFirst[0].occurrence_count);
+      expect(firstCount).toBeGreaterThanOrEqual(1);
+
+      // Second consecutive failure: the open row refreshes — the outage
+      // keeps the start it established.
+      await runCustomerIncidentScan(realDeps(true) as never);
+      const afterSecond = readRow();
+      expect(afterSecond).toHaveLength(1);
+      expect(afterSecond[0].archived_at).toBeNull();
+      expect(afterSecond[0].first_seen_at).toBe(outageStart);
+      expect(afterSecond[0].occurrence_count).toBe(firstCount + 1);
     });
 
     it("restarts the outage clock when the open probe row predates the box's current runtime", async () => {
