@@ -2090,6 +2090,121 @@ describe("stale unpaid quote expiry", () => {
     expect(blockReadsFor(paymentBlock)).toBe(day1Reads);
   });
 
+  it("keeps the timestamps a deadline-aborted lookup already resolved, so the next day resumes it", async () => {
+    // A fully-covered checkpoint whose transfers carry no stamps sends the
+    // whole serial timestamp pass through the stale slice with nothing
+    // persisted until it returns: an abort mid-lookup used to lose every
+    // resolved stamp, so a quote with enough unstamped transfers died at
+    // the same lookup every day — permanently. Stamps now flush into the
+    // coverage record as they land (batched + on abort), so the next pass
+    // resumes the lookup instead of restarting it.
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow()],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    const amount = BigInt(staleQuoteRow().token_amount_raw as string);
+    const fromBlock = chain.blockAt("2026-05-01T10:00:00.000Z");
+    const toBlock = chain.blockAt("2026-05-01T12:20:00.000Z");
+    const unstampedBlocks = [
+      chain.blockAt("2026-05-01T10:10:00.000Z"),
+      chain.blockAt("2026-05-01T10:30:00.000Z"),
+      chain.blockAt("2026-05-01T10:50:00.000Z"),
+    ];
+    const seedProgress = {
+      [HERMESOS_TOKEN_ADDRESS.toLowerCase()]: {
+        v: 1,
+        tokenAddress: HERMESOS_TOKEN_ADDRESS.toLowerCase(),
+        fromBlock,
+        toBlock,
+        scannedThroughBlock: toBlock, // fully covered: no eth_getLogs at all
+        transfers: unstampedBlocks.map((blockNumber, index) => ({
+          transactionHash: `0xunstamped${index}`,
+          logIndex: 0,
+          blockNumber,
+          amount: amount.toString(),
+          logTimestampSec: null,
+        })),
+      },
+    };
+    const row = memory.tables.managed_venice_token_quotes[0];
+    row.metadata = { ...(row.metadata as Row), depositScanProgress: seedProgress };
+
+    // Every transfer-block lookup burns 50 s of the slice, so the pass dies
+    // inside the timestamp pass after exactly two resolutions.
+    let nowMs = 0;
+    const lookupBlocks = new Set(unstampedBlocks);
+    const inner = chain.fetchImpl.getMockImplementation()!;
+    chain.fetchImpl.mockImplementation(async (url: string, init: { body: string }) => {
+      const request = JSON.parse(init.body) as { method: string; params: unknown[] };
+      if (
+        request.method === "eth_getBlockByNumber" &&
+        lookupBlocks.has(Number.parseInt(String(request.params[0]), 16))
+      ) {
+        nowMs += 50_000;
+      }
+      return inner(url, init);
+    });
+    const settleQuote = jest.fn(async (transfer: { quoteId?: string }) => ({
+      status: "settled" as const,
+      quoteId: transfer?.quoteId ?? "quote_stale",
+    }));
+    const run = (now: Date) =>
+      reconcilePendingManagedVeniceTokenQuotes({
+        db: memory.db,
+        rpcUrl: "https://base.test",
+        fetchImpl: chain.fetchImpl,
+        minConfirmations: 2,
+        settleQuote,
+        now,
+        clock: () => nowMs,
+        staleScanBudgetMs: 60_000,
+        interQuoteDelayMs: 0,
+        rpcSleepImpl: async () => {},
+      });
+    const blockReadsFor = (block: number) =>
+      chain.requests.filter(
+        (request) =>
+          request.method === "eth_getBlockByNumber" &&
+          request.params[0] === `0x${block.toString(16)}`
+      ).length;
+
+    const day1 = await run(staleNow);
+
+    expect(day1.deferred.open).toBe(1);
+    expect(day1.settled).toBe(0);
+    const day1Progress = (memory.tables.managed_venice_token_quotes[0].metadata as Row)
+      .depositScanProgress as Record<
+      string,
+      { scannedThroughBlock: number; transfers: Array<{ logTimestampSec: number | null }> }
+    >;
+    const day1Transfers = day1Progress?.[HERMESOS_TOKEN_ADDRESS.toLowerCase()]?.transfers ?? [];
+    // The two lookups the slice paid for are stamped IN the checkpoint; the
+    // third — aborted before its request — stays null.
+    expect(day1Transfers.map((entry) => entry.logTimestampSec !== null)).toEqual([
+      true,
+      true,
+      false,
+    ]);
+
+    const day2 = await run(new Date("2026-05-21T00:00:00.000Z"));
+
+    expect(day2.settled).toBe(1);
+    // Day 2 spent exactly one lookup — on the one block day 1 never reached.
+    // Under the old behaviour all three were re-read and the slice died the
+    // same way again.
+    expect(blockReadsFor(unstampedBlocks[0])).toBe(1);
+    expect(blockReadsFor(unstampedBlocks[1])).toBe(1);
+    expect(blockReadsFor(unstampedBlocks[2])).toBe(1);
+    const day2Transfers = (
+      (memory.tables.managed_venice_token_quotes[0].metadata as Row).depositScanProgress as Record<
+        string,
+        { transfers: Array<{ logTimestampSec: number | null }> }
+      >
+    )?.[HERMESOS_TOKEN_ADDRESS.toLowerCase()]?.transfers;
+    expect(day2Transfers?.every((entry) => entry.logTimestampSec !== null)).toBe(true);
+  });
+
   it("checkpoints only final coverage and re-scans the non-final tail on resume", async () => {
     // A resumable scan running close behind the head used to persist every
     // covered block — including ones a reorg could still replace. The record

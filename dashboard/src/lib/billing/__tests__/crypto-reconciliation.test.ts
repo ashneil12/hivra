@@ -905,6 +905,50 @@ describe("stale crypto top-up exclusion", () => {
     expect(rpc.methodCount("eth_getLogs")).toBe(0);
   });
 
+  it("still runs the daily stale pass when the heartbeat day-read would have failed", async () => {
+    // The first-tick gate used to SELECT ops_cron_heartbeats before the
+    // atomic claim: a failed read returned "not the first tick" — a silent
+    // skip where the day's one stale pass never ran and the summary still
+    // read clean. The day is now decided by the claim alone (its guarded
+    // update IS the day check), so a SELECT failure can no longer veto it;
+    // only a failed claim write degrades the tick (staleRetryClaimFailed).
+    const retryableStale = stalePayment({
+      created_at: "2026-04-09T11:00:00.000Z",
+      updated_at: "2026-04-09T11:00:00.000Z",
+      metadata: {
+        type: "crypto_topup_intent",
+        depositAddress: normalizedDepositAddressOne,
+        createdAt: "2026-04-09T11:00:00.000Z",
+        sessionExpiresAt: "2026-04-09T11:20:00.000Z",
+      },
+    });
+    const memory = createBillingMemoryDb({
+      payment_transactions: [retryableStale],
+      ops_cron_heartbeats: [
+        { cron_name: "reconcile-crypto-topups", last_run_at: "2026-04-23T11:00:00.000Z" },
+      ],
+    });
+    // The next SELECT on the heartbeat table fails — the old gate's read.
+    memory.failNext({ table: "ops_cron_heartbeats", op: "select" });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+
+    const result = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    // The claim decided the day on its own: the stale lane ran, the day is
+    // claimed on the row, and nothing reads as a failure.
+    expect(result.staleRetried).toBe(1);
+    expect(result.staleRetryLoadFailed).toBe(false);
+    expect(result.staleRetryClaimFailed).toBe(false);
+    expect(memory.tables.ops_cron_heartbeats[0].last_run_at).toBe(now);
+    expect(rpc.methodCount("eth_getLogs")).toBeGreaterThan(0);
+  });
+
   it("does not flag a claim failure when another run already holds the day", async () => {
     // The old boolean claim collapsed two very different answers into false:
     // "the day is already claimed" (a clean skip) and "the claim write

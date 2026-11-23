@@ -197,7 +197,11 @@ export const DASHBOARD_MANIFESTS: readonly CatalogAppManifest[] = [
     license: "MIT",
     sourceUrl: "https://github.com/hslr-s/sun-panel",
     tagline: "Lightweight server and NAS navigation panel and browser homepage.",
-    description: "Customizable startpage and server navigation panel with icon groups and quick links.",
+    // Upstream went closed-source after v1.3.0 (its own README states the
+    // latest open-source release is v1.3.0), so the manifest pins that tag
+    // rather than floating `latest` onto closed-source images. The license
+    // claim stays MIT because that is exactly what the pinned image is.
+    description: "Customizable startpage and server navigation panel with icon groups and quick links, pinned to v1.3.0, the last open-source release.",
     capabilityLine: "Sun-Panel's web dashboard, persistent config, terminal and files.",
     badge: "Dashboard",
     accent: "#f59e0b",
@@ -222,17 +226,24 @@ export const DASHBOARD_MANIFESTS: readonly CatalogAppManifest[] = [
     runtime: {
       kind: "docker-web",
       imageRepo: "hslr/sun-panel",
-      imageTag: "latest",
+      // Docker Hub carries the tag without the upstream 'v' prefix.
+      imageTag: "1.3.0",
       containerPort: 3002,
       hostPort: 3288,
       healthPath: "/",
-      volumes: [{ name: "conf", mountPath: "/app/conf" }],
+      // v1.3.0 persists config, uploaded icons and its SQLite database in
+      // three separate directories (upstream's own docker run docs).
+      volumes: [
+        { name: "conf", mountPath: "/app/conf" },
+        { name: "uploads", mountPath: "/app/uploads" },
+        { name: "database", mountPath: "/app/database" },
+      ],
       proxyMode: "standard",
     },
     seo: {
       metaTitle: "Sun-Panel Hosting: Self-Hosted Navigation Panel in the Cloud",
-      metaDescription: "Run the MIT-licensed Sun-Panel navigation dashboard on a private cloud computer with persistent config. From $9.99/mo.",
-      summary: "Run the official MIT-licensed Sun-Panel Docker image on an isolated cloud computer with persistent config.",
+      metaDescription: "Run the MIT-licensed Sun-Panel v1.3.0 navigation dashboard on a private cloud computer with persistent config. From $9.99/mo.",
+      summary: "Run the official MIT-licensed Sun-Panel Docker image (v1.3.0, the last open-source release) on an isolated cloud computer with persistent config.",
     },
   },
 ];

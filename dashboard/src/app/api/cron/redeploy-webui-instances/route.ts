@@ -277,7 +277,18 @@ async function releaseSweepVerdict(instanceId: string): Promise<string | null> {
     if (!state || !state.governed) return null;
     const { decision } = state;
     if (!decision.target) return "No release is offered to this box";
-    if (decision.direction === "none") return "Already on its target release";
+    if (decision.direction === "none") {
+      // A box on its target digest is only "current" while its update stack
+      // is healthy. A paused, failed or rolled-back update can leave the
+      // target image running (digest matches, direction 'none') with the
+      // roll itself still needing Try again — and this sweep is that retry:
+      // applyLiveUpdate reruns the same update, and a healthy dashboard
+      // update is what clears the box-side pause/failure marker. Skipping
+      // here would also stamp last_synced_at, reading a broken update as
+      // freshly synced.
+      if (state.updateHealth && state.updateHealth !== "ok") return null;
+      return "Already on its target release";
+    }
     if (!decision.autoMove) return "Release registry does not move this box automatically";
     return null;
   } catch (err) {

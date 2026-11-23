@@ -60,7 +60,7 @@ import {
 import { ensureWalletHasGas } from "./treasury-gas";
 import { USDC_BASE_TOKEN_ADDRESS, CRYPTO_TOPUP_ASSETS } from "./crypto-topups";
 import { getLogsInBlockChunks } from "./base-rpc-logs";
-import { baseRpcPayloadError } from "./base-rpc-retry";
+import { RpcHttpError, baseRpcPayloadError } from "./base-rpc-retry";
 
 const USDC_DECIMALS = CRYPTO_TOPUP_ASSETS.usdc_base.tokenDecimals;
 const ERC20_BALANCE_OF_SELECTOR = "70a08231";
@@ -245,6 +245,28 @@ function addressTopic(address: string) {
   return `0x${normalizeEvmAddress(address).slice(2).padStart(64, "0")}`;
 }
 
+// Best-effort read of the provider's JSON-RPC error on a non-OK response.
+// Base's public endpoint answers an oversized eth_getLogs range with HTTP
+// 413 AND a JSON-RPC body (-32614, "eth_getLogs is limited to a N range"):
+// throwing on the status alone drops the stated cap, so the range-adaptive
+// log scan (matchLogRangeCap) sees an unclassifiable failure instead of the
+// span it must re-tile at. The code rides along in the message too — an
+// unworded -32614 body still names itself.
+async function readRpcErrorDetail(
+  response: { json: () => Promise<unknown> }
+): Promise<string | undefined> {
+  try {
+    const payload = (await response.json()) as JsonRpcResponse | null;
+    const rpcError = payload?.error;
+    if (!rpcError) return undefined;
+    const message = typeof rpcError.message === "string" ? rpcError.message : "unknown RPC error";
+    const code = typeof rpcError.code === "number" && Number.isFinite(rpcError.code) ? rpcError.code : null;
+    return `${message}${code != null ? ` (code ${code})` : ""}`;
+  } catch {
+    return undefined;
+  }
+}
+
 function createBaseRpc(rpcUrl: string, fetchImpl: JsonRpcFetch) {
   async function call(method: string, params: unknown[]): Promise<unknown> {
     const response = await fetchImpl(rpcUrl, {
@@ -253,7 +275,7 @@ function createBaseRpc(rpcUrl: string, fetchImpl: JsonRpcFetch) {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
     });
     if (!response.ok) {
-      throw new Error(`Base RPC ${method} failed with status ${response.status}`);
+      throw new RpcHttpError(response.status, await readRpcErrorDetail(response));
     }
     const payload = (await response.json()) as JsonRpcResponse;
     if (payload.error) {
