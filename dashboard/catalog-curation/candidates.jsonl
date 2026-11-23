@@ -155,3 +155,8 @@
 {"slug": "13ft", "name": "13ft", "sourceUrl": "https://github.com/wasi-master/13ft", "status": "rejected", "reason": "slug starts with digit, fails ^[a-z][a-z0-9-]{1,38}[a-z0-9]$", "checkedAt": "2026-11-22"}
 {"slug": "pingvin-share", "name": "Pingvin Share", "sourceUrl": "https://github.com/stonith404/pingvin-share", "status": "rejected", "reason": "archived repo", "checkedAt": "2026-11-22"}
 {"slug": "seanime", "name": "Seanime", "sourceUrl": "https://github.com/5rahim/seanime", "status": "pending", "reason": "", "checkedAt": "2026-11-22"}
+{"slug": "onyx", "name": "onyx", "sourceUrl": "https://github.com/onyx-dot-app/onyx", "status": "pending", "reason": "", "checkedAt": "2026-11-23"}
+{"slug": "meetily", "name": "meetily", "sourceUrl": "https://github.com/Zackriya-Solutions/meetily", "status": "pending", "reason": "", "checkedAt": "2026-11-23"}
+{"slug": "signoz", "name": "signoz", "sourceUrl": "https://github.com/SigNoz/signoz", "status": "pending", "reason": "", "checkedAt": "2026-11-23"}
+{"slug": "dokku", "name": "dokku", "sourceUrl": "https://github.com/dokku/dokku", "status": "pending", "reason": "", "checkedAt": "2026-11-23"}
+{"slug": "nanoclaw", "name": "nanoclaw", "sourceUrl": "https://github.com/nanocoai/nanoclaw", "status": "pending", "reason": "", "checkedAt": "2026-11-23"}
