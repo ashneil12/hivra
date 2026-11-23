@@ -30,6 +30,15 @@ export function configuredOpsAdminUserIds(): Set<string> {
 }
 
 /**
+ * EVERY email named in OPS_ADMIN_EMAILS — the list counterpart of
+ * configuredOpsAdminUserIds, for the same reason: isOpsAdminUser honors
+ * only the first configured entry, but sweeps must exclude all operators.
+ */
+export function configuredOpsAdminEmails(): string[] {
+  return parseAllowlist(process.env.OPS_ADMIN_EMAILS);
+}
+
+/**
  * Whether OPS_ADMIN_EMAILS names an admin, so a caller that only has a user ID
  * can skip looking up that user's email when no email could match.
  */
@@ -86,4 +95,67 @@ export function isOpsAdminUser(identity: OpsAdminIdentity): boolean {
   }
 
   return false;
+}
+
+/**
+ * The slice of the user directory the ops-admin email→id resolution needs:
+ * the accounts holding a configured address. Matches the shape of
+ * clerkClient().users.getUserList — kept injectable so this module never
+ * imports the Clerk client itself.
+ */
+export interface OpsAdminDirectoryLookup {
+  getUserList: (params: {
+    emailAddress: string[];
+    limit?: number;
+  }) => Promise<{
+    data: Array<ClerkUserWithPrimaryEmail & { id?: string | null }>;
+  }>;
+}
+
+/**
+ * The account ids the configured ops admins resolve to: the ids named in
+ * OPS_ADMIN_USER_IDS plus the account of every user whose Clerk-VERIFIED
+ * primary email is named in OPS_ADMIN_EMAILS.
+ *
+ * The request-time check (isOpsAdminUser over an identity whose email came
+ * from verifiedPrimaryEmailOf) already grants such a user ops-admin
+ * rights — they open the ops pages — so a sweep that excludes operator
+ * rows by account id must resolve the same set: without it an ops admin
+ * configured only by email contributes no id to the exclusion and their
+ * own boxes page as customer incidents.
+ *
+ * Only the verified primary address qualifies — the same bar the
+ * request-time check sets — so a configured address sitting on someone's
+ * account as a secondary or unverified address cannot exclude their boxes
+ * either.
+ *
+ * A failed lookup for one email skips that email and reports through
+ * onLookupFailure: resolution degrades to the configured ids, never to
+ * fabricated matches.
+ */
+export async function resolveConfiguredOpsAdminUserIds(
+  lookup: OpsAdminDirectoryLookup | null | undefined,
+  onLookupFailure?: (email: string, error: unknown) => void,
+): Promise<Set<string>> {
+  const ids = configuredOpsAdminUserIds();
+  const emails = configuredOpsAdminEmails();
+  if (!lookup || emails.length === 0) return ids;
+  for (const email of emails) {
+    let candidates: Array<ClerkUserWithPrimaryEmail & { id?: string | null }>;
+    try {
+      const result = await lookup.getUserList({ emailAddress: [email], limit: 100 });
+      candidates = result.data ?? [];
+    } catch (error) {
+      onLookupFailure?.(email, error);
+      continue;
+    }
+    for (const user of candidates) {
+      const verified = verifiedPrimaryEmailOf(user);
+      if (verified && verified.toLowerCase() === email) {
+        const id = normalizeOpsUserId(user.id);
+        if (id) ids.add(id);
+      }
+    }
+  }
+  return ids;
 }
