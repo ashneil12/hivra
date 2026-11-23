@@ -346,19 +346,26 @@ export function evaluateCustomerIncidents(input: IncidentEvaluationInput): Incid
     if (!BOX_DOWN_EVENT_TYPES.has(latest.eventType)) continue;
     const immediate = latest.eventType === "recovery_exhausted";
     if (!immediate && (receiptMs == null || now - receiptMs < BOX_DOWN_MIN_AGE_MS)) continue;
-    // A failure receipt older than 24h whose public probe succeeded this
-    // scan is stale bookkeeping, not a live outage: the box answers publicly
-    // and simply stopped emitting receipts. Suppressing the finding lets the
-    // resolve pass archive the row (stale_no_new_receipts) — emitting it
-    // would pin the incident open forever, and re-page it on every scan
-    // after a silent archive. A probe that is still failing or could not be
-    // evaluated keeps the incident open.
+    // A failure receipt older than 24h is stale bookkeeping UNLESS the
+    // public probe says otherwise this scan. Probe succeeded → suppress
+    // the finding so the resolve pass archives the row
+    // (stale_no_new_receipts): the box answers publicly and simply stopped
+    // emitting receipts. Probe still failing → the outage is live; the
+    // finding stands. Probe UNKNOWN → the stale receipt alone is not
+    // evidence of a new outage: emit no finding — reporting one would
+    // REOPEN a silently archived row and re-page with no new outage
+    // evidence — but mark the key unknown so an already-open row stays
+    // open untouched instead of being resolved on a probe we could not
+    // run. Only a failed probe or a fresh (≤24h) receipt reopens a stale
+    // box_down.
     if (
       receiptMs != null &&
       now - receiptMs > BOX_DOWN_STALE_RECEIPT_MS &&
-      input.publicOutageStartedAtMs?.get(agent.id) == null &&
-      !input.publicProbeUnknownAgentIds?.has(agent.id)
+      input.publicOutageStartedAtMs?.get(agent.id) == null
     ) {
+      if (input.publicProbeUnknownAgentIds?.has(agent.id)) {
+        unknownKeys.add(key);
+      }
       continue;
     }
     findings.push({
@@ -855,17 +862,21 @@ const WATCHDOG_EVENTS_PER_AGENT_LIMIT = 30;
 // it and the evaluator pages for a box that already recovered — and the
 // mirror image hides a live outage behind stale recoveries.
 //
-// Two orderings per kind because neither alone bounds same-kind crowding.
-// Ordering by first_seen_at desc alone lets a burst of OLD-event_at
-// receipts recorded later push the genuinely newest EVENT out of the
-// window — a backlog relay re-delivering 10 stale failures can hide the
-// latest failure behind them, flipping the cross-kind verdict to a
-// recovery that is actually older. Ordering by metadata->>event_at desc
-// alone cannot see a receipt whose event_at is missing or unparseable
-// (those must compete on the first_seen_at fallback). The union misses a
-// receipt only when 10+ same-kind receipts beat it on BOTH orderings —
-// and any such receipt loses the effective-time comparison to a window
-// member anyway.
+// Three orderings per kind because no two of them bound same-kind
+// crowding in every direction. Ordering by first_seen_at desc alone lets
+// a burst of OLD-event_at receipts recorded later push the genuinely
+// newest EVENT out of the window — a backlog relay re-delivering 10 stale
+// failures can hide the latest failure behind them, flipping the
+// cross-kind verdict to a recovery that is actually older. Ordering by
+// metadata->>event_at desc alone cannot see a receipt whose event_at is
+// missing or unparseable — and neither can the recorded-time window when
+// a burst of newer-recorded receipts that DO carry event_at fills it:
+// a null-event_at receipt then has no window at all, even when its
+// first_seen_at fallback makes it the newest effective receipt of its
+// kind. The third window bounds the null-event_at subset on its own
+// (recorded-time order over rows filtered event_at IS NULL), so a
+// receipt can only be displaced from the union by same-kind receipts
+// that genuinely beat its effective time.
 const SURFACE_RECEIPT_WINDOW = 10;
 // The per-agent watchdog reads are the scan's least bounded loop: with no
 // deadline, (agents ÷ 8) × per-query latency can exceed the route's
@@ -895,6 +906,139 @@ async function collectWatchdogEvents(
       unknownAgentIds.add(rest);
     }
   };
+  // One agent's reads: the mixed diagnosis timeline plus the bounded
+  // per-kind/per-ordering surface-receipt windows. Extracted so the whole
+  // unit can race the watchdog deadline — a stalled read must not hold a
+  // worker past the budget the report pass and heartbeat depend on.
+  const readAgent = async (id: string): Promise<void> => {
+    const { data, error } = await db
+      .from("ops_events")
+      .select("id,title,first_seen_at,metadata")
+      .eq("instance_id", id)
+      .like("source", "box.surface_watchdog.%")
+      .order("metadata->>event_at", { ascending: false })
+      .limit(WATCHDOG_EVENTS_PER_AGENT_LIMIT);
+    if (error) {
+      unknownAgentIds.add(id);
+      log.warn("customer-incidents: watchdog event fetch failed for agent", {
+        source: "customer-incidents",
+        failureType: "watchdog_events_fetch_failed",
+        instanceId: id,
+        errorMessage: error.message,
+      });
+      return;
+    }
+    byAgent.set(
+      id,
+      ((data ?? []) as WatchdogOpsRow[]).map(watchdogEventFromOpsRow),
+    );
+    // The newest surface failure/recovery receipt gets its own bounded
+    // reads — THREE ORDERINGS per receipt kind, all in flight at once.
+    // The 30-row mixed timeline above is diagnostic context and can be
+    // entirely newer non-surface receipts, which would hide the
+    // receipt that actually decides whether the box is down; and a
+    // single mixed receipt window lets one kind crowd the other out
+    // of view (a late-relayed burst of stale failures can push a
+    // newer recovery outside it — or stale recoveries a live
+    // failure). Within one kind the three orderings bound the same
+    // crowding in every direction: the recorded-time window sees
+    // receipts whose effective time is the first_seen_at fallback, the
+    // event-time window cannot be crowded out by late-recorded stale
+    // events, and the null-event_at window keeps fallback-timestamped
+    // receipts visible when newer-recorded event_at-bearing receipts
+    // fill the recorded-time window.
+    const receiptWindowQueries = (eventTypes: string[]) => {
+      const base = () =>
+        db
+          .from("ops_events")
+          .select("id,title,first_seen_at,metadata")
+          .eq("instance_id", id)
+          .like("source", "box.surface_watchdog.%")
+          .in("metadata->>event_type", eventTypes)
+          .limit(SURFACE_RECEIPT_WINDOW);
+      return [
+        // Newest-RECORDED receipts of the kind: first_seen_at is
+        // always populated, so this window covers receipts whose
+        // effective time is the record-time fallback.
+        base().order("first_seen_at", { ascending: false }),
+        // Newest box-REPORTED events of the kind: a burst of stale
+        // receipts relayed late cannot push the genuinely newest
+        // event below this window's cutoff. Rows without event_at
+        // are filtered out — they would sort first under DESC and
+        // waste window slots on receipts the recorded-time window
+        // already covers.
+        base()
+          .not("metadata->>event_at", "is", null)
+          .order("metadata->>event_at", { ascending: false }),
+        // Newest-recorded receipts with NO event_at: the two windows
+        // above can both fill with event_at-bearing receipts — the
+        // event-time window excludes nulls by construction and the
+        // recorded-time window admits them on recency — so a
+        // fallback-timestamped receipt could otherwise be crowded out
+        // entirely even when it is the newest effective receipt of
+        // its kind. Its effective time IS first_seen_at, so only
+        // newer-recorded null-event_at receipts may displace it.
+        base()
+          .is("metadata->>event_at", null)
+          .order("first_seen_at", { ascending: false }),
+      ];
+    };
+    const [
+      downRecorded,
+      downEvents,
+      downNulls,
+      recoveryRecorded,
+      recoveryEvents,
+      recoveryNulls,
+    ] = await Promise.all([
+      ...receiptWindowQueries(BOX_DOWN_EVENT_TYPE_LIST),
+      ...receiptWindowQueries(BOX_RECOVERY_EVENT_TYPE_LIST),
+    ]);
+    const receiptError =
+      downRecorded.error ??
+      downEvents.error ??
+      downNulls.error ??
+      recoveryRecorded.error ??
+      recoveryEvents.error ??
+      recoveryNulls.error;
+    if (receiptError) {
+      // The timeline read succeeded but a deciding receipt did not —
+      // box_down cannot be evaluated for this agent this pass.
+      unknownAgentIds.add(id);
+      log.warn("customer-incidents: surface receipt fetch failed for agent", {
+        source: "customer-incidents",
+        failureType: "surface_receipt_fetch_failed",
+        instanceId: id,
+        errorMessage: receiptError.message,
+      });
+      return;
+    }
+    // Pick the newest receipt by EFFECTIVE time (event_at, else
+    // first_seen_at) across the union of all six windows — the same
+    // rule evaluateCustomerIncidents applies, so a receipt with a
+    // missing/invalid event_at cannot shadow a genuinely newer one.
+    // A row inside several windows appears several times; dedupe by
+    // row id so the comparison sees each receipt once.
+    const unionRows = new Map<string, WatchdogOpsRow>();
+    for (const result of [
+      downRecorded,
+      downEvents,
+      downNulls,
+      recoveryRecorded,
+      recoveryEvents,
+      recoveryNulls,
+    ]) {
+      for (const row of (result.data ?? []) as WatchdogOpsRow[]) {
+        unionRows.set(String(row.id), row);
+      }
+    }
+    const receipt = sortWatchdogEventsByEventAt(
+      [...unionRows.values()].map(watchdogEventFromOpsRow),
+    )[0];
+    if (receipt) {
+      latestSurfaceByAgent.set(id, receipt);
+    }
+  };
   await Promise.all(
     Array.from({ length: Math.min(WATCHDOG_FETCH_CONCURRENCY, queue.length) }, async () => {
       for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
@@ -902,104 +1046,27 @@ async function collectWatchdogEvents(
           markRestUnknown(id);
           return;
         }
-        const { data, error } = await db
-          .from("ops_events")
-          .select("id,title,first_seen_at,metadata")
-          .eq("instance_id", id)
-          .like("source", "box.surface_watchdog.%")
-          .order("metadata->>event_at", { ascending: false })
-          .limit(WATCHDOG_EVENTS_PER_AGENT_LIMIT);
-        if (error) {
-          unknownAgentIds.add(id);
-          log.warn("customer-incidents: watchdog event fetch failed for agent", {
-            source: "customer-incidents",
-            failureType: "watchdog_events_fetch_failed",
-            instanceId: id,
-            errorMessage: error.message,
-          });
+        if (deadlineAt == null) {
+          await readAgent(id);
           continue;
         }
-        byAgent.set(
-          id,
-          ((data ?? []) as WatchdogOpsRow[]).map(watchdogEventFromOpsRow),
+        // Hard deadline on the reads themselves, not just admission: a
+        // stalled query must not hold a worker past the budget — the
+        // agent is unread (unknown — never resolved on partial data) and
+        // the queue drains for the next pass.
+        const completed = await finishedBeforeDeadline(
+          () => readAgent(id),
+          deadlineAt,
+          clock,
         );
-        // The newest surface failure/recovery receipt gets its own bounded
-        // reads — TWO ORDERINGS per receipt kind, all in flight at once.
-        // The 30-row mixed timeline above is diagnostic context and can be
-        // entirely newer non-surface receipts, which would hide the
-        // receipt that actually decides whether the box is down; and a
-        // single mixed receipt window lets one kind crowd the other out
-        // of view (a late-relayed burst of stale failures can push a
-        // newer recovery outside it — or stale recoveries a live
-        // failure). Within one kind the two orderings bound the same
-        // crowding the other direction: the recorded-time window sees
-        // receipts whose effective time is the first_seen_at fallback
-        // while the event-time window cannot be crowded out by
-        // late-recorded stale events.
-        const receiptWindowQueries = (eventTypes: string[]) => {
-          const base = () =>
-            db
-              .from("ops_events")
-              .select("id,title,first_seen_at,metadata")
-              .eq("instance_id", id)
-              .like("source", "box.surface_watchdog.%")
-              .in("metadata->>event_type", eventTypes)
-              .limit(SURFACE_RECEIPT_WINDOW);
-          return [
-            // Newest-RECORDED receipts of the kind: first_seen_at is
-            // always populated, so this window covers receipts whose
-            // effective time is the record-time fallback.
-            base().order("first_seen_at", { ascending: false }),
-            // Newest box-REPORTED events of the kind: a burst of stale
-            // receipts relayed late cannot push the genuinely newest
-            // event below this window's cutoff. Rows without event_at
-            // are filtered out — they would sort first under DESC and
-            // waste window slots on receipts the recorded-time window
-            // already covers.
-            base()
-              .not("metadata->>event_at", "is", null)
-              .order("metadata->>event_at", { ascending: false }),
-          ];
-        };
-        const [downRecorded, downEvents, recoveryRecorded, recoveryEvents] =
-          await Promise.all([
-            ...receiptWindowQueries(BOX_DOWN_EVENT_TYPE_LIST),
-            ...receiptWindowQueries(BOX_RECOVERY_EVENT_TYPE_LIST),
-          ]);
-        const receiptError =
-          downRecorded.error ??
-          downEvents.error ??
-          recoveryRecorded.error ??
-          recoveryEvents.error;
-        if (receiptError) {
-          // The timeline read succeeded but a deciding receipt did not —
-          // box_down cannot be evaluated for this agent this pass.
-          unknownAgentIds.add(id);
-          log.warn("customer-incidents: surface receipt fetch failed for agent", {
+        if (!completed) {
+          log.warn("customer-incidents: watchdog reads exceeded the scan deadline for agent", {
             source: "customer-incidents",
-            failureType: "surface_receipt_fetch_failed",
+            failureType: "watchdog_reads_deadline",
             instanceId: id,
-            errorMessage: receiptError.message,
           });
-          continue;
-        }
-        // Pick the newest receipt by EFFECTIVE time (event_at, else
-        // first_seen_at) across the union of all four windows — the same
-        // rule evaluateCustomerIncidents applies, so a receipt with a
-        // missing/invalid event_at cannot shadow a genuinely newer one.
-        // A row inside both orderings of its kind appears twice; dedupe by
-        // row id so the comparison sees each receipt once.
-        const unionRows = new Map<string, WatchdogOpsRow>();
-        for (const result of [downRecorded, downEvents, recoveryRecorded, recoveryEvents]) {
-          for (const row of (result.data ?? []) as WatchdogOpsRow[]) {
-            unionRows.set(String(row.id), row);
-          }
-        }
-        const receipt = sortWatchdogEventsByEventAt(
-          [...unionRows.values()].map(watchdogEventFromOpsRow),
-        )[0];
-        if (receipt) {
-          latestSurfaceByAgent.set(id, receipt);
+          markRestUnknown(id);
+          return;
         }
       }
     }),
@@ -1062,6 +1129,44 @@ async function runPool<T>(
       }
     }),
   );
+}
+
+/**
+ * Bound one unit of scan work by a phase deadline — a HARD bound, not just
+ * the admission check at the queue head. The supabase/PostgREST client in
+ * this codebase exposes no per-query timeout, so the bound is a RACE
+ * rather than a cancellation: when the deadline wins, the op keeps
+ * running in the background while the scan moves on and still reaches the
+ * heartbeat write. That is safe because every write the op can still land
+ * is version-guarded (a stale archive/reset no-ops against a row that
+ * moved) or idempotent, and the caller counts the timed-out unit as
+ * degraded and treats its subject as unprocessed — rows unarchived and
+ * unresolved, retried next pass.
+ *
+ * `start` is a thunk so work past the deadline is never even started: a
+ * write that begins at the deadline boundary would otherwise run in the
+ * background untracked. Returns false when the deadline won; rejections
+ * from the work itself propagate exactly as a direct await would.
+ */
+async function finishedBeforeDeadline(
+  start: () => PromiseLike<unknown>,
+  deadlineAt: number,
+  clock: () => number,
+): Promise<boolean> {
+  const remainingMs = deadlineAt - clock();
+  if (remainingMs <= 0) return false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const winner = await Promise.race([
+      Promise.resolve(start()),
+      new Promise<"deadline">((resolve) => {
+        timer = setTimeout(() => resolve("deadline"), remainingMs);
+      }),
+    ]);
+    return winner !== "deadline";
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /**
@@ -1293,6 +1398,47 @@ async function resetPublicProbeRowFirstSeen(
   return (data?.length ?? 0) > 0 ? "reset" : "moved";
 }
 
+type ProbeRowStartRead =
+  | { outcome: "open"; firstSeenAt: string | null }
+  | { outcome: "archived" | "missing" | "error" };
+
+/**
+ * Read back the outage start a probe-row write just established. After a
+ * down-signal report the stored row — not this scan's earlier snapshot —
+ * is the truth: a racing archive turns the report's reopen into a fresh
+ * first_seen_at (resetFirstSeenOnReopen pins the NEW outage's start in
+ * the same write), so the observed start cannot be trusted to describe
+ * the row's current outage. A row archived or gone at read-back time is
+ * contested state; the caller treats it as unknown rather than page on
+ * either version.
+ */
+async function readPublicProbeRowStart(
+  db: DbClient,
+  rowId: string,
+): Promise<ProbeRowStartRead> {
+  const { data, error } = await db
+    .from("ops_events")
+    .select("first_seen_at,archived_at")
+    .eq("id", rowId)
+    .maybeSingle();
+  if (error) {
+    log.warn("customer-incidents: public probe row outage start read-back failed", {
+      source: "customer-incidents",
+      failureType: "public_probe_start_read_failed",
+      opsEventId: rowId,
+      errorMessage: error.message,
+    });
+    return { outcome: "error" };
+  }
+  if (!data) return { outcome: "missing" };
+  const row = data as { first_seen_at?: unknown; archived_at?: unknown };
+  if (row.archived_at != null) return { outcome: "archived" };
+  return {
+    outcome: "open",
+    firstSeenAt: typeof row.first_seen_at === "string" ? row.first_seen_at : null,
+  };
+}
+
 export interface PublicProbeApplication {
   /** agentId → outage start (ms epoch) for probes currently failing. */
   outageStartedAtMs: Map<string, number>;
@@ -1309,8 +1455,11 @@ export interface PublicProbeApplication {
  * un-archiving keeps the OLD row's first_seen_at — so the scan pins
  * first_seen_at to this outage's start or a recurrence would look 10
  * minutes old instantly. An "up" signal archives the open row; a failed
- * archive leaves the outage standing for evaluation. Subjects still queued
- * when the write deadline passes are left unprocessed — unknown, so their
+ * archive leaves the outage standing for evaluation. On a box WITH an
+ * observed open row the down-signal report may have REOPENED it after a
+ * racing archive — the post-write row's first_seen_at, not the observed
+ * snapshot, then decides the outage start. Subjects still queued when the
+ * write deadline passes are left unprocessed — unknown, so their
  * incidents neither open nor resolve on a skipped write.
  */
 async function applyPublicProbeSignals(
@@ -1328,20 +1477,10 @@ async function applyPublicProbeSignals(
   };
   const nowIso = new Date(deps.now).toISOString();
 
-  await runPool(agents, PUBLIC_PROBE_WRITE_CONCURRENCY, async (agent) => {
-    // The probe deadline bounds network I/O but not this per-subject
-    // decision/write phase; once the invocation approaches its limit the
-    // remaining subjects stay unprocessed — unknown, never resolved on a
-    // skipped write — and the scan still reaches the heartbeat.
-    if (budget.clock() >= budget.deadlineAt) {
-      result.unknownAgentIds.add(agent.id);
-      result.degradedAgentIds.add(agent.id);
-      return;
-    }
+  const applyToAgent = async (agent: HivraAgentSnapshot): Promise<void> => {
     const signal: PublicProbeSignal =
       signals.get(agent.id) ?? { kind: "skipped", reason: "budget" };
     const openRow = openRowsByAgent.get(agent.id) ?? null;
-    const rowStartMs = openRow ? parseTimeMs(openRow.firstSeenAt) : null;
 
     if (signal.kind === "skipped") {
       result.unknownAgentIds.add(agent.id);
@@ -1377,26 +1516,49 @@ async function applyPublicProbeSignals(
     // signal.kind === "down"
     const reported = await deps.report(publicProbeUnreachableOpsEvent(agent, signal));
     if (openRow) {
-      // Continuing outage: first_seen_at already holds the start; the report
-      // only refreshes last_seen_at/metadata. A failed refresh does not
-      // change the outage state, but it is degraded.
+      // A failed refresh does not change the outage state, but it is
+      // degraded.
       if (reported == null) result.degradedAgentIds.add(agent.id);
-      if (rowStartMs == null) {
+      // Whether the outage CONTINUED or was REOPENED decides its start —
+      // and the observed snapshot cannot tell them apart. A racing scan's
+      // healthy-probe archive between this scan's row read and the report
+      // flips the report into a reopen, and resetFirstSeenOnReopen pins
+      // first_seen_at to the NEW outage's start in that same write. Using
+      // the observed start then backdates a brand-new outage by the
+      // archived row's age and the evaluator pages it instantly. Read back
+      // the start the write actually left: only a stored first_seen_at
+      // confirms the outage the row now records. (The observed row is the
+      // outage record — reportOpsEvent dedupes onto it by fingerprint
+      // whenever it exists.)
+      const stored = await readPublicProbeRowStart(db, openRow.id);
+      const storedStartMs =
+        stored.outcome === "open" ? parseTimeMs(stored.firstSeenAt) : null;
+      if (stored.outcome !== "open" || storedStartMs == null) {
+        // The outage start could not be confirmed: the read failed, the
+        // row was archived or deleted under this scan, or it carries no
+        // usable timestamp. Unknown — never page on an unverified age.
         result.unknownAgentIds.add(agent.id);
-        result.degradedAgentIds.add(agent.id);
+        if (stored.outcome === "error" || stored.outcome === "open") {
+          result.degradedAgentIds.add(agent.id);
+        }
         return;
       }
-      // A probe outage that predates the current runtime marker (the same
-      // provisioned_at / sleep_tier_changed_at / operation_started_at bound
-      // receipts are checked against) belongs to the previous boot: the
-      // first failed probe after a wake or reprovision must not inherit the
-      // pre-sleep outage start, or it would page instantly. Pin the row's
-      // first_seen_at to now — guarded on the observed value — so this and
-      // later scans measure THIS outage; failures continuing on the same
-      // runtime keep their clock.
+      // A stored outage start that predates the current runtime marker
+      // (the same provisioned_at / sleep_tier_changed_at /
+      // operation_started_at bound receipts are checked against) belongs
+      // to the previous boot: the first failed probe after a wake or
+      // reprovision must not inherit the pre-sleep outage start, or it
+      // would page instantly. Pin the row's first_seen_at to now —
+      // guarded on the read-back value — so this and later scans measure
+      // THIS outage; failures continuing on the same runtime keep their
+      // clock.
       const runtimeMarkerMs = agentRuntimeMarkerMs(agent);
-      if (runtimeMarkerMs != null && rowStartMs < runtimeMarkerMs) {
-        const reset = await resetPublicProbeRowFirstSeen(db, openRow, nowIso);
+      if (runtimeMarkerMs != null && storedStartMs < runtimeMarkerMs) {
+        const reset = await resetPublicProbeRowFirstSeen(
+          db,
+          { ...openRow, firstSeenAt: stored.firstSeenAt },
+          nowIso,
+        );
         if (reset === "reset") {
           result.outageStartedAtMs.set(agent.id, deps.now);
         } else {
@@ -1408,7 +1570,7 @@ async function applyPublicProbeSignals(
         }
         return;
       }
-      result.outageStartedAtMs.set(agent.id, rowStartMs);
+      result.outageStartedAtMs.set(agent.id, storedStartMs);
       return;
     }
 
@@ -1425,6 +1587,36 @@ async function applyPublicProbeSignals(
     // the same write that reopens the row, so the 10-minute rule measures
     // THIS outage, not the first one ever seen.
     result.outageStartedAtMs.set(agent.id, deps.now);
+  };
+
+  await runPool(agents, PUBLIC_PROBE_WRITE_CONCURRENCY, async (agent) => {
+    // The probe deadline bounds network I/O but not this per-subject
+    // decision/write phase; once the invocation approaches its limit the
+    // remaining subjects stay unprocessed — unknown, never resolved on a
+    // skipped write — and the scan still reaches the heartbeat.
+    if (budget.clock() >= budget.deadlineAt) {
+      result.unknownAgentIds.add(agent.id);
+      result.degradedAgentIds.add(agent.id);
+      return;
+    }
+    // The deadline also races work already started: a stalled report or
+    // archive leaves the subject unprocessed (unknown + degraded, retried
+    // next pass) instead of holding the invocation past the heartbeat
+    // margin. Any write it still lands is version-guarded.
+    const completed = await finishedBeforeDeadline(
+      () => applyToAgent(agent),
+      budget.deadlineAt,
+      budget.clock,
+    );
+    if (!completed) {
+      result.unknownAgentIds.add(agent.id);
+      result.degradedAgentIds.add(agent.id);
+      log.warn("customer-incidents: probe-row write exceeded the scan deadline", {
+        source: "customer-incidents",
+        failureType: "probe_row_write_deadline",
+        instanceId: agent.id,
+      });
+    }
   });
 
   return result;
@@ -2264,12 +2456,7 @@ export async function runCustomerIncidentScan(
       (item): ReportItem => ({ kind: "touch", finding: item.finding, row: item.row }),
     ),
   ];
-  for (let index = 0; index < reportOrder.length; index += 1) {
-    if (clock() >= reportDeadlineAt) {
-      summary.degraded += reportOrder.length - index;
-      break;
-    }
-    const item = reportOrder[index];
+  const processReportItem = async (item: ReportItem): Promise<void> => {
     if (item.kind === "touch") {
       summary.stillOpen += 1;
       // The incident still holds and the row is already open — no re-page,
@@ -2280,7 +2467,7 @@ export async function runCustomerIncidentScan(
       // changed under this scan — already safe; "error" is degraded.
       const touch = await touchOpenIncidentRow(db, item.row, nowIso);
       if (touch === "error") summary.degraded += 1;
-      continue;
+      return;
     }
     const finding = item.finding;
     let probes: PublicProbeResult[] = [];
@@ -2327,6 +2514,31 @@ export async function runCustomerIncidentScan(
         incidentKey: finding.key,
       });
     }
+  };
+  for (let index = 0; index < reportOrder.length; index += 1) {
+    if (clock() >= reportDeadlineAt) {
+      summary.degraded += reportOrder.length - index;
+      break;
+    }
+    const item = reportOrder[index];
+    // The deadline also races the item's own work: a report or version
+    // refresh that stalls past the budget counts this item and the whole
+    // remaining queue as degraded — they re-emit next scan — rather than
+    // pushing the invocation past the resolve pass and the heartbeat.
+    const completed = await finishedBeforeDeadline(
+      () => processReportItem(item),
+      reportDeadlineAt,
+      clock,
+    );
+    if (!completed) {
+      summary.degraded += reportOrder.length - index;
+      log.warn("customer-incidents: report work exceeded the scan deadline; remaining items deferred", {
+        source: "customer-incidents",
+        failureType: "report_pass_deadline",
+        remaining: reportOrder.length - index,
+      });
+      break;
+    }
   }
 
   // ---- resolve closed incidents ----------------------------------------------
@@ -2346,18 +2558,17 @@ export async function runCustomerIncidentScan(
     ),
     scanTick,
   );
-  await runPool(resolveRows, SCAN_RESOLVE_CONCURRENCY, async (row) => {
-    if (clock() >= resolveDeadlineAt) {
-      summary.degraded += 1;
-      return;
-    }
+  const resolveOpenIncidentRow = async (
+    row: OpenIncidentRow & { incidentKey: string },
+  ): Promise<void> => {
     // A box_down whose newest surface receipt is over 24h old while the
     // box's public /healthz probe succeeded this scan is stale bookkeeping,
     // not a live outage — archive it silently like an aged-out launch. The
     // check runs BEFORE treating a present finding as still-open: the
     // evaluator suppresses stale-receipt findings on a healthy probe, but
     // if a stale finding is ever emitted the row must still not pin open.
-    // A live failure or an unknown probe keeps the incident open.
+    // A live failure keeps the incident open; an unknown probe leaves it
+    // untouched via unknownKeys — it neither resolves nor re-reports.
     let staleBoxDown = false;
     if (row.incidentKey.startsWith(BOX_DOWN_SUBJECT_PREFIX)) {
       const agentId = row.incidentKey.slice(BOX_DOWN_SUBJECT_PREFIX.length);
@@ -2458,6 +2669,34 @@ export async function runCustomerIncidentScan(
         opsEventId: row.id,
         incidentKey: row.incidentKey,
       });
+    }
+  };
+  await runPool(resolveRows, SCAN_RESOLVE_CONCURRENCY, async (row) => {
+    if (clock() >= resolveDeadlineAt) {
+      summary.degraded += 1;
+      return;
+    }
+    // The deadline races the row's work too, not just its admission: a
+    // subject lookup, archive or resolved notice that stalls past the
+    // budget leaves the row open for the next pass (any write it still
+    // lands is version-guarded) instead of running the invocation past
+    // the heartbeat margin.
+    const completed = await finishedBeforeDeadline(
+      () => resolveOpenIncidentRow(row),
+      resolveDeadlineAt,
+      clock,
+    );
+    if (!completed) {
+      summary.degraded += 1;
+      log.warn(
+        "customer-incidents: resolve work exceeded the scan deadline; row left open",
+        {
+          source: "customer-incidents",
+          failureType: "incident_resolve_deadline",
+          opsEventId: row.id,
+          incidentKey: row.incidentKey,
+        },
+      );
     }
   });
 
