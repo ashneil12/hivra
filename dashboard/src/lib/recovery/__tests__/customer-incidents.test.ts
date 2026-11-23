@@ -2740,7 +2740,7 @@ describe("runCustomerIncidentScan", () => {
       // fingerprint read and its verdict-refresh write: the .lt(archived_at)
       // predicate then matches zero rows. Returning "recorded" there would
       // let box_unreachable resolve while the outage row is open again.
-      let onResolve: ((table: string, calls: unknown[][]) => void) | undefined;
+      let onResolve: ((table: string, calls: unknown[][]) => void) | undefined = undefined;
       const db = fakeIncidentDb({
         agents: [agentDbRow()],
         openIncidents: [
@@ -2791,7 +2791,7 @@ describe("runCustomerIncidentScan", () => {
       // first_seen_at is preserved but last_seen_at moves past the healthy
       // observation, so the archive must no-op instead of clearing the
       // newer down verdict and reading the box as healthy.
-      let onResolve: ((table: string, calls: unknown[][]) => void) | undefined;
+      let onResolve: ((table: string, calls: unknown[][]) => void) | undefined = undefined;
       const db = fakeIncidentDb({
         agents: [agentDbRow()],
         openIncidents: [
@@ -2850,7 +2850,7 @@ describe("runCustomerIncidentScan", () => {
       // lookup returns was refreshed (last_seen_at) after this scan's
       // healthy probe ran — the observation cannot supersede it, so the
       // verdict write is never attempted and the subject stays contested.
-      let onResolve: ((table: string, calls: unknown[][]) => void) | undefined;
+      let onResolve: ((table: string, calls: unknown[][]) => void) | undefined = undefined;
       const db = fakeIncidentDb({
         agents: [agentDbRow()],
         openIncidents: [
