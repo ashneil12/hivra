@@ -17,9 +17,8 @@
  * the same reason. A failure of any kind (gate refusal, feed outage, timeout)
  * means "not usable": the check fails closed and never serves an older price.
  *
- * Who it applies to: accounts that may only pay and qualify in $HIVRA (not in
- * the $HermesOS grandfather cohort, after activation). Before activation, and
- * for grandfathered accounts, nothing here changes anything. Quotes already
+ * Applies after activation to new accounts and to accounts that opted into
+ * the earned-holder switch. Legacy conversion agreements are preserved. Quotes already
  * issued, their settlement, existing tier rows and withdrawals are never
  * gated here.
  *
@@ -87,14 +86,11 @@ export async function isHivraUsable(options: ReadinessOptions = {}): Promise<boo
   return (await getHivraReadiness(options)).usable;
 }
 
-/**
- * True when this account's new token payments and tiers are in $HIVRA only:
- * $HIVRA is active and the account is not in the $HermesOS grandfather cohort.
- * Grandfathered accounts (converted or not) and every account before
- * activation are never gated by readiness.
- */
-export function accessDependsOnHivraReadiness(access: Pick<UserTokenAccess, "phase" | "grandfathered">): boolean {
-  return access.phase === "active" && !access.grandfathered;
+type ReadinessAccess = Pick<UserTokenAccess, "phase" | "grandfathered" | "earnedHolderSwitch">;
+
+/** Require a usable price for new business after the voluntary holder switch. */
+export function accessDependsOnHivraReadiness(access: ReadinessAccess): boolean {
+  return access.phase === "active" && (!access.grandfathered || access.earnedHolderSwitch === true);
 }
 
 /** A new $HIVRA payment or tier was asked for while $HIVRA is not usable. */
@@ -109,11 +105,11 @@ export class HivraNotReadyError extends Error {
 
 /**
  * Refuse a NEW payment quote or tier in `tokenKey` for this account while
- * $HIVRA is not usable. No-op for $HermesOS, grandfathered accounts and
+ * $HIVRA is not usable. No-op for $HermesOS, accounts on a legacy arrangement and
  * before activation.
  */
 export async function assertHivraReadyFor(
-  access: Pick<UserTokenAccess, "phase" | "grandfathered">,
+  access: ReadinessAccess,
   tokenKey: PlatformTokenKey,
   options: ReadinessOptions = {}
 ): Promise<void> {
@@ -132,7 +128,7 @@ export interface TokenPaymentAvailability {
 
 /** What Billing may offer this account in tokens right now. */
 export async function resolveTokenPaymentAvailability(
-  access: Pick<UserTokenAccess, "phase" | "grandfathered" | "paymentToken">,
+  access: ReadinessAccess & Pick<UserTokenAccess, "paymentToken">,
   options: ReadinessOptions = {}
 ): Promise<TokenPaymentAvailability> {
   const now = options.now ?? new Date();
@@ -195,7 +191,7 @@ export async function hasExistingTokenTier(userId: string, db: ExistingTierDb | 
  * holds (breach and grace run as always) but gains no new one.
  */
 export async function newHivraTiersAllowed(
-  access: Pick<UserTokenAccess, "phase" | "grandfathered">,
+  access: ReadinessAccess,
   options: ReadinessOptions = {}
 ): Promise<boolean> {
   if (!accessDependsOnHivraReadiness(access)) return true;

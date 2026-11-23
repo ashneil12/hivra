@@ -1,6 +1,6 @@
 import { isBillingV2ServerEnabled } from "@/lib/billing/billing-v2-availability";
 import { isCryptoBillingEnabled } from "@/lib/billing/crypto-availability";
-import { resolveUserTokenAccess } from "@/lib/billing/token-access";
+import { isHolderTierCarryoverEnabled, readHolderTierCarryover, resolveUserTokenAccess } from "@/lib/billing/token-access";
 import { getHivraTokenPhase } from "@/lib/billing/token-registry";
 import { log } from "@/lib/logger";
 
@@ -9,7 +9,7 @@ import { readConversionAccessGate } from "../conversion-access.server";
 jest.mock("server-only", () => ({}));
 jest.mock("@/lib/billing/billing-v2-availability", () => ({ isBillingV2ServerEnabled: jest.fn() }));
 jest.mock("@/lib/billing/crypto-availability", () => ({ isCryptoBillingEnabled: jest.fn() }));
-jest.mock("@/lib/billing/token-access", () => ({ resolveUserTokenAccess: jest.fn() }));
+jest.mock("@/lib/billing/token-access", () => ({ isHolderTierCarryoverEnabled: jest.fn(() => false), readHolderTierCarryover: jest.fn(), resolveUserTokenAccess: jest.fn() }));
 jest.mock("@/lib/billing/token-registry", () => ({ getHivraTokenPhase: jest.fn() }));
 jest.mock("@/lib/logger", () => ({ log: { error: jest.fn() } }));
 
@@ -17,6 +17,7 @@ const NOW = new Date("2026-10-02T00:00:00Z");
 
 describe("readConversionAccessGate", () => {
   beforeEach(() => {
+    jest.mocked(isHolderTierCarryoverEnabled).mockReturnValue(false);
     jest.mocked(getHivraTokenPhase).mockReturnValue("active");
     jest.mocked(isBillingV2ServerEnabled).mockReturnValue(true);
     jest.mocked(isCryptoBillingEnabled).mockReturnValue(true);
@@ -35,6 +36,18 @@ describe("readConversionAccessGate", () => {
       conversionGraceEndsAt: "2026-10-04T12:00:00.000Z",
     });
     expect(resolveUserTokenAccess).toHaveBeenCalledWith("user_1", { now: NOW });
+  });
+
+  it("reads the earned tier preview only for the enabled holder journey", async () => {
+    jest.mocked(isHolderTierCarryoverEnabled).mockReturnValue(true);
+    const access = { grandfathered: true, convertedAt: null, conversionGraceEndsAt: null } as Awaited<ReturnType<typeof resolveUserTokenAccess>>;
+    jest.mocked(resolveUserTokenAccess).mockResolvedValue(access);
+    jest.mocked(readHolderTierCarryover).mockResolvedValue({ tiers: [] });
+    await expect(readConversionAccessGate("user_1", NOW, { recordMembership: false })).resolves.toMatchObject({
+      carryover: { tiers: [] },
+    });
+    expect(resolveUserTokenAccess).toHaveBeenCalledWith("user_1", { now: NOW, recordMembership: false });
+    expect(readHolderTierCarryover).toHaveBeenCalledWith("user_1", access);
   });
 
   it.each<[string, () => void]>([

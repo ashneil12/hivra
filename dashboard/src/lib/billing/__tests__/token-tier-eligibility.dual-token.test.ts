@@ -47,6 +47,7 @@ import { clearTierBreachHold, evaluateAndRecordTokenTierEligibility, holdTierBre
 type Row = Record<string, unknown> & { id: string; user_id: string; tier: string };
 
 class FakeDb {
+  beforeFilteredUpdate?: () => void;
   rows: Row[] = [];
   /** Runs after each row read: lets a test change the row under the evaluator. */
   afterLoad: ((row: Row) => void) | null = null;
@@ -92,6 +93,7 @@ class FakeDb {
             },
             eq: (column: string, value: unknown) => ({
               select: async () => {
+                this.beforeFilteredUpdate?.();
                 const target = row();
                 if (!target || target[column] !== value) return { data: [], error: null };
                 Object.assign(target, payload);
@@ -619,5 +621,50 @@ describe("a lock-wallet move in flight", () => {
     expect(db.rows[0].metadata).toEqual({ note: "kept", breach_holds: { c2: expect.objectContaining({ moving_raw: "2" }) } });
     await clearTierBreachHold({ userId: "old", holdId: "c2", db: db as unknown as DbCast });
     expect(db.rows[0].metadata).toEqual({ note: "kept" });
+  });
+});
+
+describe("earned 1:1 holder switches", () => {
+  it.each([
+    [24, 0n, HERMESOS_PRO, true],
+    [73, HERMESOS_PRO, 0n, true],
+    [73, 0n, HERMESOS_PRO, false],
+  ] as const)("evaluates the held generation at hour %i without a live threshold", async (hours, hivra, hermesos, meets) => {
+    const db = new FakeDb();
+    const original = hermesosProRow();
+    db.rows.push({...original, token_key: "hivra", metadata: {
+      holder_carryover: {qualifiedAt: original.qualified_at, amount: original.qualifying_quantity},
+    }});
+    const now = new Date(NOW.getTime() + hours * HOUR_MS);
+    gatedPriceMock.mockRejectedValue(new Error("pool below the liquidity floor"));
+    const result = await evaluateAndRecordTokenTierEligibility({
+      userId: "old", balances: {hivra, hermesos}, now,
+      access: {...converted(NOW, now), earnedHolderSwitch: true}, db: db as unknown as DbCast,
+    });
+    expect(db.rows[0].qualifying_quantity).toBe(HERMESOS_PRO.toString());
+    expect(Boolean(db.rows[0].last_breach_at)).toBe(!meets);
+    expect(result.power?.transition).toBe("unchanged");
+  });
+
+  it("does not let a stale evaluator change a tier that just switched tokens", async () => {
+    const db = new FakeDb();
+    db.rows.push(hermesosProRow());
+    db.beforeFilteredUpdate = () => { db.rows[0].token_key = "hivra"; };
+    await expect(evaluateAndRecordTokenTierEligibility({
+      userId: "old", balances: { hermesos: 0n }, now: NOW, access: grandfathered, db: db as unknown as DbCast,
+    })).rejects.toThrow("Holder tier changed during evaluation");
+    expect(db.rows[0].last_breach_at).toBeNull();
+  });
+
+  it("keeps a suspended legacy row suspended when a fresh threshold is unavailable", async () => {
+    const db = new FakeDb();
+    db.rows.push(hermesosProRow({currently_eligible: false, last_suspend_at: NOW.toISOString()}));
+    gatedPriceMock.mockRejectedValue(new Error("pool below the liquidity floor"));
+    const result = await evaluateAndRecordTokenTierEligibility({
+      userId: "old", balances: {hermesos: HERMESOS_POWER, hivra: HERMESOS_POWER}, now: NOW,
+      access: {...converted(NOW, NOW), earnedHolderSwitch: true}, db: db as unknown as DbCast,
+    });
+    expect(result.pro).toMatchObject({currentlyEligible: false, transition: "unchanged"});
+    expect(db.rows[0].token_key).toBe("hermesos");
   });
 });
