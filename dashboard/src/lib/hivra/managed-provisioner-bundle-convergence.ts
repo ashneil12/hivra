@@ -33,8 +33,9 @@ const PROBE_CONCURRENCY = 4;
  * What it will and will not do:
  * - Hosts considered: every host that holds a live managed computer on this
  *   channel, every active placement host, and the explicit Claude Code launch
- *   host. Nothing else, and only hosts with their own configuration (the sync
- *   library refuses the rest before any SSH).
+ *   host — minus hosts the operator decommissioned (maintenance +
+ *   decommissioned_at). Nothing else, and only hosts with their own
+ *   configuration (the sync library refuses the rest before any SSH).
  * - It only upgrades a provisioner directory that already exists. Preparing a
  *   host for the first time stays an operator step (proxmox-host-standup).
  * - It never replaces a bundle that claims a newer version than this
@@ -164,17 +165,32 @@ async function loadLiveComputersByHost(
 async function loadPlacementHosts(
   supabase: Supabase,
   env: Record<string, string | undefined>,
-): Promise<Set<string>> {
-  const { data, error } = await supabase.from("proxmox_hosts").select("id, status");
+): Promise<{ placement: Set<string>; decommissioned: Set<string> }> {
+  const { data, error } = await supabase
+    .from("proxmox_hosts")
+    .select("id, status, decommissioned_at");
   if (error) throw new Error(`proxmox_hosts read failed: ${error.message}`);
-  const hosts = new Set<string>();
-  for (const row of (data ?? []) as Array<{ id: string; status: string }>) {
-    const id = row.status === "active" ? normalizeHostId(row.id) : null;
-    if (id) hosts.add(id);
+  const placement = new Set<string>();
+  const decommissioned = new Set<string>();
+  for (const row of (data ?? []) as Array<{
+    id: string;
+    status: string;
+    decommissioned_at: string | null;
+  }>) {
+    const id = normalizeHostId(row.id);
+    if (!id) continue;
+    // A decommissioned host is gone for good: its remaining stopped computers
+    // keep their rows, but the host is never a sync candidate again. The
+    // column is only settable on maintenance hosts (check constraint).
+    if (row.status === "maintenance" && row.decommissioned_at) {
+      decommissioned.add(id);
+      continue;
+    }
+    if (row.status === "active") placement.add(id);
   }
   const claudeHost = normalizeHostId(resolveHivraClaudeCodeProxmoxHost(env));
-  if (claudeHost) hosts.add(claudeHost);
-  return hosts;
+  if (claudeHost && !decommissioned.has(claudeHost)) placement.add(claudeHost);
+  return { placement, decommissioned };
 }
 
 function classify(probe: ManagedProvisionerBundleProbe): {
@@ -234,7 +250,7 @@ export async function runManagedProvisionerBundleConvergence(params: {
   if (!enabled && !dryRun) return summary;
   if (!params.supabase) throw new Error("Database is not configured");
 
-  const [liveComputers, placementHosts, assets] = await Promise.all([
+  const [liveComputers, hostRegistry, assets] = await Promise.all([
     loadLiveComputersByHost(params.supabase, params.channel, params.env),
     loadPlacementHosts(params.supabase, params.env),
     deps.loadBundle(),
@@ -242,7 +258,13 @@ export async function runManagedProvisionerBundleConvergence(params: {
   const expectedManifestDigest = createHash("sha256")
     .update(managedProvisionerBundleManifestFile(assets))
     .digest("hex");
-  const hostIds = Array.from(new Set([...liveComputers.keys(), ...placementHosts])).sort();
+  // Decommissioned hosts are excluded even when their stopped computers still
+  // hold rows: the machine is gone, so probing it can only ever report
+  // unreachable and page forever (prod 2026-11: a retired host holding 43
+  // stopped rows kept the sync flagged as failing).
+  const hostIds = Array.from(new Set([...liveComputers.keys(), ...hostRegistry.placement]))
+    .filter((id) => !hostRegistry.decommissioned.has(id))
+    .sort();
 
   // Each probe is an SSH call with its own timeout; a few at a time, so a long
   // host list never opens every connection at once.
@@ -252,7 +274,7 @@ export async function runManagedProvisionerBundleConvergence(params: {
   summary.hosts = hostIds.map((targetId, index) => ({
     targetId,
     liveComputers: liveComputers.get(targetId) ?? 0,
-    placementHost: placementHosts.has(targetId),
+    placementHost: hostRegistry.placement.has(targetId),
     ...classify(probes[index]),
   }));
 
