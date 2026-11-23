@@ -77,12 +77,17 @@ export async function GET(req: NextRequest) {
     // The once-a-day stale pass failing to LOAD or to claim its day
     // produces no per-quote failure, so each rides its own flag — like the
     // crypto reconciler's staleRetryLoadFailed — or the day's one pass
-    // would read as a clean tick that simply found nothing.
+    // would read as a clean tick that simply found nothing. The open
+    // lane's lot probe failing is the same class of auxiliary miss: every
+    // lot-held recovery candidate this tick should have found went unseen
+    // while the rest of the tick ran fine.
     const staleScanLoadFailed = summary.staleScanLoadFailed === true;
     const staleScanClaimFailed = summary.staleScanClaimFailed === true;
     const stalePassFailed = staleScanLoadFailed || staleScanClaimFailed;
+    const lotProbeLoadFailed = summary.lotProbeLoadFailed === true;
+    const auxiliaryLaneFailed = stalePassFailed || lotProbeLoadFailed;
 
-    if (summary.failed > 0 || summary.manualReview > 0 || deferredCount > 0 || stalePassFailed) {
+    if (summary.failed > 0 || summary.manualReview > 0 || deferredCount > 0 || auxiliaryLaneFailed) {
       const failedQuotes = summary.results
         .filter((result) => result.status === "failed")
         .map((result) => ({
@@ -110,6 +115,7 @@ export async function GET(req: NextRequest) {
         deferred,
         staleScanLoadFailed,
         staleScanClaimFailed,
+        lotProbeLoadFailed,
         failedQuotes,
       });
 
@@ -120,7 +126,7 @@ export async function GET(req: NextRequest) {
       // (otherwise successful) reconciliation. A deferral alone is a delay
       // (a later tick picks those quotes up), so it is logged above, not
       // filed.
-      if (summary.failed > 0 || summary.manualReview > 0 || stalePassFailed) {
+      if (summary.failed > 0 || summary.manualReview > 0 || auxiliaryLaneFailed) {
         try {
           await reportOpsEvent({
             source: SOURCE,
@@ -128,7 +134,8 @@ export async function GET(req: NextRequest) {
             title:
               `Managed Venice token reconciliation: ${summary.failed} failed, ` +
               `${summary.manualReview} need manual review` +
-              (stalePassFailed ? ", stale pass did not run" : ""),
+              (stalePassFailed ? ", stale pass did not run" : "") +
+              (lotProbeLoadFailed ? ", lot discovery probe failed" : ""),
             message:
               `Checked ${summary.checked} pending token deposit quote(s): ` +
               `${summary.settled} settled, ${summary.failed} failed, ` +
@@ -137,11 +144,16 @@ export async function GET(req: NextRequest) {
               (stalePassFailed
                 ? `The once-a-day stale quote pass could not ` +
                   (staleScanClaimFailed ? `claim its utc-day slot` : `load its candidates`) +
-                  ` and produced no scans; it retries on the next tick. ` +
-                  `Failed/manual-review quotes represent real deposits awaiting credit — ` +
-                  `inspect the per-quote details in logs and settle manually if needed.`
-                : `Failed/manual-review quotes represent real deposits awaiting credit — ` +
-                  `inspect the per-quote details in logs and settle manually if needed.`),
+                  ` and produced no scans; it retries on the next tick. `
+                : "") +
+              (lotProbeLoadFailed
+                ? `The open lane's deposit-lot discovery probe failed, so the tick ` +
+                  `found no lot-held recovery candidates; each quote's own lot ` +
+                  `check still recovers holders the other lanes reach, and the ` +
+                  `probe retries on the next tick. `
+                : "") +
+              `Failed/manual-review quotes represent real deposits awaiting credit — ` +
+              `inspect the per-quote details in logs and settle manually if needed.`,
             route: ROUTE,
             metadata: {
               failureType: "managed_venice_token_reconciliation_partial_failure",
@@ -156,6 +168,7 @@ export async function GET(req: NextRequest) {
               deferred,
               staleScanLoadFailed,
               staleScanClaimFailed,
+              lotProbeLoadFailed,
               failedQuotes: failedQuotes.slice(0, 25),
             },
           });
@@ -173,17 +186,19 @@ export async function GET(req: NextRequest) {
     // credit — the same condition that files the ops event above must not
     // record a clean run. Deferred quotes are a delay, not a failure; a stale
     // pass that never ran (its day-claim write or its candidate load failed)
-    // is a missed day, not a clean skip.
+    // is a missed day, and a failed lot probe is a blind lane, not a clean
+    // skip.
     await recordCronHeartbeat(
       "managed-venice-token-reconciliation",
-      summary.failed > 0 || summary.manualReview > 0 || stalePassFailed
+      summary.failed > 0 || summary.manualReview > 0 || auxiliaryLaneFailed
         ? {
             ok: false,
             detail:
               `failed=${summary.failed} manualReview=${summary.manualReview} ` +
               `deferred=${deferredCount}` +
               (staleScanLoadFailed ? " stale_scan=load_failed" : "") +
-              (staleScanClaimFailed ? " stale_scan=claim_failed" : ""),
+              (staleScanClaimFailed ? " stale_scan=claim_failed" : "") +
+              (lotProbeLoadFailed ? " lot_probe=load_failed" : ""),
           }
         : undefined,
     );

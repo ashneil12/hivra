@@ -180,6 +180,49 @@ describe("GET /api/cron/managed-venice-token-reconciliation", () => {
     );
   });
 
+  it("reports a failed open-lane lot probe as a degraded tick, not a clean one", async () => {
+    // The lot probe failing produces no per-quote failure either — without
+    // its own flag the tick would read clean while every lot-held recovery
+    // candidate went unseen.
+    (reconcilePendingManagedVeniceTokenQuotes as jest.Mock).mockResolvedValueOnce({
+      checked: 3,
+      settled: 2,
+      underconfirmed: 0,
+      noMatch: 1,
+      manualReview: 0,
+      cancelled: 0,
+      skipped: 0,
+      failed: 0,
+      transferSurfacing: { checked: 0, complete: 0, pending: 0, failed: 0 },
+      deferred: { open: 0, surfacing: 0 },
+      staleScanLoadFailed: false,
+      staleScanClaimFailed: false,
+      lotProbeLoadFailed: true,
+      results: [],
+    });
+
+    const response = await GET(req("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(log.warn).toHaveBeenCalledWith(
+      "managed Venice token reconciliation completed with quote failures",
+      expect.objectContaining({ lotProbeLoadFailed: true })
+    );
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: "warn",
+        metadata: expect.objectContaining({ lotProbeLoadFailed: true }),
+      })
+    );
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "managed-venice-token-reconciliation",
+      expect.objectContaining({
+        ok: false,
+        detail: expect.stringContaining("lot_probe=load_failed"),
+      })
+    );
+  });
+
   it("allows the same 300 s as the sibling Base-scanning billing cron", () => {
     expect(maxDuration).toBe(300);
   });

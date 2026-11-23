@@ -75,9 +75,11 @@ export class RpcHttpError extends Error {
 }
 
 // Raised when the caller's cooperative cancellation (RpcCallOptions.shouldStop)
-// fires — a wall-clock budget interrupting a scan BETWEEN requests. Distinct
-// from transport failures: it means the work was deferred, not that the
-// endpoint misbehaved, and isRetryableRpcError correctly does not retry it
+// fires — a wall-clock budget interrupting work between units: RPC requests
+// here, and the non-RPC segments a bounded caller checks the same deadline
+// around (the stale pass's budget binds both). Distinct from transport
+// failures: it means the work was deferred, not that the endpoint
+// misbehaved, and isRetryableRpcError correctly does not retry it
 // (retrying would just re-hit the deadline).
 export class RpcCallAbortedError extends Error {
   constructor(message = "Base RPC call aborted: caller deadline reached") {

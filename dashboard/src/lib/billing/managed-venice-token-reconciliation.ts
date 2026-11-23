@@ -297,6 +297,15 @@ export interface ManagedVeniceTokenQuoteBatchReconciliationResult {
   // records a clean heartbeat while the stale pass runs on NO tick. The
   // pass stays deferred — not lost — and retries on the next tick.
   staleScanClaimFailed: boolean;
+  // The open lane's lot probe — the bounded page over open quotes matched
+  // against their deposit lots (loadOpenLotHoldingQuoteCandidates) —
+  // failed. Like the stale flags this is an auxiliary failure with no
+  // per-quote result to count: the claimed and fresh lanes still ran and
+  // every reconcile's own per-quote lot check is unaffected, but the tick
+  // found no lot-held recovery candidates at all, so it must read as
+  // degraded rather than a clean pass that simply had none. The probe
+  // retries on the next tick.
+  lotProbeLoadFailed: boolean;
   results: Array<{
     quoteId: string;
     userId: string;
@@ -1265,6 +1274,13 @@ async function scanAttributableTransfers(params: {
     saved: unknown;
     checkpoint: (scan: PersistedTokenScan) => Promise<void>;
   };
+  /**
+   * The stale pass's phase deadline, checked between the non-RPC units the
+   * RPC abort cannot reach (each extra token's surface items). Everything
+   * the decision needs is computed before the guarded units, so stopping
+   * them only owes dedupe-keyed items to a later attempt.
+   */
+  shouldStop?: () => boolean;
 }) {
   const { db, quote } = params;
   const window = managedVeniceTokenQuoteWindow(quote);
@@ -1306,6 +1322,10 @@ async function scanAttributableTransfers(params: {
     transfer.timestampMs <= graceEndMs &&
     (boundaryMs === null || transfer.timestampMs < boundaryMs);
   for (const other of livePlatformTokens(params.now ?? new Date()).filter((token) => token.address !== quote.tokenAddress)) {
+    // Past the phase deadline, another token's scan and its surface items
+    // are owed to the next attempt — the decision data above is already
+    // computed, so stopping here still returns it.
+    if (params.shouldStop?.()) break;
     const otherScan = await scanQuoteTransfers({
       chain: params.chain,
       quote,
@@ -1322,6 +1342,7 @@ async function scanAttributableTransfers(params: {
     if (confirmedOther.length === 0) continue;
     const { surfaceable } = await partitionByBindings(db, quote, confirmedOther);
     for (const transfer of surfaceable) {
+      if (params.shouldStop?.()) break;
       await surfaceManagedVeniceTokenTransfer(
         {
           quote,
@@ -1529,12 +1550,33 @@ async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
   // join on): the open set is bounded by what the stale pass drains, while
   // historical lots grow forever — a backlog of settled lots must not starve
   // a still-open lot-holding quote out of recovery.
-  const lotHeldCandidates = await loadOpenLotHoldingQuoteCandidates({
-    db: params.db,
-    openQuotes,
-    limit: params.limit,
-    probeBudget: params.lotProbeBudget,
-  });
+  //
+  // The probe is auxiliary like the stale pass's candidate SELECT: a failure
+  // here must not reject the batch — the claimed lane above and the fresh
+  // lane below (and the surface-only pass after discovery) still run, and
+  // the reconcile's own per-quote lot check keeps recovering any holder
+  // those lanes reach. But the miss must not be silent either: the tick
+  // finds no lot-held candidates at all, so the outcome flags the probe for
+  // the route's incident report and heartbeat (the staleScanLoadFailed
+  // pattern), and the probe retries on the next tick.
+  let lotHeldCandidates: Array<{ id: string; userId: string }> = [];
+  let lotProbeLoadFailed = false;
+  try {
+    lotHeldCandidates = await loadOpenLotHoldingQuoteCandidates({
+      db: params.db,
+      openQuotes,
+      limit: params.limit,
+      probeBudget: params.lotProbeBudget,
+    });
+  } catch (error) {
+    lotProbeLoadFailed = true;
+    log.warn("open-lane lot probe failed; claimed and fresh lanes still ran", {
+      source: "managed-venice-token-reconciliation",
+      failureType: "managed_venice_lot_probe_failed",
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+  }
   const lotHeldIds = new Set(lotHeldCandidates.map((candidate) => candidate.id));
 
   // Newest first: a fresh payment is always inside the batch, whatever older
@@ -1614,6 +1656,7 @@ async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
     candidates: [...byId.values()],
     claimedIds: new Set(claimedCandidates.map((candidate) => candidate.id)),
     lotHeldIds,
+    lotProbeLoadFailed,
   };
 }
 
@@ -1963,10 +2006,13 @@ async function runDailyStaleUnpaidQuoteScan(params: {
   // The pass's own slice of the tick clock (it runs before the regular open
   // loop on the daily tick), so a slow regular batch can never starve it.
   staleScanBudgetMs: number;
-  // Arms the shared RPC abort deadline for the phase the pass is in: the
-  // marked-lot lane at its share boundary, the scans at the slice end. The
-  // caller owns the underlying shouldStop and disarms it when the pass
-  // returns; the regular lanes are never bound by it.
+  // Arms the shared deadline for the phase the pass is in: the marked-lot
+  // lane at its share boundary, the scans at the slice end. It binds RPC
+  // calls through rpcOptions.shouldStop AND the reconcile's non-RPC
+  // segments through the same check, so an attempt's total elapsed — DB
+  // work included — stays inside its phase. The caller owns the
+  // underlying shouldStop and disarms it when the pass returns; the
+  // regular lanes are never bound by it.
   setRpcAbortAtMs: (deadlineMs: number) => void;
 }) {
   const expiresBeforeIso = new Date(
@@ -2020,10 +2066,12 @@ async function runDailyStaleUnpaidQuoteScan(params: {
   // a bounded, rotating slice of marked rows a lot check ahead of the day's
   // scans (see STALE_MARKED_LOT_PROBE_LIMIT) — but never the scans' whole
   // window: the lane admits attempts only inside MARKED_LOT_STALE_BUDGET_SHARE
-  // of the slice. The bound holds mid-attempt too — the RPC abort deadline
-  // is the share while the lane runs, so a marked attempt that degenerates
-  // into a scan (its lot finished between probe and reconcile) cannot ride
-  // the scan budget either.
+  // of the slice. The bound holds mid-attempt too — the abort deadline is
+  // the share while the lane runs, and the reconcile checks it between the
+  // segments of an attempt that never touch RPC (a lot-holder's normal
+  // recovery is pure DB: quote read, lot read, settle chain), so a marked
+  // attempt can no more spend the scans' reservation on DB work than a
+  // degenerate scan can on RPC calls.
   const markedLotBudgetMs = params.staleScanBudgetMs * MARKED_LOT_STALE_BUDGET_SHARE;
   params.setRpcAbortAtMs(markedLotBudgetMs);
   const markedLotProbe = await (async () => {
@@ -2266,13 +2314,25 @@ function recoveryTransfer(
   };
 }
 
+// Writes one reconciliation item per transfer — the one unbounded non-RPC
+// loop in a reconcile (a dust spray can owe hundreds of awaited inserts).
+// It honors the same cooperative deadline the RPC layer does, between
+// items: past the deadline the loop stops short instead of holding the
+// phase. Every item is dedupe-keyed, so the unwritten tail is owed to the
+// surface-only pass (a terminal quote's transfer_surfacing_pending) or the
+// next attempt's scan — never lost, and never a wrong answer: surfacing is
+// bookkeeping, not the quote's decision. Returns false when the deadline
+// ended the pass early so a caller whose own gate needs a COMPLETE surface
+// (the surfacing flag's clear below) stays honest.
 async function surfaceTransfers(
   db: SupabaseLike,
   quote: ManagedVeniceTokenQuote,
   transfers: ScannedTransfer[],
-  reasonFor: (transfer: ScannedTransfer) => ManagedVeniceTokenDepositReason
-) {
+  reasonFor: (transfer: ScannedTransfer) => ManagedVeniceTokenDepositReason,
+  shouldStop?: () => boolean
+): Promise<boolean> {
   for (const transfer of transfers) {
+    if (shouldStop?.()) return false;
     await surfaceManagedVeniceTokenTransfer(
       {
         quote,
@@ -2286,6 +2346,7 @@ async function surfaceTransfers(
       db
     );
   }
+  return true;
 }
 
 function sameTransactionHash(left: string | null | undefined, right: string | null | undefined) {
@@ -2342,6 +2403,7 @@ async function surfaceTerminalQuoteTransfers(params: {
   quote: ManagedVeniceTokenQuote;
   minConfirmations: number;
   now: Date;
+  shouldStop?: () => boolean;
 }): Promise<"complete" | "pending"> {
   const { db, quote } = params;
 
@@ -2356,12 +2418,14 @@ async function surfaceTerminalQuoteTransfers(params: {
 
   const scan = await scanAttributableTransfers(params);
   const surfaceable = [...scan.attributable, ...scan.extraLogs].sort(byChainOrder);
-  await surfaceTransfers(db, quote, surfaceable.filter(scan.isConfirmed), (transfer) =>
-    surfacedTransferReason(quote, transfer, scan.classOf(transfer))
+  const surfacedAll = await surfaceTransfers(db, quote, surfaceable.filter(scan.isConfirmed), (transfer) =>
+    surfacedTransferReason(quote, transfer, scan.classOf(transfer)), params.shouldStop
   );
 
   const fullyConfirmed =
-    scan.confirmedHeadMs >= scan.attributionEndMs + FINALITY_MARGIN_MS && surfaceable.every(scan.isConfirmed);
+    surfacedAll &&
+    scan.confirmedHeadMs >= scan.attributionEndMs + FINALITY_MARGIN_MS &&
+    surfaceable.every(scan.isConfirmed);
   if (!fullyConfirmed) return "pending";
   await completeManagedVeniceTokenTransferSurfacing({ quoteId: quote.id }, db);
   return "complete";
@@ -2384,6 +2448,7 @@ async function finishSettlement(params: {
   transfer: { transactionHash: string; confirmations?: number };
   surface?: { transfers: ScannedTransfer[]; classOf: (transfer: ScannedTransfer) => TransferClass };
   failOnSurfacingError: boolean;
+  shouldStop?: () => boolean;
 }) {
   const { db, quote, surface } = params;
   const current =
@@ -2397,8 +2462,11 @@ async function finishSettlement(params: {
   ) {
     try {
       const { surfaceable } = await partitionByBindings(db, current, surface.transfers);
+      // The flip already set transfer_surfacing_pending, so items a
+      // deadline-stopped surface leaves unwritten are owed to the
+      // surface-only pass — the settle / review outcome below stands.
       await surfaceTransfers(db, current, surfaceable, (transfer) =>
-        surfacedTransferReason(current, transfer, surface.classOf(transfer))
+        surfacedTransferReason(current, transfer, surface.classOf(transfer)), params.shouldStop
       );
     } catch (error) {
       if (params.failOnSurfacingError) throw error;
@@ -2468,6 +2536,28 @@ export async function reconcileManagedVeniceTokenQuote(params: {
   const minConfirmations = normalizeMinConfirmations(params.minConfirmations);
   const failOnSurfacingError = params.failOnTransferSurfacingError === true;
 
+  // The stale pass arms rpcOptions.shouldStop at its current phase's
+  // deadline — the marked-lot lane's share of the slice, then the slice
+  // end — and the retry layer checks it before every RPC request, so a
+  // scan's serial eth_* calls stay bound by the phase. The same deadline
+  // must also bind the segments with no RPC in them: a recovery attempt
+  // (claim or deposit lot) runs its whole settle chain on the DB without
+  // one eth_* call, and a scan's DB-side settle / surface tails are
+  // likewise off the RPC path, so a marked attempt could otherwise spend
+  // far past its share on pure-DB work and hand the day's scans a
+  // reservation that is already spent. RpcCallAbortedError is the pass's
+  // existing cooperative-cancel contract (deferred, never failed), and
+  // every throwIfStaleDeadline call site below sits where the quote is
+  // still undecided, so a firing deadline only ever defers the attempt —
+  // the row simply retries on the next pass. Outside the stale pass the
+  // check is disarmed, so this is a no-op for every other caller.
+  const shouldStop = params.rpcOptions?.shouldStop;
+  const throwIfStaleDeadline = () => {
+    if (shouldStop?.()) {
+      throw new RpcCallAbortedError("stale pass deadline reached during non-RPC quote work");
+    }
+  };
+
   if (!isOpenQuoteStatus(quote.status)) {
     // Settled / in review since the flag was introduced: the cron's
     // surface-only loop finishes surfacing whatever else reached the quote.
@@ -2480,6 +2570,7 @@ export async function reconcileManagedVeniceTokenQuote(params: {
         quote,
         minConfirmations,
         now: params.now ?? new Date(),
+        shouldStop,
       });
       return {
         status: quote.status,
@@ -2497,13 +2588,18 @@ export async function reconcileManagedVeniceTokenQuote(params: {
   const now = params.now ?? new Date();
 
   const lot = await loadManagedVeniceTokenDepositLot(quote.id, db);
+  // Entry and reads are this attempt's first non-RPC segment; everything
+  // below either commits (the settle chain) or scans (RPC-bound, plus the
+  // same check inside it). If the reads already spent the phase's share,
+  // defer the attempt while it is still undecided.
+  throwIfStaleDeadline();
   if (quote.transactionHash || lot) {
     // The flip sets transfer_surfacing_pending, so any extra transfer this
     // recovery does not scan for is surfaced by the surface-only pass. A claim
     // with no lot and no readable claim values goes to review in settle.
     const recovery = recoveryTransfer(quote, lot, now);
     const settlement = await settle(recovery, db);
-    return finishSettlement({ db, quote, settlement, transfer: recovery, failOnSurfacingError });
+    return finishSettlement({ db, quote, settlement, transfer: recovery, failOnSurfacingError, shouldStop });
   }
 
   const scan = await scanAttributableTransfers({
@@ -2513,11 +2609,16 @@ export async function reconcileManagedVeniceTokenQuote(params: {
     minConfirmations,
     now,
     scanProgress: params.scanProgress,
+    shouldStop,
   });
   const { attributable, extraLogs, classOf, isConfirmed, expiresAtMs, graceEndMs } = scan;
   const confirmed = attributable.filter(isConfirmed);
   const confirmedExtraLogs = extraLogs.filter(isConfirmed);
   const settleWith = async (transfer: ScannedTransfer) => {
+    // The scan is decided on data, not yet on the row — the settle call
+    // below commits. This is the last clean point for the phase deadline
+    // to defer the row when the scan's DB tail already spent it.
+    throwIfStaleDeadline();
     const settlement = await settle(
       {
         quoteId: quote.id,
@@ -2541,6 +2642,7 @@ export async function reconcileManagedVeniceTokenQuote(params: {
       transfer,
       surface: { transfers: [...confirmed, ...confirmedExtraLogs].sort(byChainOrder), classOf },
       failOnSurfacingError,
+      shouldStop,
     });
   };
 
@@ -2584,10 +2686,11 @@ export async function reconcileManagedVeniceTokenQuote(params: {
   }
 
   // Late out-of-band transfers and later logs of a tx bound on this address
-  // never settle or review the quote: item only.
+  // never settle or review the quote: item only. A deadline-stopped surface
+  // just owes the dedupe-keyed remainder; the decision below is unaffected.
   const lateOther = confirmed.filter((transfer) => classOf(transfer) === "late_other");
   await surfaceTransfers(db, quote, [...lateOther, ...confirmedExtraLogs].sort(byChainOrder), (transfer) =>
-    surfacedTransferReason(quote, transfer, classOf(transfer))
+    surfacedTransferReason(quote, transfer, classOf(transfer)), shouldStop
   );
 
   const awaitingConfirmations = attributable.filter(
@@ -2702,6 +2805,7 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
     deferred: { open: 0, surfacing: 0 },
     staleScanLoadFailed: false,
     staleScanClaimFailed: false,
+    lotProbeLoadFailed: false,
     results: [],
   };
 
@@ -2816,12 +2920,13 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
   // within the quote lifetime, and the stale pass re-checks the exact
   // window). This runs AFTER the stale pass so a slow discovery can never
   // starve the day's one stale pass of its budget slice.
-  const { candidates, claimedIds, lotHeldIds } = await loadPendingManagedVeniceTokenQuoteCandidates({
+  const { candidates, claimedIds, lotHeldIds, lotProbeLoadFailed } = await loadPendingManagedVeniceTokenQuoteCandidates({
     db,
     limit: normalizePendingQuoteLimit(params.limit),
     expiresAfterIso: new Date(batchNow.getTime() - NO_DEPOSIT_AFTER_EXPIRY_GRACE_MS).toISOString(),
     lotProbeBudget: params.lotProbeBudget,
   });
+  summary.lotProbeLoadFailed = lotProbeLoadFailed;
   // Rows the stale pass already decided this tick are dropped from the open
   // lanes: a marked lot-holder is reachable by both the pass's repair probe
   // and the open lot probe, and one tick must never settle a row twice.
