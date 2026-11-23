@@ -45,12 +45,12 @@ type AgentRow = {
   managed_provisioner_channel: string | null;
 };
 
-function tables(agents: AgentRow[]) {
+function tables(agents: AgentRow[], hosts: Array<{ id: string; status: string; decommissioned_at: string | null }> = []) {
   // Rows default to a live VMID-bound computer; tests exercising the
   // "holds computers" predicate pass explicit vmid/status overrides.
   const rows = agents.map((agent) => ({ vmid: 500, status: "running", ...agent }));
   mockFrom.mockImplementation((table: string) => {
-    if (table === "proxmox_hosts") return { select: () => Promise.resolve({ data: [], error: null }) };
+    if (table === "proxmox_hosts") return { select: () => Promise.resolve({ data: hosts, error: null }) };
     const builder = {
       select: () => builder, eq: () => builder, neq: () => builder, order: () => builder,
       range: () => Promise.resolve({ data: rows, error: null }),
@@ -182,6 +182,36 @@ describe("GET /api/cron/sync-managed-provisioner-bundles", () => {
       ok: false,
       detail: "hosts_needing_attention=2",
     });
+  });
+
+  it("reports remaining computer records separately from bundle health on a retired host", async () => {
+    tables([
+      { id: "stopped", status: "stopped", proxmox_host: "fixturenode21", managed_provisioner_channel: null },
+      { id: "other-channel", proxmox_host: "fixturenode21", managed_provisioner_channel: "canary" },
+    ], [{ id: "fixturenode21", status: "maintenance", decommissioned_at: "2026-01-01T00:00:00Z" }]);
+
+    const payload = await (await GET(request())).json();
+
+    expect(payload.data.hosts).toEqual([]);
+    expect(payload.data.retiredHostReferences).toEqual([{ targetId: "fixturenode21", computerRecords: 1 }]);
+    expect(mockProbe).not.toHaveBeenCalled();
+    expect(mockSync).not.toHaveBeenCalled();
+    expect(mockedReport).toHaveBeenCalledWith(expect.objectContaining({
+      severity: "warn",
+      metadata: { targetId: "fixturenode21", channel: "default", computerRecords: 1 },
+    }));
+    expect(mockHeartbeat).toHaveBeenCalledWith("sync-managed-provisioner-bundles", undefined);
+  });
+
+  it("stops before probing when the host registry read returns no data", async () => {
+    const from = mockFrom.getMockImplementation()!;
+    mockFrom.mockImplementation((table: string) => table === "proxmox_hosts"
+      ? { select: async () => ({ data: null, error: null }) }
+      : from(table));
+
+    expect((await GET(request())).status).toBe(500);
+    expect(mockProbe).not.toHaveBeenCalled();
+    expect(mockSync).not.toHaveBeenCalled();
   });
 
   it("records a plain heartbeat when no host needs attention", async () => {

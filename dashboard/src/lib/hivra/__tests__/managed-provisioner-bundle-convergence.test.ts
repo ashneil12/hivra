@@ -48,7 +48,10 @@ type AgentRow = {
 };
 
 /** Just enough PostgREST for the two reads the convergence makes. */
-function fakeSupabase(agents: AgentRow[], hosts: Array<{ id: string; status: string }>) {
+function fakeSupabase(
+  agents: AgentRow[],
+  hosts: Array<{ id: string; status: string; decommissioned_at?: string | null }>,
+) {
   // Rows default to a live VMID-bound computer; tests that exercise the
   // "holds computers" predicate pass explicit vmid/status overrides.
   const rows = agents.map((agent) => ({ vmid: 500, status: "running", ...agent }));
@@ -133,6 +136,38 @@ describe("managed provisioner bundle convergence", () => {
     expect(summary.hosts).toEqual([
       expect.objectContaining({ targetId: "fixturenode21", liveComputers: 2 }),
     ]);
+  });
+
+  it("never probes a decommissioned host even while its stopped computers hold rows", async () => {
+    // Prod 2026-11: a retired host kept 43 stopped, VMID-bound rows, so the
+    // "holds computers" leg re-admitted it every run and the unreachable
+    // probe kept the whole sync flagged as failing forever.
+    const probe = jest.fn(async (_channel: string, targetId: string) =>
+      present(targetId, PORTABLE_HIVRA_PROVISIONER_VERSION, true));
+    const summary = await runManagedProvisionerBundleConvergence({
+      supabase: fakeSupabase(
+        [
+          { id: "stopped-1", vmid: 401, status: "stopped", proxmox_host: "fixturenode21", managed_provisioner_channel: null },
+          { id: "stopped-2", vmid: 402, status: "stopped", proxmox_host: "fixturenode12", managed_provisioner_channel: null },
+        ],
+        [
+          { id: "fixturenode21", status: "maintenance", decommissioned_at: "2026-11-23T18:00:00+00:00" },
+          { id: "fixturenode12", status: "maintenance", decommissioned_at: null },
+        ],
+      ),
+      env: {},
+      channel: "default",
+      dryRun: true,
+      dependencies: { loadBundle: jest.fn().mockResolvedValue(bundle()), probe },
+    });
+
+    // The plain-maintenance host is still a candidate (honest signal for a
+    // host that is merely down); only the decommissioned one drops out.
+    expect(summary.hosts).toEqual([
+      expect.objectContaining({ targetId: "fixturenode12", liveComputers: 1 }),
+    ]);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(probe).toHaveBeenCalledWith("default", "fixturenode12", expect.any(String));
   });
 
   // The real probe script runs in bash against a temporary provisioner

@@ -42,7 +42,19 @@ export async function stopHivraManagedComputer(userId: string, agentId: string):
     if (reloadError || !current || current.operation_id !== operationId || current.operation_kind !== "stop" || current.desired_state !== "stopped" || identityFields.some((key) => current[key] !== agent[key])) throw new Error("Computer authority changed after claiming containment");
     let desktopRevoked = false;
     try { desktopRevoked = (await revokeRemoteDesktopCapability({ userId, computerKind: "hivra-agent", computerId: agentId })).ok; } catch { /* Still contain the running VM. */ }
-    const stopped = await runProxmoxHostScript(verifiedStopVmScript(agent.vmid, 30, context.infrastructureBindingTagEnforced ? context.infrastructureBindingTag : null, true), context.env, { timeoutMs: 120_000 });
+    // An operator-decommissioned host is gone, so the VM cannot be running and
+    // containment is already met: there is nothing to SSH to. Without this the
+    // stop would fail and re-retain the lease every sweep forever. Only the
+    // managed lane's hosts live in our registry.
+    let hostGone = false;
+    if (context.kind === "managed") {
+      const { data: hostRow, error: hostError } = await db.from("proxmox_hosts").select("status,decommissioned_at").eq("id", context.host).maybeSingle();
+      if (hostError) throw new Error(`Host registry unavailable: ${hostError.message}`);
+      hostGone = hostRow?.status === "maintenance" && hostRow?.decommissioned_at != null;
+    }
+    const stopped = hostGone
+      ? { ok: true }
+      : await runProxmoxHostScript(verifiedStopVmScript(agent.vmid, 30, context.infrastructureBindingTagEnforced ? context.infrastructureBindingTag : null, true), context.env, { timeoutMs: 120_000 });
     if (!stopped.ok) throw new Error("Computer shutdown or autostart disable is unconfirmed");
     if (!desktopRevoked) throw new Error("Desktop access revocation is incomplete");
     if (!await completeHivraAgentOperation({ ...operation, expectedDesiredState: "stopped", status: "stopped" })) throw new Error("Computer shutdown persistence was superseded");
