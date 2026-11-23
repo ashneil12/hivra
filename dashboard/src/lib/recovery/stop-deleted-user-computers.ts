@@ -17,6 +17,10 @@ export async function stopHivraManagedComputer(userId: string, agentId: string):
   // Never interpret a different substrate's identifiers as a managed VM.
   if (agent.computer_substrate !== "proxmox-kvm" && agent.computer_substrate != null) throw new Error("Computer substrate requires operator containment");
   if (!Number.isSafeInteger(agent.vmid) || agent.vmid <= 0) throw new Error("Computer VM identity is unavailable");
+  // Already settled: nothing to contain and nothing to claim. Sweeps visit
+  // every non-deleted orphan each run, so without this every stopped row
+  // re-acquires a fresh stop lease forever.
+  if (agent.status === "stopped" && agent.desired_state === "stopped" && !agent.operation_id) return;
   const [execution, operations, scripts, host, desktop] = await Promise.all([
     import("@/lib/hivra/agent-execution-context"), import("@/lib/hivra/agent-operation-store"),
     import("@/lib/hivra/agent-power-scripts"), import("@/lib/services/proxmox-instance-service"),
@@ -40,9 +44,21 @@ export async function stopHivraManagedComputer(userId: string, agentId: string):
     const { data: current, error: reloadError } = await db.from("hivra_agents").select("*").eq("id", agentId).eq("user_id", userId).single();
     const identityFields = ["vmid", "proxmox_host", "deployment_mode", "computer_substrate", "infrastructure_connection_id", "deployment_target_id", "infrastructure_connection_revision", "infrastructure_binding_token_hash", "infrastructure_binding_token_enforced", "managed_provisioner_channel"];
     if (reloadError || !current || current.operation_id !== operationId || current.operation_kind !== "stop" || current.desired_state !== "stopped" || identityFields.some((key) => current[key] !== agent[key])) throw new Error("Computer authority changed after claiming containment");
+    // An operator-decommissioned host is gone, so the VM cannot be running and
+    // containment is already met: there is nothing to SSH to. Without this the
+    // stop would fail and re-retain the lease every sweep forever. Only the
+    // managed lane's hosts live in our registry.
+    let hostGone = false;
+    if (context.kind === "managed") {
+      const { data: hostRow, error: hostError } = await db.from("proxmox_hosts").select("status,decommissioned_at").eq("id", context.host).maybeSingle();
+      if (hostError) throw new Error(`Host registry unavailable: ${hostError.message}`);
+      hostGone = hostRow?.status === "maintenance" && hostRow?.decommissioned_at != null;
+    }
     let desktopRevoked = false;
     try { desktopRevoked = (await revokeRemoteDesktopCapability({ userId, computerKind: "hivra-agent", computerId: agentId })).ok; } catch { /* Still contain the running VM. */ }
-    const stopped = await runProxmoxHostScript(verifiedStopVmScript(agent.vmid, 30, context.infrastructureBindingTagEnforced ? context.infrastructureBindingTag : null, true), context.env, { timeoutMs: 120_000 });
+    const stopped = hostGone
+      ? { ok: true }
+      : await runProxmoxHostScript(verifiedStopVmScript(agent.vmid, 30, context.infrastructureBindingTagEnforced ? context.infrastructureBindingTag : null, true), context.env, { timeoutMs: 120_000 });
     if (!stopped.ok) throw new Error("Computer shutdown or autostart disable is unconfirmed");
     if (!desktopRevoked) throw new Error("Desktop access revocation is incomplete");
     if (!await completeHivraAgentOperation({ ...operation, expectedDesiredState: "stopped", status: "stopped" })) throw new Error("Computer shutdown persistence was superseded");

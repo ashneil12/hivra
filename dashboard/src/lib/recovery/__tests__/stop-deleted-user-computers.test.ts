@@ -13,13 +13,18 @@ const mockMarkAwake = jest.fn();
 jest.mock("@/lib/hivra/sleep-aware", () => ({ markAgentAwake: (...args: unknown[]) => mockMarkAwake(...args) }));
 const single = jest.fn();
 let operationId: string | null;
+let hostRow: { status: string; decommissioned_at: string | null } | null;
 const baseAgent = { id: "computer", user_id: "user_gone", status: "running", vmid: 123, computer_substrate: "proxmox-kvm" };
 beforeEach(() => {
   jest.clearAllMocks();
-  (supabaseAdmin!.from as jest.Mock).mockReturnValue({ select: () => ({ eq: () => ({ eq: () => ({ single }) }) }) });
+  hostRow = null;
+  (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) =>
+    table === "proxmox_hosts"
+      ? { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: hostRow, error: null }) }) }) }
+      : { select: () => ({ eq: () => ({ eq: () => ({ single }) }) }) });
   operationId = null;
   single.mockImplementation(async () => ({ data: { ...baseAgent, ...(operationId ? { operation_id: operationId, operation_kind: "stop", desired_state: "stopped" } : {}) }, error: null }));
-  (resolveHivraAgentExecutionContext as jest.Mock).mockResolvedValue({ infrastructureBindingTagEnforced: true, infrastructureBindingTag: "hivra-bind-fixture", env: {} });
+  (resolveHivraAgentExecutionContext as jest.Mock).mockResolvedValue({ kind: "managed", host: "fixture-host", infrastructureBindingTagEnforced: true, infrastructureBindingTag: "hivra-bind-fixture", env: {} });
   (claimHivraAgentOperation as jest.Mock).mockImplementation(async (input) => { operationId = input.operationId; return true; });
   (completeHivraAgentOperation as jest.Mock).mockResolvedValue(true);
   (recordHivraAgentOperationFailure as jest.Mock).mockResolvedValue(true);
@@ -69,6 +74,51 @@ it("retries the same durable stop operation after an uncertain outcome", async (
   await stopDeletedUserComputer("user_gone", "computer");
   expect(claimHivraAgentOperation).not.toHaveBeenCalled();
   expect(completeHivraAgentOperation).toHaveBeenCalledWith(expect.objectContaining({ operationId, expectedDesiredState: "stopped", status: "stopped" }));
+  expect(completeHivraAgentOperation).toHaveBeenCalled();
+});
+
+describe("a computer on a decommissioned host", () => {
+  beforeEach(() => {
+    hostRow = { status: "maintenance", decommissioned_at: "2026-11-23T18:00:00+00:00" };
+  });
+
+  it("settles the stop without SSH: the VM cannot exist on a host that is gone", async () => {
+    // Prod 2026-11: a retired host kept re-acquiring containment stops every
+    // sweep; each unreachable SSH retained the lease and re-paged forever.
+    await stopDeletedUserComputer("user_gone", "computer");
+    expect(runProxmoxHostScript).not.toHaveBeenCalled();
+    expect(revokeRemoteDesktopCapability).toHaveBeenCalled();
+    expect(completeHivraAgentOperation).toHaveBeenCalledWith(expect.objectContaining({ expectedDesiredState: "stopped", status: "stopped" }));
+    expect(recordHivraAgentOperationFailure).not.toHaveBeenCalled();
+  });
+
+  it("settles a retained lease the same way on resume", async () => {
+    operationId = "11111111-1111-4111-8111-111111111111";
+    await stopDeletedUserComputer("user_gone", "computer");
+    expect(runProxmoxHostScript).not.toHaveBeenCalled();
+    expect(completeHivraAgentOperation).toHaveBeenCalledWith(expect.objectContaining({ operationId, expectedDesiredState: "stopped" }));
+  });
+
+  it("still refuses to finish when desktop revocation is incomplete", async () => {
+    (revokeRemoteDesktopCapability as jest.Mock).mockResolvedValue({ ok: false });
+    await expect(stopDeletedUserComputer("user_gone", "computer")).rejects.toThrow("revocation is incomplete");
+    expect(runProxmoxHostScript).not.toHaveBeenCalled();
+    expect(completeHivraAgentOperation).not.toHaveBeenCalled();
+  });
+});
+
+it("leaves an already-settled computer alone instead of re-acquiring a stop lease every sweep", async () => {
+  single.mockResolvedValue({ data: { ...baseAgent, status: "stopped", desired_state: "stopped", operation_id: null }, error: null });
+  await stopDeletedUserComputer("user_gone", "computer");
+  expect(claimHivraAgentOperation).not.toHaveBeenCalled();
+  expect(runProxmoxHostScript).not.toHaveBeenCalled();
+  expect(revokeRemoteDesktopCapability).not.toHaveBeenCalled();
+});
+
+it("still SSHes a maintenance host that is not decommissioned", async () => {
+  hostRow = { status: "maintenance", decommissioned_at: null };
+  await stopDeletedUserComputer("user_gone", "computer");
+  expect(runProxmoxHostScript).toHaveBeenCalled();
   expect(completeHivraAgentOperation).toHaveBeenCalled();
 });
 
