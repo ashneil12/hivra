@@ -45,6 +45,8 @@ export interface HivraAgentSnapshot {
   desiredState: string | null;
   createdAt: string | null;
   provisionedAt: string | null;
+  /** Last sleep/wake tier transition — bumped on every wake, so it marks the current runtime's start. */
+  sleepTierChangedAt: string | null;
   operationKind: string | null;
   operationStartedAt: string | null;
   operationId: string | null;
@@ -150,6 +152,12 @@ export interface IncidentEvaluationInput {
   agents: HivraAgentSnapshot[];
   /** Watchdog events per agent id (ops_events rows with source box.surface_watchdog.*). */
   watchdogEventsByAgent: ReadonlyMap<string, WatchdogEventSnapshot[]>;
+  /**
+   * Newest surface failure/recovery receipt per agent id, fetched by its own
+   * query so the 30-row mixed diagnosis timeline cannot push it out of view.
+   * This — not a scan of the timeline — decides box_down open/resolve.
+   */
+  latestSurfaceReceiptByAgent: ReadonlyMap<string, WatchdogEventSnapshot>;
   /** Agents whose watchdog-event fetch failed — box_down cannot be evaluated for them. */
   watchdogUnknownAgentIds: ReadonlySet<string>;
   /**
@@ -194,6 +202,25 @@ const BOX_SURFACE_EVENT_TYPES = new Set([
   ...BOX_DOWN_EVENT_TYPES,
   ...BOX_RECOVERY_EVENT_TYPES,
 ]);
+const BOX_SURFACE_EVENT_TYPE_LIST = [...BOX_SURFACE_EVENT_TYPES];
+
+/**
+ * The newest runtime (re)start marker the hivra_agents row actually records:
+ * first provision, the last sleep/wake tier transition (bumped on every
+ * wake), or an in-flight lifecycle operation's start. There is no dedicated
+ * "last restart" column — completed operations clear operation_started_at
+ * and provisioned_at keeps its first value — so this is the honest bound:
+ * receipts older than it belong to a previous runtime and cannot describe
+ * the box's current state.
+ */
+function agentRuntimeMarkerMs(agent: HivraAgentSnapshot): number | null {
+  let marker: number | null = null;
+  for (const value of [agent.provisionedAt, agent.sleepTierChangedAt, agent.operationStartedAt]) {
+    const ms = parseTimeMs(value);
+    if (ms != null && (marker == null || ms > marker)) marker = ms;
+  }
+  return marker;
+}
 const LAUNCH_FAILED_AGENT_STATUSES = new Set(["error", "deleted"]);
 const LAUNCH_FAILED_INSTANCE_STATUSES = new Set(["failed", "error"]);
 
@@ -298,17 +325,20 @@ export function evaluateCustomerIncidents(input: IncidentEvaluationInput): Incid
       continue;
     }
     const events = sortWatchdogEventsByEventAt(input.watchdogEventsByAgent.get(agent.id) ?? []);
-    // Newest SURFACE event decides state; unrelated event types are ignored
-    // for open/resolve (they remain in watchdogTimeline for diagnosis).
-    const latest = events.find(
-      (event) => event.eventType != null && BOX_SURFACE_EVENT_TYPES.has(event.eventType),
-    );
+    // The newest SURFACE receipt comes from its own query — the 30-row mixed
+    // timeline can be crowded out by newer diagnostic events. Receipts that
+    // predate the current runtime's start marker belong to a previous boot
+    // and cannot open or hold an incident for this one.
+    const latest = input.latestSurfaceReceiptByAgent.get(agent.id);
     if (!latest?.eventType) continue;
+    if (!BOX_SURFACE_EVENT_TYPES.has(latest.eventType)) continue;
+    const receiptMs = parseTimeMs(latest.eventAt) ?? parseTimeMs(latest.firstSeenAt);
+    const runtimeMarkerMs = agentRuntimeMarkerMs(agent);
+    if (receiptMs != null && runtimeMarkerMs != null && receiptMs < runtimeMarkerMs) continue;
     if (BOX_RECOVERY_EVENT_TYPES.has(latest.eventType)) continue;
     if (!BOX_DOWN_EVENT_TYPES.has(latest.eventType)) continue;
-    const eventMs = parseTimeMs(latest.eventAt) ?? parseTimeMs(latest.firstSeenAt);
     const immediate = latest.eventType === "recovery_exhausted";
-    if (!immediate && (eventMs == null || now - eventMs < BOX_DOWN_MIN_AGE_MS)) continue;
+    if (!immediate && (receiptMs == null || now - receiptMs < BOX_DOWN_MIN_AGE_MS)) continue;
     findings.push({
       key,
       rule: "box_down",
@@ -510,6 +540,7 @@ interface AgentDbRow {
   desired_state: string | null;
   created_at: string | null;
   provisioned_at: string | null;
+  sleep_tier_changed_at: string | null;
   operation_kind: string | null;
   operation_started_at: string | null;
   operation_id: string | null;
@@ -551,6 +582,7 @@ interface WatchdogOpsRow {
 
 const AGENT_SELECT =
   "id,user_id,type,name,status,sleep_state,desired_state,created_at,provisioned_at," +
+  "sleep_tier_changed_at," +
   "operation_kind,operation_started_at,operation_id,error,cf_hostname,chat_url," +
   "proxmox_host,vmid,ip";
 
@@ -565,6 +597,7 @@ function toAgentSnapshot(row: AgentDbRow): HivraAgentSnapshot {
     desiredState: row.desired_state,
     createdAt: row.created_at,
     provisionedAt: row.provisioned_at,
+    sleepTierChangedAt: row.sleep_tier_changed_at,
     operationKind: row.operation_kind,
     operationStartedAt: row.operation_started_at,
     operationId: row.operation_id,
@@ -800,8 +833,13 @@ async function collectWatchdogEvents(
   db: DbClient,
   agentIds: string[],
   options?: { deadlineAt?: number; clock?: () => number },
-): Promise<{ byAgent: Map<string, WatchdogEventSnapshot[]>; unknownAgentIds: Set<string> }> {
+): Promise<{
+  byAgent: Map<string, WatchdogEventSnapshot[]>;
+  latestSurfaceByAgent: Map<string, WatchdogEventSnapshot>;
+  unknownAgentIds: Set<string>;
+}> {
   const byAgent = new Map<string, WatchdogEventSnapshot[]>();
+  const latestSurfaceByAgent = new Map<string, WatchdogEventSnapshot>();
   const unknownAgentIds = new Set<string>();
   const queue = [...agentIds];
   const clock = options?.clock ?? Date.now;
@@ -840,10 +878,38 @@ async function collectWatchdogEvents(
           id,
           ((data ?? []) as WatchdogOpsRow[]).map(watchdogEventFromOpsRow),
         );
+        // The newest surface failure/recovery receipt gets its own query:
+        // the 30-row mixed timeline above is diagnostic context and can be
+        // entirely newer non-surface receipts, which would hide the receipt
+        // that actually decides whether the box is down.
+        const { data: receiptData, error: receiptError } = await db
+          .from("ops_events")
+          .select("id,title,first_seen_at,metadata")
+          .eq("instance_id", id)
+          .like("source", "box.surface_watchdog.%")
+          .in("metadata->>event_type", BOX_SURFACE_EVENT_TYPE_LIST)
+          .order("metadata->>event_at", { ascending: false })
+          .limit(1);
+        if (receiptError) {
+          // The timeline read succeeded but the deciding receipt did not —
+          // box_down cannot be evaluated for this agent this pass.
+          unknownAgentIds.add(id);
+          log.warn("customer-incidents: surface receipt fetch failed for agent", {
+            source: "customer-incidents",
+            failureType: "surface_receipt_fetch_failed",
+            instanceId: id,
+            errorMessage: receiptError.message,
+          });
+          continue;
+        }
+        const receiptRow = (receiptData ?? [])[0] as WatchdogOpsRow | undefined;
+        if (receiptRow) {
+          latestSurfaceByAgent.set(id, watchdogEventFromOpsRow(receiptRow));
+        }
       }
     }),
   );
-  return { byAgent, unknownAgentIds };
+  return { byAgent, latestSurfaceByAgent, unknownAgentIds };
 }
 
 // ---- public reachability signal (box_unreachable) ---------------------------
@@ -1574,6 +1640,12 @@ async function defaultNotifyResolved(input: ResolvedNoticeInput): Promise<void> 
 }
 
 const LAUNCH_FAILED_SUBJECT_PREFIX = "launch_failed:";
+const BOX_DOWN_SUBJECT_PREFIX = "box_down:";
+// A box_down whose newest surface receipt is this old AND whose public
+// /healthz probe succeeded this scan is a stale record, not a live outage:
+// the box answers publicly and simply stopped emitting receipts (watchdog
+// removed, relays lost). Archive it silently — no resolved notice.
+const BOX_DOWN_STALE_RECEIPT_MS = 24 * 60 * 60 * 1000;
 
 type LaunchFailedExpiry = "resolved" | "expired" | "unknown";
 
@@ -1733,11 +1805,16 @@ export async function runCustomerIncidentScan(
       agent.sleepState === "awake" &&
       !isAdminUser(agent.userId, adminUserIds),
   );
-  const { byAgent: watchdogEventsByAgent, unknownAgentIds } = await collectWatchdogEvents(
+  const {
+    byAgent: watchdogEventsByAgent,
+    latestSurfaceByAgent,
+    unknownAgentIds,
+  } = await collectWatchdogEvents(
     db,
     boxDownCandidates.map((agent) => agent.id),
     { deadlineAt: watchdogDeadlineAt, clock },
   );
+  const boxDownCandidateIds = new Set(boxDownCandidates.map((agent) => agent.id));
 
   // ---- public reachability probes (box_unreachable signal) ------------------
   // Same candidate set as box_down: running + awake + non-admin. Probe rows
@@ -1791,6 +1868,7 @@ export async function runCustomerIncidentScan(
     adminUserIds,
     agents,
     watchdogEventsByAgent,
+    latestSurfaceReceiptByAgent: latestSurfaceByAgent,
     watchdogUnknownAgentIds: unknownAgentIds,
     publicOutageStartedAtMs,
     publicProbeUnknownAgentIds,
@@ -1905,10 +1983,32 @@ export async function runCustomerIncidentScan(
       }
       expiredUnresolved = disposition === "expired";
     }
+    // A box_down whose newest surface receipt is over 24h old while the
+    // box's public /healthz probe succeeded this scan is stale bookkeeping,
+    // not a live outage — archive it silently like an aged-out launch.
+    let staleBoxDown = false;
+    if (row.incidentKey.startsWith(BOX_DOWN_SUBJECT_PREFIX)) {
+      const agentId = row.incidentKey.slice(BOX_DOWN_SUBJECT_PREFIX.length);
+      const receipt = latestSurfaceByAgent.get(agentId);
+      const receiptMs = receipt
+        ? parseTimeMs(receipt.eventAt) ?? parseTimeMs(receipt.firstSeenAt)
+        : null;
+      staleBoxDown =
+        boxDownCandidateIds.has(agentId) &&
+        !publicOutageStartedAtMs.has(agentId) &&
+        !publicProbeUnknownAgentIds.has(agentId) &&
+        receiptMs != null &&
+        now - receiptMs > BOX_DOWN_STALE_RECEIPT_MS;
+    }
+    const silentClosedReason = expiredUnresolved
+      ? "expired_unresolved"
+      : staleBoxDown
+        ? "stale_no_new_receipts"
+        : null;
     let archived = false;
     try {
-      archived = expiredUnresolved
-        ? await archiveIncident(row, { closedReason: "expired_unresolved" })
+      archived = silentClosedReason
+        ? await archiveIncident(row, { closedReason: silentClosedReason })
         : await archiveIncident(row);
     } catch (err) {
       summary.failed += 1;
@@ -1921,9 +2021,9 @@ export async function runCustomerIncidentScan(
       continue;
     }
     if (!archived) continue; // another invocation already resolved it
-    if (expiredUnresolved) {
-      // Aged out of the rule's window still failed — close the row without a
-      // "resolved" notice; nothing actually recovered.
+    if (silentClosedReason) {
+      // Closed without a "resolved" notice: aged out still failed, or a stale
+      // box_down record whose box is publicly healthy — nothing recovered.
       summary.expired += 1;
       continue;
     }

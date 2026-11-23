@@ -43,6 +43,7 @@ function agent(over: Partial<HivraAgentSnapshot> = {}): HivraAgentSnapshot {
     desiredState: "running",
     createdAt: iso(30 * 24 * 60 * MIN),
     provisionedAt: iso(30 * 24 * 60 * MIN - 5 * MIN),
+    sleepTierChangedAt: null,
     operationKind: null,
     operationStartedAt: null,
     operationId: null,
@@ -101,12 +102,44 @@ function heartbeat(over: Partial<CronHeartbeatSnapshot> = {}): CronHeartbeatSnap
   };
 }
 
+// The production path fetches the newest surface receipt with its own query;
+// in these fixtures the same answer is derived from the events the timeline
+// query returned (identical whenever the receipt is inside that window).
+// Tests exercising the crowded-out case pass latestSurfaceReceiptByAgent
+// explicitly.
+function deriveLatestSurfaceReceipts(
+  byAgent: ReadonlyMap<string, WatchdogEventSnapshot[]>,
+): Map<string, WatchdogEventSnapshot> {
+  const out = new Map<string, WatchdogEventSnapshot>();
+  const surface = new Set([
+    "gateway_down",
+    "gateway_recovered",
+    "unit_restart",
+    "recovered",
+    "recovery_exhausted",
+  ]);
+  for (const [agentId, events] of byAgent) {
+    const sorted = [...events].sort((a, b) => {
+      const at = Date.parse(a.eventAt ?? a.firstSeenAt ?? "") || 0;
+      const bt = Date.parse(b.eventAt ?? b.firstSeenAt ?? "") || 0;
+      return bt - at;
+    });
+    const receipt = sorted.find((e) => e.eventType != null && surface.has(e.eventType));
+    if (receipt) out.set(agentId, receipt);
+  }
+  return out;
+}
+
 function evalInput(over: Partial<IncidentEvaluationInput> = {}): IncidentEvaluationInput {
+  const watchdogEventsByAgent =
+    over.watchdogEventsByAgent ?? new Map<string, WatchdogEventSnapshot[]>();
   return {
     now: NOW,
     adminUserIds: new Set<string>(),
     agents: [],
-    watchdogEventsByAgent: new Map<string, WatchdogEventSnapshot[]>(),
+    watchdogEventsByAgent,
+    latestSurfaceReceiptByAgent:
+      over.latestSurfaceReceiptByAgent ?? deriveLatestSurfaceReceipts(watchdogEventsByAgent),
     watchdogUnknownAgentIds: new Set<string>(),
     hermesInstances: [],
     heartbeats: [],
@@ -271,6 +304,49 @@ describe("evaluateCustomerIncidents box_down", () => {
     }));
     expect(result.findings).toHaveLength(0);
     expect(result.unknownKeys.has("box_down:agent-1")).toBe(true);
+  });
+
+  it("ignores surface receipts that predate the agent's latest runtime start", () => {
+    // The box restarted (wake) 2h ago; the newest surface receipt is a
+    // gateway_down from 30h ago — it describes the PREVIOUS runtime and must
+    // not hold a box_down open against the current one.
+    const a = agent({ sleepTierChangedAt: iso(2 * 60 * MIN) });
+    const stale = watchdogEvent({ eventType: "gateway_down", eventAt: iso(30 * 60 * MIN), eventId: "old-1" });
+    const result = evaluateCustomerIncidents(evalInput({
+      agents: [a],
+      watchdogEventsByAgent: new Map([[a.id, [stale]]]),
+      latestSurfaceReceiptByAgent: new Map([[a.id, stale]]),
+    }));
+    expect(result.findings).toHaveLength(0);
+
+    // A receipt AFTER the marker still counts: same agent, fresh gateway_down.
+    const fresh = watchdogEvent({ eventType: "gateway_down", eventAt: iso(45 * MIN), eventId: "new-1" });
+    const firing = evaluateCustomerIncidents(evalInput({
+      agents: [a],
+      watchdogEventsByAgent: new Map([[a.id, [fresh]]]),
+      latestSurfaceReceiptByAgent: new Map([[a.id, fresh]]),
+    }));
+    expect(firing.findings.map((f) => f.key)).toEqual(["box_down:agent-1"]);
+  });
+
+  it("decides on the dedicated newest-surface-receipt query, not the 30-row timeline", () => {
+    const a = agent();
+    // The mixed timeline's newest surface receipt is a recovery, but the
+    // dedicated receipt query found a NEWER gateway_down that the timeline
+    // window crowded out — the box is down.
+    const timeline = [
+      watchdogEvent({ eventType: "unit_failing", eventAt: iso(5 * MIN), eventId: "noise-1" }),
+      watchdogEvent({ eventType: "recovered", eventAt: iso(20 * MIN), eventId: "rec-1" }),
+    ];
+    const hiddenDown = watchdogEvent({ eventType: "gateway_down", eventAt: iso(10 * MIN), eventId: "hidden-1" });
+    const result = evaluateCustomerIncidents(evalInput({
+      agents: [a],
+      watchdogEventsByAgent: new Map([[a.id, timeline]]),
+      latestSurfaceReceiptByAgent: new Map([[a.id, hiddenDown]]),
+    }));
+    expect(result.findings.map((f) => f.key)).toEqual(["box_down:agent-1"]);
+    // The diagnosis timeline still carries the mixed rows.
+    expect(result.findings[0].watchdogTimeline.map((e) => e.eventId)).toEqual(["noise-1", "rec-1"]);
   });
 });
 
@@ -607,6 +683,7 @@ function agentDbRow(over: Row = {}): Row {
     desired_state: "running",
     created_at: iso(30 * 24 * 60 * MIN),
     provisioned_at: iso(30 * 24 * 60 * MIN - 5 * MIN),
+    sleep_tier_changed_at: null,
     operation_kind: null,
     operation_started_at: null,
     operation_id: null,
@@ -1497,6 +1574,55 @@ describe("runCustomerIncidentScan", () => {
     expect(first).toBeTruthy();
     expect(second).toBeTruthy();
     expect(second).not.toBe(first);
+  });
+
+  it("archives a stale box_down silently when receipts went quiet and the public probe is healthy", async () => {
+    // The box restarted 2h ago (sleep-tier marker); its only surface receipt
+    // is a gateway_down from 30h ago — pre-restart, so box_down does not hold.
+    // The public /healthz probe succeeds this scan, so the open incident row
+    // is stale bookkeeping: archive with closed_reason, no resolved notice.
+    const db = fakeIncidentDb({
+      agents: [agentDbRow({ sleep_tier_changed_at: iso(2 * 60 * MIN) })],
+      watchdogByAgent: {
+        "agent-1": [watchdogDbRow("gateway_down", 30 * 60 * MIN)],
+      },
+      openIncidents: [incidentDbRow()],
+    });
+    const deps = scanDeps({
+      db,
+      probe: jest.fn(async () => ({ status: 200, latencyMs: 8, error: null })),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary).toMatchObject({ findings: 0, opened: 0, resolved: 0, expired: 1 });
+    expect(deps.archiveIncident).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "evt-open-1" }),
+      { closedReason: "stale_no_new_receipts" },
+    );
+    expect(deps.notifyResolved).not.toHaveBeenCalled();
+  });
+
+  it("does NOT stale-archive a box_down while the public probe is still failing", async () => {
+    const db = fakeIncidentDb({
+      agents: [agentDbRow({ sleep_tier_changed_at: iso(2 * 60 * MIN) })],
+      watchdogByAgent: {
+        "agent-1": [watchdogDbRow("gateway_down", 30 * 60 * MIN)],
+      },
+      openIncidents: [incidentDbRow()],
+    });
+    const deps = scanDeps({
+      db,
+      probe: jest.fn(async () => ({ status: 502, latencyMs: 120, error: null })),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    // Probe failing → the outage is live (box_unreachable may fire); the
+    // box_down row still resolves through the normal noticed path.
+    expect(summary.expired).toBe(0);
+    const archiveCalls = (deps.archiveIncident as jest.Mock).mock.calls;
+    expect(archiveCalls).toHaveLength(1);
+    expect(archiveCalls[0][0]).toEqual(expect.objectContaining({ id: "evt-open-1" }));
+    expect(archiveCalls[0][1]).toBeUndefined();
   });
 
   // ---- public probe signal (box_unreachable) -------------------------------
