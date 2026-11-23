@@ -287,6 +287,44 @@ async function recordUpdateReport(params: {
   const nextInstanceStatus =
     report.status === "succeeded" && canResurrect ? "running" : null;
 
+  // The legacy attempt correlation resolves the target an update would pin
+  // against the row's CURRENT stored state — loadBoxRelease reads
+  // agent_image_digest as the box's image — so it must run BEFORE
+  // recordReleaseReport stores this report's own `i` digest into that same
+  // column. A failure that reports the target as its running digest (the
+  // update applied, then the wrapper failed: a post-update health check, a
+  // rollback that re-pulled the target) would otherwise be read as
+  // "already on target" — keep → stale → the failed stamp skipped and the
+  // row stranded at 'redeploying' forever. The resolve is a read, so the
+  // durable-first ordering below is untouched; its failure is held and
+  // answered only after the record lands, so a registry hiccup can never
+  // cost the report itself.
+  let staleAttempt = false;
+  let correlationFailed = false;
+  let correlationError: unknown;
+  if (report.status === "failed" && !report.attemptStamp && releaseReport.targetDigest) {
+    try {
+      const { policy, state } = await resolveUpdateImagePolicy(
+        supabaseAdmin,
+        instance.id,
+        "release",
+      );
+      if (state?.governed) {
+        // For a governed box the in-flight release is the registry's
+        // pinned target; any other target name belongs to an older
+        // attempt. So does ANY target when the current update is not
+        // release-bound (a keep/config redeploy cannot report one).
+        const inFlightTarget = policy?.kind === "pinned" ? policy.digest : null;
+        staleAttempt = releaseReport.targetDigest !== inFlightTarget;
+      }
+      // Ungoverned boxes pull a floating tag: nothing stored names the
+      // in-flight target, so only the write-time bounds apply.
+    } catch (err) {
+      correlationFailed = true;
+      correlationError = err;
+    }
+  }
+
   // Durable first, lifecycle second. The box-side reporter is
   // fire-and-forget (a single `curl -m10`, no retry), so a non-2xx is not a
   // "please try again" — it is the report's only copy lost forever, and no
@@ -384,8 +422,11 @@ async function recordUpdateReport(params: {
     // the guest: lifecycle 'failed' + the reached substate keeps the row
     // retry-eligible on the next sweep.
     //
-    // Attempt correlation FIRST: a delayed failure report from an earlier
-    // update must not stamp a row a newer attempt is already redeploying.
+    // Attempt correlation already ran — BEFORE the record above stored
+    // this report's own digest into agent_image_digest, so the verdict
+    // describes the row as it was when the report arrived, not as the
+    // report left it. A delayed failure report from an earlier update
+    // must not stamp a row a newer attempt is already redeploying.
     // Reports carrying the launch-side attempt stamp need no guess: the
     // write below is predicated on the row still carrying THAT attempt's
     // transition stamp, so it can only land on the attempt it belongs to —
@@ -402,39 +443,20 @@ async function recordUpdateReport(params: {
     // newer attempt's row when both attempts targeted the same digest,
     // because nothing distinguishes them until the box image carries the
     // attempt-stamping wrapper.
-    let staleAttempt = false;
-    if (!report.attemptStamp && releaseReport.targetDigest) {
-      try {
-        const { policy, state } = await resolveUpdateImagePolicy(
-          supabaseAdmin,
-          instance.id,
-          "release",
-        );
-        if (state?.governed) {
-          // For a governed box the in-flight release is the registry's
-          // pinned target; any other target name belongs to an older
-          // attempt. So does ANY target when the current update is not
-          // release-bound (a keep/config redeploy cannot report one).
-          const inFlightTarget = policy?.kind === "pinned" ? policy.digest : null;
-          staleAttempt = releaseReport.targetDigest !== inFlightTarget;
-        }
-        // Ungoverned boxes pull a floating tag: nothing stored names the
-        // in-flight target, so only the write-time bounds apply.
-      } catch (correlationError) {
-        log.error(
-          "update report received but the attempt correlation failed",
-          correlationError instanceof Error
-            ? correlationError
-            : new Error(String(correlationError)),
-          {
-            source: "instance-update-status",
-            failureType: "update_report_correlation_failed",
-            instanceId: instance.id,
-            userId: instance.user_id,
-          },
-        );
-        return apiSuccess({ recorded: true, degraded: "update_report_correlation_failed" });
-      }
+    if (correlationFailed) {
+      log.error(
+        "update report received but the attempt correlation failed",
+        correlationError instanceof Error
+          ? correlationError
+          : new Error(String(correlationError)),
+        {
+          source: "instance-update-status",
+          failureType: "update_report_correlation_failed",
+          instanceId: instance.id,
+          userId: instance.user_id,
+        },
+      );
+      return apiSuccess({ recorded: true, degraded: "update_report_correlation_failed" });
     }
     if (staleAttempt) {
       log.info("failed update report names a target the in-flight update is not moving to; skipping the failed-state stamp", {

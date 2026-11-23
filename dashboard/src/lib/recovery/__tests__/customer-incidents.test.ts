@@ -914,7 +914,85 @@ const FAKE_FILTER_METHODS = new Set([
   "lte",
   "in",
   "like",
+  "or",
 ]);
+
+/** Split a PostgREST expression list on top-level commas (paren-aware). */
+function splitFilterTerms(expr: string): string[] {
+  const terms: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < expr.length; i += 1) {
+    const ch = expr[i];
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth -= 1;
+    else if (ch === "," && depth === 0) {
+      terms.push(expr.slice(start, i));
+      start = i + 1;
+    }
+  }
+  terms.push(expr.slice(start));
+  return terms.map((term) => term.trim()).filter((term) => term.length > 0);
+}
+
+/** Evaluate one `column.op.value` leaf of a PostgREST expression. */
+function fakeLeafMatches(row: Row, leaf: string): boolean {
+  const firstDot = leaf.indexOf(".");
+  if (firstDot < 0) return true;
+  const column = leaf.slice(0, firstDot);
+  let rest = leaf.slice(firstDot + 1);
+  let negated = false;
+  if (rest.startsWith("not.")) {
+    negated = true;
+    rest = rest.slice(4);
+  }
+  const secondDot = rest.indexOf(".");
+  const op = secondDot < 0 ? rest : rest.slice(0, secondDot);
+  const raw = secondDot < 0 ? "" : rest.slice(secondDot + 1);
+  const value = fakeColumnValue(row, column);
+  let result: boolean;
+  switch (op) {
+    case "is":
+      result = raw === "null" ? value == null : value === raw;
+      break;
+    case "eq":
+      result = fakeValuesEqual(value, raw);
+      break;
+    case "gt":
+    case "gte":
+    case "lt":
+    case "lte": {
+      if (value == null) return negated;
+      const cmp = fakeCompare(value, raw);
+      result =
+        op === "gt" ? cmp > 0 : op === "gte" ? cmp >= 0 : op === "lt" ? cmp < 0 : cmp <= 0;
+      break;
+    }
+    case "in": {
+      const inner = raw.startsWith("(") && raw.endsWith(")") ? raw.slice(1, -1) : raw;
+      result = inner
+        .split(",")
+        .some((candidate) => fakeValuesEqual(value, candidate.trim()));
+      break;
+    }
+    default:
+      result = true;
+  }
+  return negated ? !result : result;
+}
+
+/** Evaluate an `.or(filters)` string: `and(...)`, `or(...)` groups or bare leaves. */
+function fakeOrMatches(row: Row, expr: string): boolean {
+  return splitFilterTerms(expr).some((term) => {
+    if (term.startsWith("and(") && term.endsWith(")")) {
+      return splitFilterTerms(term.slice(4, -1)).every((inner) => fakeLeafMatches(row, inner));
+    }
+    if (term.startsWith("or(") && term.endsWith(")")) {
+      return fakeOrMatches(row, term.slice(3, -1));
+    }
+    return fakeLeafMatches(row, term);
+  });
+}
 
 function fakeRowMatches(row: Row, call: unknown[]): boolean {
   const [method, a1, a2, a3] = call as [string, string, unknown, unknown];
@@ -969,6 +1047,8 @@ function fakeRowMatches(row: Row, call: unknown[]): boolean {
       }
       return value === pattern;
     }
+    case "or":
+      return fakeOrMatches(row, String(a1));
     default:
       return true;
   }
@@ -1050,6 +1130,7 @@ function fakeIncidentDb(config: FakeDbConfig) {
         "lte",
         "in",
         "like",
+        "or",
         "order",
         "limit",
         "range",
@@ -1747,6 +1828,64 @@ describe("runCustomerIncidentScan", () => {
     expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
+  it("reads every agent in one consistent snapshot — a mid-scan restart cannot tear eligibility", async () => {
+    // Regression: the three eligibility predicates ran as separate paged
+    // queries merged by id, last-writer-wins. An agent that stopped between
+    // the running-read and the in-flight-op read contributed the SECOND
+    // snapshot — stopped — so box_down saw no live agent and the open
+    // incident resolved (with a notice) without the box ever being probed.
+    // One union read gives each row exactly one snapshot; here the row is
+    // swapped only if the retired in-flight-op query shape ever runs.
+    const agents = [
+      agentDbRow({
+        status: "running",
+        operation_kind: "restart",
+        // A live op — not yet stuck (10m < 15m) — but recent enough to be
+        // the runtime marker: the failure receipt must postdate it.
+        operation_started_at: iso(10 * MIN),
+      }),
+    ];
+    const db = fakeIncidentDb({
+      agents,
+      openIncidents: [incidentDbRow({ occurrence_count: 1, last_seen_at: iso(4 * MIN) })],
+      watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 5 * MIN)] },
+      mutateWhen: (table, calls) => {
+        // The retired in-flight-op subject read is the only query carrying
+        // this NOT-IS-NULL pair: land the restart there to reproduce the
+        // torn merge. The single union read never issues it.
+        if (
+          table === "hivra_agents" &&
+          calls.some((c) => c[0] === "not" && c[1] === "operation_kind") &&
+          calls.some((c) => c[0] === "not" && c[1] === "operation_started_at")
+        ) {
+          agents[0] = agentDbRow({
+            status: "stopped",
+            operation_kind: "restart",
+            operation_started_at: iso(10 * MIN),
+          });
+        }
+      },
+    });
+    const deps = scanDeps({ db });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    // The read saw the box as it was — running with a fresh gateway_down
+    // receipt — so the open incident holds: touched, not resolved, never
+    // re-paged.
+    expect(summary.resolved).toBe(0);
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    // The subject read itself carries the union in ONE ordered paged
+    // query — no second per-predicate read remains to capture a torn row.
+    const subjectReads = db.calls.filter(
+      (entry) =>
+        entry.table === "hivra_agents" &&
+        entry.calls.some((call) => call[0] === "order" && call[1] === "id"),
+    );
+    expect(subjectReads).toHaveLength(1);
+    expect(subjectReads[0].calls.some((call) => call[0] === "or")).toBe(true);
+  });
+
   it("marks remaining probes as skipped once the scan probe budget is exhausted", async () => {
     let tick = 0;
     const deps = scanDeps({
@@ -2285,6 +2424,92 @@ describe("runCustomerIncidentScan", () => {
     // Not even the still-open version touch: the row is completely
     // untouched this pass.
     expect(row.last_seen_at).toBeUndefined();
+  });
+
+  it("does not page box_down on a failure receipt that only just landed before the insert", async () => {
+    // The evaluation aged a 45-minute-old gateway_down past the grace —
+    // but the outage it described ended and a new one began in the
+    // report gap: the newest receipt at insert time is seconds old and
+    // has not earned a page. The re-check must age the CURRENT receipt,
+    // not reuse the evaluated age.
+    let subjectReRead = false;
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+      mutateWhen: (table, calls) => {
+        // The pre-insert re-check reads the subject, then the receipt
+        // windows: land the fresh failure in that gap. The subject re-read
+        // is the only hivra_agents lookup filtered by id.
+        if (
+          table === "hivra_agents" &&
+          calls.some((c) => c[0] === "eq" && c[1] === "id")
+        ) {
+          subjectReRead = true;
+        }
+        if (
+          subjectReRead &&
+          table === "ops_events" &&
+          calls.some((c) => c[0] === "in" && c[1] === "metadata->>event_type")
+        ) {
+          db.tableRows("ops_events").push({
+            ...watchdogDbRow("gateway_down", 1 * MIN, { event_id: "e2" }),
+            id: "ops-fresh-down",
+            source: "box.surface_watchdog.event",
+            instance_id: "agent-1",
+          });
+          subjectReRead = false;
+        }
+      },
+    });
+    const deps = scanDeps({ db });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.opened).toBe(0);
+    const incidentReports = (deps.report as jest.Mock).mock.calls
+      .map((c) => c[0])
+      .filter((o) => String(o.source).startsWith("incident."));
+    expect(incidentReports).toHaveLength(0);
+  });
+
+  it("pages box_down immediately on a fresh recovery_exhausted receipt, grace aside", async () => {
+    // Same gap, but the new receipt is recovery_exhausted — the box's own
+    // recovery gave up. That verdict keeps its immediate page; the grace
+    // window only holds back receipts that may still be recovering.
+    let subjectReRead = false;
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: { "agent-1": [watchdogDbRow("unit_restart", 45 * MIN)] },
+      mutateWhen: (table, calls) => {
+        if (
+          table === "hivra_agents" &&
+          calls.some((c) => c[0] === "eq" && c[1] === "id")
+        ) {
+          subjectReRead = true;
+        }
+        if (
+          subjectReRead &&
+          table === "ops_events" &&
+          calls.some((c) => c[0] === "in" && c[1] === "metadata->>event_type")
+        ) {
+          db.tableRows("ops_events").push({
+            ...watchdogDbRow("recovery_exhausted", 1 * MIN, { event_id: "e2" }),
+            id: "ops-fresh-exhausted",
+            source: "box.surface_watchdog.event",
+            instance_id: "agent-1",
+          });
+          subjectReRead = false;
+        }
+      },
+    });
+    const deps = scanDeps({ db });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.opened).toBe(1);
+    const incidentReports = (deps.report as jest.Mock).mock.calls
+      .map((c) => c[0])
+      .filter((o) => String(o.source).startsWith("incident."));
+    expect(incidentReports).toHaveLength(1);
+    expect(incidentReports[0].metadata.incident_key).toBe("box_down:agent-1");
   });
 
   // ---- public probe signal (box_unreachable) -------------------------------
@@ -3423,6 +3648,44 @@ describe("runCustomerIncidentScan", () => {
       expect(summary.opened).toBe(0);
       expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
       expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it("does not page box_unreachable when the recorded outage closed and restarted before the insert", async () => {
+      // The evaluation aged the outage from the row's first_seen_at — but
+      // a verdict write can close that outage and reopen the row with a
+      // FRESH start between evaluation and the report insert. The
+      // re-check must age the CURRENT outage start, not reuse the
+      // evaluated snapshot's: a seconds-old new outage has not earned a
+      // page yet.
+      const row = probeRow(); // first_seen_at: iso(15 * MIN) — aged at eval
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        probeRows: [row],
+        mutateWhen: (table, calls) => {
+          // The pre-insert probe-row re-read is the only source+instance_id
+          // filtered probe-row query: a racing verdict closes the old
+          // outage and starts a new one in the gap it guards.
+          if (
+            table === "ops_events" &&
+            calls.some((c) => c[0] === "eq" && c[1] === "instance_id") &&
+            calls.some(
+              (c) => c[0] === "eq" && c[1] === "source" && c[2] === "box.public_probe.unreachable",
+            )
+          ) {
+            row.first_seen_at = iso(2 * MIN);
+          }
+        },
+      });
+      const deps = scanDeps({
+        db,
+        probe: jest.fn(async () => ({ status: 502, latencyMs: 80, error: null })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.opened).toBe(0);
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+      // The outage record still fails the probe — it is simply too young
+      // to page; the next scan re-ages and reports it.
     });
 
     it("does not resolve a live incident when a newer outage row appears under the healthy verdict write", async () => {
