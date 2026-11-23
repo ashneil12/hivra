@@ -214,6 +214,18 @@ export interface HostScriptResult {
   /** Only when asked for with reportTimings: milliseconds from the start of
    * the SSH connect until the session was ready. */
   sshReadyMs?: number;
+  /**
+   * How far the SSH attempt got before it ended — the same contract
+   * hetzner/ssh's SshResult.stage carries, so a caller can tell "the script
+   * provably never ran on the host" from "the transport died and it may
+   * have". "connect": the handshake never completed; "ready": authenticated
+   * but the command channel never opened; "command": the channel opened and
+   * the script was dispatched — it may have run to any depth before the
+   * result died. Set on the ssh2 path; a failure returned before connect is
+   * attempted (config, env, fingerprint refusal) has no stage because the
+   * answer is already "never ran".
+   */
+  stage?: "connect" | "ready" | "command";
 }
 
 /** Default and absolute host-output limits protect the control plane from a
@@ -1702,6 +1714,10 @@ async function runProxmoxHostInvocation(
       let settled = false;
       // When the SSH session became ready, from the start of the connect.
       let sshReadyMs: number | null = null;
+      // How far the attempt got when it ended — the same contract as
+      // SshResult.stage, stamped onto every result so a bare timeout is
+      // honest about whether the script may have been dispatched.
+      let stage: NonNullable<HostScriptResult["stage"]> = "connect";
       // What the server presented, recorded before the verifier refuses it.
       let presentedFingerprint: string | null = null;
       const stdoutChunks: Buffer[] = [];
@@ -1717,6 +1733,7 @@ async function runProxmoxHostInvocation(
         ok: false,
         ...capturedOutput(),
         error: `Proxmox SSH operation timed out after ${timeoutMs}ms`,
+        stage,
       });
 
       const finish = (result: HostScriptResult) => {
@@ -1733,7 +1750,8 @@ async function runProxmoxHostInvocation(
         } catch {
           // ignore
         }
-        const bounded = result.ok && performance.now() >= dispatchDeadline ? timeoutResult() : result;
+        const staged = result.stage === undefined ? { ...result, stage } : result;
+        const bounded = staged.ok && performance.now() >= dispatchDeadline ? timeoutResult() : staged;
         const timed = reportTimings && sshReadyMs !== null ? { ...bounded, sshReadyMs } : bounded;
         resolve(sudoTransport ? withoutSudoSentinel(timed) : timed);
       };
@@ -1806,6 +1824,9 @@ async function runProxmoxHostInvocation(
       conn.on("ready", () => {
         if (!active()) return;
         sshReadyMs = Date.now() - t0;
+        // Authenticated: a dead result can no longer prove the script never
+        // reached the host.
+        stage = "ready";
         debugLog("ssh.ready");
         if (!active()) return;
         conn.exec(command, (err, stream) => {
@@ -1825,6 +1846,9 @@ async function runProxmoxHostInvocation(
             });
             return;
           }
+          // The channel opened: the script is dispatched next — it may have
+          // run even if nothing below ever reports back.
+          stage = "command";
           debugLog("ssh.exec.ready");
           stream.on("close", (code: number) => {
             if (!active()) return;

@@ -164,7 +164,10 @@ export async function GET(req: NextRequest) {
 
     // Honest heartbeat: per-intent failures and sweep failures used to leave
     // the run looking 100% ok. in_doubt sweeps count only when they need an
-    // operator — the rest resolve themselves from chain evidence.
+    // operator — the rest resolve themselves from chain evidence. noTreasury
+    // items count too: a reconciled deposit the sweep could not move because
+    // no treasury is configured is stuck funds, not a clean run — and unlike
+    // a thrown sweep it produces no error field anywhere else.
     const creditSweepNeedsOperator =
       "needsOperator" in sweep && typeof sweep.needsOperator === "number"
         ? sweep.needsOperator
@@ -173,17 +176,27 @@ export async function GET(req: NextRequest) {
       "failed" in sweep && typeof sweep.failed === "number"
         ? sweep.failed + creditSweepNeedsOperator
         : 0;
+    const creditSweepNoTreasury =
+      "noTreasury" in sweep && typeof sweep.noTreasury === "number"
+        ? sweep.noTreasury
+        : 0;
     const managedVeniceItemFailures =
       !("error" in managedVeniceSweep) && typeof managedVeniceSweep.failed === "number"
         ? managedVeniceSweep.failed + (managedVeniceSweep.needsOperator ?? 0)
+        : 0;
+    const managedVeniceNoTreasury =
+      !("error" in managedVeniceSweep) && typeof managedVeniceSweep.noTreasury === "number"
+        ? managedVeniceSweep.noTreasury
         : 0;
     const heartbeatFailed =
       reconciliation.failed > 0 ||
       staleRetryLoadFailed ||
       creditSweepFailed ||
       creditSweepItemFailures > 0 ||
+      creditSweepNoTreasury > 0 ||
       managedVeniceSweepFailed ||
-      managedVeniceItemFailures > 0;
+      managedVeniceItemFailures > 0 ||
+      managedVeniceNoTreasury > 0;
     await recordCronHeartbeat(
       "reconcile-crypto-topups",
       heartbeatFailed
@@ -194,7 +207,9 @@ export async function GET(req: NextRequest) {
               `stale_retry=${staleRetryLoadFailed ? "load_failed" : (reconciliation.staleRetried ?? 0)} ` +
               `credit_sweep=${creditSweepFailed ? "threw" : creditSweepItemFailures} ` +
               `credit_sweep_op_review=${creditSweepNeedsOperator} ` +
-              `mv_sweep=${managedVeniceSweepFailed ? "threw" : managedVeniceItemFailures}`,
+              `credit_sweep_no_treasury=${creditSweepNoTreasury} ` +
+              `mv_sweep=${managedVeniceSweepFailed ? "threw" : managedVeniceItemFailures} ` +
+              `mv_sweep_no_treasury=${managedVeniceNoTreasury}`,
           }
         : undefined,
     );

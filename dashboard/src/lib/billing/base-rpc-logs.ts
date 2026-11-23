@@ -144,6 +144,14 @@ function matchLogRangeCap(error: unknown): { statedBlocks: number | null } | nul
  * `endpoint` identifies the RPC endpoint the discovered range cap is scoped
  * to (the provider URL is the natural key); callers that pass none share a
  * single cap, matching the original global behaviour.
+ *
+ * `onChunk`, when given, is awaited after each top-level chunk is fully
+ * answered, in order, with the chunk's inclusive end block and its logs. It
+ * exists so a bounded caller can checkpoint resumable coverage: once the
+ * callback returns, every block in `fromBlock..chunkEndBlock` has been
+ * answered. A chunk that throws — including a cooperative abort raised inside
+ * the caller's `call` — never fires the callback, so an interrupted scan's
+ * last checkpointed block is always one it actually covered.
  */
 export async function getLogsInBlockChunks<TLog>(params: {
   call: BaseRpcCall;
@@ -151,6 +159,7 @@ export async function getLogsInBlockChunks<TLog>(params: {
   fromBlock: number;
   toBlock: number;
   endpoint?: string;
+  onChunk?: (chunkEndBlock: number, chunkLogs: TLog[]) => void | Promise<void>;
 }): Promise<TLog[]> {
   assertBlockNumber(params.fromBlock, "fromBlock");
   assertBlockNumber(params.toBlock, "toBlock");
@@ -226,6 +235,7 @@ export async function getLogsInBlockChunks<TLog>(params: {
     );
     const chunkEnd = Math.min(params.toBlock, chunkStart + chunkBlocks - 1);
     const chunkLogs = await fetchRange(chunkStart, chunkEnd);
+    await params.onChunk?.(chunkEnd, chunkLogs);
     logs.push(...chunkLogs);
     chunkStart = chunkEnd + 1;
   }

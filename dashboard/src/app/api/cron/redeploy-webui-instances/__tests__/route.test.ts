@@ -506,13 +506,14 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
     // lifecycle_state='active' plus the status='running' rescue arm — a
     // failed row with a non-running status has no VM the redeploy can reach,
     // and sweeping one manufactures a guaranteed daily failure (prod 2026-11).
-    // The third arm re-admits exactly the reachable-failed case: a bare
-    // 'failed' arm is still NOT eligible, only a row whose last update
-    // provably ran on the guest (the substate applyLiveUpdate stamps on a
-    // launch failure that got past the box's SSH gates).
+    // The third arm re-admits exactly the reachable-failed case — plus the
+    // may-have-reached one, a launch whose transport died past connect and
+    // cannot prove the update never ran. A bare 'failed' arm is still NOT
+    // eligible, only a row whose last update ran (or may be running) on the
+    // guest (the substate applyLiveUpdate stamps on a launch failure).
     expect(orArg).toBe(
       "lifecycle_state.eq.active,status.eq.running," +
-        "and(lifecycle_state.eq.failed,lifecycle_substate.eq.live_update_failed_vm_reached)"
+        'and(lifecycle_state.eq.failed,lifecycle_substate.in.("live_update_failed_vm_reached","live_update_failed_vm_maybe_reached"))'
     );
     expect(LIFECYCLE_CHECK_STATES).toContain("active");
     // ...and the deny-list is what keeps that arm from redeploying a destroyed
@@ -550,14 +551,17 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
     }
   });
 
-  it("admits a failed row only when its last update provably reached the guest", async () => {
+  it("admits a failed row only when its last update reached — or may have reached — the guest", async () => {
     // applyLiveUpdate stamps lifecycle_substate on every launch failure:
     // 'live_update_failed_vm_reached' when the update died ON the box (a real
     // retry — recovery can restart the VM but never re-applies the release),
-    // 'live_update_failed_vm_unreachable' when the launch never got a
-    // command on the guest (recovery owns that row — powered off, wrong
-    // VMID, dead agent channel). The sweep's failed arm must require the
-    // reached marker: unreachable rows and rows predating the marker (NULL
+    // 'live_update_failed_vm_maybe_reached' when the transport died past
+    // connect so the launch may already be running (dropping it would orphan
+    // the row), and 'live_update_failed_vm_unreachable' when the launch
+    // provably never got a command on the guest (recovery owns that row —
+    // powered off, wrong VMID, dead agent channel, a connect-phase refusal).
+    // The sweep's failed arm must require one of the two retry-eligible
+    // markers: unreachable rows and rows predating the marker (NULL
     // substate) stay out, so the sweep cannot re-create the guaranteed daily
     // failure the live-only filter was added to stop.
     const query = fleetSelectQuery([]);
@@ -568,7 +572,7 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
 
     const orArg = String(query.orMock.mock.calls[0][0]);
     expect(orArg).toContain(
-      "and(lifecycle_state.eq.failed,lifecycle_substate.eq.live_update_failed_vm_reached)"
+      'and(lifecycle_state.eq.failed,lifecycle_substate.in.("live_update_failed_vm_reached","live_update_failed_vm_maybe_reached"))'
     );
     expect(orArg).not.toContain("live_update_failed_vm_unreachable");
     // No bare failed arm anywhere: 'failed' may only appear inside the

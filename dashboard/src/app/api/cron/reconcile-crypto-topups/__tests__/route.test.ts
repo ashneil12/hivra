@@ -350,4 +350,51 @@ describe("GET /api/cron/reconcile-crypto-topups", () => {
     expect(response.status).toBe(200);
     expect(recordCronHeartbeat).toHaveBeenCalledWith("reconcile-crypto-topups", undefined);
   });
+
+  it("records an ok:false heartbeat when the credit sweep cannot move funds without a treasury", async () => {
+    // A reconciled deposit the sweep skips with noTreasury is stuck funds:
+    // the run looks clean on every other count (no failures, nothing for an
+    // operator) and would heartbeat ok forever while the deposit sits
+    // unmoved. noTreasury counts in the predicate and the detail.
+    (sweepPendingCreditDepositReceipts as jest.Mock).mockResolvedValueOnce({
+      ...sweepPayload,
+      failed: 0,
+      noTreasury: 2,
+      results: [
+        { receiptId: "receipt-1", userId: "user-1", outcome: "no_treasury" },
+        { receiptId: "receipt-2", userId: "user-2", outcome: "no_treasury" },
+      ],
+    });
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "reconcile-crypto-topups",
+      expect.objectContaining({ ok: false, detail: expect.stringContaining("credit_sweep_no_treasury=2") })
+    );
+  });
+
+  it("records an ok:false heartbeat when the managed Venice sweep cannot move funds without a treasury", async () => {
+    // The managed Venice arm has its own noTreasury count: a settled quote's
+    // deposit that cannot be swept is the same stuck-funds condition and
+    // must fail the heartbeat on its own, not only alongside credit-sweep
+    // noTreasury.
+    (sweepPendingManagedVeniceTokenQuotes as jest.Mock).mockResolvedValueOnce({
+      ...managedVeniceSweepPayload,
+      failed: 0,
+      noTreasury: 1,
+      results: [
+        { quoteId: "quote-1", userId: "user-1", outcome: "no_treasury" },
+      ],
+    });
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "reconcile-crypto-topups",
+      expect.objectContaining({ ok: false, detail: expect.stringContaining("mv_sweep_no_treasury=1") })
+    );
+  });
 });
