@@ -184,4 +184,31 @@ describe("universal catalog manifests", () => {
     expect(zeroclaw.runtime.setup?.commands.join("\n")).toContain("agents.hivra.model_provider");
     expect(zeroclaw.runtime.setup?.commands.join("\n")).toContain("$OPENAI_API_KEY");
   });
+
+  it("pins Sun-Panel to its last open-source release and mounts all three persistence paths", () => {
+    // Upstream (hslr-s/sun-panel) went closed-source after v1.3.0 — its own
+    // README states v1.3.0 is the latest open-source release — so floating
+    // `latest` would pull closed-source images under an "MIT" license claim.
+    // The manifest pins the Docker tag "1.3.0" (Docker Hub carries it without
+    // the 'v' prefix), keeps the MIT claim accurate for exactly that image,
+    // and mounts every directory v1.3.0 persists to (upstream's docker run
+    // docs): /app/conf, /app/uploads and /app/database.
+    const manifest = getCatalogAppManifest("sun-panel");
+    expect(manifest).toBeDefined();
+    expect(manifest!.license).toBe("MIT");
+    expect(manifest!.runtime.kind).toBe("docker-web");
+    if (manifest!.runtime.kind !== "docker-web") return;
+    expect(manifest!.runtime.imageRepo).toBe("hslr/sun-panel");
+    expect(manifest!.runtime.imageTag).toBe("1.3.0");
+    expect(manifest!.runtime.volumes).toEqual([
+      { name: "conf", mountPath: "/app/conf" },
+      { name: "uploads", mountPath: "/app/uploads" },
+      { name: "database", mountPath: "/app/database" },
+    ]);
+    // The copy must not oversell: it names the pinned release and its
+    // open-source status rather than implying current releases are MIT.
+    expect(manifest!.description).toContain("1.3.0");
+    expect(manifest!.seo?.summary).toContain("open-source");
+    expect(() => CatalogAppManifestSchema.parse(manifest)).not.toThrow();
+  });
 });

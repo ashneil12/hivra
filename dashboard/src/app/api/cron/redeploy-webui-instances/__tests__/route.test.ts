@@ -618,6 +618,43 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
       expect(query.updateMock).toHaveBeenCalledWith(expect.objectContaining({ last_synced_at: expect.any(String) }));
     });
 
+    it("retries a box whose update stack is unhealthy even when its digest already matches the target", async () => {
+      // A failed or paused update can leave the target image running (digest
+      // matches, direction 'none') with the roll itself still broken — the
+      // box's own update stack reports update_health failed/paused. The plan
+      // gives every paused, failed or rolled-back update a Try again that
+      // reruns the same update, and the fleet sweep is that retry for
+      // governed boxes; a healthy dashboard update is also what clears the
+      // box-side pause marker. Treating the digest match as "current" would
+      // never retry it AND would stamp last_synced_at over a failed update.
+      sweep([
+        { id: "failed-on-target", name: "a" },
+        { id: "paused-on-target", name: "b" },
+        { id: "healthy-on-target", name: "c" },
+      ]);
+      (loadBoxRelease as jest.Mock).mockImplementation(async (_db: unknown, id: string) => ({
+        ...state({ target: release(2), direction: "none", autoMove: false, updateAvailable: false }),
+        updateHealth:
+          id === "failed-on-target" ? "failed" : id === "paused-on-target" ? "paused" : "ok",
+      }));
+
+      const body = await (await GET(getRequest())).json();
+
+      // Both unhealthy boxes go through applyLiveUpdate (the documented Try
+      // again); only the healthy one is skipped and stamped synced.
+      expect(mockedApplyLiveUpdate).toHaveBeenCalledTimes(2);
+      expect(mockedApplyLiveUpdate.mock.calls.map((call) => call[0].id).sort()).toEqual([
+        "failed-on-target",
+        "paused-on-target",
+      ]);
+      expect(body.data).toMatchObject({ launched: 2, skipped: 1, failed: 0 });
+      expect(body.data.results).toEqual(
+        expect.arrayContaining([
+          { id: "healthy-on-target", name: "c", success: false, skipped: true, error: "Already on its target release" },
+        ])
+      );
+    });
+
     it("does not move a box the registry offers nothing, or will not move automatically", async () => {
       sweep([
         { id: "offered-nothing", name: "a" },

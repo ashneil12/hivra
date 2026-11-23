@@ -21,7 +21,7 @@ import {
   type CryptoTopUpSettlementResult,
   type CryptoTopUpTransfer,
 } from "@/lib/billing/crypto-topups";
-import { claimCronUtcDayOutcome, isFirstCronTickOfUtcDay } from "@/lib/cron-heartbeat";
+import { claimCronUtcDayOutcome } from "@/lib/cron-heartbeat";
 import {
   createBaseChainReader,
   paymentDustFloor,
@@ -632,23 +632,22 @@ export async function reconcilePendingCryptoTopUps(params: {
   // The first tick of a new UTC day also retries a bounded batch of the
   // intents the age cutoff excludes — a paid intent whose last scan failed
   // just before crossing it must not lose its only automatic retry. The day
-  // boundary comes from the cron heartbeat's last_run_at; with no previous
-  // tick recorded there is nothing to compare, so nothing is retried.
+  // boundary IS the claim below: its guarded update only matches a
+  // last_run_at from before today, so "claimed" is exactly "first tick of a
+  // new UTC day with a recorded previous run" — no separate read can add to
+  // that, and no row at all means no baseline and a held claim.
   //
-  // The read is only a gate. The route heartbeats AFTER reconciliation
-  // resolves, so two overlapping authorized invocations could both read
-  // "previous tick was yesterday" and both run the stale batch — a second
-  // full scan of every stale intent on the shared public RPC. claimCronUtcDay
-  // is the atomic decider: the first writer to move last_run_at into today
-  // owns the day's pass; a loser skips it. A winner that then crashes holds
-  // the day, deferring the pass to tomorrow — deferral, not loss, which is
-  // the right trade for a retry lane that already runs daily.
+  // The claim is also the atomic decider between overlapping invocations:
+  // the route heartbeats AFTER reconciliation resolves, so two runs that
+  // both believe the day is free would otherwise both scan every stale
+  // intent on the shared public RPC. The first writer to move last_run_at
+  // into today owns the pass; a loser skips it. A winner that then crashes
+  // holds the day, deferring the pass to tomorrow — deferral, not loss,
+  // which is the right trade for a retry lane that already runs daily.
   // A failed claim is distinct from an already-claimed day: the day stays
   // unclaimed while the retry lane never ran, so the run's incident report
   // and heartbeat must read degraded, not a clean skip.
-  const staleDayClaim =
-    (await isFirstCronTickOfUtcDay(db, CRYPTO_TOPUPS_CRON_NAME, now)) &&
-    (await claimCronUtcDayOutcome(db, CRYPTO_TOPUPS_CRON_NAME, now));
+  const staleDayClaim = await claimCronUtcDayOutcome(db, CRYPTO_TOPUPS_CRON_NAME, now);
   const retryStale = staleDayClaim === "claimed";
   const staleRetryClaimFailed = staleDayClaim === "failed";
   let staleRetryLoadFailed = false;

@@ -924,7 +924,21 @@ async function scanQuoteTransfers(params: {
   // including ones a previous attempt's checkpoint seeded without their
   // stamps. Called inside the scan so the resolution rides the pass's own
   // deadline instead of a serial post-scan pass that re-ran from an empty
-  // cache every attempt.
+  // cache every attempt — and each resolved stamp is flushed into the
+  // coverage record as it lands (in bounded batches plus a final flush in
+  // `finally`), so a deadline abort mid-lookup leaves the lookups already
+  // paid inside the checkpoint instead of restarting them all tomorrow.
+  const stampResolvedBlock = (block: number, stamp: number) => {
+    for (const entry of parsed.values()) {
+      if (entry.blockNumber === block && entry.logTimestampSec === null) {
+        entry.logTimestampSec = stamp;
+      }
+    }
+  };
+  // Checkpoint at most once per this many resolved blocks: a 200-block
+  // lookup writes the record ~8 times instead of ~200, and the finally
+  // flush below captures the last partial batch.
+  const TIMESTAMP_FLUSH_EVERY = 25;
   const resolveMissingTransferTimestamps = async () => {
     const missing = new Set<number>(
       [...parsed.values()]
@@ -932,18 +946,39 @@ async function scanQuoteTransfers(params: {
         .map((entry) => entry.blockNumber)
     );
     if (missing.size === 0) return false;
-    const times = await blockTimestampsFor(
-      chain,
-      missing,
-      { block: latest, timestampSec: latestSec },
-      "Managed Venice quote scan"
-    );
-    for (const entry of parsed.values()) {
-      if (entry.logTimestampSec === null) {
-        entry.logTimestampSec = times.get(entry.blockNumber) ?? null;
-      }
+    let sinceFlush = 0;
+    // The reader blockTimestampsFor resolves through: each returned stamp is
+    // applied to `parsed` IMMEDIATELY (an abort between calls can never take
+    // resolved stamps with it) and periodically persisted.
+    const stampingChain = {
+      blockTimestamp: async (block: number) => {
+        const stamp = await chain.blockTimestamp(block);
+        stampResolvedBlock(block, stamp);
+        sinceFlush += 1;
+        if (sinceFlush >= TIMESTAMP_FLUSH_EVERY) {
+          sinceFlush = 0;
+          await persistProgress();
+        }
+        return stamp;
+      },
+    };
+    try {
+      const times = await blockTimestampsFor(
+        stampingChain,
+        missing,
+        { block: latest, timestampSec: latestSec },
+        "Managed Venice quote scan"
+      );
+      // Blocks the fixed-spacing shortcut computed without a read (the
+      // >200-lookup path) were never stamped through the wrapped reader.
+      for (const [block, stamp] of times) stampResolvedBlock(block, stamp);
+      return true;
+    } finally {
+      // Success or deadline abort alike: whatever resolved is stamped on
+      // `parsed` already — flush it so the next attempt reuses it.
+      // persistProgress is a no-op for a scan without resumable coverage.
+      await persistProgress();
     }
-    return true;
   };
 
   let dustSkipped = 0;
@@ -975,10 +1010,9 @@ async function scanQuoteTransfers(params: {
     await persistProgress();
     // Stamp the resolved timestamps into the same coverage record, so a
     // resumed attempt finds them inline and never re-pays a serial
-    // timestamp pass on an empty cache.
-    if (await resolveMissingTransferTimestamps()) {
-      await persistProgress();
-    }
+    // timestamp pass on an empty cache. The resolver flushes internally
+    // (batches plus a finally), so an abort mid-lookup keeps paid stamps.
+    await resolveMissingTransferTimestamps();
   };
 
   // Chunked at the public endpoint's 2,000-block eth_getLogs limit (Base's
@@ -1004,34 +1038,14 @@ async function scanQuoteTransfers(params: {
     });
   }
 
-  const blocksToFetch = new Set(
-    [...parsed.values()]
-      .filter((entry) => entry.logTimestampSec === null)
-      .map((entry) => entry.blockNumber)
-  );
-  const blockTimes = await blockTimestampsFor(
-    chain,
-    blocksToFetch,
-    { block: latest, timestampSec: latestSec },
-    "Managed Venice quote scan"
-  );
-  // Stamp the resolved block times back onto the entries and — for a
-  // resume-armed scan — into the coverage record they belong to. A
-  // checkpointed transfer with no inline timestamp made every later attempt
-  // re-run this serial lookup from an empty cache; persisting the stamps
-  // keeps the next pass inside its budget.
-  let resolvedAfterScan = false;
-  for (const entry of parsed.values()) {
-    if (entry.logTimestampSec === null) {
-      const stamp = blockTimes.get(entry.blockNumber);
-      if (stamp === undefined) continue;
-      entry.logTimestampSec = stamp;
-      resolvedAfterScan = true;
-    }
-  }
-  if (resolvedAfterScan) {
-    await persistProgress();
-  }
+  // Resolve every still-unstamped qualifying transfer — including ones a
+  // fully-covered checkpoint seeded without stamps, where no chunk callback
+  // ran at all. A checkpointed transfer with no inline timestamp made every
+  // later attempt re-run this serial pass from an empty cache and lose all
+  // of it to a deadline abort; the resolver flushes stamps into the
+  // coverage record as they land (and once more in finally), so the next
+  // pass resumes instead of restarting.
+  await resolveMissingTransferTimestamps();
   // A tx's logs share one block, so they are always scanned (and in range,
   // and confirmed) together.
   const logsByTx = new Map<string, Array<{ logIndex: number; amount: bigint }>>();
@@ -1043,7 +1057,9 @@ async function scanQuoteTransfers(params: {
   }
   const transfers: ScannedTransfer[] = [];
   for (const { logTimestampSec, ...transfer } of parsed.values()) {
-    const timestampSec = logTimestampSec ?? blockTimes.get(transfer.blockNumber)!;
+    // Every entry is stamped by now — resolveMissingTransferTimestamps
+    // either resolved it or threw (abort) before this line ran.
+    const timestampSec = logTimestampSec!;
     const txLogs = logsByTx.get(transfer.transactionHash) ?? [{ logIndex: transfer.logIndex, amount: transfer.amount }];
     const firstLogIndex = Math.min(...txLogs.map((log) => log.logIndex));
     transfers.push({
