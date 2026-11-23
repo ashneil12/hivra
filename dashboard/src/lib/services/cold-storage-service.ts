@@ -1324,6 +1324,23 @@ async function restoreInstanceAfterLock(
   // A timed-out or signalled client process can leave a detached Proxmox task.
   // Do not race that task with teardown even if the shell printed an exit code.
   if (!scriptResult.ok && !normalExit) {
+    // "connect"/"ready" are the documented pre-dispatch stages: the handshake
+    // or the channel open failed, so the writer provably never ran — the
+    // missing receipt is explained, no clone exists, and no teardown is owed.
+    // The claim reverts to cold_archived so the row retries cleanly. Only a
+    // command-stage (or stage-less) failure leaves dispatch ambiguous enough
+    // to hold the claim for manual verification.
+    if (scriptResult.stage === "connect" || scriptResult.stage === "ready") {
+      return revertToCold({
+        ok: false,
+        reason: "host_script_failed",
+        message: `Restore writer never dispatched on ${options.destinationHostSlug} (SSH stage "${scriptResult.stage}"): ${
+          scriptResult.error ?? scriptResult.stderr ?? "unknown error"
+        }`,
+        instanceId,
+        retryable: true,
+      });
+    }
     return holdUnverifiedRestore({
       ok: false,
       reason: "host_script_failed",

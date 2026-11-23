@@ -5287,6 +5287,60 @@ describe("DELETE /api/instances/[id] for an archived runtime", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("routes a failed archive that still owns a Proxmox VM through runtime teardown", async () => {
+    // Regression: `isArchivedInstanceDelete` used to claim this row shape, and
+    // `deleteArchivedInstance`'s runtime-field guard then returned
+    // `instance_changed` → a permanent 409 while the VM kept running. The row
+    // must fall through to the resolved lifecycle target so verified runtime
+    // teardown runs before the tombstone.
+    const { update } = mockArchiveRow({
+      proxmox_vmid: 216,
+      proxmox_node: "fixturenode2",
+      ipv4_address: "10.250.20.51",
+      gateway_url: "https://abc123.203-0-113-10.sslip.io",
+    });
+    (deleteProxmoxInstance as jest.Mock).mockResolvedValue({ ok: true, stdout: "", stderr: "" });
+
+    const response = await remove();
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: { deleted: true } });
+    expect(deleteProxmoxInstance).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "proxmox", vmid: 216 }),
+      expect.objectContaining({ expectedInstanceId: id }),
+    );
+    // The archive-only helper never ran: no fleet probe, no storage purge.
+    expect(locate).not.toHaveBeenCalled();
+    expect(storage).not.toHaveBeenCalled();
+    // The tombstone is the legacy write, which also releases the VMID slot.
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      status: "deleted",
+      lifecycle_state: "deleted",
+      proxmox_vmid: null,
+    }));
+  });
+
+  it("keeps a failed archive that still owns a Proxmox VM when teardown fails", async () => {
+    const { update } = mockArchiveRow({
+      proxmox_vmid: 216,
+      proxmox_node: "fixturenode2",
+      ipv4_address: "10.250.20.51",
+      gateway_url: "https://abc123.203-0-113-10.sslip.io",
+    });
+    (deleteProxmoxInstance as jest.Mock).mockResolvedValue({
+      ok: false,
+      error: "qm destroy 216 failed",
+      stdout: "",
+      stderr: "",
+    });
+
+    const response = await remove();
+    expect(response.status).toBe(502);
+    // No tombstone may be written while the VM could not be verified removed.
+    expect(update).not.toHaveBeenCalled();
+    expect(locate).not.toHaveBeenCalled();
+    expect(storage).not.toHaveBeenCalled();
+  });
+
   it.each(["restoring", "archiving"])("leaves a %s instance to the active lifecycle operation", async (state) => {
     const { update } = mockArchiveRow({ lifecycle_state: state });
     expect((await remove()).status).toBe(409);

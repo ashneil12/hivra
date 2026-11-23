@@ -25,7 +25,13 @@ type DeleteArchivedInstanceResult =
 export function isArchivedInstanceDelete(row: ArchiveDeleteRow): boolean {
   return row.lifecycle_state === "cold_archived"
     || row.lifecycle_state === "pending_deletion"
-    || (row.lifecycle_state === "failed" && Boolean(row.archive_uri))
+    // A `failed` archive that still owns a Proxmox VM belongs to the runtime
+    // teardown path, not this archive-only helper: the helper never destroys a
+    // guest, and its runtime-field guard would 409 the delete forever while the
+    // VM keeps running. With `proxmox_vmid` still set the row falls through to
+    // the resolved lifecycle target, which verifies teardown before the
+    // tombstone. (Mirrors the Start route's `isColdLifecycleRow` gate.)
+    || (row.lifecycle_state === "failed" && Boolean(row.archive_uri) && row.proxmox_vmid == null)
     || (row.lifecycle_state === "deleting" && (
       row.lifecycle_substate === OWNER_ARCHIVE_DELETE || Boolean(row.archive_uri)
     ));

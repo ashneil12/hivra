@@ -255,14 +255,19 @@ describe("orphan restore claim safety", () => {
     jest.useRealTimers();
   });
 
-  function mockQueries() {
+  function mockQueries(rows = [candidate], total = rows.length) {
     const selection = {
       eq: jest.fn().mockReturnThis(),
       is: jest.fn().mockReturnThis(),
       not: jest.fn().mockReturnThis(),
       in: jest.fn().mockReturnThis(),
       lt: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockResolvedValue({ data: [candidate], error: null }),
+      order: jest.fn().mockReturnThis(),
+      // The page fetch carries `count: "exact"`: the response's `count` is the
+      // filter's total, not the slice length.
+      range: jest.fn().mockImplementation(
+        async (from: number, to: number) => ({ data: rows.slice(from, to + 1), error: null, count: total }),
+      ),
     };
     const write = {
       eq: jest.fn().mockReturnThis(),
@@ -319,5 +324,41 @@ describe("orphan restore claim safety", () => {
     expect(write.eq).toHaveBeenCalledWith("last_lifecycle_transition_at", candidate.last_lifecycle_transition_at);
     expect(write.eq).toHaveBeenCalledWith("last_lifecycle_transition_at", now);
     expect(summary.adopted).toBe(1);
+  });
+
+  it("walks the whole matching set across sweeps instead of re-reading the first page", async () => {
+    // Regression: the loader used to fetch a fixed 25 rows. When the front of
+    // the set kept stopped clones — inconclusive locates that keep the row a
+    // candidate forever — the same 25 loaded every sweep and candidate 26+
+    // was never even fetched. The selection now rotates a bounded page across
+    // the whole matching set on a deterministic order.
+    const stuck = Array.from({ length: 25 }, (_, i) => ({
+      ...candidate,
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    }));
+    const deep = { ...candidate, id: "00000000-0000-4000-8000-0000000000ff26" };
+    const { selection } = mockQueries([...stuck, deep], 26);
+    // The front page's clones are stopped (inconclusive → claims retained);
+    // the deep candidate's is actually gone.
+    locate.mockImplementation(async (c: { id: string }) =>
+      c.id === deep.id ? { status: "gone" as const } : { status: "inconclusive" as const },
+    );
+
+    // Bucket 4 → page 0: the sweep sees only the front window, and the deep
+    // candidate is never fetched (so never checked).
+    jest.setSystemTime(new Date(2 * 60_000 * 4));
+    const first = await runColdRestoreOrphanAdoptionSweep();
+    expect(selection.range).toHaveBeenCalledWith(0, 24);
+    expect(locate).not.toHaveBeenCalledWith(expect.objectContaining({ id: deep.id }));
+    expect(first.resetToCold).toBe(0);
+    expect(first.stillPending).toBe(25);
+
+    // Bucket 5 → page 1: the window advanced — the tail candidate is loaded,
+    // absence-checked, and reset under the same stopped-clone gate.
+    jest.setSystemTime(new Date(2 * 60_000 * 5));
+    const second = await runColdRestoreOrphanAdoptionSweep();
+    expect(selection.range).toHaveBeenCalledWith(25, 49);
+    expect(locate).toHaveBeenCalledWith(expect.objectContaining({ id: deep.id }));
+    expect(second.resetToCold).toBe(1);
   });
 });

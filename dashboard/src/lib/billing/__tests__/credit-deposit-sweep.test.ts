@@ -106,4 +106,50 @@ describe("credit deposit sweep evidence scan", () => {
     expect(spans.some((span) => span <= 500)).toBe(true);
     expect(spans.filter((span) => span <= 500).length).toBeGreaterThanOrEqual(4);
   });
+
+  it("falls back to the HTTP status when a non-OK response stalls the error body read", async () => {
+    // Regression: the evidence scan's eth_getLogs answered 503 but then
+    // stalled the error-body stream, and `readRpcErrorDetail` awaited
+    // `response.json()` with no deadline — the whole sweep pass hung on a
+    // body that never arrived. One deadline now covers the request and the
+    // body read; on body timeout the sweep throws on the status alone so
+    // the run still reports (and retries next run) promptly.
+    const memory = createBillingMemoryDb({
+      crypto_deposit_receipts: [submittedReceipt()],
+    });
+    mockSupabaseState.admin = memory.db;
+    const rpc = createBaseRpcFake({ latestBlock: HEAD, latestTimestamp: now });
+    const fetchImpl = (url: string, init: { body: string }) => {
+      const request = JSON.parse(init.body) as { method?: string };
+      if (request.method === "eth_getLogs") {
+        return Promise.resolve({
+          ok: false,
+          status: 503,
+          // The body stream opens but never delivers a byte.
+          json: () => new Promise<unknown>(() => {}),
+        });
+      }
+      return rpc.fetchImpl(url, init);
+    };
+
+    const summary = await sweepPendingCreditDepositReceipts({
+      rpcUrl: "https://base.test",
+      fetchImpl,
+      env: { HERMES_TREASURY_ADDRESS: TREASURY_ADDRESS },
+      now: new Date(now),
+      rpcRequestTimeoutMs: 20,
+    });
+
+    // The stalled body fell back to the bare status: the receipt is reported
+    // as a plain error and is NOT re-sent or confirmed.
+    expect(summary.results).toEqual([
+      expect.objectContaining({
+        receiptId: "receipt_1",
+        outcome: "error",
+        error: expect.stringContaining("status 503"),
+      }),
+    ]);
+    const row = memory.tables.crypto_deposit_receipts[0];
+    expect(row.sweep_status).toBe("submitted");
+  });
 });

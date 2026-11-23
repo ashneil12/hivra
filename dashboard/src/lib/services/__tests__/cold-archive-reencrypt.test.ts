@@ -243,6 +243,48 @@ describe("runReencryptSweep", () => {
     expect(rows[0]).toMatchObject({ archive_uri: uriFor(ID_A), lifecycle_substate: null });
   });
 
+  it.each(["connect", "ready"] as const)(
+    "releases its claim on a pre-dispatch SSH failure (stage=%s, no stdout)",
+    async (stage) => {
+      // "connect" = handshake never completed; "ready" = channel never opened.
+      // Both prove the writer was never dispatched — holding the claim would
+      // lock the archive out of every later sweep over a run that never was.
+      const rows = [row(ID_A)];
+      const { client } = fakeSupabase(rows);
+      const runHostScript = jest.fn(async () => ({
+        ok: false,
+        stdout: "",
+        stderr: "ssh transport failed",
+        stage,
+      }));
+      const r = await runReencryptSweep(client, sweepOn, { hostSlug: "fixturenodea" }, { runHostScript });
+      expect(r.outcomes[0]).toMatchObject({
+        status: "host_script_failed",
+        message: expect.stringContaining("never dispatched"),
+      });
+      expect(rows[0]).toMatchObject({ archive_uri: uriFor(ID_A), lifecycle_substate: null });
+    },
+  );
+
+  it("keeps the claim on a command-stage failure even with no stdout", async () => {
+    // The channel opened — the writer may have run to any depth before the
+    // result died, so an empty stdout proves nothing.
+    const rows = [row(ID_A)];
+    const { client } = fakeSupabase(rows);
+    const runHostScript = jest.fn(async () => ({
+      ok: false,
+      stdout: "",
+      stderr: "channel closed mid-command",
+      stage: "command" as const,
+    }));
+    const r = await runReencryptSweep(client, sweepOn, { hostSlug: "fixturenodea" }, { runHostScript });
+    expect(r.outcomes[0]).toMatchObject({
+      status: "host_script_failed",
+      message: expect.stringContaining("claim retained"),
+    });
+    expect(rows[0]).toMatchObject({ archive_uri: uriFor(ID_A), lifecycle_substate: "cold_archive_reencrypt" });
+  });
+
   it("does not start a second writer while an earlier writer claim remains", async () => {
     const { client } = fakeSupabase([row(ID_A, { lifecycle_substate: "cold_archive_reencrypt" })]);
     const runHostScript = jest.fn();

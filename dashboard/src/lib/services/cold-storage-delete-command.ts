@@ -66,6 +66,7 @@ export function buildRetentionArchiveTrashCommand(
   }
 
   const archiveDirectory = archiveUri.slice(0, archiveUri.lastIndexOf("/"));
+  const archiveFileName = archiveUri.slice(archiveUri.lastIndexOf("/") + 1);
   const trashDirectory = `trash/${instanceId}-${compactTimestamp}`;
   return `${STORAGE_BOX_PRELUDE}
 move_to_trash() {
@@ -96,6 +97,13 @@ move_to_trash meta/${instanceId} ${trashDirectory}/meta yes
 verify_missing_on_storage_box ${archiveDirectory}
 verify_missing_on_storage_box meta/${instanceId}
 storage_box "ls -ld ${trashDirectory}/data" >/dev/null
+# The receipt is what lets purge mark the row deleted and clear the archive
+# pointer — so it must also prove the EXPECTED archive file came along inside
+# the moved directory, not merely that a directory exists. A free/<id> that
+# lost its archive (partial upload cleanup, manual deletion) still moved
+# happily; without this check the row went to deleted while the data it named
+# was never there.
+storage_box "test -f ${trashDirectory}/data/${archiveFileName}"
 echo ${COLD_RETENTION_TRASH_RECEIPT}
 `;
 }
