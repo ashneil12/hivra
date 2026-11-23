@@ -190,7 +190,7 @@ describe("runSurfaceWatchdogSweep", () => {
         event("e1-1", "unit_failing", { unit: "bux-browser-keeper.service", reason: "failed", nRestarts: 3864 }),
         event("e1-2", "unit_restart", { unit: "hivra-agent-zero.service", attempt: 1, ok: true }),
       ]),
-      report: async (ops) => { reportedOps.push(ops); return { fingerprint: "x" }; },
+      report: async (ops) => { reportedOps.push(ops); return { id: "evt-x", fingerprint: "x" }; },
     });
     expect(summary).toMatchObject({ scanned: 1, reported: 1, relayed: 2, failed: 0 });
     expect(reportedOps.map((ops) => (ops as { title: string }).title)).toEqual([
@@ -205,7 +205,7 @@ describe("runSurfaceWatchdogSweep", () => {
     const events = Array.from({ length: 15 }, (_, i) => event(`e1-${i + 1}`, "unit_failing", { unit: "bux-x.service" }));
     const summary = await runSurfaceWatchdogSweep({
       read: async () => reported(events),
-      report: async (ops) => { reportedOps.push(ops); return { fingerprint: "x" }; },
+      report: async (ops) => { reportedOps.push(ops); return { id: "evt-x", fingerprint: "x" }; },
     });
     expect(summary.relayed).toBe(10);
     // The newest 10: e1-6 .. e1-15.
@@ -226,7 +226,7 @@ describe("runSurfaceWatchdogSweep", () => {
     ];
     const report = jest.fn(async (ops: { title: string }) => {
       storedTitles.add(ops.title);
-      return { fingerprint: "x" };
+      return { id: "evt-x", fingerprint: "x" };
     });
     const read = async () => reported(events);
 
@@ -248,7 +248,7 @@ describe("runSurfaceWatchdogSweep", () => {
         return chain;
       },
     };
-    const report = jest.fn(async () => ({ fingerprint: "x" }));
+    const report = jest.fn(async () => ({ id: "evt-x", fingerprint: "x" }));
     const summary = await runSurfaceWatchdogSweep({
       read: async () => reported([event("e8-1", "unit_failing", { unit: "x.service" })]),
       report,
@@ -275,7 +275,7 @@ describe("runSurfaceWatchdogSweep", () => {
 
   it("counts a throwing read as failed and keeps sweeping the rest", async () => {
     mockDb.current = fakeDb([agentRow("a1"), agentRow("a2")]);
-    const report = jest.fn(async () => ({ fingerprint: "x" }));
+    const report = jest.fn(async () => ({ id: "evt-x", fingerprint: "x" }));
     const reads: string[] = [];
     const summary = await runSurfaceWatchdogSweep({
       read: async (target) => {
@@ -294,9 +294,21 @@ describe("runSurfaceWatchdogSweep", () => {
     let calls = 0;
     const summary = await runSurfaceWatchdogSweep({
       read: async () => reported([event("e4-1", "unit_failing"), event("e4-2", "unit_failing")]),
-      report: async () => { calls += 1; if (calls === 1) throw new Error("db down"); return { fingerprint: "x" }; },
+      report: async () => { calls += 1; if (calls === 1) throw new Error("db down"); return { id: "evt-x", fingerprint: "x" }; },
     });
     expect(summary).toMatchObject({ relayed: 1, failed: 1 });
+  });
+
+  it("counts a report that returns no persisted id as failed, not relayed", async () => {
+    // reportOpsEvent answers null when the ops_events write itself failed —
+    // the receipt was never stored, so the sweep must not count it relayed
+    // or the route heartbeat reads clean while events are being lost.
+    mockDb.current = fakeDb([agentRow("a1")]);
+    const summary = await runSurfaceWatchdogSweep({
+      read: async () => reported([event("e9-1", "unit_failing", { unit: "x.service" })]),
+      report: async () => null,
+    });
+    expect(summary).toMatchObject({ reported: 1, relayed: 0, failed: 1 });
   });
 
   it("does nothing without the admin client", async () => {

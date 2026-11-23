@@ -262,7 +262,17 @@ export async function runSurfaceWatchdogSweep(options: SurfaceWatchdogSweepOptio
     for (const ops of pending) {
       if (alreadyRelayed.has(ops.title)) continue;
       try {
-        await report(ops);
+        const reported = await report(ops);
+        if (reported?.id == null) {
+          // reportOpsEvent answers null when the write itself failed — a
+          // receipt that never persisted is a failed relay, not a relayed
+          // one, or the route heartbeat reads clean while receipts drop.
+          summary.failed += 1;
+          log.error("surface watchdog event relay did not persist", new Error("reportOpsEvent returned no id"), {
+            source: SOURCE, failureType: "watchdog_event_relay_unpersisted", instanceId: row.id, userId: row.user_id,
+          });
+          continue;
+        }
         summary.relayed += 1;
       } catch (error) {
         summary.failed += 1;
