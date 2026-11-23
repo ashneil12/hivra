@@ -292,6 +292,7 @@ function createBaseRpc(rpcUrl: string, fetchImpl: JsonRpcFetch) {
         },
         fromBlock: params.fromBlock,
         toBlock: params.toBlock,
+        endpoint: rpcUrl,
       });
     },
   };

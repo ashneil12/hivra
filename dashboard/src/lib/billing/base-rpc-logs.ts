@@ -6,9 +6,9 @@
 // limited to a N range"). The cap moves: it was 2,000 blocks, then 1,000,
 // then a few hundred. MAX_BASE_RPC_LOG_RANGE_BLOCKS stays the configured
 // ceiling; when a provider refuses a range the stated cap is parsed from the
-// error and the remaining range is re-tiled at that size, remembered for the
-// process so later scans start there instead of paying one refused request
-// per chunk.
+// error and the remaining range is re-tiled at that size, remembered per
+// endpoint for a bounded window so later scans start there instead of paying
+// one refused request per chunk.
 //
 // The managed-Venice reconciler was fixed for this with its own chunk loop,
 // but the USDC top-up reconciler kept one 5,000-block call, so every pending
@@ -22,16 +22,59 @@
 
 export const MAX_BASE_RPC_LOG_RANGE_BLOCKS = 2_000;
 
-// The smallest span this process has had to fall back to after a provider
-// range-cap refusal. Never grows back within the process: a provider that
-// once refused 500-block ranges is assumed to keep refusing them, so scans
-// start at the discovered size rather than re-learning it per call.
-let discoveredLogRangeCapBlocks: number | null = null;
+// How long a discovered cap is trusted before it is re-probed. The cap a
+// provider enforces is load-dependent (Base's public endpoint answered 2,000,
+// then 1,000, then a few hundred over days), so a span confirmed during a
+// degraded window must not pin every later scan at the degraded size for the
+// life of the process — a serverless warm pool can live for hours.
+const DISCOVERED_LOG_RANGE_CAP_TTL_MS = 60 * 60_000;
 
-// Test hook: the discovered cap is process state and would otherwise leak
+// The smallest span this process has had to fall back to after a provider
+// range-cap refusal, keyed by endpoint: different providers enforce different
+// caps, so a cap learned on one URL must not shrink another's scans. A cap is
+// recorded only once a request at that span has actually SUCCEEDED — a
+// provider that refuses every range down to a single block proves nothing
+// about the span it will accept once it recovers, so a refusal alone must
+// never shrink the remembered cap (otherwise one fully-degraded window would
+// leave every later scan doing 2,000 one-block requests). Entries expire
+// after the TTL and are re-learned on the next refusal.
+const discoveredLogRangeCaps = new Map<string, { blocks: number; confirmedAtMs: number }>();
+
+// Test hook: the discovered caps are process state and would otherwise leak
 // between cases in the same worker.
 export function resetDiscoveredBaseLogRangeCap() {
-  discoveredLogRangeCapBlocks = null;
+  discoveredLogRangeCaps.clear();
+}
+
+function logRangeCapKey(endpoint: string | undefined) {
+  return endpoint ?? "";
+}
+
+// The confirmed cap for this endpoint, or null when none was learned (or the
+// learned one aged out — expiry deletes so the next scan re-probes at the
+// configured ceiling).
+function rememberedLogRangeCap(endpoint: string | undefined) {
+  const key = logRangeCapKey(endpoint);
+  const cap = discoveredLogRangeCaps.get(key);
+  if (!cap) return null;
+  if (Date.now() - cap.confirmedAtMs >= DISCOVERED_LOG_RANGE_CAP_TTL_MS) {
+    discoveredLogRangeCaps.delete(key);
+    return null;
+  }
+  return cap.blocks;
+}
+
+function noteDiscoveredLogRangeCap(endpoint: string | undefined, blocks: number) {
+  const key = logRangeCapKey(endpoint);
+  const existing = discoveredLogRangeCaps.get(key);
+  const stillFresh = existing && Date.now() - existing.confirmedAtMs < DISCOVERED_LOG_RANGE_CAP_TTL_MS;
+  // Within the window the cap only shrinks (a provider that once refused
+  // 500-block ranges is assumed to keep refusing them); past it, the new
+  // confirmation replaces the stale value.
+  discoveredLogRangeCaps.set(key, {
+    blocks: stillFresh ? Math.min(existing.blocks, blocks) : blocks,
+    confirmedAtMs: Date.now(),
+  });
 }
 
 export type BaseRpcCall = <T>(method: string, params: unknown[]) => Promise<T>;
@@ -90,10 +133,6 @@ function matchLogRangeCap(error: unknown): { statedBlocks: number | null } | nul
   return null;
 }
 
-function noteDiscoveredLogRangeCap(blocks: number) {
-  discoveredLogRangeCapBlocks = Math.min(discoveredLogRangeCapBlocks ?? blocks, blocks);
-}
-
 /**
  * Every log matching `filter` in blocks `fromBlock`..`toBlock` (inclusive),
  * fetched in sequential eth_getLogs requests of at most
@@ -101,12 +140,17 @@ function noteDiscoveredLogRangeCap(blocks: number) {
  * numbers — never "latest" — so a request can never span more than the limit
  * and every chunk sees the same chain head the caller measured confirmations
  * against.
+ *
+ * `endpoint` identifies the RPC endpoint the discovered range cap is scoped
+ * to (the provider URL is the natural key); callers that pass none share a
+ * single cap, matching the original global behaviour.
  */
 export async function getLogsInBlockChunks<TLog>(params: {
   call: BaseRpcCall;
   filter: BaseLogFilter;
   fromBlock: number;
   toBlock: number;
+  endpoint?: string;
 }): Promise<TLog[]> {
   assertBlockNumber(params.fromBlock, "fromBlock");
   assertBlockNumber(params.toBlock, "toBlock");
@@ -116,7 +160,7 @@ export async function getLogsInBlockChunks<TLog>(params: {
     );
   }
 
-  const fetchRange = async (from: number, to: number): Promise<TLog[]> => {
+  const fetchRange = async (from: number, to: number, confirmSpanAsCap = false): Promise<TLog[]> => {
     let rangeLogs: TLog[];
     try {
       rangeLogs = await params.call<TLog[]>("eth_getLogs", [
@@ -134,8 +178,8 @@ export async function getLogsInBlockChunks<TLog>(params: {
       }
       // A range-cap refusal re-tiles the SAME range at the discovered (or
       // halved) span: contiguous tile-sized subranges cover it exactly once,
-      // so no block is skipped or fetched twice, and the process remembers
-      // the smaller span for every later chunk and scan.
+      // so no block is skipped or fetched twice, and a served tile's span is
+      // remembered for every later chunk and scan on this endpoint.
       const cap = to > from ? matchLogRangeCap(error) : null;
       if (cap) {
         const span = to - from + 1;
@@ -144,12 +188,15 @@ export async function getLogsInBlockChunks<TLog>(params: {
             ? cap.statedBlocks
             : Math.floor(span / 2);
         if (tile < 1) throw error;
-        noteDiscoveredLogRangeCap(tile);
         const retiled: TLog[] = [];
         let subStart = from;
         while (subStart <= to) {
           const subEnd = Math.min(to, subStart + tile - 1);
-          retiled.push(...(await fetchRange(subStart, subEnd)));
+          // A full tile that the provider then SERVES is the only proof a
+          // smaller cap exists — a partial tail tile says nothing about the
+          // tile size, and a provider that keeps refusing down to one block
+          // leaves the remembered cap alone.
+          retiled.push(...(await fetchRange(subStart, subEnd, subEnd - subStart + 1 === tile)));
           subStart = subEnd + 1;
         }
         return retiled;
@@ -161,18 +208,21 @@ export async function getLogsInBlockChunks<TLog>(params: {
     if (!Array.isArray(rangeLogs)) {
       throw new Error("Invalid eth_getLogs result from Base RPC");
     }
+    if (confirmSpanAsCap) {
+      noteDiscoveredLogRangeCap(params.endpoint, to - from + 1);
+    }
     return rangeLogs;
   };
 
   const logs: TLog[] = [];
   let chunkStart = params.fromBlock;
   while (chunkStart <= params.toBlock) {
-    // The configured ceiling, shrunk to the cap this process discovered on an
-    // earlier refusal, so later chunks never pay for a request we know the
-    // provider will reject.
+    // The configured ceiling, shrunk to the cap this endpoint confirmed on an
+    // earlier refusal (within the TTL), so later chunks never pay for a
+    // request we know the provider will reject.
     const chunkBlocks = Math.min(
       MAX_BASE_RPC_LOG_RANGE_BLOCKS,
-      discoveredLogRangeCapBlocks ?? MAX_BASE_RPC_LOG_RANGE_BLOCKS
+      rememberedLogRangeCap(params.endpoint) ?? MAX_BASE_RPC_LOG_RANGE_BLOCKS
     );
     const chunkEnd = Math.min(params.toBlock, chunkStart + chunkBlocks - 1);
     const chunkLogs = await fetchRange(chunkStart, chunkEnd);

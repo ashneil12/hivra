@@ -29,8 +29,10 @@ export interface CronHeartbeatDefinition {
 
 // The crons whose silence is a real incident. periodMinutes mirrors the
 // schedule in vercel.json. The watchdog only alerts on crons listed here AND
-// already seen at least once (a never-run cron has no baseline — we don't want
-// a false page the first time the registry grows ahead of the wiring).
+// either seen at least once or past the expected-since grace (a never-seen
+// cron gets a watchdog-planted marker row on first sight and pages once the
+// marker outlives its period budget — wiring may trail the registry, so the
+// grace is the same 3x a rough start gets).
 export const CRON_REGISTRY: readonly CronHeartbeatDefinition[] = [
   { name: "probe-instance-health", periodMinutes: 5 },
   { name: "recover-unhealthy-active-instances", periodMinutes: 15 },
@@ -140,6 +142,47 @@ const STALE_PERIOD_MULTIPLIER = 2;
 const NEVER_SUCCEEDED_PERIOD_MULTIPLIER = 3;
 
 /**
+ * Plant the watchdog's expected-since marker for a registered cron with no
+ * heartbeat row. The row (run_count = 0, created_at = now) is the baseline a
+ * later tick ages: once it outlives the never-succeeded budget the cron pages
+ * as never-reported. Without it a cron that always dies before its first
+ * heartbeat write would be invisible forever. ignoreDuplicates so a heartbeat
+ * row racing this write wins. Best-effort like the heartbeat itself — a
+ * failed marker must never break the watchdog's page loop.
+ */
+async function markCronExpectedSince(
+  db: NonNullable<typeof supabaseAdmin>,
+  cronName: string,
+): Promise<void> {
+  try {
+    const { error } = await db.from("ops_cron_heartbeats").upsert(
+      {
+        cron_name: cronName,
+        run_count: 0,
+        ok_count: 0,
+        last_detail: "watchdog expected-since marker: awaiting first heartbeat",
+      },
+      { onConflict: "cron_name", ignoreDuplicates: true },
+    );
+    if (error) {
+      log.warn("cron expected-since marker write failed", {
+        source: "cron-heartbeat",
+        failureType: "cron_expected_since_marker_failed",
+        cronName,
+        errorMessage: error.message,
+      });
+    }
+  } catch (err) {
+    log.warn("cron expected-since marker write threw", {
+      source: "cron-heartbeat",
+      failureType: "cron_expected_since_marker_threw",
+      cronName,
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Dead-man check across CRON_REGISTRY. For each registered cron that has been
  * seen at least once but whose last_success_at is older than 2x its period,
  * emit a fatal ops event. Fingerprint-deduped per cron name (via reportOpsEvent),
@@ -169,23 +212,34 @@ export async function runCronHeartbeatWatchdog(): Promise<CronHeartbeatWatchdogR
 
   for (const def of CRON_REGISTRY) {
     const row = byName.get(def.name);
-    // Never-seen cron: no baseline. Skip — wiring may trail the registry.
-    if (!row) continue;
+    // Never reported: no row at all. A cron that times out on EVERY
+    // invocation dies before it can write its first heartbeat, and without a
+    // baseline it would stay invisible forever — plant the watchdog's
+    // expected-since marker (first-seen-missing ≈ deploy/registration time)
+    // so a later tick can age it like any other never-succeeded row. The
+    // insert only fills an empty slot: a heartbeat row that lands between the
+    // SELECT above and this write is kept (ignoreDuplicates).
+    if (!row) {
+      await markCronExpectedSince(db, def.name);
+      continue;
+    }
 
     // A cron that ran but never succeeded has no last_success_at, and failing
     // runs keep refreshing last_run_at — staleness alone can never see it (the
     // route 500s every tick forever while looking "fresh"). When run_count > 0
     // with no success ever, age the dead-man budget from the row's creation:
     // 3x its period without a single success is just as dead as 2x without a
-    // recent one.
+    // recent one. A marker row (run_count = 0) is the same shape one step
+    // earlier: the cron never reported at all.
+    const neverReported = (row.run_count ?? 0) === 0;
     const neverSucceeded =
-      row.last_success_at == null && (row.run_count ?? 0) > 0;
-    const referenceRaw = neverSucceeded ? row.created_at : row.last_success_at;
+      !neverReported && row.last_success_at == null;
+    const referenceRaw = neverReported || neverSucceeded ? row.created_at : row.last_success_at;
     const referenceMs = referenceRaw ? new Date(referenceRaw).getTime() : NaN;
     if (!Number.isFinite(referenceMs)) continue;
 
     const staleMinutes = (now - referenceMs) / 60000;
-    const budgetMinutes = def.periodMinutes * (neverSucceeded ? NEVER_SUCCEEDED_PERIOD_MULTIPLIER : STALE_PERIOD_MULTIPLIER);
+    const budgetMinutes = def.periodMinutes * (neverReported || neverSucceeded ? NEVER_SUCCEEDED_PERIOD_MULTIPLIER : STALE_PERIOD_MULTIPLIER);
     if (staleMinutes <= budgetMinutes) continue;
 
     stale.push({
@@ -210,12 +264,18 @@ export async function runCronHeartbeatWatchdog(): Promise<CronHeartbeatWatchdogR
       source: "synthetic.cron-dead-man",
       severity: "fatal",
       title: `Cron stalled: ${def.name}`,
-      message:
-        `Cron '${def.name}' is expected to run every ${def.periodMinutes} min but has not ` +
-        `recorded a successful run within its ${budgetMinutes} min dead-man budget. It is ` +
-        `likely 500ing, timing out, or no longer scheduled. Check Vercel Cron + the route ` +
-        `logs for /api/cron/${def.name}; a silent prober/recovery cron means fleet breakage ` +
-        `now goes unnoticed. Exact staleness + last-success time are in this event's metadata.`,
+      message: neverReported
+        ? `Cron '${def.name}' is expected to run every ${def.periodMinutes} min but has never ` +
+          `recorded a heartbeat — its expected-since marker is ${Math.round(staleMinutes)} min old, ` +
+          `past the ${budgetMinutes} min dead-man budget. It is likely timing out before its first ` +
+          `run completes, 500ing before the heartbeat write, or not scheduled at all. Check Vercel ` +
+          `Cron + the route logs for /api/cron/${def.name}; a silent prober/recovery cron means ` +
+          `fleet breakage now goes unnoticed.`
+        : `Cron '${def.name}' is expected to run every ${def.periodMinutes} min but has not ` +
+          `recorded a successful run within its ${budgetMinutes} min dead-man budget. It is ` +
+          `likely 500ing, timing out, or no longer scheduled. Check Vercel Cron + the route ` +
+          `logs for /api/cron/${def.name}; a silent prober/recovery cron means fleet breakage ` +
+          `now goes unnoticed. Exact staleness + last-success time are in this event's metadata.`,
       route: `/api/cron/${def.name}`,
       metadata: {
         failureOwner: "control-plane",
@@ -226,6 +286,7 @@ export async function runCronHeartbeatWatchdog(): Promise<CronHeartbeatWatchdogR
         periodMinutes: def.periodMinutes,
         budgetMinutes,
         neverSucceeded,
+        neverReported,
         staleMinutes: Math.round(staleMinutes),
         lastSuccessAt: row.last_success_at,
         lastRunAt: row.last_run_at,
