@@ -16,6 +16,9 @@
  *     holding either token keeps their tier (the $HIVRA side counts against the
  *     $HIVRA threshold locked at conversion). After that the evaluator moves
  *     each $HermesOS tier row to $HIVRA at the then-current $HIVRA threshold.
+ *     With optional holder carryover, the switch moves already earned rows
+ *     immediately at their existing raw amounts. Their grace still accepts
+ *     either token; acquiring a new tier follows the normal price rules.
  *   - Everyone else holds and pays in $HIVRA only; $HermesOS is refused
  *     server-side.
  *
@@ -26,6 +29,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { chunk } from "@/lib/array-utils";
 import { reportOpsEvent } from "@/lib/ops-events";
 import {
+  HERMESOS_TOKEN,
   TOKEN_CONVERSION_GRACE_HOURS,
   getConfiguredHivraToken,
   platformTokenByKey,
@@ -36,6 +40,10 @@ import {
 import { isFoundersRateUser, type ThresholdTierCode, type TierKey } from "./tier-thresholds";
 import { getLiveActiveThresholds } from "./live-thresholds";
 import {
+  fetchTokenBalance,
+  formatRawTokenBalance,
+  getTokenVerificationWallet,
+  platformTokenBalanceConfig,
   getLatestHermesTokenHoldingSnapshot,
   getLatestTokenHoldingSnapshot,
   type HermesTokenHoldingSnapshot,
@@ -76,6 +84,7 @@ export interface UserTokenAccess {
   /** In the $HermesOS grandfather cohort. Always false before activation. */
   grandfathered: boolean;
   convertedAt: Date | null;
+  earnedHolderSwitch?: boolean;
   conversionGraceEndsAt: Date | null;
   /** $HIVRA thresholds locked when the member converted, per tier. */
   conversionThresholds: Partial<Record<TierKey, ConversionThreshold>>;
@@ -175,6 +184,8 @@ export function computeUserTokenAccess(params: {
     convertedAt,
     conversionGraceEndsAt: graceEndsAt,
     conversionThresholds: parseConversionThresholds(params.cohort.metadata),
+    ...((params.cohort.metadata?.conversion as {source?: string} | undefined)?.source === "earned_holder_1_to_1"
+      ? { earnedHolderSwitch: true } : {}),
   };
   if (!convertedAt) {
     return {
@@ -411,7 +422,8 @@ export async function assertTokenAllowedForUser(
 
 export class TokenConversionError extends Error {
   constructor(
-    readonly code: "hivra_not_active" | "not_grandfathered" | "already_converted" | "price_unavailable",
+    readonly code: "hivra_not_active" | "not_grandfathered" | "already_converted" | "price_unavailable" |
+      "verified_wallet_required" | "wallet_unavailable" | "insufficient_hivra" | "tier_changed",
     message: string
   ) {
     super(message);
@@ -419,15 +431,148 @@ export class TokenConversionError extends Error {
   }
 }
 
+export function isHolderTierCarryoverEnabled() {
+  return process.env.HIVRA_HOLDER_TIER_CARRYOVER === "1";
+}
+
+export type HolderTierCarryover = {
+  tiers: Array<{ tier: TierKey; amountRaw: string; amountDisplay: string }>;
+};
+
+type EarnedTier = {
+  tier: TierKey;
+  qualifying_quantity: string;
+  qualifying_threshold_tier: string;
+};
+
+async function earnedLegacyTiers(userId: string, db: TokenAccessDb): Promise<EarnedTier[]> {
+  const result = await table(db, "token_tier_qualifications")
+    .select("tier, token_key, qualifying_quantity::text, qualifying_threshold_tier, currently_eligible, last_breach_at, last_suspend_at")
+    .eq("user_id", userId);
+  if (result.error) throw new Error("Could not load existing holder tiers.");
+  const rows = result.data as Array<EarnedTier & {
+    token_key: string;
+    currently_eligible: boolean;
+    last_breach_at: string | null;
+    last_suspend_at: string | null;
+  }>;
+  return rows.filter((row) => {
+    if (row.token_key === "hermesos" && row.last_suspend_at && !row.currently_eligible) return false;
+    const tierCodes = [`${row.tier.toUpperCase()}_LAUNCH`, `${row.tier.toUpperCase()}_STANDARD`];
+    if (
+      row.token_key !== "hermesos" || !row.currently_eligible || row.last_suspend_at || row.last_breach_at ||
+      !["pro", "power"].includes(row.tier) || !tierCodes.includes(row.qualifying_threshold_tier) ||
+      !/^[1-9]\d*$/.test(row.qualifying_quantity)
+    ) {
+      throw new TokenConversionError("tier_changed", "Your holder tier needs a balance review before switching. Refresh your wallet and try again.");
+    }
+    return true;
+  });
+}
+
+export async function readHolderTierCarryover(
+  userId: string,
+  access: UserTokenAccess,
+  db: TokenAccessDb | null = supabaseAdmin as unknown as TokenAccessDb | null
+): Promise<HolderTierCarryover | null> {
+  if (!db || !isHolderTierCarryoverEnabled() || access.phase !== "active" || !access.grandfathered || access.convertedAt) return null;
+  try {
+    const rows = await earnedLegacyTiers(userId, db);
+    return {
+      tiers: rows.map((row) => ({
+        tier: row.tier,
+        amountRaw: row.qualifying_quantity,
+        amountDisplay: formatRawTokenBalance(row.qualifying_quantity, HERMESOS_TOKEN.decimals),
+      })),
+    };
+  } catch (error) {
+    if (error instanceof TokenConversionError && error.code === "tier_changed") return null;
+    throw error;
+  }
+}
+
+async function switchHolder(
+  userId: string,
+  db: TokenAccessDb,
+  now: Date,
+  hivra: NonNullable<ReturnType<typeof getConfiguredHivraToken>>,
+  reviewedTiers: unknown
+): Promise<UserTokenAccess> {
+  if (hivra.decimals !== HERMESOS_TOKEN.decimals || hivra.chainId !== HERMESOS_TOKEN.chainId) {
+    throw new Error("Platform tokens are incompatible for a 1:1 holder switch.");
+  }
+  const rows = await earnedLegacyTiers(userId, db);
+  const termsMatch = Array.isArray(reviewedTiers) && reviewedTiers.length === rows.length &&
+    rows.every((row) => reviewedTiers.some((item) =>
+      item?.tier === row.tier && item?.amountRaw === row.qualifying_quantity
+    ));
+  if (!termsMatch) {
+    throw new TokenConversionError("tier_changed", "Your holder amounts changed. Refresh this page and review the switch again.");
+  }
+  const walletDb = db as unknown as Parameters<typeof getTokenVerificationWallet>[1];
+  let minimum = 0n;
+  const expected: Partial<Record<TierKey, {amount: string; code: string}>> = {};
+  for (const row of rows) {
+    const amount = BigInt(row.qualifying_quantity);
+    if (amount > minimum) minimum = amount;
+    expected[row.tier] = { amount: row.qualifying_quantity, code: row.qualifying_threshold_tier };
+  }
+  let walletId: string | null = null;
+  let proof = null;
+  if (minimum > 0n) {
+    const wallet = await getTokenVerificationWallet(userId, walletDb);
+    if (!wallet) throw new TokenConversionError("verified_wallet_required", "Verify your Base holder wallet before switching.");
+    let balance;
+    try {
+      balance = await fetchTokenBalance({token: platformTokenBalanceConfig(hivra), walletAddress: wallet.normalizedAddress});
+    } catch {
+      throw new TokenConversionError("wallet_unavailable", "We could not verify your Base balance. Try again once your wallet balance can be read.");
+    }
+    if (BigInt(balance.balanceRaw) < minimum) {
+      throw new TokenConversionError("insufficient_hivra",
+        `Your holder wallet ${wallet.normalizedAddress} needs at least ${formatRawTokenBalance(minimum, hivra.decimals)} $HIVRA on Base before switching. Your existing access is unchanged.`);
+    }
+    walletId = wallet.id;
+    proof = {
+      address: wallet.normalizedAddress,
+      balanceRaw: balance.balanceRaw,
+      balanceDisplay: balance.balanceDisplay,
+      blockNumber: balance.blockNumber,
+    };
+  }
+  const { data, error } = await requireRpc(db)("switch_grandfathered_holder", {
+    p_user_id: userId,
+    p_expected_tiers: expected,
+    p_wallet_id: walletId,
+    p_proof: proof,
+    p_now: now.toISOString(),
+    p_grace_ends_at: new Date(now.getTime() + TOKEN_CONVERSION_GRACE_HOURS * HOUR_MS).toISOString(),
+    p_hivra_address: hivra.address,
+    p_hermesos_address: HERMESOS_TOKEN.address,
+  });
+  if (error) throw new Error(`Failed to switch holder access: ${error.message ?? "unknown"}`);
+  const result = data as {status: string; cohort?: CohortRow};
+  if (result.status === "converted" && result.cohort) return computeUserTokenAccess({phase: "active", cohort: result.cohort, now});
+  if (result.status === "wallet_changed") throw new TokenConversionError("verified_wallet_required", "Refresh or verify your Base holder wallet, then review the switch again.");
+  if (result.status === "already_converted") throw new TokenConversionError("already_converted", "This account has already switched to $HIVRA.");
+  if (result.status === "not_grandfathered") throw new TokenConversionError("not_grandfathered", "This account already uses $HIVRA.");
+  throw new TokenConversionError("tier_changed", "Your holder tier or verification wallet changed. Refresh your wallet and review the switch again.");
+}
+
 /**
  * A grandfathered member chooses to move to $HIVRA. Locks the $HIVRA
  * thresholds for the conversion grace (so the grace needs no live price) and
- * starts it. Fails closed without a live $HIVRA price.
+ * starts it. The legacy flow requires a live price. The optional carryover
+ * verifies existing amounts against the account’s current Base wallet.
  */
 export async function convertGrandfatheredUserToHivra(
   userId: string,
-  params: { db?: TokenAccessDb | null; now?: Date } = {}
+  params: { db?: TokenAccessDb | null; now?: Date; holderConsent?: { tiers: unknown } } = {}
 ): Promise<UserTokenAccess> {
+  const holderConsent = params.holderConsent;
+  if (isHolderTierCarryoverEnabled() !== Boolean(holderConsent)) {
+    throw new TokenConversionError("tier_changed", "The available switch terms changed. Refresh this page and review them again.");
+  }
   const now = params.now ?? new Date();
   const db = (params.db ?? (supabaseAdmin as unknown)) as TokenAccessDb | null;
   if (!db) throw new Error("Database not configured");
@@ -443,6 +588,8 @@ export async function convertGrandfatheredUserToHivra(
   }
   const hivra = getConfiguredHivraToken();
   if (!hivra) throw new TokenConversionError("hivra_not_active", "$HIVRA is not live yet.");
+
+  if (holderConsent) return switchHolder(userId, db, now, hivra, holderConsent.tiers);
 
   let thresholds;
   try {
