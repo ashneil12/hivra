@@ -52,7 +52,7 @@ async function main() {
       values('holder','evm',8453,$1,$1,true,$2,'signature') returning id`, [wallet, now]);
     for (const [tier, { amount, code }] of Object.entries(tiers)) {
       await db.query(`insert into token_tier_qualifications(user_id,tier,token_key,qualifying_quantity,threshold_at_qualification,
-        qualifying_threshold_tier,qualified_at,currently_eligible) values ('holder',$1,'hermesos',$2,$2,$3,'2026-09-15T00:00Z',true)`, [tier, amount, code]);
+        qualifying_threshold_tier,qualified_at,currently_eligible) values ('holder',$1,'hermesos',$2,500,$3,'2026-09-15T00:00Z',true)`, [tier, amount, code]);
     }
 
     const holderState = async () => [
@@ -65,6 +65,7 @@ async function main() {
       [{ pro: tiers.pro }, walletRow.id, proof, "tier_changed"],
       [tiers, walletRow.id, { ...proof, balanceRaw: (BigInt(proof.balanceRaw) - 1n).toString(), balanceDisplay: "100" }, "insufficient_hivra"],
       [tiers, null, proof, "wallet_changed"],
+      [tiers, walletRow.id, { ...proof, address: "0x0000000000000000000000000000000000000001" }, "wallet_changed"],
     ]) {
       assert.equal((await submit("holder", expected, walletId, observed)).status, status);
       assert.deepEqual(await holderState(), originalHolderState, `${status} changed a row`);
@@ -81,10 +82,14 @@ async function main() {
 
     const converted = await submit("holder", tiers, walletRow.id, proof);
     assert.equal(converted.status, "converted");
+    assert.deepEqual(converted.cohort.metadata.conversion.hivraThresholds, tiers);
+    assert.equal(Date.parse(converted.cohort.conversion_grace_ends_at), Date.parse(grace));
+    assert.deepEqual(await rows(`select token_address,wallet_id,balance_raw::text as amount from token_holding_snapshots
+      where user_id='holder'`), [{ token_address: hivra, wallet_id: walletRow.id, amount: proof.balanceRaw }]);
     const migrated = await rows(`select tier,token_key,qualifying_quantity::text as amount,
-      qualifying_threshold_tier as code,currently_eligible from token_tier_qualifications where user_id='holder' order by tier`);
+      qualifying_threshold_tier as code,threshold_at_qualification::text as calibration,currently_eligible from token_tier_qualifications where user_id='holder' order by tier`);
     for (const [index, tier] of ["power", "pro"].entries()) {
-      assert.deepEqual(migrated[index], { tier, token_key: "hivra", ...tiers[tier], currently_eligible: true });
+      assert.deepEqual(migrated[index], { tier, token_key: "hivra", ...tiers[tier], calibration: "500", currently_eligible: true });
     }
     assert.equal((await submit("holder", tiers, walletRow.id, proof)).status, "already_converted");
     assert.equal((await submit("outside", {}, null, null)).status, "not_grandfathered");
