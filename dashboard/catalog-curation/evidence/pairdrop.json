@@ -1,0 +1,111 @@
+{
+  "slug": "pairdrop",
+  "checkedAt": "2026-11-22T15:33:08.937Z",
+  "gitSha": "ae8dbbd512dabfdf73fd6b119655f93f4aebd567",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "schlagmichdoch/PairDrop is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "schlagmichdoch/PairDrop",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "lscr.io/linuxserver/pairdrop:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "lscr.io/linuxserver/pairdrop:latest",
+        "digest": "sha256:60daccfe8b940964fecac81995fda0d9d28f7b983ec50c0dfd56aec65db3cf12",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-pairdrop-3bqnyi",
+        "hostPort": 3289,
+        "image": "lscr.io/linuxserver/pairdrop:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-pairdrop-3bqnyi",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3289:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-pairdrop-3bqnyi-config:/config",
+          "lscr.io/linuxserver/pairdrop:latest"
+        ],
+        "runStdout": "1dff128f03730321339d28940621407b4720cdf0c04d742a4c15fcd63590609c",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "40.57MiB / 7.652GiB",
+        "memBytes": 42540728
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 61580,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n\n<head>\n    <meta charset=\"utf-8\">\n    <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">\n    <!-- Web App Config -->\n    <title>PairDrop | Transfer Files Cross-Platform. No Setup, No Signup.</title>\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <meta name=\"theme-color\" content=\"#3367d6\">\n    <meta name=\"color-schem",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 301,
+          "bodyHead": "<p>Moved Permanently. Redirecting to /</p>"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 40.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 42540728,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -392,13 +392,49 @@ systemctl enable --now hermes-disk-cleanup.timer
 }
 export function buildProxmoxInfrastructureDiscoveryScript(params: {
   vmName: string;
+  /**
+   * Older provisioners named VMs by sanitizing the whole
+   * `hermes-<name>-<id8>` string and cutting it at 48 chars, which could
+   * truncate through the instance-id suffix. When set, a VM carrying this
+   * legacy name becomes a candidate ONLY after its configured `name:` still
+   * carries this instance's identity (`expectedInstanceId`'s `-<id8>` suffix
+   * or the full UUID) — the same predicate
+   * `buildProxmoxVmOwnedByInstanceCheck` uses. A truncated legacy name is not
+   * unique to this instance and could be a recycled foreign VM, so a bare
+   * `qm list` name match is never enough to adopt it.
+   */
+  legacyVmName?: string;
+  expectedInstanceId?: string;
 }): string {
+  const legacyVmName = params.legacyVmName?.trim();
+  const expectedInstanceId = params.expectedInstanceId?.trim().toLowerCase();
+  const legacyProbe =
+    legacyVmName && expectedInstanceId && INSTANCE_ID_PATTERN.test(expectedInstanceId)
+      ? `LEGACY_VM_NAME=${shQuote(legacyVmName)}
+`
+      : "";
+  const legacyFallback = legacyProbe
+    ? `if [ -z "$VMID" ]; then
+  LEGACY_VMID="$(qm list | awk -v name="$LEGACY_VM_NAME" 'NR>1 && $2 == name { print $1; exit }')"
+  if [ -n "$LEGACY_VMID" ]; then
+    # Ownership is verified on the VM's configured name, not on the pattern we
+    # searched for: the legacy name may have been truncated through its id8
+    # suffix, in which case it cannot prove it belongs to this instance.
+    LEGACY_ACTUAL_NAME="$(qm config "$LEGACY_VMID" 2>/dev/null | sed -n 's/^name:[[:space:]]*//p' | head -1 || true)"
+    case "$LEGACY_ACTUAL_NAME" in
+      *-${expectedInstanceId!.slice(0, 8)}|*${expectedInstanceId}*) VMID="$LEGACY_VMID" ;;
+      *) echo "HERMES_PROXMOX_DISCOVERY unverified $LEGACY_VMID"; exit 0 ;;
+    esac
+  fi
+fi
+`
+    : "";
   return `#!/usr/bin/env bash
 set -euo pipefail
 VM_NAME=${shQuote(params.vmName)}
-
+${legacyProbe}
 VMID="$(qm list | awk -v name="$VM_NAME" 'NR>1 && $2 == name { print $1; exit }')"
-if [ -z "$VMID" ]; then
+${legacyFallback}if [ -z "$VMID" ]; then
   echo "HERMES_PROXMOX_DISCOVERY missing"
   exit 0
 fi

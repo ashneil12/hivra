@@ -153,6 +153,23 @@ describe("universal catalog manifests", () => {
     }
   });
 
+  it("binds ezBookkeeping's required secret_key to a generated secret, never a literal", () => {
+    // Upstream requires secret_key (env EBK_SECURITY_SECRET_KEY) set to a
+    // random string before production use: it encrypts tokens and user 2FA
+    // secrets, and the documented default must never serve a real deployment.
+    // The manifest must wire it through the guest's generated-secret
+    // mechanism — a literal in the repo would be worse than the default.
+    const manifest = getCatalogAppManifest("ezbookkeeping");
+    expect(manifest).toBeDefined();
+    expect(manifest!.runtime.kind).toBe("docker-web");
+    if (manifest!.runtime.kind !== "docker-web") return;
+    const secretName = "EBK_SECRET_KEY_RAW";
+    expect(manifest!.runtime.env?.EBK_SECURITY_SECRET_KEY).toBe(`\${${secretName}}`);
+    expect(manifest!.runtime.generatedSecrets).toContain(secretName);
+    // The whole manifest still parses under the launch schema.
+    expect(() => CatalogAppManifestSchema.parse(manifest)).not.toThrow();
+  });
+
   it("pins ZeroClaw to its configured-agent CLI shape and headless setup", () => {
     // Regression for the live Canary launch: `zeroclaw agent` requires a named
     // --agent alias plus configured risk/runtime/provider profiles, which the
@@ -166,5 +183,32 @@ describe("universal catalog manifests", () => {
     expect(zeroclaw.runtime.setup?.commands.join("\n")).toContain("agents create hivra");
     expect(zeroclaw.runtime.setup?.commands.join("\n")).toContain("agents.hivra.model_provider");
     expect(zeroclaw.runtime.setup?.commands.join("\n")).toContain("$OPENAI_API_KEY");
+  });
+
+  it("pins Sun-Panel to its last open-source release and mounts all three persistence paths", () => {
+    // Upstream (hslr-s/sun-panel) went closed-source after v1.3.0 — its own
+    // README states v1.3.0 is the latest open-source release — so floating
+    // `latest` would pull closed-source images under an "MIT" license claim.
+    // The manifest pins the Docker tag "1.3.0" (Docker Hub carries it without
+    // the 'v' prefix), keeps the MIT claim accurate for exactly that image,
+    // and mounts every directory v1.3.0 persists to (upstream's docker run
+    // docs): /app/conf, /app/uploads and /app/database.
+    const manifest = getCatalogAppManifest("sun-panel");
+    expect(manifest).toBeDefined();
+    expect(manifest!.license).toBe("MIT");
+    expect(manifest!.runtime.kind).toBe("docker-web");
+    if (manifest!.runtime.kind !== "docker-web") return;
+    expect(manifest!.runtime.imageRepo).toBe("hslr/sun-panel");
+    expect(manifest!.runtime.imageTag).toBe("1.3.0");
+    expect(manifest!.runtime.volumes).toEqual([
+      { name: "conf", mountPath: "/app/conf" },
+      { name: "uploads", mountPath: "/app/uploads" },
+      { name: "database", mountPath: "/app/database" },
+    ]);
+    // The copy must not oversell: it names the pinned release and its
+    // open-source status rather than implying current releases are MIT.
+    expect(manifest!.description).toContain("1.3.0");
+    expect(manifest!.seo?.summary).toContain("open-source");
+    expect(() => CatalogAppManifestSchema.parse(manifest)).not.toThrow();
   });
 });

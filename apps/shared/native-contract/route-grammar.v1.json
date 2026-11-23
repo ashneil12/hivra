@@ -1670,6 +1670,108 @@
     },
     {
       "family": "value-set",
+      "input": "/dashboard/launch?profile=termix&stage=choose",
+      "expect": "/dashboard/launch?profile=termix&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=termix",
+      "expect": "/dashboard/infrastructure?launch=termix"
+    },
+    {
+      "name": "catalog-dagu-launch",
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=dagu&stage=choose",
+      "expect": "/dashboard/launch?profile=dagu&stage=choose"
+    },
+    {
+      "name": "catalog-dagu-infra",
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=dagu",
+      "expect": "/dashboard/infrastructure?launch=dagu"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=homer&stage=choose",
+      "expect": "/dashboard/launch?profile=homer&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=homer",
+      "expect": "/dashboard/infrastructure?launch=homer"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=ezbookkeeping&stage=choose",
+      "expect": "/dashboard/launch?profile=ezbookkeeping&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=ezbookkeeping",
+      "expect": "/dashboard/infrastructure?launch=ezbookkeeping"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=convertx&stage=choose",
+      "expect": "/dashboard/launch?profile=convertx&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=convertx",
+      "expect": "/dashboard/infrastructure?launch=convertx"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=sun-panel&stage=choose",
+      "expect": "/dashboard/launch?profile=sun-panel&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=sun-panel",
+      "expect": "/dashboard/infrastructure?launch=sun-panel"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=pairdrop&stage=choose",
+      "expect": "/dashboard/launch?profile=pairdrop&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=pairdrop",
+      "expect": "/dashboard/infrastructure?launch=pairdrop"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=dufs&stage=choose",
+      "expect": "/dashboard/launch?profile=dufs&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=dufs",
+      "expect": "/dashboard/infrastructure?launch=dufs"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=gotenberg&stage=choose",
+      "expect": "/dashboard/launch?profile=gotenberg&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=gotenberg",
+      "expect": "/dashboard/infrastructure?launch=gotenberg"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=rsshub&stage=choose",
+      "expect": "/dashboard/launch?profile=rsshub&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=rsshub",
+      "expect": "/dashboard/infrastructure?launch=rsshub"
+    },
+    {
+      "family": "value-set",
       "input": "/dashboard/launch?profile=traccar&stage=choose",
       "expect": "/dashboard/launch?profile=traccar&stage=choose"
     },

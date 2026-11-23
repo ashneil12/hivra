@@ -404,7 +404,11 @@ const nextConfig: NextConfig = {
           //     turnstile, Mux player iframe.
           //   frame-ancestors 'self' — preserves the X-Frame-Options
           //     SAMEORIGIN behaviour.
-          //   form-action 'self' — POSTs target only the dashboard.
+          //   form-action — 'self' plus the box gateway origins: the agent
+          //     page POSTs hidden bootstrap forms to /auth/bootstrap on the
+          //     same per-instance hostnames frame-src allows (prod CSP reports
+          //     show form-action violations on /dashboard/agent/* for live
+          //     boxes; report-only today, broken the day this enforces).
           //   base-uri 'self' — block <base href="..."> injection.
           {
             key: "Content-Security-Policy-Report-Only",
@@ -442,7 +446,7 @@ const nextConfig: NextConfig = {
               "frame-src 'self' https://js.stripe.com https://*.stripe.com https://*.clerk.accounts.dev https://clerk.hivra.cloud https://challenges.cloudflare.com https://stream.mux.com https://*.hermesos.cloud https://*.agents.hermesos.cloud https://*.hivra.cloud https://*.agents.hivra.cloud https://*.sslip.io",
               "worker-src 'self' blob:",
               "frame-ancestors 'self'",
-              "form-action 'self'",
+              "form-action 'self' https://*.hermesos.cloud https://*.agents.hermesos.cloud https://*.hivra.cloud https://*.agents.hivra.cloud https://*.sslip.io",
               "base-uri 'self'",
               // Receiver for CSP violations — the 2026-04-30 debug session
               // had a 6-hour stretch where Chrome was CSP-blocking the SW's

@@ -44,6 +44,7 @@
  */
 
 import { chunk } from "@/lib/array-utils";
+import { resolveHivraProxmoxHost } from "@/lib/hivra/proxmox-target";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import {
@@ -78,10 +79,6 @@ type ProxmoxHostRow = {
   id: string;
   status: "active" | "draining" | "maintenance";
 };
-
-interface DbInstanceVmidRow {
-  proxmox_vmid: number | null;
-}
 
 /** A running VM observed on a Proxmox host. */
 export interface ProxmoxLiveVm {
@@ -560,26 +557,95 @@ async function loadActiveProxmoxHosts(
   return (data ?? []) as ProxmoxHostRow[];
 }
 
-async function loadDbVmidsForHost(
+// PostgREST caps every response at max_rows (1000 in this project) and says
+// nothing when it truncates — the same landmine the customer-incidents scan
+// pages around. Here it is a data-loss path: the hivra_agents ownership read
+// cannot be host-scoped in SQL (an empty proxmox_host resolves to the
+// default host in code, so rows from EVERY host sharing a vmid shape fill
+// the page), and once the response truncates, a host-claimed vmid silently
+// goes missing and the reap guard treats its disk as unclaimed. Keyset-page
+// on the unique id until a short page; an error mid-read throws so the
+// caller skips the host — and its reaps — rather than guessing at ownership.
+const VMID_LOOKUP_PAGE_SIZE = 1000;
+
+async function selectVmidClaimPages<RowT extends { id: string | null }>(
+  label: string,
+  build: (
+    cursor: string | null,
+  ) => PromiseLike<{ data: unknown; error: { message?: string } | null }>,
+): Promise<RowT[]> {
+  const rows: RowT[] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const { data, error } = await build(cursor);
+    if (error) {
+      throw new Error(`${label} query failed: ${error.message ?? "unknown"}`);
+    }
+    const page = (data ?? []) as RowT[];
+    rows.push(...page);
+    if (page.length < VMID_LOOKUP_PAGE_SIZE) return rows;
+    const tail = page[page.length - 1];
+    if (tail == null || typeof tail.id !== "string" || tail.id.length === 0) {
+      throw new Error(`${label} pagination cursor missing`);
+    }
+    cursor = tail.id;
+  }
+}
+
+export async function loadDbVmidsForHost(
   supabase: SupabaseAdmin,
   hostId: string,
   liveVmids: number[],
 ): Promise<number[]> {
   if (liveVmids.length === 0) return [];
-  const { data, error } = await supabase
-    .from("hermes_instances")
-    .select("proxmox_vmid")
-    .eq("proxmox_node", hostId)
-    .in("proxmox_vmid", liveVmids)
-    .neq("lifecycle_state", "deleted");
-  if (error) {
-    throw new Error(`hermes_instances query failed: ${error.message}`);
-  }
-  const rows = (data ?? []) as DbInstanceVmidRow[];
+  const rows = await selectVmidClaimPages<{ id: string | null; proxmox_vmid: number | null }>(
+    "hermes_instances",
+    (cursor) => {
+      let query = supabase
+        .from("hermes_instances")
+        .select("id, proxmox_vmid")
+        .eq("proxmox_node", hostId)
+        .in("proxmox_vmid", liveVmids)
+        .neq("lifecycle_state", "deleted")
+        .order("id", { ascending: true });
+      if (cursor != null) query = query.gt("id", cursor);
+      return query.limit(VMID_LOOKUP_PAGE_SIZE);
+    },
+  );
   const vmids: number[] = [];
   for (const row of rows) {
     if (typeof row.proxmox_vmid === "number" && Number.isFinite(row.proxmox_vmid)) {
       vmids.push(row.proxmox_vmid);
+    }
+  }
+  // Hivra agent computers (hivra-cc-*/Agent Zero VMs) live in hivra_agents,
+  // not hermes_instances — without this union every running agent VM was
+  // reported as an orphan (prod 2026-11: 9 "orphans" on one host, all owned).
+  // Ownership is resolved per row, not filtered in SQL: an empty proxmox_host
+  // resolves to the default/current host, so a raw .eq would miss exactly the
+  // agents that belong to it. That is also why the read must page through
+  // every matching row fleet-wide — host filtering happens after the read.
+  const agentRows = await selectVmidClaimPages<{
+    id: string | null;
+    vmid: number | null;
+    proxmox_host: string | null;
+  }>("hivra_agents", (cursor) => {
+    let query = supabase
+      .from("hivra_agents")
+      .select("id, vmid, proxmox_host")
+      .in("vmid", liveVmids)
+      .neq("status", "deleted")
+      .order("id", { ascending: true });
+    if (cursor != null) query = query.gt("id", cursor);
+    return query.limit(VMID_LOOKUP_PAGE_SIZE);
+  });
+  for (const row of agentRows) {
+    if (
+      typeof row.vmid === "number" &&
+      Number.isFinite(row.vmid) &&
+      resolveHivraProxmoxHost(row.proxmox_host) === hostId
+    ) {
+      vmids.push(row.vmid);
     }
   }
   return vmids;

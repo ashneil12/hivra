@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
+import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import {
   runManagedProvisionerBundleConvergence,
   type ManagedBundleHostReport,
@@ -132,6 +133,19 @@ export async function GET(req: NextRequest) {
         metadata: { ...host, channel: summary.channel, requestedVersion: summary.requestedVersion },
       });
     }
+
+    // Honest heartbeat: hosts needing a human (attention severity error —
+    // sync_failed, or unreachable/unconfigured while holding computers) mean
+    // this run did not fully do its job.
+    const attentionFailures = summary.hosts.filter(
+      (host) => attentionFor(host)?.severity === "error",
+    ).length;
+    await recordCronHeartbeat(
+      "sync-managed-provisioner-bundles",
+      attentionFailures > 0
+        ? { ok: false, detail: `hosts_needing_attention=${attentionFailures}` }
+        : undefined,
+    );
 
     return apiSuccess(summary);
   } catch (error) {

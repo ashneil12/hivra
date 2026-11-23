@@ -254,10 +254,14 @@ describe("POST /api/billing/managed-venice/hermesos/check", () => {
 
   it("fails safely when Base rejects the scan", async () => {
     mockMemory = createManagedVeniceMemoryDb({ managed_venice_token_quotes: [quoteRow()] });
+    // A non-range-cap rejection: range-cap errors (413 / -32614) are now
+    // handled by adaptive re-tiling inside the log fetcher, so "Base rejects
+    // the scan" has to mean a refusal it cannot re-tile around.
     rpc.failNext({
       method: "eth_getLogs",
-      status: 413,
-      body: { jsonrpc: "2.0", id: 1, error: { code: -32614, message: "eth_getLogs is limited to a 2,000 range" } },
+      status: 500,
+      times: 1_000,
+      body: { jsonrpc: "2.0", id: 1, error: { code: -32000, message: "upstream error" } },
     });
 
     const response = await check();

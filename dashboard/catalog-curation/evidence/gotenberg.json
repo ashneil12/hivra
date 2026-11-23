@@ -1,0 +1,112 @@
+{
+  "slug": "gotenberg",
+  "checkedAt": "2026-11-22T12:12:51.012Z",
+  "gitSha": "abcf0b7fb7806118e670e5d27ab7d999858f626b",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "gotenberg/gotenberg is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "gotenberg/gotenberg",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "gotenberg/gotenberg:8 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "gotenberg/gotenberg:8",
+        "digest": "sha256:53073e798c8ef39ea2187e44cb67bab77894ea2509100b94c4fe3b461f7b2996",
+        "platforms": [
+          "linux/amd64",
+          "linux/386",
+          "linux/ppc64le",
+          "linux/arm64",
+          "linux/arm/v7"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /health -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-gotenberg-pmzgiu",
+        "hostPort": 3284,
+        "image": "gotenberg/gotenberg:8",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-gotenberg-pmzgiu",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3284:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-gotenberg-pmzgiu-tmp:/tmp",
+          "gotenberg/gotenberg:8"
+        ],
+        "runStdout": "1530e9328308802f7c00e15388a38c8169f79944299a4c9d2ca5a4ca6fe808e7",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "18.64MiB / 7.652GiB",
+        "memBytes": 19545457
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 59826,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "Hey, Gotenberg has no UI, it's an API. Head to the <a href=\"https://gotenberg.dev\">documentation</a> to learn how to interact with it 🚀",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "Not Found"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 18.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 19545457,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

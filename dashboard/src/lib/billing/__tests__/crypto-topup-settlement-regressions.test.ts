@@ -310,11 +310,12 @@ describe("CT-2: session expiry must not fail a paid-but-unreconciled intent", ()
         }),
         intentRow({ ref: "bankr_crypto_topup:second", userId: "user_repeat_payer", address, createdAt: bCreated, packageCredits: 5000 }),
         // An unpaid intent the old code expired: closed, never credited.
+        // Inside the 14-day stale cutoff so the batch still scans it.
         intentRow({
           ref: "bankr_crypto_topup:unpaid",
           userId: "user_other",
           address: depositAddress(),
-          createdAt: "2026-08-11T09:00:00.000Z",
+          createdAt: "2026-09-10T09:00:00.000Z",
           packageCredits: 500,
           status: "failed",
           metadata: { creditGrantStatus: "expired", failureType: "crypto_payment_session_expired" },

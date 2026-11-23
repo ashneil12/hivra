@@ -17,6 +17,13 @@ const makeRequest = (
     headers: authorization ? { authorization } : {},
   }) as unknown as NextRequest;
 
+// Mirrors the route's utcDateNDaysAgo so expected snapshot dates can be compared.
+const utcDaysAgo = (n: number) => {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+};
+
 describe("GET /api/cron/rollup-platform-stats", () => {
   const rpc = supabaseAdmin!.rpc as jest.Mock;
   let consoleErrorSpy: jest.SpyInstance;
@@ -78,6 +85,47 @@ describe("GET /api/cron/rollup-platform-stats", () => {
     expect(
       rpc.mock.calls.filter((c) => c[0] === "compute_platform_stats_snapshot")
     ).toHaveLength(90);
+  });
+
+  it("resumes a backfill from an older window via daysAgoStart", async () => {
+    // Regression: a deep backfill used to always start at today, so a run that
+    // exhausted the function budget recomputed the same recent days forever and
+    // never reached the oldest ones. daysAgoStart lets the caller advance the
+    // window so repeated invocations drain the range.
+    const res = await GET(
+      makeRequest(
+        "Bearer cron-secret",
+        "http://localhost/api/cron/rollup-platform-stats?days=10&daysAgoStart=30"
+      )
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ computed: 10, errors: 0, days: 10, daysAgoStart: 30 });
+    const dates = rpc.mock.calls
+      .filter((c) => c[0] === "compute_platform_stats_snapshot")
+      .map((c) => (c[1] as { p_date: string }).p_date)
+      .sort();
+    // Days 30..39 ago — none of today's window is recomputed.
+    expect(dates).toEqual(
+      Array.from({ length: 10 }, (_, k) => utcDaysAgo(30 + k)).sort()
+    );
+  });
+
+  it("clamps the window so daysAgoStart + days stays inside the 90-day cap", async () => {
+    const res = await GET(
+      makeRequest(
+        "Bearer cron-secret",
+        "http://localhost/api/cron/rollup-platform-stats?days=90&daysAgoStart=30"
+      )
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toMatchObject({ days: 60, daysAgoStart: 30 });
+    expect(
+      rpc.mock.calls.filter((c) => c[0] === "compute_platform_stats_snapshot")
+    ).toHaveLength(60);
   });
 
   it("continues past a failed day and counts it as an error", async () => {

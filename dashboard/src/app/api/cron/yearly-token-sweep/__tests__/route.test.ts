@@ -57,6 +57,10 @@ jest.mock("@/lib/ops-events", () => ({
   reportOpsEvent: (...args: unknown[]) => mockReportOpsEvent(...args),
 }));
 
+jest.mock("@/lib/cron-heartbeat", () => ({
+  recordCronHeartbeat: jest.fn(async () => undefined),
+}));
+
 // The instance side of a settled payment (tier change + resume) is unit-tested
 // in yearly-activation.test.ts; here we only check the sweep hands it over.
 jest.mock("@/lib/billing/yearly-activation", () => ({
@@ -65,6 +69,8 @@ jest.mock("@/lib/billing/yearly-activation", () => ({
 
 import { GET } from "../route";
 import { applyYearlyPaymentToInstances } from "@/lib/billing/yearly-activation";
+import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
+import * as yearlySettlement from "@/lib/billing/yearly-token-settlement";
 
 const REQUIRED = 1_000n * 10n ** 18n;
 const originalFetch = global.fetch;
@@ -453,5 +459,69 @@ describe("YR-7: sweep transitions are compare-and-set", () => {
     expect(world.bankr.submitBankrTransfer).toHaveBeenCalledTimes(1);
     expect(world.submitted).toEqual([expect.objectContaining({ from: legacyWallet, amountRaw: REQUIRED })]);
     expect(world.subscriptions().find((row) => row.id === "ys_new")).toMatchObject({ sweep_status: "swept" });
+  });
+});
+
+describe("heartbeat honesty", () => {
+  beforeEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("records an ok:false heartbeat when the reconcile pass throws, and never on auth failures", async () => {
+    setup();
+    jest
+      .spyOn(yearlySettlement, "reconcilePendingYearlyTokenQuotes")
+      .mockRejectedValueOnce(new Error("quotes load exploded"));
+
+    const response = await GET(cronRequest());
+
+    expect(response.status).toBe(500);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "yearly-token-sweep",
+      expect.objectContaining({ ok: false, detail: expect.stringContaining("exception") })
+    );
+
+    // A 401 is not a failed run — it must not touch the heartbeat.
+    (recordCronHeartbeat as jest.Mock).mockClear();
+    const unauthorized = await GET(
+      new Request("http://localhost/api/cron/yearly-token-sweep", {
+        headers: { authorization: "Bearer wrong" },
+      }) as unknown as NextRequest
+    );
+    expect(unauthorized.status).toBe(401);
+    expect(recordCronHeartbeat).not.toHaveBeenCalled();
+  });
+
+  it("records an ok:false heartbeat when the treasury is not configured, even with zero sweep failures", async () => {
+    // A missing/invalid HERMES_TREASURY_ADDRESS parks the subscription's
+    // sweep as treasuryNotConfigured — no per-row sweep failure is counted,
+    // but money is sitting unswept, so the run must read not-ok.
+    const world = setup();
+    delete process.env.HERMES_TREASURY_ADDRESS;
+    world.memory.insertRow(
+      "yearly_token_subscriptions",
+      yearlySubscriptionRow({
+        id: "ys_pending",
+        paid_at: world.at(-1 * MINUTE_MS),
+        expires_at: world.at(YEAR_MS),
+        deposit_tx_hash: txHash(1),
+        deposit_log_index: 0,
+        sweep_status: "pending",
+      })
+    );
+
+    const response = await GET(cronRequest());
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.sweep.treasuryNotConfigured).toBe(1);
+    expect(body.data.sweep.failed).toBe(0);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "yearly-token-sweep",
+      expect.objectContaining({
+        ok: false,
+        detail: expect.stringContaining("treasury_not_configured=1"),
+      })
+    );
   });
 });
