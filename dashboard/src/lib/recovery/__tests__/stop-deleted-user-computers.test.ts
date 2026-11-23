@@ -107,12 +107,26 @@ describe("a computer on a decommissioned host", () => {
   });
 });
 
-it("leaves an already-settled computer alone instead of re-acquiring a stop lease every sweep", async () => {
-  single.mockResolvedValue({ data: { ...baseAgent, status: "stopped", desired_state: "stopped", operation_id: null }, error: null });
-  await stopDeletedUserComputer("user_gone", "computer");
-  expect(claimHivraAgentOperation).not.toHaveBeenCalled();
+it("verifies shutdown and revokes access even when the row already says stopped", async () => {
+  single.mockResolvedValueOnce({ data: { ...baseAgent, status: "stopped", desired_state: "stopped", operation_id: null }, error: null });
+  (revokeRemoteDesktopCapability as jest.Mock).mockResolvedValue({ ok: false });
+  await expect(stopDeletedUserComputer("user_gone", "computer")).rejects.toThrow("revocation is incomplete");
+  expect(runProxmoxHostScript).toHaveBeenCalled();
+  expect(revokeRemoteDesktopCapability).toHaveBeenCalled();
+  expect(recordHivraAgentOperationFailure).toHaveBeenCalled();
+  expect(completeHivraAgentOperation).not.toHaveBeenCalled();
+});
+
+it("still revokes desktop access if it cannot verify the managed host registry", async () => {
+  const from = (supabaseAdmin!.from as jest.Mock).getMockImplementation()!;
+  (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => table === "proxmox_hosts"
+    ? { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: { message: "unavailable" } }) }) }) }
+    : from(table));
+  await expect(stopDeletedUserComputer("user_gone", "computer")).rejects.toThrow("Host registry unavailable");
+  expect(revokeRemoteDesktopCapability).toHaveBeenCalled();
   expect(runProxmoxHostScript).not.toHaveBeenCalled();
-  expect(revokeRemoteDesktopCapability).not.toHaveBeenCalled();
+  expect(recordHivraAgentOperationFailure).toHaveBeenCalled();
+  expect(completeHivraAgentOperation).not.toHaveBeenCalled();
 });
 
 it("still SSHes a maintenance host that is not decommissioned", async () => {
