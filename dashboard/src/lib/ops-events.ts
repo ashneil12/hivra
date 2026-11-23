@@ -308,6 +308,10 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
       // reopen path's page or first_seen_at reset, so a pageable recurrence
       // lost its notification. The open-only predicate turns that race into
       // a no-match, routed through the conditional reopen below instead.
+      // last_seen_at also moves forward only: two racing refreshes write
+      // their own `now`, and the slower one must not drag the marker back —
+      // the healthy-verdict path reads last_seen_at as the newest down
+      // sighting, so a regressed value lets an archive close a live outage.
       let refreshQuery = supabaseAdmin
         .from('ops_events')
         .update({
@@ -316,7 +320,8 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
           occurrence_count: (existing.occurrence_count || 0) + 1,
         })
         .eq('id', existing.id)
-        .is('archived_at', null);
+        .is('archived_at', null)
+        .lte('last_seen_at', now);
       if (input.observedAt) {
         // Same verdict at the row: the outage start it records must not be
         // newer than this observation.

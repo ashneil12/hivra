@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { decryptApiKey } from "@/lib/crypto";
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
+import { resolveUpdateImagePolicy } from "@/lib/hermes-releases/live-update";
 import { DIGEST_PATTERN } from "@/lib/hermes-releases/policy";
 import { recordBoxOutcome, type BoxOutcome } from "@/lib/hermes-releases/store";
 import {
@@ -289,39 +290,102 @@ async function recordUpdateReport(params: {
     // release — the box would report "update in flight" forever with the
     // release never retried. Stamp it like a launch failure that reached
     // the guest: lifecycle 'failed' + the reached substate keeps the row
-    // retry-eligible on the next sweep. The write is predicated on the
-    // status still being 'redeploying': a late or duplicated report must
-    // not claw back a row that already recovered to running (or moved on
-    // to another state), and a box-side roll failure on a live row stays
-    // a release-health signal — recordReleaseReport below covers it —
-    // not a user-facing status change.
-    const { error: failedStateError } = await supabaseAdmin
-      .from("hermes_instances")
-      .update({
-        ...buildInstanceLifecyclePatch("failed"),
-        lifecycle_substate: LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
-      })
-      .eq("id", instance.id)
-      .eq("status", "redeploying")
-      .is("deleted_at", null);
-    if (failedStateError) {
-      // Without the stamp the row stays 'redeploying' — invisible to the
-      // update sweep — so answering recorded:true would hide the missing
-      // retry marker. Behave like the success-status write's error path:
-      // a non-2xx tells the box this report was not recorded, and its
-      // retry can still land the stamp. An error-free zero-match stays
-      // 200: a row that already moved on is fine.
-      log.error(
-        "update report received but the failed-state write failed",
-        new Error("update_report_state_write_failed"),
-        {
-          source: "instance-update-status",
-          failureType: "update_report_state_write_failed",
-          instanceId: instance.id,
-          userId: instance.user_id,
-        },
-      );
-      return apiError("Failed to update instance status", 500);
+    // retry-eligible on the next sweep.
+    //
+    // Attempt correlation FIRST: a delayed failure report from an earlier
+    // update must not stamp a row a newer attempt is already redeploying.
+    // The report carries no operation token, so the bounds are the two
+    // attempt-identifying fields it does carry. A report naming the
+    // release its failed attempt targeted must match the target a release
+    // update would pin NOW — resolved the way the update path pins it —
+    // and a report carrying neither identity keeps only the write-time
+    // bounds below.
+    let staleAttempt = false;
+    if (releaseReport.targetDigest) {
+      try {
+        const { policy, state } = await resolveUpdateImagePolicy(
+          supabaseAdmin,
+          instance.id,
+          "release",
+        );
+        if (state?.governed) {
+          // For a governed box the in-flight release is the registry's
+          // pinned target; any other target name belongs to an older
+          // attempt. So does ANY target when the current update is not
+          // release-bound (a keep/config redeploy cannot report one).
+          const inFlightTarget = policy?.kind === "pinned" ? policy.digest : null;
+          staleAttempt = releaseReport.targetDigest !== inFlightTarget;
+        }
+        // Ungoverned boxes pull a floating tag: nothing stored names the
+        // in-flight target, so only the write-time bounds apply.
+      } catch (correlationError) {
+        // Same contract as the failed write below: a non-2xx tells the box
+        // this report was not recorded, so its retry can still land the
+        // stamp once the registry answers.
+        log.error(
+          "update report received but the attempt correlation failed",
+          correlationError instanceof Error
+            ? correlationError
+            : new Error(String(correlationError)),
+          {
+            source: "instance-update-status",
+            failureType: "update_report_correlation_failed",
+            instanceId: instance.id,
+            userId: instance.user_id,
+          },
+        );
+        return apiError("Failed to update instance status", 500);
+      }
+    }
+    if (staleAttempt) {
+      log.info("failed update report names a target the in-flight update is not moving to; skipping the failed-state stamp", {
+        source: "instance-update-status",
+        failureType: "update_report_stale_attempt",
+        instanceId: instance.id,
+        userId: instance.user_id,
+      });
+    } else {
+      // The write itself is still predicated on the row being mid-update:
+      // a late or duplicated report must not claw back a row that already
+      // recovered to running (or moved on to another state), and a
+      // box-side roll failure on a live row stays a release-health signal
+      // — recordReleaseReport below covers it — not a user-facing status
+      // change.
+      let failedWrite = supabaseAdmin
+        .from("hermes_instances")
+        .update({
+          ...buildInstanceLifecyclePatch("failed"),
+          lifecycle_substate: LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
+        })
+        .eq("id", instance.id)
+        .eq("status", "redeploying")
+        .is("deleted_at", null);
+      if (report.occurredAt && !Number.isNaN(Date.parse(report.occurredAt))) {
+        // last_lifecycle_transition_at is when the CURRENT attempt stamped
+        // 'redeploying'; a failure the box says happened before that stamp
+        // belongs to an earlier attempt and must not overwrite it.
+        failedWrite = failedWrite.lte("last_lifecycle_transition_at", report.occurredAt);
+      }
+      const { error: failedStateError } = await failedWrite;
+      if (failedStateError) {
+        // Without the stamp the row stays 'redeploying' — invisible to the
+        // update sweep — so answering recorded:true would hide the missing
+        // retry marker. Behave like the success-status write's error path:
+        // a non-2xx tells the box this report was not recorded, and its
+        // retry can still land the stamp. An error-free zero-match stays
+        // 200: a row that already moved on is fine.
+        log.error(
+          "update report received but the failed-state write failed",
+          new Error("update_report_state_write_failed"),
+          {
+            source: "instance-update-status",
+            failureType: "update_report_state_write_failed",
+            instanceId: instance.id,
+            userId: instance.user_id,
+          },
+        );
+        return apiError("Failed to update instance status", 500);
+      }
     }
   }
 

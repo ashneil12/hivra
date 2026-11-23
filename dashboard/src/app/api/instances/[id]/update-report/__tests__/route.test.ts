@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { GET, POST } from "../route";
 import { decryptApiKey } from "@/lib/crypto";
 import { reportOpsEvent } from "@/lib/ops-events";
+import { resolveUpdateImagePolicy } from "@/lib/hermes-releases/live-update";
 import { supabaseAdmin } from "@/lib/supabase";
 
 jest.mock("@/lib/crypto", () => ({
@@ -12,6 +13,14 @@ jest.mock("@/lib/crypto", () => ({
 jest.mock("@/lib/ops-events", () => ({
   ...jest.requireActual("@/lib/ops-events"),
   reportOpsEvent: jest.fn().mockResolvedValue({ id: "evt_123", fingerprint: "fp_123" }),
+}));
+
+// The failed-report attempt correlation resolves the release a NEW update
+// would pin. Mocked here: the real module's transitive graph (the instance
+// builders) is out of scope for this suite, and the tests drive every
+// correlation outcome directly.
+jest.mock("@/lib/hermes-releases/live-update", () => ({
+  resolveUpdateImagePolicy: jest.fn(),
 }));
 
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supabase").createSupabaseMock().admin }));;
@@ -31,6 +40,7 @@ describe("POST /api/instances/[id]/update-report", () => {
   let instanceUpdateEq: jest.Mock;
   let instanceUpdateNot: jest.Mock;
   let instanceUpdateIs: jest.Mock;
+  let instanceUpdateLte: jest.Mock;
 
   // The lookup row returned by the select chain. Tests mutate this to exercise
   // soft-deleted / terminal-status cases. The route's query chains
@@ -43,7 +53,11 @@ describe("POST /api/instances/[id]/update-report", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     lookupError = null;
-    instanceUpdateIs = jest.fn().mockResolvedValue({ error: null });
+    // The failed-report stamp chains .eq().eq().is() and then a conditional
+    // .lte() when the report carries occurredAt — the .is() step returns a
+    // result that is both the terminal {error} and the .lte() chain link.
+    instanceUpdateLte = jest.fn().mockResolvedValue({ error: null });
+    instanceUpdateIs = jest.fn().mockReturnValue({ error: null, lte: instanceUpdateLte });
     instanceUpdateNot = jest.fn().mockReturnValue({ is: instanceUpdateIs });
     // The success write chains .eq().not().is(); the failed-report stamp
     // chains .eq().eq().is() — one result object serves both.
@@ -54,6 +68,12 @@ describe("POST /api/instances/[id]/update-report", () => {
     instanceUpdateEq = jest.fn().mockReturnValue(eqResult);
     eqResult.eq = instanceUpdateEq;
     instanceUpdate = jest.fn().mockReturnValue({ eq: instanceUpdateEq });
+    // Without a seeded resolution the correlation stays ungoverned — the
+    // report's write-time bounds alone apply.
+    (resolveUpdateImagePolicy as jest.Mock).mockResolvedValue({
+      policy: undefined,
+      state: null,
+    });
 
     instanceFixture = {
       id: "11111111-1111-4111-8111-111111111111",
@@ -181,6 +201,184 @@ describe("POST /api/instances/[id]/update-report", () => {
     expect(instanceUpdateEq).toHaveBeenCalledWith("id", "11111111-1111-4111-8111-111111111111");
     expect(instanceUpdateEq).toHaveBeenCalledWith("status", "redeploying");
     expect(instanceUpdateIs).toHaveBeenCalledWith("deleted_at", null);
+  });
+
+  it("bounds the failed stamp to failures that happened after the current redeploy began", async () => {
+    // occurredAt is the box-side failure time. A delayed failure report from
+    // an EARLIER attempt carries an occurredAt older than the transition
+    // stamp the in-flight attempt left — the .lte predicate makes that write
+    // a no-match instead of clawing the newer attempt's row back to failed.
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "failed",
+          runType: "manual",
+          reason: "exit_status_1",
+          occurredAt: "2026-04-23T06:00:00Z",
+        }),
+      }),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(instanceUpdateLte).toHaveBeenCalledWith(
+      "last_lifecycle_transition_at",
+      "2026-04-23T06:00:00Z"
+    );
+  });
+
+  it("stamps the failed state when the report's target is the release a new update would pin", async () => {
+    // Attempt correlation: the registry still points this box's release
+    // update at the digest the failed attempt moved toward, so the failure
+    // belongs to the in-flight attempt and the stamp lands.
+    const target = `sha256:${"2".repeat(64)}`;
+    (resolveUpdateImagePolicy as jest.Mock).mockResolvedValue({
+      policy: { kind: "pinned", ref: `ghcr.io/example/agent@${target}`, digest: target },
+      state: { governed: true },
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "failed",
+          runType: "scheduled",
+          reason: "pull_failed",
+          targetDigest: target,
+        }),
+      }),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(resolveUpdateImagePolicy).toHaveBeenCalledWith(
+      supabaseAdmin,
+      "11111111-1111-4111-8111-111111111111",
+      "release"
+    );
+    expect(instanceUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        lifecycle_substate: "live_update_failed_vm_reached",
+      })
+    );
+  });
+
+  it("skips the failed stamp when a delayed report targets a superseded release — but still records", async () => {
+    // The failed attempt moved toward D1, but a release update would pin D2
+    // NOW: the in-flight attempt is a different operation and the stale
+    // failure must not stamp its row. The report itself still counts — a
+    // 200 keeps the box from retrying pointlessly and the release-health
+    // signal below still lands.
+    const superseded = `sha256:${"1".repeat(64)}`;
+    const inFlight = `sha256:${"2".repeat(64)}`;
+    (resolveUpdateImagePolicy as jest.Mock).mockResolvedValue({
+      policy: { kind: "pinned", ref: `ghcr.io/example/agent@${inFlight}`, digest: inFlight },
+      state: { governed: true },
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "failed",
+          runType: "scheduled",
+          reason: "pull_failed",
+          targetDigest: superseded,
+        }),
+      }),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(instanceUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ lifecycle_substate: expect.anything() })
+    );
+    expect(instanceUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ lifecycle_state: "failed" })
+    );
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Auto-update failed" })
+    );
+  });
+
+  it("skips the failed stamp when a governed box has no release pinned — a keep-intent update cannot report one", async () => {
+    // The registry governs the box but decides no release move right now:
+    // a report naming ANY target belongs to an earlier attempt — the
+    // in-flight update is release-keep (config/redeploy), which cannot
+    // produce a target-bearing failure of its own.
+    (resolveUpdateImagePolicy as jest.Mock).mockResolvedValue({
+      policy: { kind: "keep" },
+      state: { governed: true },
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "failed",
+          runType: "manual",
+          targetDigest: `sha256:${"1".repeat(64)}`,
+        }),
+      }),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(instanceUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ lifecycle_substate: expect.anything() })
+    );
+  });
+
+  it("answers a server error when the attempt correlation read fails — the box retries the stamp", async () => {
+    // A target-bearing report cannot be judged stale or fresh without the
+    // registry answer. Like the failed write itself, the failed read
+    // answers non-2xx: a silent 200 would claim the report recorded while
+    // dropping the only marker that retries the stamp.
+    (resolveUpdateImagePolicy as jest.Mock).mockRejectedValueOnce(
+      new Error("release registry read failed")
+    );
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "failed",
+          runType: "scheduled",
+          reason: "pull_failed",
+          targetDigest: `sha256:${"1".repeat(64)}`,
+        }),
+      }),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(json).toEqual({ success: false, error: "Failed to update instance status" });
+    expect(instanceUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ lifecycle_substate: expect.anything() })
+    );
   });
 
   it("answers a server error when the failed-state write fails", async () => {

@@ -12,6 +12,12 @@ jest.mock("@/lib/ops-events", () => ({
   ...jest.requireActual("@/lib/ops-events"),
   reportOpsEvent: jest.fn().mockResolvedValue({}),
 }));
+// The failed-report attempt correlation resolves the release a NEW update
+// would pin. These tests exercise the report contract, not the registry
+// read — the ungoverned answer keeps every case on the write-time bounds.
+jest.mock("@/lib/hermes-releases/live-update", () => ({
+  resolveUpdateImagePolicy: jest.fn(async () => ({ policy: undefined, state: null })),
+}));
 jest.mock("@/lib/supabase", () => ({
   get supabaseAdmin() {
     return mockDb.current;

@@ -3318,6 +3318,158 @@ describe("runCustomerIncidentScan", () => {
       expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
       expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
     });
+
+    it("keeps the probe-row result when ops-admin email resolution stalls past the collection deadline", async () => {
+      // Regression: the probe-row read raced the shared collection deadline
+      // but its race was armed only when awaited — the ops-admin
+      // directory wait in between consumed the window first, and a result
+      // that had already landed inside it was discarded, sending every
+      // candidate's public probe to unknown. The race is now armed at read
+      // start, so the finished result survives the stalled wait.
+      const prevEmails = process.env.OPS_ADMIN_EMAILS;
+      const prevIds = process.env.OPS_ADMIN_USER_IDS;
+      process.env.OPS_ADMIN_EMAILS = "ops@example.com";
+      delete process.env.OPS_ADMIN_USER_IDS;
+      try {
+        const deps = scanDeps({
+          collectionBudgetMs: 20,
+          db: fakeIncidentDb({
+            agents: [agentDbRow()],
+            probeRows: [probeRow()],
+          }),
+          probe: jest.fn(async () => ({ status: 502, latencyMs: 80, error: null })),
+          opsAdminDirectory: {
+            // The directory never answers — the wait consumes the whole
+            // collection window before the probe-row outcome is awaited.
+            getUserList: jest.fn(() => new Promise<never>(() => {})),
+          },
+        });
+        delete (deps as Record<string, unknown>).adminUserIds;
+        const summary = await runCustomerIncidentScan(deps as never);
+
+        // The probe-row read landed inside the window and still counts: the
+        // probe ran, the 15-minute outage stood, and box_unreachable paged.
+        expect(deps.probe as jest.Mock).toHaveBeenCalled();
+        expect(summary.opened).toBe(1);
+        expect(summary.unknown).toBe(0);
+        const incidents = incidentReports(deps.report as jest.Mock);
+        expect(incidents.map((o) => o.metadata.incident_key)).toEqual([
+          "box_unreachable:agent-1",
+        ]);
+      } finally {
+        if (prevEmails === undefined) delete process.env.OPS_ADMIN_EMAILS;
+        else process.env.OPS_ADMIN_EMAILS = prevEmails;
+        if (prevIds === undefined) delete process.env.OPS_ADMIN_USER_IDS;
+        else process.env.OPS_ADMIN_USER_IDS = prevIds;
+      }
+    });
+
+    it("does not page box_unreachable when the box answers publicly again before the incident insert", async () => {
+      // A delayed report can outlive the scan that produced it and still
+      // reach the write: the subject is re-checked immediately before the
+      // insert, and a box whose /healthz answers again is confirmed
+      // recovery — the stale insert would page an incident nothing is open
+      // for anymore. Here the scan probe fails but the report-pass
+      // diagnosis probe already answers 200.
+      const probe = jest
+        .fn()
+        .mockResolvedValueOnce({ status: 502, latencyMs: 80, error: null })
+        .mockResolvedValue({ status: 200, latencyMs: 9, error: null });
+      const deps = scanDeps({
+        db: fakeIncidentDb({
+          agents: [agentDbRow()],
+          probeRows: [probeRow()],
+        }),
+        probe,
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.opened).toBe(0);
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it("does not page box_unreachable when a concurrent healthy scan already archived the outage", async () => {
+      // Same skip, via the stored verdict rather than the live probe: the
+      // scan's own probe still fails, but another scan's healthy probe
+      // archived the outage row between this pass's collection and its
+      // report write. The stored row is re-read before the insert — an
+      // archived row says the outage already ended.
+      const row = probeRow();
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        probeRows: [row],
+        mutateWhen: (table, calls) => {
+          // The pre-insert probe-row re-read is the only source+instance_id
+          // filtered probe-row query: land the concurrent archive in the
+          // gap it guards.
+          if (
+            table === "ops_events" &&
+            calls.some((c) => c[0] === "eq" && c[1] === "instance_id") &&
+            calls.some(
+              (c) => c[0] === "eq" && c[1] === "source" && c[2] === "box.public_probe.unreachable",
+            )
+          ) {
+            row.archived_at = new Date(NOW).toISOString();
+          }
+        },
+      });
+      const deps = scanDeps({
+        db,
+        probe: jest.fn(async () => ({ status: 502, latencyMs: 80, error: null })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.opened).toBe(0);
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it("does not resolve a live incident when a newer outage row appears under the healthy verdict write", async () => {
+      // The scan's collection saw no open probe row and the probe answered
+      // 200, so the verdict write went to persist that healthy observation —
+      // but a delayed down report committed a NEWER outage in between (its
+      // first_seen is after this probe ran). Recording healthy over it
+      // would archive a live box_unreachable incident: the verdict must
+      // come back "moved", leaving the subject unknown and the open
+      // incident for a later pass.
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-unreach-verdict-race",
+            source: "incident.box_unreachable",
+            metadata: { incident_key: "box_unreachable:agent-1" },
+          }),
+        ],
+        mutateWhen: (table, calls) => {
+          if (table !== "ops_events") return;
+          // The verdict write's fingerprint lookup is the only
+          // fingerprint-filtered read: land the delayed outage there.
+          const fp = calls.find((c) => c[0] === "eq" && c[1] === "fingerprint");
+          if (!fp) return;
+          db.tableRows("ops_events").push(
+            probeRow({
+              id: "probe-row-late",
+              fingerprint: String(fp[2]),
+              // Committed after the healthy observation — this probe cannot
+              // disprove an outage it predates. The observation timestamp is
+              // the real clock (scanDeps does not inject `clock`), so the
+              // "newer" outage must postdate real now, not fixture NOW.
+              first_seen_at: new Date(Date.now() + 10 * MIN).toISOString(),
+              last_seen_at: new Date(Date.now() + 10 * MIN).toISOString(),
+            }),
+          );
+        },
+      });
+      const deps = scanDeps({ db }); // default probe answers 200 → up
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.resolved).toBe(0);
+      expect(summary.unknown).toBe(1);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+      expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+    });
   });
 
   // ---- report pass deadline + still-open version refresh -------------------
@@ -3329,9 +3481,9 @@ describe("runCustomerIncidentScan", () => {
     // ticks are: scan-start deadline reads ×3 (probe, watchdog, collection),
     // the four collection-phase races (core reads, ops-admin id resolution,
     // probe rows, subscription), the first item's admission check, its
-    // in-flight bound read and its internal pre-write checkpoint, then the
-    // lapsed admission read.
-    const times = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1e15];
+    // in-flight bound read, its internal pre-write checkpoint and its
+    // post-revalidation checkpoint, then the lapsed admission read.
+    const times = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1e15];
     let tick = 0;
     const clock = () => times[Math.min(tick++, times.length - 1)];
     const deps = scanDeps({

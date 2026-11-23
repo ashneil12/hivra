@@ -928,6 +928,96 @@ const SURFACE_RECEIPT_WINDOW = 10;
 // never resolved on partial data — and count as degraded.
 const SCAN_WATCHDOG_READ_BUDGET_MS = 60_000;
 
+/**
+ * The newest surface failure/recovery receipt for one agent, picked by the
+ * same effective-time rule the evaluator applies (event_at, else
+ * first_seen_at) across the union of all six bounded windows — the three
+ * orderings per kind exist because no single one bounds same-kind crowding
+ * in every direction (see the windows' rationale above). `error` reports a
+ * failed receipt read; the caller decides whether the subject can still be
+ * evaluated.
+ */
+async function latestSurfaceReceiptForAgent(
+  db: DbClient,
+  agentId: string,
+): Promise<{ receipt?: WatchdogEventSnapshot; error?: { message?: string } }> {
+  const receiptWindowQueries = (eventTypes: string[]) => {
+    const base = () =>
+      db
+        .from("ops_events")
+        .select("id,title,first_seen_at,metadata")
+        .eq("instance_id", agentId)
+        .like("source", "box.surface_watchdog.%")
+        .in("metadata->>event_type", eventTypes)
+        .limit(SURFACE_RECEIPT_WINDOW);
+    return [
+      // Newest-RECORDED receipts of the kind: first_seen_at is
+      // always populated, so this window covers receipts whose
+      // effective time is the record-time fallback.
+      base().order("first_seen_at", { ascending: false }),
+      // Newest box-REPORTED events of the kind: a burst of stale
+      // receipts relayed late cannot push the genuinely newest
+      // event below this window's cutoff. Rows without event_at
+      // are filtered out — they would sort first under DESC and
+      // waste window slots on receipts the recorded-time window
+      // already covers.
+      base()
+        .not("metadata->>event_at", "is", null)
+        .order("metadata->>event_at", { ascending: false }),
+      // Newest-recorded receipts with NO event_at: the two windows
+      // above can both fill with event_at-bearing receipts — the
+      // event-time window excludes nulls by construction and the
+      // recorded-time window admits them on recency — so a
+      // fallback-timestamped receipt could otherwise be crowded out
+      // entirely even when it is the newest effective receipt of
+      // its kind. Its effective time IS first_seen_at, so only
+      // newer-recorded null-event_at receipts may displace it.
+      base()
+        .is("metadata->>event_at", null)
+        .order("first_seen_at", { ascending: false }),
+    ];
+  };
+  const [
+    downRecorded,
+    downEvents,
+    downNulls,
+    recoveryRecorded,
+    recoveryEvents,
+    recoveryNulls,
+  ] = await Promise.all([
+    ...receiptWindowQueries(BOX_DOWN_EVENT_TYPE_LIST),
+    ...receiptWindowQueries(BOX_RECOVERY_EVENT_TYPE_LIST),
+  ]);
+  const receiptError =
+    downRecorded.error ??
+    downEvents.error ??
+    downNulls.error ??
+    recoveryRecorded.error ??
+    recoveryEvents.error ??
+    recoveryNulls.error;
+  if (receiptError) return { error: receiptError };
+  // A row inside several windows appears several times; dedupe by
+  // row id so the comparison sees each receipt once.
+  const unionRows = new Map<string, WatchdogOpsRow>();
+  for (const result of [
+    downRecorded,
+    downEvents,
+    downNulls,
+    recoveryRecorded,
+    recoveryEvents,
+    recoveryNulls,
+  ]) {
+    for (const row of (result.data ?? []) as WatchdogOpsRow[]) {
+      unionRows.set(String(row.id), row);
+    }
+  }
+  return {
+    receipt: sortWatchdogEventsByEventAt(
+      [...unionRows.values()].map(watchdogEventFromOpsRow),
+    )[0],
+  };
+}
+
 async function collectWatchdogEvents(
   db: DbClient,
   agentIds: string[],
@@ -994,60 +1084,7 @@ async function collectWatchdogEvents(
     // events, and the null-event_at window keeps fallback-timestamped
     // receipts visible when newer-recorded event_at-bearing receipts
     // fill the recorded-time window.
-    const receiptWindowQueries = (eventTypes: string[]) => {
-      const base = () =>
-        db
-          .from("ops_events")
-          .select("id,title,first_seen_at,metadata")
-          .eq("instance_id", id)
-          .like("source", "box.surface_watchdog.%")
-          .in("metadata->>event_type", eventTypes)
-          .limit(SURFACE_RECEIPT_WINDOW);
-      return [
-        // Newest-RECORDED receipts of the kind: first_seen_at is
-        // always populated, so this window covers receipts whose
-        // effective time is the record-time fallback.
-        base().order("first_seen_at", { ascending: false }),
-        // Newest box-REPORTED events of the kind: a burst of stale
-        // receipts relayed late cannot push the genuinely newest
-        // event below this window's cutoff. Rows without event_at
-        // are filtered out — they would sort first under DESC and
-        // waste window slots on receipts the recorded-time window
-        // already covers.
-        base()
-          .not("metadata->>event_at", "is", null)
-          .order("metadata->>event_at", { ascending: false }),
-        // Newest-recorded receipts with NO event_at: the two windows
-        // above can both fill with event_at-bearing receipts — the
-        // event-time window excludes nulls by construction and the
-        // recorded-time window admits them on recency — so a
-        // fallback-timestamped receipt could otherwise be crowded out
-        // entirely even when it is the newest effective receipt of
-        // its kind. Its effective time IS first_seen_at, so only
-        // newer-recorded null-event_at receipts may displace it.
-        base()
-          .is("metadata->>event_at", null)
-          .order("first_seen_at", { ascending: false }),
-      ];
-    };
-    const [
-      downRecorded,
-      downEvents,
-      downNulls,
-      recoveryRecorded,
-      recoveryEvents,
-      recoveryNulls,
-    ] = await Promise.all([
-      ...receiptWindowQueries(BOX_DOWN_EVENT_TYPE_LIST),
-      ...receiptWindowQueries(BOX_RECOVERY_EVENT_TYPE_LIST),
-    ]);
-    const receiptError =
-      downRecorded.error ??
-      downEvents.error ??
-      downNulls.error ??
-      recoveryRecorded.error ??
-      recoveryEvents.error ??
-      recoveryNulls.error;
+    const { receipt: latestSurface, error: receiptError } = await latestSurfaceReceiptForAgent(db, id);
     if (receiptError) {
       // The timeline read succeeded but a deciding receipt did not —
       // box_down cannot be evaluated for this agent this pass. The timeline
@@ -1061,29 +1098,7 @@ async function collectWatchdogEvents(
       });
       return { events, unknown: true };
     }
-    // Pick the newest receipt by EFFECTIVE time (event_at, else
-    // first_seen_at) across the union of all six windows — the same
-    // rule evaluateCustomerIncidents applies, so a receipt with a
-    // missing/invalid event_at cannot shadow a genuinely newer one.
-    // A row inside several windows appears several times; dedupe by
-    // row id so the comparison sees each receipt once.
-    const unionRows = new Map<string, WatchdogOpsRow>();
-    for (const result of [
-      downRecorded,
-      downEvents,
-      downNulls,
-      recoveryRecorded,
-      recoveryEvents,
-      recoveryNulls,
-    ]) {
-      for (const row of (result.data ?? []) as WatchdogOpsRow[]) {
-        unionRows.set(String(row.id), row);
-      }
-    }
-    const receipt = sortWatchdogEventsByEventAt(
-      [...unionRows.values()].map(watchdogEventFromOpsRow),
-    )[0];
-    return { events, latestSurface: receipt };
+    return { events, latestSurface };
   };
   await Promise.all(
     Array.from({ length: Math.min(WATCHDOG_FETCH_CONCURRENCY, queue.length) }, async () => {
@@ -1675,11 +1690,16 @@ async function recordPublicProbeHealthyVerdict(
     // an outage established between collection and now. Close it only when
     // its recorded start predates this healthy observation — a start after
     // it is a NEWER verdict that this stale observation must not touch.
-    // (first_seen_at is the outage's commit time, the closest stored proxy
-    // for the establishing observation; an unverifiable row is left alone.)
+    // Returning "recorded" here would tell the caller the subject is
+    // healthy and let it archive a live box_unreachable incident while the
+    // newer outage row stays open — the subject is contested instead:
+    // "moved" keeps it unknown so a later pass re-evaluates. (first_seen_at
+    // is the outage's commit time, the closest stored proxy for the
+    // establishing observation; an unverifiable row is contested the same
+    // way — the observation cannot disprove it.)
     const firstSeenAtMs = parseTimeMs(row.first_seen_at as string | null);
     if (firstSeenAtMs == null || firstSeenAtMs > observedAtMs) {
-      return "recorded";
+      return "moved";
     }
     // The outage start predates this observation, but a REFRESH can still
     // postdate it: reportOpsEvent stamps last_seen_at at its own write
@@ -2326,6 +2346,192 @@ export function incidentOpsEvent(
   };
 }
 
+type FindingRevalidation = "holds" | "cleared" | "unknown";
+
+/**
+ * Re-check a NEW finding's subject against current state immediately before
+ * its incident row inserts. Evaluation ran on a collection snapshot that
+ * can be minutes stale by the time this report reaches the write — queue
+ * waits, a lost deadline race leaving the insert running in the
+ * background, or a stalled write all live between the two — so a finding
+ * emitted while the outage was live can otherwise insert and page for a
+ * subject a later observation already recorded recovered (with nothing
+ * open for a resolve pass to archive first).
+ *
+ * Each rule is re-checked the way evaluateCustomerIncidents checks it —
+ * minus the gates that only delay a NEW page, whose thresholds cannot move
+ * backward. "cleared" means CONFIRMED recovery only: a subject row that is
+ * gone or healthy, a receipt that says recovered, a probe that just
+ * answered. A re-read that fails reports "unknown" — the finding was fresh
+ * at evaluation, and the resolve pass still owns any false positive the
+ * insert creates; a suppressed page never fires at all.
+ */
+async function revalidateIncidentFinding(
+  db: DbClient,
+  finding: IncidentFinding,
+  probes: PublicProbeResult[],
+  now: number,
+): Promise<FindingRevalidation> {
+  const healthzProbe = probes.find((probe) => probe.name === "healthz");
+  const revalidateFailed = (label: string, errorMessage: string | undefined): FindingRevalidation => {
+    log.warn(`customer-incidents: ${label} re-check failed before incident report`, {
+      source: "customer-incidents",
+      failureType: "incident_report_revalidate_failed",
+      incidentKey: finding.key,
+      instanceId: finding.instanceId,
+      errorMessage: errorMessage ?? "unknown",
+    });
+    return "unknown";
+  };
+  const readAgentSubject = async (
+    agentId: string,
+  ): Promise<{ agent?: HivraAgentSnapshot | null; error?: { message?: string } }> => {
+    const { data, error } = await db
+      .from("hivra_agents")
+      .select(AGENT_SELECT)
+      .eq("id", agentId)
+      .maybeSingle();
+    if (error) return { error };
+    return {
+      agent: data ? toAgentSnapshot(data as unknown as AgentDbRow) : null,
+    };
+  };
+  const readInstanceSubject = async (
+    instanceId: string,
+  ): Promise<{ instance?: HermesInstanceSnapshot | null; error?: { message?: string } }> => {
+    const { data, error } = await db
+      .from("hermes_instances")
+      .select("id,user_id,name,status,lifecycle_state,gateway_url,created_at")
+      .eq("id", instanceId)
+      .maybeSingle();
+    if (error) return { error };
+    return {
+      instance: data
+        ? toInstanceSnapshot(data as unknown as HermesInstanceDbRow)
+        : null,
+    };
+  };
+
+  switch (finding.rule) {
+    case "box_down": {
+      const subject = await readAgentSubject(finding.subjectId);
+      if (subject.error) return revalidateFailed("hivra_agents", subject.error.message);
+      const agent = subject.agent;
+      if (!agent || agent.status !== "running" || agent.sleepState !== "awake") return "cleared";
+      const { receipt, error } = await latestSurfaceReceiptForAgent(db, finding.subjectId);
+      if (error) return revalidateFailed("surface receipts", error.message);
+      if (!receipt?.eventType || !BOX_SURFACE_EVENT_TYPES.has(receipt.eventType)) return "cleared";
+      const receiptMs = parseTimeMs(receipt.eventAt) ?? parseTimeMs(receipt.firstSeenAt);
+      const runtimeMarkerMs = agentRuntimeMarkerMs(agent);
+      // A receipt older than the current runtime belongs to a previous boot.
+      if (receiptMs != null && runtimeMarkerMs != null && receiptMs < runtimeMarkerMs) return "cleared";
+      if (!BOX_DOWN_EVENT_TYPES.has(receipt.eventType)) return "cleared";
+      // A receipt past the stale window whose public probe just answered is
+      // stale bookkeeping — the same suppression the evaluator applies.
+      if (
+        receiptMs != null &&
+        now - receiptMs > BOX_DOWN_STALE_RECEIPT_MS &&
+        healthzProbe?.status === 200
+      ) {
+        return "cleared";
+      }
+      return "holds";
+    }
+    case "box_unreachable": {
+      const subject = await readAgentSubject(finding.subjectId);
+      if (subject.error) return revalidateFailed("hivra_agents", subject.error.message);
+      const agent = subject.agent;
+      if (!agent || agent.status !== "running" || agent.sleepState !== "awake") return "cleared";
+      // The subject's CURRENT recorded outage: a concurrent healthy scan
+      // (or a healthy-verdict write) archives the probe row — the stored
+      // verdict then says recovered even when this pass's diagnosis probe
+      // could not run inside the report budget. A missing row means the
+      // outage record vanished entirely; re-recording is the next scan's
+      // job, not this stale insert's.
+      const { data: probeRow, error: probeRowError } = await db
+        .from("ops_events")
+        .select("id,archived_at")
+        .eq("source", PUBLIC_PROBE_SOURCE)
+        .eq("instance_id", finding.subjectId)
+        .maybeSingle();
+      if (probeRowError) return revalidateFailed("probe row", probeRowError.message);
+      if (!probeRow || probeRow.archived_at != null) return "cleared";
+      // Still-open stored outage: the diagnosis probes of the subject's own
+      // public /healthz just ran for this report — the freshest possible
+      // observation. Only a 200 is confirmed recovery; a failed, skipped or
+      // absent probe keeps the recorded outage standing.
+      if (healthzProbe?.status === 200) return "cleared";
+      return "holds";
+    }
+    case "launch_failed": {
+      if (finding.subjectKind === "hermes_instance") {
+        const subject = await readInstanceSubject(finding.subjectId);
+        if (subject.error) return revalidateFailed("hermes_instances", subject.error.message);
+        const instance = subject.instance;
+        if (!instance) return "cleared";
+        const createdMs = parseTimeMs(instance.createdAt);
+        if (createdMs == null || now - createdMs > LAUNCH_FAILED_WINDOW_MS || now - createdMs < 0) {
+          return "cleared";
+        }
+        const failed =
+          (instance.status != null && LAUNCH_FAILED_INSTANCE_STATUSES.has(instance.status)) ||
+          instance.lifecycleState === "failed";
+        return failed ? "holds" : "cleared";
+      }
+      const subject = await readAgentSubject(finding.subjectId);
+      if (subject.error) return revalidateFailed("hivra_agents", subject.error.message);
+      const agent = subject.agent;
+      if (!agent || agent.provisionedAt != null) return "cleared";
+      const createdMs = parseTimeMs(agent.createdAt);
+      if (createdMs == null || now - createdMs > LAUNCH_FAILED_WINDOW_MS || now - createdMs < 0) {
+        return "cleared";
+      }
+      const failedStatus = agent.status != null && LAUNCH_FAILED_AGENT_STATUSES.has(agent.status);
+      const stuckAge = now - createdMs > LAUNCH_FAILED_STUCK_MS;
+      return failedStatus || stuckAge ? "holds" : "cleared";
+    }
+    case "lifecycle_stuck": {
+      const subject = await readAgentSubject(finding.subjectId);
+      if (subject.error) return revalidateFailed("hivra_agents", subject.error.message);
+      const agent = subject.agent;
+      if (!agent || !agent.operationKind || !agent.operationStartedAt) return "cleared";
+      const startedMs = parseTimeMs(agent.operationStartedAt);
+      if (startedMs == null || now - startedMs < LIFECYCLE_STUCK_MS) return "cleared";
+      return "holds";
+    }
+    case "cron_unhealthy": {
+      const { data, error } = await db
+        .from("ops_cron_heartbeats")
+        .select("cron_name,last_run_at,last_success_at,run_count,ok_count,consecutive_failures,last_detail,created_at")
+        .eq("cron_name", finding.subjectId)
+        .maybeSingle();
+      if (error) return revalidateFailed("ops_cron_heartbeats", error.message);
+      if (!data) return "cleared";
+      const heartbeat = toHeartbeatSnapshot(data as HeartbeatDbRow);
+      const schedule = finding.cron?.schedule;
+      const periodMinutes = schedule?.periodMinutes ?? null;
+      const streak = heartbeat.consecutiveFailures ?? 0;
+      const referenceMs =
+        parseTimeMs(heartbeat.lastSuccessAt) ?? parseTimeMs(heartbeat.lastRunAt);
+      const stale =
+        periodMinutes != null &&
+        referenceMs != null &&
+        now - referenceMs > CRON_STALE_PERIOD_MULTIPLIER * periodMinutes * 60 * 1000;
+      const neverSucceededMs = parseTimeMs(heartbeat.createdAt);
+      const neverSucceededStale =
+        periodMinutes != null &&
+        heartbeat.lastSuccessAt == null &&
+        (heartbeat.runCount ?? 0) > 0 &&
+        neverSucceededMs != null &&
+        now - neverSucceededMs > CRON_NEVER_SUCCEEDED_PERIOD_MULTIPLIER * periodMinutes * 60 * 1000;
+      return streak >= CRON_FAILURE_STREAK || stale || neverSucceededStale ? "holds" : "cleared";
+    }
+    default:
+      // A rule without a re-check reports as evaluated.
+      return "holds";
+  }
+}
+
 // ---- orchestration ---------------------------------------------------------
 
 export interface ResolvedNoticeInput {
@@ -2774,6 +2980,16 @@ export async function runCustomerIncidentScan(
   // still settling, and the only listener is the deadline race below — an
   // otherwise-unobserved rejection would surface as an unhandled error.
   void probeRowRead.catch(() => undefined);
+  // The deadline race is ARMED now, while the read is actually in flight —
+  // not awaited until after the admin-id resolution below. Racing later
+  // would let that wait consume the shared deadline first and reject a
+  // probe-row read that already finished inside the window (the race's
+  // remaining-budget check runs at arm time, not at await time).
+  const probeRowReadOutcome: Promise<{ done: boolean; error?: unknown }> =
+    finishedBeforeDeadline(() => probeRowRead, collectionDeadlineAt, clock).then(
+      (done) => ({ done }),
+      (error: unknown) => ({ done: false, error }),
+    );
   try {
     const coreReads = Promise.all([
       collectAgents(db, now),
@@ -2850,25 +3066,23 @@ export async function runCustomerIncidentScan(
   // Swallow rejections eagerly, same as probeRowRead: the read may fail
   // while the probe-row await below is still settling.
   void subscriptionRead.catch(() => undefined);
+  // Armed eagerly for the same reason as the probe-row race: the awaits
+  // between this read's start and its deadline verdict cannot consume the
+  // window out from under a result that already arrived.
+  const subscriptionReadOutcome: Promise<{ done: boolean; error?: unknown }> =
+    finishedBeforeDeadline(() => subscriptionRead, collectionDeadlineAt, clock).then(
+      (done) => ({ done }),
+      (error: unknown) => ({ done: false, error }),
+    );
 
   // The probe-row read races the shared collection deadline; it was
-  // started with the core reads above so a slow watchdog pass cannot push
-  // it out of window, and it is awaited BEFORE enrichment so its result
-  // counts whenever it finished inside the window — a read that outlives
-  // the deadline, or fails, degrades to "all candidates unknown" exactly
-  // like a failed read: nothing opens or resolves on missing probe-row
-  // data.
-  let probeRowsDone = false;
-  let probeRowReadError: unknown;
-  try {
-    probeRowsDone = await finishedBeforeDeadline(
-      () => probeRowRead,
-      collectionDeadlineAt,
-      clock,
-    );
-  } catch (err) {
-    probeRowReadError = err;
-  }
+  // started — and its deadline race armed — with the core reads above so a
+  // slow watchdog pass or admin-id lookup cannot push it out of window,
+  // and it is awaited BEFORE enrichment so its result counts whenever it
+  // finished inside the window — a read that outlives the deadline, or
+  // fails, degrades to "all candidates unknown" exactly like a failed
+  // read: nothing opens or resolves on missing probe-row data.
+  const { done: probeRowsDone, error: probeRowReadError } = await probeRowReadOutcome;
   if (probeRowReadError !== undefined) {
     log.warn("customer-incidents: public probe row read failed; box_unreachable unknown", {
       source: "customer-incidents",
@@ -2887,11 +3101,7 @@ export async function runCustomerIncidentScan(
     probeRowsReadable = true;
   }
 
-  const subscriptionsDone = await finishedBeforeDeadline(
-    () => subscriptionRead,
-    collectionDeadlineAt,
-    clock,
-  );
+  const { done: subscriptionsDone } = await subscriptionReadOutcome;
   if (subscriptionsDone) {
     subscriptions = await subscriptionRead;
   } else {
@@ -3076,6 +3286,28 @@ export async function runCustomerIncidentScan(
     // deadline passed, this item is counted deferred — a report (and its
     // page) must not start now, even though the race cannot recall a write
     // already in flight.
+    if (pastReportDeadline()) return { deferred: true };
+    // Re-validate against the subject's CURRENT state immediately before
+    // the insert. The evaluation snapshot is minutes stale by now — this
+    // report may itself still be running in the background after losing
+    // its deadline race — and a later scan may already have observed the
+    // recovery this finding pages for. A confirmed-cleared subject skips
+    // the insert entirely: nothing was open to archive, so a stale insert
+    // would page an incident that already ended. An unverifiable re-check
+    // reports anyway — the finding was fresh at evaluation and the resolve
+    // pass owns whatever false positive remains. The comparison timestamp
+    // is the scan's own `now` — the same observation time the evaluator
+    // and the resolve pass use — not the real-time deadline clock.
+    const revalidation = await revalidateIncidentFinding(db, finding, probes, now);
+    if (revalidation === "cleared") {
+      log.warn("customer-incidents: skipping incident report; the subject recovered before the insert", {
+        source: "customer-incidents",
+        failureType: "incident_report_superseded",
+        incidentKey: finding.key,
+        instanceId: finding.instanceId,
+      });
+      return {};
+    }
     if (pastReportDeadline()) return { deferred: true };
     try {
       const reported = await report(incidentOpsEvent(finding, metadata, pagingEnabled));

@@ -98,9 +98,16 @@ const INSTANCE: InstanceRowForOrchestration = {
 };
 
 function supabaseStub(): SupabaseClient {
+  const writeResult = { data: { id: INSTANCE.id }, error: null };
+  const writeChain: Record<string, jest.Mock> = {
+    select: jest.fn().mockReturnValue({ maybeSingle: jest.fn().mockResolvedValue(writeResult) }),
+  };
+  for (const method of ["eq", "or", "is", "not", "in", "lte", "gte"]) {
+    writeChain[method] = jest.fn().mockReturnValue(writeChain);
+  }
   return {
     from: jest.fn().mockReturnValue({
-      update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }),
+      update: jest.fn().mockReturnValue(writeChain),
     }),
   } as unknown as SupabaseClient;
 }
