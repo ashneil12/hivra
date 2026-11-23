@@ -873,6 +873,59 @@ describe('ops-events helper', () => {
     expect(result).toEqual({ id: 'evt_probe', fingerprint: expect.any(String) });
   });
 
+  it('predicates the refresh on last_seen_at only moving forward — a slower older refresh cannot drag the marker back', async () => {
+    // Two racing refreshes stamp their own write-time `now`. If the slower,
+    // older `now` commits second it would overwrite the newer last_seen_at —
+    // and the healthy-verdict path reads last_seen_at as the newest down
+    // sighting, so a regressed value lets an archive close a live outage.
+    // The .lte guard makes the stale refresh a no-match instead.
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: {
+        id: 'evt_probe',
+        occurrence_count: 4,
+        archived_at: null,
+        first_seen_at: '2026-11-22T11:45:00.000Z',
+      },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const updateEq = jest.fn().mockReturnThis();
+    const updateIs = jest.fn().mockReturnThis();
+    const updateLte = jest.fn().mockReturnThis();
+    const updateMaybeSingle = jest
+      .fn()
+      .mockResolvedValue({ data: { id: 'evt_probe' }, error: null });
+    const update = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
+      .mockReturnValueOnce({
+        update,
+        eq: updateEq,
+        is: updateIs,
+        lte: updateLte,
+        select,
+        maybeSingle: updateMaybeSingle,
+      });
+
+    const result = await reportOpsEvent({
+      source: 'box.public_probe.unreachable',
+      severity: 'warn',
+      title: 'Customer box public probe unreachable',
+      message: 'probe failing',
+      instanceId: 'agent_1',
+      observedAt: '2026-11-22T12:00:00.000Z',
+    });
+
+    const lastSeenGuard = updateLte.mock.calls.find((call) => call[0] === 'last_seen_at');
+    expect(lastSeenGuard).toBeDefined();
+    // The bound is this report's own write timestamp — a row carrying a
+    // NEWER last_seen_at refuses the write.
+    expect(Number.isNaN(Date.parse(String(lastSeenGuard![1])))).toBe(false);
+    expect(result).toEqual({ id: 'evt_probe', fingerprint: expect.any(String) });
+  });
+
   it('answers superseded when a guarded refresh matched no rows (a newer verdict won the window)', async () => {
     const openRow = {
       id: 'evt_probe',
