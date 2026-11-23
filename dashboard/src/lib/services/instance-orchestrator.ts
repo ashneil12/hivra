@@ -273,6 +273,21 @@ export type BankrRuntimeEnvPlan =
 
 const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 
+// How long a 'redeploying' stamp may sit before the update attempt that
+// wrote it is presumed abandoned rather than in-flight — the bound a new
+// attempt may take the row over at. The launcher returns within seconds of
+// dispatching the wrapper, but the wrapper itself pulls the image,
+// recreates the agent and waits on its health check, which a loaded host
+// can stretch past several minutes. A false takeover launches a second
+// wrapper on the same guest — the exact double-launch the in-flight check
+// below exists to prevent — so the bound errs long: 25 minutes matches
+// the sibling "still possibly in-flight" bounds (RESTORING_STALE_MS in
+// recover-stuck-instances, LAUNCH_FAILED_STUCK_MS in customer-incidents).
+// A row whose attempt dies younger is recovered by the next fleet-sync /
+// sweep tick that lands after the bound, and recover-stuck's probe owns
+// the box's health meanwhile.
+export const LIVE_UPDATE_ATTEMPT_TAKEOVER_MS = 25 * 60 * 1000;
+
 function warnBankrAgentConfigUnavailable(instanceId: string, err: unknown): void {
   log.warn("bankr agent config unavailable during live update", {
     source: LOG_SOURCE,
@@ -1029,7 +1044,7 @@ fi
   // its exact prior state back (the deferral contract: nothing changed).
   const { data: preAttemptRow, error: preAttemptError } = await supabaseAdmin
     .from("hermes_instances")
-    .select("status,lifecycle_state,last_lifecycle_transition_at,paused_reason,gateway_url")
+    .select("status,lifecycle_state,lifecycle_substate,last_lifecycle_transition_at,paused_reason,gateway_url")
     .eq("id", instance.id)
     .maybeSingle();
   if (preAttemptError || !preAttemptRow) {
@@ -1038,6 +1053,46 @@ fi
       error: "Could not confirm the computer's current lifecycle state. Refresh before updating.",
       initiator,
     };
+  }
+
+  // A 'redeploying' row is an update attempt already in flight — its
+  // wrapper may be running on the box right now. The compare-and-swap
+  // claim below verifies the snapshot this attempt read, so adopting an
+  // in-flight snapshot would let this attempt claim the row with the
+  // PREVIOUS attempt's stamp as its expected value: two wrappers writing
+  // the same deploy and report paths on one guest. Ordinary launches
+  // refuse while the stamp is fresh enough that the earlier attempt could
+  // still be running. Only a stamp old enough to prove the launcher died
+  // mid-attempt (or missing entirely — no live `a=` can correlate to it)
+  // is a takeover: this attempt's claim re-stamps the row, after which
+  // the abandoned wrapper's `a=` matches nothing and its reports fall to
+  // the stale-callback refusals.
+  if (preAttemptRow.status === "redeploying") {
+    const priorAttemptStampMs = Date.parse(preAttemptRow.last_lifecycle_transition_at ?? "");
+    const attemptAbandoned =
+      !Number.isFinite(priorAttemptStampMs) ||
+      Date.now() - priorAttemptStampMs >= LIVE_UPDATE_ATTEMPT_TAKEOVER_MS;
+    if (!attemptAbandoned) {
+      log.info("live update refused: an attempt is already in flight", {
+        source: LOG_SOURCE,
+        failureType: "live_update_attempt_in_flight",
+        instanceId: instance.id,
+        userId: instance.user_id,
+        priorAttemptStamp: preAttemptRow.last_lifecycle_transition_at,
+      });
+      return {
+        applied: false as const,
+        error: "An update is already in flight on this computer. Wait for it to finish before launching another.",
+        initiator,
+      };
+    }
+    log.info("live update taking over an abandoned attempt stamp", {
+      source: LOG_SOURCE,
+      failureType: "live_update_attempt_takeover",
+      instanceId: instance.id,
+      userId: instance.user_id,
+      priorAttemptStamp: preAttemptRow.last_lifecycle_transition_at,
+    });
   }
 
   // Claim the row for THIS attempt BEFORE the box can possibly report back.
@@ -1060,6 +1115,13 @@ fi
     .from("hermes_instances")
     .update({
       ...buildInstanceLifecyclePatch("redeploying", { now: updateAttemptStamp }),
+      // The previous attempt's reach marker describes ITS failed launch,
+      // not this one — a row mid-retry must not keep advertising it. The
+      // fleet-sync sweep reads 'redeploying' + a reached marker as the
+      // update-report degraded write asking for a retry; leaving a stale
+      // value here would make every in-flight retry look like one.
+      // (The deferred-revert below restores the snapshot's value.)
+      lifecycle_substate: null,
       // Never write null over a good gateway_url — a proxmox row whose safe
       // derivation failed (no subdomain, host env unresolved) must keep its
       // existing value, not get nulled out. This is the exact write that
@@ -1186,10 +1248,24 @@ fi
     // snapshot state. A box-side callback verdict that landed first rewrote
     // the transition or the status, so the stamp then stands down — a
     // timed-out SSH must never claw a reported success back to failed.
+    // last_lifecycle_transition_at doubles as this attempt's identity
+    // (`a=`): the transport may have died AFTER the wrapper started — a
+    // post-connect timeout cannot prove otherwise — so the wrapper can
+    // still be finishing the update on the box. The failure patch must
+    // keep THIS attempt's stamp (not a fresh "now"): a late `ru` verdict
+    // from the wrapper correlates to the row only while the stamp
+    // matches, and a reported success may still settle this same attempt
+    // to running. The write's own predicates prove the row still belongs
+    // to this attempt, so carrying the stamp through cannot adopt a
+    // newer owner's identity; updated_at records when the transition
+    // actually landed.
+    const { last_lifecycle_transition_at: _launchStampedAt, ...failedLifecyclePatch } =
+      buildInstanceLifecyclePatch("failed");
     let failedStampQuery = supabaseAdmin
       .from("hermes_instances")
       .update({
-        ...buildInstanceLifecyclePatch("failed"),
+        ...failedLifecyclePatch,
+        last_lifecycle_transition_at: updateAttemptStamp,
         lifecycle_substate:
           launchReach === "reached"
             ? LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE
@@ -1266,17 +1342,30 @@ fi
       // pre-launch attempt claim DID write the row — hand it the exact
       // state the snapshot read captured, guarded on our own stamp so a
       // row that moved on under another owner is left alone.
+      //
+      // The stamp alone is NOT enough: the transition value survives
+      // writes that change what the row IS — an orphan cleanup that moved
+      // it to 'scheduled_for_deletion', a recovery verdict that settled
+      // it, a purge that armed it. The claim wrote 'redeploying' +
+      // 'provisioning', so the revert may only land while the row is
+      // still exactly that claimed attempt; anything else now belongs to
+      // whatever moved it, and writing the snapshot back would resurrect
+      // a teardown the purge already owns (the same clobber class
+      // isAwaitingTeardown guards the attempt path against).
       const { error: revertError } = await supabaseAdmin
         .from("hermes_instances")
         .update({
           status: preAttemptRow.status,
           lifecycle_state: preAttemptRow.lifecycle_state,
+          lifecycle_substate: preAttemptRow.lifecycle_substate,
           last_lifecycle_transition_at: preAttemptRow.last_lifecycle_transition_at,
           paused_reason: preAttemptRow.paused_reason,
           gateway_url: preAttemptRow.gateway_url,
           updated_at: new Date().toISOString(),
         })
         .eq("id", instance.id)
+        .eq("status", "redeploying")
+        .eq("lifecycle_state", "provisioning")
         .eq("last_lifecycle_transition_at", updateAttemptStamp);
       if (revertError) {
         // The row is left stamped 'redeploying' for an update that never
@@ -1360,15 +1449,19 @@ fi
   // bump every run would re-roll the same ~50 VMs and the fleet never
   // converges. Every applyLiveUpdate caller (fleet-sync, manual redeploy,
   // resize, recovery) recreates from :stable, so all of them advance the cursor.
-  // The write is predicated on this attempt's stamp: a box-side callback
-  // verdict that already landed rewrote the transition (the failed report
-  // re-stamps it), and a row that moved owners no longer belongs to this
-  // launch — neither may be bumped into the synced cohort on stale evidence.
+  // The write is predicated on this attempt's stamp plus a status that
+  // still means the update is or was succeeding: a box-side callback
+  // verdict that already landed settled the attempt but KEEPS the stamp
+  // (a failed report flips status to 'failed' — that box must NOT be
+  // counted synced, while a reported success may still advance the
+  // cursor), a takeover re-stamped it, and a row that moved owners no
+  // longer belongs to this launch.
   const { error: redeployStateError } = await supabaseAdmin
     .from("hermes_instances")
     .update({ last_synced_at: new Date().toISOString() })
     .eq("id", instance.id)
-    .eq("last_lifecycle_transition_at", updateAttemptStamp);
+    .eq("last_lifecycle_transition_at", updateAttemptStamp)
+    .or('status.eq.redeploying,status.eq.running');
   if (redeployStateError) {
     // The update is already running on the box, but the fleet-sync cursor
     // did not advance. Log it so the stale row is visible.

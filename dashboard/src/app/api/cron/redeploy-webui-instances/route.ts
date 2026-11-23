@@ -22,6 +22,7 @@ import {
 } from "@/lib/services/inflight-update-gate";
 import {
   applyLiveUpdate,
+  LIVE_UPDATE_ATTEMPT_TAKEOVER_MS,
   resolveInstanceIpv4,
   type InstanceRowForOrchestration,
 } from "@/lib/services/instance-orchestrator";
@@ -155,9 +156,22 @@ function applyFleetSyncEligibility<T>(query: T): T {
       // while a launch refused before the guest (unreachable marker, or no
       // marker at all — powered off, wrong VMID, dead agent channel) stays
       // out and keeps belonging to recovery.
+      //
+      // The fourth arm is the same retry evidence one write earlier: when
+      // the box's own failed report lands but the failed-state write
+      // errors, the update-report route leaves the row 'redeploying' with
+      // ONLY the reached marker stamped (instance-orchestrator clears the
+      // marker on every claim, so an in-flight attempt never matches this
+      // arm — a 'redeploying' row carrying it is exactly a reported box-side
+      // failure whose lifecycle stamp never landed). The stamp-age bound
+      // keeps a freshly-marked row from burning a batch slot while its
+      // attempt could still settle; applyLiveUpdate refuses the takeover
+      // until the attempt is abandoned anyway, but not selecting it yet is
+      // what keeps the fairness cursor honest for the rest of the fleet.
       .or(
         `lifecycle_state.eq.active,status.eq.running,` +
-        `and(lifecycle_state.eq.failed,lifecycle_substate.in.("${LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE}","${LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE}"))`
+        `and(lifecycle_state.eq.failed,lifecycle_substate.in.("${LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE}","${LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE}")),` +
+        `and(status.eq.redeploying,lifecycle_substate.in.("${LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE}","${LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE}"),last_lifecycle_transition_at.lt."${new Date(Date.now() - LIVE_UPDATE_ATTEMPT_TAKEOVER_MS).toISOString()}")`
       )
       .not("lifecycle_state", "in", FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST)
       // Never sweep a row armed for teardown. The orphan sweep (Mon 09:00)

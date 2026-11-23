@@ -36,6 +36,10 @@ jest.mock("@/lib/hermes-releases/box", () => ({
 jest.mock("@/lib/services/instance-orchestrator", () => ({
   applyLiveUpdate: jest.fn(),
   resolveInstanceIpv4: jest.fn(),
+  // The eligibility arm computes its abandoned-attempt bound from this —
+  // keep it in lockstep with the real constant rather than requireActual
+  // (the module's transitive graph is out of scope for this suite).
+  LIVE_UPDATE_ATTEMPT_TAKEOVER_MS: 25 * 60 * 1000,
 }));
 
 const FLEET_SYNC = systemLiveUpdate("fleet_sync");
@@ -511,9 +515,17 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
     // cannot prove the update never ran. A bare 'failed' arm is still NOT
     // eligible, only a row whose last update ran (or may be running) on the
     // guest (the substate applyLiveUpdate stamps on a launch failure).
-    expect(orArg).toBe(
+    // The fourth arm re-admits the update-report degraded write: a box that
+    // reported its update failed while the failed-state stamp errored is
+    // left 'redeploying' with ONLY the reached marker — and only once the
+    // attempt stamp is old enough to be abandoned (a fresh one could still
+    // settle and must not burn a batch slot).
+    expect(orArg).toContain(
       "lifecycle_state.eq.active,status.eq.running," +
-        'and(lifecycle_state.eq.failed,lifecycle_substate.in.("live_update_failed_vm_reached","live_update_failed_vm_maybe_reached"))'
+        'and(lifecycle_state.eq.failed,lifecycle_substate.in.("live_update_failed_vm_reached","live_update_failed_vm_maybe_reached")),'
+    );
+    expect(orArg).toMatch(
+      /and\(status\.eq\.redeploying,lifecycle_substate\.in\.\("live_update_failed_vm_reached","live_update_failed_vm_maybe_reached"\),last_lifecycle_transition_at\.lt\."\d{4}-\d{2}-\d{2}T[^"]+"\)$/,
     );
     expect(LIFECYCLE_CHECK_STATES).toContain("active");
     // ...and the deny-list is what keeps that arm from redeploying a destroyed

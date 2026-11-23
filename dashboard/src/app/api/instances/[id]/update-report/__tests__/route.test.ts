@@ -2,12 +2,17 @@ import { NextRequest } from "next/server";
 
 import { GET, POST } from "../route";
 import { decryptApiKey } from "@/lib/crypto";
+import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { resolveUpdateImagePolicy } from "@/lib/hermes-releases/live-update";
 import { supabaseAdmin } from "@/lib/supabase";
 
 jest.mock("@/lib/crypto", () => ({
   decryptApiKey: jest.fn((value: string) => value),
+}));
+
+jest.mock("@/lib/logger", () => ({
+  log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
 jest.mock("@/lib/ops-events", () => ({
@@ -41,6 +46,7 @@ describe("POST /api/instances/[id]/update-report", () => {
   let instanceUpdateNot: jest.Mock;
   let instanceUpdateIs: jest.Mock;
   let instanceUpdateLte: jest.Mock;
+  let instanceUpdateOr: jest.Mock;
 
   // The lookup row returned by the select chain. Tests mutate this to exercise
   // soft-deleted / terminal-status cases. The route's query chains
@@ -53,23 +59,31 @@ describe("POST /api/instances/[id]/update-report", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     lookupError = null;
-    // The failed-report stamp chains .eq().eq().is() and then a conditional
-    // .lte() when the report carries occurredAt — the .is() step returns a
-    // result that is both the terminal {error} and the .lte() chain link.
+    // The writes chain .eq()/.is()/.lte()/.not()/.or() in different orders:
+    //   release fields: .eq(id).is(deleted_at)[.eq(stamp)][.lte(occurred)]
+    //   failed stamp:   .eq(id).eq(status).is(deleted_at)[.eq(stamp)][.lte(occurred)]
+    //   retry marker:   same shape as the failed stamp
+    //   running write:  .eq(id)[.eq(stamp)].not(status,in).is(deleted_at).or(lifecycle)
+    // so every result object carries the methods a later step may call.
     instanceUpdateLte = jest.fn().mockResolvedValue({ error: null });
-    instanceUpdateIs = jest.fn().mockReturnValue({ error: null, lte: instanceUpdateLte });
-    instanceUpdateNot = jest.fn().mockReturnValue({ is: instanceUpdateIs });
-    // The success write chains .eq().not().is(); the failed-report stamp
-    // chains .eq().eq().is() — one result object serves both.
+    instanceUpdateOr = jest.fn().mockResolvedValue({ error: null });
     const eqResult: Record<string, unknown> = {
-      not: instanceUpdateNot,
-      is: instanceUpdateIs,
+      lte: instanceUpdateLte,
     };
     instanceUpdateEq = jest.fn().mockReturnValue(eqResult);
     eqResult.eq = instanceUpdateEq;
+    instanceUpdateIs = jest.fn().mockReturnValue({
+      error: null,
+      lte: instanceUpdateLte,
+      eq: instanceUpdateEq,
+      or: instanceUpdateOr,
+    });
+    eqResult.is = instanceUpdateIs;
+    instanceUpdateNot = jest.fn().mockReturnValue({ is: instanceUpdateIs });
+    eqResult.not = instanceUpdateNot;
     instanceUpdate = jest.fn().mockReturnValue({ eq: instanceUpdateEq });
-    // Without a seeded resolution the correlation stays ungoverned — the
-    // report's write-time bounds alone apply.
+    // The route no longer reads the registry for attempt correlation —
+    // the mock stays so any accidental re-introduction fails loudly.
     (resolveUpdateImagePolicy as jest.Mock).mockResolvedValue({
       policy: undefined,
       state: null,
@@ -270,6 +284,16 @@ describe("POST /api/instances/[id]/update-report", () => {
       "last_lifecycle_transition_at",
       attempt
     );
+    expect(instanceUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        lifecycle_state: "failed",
+        // The attempt stamp survives the failed write: the wrapper may
+        // still be running, and its success callback must be able to
+        // settle THIS attempt instead of being refused by a moved stamp.
+        last_lifecycle_transition_at: attempt,
+      })
+    );
     expect(reportOpsEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({ attemptStamp: attempt }),
@@ -324,14 +348,20 @@ describe("POST /api/instances/[id]/update-report", () => {
       attempt
     );
     expect(instanceUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "running" })
+      expect.objectContaining({
+        status: "running",
+        lifecycle_state: "active",
+        // Stamped success keeps the attempt stamp so this write and the
+        // failed-stamp write cannot drift onto different transition times.
+        last_lifecycle_transition_at: attempt,
+      })
     );
   });
 
-  it("ignores a malformed attempt stamp and falls back to the legacy correlation", async () => {
+  it("ignores a malformed attempt stamp and falls back to the legacy write bounds", async () => {
     // A value that cannot be a transition stamp must not reach the
-    // PostgREST filter — it is dropped at normalization, so the report
-    // correlates exactly like one that carried no attempt stamp at all.
+    // PostgREST filter — it is dropped at normalization, so the report's
+    // writes run under exactly the bounds an unstamped report gets.
     const response = await POST(
       new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
         method: "POST",
@@ -355,18 +385,22 @@ describe("POST /api/instances/[id]/update-report", () => {
       "last_lifecycle_transition_at",
       expect.anything()
     );
-    // Legacy path: the named target still drives the registry correlation.
-    expect(resolveUpdateImagePolicy).toHaveBeenCalledWith(
-      supabaseAdmin,
-      "11111111-1111-4111-8111-111111111111",
-      "release"
+    // Legacy (stamp-less) reports never consult the registry — the write
+    // bounds arbitrate ownership, not the current pin.
+    expect(resolveUpdateImagePolicy).not.toHaveBeenCalled();
+    expect(instanceUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        lifecycle_substate: "live_update_failed_vm_reached",
+      })
     );
   });
 
-  it("stamps the failed state when the report's target is the release a new update would pin", async () => {
-    // Attempt correlation: the registry still points this box's release
-    // update at the digest the failed attempt moved toward, so the failure
-    // belongs to the in-flight attempt and the stamp lands.
+  it("stamps a legacy report naming the in-flight target — the pin is policy, not ownership", async () => {
+    // Round-13 regression: a registry repin is a DECISION about what a new
+    // update would install — it carries no attempt identity. The failed
+    // stamp runs under the redeploying/deleted/occurredAt bounds and lands
+    // whenever the row is still mid-update.
     const target = `sha256:${"2".repeat(64)}`;
     (resolveUpdateImagePolicy as jest.Mock).mockResolvedValue({
       policy: { kind: "pinned", ref: `ghcr.io/example/agent@${target}`, digest: target },
@@ -391,11 +425,7 @@ describe("POST /api/instances/[id]/update-report", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(resolveUpdateImagePolicy).toHaveBeenCalledWith(
-      supabaseAdmin,
-      "11111111-1111-4111-8111-111111111111",
-      "release"
-    );
+    expect(resolveUpdateImagePolicy).not.toHaveBeenCalled();
     expect(instanceUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "failed",
@@ -404,12 +434,12 @@ describe("POST /api/instances/[id]/update-report", () => {
     );
   });
 
-  it("skips the failed stamp when a delayed report targets a superseded release — but still records", async () => {
-    // The failed attempt moved toward D1, but a release update would pin D2
-    // NOW: the in-flight attempt is a different operation and the stale
-    // failure must not stamp its row. The report itself still counts — a
-    // 200 keeps the box from retrying pointlessly and the release-health
-    // signal below still lands.
+  it("does not let a pin change refuse a legacy report — the write's occurredAt bound is what rejects a provably-stale one", async () => {
+    // The failed attempt moved toward D1 while the registry has since
+    // repinned to D2. That drift proves nothing about attempt ownership:
+    // the in-flight attempt the report belongs to predates the repin. The
+    // report's occurredAt — not the pin — is the staleness bound, so the
+    // stamp lands while the row is still mid-update.
     const superseded = `sha256:${"1".repeat(64)}`;
     const inFlight = `sha256:${"2".repeat(64)}`;
     (resolveUpdateImagePolicy as jest.Mock).mockResolvedValue({
@@ -429,28 +459,34 @@ describe("POST /api/instances/[id]/update-report", () => {
           runType: "scheduled",
           reason: "pull_failed",
           targetDigest: superseded,
+          occurredAt: "2026-04-23T06:00:00Z",
         }),
       }),
       { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
     );
 
     expect(response.status).toBe(200);
-    expect(instanceUpdate).not.toHaveBeenCalledWith(
-      expect.objectContaining({ lifecycle_substate: expect.anything() })
+    expect(resolveUpdateImagePolicy).not.toHaveBeenCalled();
+    expect(instanceUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        lifecycle_substate: "live_update_failed_vm_reached",
+      })
     );
-    expect(instanceUpdate).not.toHaveBeenCalledWith(
-      expect.objectContaining({ lifecycle_state: "failed" })
+    expect(instanceUpdateLte).toHaveBeenCalledWith(
+      "last_lifecycle_transition_at",
+      "2026-04-23T06:00:00Z"
     );
     expect(reportOpsEvent).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Auto-update failed" })
     );
   });
 
-  it("skips the failed stamp when a governed box has no release pinned — a keep-intent update cannot report one", async () => {
-    // The registry governs the box but decides no release move right now:
-    // a report naming ANY target belongs to an earlier attempt — the
-    // in-flight update is release-keep (config/redeploy), which cannot
-    // produce a target-bearing failure of its own.
+  it("stamps a legacy report on a governed box with no pinned release — keep intent is policy too", async () => {
+    // A governed box whose registry currently says "keep" is still running
+    // the in-flight attempt the launcher already claimed. The report
+    // carries no attempt identity so the write bounds decide; the pin is
+    // never consulted.
     (resolveUpdateImagePolicy as jest.Mock).mockResolvedValue({
       policy: { kind: "keep" },
       state: { governed: true },
@@ -473,22 +509,21 @@ describe("POST /api/instances/[id]/update-report", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(instanceUpdate).not.toHaveBeenCalledWith(
-      expect.objectContaining({ lifecycle_substate: expect.anything() })
+    expect(resolveUpdateImagePolicy).not.toHaveBeenCalled();
+    expect(instanceUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        lifecycle_substate: "live_update_failed_vm_reached",
+      })
     );
   });
 
-  it("records the report and degrades the response when the attempt correlation read fails", async () => {
-    // A target-bearing report cannot be judged stale or fresh without the
-    // registry answer — but the report itself is already durably on file
-    // (release outcome + ops event) before correlation runs. The box-side
-    // reporter is fire-and-forget: a non-2xx would teach it that a recorded
-    // report was dropped while no retry ever comes, so the missing stamp is
-    // degraded detail on a 200 — and a 'redeploying' row is still recovered
-    // by the normal sweeps, not stranded.
-    (resolveUpdateImagePolicy as jest.Mock).mockRejectedValueOnce(
-      new Error("release registry read failed")
-    );
+  it("retries the failed-state write once, then answers a clean 200 when the retry lands", async () => {
+    // A transient write failure used to strand the row at 'redeploying'
+    // with only a degraded response. The write is idempotent under its own
+    // bounds, so one retry inside the request settles it.
+    instanceUpdateIs
+      .mockReturnValueOnce({ error: { message: "row locked" }, lte: instanceUpdateLte, eq: instanceUpdateEq, or: instanceUpdateOr });
 
     const response = await POST(
       new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
@@ -499,9 +534,8 @@ describe("POST /api/instances/[id]/update-report", () => {
         },
         body: JSON.stringify({
           status: "failed",
-          runType: "scheduled",
-          reason: "pull_failed",
-          targetDigest: `sha256:${"1".repeat(64)}`,
+          runType: "manual",
+          reason: "exit_status_1",
         }),
       }),
       { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
@@ -509,40 +543,22 @@ describe("POST /api/instances/[id]/update-report", () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(json).toEqual({
-      success: true,
-      data: { recorded: true, degraded: "update_report_correlation_failed" },
-    });
-    // The report's own ops event persisted BEFORE the failed correlation —
-    // the outage is on file even though the stamp could not be attempted.
-    expect(reportOpsEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: "instance-update-status",
-        title: "Auto-update failed",
-      })
-    );
-    expect(reportOpsEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: "instance-update-status",
-        title: "update report received but the attempt correlation failed",
-        severity: "error",
-        metadata: expect.objectContaining({
-          failureType: "update_report_correlation_failed",
-        }),
-      })
-    );
-    expect(instanceUpdate).not.toHaveBeenCalledWith(
-      expect.objectContaining({ lifecycle_substate: expect.anything() })
-    );
+    expect(json).toEqual({ success: true, data: { recorded: true } });
+    expect(instanceUpdate).toHaveBeenCalledTimes(2);
   });
 
-  it("records the report and degrades the response when the failed-state write fails", async () => {
-    // The stamp can still be retried — recover-stuck probes a 'redeploying'
-    // row and the next launch re-stamps a fresh attempt marker — while the
-    // box's single fire-and-forget curl never retries. So the recorded
-    // report answers 200 with the missed stamp named as degraded detail
-    // instead of a 500 that only looks like the report was dropped.
-    instanceUpdateIs.mockResolvedValueOnce({ error: { message: "row locked" } });
+  it("keeps the row sweep-retryable when the failed-state write keeps failing", async () => {
+    // Round-13 regression: the old path answered 200 and left the row
+    // 'redeploying' — a status the fleet-sync sweep skips but recover-stuck
+    // probes for a LONG window, so a failed update stayed un-retried. Now
+    // both the attempt and its retry are guarded, and when both fail a
+    // cheap reached-marker write re-arms sweep eligibility. The recorded
+    // report still answers 200 — the box's fire-and-forget curl never
+    // retries — with the missed stamp named as degraded detail.
+    const isResult = { error: { message: "row locked" }, lte: instanceUpdateLte, eq: instanceUpdateEq, or: instanceUpdateOr };
+    instanceUpdateIs
+      .mockReturnValueOnce(isResult)
+      .mockReturnValueOnce(isResult);
 
     const response = await POST(
       new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
@@ -564,25 +580,35 @@ describe("POST /api/instances/[id]/update-report", () => {
     expect(response.status).toBe(200);
     expect(json).toEqual({
       success: true,
-      data: { recorded: true, degraded: "update_report_state_write_failed" },
+      data: {
+        recorded: true,
+        degraded: "update_report_state_write_failed",
+      },
     });
-    // The failure report's own ops event persisted first; the second call
-    // is the error-log mirror of the missed stamp.
-    expect(reportOpsEvent).toHaveBeenCalledTimes(2);
+    // Attempt + retry + marker — three writes, the last one carrying ONLY
+    // the reached substate (no status change, so a row that already moved
+    // to running/failed keeps its state while becoming sweep-eligible).
+    expect(instanceUpdate).toHaveBeenCalledTimes(3);
+    expect(instanceUpdate).toHaveBeenLastCalledWith({
+      lifecycle_substate: "live_update_failed_vm_reached",
+    });
+    // The marker write is under the same ownership bounds as the stamp it
+    // replaces.
+    expect(instanceUpdateEq).toHaveBeenCalledWith("status", "redeploying");
+    // The failure report's own ops event persisted first; the error log
+    // mirrors the missed stamp with the retry outcome.
     expect(reportOpsEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         source: "instance-update-status",
         title: "Manual update failed",
       })
     );
-    expect(reportOpsEvent).toHaveBeenCalledWith(
+    expect(log.error).toHaveBeenCalledWith(
+      "update report received but the failed-state write failed",
+      expect.anything(),
       expect.objectContaining({
-        source: "instance-update-status",
-        title: "update report received but the failed-state write failed",
-        severity: "error",
-        metadata: expect.objectContaining({
-          failureType: "update_report_state_write_failed",
-        }),
+        failureType: "update_report_state_write_failed",
+        retryMarker: "stamped",
       })
     );
   });

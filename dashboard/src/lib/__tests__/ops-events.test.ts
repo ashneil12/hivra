@@ -1365,6 +1365,334 @@ describe('ops-events helper', () => {
     expect(compensateUpdate).not.toHaveBeenCalled();
     expect(result).toEqual({ id: 'evt_new', fingerprint: expect.any(String) });
   });
+
+  it('answers failure when the insert-arm compensation write errors — never a clean superseded', async () => {
+    // Regression: the archive-the-just-inserted-row write was awaited but
+    // its error ignored, so a failed compensation returned
+    // { superseded: true } while the stale row stayed open — the caller
+    // believed the report stood down and the open row could still page or
+    // refresh as live. A failed undo must report failure (null), the same
+    // convention as every other write in this function.
+    const lookupMaybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const insert = jest.fn().mockReturnThis();
+    const insertSingle = jest.fn().mockResolvedValue({ data: { id: 'evt_new' }, error: null });
+    const guardLimit = jest.fn().mockResolvedValue({ data: [], error: null });
+    const guardIs = jest.fn().mockReturnThis();
+    const guardEq = jest.fn().mockReturnThis();
+    const compensateUpdate = jest.fn().mockReturnThis();
+    const compensateEq = jest.fn().mockReturnThis();
+    const compensateIs = jest
+      .fn()
+      .mockResolvedValue({ data: null, error: { message: 'archive write exploded' } });
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle: lookupMaybeSingle })
+      .mockReturnValueOnce({ insert, select, single: insertSingle })
+      .mockReturnValueOnce({ select, eq: guardEq, is: guardIs, limit: guardLimit })
+      .mockReturnValueOnce({ update: compensateUpdate, eq: compensateEq, is: compensateIs });
+
+    const result = await reportOpsEvent({
+      source: 'incident.box_unreachable',
+      severity: 'error',
+      page: true,
+      title: 'Customer incident: agent box unreachable',
+      message: 'public probe failing',
+      instanceId: 'agent_1',
+      observedAt: '2026-11-22T12:00:00.000Z',
+      verdictGuard: {
+        source: 'box.public_probe.unreachable',
+        instanceId: 'agent_1',
+        firstSeenAt: '2026-11-22T11:45:00.000Z',
+      },
+    });
+
+    expect(compensateUpdate).toHaveBeenCalled();
+    expect(mockedFatalAlert).not.toHaveBeenCalled();
+    expect(result).toBeNull();
+  });
+
+  it('answers failure when the reopen-arm compensation write errors — never a clean superseded', async () => {
+    // Same regression on the reopen arm: the restore-the-archive write's
+    // error was ignored, so a failed compensation answered superseded
+    // while the row sat open under the archive it just lost.
+    const lookupMaybeSingle = jest.fn().mockResolvedValue({
+      data: {
+        id: 'evt_incident',
+        occurrence_count: 3,
+        archived_at: '2026-11-22T11:30:00.000Z',
+        archived_by_user_id: 'ops_user_9',
+        first_seen_at: '2026-11-22T11:00:00.000Z',
+      },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const reopenUpdate = jest.fn().mockReturnThis();
+    const reopenEq = jest.fn().mockReturnThis();
+    const reopenMaybeSingle = jest
+      .fn()
+      .mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
+    const guardLimit = jest.fn().mockResolvedValue({ data: [], error: null });
+    const guardIs = jest.fn().mockReturnThis();
+    const guardEq = jest.fn().mockReturnThis();
+    const compensateUpdate = jest.fn().mockReturnThis();
+    const compensateEq = jest.fn().mockReturnThis();
+    const compensateIs = jest
+      .fn()
+      .mockResolvedValue({ data: null, error: { message: 'restore write exploded' } });
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle: lookupMaybeSingle })
+      .mockReturnValueOnce({
+        update: reopenUpdate,
+        eq: reopenEq,
+        select,
+        maybeSingle: reopenMaybeSingle,
+      })
+      .mockReturnValueOnce({ select, eq: guardEq, is: guardIs, limit: guardLimit })
+      .mockReturnValueOnce({ update: compensateUpdate, eq: compensateEq, is: compensateIs });
+
+    const result = await reportOpsEvent({
+      source: 'incident.box_unreachable',
+      severity: 'error',
+      page: true,
+      title: 'Customer incident: agent box unreachable',
+      message: 'public probe failing',
+      instanceId: 'agent_1',
+      observedAt: '2026-11-22T12:00:00.000Z',
+      verdictGuard: {
+        source: 'box.public_probe.unreachable',
+        instanceId: 'agent_1',
+        firstSeenAt: '2026-11-22T11:45:00.000Z',
+      },
+    });
+
+    expect(compensateUpdate).toHaveBeenCalled();
+    expect(mockedFatalAlert).not.toHaveBeenCalled();
+    expect(result).toBeNull();
+  });
+
+  it('undoes a committed refresh when the verdict moves under the write — restores the observed markers', async () => {
+    // Regression: the refresh arm checked the verdict BEFORE the write but
+    // never after — a healthy verdict archiving the outage row in that gap
+    // let a stale observation bump last_seen_at/occurrence_count as fresh
+    // evidence and return a persisted-looking id. The post-commit re-check
+    // hands the markers back (pinned to this refresh's own last_seen_at so
+    // a newer refresh is never dragged back) and answers superseded.
+    const lookupMaybeSingle = jest.fn().mockResolvedValue({
+      data: {
+        id: 'evt_incident',
+        occurrence_count: 4,
+        archived_at: null,
+        archived_by_user_id: null,
+        first_seen_at: '2026-11-22T11:45:00.000Z',
+        last_seen_at: '2026-11-22T11:58:00.000Z',
+      },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    // The pre-write verdict read: still open under the observed start.
+    const preGuardLimit = jest.fn().mockResolvedValue({ data: [{ id: 'probe_row_1' }], error: null });
+    const preGuardIs = jest.fn().mockReturnThis();
+    const preGuardEq = jest.fn().mockReturnThis();
+    const refreshUpdate = jest.fn().mockReturnThis();
+    const refreshEq = jest.fn().mockReturnThis();
+    const refreshIs = jest.fn().mockReturnThis();
+    const refreshLte = jest.fn().mockReturnThis();
+    const refreshMaybeSingle = jest
+      .fn()
+      .mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
+    // The post-commit verdict read: moved (archived between check and write).
+    const postGuardLimit = jest.fn().mockResolvedValue({ data: [], error: null });
+    const postGuardIs = jest.fn().mockReturnThis();
+    const postGuardEq = jest.fn().mockReturnThis();
+    // The undo restores the observed markers, guarded on open + our own
+    // last_seen_at. The chain ends in .eq(), so awaiting the builder
+    // resolves the (non-thenable) object — an error-free write either way.
+    const undoUpdate = jest.fn().mockReturnThis();
+    const undoEq = jest.fn().mockReturnThis();
+    const undoIs = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle: lookupMaybeSingle })
+      .mockReturnValueOnce({ select, eq: preGuardEq, is: preGuardIs, limit: preGuardLimit })
+      .mockReturnValueOnce({
+        update: refreshUpdate,
+        eq: refreshEq,
+        is: refreshIs,
+        lte: refreshLte,
+        select,
+        maybeSingle: refreshMaybeSingle,
+      })
+      .mockReturnValueOnce({ select, eq: postGuardEq, is: postGuardIs, limit: postGuardLimit })
+      .mockReturnValueOnce({ update: undoUpdate, eq: undoEq, is: undoIs });
+
+    const result = await reportOpsEvent({
+      source: 'incident.box_unreachable',
+      severity: 'error',
+      title: 'Customer incident: agent box unreachable',
+      message: 'public probe failing',
+      instanceId: 'agent_1',
+      observedAt: '2026-11-22T12:00:00.000Z',
+      verdictGuard: {
+        source: 'box.public_probe.unreachable',
+        instanceId: 'agent_1',
+        firstSeenAt: '2026-11-22T11:45:00.000Z',
+      },
+    });
+
+    // The restore writes back exactly what the lookup observed, pinned to
+    // this refresh's own last_seen_at so a newer write is never undone.
+    expect(undoUpdate).toHaveBeenCalledWith({
+      last_seen_at: '2026-11-22T11:58:00.000Z',
+      occurrence_count: 4,
+    });
+    expect(undoEq).toHaveBeenCalledWith('id', 'evt_incident');
+    expect(undoIs).toHaveBeenCalledWith('archived_at', null);
+    expect(undoEq).toHaveBeenCalledWith('last_seen_at', expect.any(String));
+    expect(result).toEqual({ fingerprint: expect.any(String), superseded: true });
+  });
+
+  it('answers failure when the refresh-arm marker restore errors — the stale bump must not read as superseded', async () => {
+    // A failed undo leaves the bump live on the row: answering superseded
+    // would tell the caller the report stood down while the row carries
+    // fresh evidence of a moved verdict. Failure (null) is the honest
+    // answer — the caller's failed path retries.
+    const lookupMaybeSingle = jest.fn().mockResolvedValue({
+      data: {
+        id: 'evt_incident',
+        occurrence_count: 4,
+        archived_at: null,
+        archived_by_user_id: null,
+        first_seen_at: '2026-11-22T11:45:00.000Z',
+        last_seen_at: '2026-11-22T11:58:00.000Z',
+      },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const preGuardLimit = jest.fn().mockResolvedValue({ data: [{ id: 'probe_row_1' }], error: null });
+    const preGuardIs = jest.fn().mockReturnThis();
+    const preGuardEq = jest.fn().mockReturnThis();
+    const refreshUpdate = jest.fn().mockReturnThis();
+    const refreshEq = jest.fn().mockReturnThis();
+    const refreshIs = jest.fn().mockReturnThis();
+    const refreshLte = jest.fn().mockReturnThis();
+    const refreshMaybeSingle = jest
+      .fn()
+      .mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
+    const postGuardLimit = jest.fn().mockResolvedValue({ data: [], error: null });
+    const postGuardIs = jest.fn().mockReturnThis();
+    const postGuardEq = jest.fn().mockReturnThis();
+    const undoUpdate = jest.fn().mockReturnThis();
+    const undoIs = jest.fn().mockReturnThis();
+    // The chain ends .eq('last_seen_at', now): the first .eq('id', ...)
+    // returns the builder, the awaited terminal .eq resolves the error so
+    // the undo reads as failed.
+    const undoChain: Record<string, unknown> = {};
+    const undoEq = jest
+      .fn()
+      .mockReturnValueOnce(undoChain)
+      .mockResolvedValueOnce({ data: null, error: { message: 'restore exploded' } });
+    Object.assign(undoChain, { update: undoUpdate, eq: undoEq, is: undoIs });
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle: lookupMaybeSingle })
+      .mockReturnValueOnce({ select, eq: preGuardEq, is: preGuardIs, limit: preGuardLimit })
+      .mockReturnValueOnce({
+        update: refreshUpdate,
+        eq: refreshEq,
+        is: refreshIs,
+        lte: refreshLte,
+        select,
+        maybeSingle: refreshMaybeSingle,
+      })
+      .mockReturnValueOnce({ select, eq: postGuardEq, is: postGuardIs, limit: postGuardLimit })
+      .mockReturnValueOnce(undoChain);
+
+    const result = await reportOpsEvent({
+      source: 'incident.box_unreachable',
+      severity: 'error',
+      title: 'Customer incident: agent box unreachable',
+      message: 'public probe failing',
+      instanceId: 'agent_1',
+      observedAt: '2026-11-22T12:00:00.000Z',
+      verdictGuard: {
+        source: 'box.public_probe.unreachable',
+        instanceId: 'agent_1',
+        firstSeenAt: '2026-11-22T11:45:00.000Z',
+      },
+    });
+
+    expect(undoUpdate).toHaveBeenCalled();
+    expect(result).toBeNull();
+  });
+
+  it('keeps a committed refresh whose verdict is still current after the write — post-check is a pass-through', async () => {
+    // The post-commit re-check must not turn a healthy verdict into a
+    // refusal: verdict still open under the observed start before AND
+    // after the refresh lands → the row's id comes back normally.
+    const lookupMaybeSingle = jest.fn().mockResolvedValue({
+      data: {
+        id: 'evt_incident',
+        occurrence_count: 4,
+        archived_at: null,
+        archived_by_user_id: null,
+        first_seen_at: '2026-11-22T11:45:00.000Z',
+        last_seen_at: '2026-11-22T11:58:00.000Z',
+      },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const preGuardLimit = jest.fn().mockResolvedValue({ data: [{ id: 'probe_row_1' }], error: null });
+    const preGuardIs = jest.fn().mockReturnThis();
+    const preGuardEq = jest.fn().mockReturnThis();
+    const refreshUpdate = jest.fn().mockReturnThis();
+    const refreshEq = jest.fn().mockReturnThis();
+    const refreshIs = jest.fn().mockReturnThis();
+    const refreshLte = jest.fn().mockReturnThis();
+    const refreshMaybeSingle = jest
+      .fn()
+      .mockResolvedValue({ data: { id: 'evt_incident' }, error: null });
+    const postGuardLimit = jest.fn().mockResolvedValue({ data: [{ id: 'probe_row_1' }], error: null });
+    const postGuardIs = jest.fn().mockReturnThis();
+    const postGuardEq = jest.fn().mockReturnThis();
+    const undoUpdate = jest.fn();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle: lookupMaybeSingle })
+      .mockReturnValueOnce({ select, eq: preGuardEq, is: preGuardIs, limit: preGuardLimit })
+      .mockReturnValueOnce({
+        update: refreshUpdate,
+        eq: refreshEq,
+        is: refreshIs,
+        lte: refreshLte,
+        select,
+        maybeSingle: refreshMaybeSingle,
+      })
+      .mockReturnValueOnce({ select, eq: postGuardEq, is: postGuardIs, limit: postGuardLimit });
+
+    const result = await reportOpsEvent({
+      source: 'incident.box_unreachable',
+      severity: 'error',
+      title: 'Customer incident: agent box unreachable',
+      message: 'public probe failing',
+      instanceId: 'agent_1',
+      observedAt: '2026-11-22T12:00:00.000Z',
+      verdictGuard: {
+        source: 'box.public_probe.unreachable',
+        instanceId: 'agent_1',
+        firstSeenAt: '2026-11-22T11:45:00.000Z',
+      },
+    });
+
+    expect(undoUpdate).not.toHaveBeenCalled();
+    expect(result).toEqual({ id: 'evt_incident', fingerprint: expect.any(String) });
+  });
 });
 
 describe('reportOpsEventOnce', () => {

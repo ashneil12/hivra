@@ -3,13 +3,13 @@ import { NextRequest } from "next/server";
 import { decryptApiKey } from "@/lib/crypto";
 import { apiError, apiSuccess, handleApiError } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
-import { resolveUpdateImagePolicy } from "@/lib/hermes-releases/live-update";
 import { DIGEST_PATTERN } from "@/lib/hermes-releases/policy";
 import { recordBoxOutcome, type BoxOutcome } from "@/lib/hermes-releases/store";
 import {
   buildInstanceLifecyclePatch,
   LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
 } from "@/lib/instance-lifecycle";
+import { LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST } from "@/lib/services/instance-live-mutation";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -153,7 +153,30 @@ async function recordReleaseReport(
     patch.update_health_detail = kind === "updated" ? null : (report.reason ?? report.detail ?? null)?.slice(0, 500) ?? null;
     patch.update_health_at = now;
   }
-  const { error } = await supabaseAdmin.from("hermes_instances").update(patch).eq("id", instance.id);
+  // The release fields are THIS attempt's evidence about the row — the
+  // same ownership bounds the lifecycle writes below apply. A delayed or
+  // replayed report whose attempt no longer owns the row must not
+  // overwrite the image digest / update-health a newer attempt just wrote:
+  // it would mis-state which release the current attempt is running and
+  // feed stale evidence into the release registry's halt decision.
+  let releaseWrite = supabaseAdmin
+    .from("hermes_instances")
+    .update(patch)
+    .eq("id", instance.id)
+    .is("deleted_at", null);
+  if (report.attemptStamp) {
+    releaseWrite = releaseWrite.eq(
+      "last_lifecycle_transition_at",
+      report.attemptStamp,
+    );
+  }
+  if (report.occurredAt && !Number.isNaN(Date.parse(report.occurredAt))) {
+    // Same bound the failed-state write applies: a report the box says
+    // happened before the current attempt stamped 'redeploying' cannot
+    // describe that attempt's release state.
+    releaseWrite = releaseWrite.lte("last_lifecycle_transition_at", report.occurredAt);
+  }
+  const { error } = await releaseWrite;
   if (error) {
     log.error("release report write failed", new Error("release_report_write_failed"), {
       source: "instance-update-status",
@@ -287,43 +310,23 @@ async function recordUpdateReport(params: {
   const nextInstanceStatus =
     report.status === "succeeded" && canResurrect ? "running" : null;
 
-  // The legacy attempt correlation resolves the target an update would pin
-  // against the row's CURRENT stored state — loadBoxRelease reads
-  // agent_image_digest as the box's image — so it must run BEFORE
-  // recordReleaseReport stores this report's own `i` digest into that same
-  // column. A failure that reports the target as its running digest (the
-  // update applied, then the wrapper failed: a post-update health check, a
-  // rollback that re-pulled the target) would otherwise be read as
-  // "already on target" — keep → stale → the failed stamp skipped and the
-  // row stranded at 'redeploying' forever. The resolve is a read, so the
-  // durable-first ordering below is untouched; its failure is held and
-  // answered only after the record lands, so a registry hiccup can never
-  // cost the report itself.
-  let staleAttempt = false;
-  let correlationFailed = false;
-  let correlationError: unknown;
-  if (report.status === "failed" && !report.attemptStamp && releaseReport.targetDigest) {
-    try {
-      const { policy, state } = await resolveUpdateImagePolicy(
-        supabaseAdmin,
-        instance.id,
-        "release",
-      );
-      if (state?.governed) {
-        // For a governed box the in-flight release is the registry's
-        // pinned target; any other target name belongs to an older
-        // attempt. So does ANY target when the current update is not
-        // release-bound (a keep/config redeploy cannot report one).
-        const inFlightTarget = policy?.kind === "pinned" ? policy.digest : null;
-        staleAttempt = releaseReport.targetDigest !== inFlightTarget;
-      }
-      // Ungoverned boxes pull a floating tag: nothing stored names the
-      // in-flight target, so only the write-time bounds apply.
-    } catch (err) {
-      correlationFailed = true;
-      correlationError = err;
-    }
-  }
+  // Attempt ownership for a report is decided by the WRITES below, not by
+  // comparing the reported target to the release registry's current pin.
+  // The registry can repin D1→D2 while the SAME attempt is still in flight
+  // — a pin value is policy, not attempt identity — so treating a pin
+  // mismatch as "a newer attempt owns this row" wrongly refused the
+  // in-flight attempt's own verdict (and stranded the row 'redeploying'),
+  // while a pin match could just as wrongly adopt an old attempt's report.
+  // What correlates instead: the launch-side attempt stamp (`a=`, the
+  // target/identity captured when the attempt launched — carried in
+  // last_lifecycle_transition_at) where the wrapper is new enough to send
+  // it, and otherwise the reported `occurredAt` against the current
+  // attempt's stamp. A legacy report with neither is genuinely ambiguous:
+  // the failed write is admitted under the status bound and PRESERVES the
+  // row's attempt stamp, so whichever attempt actually owns the row keeps
+  // its correlation — its own verdicts can still settle it, and the
+  // recorded failure keeps the row retry-eligible rather than paged as
+  // an untracked stuck update.
 
   // Durable first, lifecycle second. The box-side reporter is
   // fire-and-forget (a single `curl -m10`, no retry), so a non-2xx is not a
@@ -367,9 +370,23 @@ async function recordUpdateReport(params: {
   });
 
   if (nextInstanceStatus) {
+    // Settle the attempt on the full running lifecycle, not a status-only
+    // relabel: a box the launch wrote off ('failed' + preserved stamp,
+    // because its SSH died after the wrapper started) needs
+    // lifecycle_state back to 'active' too, or recover-stuck keeps
+    // re-driving a healthy row. The transition column stays the attempt's
+    // own — report writes never mint a transition identity they did not
+    // launch with; updated_at records when this settlement landed.
+    const { last_lifecycle_transition_at: _successAttemptStamp, ...runningPatch } =
+      buildInstanceLifecyclePatch("running");
     let runningWrite = supabaseAdmin
       .from("hermes_instances")
-      .update({ status: nextInstanceStatus, updated_at: new Date().toISOString() })
+      .update({
+        ...runningPatch,
+        ...(report.attemptStamp
+          ? { last_lifecycle_transition_at: report.attemptStamp }
+          : {}),
+      })
       .eq("id", instance.id);
     if (report.attemptStamp) {
       // Same attempt scope as the failed stamp below: a delayed success
@@ -387,7 +404,12 @@ async function recordUpdateReport(params: {
       .not("status", "in", NON_RESURRECTABLE_STATUS_FILTER)
       // Soft-delete paths (e.g. cold-storage purge) set deleted_at without
       // changing status, so the write re-checks it too.
-      .is("deleted_at", null);
+      .is("deleted_at", null)
+      // blocksInstanceLiveMutation's lifecycle exclusions in the same
+      // or-form the update path writes (unset lifecycle is not blocked):
+      // a deleting/archiving/restoring row is another operation's lock —
+      // a late success verdict must not cancel it by flipping to active.
+      .or(`lifecycle_state.is.null,lifecycle_state.not.in.${LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST}`);
 
     if (statusError) {
       // The report is already on file; only the status stamp is missing.
@@ -414,100 +436,113 @@ async function recordUpdateReport(params: {
     // The update this report describes ran on the box and failed there —
     // the callback itself is the reach evidence. A row still stamped
     // 'redeploying' by the launch sits in a state the fleet-sync sweep
-    // does not admit (its retry list is lifecycle 'failed' carrying the
-    // reached/maybe_reached substates, or a live status/lifecycle), and
-    // recover-stuck can probe and restart the VM but never re-applies the
-    // release — the box would report "update in flight" forever with the
-    // release never retried. Stamp it like a launch failure that reached
-    // the guest: lifecycle 'failed' + the reached substate keeps the row
-    // retry-eligible on the next sweep.
+    // does not admit on its own (its retry list is lifecycle 'failed'
+    // carrying the reached/maybe_reached substates, a live
+    // status/lifecycle, or the degraded-write marker arm described
+    // below), and recover-stuck can probe and restart the VM but never
+    // re-applies the release — the box would report "update in flight"
+    // forever with the release never retried. Stamp it like a launch
+    // failure that reached the guest: lifecycle 'failed' + the reached
+    // substate keeps the row retry-eligible on the next sweep.
     //
-    // Attempt correlation already ran — BEFORE the record above stored
-    // this report's own digest into agent_image_digest, so the verdict
-    // describes the row as it was when the report arrived, not as the
-    // report left it. A delayed failure report from an earlier update
-    // must not stamp a row a newer attempt is already redeploying.
-    // Reports carrying the launch-side attempt stamp need no guess: the
-    // write below is predicated on the row still carrying THAT attempt's
-    // transition stamp, so it can only land on the attempt it belongs to —
-    // even when the registry has repinned since the attempt started, and
-    // even when a same-digest retry has taken the row over. A zero-match
-    // there means the attempt moved on, which is the correct outcome.
+    // Ownership is arbitrated by the write's own predicates, not by a
+    // registry-pin comparison — a repinned target does not prove a new
+    // attempt owns the row (see above). A stamped report can only land on
+    // its own attempt: the launch wrote THAT stamp into the transition
+    // column, so an `a=` match means the row is still mid-flight under
+    // this attempt — a zero-match means the attempt moved on, which is
+    // the correct outcome. For a legacy stamp-less report the
+    // status/occurredAt bounds are what remain: admitted while the row
+    // is mid-update (and, when the box told us when it happened, only
+    // while that time still covers the current attempt's stamp).
     //
-    // Reports without an attempt stamp (wrappers from before it existed,
-    // or any other caller) fall back to the older bounds: the named target
-    // must still match the target a release update would pin NOW —
-    // resolved the way the update path pins it — plus the write-time
-    // status/occurredAt bounds below. That residual is documented: a
-    // timestamp-free report from a superseded attempt CAN still stamp a
-    // newer attempt's row when both attempts targeted the same digest,
-    // because nothing distinguishes them until the box image carries the
-    // attempt-stamping wrapper.
-    if (correlationFailed) {
-      log.error(
-        "update report received but the attempt correlation failed",
-        correlationError instanceof Error
-          ? correlationError
-          : new Error(String(correlationError)),
-        {
-          source: "instance-update-status",
-          failureType: "update_report_correlation_failed",
-          instanceId: instance.id,
-          userId: instance.user_id,
-        },
-      );
-      return apiSuccess({ recorded: true, degraded: "update_report_correlation_failed" });
-    }
-    if (staleAttempt) {
-      log.info("failed update report names a target the in-flight update is not moving to; skipping the failed-state stamp", {
-        source: "instance-update-status",
-        failureType: "update_report_stale_attempt",
-        instanceId: instance.id,
-        userId: instance.user_id,
-      });
-    } else {
-      // The write itself is still predicated on the row being mid-update:
-      // a late or duplicated report must not claw back a row that already
-      // recovered to running (or moved on to another state), and a
-      // box-side roll failure on a live row stays a release-health signal
-      // — recordReleaseReport above covers it — not a user-facing status
-      // change.
-      let failedWrite = supabaseAdmin
+    // Either way the transition column is preserved, not re-stamped: it
+    // is the owning attempt's identity, and the write only lands where
+    // the predicates already proved ownership — so keeping the stamp can
+    // never adopt a newer attempt's identity, and the real owner's later
+    // verdicts (its `a=` reports) still correlate. updated_at records
+    // when the transition actually landed.
+    const { last_lifecycle_transition_at: _failedAttemptStamp, ...failedPatch } =
+      buildInstanceLifecyclePatch("failed");
+    const failedStateWrite = () => {
+      // The closure captures the module binding (narrowed above cannot
+      // reach in) — supabaseAdmin is proven non-null at line ~241.
+      let write = supabaseAdmin!
         .from("hermes_instances")
         .update({
-          ...buildInstanceLifecyclePatch("failed"),
+          ...failedPatch,
+          // A stamped report re-writes the same value its predicate
+          // requires — explicit, so this attempt's identity visibly
+          // survives in both branches. A stamp-less report leaves the
+          // column untouched entirely.
+          ...(report.attemptStamp
+            ? { last_lifecycle_transition_at: report.attemptStamp }
+            : {}),
           lifecycle_substate: LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
         })
         .eq("id", instance.id)
-        .eq("status", "redeploying");
+        .eq("status", "redeploying")
+        .is("deleted_at", null);
       if (report.attemptStamp) {
         // The launch stamps its attempt id into the transition column when
         // it marks the row 'redeploying'; the report proves it belongs to
         // THIS attempt by matching it. A stale report — any attempt that
         // has since been superseded, retried or recovered — fails the
         // match instead of stomping the newer attempt's lifecycle state.
-        failedWrite = failedWrite.eq(
+        write = write.eq(
           "last_lifecycle_transition_at",
           report.attemptStamp,
         );
       }
-      failedWrite = failedWrite.is("deleted_at", null);
       if (report.occurredAt && !Number.isNaN(Date.parse(report.occurredAt))) {
         // last_lifecycle_transition_at is when the CURRENT attempt stamped
         // 'redeploying'; a failure the box says happened before that stamp
         // belongs to an earlier attempt and must not overwrite it.
-        failedWrite = failedWrite.lte("last_lifecycle_transition_at", report.occurredAt);
+        write = write.lte("last_lifecycle_transition_at", report.occurredAt);
       }
-      const { error: failedStateError } = await failedWrite;
-      if (failedStateError) {
-        // Without the stamp the row stays 'redeploying' — but the report
-        // itself is already recorded above, so the failure is degraded
-        // stamp state, not a lost report. A 'redeploying' row is still
-        // retried: recover-stuck probes it and the next launch stamps a
-        // fresh attempt marker, so the missed stamp is not permanent —
-        // while a non-2xx would only teach a reporter that never retries
-        // to believe the report was dropped. An error-free zero-match
-        // stays silent-200: a row that already moved on is fine.
+      return write;
+    };
+    const { error: failedStateError } = await failedStateWrite();
+    if (failedStateError) {
+      // The write is a guarded compare-and-swap, so a transient PostgREST
+      // error is the likeliest cause of a first failure — retry the same
+      // bounded write once before degrading.
+      const { error: failedStateRetryError } = await failedStateWrite();
+      if (failedStateRetryError) {
+        // The full stamp will not land. A bare 'redeploying' row is NOT
+        // retry-eligible by itself: the sweep's live/failed arms skip it
+        // and recover-stuck never re-applies the release, so the box
+        // would sit paged-and-unowned until the attempt aged into
+        // takeover. Stamp ONLY the reached marker under the same
+        // ownership bounds: 'redeploying' + a reached substate is the
+        // exact signature the sweep's degraded-write arm selects (the
+        // claim clears the marker on real retries, so the arm can never
+        // match an in-flight attempt), and the release is re-driven once
+        // the orphaned attempt is old enough to take over. A marker
+        // write that also errors is the end of what this response can do
+        // — the report itself is already durable above, and an error-free
+        // zero-match stays silent-200: a row that moved on is fine.
+        let markerWrite = supabaseAdmin
+          .from("hermes_instances")
+          .update({
+            lifecycle_substate: LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
+          })
+          .eq("id", instance.id)
+          .eq("status", "redeploying")
+          .is("deleted_at", null);
+        if (report.attemptStamp) {
+          markerWrite = markerWrite.eq(
+            "last_lifecycle_transition_at",
+            report.attemptStamp,
+          );
+        }
+        if (report.occurredAt && !Number.isNaN(Date.parse(report.occurredAt))) {
+          markerWrite = markerWrite.lte(
+            "last_lifecycle_transition_at",
+            report.occurredAt,
+          );
+        }
+        const { error: markerWriteError } = await markerWrite;
         log.error(
           "update report received but the failed-state write failed",
           new Error("update_report_state_write_failed"),
@@ -516,6 +551,7 @@ async function recordUpdateReport(params: {
             failureType: "update_report_state_write_failed",
             instanceId: instance.id,
             userId: instance.user_id,
+            retryMarker: markerWriteError ? "write_failed" : "stamped",
           },
         );
         return apiSuccess({ recorded: true, degraded: "update_report_state_write_failed" });

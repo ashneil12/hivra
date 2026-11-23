@@ -2435,6 +2435,12 @@ async function revalidateIncidentFinding(
       if (subject.error) return revalidateFailed("hivra_agents", subject.error.message);
       const agent = subject.agent;
       if (!agent || agent.status !== "running" || agent.sleepState !== "awake") return cleared;
+      // The diagnosis probes of the subject's own public /healthz just ran
+      // for this report — the freshest possible observation. A 200 is
+      // CONFIRMED recovery and stands on its own: honor it before the
+      // probe-row read so a failed lookup cannot strand a verified
+      // recovery at "unknown" (which reports without a verdictGuard).
+      if (healthzProbe?.status === 200) return cleared;
       // The subject's CURRENT recorded outage: a concurrent healthy scan
       // (or a healthy-verdict write) archives the probe row — the stored
       // verdict then says recovered even when this pass's diagnosis probe
@@ -2449,11 +2455,6 @@ async function revalidateIncidentFinding(
         .maybeSingle();
       if (probeRowError) return revalidateFailed("probe row", probeRowError.message);
       if (!probeRow || probeRow.archived_at != null) return cleared;
-      // Still-open stored outage: the diagnosis probes of the subject's own
-      // public /healthz just ran for this report — the freshest possible
-      // observation. Only a 200 is confirmed recovery; a failed, skipped or
-      // absent probe keeps the recorded outage standing.
-      if (healthzProbe?.status === 200) return cleared;
       // The grace window applies to the CURRENT outage, not the one the
       // evaluation snapshot aged: the recorded outage can close and a new
       // one open between evaluation and this insert — a verdict write

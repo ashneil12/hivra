@@ -251,7 +251,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
 
     const { data: existing, error: lookupError } = await supabaseAdmin
       .from('ops_events')
-      .select('id, occurrence_count, archived_at, archived_by_user_id, first_seen_at')
+      .select('id, occurrence_count, archived_at, archived_by_user_id, first_seen_at, last_seen_at')
       .eq('fingerprint', fingerprint)
       .maybeSingle();
 
@@ -327,7 +327,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
           // reopen, so a later writer's own verdict is never clobbered)
           // and answer superseded: no page for a verdict already gone.
           if (input.verdictGuard && (await checkVerdictGuard()) === "moved") {
-            await db
+            const { error: compensateError } = await db
               .from('ops_events')
               .update({
                 archived_at: row.archived_at,
@@ -335,6 +335,14 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
               })
               .eq('id', row.id)
               .is('archived_at', null);
+            // A failed compensation is NOT a clean refusal: the stale row
+            // is still open while the caller believes the report stood
+            // down. Answer failure — the caller's failed-report path is
+            // the recovery, and the resolve pass owns the open row
+            // meanwhile. An error-free zero-match means another writer
+            // already closed it: the compensation the verdict asked for
+            // is done either way.
+            if (compensateError) return null;
             return { fingerprint, superseded: true };
           }
           // A recurrence of an ARCHIVED fingerprint un-archives the row —
@@ -380,6 +388,8 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
       // answers for the verdict it was recorded against: a moved verdict
       // makes this sighting stale, so it must not bump the row's
       // last_seen_at/occurrence_count into looking like fresh evidence.
+      // This is the cheap pre-write half; the post-commit re-check below
+      // covers the window between this read and the refresh landing.
       if (input.verdictGuard && (await checkVerdictGuard()) === "moved") {
         return { fingerprint, superseded: true };
       }
@@ -419,6 +429,34 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
         return null;
       }
       if (refreshed?.id) {
+        // The verdict can still move between the pre-write check above and
+        // this commit — the window the check cannot close on its own. Same
+        // serializing pattern the insert and reopen arms use: re-read the
+        // verdict AFTER the write lands and undo the fresh-sighting markers
+        // if it moved, so a stale observation is never recorded as fresh
+        // evidence. The restore is pinned to this refresh's own
+        // last_seen_at: a newer refresh landing after ours owns the markers
+        // now, and an archive that closed under us already holds the
+        // correct verdict — neither may be dragged back.
+        if (input.verdictGuard && (await checkVerdictGuard()) === "moved") {
+          const { error: compensateError } = await supabaseAdmin
+            .from('ops_events')
+            .update({
+              last_seen_at: existing.last_seen_at,
+              occurrence_count: existing.occurrence_count,
+            })
+            .eq('id', existing.id)
+            .is('archived_at', null)
+            .eq('last_seen_at', now);
+          // A failed undo leaves the stale bump live — report failure, not
+          // superseded. An error-free zero-match means a newer write or a
+          // close owns the row now: the markers are no longer this
+          // refresh's to restore, which is the outcome the guard wanted.
+          if (compensateError) {
+            return null;
+          }
+          return { fingerprint, superseded: true };
+        }
         return { id: refreshed.id, fingerprint };
       }
 
@@ -430,7 +468,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
       // handled by the same fallback as before).
       const { data: current, error: rereadError } = await supabaseAdmin
         .from('ops_events')
-        .select('id, occurrence_count, archived_at, archived_by_user_id, first_seen_at')
+        .select('id, occurrence_count, archived_at, archived_by_user_id, first_seen_at, last_seen_at')
         .eq('fingerprint', fingerprint)
         .maybeSingle();
       if (rereadError) {
@@ -463,7 +501,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
     // the refusal recorded, not deleted, so the ops feed still shows the
     // write — and answer superseded: the report stands down with no page.
     if (data?.id && input.verdictGuard && (await checkVerdictGuard()) === "moved") {
-      await supabaseAdmin
+      const { error: compensateError } = await supabaseAdmin
         .from('ops_events')
         .update({
           archived_at: now,
@@ -472,6 +510,13 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventRepo
         })
         .eq('id', data.id)
         .is('archived_at', null);
+      // A failed archive leaves the stale row open while the caller
+      // believes the report stood down — answer failure, not a clean
+      // superseded. An error-free zero-match means another writer already
+      // closed it: compensated either way.
+      if (compensateError) {
+        return null;
+      }
       return { fingerprint, superseded: true };
     }
 

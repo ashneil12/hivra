@@ -1178,9 +1178,13 @@ describe("applyLiveUpdate", () => {
     expect(writes[0].filters).toContainEqual(["eq", "last_lifecycle_transition_at", "2026-01-01T00:00:00.000Z"]);
     // Stamp the fleet-sync cursor on launch success so the daily :stable
     // sweep advances to the next-oldest cohort instead of re-rolling this
-    // VM — guarded on this attempt still owning the row.
+    // VM — guarded on this attempt still owning the row AND on a status
+    // that still means the update is live: a box-side failed verdict that
+    // landed mid-launch keeps this attempt's stamp but flips status to
+    // 'failed', and that box must NOT be counted synced on stale evidence.
     expect(writes[1].patch).toEqual({ last_synced_at: expect.any(String) });
     expect(writes[1].filters).toContainEqual(["eq", "last_lifecycle_transition_at", attemptStamp]);
+    expect(writes[1].filters).toContainEqual(["or", "status.eq.redeploying,status.eq.running"]);
   });
 
   it("has the attempt stamp down before launch, matching the wrapper's a= report key", async () => {
@@ -1228,6 +1232,212 @@ describe("applyLiveUpdate", () => {
       "/tmp/hermes-update-wrapper-inst-attempt-stamp.sh"
     );
     expect(wrapperScript).toContain(`a=${attemptStamp}`);
+  });
+
+  it("refuses to claim a row whose 'redeploying' stamp is fresh — an in-flight attempt owns it", async () => {
+    // Regression: the claim's compare-and-swap verifies the snapshot it
+    // read, so a second launch reading the row ALREADY 'redeploying' used
+    // to adopt the first attempt's stamp as its expected value and claim
+    // the row out from under it — two wrappers on one guest. A fresh
+    // 'redeploying' stamp means that attempt may still be running:
+    // ordinary launches stand down before the claim write, before SSH.
+    const infoSpy = jest.spyOn(log, "info").mockImplementation(() => undefined);
+    const { supabase, update } = liveUpdateDb({
+      snapshot: {
+        status: "redeploying",
+        lifecycle_state: "provisioning",
+        last_lifecycle_transition_at: new Date(Date.now() - 60_000).toISOString(),
+        paused_reason: null,
+        gateway_url: "https://agent.example.com",
+      },
+    });
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-in-flight",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result).toEqual({
+      applied: false,
+      error: expect.stringContaining("already in flight"),
+      initiator: USER_LIVE_UPDATE,
+    });
+    // Refused before the claim: no row write, no launch.
+    expect(update).not.toHaveBeenCalled();
+    expect(sshExec).not.toHaveBeenCalled();
+    expect(runProxmoxHostScript).not.toHaveBeenCalled();
+    expect(infoSpy).toHaveBeenCalledWith(
+      "live update refused: an attempt is already in flight",
+      expect.objectContaining({ instanceId: "inst-in-flight" }),
+    );
+    infoSpy.mockRestore();
+  });
+
+  it("takes over a 'redeploying' row whose attempt stamp is old enough to be abandoned", async () => {
+    // The recovery half of the in-flight gate: a launcher that died after
+    // stamping leaves the row 'redeploying' forever. Past the takeover
+    // bound the stamp is presumed abandoned — this attempt claims the row
+    // (still compare-and-swapped on the abandoned snapshot, so a stamp
+    // that lands in between still wins the row back) and launches.
+    const abandonedStamp = new Date(Date.now() - 26 * 60 * 1000).toISOString();
+    const { supabase, writes } = liveUpdateDb({
+      snapshot: {
+        status: "redeploying",
+        lifecycle_state: "provisioning",
+        last_lifecycle_transition_at: abandonedStamp,
+        paused_reason: null,
+        gateway_url: "https://agent.example.com",
+      },
+    });
+    (decryptApiKey as jest.Mock)
+      .mockReturnValueOnce("plain-api-key")
+      .mockReturnValueOnce("gateway-secret");
+    (sshExec as jest.Mock).mockResolvedValue({ ok: true, stdout: "4242\n", stderr: "" });
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-abandoned",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result).toEqual({ applied: true, initiator: USER_LIVE_UPDATE, inFlightGate: null });
+    // The takeover claim still pins the abandoned attempt's exact state —
+    // a concurrent report or claim moving the row stands this attempt
+    // down instead of sharing the guest.
+    expect(writes[0].filters).toContainEqual(["eq", "status", "redeploying"]);
+    expect(writes[0].filters).toContainEqual(["eq", "lifecycle_state", "provisioning"]);
+    expect(writes[0].filters).toContainEqual(["eq", "last_lifecycle_transition_at", abandonedStamp]);
+    // …and stamps THIS attempt's own identity, so the abandoned wrapper's
+    // `a=` can never correlate again.
+    const attemptStamp = writes[0].patch.last_lifecycle_transition_at;
+    expect(attemptStamp).not.toBe(abandonedStamp);
+    expect(sshExec).toHaveBeenCalled();
+  });
+
+  it("preserves the attempt stamp through the launch-failure patch so a late wrapper verdict still correlates", async () => {
+    // Regression: the failure patch wrote a FRESH
+    // last_lifecycle_transition_at, replacing the attempt stamp — but an
+    // SSH that timed out past connect may have the wrapper still running
+    // on the box, and its `ru` callback correlates by that stamp. The
+    // report could never attach: the row sat failed while the box may
+    // have finished the update. The failed stamp keeps THIS attempt's
+    // stamp; updated_at records when the transition landed.
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: false,
+      stdout: "",
+      stderr: "",
+      error: "SSH operation timed out after 30000ms",
+      stage: "command",
+    });
+
+    const { supabase, writes } = failedStampDb();
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-stamp-kept",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: USER_LIVE_UPDATE }
+    );
+
+    expect(result.applied).toBe(false);
+    const attemptStamp = writes[0].patch.last_lifecycle_transition_at;
+    expect(writes[1].patch).toMatchObject({
+      status: "failed",
+      lifecycle_state: "failed",
+      lifecycle_substate: "live_update_failed_vm_maybe_reached",
+      last_lifecycle_transition_at: attemptStamp,
+    });
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("hands the deferred row its exact snapshot back — including the substate the claim cleared", async () => {
+    // The claim clears lifecycle_substate (the last failure's reach marker
+    // describes ITS launch, not this one); the deferral contract is that
+    // nothing changed, so the revert restores the snapshot's value — and
+    // may only land while the row is still the claimed attempt itself:
+    // 'redeploying' + 'provisioning' + this attempt's stamp. An orphan
+    // cleanup moving the row to scheduled_for_deletion between the
+    // completion read and the revert must not be undone.
+    const snapshot = {
+      status: "running",
+      lifecycle_state: "active",
+      lifecycle_substate: "live_update_failed_vm_reached",
+      last_lifecycle_transition_at: "2026-01-01T00:00:00.000Z",
+      paused_reason: null,
+      gateway_url: "https://agent.example.com",
+    };
+    (sshExec as jest.Mock).mockResolvedValue({
+      ok: true,
+      stdout:
+        `HERMES_INFLIGHT_GATE action=defer verdict=busy reason=in_flight_turn trigger=fleet_sync live=1 unreadable=0 gateway_active=0 gateway_unknown=0 deferrals=1 streak_s=60\n`,
+      stderr: "",
+    });
+    const { supabase, writes } = liveUpdateDb({ snapshot });
+    const FLEET_SYNC = systemLiveUpdate("fleet_sync");
+
+    const result = await applyLiveUpdate(
+      {
+        id: "inst-defer-revert",
+        user_id: "user-123",
+        provider: "openai",
+        hetzner_server_id: 1,
+        api_key_encrypted: "enc-api-key",
+        api_server_key_encrypted: "enc-gateway",
+        config: {},
+      },
+      "127.0.0.1",
+      {},
+      supabase,
+      { initiator: FLEET_SYNC }
+    );
+
+    expect(result).toMatchObject({ applied: false, deferred: true, reason: "deferred_busy" });
+    expect(writes).toHaveLength(2);
+    // The claim cleared the stale reach marker…
+    expect(writes[0].patch).toMatchObject({ lifecycle_substate: null });
+    const attemptStamp = writes[0].patch.last_lifecycle_transition_at;
+    // …the revert restores the whole snapshot, substate included…
+    expect(writes[1].patch).toMatchObject({
+      status: "running",
+      lifecycle_state: "active",
+      lifecycle_substate: "live_update_failed_vm_reached",
+      last_lifecycle_transition_at: "2026-01-01T00:00:00.000Z",
+    });
+    // …and only while the row is still exactly the claimed attempt —
+    // stamp alone cannot resurrect a teardown or a settled verdict.
+    expect(writes[1].filters).toContainEqual(["eq", "status", "redeploying"]);
+    expect(writes[1].filters).toContainEqual(["eq", "lifecycle_state", "provisioning"]);
+    expect(writes[1].filters).toContainEqual(["eq", "last_lifecycle_transition_at", attemptStamp]);
   });
 
   it("stands down before launch when the attempt claim matches nothing — the row moved under it", async () => {
