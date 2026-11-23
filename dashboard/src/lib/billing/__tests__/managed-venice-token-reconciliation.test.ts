@@ -9,6 +9,7 @@ import {
 } from "@/lib/billing/managed-venice-token-reconciliation";
 
 import {
+  addressTopic,
   createBaseRpcFake,
   createManagedVeniceMemoryDb,
   managedVeniceQuoteRow,
@@ -380,6 +381,76 @@ describe("managed Venice token quote reconciliation", () => {
     );
     expect(settledHashes).toEqual(expect.arrayContaining(["0xclaimedbeef", "0xlotpaidcafe"]));
     expect(settledHashes).toHaveLength(2);
+  });
+
+  it("rotates failing claimed quotes so a batch of them cannot starve newer claims", async () => {
+    // Three claimed quotes > limit 2, every recovery attempt throwing. Under
+    // created_at order the same two would fill every batch forever and the
+    // third claim — too old for the fresh lane, holding no lot — would never
+    // be reached. The claimed lane orders by the updated_at last-attempt
+    // cursor instead, and every attempt bumps the row to the back.
+    const oldExpiry = "2026-05-01T00:00:00.000Z";
+    const claimedRow = (index: number, createdAt: string, updatedAt: string) =>
+      managedVeniceQuoteRow({
+        id: `quote_claimed_${index}`,
+        user_id: `user_claimed_${index}`,
+        transaction_hash: `0xclaimed${index}`,
+        deposit_address: `0x${String(index + 1).repeat(40)}`,
+        quoted_at: "2026-04-30T00:00:00.000Z",
+        expires_at: oldExpiry,
+        created_at: createdAt,
+        updated_at: updatedAt,
+      });
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [
+        // Created FIRST but claimed most recently: under created_at order it
+        // would head the lane; under the attempt cursor it is last.
+        claimedRow(0, "2026-04-29T00:00:00.000Z", "2026-04-30T02:00:00.000Z"),
+        claimedRow(1, "2026-04-30T00:00:00.000Z", "2026-04-30T00:00:00.000Z"),
+        claimedRow(2, "2026-04-30T00:01:00.000Z", "2026-04-30T01:00:00.000Z"),
+      ],
+    });
+    const settleQuote = jest.fn(async (_transfer: { quoteId?: string }) => {
+      throw new Error("settlement keeps crashing");
+    });
+    const run = (now: Date) =>
+      reconcilePendingManagedVeniceTokenQuotes({
+        db: memory.db,
+        rpcUrl: "https://base.test",
+        fetchImpl: makeChain().fetchImpl,
+        settleQuote,
+        now,
+        limit: 2,
+        interQuoteDelayMs: 0,
+        rpcSleepImpl: async () => {},
+      });
+    const attempted = () =>
+      settleQuote.mock.calls.map((call) => (call[0] as { quoteId?: string }).quoteId);
+
+    const tick1Now = new Date("2026-05-16T10:22:00.000Z");
+    const tick1 = await run(tick1Now);
+
+    // Least-recently-attempted first: claims 1 (00:00) and 2 (01:00), NOT the
+    // created-first row 0 whose claim was written most recently.
+    expect(tick1.checked).toBe(2);
+    expect(tick1.failed).toBe(2);
+    expect(attempted()).toEqual(["quote_claimed_1", "quote_claimed_2"]);
+    const rows = memory.tables.managed_venice_token_quotes;
+    const updatedAtOf = (id: string) => rows.find((row) => row.id === id)?.updated_at;
+    // Failed attempts still moved the cursor: claims 1 and 2 go to the back,
+    // claim 0 — never attempted — keeps its older stamp.
+    expect(updatedAtOf("quote_claimed_1")).toBe(tick1Now.toISOString());
+    expect(updatedAtOf("quote_claimed_2")).toBe(tick1Now.toISOString());
+    expect(updatedAtOf("quote_claimed_0")).toBe("2026-04-30T02:00:00.000Z");
+
+    const tick2Now = new Date("2026-05-16T10:37:00.000Z");
+    const tick2 = await run(tick2Now);
+
+    // The un-attempted claim is now the least-recently-touched row and gets
+    // in ahead of the two that already failed — nothing is starved and
+    // nothing is lost.
+    expect(tick2.checked).toBe(2);
+    expect(attempted().slice(2)).toEqual(["quote_claimed_0", "quote_claimed_1"]);
   });
 
   it("still reaches an open lot-holding quote when settled lots outnumber the scan limit", async () => {
@@ -1034,10 +1105,12 @@ describe("stale unpaid quote expiry", () => {
     expect((row.metadata as Row).closedReason).toBe("expired_unpaid");
   });
 
-  it("stops selecting a no_deposit_after_grace row once its one scan is done", async () => {
-    // The scan runs but stays inconclusive (chain head before the grace end):
-    // the quote keeps its 'expired' status, is stamped graceWindowScannedAt,
-    // and is never selected again — the marker is what bounds it to ONE scan.
+  it("keeps a grace-expired row eligible while its catch-up scan cannot cover the window", async () => {
+    // A no_match is only "nothing in what we scanned" — NOT proof the window
+    // is empty. When the chain head sits before the quote's grace end, a
+    // transfer in the unscanned tail would be invisible, so the row must NOT
+    // be stamped graceWindowScannedAt and must stay in the rotation: only an
+    // explicit full-window outcome may bound it to one scan.
     const memory = createManagedVeniceMemoryDb({
       managed_venice_token_quotes: [
         {
@@ -1052,7 +1125,7 @@ describe("stale unpaid quote expiry", () => {
       ops_cron_heartbeats: [heartbeatYesterday],
     });
     // Head at 12:00 sits before the quote's grace end (12:20): the window
-    // cannot be fully scanned, so the row stays 'expired' with its marker.
+    // cannot be fully scanned, so the row stays 'expired' WITHOUT a marker.
     const chain = createBaseRpcFake({
       latestBlock: 1_000,
       latestTimestamp: "2026-05-01T12:00:00.000Z",
@@ -1066,20 +1139,42 @@ describe("stale unpaid quote expiry", () => {
     ]);
     const scannedAt = chain.methodCount("eth_getLogs");
     expect(scannedAt).toBeGreaterThan(0);
-    const row = memory.tables.managed_venice_token_quotes[0];
+    let row = memory.tables.managed_venice_token_quotes[0];
     expect(row.status).toBe("expired");
     expect((row.metadata as Row).closedReason).toBe("no_deposit_after_grace");
-    expect(typeof (row.metadata as Row).graceWindowScannedAt).toBe("string");
+    expect((row.metadata as Row).graceWindowScannedAt).toBeUndefined();
+    // The incomplete scan still rotated the row's queue cursor — it retries
+    // from the back of tomorrow's selection, not from the head.
+    expect(row.updated_at).toBe(staleNow.toISOString());
 
-    // Next day's first tick claims its day — but the marked row is out for
-    // good and is never scanned again.
+    // The next day's first tick re-selects and re-scans the same row: a
+    // partial no_match never discharges the one-scan obligation.
     const day2 = await runBatch(
       memory.db,
       chain,
       new Date("2026-05-21T00:00:00.000Z")
     );
-    expect(day2.checked).toBe(0);
-    expect(chain.methodCount("eth_getLogs")).toBe(scannedAt);
+    expect(day2.checked).toBe(1);
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(scannedAt);
+    row = memory.tables.managed_venice_token_quotes[0];
+    expect(row.status).toBe("expired");
+    expect((row.metadata as Row).graceWindowScannedAt).toBeUndefined();
+
+    // Once the head really does cover the window + grace, the same row's
+    // scan retires it like any confirmed-empty stale quote.
+    const covered = createBaseRpcFake({
+      latestBlock: 1_000_000,
+      latestTimestamp: "2026-05-01T13:00:00.000Z",
+    });
+    const day3 = await runBatch(
+      memory.db,
+      covered,
+      new Date("2026-05-22T00:00:00.000Z")
+    );
+    expect(day3.cancelled).toBe(1);
+    row = memory.tables.managed_venice_token_quotes[0];
+    expect(row.status).toBe("cancelled");
+    expect((row.metadata as Row).closedReason).toBe("expired_unpaid");
   });
 
   it("settles the deposit a no_deposit_after_grace row's catch-up scan finds", async () => {
@@ -1363,8 +1458,9 @@ describe("stale unpaid quote expiry", () => {
     // checked between quotes: a single scan — dozens of serial RPC calls —
     // that crosses the slice is interrupted between requests. An aborted
     // scan is never authoritative: the row is counted deferred (not failed,
-    // not closed on partial data), keeps its cursor and stays fully
-    // eligible for the next day's pass.
+    // not closed on partial data) and stays fully eligible for the next
+    // day's pass — only its queue cursor moves, so it retries from the back
+    // instead of pinning the head and re-running the same expensive scan.
     const quotes = [
       staleQuoteRow({ id: "quote_stale_0" }),
       staleQuoteRow({
@@ -1418,10 +1514,45 @@ describe("stale unpaid quote expiry", () => {
     expect(summary.results).toHaveLength(0);
     const rows = memory.tables.managed_venice_token_quotes;
     expect(rows.map((row) => row.status)).toEqual(["active", "active", "active"]);
-    // The interrupted row was never scanned or touched: its updated_at
-    // cursor is unchanged, so tomorrow's pass re-tries it at the front.
-    expect(rows[0].updated_at).toBe("2026-05-01T10:00:00.000Z");
+    // The interrupted row carries no marker and no status change — but its
+    // queue cursor DID advance: it retries from the back of tomorrow's
+    // selection instead of pinning the head and restarting the same scan.
+    expect(rows[0].updated_at).toBe(staleNow.toISOString());
+    expect((rows[0].metadata as Row).graceWindowScannedAt).toBeUndefined();
     expect(chain.methodCount("eth_getLogs")).toBe(2);
+
+    // Day 2 proves the rotation: the least-recently-touched row (the second,
+    // at 11:00) is scanned first — the getLogs target its deposit address,
+    // not the day-1 head's — and IT takes the interrupt + cursor touch.
+    const day2LogsBefore = chain.methodCount("eth_getLogs");
+    const day2RequestsBefore = chain.requests.length;
+    const day2Now = new Date("2026-05-21T00:00:00.000Z");
+    const day2 = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote: jest.fn(async () => ({ status: "settled" as const, quoteId: "x" })),
+      now: day2Now,
+      clock: () => nowMs,
+      staleScanBudgetMs: 60_000,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    expect(day2.deferred.open).toBe(3);
+    const day2LogTopics = chain.requests
+      .slice(day2RequestsBefore)
+      .filter((request) => request.method === "eth_getLogs")
+      .map((request) => (request.params[0] as { topics: Array<string | null> }).topics[2]);
+    expect(day2LogTopics.length).toBeGreaterThan(0);
+    expect(
+      day2LogTopics.every(
+        (topic) => topic === addressTopic("0x8888888888888888888888888888888888888888")
+      )
+    ).toBe(true);
+    expect(rows[1].updated_at).toBe(day2Now.toISOString());
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(day2LogsBefore);
   });
 
   it("still runs the regular lanes when the daily stale pass cannot load its candidates", async () => {

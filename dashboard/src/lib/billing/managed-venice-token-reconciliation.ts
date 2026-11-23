@@ -1173,8 +1173,16 @@ async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
   // it — at any age. Claimed quotes are matched on transaction_hash; lot
   // holders on their lot rows (no FK, so open quote ids are matched to lots
   // below instead).
+  //
+  // Claimed rows rotate on the same updated_at cursor the daily stale pass
+  // uses: every recovery attempt bumps the row to the back of the claimed
+  // queue (see the batch loop), so a set of permanently-failing claims cannot
+  // pin every batch the way created_at order let it — an un-attempted claim
+  // is always a least-recently-touched row and gets in, while attempted ones
+  // stay eligible behind it rather than being dropped.
   const claimed = await openQuotes()
     .not("transaction_hash", "is", null)
+    .order("updated_at", { ascending: true })
     .order("created_at", { ascending: true })
     .limit(params.limit);
 
@@ -1193,15 +1201,22 @@ async function loadPendingManagedVeniceTokenQuoteCandidates(params: {
     probeBudget: params.lotProbeBudget,
   });
 
+  const claimedCandidates = quoteCandidates(claimed.data);
   const byId = new Map<string, { id: string; userId: string }>();
   for (const candidate of [
     ...quoteCandidates(fresh.data),
-    ...quoteCandidates(claimed.data),
+    ...claimedCandidates,
     ...lotHeldCandidates,
   ]) {
     byId.set(candidate.id, candidate);
   }
-  return [...byId.values()];
+  // The batch loop needs the claimed set back out: claimed quotes ordered by
+  // updated_at only rotate if their attempts touch that cursor, so the loop
+  // must know which candidates came through this lane.
+  return {
+    candidates: [...byId.values()],
+    claimedIds: new Set(claimedCandidates.map((candidate) => candidate.id)),
+  };
 }
 
 // Settled / in-review quotes whose flip set transfer_surfacing_pending and
@@ -1283,22 +1298,25 @@ async function loadStaleUnpaidQuoteRows(params: {
   return (Array.isArray(data) ? data : []) as StaleQuoteCandidateRow[];
 }
 
-// Advance a stale row's queue cursor after its scan (whatever the outcome),
-// so the next daily selection takes the rows that have waited longest — the
-// fairness mechanism that keeps repeatedly-failing rows from pinning the
-// batch. updated_at is the state surface: the row's own update trigger would
-// bump it on any write anyway, and the status guard no-ops once the quote
-// has left the open set. Best-effort: a failed touch only means the row
-// keeps its place at the front for tomorrow.
-async function touchStaleQuoteScanCursor(db: SupabaseLike, quoteId: string, nowIso: string) {
+// Advance an open quote's queue cursor after it was tried (whatever the
+// outcome), so the next selection — the daily stale pass over updated_at, or
+// the claimed lane that orders the same way — takes the rows that have
+// waited longest. It is the fairness mechanism that keeps repeatedly-failing
+// rows from pinning a batch's head. updated_at is the state surface: the
+// row's own update trigger would bump it on any write anyway, and the
+// open-status guard no-ops once the quote has left the open set. Only the
+// cursor moves — no completion marker and no status change — so a row that
+// was never decided stays fully eligible. Best-effort: a failed touch only
+// means the row keeps its place at the front for the next pass.
+async function touchQuoteQueueCursor(db: SupabaseLike, quoteId: string, nowIso: string) {
   const { error } = await (db.from("managed_venice_token_quotes") as DbTable)
     .update({ updated_at: nowIso })
     .eq("id", quoteId)
     .in("status", ["active", "expired"]);
   if (error) {
-    log.warn("stale quote scan cursor update failed; the row is re-selected first tomorrow", {
+    log.warn("quote queue cursor update failed; the row is re-selected first next pass", {
       source: "managed-venice-token-reconciliation",
-      failureType: "managed_venice_stale_scan_cursor_failed",
+      failureType: "managed_venice_scan_cursor_failed",
       quoteId,
       errorMessage: error.message ?? "unknown",
     });
@@ -1452,6 +1470,12 @@ async function runDailyStaleUnpaidQuoteScan(params: {
       // A partial scan is never authoritative, so nothing settle/expire
       // -shaped happened for this row inside the aborted call.
       if (error instanceof RpcCallAbortedError) {
+        // Still advance the row's queue cursor — only the cursor, no marker
+        // or status change — so tomorrow's pass does not restart the SAME
+        // scan at the head of the selection while rows behind it (including
+        // ones recoverable without RPC) never get a turn. The row stays
+        // fully eligible; it just retries from the back.
+        await touchQuoteQueueCursor(params.db, candidate.id, params.now.toISOString());
         deferred = rows.length - position;
         break;
       }
@@ -1464,16 +1488,24 @@ async function runDailyStaleUnpaidQuoteScan(params: {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
     }
-    if (
-      graceExpired &&
-      (scannedOutcome?.status === "no_match" || scannedOutcome?.status === "expired")
-    ) {
-      // The row's one catch-up scan completed and decided nothing — the
-      // quote stays open but is done here: stamp the marker so tomorrow's
-      // selection skips it. A terminal outcome (settled / review / retired)
-      // took the row out of the open set and needs no marker; anything else
-      // that left the row open — underconfirmed (a pending deposit owes it
-      // another look) or an indecisive status — is NOT marked, so it stays
+    // The marker is only honest on an EXPLICIT full-window outcome: the
+    // 'expired' status only comes back from the retire path, which itself
+    // requires the confirmed head past the whole grace end, and a no_match
+    // counts only when it reports that same coverage — a bare no_match just
+    // means "nothing in what we scanned", and a chain head behind the grace
+    // end leaves a payment in the unscanned tail invisible forever if the
+    // row is excluded here.
+    const catchUpScanProved =
+      scannedOutcome?.status === "expired" ||
+      (scannedOutcome?.status === "no_match" && scannedOutcome.windowFullyScanned === true);
+    if (graceExpired && catchUpScanProved) {
+      // The row's one catch-up scan completed over the whole window and
+      // decided nothing — the quote stays open but is done here: stamp the
+      // marker so tomorrow's selection skips it. A terminal outcome
+      // (settled / review / retired) took the row out of the open set and
+      // needs no marker; anything else that left the row open —
+      // underconfirmed (a pending deposit owes it another look), a partial
+      // no_match, or an indecisive status — is NOT marked, so it stays
       // eligible rather than being excluded with money still in flight.
       await markStaleQuoteGraceScanned(
         params.db,
@@ -1488,7 +1520,7 @@ async function runDailyStaleUnpaidQuoteScan(params: {
     // outcome or failure alike — so repeatedly-failing quotes go to the back
     // of the daily selection instead of pinning its head (the open-status
     // guard makes this a no-op once the row has left the set).
-    await touchStaleQuoteScanCursor(params.db, candidate.id, params.now.toISOString());
+    await touchQuoteQueueCursor(params.db, candidate.id, params.now.toISOString());
   }
   return { loadFailed: false, failed, outcomes, deferred };
 }
@@ -1878,6 +1910,12 @@ export async function reconcileManagedVeniceTokenQuote(params: {
   return {
     status: "no_match" as const,
     quote: quotePayload(quote),
+    // Whether the confirmed head provably covered the whole window + grace —
+    // the same bar the retire path above uses. A no_match WITHOUT it only
+    // says "nothing in the scanned prefix": the unscanned tail can still
+    // hold the payment, so callers that exclude a quote on one silent scan
+    // (the daily stale pass's graceWindowScannedAt marker) must read this.
+    windowFullyScanned: fullyScanned,
   };
 }
 
@@ -2054,7 +2092,7 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
   // within the quote lifetime, and the stale pass re-checks the exact
   // window). This runs AFTER the stale pass so a slow discovery can never
   // starve the day's one stale pass of its budget slice.
-  const candidates = await loadPendingManagedVeniceTokenQuoteCandidates({
+  const { candidates, claimedIds } = await loadPendingManagedVeniceTokenQuoteCandidates({
     db,
     limit: normalizePendingQuoteLimit(params.limit),
     expiresAfterIso: new Date(batchNow.getTime() - NO_DEPOSIT_AFTER_EXPIRY_GRACE_MS).toISOString(),
@@ -2101,6 +2139,15 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
     } catch (error) {
       summary.failed += 1;
       summary.results.push(failure(candidate, error));
+    }
+    // A claimed quote is selected least-recently-attempted first (updated_at
+    // order in discovery): advancing its cursor after the attempt rotates a
+    // claim that keeps failing to the back of the lane instead of letting a
+    // batch-sized set of them starve every newer claim forever. The cursor
+    // moves only — terminal outcomes already left the open set, where the
+    // status guard makes the write a no-op.
+    if (claimedIds.has(candidate.id)) {
+      await touchQuoteQueueCursor(db, candidate.id, batchNow.toISOString());
     }
   }
 
