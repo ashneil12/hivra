@@ -487,9 +487,8 @@ export async function claimCronUtcDayOutcome(
 
     // First sight: plant the row seeded from the cron's own previous tick
     // when one exists, so a claim key adopted mid-life inherits the same
-    // "previous day" baseline the heartbeat gave it and does not re-run a
-    // day the old scheme already covered; with no baseline at all the first
-    // observed tick only plants (claim fails below), matching the
+    // "previous day" baseline the heartbeat gave it; with no baseline at all
+    // the first observed tick only plants (claim fails below), matching the
     // day-check's "requires an observed previous tick" contract.
     const { data: baseRows, error: baseError } = await (
       db.from("ops_cron_heartbeats") as unknown as CronHeartbeatDayQuery
@@ -509,8 +508,19 @@ export async function claimCronUtcDayOutcome(
     const baseRow = Array.isArray(baseRows)
       ? (baseRows[0] as { last_run_at?: unknown } | undefined)
       : undefined;
-    const baseline =
-      typeof baseRow?.last_run_at === "string" ? baseRow.last_run_at : now.toISOString();
+    const inherited = typeof baseRow?.last_run_at === "string" ? Date.parse(baseRow.last_run_at) : NaN;
+    // An inherited baseline already inside today must never be planted
+    // verbatim: it stamps a claim-shaped timestamp the keyed pass never
+    // earned — a run whose earlier keyed claims failed transiently while
+    // its heartbeat advanced into today would read "held" on every later
+    // tick, with the day's once-daily work run on none. Clamp it to just
+    // before the day start so the claim below — and every later tick —
+    // decides the day for real. On a day the pre-key scheme genuinely
+    // covered this re-runs the pass at most once — bounded and idempotent,
+    // the right trade next to a day that can never be claimed.
+    const baseline = Number.isFinite(inherited)
+      ? new Date(Math.min(inherited, utcDayStart.getTime() - 1)).toISOString()
+      : now.toISOString();
     const { error: plantError } = await (
       db.from("ops_cron_heartbeats") as unknown as CronHeartbeatClaimTable
     ).upsert(
@@ -532,8 +542,9 @@ export async function claimCronUtcDayOutcome(
       });
       return "failed";
     }
-    // Retry the SAME guarded update: a baseline before today claims now, a
-    // same-day (or just-planted) baseline defers the pass to tomorrow.
+    // Retry the SAME guarded update: a baseline before today claims now;
+    // the only baseline that can still be inside today is the just-planted
+    // no-history marker, which defers the pass to tomorrow by design.
     const { data: retryData, error: retryError } = await claim();
     if (retryError) {
       log.warn("cron utc-day claim retry failed; skipping once-daily work", {

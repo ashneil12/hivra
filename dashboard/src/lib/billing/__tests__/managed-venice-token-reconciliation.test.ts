@@ -539,6 +539,114 @@ describe("managed Venice token quote reconciliation", () => {
     expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
   });
 
+  it("bounds the recovery lanes' share of the open budget so a failing-claim storm cannot starve fresh payments", async () => {
+    // Recovery-first ordering is only fair while recovery candidates are
+    // cheap: a settled-in-crash quote finishes without a scan. But a
+    // settlement backend that keeps failing turns every recovery attempt
+    // into budget spend — enough of them, each slow, would consume the
+    // whole open slice ahead of fresh discovery and defer every fresh
+    // payment to the once-a-day stale pass. The claimed + lot-held lanes
+    // are bounded to a share of the open budget; un-attempted claims stay
+    // admitted (they were never tried, so the cursor keeps them first).
+    const now = new Date("2026-05-20T00:00:00.000Z");
+    const claimed = [0, 1, 2].map((index) =>
+      managedVeniceQuoteRow({
+        id: `quote_claimed_${index}`,
+        user_id: `user_claimed_${index}`,
+        transaction_hash: `0xclaimed${index}`,
+        deposit_address: `0x${String(index + 1).repeat(40)}`,
+        quoted_at: "2026-05-01T10:00:00.000Z",
+        expires_at: "2026-05-01T10:20:00.000Z",
+        created_at: "2026-05-01T10:00:00.000Z",
+        updated_at: `2026-05-01T10:0${index}:00.000Z`,
+      })
+    );
+    const lotHeld = managedVeniceQuoteRow({
+      id: "quote_lotheld",
+      user_id: "user_lotheld",
+      deposit_address: `0x${"8".repeat(40)}`,
+      quoted_at: "2026-05-01T10:00:00.000Z",
+      expires_at: "2026-05-01T10:20:00.000Z",
+      created_at: "2026-05-01T10:00:00.000Z",
+      updated_at: "2026-05-01T10:00:00.000Z",
+    });
+    const fresh = [0, 1].map((index) =>
+      managedVeniceQuoteRow({
+        id: `quote_fresh_${index}`,
+        user_id: `user_fresh_${index}`,
+        deposit_address: `0x${String(index + 20).padStart(40, "0")}`,
+        quoted_at: "2026-05-19T23:00:00.000Z",
+        expires_at: "2026-05-19T23:20:00.000Z",
+        created_at: `2026-05-19T23:00:0${index}.000Z`,
+        updated_at: `2026-05-19T23:00:0${index}.000Z`,
+      })
+    );
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [...claimed, lotHeld, ...fresh],
+      managed_venice_token_lots: [
+        {
+          id: "lot_held_storm",
+          account_id: "account_1",
+          user_id: "user_lotheld",
+          quote_id: "quote_lotheld",
+          source: "hermesos_deposit",
+          token_amount_raw: "1000000000000000000000",
+          remaining_token_amount_raw: "1000000000000000000000",
+          snapshot_price_usd: "0.05",
+          original_value_micro_usd: 50_000_000,
+          remaining_value_micro_usd: 50_000_000,
+          quote_source: "dexscreener",
+          quoted_at: "2026-05-01T10:00:00.000Z",
+          quote_expires_at: "2026-05-01T10:20:00.000Z",
+          transaction_hash: "0xlotstorm",
+          status: "active",
+          metadata: {},
+        },
+      ],
+    });
+    const chain = createBaseRpcFake({
+      latestBlock: 1_000_000,
+      latestTimestamp: "2026-05-20T00:00:00.000Z",
+    });
+    // Every recovery attempt burns 30 s of the tick clock and still fails:
+    // an unbounded lane would spend 0/30/60/90 of a 100 s budget on all four
+    // recovery candidates and defer both fresh quotes to tomorrow's pass.
+    let nowMs = 0;
+    const settleQuote = jest.fn(async () => {
+      nowMs += 30_000;
+      throw new Error("settlement keeps crashing");
+    });
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote,
+      now,
+      clock: () => nowMs,
+      openScanBudgetMs: 100_000,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    // The recovery lanes stop at their half-share: attempts start at 0 s and
+    // 30 s; the third would start at 60 s — past the 50 s recovery slice —
+    // so the remaining recovery candidates defer (not fail, never dropped:
+    // they retry first on the next tick).
+    expect(summary.failed).toBe(2);
+    expect(summary.deferred.open).toBe(2);
+    // Fresh quotes still ran their real scans inside the same tick.
+    expect(summary.results.map((result) => result.quoteId)).toEqual([
+      "quote_claimed_0",
+      "quote_claimed_1",
+      "quote_fresh_1",
+      "quote_fresh_0",
+    ]);
+    expect(summary.noMatch).toBe(2);
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+  });
+
   it("still reaches an open lot-holding quote when settled lots outnumber the scan limit", async () => {
     // limit=10 but 15 older settled lots fill a naive .limit() read: the open
     // quote's lot is newest, so it must be found by paging all lot ids and
@@ -1146,9 +1254,16 @@ describe("stale unpaid quote expiry", () => {
   });
 
   it("does no stale work on a tick that is not the day's first", async () => {
+    // The day's slot is held by the keyed claim row an earlier tick planted
+    // and claimed — the unkeyed base row being same-day is irrelevant to the
+    // keyed pass once its own row exists.
+    const keyedHeldToday = {
+      cron_name: `${VENICE_CRON}:stale-scan`,
+      last_run_at: "2026-05-20T06:00:00.000Z",
+    };
     const memory = createManagedVeniceMemoryDb({
       managed_venice_token_quotes: [staleQuoteRow()],
-      ops_cron_heartbeats: [heartbeatSameDay],
+      ops_cron_heartbeats: [heartbeatSameDay, keyedHeldToday],
     });
     const chain = staleChain();
 
@@ -2270,6 +2385,62 @@ describe("stale unpaid quote expiry", () => {
     ).toBeGreaterThanOrEqual(nonFinalBlock);
   });
 
+  it("rejects a checkpoint whose persisted transfer lies outside its covered range", async () => {
+    // A corrupt record claims coverage through block 100 but carries a
+    // transfer at block 105 — that log was never part of the proven scan,
+    // yet seeding it makes it a settle candidate with confirmations computed
+    // off today's head. The record must fail closed like any other malformed
+    // checkpoint: the whole range is re-scanned and the phantom transfer
+    // never reaches settle.
+    const chain = makeChain();
+    const settleQuote = jest.fn(async () => ({ status: "settled" as const, quoteId: "quote_1" }));
+    // quoteRow's window maps fromBlock 50 (quoted_at) to toBlock 110 (head
+    // below the grace end): scannedThroughBlock 100 is a valid-looking
+    // checkpoint, blockNumber 105 is outside it.
+    const corrupt = {
+      v: 1,
+      tokenAddress: HERMESOS_TOKEN_ADDRESS.toLowerCase(),
+      fromBlock: 50,
+      toBlock: HEAD_BLOCK,
+      scannedThroughBlock: 100,
+      transfers: [
+        {
+          transactionHash: "0xghost",
+          logIndex: 0,
+          blockNumber: 105,
+          amount: quoteRow.token_amount_raw,
+          logTimestampSec: null,
+        },
+      ],
+    };
+
+    const result = await reconcileManagedVeniceTokenQuote({
+      quoteId: "quote_1",
+      userId: "user_1",
+      db: createMemoryDb([quoteRow]),
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote,
+      now: new Date("2026-05-16T10:22:00.000Z"),
+      scanProgress: {
+        saved: { [HERMESOS_TOKEN_ADDRESS.toLowerCase()]: corrupt },
+        checkpoint: async () => {},
+      },
+    });
+
+    // The record was dropped: the scan re-ran from the window's first block
+    // instead of resuming at 101, and the phantom transfer was never a
+    // settle candidate.
+    const scanRanges = chain.requests
+      .filter((request) => request.method === "eth_getLogs")
+      .map((request) => request.params[0] as { fromBlock: string });
+    expect(scanRanges.length).toBeGreaterThan(0);
+    expect(Number.parseInt(scanRanges[0].fromBlock, 16)).toBe(50);
+    expect(settleQuote).not.toHaveBeenCalled();
+    expect(result.status).toBe("no_match");
+  });
+
   it("never stamps the grace-scan marker over a settlement claim that landed mid-scan", async () => {
     // A stale row's catch-up scan runs while a competing worker claims the
     // quote: the claim CAS writes transaction_hash plus the claim payload in
@@ -2325,14 +2496,15 @@ describe("stale unpaid quote expiry", () => {
     expect(summary.checked).toBeGreaterThanOrEqual(1);
   });
 
-  it("still stamps the grace-scan marker on an unclaimed row after its proved catch-up scan", async () => {
-    // The transaction_hash guard refuses claimed rows — it must not refuse
-    // unclaimed ones: a grace-expired row whose catch-up scan proves an
-    // empty window still gets its marker, or it re-consumes the daily batch
-    // forever. Here the outcome is 'expired' because a deposit lot lands
-    // mid-scan (the retire re-read finds it and refuses to cancel the row) —
-    // a lot is not a claim, so the marker's guards all pass and the row is
-    // discharged from the pass's one-scan obligation.
+  it("refuses the grace-scan marker over a deposit lot, then recovers it on the next pass", async () => {
+    // The marker's transaction_hash guard refuses claimed rows — but a lot
+    // is not a claim: a settlement that crashed between the lot insert and
+    // the quote flip holds a lot with transaction_hash still null, and a
+    // lot can also land mid-scan right here (the retire re-read finds it
+    // and refuses to cancel). Stamping the marker over either would
+    // exclude the row from the stale selection for good while the open
+    // lane's bounded lot probe may never reach it — settlement recovery is
+    // the lot's only path, so the marker must not discharge the row.
     const memory = createManagedVeniceMemoryDb({
       managed_venice_token_quotes: [
         {
@@ -2381,7 +2553,120 @@ describe("stale unpaid quote expiry", () => {
     expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
     expect(row.status).toBe("expired");
     expect(row.transaction_hash).toBeNull();
-    expect((row.metadata as Row).graceWindowScannedAt).toBe("2026-05-20T00:00:00.000Z");
+    // No marker: the row keeps its place, so a later pass's recovery branch
+    // — not a scan — finishes the settlement the lot belongs to.
+    expect((row.metadata as Row).graceWindowScannedAt).toBeUndefined();
+  });
+
+  it("recovers a marked lot-only quote the stale selection excludes", async () => {
+    // The stale selection drops rows carrying both closedReason =
+    // no_deposit_after_grace and the grace marker — correct for a proved
+    // empty window, but a row in that state can still hold a deposit lot
+    // (one landed while its catch-up scan ran before the marker learned the
+    // lot check, or a legacy lot-only row was expired sight-unseen and
+    // marked under an older guard). Such a row owes settlement recovery,
+    // needs no scan, and can sit beyond the open lane's bounded lot probe —
+    // so the pass hands a rotating slice of marked rows a lot check and
+    // finishes this one on the lot's tx.
+    const marked = staleQuoteRow({
+      status: "expired",
+      metadata: {
+        ...(staleQuoteRow().metadata as Row),
+        closedReason: "no_deposit_after_grace",
+        graceWindowScannedAt: "2026-05-19T00:00:00.000Z",
+      },
+    });
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [marked],
+      managed_venice_token_lots: [
+        {
+          id: "lot_marked",
+          account_id: "account_1",
+          user_id: "user_1",
+          quote_id: "quote_stale",
+          source: "hermesos_deposit",
+          token_amount_raw: "1000000000000000000000",
+          remaining_token_amount_raw: "1000000000000000000000",
+          snapshot_price_usd: "0.05",
+          original_value_micro_usd: 50_000_000,
+          remaining_value_micro_usd: 50_000_000,
+          quote_source: "dexscreener",
+          quoted_at: "2026-05-01T10:00:00.000Z",
+          quote_expires_at: "2026-05-01T10:20:00.000Z",
+          transaction_hash: "0xmarkedlotpaid",
+          status: "active",
+          metadata: {},
+        },
+      ],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    const settleQuote = jest.fn(async () => ({ status: "settled" as const, quoteId: "quote_stale" }));
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote,
+      now: staleNow,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    // The marked row was never scanned — it settles on the lot's tx.
+    expect(chain.methodCount("eth_getLogs")).toBe(0);
+    expect(settleQuote).toHaveBeenCalledWith(
+      expect.objectContaining({ quoteId: "quote_stale", transactionHash: "0xmarkedlotpaid" }),
+      expect.anything()
+    );
+    expect(summary.settled).toBe(1);
+    expect(summary.results).toEqual([
+      expect.objectContaining({ quoteId: "quote_stale", status: "settled" }),
+    ]);
+  });
+
+  it("only lot-checks marked rows — a marked lot-free row is rotated, not reconciled", async () => {
+    // The marked-row probe exists for lot recovery only: a marked row with
+    // no lot must NOT be re-admitted to reconcile — re-scanning it every
+    // day is exactly what the marker exists to prevent. It is only
+    // cursor-rotated so the whole marked backlog gets its lot check across
+    // days.
+    const marked = staleQuoteRow({
+      status: "expired",
+      metadata: {
+        ...(staleQuoteRow().metadata as Row),
+        closedReason: "no_deposit_after_grace",
+        graceWindowScannedAt: "2026-05-19T00:00:00.000Z",
+      },
+    });
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [marked],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    const settleQuote = jest.fn(async () => ({ status: "settled" as const, quoteId: "quote_stale" }));
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote,
+      now: staleNow,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    // No scan, no settle, no outcome — the marker's exclusion held. The row
+    // did move to the back of the probe queue (its updated_at cursor ran).
+    expect(chain.methodCount("eth_getLogs")).toBe(0);
+    expect(settleQuote).not.toHaveBeenCalled();
+    expect(summary.results).toEqual([]);
+    expect(summary.checked).toBe(0);
+    const row = memory.tables.managed_venice_token_quotes[0];
+    expect(row.status).toBe("expired");
+    expect(row.updated_at).toBe(staleNow.toISOString());
   });
 
   it("degrades the tick — but still runs the regular lanes — when the day's claim write fails", async () => {
