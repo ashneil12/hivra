@@ -923,6 +923,18 @@ async function main() {
     });
     await db.exec(staleFailedUnits);
     assert.deepEqual(await admissionDefinitions(), admittedStaleFailedUnits, "re-applying the stale failed-unit admission changes nothing");
+
+    const appSubpaths = migration("20261123120000_provider_release_admission_2026_11_23_1.sql");
+    await db.exec(appSubpaths);
+    const admittedAppSubpaths = await admissionDefinitions();
+    admittedAppSubpaths.forEach((definition, index) => {
+      for (const version of ["2026.11.22.3", "2026.11.23.1"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["9263f24c362351b874a52bb727700e6361495da4b75ad7a467aecd6c1c96f2d7", "f61c0c827e6c4b628c10b13fa904935a8e419fe1e5909aa1326bcb0fd7611821"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(appSubpaths);
+    assert.deepEqual(await admissionDefinitions(), admittedAppSubpaths, "re-applying the catalog-app subpath admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

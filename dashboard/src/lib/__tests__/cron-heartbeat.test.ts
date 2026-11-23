@@ -441,29 +441,73 @@ describe("claimCronUtcDay with a claim key", () => {
     );
   });
 
-  it("defers to tomorrow when the cron's heartbeat already covered today", async () => {
-    // First sight of the claim key: the dedicated row is planted with the
-    // base heartbeat's last_run_at, which is already inside today — the
-    // inherited baseline must not re-run a day the old scheme covered.
+  it("clamps an inherited same-day baseline so the day can still be claimed", async () => {
+    // First sight of the claim key with the base heartbeat already inside
+    // today. Planting that timestamp verbatim would stamp a claim-shaped
+    // last_run_at the keyed pass never earned: if the claim write behind it
+    // failed transiently, every later tick would read "held" with the day's
+    // once-daily work run on none. The inherited baseline is clamped to
+    // before the day start instead — the retry claims for real, at the one-
+    // time cost of re-running a day the old scheme may already have covered
+    // (the once-daily pass is idempotent, so at most one extra pass).
     const memory = createManagedVeniceMemoryDb({
       ops_cron_heartbeats: [{ cron_name: "cron-x", last_run_at: "2026-04-24T06:00:00.000Z" }],
     });
+    const now = new Date("2026-04-24T00:10:00.000Z");
 
     await expect(
-      claimCronUtcDay(memory.db, "cron-x", new Date("2026-04-24T00:10:00.000Z"), {
+      claimCronUtcDay(memory.db, "cron-x", now, { claimKey: "daily" })
+    ).resolves.toBe(true);
+    // The row is claimed, not merely planted: its timestamp is this tick.
+    expect(
+      memory.tables.ops_cron_heartbeats.find((row) => row.cron_name === "cron-x:daily")?.last_run_at
+    ).toBe(now.toISOString());
+
+    // Exclusivity is preserved: a second same-day claim is held.
+    await expect(
+      claimCronUtcDay(memory.db, "cron-x", new Date("2026-04-24T01:00:00.000Z"), {
         claimKey: "daily",
       })
     ).resolves.toBe(false);
-    expect(
-      memory.tables.ops_cron_heartbeats.find((row) => row.cron_name === "cron-x:daily")?.last_run_at
-    ).toBe("2026-04-24T06:00:00.000Z");
+  });
 
-    // The next UTC day claims normally off the planted row.
+  it("leaves the keyed day claimable when the post-plant claim write fails", async () => {
+    // The poison path: earlier ticks' claim updates failed transiently while
+    // the run heartbeat advanced into today, so the planted baseline reads
+    // like a same-day claim. Without the clamp, the failed retry leaves that
+    // row planted with "today" — every later tick answers "held" and the
+    // once-daily pass runs on NO tick of this UTC day. With it, the planted
+    // baseline is before the day start, so the next healthy tick claims.
+    const memory = createManagedVeniceMemoryDb({
+      ops_cron_heartbeats: [{ cron_name: "cron-x", last_run_at: "2026-04-24T06:00:00.000Z" }],
+    });
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    // Fail the retry claim only: the first update misses by matching no row
+    // (it errors nothing), the plant upsert succeeds, the retry update is
+    // the second "update" op — failNext's match sees them in order.
+    let updateCalls = 0;
+    memory.failNext({
+      table: "ops_cron_heartbeats",
+      op: "update",
+      match: () => ++updateCalls === 2,
+    });
+
     await expect(
-      claimCronUtcDay(memory.db, "cron-x", new Date("2026-04-25T00:10:00.000Z"), {
+      claimCronUtcDayOutcome(memory.db, "cron-x", new Date("2026-04-24T12:00:00.000Z"), {
         claimKey: "daily",
       })
-    ).resolves.toBe(true);
+    ).resolves.toBe("failed");
+    warnSpy.mockRestore();
+
+    // The plant landed, but with a pre-today baseline — the day was never
+    // stamped as held, so the next tick's claim still wins it.
+    const planted = memory.tables.ops_cron_heartbeats.find((row) => row.cron_name === "cron-x:daily");
+    expect(planted?.last_run_at).toBe("2026-04-23T23:59:59.999Z");
+    await expect(
+      claimCronUtcDayOutcome(memory.db, "cron-x", new Date("2026-04-24T13:00:00.000Z"), {
+        claimKey: "daily",
+      })
+    ).resolves.toBe("claimed");
   });
 
   it("is claimed for the day the tick ran even when the run heartbeat lands on the next day", async () => {

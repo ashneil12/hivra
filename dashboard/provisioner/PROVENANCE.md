@@ -1453,3 +1453,9 @@ longer installed. A failed-unit record left behind after a unit file is removed
 no longer raises `unit_failing`; only units present on the box are watched. The
 provisioning scripts also clear the keeper's stale failed state when they
 remove it.
+
+Release `2026.11.23.1` narrows the catalog-app gateway entry to exactly `/app`
+and `/app/`. Every deeper path — including an app's own `/app/*` pages and a
+file share folder literally named `app` — proxies to the installed app instead
+of being answered by the entry's redirect, so writes like `PUT /app/<file>`
+reach the app unchanged. The gateway-reserved prefixes are untouched.
