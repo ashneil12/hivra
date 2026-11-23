@@ -60,7 +60,7 @@ describe("SwitchAccessStep", () => {
   });
 
   it("refreshes instead of erroring when another tab already switched (409)", async () => {
-    mockFetch(409, { success: false, error: "This account has already switched to $HIVRA." });
+    mockFetch(409, { success: false, code: "already_converted", error: "This account has already switched to $HIVRA." });
     render(<SwitchAccessStep />);
 
     fireEvent.click(screen.getByRole("checkbox"));
@@ -68,6 +68,16 @@ describe("SwitchAccessStep", () => {
 
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the form open and explains an insufficient verified balance", async () => {
+    mockFetch(409, { success: false, code: "insufficient_hivra", error: "Your verified wallet needs 120 $HIVRA." });
+    render(<SwitchAccessStep carryover={{ tiers: [{ tier: "pro", amountRaw: "120000000000000000000", amountDisplay: "120" }] }} />);
+    expect(screen.getByText(/your qualifying amount carries over 1:1/i)).toBeVisible();
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Switch my access to $HIVRA" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your verified wallet needs 120 $HIVRA.");
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("treats a 200 with success:false as a failure", async () => {

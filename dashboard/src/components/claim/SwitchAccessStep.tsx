@@ -1,20 +1,16 @@
 "use client";
 
 import { useId, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import type { HolderTierCarryover } from "@/lib/billing/token-access";
 import { TOKEN_CONVERSION_GRACE_HOURS } from "@/lib/billing/token-registry";
 
 const FALLBACK_ERROR = "Couldn't confirm the switch. Reload this page to see whether it went through.";
 
-/**
- * Optional for a grandfathered holder once the claim window has closed (the
- * conservative gate, resolveAccess in lib/claim/conversion-state.ts): move
- * their tier from $HermesOS to $HIVRA before they move $HermesOS out of their
- * verified wallet, so that can't drop them below it. The switch itself is
- * lib/billing/token-access.ts (POST /api/billing/token-access).
- */
-export function SwitchAccessStep() {
+/** Changing access only updates the account. The holder confirms before the API checks their wallet. */
+export function SwitchAccessStep({ carryover }: { carryover?: HolderTierCarryover }) {
   const router = useRouter();
   const confirmId = useId();
   const [confirmed, setConfirmed] = useState(false);
@@ -30,14 +26,14 @@ export function SwitchAccessStep() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "convert" }),
       });
-      const payload = (await response.json().catch(() => null)) as { success?: boolean; error?: unknown } | null;
-      if (response.status === 409) {
+      const payload = (await response.json().catch(() => null)) as { success?: boolean; error?: unknown; code?: string } | null;
+      if (response.status === 409 && payload?.code === "already_converted") {
         // Already switched (another tab) or already on $HIVRA: the page's
         // current state is stale, so re-render it instead of showing an error.
         router.refresh();
         return;
       }
-      if (!response.ok || payload?.success === false) {
+      if (!response.ok || payload?.success !== true) {
         setError(typeof payload?.error === "string" ? payload.error : FALLBACK_ERROR);
         return;
       }
@@ -51,18 +47,35 @@ export function SwitchAccessStep() {
 
   return (
     <div data-testid="convert-switch-access" style={{ display: "grid", gap: 12 }}>
-      <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6 }}>
+      {carryover && carryover.tiers.length === 0 ? (
+        <>
+          <p>You have no active Pro or Power holder tier to carry over. Any subscription you already paid for keeps its paid-through date. Switching alone grants no new tier.</p>
+          <p>If your current access comes from holding one $HermesOS, hold at least one $HIVRA in your <Link className="underline" href="/dashboard/wallet">verified Base wallet</Link> before switching.</p>
+          <p>Switching access does not transfer or claim tokens.</p>
+        </>
+      ) : carryover ? (
+        <>
+          <p>You can keep using $HermesOS or switch your existing tier to $HIVRA. Your qualifying amount carries over 1:1.</p>
+          <ul className="list-disc pl-6">
+            {carryover.tiers.map(({ tier, amountDisplay }) => (
+              <li key={tier}><strong>{tier === "power" ? "Power" : "Pro"}</strong> requires {amountDisplay} $HIVRA in your verified wallet.</li>
+            ))}
+          </ul>
+          {carryover.tiers.length > 1 ? <p>One balance covers both tiers. Hold at least the larger amount shown above.</p> : null}
+          <p>Hivra checks your <Link className="underline" href="/dashboard/wallet">verified wallet</Link> on Base before switching. If the balance is too low, your $HermesOS access continues. Switching access does not transfer or claim tokens.</p>
+        </>
+      ) : <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6 }}>
         <strong>Optional: switch your access to $HIVRA.</strong> Your tier counts the legacy $HermesOS in your
         verified wallet. If you plan to move $HermesOS out of that wallet, switch your access first so your tier
         counts $HIVRA instead.
-      </p>
+      </p>}
       <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6 }}>
-        For {TOKEN_CONVERSION_GRACE_HOURS} hours after you switch, holding either token keeps your tier. After that,
+        For {TOKEN_CONVERSION_GRACE_HOURS} hours after you switch, either token can count toward holder access. After that,
         only $HIVRA counts. Switching can&apos;t be undone.
       </p>
-      <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "var(--text-secondary)" }}>
+      {!carryover && <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "var(--text-secondary)" }}>
         If you keep your $HermesOS where it is, you don&apos;t need to switch. Your $HermesOS access continues.
-      </p>
+      </p>}
       <label htmlFor={confirmId} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14, lineHeight: 1.5 }}>
         <input
           id={confirmId}

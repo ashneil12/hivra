@@ -243,6 +243,27 @@ describe("ConvertPanel once $HIVRA is launched", () => {
     });
   });
 
+  it.each([OPEN, CLOSED, NOT_PUBLISHED])("offers the enabled carryover independently of claim publication", (airdrop) => {
+    renderState({ ...LIVE, airdrop, access: { ...GRANDFATHERED, carryover: { tiers: [{ tier: "power", amountRaw: "120000000000000000000", amountDisplay: "120" }] } } });
+    expect(screen.getByRole("heading", { name: "Your holder access" })).toBeVisible();
+    expect(screen.getByTestId("convert-switch-access")).toHaveTextContent("Power requires 120 $HIVRA");
+    expect(screen.getByText(/Sablier claim is a separate wallet transaction/)).toBeVisible();
+  });
+
+  it("offers a switch without promising a higher tier when the grandfathered account has none", () => {
+    renderState({ ...LIVE, airdrop: OPEN, access: { ...GRANDFATHERED, carryover: { tiers: [] } } });
+    expect(screen.getByTestId("convert-switch-access")).toHaveTextContent("no active Pro or Power holder tier");
+    expect(screen.getByText(/at least one \$HIVRA/)).toBeVisible();
+    expect(screen.getByTestId("convert-switch-access")).toHaveTextContent("paid-through date");
+  });
+
+  it("keeps a blocked holder's earned amounts and action out of the page", () => {
+    const state = resolveConversionState({ ...DORMANT, ...LIVE, airdrop: OPEN, access: { ...GRANDFATHERED, carryover: { tiers: [{ tier: "pro", amountRaw: "987000000000000000000", amountDisplay: "987" }] } } });
+    render(<ConvertPanel state={state} geoNotice="Token features are restricted." />);
+    expect(screen.queryByTestId("convert-switch-access")).not.toBeInTheDocument();
+    expect(screen.queryByText(/987/)).not.toBeInTheDocument();
+  });
+
   it("tells a holder whose tier counts $HIVRA, and one who switched when their grace ends", () => {
     renderState({
       ...LIVE,
