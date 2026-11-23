@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+import { HolderSwitchNotice } from "@/components/claim/HolderSwitchNotice";
 import { redirect } from "next/navigation";
 
 import { parseWorkspaceRoute } from "@/lib/workspace/workspace-route-state";
@@ -59,5 +61,12 @@ export async function WorkspaceView({ searchParams }: WorkspaceViewProps) {
   );
 
   // The switcher and the attention link ask for the list explicitly.
-  return <FleetControlPane key={`${query.get("runtimes")}:${query.get("attention")}`} requested={query.get("runtimes") === "1" || query.get("attention") === "1"} attentionRequested={query.get("attention") === "1"} />;
+  return (
+    <FleetControlPane
+      key={`${query.get("runtimes")}:${query.get("attention")}`}
+      requested={query.get("runtimes") === "1" || query.get("attention") === "1"}
+      attentionRequested={query.get("attention") === "1"}
+      holderNotice={<Suspense fallback={null}><HolderSwitchNotice /></Suspense>}
+    />
+  );
 }
