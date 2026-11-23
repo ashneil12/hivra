@@ -1,7 +1,7 @@
 {
   "slug": "dufs",
-  "checkedAt": "2026-11-22T23:33:50.680Z",
-  "gitSha": "26fb7b6a151f074d00e1481a361f5270e5cd383a",
+  "checkedAt": "2026-11-23T00:09:52.899Z",
+  "gitSha": "52028358a58ee37423245320ac74ac2a8ac94657",
   "checks": [
     {
       "name": "license",
@@ -33,16 +33,16 @@
     {
       "name": "boot",
       "status": "pass",
-      "detail": "health / -> 200 in 0s",
+      "detail": "health / -> 200 in 0.1s",
       "evidence": {
-        "container": "hivra-verify-dufs-5o8diw",
+        "container": "hivra-verify-dufs-117e6e",
         "hostPort": 3283,
         "image": "sigoden/dufs:latest",
         "runArgs": [
           "run",
           "-d",
           "--name",
-          "hivra-verify-dufs-5o8diw",
+          "hivra-verify-dufs-117e6e",
           "--security-opt",
           "no-new-privileges",
           "-p",
@@ -50,18 +50,18 @@
           "--env-file",
           "<env-file>",
           "-v",
-          "hivra-verify-dufs-5o8diw-data:/data",
+          "hivra-verify-dufs-117e6e-data:/data",
           "sigoden/dufs:latest"
         ],
-        "runStdout": "40f41728eba6350ab2425ada77bf5d713e1f702344791753b4ae7a20be0a6f1c",
+        "runStdout": "12b65c6b74e850cd4713e52edc05a4240d00a37eb568a99cca77866e1ad49fc8",
         "health": {
           "ok": true,
           "status": 200,
-          "seconds": 0,
+          "seconds": 0.1,
           "attempts": 1
         },
-        "memUsage": "2.777MiB / 7.652GiB",
-        "memBytes": 2911896
+        "memUsage": "2.566MiB / 7.652GiB",
+        "memBytes": 2690646
       }
     },
     {
@@ -70,7 +70,7 @@
       "detail": "through gateway: 303 /app/ -> 200 /",
       "evidence": {
         "publicHost": "box-verify.example.test",
-        "gatewayPort": 60017,
+        "gatewayPort": 52172,
         "proxyMode": "standard",
         "hops": [
           {
@@ -101,9 +101,9 @@
     {
       "name": "floor",
       "status": "pass",
-      "detail": "idle memory 2.8MiB vs floor 1GB*0.8=0.8GiB",
+      "detail": "idle memory 2.6MiB vs floor 1GB*0.8=0.8GiB",
       "evidence": {
-        "memBytes": 2911896,
+        "memBytes": 2690646,
         "floorRamGb": 1
       }
     }
