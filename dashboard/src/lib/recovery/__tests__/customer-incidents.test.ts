@@ -1522,7 +1522,7 @@ describe("runCustomerIncidentScan", () => {
         .flatMap((e) => e.calls)
         .filter((c) => c[0] === "update");
 
-    it("records a fresh probe outage as a warn row, pins first_seen_at, and does not page", async () => {
+    it("records a fresh probe outage as a warn row and restarts its clock on reopen", async () => {
       const db = fakeIncidentDb({ agents: [agentDbRow()] });
       const deps = scanDeps({
         db,
@@ -1539,12 +1539,15 @@ describe("runCustomerIncidentScan", () => {
       expect(rows[0].page).toBe(false);
       expect(rows[0].instanceId).toBe("agent-1");
       expect(rows[0].userId).toBe("user-1");
-      // The outage-start pin: first_seen_at is written on the new row so an
-      // un-archived recurrence cannot inherit a stale outage clock.
+      // The outage-start pin is atomic with the reopen: reportOpsEvent resets
+      // first_seen_at inside the same archived→open write, so a recurrence
+      // cannot inherit the previous outage's clock.
+      expect(rows[0].resetFirstSeenOnReopen).toBe(true);
+      // No separate timestamp write remains.
       const pin = opsUpdates(db).find(
         (c) => (c[1] as Row).first_seen_at === new Date(NOW).toISOString(),
       );
-      expect(pin).toBeDefined();
+      expect(pin).toBeUndefined();
     });
 
     it("pages box_unreachable once the open probe outage is 10+ minutes old", async () => {
@@ -1652,8 +1655,9 @@ describe("runCustomerIncidentScan", () => {
       const db = fakeIncidentDb({
         agents: [agentDbRow()],
         // The previous outage's row was archived an hour ago; it is invisible
-        // to the open-row read but reportOpsEvent would un-archive it with the
-        // ORIGINAL first_seen_at — the pin must rewrite it to now.
+        // to the open-row read but reportOpsEvent would un-archive it — the
+        // resetFirstSeenOnReopen option rewrites first_seen_at inside that
+        // same write so THIS outage gets a fresh 10-minute clock.
         probeRows: [
           probeRow({
             id: "probe-old",
@@ -1669,10 +1673,9 @@ describe("runCustomerIncidentScan", () => {
       const summary = await runCustomerIncidentScan(deps as never);
 
       expect(summary.opened).toBe(0);
-      const pin = opsUpdates(db).find(
-        (c) => (c[1] as Row).first_seen_at === new Date(NOW).toISOString(),
-      );
-      expect(pin).toBeDefined();
+      const rows = probeReports(deps.report as jest.Mock);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].resetFirstSeenOnReopen).toBe(true);
       expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
     });
   });

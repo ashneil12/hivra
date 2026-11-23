@@ -995,6 +995,9 @@ function publicProbeUnreachableOpsEvent(
     source: PUBLIC_PROBE_SOURCE,
     severity: "warn",
     page: false,
+    // first_seen_at is the outage start: a recurrence after archival must
+    // restart the clock in the same write that reopens the row.
+    resetFirstSeenOnReopen: true,
     title: "Customer box public probe unreachable",
     message:
       "The dashboard-side public probe cannot get a healthy response from the box's " +
@@ -1127,25 +1130,9 @@ async function applyPublicProbeSignals(
     }
 
     // Fresh outage (insert, or un-archive of a previously closed row).
-    // reportOpsEvent keeps the row's original first_seen_at on un-archive;
-    // pin it to this outage's start so the 10-minute rule measures THIS
-    // outage, not the first one ever seen.
-    const { error: pinError } = await db
-      .from("ops_events")
-      .update({ first_seen_at: nowIso })
-      .eq("id", reported.id);
-    if (pinError) {
-      result.unknownAgentIds.add(agent.id);
-      result.degradedAgentIds.add(agent.id);
-      log.warn("customer-incidents: probe outage first_seen_at pin failed", {
-        source: "customer-incidents",
-        failureType: "public_probe_first_seen_pin_failed",
-        instanceId: agent.id,
-        opsEventId: reported.id,
-        errorMessage: pinError.message,
-      });
-      return;
-    }
+    // resetFirstSeenOnReopen pins first_seen_at to this outage's start inside
+    // the same write that reopens the row, so the 10-minute rule measures
+    // THIS outage, not the first one ever seen.
     result.outageStartedAtMs.set(agent.id, deps.now);
   });
 
