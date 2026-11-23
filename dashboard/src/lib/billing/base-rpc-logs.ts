@@ -78,10 +78,13 @@ function matchLogRangeCap(error: unknown): { statedBlocks: number | null } | nul
     const blocks = Number(stated[1].replace(/,/g, ""));
     return { statedBlocks: Number.isSafeInteger(blocks) && blocks > 0 ? blocks : null };
   }
-  // Unstated cap: the JSON-RPC range-limit code, or "limited to a ... range"
-  // phrased without a number. "limited to a" alone is not enough — rate-limit
-  // messages use it too ("limited to a certain number of requests").
-  if (/-32614\b/.test(message) || /limited to a\b[^.;]*\brange\b/i.test(message)) {
+  // Unstated cap: the JSON-RPC range-limit code — carried as a structured
+  // property by the RPC wrappers (and rendered into the message) — or
+  // "limited to a ... range" phrased without a number. "limited to a" alone
+  // is not enough — rate-limit messages use it too ("limited to a certain
+  // number of requests").
+  const rpcCode = (error as { code?: unknown }).code;
+  if (rpcCode === -32614 || /-32614\b/.test(message) || /limited to a\b[^.;]*\brange\b/i.test(message)) {
     return { statedBlocks: null };
   }
   return null;

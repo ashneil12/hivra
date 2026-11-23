@@ -42,6 +42,7 @@ import {
   isRetryableRpcError,
   normalizeRpcRetryConfig,
   RpcHttpError,
+  baseRpcPayloadError,
   sleep,
   withRpcRetry,
   type RpcCallOptions,
@@ -374,11 +375,7 @@ async function rpcCallOnce<T>(
   if (payload.error) {
     // A JSON-RPC error body is a deterministic application-level failure, not a
     // transport hiccup — surface it as a plain Error so it is NOT retried.
-    throw new Error(
-      `Base RPC ${method} returned an error: ${
-        payload.error.message || "unknown RPC error"
-      }`
-    );
+    throw baseRpcPayloadError(method, payload.error);
   }
 
   return payload.result as T;
