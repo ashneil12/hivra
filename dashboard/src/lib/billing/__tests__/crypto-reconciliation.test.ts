@@ -895,11 +895,51 @@ describe("stale crypto top-up exclusion", () => {
     });
 
     expect(result.staleRetried).toBe(0);
-    // The claim failing is not a stale-lane load failure — the lane never ran.
+    // The claim failing is not a stale-lane load failure — the lane never ran —
+    // but it IS a claim failure: distinct from "another run holds the day" so
+    // the route reads the tick degraded instead of a clean skip.
     expect(result.staleRetryLoadFailed).toBe(false);
+    expect(result.staleRetryClaimFailed).toBe(true);
     // And the row was not claimed: a later same-day run may still win the day.
     expect(memory.tables.ops_cron_heartbeats[0].last_run_at).toBe("2026-04-23T11:00:00.000Z");
     expect(rpc.methodCount("eth_getLogs")).toBe(0);
+  });
+
+  it("does not flag a claim failure when another run already holds the day", async () => {
+    // The old boolean claim collapsed two very different answers into false:
+    // "the day is already claimed" (a clean skip) and "the claim write
+    // failed" (the pass silently never ran). A held day must read clean —
+    // only a failed write degrades the tick.
+    const retryableStale = stalePayment({
+      created_at: "2026-04-09T11:00:00.000Z",
+      updated_at: "2026-04-09T11:00:00.000Z",
+      metadata: {
+        type: "crypto_topup_intent",
+        depositAddress: normalizedDepositAddressOne,
+        createdAt: "2026-04-09T11:00:00.000Z",
+        sessionExpiresAt: "2026-04-09T11:20:00.000Z",
+      },
+    });
+    const memory = createBillingMemoryDb({
+      payment_transactions: [retryableStale],
+      ops_cron_heartbeats: [
+        // last_run_at already inside `now`'s UTC day: the day is held.
+        { cron_name: "reconcile-crypto-topups", last_run_at: now },
+      ],
+    });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+
+    const result = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    expect(result.staleRetried).toBe(0);
+    expect(result.staleRetryLoadFailed).toBe(false);
+    expect(result.staleRetryClaimFailed).toBe(false);
   });
 
   it("surfaces a failed stale-retry load in the outcome instead of reading as a clean run", async () => {

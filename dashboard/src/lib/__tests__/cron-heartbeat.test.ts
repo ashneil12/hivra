@@ -19,7 +19,13 @@ jest.mock("@/lib/supabase", () => ({
 jest.mock("@/lib/ops-events", () => ({ reportOpsEvent: jest.fn() }));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
-import { claimCronUtcDay, recordCronHeartbeat, runCronHeartbeatWatchdog, CRON_REGISTRY } from "../cron-heartbeat";
+import {
+  claimCronUtcDay,
+  claimCronUtcDayOutcome,
+  recordCronHeartbeat,
+  runCronHeartbeatWatchdog,
+  CRON_REGISTRY,
+} from "../cron-heartbeat";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { createManagedVeniceMemoryDb } from "@/test-utils/managed-venice-memory-db";
 
@@ -496,6 +502,105 @@ describe("claimCronUtcDay with a claim key", () => {
     await expect(
       claimCronUtcDay(memory.db, "cron-x", now, { claimKey: "daily" })
     ).resolves.toBe(false);
+  });
+});
+
+describe("claimCronUtcDayOutcome", () => {
+  afterEach(() => jest.clearAllMocks());
+
+  // The boolean claim collapses "the day is already taken" and "the claim
+  // write itself failed" into the same false — but they are opposites for a
+  // caller's health report: the first means the day's work ran (a clean
+  // skip), the second means the once-daily pass ran on NO tick while the
+  // route could still stamp a clean heartbeat. The outcome keeps them apart:
+  // "claimed" owns the day, "held" skips clean, "failed" degrades.
+
+  it("answers 'claimed' when the guarded update takes the day", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      ops_cron_heartbeats: [{ cron_name: "cron-x", last_run_at: "2026-04-23T12:00:00.000Z" }],
+    });
+
+    await expect(
+      claimCronUtcDayOutcome(memory.db, "cron-x", new Date("2026-04-24T00:10:00.000Z"))
+    ).resolves.toBe("claimed");
+  });
+
+  it("answers 'held' when the day is already taken — a clean skip, not a failure", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      ops_cron_heartbeats: [{ cron_name: "cron-x", last_run_at: "2026-04-24T06:00:00.000Z" }],
+    });
+
+    await expect(
+      claimCronUtcDayOutcome(memory.db, "cron-x", new Date("2026-04-24T12:00:00.000Z"))
+    ).resolves.toBe("held");
+  });
+
+  it("answers 'failed' when the claim update errors, and the day stays unclaimed", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      ops_cron_heartbeats: [{ cron_name: "cron-x", last_run_at: "2026-04-23T12:00:00.000Z" }],
+    });
+    memory.failNext({ table: "ops_cron_heartbeats", op: "update" });
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      claimCronUtcDayOutcome(memory.db, "cron-x", new Date("2026-04-24T12:00:00.000Z"))
+    ).resolves.toBe("failed");
+    warnSpy.mockRestore();
+    // Nothing was claimed: the NEXT tick's claim still wins the day.
+    expect(memory.tables.ops_cron_heartbeats[0].last_run_at).toBe("2026-04-23T12:00:00.000Z");
+    await expect(
+      claimCronUtcDayOutcome(memory.db, "cron-x", new Date("2026-04-24T13:00:00.000Z"))
+    ).resolves.toBe("claimed");
+  });
+
+  it("answers 'failed' when a keyed claim's row read errors, distinct from a held day", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      ops_cron_heartbeats: [{ cron_name: "cron-x", last_run_at: "2026-04-23T12:00:00.000Z" }],
+    });
+    // The claim update misses (keyed row does not exist yet); the follow-up
+    // existence read is what fails.
+    memory.failNext({ table: "ops_cron_heartbeats", op: "select" });
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      claimCronUtcDayOutcome(memory.db, "cron-x", new Date("2026-04-24T12:00:00.000Z"), {
+        claimKey: "daily",
+      })
+    ).resolves.toBe("failed");
+    warnSpy.mockRestore();
+  });
+
+  it("answers 'held' for a keyed claim another run already owns today", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      ops_cron_heartbeats: [
+        { cron_name: "cron-x", last_run_at: "2026-04-23T12:00:00.000Z" },
+        { cron_name: "cron-x:daily", last_run_at: "2026-04-24T06:00:00.000Z" },
+      ],
+    });
+
+    await expect(
+      claimCronUtcDayOutcome(memory.db, "cron-x", new Date("2026-04-24T12:00:00.000Z"), {
+        claimKey: "daily",
+      })
+    ).resolves.toBe("held");
+  });
+
+  it("keeps claimCronUtcDay boolean-compatible: claimed is true, held and failed are false", async () => {
+    const memory = createManagedVeniceMemoryDb({
+      ops_cron_heartbeats: [{ cron_name: "cron-x", last_run_at: "2026-04-23T12:00:00.000Z" }],
+    });
+    const now = new Date("2026-04-24T12:00:00.000Z");
+
+    await expect(claimCronUtcDay(memory.db, "cron-x", now)).resolves.toBe(true);
+    // Second same-day claim is held → false.
+    await expect(claimCronUtcDay(memory.db, "cron-x", now)).resolves.toBe(false);
+
+    memory.failNext({ table: "ops_cron_heartbeats", op: "update" });
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(
+      claimCronUtcDay(memory.db, "cron-x", new Date("2026-04-25T12:00:00.000Z"))
+    ).resolves.toBe(false);
+    warnSpy.mockRestore();
   });
 });
 

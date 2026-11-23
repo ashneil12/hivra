@@ -153,6 +153,23 @@ describe("universal catalog manifests", () => {
     }
   });
 
+  it("binds ezBookkeeping's required secret_key to a generated secret, never a literal", () => {
+    // Upstream requires secret_key (env EBK_SECURITY_SECRET_KEY) set to a
+    // random string before production use: it encrypts tokens and user 2FA
+    // secrets, and the documented default must never serve a real deployment.
+    // The manifest must wire it through the guest's generated-secret
+    // mechanism — a literal in the repo would be worse than the default.
+    const manifest = getCatalogAppManifest("ezbookkeeping");
+    expect(manifest).toBeDefined();
+    expect(manifest!.runtime.kind).toBe("docker-web");
+    if (manifest!.runtime.kind !== "docker-web") return;
+    const secretName = "EBK_SECRET_KEY_RAW";
+    expect(manifest!.runtime.env?.EBK_SECURITY_SECRET_KEY).toBe(`\${${secretName}}`);
+    expect(manifest!.runtime.generatedSecrets).toContain(secretName);
+    // The whole manifest still parses under the launch schema.
+    expect(() => CatalogAppManifestSchema.parse(manifest)).not.toThrow();
+  });
+
   it("pins ZeroClaw to its configured-agent CLI shape and headless setup", () => {
     // Regression for the live Canary launch: `zeroclaw agent` requires a named
     // --agent alias plus configured risk/runtime/provider profiles, which the

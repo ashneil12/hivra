@@ -925,6 +925,16 @@ export const PRODUCTIVITY_MANIFESTS: readonly CatalogAppManifest[] = [
         { name: "data", mountPath: "/ezbookkeeping/data" },
         { name: "storage", mountPath: "/ezbookkeeping/storage" },
       ],
+      // Upstream requires secret_key (env EBK_SECURITY_SECRET_KEY) to be set
+      // to a random string before production use: it encrypts JWTs/tokens and
+      // user 2FA secrets, and the documented default must never serve a real
+      // deployment. The guest generates it once and reuses it across
+      // reinstalls, so existing sessions and TOTP secrets are never orphaned
+      // by a silent rotation.
+      env: {
+        EBK_SECURITY_SECRET_KEY: "${EBK_SECRET_KEY_RAW}",
+      },
+      generatedSecrets: ["EBK_SECRET_KEY_RAW"],
       proxyMode: "standard",
     },
     seo: {
