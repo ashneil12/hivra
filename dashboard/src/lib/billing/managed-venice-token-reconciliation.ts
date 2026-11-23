@@ -1746,6 +1746,16 @@ async function touchQuoteQueueCursor(db: SupabaseLike, quoteId: string, nowIso: 
 // same updated_at cursor so a marked backlog larger than the slice is still
 // covered across days.
 const STALE_MARKED_LOT_PROBE_LIMIT = 200;
+// The marked lot-holder lane runs ahead of the day's scans on the same
+// clock, but it is settlement recovery, not scanning — a persistently slow
+// or failing marked set (each attempt is only checked against the budget
+// between quotes, so two ~30 s attempts land before the first check fails)
+// could otherwise spend the whole slice before one stale quote scanned,
+// and the UTC-day claim blocks a same-day retry. The lane is bounded to
+// this share of the slice — the same shape RECOVERY_OPEN_BUDGET_SHARE
+// gives the open lane's recovery work — so the scans keep the rest
+// guaranteed.
+const MARKED_LOT_STALE_BUDGET_SHARE = 0.5;
 
 async function loadMarkedLotHoldingQuoteRows(params: {
   db: SupabaseLike;
@@ -1876,7 +1886,8 @@ async function markStaleQuoteGraceScanned(
   // refuses to cancel over one, and the marker must not discharge the row
   // either: marked rows leave the stale selection for good, so stamping it
   // over a lot would park a crash-stopped settlement where only the bounded
-  // open-lane lot probe might still find it. Skip the mark instead — the row
+  // lot probes — the open lane's, and this pass's marked lane — might still
+  // find it. Skip the mark instead — the row
   // keeps its place and a later pass's recovery branch finishes the lot.
   // (The marker guards on transaction_hash alone because a claim occupies
   // that column; a lot does not — it is a crash window between lot insert
@@ -1952,6 +1963,11 @@ async function runDailyStaleUnpaidQuoteScan(params: {
   // The pass's own slice of the tick clock (it runs before the regular open
   // loop on the daily tick), so a slow regular batch can never starve it.
   staleScanBudgetMs: number;
+  // Arms the shared RPC abort deadline for the phase the pass is in: the
+  // marked-lot lane at its share boundary, the scans at the slice end. The
+  // caller owns the underlying shouldStop and disarms it when the pass
+  // returns; the regular lanes are never bound by it.
+  setRpcAbortAtMs: (deadlineMs: number) => void;
 }) {
   const expiresBeforeIso = new Date(
     params.now.getTime() - NO_DEPOSIT_AFTER_EXPIRY_GRACE_MS
@@ -2002,7 +2018,14 @@ async function runDailyStaleUnpaidQuoteScan(params: {
   // and marked under an older guard), and such a row can sit beyond the open
   // lane's bounded lot probe. Lot recovery needs no scan, so the pass gives
   // a bounded, rotating slice of marked rows a lot check ahead of the day's
-  // scans (see STALE_MARKED_LOT_PROBE_LIMIT).
+  // scans (see STALE_MARKED_LOT_PROBE_LIMIT) — but never the scans' whole
+  // window: the lane admits attempts only inside MARKED_LOT_STALE_BUDGET_SHARE
+  // of the slice. The bound holds mid-attempt too — the RPC abort deadline
+  // is the share while the lane runs, so a marked attempt that degenerates
+  // into a scan (its lot finished between probe and reconcile) cannot ride
+  // the scan budget either.
+  const markedLotBudgetMs = params.staleScanBudgetMs * MARKED_LOT_STALE_BUDGET_SHARE;
+  params.setRpcAbortAtMs(markedLotBudgetMs);
   const markedLotProbe = await (async () => {
     try {
       return await loadMarkedLotHoldingQuoteRows({ db: params.db, limit: STALE_MARKED_LOT_PROBE_LIMIT });
@@ -2021,7 +2044,7 @@ async function runDailyStaleUnpaidQuoteScan(params: {
   const markedHolderIds = new Set(markedLotProbe.holders.map((holder) => holder.id));
   const attemptedMarkedHolders = new Set<string>();
   for (const [position, holder] of markedLotProbe.holders.entries()) {
-    if (params.elapsedMs() >= params.staleScanBudgetMs) {
+    if (params.elapsedMs() >= markedLotBudgetMs) {
       deferred += markedLotProbe.holders.length - position;
       break;
     }
@@ -2073,6 +2096,9 @@ async function runDailyStaleUnpaidQuoteScan(params: {
     params.now.toISOString()
   );
 
+  // The scans own the rest of the slice: the abort boundary moves from the
+  // marked lane's share to the full stale budget.
+  params.setRpcAbortAtMs(params.staleScanBudgetMs);
   for (const [position, row] of rows.entries()) {
     const candidate = row as StaleQuoteCandidateRow;
     if (typeof candidate.id !== "string" || typeof candidate.user_id !== "string") continue;
@@ -2638,16 +2664,18 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
 
   // Build the per-call RPC options once: retry config + injectable sleep/random
   // ride along with every eth_* call this batch makes. shouldStop is armed
-  // only while the daily stale pass runs so a single stale quote's scan —
-  // dozens of serial RPC calls — is interrupted at the slice boundary instead
-  // of overrunning it for minutes; the regular lanes let an in-flight scan
-  // finish (their budgets are honored between quotes).
-  let staleScanDeadlineArmed = false;
+  // only while the daily stale pass runs, at the boundary the pass's current
+  // phase owns — the marked-lot lane's share, then the slice end — so a
+  // single quote's scan, dozens of serial RPC calls, is interrupted at its
+  // phase's boundary instead of overrunning it for minutes; the regular
+  // lanes let an in-flight scan finish (their budgets are honored between
+  // quotes).
+  let staleRpcAbortAtMs: number | null = null;
   const rpcOptions: RpcCallOptions = {
     retryConfig: normalizeRpcRetryConfig(params.rpcRetryConfig),
     sleepImpl: params.rpcSleepImpl,
     random: params.rpcRandom,
-    shouldStop: () => staleScanDeadlineArmed && elapsedMs() >= staleScanBudgetMs,
+    shouldStop: () => staleRpcAbortAtMs !== null && elapsedMs() >= staleRpcAbortAtMs,
   };
   // One chain view per batch: the head and each block timestamp are fetched
   // once and shared by every quote in the tick.
@@ -2730,7 +2758,6 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
   }
   const staleHandledIds = new Set<string>();
   if (staleScanClaim === "claimed") {
-    staleScanDeadlineArmed = true;
     try {
       // Only the pass's candidate SELECT is caught inside (loadFailed); a
       // genuine mid-pass crash still propagates as a batch failure, and
@@ -2747,6 +2774,9 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
         throttle,
         elapsedMs,
         staleScanBudgetMs,
+        setRpcAbortAtMs: (deadlineMs) => {
+          staleRpcAbortAtMs = deadlineMs;
+        },
       });
       if (stale.loadFailed) summary.staleScanLoadFailed = true;
       summary.failed += stale.failed.length;
@@ -2776,7 +2806,7 @@ export async function reconcilePendingManagedVeniceTokenQuotes(params: {
     } finally {
       // The regular lanes must never see the stale deadline — their budgets
       // are honored between quotes and an in-flight scan completes.
-      staleScanDeadlineArmed = false;
+      staleRpcAbortAtMs = null;
     }
   }
 
