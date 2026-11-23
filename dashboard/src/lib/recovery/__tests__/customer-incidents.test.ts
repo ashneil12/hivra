@@ -3618,6 +3618,57 @@ describe("runCustomerIncidentScan", () => {
     ).toBe(true);
   });
 
+  it("never moves the guarded version backward when the stored marker is ahead of this scan's now", async () => {
+    // The scan's `now` is captured at scan start. A row whose stored marker
+    // is already ahead of it — e.g. a refresh stamped from an event time
+    // rather than the scan clock — used to be overwritten with the OLDER
+    // scan-start value. That regression handed any resolver holding the
+    // older version a matching row to archive: live incident closed,
+    // resolved notice sent. The refresh is a compare-and-swap that only
+    // advances: it writes observed+1ms under the observed-version
+    // predicates, so the version still moves (stale archives still no-op)
+    // but never retreats.
+    const ahead = iso(-5 * MIN); // five minutes past this scan's `now`
+    const row = incidentDbRow({
+      id: "evt-so-fwd",
+      occurrence_count: 2,
+      last_seen_at: ahead,
+      metadata: { incident_key: "box_down:agent-1" },
+    });
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+      openIncidents: [row],
+    });
+    const deps = scanDeps({ db, archiveIncident: undefined });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.stillOpen).toBe(1);
+    // The marker advanced past the stored value — never back to this
+    // scan's older `now` — and still moved, so a resolver holding the
+    // observed version cannot match it.
+    expect(row.last_seen_at).toBe(new Date(Date.parse(ahead) + 1).toISOString());
+    expect(Date.parse(row.last_seen_at as string)).toBeGreaterThan(Date.parse(ahead));
+    const touchCalls = db.calls.filter(
+      (entry) =>
+        entry.table === "ops_events" &&
+        entry.calls.some(
+          (c) => c[0] === "update" && typeof (c[1] as Row).last_seen_at === "string",
+        ),
+    );
+    expect(touchCalls).toHaveLength(1);
+    const chain = touchCalls[0].calls;
+    // Guarded on the version this scan observed — a concurrent write
+    // between read and touch still no-ops the refresh entirely.
+    expect(
+      chain.some((c) => c[0] === "eq" && c[1] === "occurrence_count" && c[2] === 2),
+    ).toBe(true);
+    expect(
+      chain.some((c) => c[0] === "eq" && c[1] === "last_seen_at" && c[2] === ahead),
+    ).toBe(true);
+    expect(deps.report as jest.Mock).not.toHaveBeenCalled();
+  });
+
   it("a stale archive cannot close a live incident once a still-open refresh moved its version", async () => {
     // Scan A read the incident row, then scan B's still-open refresh landed
     // (bumping last_seen_at), then A's guarded archive fired. The version
