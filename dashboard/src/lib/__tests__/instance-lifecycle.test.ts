@@ -143,10 +143,10 @@ describe("instance lifecycle helpers", () => {
     const fs = jest.requireActual("fs") as typeof import("fs");
     const path = jest.requireActual("path") as typeof import("path");
     const sql = fs.readFileSync(
-      path.join(__dirname, "../../../supabase/migrations/20261112130000_explicit_state_transitions.sql"),
+      path.join(__dirname, "../../../supabase/migrations/20261123110000_protect_hermes_archive_lifecycle.sql"),
       "utf8"
     );
-    const body = sql.slice(sql.indexOf("hermes_instance_lifecycle_allowed"), sql.indexOf("hermes_instance_watch_lifecycle_transition"));
+    const body = sql.slice(0, sql.indexOf("$$;"));
     const inSql = new Set([...body.matchAll(/\('([a-z_]+)','([a-z_]+)'\)/g)].map((m) => `${m[1]}->${m[2]}`));
     const inTs = new Set(
       Object.entries(ALLOWED_TRANSITIONS).flatMap(([from, tos]) => tos.map((to) => `${from}->${to}`))
@@ -157,6 +157,8 @@ describe("instance lifecycle helpers", () => {
   it("lets cold storage move forward and keeps deleted final", () => {
     expect(canTransitionInstanceLifecycle("paused", "archiving")).toBe(true);
     expect(canTransitionInstanceLifecycle("cold_archived", "restoring")).toBe(true);
+    expect(canTransitionInstanceLifecycle("cold_archived", "deleting")).toBe(true);
+    expect(canTransitionInstanceLifecycle("pending_deletion", "deleting")).toBe(true);
     expect(canTransitionInstanceLifecycle("pending_deletion", "active")).toBe(false);
     expect(canTransitionInstanceLifecycle("deleted", "restoring")).toBe(false);
   });

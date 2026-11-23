@@ -143,7 +143,9 @@ export async function DELETE(request: NextRequest) {
       // existing per-instance guards refuse precisely when a live VM might be
       // left behind, and deleting the Clerk user now would orphan it.
       return apiError(
-        "Some of your agents could not be removed. Nothing was lost — please try again, or contact support if this keeps happening.",
+        deletedInstances.length > 0
+          ? "Some agents were deleted. Account deletion could not finish. Retry or contact support."
+          : "Some of your agents could not be removed. Retry or contact support.",
         502,
         { failedInstances },
         {
