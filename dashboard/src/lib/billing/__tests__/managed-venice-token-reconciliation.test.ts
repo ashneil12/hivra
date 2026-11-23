@@ -1003,7 +1003,12 @@ describe("stale unpaid quote expiry", () => {
     expect(memory.tables.managed_venice_token_quotes[0].status).toBe("active");
   });
 
-  it("skips an already-expired stale quote even on the day-rollover tick", async () => {
+  it("gives an already-expired no_deposit_after_grace quote its one catch-up scan", async () => {
+    // The expire-without-scan era marked rows no_deposit_after_grace without
+    // ever reading their deposit window — a payment arriving inside it could
+    // be hidden forever. Each such row is owed exactly one real scan before
+    // it is out for good: this one completes clean and the row retires like
+    // any fully-scanned stale quote.
     const memory = createManagedVeniceMemoryDb({
       managed_venice_token_quotes: [
         {
@@ -1021,9 +1026,94 @@ describe("stale unpaid quote expiry", () => {
 
     const summary = await runBatch(memory.db, chain);
 
-    expect(summary.checked).toBe(0);
-    expect(summary.cancelled).toBe(0);
-    expect(chain.methodCount("eth_getLogs")).toBe(0);
+    expect(summary.checked).toBe(1);
+    expect(summary.cancelled).toBe(1);
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
+    const row = memory.tables.managed_venice_token_quotes[0];
+    expect(row.status).toBe("cancelled");
+    expect((row.metadata as Row).closedReason).toBe("expired_unpaid");
+  });
+
+  it("stops selecting a no_deposit_after_grace row once its one scan is done", async () => {
+    // The scan runs but stays inconclusive (chain head before the grace end):
+    // the quote keeps its 'expired' status, is stamped graceWindowScannedAt,
+    // and is never selected again — the marker is what bounds it to ONE scan.
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [
+        {
+          ...staleQuoteRow(),
+          status: "expired",
+          metadata: {
+            ...(staleQuoteRow().metadata as Row),
+            closedReason: "no_deposit_after_grace",
+          },
+        },
+      ],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    // Head at 12:00 sits before the quote's grace end (12:20): the window
+    // cannot be fully scanned, so the row stays 'expired' with its marker.
+    const chain = createBaseRpcFake({
+      latestBlock: 1_000,
+      latestTimestamp: "2026-05-01T12:00:00.000Z",
+    });
+
+    const day1 = await runBatch(memory.db, chain);
+
+    expect(day1.checked).toBe(1);
+    expect(day1.results).toEqual([
+      expect.objectContaining({ quoteId: "quote_stale", status: "no_match" }),
+    ]);
+    const scannedAt = chain.methodCount("eth_getLogs");
+    expect(scannedAt).toBeGreaterThan(0);
+    const row = memory.tables.managed_venice_token_quotes[0];
+    expect(row.status).toBe("expired");
+    expect((row.metadata as Row).closedReason).toBe("no_deposit_after_grace");
+    expect(typeof (row.metadata as Row).graceWindowScannedAt).toBe("string");
+
+    // Next day's first tick claims its day — but the marked row is out for
+    // good and is never scanned again.
+    const day2 = await runBatch(
+      memory.db,
+      chain,
+      new Date("2026-05-21T00:00:00.000Z")
+    );
+    expect(day2.checked).toBe(0);
+    expect(chain.methodCount("eth_getLogs")).toBe(scannedAt);
+  });
+
+  it("settles the deposit a no_deposit_after_grace row's catch-up scan finds", async () => {
+    // The finding's money path: a payment that landed inside the window of a
+    // quote the old pass expired sight-unseen is still credited by its one
+    // catch-up scan instead of staying invisible forever.
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [
+        {
+          ...staleQuoteRow(),
+          status: "expired",
+          metadata: {
+            ...(staleQuoteRow().metadata as Row),
+            closedReason: "no_deposit_after_grace",
+          },
+        },
+      ],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    chain.addTransfer(
+      transferAt(
+        chain.blockAt("2026-05-01T10:10:00.000Z"),
+        BigInt(staleQuoteRow().token_amount_raw as string),
+        "0xlatepaid"
+      )
+    );
+
+    const summary = await runBatch(memory.db, chain);
+
+    expect(summary.settled).toBe(1);
+    expect(summary.results).toEqual([
+      expect.objectContaining({ quoteId: "quote_stale", status: "settled" }),
+    ]);
   });
 
   it("still scans a quote inside the 7-day grace", async () => {
@@ -1193,6 +1283,7 @@ describe("stale unpaid quote expiry", () => {
       now: staleNow,
       clock: () => nowMs,
       openScanBudgetMs: 1,
+      staleScanBudgetMs: 240_000,
       interQuoteDelayMs: 0,
       rpcSleepImpl: async () => {},
     });
@@ -1207,8 +1298,73 @@ describe("stale unpaid quote expiry", () => {
 
   it("defers the rest of the daily stale batch once its own slice is spent", async () => {
     // The guaranteed slice is bounded: with each stale scan costing ~150 s
-    // of tick clock, a 60 s stale budget scans the first row and leaves the
-    // remaining two for a later day instead of eating the open loop's share.
+    // of tick clock, a 200 s stale budget scans the first row to completion,
+    // interrupts the second's scan mid-flight (it is deferred, never decided
+    // on partial data) and leaves both leftovers for a later day instead of
+    // eating the open loop's share.
+    const quotes = [
+      staleQuoteRow({ id: "quote_stale_0" }),
+      staleQuoteRow({
+        id: "quote_stale_1",
+        deposit_address: `0x${"8".repeat(40)}`,
+        quoted_at: "2026-05-01T11:00:00.000Z",
+        expires_at: "2026-05-01T11:20:00.000Z",
+        created_at: "2026-05-01T11:00:00.000Z",
+        updated_at: "2026-05-01T11:00:00.000Z",
+      }),
+      staleQuoteRow({
+        id: "quote_stale_2",
+        deposit_address: `0x${"7".repeat(40)}`,
+        quoted_at: "2026-05-01T12:00:00.000Z",
+        expires_at: "2026-05-01T12:20:00.000Z",
+        created_at: "2026-05-01T12:00:00.000Z",
+        updated_at: "2026-05-01T12:00:00.000Z",
+      }),
+    ];
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: quotes,
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+    let nowMs = 0;
+    const inner = chain.fetchImpl.getMockImplementation()!;
+    chain.fetchImpl.mockImplementation(async (url: string, init: { body: string }) => {
+      if ((JSON.parse(init.body) as { method: string }).method === "eth_getLogs") nowMs += 50_000;
+      return inner(url, init);
+    });
+
+    const summary = await reconcilePendingManagedVeniceTokenQuotes({
+      db: memory.db,
+      rpcUrl: "https://base.test",
+      fetchImpl: chain.fetchImpl,
+      minConfirmations: 2,
+      settleQuote: jest.fn(async () => ({ status: "settled" as const, quoteId: "x" })),
+      now: staleNow,
+      clock: () => nowMs,
+      staleScanBudgetMs: 200_000,
+      interQuoteDelayMs: 0,
+      rpcSleepImpl: async () => {},
+    });
+
+    expect(summary.cancelled).toBe(1);
+    expect(summary.results.map((result) => result.quoteId)).toEqual(["quote_stale_0"]);
+    // The two rows the slice could not finish are reported deferred, not
+    // lost: still open, still eligible on the next day.
+    expect(summary.deferred.open).toBe(2);
+    expect(memory.tables.managed_venice_token_quotes.map((row) => row.status)).toEqual([
+      "cancelled",
+      "active",
+      "active",
+    ]);
+  });
+
+  it("defers a stale row mid-scan when its slice runs out inside the log scan", async () => {
+    // The stale deadline is threaded into the per-quote RPC loop, not just
+    // checked between quotes: a single scan — dozens of serial RPC calls —
+    // that crosses the slice is interrupted between requests. An aborted
+    // scan is never authoritative: the row is counted deferred (not failed,
+    // not closed on partial data), keeps its cursor and stays fully
+    // eligible for the next day's pass.
     const quotes = [
       staleQuoteRow({ id: "quote_stale_0" }),
       staleQuoteRow({
@@ -1253,16 +1409,19 @@ describe("stale unpaid quote expiry", () => {
       rpcSleepImpl: async () => {},
     });
 
-    expect(summary.cancelled).toBe(1);
-    expect(summary.results.map((result) => result.quoteId)).toEqual(["quote_stale_0"]);
-    // The two rows the slice could not reach are reported deferred, not lost:
-    // still open, still eligible on the next day.
-    expect(summary.deferred.open).toBe(2);
-    expect(memory.tables.managed_venice_token_quotes.map((row) => row.status)).toEqual([
-      "cancelled",
-      "active",
-      "active",
-    ]);
+    // The first row's own scan is aborted after its second of three getLogs
+    // chunks: no settle/expire decision was made on partial data, and the
+    // abort is a deferral (deferred.open), never a per-quote failure.
+    expect(summary.cancelled).toBe(0);
+    expect(summary.failed).toBe(0);
+    expect(summary.deferred.open).toBe(3);
+    expect(summary.results).toHaveLength(0);
+    const rows = memory.tables.managed_venice_token_quotes;
+    expect(rows.map((row) => row.status)).toEqual(["active", "active", "active"]);
+    // The interrupted row was never scanned or touched: its updated_at
+    // cursor is unchanged, so tomorrow's pass re-tries it at the front.
+    expect(rows[0].updated_at).toBe("2026-05-01T10:00:00.000Z");
+    expect(chain.methodCount("eth_getLogs")).toBe(2);
   });
 
   it("still runs the regular lanes when the daily stale pass cannot load its candidates", async () => {
@@ -1330,5 +1489,143 @@ describe("stale unpaid quote expiry", () => {
     // behind the failed select.
     expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(0);
     expect(memory.tables.managed_venice_token_quotes[0].status).toBe("cancelled");
+  });
+
+  it("runs the next day's stale pass even when the previous tick's heartbeat landed after midnight", async () => {
+    // A tick that starts before UTC midnight and finishes after it stamps its
+    // run heartbeat in the NEW day. Keying the daily pass off that heartbeat's
+    // landing day would then skip the new day's pass entirely: 05-20's pass
+    // would be recorded as 05-21's. The pass claims a dedicated
+    // "<cron>:stale-scan" day row at run START instead, so the day that ran
+    // the work is the day that is marked taken.
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: [staleQuoteRow({ id: "quote_stale_a" })],
+      ops_cron_heartbeats: [heartbeatYesterday],
+    });
+    const chain = staleChain();
+
+    // Tick 1 starts 2026-05-20T23:59 — before midnight — and claims 05-20.
+    const day1 = await runBatch(memory.db, chain, new Date("2026-05-20T23:59:00.000Z"));
+    expect(day1.cancelled).toBe(1);
+    const claimRow = memory.tables.ops_cron_heartbeats.find(
+      (row) => row.cron_name === `${VENICE_CRON}:stale-scan`
+    );
+    expect(claimRow?.last_run_at).toBe("2026-05-20T23:59:00.000Z");
+
+    // The run's heartbeat lands AFTER midnight, as the real end-of-run write
+    // would. Under heartbeat-day keying this alone would suppress 05-21.
+    const runRow = memory.tables.ops_cron_heartbeats.find((row) => row.cron_name === VENICE_CRON);
+    runRow!.last_run_at = "2026-05-21T00:05:00.000Z";
+
+    // A second stale quote ages in; 05-21's first tick still claims its own
+    // day and scans it — the claim row says 05-20 ran, not 05-21.
+    memory.insertRow(
+      "managed_venice_token_quotes",
+      staleQuoteRow({
+        id: "quote_stale_b",
+        deposit_address: `0x${"6".repeat(40)}`,
+      })
+    );
+    const logsBefore = chain.methodCount("eth_getLogs");
+    const day2 = await runBatch(memory.db, chain, new Date("2026-05-21T00:10:00.000Z"));
+
+    expect(day2.cancelled).toBe(1);
+    expect(chain.methodCount("eth_getLogs")).toBeGreaterThan(logsBefore);
+    expect(memory.tables.managed_venice_token_quotes.map((row) => row.status)).toEqual([
+      "cancelled",
+      "cancelled",
+    ]);
+  });
+
+  it("bounds the lot probe to its tick budget and still reaches an old lot-holding quote", async () => {
+    // The probe may not page the whole open table before fresh work: it reads
+    // a bounded slice of the longest-expired open quotes per tick. A
+    // lot-holding quote deeper than the slice is NOT found by the probe —
+    // but it is never lost either: the daily stale pass scans every
+    // unclaimed open quote (bounded per day, rotating) and runs the same
+    // lot recovery inside its reconcile.
+    const expiryOf = (index: number) =>
+      new Date(Date.parse("2026-05-01T10:20:00.000Z") + index * 60_000).toISOString();
+    const quotes = Array.from({ length: 5 }, (_, index) =>
+      staleQuoteRow({
+        id: `quote_probe_${index}`,
+        deposit_address: `0x${String(5 - index).repeat(40)}`,
+        quoted_at: new Date(Date.parse("2026-05-01T10:00:00.000Z") + index * 60_000).toISOString(),
+        expires_at: expiryOf(index),
+        created_at: new Date(Date.parse("2026-05-01T10:00:00.000Z") + index * 60_000).toISOString(),
+        updated_at: new Date(Date.parse("2026-05-01T10:00:00.000Z") + index * 60_000).toISOString(),
+      })
+    );
+    // The lot-holder sits at probe position 5 — past a budget of 2.
+    const lot = {
+      id: "lot_deep",
+      account_id: "account_deep",
+      user_id: "user_1",
+      quote_id: "quote_probe_4",
+      source: "hermesos_deposit",
+      token_amount_raw: "1000000000000000000000",
+      remaining_token_amount_raw: "1000000000000000000000",
+      snapshot_price_usd: "0.05",
+      original_value_micro_usd: 50_000_000,
+      remaining_value_micro_usd: 50_000_000,
+      quote_source: "dexscreener",
+      quoted_at: "2026-05-01T10:00:00.000Z",
+      quote_expires_at: expiryOf(4),
+      transaction_hash: "0xlotpaiddeep",
+      status: "active",
+      metadata: { observedAt: "2026-05-01T10:05:00.000Z" },
+      created_at: "2026-05-01T10:05:00.000Z",
+      updated_at: "2026-05-01T10:05:00.000Z",
+    };
+    const memory = createManagedVeniceMemoryDb({
+      managed_venice_token_quotes: quotes,
+      managed_venice_token_lots: [lot],
+    });
+    // The real settle is a compare-and-set that flips the row out of the open
+    // set; this mock does the same so the probe can't hand the just-settled
+    // quote back to the batch a second time inside one tick.
+    const settleQuote = jest.fn(async (transfer: { quoteId?: string; transactionHash?: string }) => {
+      const row = memory.tables.managed_venice_token_quotes.find(
+        (candidate) => candidate.id === transfer.quoteId
+      );
+      if (row) {
+        row.status = "settled";
+        row.transaction_hash = transfer.transactionHash ?? "0xsettled";
+      }
+      return { status: "settled" as const, quoteId: transfer?.quoteId ?? "quote_unknown" };
+    });
+    const chain = staleChain();
+    const run = (now: Date) =>
+      reconcilePendingManagedVeniceTokenQuotes({
+        db: memory.db,
+        rpcUrl: "https://base.test",
+        fetchImpl: chain.fetchImpl,
+        minConfirmations: 2,
+        settleQuote,
+        now,
+        interQuoteDelayMs: 0,
+        rpcSleepImpl: async () => {},
+        lotProbeBudget: 2,
+      });
+
+    // Tick 1 (no prior tick → no daily pass): the probe reads only the
+    // budgeted slice — the two longest-expired open quotes — so the deep
+    // lot-holder is NOT recovered by it.
+    const tick1 = await run(staleNow);
+    expect(tick1.checked).toBe(0);
+    expect(settleQuote).not.toHaveBeenCalled();
+
+    // The daily stale pass is the guaranteed reach: the next day's first
+    // tick scans every unclaimed open quote and the deep quote settles on
+    // its lot's tx — the other four retire on their clean scans. (Tick 1
+    // planted the "<cron>:stale-scan" claim row, so this tick claims
+    // 05-21 without needing any heartbeat baseline.)
+    const tick2 = await run(new Date("2026-05-21T00:00:00.000Z"));
+    expect(tick2.settled).toBe(1);
+    expect(tick2.cancelled).toBe(4);
+    expect(settleQuote).toHaveBeenCalledWith(
+      expect.objectContaining({ quoteId: "quote_probe_4", transactionHash: "0xlotpaiddeep" }),
+      expect.anything()
+    );
   });
 });

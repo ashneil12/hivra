@@ -74,6 +74,18 @@ export class RpcHttpError extends Error {
   }
 }
 
+// Raised when the caller's cooperative cancellation (RpcCallOptions.shouldStop)
+// fires — a wall-clock budget interrupting a scan BETWEEN requests. Distinct
+// from transport failures: it means the work was deferred, not that the
+// endpoint misbehaved, and isRetryableRpcError correctly does not retry it
+// (retrying would just re-hit the deadline).
+export class RpcCallAbortedError extends Error {
+  constructor(message = "Base RPC call aborted: caller deadline reached") {
+    super(message);
+    this.name = "RpcCallAbortedError";
+  }
+}
+
 /**
  * Error for a JSON-RPC error body — deterministic, so callers must NOT wrap
  * it in the retry layer. The provider's numeric code is preserved twice: as a
@@ -145,6 +157,14 @@ export interface RpcCallOptions {
   retryConfig?: RpcRetryConfig;
   sleepImpl?: (ms: number) => Promise<void>;
   random?: () => number;
+  /**
+   * Cooperative cancellation for long scans: checked before every attempt
+   * and before every backoff sleep. When it reports true the call throws
+   * RpcCallAbortedError instead of issuing (or waiting to issue) the next
+   * request — a caller's wall-clock budget can therefore interrupt a scan
+   * mid-way, between requests, instead of only between whole scans.
+   */
+  shouldStop?: () => boolean;
 }
 
 // Run a single RPC operation with retry + exponential backoff + jitter. The
@@ -163,6 +183,7 @@ export async function withRpcRetry<T>(
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= config.maxAttempts; attempt += 1) {
+    if (options.shouldStop?.()) throw new RpcCallAbortedError();
     try {
       return await operation();
     } catch (error) {
@@ -170,6 +191,7 @@ export async function withRpcRetry<T>(
       if (attempt >= config.maxAttempts || !isRetryableRpcError(error)) {
         throw error;
       }
+      if (options.shouldStop?.()) throw new RpcCallAbortedError();
       await sleepImpl(computeBackoffDelayMs(attempt, config, random));
     }
   }

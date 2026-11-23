@@ -134,12 +134,15 @@ export async function GET(req: NextRequest) {
   }
 
   // Honest heartbeat: reconciliation/manual-review/sweep failures are real
-  // money awaiting credit or operator action — a run that logged them is not ok.
+  // money awaiting credit or operator action — a run that logged them is not
+  // ok. A treasury-config gap (treasuryNotConfigured) parks payments unswept
+  // without producing a per-row failure, so it must fail the run too.
   const heartbeatFailed =
     reconciliation.failed > 0 ||
     reconciliation.manualReview > 0 ||
     sweep.failed > 0 ||
     (sweep.needsOperator ?? 0) > 0 ||
+    (sweep.treasuryNotConfigured ?? 0) > 0 ||
     "error" in veniceReviewConflicts;
   await recordCronHeartbeat(
     "yearly-token-sweep",
@@ -149,6 +152,7 @@ export async function GET(req: NextRequest) {
           detail:
             `recon_failed=${reconciliation.failed} manual_review=${reconciliation.manualReview} ` +
             `sweep_failed=${sweep.failed} needs_operator=${sweep.needsOperator ?? 0} ` +
+            `treasury_not_configured=${sweep.treasuryNotConfigured ?? 0} ` +
             `venice_cross_check=${"error" in veniceReviewConflicts ? "error" : "ok"}`,
         }
       : undefined,
