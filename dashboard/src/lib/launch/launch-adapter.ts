@@ -12,6 +12,7 @@ import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
 import { launchManagedSession, ManagedSessionApiError } from "@/lib/hivra/managed-session-client";
 import { DIGITALOCEAN_HARNESS_LABELS } from "@/lib/hivra/managed-session-contracts";
 import type { DeploymentTargetDto, DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import { isCatalogAppId } from "@/lib/hivra/catalog-manifests";
 import { buildInfrastructureSetupHref } from "@/lib/hivra/launch-navigation";
 import { getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
 import { getFingerprintRequestId } from "@/lib/abuse/client-fingerprint";
@@ -113,6 +114,7 @@ export function launchResumeModeFor(draft: Pick<LaunchDraft, "profileId" | "capa
 export function launchResumeMode(profileId: LaunchProfileId): "resend" | "observe" {
   return profileId === "claude-code" || profileId === "hermes" || profileId === "hermes-computer" || profileId === "openclaw"
     || profileId === "agent-zero" || profileId === "openbot" || profileId === "nuphos" || profileId === "aeon" || profileId === "deepseek-harness"
+    || isCatalogAppId(profileId)
     ? "observe"
     : "resend";
 }

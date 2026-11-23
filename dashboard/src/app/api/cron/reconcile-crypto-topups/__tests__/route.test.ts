@@ -5,6 +5,7 @@ import { reconcilePendingCryptoTopUps } from "@/lib/billing/crypto-reconciliatio
 import { sweepPendingCreditDepositReceipts } from "@/lib/billing/credit-deposit-sweep";
 import { sweepPendingManagedVeniceTokenQuotes } from "@/lib/billing/managed-venice-token-sweep";
 import { reportOpsEvent } from "@/lib/ops-events";
+import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 
 jest.mock("@/lib/billing/crypto-reconciliation", () => ({
   reconcilePendingCryptoTopUps: jest.fn(),
@@ -21,6 +22,10 @@ jest.mock("@/lib/billing/managed-venice-token-sweep", () => ({
 jest.mock("@/lib/ops-events", () => ({
   ...jest.requireActual("@/lib/ops-events"),
   reportOpsEvent: jest.fn(async () => null),
+}));
+
+jest.mock("@/lib/cron-heartbeat", () => ({
+  recordCronHeartbeat: jest.fn(async () => undefined),
 }));
 
 describe("GET /api/cron/reconcile-crypto-topups", () => {
@@ -225,6 +230,38 @@ describe("GET /api/cron/reconcile-crypto-topups", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it("reports a stale-retry load failure as a reconciliation failure, not a clean run", async () => {
+    // Regression: the once-a-day stale pass failing to LOAD produced no
+    // per-intent failures, so nothing reached the ops feed and the heartbeat
+    // read ok — while the day's stale work silently never ran.
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    (reconcilePendingCryptoTopUps as jest.Mock).mockResolvedValueOnce({
+      ...reconciliationPayload,
+      staleRetried: 0,
+      staleRetryLoadFailed: true,
+    });
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: "error",
+        title: "USDC top-up reconciliation failed",
+        metadata: expect.objectContaining({
+          staleRetryLoadFailed: true,
+          staleRetried: 0,
+        }),
+      })
+    );
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "reconcile-crypto-topups",
+      expect.objectContaining({ ok: false, detail: expect.stringContaining("stale_retry=load_failed") })
+    );
+
+    consoleErrorSpy.mockRestore();
+  });
+
   it("does not raise a reconciliation alert on a clean run", async () => {
     await GET(makeRequest("Bearer cron-secret"));
 
@@ -246,5 +283,118 @@ describe("GET /api/cron/reconcile-crypto-topups", () => {
     expect(JSON.stringify(consoleErrorSpy.mock.calls)).not.toContain("rpc-url-secret");
 
     consoleErrorSpy.mockRestore();
+  });
+
+  it("records an ok:false heartbeat when the run throws, and never on auth failures", async () => {
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    (reconcilePendingCryptoTopUps as jest.Mock).mockRejectedValueOnce(
+      new Error("reconciliation exploded")
+    );
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(500);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "reconcile-crypto-topups",
+      expect.objectContaining({ ok: false, detail: expect.stringContaining("exception") })
+    );
+
+    // A 401 is not a failed run — it must not touch the heartbeat.
+    (recordCronHeartbeat as jest.Mock).mockClear();
+    const unauthorized = await GET(makeRequest("Bearer wrong"));
+    expect(unauthorized.status).toBe(401);
+    expect(recordCronHeartbeat).not.toHaveBeenCalled();
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("records an ok:false heartbeat when credit sweeps need operator review", async () => {
+    (sweepPendingCreditDepositReceipts as jest.Mock).mockResolvedValueOnce({
+      ...sweepPayload,
+      failed: 0,
+      inDoubt: 1,
+      needsOperator: 1,
+      results: [
+        {
+          receiptId: "receipt-1",
+          userId: "user-1",
+          outcome: "in_doubt",
+          needsOperator: true,
+        },
+      ],
+    });
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "reconcile-crypto-topups",
+      expect.objectContaining({ ok: false, detail: expect.stringContaining("credit_sweep_op_review=1") })
+    );
+  });
+
+  it("keeps a clean heartbeat when in_doubt sweeps can still self-heal", async () => {
+    (sweepPendingCreditDepositReceipts as jest.Mock).mockResolvedValueOnce({
+      ...sweepPayload,
+      failed: 0,
+      inDoubt: 2,
+      needsOperator: 0,
+      results: [
+        { receiptId: "receipt-1", userId: "user-1", outcome: "in_doubt" },
+        { receiptId: "receipt-2", userId: "user-2", outcome: "in_doubt" },
+      ],
+    });
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith("reconcile-crypto-topups", undefined);
+  });
+
+  it("records an ok:false heartbeat when the credit sweep cannot move funds without a treasury", async () => {
+    // A reconciled deposit the sweep skips with noTreasury is stuck funds:
+    // the run looks clean on every other count (no failures, nothing for an
+    // operator) and would heartbeat ok forever while the deposit sits
+    // unmoved. noTreasury counts in the predicate and the detail.
+    (sweepPendingCreditDepositReceipts as jest.Mock).mockResolvedValueOnce({
+      ...sweepPayload,
+      failed: 0,
+      noTreasury: 2,
+      results: [
+        { receiptId: "receipt-1", userId: "user-1", outcome: "no_treasury" },
+        { receiptId: "receipt-2", userId: "user-2", outcome: "no_treasury" },
+      ],
+    });
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "reconcile-crypto-topups",
+      expect.objectContaining({ ok: false, detail: expect.stringContaining("credit_sweep_no_treasury=2") })
+    );
+  });
+
+  it("records an ok:false heartbeat when the managed Venice sweep cannot move funds without a treasury", async () => {
+    // The managed Venice arm has its own noTreasury count: a settled quote's
+    // deposit that cannot be swept is the same stuck-funds condition and
+    // must fail the heartbeat on its own, not only alongside credit-sweep
+    // noTreasury.
+    (sweepPendingManagedVeniceTokenQuotes as jest.Mock).mockResolvedValueOnce({
+      ...managedVeniceSweepPayload,
+      failed: 0,
+      noTreasury: 1,
+      results: [
+        { quoteId: "quote-1", userId: "user-1", outcome: "no_treasury" },
+      ],
+    });
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "reconcile-crypto-topups",
+      expect.objectContaining({ ok: false, detail: expect.stringContaining("mv_sweep_no_treasury=1") })
+    );
   });
 });

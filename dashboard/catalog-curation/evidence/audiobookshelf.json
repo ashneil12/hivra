@@ -1,0 +1,113 @@
+{
+  "slug": "audiobookshelf",
+  "checkedAt": "2026-11-21T14:29:54.403Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "advplyr/audiobookshelf is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "advplyr/audiobookshelf",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "advplyr/audiobookshelf:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "advplyr/audiobookshelf:latest",
+        "digest": "sha256:60064c23f32fd9099fd39e82c5132c51701d1221135bbca04cd099b589e1edc3",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /healthcheck -> 200 in 56s",
+      "evidence": {
+        "container": "hivra-verify-audiobookshelf-4tcly3",
+        "hostPort": 3249,
+        "image": "advplyr/audiobookshelf:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-audiobookshelf-4tcly3",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3249:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-audiobookshelf-4tcly3-config:/config",
+          "-v",
+          "hivra-verify-audiobookshelf-4tcly3-metadata:/metadata",
+          "advplyr/audiobookshelf:latest"
+        ],
+        "runStdout": "1040666816db34c0c2b53c94d3d4357e6c84a233a2a3a6b110f6c7a489df47d3",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 56,
+          "attempts": 26
+        },
+        "memUsage": "79.58MiB / 7.652GiB",
+        "memBytes": 83445678
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 50421,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\" data-n-head=\"%7B%22lang%22:%7B%221%22:%22en%22%7D%7D\">\n  <head>\n    <meta data-n-head=\"1\" charset=\"utf-8\"><meta data-n-head=\"1\" name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta data-n-head=\"1\" data-hid=\"description\" name=\"description\" content=\"\"><meta data-n-head=\"1\" data-hid=\"robots\" name=\"robots\" content=\"noindex\"><meta data-n-head=\"1\" data-hid=\"",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 401,
+          "bodyHead": "Unauthorized"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 79.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 83445678,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -14,19 +14,30 @@
 // update target `latest`), or the agent's own update command. There is no
 // tested version, no "behind", and no automatic update.
 
+import {
+  isCatalogAppId,
+  UNIVERSAL_CATALOG_IDS,
+  type UniversalCatalogAppId,
+} from "./catalog-manifests";
+
 export const AGENT_CLI_NAMES = ["claude-code", "codex"] as const;
 export type AgentCliName = (typeof AGENT_CLI_NAMES)[number];
-export const AGENT_APP_NAMES = ["aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos"] as const;
+export const AGENT_APP_NAMES = ["aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos", ...UNIVERSAL_CATALOG_IDS] as const;
 export type AgentAppName = (typeof AGENT_APP_NAMES)[number];
 /** What Hivra updates on the agent: its CLI or its hosted app. */
 export type AgentSoftwareName = AgentCliName | AgentAppName;
 
 const CLI_VERSION = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
+const CATALOG_APP_VERSION = /^(?:sha256:[0-9a-f]{64}|v?\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[A-Za-z0-9._-]{1,32})?|latest)$/;
 const REASON = /^[a-z_]{1,40}$/;
 /**
  * How each one names a version: an x.y.z release (the CLIs, OpenClaw), the
  * upstream commit Aeon's dashboard is built from, or Agent Zero's image digest.
  */
+const UNIVERSAL_SOFTWARE_VERSIONS = Object.fromEntries(
+  UNIVERSAL_CATALOG_IDS.map((id) => [id, CATALOG_APP_VERSION]),
+) as unknown as Record<UniversalCatalogAppId, RegExp>;
+
 const SOFTWARE_VERSION: Readonly<Record<AgentSoftwareName, RegExp>> = {
   "claude-code": CLI_VERSION,
   codex: CLI_VERSION,
@@ -39,6 +50,7 @@ const SOFTWARE_VERSION: Readonly<Record<AgentSoftwareName, RegExp>> = {
   openbot: CLI_VERSION,
   // Nuphos runtime release (x.y.z).
   nuphos: CLI_VERSION,
+  ...UNIVERSAL_SOFTWARE_VERSIONS,
 };
 
 /**
@@ -99,13 +111,14 @@ export function parseAgentCliReport(stdout: string): AgentCliUpdateReport | null
   return null;
 }
 
-export const AGENT_APP_LINE = /^HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes|openbot|nuphos) version=(\S{1,80}) target=(\S{1,80}) state=(current|scheduled|running|failed)$/;
+export const AGENT_APP_LINE = /^HIVRA_AGENT_APP name=([a-z][a-z0-9-]{1,38}[a-z0-9]) version=(\S{1,80}) target=(\S{1,80}) state=(current|scheduled|running|failed)$/;
 
 /** The runtime updater's host-validated agent app line, each version in its app's own form. */
 export function parseAgentAppReport(stdout: string): AgentAppUpdateReport | null {
   for (const line of stdout.split(/\r?\n/)) {
     const match = AGENT_APP_LINE.exec(line);
     if (!match) continue;
+    if (!(AGENT_APP_NAMES as readonly string[]).includes(match[1])) continue;
     const name = match[1] as AgentAppName;
     const version = match[2] === "unknown" ? null : match[2];
     if (version !== null && !isAgentSoftwareVersion(name, version)) return null;
@@ -181,8 +194,12 @@ export function parseAgentCliMeta(value: unknown, expected: AgentSoftwareName): 
  * update is refused), computers and every other kind of computer are not
  * covered.
  */
-export const AGENT_SOFTWARE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos"] as const;
+export const AGENT_SOFTWARE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos", ...UNIVERSAL_CATALOG_IDS] as const;
 export type AgentSoftwareType = (typeof AGENT_SOFTWARE_TYPES)[number];
+
+const UNIVERSAL_GATEWAY_KINDS = Object.fromEntries(
+  UNIVERSAL_CATALOG_IDS.map((id) => [id, "catalog-app"]),
+) as unknown as Record<UniversalCatalogAppId, string>;
 
 /** The agentKind each covered agent's connection service reports on /api/meta. */
 const GATEWAY_KIND: Record<AgentSoftwareType, string> = {
@@ -194,13 +211,14 @@ const GATEWAY_KIND: Record<AgentSoftwareType, string> = {
   hermes: "hermes",
   openbot: "openbot",
   nuphos: "nuphos",
+  ...UNIVERSAL_GATEWAY_KINDS,
 };
 
 export interface AgentSoftwareSubject {
   type: AgentSoftwareType;
   /** Claude Code or Codex; null for the app agents. */
   cli: AgentCliName | null;
-  /** The Aeon dashboard, OpenClaw, Agent Zero or Hermes; null for the CLI agents. */
+  /** The Aeon dashboard, OpenClaw, Agent Zero, Hermes, or a universal catalog app; null for the CLI agents. */
   app: AgentAppName | null;
   /** Whichever of the two this agent runs. */
   software: AgentSoftwareName;
@@ -221,7 +239,7 @@ export function agentSoftwareSubject(row: {
   if (!(AGENT_SOFTWARE_TYPES as readonly unknown[]).includes(row.type)) return null;
   const type = row.type as AgentSoftwareType;
   const cli = type === "claude-code" || type === "codex" ? type : null;
-  const app = type === "aeon" || type === "openclaw" || type === "agent-zero" || type === "hermes" || type === "openbot" || type === "nuphos" ? type : null;
+  const app = type === "aeon" || type === "openclaw" || type === "agent-zero" || type === "hermes" || type === "openbot" || type === "nuphos" || isCatalogAppId(type) ? type : null;
   return {
     type,
     cli,

@@ -29,6 +29,7 @@ export const maxDuration = 800;
 // far above the 800s wall). Leave ~100s margin for the surrounding handler +
 // response. Mirrors daily-vm-backups' HOST_BACKUP_TIMEOUT_MS.
 const HOST_BACKUP_TIMEOUT_MS = 700_000;
+const HOST_BACKUP_DEADLINE = `timeout --kill-after=10s ${HOST_BACKUP_TIMEOUT_MS / 1000 - 10}s`;
 
 const LOG_SOURCE = "cron:daily-instance-backups";
 const ROUTE = "/api/cron/daily-instance-backups";
@@ -149,7 +150,7 @@ function buildRunScript(row: BackupCandidate, password: string, apply: boolean):
   return `set -euo pipefail
 ${buildInstallResticScript()}
 export RESTIC_PASSWORD=${shellQuote(password)}
-/usr/local/sbin/backup-vm-restic.sh ${args}
+${HOST_BACKUP_DEADLINE} /usr/local/sbin/backup-vm-restic.sh ${args}
 `;
 }
 

@@ -1,0 +1,75 @@
+{
+  "slug": "karakeep",
+  "checkedAt": "2026-11-21T03:24:54.684Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "karakeep-app/karakeep is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "karakeep-app/karakeep",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/karakeep-app/karakeep:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/karakeep-app/karakeep:latest",
+        "digest": "sha256:e53fb4535b1ce18e2aa7f10b14812be3c25324323131fc039212eca9d52b4cd6",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "fail",
+      "detail": "health /api/health never returned <400 (last status 500)",
+      "evidence": {
+        "container": "hivra-verify-karakeep-q2tuqw",
+        "hostPort": 54839,
+        "image": "ghcr.io/karakeep-app/karakeep:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-karakeep-q2tuqw",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:54839:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-karakeep-q2tuqw-data:/data",
+          "ghcr.io/karakeep-app/karakeep:latest"
+        ],
+        "runStdout": "b53e73b78173375d81de9bde8a667ab5e529622800c16346e8db6530b8540f43",
+        "health": {
+          "ok": false,
+          "status": 500,
+          "seconds": 241,
+          "attempts": 120,
+          "error": "fetch failed"
+        },
+        "logsTail": "2026-11-21T03:24:50.109Z \u001b[31merror\u001b[39m: [import] Error in polling loop: SqliteError: no such table: importStagingBookmarks\n"
+      }
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "no floor.ram in spec or no memory reading"
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "boot: health /api/health never returned <400 (last status 500)"
+  ]
+}

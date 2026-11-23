@@ -11,6 +11,7 @@ import type { HivraAgent } from "@/lib/hivra/agent-api";
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
 import { veniceModelName } from "@/lib/venice/model-catalog";
 import { agentSoftwareSubject } from "@/lib/hivra/agent-cli-status";
+import { isCatalogAppId } from "@/lib/hivra/catalog-manifests";
 import { agentSoftwareDisplayName } from "@/lib/hivra/agent-software-names";
 import type { ManageSectionId } from "@/lib/hivra/manage-sections";
 import type { AgentSurfaceId } from "@/lib/agent-computers/agent-surfaces";
@@ -84,7 +85,7 @@ export function commandPanelCapabilities(agent: HivraAgent, surfaces: readonly s
       id: "update",
       label: `Update ${agentSoftwareDisplayName(subject.app, name)}`,
       // Hermes has no Hivra-tested version: the button runs its own `hermes update`.
-      description: subject.app === "hermes" ? "Runs hermes update for the newest release" : subject.app === "openbot" || subject.app === "nuphos" ? "Installs the newest release" : "Move it to the version Hivra has tested",
+      description: subject.app === "hermes" ? "Runs hermes update for the newest release" : subject.app === "openbot" || subject.app === "nuphos" || isCatalogAppId(subject.app) ? "Installs the newest release" : "Move it to the version Hivra has tested",
       defaultShown: true,
       target: { kind: "update" },
     });

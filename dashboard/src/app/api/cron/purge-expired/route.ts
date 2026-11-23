@@ -469,7 +469,7 @@ export async function GET(req: NextRequest) {
       // strand the archive and kill the user's restore path.
       if (instance.lifecycle_state === "cold_archived") {
         const handoffAt = new Date().toISOString();
-        const { error: handoffError } = await supabaseAdmin
+        const { data: handedOff, error: handoffError } = await supabaseAdmin
           .from("hermes_instances")
           .update({
             status: "stopped",
@@ -478,11 +478,19 @@ export async function GET(req: NextRequest) {
             updated_at: handoffAt,
           })
           .eq("id", instance.id)
-          .eq("lifecycle_state", "cold_archived");
+          .eq("lifecycle_state", "cold_archived")
+          .is("lifecycle_substate", null)
+          .is("deleted_at", null)
+          .select("id")
+          .maybeSingle();
         if (handoffError) {
           throw new Error(
             `Failed to hand cold-archived row to cold-retention pipeline: ${handoffError.message || "unknown"}`
           );
+        }
+        if (!handedOff) {
+          results.push({ id: instance.id, name: instance.name, success: false, error: "skipped: archive changed or is busy" });
+          continue;
         }
         log.info(
           "cold-archived instance handed off to cold-retention pipeline (no VM to tear down)",

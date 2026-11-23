@@ -1,0 +1,113 @@
+{
+  "slug": "komga",
+  "checkedAt": "2026-11-21T14:34:49.918Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "gotson/komga is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "gotson/komga",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "gotson/komga:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "gotson/komga:latest",
+        "digest": "sha256:d43bb3b57aeeafd274ea805214f5da71ff9306accf012fb14cc13dedc3307212",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v7",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 208.8s",
+      "evidence": {
+        "container": "hivra-verify-komga-b6j9gm",
+        "hostPort": 3261,
+        "image": "gotson/komga:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-komga-b6j9gm",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3261:25600",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-komga-b6j9gm-config:/config",
+          "gotson/komga:latest"
+        ],
+        "runStdout": "8821b63d1006ae97d8407b40ed3f4a1dd15b0b7786712c8ca4d82f6b46789238",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 208.8,
+          "attempts": 88
+        },
+        "memUsage": "681.1MiB / 7.652GiB",
+        "memBytes": 714185114
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 51750,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Komga</title><link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple-touch-icon.png\"><link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/favicon-32x32.png\"><link rel=\"icon\" type=\"image/png\" sizes=\"16x16\" href=\"/favicon-16x16.png\"><link rel=\"manifest\" href=\"/mani",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 405,
+          "bodyHead": "<html><body><h1>Whitelabel Error Page</h1><p>This application has no explicit mapping for /error, so you are seeing this as a fallback.</p><div id='created'>Sat Nov 21 14:34:45 GMT 2026</div><div>There was an unexpected error (type=Method Not Allowed, status=405).</div><div>Method &#39;POST&#39; is "
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 681.1MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 714185114,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

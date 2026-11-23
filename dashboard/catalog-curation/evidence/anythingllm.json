@@ -1,0 +1,111 @@
+{
+  "slug": "anythingllm",
+  "checkedAt": "2026-11-21T14:54:09.572Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "Mintplex-Labs/anything-llm is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "Mintplex-Labs/anything-llm",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "mintplexlabs/anythingllm:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "mintplexlabs/anythingllm:latest",
+        "digest": "sha256:e98c38142741a5ca77900d3153cb8847464f0cdadaad618802ffeaa1290db818",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /api/ping -> 200 in 51.3s",
+      "evidence": {
+        "container": "hivra-verify-anythingllm-f4ibng",
+        "hostPort": 3205,
+        "image": "mintplexlabs/anythingllm:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-anythingllm-f4ibng",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3205:3001",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-anythingllm-f4ibng-storage:/app/server/storage",
+          "mintplexlabs/anythingllm:latest"
+        ],
+        "runStdout": "0fe8a5915a902b665c3d142a1319f004677ca334923c66c4502eab7243dd16f6",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 51.3,
+          "attempts": 25
+        },
+        "memUsage": "466.9MiB / 7.652GiB",
+        "memBytes": 489580134
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 55111,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "\n       <!DOCTYPE html>\n        <html lang=\"en\">\n          <head>\n            <meta charset=\"UTF-8\" />\n            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n            <link type=\"image/svg+xml\" href=\"/favicon.png\" >\n<title >AnythingLLM | Your personal LLM trained on anything</title>\n<meta name=\"title\" content=\"AnythingLLM | Your personal LLM trained on anything\" >\n",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 200,
+          "bodyHead": "\n       <!DOCTYPE html>\n        <html lang=\"en\">\n          <head>\n            <meta charset=\"UTF-8\" />\n            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n            <link type=\"image/svg+xml\" href=\"/favicon.png\" >\n<title >AnythingLLM | Your personal LLM trained on "
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 466.9MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 489580134,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -87,6 +87,8 @@ import {
 import { buildHostTimeSyncRepairScript } from "@/lib/services/hetzner-instance-builders";
 import { provisionedHetznerServerId } from "@/lib/hetzner/creation-receipt";
 import { orchestrateColdRestore } from "@/lib/services/cold-storage-restore-orchestrator";
+import { deleteArchivedInstance, isArchivedInstanceDelete } from "@/lib/services/delete-archived-instance";
+import { blocksInstanceLiveMutation } from "@/lib/services/instance-live-mutation";
 import { loadGlobalHermesSettingsForUser } from "@/lib/clerk-hermes-settings";
 import { recordInstanceUserActivity } from "@/lib/instance-activity";
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
@@ -2228,6 +2230,21 @@ export async function PATCH(
   }
 }
 
+async function removeDeletedInstanceDns(instance: HermesInstanceRow) {
+  const domain = deriveDnsDomainFromGatewayUrl(instance.gateway_url, instance.subdomain);
+  const context = {
+    source: "instances",
+    route: "/api/instances/[id]",
+    instanceId: instance.id,
+    userId: instance.user_id,
+  };
+  if (domain) {
+    await removeInstanceDnsBestEffort(instance.subdomain, context, { dnsDomain: domain });
+  } else {
+    await removeInstanceDnsBestEffort(instance.subdomain, context);
+  }
+}
+
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -2261,6 +2278,69 @@ export async function DELETE(
           failureType: "instance_delete_confirmation_required",
         }
       );
+    }
+
+    if (instance.lifecycle_state === "archiving" || instance.lifecycle_state === "restoring") {
+      return apiError(
+        "Wait for archiving or restoration to finish, then retry deletion.",
+        409,
+        { failureType: "instance_delete_cold_operation_in_progress", retryable: true },
+      );
+    }
+
+    if (isArchivedInstanceDelete(instance)) {
+      const result = await deleteArchivedInstance(supabaseAdmin!, instance);
+      if (result.kind !== "deleted") {
+        const failureType = `instance_delete_archived_${result.kind}`;
+        const responses = {
+          archive_invalid: { status: 409, message: "The archive identity could not be verified. Contact support to finish deletion." },
+          instance_changed: { status: 409, message: "The instance is busy or has changed. Refresh and retry deletion." },
+          runtime_present: { status: 409, message: "The instance still has a VM. Contact support to finish deletion." },
+          runtime_unverified: { status: 502, message: "The VM could not be verified as removed. Retry deletion to finish." },
+          storage_failed: { status: 502, message: "The archive and backups could not be verified as removed. Retry deletion to finish." },
+          claim_failed: { status: 500, message: "The deletion could not be started. Retry deletion to finish." },
+          record_failed: { status: 500, message: "The archive and backups were removed, but the record could not be updated. Retry deletion to finish." },
+        };
+        const { status, message } = responses[result.kind];
+        if ("error" in result) {
+          log.error("Archived instance deletion stopped", result.error, {
+            source: "instances",
+            route: "/api/instances/[id]",
+            method: "DELETE",
+            instanceId: id,
+            userId,
+            failureType,
+          });
+        }
+        return apiError(message, status, {
+          failureType,
+          retryable: result.kind !== "archive_invalid" && result.kind !== "runtime_present",
+        });
+      }
+
+      if (result.finalized) {
+        await removeDeletedInstanceDns(instance);
+        await reportOpsEvent({
+          source: "instances.delete",
+          severity: "warn",
+          title: "User instance delete",
+          message: `User ${userId} deleted archived instance ${id} and its stored backups`,
+          route: "/api/instances/[id]",
+          userId,
+          instanceId: id,
+          metadata: {
+            actor_user_id: userId,
+            instance_id: id,
+            previous_status: instance.status,
+            previous_lifecycle_state: instance.lifecycle_state,
+            infrastructure_provider: "proxmox",
+            cold_storage_removed: true,
+            delete_reason: deleteReason,
+            delete_reason_note: deleteReasonNote,
+          },
+        });
+      }
+      return apiSuccess({ deleted: true });
     }
 
     // Resolve from config first, then DB columns. This catches legacy rows
@@ -2656,25 +2736,7 @@ export async function DELETE(
       }
     }
 
-    const persistedDnsDomain = deriveDnsDomainFromGatewayUrl(
-      instance!.gateway_url,
-      instance!.subdomain,
-    );
-    const dnsCleanupContext = {
-      source: "instances",
-      route: "/api/instances/[id]",
-      instanceId: id,
-      userId,
-    };
-    if (persistedDnsDomain) {
-      await removeInstanceDnsBestEffort(
-        instance!.subdomain,
-        dnsCleanupContext,
-        { dnsDomain: persistedDnsDomain },
-      );
-    } else {
-      await removeInstanceDnsBestEffort(instance!.subdomain, dnsCleanupContext);
-    }
+    await removeDeletedInstanceDns(instance);
 
     // Mark the instance as deleted, AND release any proxmox_vmid claim
     // so the next provision can reuse the slot. The unique index
@@ -3013,6 +3075,20 @@ export async function POST(
         newIpv4: restoreResult.newIpv4,
         restoredAt: restoreResult.restoredAt,
       });
+    }
+
+    if ((ENTITLEMENT_GATED_INSTANCE_ACTIONS.has(action) || action === "stop")
+      && blocksInstanceLiveMutation(instance!)) {
+      const failureType = isColdLifecycleRow
+        ? "instance_action_requires_cold_restore"
+        : "instance_action_lifecycle_busy";
+      return apiError(
+        isColdLifecycleRow
+          ? "This instance is in cold storage. Use Start to restore it before running other runtime actions."
+          : "This instance is busy with a lifecycle operation. Refresh before trying another runtime action.",
+        409,
+        { failureType },
+      );
     }
 
     // Legacy "dormant_reclaimed" path — pre-cold-storage archive system.

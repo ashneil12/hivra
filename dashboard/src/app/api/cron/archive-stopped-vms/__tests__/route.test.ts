@@ -144,7 +144,8 @@ describe("GET /api/cron/archive-stopped-vms time budget", () => {
     expect(archiveInstance).toHaveBeenCalledTimes(1);
     const call = (archiveInstance as jest.Mock).mock.calls[0];
     // archiveInstance(supabase, instanceId, deps, options)
-    const options = call[3] as { maxScriptTimeoutMs?: number };
+    const options = call[3] as { maxScriptTimeoutMs?: number; pausedBefore?: string };
+    expect(options.pausedBefore).toBe("2026-06-22T03:00:00.000Z");
     const timeout = options?.maxScriptTimeoutMs ?? 0;
     expect(timeout).toBeGreaterThan(0);
     // The SCRIPT budget must reserve the ~180s post-archive tail (manifest +

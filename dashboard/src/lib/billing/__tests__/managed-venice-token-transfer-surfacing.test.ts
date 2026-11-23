@@ -373,7 +373,9 @@ describe("managed Venice terminal quotes: surfacing flag lifecycle", () => {
     expect(reviewing.manualReview).toBe(1);
 
     rpc.addTransfer(transfer("0xcorrect", QUOTED, "2026-05-16T10:25:00.000Z"));
-    rpc.failNext({ method: "eth_getLogs", status: 413, body: { error: { message: "eth_getLogs is limited to a 2,000 range" } } });
+    // A deterministic (non-range-cap) refusal: range-cap errors are re-tiled
+    // by the shared log helper, so they no longer fail a pass outright.
+    rpc.failNext({ method: "eth_getLogs", status: 400, body: { error: { message: "eth_getLogs rejected the filter" } } });
     const failing = await tickAt(memory, rpc, "2026-05-16T10:30:00.000Z");
     expect(failing).toMatchObject({
       checked: 0,
@@ -385,7 +387,7 @@ describe("managed Venice terminal quotes: surfacing flag lifecycle", () => {
       expect.objectContaining({
         quoteId: "quote_1",
         status: "failed",
-        errorMessage: expect.stringContaining("eth_getLogs is limited to a 2,000 range"),
+        errorMessage: expect.stringContaining("eth_getLogs rejected the filter"),
       }),
     ]);
     expect(quote(memory).transfer_surfacing_pending).toBe(true);

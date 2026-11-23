@@ -234,7 +234,8 @@ describe("gateway Nuphos runtime at the box root", () => {
   it("asks for the Hivra sign-in before the console", async () => {
     const { app, port } = await nuphos();
     const page = await request(port, "/", { Accept: "text/html" }, { auth: false });
-    expect(page.status).toBe(401);
+    expect(page.status).toBe(303);
+    expect(page.headers.location).toBe("/login?next=%2F");
     expect(app.http).toEqual([]);
   });
 

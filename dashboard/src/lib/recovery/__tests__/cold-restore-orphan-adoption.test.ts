@@ -7,11 +7,30 @@ import {
   buildReapScript,
   countReaped,
   summarizeFleetDiscovery,
+  runColdRestoreOrphanAdoptionSweep,
   DISCOVERY_SCRIPT,
   ORPHAN_RESTORE_CANDIDATE_LIFECYCLE_STATES,
   type DiscoveredAgentVm,
   type HostDiscoveryOutcome,
 } from "@/lib/recovery/cold-restore-orphan-adoption";
+import { locateProxmoxInstanceAcrossFleet } from "@/lib/recovery/recover-orphan-provisioning";
+import { applyRestoreRouting } from "@/lib/services/cold-storage-restore-routing";
+import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
+import { supabaseAdmin } from "@/lib/supabase";
+
+jest.mock("@/lib/recovery/recover-orphan-provisioning", () => ({
+  locateProxmoxInstanceAcrossFleet: jest.fn(),
+}));
+jest.mock("@/lib/services/cold-storage-restore-routing", () => ({
+  applyRestoreRouting: jest.fn(),
+}));
+jest.mock("@/lib/services/proxmox-instance-service", () => ({
+  resolveProxmoxHostEnv: jest.fn(() => ({})),
+  runProxmoxHostScript: jest.fn(),
+}));
+jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: jest.fn() } }));
+jest.mock("@/lib/ops-events", () => ({ reportOpsEvent: jest.fn() }));
+jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 const ID_A = "00000000-0000-4000-8000-000000001007";
 const ID_B = "00000000-0000-4000-8000-000000001037";
@@ -206,5 +225,140 @@ describe("ORPHAN_RESTORE_CANDIDATE_LIFECYCLE_STATES", () => {
       "provisioning",
       "restoring",
     ]);
+  });
+});
+
+describe("orphan restore claim safety", () => {
+  const now = "2026-11-20T13:00:00.000Z";
+  const candidate = {
+    id: ID_A,
+    user_id: "user_fixture",
+    gateway_url: "https://fixture.example.com",
+    config: null,
+    proxmox_node: null,
+    archive_uri: `free/${ID_A}/data-20261119T130000Z.tar.zst`,
+    archive_sha256: "a".repeat(64),
+    last_lifecycle_transition_at: "2026-11-20T12:40:00.000Z",
+  };
+  const locate = jest.mocked(locateProxmoxInstanceAcrossFleet);
+  const host = jest.mocked(runProxmoxHostScript);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers().setSystemTime(new Date(now));
+    locate.mockResolvedValue({ status: "gone" });
+    host.mockResolvedValue({ ok: true, stdout: "", stderr: "" });
+    jest.mocked(applyRestoreRouting).mockResolvedValue({ hostCaddy: { ok: true } } as never);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  function mockQueries(rows = [candidate], total = rows.length) {
+    const selection = {
+      eq: jest.fn().mockReturnThis(),
+      is: jest.fn().mockReturnThis(),
+      not: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
+      lt: jest.fn().mockReturnThis(),
+      order: jest.fn().mockReturnThis(),
+      // The page fetch carries `count: "exact"`: the response's `count` is the
+      // filter's total, not the slice length.
+      range: jest.fn().mockImplementation(
+        async (from: number, to: number) => ({ data: rows.slice(from, to + 1), error: null, count: total }),
+      ),
+    };
+    const write = {
+      eq: jest.fn().mockReturnThis(),
+      is: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({ data: { id: ID_A }, error: null }),
+    };
+    const update = jest.fn().mockReturnValue(write);
+    jest.mocked(supabaseAdmin!.from).mockImplementation((table) => {
+      if (table === "proxmox_hosts") {
+        return { select: () => ({ in: async () => ({ data: [{ id: "fixture" }], error: null }) }) } as never;
+      }
+      return { select: () => selection, update } as never;
+    });
+    return { selection, write, update };
+  }
+
+  it("waits beyond the full restore budget and checks the authoritative inventory before resetting", async () => {
+    const { selection, write, update } = mockQueries();
+    const summary = await runColdRestoreOrphanAdoptionSweep();
+    expect(selection.lt).toHaveBeenCalledWith("last_lifecycle_transition_at", "2026-11-20T12:45:00.000Z");
+    expect(locate).toHaveBeenCalledWith(candidate);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ lifecycle_state: "cold_archived" }));
+    expect(write.eq).toHaveBeenCalledWith("last_lifecycle_transition_at", candidate.last_lifecycle_transition_at);
+    expect(write.eq).toHaveBeenCalledWith("archive_uri", candidate.archive_uri);
+    expect(summary.resetToCold).toBe(1);
+  });
+
+  it.each(["inconclusive", "found"] as const)("retains the claim when strict discovery reports %s", async (status) => {
+    const { update } = mockQueries();
+    locate.mockResolvedValue(status === "inconclusive" ? { status } : {
+      status,
+      found: { hostSlug: "maintenance-host", vmid: 231, privateIpv4: "192.0.2.4", gatewayFqdn: "fixture.example.com" },
+    });
+    const summary = await runColdRestoreOrphanAdoptionSweep();
+    expect(update).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({ resetToCold: 0, stillPending: 1 });
+  });
+
+  it("leaves a newer claim in place if the reset compare-and-set lost", async () => {
+    const { write } = mockQueries();
+    write.maybeSingle.mockResolvedValue({ data: null, error: null });
+    const summary = await runColdRestoreOrphanAdoptionSweep();
+    expect(write.eq).toHaveBeenCalledWith("last_lifecycle_transition_at", candidate.last_lifecycle_transition_at);
+    expect(summary).toMatchObject({ resetToCold: 0, stillPending: 1 });
+  });
+
+  it("keeps positive adoption and binds both writes to the corresponding claim", async () => {
+    const { write, update } = mockQueries();
+    host.mockResolvedValue({ ok: true, stdout: `VMINFO 231 hermes-${ID_A} 192.0.2.4 200`, stderr: "" });
+    const summary = await runColdRestoreOrphanAdoptionSweep();
+    expect(locate).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(write.eq).toHaveBeenCalledWith("last_lifecycle_transition_at", candidate.last_lifecycle_transition_at);
+    expect(write.eq).toHaveBeenCalledWith("last_lifecycle_transition_at", now);
+    expect(summary.adopted).toBe(1);
+  });
+
+  it("walks the whole matching set across sweeps instead of re-reading the first page", async () => {
+    // Regression: the loader used to fetch a fixed 25 rows. When the front of
+    // the set kept stopped clones — inconclusive locates that keep the row a
+    // candidate forever — the same 25 loaded every sweep and candidate 26+
+    // was never even fetched. The selection now rotates a bounded page across
+    // the whole matching set on a deterministic order.
+    const stuck = Array.from({ length: 25 }, (_, i) => ({
+      ...candidate,
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    }));
+    const deep = { ...candidate, id: "00000000-0000-4000-8000-0000000000ff26" };
+    const { selection } = mockQueries([...stuck, deep], 26);
+    // The front page's clones are stopped (inconclusive → claims retained);
+    // the deep candidate's is actually gone.
+    locate.mockImplementation(async (c: { id: string }) =>
+      c.id === deep.id ? { status: "gone" as const } : { status: "inconclusive" as const },
+    );
+
+    // Bucket 4 → page 0: the sweep sees only the front window, and the deep
+    // candidate is never fetched (so never checked).
+    jest.setSystemTime(new Date(2 * 60_000 * 4));
+    const first = await runColdRestoreOrphanAdoptionSweep();
+    expect(selection.range).toHaveBeenCalledWith(0, 24);
+    expect(locate).not.toHaveBeenCalledWith(expect.objectContaining({ id: deep.id }));
+    expect(first.resetToCold).toBe(0);
+    expect(first.stillPending).toBe(25);
+
+    // Bucket 5 → page 1: the window advanced — the tail candidate is loaded,
+    // absence-checked, and reset under the same stopped-clone gate.
+    jest.setSystemTime(new Date(2 * 60_000 * 5));
+    const second = await runColdRestoreOrphanAdoptionSweep();
+    expect(selection.range).toHaveBeenCalledWith(25, 49);
+    expect(locate).toHaveBeenCalledWith(expect.objectContaining({ id: deep.id }));
+    expect(second.resetToCold).toBe(1);
   });
 });

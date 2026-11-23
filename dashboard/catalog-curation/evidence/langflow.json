@@ -1,0 +1,73 @@
+{
+  "slug": "langflow",
+  "checkedAt": "2026-11-21T03:25:34.538Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "langflow-ai/langflow is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "langflow-ai/langflow",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "langflowai/langflow:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "langflowai/langflow:latest",
+        "digest": "sha256:0dea79f5a557e1602b5514973484332f479cdb6b71cceb098536ecc231b02d7d",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "fail",
+      "detail": "health /health never returned <400 (last status none)",
+      "evidence": {
+        "container": "hivra-verify-langflow-2rl5tg",
+        "hostPort": 55046,
+        "image": "langflowai/langflow:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-langflow-2rl5tg",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:55046:7860",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-langflow-2rl5tg-data:/app/data",
+          "langflowai/langflow:latest"
+        ],
+        "runStdout": "36cc4a2321023e5564d52834351519bea45015b62188832934981f14df57f527",
+        "health": {
+          "ok": false,
+          "status": null,
+          "seconds": 240.9,
+          "attempts": 108,
+          "error": "fetch failed"
+        },
+        "logsTail": "^^^^^^^^^^^^^^^^^^^^^\n  File \"/app/.venv/lib64/python3.14/site-packages/langflow/main.py\", line 302, in lifespan\n    await initialize_services(fix_migration=fix_migration)\n  File \"/app/.venv/lib64/python3.14/site-packages/langflow/services/utils.py\", line 851, in initialize_services\n    await setup_superuser(settings_service, session)\n  File \"/app/.venv/lib64/python3.14/site-packages/langflow/services/utils.py\", line 240, in setup_superuser\n    raise ValueError(msg)\nValueError: Username and password must be set. Set LANGFLOW_SUPERUSER_PASSWORD before starting Langflow. If you are upgrading an existing auto-login installation, see https://docs.langflow.org/next/api-keys-and-authentication#upgrade-from-auto-login\n\u001b[0m [\u001b[0m\u001b[1m\u001b[34muvicorn.error\u001b[0m]\u001b[0m \u001b[36mservice\u001b[0m=\u001b[35mlangflow\u001b[0m\n\u001b[2m2026-11-21T03:22:10.297145Z\u001b[0m [\u001b[31m\u001b[1merror    \u001b[0m] \u001b[1mApplication startup failed. Exiting.\u001b[0m [\u001b[0m\u001b[1m\u001b[34muvicorn.error\u001b[0m]\u001b[0m \u001b[36mservice\u001b[0m=\u001b[35mlangflow\u001b[0m\n\u001b[2m2026-11-21T03:22:10.314156Z\u001b[0m [\u001b[31m\u001b[1merror    \u001b[0m] \u001b[1mWorker (pid:38) exited with code 3.\u001b[0m [\u001b[0m\u001b[1m\u001b[34mgunicorn.error\u001b[0m]\u001b[0m \u001b[36mservice\u001b[0m=\u001b[35mlangflow\u001b[0m\n\u001b[2m2026-11-21T03:22:10.315932Z\u001b[0m [\u001b[31m\u001b[1merror    \u001b[0m] \u001b[1mShutting down: Master         \u001b[0m [\u001b[0m\u001b[1m\u001b[34mgunicorn.error\u001b[0m]\u001b[0m \u001b[36mservice\u001b[0m=\u001b[35mlangflow\u001b[0m\n\u001b[2m2026-11-21T03:22:10.316090Z\u001b[0m [\u001b[31m\u001b[1merror    \u001b[0m] \u001b[1mReason: Worker failed to boot.\u001b[0m [\u001b[0m\u001b[1m\u001b[34mgunicorn.error\u001b[0m]\u001b[0m \u001b[36mservice\u001b[0m=\u001b[35mlangflow\u001b[0m\n"
+      }
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "no floor.ram in spec or no memory reading"
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "boot: health /health never returned <400 (last status none)"
+  ]
+}

@@ -5,6 +5,8 @@
 // what Manage offers cannot drift from what the server will do. Pure and
 // isomorphic: no server imports, no I/O.
 
+import { UNIVERSAL_CATALOG_IDS } from "./catalog-manifests";
+
 /** The stored-row fields these predicates read. Values are untrusted. */
 export interface LifecycleSupportRow {
   type?: unknown;
@@ -202,7 +204,7 @@ export type RuntimeUpdateRefusal = "digitalocean" | "prepared" | "my-cloud";
  * left out: its runtime probe is bound to the release it was installed from,
  * so an in-place update would fail its next Start or Restart.
  */
-export const PROVIDER_RUNTIME_UPDATE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos"] as const;
+export const PROVIDER_RUNTIME_UPDATE_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "hermes", "openbot", "nuphos", ...UNIVERSAL_CATALOG_IDS] as const;
 
 /**
  * Why update_runtime is refused for this row, before any lease or host call,

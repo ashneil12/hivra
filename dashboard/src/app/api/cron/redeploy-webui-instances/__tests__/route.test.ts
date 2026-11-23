@@ -36,6 +36,10 @@ jest.mock("@/lib/hermes-releases/box", () => ({
 jest.mock("@/lib/services/instance-orchestrator", () => ({
   applyLiveUpdate: jest.fn(),
   resolveInstanceIpv4: jest.fn(),
+  // The eligibility arm computes its abandoned-attempt bound from this —
+  // keep it in lockstep with the real constant rather than requireActual
+  // (the module's transitive graph is out of scope for this suite).
+  LIVE_UPDATE_ATTEMPT_TAKEOVER_MS: 25 * 60 * 1000,
 }));
 
 const FLEET_SYNC = systemLiveUpdate("fleet_sync");
@@ -502,23 +506,28 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
     expect(body.data.failed).toBe(0);
     // Confirms we queried for the right shape — webfree-backend set + active-ish lifecycle.
     expect(query.backendInMock).toHaveBeenCalledWith("backend", ["webui", "gateway"]);
-    // Every lifecycle literal we filter on MUST be a member of the column's
-    // CHECK vocabulary. The original filter used STATUS words ('running',
-    // 'provisioned') that the constraint does not allow, so it silently
-    // collapsed to lifecycle_state='active' and starved everything else.
     const orArg = String(query.orMock.mock.calls[0][0]);
-    const lifecycleLiterals = (orArg.match(/lifecycle_state\.in\.\(([^)]*)\)/)?.[1] ?? "")
-      .split(",")
-      .filter(Boolean);
-    expect(lifecycleLiterals.length).toBeGreaterThan(0);
-    for (const literal of lifecycleLiterals) {
-      expect(LIFECYCLE_CHECK_STATES).toContain(literal);
-    }
-    // 'failed' must be eligible: a dispatch failure stamps lifecycle_state=
-    // 'failed', so excluding it EJECTS a box from the sweep permanently.
-    expect(lifecycleLiterals).toContain("failed");
-    // The status arm rescues boxes whose lifecycle_state drifted...
-    expect(orArg).toContain("status.eq.running");
+    // lifecycle_state='active' plus the status='running' rescue arm — a
+    // failed row with a non-running status has no VM the redeploy can reach,
+    // and sweeping one manufactures a guaranteed daily failure (prod 2026-11).
+    // The third arm re-admits exactly the reachable-failed case — plus the
+    // may-have-reached one, a launch whose transport died past connect and
+    // cannot prove the update never ran. A bare 'failed' arm is still NOT
+    // eligible, only a row whose last update ran (or may be running) on the
+    // guest (the substate applyLiveUpdate stamps on a launch failure).
+    // The fourth arm re-admits the update-report degraded write: a box that
+    // reported its update failed while the failed-state stamp errored is
+    // left 'redeploying' with ONLY the reached marker — and only once the
+    // attempt stamp is old enough to be abandoned (a fresh one could still
+    // settle and must not burn a batch slot).
+    expect(orArg).toContain(
+      "lifecycle_state.eq.active,status.eq.running," +
+        'and(lifecycle_state.eq.failed,lifecycle_substate.in.("live_update_failed_vm_reached","live_update_failed_vm_maybe_reached")),'
+    );
+    expect(orArg).toMatch(
+      /and\(status\.eq\.redeploying,lifecycle_substate\.in\.\("live_update_failed_vm_reached","live_update_failed_vm_maybe_reached"\),last_lifecycle_transition_at\.lt\."\d{4}-\d{2}-\d{2}T[^"]+"\)$/,
+    );
+    expect(LIFECYCLE_CHECK_STATES).toContain("active");
     // ...and the deny-list is what keeps that arm from redeploying a destroyed
     // (cold_archived), mid-deletion or billing-suspended box on a stale status.
     expect(query.notMock).toHaveBeenCalledWith(
@@ -552,6 +561,37 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
     for (const call of mockedApplyLiveUpdate.mock.calls) {
       expect(call[4]).toEqual({ initiator: FLEET_SYNC, imageIntent: "release" });
     }
+  });
+
+  it("admits a failed row only when its last update reached — or may have reached — the guest", async () => {
+    // applyLiveUpdate stamps lifecycle_substate on every launch failure:
+    // 'live_update_failed_vm_reached' when the update died ON the box (a real
+    // retry — recovery can restart the VM but never re-applies the release),
+    // 'live_update_failed_vm_maybe_reached' when the transport died past
+    // connect so the launch may already be running (dropping it would orphan
+    // the row), and 'live_update_failed_vm_unreachable' when the launch
+    // provably never got a command on the guest (recovery owns that row —
+    // powered off, wrong VMID, dead agent channel, a connect-phase refusal).
+    // The sweep's failed arm must require one of the two retry-eligible
+    // markers: unreachable rows and rows predating the marker (NULL
+    // substate) stay out, so the sweep cannot re-create the guaranteed daily
+    // failure the live-only filter was added to stop.
+    const query = fleetSelectQuery([]);
+    mockedSupabaseAdmin.from.mockReturnValue(query);
+
+    const response = await GET(getRequest());
+    expect(response.status).toBe(200);
+
+    const orArg = String(query.orMock.mock.calls[0][0]);
+    expect(orArg).toContain(
+      'and(lifecycle_state.eq.failed,lifecycle_substate.in.("live_update_failed_vm_reached","live_update_failed_vm_maybe_reached"))'
+    );
+    expect(orArg).not.toContain("live_update_failed_vm_unreachable");
+    // No bare failed arm anywhere: 'failed' may only appear inside the
+    // substate-qualified and(...) term.
+    expect(orArg).not.toMatch(/(^|,)lifecycle_state\.eq\.failed(,|$)/);
+    // Teardown-armed rows stay excluded regardless of any substate.
+    expect(query.neqMock).toHaveBeenCalledWith("status", "scheduled_for_deletion");
   });
 
   describe("release registry", () => {
@@ -588,6 +628,43 @@ describe("GET /api/cron/redeploy-webui-instances (scheduled fleet sweep)", () =>
       );
       // The skipped box is current: its synced-at moves, so the ops staleness signal stays honest.
       expect(query.updateMock).toHaveBeenCalledWith(expect.objectContaining({ last_synced_at: expect.any(String) }));
+    });
+
+    it("retries a box whose update stack is unhealthy even when its digest already matches the target", async () => {
+      // A failed or paused update can leave the target image running (digest
+      // matches, direction 'none') with the roll itself still broken — the
+      // box's own update stack reports update_health failed/paused. The plan
+      // gives every paused, failed or rolled-back update a Try again that
+      // reruns the same update, and the fleet sweep is that retry for
+      // governed boxes; a healthy dashboard update is also what clears the
+      // box-side pause marker. Treating the digest match as "current" would
+      // never retry it AND would stamp last_synced_at over a failed update.
+      sweep([
+        { id: "failed-on-target", name: "a" },
+        { id: "paused-on-target", name: "b" },
+        { id: "healthy-on-target", name: "c" },
+      ]);
+      (loadBoxRelease as jest.Mock).mockImplementation(async (_db: unknown, id: string) => ({
+        ...state({ target: release(2), direction: "none", autoMove: false, updateAvailable: false }),
+        updateHealth:
+          id === "failed-on-target" ? "failed" : id === "paused-on-target" ? "paused" : "ok",
+      }));
+
+      const body = await (await GET(getRequest())).json();
+
+      // Both unhealthy boxes go through applyLiveUpdate (the documented Try
+      // again); only the healthy one is skipped and stamped synced.
+      expect(mockedApplyLiveUpdate).toHaveBeenCalledTimes(2);
+      expect(mockedApplyLiveUpdate.mock.calls.map((call) => call[0].id).sort()).toEqual([
+        "failed-on-target",
+        "paused-on-target",
+      ]);
+      expect(body.data).toMatchObject({ launched: 2, skipped: 1, failed: 0 });
+      expect(body.data.results).toEqual(
+        expect.arrayContaining([
+          { id: "healthy-on-target", name: "c", success: false, skipped: true, error: "Already on its target release" },
+        ])
+      );
     });
 
     it("does not move a box the registry offers nothing, or will not move automatically", async () => {
