@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { GET, maxDuration } from "../route";
 import { reconcilePendingManagedVeniceTokenQuotes } from "@/lib/billing/managed-venice-token-reconciliation";
+import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 
@@ -17,6 +18,10 @@ jest.mock("@/lib/supabase", () => ({
 
 jest.mock("@/lib/ops-events", () => ({
   reportOpsEvent: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("@/lib/cron-heartbeat", () => ({
+  recordCronHeartbeat: jest.fn(async () => undefined),
 }));
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
@@ -56,6 +61,8 @@ describe("GET /api/cron/managed-venice-token-reconciliation", () => {
 
     expect(response.status).toBe(401);
     expect(reconcilePendingManagedVeniceTokenQuotes).not.toHaveBeenCalled();
+    // An auth failure is not a failed run — it must not touch the heartbeat.
+    expect(recordCronHeartbeat).not.toHaveBeenCalled();
   });
 
   it("runs pending token quote reconciliation with a bounded limit", async () => {
@@ -202,6 +209,12 @@ describe("GET /api/cron/managed-venice-token-reconciliation", () => {
       expect.objectContaining({
         failureType: "managed_venice_token_reconciliation_cron_failed",
       })
+    );
+    // A thrown run must stamp ok:false immediately — waiting for the
+    // staleness window would hide a dead cron for hours.
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "managed-venice-token-reconciliation",
+      expect.objectContaining({ ok: false, detail: expect.stringContaining("exception") })
     );
   });
 });

@@ -96,6 +96,7 @@ function heartbeat(over: Partial<CronHeartbeatSnapshot> = {}): CronHeartbeatSnap
     okCount: 100,
     consecutiveFailures: 0,
     lastDetail: null,
+    createdAt: null,
     ...over,
   };
 }
@@ -198,6 +199,36 @@ describe("evaluateCustomerIncidents box_down", () => {
     expect(result.findings).toHaveLength(0);
   });
 
+  it("ignores non-surface events when picking the newest: unit_failing cannot clear an outage", () => {
+    const a = agent();
+    // recovery_exhausted 30m ago, then a unit_failing receipt 5m ago. The
+    // unit_failing is newer by event_at but is not a surface state change —
+    // the box is still down.
+    const result = evaluateCustomerIncidents(evalInput({
+      agents: [a],
+      watchdogEventsByAgent: new Map([[a.id, [
+        watchdogEvent({ eventType: "unit_failing", eventAt: iso(5 * MIN), eventId: "e4-2" }),
+        watchdogEvent({ eventType: "recovery_exhausted", eventAt: iso(30 * MIN), eventId: "e4-1" }),
+      ]]]),
+    }));
+    expect(result.findings.map((f) => f.rule)).toEqual(["box_down"]);
+    // The ignored event is still in the diagnosis timeline.
+    expect(result.findings[0].watchdogTimeline.map((e) => e.eventType)).toEqual([
+      "unit_failing",
+      "recovery_exhausted",
+    ]);
+
+    // Same shape with a watchdog_error on top of an old gateway_down.
+    const noisy = evaluateCustomerIncidents(evalInput({
+      agents: [agent({ id: "a-noisy" })],
+      watchdogEventsByAgent: new Map([["a-noisy", [
+        watchdogEvent({ eventType: "watchdog_error", eventAt: iso(2 * MIN), eventId: "e5-2" }),
+        watchdogEvent({ eventType: "gateway_down", eventAt: iso(45 * MIN), eventId: "e5-1" }),
+      ]]]),
+    }));
+    expect(noisy.findings.map((f) => f.key)).toEqual(["box_down:a-noisy"]);
+  });
+
   it("does not fire for sleeping or non-running agents, and skips admin users", () => {
     const sleeping = agent({ id: "a-sleep", sleepState: "sleeping" });
     const stopped = agent({ id: "a-stop", status: "stopped" });
@@ -211,6 +242,23 @@ describe("evaluateCustomerIncidents box_down", () => {
       agents: [sleeping, stopped, adminAgent],
       watchdogEventsByAgent: events,
       adminUserIds: new Set(["admin-1"]),
+    }));
+    expect(result.findings).toHaveLength(0);
+  });
+
+  it("matches admin users regardless of id casing on either side", () => {
+    // Stored user ids keep their database casing; configured admin ids are
+    // lowercased by the allowlist parser. Both directions must normalize.
+    const mixedCaseStored = agent({ id: "a-case-1", userId: "User_Admin-1" });
+    const lowerStored = agent({ id: "a-case-2", userId: "admin-2" });
+    const result = evaluateCustomerIncidents(evalInput({
+      agents: [mixedCaseStored, lowerStored],
+      // Uppercase entry exercises normalization of the configured side too.
+      adminUserIds: new Set(["user_admin-1", "ADMIN-2"]),
+      watchdogEventsByAgent: new Map([
+        ["a-case-1", [watchdogEvent({ eventAt: iso(60 * MIN) })]],
+        ["a-case-2", [watchdogEvent({ eventAt: iso(60 * MIN) })]],
+      ]),
     }));
     expect(result.findings).toHaveLength(0);
   });
@@ -229,6 +277,60 @@ describe("evaluateCustomerIncidents box_down", () => {
 // ---------------------------------------------------------------------------
 // evaluateCustomerIncidents — launch_failed / lifecycle_stuck / cron_unhealthy
 // ---------------------------------------------------------------------------
+
+describe("evaluateCustomerIncidents box_unreachable", () => {
+  it("fires when the public probe outage is at least 10 minutes old", () => {
+    const a = agent();
+    const result = evaluateCustomerIncidents(evalInput({
+      agents: [a],
+      publicOutageStartedAtMs: new Map([[a.id, NOW - 15 * MIN]]),
+    }));
+    expect(result.findings).toHaveLength(1);
+    const finding = result.findings[0];
+    expect(finding.rule).toBe("box_unreachable");
+    expect(finding.key).toBe("box_unreachable:agent-1");
+    expect(finding.subjectKind).toBe("hivra_agent");
+    expect(finding.userId).toBe("user-1");
+    expect(finding.route).toBe("/dashboard/agent/agent-1");
+  });
+
+  it("does not fire while the outage is younger than 10 minutes", () => {
+    const a = agent();
+    const result = evaluateCustomerIncidents(evalInput({
+      agents: [a],
+      publicOutageStartedAtMs: new Map([[a.id, NOW - 5 * MIN]]),
+    }));
+    expect(result.findings).toHaveLength(0);
+  });
+
+  it("marks the key unknown when the probe could not be evaluated", () => {
+    const a = agent();
+    const result = evaluateCustomerIncidents(evalInput({
+      agents: [a],
+      publicProbeUnknownAgentIds: new Set([a.id]),
+      publicOutageStartedAtMs: new Map([[a.id, NOW - 60 * MIN]]),
+    }));
+    expect(result.findings).toHaveLength(0);
+    expect(result.unknownKeys.has("box_unreachable:agent-1")).toBe(true);
+  });
+
+  it("does not fire for sleeping, non-running or admin agents", () => {
+    const sleeping = agent({ id: "agent-sleep", sleepState: "asleep" });
+    const stopped = agent({ id: "agent-stop", status: "stopped" });
+    const admin = agent({ id: "agent-admin", userId: "admin-1" });
+    const outages = new Map<string, number>([
+      [sleeping.id, NOW - 60 * MIN],
+      [stopped.id, NOW - 60 * MIN],
+      [admin.id, NOW - 60 * MIN],
+    ]);
+    const result = evaluateCustomerIncidents(evalInput({
+      agents: [sleeping, stopped, admin],
+      adminUserIds: new Set(["admin-1"]),
+      publicOutageStartedAtMs: outages,
+    }));
+    expect(result.findings).toHaveLength(0);
+  });
+});
 
 describe("evaluateCustomerIncidents launch_failed", () => {
   const schedules = new Map<string, CronScheduleInfo>();
@@ -363,6 +465,40 @@ describe("evaluateCustomerIncidents cron_unhealthy", () => {
       cronSchedules: schedules,
     }));
     expect(fresh.findings).toHaveLength(0);
+  });
+
+  it("fires for a cron that ran but never succeeded once its row is 3x its period old", () => {
+    // test-cron runs every 5 min → never-succeeded budget is 15 min. The row
+    // was created an hour ago and has failed every run since; last_run_at
+    // stays fresh on each failure so only created_at exposes the dead cron.
+    const dead = evaluateCustomerIncidents(evalInput({
+      heartbeats: [heartbeat({
+        cronName: "test-cron",
+        lastRunAt: iso(1 * MIN),
+        lastSuccessAt: null,
+        runCount: 50,
+        okCount: 0,
+        consecutiveFailures: 50,
+        createdAt: iso(60 * MIN),
+      })],
+      cronSchedules: schedules,
+    }));
+    expect(dead.findings.map((f) => f.key)).toEqual(["cron_unhealthy:test-cron"]);
+
+    // Same failing shape but the heartbeat row is only 10 minutes old —
+    // inside the 15-minute never-succeeded grace, sub-streak, fresh last run.
+    const grace = evaluateCustomerIncidents(evalInput({
+      heartbeats: [heartbeat({
+        cronName: "test-cron",
+        lastRunAt: iso(1 * MIN),
+        lastSuccessAt: null,
+        runCount: 2,
+        consecutiveFailures: 2,
+        createdAt: iso(10 * MIN),
+      })],
+      cronSchedules: schedules,
+    }));
+    expect(grace.findings).toHaveLength(0);
   });
 });
 
@@ -519,51 +655,205 @@ interface FakeDbConfig {
   subscriptions?: Row[];
   openIncidents?: Row[];
   watchdogByAgent?: Record<string, Row[]>;
+  /** Open box.public_probe.* rows (public-reachability signal rows). */
+  probeRows?: Row[];
+  /** When true, the open probe-row read fails (box_unreachable goes unknown). */
+  publicProbeRowsFail?: boolean;
   /** When true, per-agent watchdog event queries fail (box_down goes unknown). */
   watchdogFetchFails?: boolean;
   /** When true, single-row subject lookups (launch_failed expiry checks) fail. */
   subjectLookupFails?: boolean;
+  /** When true, single-row subject lookups throw instead of returning an error. */
+  subjectLookupThrows?: boolean;
+  /** When set, queries against this table fail from the second keyset page on. */
+  failKeysetPageFor?: string;
 }
 
-/** Thenable query-builder fake: records the chain, resolves per table on await. */
-function fakeIncidentDb(config: FakeDbConfig) {
-  const resolveTable = (
-    table: string,
-    calls: unknown[][],
-  ): { data: Row[] | null; error: { message: string } | null } => {
-    const ok = (data: Row[]) => ({ data, error: null });
-    const singleLookup = calls.some((c) => c[0] === "maybeSingle" || c[0] === "single");
-    if (
-      config.subjectLookupFails &&
-      singleLookup &&
-      (table === "hivra_agents" || table === "hermes_instances")
-    ) {
-      return { data: null, error: { message: "subject lookup failed" } };
+// PostgREST caps every response at max_rows even when the query asks for
+// more — the fake applies the same cap so a scan that stops paginating
+// silently loses rows exactly like production would.
+const FAKE_POSTGREST_MAX_ROWS = 1000;
+
+function fakeColumnValue(row: Row, column: string): unknown {
+  if (column.includes("->>")) {
+    const [base, key] = column.split("->>");
+    const container = row[base.trim()];
+    if (!container || typeof container !== "object") return undefined;
+    return (container as Row)[key.trim()];
+  }
+  return row[column];
+}
+
+function fakeCompare(a: unknown, b: unknown): number {
+  const sa = String(a);
+  const sb = String(b);
+  const na = Number(a);
+  const nb = Number(b);
+  if (
+    sa.trim() !== "" &&
+    sb.trim() !== "" &&
+    Number.isFinite(na) &&
+    Number.isFinite(nb)
+  ) {
+    return na - nb;
+  }
+  return sa < sb ? -1 : sa > sb ? 1 : 0;
+}
+
+function fakeValuesEqual(a: unknown, b: unknown): boolean {
+  if (a == null || b == null) return false;
+  return a === b || String(a) === String(b);
+}
+
+const FAKE_FILTER_METHODS = new Set([
+  "eq",
+  "neq",
+  "is",
+  "not",
+  "gt",
+  "gte",
+  "lt",
+  "lte",
+  "in",
+  "like",
+]);
+
+function fakeRowMatches(row: Row, call: unknown[]): boolean {
+  const [method, a1, a2, a3] = call as [string, string, unknown, unknown];
+  switch (method) {
+    case "eq":
+    case "neq": {
+      const matched = fakeValuesEqual(fakeColumnValue(row, a1), a2);
+      return method === "eq" ? matched : !matched;
     }
-    if (table === "hivra_agents") return ok(config.agents ?? []);
-    if (table === "hermes_instances") return ok(config.instances ?? []);
-    if (table === "ops_cron_heartbeats") return ok(config.heartbeats ?? []);
-    if (table === "hermes_subscriptions") return ok(config.subscriptions ?? []);
-    if (table === "ops_events") {
-      const isIncidentFeed = calls.some(
-        (c) => c[0] === "like" && c[1] === "source" && String(c[2]).startsWith("incident"),
-      );
-      if (isIncidentFeed) return ok(config.openIncidents ?? []);
-      const instanceCall = calls.find((c) => c[0] === "eq" && c[1] === "instance_id");
-      const agentId = instanceCall ? String(instanceCall[2]) : null;
-      if (config.watchdogFetchFails) {
-        return { data: null, error: { message: "watchdog events query failed" } };
+    case "is":
+      return a2 === null
+        ? fakeColumnValue(row, a1) == null
+        : fakeColumnValue(row, a1) === a2;
+    case "not": {
+      // .not(column, op, value)
+      const column = a1;
+      const op = a2 as string;
+      const value = a3;
+      if (op === "is") {
+        return value === null
+          ? fakeColumnValue(row, column) != null
+          : fakeColumnValue(row, column) !== value;
       }
-      return ok(agentId ? config.watchdogByAgent?.[agentId] ?? [] : []);
+      if (op === "eq") {
+        return !fakeValuesEqual(fakeColumnValue(row, column), value);
+      }
+      return true;
     }
-    return ok([]);
+    case "gt":
+    case "gte":
+    case "lt":
+    case "lte": {
+      const value = fakeColumnValue(row, a1);
+      if (value == null) return false;
+      const cmp = fakeCompare(value, a2);
+      if (method === "gt") return cmp > 0;
+      if (method === "gte") return cmp >= 0;
+      if (method === "lt") return cmp < 0;
+      return cmp <= 0;
+    }
+    case "in":
+      return (
+        Array.isArray(a2) &&
+        a2.some((candidate) => fakeValuesEqual(fakeColumnValue(row, a1), candidate))
+      );
+    case "like": {
+      const value = fakeColumnValue(row, a1);
+      if (typeof value !== "string") return false;
+      const pattern = String(a2);
+      if (pattern.endsWith("%") && !pattern.slice(0, -1).includes("%")) {
+        return value.startsWith(pattern.slice(0, -1));
+      }
+      return value === pattern;
+    }
+    default:
+      return true;
+  }
+}
+
+function fakeApplyOrder(rows: Row[], orderCalls: unknown[][]): Row[] {
+  if (orderCalls.length === 0) return rows;
+  const keys = orderCalls.map((call) => {
+    const options = call[2] as { ascending?: boolean } | undefined;
+    return {
+      column: String(call[1]),
+      ascending: options?.ascending !== false,
+    };
+  });
+  return [...rows].sort((left, right) => {
+    for (const key of keys) {
+      const a = fakeColumnValue(left, key.column);
+      const b = fakeColumnValue(right, key.column);
+      if (a == null && b == null) continue;
+      if (a == null) return key.ascending ? 1 : -1;
+      if (b == null) return key.ascending ? -1 : 1;
+      const cmp = fakeCompare(a, b);
+      if (cmp !== 0) return key.ascending ? cmp : -cmp;
+    }
+    return 0;
+  });
+}
+
+/** Thenable query-builder fake: applies filters, ordering and the row cap. */
+function fakeIncidentDb(config: FakeDbConfig) {
+  // ops_events holds every event-ish row: open incident rows, relayed
+  // watchdog receipts (keyed to their agent) and public-probe rows. The
+  // source/instance filters pick the right subset per query, like production.
+  const opsEventRows: Row[] = [
+    ...(config.openIncidents ?? []),
+    ...(config.probeRows ?? []),
+    ...Object.entries(config.watchdogByAgent ?? {}).flatMap(([agentId, rows]) =>
+      rows.map((row) => ({
+        source: "box.surface_watchdog.event",
+        instance_id: agentId,
+        ...row,
+      })),
+    ),
+  ];
+  const rowsFor = (table: string): Row[] => {
+    switch (table) {
+      case "hivra_agents":
+        return config.agents ?? [];
+      case "hermes_instances":
+        return config.instances ?? [];
+      case "ops_cron_heartbeats":
+        return config.heartbeats ?? [];
+      case "hermes_subscriptions":
+        return config.subscriptions ?? [];
+      case "ops_events":
+        return opsEventRows;
+      default:
+        return [];
+    }
   };
+  const recordedCalls: Array<{ table: string; calls: unknown[][] }> = [];
   return {
+    calls: recordedCalls,
     from(table: string) {
       const calls: unknown[][] = [];
       const chain: Record<string, unknown> = {};
       let terminal: "none" | "single" | "maybe" = "none";
-      for (const method of ["select", "eq", "is", "not", "gte", "in", "like", "order", "limit", "range"]) {
+      for (const method of [
+        "select",
+        "update",
+        "eq",
+        "is",
+        "not",
+        "gte",
+        "gt",
+        "lt",
+        "lte",
+        "in",
+        "like",
+        "order",
+        "limit",
+        "range",
+      ]) {
         chain[method] = (...args: unknown[]) => {
           calls.push([method, ...args]);
           return chain;
@@ -580,16 +870,66 @@ function fakeIncidentDb(config: FakeDbConfig) {
         return chain;
       };
       const resolve = (): { data: unknown; error: { message: string } | null } => {
-        const result = resolveTable(table, calls);
-        if (result.error || !result.data) return { data: result.data, error: result.error };
-        let rows = result.data;
+        recordedCalls.push({ table, calls: [...calls] });
+        const isWatchdogQuery =
+          table === "ops_events" &&
+          calls.some((c) => c[0] === "eq" && c[1] === "instance_id");
+        if (
+          config.subjectLookupThrows &&
+          terminal !== "none" &&
+          (table === "hivra_agents" || table === "hermes_instances")
+        ) {
+          throw new Error("subject lookup exploded");
+        }
+        if (
+          config.subjectLookupFails &&
+          terminal !== "none" &&
+          (table === "hivra_agents" || table === "hermes_instances")
+        ) {
+          return { data: null, error: { message: "subject lookup failed" } };
+        }
+        if (config.watchdogFetchFails && isWatchdogQuery) {
+          return { data: null, error: { message: "watchdog events query failed" } };
+        }
+        if (config.failKeysetPageFor === table && calls.some((c) => c[0] === "gt")) {
+          return { data: null, error: { message: "keyset page two failed" } };
+        }
+        const isProbeRowsQuery =
+          table === "ops_events" &&
+          calls.some(
+            (c) => c[0] === "eq" && c[1] === "source" && c[2] === "box.public_probe.unreachable",
+          );
+        if (config.publicProbeRowsFail && isProbeRowsQuery) {
+          return { data: null, error: { message: "probe rows read failed" } };
+        }
+        let rows = rowsFor(table).filter((row) =>
+          calls
+            .filter((c) => FAKE_FILTER_METHODS.has(String(c[0])))
+            .every((call) => fakeRowMatches(row, call)),
+        );
+        const updateCall = calls.find((c) => c[0] === "update");
+        if (updateCall) {
+          // .update(payload).eq(...): mutate every filtered row in place so
+          // later reads in the same scan see the write, like production.
+          const payload = updateCall[1] as Row;
+          for (const row of rows) Object.assign(row, payload);
+          return { data: rows, error: null };
+        }
+        rows = fakeApplyOrder(
+          rows,
+          calls.filter((c) => c[0] === "order"),
+        );
+        const limitCall = calls.find((c) => c[0] === "limit");
+        const cap = Math.min(
+          limitCall ? Number(limitCall[1]) : FAKE_POSTGREST_MAX_ROWS,
+          FAKE_POSTGREST_MAX_ROWS,
+        );
+        rows = rows.slice(0, cap);
         const rangeCall = calls.find((c) => c[0] === "range");
         if (rangeCall) {
           rows = rows.slice(Number(rangeCall[1]), Number(rangeCall[2]) + 1);
         }
         if (terminal !== "none") {
-          const idCall = calls.find((c) => c[0] === "eq" && c[1] === "id");
-          if (idCall) rows = rows.filter((r) => r.id === idCall[2]);
           return { data: rows[0] ?? null, error: null };
         }
         return { data: rows, error: null };
@@ -684,7 +1024,12 @@ describe("runCustomerIncidentScan", () => {
     const summary = await runCustomerIncidentScan(second as never);
     expect(summary).toMatchObject({ opened: 0, stillOpen: 1 });
     expect(second.report as jest.Mock).not.toHaveBeenCalled();
-    expect(second.probe as jest.Mock).not.toHaveBeenCalled();
+    // The gateway-independent signal probe still runs once per candidate
+    // (healthz only); no diagnosis probes fire for a still-open incident.
+    expect(second.probe as jest.Mock).toHaveBeenCalledTimes(1);
+    expect((second.probe as jest.Mock).mock.calls[0][0]).toBe(
+      "https://box-1.hivra.example/healthz",
+    );
   });
 
   it("archives the row and sends exactly one resolved notice when the rule clears", async () => {
@@ -704,7 +1049,9 @@ describe("runCustomerIncidentScan", () => {
     const summary = await runCustomerIncidentScan(deps as never);
 
     expect(summary).toMatchObject({ opened: 0, resolved: 1, failed: 0 });
-    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-open-1");
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "evt-open-1" }),
+    );
     expect(deps.notifyResolved as jest.Mock).toHaveBeenCalledTimes(1);
     const notice = (deps.notifyResolved as jest.Mock).mock.calls[0][0];
     expect(notice.title).toBe("Resolved: Customer incident: agent box down");
@@ -781,7 +1128,9 @@ describe("runCustomerIncidentScan", () => {
     expect(ops.page).toBe(false);
     // The stale open row for a different key still resolves (archive) but no
     // resolved notice is sent off-production.
-    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-resolved-1");
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "evt-resolved-1" }),
+    );
     expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
@@ -805,31 +1154,66 @@ describe("runCustomerIncidentScan", () => {
     expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
-  it("pages subject queries past the PostgREST max_rows cap", async () => {
-    // 1000 healthy fillers + the failing agent on the second page: without
-    // range pagination the subject query truncates at 1000 and the incident
-    // never opens.
+  it("pages subject queries by keyset past the PostgREST row cap", async () => {
+    // 1000 eligible unprovisioned rows sorting before the failing row fill
+    // the first page exactly. Without keyset pagination the failing row is
+    // never read and the incident never opens; the fake applies the real
+    // filters and the 1000-row cap, so removing pagination fails this test.
+    // Fillers are young provisioning rows: collected, but inside no rule's
+    // firing condition (under 25 minutes, not a failed status).
     const fillers = Array.from({ length: 1000 }, (_, i) =>
       agentDbRow({
-        id: `agent-fill-${i}`,
-        status: "running",
-        provisioned_at: iso(30 * 24 * 60 * MIN),
-        created_at: iso(30 * 24 * 60 * MIN),
+        id: `agent-fill-${String(i).padStart(4, "0")}`,
+        status: "provisioning",
+        provisioned_at: null,
+        created_at: iso(20 * MIN),
       }),
     );
     const failing = agentDbRow({
-      id: "agent-page-2",
+      id: "agent-zz-fail",
       status: "error",
       provisioned_at: null,
       created_at: iso(2 * 60 * MIN),
     });
-    const deps = scanDeps({
-      db: fakeIncidentDb({ agents: [...fillers, failing] }),
-    });
+    const db = fakeIncidentDb({ agents: [...fillers, failing] });
+    const deps = scanDeps({ db });
     const summary = await runCustomerIncidentScan(deps as never);
+
     expect(summary.opened).toBe(1);
     const ops = (deps.report as jest.Mock).mock.calls[0][0];
-    expect(ops.metadata.incident_key).toBe("launch_failed:agent-page-2");
+    expect(ops.metadata.incident_key).toBe("launch_failed:agent-zz-fail");
+    // The second page was actually requested: a .gt keyset cursor on id.
+    const agentQueries = db.calls.filter((entry) => entry.table === "hivra_agents");
+    expect(
+      agentQueries.some((entry) =>
+        entry.calls.some((call) => call[0] === "gt" && call[1] === "id"),
+      ),
+    ).toBe(true);
+  });
+
+  it("aborts the pass when a keyset page fails mid-read — partial data never resolves", async () => {
+    const fillers = Array.from({ length: 1000 }, (_, i) =>
+      agentDbRow({
+        id: `agent-fill-${String(i).padStart(4, "0")}`,
+        status: "provisioning",
+        provisioned_at: null,
+        created_at: iso(20 * MIN),
+      }),
+    );
+    const deps = scanDeps({
+      db: fakeIncidentDb({
+        agents: [...fillers, agentDbRow({ id: "agent-zz-fail", status: "error", provisioned_at: null, created_at: iso(2 * 60 * MIN) })],
+        failKeysetPageFor: "hivra_agents",
+        openIncidents: [incidentDbRow()],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    // Page two errored → the whole collection aborts → nothing opens,
+    // resolves or archives on incomplete subject data.
+    expect(summary.failed).toBe(1);
+    expect(deps.report as jest.Mock).not.toHaveBeenCalled();
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
   it("marks remaining probes as skipped once the scan probe budget is exhausted", async () => {
@@ -837,6 +1221,9 @@ describe("runCustomerIncidentScan", () => {
     const deps = scanDeps({
       clock: () => (tick += 100_000), // each read jumps past the 90s budget
       probeBudgetMs: 90_000,
+      // The watchdog read deadline shares the same clock; keep it far away
+      // so only the probe budget is exercised here.
+      watchdogBudgetMs: 24 * 60 * 60 * 1000,
       db: fakeIncidentDb({
         agents: [agentDbRow()],
         watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
@@ -849,6 +1236,35 @@ describe("runCustomerIncidentScan", () => {
     const probes = ops.metadata.probes as Array<{ error: string | null }>;
     expect(probes.length).toBeGreaterThan(0);
     expect(probes.every((p) => p.error === "skipped: scan budget")).toBe(true);
+  });
+
+  it("marks agents the watchdog deadline never reached as unknown and degraded", async () => {
+    // clock: the two scan-start deadline reads return 0; the per-agent
+    // deadline check for the second agent jumps past the 60s budget, so
+    // agent-2's receipts are never read — it must be unknown, not resolved.
+    const times = [0, 0, 0, 200_000];
+    let tick = 0;
+    const clock = () => times[Math.min(tick++, times.length - 1)];
+    const deps = scanDeps({
+      clock,
+      watchdogBudgetMs: 60_000,
+      // Keep the public-probe budget far away so only the watchdog deadline
+      // is exercised; the default probe answers 200 (up) for both agents.
+      probeBudgetMs: 24 * 60 * 60 * 1000,
+      db: fakeIncidentDb({
+        agents: [agentDbRow({ id: "agent-1" }), agentDbRow({ id: "agent-2" })],
+        watchdogByAgent: { "agent-1": [watchdogDbRow("recovered", 20 * MIN)] },
+        openIncidents: [
+          incidentDbRow({ id: "evt-dl-1", metadata: { incident_key: "box_down:agent-2" } }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary.degraded).toBe(1);
+    expect(summary.unknown).toBe(1);
+    // agent-2's open box_down incident is neither resolved nor re-reported.
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
   it("counts watchdog fetch failures as degraded without resolving their incidents", async () => {
@@ -903,9 +1319,10 @@ describe("runCustomerIncidentScan", () => {
     });
     const summary = await runCustomerIncidentScan(deps as never);
     expect(summary).toMatchObject({ expired: 1, resolved: 0 });
-    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-lf-1", {
-      closedReason: "expired_unresolved",
-    });
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "evt-lf-1" }),
+      { closedReason: "expired_unresolved" },
+    );
     expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
   });
 
@@ -927,7 +1344,9 @@ describe("runCustomerIncidentScan", () => {
     });
     const summary = await runCustomerIncidentScan(deps as never);
     expect(summary).toMatchObject({ expired: 0, resolved: 1 });
-    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith("evt-lf-2");
+    expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "evt-lf-2" }),
+    );
     expect(deps.notifyResolved as jest.Mock).toHaveBeenCalledTimes(1);
   });
 
@@ -950,7 +1369,312 @@ describe("runCustomerIncidentScan", () => {
     });
     const summary = await runCustomerIncidentScan(deps as never);
     expect(summary).toMatchObject({ expired: 0, resolved: 0 });
+    expect(summary.degraded).toBe(1);
     expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("counts a thrown launch_failed subject lookup as degraded and leaves the row open", async () => {
+    const deps = scanDeps({
+      db: fakeIncidentDb({
+        agents: [
+          agentDbRow({
+            id: "agent-thrown",
+            status: "error",
+            provisioned_at: null,
+            created_at: iso(30 * 24 * 60 * MIN),
+          }),
+        ],
+        subjectLookupThrows: true,
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-lf-t",
+            source: "incident.launch_failed",
+            metadata: {
+              incident_key: "launch_failed:agent-thrown",
+              subject_kind: "hivra_agent",
+            },
+          }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+    expect(summary).toMatchObject({ expired: 0, resolved: 0 });
+    expect(summary.degraded).toBe(1);
+    expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("does not archive an incident row whose occurrence moved after the snapshot", async () => {
+    const racedRow = incidentDbRow({
+      id: "evt-raced",
+      occurrence_count: 3,
+      last_seen_at: iso(2 * MIN),
+      metadata: { incident_key: "box_down:gone-race" },
+    });
+    const deps = scanDeps({
+      // No archiveIncident dep — the real defaultArchiveIncident runs against
+      // the fake DB so the occurrence guard is exercised end to end.
+      archiveIncident: undefined,
+      report: jest.fn(async () => {
+        // A concurrent re-report lands between the snapshot read and the
+        // archive: occurrence_count and last_seen_at move, so the observed
+        // occurrence is no longer the row's current state.
+        racedRow.occurrence_count = 4;
+        racedRow.last_seen_at = iso(0);
+        return { id: "evt-new-1", fingerprint: "fp" };
+      }),
+      db: fakeIncidentDb({
+        agents: [],
+        heartbeats: [
+          {
+            cron_name: "test-cron",
+            last_run_at: iso(5 * MIN),
+            last_success_at: iso(5 * MIN),
+            run_count: 30,
+            ok_count: 20,
+            consecutive_failures: 3,
+            last_detail: "failed=2",
+          },
+        ],
+        openIncidents: [racedRow],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    // The cron_unhealthy finding still opens; the raced row stays open and
+    // unarchived — the next pass re-evaluates the fresh occurrence.
+    expect(summary.opened).toBe(1);
+    expect(summary.resolved).toBe(0);
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+    expect(racedRow.archived_at).toBeUndefined();
+  });
+
+  it("archives normally when the observed occurrence is still current", async () => {
+    const deps = scanDeps({
+      archiveIncident: undefined,
+      db: fakeIncidentDb({
+        agents: [],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-current",
+            occurrence_count: 2,
+            last_seen_at: iso(4 * MIN),
+            metadata: { incident_key: "box_down:gone-current" },
+          }),
+        ],
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.resolved).toBe(1);
+    expect(deps.notifyResolved as jest.Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends a distinct resolved notice for each archive transition of the same incident", async () => {
+    const mkRow = (count: number, seenAgo: number) =>
+      incidentDbRow({
+        id: "evt-recurring",
+        occurrence_count: count,
+        last_seen_at: iso(seenAgo),
+        metadata: { incident_key: "box_down:gone-recurring" },
+      });
+
+    // Transition 1: the incident resolves on this tick.
+    const deps1 = scanDeps({
+      db: fakeIncidentDb({ agents: [], openIncidents: [mkRow(1, 10 * MIN)] }),
+    });
+    await runCustomerIncidentScan(deps1 as never);
+    const first = (deps1.notifyResolved as jest.Mock).mock.calls[0][0].fingerprint;
+
+    // reportOpsEvent un-archives the row on recurrence (occurrence 2); it
+    // resolves again one tick later.
+    const deps2 = scanDeps({
+      now: () => NOW + 5 * MIN,
+      db: fakeIncidentDb({ agents: [], openIncidents: [mkRow(2, 5 * MIN)] }),
+    });
+    await runCustomerIncidentScan(deps2 as never);
+    const second = (deps2.notifyResolved as jest.Mock).mock.calls[0][0].fingerprint;
+
+    expect(first).toBeTruthy();
+    expect(second).toBeTruthy();
+    expect(second).not.toBe(first);
+  });
+
+  // ---- public probe signal (box_unreachable) -------------------------------
+
+  describe("public probe signal", () => {
+    const probeRow = (over: Row = {}): Row => ({
+      id: "probe-row-1",
+      fingerprint: "fp-probe-1",
+      source: "box.public_probe.unreachable",
+      instance_id: "agent-1",
+      first_seen_at: iso(15 * MIN),
+      ...over,
+    });
+    const incidentReports = (report: jest.Mock) =>
+      report.mock.calls.map((c) => c[0]).filter((o) => String(o.source).startsWith("incident."));
+    const probeReports = (report: jest.Mock) =>
+      report.mock.calls
+        .map((c) => c[0])
+        .filter((o) => o.source === "box.public_probe.unreachable");
+    const opsUpdates = (db: { calls: Array<{ table: string; calls: unknown[][] }> }) =>
+      db.calls
+        .filter((e) => e.table === "ops_events")
+        .flatMap((e) => e.calls)
+        .filter((c) => c[0] === "update");
+
+    it("records a fresh probe outage as a warn row, pins first_seen_at, and does not page", async () => {
+      const db = fakeIncidentDb({ agents: [agentDbRow()] });
+      const deps = scanDeps({
+        db,
+        probe: jest.fn(async () => ({ status: 502, latencyMs: 120, error: null })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.opened).toBe(0);
+      const report = deps.report as jest.Mock;
+      expect(incidentReports(report)).toHaveLength(0);
+      const rows = probeReports(report);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].severity).toBe("warn");
+      expect(rows[0].page).toBe(false);
+      expect(rows[0].instanceId).toBe("agent-1");
+      expect(rows[0].userId).toBe("user-1");
+      // The outage-start pin: first_seen_at is written on the new row so an
+      // un-archived recurrence cannot inherit a stale outage clock.
+      const pin = opsUpdates(db).find(
+        (c) => (c[1] as Row).first_seen_at === new Date(NOW).toISOString(),
+      );
+      expect(pin).toBeDefined();
+    });
+
+    it("pages box_unreachable once the open probe outage is 10+ minutes old", async () => {
+      const deps = scanDeps({
+        db: fakeIncidentDb({
+          agents: [agentDbRow()],
+          probeRows: [probeRow()],
+        }),
+        probe: jest.fn(async () => ({ status: null, latencyMs: 5000, error: "The operation timed out" })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.opened).toBe(1);
+      const report = deps.report as jest.Mock;
+      const rows = probeReports(report);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].severity).toBe("warn");
+      expect(rows[0].page).toBe(false);
+      const incidents = incidentReports(report);
+      expect(incidents).toHaveLength(1);
+      expect(incidents[0].source).toBe("incident.box_unreachable");
+      expect(incidents[0].page).toBe(true);
+      expect(incidents[0].metadata.incident_key).toBe("box_unreachable:agent-1");
+      expect(incidents[0].metadata.agent).toMatchObject({ id: "agent-1" });
+      expect(incidents[0].metadata.watchdog).toBeNull();
+    });
+
+    it("archives the probe row and resolves the incident when the probe succeeds", async () => {
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        probeRows: [probeRow()],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-unreach-1",
+            source: "incident.box_unreachable",
+            title: "Customer incident: agent box unreachable",
+            metadata: { incident_key: "box_unreachable:agent-1" },
+          }),
+        ],
+        watchdogByAgent: { "agent-1": [watchdogDbRow("recovered", 20 * MIN)] },
+      });
+      const deps = scanDeps({ db }); // default probe answers 200 → up
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.resolved).toBe(1);
+      expect(opsUpdates(db).some((c) => (c[1] as Row).archived_at != null)).toBe(true);
+      expect(deps.archiveIncident as jest.Mock).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "evt-unreach-1" }),
+      );
+      expect(deps.notifyResolved as jest.Mock).toHaveBeenCalledTimes(1);
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+    });
+
+    it("a budget-skipped probe neither opens nor resolves box_unreachable", async () => {
+      const deps = scanDeps({
+        probeBudgetMs: 0,
+        watchdogBudgetMs: 24 * 60 * 60 * 1000,
+        db: fakeIncidentDb({
+          agents: [agentDbRow()],
+          probeRows: [probeRow()],
+          openIncidents: [
+            incidentDbRow({
+              id: "evt-unreach-2",
+              source: "incident.box_unreachable",
+              metadata: { incident_key: "box_unreachable:agent-1" },
+            }),
+          ],
+          watchdogByAgent: { "agent-1": [watchdogDbRow("recovered", 20 * MIN)] },
+        }),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(deps.probe as jest.Mock).not.toHaveBeenCalled();
+      expect(summary.resolved).toBe(0);
+      expect(summary.unknown).toBe(1);
+      expect(summary.degraded).toBe(1);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+    });
+
+    it("marks every candidate's box_unreachable unknown when probe rows cannot be read", async () => {
+      const deps = scanDeps({
+        db: fakeIncidentDb({
+          agents: [agentDbRow()],
+          publicProbeRowsFail: true,
+          openIncidents: [
+            incidentDbRow({
+              id: "evt-unreach-3",
+              source: "incident.box_unreachable",
+              metadata: { incident_key: "box_unreachable:agent-1" },
+            }),
+          ],
+        }),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(deps.probe as jest.Mock).not.toHaveBeenCalled();
+      expect(summary.resolved).toBe(0);
+      expect(summary.unknown).toBe(1);
+      expect(summary.degraded).toBe(1);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it("a recurring outage restarts the 10-minute clock instead of inheriting the archived row's age", async () => {
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        // The previous outage's row was archived an hour ago; it is invisible
+        // to the open-row read but reportOpsEvent would un-archive it with the
+        // ORIGINAL first_seen_at — the pin must rewrite it to now.
+        probeRows: [
+          probeRow({
+            id: "probe-old",
+            archived_at: iso(60 * MIN),
+            first_seen_at: iso(60 * MIN),
+          }),
+        ],
+      });
+      const deps = scanDeps({
+        db,
+        probe: jest.fn(async () => ({ status: 503, latencyMs: 80, error: null })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(summary.opened).toBe(0);
+      const pin = opsUpdates(db).find(
+        (c) => (c[1] as Row).first_seen_at === new Date(NOW).toISOString(),
+      );
+      expect(pin).toBeDefined();
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+    });
   });
 });
 

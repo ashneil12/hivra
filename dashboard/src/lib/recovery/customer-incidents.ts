@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 
 import { log } from "@/lib/logger";
 import { reportOpsEvent, type OpsEventInput } from "@/lib/ops-events";
-import { configuredOpsAdminUserIds } from "@/lib/ops-access";
+import { configuredOpsAdminUserIds, normalizeOpsUserId } from "@/lib/ops-access";
 import { isCanaryDeployment } from "@/lib/deployment-channel";
 import { supabaseAdmin } from "@/lib/supabase";
 import vercelConfig from "../../../vercel.json";
@@ -27,7 +27,12 @@ import vercelConfig from "../../../vercel.json";
 // userId/instanceId/route, so an open incident pages exactly once and an
 // archived-then-recurring one pages again through reportOpsEvent.
 
-export type IncidentRule = "box_down" | "launch_failed" | "lifecycle_stuck" | "cron_unhealthy";
+export type IncidentRule =
+  | "box_down"
+  | "box_unreachable"
+  | "launch_failed"
+  | "lifecycle_stuck"
+  | "cron_unhealthy";
 export type IncidentSubjectKind = "hivra_agent" | "hermes_instance" | "cron";
 
 export interface HivraAgentSnapshot {
@@ -86,6 +91,8 @@ export interface CronHeartbeatSnapshot {
   okCount: number | null;
   consecutiveFailures: number | null;
   lastDetail: string | null;
+  /** Row creation time — the dead-man reference for a cron that never succeeded. */
+  createdAt: string | null;
 }
 
 export interface CronScheduleInfo {
@@ -122,6 +129,13 @@ export interface OpenIncidentRow {
   title: string;
   incidentKey: string | null;
   subjectKind: string | null;
+  /**
+   * The occurrence this snapshot observed. reportOpsEvent bumps both fields
+   * on every re-report, so an archive that still matches them cannot close a
+   * recurrence that landed after the scan read the row.
+   */
+  occurrenceCount: number | null;
+  lastSeenAt: string | null;
 }
 
 export interface CustomerSubscriptionSnapshot {
@@ -138,6 +152,13 @@ export interface IncidentEvaluationInput {
   watchdogEventsByAgent: ReadonlyMap<string, WatchdogEventSnapshot[]>;
   /** Agents whose watchdog-event fetch failed — box_down cannot be evaluated for them. */
   watchdogUnknownAgentIds: ReadonlySet<string>;
+  /**
+   * agentId → outage start (ms epoch) for agents whose dashboard-side public
+   * probe is currently failing. Drives box_unreachable.
+   */
+  publicOutageStartedAtMs?: ReadonlyMap<string, number>;
+  /** Agents whose public probe could not be evaluated this scan. */
+  publicProbeUnknownAgentIds?: ReadonlySet<string>;
   hermesInstances: HermesInstanceSnapshot[];
   heartbeats: CronHeartbeatSnapshot[];
   cronSchedules: ReadonlyMap<string, CronScheduleInfo>;
@@ -154,15 +175,25 @@ export interface IncidentEvaluation {
 }
 
 const BOX_DOWN_MIN_AGE_MS = 10 * 60 * 1000;
+const BOX_UNREACHABLE_MIN_AGE_MS = 10 * 60 * 1000;
 const LAUNCH_FAILED_WINDOW_MS = 24 * 60 * 60 * 1000;
 const LAUNCH_FAILED_STUCK_MS = 25 * 60 * 1000;
 const LIFECYCLE_STUCK_MS = 15 * 60 * 1000;
 const CRON_STALE_PERIOD_MULTIPLIER = 3;
+const CRON_NEVER_SUCCEEDED_PERIOD_MULTIPLIER = 3;
 const CRON_FAILURE_STREAK = 3;
 const WATCHDOG_TIMELINE_LIMIT = 10;
 
 const BOX_DOWN_EVENT_TYPES = new Set(["gateway_down", "unit_restart", "recovery_exhausted"]);
 const BOX_RECOVERY_EVENT_TYPES = new Set(["recovered", "gateway_recovered"]);
+// Only surface failure/recovery receipts decide open/resolve state.
+// unit_failing and watchdog_error are diagnostic noise for this rule — a
+// unit_failing emitted after recovery_exhausted must not clear a live
+// outage, and they stay in the diagnosis timeline either way.
+const BOX_SURFACE_EVENT_TYPES = new Set([
+  ...BOX_DOWN_EVENT_TYPES,
+  ...BOX_RECOVERY_EVENT_TYPES,
+]);
 const LAUNCH_FAILED_AGENT_STATUSES = new Set(["error", "deleted"]);
 const LAUNCH_FAILED_INSTANCE_STATUSES = new Set(["failed", "error"]);
 
@@ -173,7 +204,23 @@ function parseTimeMs(value: string | null | undefined): number | null {
 }
 
 function isAdminUser(userId: string | null | undefined, adminUserIds: ReadonlySet<string>): boolean {
-  return !!userId && adminUserIds.has(userId);
+  const normalized = normalizeOpsUserId(userId);
+  return normalized != null && adminUserIds.has(normalized);
+}
+
+/**
+ * Admin ids arrive from OPS_ADMIN_USER_IDS (already lowercased) or an injected
+ * dep; stored user ids come from the database with their original casing.
+ * Normalize BOTH sides with the same rule isOpsAdminUser uses so a casing
+ * difference can never turn an operator's box into a customer page.
+ */
+function normalizeAdminIdSet(ids: ReadonlySet<string>): ReadonlySet<string> {
+  const normalized = new Set<string>();
+  for (const id of ids) {
+    const value = normalizeOpsUserId(id);
+    if (value) normalized.add(value);
+  }
+  return normalized;
 }
 
 /** Newest-first ordering by the box-reported event_at; falls back to first_seen_at. */
@@ -199,6 +246,12 @@ const RULE_MESSAGES: Record<Exclude<IncidentRule, "cron_unhealthy">, string> = {
     "open for at least 10 minutes — recovery_exhausted pages immediately. The customer is " +
     "likely unable to reach their agent right now. Diagnosis (customer, plan, watchdog " +
     "timeline, live public probes) is in this event's metadata.",
+  box_unreachable:
+    "A customer's agent box is unreachable over its public hostname: the dashboard-side " +
+    "probe of https://<hostname>/healthz has been failing for at least 10 minutes. This " +
+    "signal does not depend on the box gateway, so it still fires while the gateway itself " +
+    "is down. The customer likely cannot open their agent at all. Diagnosis is in this " +
+    "event's metadata.",
   launch_failed:
     "A customer's agent or instance created in the last 24 hours never reached a running " +
     "state: provisioning never completed (provisioned_at still null past the grace window " +
@@ -227,7 +280,8 @@ function cronUnhealthyMessage(cronName: string): string {
 export function evaluateCustomerIncidents(input: IncidentEvaluationInput): IncidentEvaluation {
   const findings: IncidentFinding[] = [];
   const unknownKeys = new Set<string>();
-  const { now, adminUserIds } = input;
+  const { now } = input;
+  const adminUserIds = normalizeAdminIdSet(input.adminUserIds);
 
   // ---- box_down -----------------------------------------------------------
   // A running, awake hivra_agent whose LATEST watchdog event by event_at is a
@@ -244,7 +298,11 @@ export function evaluateCustomerIncidents(input: IncidentEvaluationInput): Incid
       continue;
     }
     const events = sortWatchdogEventsByEventAt(input.watchdogEventsByAgent.get(agent.id) ?? []);
-    const latest = events[0];
+    // Newest SURFACE event decides state; unrelated event types are ignored
+    // for open/resolve (they remain in watchdogTimeline for diagnosis).
+    const latest = events.find(
+      (event) => event.eventType != null && BOX_SURFACE_EVENT_TYPES.has(event.eventType),
+    );
     if (!latest?.eventType) continue;
     if (BOX_RECOVERY_EVENT_TYPES.has(latest.eventType)) continue;
     if (!BOX_DOWN_EVENT_TYPES.has(latest.eventType)) continue;
@@ -266,6 +324,43 @@ export function evaluateCustomerIncidents(input: IncidentEvaluationInput): Incid
       cron: null,
       watchdogTimeline: events.slice(0, WATCHDOG_TIMELINE_LIMIT),
       nextStep: boxDownNextStep(agent),
+    });
+  }
+
+  // ---- box_unreachable -----------------------------------------------------
+  // Gateway-independent signal: the dashboard-side probe of the box's public
+  // /healthz keeps failing while the box reports running. The outage clock is
+  // the probe row's first_seen_at, so a flap under 10 minutes never pages. A
+  // probe that could not run this scan (budget, read failure, no hostname)
+  // marks the key unknown — an open incident is never resolved on a guess.
+  for (const agent of input.agents) {
+    if (agent.status !== "running" || agent.sleepState !== "awake") continue;
+    if (isAdminUser(agent.userId, adminUserIds)) continue;
+    const key = `box_unreachable:${agent.id}`;
+    if (input.publicProbeUnknownAgentIds?.has(agent.id)) {
+      unknownKeys.add(key);
+      continue;
+    }
+    const outageStartMs = input.publicOutageStartedAtMs?.get(agent.id);
+    if (outageStartMs == null || now - outageStartMs < BOX_UNREACHABLE_MIN_AGE_MS) continue;
+    const events = sortWatchdogEventsByEventAt(input.watchdogEventsByAgent.get(agent.id) ?? []);
+    findings.push({
+      key,
+      rule: "box_unreachable",
+      subjectId: agent.id,
+      subjectKind: "hivra_agent",
+      userId: agent.userId,
+      title: "Customer incident: agent box unreachable",
+      message: RULE_MESSAGES.box_unreachable,
+      route: `/dashboard/agent/${agent.id}`,
+      instanceId: agent.id,
+      agent,
+      instance: null,
+      cron: null,
+      watchdogTimeline: events.slice(0, WATCHDOG_TIMELINE_LIMIT),
+      nextStep:
+        "Check the box's Cloudflare tunnel, DNS and public hostname — the dashboard-side " +
+        "/healthz probe has failed for 10+ minutes while the box reports running",
     });
   }
 
@@ -366,7 +461,18 @@ export function evaluateCustomerIncidents(input: IncidentEvaluationInput): Incid
       periodMinutes != null &&
       referenceMs != null &&
       now - referenceMs > CRON_STALE_PERIOD_MULTIPLIER * periodMinutes * 60 * 1000;
-    if (streak < CRON_FAILURE_STREAK && !stale) continue;
+    // A cron that ran but never succeeded keeps refreshing last_run_at on
+    // every failure, so the staleness check above can never see it. Mirror
+    // the independent watchdog: run_count > 0, no success ever, and the row
+    // is older than 3x its period means the cron has been dead since birth.
+    const neverSucceededMs = parseTimeMs(heartbeat.createdAt);
+    const neverSucceededStale =
+      periodMinutes != null &&
+      heartbeat.lastSuccessAt == null &&
+      (heartbeat.runCount ?? 0) > 0 &&
+      neverSucceededMs != null &&
+      now - neverSucceededMs > CRON_NEVER_SUCCEEDED_PERIOD_MULTIPLIER * periodMinutes * 60 * 1000;
+    if (streak < CRON_FAILURE_STREAK && !stale && !neverSucceededStale) continue;
     findings.push({
       key: `cron_unhealthy:${heartbeat.cronName}`,
       rule: "cron_unhealthy",
@@ -433,6 +539,7 @@ interface HeartbeatDbRow {
   ok_count: number | null;
   consecutive_failures: number | null;
   last_detail: string | null;
+  created_at: string | null;
 }
 
 interface WatchdogOpsRow {
@@ -491,6 +598,7 @@ function toHeartbeatSnapshot(row: HeartbeatDbRow): CronHeartbeatSnapshot {
     okCount: row.ok_count,
     consecutiveFailures: row.consecutive_failures,
     lastDetail: row.last_detail,
+    createdAt: row.created_at,
   };
 }
 
@@ -525,22 +633,34 @@ function watchdogEventFromOpsRow(row: WatchdogOpsRow): WatchdogEventSnapshot {
 // nothing when it truncates — an unpaged subject query silently drops rows,
 // which for this scan means a customer incident that never opens or a stale
 // one that resolves early. Page every subject read until a short page.
+//
+// Keyset, not offsets: an offset read skips whichever row moves across the
+// page boundary between requests (an agent that stops running mid-scan
+// shifts every later row up one slot), and the resolver would then archive
+// that subject's open incident as recovered. Ordering by the unique column
+// and resuming `.gt(col, last)` can neither skip nor repeat a row. An error
+// mid-read throws — the caller aborts the pass, so partial data is never
+// treated as evidence of recovery.
 const SUBJECT_PAGE_SIZE = 1000;
 
 async function selectAllPages<RowT>(
   label: string,
   build: (
-    from: number,
-    to: number,
+    cursor: string | null,
   ) => PromiseLike<{ data: unknown; error: { message?: string } | null }>,
+  cursorOf: (row: RowT) => string | null,
 ): Promise<RowT[]> {
   const rows: RowT[] = [];
-  for (let from = 0; ; from += SUBJECT_PAGE_SIZE) {
-    const { data, error } = await build(from, from + SUBJECT_PAGE_SIZE - 1);
+  let cursor: string | null = null;
+  for (;;) {
+    const { data, error } = await build(cursor);
     if (error) throw new Error(error.message || `${label} query failed`);
     const page = (data ?? []) as RowT[];
     rows.push(...page);
     if (page.length < SUBJECT_PAGE_SIZE) return rows;
+    const tail = cursorOf(page[page.length - 1]);
+    if (tail == null) throw new Error(`${label} pagination cursor missing`);
+    cursor = tail;
   }
 }
 
@@ -550,31 +670,46 @@ async function collectAgents(db: DbClient, now: number): Promise<HivraAgentSnaps
   // running (box_down), and in-flight operations (lifecycle_stuck — the stuck
   // op may sit on a non-running status like provisioning/deleting).
   const [unprovisioned, running, inFlight] = await Promise.all([
-    selectAllPages<AgentDbRow>("hivra_agents unprovisioned", (from, to) =>
-      db
-        .from("hivra_agents")
-        .select(AGENT_SELECT)
-        .is("provisioned_at", null)
-        .gte("created_at", cutoff24)
-        .order("id", { ascending: true })
-        .range(from, to),
+    selectAllPages<AgentDbRow>(
+      "hivra_agents unprovisioned",
+      (cursor) => {
+        let query = db
+          .from("hivra_agents")
+          .select(AGENT_SELECT)
+          .is("provisioned_at", null)
+          .gte("created_at", cutoff24)
+          .order("id", { ascending: true });
+        if (cursor != null) query = query.gt("id", cursor);
+        return query.limit(SUBJECT_PAGE_SIZE);
+      },
+      (row) => row.id,
     ),
-    selectAllPages<AgentDbRow>("hivra_agents running", (from, to) =>
-      db
-        .from("hivra_agents")
-        .select(AGENT_SELECT)
-        .eq("status", "running")
-        .order("id", { ascending: true })
-        .range(from, to),
+    selectAllPages<AgentDbRow>(
+      "hivra_agents running",
+      (cursor) => {
+        let query = db
+          .from("hivra_agents")
+          .select(AGENT_SELECT)
+          .eq("status", "running")
+          .order("id", { ascending: true });
+        if (cursor != null) query = query.gt("id", cursor);
+        return query.limit(SUBJECT_PAGE_SIZE);
+      },
+      (row) => row.id,
     ),
-    selectAllPages<AgentDbRow>("hivra_agents in-flight", (from, to) =>
-      db
-        .from("hivra_agents")
-        .select(AGENT_SELECT)
-        .not("operation_kind", "is", null)
-        .not("operation_started_at", "is", null)
-        .order("id", { ascending: true })
-        .range(from, to),
+    selectAllPages<AgentDbRow>(
+      "hivra_agents in-flight",
+      (cursor) => {
+        let query = db
+          .from("hivra_agents")
+          .select(AGENT_SELECT)
+          .not("operation_kind", "is", null)
+          .not("operation_started_at", "is", null)
+          .order("id", { ascending: true });
+        if (cursor != null) query = query.gt("id", cursor);
+        return query.limit(SUBJECT_PAGE_SIZE);
+      },
+      (row) => row.id,
     ),
   ]);
   const byId = new Map<string, HivraAgentSnapshot>();
@@ -586,37 +721,53 @@ async function collectAgents(db: DbClient, now: number): Promise<HivraAgentSnaps
 
 async function collectHermesInstances(db: DbClient, now: number): Promise<HermesInstanceSnapshot[]> {
   const cutoff24 = new Date(now - LAUNCH_FAILED_WINDOW_MS).toISOString();
-  const rows = await selectAllPages<HermesInstanceDbRow>("hermes_instances", (from, to) =>
-    db
-      .from("hermes_instances")
-      .select("id,user_id,name,status,lifecycle_state,gateway_url,created_at")
-      .gte("created_at", cutoff24)
-      .order("id", { ascending: true })
-      .range(from, to),
+  const rows = await selectAllPages<HermesInstanceDbRow>(
+    "hermes_instances",
+    (cursor) => {
+      let query = db
+        .from("hermes_instances")
+        .select("id,user_id,name,status,lifecycle_state,gateway_url,created_at")
+        .gte("created_at", cutoff24)
+        .order("id", { ascending: true });
+      if (cursor != null) query = query.gt("id", cursor);
+      return query.limit(SUBJECT_PAGE_SIZE);
+    },
+    (row) => row.id,
   );
   return rows.map(toInstanceSnapshot);
 }
 
 async function collectHeartbeats(db: DbClient): Promise<CronHeartbeatSnapshot[]> {
-  const rows = await selectAllPages<HeartbeatDbRow>("ops_cron_heartbeats", (from, to) =>
-    db
-      .from("ops_cron_heartbeats")
-      .select("cron_name,last_run_at,last_success_at,run_count,ok_count,consecutive_failures,last_detail")
-      .order("cron_name", { ascending: true })
-      .range(from, to),
+  const rows = await selectAllPages<HeartbeatDbRow>(
+    "ops_cron_heartbeats",
+    (cursor) => {
+      // cron_name is the table's primary key — the keyset cursor column.
+      let query = db
+        .from("ops_cron_heartbeats")
+        .select("cron_name,last_run_at,last_success_at,run_count,ok_count,consecutive_failures,last_detail,created_at")
+        .order("cron_name", { ascending: true });
+      if (cursor != null) query = query.gt("cron_name", cursor);
+      return query.limit(SUBJECT_PAGE_SIZE);
+    },
+    (row) => row.cron_name,
   );
   return rows.map(toHeartbeatSnapshot);
 }
 
 async function collectOpenIncidentRows(db: DbClient): Promise<OpenIncidentRow[]> {
-  const data = await selectAllPages<Record<string, unknown>>("open incident rows", (from, to) =>
-    db
-      .from("ops_events")
-      .select("id,fingerprint,title,source,metadata")
-      .like("source", "incident.%")
-      .is("archived_at", null)
-      .order("id", { ascending: true })
-      .range(from, to),
+  const data = await selectAllPages<Record<string, unknown>>(
+    "open incident rows",
+    (cursor) => {
+      let query = db
+        .from("ops_events")
+        .select("id,fingerprint,title,source,metadata,occurrence_count,last_seen_at")
+        .like("source", "incident.%")
+        .is("archived_at", null)
+        .order("id", { ascending: true });
+      if (cursor != null) query = query.gt("id", cursor);
+      return query.limit(SUBJECT_PAGE_SIZE);
+    },
+    (row) => (typeof row.id === "string" ? row.id : null),
   );
   const rows: OpenIncidentRow[] = [];
   for (const row of data) {
@@ -628,6 +779,9 @@ async function collectOpenIncidentRows(db: DbClient): Promise<OpenIncidentRow[]>
       title: String(row.title ?? ""),
       incidentKey: strOrNull(metadata.incident_key),
       subjectKind: strOrNull(metadata.subject_kind),
+      occurrenceCount:
+        typeof row.occurrence_count === "number" ? row.occurrence_count : null,
+      lastSeenAt: typeof row.last_seen_at === "string" ? row.last_seen_at : null,
     });
   }
   return rows;
@@ -635,17 +789,36 @@ async function collectOpenIncidentRows(db: DbClient): Promise<OpenIncidentRow[]>
 
 const WATCHDOG_FETCH_CONCURRENCY = 8;
 const WATCHDOG_EVENTS_PER_AGENT_LIMIT = 30;
+// The per-agent watchdog reads are the scan's least bounded loop: with no
+// deadline, (agents ÷ 8) × per-query latency can exceed the route's
+// maxDuration and the invocation dies before reporting, resolving or the
+// heartbeat write. Agents not reached before this deadline are unknown —
+// never resolved on partial data — and count as degraded.
+const SCAN_WATCHDOG_READ_BUDGET_MS = 60_000;
 
 async function collectWatchdogEvents(
   db: DbClient,
   agentIds: string[],
+  options?: { deadlineAt?: number; clock?: () => number },
 ): Promise<{ byAgent: Map<string, WatchdogEventSnapshot[]>; unknownAgentIds: Set<string> }> {
   const byAgent = new Map<string, WatchdogEventSnapshot[]>();
   const unknownAgentIds = new Set<string>();
   const queue = [...agentIds];
+  const clock = options?.clock ?? Date.now;
+  const deadlineAt = options?.deadlineAt;
+  const markRestUnknown = (currentId: string | undefined) => {
+    if (currentId !== undefined) unknownAgentIds.add(currentId);
+    for (let rest = queue.shift(); rest !== undefined; rest = queue.shift()) {
+      unknownAgentIds.add(rest);
+    }
+  };
   await Promise.all(
     Array.from({ length: Math.min(WATCHDOG_FETCH_CONCURRENCY, queue.length) }, async () => {
       for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+        if (deadlineAt != null && clock() >= deadlineAt) {
+          markRestUnknown(id);
+          return;
+        }
         const { data, error } = await db
           .from("ops_events")
           .select("id,title,first_seen_at,metadata")
@@ -673,6 +846,312 @@ async function collectWatchdogEvents(
   return { byAgent, unknownAgentIds };
 }
 
+// ---- public reachability signal (box_unreachable) ---------------------------
+//
+// box_down reads the box-side watchdog THROUGH the box gateway, so a gateway
+// outage produces no receipts and the rule stays silent for the whole
+// outage. The public probe is dashboard-side: it asks the box's public
+// hostname directly, so it keeps working while the gateway path is dead.
+// Each scan probes every running, awake, non-admin box's
+// https://<cf_hostname>/healthz and maintains one ops_events row per box
+// (source box.public_probe.unreachable, warn, never pages). The row's
+// first_seen_at is the outage start; box_unreachable pages once it is 10
+// minutes old, and the row is archived the first scan the probe succeeds.
+
+const PUBLIC_PROBE_CONCURRENCY = 16;
+const PUBLIC_PROBE_WRITE_CONCURRENCY = 8;
+export const PUBLIC_PROBE_SOURCE = "box.public_probe.unreachable";
+
+type PublicProbeSignal =
+  | { kind: "up" }
+  | { kind: "down"; status: number | null; latencyMs: number | null; error: string | null }
+  | { kind: "skipped"; reason: "budget" | "no_hostname" | "invalid_hostname" };
+
+interface OpenProbeRow {
+  id: string;
+  agentId: string;
+  firstSeenAt: string | null;
+}
+
+interface ProbeRowDbRow {
+  id: string;
+  instance_id: string | null;
+  first_seen_at: string | null;
+}
+
+async function runPool<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  const queue = [...items];
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+      for (let item = queue.shift(); item !== undefined; item = queue.shift()) {
+        await fn(item);
+      }
+    }),
+  );
+}
+
+/** Open box.public_probe.* rows, keyed later by agent id. */
+async function collectOpenProbeRows(db: DbClient): Promise<OpenProbeRow[]> {
+  const rows = await selectAllPages<ProbeRowDbRow>(
+    "open public probe rows",
+    (cursor) => {
+      let query = db
+        .from("ops_events")
+        .select("id,instance_id,first_seen_at")
+        .eq("source", PUBLIC_PROBE_SOURCE)
+        .is("archived_at", null)
+        .order("id", { ascending: true });
+      if (cursor != null) query = query.gt("id", cursor);
+      return query.limit(SUBJECT_PAGE_SIZE);
+    },
+    (row) => row.id,
+  );
+  const open: OpenProbeRow[] = [];
+  for (const row of rows) {
+    if (typeof row.instance_id === "string" && row.instance_id.length > 0) {
+      open.push({
+        id: row.id,
+        agentId: row.instance_id,
+        firstSeenAt: typeof row.first_seen_at === "string" ? row.first_seen_at : null,
+      });
+    }
+  }
+  return open;
+}
+
+/**
+ * Probe every candidate's public /healthz. "Up" means any sub-500 HTTP
+ * response — the edge answered, so the public path is alive; transport
+ * failures and 5xx (Cloudflare origin errors: 502/521/522/523/524/530)
+ * mean the customer cannot reach the box. Budget-skipped and unprobable
+ * hosts are reported distinctly so the caller can mark them unknown
+ * without counting them as scan degradation.
+ */
+async function collectPublicProbeSignals(
+  agents: HivraAgentSnapshot[],
+  probe: ProbeFn,
+  budget: { deadlineAt: number; clock: () => number },
+): Promise<Map<string, PublicProbeSignal>> {
+  const signals = new Map<string, PublicProbeSignal>();
+  const queue = [...agents];
+  const skipRest = (reason: "budget") => {
+    for (let rest = queue.shift(); rest !== undefined; rest = queue.shift()) {
+      signals.set(rest.id, { kind: "skipped", reason });
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(PUBLIC_PROBE_CONCURRENCY, queue.length) }, async () => {
+      for (let agent = queue.shift(); agent !== undefined; agent = queue.shift()) {
+        if (budget.clock() >= budget.deadlineAt) {
+          signals.set(agent.id, { kind: "skipped", reason: "budget" });
+          skipRest("budget");
+          return;
+        }
+        const host = agent.cfHostname?.trim().toLowerCase();
+        if (!host) {
+          signals.set(agent.id, { kind: "skipped", reason: "no_hostname" });
+          continue;
+        }
+        let url: string;
+        try {
+          url = new URL(`https://${host}/healthz`).toString();
+        } catch {
+          signals.set(agent.id, { kind: "skipped", reason: "invalid_hostname" });
+          continue;
+        }
+        const outcome = await probe(url);
+        const healthy = outcome.status != null && outcome.status < 500;
+        signals.set(
+          agent.id,
+          healthy
+            ? { kind: "up" }
+            : {
+                kind: "down",
+                status: outcome.status,
+                latencyMs: outcome.latencyMs,
+                error: outcome.error,
+              },
+        );
+      }
+    }),
+  );
+  return signals;
+}
+
+/**
+ * The probe row's title/message are fixed per box so the fingerprint is
+ * stable while the outage continues; volatile detail (status, error) lives
+ * in metadata, which is not part of the fingerprint.
+ */
+function publicProbeUnreachableOpsEvent(
+  agent: HivraAgentSnapshot,
+  signal: Extract<PublicProbeSignal, { kind: "down" }>,
+): OpsEventInput {
+  return {
+    source: PUBLIC_PROBE_SOURCE,
+    severity: "warn",
+    page: false,
+    title: "Customer box public probe unreachable",
+    message:
+      "The dashboard-side public probe cannot get a healthy response from the box's " +
+      "public /healthz endpoint. This signal does not depend on the box gateway, so it " +
+      "covers gateway outages the watchdog path cannot see. Latest probe detail is in " +
+      "this event's metadata.",
+    route: `/dashboard/agent/${agent.id}`,
+    userId: agent.userId,
+    instanceId: agent.id,
+    metadata: {
+      detected_by: "cron:customer-incidents",
+      agent_id: agent.id,
+      cf_hostname: agent.cfHostname,
+      probe: {
+        status: signal.status,
+        latency_ms: signal.latencyMs,
+        error: signal.error,
+        checked_at: new Date().toISOString(),
+      },
+    },
+  };
+}
+
+type ProbeRowArchiveOutcome = "archived" | "already_archived" | "error";
+
+async function archivePublicProbeRow(
+  db: DbClient,
+  rowId: string,
+  archivedAtIso: string,
+): Promise<ProbeRowArchiveOutcome> {
+  const { data, error } = await db
+    .from("ops_events")
+    .update({ archived_at: archivedAtIso, archived_by_user_id: null })
+    .eq("id", rowId)
+    .is("archived_at", null)
+    .select("id");
+  if (error) {
+    log.warn("customer-incidents: public probe row archive failed", {
+      source: "customer-incidents",
+      failureType: "public_probe_archive_failed",
+      opsEventId: rowId,
+      errorMessage: error.message,
+    });
+    return "error";
+  }
+  return (data?.length ?? 0) > 0 ? "archived" : "already_archived";
+}
+
+export interface PublicProbeApplication {
+  /** agentId → outage start (ms epoch) for probes currently failing. */
+  outageStartedAtMs: Map<string, number>;
+  /** Agents whose probe state could not be determined — never resolve them. */
+  unknownAgentIds: Set<string>;
+  /** Agents whose probe state is degraded this scan (feeds summary.degraded). */
+  degradedAgentIds: Set<string>;
+}
+
+/**
+ * Turn raw probe signals into probe-row writes and the post-scan outage
+ * state evaluateCustomerIncidents consumes. A "down" signal on a box with
+ * no open row is a NEW outage: reportOpsEvent inserts or un-archives, and
+ * un-archiving keeps the OLD row's first_seen_at — so the scan pins
+ * first_seen_at to this outage's start or a recurrence would look 10
+ * minutes old instantly. An "up" signal archives the open row; a failed
+ * archive leaves the outage standing for evaluation.
+ */
+async function applyPublicProbeSignals(
+  db: DbClient,
+  agents: HivraAgentSnapshot[],
+  signals: Map<string, PublicProbeSignal>,
+  openRowsByAgent: Map<string, OpenProbeRow>,
+  deps: { report: typeof reportOpsEvent; now: number },
+): Promise<PublicProbeApplication> {
+  const result: PublicProbeApplication = {
+    outageStartedAtMs: new Map(),
+    unknownAgentIds: new Set(),
+    degradedAgentIds: new Set(),
+  };
+  const nowIso = new Date(deps.now).toISOString();
+
+  await runPool(agents, PUBLIC_PROBE_WRITE_CONCURRENCY, async (agent) => {
+    const signal: PublicProbeSignal =
+      signals.get(agent.id) ?? { kind: "skipped", reason: "budget" };
+    const openRow = openRowsByAgent.get(agent.id) ?? null;
+    const rowStartMs = openRow ? parseTimeMs(openRow.firstSeenAt) : null;
+
+    if (signal.kind === "skipped") {
+      result.unknownAgentIds.add(agent.id);
+      // Only budget exhaustion is scan degradation; a box without a usable
+      // public hostname is a standing data gap, not a failed read.
+      if (signal.reason === "budget") result.degradedAgentIds.add(agent.id);
+      return;
+    }
+
+    if (signal.kind === "up") {
+      if (!openRow) return;
+      const archive = await archivePublicProbeRow(db, openRow.id, nowIso);
+      if (archive === "error") {
+        // The row may still be open — keep the outage visible to evaluation.
+        result.degradedAgentIds.add(agent.id);
+        if (rowStartMs != null) result.outageStartedAtMs.set(agent.id, rowStartMs);
+        else result.unknownAgentIds.add(agent.id);
+      }
+      // "archived" and "already_archived" both mean no open outage remains.
+      return;
+    }
+
+    // signal.kind === "down"
+    const reported = await deps.report(publicProbeUnreachableOpsEvent(agent, signal));
+    if (openRow) {
+      // Continuing outage: first_seen_at already holds the start; the report
+      // only refreshes last_seen_at/metadata. A failed refresh does not
+      // change the outage state, but it is degraded.
+      if (reported == null) result.degradedAgentIds.add(agent.id);
+      if (rowStartMs != null) {
+        result.outageStartedAtMs.set(agent.id, rowStartMs);
+      } else {
+        result.unknownAgentIds.add(agent.id);
+        result.degradedAgentIds.add(agent.id);
+      }
+      return;
+    }
+
+    if (reported?.id == null) {
+      // The outage could not be recorded — its state is unknown, and an
+      // open incident must not resolve on a guess.
+      result.unknownAgentIds.add(agent.id);
+      result.degradedAgentIds.add(agent.id);
+      return;
+    }
+
+    // Fresh outage (insert, or un-archive of a previously closed row).
+    // reportOpsEvent keeps the row's original first_seen_at on un-archive;
+    // pin it to this outage's start so the 10-minute rule measures THIS
+    // outage, not the first one ever seen.
+    const { error: pinError } = await db
+      .from("ops_events")
+      .update({ first_seen_at: nowIso })
+      .eq("id", reported.id);
+    if (pinError) {
+      result.unknownAgentIds.add(agent.id);
+      result.degradedAgentIds.add(agent.id);
+      log.warn("customer-incidents: probe outage first_seen_at pin failed", {
+        source: "customer-incidents",
+        failureType: "public_probe_first_seen_pin_failed",
+        instanceId: agent.id,
+        opsEventId: reported.id,
+        errorMessage: pinError.message,
+      });
+      return;
+    }
+    result.outageStartedAtMs.set(agent.id, deps.now);
+  });
+
+  return result;
+}
+
 async function collectSubscriptions(
   db: DbClient,
   userIds: string[],
@@ -682,13 +1161,17 @@ async function collectSubscriptions(
   try {
     const rows = await selectAllPages<{ user_id: string; plan: string | null; status: string | null }>(
       "hermes_subscriptions",
-      (from, to) =>
-        db
+      (cursor) => {
+        // user_id is UNIQUE — the keyset cursor column.
+        let query = db
           .from("hermes_subscriptions")
           .select("user_id,plan,status")
           .in("user_id", userIds)
-          .order("user_id", { ascending: true })
-          .range(from, to),
+          .order("user_id", { ascending: true });
+        if (cursor != null) query = query.gt("user_id", cursor);
+        return query.limit(SUBJECT_PAGE_SIZE);
+      },
+      (row) => row.user_id,
     );
     for (const row of rows) {
       map.set(row.user_id, { plan: row.plan, status: row.status });
@@ -907,6 +1390,7 @@ function cronDiagnosisFields(finding: IncidentFinding): Record<string, unknown> 
     period_minutes: schedule.periodMinutes,
     last_run_at: heartbeat.lastRunAt,
     last_success_at: heartbeat.lastSuccessAt,
+    created_at: heartbeat.createdAt,
     run_count: heartbeat.runCount,
     ok_count: heartbeat.okCount,
     consecutive_failures: heartbeat.consecutiveFailures,
@@ -996,14 +1480,16 @@ export interface CustomerIncidentScanDeps {
   clock?: () => number;
   /** Total wall-clock budget for all public probes in one scan. */
   probeBudgetMs?: number;
+  /** Total wall-clock budget for the watchdog read loop in one scan. */
+  watchdogBudgetMs?: number;
   report?: typeof reportOpsEvent;
   probe?: ProbeFn;
   adminUserIds?: ReadonlySet<string>;
   cronSchedules?: ReadonlyMap<string, CronScheduleInfo>;
   /** Page admins for new incidents + send resolved notices. Defaults to the production-deployment check. */
   pagingEnabled?: boolean;
-  /** Archive an incident row by id; returns true when this call won the archive. */
-  archiveIncident?: (rowId: string, options?: { closedReason?: string }) => Promise<boolean>;
+  /** Archive the observed incident row; returns true when this call won the archive. */
+  archiveIncident?: (row: OpenIncidentRow, options?: { closedReason?: string }) => Promise<boolean>;
   /** Send the one resolved notice through the admin transport. */
   notifyResolved?: (input: ResolvedNoticeInput) => Promise<void>;
 }
@@ -1027,9 +1513,10 @@ function emptySummary(): CustomerIncidentScanSummary {
 
 async function defaultArchiveIncident(
   db: DbClient,
-  rowId: string,
+  row: OpenIncidentRow,
   options?: { closedReason?: string },
 ): Promise<boolean> {
+  const rowId = row.id;
   const update: Record<string, unknown> = {
     archived_at: new Date().toISOString(),
     archived_by_user_id: null,
@@ -1052,18 +1539,37 @@ async function defaultArchiveIncident(
       closed_reason: options.closedReason,
     };
   }
-  const { data, error } = await db
+  let query = db
     .from("ops_events")
     .update(update)
     .eq("id", rowId)
-    .is("archived_at", null)
-    .select("id");
+    .is("archived_at", null);
+  // The scan closes the occurrence it OBSERVED, not whatever the row has
+  // become since: a re-report bumps occurrence_count and last_seen_at, and an
+  // archive that ignores the drift would resolve an incident that recurred
+  // after the snapshot. Matching the observed values makes the update a
+  // no-op in that case — the next pass re-evaluates the fresh occurrence.
+  if (row.occurrenceCount != null) {
+    query = query.eq("occurrence_count", row.occurrenceCount);
+  }
+  if (row.lastSeenAt != null) {
+    query = query.eq("last_seen_at", row.lastSeenAt);
+  }
+  const { data, error } = await query.select("id");
   if (error) throw new Error(error.message || "archive incident failed");
   return (data?.length ?? 0) > 0;
 }
 
-function resolvedNoticeFingerprint(incidentFingerprint: string): string {
-  return createHash("sha256").update(`incident-resolved:${incidentFingerprint}`).digest("hex");
+/**
+ * Idempotency key for the resolved notice. The incident row id + the
+ * resolution time make every archive TRANSITION unique: the same incident
+ * row can recur (un-archived by reportOpsEvent) and resolve again, and the
+ * second resolution must page admins just like the first.
+ */
+function resolvedNoticeFingerprint(row: OpenIncidentRow, resolvedAtMs: number): string {
+  return createHash("sha256")
+    .update(`incident-resolved:${row.id}:${resolvedAtMs}:${row.fingerprint}`)
+    .digest("hex");
 }
 
 async function defaultNotifyResolved(input: ResolvedNoticeInput): Promise<void> {
@@ -1179,15 +1685,16 @@ export async function runCustomerIncidentScan(
   // it — the scan must finish inside maxDuration with room to resolve rows and
   // write the heartbeat.
   const probeDeadlineAt = clock() + (deps.probeBudgetMs ?? SCAN_PROBE_BUDGET_MS);
+  const watchdogDeadlineAt = clock() + (deps.watchdogBudgetMs ?? SCAN_WATCHDOG_READ_BUDGET_MS);
   const report = deps.report ?? reportOpsEvent;
   const probe = deps.probe ?? defaultProbe;
-  const adminUserIds = deps.adminUserIds ?? configuredOpsAdminUserIds();
+  const adminUserIds = normalizeAdminIdSet(deps.adminUserIds ?? configuredOpsAdminUserIds());
   const cronSchedules = deps.cronSchedules ?? VERCEL_CRONS;
   const pagingEnabled = deps.pagingEnabled ?? incidentPagingEnabled();
   const archiveIncident =
     deps.archiveIncident ??
-    ((rowId: string, options?: { closedReason?: string }) =>
-      db ? defaultArchiveIncident(db, rowId, options) : Promise.resolve(false));
+    ((row: OpenIncidentRow, options?: { closedReason?: string }) =>
+      db ? defaultArchiveIncident(db, row, options) : Promise.resolve(false));
   const notifyResolved = deps.notifyResolved ?? defaultNotifyResolved;
 
   if (!db) {
@@ -1226,7 +1733,7 @@ export async function runCustomerIncidentScan(
     ...new Set(
       [...agents, ...hermesInstances]
         .map((row) => row.userId)
-        .filter((id): id is string => typeof id === "string" && id.length > 0 && !adminUserIds.has(id)),
+        .filter((id): id is string => typeof id === "string" && id.length > 0 && !isAdminUser(id, adminUserIds)),
     ),
   ];
   const subscriptions = await collectSubscriptions(db, customerUserIds);
@@ -1242,7 +1749,54 @@ export async function runCustomerIncidentScan(
   const { byAgent: watchdogEventsByAgent, unknownAgentIds } = await collectWatchdogEvents(
     db,
     boxDownCandidates.map((agent) => agent.id),
+    { deadlineAt: watchdogDeadlineAt, clock },
   );
+
+  // ---- public reachability probes (box_unreachable signal) ------------------
+  // Same candidate set as box_down: running + awake + non-admin. Probe rows
+  // are the outage record; a failed probe-row read marks every candidate's
+  // box_unreachable unknown rather than resolving incidents on missing data.
+  const degradedAgentIds = new Set(unknownAgentIds);
+  const publicOutageStartedAtMs = new Map<string, number>();
+  const publicProbeUnknownAgentIds = new Set<string>();
+  const openProbeRowsByAgent = new Map<string, OpenProbeRow>();
+  let probeRowsReadable = false;
+  try {
+    for (const row of await collectOpenProbeRows(db)) {
+      openProbeRowsByAgent.set(row.agentId, row);
+    }
+    probeRowsReadable = true;
+  } catch (err) {
+    log.warn("customer-incidents: public probe row read failed; box_unreachable unknown", {
+      source: "customer-incidents",
+      failureType: "public_probe_rows_read_failed",
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  if (probeRowsReadable) {
+    const signals = await collectPublicProbeSignals(boxDownCandidates, probe, {
+      deadlineAt: probeDeadlineAt,
+      clock,
+    });
+    const applied = await applyPublicProbeSignals(
+      db,
+      boxDownCandidates,
+      signals,
+      openProbeRowsByAgent,
+      { report, now },
+    );
+    for (const [agentId, startMs] of applied.outageStartedAtMs) {
+      publicOutageStartedAtMs.set(agentId, startMs);
+    }
+    for (const agentId of applied.unknownAgentIds) publicProbeUnknownAgentIds.add(agentId);
+    for (const agentId of applied.degradedAgentIds) degradedAgentIds.add(agentId);
+  } else {
+    for (const agent of boxDownCandidates) {
+      publicProbeUnknownAgentIds.add(agent.id);
+      degradedAgentIds.add(agent.id);
+    }
+  }
 
   // ---- evaluate ------------------------------------------------------------
   const evaluation = evaluateCustomerIncidents({
@@ -1251,6 +1805,8 @@ export async function runCustomerIncidentScan(
     agents,
     watchdogEventsByAgent,
     watchdogUnknownAgentIds: unknownAgentIds,
+    publicOutageStartedAtMs,
+    publicProbeUnknownAgentIds,
     hermesInstances,
     heartbeats,
     cronSchedules,
@@ -1259,9 +1815,10 @@ export async function runCustomerIncidentScan(
   summary.unknown = [...evaluation.unknownKeys].filter((key) =>
     openIncidentRows.some((row) => row.incidentKey === key),
   ).length;
-  // Watchdog fetch failures mean we could not evaluate box_down for those
-  // agents — count them so the heartbeat records the pass as degraded.
-  summary.degraded = unknownAgentIds.size;
+  // Watchdog fetch failures and degraded probe reads mean we could not
+  // evaluate those subjects — count them so the heartbeat records the pass
+  // as degraded.
+  summary.degraded = degradedAgentIds.size;
 
   const openByKey = new Map<string, OpenIncidentRow>();
   for (const row of openIncidentRows) {
@@ -1343,6 +1900,7 @@ export async function runCustomerIncidentScan(
       try {
         disposition = await classifyLaunchFailedExpiry(db, row);
       } catch (err) {
+        summary.degraded += 1;
         log.warn("customer-incidents: launch_failed expiry check failed; leaving row open", {
           source: "customer-incidents",
           failureType: "launch_failed_expiry_check_failed",
@@ -1352,14 +1910,19 @@ export async function runCustomerIncidentScan(
         });
         continue;
       }
-      if (disposition === "unknown") continue;
+      if (disposition === "unknown") {
+        // The subject lookup failed — the row stays open for the next pass,
+        // but the pass is degraded so the heartbeat does not read clean.
+        summary.degraded += 1;
+        continue;
+      }
       expiredUnresolved = disposition === "expired";
     }
     let archived = false;
     try {
       archived = expiredUnresolved
-        ? await archiveIncident(row.id, { closedReason: "expired_unresolved" })
-        : await archiveIncident(row.id);
+        ? await archiveIncident(row, { closedReason: "expired_unresolved" })
+        : await archiveIncident(row);
     } catch (err) {
       summary.failed += 1;
       log.error("customer-incidents: incident archive failed", err, {
@@ -1381,7 +1944,7 @@ export async function runCustomerIncidentScan(
     if (!pagingEnabled) continue; // non-production: archive only, no admin mail
     try {
       await notifyResolved({
-        fingerprint: resolvedNoticeFingerprint(row.fingerprint),
+        fingerprint: resolvedNoticeFingerprint(row, now),
         source: row.source,
         title: `Resolved: ${row.title}`,
         message:

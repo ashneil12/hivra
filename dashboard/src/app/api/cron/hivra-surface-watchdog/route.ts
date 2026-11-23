@@ -40,10 +40,12 @@ export async function GET(req: NextRequest) {
 
   try {
     const summary = await runSurfaceWatchdogSweep();
-    // Honest heartbeat: read/relay failures mean boxes went unswept this tick.
+    // Honest heartbeat: read/relay failures AND budget-skipped boxes mean
+    // boxes went unswept this tick — notReached>0 is an incomplete sweep,
+    // not a clean one.
     await recordCronHeartbeat(
       "hivra-surface-watchdog",
-      summary.failed > 0
+      summary.failed > 0 || summary.notReached > 0
         ? {
             ok: false,
             detail:

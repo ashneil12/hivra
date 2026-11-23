@@ -73,16 +73,25 @@ describe("recordCronHeartbeat", () => {
 describe("runCronHeartbeatWatchdog", () => {
   afterEach(() => jest.clearAllMocks());
 
-  function mockHeartbeats(rows: Array<{ cron_name: string; last_success_at: string | null }>) {
+  function mockHeartbeats(
+    rows: Array<{
+      cron_name: string;
+      last_success_at: string | null;
+      last_run_at?: string | null;
+      run_count?: number | null;
+      created_at?: string | null;
+    }>,
+  ) {
     mockSupabaseAdmin.value = {
       from: jest.fn().mockReturnValue({
         select: jest.fn().mockResolvedValue({
           data: rows.map((r) => ({
             cron_name: r.cron_name,
             last_success_at: r.last_success_at,
-            last_run_at: r.last_success_at,
+            last_run_at: r.last_run_at ?? r.last_success_at,
             ok_count: 10,
-            run_count: 10,
+            run_count: r.run_count ?? 10,
+            created_at: r.created_at ?? minutesAgoIso(24 * 60),
           })),
           error: null,
         }),
@@ -158,8 +167,57 @@ describe("runCronHeartbeatWatchdog", () => {
     expect(reportOpsEvent).not.toHaveBeenCalled();
   });
 
-  it("does NOT page a cron whose row exists but never recorded a success", async () => {
-    mockHeartbeats([{ cron_name: "purge-expired", last_success_at: null }]);
+  it("does NOT page a cron whose row exists but never ran (no baseline)", async () => {
+    mockHeartbeats([{ cron_name: "purge-expired", last_success_at: null, run_count: 0 }]);
+
+    const result = await runCronHeartbeatWatchdog();
+
+    expect(result.stale).toHaveLength(0);
+    expect(reportOpsEvent).not.toHaveBeenCalled();
+  });
+
+  it("pages a cron that has run but never succeeded once it is 3x its period old", async () => {
+    // purge-expired runs daily (1440 min) → never-succeeded budget is 3x = 3
+    // days. The row was created 4 days ago, has run 10 times, never succeeded.
+    // Failing runs keep last_run_at fresh, so only the created_at reference
+    // can see this dead cron.
+    mockHeartbeats([
+      {
+        cron_name: "purge-expired",
+        last_success_at: null,
+        last_run_at: minutesAgoIso(5),
+        run_count: 10,
+        created_at: minutesAgoIso(4 * 24 * 60),
+      },
+    ]);
+
+    const result = await runCronHeartbeatWatchdog();
+
+    expect(result.stale.map((s) => s.name)).toEqual(["purge-expired"]);
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "synthetic.cron-dead-man",
+        severity: "fatal",
+        metadata: expect.objectContaining({
+          cronName: "purge-expired",
+          neverSucceeded: true,
+        }),
+      }),
+    );
+  });
+
+  it("does NOT page a never-succeeded cron still inside its 3x-period grace", async () => {
+    // Same shape but created 1 day ago on a daily cron: within the 3-day
+    // never-succeeded budget, so it gets the benefit of the doubt.
+    mockHeartbeats([
+      {
+        cron_name: "purge-expired",
+        last_success_at: null,
+        last_run_at: minutesAgoIso(5),
+        run_count: 2,
+        created_at: minutesAgoIso(24 * 60),
+      },
+    ]);
 
     const result = await runCronHeartbeatWatchdog();
 

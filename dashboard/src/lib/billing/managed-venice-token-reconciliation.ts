@@ -76,6 +76,7 @@ type DbQuery = {
   lt: (...args: unknown[]) => DbQuery;
   lte: (...args: unknown[]) => DbQuery;
   is: (...args: unknown[]) => DbQuery;
+  or: (...args: unknown[]) => DbQuery;
   order: (...args: unknown[]) => DbQuery;
   limit: (...args: unknown[]) => DbQuery;
   range: (...args: unknown[]) => DbQuery;
@@ -1193,6 +1194,15 @@ async function expireStaleUnpaidQuotes(params: {
     .in("status", ["active", "expired"])
     .is("transaction_hash", null)
     .lte("expires_at", expiresBeforeIso)
+    // Rows this pass already expired (metadata.closedReason =
+    // no_deposit_after_grace) must not consume the batch limit again — with a
+    // backlog above `limit` they would be re-selected every tick and starve
+    // the rest. `is.null` keeps quotes with missing metadata eligible: a
+    // plain `not.eq` would compare NULL and drop them in Postgres.
+    .or(
+      "metadata->>closedReason.is.null," +
+        "metadata->>closedReason.neq.no_deposit_after_grace"
+    )
     .order("expires_at", { ascending: true })
     .limit(params.limit);
 
