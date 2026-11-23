@@ -25,6 +25,13 @@ import { reportOpsEvent } from "@/lib/ops-events";
  * (active_agents, tier/fleet mix) record current values for past dates —
  * see the migration header.
  *
+ * A deep backfill is driven in budget-sized windows from `daysAgoStart`
+ * (default 0 = start at today): `?days=30`, then `?days=30&daysAgoStart=30`,
+ * then `?days=30&daysAgoStart=60`. Each invocation then finishes inside the
+ * 300s budget and repeated calls drain the range — a single `?days=90` restarts
+ * at today every run and can die before the oldest dates are ever reached.
+ * The window is clamped so daysAgoStart + days stays inside the 90-day cap.
+ *
  * Read-only against the live event tables; only writes platform_stats_daily.
  */
 
@@ -70,15 +77,24 @@ export async function GET(req: NextRequest) {
     return apiError("Supabase service role is not configured", 500);
   }
 
-  const daysRaw = Number(new URL(req.url).searchParams.get("days") ?? String(DEFAULT_DAYS));
-  const days = Number.isFinite(daysRaw)
+  const searchParams = new URL(req.url).searchParams;
+  const daysRaw = Number(searchParams.get("days") ?? String(DEFAULT_DAYS));
+  const startRaw = Number(searchParams.get("daysAgoStart") ?? "0");
+  const daysAgoStart = Number.isFinite(startRaw)
+    ? Math.min(Math.max(Math.trunc(startRaw), 0), MAX_BACKFILL_DAYS - 1)
+    : 0;
+  const requestedDays = Number.isFinite(daysRaw)
     ? Math.min(Math.max(Math.trunc(daysRaw), 1), MAX_BACKFILL_DAYS)
     : DEFAULT_DAYS;
+  // The oldest date a window may reach stays inside the backfill cap —
+  // point-in-time columns record current values, so dates older than 90 days
+  // would store today's fleet mix as if it were that day's.
+  const days = Math.min(requestedDays, MAX_BACKFILL_DAYS - daysAgoStart);
 
   // Each UTC day's snapshot is independent of the others, so run a few at a time
   // instead of one round trip after another (a 90-day backfill was 90 serial RPCs).
   const admin = supabaseAdmin;
-  const dayIndexes = Array.from({ length: days }, (_, i) => i);
+  const dayIndexes = Array.from({ length: days }, (_, i) => daysAgoStart + i);
   const daySucceeded = await mapWithConcurrencyLimit(dayIndexes, SNAPSHOT_CONCURRENCY, async (i) => {
     const statDate = utcDateNDaysAgo(i);
     const { error } = await admin.rpc("compute_platform_stats_snapshot", {
@@ -124,6 +140,7 @@ export async function GET(req: NextRequest) {
       metadata: {
         failureType: "platform_stats_snapshot_partial_failure",
         days,
+        daysAgoStart,
         computed,
         errors,
       },
@@ -159,5 +176,5 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return apiSuccess({ computed, errors, days, tokenAnchorRolled: !anchorError });
+  return apiSuccess({ computed, errors, days, daysAgoStart, tokenAnchorRolled: !anchorError });
 }

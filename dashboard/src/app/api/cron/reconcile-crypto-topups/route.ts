@@ -40,9 +40,12 @@ export async function GET(req: NextRequest) {
   try {
     const limit = parseLimit(req);
     const reconciliation = await reconcilePendingCryptoTopUps({ limit });
-    if (reconciliation.failed > 0) {
+    const staleRetryLoadFailed = reconciliation.staleRetryLoadFailed === true;
+    if (reconciliation.failed > 0 || staleRetryLoadFailed) {
       // Per-intent failures (an RPC rejecting the scan, a DB error) used to
-      // vanish into a 200 while paid top-ups went uncredited. Surface them.
+      // vanish into a 200 while paid top-ups went uncredited. Surface them —
+      // and the once-a-day stale pass failing to LOAD, which produces no
+      // per-intent failures at all while leaving the day's retry unrun.
       const failures = reconciliation.results.filter(
         (result) =>
           result.status === "failed" ||
@@ -57,6 +60,8 @@ export async function GET(req: NextRequest) {
         // Open intents past the stale cutoff this run skipped on purpose —
         // context so a nonzero count is not mistaken for missing work.
         staleExcluded: reconciliation.staleExcluded,
+        staleRetried: reconciliation.staleRetried,
+        staleRetryLoadFailed,
       });
       await reportOpsEvent({
         source: "cron.reconcile-crypto-topups",
@@ -70,6 +75,8 @@ export async function GET(req: NextRequest) {
           failureType: "crypto_topup_reconciliation_intent_failed",
           failed: reconciliation.failed,
           staleExcluded: reconciliation.staleExcluded,
+          staleRetried: reconciliation.staleRetried,
+          staleRetryLoadFailed,
           sample: failures.slice(0, 5).map((result) => ({
             referenceId: result.referenceId,
             errorName: "errorName" in result ? result.errorName : undefined,
@@ -172,6 +179,7 @@ export async function GET(req: NextRequest) {
         : 0;
     const heartbeatFailed =
       reconciliation.failed > 0 ||
+      staleRetryLoadFailed ||
       creditSweepFailed ||
       creditSweepItemFailures > 0 ||
       managedVeniceSweepFailed ||
@@ -183,6 +191,7 @@ export async function GET(req: NextRequest) {
             ok: false,
             detail:
               `recon_failed=${reconciliation.failed} ` +
+              `stale_retry=${staleRetryLoadFailed ? "load_failed" : (reconciliation.staleRetried ?? 0)} ` +
               `credit_sweep=${creditSweepFailed ? "threw" : creditSweepItemFailures} ` +
               `credit_sweep_op_review=${creditSweepNeedsOperator} ` +
               `mv_sweep=${managedVeniceSweepFailed ? "threw" : managedVeniceItemFailures}`,

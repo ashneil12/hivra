@@ -523,6 +523,48 @@ describe('ops-events helper', () => {
     expect(result).toEqual({ id: 'evt_race', fingerprint: expect.any(String) });
   });
 
+  it('returns null and does not page when the archived-row reopen update fails', async () => {
+    // Regression: a reopen UPDATE that errored used to fall through to the
+    // "lost race" branch and return the existing row id — the row stayed
+    // archived, no page went out, and callers saw a persisted-looking id for
+    // an event that was never recorded. It must report failure (null) like
+    // the lookup-error path; only an error-free update matching zero rows is
+    // a genuine lost race.
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: { id: 'evt_reopen_fail', occurrence_count: 9, archived_at: '2026-11-20T00:00:00Z' },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const updateEq = jest.fn().mockReturnThis();
+    const updateNot = jest.fn().mockReturnThis();
+    const updateMaybeSingle = jest
+      .fn()
+      .mockResolvedValue({ data: null, error: { message: 'reopen update exploded' } });
+    const update = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
+      .mockReturnValueOnce({
+        update,
+        eq: updateEq,
+        not: updateNot,
+        select,
+        maybeSingle: updateMaybeSingle,
+      });
+
+    const result = await reportOpsEvent({
+      source: 'incident.box_down',
+      severity: 'error',
+      page: true,
+      title: 'Customer incident: agent box down',
+      message: 'A customer box is down',
+    });
+
+    expect(result).toBeNull();
+    expect(mockedFatalAlert).not.toHaveBeenCalled();
+  });
+
   it('does NOT page when the insert returns no persisted id', async () => {
     const maybeSingle = jest.fn().mockResolvedValue({ data: null, error: null });
     const eq = jest.fn().mockReturnThis();

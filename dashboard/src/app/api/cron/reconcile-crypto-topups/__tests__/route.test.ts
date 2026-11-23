@@ -230,6 +230,38 @@ describe("GET /api/cron/reconcile-crypto-topups", () => {
     consoleErrorSpy.mockRestore();
   });
 
+  it("reports a stale-retry load failure as a reconciliation failure, not a clean run", async () => {
+    // Regression: the once-a-day stale pass failing to LOAD produced no
+    // per-intent failures, so nothing reached the ops feed and the heartbeat
+    // read ok — while the day's stale work silently never ran.
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    (reconcilePendingCryptoTopUps as jest.Mock).mockResolvedValueOnce({
+      ...reconciliationPayload,
+      staleRetried: 0,
+      staleRetryLoadFailed: true,
+    });
+
+    const response = await GET(makeRequest("Bearer cron-secret"));
+
+    expect(response.status).toBe(200);
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: "error",
+        title: "USDC top-up reconciliation failed",
+        metadata: expect.objectContaining({
+          staleRetryLoadFailed: true,
+          staleRetried: 0,
+        }),
+      })
+    );
+    expect(recordCronHeartbeat).toHaveBeenCalledWith(
+      "reconcile-crypto-topups",
+      expect.objectContaining({ ok: false, detail: expect.stringContaining("stale_retry=load_failed") })
+    );
+
+    consoleErrorSpy.mockRestore();
+  });
+
   it("does not raise a reconciliation alert on a clean run", async () => {
     await GET(makeRequest("Bearer cron-secret"));
 

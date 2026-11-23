@@ -173,7 +173,7 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
         // Conditional reopen: the write only lands while the row is still
         // archived, so exactly one racing writer flips it back to open — and
         // only that writer may page for the fresh incident.
-        const { data: reopened } = await supabaseAdmin
+        const { data: reopened, error: reopenError } = await supabaseAdmin
           .from('ops_events')
           .update({
             ...payload,
@@ -187,6 +187,14 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
           .not('archived_at', 'is', null)
           .select('id')
           .maybeSingle();
+
+        // A failed update is NOT a lost race: the row is still archived, no
+        // writer paged, and the event went unrecorded. Returning the existing
+        // id here would look like a persisted event to callers while the feed
+        // stayed silent — report failure instead, same as the lookup path.
+        if (reopenError) {
+          return null;
+        }
 
         if (reopened?.id) {
           // A recurrence of an ARCHIVED fingerprint un-archives the row —
@@ -206,9 +214,9 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
           }
           return { id: reopened.id, fingerprint };
         }
-        // Lost the reopen race: another writer already flipped the row open
-        // (and paged if needed). The fingerprint is represented; report the
-        // existing row id.
+        // Lost the reopen race: the update was error-free but matched no rows,
+        // so another writer already flipped the row open (and paged if needed).
+        // The fingerprint is represented; report the existing row id.
         return { id: existing.id, fingerprint };
       }
 

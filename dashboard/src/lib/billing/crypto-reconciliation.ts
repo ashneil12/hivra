@@ -21,7 +21,7 @@ import {
   type CryptoTopUpSettlementResult,
   type CryptoTopUpTransfer,
 } from "@/lib/billing/crypto-topups";
-import { isFirstCronTickOfUtcDay } from "@/lib/cron-heartbeat";
+import { claimCronUtcDay, isFirstCronTickOfUtcDay } from "@/lib/cron-heartbeat";
 import {
   createBaseChainReader,
   paymentDustFloor,
@@ -634,7 +634,19 @@ export async function reconcilePendingCryptoTopUps(params: {
   // just before crossing it must not lose its only automatic retry. The day
   // boundary comes from the cron heartbeat's last_run_at; with no previous
   // tick recorded there is nothing to compare, so nothing is retried.
-  const retryStale = await isFirstCronTickOfUtcDay(db, CRYPTO_TOPUPS_CRON_NAME, now);
+  //
+  // The read is only a gate. The route heartbeats AFTER reconciliation
+  // resolves, so two overlapping authorized invocations could both read
+  // "previous tick was yesterday" and both run the stale batch — a second
+  // full scan of every stale intent on the shared public RPC. claimCronUtcDay
+  // is the atomic decider: the first writer to move last_run_at into today
+  // owns the day's pass; a loser skips it. A winner that then crashes holds
+  // the day, deferring the pass to tomorrow — deferral, not loss, which is
+  // the right trade for a retry lane that already runs daily.
+  const retryStale =
+    (await isFirstCronTickOfUtcDay(db, CRYPTO_TOPUPS_CRON_NAME, now)) &&
+    (await claimCronUtcDay(db, CRYPTO_TOPUPS_CRON_NAME, now));
+  let staleRetryLoadFailed = false;
   const [intents, staleExcluded, staleRetry] = await Promise.all([
     listOpenCryptoTopUps(db, limit, staleCutoffIso),
     // The stale count only feeds the run summary — a failure here must not
@@ -650,9 +662,13 @@ export async function reconcilePendingCryptoTopUps(params: {
     }),
     // The daily retry lane is auxiliary like the count: a failed read must
     // not reject the batch — the intents stay open and are retried tomorrow.
+    // But it must not be INVISIBLE either: the day's one stale pass silently
+    // missing would leave the run summary, the cron's incident report and its
+    // heartbeat all reading as success, so the outcome carries the failure.
     retryStale
       ? listStaleCryptoTopUpsForDailyRetry(db, staleCutoffIso, STALE_DAILY_RETRY_LIMIT).catch(
           (error: unknown) => {
+            staleRetryLoadFailed = true;
             log.warn("stale crypto top-up daily retry load failed; continuing without it", {
               source: "crypto-reconciliation",
               failureType: "stale_topup_retry_load_failed",
@@ -708,6 +724,10 @@ export async function reconcilePendingCryptoTopUps(params: {
     // on demand.
     staleExcluded,
     staleRetried: staleRetry.length,
+    // The day was claimed for the stale pass but its intent SELECT failed —
+    // the pass produced zero rows without running. Surfaced so the caller's
+    // incident report and heartbeat read the run as degraded instead of clean.
+    staleRetryLoadFailed,
     ...counts,
     results,
   };
