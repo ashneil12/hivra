@@ -48,9 +48,14 @@ export async function stopHivraManagedComputer(userId: string, agentId: string):
     // managed lane's hosts live in our registry.
     let hostGone = false;
     if (context.kind === "managed") {
-      const { data: hostRow, error: hostError } = await db.from("proxmox_hosts").select("status,decommissioned_at").eq("id", context.host).maybeSingle();
-      if (hostError) throw new Error(`Host registry unavailable: ${hostError.message}`);
-      hostGone = hostRow?.status === "maintenance" && hostRow?.decommissioned_at != null;
+      // Registry ids use the normalized form target resolution produces;
+      // a stored or env host written differently still resolves there.
+      const registryId = host.normalizeProxmoxTargetId(context.host);
+      if (registryId) {
+        const { data: hostRow, error: hostError } = await db.from("proxmox_hosts").select("status,decommissioned_at").eq("id", registryId).maybeSingle();
+        if (hostError) throw new Error(`Host registry unavailable: ${hostError.message}`);
+        hostGone = hostRow?.status === "maintenance" && hostRow?.decommissioned_at != null;
+      }
     }
     const stopped = hostGone
       ? { ok: true }
