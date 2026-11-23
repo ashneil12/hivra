@@ -739,6 +739,10 @@ interface FakeDbConfig {
   publicProbeRowsFail?: boolean;
   /** When true, per-agent watchdog event queries fail (box_down goes unknown). */
   watchdogFetchFails?: boolean;
+  /** When true, ops_events updates touching public-probe rows fail. */
+  probeRowUpdateFails?: boolean;
+  /** When true, ops_events updates touching incident.* rows fail. */
+  incidentRowUpdateFails?: boolean;
   /** When true, single-row subject lookups (launch_failed expiry checks) fail. */
   subjectLookupFails?: boolean;
   /** When true, single-row subject lookups throw instead of returning an error. */
@@ -987,6 +991,18 @@ function fakeIncidentDb(config: FakeDbConfig) {
         );
         const updateCall = calls.find((c) => c[0] === "update");
         if (updateCall) {
+          if (
+            config.probeRowUpdateFails &&
+            rows.some((row) => row.source === "box.public_probe.unreachable")
+          ) {
+            return { data: null, error: { message: "probe row update failed" } };
+          }
+          if (
+            config.incidentRowUpdateFails &&
+            rows.some((row) => String(row.source ?? "").startsWith("incident."))
+          ) {
+            return { data: null, error: { message: "incident row update failed" } };
+          }
           // .update(payload).eq(...): mutate every filtered row in place so
           // later reads in the same scan see the write, like production.
           const payload = updateCall[1] as Row;
@@ -1299,9 +1315,10 @@ describe("runCustomerIncidentScan", () => {
     const deps = scanDeps({
       clock: () => (tick += 100_000), // each read jumps past the 90s budget
       probeBudgetMs: 90_000,
-      // The watchdog read deadline shares the same clock; keep it far away
-      // so only the probe budget is exercised here.
+      // The watchdog read and report deadlines share the same clock; keep
+      // them far away so only the probe budget is exercised here.
       watchdogBudgetMs: 24 * 60 * 60 * 1000,
+      reportBudgetMs: 24 * 60 * 60 * 1000,
       db: fakeIncidentDb({
         agents: [agentDbRow()],
         watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
@@ -1652,6 +1669,74 @@ describe("runCustomerIncidentScan", () => {
     expect(ops.metadata.incident_key).toBe("box_down:agent-1");
   });
 
+  it("does not let late-relayed failure receipts starve a newer recovery out of the receipt window", async () => {
+    // A recovery was recorded, then a burst of receipts with OLDER event_at
+    // but NEWER first_seen_at got relayed (backlog drain). A single mixed
+    // first_seen_at window fills with the late failures and the recovery
+    // falls outside it — the evaluator would keep a box_down open for a box
+    // that already recovered. Each receipt kind gets its own window, so
+    // neither can push the other out.
+    const lateFailures = Array.from({ length: 12 }, (_, i) =>
+      watchdogDbRow("unit_restart", 2 * MIN, {
+        event_id: `stale-${i}`,
+        // Recorded 2m ago but effective 35m+ ago — older than the recovery.
+        event_at: iso((35 + i) * MIN),
+      }),
+    );
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: {
+        "agent-1": [
+          // The genuinely newest effective receipt — recovery 3m ago.
+          watchdogDbRow("recovered", 3 * MIN, { event_id: "rec-now" }),
+          ...lateFailures,
+        ],
+      },
+      openIncidents: [incidentDbRow()],
+    });
+    const deps = scanDeps({ db });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.opened).toBe(0);
+    // The open box_down incident resolves: the recovery is the newest
+    // effective receipt even though the window is full of newer-RECORDED
+    // failure rows.
+    expect(summary.resolved).toBe(1);
+    expect(deps.notifyResolved).toHaveBeenCalled();
+  });
+
+  it("does not let late-relayed recovery receipts starve a live failure out of the receipt window", async () => {
+    // Mirror image: a live failure is the newest effective receipt, but a
+    // burst of stale recoveries recorded afterwards fills a mixed window —
+    // a box that is actually down would silently resolve.
+    const lateRecoveries = Array.from({ length: 12 }, (_, i) =>
+      watchdogDbRow("recovered", 2 * MIN, {
+        event_id: `stale-rec-${i}`,
+        event_at: iso((40 + i) * MIN),
+      }),
+    );
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: {
+        "agent-1": [
+          // Newest effective receipt: gateway_down 15m ago (past grace).
+          watchdogDbRow("gateway_down", 15 * MIN, { event_id: "down-now" }),
+          ...lateRecoveries,
+        ],
+      },
+      openIncidents: [incidentDbRow()],
+    });
+    const deps = scanDeps({ db });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    // The live outage is still seen: the incident stays open and is never
+    // resolved on a window full of stale recoveries.
+    expect(summary.resolved).toBe(0);
+    expect(summary.stillOpen).toBe(1);
+    expect(deps.archiveIncident).not.toHaveBeenCalled();
+    expect(deps.notifyResolved).not.toHaveBeenCalled();
+  });
+
   it("archives a stale box_down whose receipt is post-marker but over 24h old while the probe is healthy", async () => {
     // No runtime marker newer than the receipt: the gateway_down is 30h old
     // but belongs to the CURRENT runtime, so it still produces a finding
@@ -1802,6 +1887,38 @@ describe("runCustomerIncidentScan", () => {
       );
       expect(deps.notifyResolved as jest.Mock).toHaveBeenCalledTimes(1);
       expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+    });
+
+    it("never opens box_unreachable from a stale probe row when the healthy-probe archive fails", async () => {
+      // The probe answered 200 but archiving the 15-minute-old outage row
+      // failed: the stored row is stale data, not evidence of a live
+      // outage. Treating it as one would page a box that just answered
+      // publicly — the subject must go unknown instead, which also keeps an
+      // existing incident open for a later pass to retry the archive.
+      const row = probeRow(); // first_seen 15m ago — past the page threshold
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        probeRows: [row],
+        probeRowUpdateFails: true,
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-unreach-archerr",
+            source: "incident.box_unreachable",
+            title: "Customer incident: agent box unreachable",
+            metadata: { incident_key: "box_unreachable:agent-1" },
+          }),
+        ],
+      });
+      const deps = scanDeps({ db }); // default probe answers 200 → up
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(row.archived_at).toBeUndefined();
+      expect(summary.opened).toBe(0);
+      expect(summary.resolved).toBe(0);
+      expect(summary.unknown).toBe(1);
+      expect(summary.degraded).toBe(1);
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
     });
 
     it("a budget-skipped probe neither opens nor resolves box_unreachable", async () => {
@@ -2078,6 +2195,176 @@ describe("runCustomerIncidentScan", () => {
       }
       expect(union.size).toBe(20);
     });
+  });
+
+  // ---- report pass deadline + still-open version refresh -------------------
+
+  it("stops reporting findings once the report budget lapses and records the rest as degraded", async () => {
+    // Two failing crons produce two findings. The report deadline passes
+    // after the first report: the second is not reported this pass (it
+    // re-emits next scan) and the pass is recorded degraded.
+    const times = [0, 0, 0, 1e15];
+    let tick = 0;
+    const clock = () => times[Math.min(tick++, times.length - 1)];
+    const deps = scanDeps({
+      clock,
+      db: fakeIncidentDb({
+        agents: [],
+        heartbeats: [
+          {
+            cron_name: "cron-a",
+            last_run_at: iso(5 * MIN),
+            last_success_at: iso(5 * MIN),
+            run_count: 30,
+            ok_count: 20,
+            consecutive_failures: 3,
+          },
+          {
+            cron_name: "cron-b",
+            last_run_at: iso(5 * MIN),
+            last_success_at: iso(5 * MIN),
+            run_count: 30,
+            ok_count: 20,
+            consecutive_failures: 3,
+          },
+        ],
+      }),
+      cronSchedules: new Map<string, CronScheduleInfo>([
+        ["cron-a", { periodMinutes: 5, path: "/api/cron/cron-a" }],
+        ["cron-b", { periodMinutes: 5, path: "/api/cron/cron-b" }],
+      ]),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.opened).toBe(1);
+    expect(summary.degraded).toBe(1);
+    expect(deps.report as jest.Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports nothing once the report deadline has already passed", async () => {
+    // reportDeadlineAt = probeWriteDeadlineAt + reportBudgetMs — a negative
+    // budget puts it before the scan started, so every finding is skipped.
+    const deps = scanDeps({
+      reportBudgetMs: -(90_000 + 60_000 + 60_000),
+      db: fakeIncidentDb({
+        agents: [agentDbRow()],
+        watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.findings).toBe(1);
+    expect(summary.opened).toBe(0);
+    expect(summary.degraded).toBe(1);
+    expect(deps.report as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the open row's guarded version without re-paging while the incident still holds", async () => {
+    // Scan B confirms the incident still holds on an already-open row: it
+    // must not re-report (dedup — no second page), but it MUST move the
+    // version the resolve pass's archive is guarded on, or a concurrent
+    // scan's stale archive can close the live incident.
+    const row = incidentDbRow({
+      id: "evt-so-1",
+      occurrence_count: 2,
+      last_seen_at: iso(10 * MIN),
+      metadata: { incident_key: "box_down:agent-1" },
+    });
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+      openIncidents: [row],
+    });
+    const deps = scanDeps({ db, archiveIncident: undefined });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.stillOpen).toBe(1);
+    // No re-report for an already-open row — the page dedup is unchanged.
+    expect(deps.report as jest.Mock).not.toHaveBeenCalled();
+    // The version moved to this scan's time; the update was guarded on the
+    // version this scan observed (id + archived_at-null + old occurrence).
+    expect(row.last_seen_at).toBe(new Date(NOW).toISOString());
+    expect(row.occurrence_count).toBe(2);
+    const touchCalls = db.calls.filter(
+      (entry) =>
+        entry.table === "ops_events" &&
+        entry.calls.some(
+          (c) => c[0] === "update" && (c[1] as Row).last_seen_at === new Date(NOW).toISOString(),
+        ),
+    );
+    expect(touchCalls).toHaveLength(1);
+    const chain = touchCalls[0].calls;
+    expect(
+      chain.some((c) => c[0] === "eq" && c[1] === "occurrence_count" && c[2] === 2),
+    ).toBe(true);
+    expect(
+      chain.some((c) => c[0] === "eq" && c[1] === "last_seen_at" && c[2] === iso(10 * MIN)),
+    ).toBe(true);
+    expect(
+      chain.some((c) => c[0] === "is" && c[1] === "archived_at" && c[2] === null),
+    ).toBe(true);
+  });
+
+  it("a stale archive cannot close a live incident once a still-open refresh moved its version", async () => {
+    // Scan A read the incident row, then scan B's still-open refresh landed
+    // (bumping last_seen_at), then A's guarded archive fired. The version
+    // predicate no longer matches — the archive no-ops instead of closing a
+    // live incident and paging a resolved notice.
+    const row = incidentDbRow({
+      id: "evt-so-2",
+      occurrence_count: 2,
+      last_seen_at: iso(10 * MIN),
+      metadata: { incident_key: "box_down:agent-1" },
+    });
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      // The condition cleared in A's evaluation (newest receipt is a
+      // recovery) so A attempts the archive.
+      watchdogByAgent: {
+        "agent-1": [
+          watchdogDbRow("gateway_down", 90 * MIN),
+          watchdogDbRow("recovered", 20 * MIN),
+        ],
+      },
+      openIncidents: [row],
+    });
+    const deps = scanDeps({
+      db,
+      archiveIncident: undefined, // real guarded archive against the fake db
+      probe: jest.fn(async () => {
+        // B's concurrent still-open refresh lands between A's row read and
+        // its archive: last_seen_at moves past what A observed.
+        row.last_seen_at = iso(0);
+        return { status: 200, latencyMs: 9, error: null };
+      }),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(row.archived_at).toBeUndefined();
+    expect(summary.resolved).toBe(0);
+    expect(deps.notifyResolved as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it("counts a failed still-open version refresh as degraded without paging again", async () => {
+    const row = incidentDbRow({
+      id: "evt-so-3",
+      occurrence_count: 2,
+      last_seen_at: iso(10 * MIN),
+      metadata: { incident_key: "box_down:agent-1" },
+    });
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: { "agent-1": [watchdogDbRow("gateway_down", 45 * MIN)] },
+      openIncidents: [row],
+      incidentRowUpdateFails: true,
+    });
+    const deps = scanDeps({ db });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.stillOpen).toBe(1);
+    expect(summary.degraded).toBe(1);
+    expect(row.last_seen_at).toBe(iso(10 * MIN));
+    expect(deps.report as jest.Mock).not.toHaveBeenCalled();
   });
 });
 
