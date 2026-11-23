@@ -28,6 +28,7 @@ import {
   resolveBackupEncryption,
 } from "@/lib/cold-storage/backup-encryption";
 import {
+  isColdArchiveUriForInstance,
   isValidColdArchiveUri,
   isValidColdTimestampCompact,
   manifestPathFromArchiveUri,
@@ -47,6 +48,7 @@ import {
   type ProxmoxHostRoutingConfig,
 } from "./proxmox-instance-service";
 import { buildColdStorageScriptInstall } from "./cold-storage-host-scripts";
+import { buildRetentionArchiveTrashCommand, COLD_RETENTION_TRASH_RECEIPT } from "./cold-storage-delete-command";
 
 /**
  * EnvLike mirrors the loose shape proxmox-instance-service uses internally.
@@ -55,6 +57,16 @@ import { buildColdStorageScriptInstall } from "./cold-storage-host-scripts";
 type EnvLike = Record<string, string | undefined>;
 
 const LOG_PREFIX = "[cold-storage-service]";
+const RETENTION_ARCHIVE_PURGE = "retention_archive_purge";
+export const COLD_RESTORE_WRITER_EXITED = "HERMES_COLD_RESTORE_WRITER_EXITED";
+
+function coldStorageHostTimeout(transportTimeoutMs: number): string {
+  const transportSeconds = transportTimeoutMs / 1_000;
+  const killGraceSeconds = Math.min(5, transportSeconds / 4);
+  const commandSeconds = transportSeconds - 2 * killGraceSeconds;
+  // GNU timeout also stops descendants in the command's process group.
+  return `timeout --kill-after=${killGraceSeconds}s ${commandSeconds}s`;
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Public types
@@ -188,6 +200,8 @@ type HermesInstanceRow = {
   ipv4_address: string | null;
   resource_tier: string | null;
   lifecycle_state: string | null;
+  lifecycle_substate?: string | null;
+  last_lifecycle_transition_at?: string | null;
   status: string | null;
   subdomain: string | null;
   gateway_url?: string | null;
@@ -207,6 +221,8 @@ const INSTANCE_COLUMNS = [
   "ipv4_address",
   "resource_tier",
   "lifecycle_state",
+  "lifecycle_substate",
+  "last_lifecycle_transition_at",
   "status",
   "subdomain",
   "gateway_url",
@@ -325,6 +341,8 @@ const DEFAULT_ARCHIVE_SCRIPT_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_RESTORE_SCRIPT_TIMEOUT_MS = 660 * 1000;
 
 export type ArchiveInstanceOptions = {
+  /** Require the computer to still have been paused before this cutoff at claim time. */
+  pausedBefore?: string;
   /**
    * Upper bound on the archive host-script's wall-clock, in ms. The
    * archive-stopped-vms cron passes the time it has left before Vercel's
@@ -422,7 +440,7 @@ export async function archiveInstance(
 
   // 2. CAS: paused → archiving
   const lockedAt = d.now().toISOString();
-  const lockResult = await supabase
+  const lockQuery = supabase
     .from("hermes_instances")
     .update({
       lifecycle_state: "archiving",
@@ -431,7 +449,11 @@ export async function archiveInstance(
     })
     .eq("id", instanceId)
     .eq("lifecycle_state", "paused")
-    .is("deleted_at", null)
+    .is("lifecycle_substate", null)
+    .is("deleted_at", null);
+  const lockResult = await (options?.pausedBefore
+    ? lockQuery.lt("last_lifecycle_transition_at", options.pausedBefore)
+    : lockQuery)
     .select("id")
     .maybeSingle();
 
@@ -528,12 +550,11 @@ async function archiveInstanceAfterLock(
     1_000,
     options?.maxScriptTimeoutMs ?? DEFAULT_ARCHIVE_SCRIPT_TIMEOUT_MS
   );
-  // "" when encryption is off, so the command is unchanged. Only the PUBLIC
-  // recipient is ever put on the command line.
+  // Only the public recipient is ever put on the command line.
   const encryptionEnv = backupEncryptionEnvPrefix(resolveBackupEncryption(d.env));
   const scriptResult = await d.runHostScript(
     `${buildColdStorageScriptInstall("archive-vm-cold.sh")}
-${encryptionEnv}/usr/local/sbin/archive-vm-cold.sh ${row.proxmox_vmid} ${shellQuote(instanceId)}`,
+${encryptionEnv}${coldStorageHostTimeout(scriptTimeoutMs)} /usr/local/sbin/archive-vm-cold.sh ${row.proxmox_vmid} ${shellQuote(instanceId)}`,
     hostEnv,
     { timeoutMs: scriptTimeoutMs }
   );
@@ -910,9 +931,10 @@ export async function restoreInstance(
     !!row.archive_sha256 &&
     row.proxmox_vmid == null;
   if (
-    row.lifecycle_state !== "cold_archived" &&
-    row.lifecycle_state !== "pending_deletion" &&
-    !isFailedButRestorable
+    row.lifecycle_substate != null ||
+    (row.lifecycle_state !== "cold_archived" &&
+      row.lifecycle_state !== "pending_deletion" &&
+      !isFailedButRestorable)
   ) {
     return {
       ok: false,
@@ -935,7 +957,7 @@ export async function restoreInstance(
   // restore-vm-cold.sh argv — both must pass path-safety validation before
   // the remote command is built. Fails before the CAS lock: nothing held,
   // nothing to revert.
-  if (!INSTANCE_UUID_RE.test(instanceId) || !isValidColdArchiveUri(row.archive_uri)) {
+  if (!INSTANCE_UUID_RE.test(instanceId) || !isColdArchiveUriForInstance(row.archive_uri, instanceId)) {
     return {
       ok: false,
       reason: "missing_archive_metadata",
@@ -957,6 +979,9 @@ export async function restoreInstance(
     })
     .eq("id", instanceId)
     .eq("lifecycle_state", previousState)
+    .eq("archive_uri", row.archive_uri)
+    .eq("archive_sha256", row.archive_sha256)
+    .is("lifecycle_substate", null)
     .is("deleted_at", null)
     .select("id")
     .maybeSingle();
@@ -1003,9 +1028,7 @@ export async function restoreInstance(
     return reason;
   };
 
-  // Belt-and-braces: anything thrown synchronously between CAS and the
-  // final active transition (e.g. resolveProxmoxHostEnv throwing on
-  // misconfigured destination env) must still release the lock.
+  let hostDispatchAttempted = false;
   try {
     return await restoreInstanceAfterLock(
       supabase,
@@ -1013,18 +1036,18 @@ export async function restoreInstance(
       d,
       instanceId,
       options,
-      revertToCold
+      revertToCold,
+      () => { hostDispatchAttempted = true; }
     );
   } catch (err) {
-    return revertToCold({
+    const failure = {
       ok: false,
       reason: "host_script_failed",
-      message: `restoreInstance threw after lock acquired (row was reverted to ${previousState}): ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      message: `Restore failed after acquiring the claim: ${err instanceof Error ? err.message : String(err)}`,
       instanceId,
       retryable: true,
-    });
+    } satisfies ColdRestoreResult;
+    return hostDispatchAttempted ? holdUnverifiedRestore(failure, options) : revertToCold(failure);
   }
 }
 
@@ -1064,18 +1087,29 @@ export function buildRestoreCloneTeardownScript(
   }
   if (!INSTANCE_UUID_RE.test(instanceId)) return null;
   const expect = `hermes-${instanceId}`;
-  return `set -uo pipefail
+  return `set -euo pipefail
 vmid=${vmid}
 expect='${expect}'
-name=$(qm config "$vmid" 2>/dev/null | awk -F': ' '/^name:/{print $2; exit}')
-if [ -z "\${name:-}" ]; then echo "TEARDOWN_SKIP_ABSENT $vmid"; exit 0; fi
+inventory=$(qm list)
+[ "$(awk 'NR==1{print $1}' <<< "$inventory")" = VMID ]
+if ! awk -v id="$vmid" 'NR>1 && $1==id { found=1 } END { exit !found }' <<< "$inventory"; then
+  echo "TEARDOWN_SKIP_ABSENT $vmid"
+  exit 0
+fi
+name=$(qm config "$vmid" | awk -F': ' '/^name:/ && !found { print $2; found=1 }')
+if [ -z "$name" ]; then echo "TEARDOWN_FAIL $vmid"; exit 1; fi
 if [ "$name" != "$expect" ]; then echo "TEARDOWN_SKIP_NAME $vmid $name"; exit 0; fi
 qm stop "$vmid" --timeout 25 >/dev/null 2>&1 || true
 if qm destroy "$vmid" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1; then
-  echo "TEARDOWN_OK $vmid"
-else
-  echo "TEARDOWN_FAIL $vmid"
+  inventory=$(qm list)
+  [ "$(awk 'NR==1{print $1}' <<< "$inventory")" = VMID ]
+  if ! awk -v id="$vmid" 'NR>1 && $1==id { found=1 } END { exit !found }' <<< "$inventory"; then
+    echo "TEARDOWN_OK $vmid"
+    exit 0
+  fi
 fi
+echo "TEARDOWN_FAIL $vmid"
+exit 1
 `;
 }
 
@@ -1105,8 +1139,7 @@ export function restoreScriptRefusedPreexistingVmid(result: {
  * cold_archived — so the next Start leaks ANOTHER clone (fixturecase20 accumulated
  * 4; fixturecase11 was still leaking the morning of 2026-07-07).
  *
- * Never throws; a failed teardown is logged and left for the flag-gated
- * orphan sweep to flag.
+ * Only positive teardown evidence permits releasing the restore claim.
  */
 async function teardownFailedRestoreCloneBestEffort(
   d: Required<Pick<ColdStorageDeps, "runHostScript" | "now" | "env">>,
@@ -1115,7 +1148,7 @@ async function teardownFailedRestoreCloneBestEffort(
   options: RestoreInstanceOptions,
   scriptResult: { stdout?: string; stderr?: string },
   failureReason: string
-): Promise<void> {
+): Promise<boolean> {
   try {
     if (restoreScriptRefusedPreexistingVmid(scriptResult)) {
       log.warn("restore teardown skipped: destination VMID pre-existed this attempt", {
@@ -1125,7 +1158,7 @@ async function teardownFailedRestoreCloneBestEffort(
         vmid: options.destinationVmid,
         failureType: "restore_clone_teardown_skipped_preexisting",
       });
-      return;
+      return true;
     }
     const script = buildRestoreCloneTeardownScript(options.destinationVmid, instanceId);
     if (!script) {
@@ -1136,7 +1169,7 @@ async function teardownFailedRestoreCloneBestEffort(
         vmid: options.destinationVmid,
         failureType: "restore_clone_teardown_refused",
       });
-      return;
+      return false;
     }
     const result = await d.runHostScript(script, destHostEnv, { timeoutMs: 90_000 });
     const outcomeLine =
@@ -1154,6 +1187,10 @@ async function teardownFailedRestoreCloneBestEffort(
       outcome: outcomeLine,
       failureType: "restore_clone_teardown_ran",
     });
+    return result.ok && (
+      outcomeLine === `TEARDOWN_OK ${options.destinationVmid}`
+      || outcomeLine === `TEARDOWN_SKIP_ABSENT ${options.destinationVmid}`
+    );
   } catch (err) {
     log.warn("restore failure-path clone teardown threw (leftover clone left for the orphan sweep)", {
       source: "cold-storage-service",
@@ -1163,7 +1200,28 @@ async function teardownFailedRestoreCloneBestEffort(
       failureType: "restore_clone_teardown_threw",
       error: err instanceof Error ? err.message : String(err),
     });
+    return false;
   }
+}
+
+function holdUnverifiedRestore(
+  failure: ColdRestoreResult & { ok: false },
+  options: RestoreInstanceOptions,
+): ColdRestoreResult {
+  log.warn("Restore process exit or clone removal is unverified. The restore claim remains held.", {
+    source: "cold-storage-service",
+    failureType: "cold_restore_host_unverified",
+    instanceId: failure.instanceId,
+    reason: failure.reason,
+    destinationHost: options.destinationHostSlug,
+    destinationVmid: options.destinationVmid,
+  });
+  return {
+    ...failure,
+    message: `${failure.message} Support must verify the restore host before this computer can be restored or deleted.`,
+    retryable: false,
+    revertFailed: true,
+  };
 }
 
 async function restoreInstanceAfterLock(
@@ -1172,7 +1230,8 @@ async function restoreInstanceAfterLock(
   d: Required<Pick<ColdStorageDeps, "runHostScript" | "now" | "env">>,
   instanceId: string,
   options: RestoreInstanceOptions,
-  revertToCold: (reason: ColdRestoreResult & { ok: false }) => Promise<ColdRestoreResult>
+  revertToCold: (reason: ColdRestoreResult & { ok: false }) => Promise<ColdRestoreResult>,
+  markHostDispatched: () => void,
 ): Promise<ColdRestoreResult> {
   if (
     !row.archive_uri ||
@@ -1234,10 +1293,11 @@ async function restoreInstanceAfterLock(
     identityPrelude = `${buildAgeIdentityPrelude(identity.identity)}\n`;
   }
 
+  const scriptTimeoutMs = Math.max(1_000, options.maxScriptTimeoutMs ?? DEFAULT_RESTORE_SCRIPT_TIMEOUT_MS);
   const cmd = [
     // Reinstall from this deploy's embedded copy first — the host may still be
     // carrying a hand-copied version from an earlier release.
-    `${identityPrelude}${buildColdStorageScriptInstall("restore-vm-cold.sh")}\n/usr/local/sbin/restore-vm-cold.sh`,
+    `${identityPrelude}${buildColdStorageScriptInstall("restore-vm-cold.sh")}\n${coldStorageHostTimeout(scriptTimeoutMs)} /usr/local/sbin/restore-vm-cold.sh`,
     shellQuote(instanceId),
     shellQuote(row.archive_uri),
     shellQuote(row.archive_sha256),
@@ -1250,12 +1310,28 @@ async function restoreInstanceAfterLock(
     String(options.ramLimitMb ?? 4096),
   ].join(" ");
 
-  const scriptResult = await d.runHostScript(cmd, destHostEnv, {
-    timeoutMs: Math.max(
-      1_000,
-      options.maxScriptTimeoutMs ?? DEFAULT_RESTORE_SCRIPT_TIMEOUT_MS
-    ),
-  });
+  const reportedCommand = [
+    "(", cmd, ")", "restore_status=$?",
+    `echo ${COLD_RESTORE_WRITER_EXITED} "$restore_status"`, 'exit "$restore_status"',
+  ].join("\n");
+  markHostDispatched();
+  const scriptResult = await d.runHostScript(reportedCommand, destHostEnv, { timeoutMs: scriptTimeoutMs });
+  const receiptPrefix = `${COLD_RESTORE_WRITER_EXITED} `;
+  const exitReceipt = scriptResult.stdout.split(/\r?\n/)
+    .find((line) => line.startsWith(receiptPrefix))
+    ?.slice(receiptPrefix.length);
+  const normalExit = exitReceipt !== undefined && /^\d+$/.test(exitReceipt) && Number(exitReceipt) < 124;
+  // A timed-out or signalled client process can leave a detached Proxmox task.
+  // Do not race that task with teardown even if the shell printed an exit code.
+  if (!scriptResult.ok && !normalExit) {
+    return holdUnverifiedRestore({
+      ok: false,
+      reason: "host_script_failed",
+      message: "Restore ended without confirmation that the host work finished.",
+      instanceId,
+      retryable: false,
+    }, options);
+  }
 
   // Parse the RESULT line FIRST — restore-vm-cold.sh emits it on BOTH the
   // success path (exit 0, status=ok) AND the health-pending path (exit 5,
@@ -1274,23 +1350,20 @@ async function restoreInstanceAfterLock(
   const hasValidCoords = Boolean(newVmidStr && newIp && newHost);
   const isHealthPending = status === "health_pending" && hasValidCoords;
 
-  // Every failure branch below reverts the row to cold — so the clone this
-  // attempt may have created MUST be torn down first, or it leaks as a
-  // running onboot=1 VM that nothing else can see (the row's proxmox_vmid is
-  // NULL; orphan detection keys off rows that point at vmids). The teardown
-  // is guarded (exact `hermes-<instanceId>` name re-check at run time, tenant
-  // VMID range only, skipped entirely when the script's preflight refused a
-  // pre-existing VMID) and best-effort. health_pending is NOT a failure and
-  // never tears down — its live VM is parked for the recovery sweep.
+  // A failed restore may leave a clone. Keep the lifecycle claim unless its
+  // removal was confirmed. A health_pending VM continues through recovery.
+  async function failRestore(failure: ColdRestoreResult & { ok: false }): Promise<ColdRestoreResult> {
+    const removed = await teardownFailedRestoreCloneBestEffort(
+      d, destHostEnv, instanceId, options, scriptResult, failure.reason,
+    );
+    return removed ? revertToCold(failure) : holdUnverifiedRestore(failure, options);
+  }
 
   // Generic host-script failure (no parseable RESULT, or a non-health_pending
   // non-zero exit). health_pending is handled distinctly below — it is NOT a
   // failure, so it must not hit this revert.
   if (!scriptResult.ok && !isHealthPending) {
-    await teardownFailedRestoreCloneBestEffort(
-      d, destHostEnv, instanceId, options, scriptResult, "host_script_failed"
-    );
-    return revertToCold({
+    return failRestore({
       ok: false,
       reason: "host_script_failed",
       message: `restore-vm-cold.sh failed on ${options.destinationHostSlug}: ${
@@ -1302,10 +1375,7 @@ async function restoreInstanceAfterLock(
   }
 
   if (!isHealthPending && (status !== "ok" || !hasValidCoords)) {
-    await teardownFailedRestoreCloneBestEffort(
-      d, destHostEnv, instanceId, options, scriptResult, "result_parse_failed"
-    );
-    return revertToCold({
+    return failRestore({
       ok: false,
       reason: "result_parse_failed",
       message: `restore-vm-cold.sh did not report status=ok; stdout tail: ${scriptResult.stdout.slice(-400)}`,
@@ -1314,10 +1384,7 @@ async function restoreInstanceAfterLock(
     });
   }
   if (reportedInstanceId && reportedInstanceId !== instanceId) {
-    await teardownFailedRestoreCloneBestEffort(
-      d, destHostEnv, instanceId, options, scriptResult, "instance_id_mismatch"
-    );
-    return revertToCold({
+    return failRestore({
       ok: false,
       reason: "result_parse_failed",
       message: `Restore reported instance=${reportedInstanceId} but expected ${instanceId}`,
@@ -1328,10 +1395,7 @@ async function restoreInstanceAfterLock(
 
   const newVmid = Number.parseInt(newVmidStr!, 10);
   if (!Number.isInteger(newVmid) || newVmid <= 0) {
-    await teardownFailedRestoreCloneBestEffort(
-      d, destHostEnv, instanceId, options, scriptResult, "invalid_vmid"
-    );
-    return revertToCold({
+    return failRestore({
       ok: false,
       reason: "result_parse_failed",
       message: `Restore reported non-positive vmid=${newVmidStr}`,
@@ -1756,11 +1820,21 @@ export async function purgeArchive(
   // interpolated into the `ssh cold` rm/mv command below — a tampered value
   // (e.g. `data-x$(id).tar.zst`) would execute on the Storage Box. Refuse
   // before any remote command is constructed.
-  if (!INSTANCE_UUID_RE.test(instanceId) || !isValidColdArchiveUri(row.archive_uri)) {
+  if (!INSTANCE_UUID_RE.test(instanceId) || !isColdArchiveUriForInstance(row.archive_uri, instanceId)) {
     return {
       ok: false,
       reason: "missing_archive_metadata",
       message: `Instance ${instanceId} archive_uri failed path-safety validation: ${JSON.stringify(row.archive_uri)}`,
+      instanceId,
+    };
+  }
+
+  const resuming = row.lifecycle_substate === RETENTION_ARCHIVE_PURGE;
+  if (row.lifecycle_state !== "pending_deletion" || (!resuming && row.lifecycle_substate != null)) {
+    return {
+      ok: false,
+      reason: "db_update_failed",
+      message: "Instance is no longer available for scheduled archive purging.",
       instanceId,
     };
   }
@@ -1776,20 +1850,47 @@ export async function purgeArchive(
 
   const env = resolveProxmoxHostEnv(hostRoutingForSlug(hostSlug), d.env);
 
-  const ts = d.now().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const claimAt = resuming ? row.last_lifecycle_transition_at : d.now().toISOString();
+  if (!claimAt || !Number.isFinite(Date.parse(claimAt))) {
+    return { ok: false, reason: "db_update_failed", message: "Invalid archive purge claim timestamp.", instanceId };
+  }
+  if (!resuming) {
+    // Share a compare-and-set boundary with owner deletion and restore. A cron
+    // candidate selected before either operation cannot move its files to trash.
+    const claim = await supabase
+      .from("hermes_instances")
+      .update({ lifecycle_substate: RETENTION_ARCHIVE_PURGE, last_lifecycle_transition_at: claimAt })
+      .eq("id", instanceId)
+      .eq("lifecycle_state", "pending_deletion")
+      .is("lifecycle_substate", null)
+      .is("deleted_at", null)
+      .eq("archive_uri", row.archive_uri)
+      .select("id")
+      .maybeSingle();
+    if (claim.error || !claim.data) {
+      return {
+        ok: false,
+        reason: "db_update_failed",
+        message: `Scheduled archive purge could not claim the instance: ${claim.error?.message ?? "state changed"}`,
+        instanceId,
+      };
+    }
+  }
+
+  const ts = new Date(claimAt).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
   const trashUri = `trash/${instanceId}-${ts}`;
 
   const dataPathParent = row.archive_uri.replace(/\/[^/]+$/, "");
   const remoteCmd = options.skipTrash
-    ? `ssh cold "rm -rf ${shellQuote(dataPathParent)} ${shellQuote(`meta/${instanceId}`)}"`
-    : `ssh cold "mkdir -p ${shellQuote(trashUri)} && mv ${shellQuote(dataPathParent)} ${shellQuote(`${trashUri}/data`)} && (mv ${shellQuote(`meta/${instanceId}`)} ${shellQuote(`${trashUri}/meta`)} || true)"`;
+    ? `ssh -n -o BatchMode=yes -o StrictHostKeyChecking=yes cold "rm -rf ${shellQuote(dataPathParent)} ${shellQuote(`meta/${instanceId}`)}"`
+    : buildRetentionArchiveTrashCommand(instanceId, row.archive_uri, ts);
 
   const result = await d.runHostScript(remoteCmd, env, { timeoutMs: 60_000 });
-  if (!result.ok) {
+  if (!result.ok || (!options.skipTrash && !result.stdout.split(/\r?\n/).includes(COLD_RETENTION_TRASH_RECEIPT))) {
     return {
       ok: false,
       reason: "host_script_failed",
-      message: `purge command failed: ${result.error ?? result.stderr}`,
+      message: `purge command failed: ${result.error || result.stderr || "storage host did not confirm trash move"}`,
       instanceId,
     };
   }
@@ -1805,6 +1906,11 @@ export async function purgeArchive(
       last_lifecycle_transition_at: purgedAt,
     })
     .eq("id", instanceId)
+    .eq("lifecycle_state", "pending_deletion")
+    .eq("lifecycle_substate", RETENTION_ARCHIVE_PURGE)
+    .eq("last_lifecycle_transition_at", claimAt)
+    .eq("archive_uri", row.archive_uri)
+    .is("deleted_at", null)
     .select("id")
     .maybeSingle();
 

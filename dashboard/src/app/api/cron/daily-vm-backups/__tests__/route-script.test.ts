@@ -68,9 +68,16 @@ describe("daily VM backup host script", () => {
     );
 
     expect(processCandidate).toContain("buildInstallDailyBackupScript()");
+    expect(processCandidate).toContain("${HOST_BACKUP_DEADLINE}");
     expect(processCandidate.indexOf("buildInstallDailyBackupScript()")).toBeLessThan(
       processCandidate.indexOf('"/usr/local/sbin/backup-vm-daily.sh"')
     );
+  });
+
+  it("keeps a host-side deadline on detached backup writers", () => {
+    const route = readRepoFile("src/app/api/cron/daily-vm-backups/route.ts");
+    expect(route).toContain('DETACHED_BACKUP_DEADLINE = "timeout --kill-after=10s 45m"');
+    expect(route).toContain("nohup ${DETACHED_BACKUP_DEADLINE} /usr/local/sbin/backup-vm-daily.sh");
   });
 
   it("runs real memory preflight without starting vzdump for host-preflight", () => {

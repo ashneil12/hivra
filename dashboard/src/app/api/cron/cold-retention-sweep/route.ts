@@ -86,6 +86,7 @@ async function handle(req: NextRequest) {
       .from("hermes_instances")
       .select("id, archived_at")
       .eq("lifecycle_state", "cold_archived")
+      .is("lifecycle_substate", null)
       .eq("resource_tier", "credit_base")
       .lt("archived_at", freeMarkBefore)
       .is("scheduled_deletion_at", null)
@@ -105,6 +106,7 @@ async function handle(req: NextRequest) {
         })
         .eq("id", row.id)
         .eq("lifecycle_state", "cold_archived")
+        .is("lifecycle_substate", null)
         .select("id")
         .maybeSingle();
       if (upd.error) {
@@ -125,6 +127,7 @@ async function handle(req: NextRequest) {
       .from("hermes_instances")
       .select("id, archived_at, resource_tier, entitlement_state")
       .eq("lifecycle_state", "cold_archived")
+      .is("lifecycle_substate", null)
       .neq("resource_tier", "credit_base")
       .in("entitlement_state", ["cancelled", "past_due"])
       .lt("archived_at", paidMarkBefore)
@@ -145,6 +148,7 @@ async function handle(req: NextRequest) {
         })
         .eq("id", row.id)
         .eq("lifecycle_state", "cold_archived")
+        .is("lifecycle_substate", null)
         .select("id")
         .maybeSingle();
       if (upd.error) {

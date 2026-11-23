@@ -107,9 +107,8 @@ export type StoredLifecycleState =
 
 /**
  * The one list of how a computer's lifecycle_state may move. The database
- * watches the same list (hermes_instance_lifecycle_allowed in
- * 20261112130000_explicit_state_transitions.sql) and records any other move on
- * the ops page, without blocking it yet. Keep the two in step; a test checks.
+ * watches the same list in hermes_instance_lifecycle_allowed. Archive protection
+ * also enforces the allowed exits from archive-only states at the write boundary.
  */
 export const ALLOWED_TRANSITIONS: Readonly<Record<StoredLifecycleState, readonly StoredLifecycleState[]>> = {
   pending: ["provisioning", "failed", "deleting", "deleted"],
@@ -117,12 +116,12 @@ export const ALLOWED_TRANSITIONS: Readonly<Record<StoredLifecycleState, readonly
   active: ["provisioning", "paused", "suspended", "failed", "deleting", "deleted"],
   paused: ["provisioning", "active", "suspended", "failed", "deleting", "deleted", "archiving"],
   suspended: ["provisioning", "active", "paused", "failed", "deleting", "deleted"],
-  failed: ["provisioning", "active", "paused", "deleting", "deleted"],
+  failed: ["provisioning", "active", "paused", "restoring", "deleting", "deleted"],
   deleting: ["deleted", "failed"],
   deleted: [],
   archiving: ["paused", "cold_archived", "failed"],
-  cold_archived: ["restoring", "pending_deletion", "deleted"],
-  pending_deletion: ["restoring", "deleted"],
+  cold_archived: ["restoring", "pending_deletion", "deleting", "deleted"],
+  pending_deletion: ["restoring", "deleting", "deleted"],
   restoring: ["active", "cold_archived", "pending_deletion", "failed"],
 };
 

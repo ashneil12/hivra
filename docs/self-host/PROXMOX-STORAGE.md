@@ -59,6 +59,30 @@ PROXMOX_IP_LAST_OCTET_START + (vmid - PROXMOX_VMID_START)
 
 Do not reuse the old test-only VMID window as the fleet default.
 
+## Register a verified host retirement
+
+The fleet recovery scan checks active, draining, and maintenance hosts. It
+excludes a host only when its registry row records a verified decommission.
+An unreachable host or a placement or SSH host declaration missing from the
+registry leaves the scan inconclusive. Reconcile the registry and configured
+identities when adding, moving, or retiring a host.
+
+1. Apply the migration that adds `proxmox_hosts.decommissioned_at` before
+   releasing code that reads it. Follow the [managed release
+   process](../release/MANAGED-HOSTING-RELEASES.md) for hosted environments.
+2. Drain new placements. Reconcile the node's inventory, including stopped
+   guests and locally held storage, against all instance and computer records.
+   Verify each workload was moved or was removed with authorization. Confirm
+   permanent disposal with provider or storage-wipe evidence. A missing SSH
+   mapping or an unanswered inventory request is insufficient evidence.
+3. Keep the row in `maintenance` and set its `decommissioned_at` to the
+   verified retirement time. Record the evidence in the private operations
+   handoff. Remove its routing configuration and credentials after the
+   retirement is registered. Clear the marker before enrolling a replacement
+   with the same host identity.
+4. Verify on a disposable instance that the retired host is skipped and an
+   unreachable host without a retirement marker still blocks deletion.
+
 ## Mixed Hermes + Hivra Host Baseline
 
 A mixed host is not a Hivra-only exception. Resolve its current identity and

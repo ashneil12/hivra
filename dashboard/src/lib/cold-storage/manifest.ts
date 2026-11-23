@@ -63,6 +63,12 @@ export function isValidColdArchiveUri(archiveUri: string): boolean {
   return COLD_ARCHIVE_URI_RE.test(archiveUri);
 }
 
+export function isColdArchiveUriForInstance(archiveUri: string, instanceId: string): boolean {
+  const match = COLD_ARCHIVE_URI_RE.exec(archiveUri);
+  return (archiveUri.startsWith("free/") || archiveUri.startsWith("paid/"))
+    && match?.[0] === archiveUri && match[1] === instanceId;
+}
+
 function fail(manifestPath: string, field: string, reason: string): never {
   throw new Error(`Invalid cold-storage manifest ${manifestPath}: ${field} ${reason}`);
 }
