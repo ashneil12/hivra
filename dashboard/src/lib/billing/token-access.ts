@@ -380,6 +380,28 @@ export async function resolveUserTokenAccess(
   return computeUserTokenAccess({ phase, cohort, now });
 }
 
+/**
+ * Re-read access when an earlier snapshot may have raced a conversion.
+ * Reads only the cohort row (the mutable input) and recomputes: activation
+ * ensure and membership recording belong to first resolution, not a re-check.
+ */
+export async function reReadUserTokenAccess(
+  userId: string,
+  params: { db?: TokenAccessDb | null; now?: Date } = {}
+): Promise<UserTokenAccess> {
+  const now = params.now ?? new Date();
+  const phase = getHivraTokenPhase(now);
+  if (phase !== "active") return computeUserTokenAccess({ phase, cohort: null, now });
+  const db = (params.db ?? (supabaseAdmin as unknown)) as TokenAccessDb | null;
+  if (!db) throw new Error("Database not configured");
+  const { data, error } = await table(db, "token_grandfather_cohort")
+    .select(COHORT_SELECT)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to load the $HermesOS cohort row: ${error.message ?? "unknown"}`);
+  return computeUserTokenAccess({ phase, cohort: (data as CohortRow | null) ?? null, now });
+}
+
 /** Batch form for crons. Relies on the cohort recorded at activation. */
 export async function resolveTokenAccessForUsers(
   userIds: string[],
