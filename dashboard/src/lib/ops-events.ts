@@ -39,6 +39,19 @@ export interface OpsEventInput {
    * that must restart when the condition recurs, not keep the first-ever sighting.
    */
   resetFirstSeenOnReopen?: boolean;
+  /**
+   * ISO-8601 time the observation behind this report was taken. For events
+   * whose fingerprint row doubles as a state record (e.g. the public-probe
+   * outage rows), a report can be in flight long enough — a stalled write
+   * racing a deadline — for a NEWER observation to change the stored verdict
+   * first: the row got archived by a healthy scan, or records an outage that
+   * began after this observation. Reopening or refreshing that row would
+   * commit stale state. When set, both update branches are predicated on the
+   * observation still being current and the report is refused
+   * ({ superseded: true }) instead. The insert branch is unguarded by
+   * necessity: no row exists to contradict the observation.
+   */
+  observedAt?: string;
 }
 
 export interface ArchiveOpsEventsInput {
@@ -131,18 +144,29 @@ export function buildOpsEventFingerprint(input: {
   return createHash('sha256').update(raw).digest('hex');
 }
 
-export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: string; fingerprint: string } | null> {
-  if (!supabaseAdmin) return null;
+export interface OpsEventReport {
+  /** Persisted row id — unset when a raced write matched nothing. */
+  id?: string;
+  fingerprint: string;
+  /**
+   * Set (true) only for observedAt-guarded reports that were REFUSED: the
+   * stored fingerprint row carries a verdict newer than the observation this
+   * report recorded — it was archived after the observation, or its recorded
+   * start began after it — so the stale write was skipped rather than
+   * committed. Callers should treat the subject as contested, not written.
+   */
+  superseded?: boolean;
+}
 
-  const severity = input.severity || 'error';
-  const fingerprint = buildOpsEventFingerprint(input);
-  const now = new Date().toISOString();
-  const shouldPage = severity === 'fatal' || input.page === true;
+function parseIsoMs(value: unknown): number {
+  return typeof value === 'string' ? Date.parse(value) : Number.NaN;
+}
 
-  const payload = {
+function buildOpsEventPayload(input: OpsEventInput, fingerprint: string) {
+  return {
     fingerprint,
     source: sanitizeString(input.source),
-    severity,
+    severity: input.severity || 'error',
     title: sanitizeString(input.title),
     message: sanitizeString(input.message),
     route: input.route ? sanitizeString(input.route) : null,
@@ -154,11 +178,27 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
     sample_stack: input.sampleStack ? sanitizeString(input.sampleStack) : null,
     environment: process.env.NODE_ENV || 'unknown',
   };
+}
+
+export async function reportOpsEvent(input: OpsEventInput): Promise<OpsEventReport | null> {
+  if (!supabaseAdmin) return null;
+
+  const severity = input.severity || 'error';
+  const fingerprint = buildOpsEventFingerprint(input);
+  const now = new Date().toISOString();
+  const shouldPage = severity === 'fatal' || input.page === true;
+  // The observation-time guard (see OpsEventInput.observedAt) keeps a stalled
+  // report from committing a stale verdict over a newer one. An unparseable
+  // timestamp disables the guard rather than silently refusing every write.
+  const observedAtMs = input.observedAt != null ? Date.parse(input.observedAt) : Number.NaN;
+  const hasObservedAt = Number.isFinite(observedAtMs);
+
+  const payload = buildOpsEventPayload(input, fingerprint);
 
   try {
     const { data: existing, error: lookupError } = await supabaseAdmin
       .from('ops_events')
-      .select('id, occurrence_count, archived_at')
+      .select('id, occurrence_count, archived_at, first_seen_at')
       .eq('fingerprint', fingerprint)
       .maybeSingle();
 
@@ -170,10 +210,20 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
       const wasArchived = existing.archived_at != null;
 
       if (wasArchived) {
+        // A row closed AT-or-AFTER the observation was resolved by a newer
+        // verdict; reopening it from this stale report would resurrect a
+        // state that already ended. Refuse before the write — and predicate
+        // the write itself so the same verdict landing between the lookup
+        // and the update turns it into a no-op as well.
+        const archivedAtMs = parseIsoMs(existing.archived_at);
+        if (hasObservedAt && Number.isFinite(archivedAtMs) && archivedAtMs >= observedAtMs) {
+          return { fingerprint, superseded: true };
+        }
+
         // Conditional reopen: the write only lands while the row is still
         // archived, so exactly one racing writer flips it back to open — and
         // only that writer may page for the fresh incident.
-        const { data: reopened, error: reopenError } = await supabaseAdmin
+        let reopenQuery = supabaseAdmin
           .from('ops_events')
           .update({
             ...payload,
@@ -184,7 +234,13 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
             ...(input.resetFirstSeenOnReopen ? { first_seen_at: now } : {}),
           })
           .eq('id', existing.id)
-          .not('archived_at', 'is', null)
+          .not('archived_at', 'is', null);
+        if (input.observedAt) {
+          // Same verdict at the row: the close must still predate the
+          // observation, or the reopen is the stale commit.
+          reopenQuery = reopenQuery.lt('archived_at', input.observedAt);
+        }
+        const { data: reopened, error: reopenError } = await reopenQuery
           .select('id')
           .maybeSingle();
 
@@ -214,13 +270,25 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
           }
           return { id: reopened.id, fingerprint };
         }
-        // Lost the reopen race: the update was error-free but matched no rows,
-        // so another writer already flipped the row open (and paged if needed).
-        // The fingerprint is represented; report the existing row id.
+        // The update was error-free but matched no rows. Unguarded reports
+        // treat that as a lost reopen race — another writer already flipped
+        // the row open (and paged if needed), so the fingerprint is
+        // represented. Guarded reports treat it as a refusal: the verdict
+        // that won is newer than this observation.
+        if (input.observedAt) {
+          return { fingerprint, superseded: true };
+        }
         return { id: existing.id, fingerprint };
       }
 
-      const { data } = await supabaseAdmin
+      // An OPEN row that records a start newer than this observation belongs
+      // to a fresher report — this stale one must not bump it.
+      const firstSeenAtMs = parseIsoMs(existing.first_seen_at);
+      if (hasObservedAt && Number.isFinite(firstSeenAtMs) && firstSeenAtMs > observedAtMs) {
+        return { fingerprint, superseded: true };
+      }
+
+      let refreshQuery = supabaseAdmin
         .from('ops_events')
         .update({
           ...payload,
@@ -229,10 +297,23 @@ export async function reportOpsEvent(input: OpsEventInput): Promise<{ id?: strin
           last_seen_at: now,
           occurrence_count: (existing.occurrence_count || 0) + 1,
         })
-        .eq('id', existing.id)
+        .eq('id', existing.id);
+      if (input.observedAt) {
+        // Land only while the row has not been closed after the observation
+        // (the update itself can reopen an archived row — an archive landing
+        // between the lookup and this write must not be undone by the stale
+        // report) and does not record a start newer than the observation.
+        refreshQuery = refreshQuery
+          .or(`archived_at.is.null,archived_at.lt."${input.observedAt}"`)
+          .lte('first_seen_at', input.observedAt);
+      }
+      const { data } = await refreshQuery
         .select('id')
         .single();
 
+      if (input.observedAt && !data?.id) {
+        return { fingerprint, superseded: true };
+      }
       return {
         id: data?.id,
         fingerprint,
@@ -305,6 +386,86 @@ async function dispatchAdminPageAlert(input: {
   } catch {
     // Transport module failed to load or threw past its own guard — never let
     // paging break event recording.
+  }
+}
+
+export interface OpsEventInsertOnceResult {
+  /** Inserted row id — set only when this call actually wrote the row. */
+  id?: string;
+  fingerprint: string;
+  /**
+   * True when this call inserted the row; false when the fingerprint was
+   * already stored — the unique constraint resolved the race at insert time
+   * and NO update, reopen, or counter bump happened.
+   */
+  inserted: boolean;
+}
+
+/**
+ * Insert-only report: records the event iff its fingerprint is not already
+ * stored. reportOpsEvent's dedupe is select-then-update — two racing reports
+ * can both pass the lookup and the second lands on the UPDATE branch,
+ * bumping last_seen_at/occurrence_count (or reopening an archived row) for
+ * an event that was already recorded. For receipt relays — where each
+ * receipt is a unique event that must persist exactly once no matter how
+ * many sweeps re-read it — that bump is false activity.
+ *
+ * The unique fingerprint constraint decides the race atomically inside the
+ * INSERT (ON CONFLICT DO NOTHING): a conflict means "already recorded" and
+ * changes nothing. Pages on insert like reportOpsEvent's insert branch —
+ * the row IS the first sighting — and never otherwise.
+ *
+ * Returns the insert result on success, { inserted:false } on conflict,
+ * and null on failure (same convention as reportOpsEvent).
+ */
+export async function reportOpsEventOnce(input: OpsEventInput): Promise<OpsEventInsertOnceResult | null> {
+  if (!supabaseAdmin) return null;
+
+  const severity = input.severity || 'error';
+  const fingerprint = buildOpsEventFingerprint(input);
+  const now = new Date().toISOString();
+  const shouldPage = severity === 'fatal' || input.page === true;
+
+  const payload = buildOpsEventPayload(input, fingerprint);
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('ops_events')
+      .upsert(
+        {
+          ...payload,
+          first_seen_at: now,
+          last_seen_at: now,
+          occurrence_count: 1,
+        },
+        { onConflict: 'fingerprint', ignoreDuplicates: true },
+      )
+      .select('id');
+
+    if (error) return null;
+
+    const row = ((data ?? []) as Array<{ id?: string }>)[0];
+    if (!row?.id) {
+      // Fingerprint already stored: this receipt was recorded already.
+      return { fingerprint, inserted: false };
+    }
+
+    if (shouldPage) {
+      await dispatchAdminPageAlert({
+        fingerprint,
+        source: payload.source,
+        title: payload.title,
+        message: payload.message,
+        route: payload.route,
+        instanceId: payload.instance_id,
+        userId: payload.user_id,
+        metadata: payload.metadata,
+      });
+    }
+
+    return { id: row.id, fingerprint, inserted: true };
+  } catch {
+    return null;
   }
 }
 

@@ -23,11 +23,16 @@
  * the sweep batch-looks-up which of those titles already have an ops_events
  * row and relays only the new ones — a re-read of the receipt list must not
  * touch last_seen_at or occurrence_count (re-reads used to make an old outage
- * look current, with counts in the hundreds).
+ * look current, with counts in the hundreds). The batch lookup is only the
+ * fast path: correctness rests on the write itself — each relay goes through
+ * an INSERT keyed on the event's fingerprint (reportOpsEventOnce), which the
+ * unique constraint resolves atomically, so two overlapping sweeps that both
+ * read "not stored" cannot have the second one's write land on the dedupe
+ * UPDATE branch and bump the row the first just inserted.
  */
 
 import { log } from "@/lib/logger";
-import { reportOpsEvent, type OpsEventInput } from "@/lib/ops-events";
+import { reportOpsEventOnce, type OpsEventInput } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   readSurfaceWatchdogFromBox,
@@ -174,7 +179,12 @@ export async function lookupRelayedWatchdogTitles(
 export interface SurfaceWatchdogSweepOptions {
   now?: () => number;
   read?: typeof readSurfaceWatchdogFromBox;
-  report?: typeof reportOpsEvent;
+  /**
+   * Insert-only persistence for one relayed receipt: writes the ops row iff
+   * its fingerprint is not already stored and reports whether THIS call
+   * wrote it — the atomic guard two overlapping sweeps need.
+   */
+  insertOnce?: typeof reportOpsEventOnce;
   /** Test hook: which of a box's event titles are already stored. Defaults to a real ops_events lookup. */
   lookupRelayedTitles?: (instanceId: string, titles: string[]) => Promise<Set<string>>;
 }
@@ -190,7 +200,7 @@ export async function runSurfaceWatchdogSweep(options: SurfaceWatchdogSweepOptio
 
   const now = options.now ?? Date.now;
   const read = options.read ?? readSurfaceWatchdogFromBox;
-  const report = options.report ?? reportOpsEvent;
+  const insertOnce = options.insertOnce ?? reportOpsEventOnce;
   const lookupRelayedTitles =
     options.lookupRelayedTitles ??
     ((instanceId: string, titles: string[]) =>
@@ -262,15 +272,22 @@ export async function runSurfaceWatchdogSweep(options: SurfaceWatchdogSweepOptio
     for (const ops of pending) {
       if (alreadyRelayed.has(ops.title)) continue;
       try {
-        const reported = await report(ops);
-        if (reported?.id == null) {
-          // reportOpsEvent answers null when the write itself failed — a
+        const inserted = await insertOnce(ops);
+        if (inserted == null) {
+          // reportOpsEventOnce answers null when the write itself failed — a
           // receipt that never persisted is a failed relay, not a relayed
           // one, or the route heartbeat reads clean while receipts drop.
           summary.failed += 1;
-          log.error("surface watchdog event relay did not persist", new Error("reportOpsEvent returned no id"), {
+          log.error("surface watchdog event relay did not persist", new Error("reportOpsEventOnce returned null"), {
             source: SOURCE, failureType: "watchdog_event_relay_unpersisted", instanceId: row.id, userId: row.user_id,
           });
+          continue;
+        }
+        if (!inserted.inserted) {
+          // A fingerprint conflict resolved to "already stored" — a racing
+          // sweep relayed this receipt between our lookup and our insert.
+          // That is the dedupe WINNING, not a failure: nothing was bumped
+          // or reopened, and the receipt needs no write from us.
           continue;
         }
         summary.relayed += 1;

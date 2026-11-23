@@ -159,6 +159,16 @@ export interface IncidentEvaluationInput {
    * This — not a scan of the timeline — decides box_down open/resolve.
    */
   latestSurfaceReceiptByAgent: ReadonlyMap<string, WatchdogEventSnapshot>;
+  /**
+   * incident_keys that already have an open ops row this pass. Gates that
+   * exist to delay a NEW page (the 10-minute minimum outage age on box_down
+   * and box_unreachable) apply to candidate incidents only: an already-open
+   * incident must not resolve just because the current outage's newest
+   * evidence is still inside the grace window — the suppression would let
+   * the resolve pass archive a live incident (and send a resolved notice)
+   * only to re-page the same outage once the evidence ages past the window.
+   */
+  openIncidentKeys?: ReadonlySet<string>;
   /** Agents whose watchdog-event fetch failed — box_down cannot be evaluated for them. */
   watchdogUnknownAgentIds: ReadonlySet<string>;
   /**
@@ -345,7 +355,18 @@ export function evaluateCustomerIncidents(input: IncidentEvaluationInput): Incid
     if (BOX_RECOVERY_EVENT_TYPES.has(latest.eventType)) continue;
     if (!BOX_DOWN_EVENT_TYPES.has(latest.eventType)) continue;
     const immediate = latest.eventType === "recovery_exhausted";
-    if (!immediate && (receiptMs == null || now - receiptMs < BOX_DOWN_MIN_AGE_MS)) continue;
+    // The minimum age gates OPENING only — a new incident waits for the
+    // outage to age before it pages. An incident that is ALREADY open holds
+    // while the newest surface receipt is still a failure describing the
+    // current runtime (the recovery and runtime-marker checks above already
+    // passed): suppressing the finding here would let the resolve pass
+    // archive the live row and send a resolved notice, then re-page the
+    // same outage once the fresh receipt ages past the window.
+    if (
+      !immediate &&
+      !input.openIncidentKeys?.has(key) &&
+      (receiptMs == null || now - receiptMs < BOX_DOWN_MIN_AGE_MS)
+    ) continue;
     // A failure receipt older than 24h is stale bookkeeping UNLESS the
     // public probe says otherwise this scan. Probe succeeded → suppress
     // the finding so the resolve pass archives the row
@@ -401,7 +422,18 @@ export function evaluateCustomerIncidents(input: IncidentEvaluationInput): Incid
       continue;
     }
     const outageStartMs = input.publicOutageStartedAtMs?.get(agent.id);
-    if (outageStartMs == null || now - outageStartMs < BOX_UNREACHABLE_MIN_AGE_MS) continue;
+    // No probe outage at all means the box answered publicly — that is a
+    // real resolve, not a grace gate, for open and candidate incidents alike.
+    if (outageStartMs == null) continue;
+    // The minimum outage age gates OPENING only: a live incident stays open
+    // while the recorded outage — however fresh its clock (a reopen or a
+    // runtime-reset first_seen_at) — still fails the public probe. A
+    // suppressed finding here would resolve + notice + re-page the same
+    // unreachable box once the young outage ages past the window.
+    if (
+      !input.openIncidentKeys?.has(key) &&
+      now - outageStartMs < BOX_UNREACHABLE_MIN_AGE_MS
+    ) continue;
     const events = sortWatchdogEventsByEventAt(input.watchdogEventsByAgent.get(agent.id) ?? []);
     findings.push({
       key,
@@ -1092,7 +1124,17 @@ export const PUBLIC_PROBE_SOURCE = "box.public_probe.unreachable";
 
 type PublicProbeSignal =
   | { kind: "up" }
-  | { kind: "down"; status: number | null; latencyMs: number | null; error: string | null }
+  | {
+      kind: "down";
+      status: number | null;
+      latencyMs: number | null;
+      error: string | null;
+      /**
+       * Scan clock at the moment the failed probe returned — the observation
+       * time the probe-row write is guarded on (see OpsEventInput.observedAt).
+       */
+      observedAtMs: number;
+    }
   | { kind: "skipped"; reason: "budget" | "no_hostname" | "invalid_hostname" };
 
 interface OpenProbeRow {
@@ -1274,6 +1316,7 @@ async function collectPublicProbeSignals(
                 status: outcome.status,
                 latencyMs: outcome.latencyMs,
                 error: outcome.error,
+                observedAtMs: budget.clock(),
               },
         );
       }
@@ -1514,7 +1557,33 @@ async function applyPublicProbeSignals(
     }
 
     // signal.kind === "down"
-    const reported = await deps.report(publicProbeUnreachableOpsEvent(agent, signal));
+    // The write deadline races this whole apply, not the write itself — a
+    // report that stalls past it keeps running in the background and can
+    // commit AFTER a later healthy scan archived the probe row, resurrecting
+    // an outage from an obsolete observation. observedAt predicates the
+    // write inside reportOpsEvent on the stored row still describing a
+    // verdict older than this probe's: a row closed — or an outage started —
+    // after the observation refuses the write entirely. (A pure insert has
+    // no stored row to contradict, so that residual window remains.)
+    const reported = await deps.report({
+      ...publicProbeUnreachableOpsEvent(agent, signal),
+      observedAt: new Date(signal.observedAtMs).toISOString(),
+    });
+    if (reported?.superseded) {
+      // The stored row carries a newer verdict than this scan's down
+      // observation — another scan already archived it or recorded a newer
+      // outage after the probe ran. The write was refused, so this subject's
+      // probe state is contested: mark it unknown rather than claim an
+      // outage age this report never established — and never resolve an
+      // incident on a write that did not commit.
+      result.unknownAgentIds.add(agent.id);
+      log.warn("customer-incidents: probe-row down report superseded by a newer verdict", {
+        source: "customer-incidents",
+        failureType: "public_probe_report_superseded",
+        instanceId: agent.id,
+      });
+      return;
+    }
     if (openRow) {
       // A failed refresh does not change the outage state, but it is
       // degraded.
@@ -1731,6 +1800,14 @@ export interface ProbeFn {
 
 const PROBE_TIMEOUT_MS = 5000;
 
+// The collection phase (core subject/incident reads, subscription
+// enrichment, open probe rows) runs before the phase deadlines exist —
+// without its own bound a stalled read holds the invocation until the
+// function ceiling kills it, and the scan dies before the heartbeat write,
+// which then records a cron failure instead of a slow pass. 30s is far past
+// a healthy collection (a handful of paged reads) and still leaves the
+// probe window most of its budget.
+const SCAN_COLLECTION_BUDGET_MS = 30_000;
 // One scan can open many incidents at once; without a shared budget a slow box
 // fleet could spend the whole maxDuration budget probing and never reach the
 // resolve pass or the heartbeat. Remaining probes are recorded as skipped.
@@ -1971,6 +2048,14 @@ export interface CustomerIncidentScanDeps {
   now?: () => number;
   /** Monotonic-ish clock for the scan-wide probe budget. Defaults to Date.now. */
   clock?: () => number;
+  /**
+   * Shared wall-clock deadline for the collection phase: the core
+   * subject/incident reads, subscription enrichment and the open probe-row
+   * read. A core read that outlives it fails the pass; the enrichment and
+   * probe-row reads degrade to missing diagnosis / all-unknown the same way
+   * their error paths already do.
+   */
+  collectionBudgetMs?: number;
   /** Total wall-clock budget for all public probes in one scan. */
   probeBudgetMs?: number;
   /**
@@ -2264,6 +2349,13 @@ export async function runCustomerIncidentScan(
   const resolveDeadlineAt =
     reportDeadlineAt + (deps.resolveBudgetMs ?? SCAN_RESOLVE_BUDGET_MS);
   const watchdogDeadlineAt = clock() + (deps.watchdogBudgetMs ?? SCAN_WATCHDOG_READ_BUDGET_MS);
+  // The collection phase shares one deadline with everything the scan reads
+  // before the bounded per-subject phases begin. Bounded like the other
+  // phases because PostgREST offers no per-query timeout: when it wins, the
+  // abandoned read keeps running in the background — safe because these
+  // reads write nothing.
+  const collectionDeadlineAt =
+    clock() + (deps.collectionBudgetMs ?? SCAN_COLLECTION_BUDGET_MS);
   const report = deps.report ?? reportOpsEvent;
   const probe = deps.probe ?? defaultProbe;
   const adminUserIds = normalizeAdminIdSet(deps.adminUserIds ?? configuredOpsAdminUserIds());
@@ -2290,12 +2382,27 @@ export async function runCustomerIncidentScan(
   let heartbeats: CronHeartbeatSnapshot[];
   let openIncidentRows: OpenIncidentRow[];
   try {
-    [agents, hermesInstances, heartbeats, openIncidentRows] = await Promise.all([
+    const coreReads = Promise.all([
       collectAgents(db, now),
       collectHermesInstances(db, now),
       collectHeartbeats(db),
       collectOpenIncidentRows(db),
     ]);
+    const completed = await finishedBeforeDeadline(
+      () => coreReads,
+      collectionDeadlineAt,
+      clock,
+    );
+    if (!completed) {
+      // A stalled core read is indistinguishable from a failed one: the
+      // pass aborts either way, so the heartbeat records an honest failed
+      // scan rather than the invocation dying silently at the function
+      // ceiling. The abandoned read is swallowed — it can still reject in
+      // the background and nobody listens any more.
+      void coreReads.catch(() => undefined);
+      throw new Error("core collection exceeded the scan collection deadline");
+    }
+    [agents, hermesInstances, heartbeats, openIncidentRows] = await coreReads;
   } catch (err) {
     // Without complete inputs we cannot tell "resolved" from "unknown" — abort
     // the whole pass. Next tick retries; nothing is reported or archived.
@@ -2314,7 +2421,25 @@ export async function runCustomerIncidentScan(
         .filter((id): id is string => typeof id === "string" && id.length > 0 && !isAdminUser(id, adminUserIds)),
     ),
   ];
-  const subscriptions = await collectSubscriptions(db, customerUserIds);
+  // Enrichment is bounded like the core reads but fails SOFT: a stalled
+  // lookup degrades the diagnosis bundle to missing plan data — the same
+  // shape as its error path — instead of failing the pass.
+  let subscriptions = new Map<string, CustomerSubscriptionSnapshot>();
+  const subscriptionRead = collectSubscriptions(db, customerUserIds);
+  const subscriptionsDone = await finishedBeforeDeadline(
+    () => subscriptionRead,
+    collectionDeadlineAt,
+    clock,
+  );
+  if (subscriptionsDone) {
+    subscriptions = await subscriptionRead;
+  } else {
+    void subscriptionRead.catch(() => undefined);
+    log.warn("customer-incidents: subscription lookup exceeded the collection deadline; diagnosis will lack plan data", {
+      source: "customer-incidents",
+      failureType: "subscription_lookup_deadline",
+    });
+  }
 
   // Watchdog events are only needed for box_down candidates: running + awake +
   // non-admin. A failed per-agent fetch marks that agent's box_down unknown.
@@ -2351,17 +2476,39 @@ export async function runCustomerIncidentScan(
   const publicProbeUnknownAgentIds = new Set<string>();
   const openProbeRowsByAgent = new Map<string, OpenProbeRow>();
   let probeRowsReadable = false;
+  // Same shared collection deadline; a read that outlives it — or fails —
+  // degrades to "all candidates unknown" exactly like a failed read did
+  // before the deadline existed: nothing opens or resolves on missing
+  // probe-row data.
+  const probeRowRead = collectOpenProbeRows(db);
+  let probeRowsDone = false;
+  let probeRowReadError: unknown;
   try {
-    for (const row of await collectOpenProbeRows(db)) {
-      openProbeRowsByAgent.set(row.agentId, row);
-    }
-    probeRowsReadable = true;
+    probeRowsDone = await finishedBeforeDeadline(
+      () => probeRowRead,
+      collectionDeadlineAt,
+      clock,
+    );
   } catch (err) {
+    probeRowReadError = err;
+  }
+  if (probeRowReadError !== undefined) {
     log.warn("customer-incidents: public probe row read failed; box_unreachable unknown", {
       source: "customer-incidents",
       failureType: "public_probe_rows_read_failed",
-      errorMessage: err instanceof Error ? err.message : String(err),
+      errorMessage: probeRowReadError instanceof Error ? probeRowReadError.message : String(probeRowReadError),
     });
+  } else if (!probeRowsDone) {
+    void probeRowRead.catch(() => undefined);
+    log.warn("customer-incidents: public probe row read exceeded the collection deadline; box_unreachable unknown", {
+      source: "customer-incidents",
+      failureType: "public_probe_rows_deadline",
+    });
+  } else {
+    for (const row of await probeRowRead) {
+      openProbeRowsByAgent.set(row.agentId, row);
+    }
+    probeRowsReadable = true;
   }
 
   if (probeRowsReadable) {
@@ -2390,6 +2537,13 @@ export async function runCustomerIncidentScan(
   }
 
   // ---- evaluate ------------------------------------------------------------
+  // incident_keys that already have an open row this pass — the evaluator
+  // uses them to keep live incidents open through gates that only delay a
+  // NEW page (the 10-minute minimum outage age on box_down/box_unreachable).
+  const openIncidentKeys = new Set<string>();
+  for (const row of openIncidentRows) {
+    if (row.incidentKey) openIncidentKeys.add(row.incidentKey);
+  }
   const evaluation = evaluateCustomerIncidents({
     now,
     adminUserIds,
@@ -2399,6 +2553,7 @@ export async function runCustomerIncidentScan(
     watchdogUnknownAgentIds: unknownAgentIds,
     publicOutageStartedAtMs,
     publicProbeUnknownAgentIds,
+    openIncidentKeys,
     hermesInstances,
     heartbeats,
     cronSchedules,

@@ -1,4 +1,4 @@
-import { archiveOpsEvents, buildOpsEventFingerprint, reportOpsEvent, sanitizeOpsMetadata } from '../ops-events';
+import { archiveOpsEvents, buildOpsEventFingerprint, reportOpsEvent, reportOpsEventOnce, sanitizeOpsMetadata } from '../ops-events';
 import { supabaseAdmin } from '@/lib/supabase';
 import { sendOpsFatalAdminAlert } from '@/lib/email/ops-fatal-admin';
 
@@ -682,5 +682,285 @@ describe('ops-events helper', () => {
     expect(result).toEqual({
       archivedCount: 2,
     });
+  });
+
+  it('refuses an archived-row reopen when the row was closed after the observation', async () => {
+    // The stalled 'down' report: between this report's observation and its
+    // in-flight write, a healthy scan archived the probe row. The row's
+    // archived_at is newer than observedAt — reopening it would commit an
+    // outage from an obsolete observation.
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: {
+        id: 'evt_probe',
+        occurrence_count: 4,
+        archived_at: '2026-11-22T12:05:00.000Z',
+        first_seen_at: '2026-11-22T11:40:00.000Z',
+      },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const update = jest.fn();
+
+    // No update-chain mock at all: the lookup is the only from() this path
+    // makes — a second call would throw inside reportOpsEvent and surface as
+    // a null result, and an unconsumed mockReturnValueOnce would leak into
+    // the next test.
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle });
+
+    const result = await reportOpsEvent({
+      source: 'box.public_probe.unreachable',
+      severity: 'warn',
+      title: 'Customer box public probe unreachable',
+      message: 'probe failing',
+      instanceId: 'agent_1',
+      resetFirstSeenOnReopen: true,
+      observedAt: '2026-11-22T12:00:00.000Z',
+    });
+
+    expect(result).toEqual({ fingerprint: expect.any(String), superseded: true });
+    // The lookup is the only read; no update was attempted.
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('reopens an archived row whose close predates the observation — with the close-time predicate on the write', async () => {
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: {
+        id: 'evt_probe',
+        occurrence_count: 4,
+        archived_at: '2026-11-22T11:30:00.000Z',
+        first_seen_at: '2026-11-22T11:00:00.000Z',
+      },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const updateEq = jest.fn().mockReturnThis();
+    const updateNot = jest.fn().mockReturnThis();
+    const updateLt = jest.fn().mockReturnThis();
+    const updateMaybeSingle = jest
+      .fn()
+      .mockResolvedValue({ data: { id: 'evt_probe' }, error: null });
+    const update = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
+      .mockReturnValueOnce({
+        update,
+        eq: updateEq,
+        not: updateNot,
+        lt: updateLt,
+        select,
+        maybeSingle: updateMaybeSingle,
+      });
+
+    const result = await reportOpsEvent({
+      source: 'box.public_probe.unreachable',
+      severity: 'warn',
+      title: 'Customer box public probe unreachable',
+      message: 'probe failing',
+      instanceId: 'agent_1',
+      resetFirstSeenOnReopen: true,
+      observedAt: '2026-11-22T12:00:00.000Z',
+    });
+
+    // The row was archived BEFORE the observation → the reopen is current.
+    expect(updateLt).toHaveBeenCalledWith('archived_at', '2026-11-22T12:00:00.000Z');
+    expect(result).toEqual({ id: 'evt_probe', fingerprint: expect.any(String) });
+  });
+
+  it('refuses a refresh on an open row whose recorded start is newer than the observation', async () => {
+    // The row records an outage that began AFTER this observation — a
+    // fresher report already owns it; the stale report must not bump it.
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: {
+        id: 'evt_probe',
+        occurrence_count: 4,
+        archived_at: null,
+        first_seen_at: '2026-11-22T12:10:00.000Z',
+      },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const update = jest.fn();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle });
+
+    const result = await reportOpsEvent({
+      source: 'box.public_probe.unreachable',
+      severity: 'warn',
+      title: 'Customer box public probe unreachable',
+      message: 'probe failing',
+      instanceId: 'agent_1',
+      observedAt: '2026-11-22T12:00:00.000Z',
+    });
+
+    expect(result).toEqual({ fingerprint: expect.any(String), superseded: true });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refreshes an open row inside its outage window — predicated against a newer close or start', async () => {
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: {
+        id: 'evt_probe',
+        occurrence_count: 4,
+        archived_at: null,
+        first_seen_at: '2026-11-22T11:45:00.000Z',
+      },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const updateEq = jest.fn().mockReturnThis();
+    const updateOr = jest.fn().mockReturnThis();
+    const updateLte = jest.fn().mockReturnThis();
+    const updateSingle = jest.fn().mockResolvedValue({ data: { id: 'evt_probe' }, error: null });
+    const update = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
+      .mockReturnValueOnce({
+        update,
+        eq: updateEq,
+        or: updateOr,
+        lte: updateLte,
+        select,
+        single: updateSingle,
+      });
+
+    const result = await reportOpsEvent({
+      source: 'box.public_probe.unreachable',
+      severity: 'warn',
+      title: 'Customer box public probe unreachable',
+      message: 'probe failing',
+      instanceId: 'agent_1',
+      observedAt: '2026-11-22T12:00:00.000Z',
+    });
+
+    // first_seen_at predates the observation → the refresh lands, guarded:
+    // not closed after the observation AND not started after it.
+    expect(updateOr).toHaveBeenCalledWith(
+      'archived_at.is.null,archived_at.lt."2026-11-22T12:00:00.000Z"',
+    );
+    expect(updateLte).toHaveBeenCalledWith('first_seen_at', '2026-11-22T12:00:00.000Z');
+    expect(result).toEqual({ id: 'evt_probe', fingerprint: expect.any(String) });
+  });
+
+  it('answers superseded when a guarded refresh matched no rows (a newer verdict won the window)', async () => {
+    const maybeSingle = jest.fn().mockResolvedValue({
+      data: {
+        id: 'evt_probe',
+        occurrence_count: 4,
+        archived_at: null,
+        first_seen_at: '2026-11-22T11:45:00.000Z',
+      },
+      error: null,
+    });
+    const eqSelect = jest.fn().mockReturnThis();
+    const select = jest.fn().mockReturnThis();
+    const updateEq = jest.fn().mockReturnThis();
+    const updateOr = jest.fn().mockReturnThis();
+    const updateLte = jest.fn().mockReturnThis();
+    // The predicates filtered the row out between the lookup and the write.
+    const updateSingle = jest.fn().mockResolvedValue({ data: null, error: null });
+    const update = jest.fn().mockReturnThis();
+
+    (supabaseAdmin!.from as jest.Mock)
+      .mockReturnValueOnce({ select, eq: eqSelect, maybeSingle })
+      .mockReturnValueOnce({
+        update,
+        eq: updateEq,
+        or: updateOr,
+        lte: updateLte,
+        select,
+        single: updateSingle,
+      });
+
+    const result = await reportOpsEvent({
+      source: 'box.public_probe.unreachable',
+      severity: 'warn',
+      title: 'Customer box public probe unreachable',
+      message: 'probe failing',
+      instanceId: 'agent_1',
+      observedAt: '2026-11-22T12:00:00.000Z',
+    });
+
+    expect(result).toEqual({ fingerprint: expect.any(String), superseded: true });
+  });
+});
+
+describe('reportOpsEventOnce', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('inserts when the fingerprint is not stored and reports the new row', async () => {
+    const upsert = jest.fn().mockReturnThis();
+    const select = jest
+      .fn()
+      .mockResolvedValue({ data: [{ id: 'evt_new' }], error: null });
+
+    (supabaseAdmin!.from as jest.Mock).mockReturnValueOnce({ upsert, select });
+
+    const result = await reportOpsEventOnce({
+      source: 'box.surface_watchdog.unit_failing',
+      severity: 'warn',
+      title: 'surface watchdog: unit_failing x.service [e1-1]',
+      message: 'receipt',
+      instanceId: 'agent_1',
+    });
+
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        occurrence_count: 1,
+        title: 'surface watchdog: unit_failing x.service [e1-1]',
+      }),
+      { onConflict: 'fingerprint', ignoreDuplicates: true },
+    );
+    expect(result).toEqual({
+      id: 'evt_new',
+      fingerprint: expect.any(String),
+      inserted: true,
+    });
+  });
+
+  it('answers inserted:false on a fingerprint conflict — already stored, nothing updated', async () => {
+    const upsert = jest.fn().mockReturnThis();
+    const select = jest.fn().mockResolvedValue({ data: [], error: null });
+
+    (supabaseAdmin!.from as jest.Mock).mockReturnValueOnce({ upsert, select });
+
+    const result = await reportOpsEventOnce({
+      source: 'box.surface_watchdog.recovered',
+      severity: 'info',
+      title: 'surface watchdog: recovered x.service [e1-2]',
+      message: 'receipt',
+      instanceId: 'agent_1',
+    });
+
+    expect(result).toEqual({ fingerprint: expect.any(String), inserted: false });
+    expect(mockedFatalAlert).not.toHaveBeenCalled();
+  });
+
+  it('returns null when the insert fails', async () => {
+    const upsert = jest.fn().mockReturnThis();
+    const select = jest
+      .fn()
+      .mockResolvedValue({ data: null, error: { message: 'db down' } });
+
+    (supabaseAdmin!.from as jest.Mock).mockReturnValueOnce({ upsert, select });
+
+    const result = await reportOpsEventOnce({
+      source: 'box.surface_watchdog.unit_failing',
+      severity: 'warn',
+      title: 'surface watchdog: unit_failing x.service [e1-1]',
+      message: 'receipt',
+      instanceId: 'agent_1',
+    });
+
+    expect(result).toBeNull();
   });
 });

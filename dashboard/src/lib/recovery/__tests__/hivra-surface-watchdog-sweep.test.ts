@@ -137,8 +137,8 @@ type Row = Record<string, unknown>;
 /**
  * Table-aware fake: hivra_agents returns `rows` for the candidate query;
  * ops_events answers the relay-dedupe lookup from `storedTitles` — the set a
- * real reportOpsEvent INSERT would have written. Tests populate it via the
- * `report` mock so a second sweep sees the same receipts as already stored.
+ * real reportOpsEventOnce INSERT would have written. Tests populate it via
+ * the `insertOnce` mock so a second sweep sees the same receipts as stored.
  */
 function fakeDb(rows: Row[] | Error, opts: { storedTitles?: Set<string> } = {}) {
   const storedTitles = opts.storedTitles ?? new Set<string>();
@@ -172,6 +172,55 @@ const agentRow = (id: string, extra: Row = {}): Row => ({
   ...extra,
 });
 
+/**
+ * ops_events fake keyed on the real fingerprint semantics: the dedupe title
+ * lookup reads stored rows, and `upsert(..., {ignoreDuplicates})` resolves to
+ * the inserted id or an empty list on conflict — exactly what the unique
+ * fingerprint constraint does for the REAL reportOpsEventOnce, which the
+ * sweep calls by default. Lets tests exercise the production write path end
+ * to end instead of a contract-shaped mock.
+ */
+function fakeDbWithOpsStore(rows: Row[], stored: Map<string, Row>) {
+  const agentChain: Record<string, unknown> = {};
+  for (const method of ["select", "eq", "is", "not", "order"]) {
+    agentChain[method] = () => agentChain;
+  }
+  agentChain.limit = async () => ({ data: rows, error: null });
+  const storedTitles = () => new Set([...stored.values()].map((r) => r.title));
+
+  return {
+    from: (table: string) => {
+      if (table !== "ops_events") return agentChain;
+      const chain: Record<string, unknown> = {};
+      let upsertPayload: Row | null = null;
+      chain.select = () => chain;
+      chain.eq = () => chain;
+      chain.in = async (_column: string, values: string[]) => ({
+        data: values.filter((title) => storedTitles().has(title)).map((title) => ({ title })),
+        error: null,
+      });
+      chain.upsert = (payload: Row) => {
+        upsertPayload = payload;
+        return chain;
+      };
+      chain.then = (onFulfilled: (v: unknown) => unknown) => {
+        if (upsertPayload == null) {
+          return Promise.resolve({ data: [], error: null }).then(onFulfilled);
+        }
+        const fingerprint = String(upsertPayload.fingerprint);
+        if (stored.has(fingerprint)) {
+          // Unique-constraint conflict: nothing inserted, nothing updated.
+          return Promise.resolve({ data: [], error: null }).then(onFulfilled);
+        }
+        const row = { ...upsertPayload, id: `ops-${stored.size + 1}` };
+        stored.set(fingerprint, row);
+        return Promise.resolve({ data: [{ id: row.id }], error: null }).then(onFulfilled);
+      };
+      return chain;
+    },
+  };
+}
+
 const reported = (events: ReturnType<typeof event>[]): SurfaceWatchdogReading => ({
   observation: "reported",
   report: { agentKind: "agent-zero", updatedAt: "2026-11-15T17:30:05.000Z", surface: { status: "ok", reason: null, restarts: 0 }, events },
@@ -190,7 +239,7 @@ describe("runSurfaceWatchdogSweep", () => {
         event("e1-1", "unit_failing", { unit: "bux-browser-keeper.service", reason: "failed", nRestarts: 3864 }),
         event("e1-2", "unit_restart", { unit: "hivra-agent-zero.service", attempt: 1, ok: true }),
       ]),
-      report: async (ops) => { reportedOps.push(ops); return { id: "evt-x", fingerprint: "x" }; },
+      insertOnce: async (ops) => { reportedOps.push(ops); return { id: "evt-x", fingerprint: "x", inserted: true }; },
     });
     expect(summary).toMatchObject({ scanned: 1, reported: 1, relayed: 2, failed: 0 });
     expect(reportedOps.map((ops) => (ops as { title: string }).title)).toEqual([
@@ -205,7 +254,7 @@ describe("runSurfaceWatchdogSweep", () => {
     const events = Array.from({ length: 15 }, (_, i) => event(`e1-${i + 1}`, "unit_failing", { unit: "bux-x.service" }));
     const summary = await runSurfaceWatchdogSweep({
       read: async () => reported(events),
-      report: async (ops) => { reportedOps.push(ops); return { id: "evt-x", fingerprint: "x" }; },
+      insertOnce: async (ops) => { reportedOps.push(ops); return { id: "evt-x", fingerprint: "x", inserted: true }; },
     });
     expect(summary.relayed).toBe(10);
     // The newest 10: e1-6 .. e1-15.
@@ -224,18 +273,18 @@ describe("runSurfaceWatchdogSweep", () => {
       event("e7-1", "unit_restart", { unit: "hivra-agent-zero.service", attempt: 1, ok: true }),
       event("e7-2", "recovered", { unit: "hivra-agent-zero.service" }),
     ];
-    const report = jest.fn(async (ops: { title: string }) => {
+    const insertOnce = jest.fn(async (ops: { title: string }) => {
       storedTitles.add(ops.title);
-      return { id: "evt-x", fingerprint: "x" };
+      return { id: "evt-x", fingerprint: "x", inserted: true };
     });
     const read = async () => reported(events);
 
-    const first = await runSurfaceWatchdogSweep({ read, report });
+    const first = await runSurfaceWatchdogSweep({ read, insertOnce });
     expect(first).toMatchObject({ reported: 1, relayed: 2, failed: 0 });
 
-    const second = await runSurfaceWatchdogSweep({ read, report });
+    const second = await runSurfaceWatchdogSweep({ read, insertOnce });
     expect(second).toMatchObject({ reported: 1, relayed: 0, failed: 0 });
-    expect(report).toHaveBeenCalledTimes(2);
+    expect(insertOnce).toHaveBeenCalledTimes(2);
   });
 
   it("still relays when the dedupe lookup itself fails (delivery over count accuracy)", async () => {
@@ -248,34 +297,34 @@ describe("runSurfaceWatchdogSweep", () => {
         return chain;
       },
     };
-    const report = jest.fn(async () => ({ id: "evt-x", fingerprint: "x" }));
+    const insertOnce = jest.fn(async () => ({ id: "evt-x", fingerprint: "x", inserted: true }));
     const summary = await runSurfaceWatchdogSweep({
       read: async () => reported([event("e8-1", "unit_failing", { unit: "x.service" })]),
-      report,
+      insertOnce,
     });
     expect(summary.relayed).toBe(1);
-    expect(report).toHaveBeenCalledTimes(1);
+    expect(insertOnce).toHaveBeenCalledTimes(1);
   });
 
   it("treats a gateway without the endpoint as not_installed and emits no ops row", async () => {
     mockDb.current = fakeDb([agentRow("old-box")]);
-    const report = jest.fn();
-    const summary = await runSurfaceWatchdogSweep({ read: async () => ({ observation: "not_installed" }), report });
+    const insertOnce = jest.fn();
+    const summary = await runSurfaceWatchdogSweep({ read: async () => ({ observation: "not_installed" }), insertOnce });
     expect(summary).toMatchObject({ scanned: 1, notInstalled: 1, relayed: 0 });
-    expect(report).not.toHaveBeenCalled();
+    expect(insertOnce).not.toHaveBeenCalled();
   });
 
   it("treats an unreadable box as unreachable and emits no ops row (the health crons own that)", async () => {
     mockDb.current = fakeDb([agentRow("down-box")]);
-    const report = jest.fn();
-    const summary = await runSurfaceWatchdogSweep({ read: async () => ({ observation: "unreachable" }), report });
+    const insertOnce = jest.fn();
+    const summary = await runSurfaceWatchdogSweep({ read: async () => ({ observation: "unreachable" }), insertOnce });
     expect(summary).toMatchObject({ scanned: 1, unreachable: 1, relayed: 0 });
-    expect(report).not.toHaveBeenCalled();
+    expect(insertOnce).not.toHaveBeenCalled();
   });
 
   it("counts a throwing read as failed and keeps sweeping the rest", async () => {
     mockDb.current = fakeDb([agentRow("a1"), agentRow("a2")]);
-    const report = jest.fn(async () => ({ id: "evt-x", fingerprint: "x" }));
+    const insertOnce = jest.fn(async () => ({ id: "evt-x", fingerprint: "x", inserted: true }));
     const reads: string[] = [];
     const summary = await runSurfaceWatchdogSweep({
       read: async (target) => {
@@ -283,7 +332,7 @@ describe("runSurfaceWatchdogSweep", () => {
         if (String(target.chatUrl).includes("a1")) throw new Error("boom");
         return reported([event("e2-1", "recovered", { unit: "hivra-agent-zero.service" })]);
       },
-      report,
+      insertOnce,
     });
     expect(summary).toMatchObject({ scanned: 2, reported: 1, relayed: 1, failed: 1 });
     expect(reads).toHaveLength(2);
@@ -294,7 +343,7 @@ describe("runSurfaceWatchdogSweep", () => {
     let calls = 0;
     const summary = await runSurfaceWatchdogSweep({
       read: async () => reported([event("e4-1", "unit_failing"), event("e4-2", "unit_failing")]),
-      report: async () => { calls += 1; if (calls === 1) throw new Error("db down"); return { id: "evt-x", fingerprint: "x" }; },
+      insertOnce: async () => { calls += 1; if (calls === 1) throw new Error("db down"); return { id: "evt-x", fingerprint: "x", inserted: true }; },
     });
     expect(summary).toMatchObject({ relayed: 1, failed: 1 });
   });
@@ -306,9 +355,44 @@ describe("runSurfaceWatchdogSweep", () => {
     mockDb.current = fakeDb([agentRow("a1")]);
     const summary = await runSurfaceWatchdogSweep({
       read: async () => reported([event("e9-1", "unit_failing", { unit: "x.service" })]),
-      report: async () => null,
+      insertOnce: async () => null,
     });
     expect(summary).toMatchObject({ reported: 1, relayed: 0, failed: 1 });
+  });
+
+  it("two overlapping sweeps cannot double-relay a receipt — the losing insert conflicts, never bumps", async () => {
+    // Regression: the batch dedupe lookup is a stale read — two overlapping
+    // sweeps could both see "not stored" and both write. Under reportOpsEvent
+    // the second write landed on the dedupe UPDATE branch and bumped
+    // last_seen_at / occurrence_count on the row the first had just
+    // inserted — the exact false-activity bug the dedup exists to prevent.
+    // The fingerprint-keyed insert-or-ignore resolves the race atomically at
+    // write time: the conflict means "already relayed" and touches nothing.
+    const stored = new Map<string, Row>();
+    mockDb.current = fakeDbWithOpsStore([agentRow("a1")], stored);
+    const events = [
+      event("e5-1", "unit_restart", { unit: "hivra-agent-zero.service", attempt: 1, ok: true }),
+      event("e5-2", "recovered", { unit: "hivra-agent-zero.service" }),
+    ];
+    const read = async () => reported(events);
+    // Worst case for the race: BOTH sweeps' dedupe lookups see a pre-write
+    // snapshot, so every receipt reaches the insert path twice.
+    const lookupRelayedTitles = async () => new Set<string>();
+
+    const [first, second] = await Promise.all([
+      runSurfaceWatchdogSweep({ read, lookupRelayedTitles }),
+      runSurfaceWatchdogSweep({ read, lookupRelayedTitles }),
+    ]);
+
+    // Exactly one row per receipt landed — the loser's inserts conflicted —
+    // and no row was ever bumped: occurrence_count stays 1 and last_seen_at
+    // was written once by its inserting sweep.
+    expect(stored.size).toBe(2);
+    for (const row of stored.values()) {
+      expect(row.occurrence_count).toBe(1);
+    }
+    expect(first.relayed + second.relayed).toBe(2);
+    expect(first.failed + second.failed).toBe(0);
   });
 
   it("does nothing without the admin client", async () => {
