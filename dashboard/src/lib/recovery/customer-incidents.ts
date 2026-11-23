@@ -184,6 +184,11 @@ export interface IncidentEvaluation {
 
 const BOX_DOWN_MIN_AGE_MS = 10 * 60 * 1000;
 const BOX_UNREACHABLE_MIN_AGE_MS = 10 * 60 * 1000;
+// A box_down whose newest surface receipt is this old AND whose public
+// /healthz probe succeeded this scan is a stale record, not a live outage:
+// the box answers publicly and simply stopped emitting receipts (watchdog
+// removed, relays lost). Archive it silently — no resolved notice.
+const BOX_DOWN_STALE_RECEIPT_MS = 24 * 60 * 60 * 1000;
 const LAUNCH_FAILED_WINDOW_MS = 24 * 60 * 60 * 1000;
 const LAUNCH_FAILED_STUCK_MS = 25 * 60 * 1000;
 const LIFECYCLE_STUCK_MS = 15 * 60 * 1000;
@@ -339,6 +344,21 @@ export function evaluateCustomerIncidents(input: IncidentEvaluationInput): Incid
     if (!BOX_DOWN_EVENT_TYPES.has(latest.eventType)) continue;
     const immediate = latest.eventType === "recovery_exhausted";
     if (!immediate && (receiptMs == null || now - receiptMs < BOX_DOWN_MIN_AGE_MS)) continue;
+    // A failure receipt older than 24h whose public probe succeeded this
+    // scan is stale bookkeeping, not a live outage: the box answers publicly
+    // and simply stopped emitting receipts. Suppressing the finding lets the
+    // resolve pass archive the row (stale_no_new_receipts) — emitting it
+    // would pin the incident open forever, and re-page it on every scan
+    // after a silent archive. A probe that is still failing or could not be
+    // evaluated keeps the incident open.
+    if (
+      receiptMs != null &&
+      now - receiptMs > BOX_DOWN_STALE_RECEIPT_MS &&
+      input.publicOutageStartedAtMs?.get(agent.id) == null &&
+      !input.publicProbeUnknownAgentIds?.has(agent.id)
+    ) {
+      continue;
+    }
     findings.push({
       key,
       rule: "box_down",
@@ -822,6 +842,13 @@ async function collectOpenIncidentRows(db: DbClient): Promise<OpenIncidentRow[]>
 
 const WATCHDOG_FETCH_CONCURRENCY = 8;
 const WATCHDOG_EVENTS_PER_AGENT_LIMIT = 30;
+// Window for the newest-surface-receipt read. SQL cannot order by the
+// receipt's EFFECTIVE time (a null or unparseable metadata.event_at sorts
+// first under DESC in Postgres and would shadow a genuinely newer row), so
+// the query takes the most recently RECORDED receipts — first_seen_at is
+// always populated — and the newest by effective time is picked in code
+// with the same rule the evaluator uses (event_at, else first_seen_at).
+const SURFACE_RECEIPT_WINDOW = 10;
 // The per-agent watchdog reads are the scan's least bounded loop: with no
 // deadline, (agents ÷ 8) × per-query latency can exceed the route's
 // maxDuration and the invocation dies before reporting, resolving or the
@@ -888,8 +915,8 @@ async function collectWatchdogEvents(
           .eq("instance_id", id)
           .like("source", "box.surface_watchdog.%")
           .in("metadata->>event_type", BOX_SURFACE_EVENT_TYPE_LIST)
-          .order("metadata->>event_at", { ascending: false })
-          .limit(1);
+          .order("first_seen_at", { ascending: false })
+          .limit(SURFACE_RECEIPT_WINDOW);
         if (receiptError) {
           // The timeline read succeeded but the deciding receipt did not —
           // box_down cannot be evaluated for this agent this pass.
@@ -902,9 +929,15 @@ async function collectWatchdogEvents(
           });
           continue;
         }
-        const receiptRow = (receiptData ?? [])[0] as WatchdogOpsRow | undefined;
-        if (receiptRow) {
-          latestSurfaceByAgent.set(id, watchdogEventFromOpsRow(receiptRow));
+        // Pick the newest receipt by EFFECTIVE time (event_at, else
+        // first_seen_at) — the same rule evaluateCustomerIncidents applies,
+        // so a receipt with a missing/invalid event_at cannot shadow a
+        // genuinely newer one.
+        const receipt = sortWatchdogEventsByEventAt(
+          ((receiptData ?? []) as WatchdogOpsRow[]).map(watchdogEventFromOpsRow),
+        )[0];
+        if (receipt) {
+          latestSurfaceByAgent.set(id, receipt);
         }
       }
     }),
@@ -937,12 +970,21 @@ interface OpenProbeRow {
   id: string;
   agentId: string;
   firstSeenAt: string | null;
+  /**
+   * The row version this scan observed. reportOpsEvent bumps both fields on
+   * every report, so a write that still matches them cannot clobber a
+   * concurrent failure/refresh that landed after the read.
+   */
+  occurrenceCount: number | null;
+  lastSeenAt: string | null;
 }
 
 interface ProbeRowDbRow {
   id: string;
   instance_id: string | null;
   first_seen_at: string | null;
+  occurrence_count: number | null;
+  last_seen_at: string | null;
 }
 
 async function runPool<T>(
@@ -967,7 +1009,7 @@ async function collectOpenProbeRows(db: DbClient): Promise<OpenProbeRow[]> {
     (cursor) => {
       let query = db
         .from("ops_events")
-        .select("id,instance_id,first_seen_at")
+        .select("id,instance_id,first_seen_at,occurrence_count,last_seen_at")
         .eq("source", PUBLIC_PROBE_SOURCE)
         .is("archived_at", null)
         .order("id", { ascending: true });
@@ -983,6 +1025,9 @@ async function collectOpenProbeRows(db: DbClient): Promise<OpenProbeRow[]> {
         id: row.id,
         agentId: row.instance_id,
         firstSeenAt: typeof row.first_seen_at === "string" ? row.first_seen_at : null,
+        occurrenceCount:
+          typeof row.occurrence_count === "number" ? row.occurrence_count : null,
+        lastSeenAt: typeof row.last_seen_at === "string" ? row.last_seen_at : null,
       });
     }
   }
@@ -990,12 +1035,16 @@ async function collectOpenProbeRows(db: DbClient): Promise<OpenProbeRow[]> {
 }
 
 /**
- * Probe every candidate's public /healthz. "Up" means any sub-500 HTTP
- * response — the edge answered, so the public path is alive; transport
- * failures and 5xx (Cloudflare origin errors: 502/521/522/523/524/530)
- * mean the customer cannot reach the box. Budget-skipped and unprobable
- * hosts are reported distinctly so the caller can mark them unknown
- * without counting them as scan degradation.
+ * Probe every candidate's public /healthz. "Up" means HTTP 200 only — the
+ * same policy the ingress edge check uses (hivra/ingress/enable.ts): the
+ * Cloudflare tunnel config ends in a catch-all `http_status:404` ingress
+ * rule, so a hostname with no live ingress answers 404 at the edge WITHOUT
+ * ever reaching the box, and counting it as up would falsely clear a real
+ * outage. Transport failures and everything else (5xx Cloudflare origin
+ * errors, redirects, other 4xx) mean the box did not serve a healthy
+ * /healthz. Budget-skipped and unprobable hosts are reported distinctly so
+ * the caller can mark them unknown without counting them as scan
+ * degradation.
  */
 async function collectPublicProbeSignals(
   agents: HivraAgentSnapshot[],
@@ -1030,7 +1079,9 @@ async function collectPublicProbeSignals(
           continue;
         }
         const outcome = await probe(url);
-        const healthy = outcome.status != null && outcome.status < 500;
+        // Only 200 proves the box itself served /healthz — any other status
+        // (including the tunnel catch-all's edge-side 404) is down.
+        const healthy = outcome.status === 200;
         signals.set(
           agent.id,
           healthy
@@ -1087,29 +1138,81 @@ function publicProbeUnreachableOpsEvent(
   };
 }
 
-type ProbeRowArchiveOutcome = "archived" | "already_archived" | "error";
+type ProbeRowArchiveOutcome = "archived" | "moved" | "error";
 
+/**
+ * Archive the probe-outage row this scan OBSERVED — not whatever the row
+ * has become since. A concurrent scan can record a fresh failure on the
+ * same row between this scan's read and its healthy-probe archive; the
+ * occurrence_count/last_seen_at predicates make that update a no-op so the
+ * new outage clock is never reset by a stale observation. A zero-row
+ * result is "moved": the row was archived or version-bumped by someone
+ * else, and the caller treats the subject as unknown rather than resolved.
+ */
 async function archivePublicProbeRow(
   db: DbClient,
-  rowId: string,
+  row: OpenProbeRow,
   archivedAtIso: string,
 ): Promise<ProbeRowArchiveOutcome> {
-  const { data, error } = await db
+  let query = db
     .from("ops_events")
     .update({ archived_at: archivedAtIso, archived_by_user_id: null })
-    .eq("id", rowId)
-    .is("archived_at", null)
-    .select("id");
+    .eq("id", row.id)
+    .is("archived_at", null);
+  query =
+    row.occurrenceCount == null
+      ? query.is("occurrence_count", null)
+      : query.eq("occurrence_count", row.occurrenceCount);
+  query =
+    row.lastSeenAt == null
+      ? query.is("last_seen_at", null)
+      : query.eq("last_seen_at", row.lastSeenAt);
+  const { data, error } = await query.select("id");
   if (error) {
     log.warn("customer-incidents: public probe row archive failed", {
       source: "customer-incidents",
       failureType: "public_probe_archive_failed",
-      opsEventId: rowId,
+      opsEventId: row.id,
       errorMessage: error.message,
     });
     return "error";
   }
-  return (data?.length ?? 0) > 0 ? "archived" : "already_archived";
+  return (data?.length ?? 0) > 0 ? "archived" : "moved";
+}
+
+type ProbeRowResetOutcome = "reset" | "moved" | "error";
+
+/**
+ * Pin an open probe-outage row's first_seen_at to a fresh outage start,
+ * guarded on the first_seen_at this scan observed so a concurrent reset or
+ * archive is not clobbered. Used when the stored outage predates the box's
+ * current runtime — see applyPublicProbeSignals.
+ */
+async function resetPublicProbeRowFirstSeen(
+  db: DbClient,
+  row: OpenProbeRow,
+  firstSeenAtIso: string,
+): Promise<ProbeRowResetOutcome> {
+  let query = db
+    .from("ops_events")
+    .update({ first_seen_at: firstSeenAtIso })
+    .eq("id", row.id)
+    .is("archived_at", null);
+  query =
+    row.firstSeenAt == null
+      ? query.is("first_seen_at", null)
+      : query.eq("first_seen_at", row.firstSeenAt);
+  const { data, error } = await query.select("id");
+  if (error) {
+    log.warn("customer-incidents: public probe row outage reset failed", {
+      source: "customer-incidents",
+      failureType: "public_probe_reset_failed",
+      opsEventId: row.id,
+      errorMessage: error.message,
+    });
+    return "error";
+  }
+  return (data?.length ?? 0) > 0 ? "reset" : "moved";
 }
 
 export interface PublicProbeApplication {
@@ -1128,7 +1231,9 @@ export interface PublicProbeApplication {
  * un-archiving keeps the OLD row's first_seen_at — so the scan pins
  * first_seen_at to this outage's start or a recurrence would look 10
  * minutes old instantly. An "up" signal archives the open row; a failed
- * archive leaves the outage standing for evaluation.
+ * archive leaves the outage standing for evaluation. Subjects still queued
+ * when the write deadline passes are left unprocessed — unknown, so their
+ * incidents neither open nor resolve on a skipped write.
  */
 async function applyPublicProbeSignals(
   db: DbClient,
@@ -1136,6 +1241,7 @@ async function applyPublicProbeSignals(
   signals: Map<string, PublicProbeSignal>,
   openRowsByAgent: Map<string, OpenProbeRow>,
   deps: { report: typeof reportOpsEvent; now: number },
+  budget: { deadlineAt: number; clock: () => number },
 ): Promise<PublicProbeApplication> {
   const result: PublicProbeApplication = {
     outageStartedAtMs: new Map(),
@@ -1145,6 +1251,15 @@ async function applyPublicProbeSignals(
   const nowIso = new Date(deps.now).toISOString();
 
   await runPool(agents, PUBLIC_PROBE_WRITE_CONCURRENCY, async (agent) => {
+    // The probe deadline bounds network I/O but not this per-subject
+    // decision/write phase; once the invocation approaches its limit the
+    // remaining subjects stay unprocessed — unknown, never resolved on a
+    // skipped write — and the scan still reaches the heartbeat.
+    if (budget.clock() >= budget.deadlineAt) {
+      result.unknownAgentIds.add(agent.id);
+      result.degradedAgentIds.add(agent.id);
+      return;
+    }
     const signal: PublicProbeSignal =
       signals.get(agent.id) ?? { kind: "skipped", reason: "budget" };
     const openRow = openRowsByAgent.get(agent.id) ?? null;
@@ -1160,14 +1275,20 @@ async function applyPublicProbeSignals(
 
     if (signal.kind === "up") {
       if (!openRow) return;
-      const archive = await archivePublicProbeRow(db, openRow.id, nowIso);
+      const archive = await archivePublicProbeRow(db, openRow, nowIso);
       if (archive === "error") {
         // The row may still be open — keep the outage visible to evaluation.
         result.degradedAgentIds.add(agent.id);
         if (rowStartMs != null) result.outageStartedAtMs.set(agent.id, rowStartMs);
         else result.unknownAgentIds.add(agent.id);
+      } else if (archive === "moved") {
+        // The row changed under this scan (a concurrent failure report or
+        // archive landed between the read and the archive): its state is no
+        // longer what we observed — re-evaluate next pass rather than
+        // resolving on a stale snapshot.
+        result.unknownAgentIds.add(agent.id);
       }
-      // "archived" and "already_archived" both mean no open outage remains.
+      // "archived" means no open outage remains.
       return;
     }
 
@@ -1178,12 +1299,34 @@ async function applyPublicProbeSignals(
       // only refreshes last_seen_at/metadata. A failed refresh does not
       // change the outage state, but it is degraded.
       if (reported == null) result.degradedAgentIds.add(agent.id);
-      if (rowStartMs != null) {
-        result.outageStartedAtMs.set(agent.id, rowStartMs);
-      } else {
+      if (rowStartMs == null) {
         result.unknownAgentIds.add(agent.id);
         result.degradedAgentIds.add(agent.id);
+        return;
       }
+      // A probe outage that predates the current runtime marker (the same
+      // provisioned_at / sleep_tier_changed_at / operation_started_at bound
+      // receipts are checked against) belongs to the previous boot: the
+      // first failed probe after a wake or reprovision must not inherit the
+      // pre-sleep outage start, or it would page instantly. Pin the row's
+      // first_seen_at to now — guarded on the observed value — so this and
+      // later scans measure THIS outage; failures continuing on the same
+      // runtime keep their clock.
+      const runtimeMarkerMs = agentRuntimeMarkerMs(agent);
+      if (runtimeMarkerMs != null && rowStartMs < runtimeMarkerMs) {
+        const reset = await resetPublicProbeRowFirstSeen(db, openRow, nowIso);
+        if (reset === "reset") {
+          result.outageStartedAtMs.set(agent.id, deps.now);
+        } else {
+          // The row changed under this scan (or the write failed): its
+          // outage start is no longer what we observed — re-evaluate next
+          // pass.
+          result.unknownAgentIds.add(agent.id);
+          if (reset === "error") result.degradedAgentIds.add(agent.id);
+        }
+        return;
+      }
+      result.outageStartedAtMs.set(agent.id, rowStartMs);
       return;
     }
 
@@ -1318,6 +1461,13 @@ const PROBE_TIMEOUT_MS = 5000;
 // fleet could spend the whole maxDuration budget probing and never reach the
 // resolve pass or the heartbeat. Remaining probes are recorded as skipped.
 const SCAN_PROBE_BUDGET_MS = 90_000;
+// The per-subject probe-row decision/write phase gets its own bound, measured
+// from the end of the probe budget: probing plus writing stays inside
+// maxDuration with room to resolve rows and write the heartbeat.
+const SCAN_PROBE_WRITE_BUDGET_MS = 60_000;
+// The cron's */5-minute schedule in vercel.json — the scan-tick bucket used
+// to rotate the candidate order each pass.
+const SCAN_INTERVAL_MS = 5 * 60 * 1000;
 
 async function defaultProbe(url: string): Promise<{ status: number | null; latencyMs: number | null; error: string | null }> {
   const started = Date.now();
@@ -1533,6 +1683,11 @@ export interface CustomerIncidentScanDeps {
   clock?: () => number;
   /** Total wall-clock budget for all public probes in one scan. */
   probeBudgetMs?: number;
+  /**
+   * Extra wall-clock budget (measured from the end of the probe budget) for
+   * the per-subject probe-row write phase in one scan.
+   */
+  probeWriteBudgetMs?: number;
   /** Total wall-clock budget for the watchdog read loop in one scan. */
   watchdogBudgetMs?: number;
   report?: typeof reportOpsEvent;
@@ -1641,11 +1796,6 @@ async function defaultNotifyResolved(input: ResolvedNoticeInput): Promise<void> 
 
 const LAUNCH_FAILED_SUBJECT_PREFIX = "launch_failed:";
 const BOX_DOWN_SUBJECT_PREFIX = "box_down:";
-// A box_down whose newest surface receipt is this old AND whose public
-// /healthz probe succeeded this scan is a stale record, not a live outage:
-// the box answers publicly and simply stopped emitting receipts (watchdog
-// removed, relays lost). Archive it silently — no resolved notice.
-const BOX_DOWN_STALE_RECEIPT_MS = 24 * 60 * 60 * 1000;
 
 type LaunchFailedExpiry = "resolved" | "expired" | "unknown";
 
@@ -1744,6 +1894,11 @@ export async function runCustomerIncidentScan(
   // it — the scan must finish inside maxDuration with room to resolve rows and
   // write the heartbeat.
   const probeDeadlineAt = clock() + (deps.probeBudgetMs ?? SCAN_PROBE_BUDGET_MS);
+  // The probe-row write phase is bounded separately from network probing so
+  // a large fleet of down signals cannot consume the resolve pass and the
+  // heartbeat inside the same invocation.
+  const probeWriteDeadlineAt =
+    probeDeadlineAt + (deps.probeWriteBudgetMs ?? SCAN_PROBE_WRITE_BUDGET_MS);
   const watchdogDeadlineAt = clock() + (deps.watchdogBudgetMs ?? SCAN_WATCHDOG_READ_BUDGET_MS);
   const report = deps.report ?? reportOpsEvent;
   const probe = deps.probe ?? defaultProbe;
@@ -1805,13 +1960,26 @@ export async function runCustomerIncidentScan(
       agent.sleepState === "awake" &&
       !isAdminUser(agent.userId, adminUserIds),
   );
+  // Every budget-bounded loop below consumes candidates head-first, so a
+  // fixed order would starve the same tail boxes whenever a budget runs out
+  // mid-scan — their incidents could then never open OR resolve. Rotate the
+  // list by the scan-tick bucket so every box periodically lands inside the
+  // window; subjects skipped on a given pass still stay "unknown".
+  const scanTick = Math.floor(now / SCAN_INTERVAL_MS);
+  const scanCandidates =
+    boxDownCandidates.length > 1
+      ? [
+          ...boxDownCandidates.slice(scanTick % boxDownCandidates.length),
+          ...boxDownCandidates.slice(0, scanTick % boxDownCandidates.length),
+        ]
+      : boxDownCandidates;
   const {
     byAgent: watchdogEventsByAgent,
     latestSurfaceByAgent,
     unknownAgentIds,
   } = await collectWatchdogEvents(
     db,
-    boxDownCandidates.map((agent) => agent.id),
+    scanCandidates.map((agent) => agent.id),
     { deadlineAt: watchdogDeadlineAt, clock },
   );
   const boxDownCandidateIds = new Set(boxDownCandidates.map((agent) => agent.id));
@@ -1839,16 +2007,17 @@ export async function runCustomerIncidentScan(
   }
 
   if (probeRowsReadable) {
-    const signals = await collectPublicProbeSignals(boxDownCandidates, probe, {
+    const signals = await collectPublicProbeSignals(scanCandidates, probe, {
       deadlineAt: probeDeadlineAt,
       clock,
     });
     const applied = await applyPublicProbeSignals(
       db,
-      boxDownCandidates,
+      scanCandidates,
       signals,
       openProbeRowsByAgent,
       { report, now },
+      { deadlineAt: probeWriteDeadlineAt, clock },
     );
     for (const [agentId, startMs] of applied.outageStartedAtMs) {
       publicOutageStartedAtMs.set(agentId, startMs);
@@ -1953,7 +2122,28 @@ export async function runCustomerIncidentScan(
   const findingKeys = new Set(evaluation.findings.map((finding) => finding.key));
   for (const row of openIncidentRows) {
     if (!row.incidentKey) continue;
-    if (findingKeys.has(row.incidentKey)) continue;
+    // A box_down whose newest surface receipt is over 24h old while the
+    // box's public /healthz probe succeeded this scan is stale bookkeeping,
+    // not a live outage — archive it silently like an aged-out launch. The
+    // check runs BEFORE treating a present finding as still-open: the
+    // evaluator suppresses stale-receipt findings on a healthy probe, but
+    // if a stale finding is ever emitted the row must still not pin open.
+    // A live failure or an unknown probe keeps the incident open.
+    let staleBoxDown = false;
+    if (row.incidentKey.startsWith(BOX_DOWN_SUBJECT_PREFIX)) {
+      const agentId = row.incidentKey.slice(BOX_DOWN_SUBJECT_PREFIX.length);
+      const receipt = latestSurfaceByAgent.get(agentId);
+      const receiptMs = receipt
+        ? parseTimeMs(receipt.eventAt) ?? parseTimeMs(receipt.firstSeenAt)
+        : null;
+      staleBoxDown =
+        boxDownCandidateIds.has(agentId) &&
+        !publicOutageStartedAtMs.has(agentId) &&
+        !publicProbeUnknownAgentIds.has(agentId) &&
+        receiptMs != null &&
+        now - receiptMs > BOX_DOWN_STALE_RECEIPT_MS;
+    }
+    if (findingKeys.has(row.incidentKey) && !staleBoxDown) continue;
     if (evaluation.unknownKeys.has(row.incidentKey)) continue;
     // launch_failed rows age out of the rule's 24h subject window, so the rule
     // stops emitting a finding while the launch may still be failed. Read the
@@ -1982,23 +2172,6 @@ export async function runCustomerIncidentScan(
         continue;
       }
       expiredUnresolved = disposition === "expired";
-    }
-    // A box_down whose newest surface receipt is over 24h old while the
-    // box's public /healthz probe succeeded this scan is stale bookkeeping,
-    // not a live outage — archive it silently like an aged-out launch.
-    let staleBoxDown = false;
-    if (row.incidentKey.startsWith(BOX_DOWN_SUBJECT_PREFIX)) {
-      const agentId = row.incidentKey.slice(BOX_DOWN_SUBJECT_PREFIX.length);
-      const receipt = latestSurfaceByAgent.get(agentId);
-      const receiptMs = receipt
-        ? parseTimeMs(receipt.eventAt) ?? parseTimeMs(receipt.firstSeenAt)
-        : null;
-      staleBoxDown =
-        boxDownCandidateIds.has(agentId) &&
-        !publicOutageStartedAtMs.has(agentId) &&
-        !publicProbeUnknownAgentIds.has(agentId) &&
-        receiptMs != null &&
-        now - receiptMs > BOX_DOWN_STALE_RECEIPT_MS;
     }
     const silentClosedReason = expiredUnresolved
       ? "expired_unresolved"

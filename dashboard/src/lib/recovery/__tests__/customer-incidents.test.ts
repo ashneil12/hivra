@@ -19,6 +19,7 @@ import {
   type HivraAgentSnapshot,
   type HermesInstanceSnapshot,
   type IncidentEvaluationInput,
+  type ProbeFn,
   type WatchdogEventSnapshot,
 } from "../customer-incidents";
 
@@ -1625,6 +1626,82 @@ describe("runCustomerIncidentScan", () => {
     expect(archiveCalls[0][1]).toBeUndefined();
   });
 
+  it("picks the newest surface receipt by effective time, not raw event_at ordering", async () => {
+    // A receipt row with a missing event_at sorts FIRST under DESC ordering
+    // in Postgres — a limit(1) read on event_at would pick it and drop the
+    // genuinely newer gateway_down. The window read orders by first_seen_at
+    // and the newest effective time wins in code.
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: {
+        "agent-1": [
+          // Recorded 45m ago, no box-reported event_at — effective time is
+          // first_seen_at (45m), so it is OLDER than the gateway_down.
+          watchdogDbRow("recovered", 45 * MIN, { event_at: null }),
+          watchdogDbRow("gateway_down", 30 * MIN),
+        ],
+      },
+    });
+    const deps = scanDeps({ db });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary.opened).toBe(1);
+    const ops = (deps.report as jest.Mock).mock.calls
+      .map((c) => c[0])
+      .find((o) => String(o.source).startsWith("incident."));
+    expect(ops.metadata.incident_key).toBe("box_down:agent-1");
+  });
+
+  it("archives a stale box_down whose receipt is post-marker but over 24h old while the probe is healthy", async () => {
+    // No runtime marker newer than the receipt: the gateway_down is 30h old
+    // but belongs to the CURRENT runtime, so it still produces a finding
+    // upstream of this fix — pinning the open incident forever. With the
+    // probe healthy this scan it is stale bookkeeping: archive silently,
+    // and never re-page (a fresh incident report would reopen the row next
+    // tick and page again).
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: {
+        "agent-1": [watchdogDbRow("gateway_down", 30 * 60 * MIN)],
+      },
+      openIncidents: [incidentDbRow()],
+    });
+    const deps = scanDeps({ db }); // default probe answers 200 → healthy
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary).toMatchObject({ findings: 0, opened: 0, resolved: 0, expired: 1 });
+    expect(deps.archiveIncident).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "evt-open-1" }),
+      { closedReason: "stale_no_new_receipts" },
+    );
+    expect(deps.notifyResolved).not.toHaveBeenCalled();
+    // No incident ops event was reported — the row cannot re-open and re-page.
+    const report = deps.report as jest.Mock;
+    expect(
+      report.mock.calls.map((c) => c[0]).filter((o) => String(o.source).startsWith("incident.")),
+    ).toHaveLength(0);
+  });
+
+  it("keeps a stale-receipt box_down open while the public probe is still failing", async () => {
+    // Same 30h post-marker receipt, but the probe is down: the outage is
+    // live, so the finding must still hold the incident open.
+    const db = fakeIncidentDb({
+      agents: [agentDbRow()],
+      watchdogByAgent: {
+        "agent-1": [watchdogDbRow("gateway_down", 30 * 60 * MIN)],
+      },
+      openIncidents: [incidentDbRow()],
+    });
+    const deps = scanDeps({
+      db,
+      probe: jest.fn(async () => ({ status: 502, latencyMs: 120, error: null })),
+    });
+    const summary = await runCustomerIncidentScan(deps as never);
+
+    expect(summary).toMatchObject({ stillOpen: 1, expired: 0, resolved: 0 });
+    expect(deps.archiveIncident).not.toHaveBeenCalled();
+  });
+
   // ---- public probe signal (box_unreachable) -------------------------------
 
   describe("public probe signal", () => {
@@ -1803,6 +1880,203 @@ describe("runCustomerIncidentScan", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0].resetFirstSeenOnReopen).toBe(true);
       expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+    });
+
+    it("counts the tunnel catch-all's edge-side 404 as down, not up", async () => {
+      // The Cloudflare tunnel config ends in a catch-all http_status:404
+      // ingress rule: a hostname with no live ingress answers 404 without
+      // reaching the box. Only a 200 proves the box served /healthz.
+      const deps = scanDeps({
+        db: fakeIncidentDb({
+          agents: [agentDbRow()],
+          probeRows: [probeRow()],
+        }),
+        probe: jest.fn(async () => ({ status: 404, latencyMs: 30, error: null })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      // The 15-minute outage stands → box_unreachable pages.
+      expect(summary.opened).toBe(1);
+      const incidents = incidentReports(deps.report as jest.Mock);
+      expect(incidents.map((o) => o.metadata.incident_key)).toEqual([
+        "box_unreachable:agent-1",
+      ]);
+    });
+
+    it("does not archive the probe row when its version moved after the scan read it", async () => {
+      // The scan observes the row open, probes healthy, then archives — but
+      // a concurrent scan recorded a fresh failure in between (last_seen_at
+      // and occurrence_count bumped). The version-guarded archive must
+      // no-op, leaving the new outage clock intact and the subject unknown.
+      const racedRow = probeRow({
+        occurrence_count: 4,
+        last_seen_at: iso(10 * MIN),
+      });
+      const db = fakeIncidentDb({
+        agents: [agentDbRow()],
+        probeRows: [racedRow],
+        openIncidents: [
+          incidentDbRow({
+            id: "evt-unreach-race",
+            source: "incident.box_unreachable",
+            metadata: { incident_key: "box_unreachable:agent-1" },
+          }),
+        ],
+      });
+      const deps = scanDeps({
+        db,
+        probe: jest.fn(async () => {
+          // The concurrent failure lands between the open-row read and the
+          // healthy-probe archive.
+          racedRow.occurrence_count = 5;
+          racedRow.last_seen_at = iso(1 * MIN);
+          return { status: 200, latencyMs: 9, error: null };
+        }),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(racedRow.archived_at).toBeUndefined();
+      expect(summary.resolved).toBe(0);
+      expect(summary.unknown).toBe(1);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it("archives the probe row when its version is still what the scan observed", async () => {
+      const row = probeRow({ occurrence_count: 4, last_seen_at: iso(10 * MIN) });
+      const db = fakeIncidentDb({ agents: [agentDbRow()], probeRows: [row] });
+      const deps = scanDeps({ db }); // default probe answers 200 → up
+      await runCustomerIncidentScan(deps as never);
+
+      expect(row.archived_at).toBe(new Date(NOW).toISOString());
+    });
+
+    it("restarts the outage clock when the open probe row predates the box's current runtime", async () => {
+      // The box woke 1h ago (sleep-tier marker) but the probe row's outage
+      // started 3h ago — on the PREVIOUS runtime. The first failed probe
+      // after the wake must not inherit the pre-sleep start, or it would
+      // page instantly. The row's first_seen_at is pinned to this outage's
+      // start inside a write guarded on the observed value.
+      const row = probeRow({ first_seen_at: iso(3 * 60 * MIN) });
+      const db = fakeIncidentDb({
+        agents: [agentDbRow({ sleep_tier_changed_at: iso(60 * MIN) })],
+        probeRows: [row],
+      });
+      const deps = scanDeps({
+        db,
+        probe: jest.fn(async () => ({ status: 502, latencyMs: 80, error: null })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      // New outage is under 10 minutes → no box_unreachable page.
+      expect(summary.opened).toBe(0);
+      expect(incidentReports(deps.report as jest.Mock)).toHaveLength(0);
+      expect(row.first_seen_at).toBe(new Date(NOW).toISOString());
+
+      // Next scan, 20 minutes later, probe still down: the pinned clock is
+      // now past 10 minutes on the SAME runtime → the incident pages.
+      const deps2 = scanDeps({
+        db,
+        now: () => NOW + 20 * MIN,
+        probe: jest.fn(async () => ({ status: 502, latencyMs: 80, error: null })),
+      });
+      const summary2 = await runCustomerIncidentScan(deps2 as never);
+      expect(summary2.opened).toBe(1);
+      expect(
+        incidentReports(deps2.report as jest.Mock).map((o) => o.metadata.incident_key),
+      ).toEqual(["box_unreachable:agent-1"]);
+    });
+
+    it("preserves the outage clock for failures continuing on the same runtime", async () => {
+      // Marker 1h ago, outage 15m ago — entirely inside this runtime.
+      const row = probeRow({ first_seen_at: iso(15 * MIN) });
+      const db = fakeIncidentDb({
+        agents: [agentDbRow({ sleep_tier_changed_at: iso(60 * MIN) })],
+        probeRows: [row],
+      });
+      const deps = scanDeps({
+        db,
+        probe: jest.fn(async () => ({ status: 502, latencyMs: 80, error: null })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(row.first_seen_at).toBe(iso(15 * MIN));
+      expect(summary.opened).toBe(1);
+      expect(
+        incidentReports(deps.report as jest.Mock).map((o) => o.metadata.incident_key),
+      ).toEqual(["box_unreachable:agent-1"]);
+    });
+
+    it("stops probe-row writes once the write budget lapses — subjects stay unknown", async () => {
+      // Probing itself is inside its budget, but the decision/write phase
+      // deadline has already passed: no outage rows are written or
+      // archived, and no incident opens or resolves on a skipped write.
+      const deps = scanDeps({
+        // Write deadline = probeDeadline + probeWriteBudgetMs < scan start.
+        probeWriteBudgetMs: -(90_000 + 60_000),
+        db: fakeIncidentDb({
+          agents: [agentDbRow()],
+          probeRows: [probeRow()],
+          openIncidents: [
+            incidentDbRow({
+              id: "evt-unreach-wb",
+              source: "incident.box_unreachable",
+              metadata: { incident_key: "box_unreachable:agent-1" },
+            }),
+          ],
+        }),
+        probe: jest.fn(async () => ({ status: 200, latencyMs: 9, error: null })),
+      });
+      const summary = await runCustomerIncidentScan(deps as never);
+
+      expect(deps.probe as jest.Mock).toHaveBeenCalledTimes(1);
+      expect(probeReports(deps.report as jest.Mock)).toHaveLength(0);
+      expect(summary.resolved).toBe(0);
+      expect(summary.unknown).toBe(1);
+      expect(summary.degraded).toBe(1);
+      expect(deps.archiveIncident as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    it("rotates the candidate order each tick so the probe budget window covers every box", async () => {
+      // 20 candidates, a probe budget that only admits the first 16 of the
+      // ordering: a fixed order would probe the same 16 and permanently
+      // skip the same 4 tail boxes. Rotating by the scan-tick bucket moves
+      // the window each pass.
+      const agents = Array.from({ length: 20 }, (_, i) =>
+        agentDbRow({
+          id: `agent-${String(i).padStart(2, "0")}`,
+          cf_hostname: `box-${String(i).padStart(2, "0")}.hivra.example`,
+        }),
+      );
+      const probedHosts = async (nowMs: number): Promise<Set<string>> => {
+        const probe: jest.MockedFunction<ProbeFn> = jest.fn();
+        probe.mockResolvedValue({ status: 200, latencyMs: 5, error: null });
+        // The clock flips past every deadline once 16 probes have run, so
+        // exactly the first 16 candidates of the rotated order are probed.
+        const deps = scanDeps({
+          db: fakeIncidentDb({ agents }),
+          now: () => nowMs,
+          clock: () => (probe.mock.calls.length >= 16 ? 1e15 : 0),
+          probe,
+        });
+        await runCustomerIncidentScan(deps as never);
+        return new Set(
+          probe.mock.calls.map((call) => new URL(String(call[0])).hostname),
+        );
+      };
+
+      const tickMs = 5 * 60 * 1000;
+      const first = await probedHosts(NOW);
+      const second = await probedHosts(NOW + tickMs);
+      expect(first.size).toBe(16);
+      expect(second.size).toBe(16);
+      // Consecutive ticks rotate the window by one slot: the probed sets
+      // differ, and across a few ticks every box lands inside it.
+      expect(second).not.toEqual(first);
+      const union = new Set([...first, ...second]);
+      for (let t = 2; t <= 5; t++) {
+        for (const host of await probedHosts(NOW + t * tickMs)) union.add(host);
+      }
+      expect(union.size).toBe(20);
     });
   });
 });
