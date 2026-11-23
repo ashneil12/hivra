@@ -305,8 +305,12 @@ async function recordUpdateReport(params: {
       .eq("status", "redeploying")
       .is("deleted_at", null);
     if (failedStateError) {
-      // Without the stamp the row is invisible to the update sweep — the
-      // outage is silent. Log loudly rather than let it strand.
+      // Without the stamp the row stays 'redeploying' — invisible to the
+      // update sweep — so answering recorded:true would hide the missing
+      // retry marker. Behave like the success-status write's error path:
+      // a non-2xx tells the box this report was not recorded, and its
+      // retry can still land the stamp. An error-free zero-match stays
+      // 200: a row that already moved on is fine.
       log.error(
         "update report received but the failed-state write failed",
         new Error("update_report_state_write_failed"),
@@ -317,6 +321,7 @@ async function recordUpdateReport(params: {
           userId: instance.user_id,
         },
       );
+      return apiError("Failed to update instance status", 500);
     }
   }
 

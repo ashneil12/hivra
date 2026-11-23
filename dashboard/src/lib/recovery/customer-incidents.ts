@@ -9,7 +9,13 @@ import {
   sanitizeOpsMetadata,
   type OpsEventInput,
 } from "@/lib/ops-events";
-import { configuredOpsAdminUserIds, normalizeOpsUserId } from "@/lib/ops-access";
+import {
+  configuredOpsAdminEmails,
+  configuredOpsAdminUserIds,
+  normalizeOpsUserId,
+  resolveConfiguredOpsAdminUserIds,
+  type OpsAdminDirectoryLookup,
+} from "@/lib/ops-access";
 import { isCanaryDeployment } from "@/lib/deployment-channel";
 import { supabaseAdmin } from "@/lib/supabase";
 import vercelConfig from "../../../vercel.json";
@@ -1572,7 +1578,7 @@ async function recordPublicProbeHealthyVerdict(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const { data, error } = await db
       .from("ops_events")
-      .select("id, archived_at, first_seen_at")
+      .select("id, archived_at, first_seen_at, last_seen_at")
       .eq("fingerprint", fingerprint)
       .maybeSingle();
     if (error) {
@@ -1585,7 +1591,7 @@ async function recordPublicProbeHealthyVerdict(
       return "error";
     }
     const row = data as
-      | { id: string; archived_at?: unknown; first_seen_at?: unknown }
+      | { id: string; archived_at?: unknown; first_seen_at?: unknown; last_seen_at?: unknown }
       | null;
 
     if (!row) {
@@ -1641,12 +1647,17 @@ async function recordPublicProbeHealthyVerdict(
       if (archivedAtMs >= observedAtMs) return "recorded";
       // Advance the verdict forward only — the .lt predicate makes a
       // racing newer verdict (a fresh reopen, or a later healthy write)
-      // win instead of being regressed.
-      const { error: updateError } = await db
+      // win instead of being regressed. The matched row is requested back
+      // because a losing write is SILENT otherwise: a reopen between the
+      // read and this update clears archived_at, the .lt matches nothing,
+      // and returning "recorded" would let the caller resolve the subject
+      // while the row is open again. Zero matches = "moved".
+      const { data: refreshed, error: updateError } = await db
         .from("ops_events")
         .update({ archived_at: observedAtIso })
         .eq("id", row.id)
-        .lt("archived_at", observedAtIso);
+        .lt("archived_at", observedAtIso)
+        .select("id");
       if (updateError) {
         log.warn("customer-incidents: public probe verdict refresh failed", {
           source: "customer-incidents",
@@ -1657,7 +1668,7 @@ async function recordPublicProbeHealthyVerdict(
         });
         return "error";
       }
-      return "recorded";
+      return (refreshed?.length ?? 0) > 0 ? "recorded" : "moved";
     }
 
     // An open fingerprint row that this scan's open-row read did not see:
@@ -1670,12 +1681,27 @@ async function recordPublicProbeHealthyVerdict(
     if (firstSeenAtMs == null || firstSeenAtMs > observedAtMs) {
       return "recorded";
     }
+    // The outage start predates this observation, but a REFRESH can still
+    // postdate it: reportOpsEvent stamps last_seen_at at its own write
+    // time, so a row refreshed after this probe ran carries a down sighting
+    // recorded after the healthy observation — whether the report behind
+    // it was genuinely newer or merely late. Archiving over it would clear
+    // the newer verdict and read the box as healthy. Contested: re-read
+    // next pass.
+    const lastSeenAtMs = parseTimeMs(row.last_seen_at as string | null);
+    if (lastSeenAtMs != null && lastSeenAtMs > observedAtMs) {
+      return "moved";
+    }
     const { data: archived, error: archiveError } = await db
       .from("ops_events")
       .update({ archived_at: observedAtIso, archived_by_user_id: null })
       .eq("id", row.id)
       .is("archived_at", null)
       .eq("first_seen_at", row.first_seen_at as string)
+      // The same refresh between this read and the write: a down report
+      // landing in the gap bumps last_seen_at past this observation, so
+      // the archive no-ops instead of clearing the newer verdict.
+      .lte("last_seen_at", observedAtIso)
       .select("id");
     if (archiveError) {
       log.warn("customer-incidents: public probe verdict archive failed", {
@@ -2366,6 +2392,13 @@ export interface CustomerIncidentScanDeps {
   report?: typeof reportOpsEvent;
   probe?: ProbeFn;
   adminUserIds?: ReadonlySet<string>;
+  /**
+   * The user directory OPS_ADMIN_EMAILS is resolved through when
+   * adminUserIds is unset (see resolveScanAdminUserIds). Null disables
+   * email resolution — only the configured ids apply. Defaults to the
+   * Clerk users API.
+   */
+  opsAdminDirectory?: OpsAdminDirectoryLookup | null;
   cronSchedules?: ReadonlyMap<string, CronScheduleInfo>;
   /** Page admins for new incidents + send resolved notices. Defaults to the production-deployment check. */
   pagingEnabled?: boolean;
@@ -2390,6 +2423,62 @@ export interface CustomerIncidentScanSummary {
 
 function emptySummary(): CustomerIncidentScanSummary {
   return { findings: 0, opened: 0, stillOpen: 0, resolved: 0, expired: 0, unknown: 0, degraded: 0, failed: 0 };
+}
+
+/**
+ * The user directory the ops-admin email→id resolution runs against: the
+ * Clerk backend client in managed hosting — or, in self-host builds, the
+ * shim whose getUserList returns the local operator (whose
+ * verified-primary match then applies the same rule). Null when the
+ * directory cannot be built; resolution then keeps only configured ids.
+ */
+async function defaultOpsAdminDirectory(): Promise<OpsAdminDirectoryLookup | null> {
+  try {
+    const { clerkClient } = await import("@clerk/nextjs/server");
+    const client = await clerkClient();
+    return {
+      getUserList: (params: { emailAddress: string[]; limit?: number }) =>
+        client.users.getUserList(params),
+    };
+  } catch (err) {
+    log.warn("customer-incidents: user directory unavailable; ops-admin emails unresolved", {
+      source: "customer-incidents",
+      failureType: "ops_admin_directory_unavailable",
+      errorName: err instanceof Error ? err.name : typeof err,
+    });
+    return null;
+  }
+}
+
+/**
+ * The ops-admin exclusion set for this scan: OPS_ADMIN_USER_IDS plus every
+ * account whose verified primary email OPS_ADMIN_EMAILS names. An admin
+ * configured only by email still passes the request-time ops checks, so
+ * their boxes must be excluded by the same identity or they page as
+ * customer incidents. Resolution never throws and never widens the scan:
+ * any failure degrades to the configured ids.
+ */
+async function resolveScanAdminUserIds(
+  directory: OpsAdminDirectoryLookup | null | undefined,
+): Promise<ReadonlySet<string>> {
+  if (configuredOpsAdminEmails().length === 0) return configuredOpsAdminUserIds();
+  try {
+    const lookup = directory === undefined ? await defaultOpsAdminDirectory() : directory;
+    return await resolveConfiguredOpsAdminUserIds(lookup, (_email, error) => {
+      log.warn("customer-incidents: ops-admin email lookup failed; using configured ids only", {
+        source: "customer-incidents",
+        failureType: "ops_admin_email_lookup_failed",
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+    });
+  } catch (err) {
+    log.warn("customer-incidents: ops-admin id resolution failed; using configured ids only", {
+      source: "customer-incidents",
+      failureType: "ops_admin_resolution_failed",
+      errorName: err instanceof Error ? err.name : typeof err,
+    });
+    return configuredOpsAdminUserIds();
+  }
 }
 
 async function defaultArchiveIncident(
@@ -2643,7 +2732,13 @@ export async function runCustomerIncidentScan(
     clock() + (deps.collectionBudgetMs ?? SCAN_COLLECTION_BUDGET_MS);
   const report = deps.report ?? reportOpsEvent;
   const probe = deps.probe ?? defaultProbe;
-  const adminUserIds = normalizeAdminIdSet(deps.adminUserIds ?? configuredOpsAdminUserIds());
+  // Resolving OPS_ADMIN_EMAILS to account ids needs a user-directory read,
+  // so it starts here and finishes in parallel with collection; it is
+  // awaited under the same collection deadline below — a stall degrades
+  // to the configured ids, never to an empty exclusion.
+  const adminUserIdsResolution: Promise<ReadonlySet<string>> = Promise.resolve(
+    deps.adminUserIds ?? resolveScanAdminUserIds(deps.opsAdminDirectory),
+  );
   const cronSchedules = deps.cronSchedules ?? VERCEL_CRONS;
   const pagingEnabled = deps.pagingEnabled ?? incidentPagingEnabled();
   const archiveIncident =
@@ -2711,6 +2806,30 @@ export async function runCustomerIncidentScan(
     summary.failed += 1;
     return summary;
   }
+
+  // The ops-admin id resolution raced the same collection deadline as the
+  // core reads: a still-running lookup degrades to the configured ids
+  // rather than holding the scan past it (the in-flight read keeps going
+  // in the background like the other abandoned collection reads — it
+  // writes nothing).
+  let resolvedAdminIds: ReadonlySet<string> | undefined;
+  const adminIdsDone = await finishedBeforeDeadline(
+    async () => {
+      resolvedAdminIds = await adminUserIdsResolution;
+    },
+    collectionDeadlineAt,
+    clock,
+  );
+  if (!adminIdsDone) {
+    log.warn(
+      "customer-incidents: ops-admin id resolution exceeded the collection deadline; using configured ids only",
+      {
+        source: "customer-incidents",
+        failureType: "ops_admin_resolution_deadline",
+      },
+    );
+  }
+  const adminUserIds = normalizeAdminIdSet(resolvedAdminIds ?? configuredOpsAdminUserIds());
 
   const customerUserIds = [
     ...new Set(

@@ -183,6 +183,51 @@ describe("POST /api/instances/[id]/update-report", () => {
     expect(instanceUpdateIs).toHaveBeenCalledWith("deleted_at", null);
   });
 
+  it("answers a server error when the failed-state write fails", async () => {
+    // The stamp is the only retry marker the update sweep sees: a silent
+    // 200 would leave the row 'redeploying' — invisible to the sweep —
+    // while claiming recorded:true. The error answer tells the box the
+    // report was not recorded so its retry can still land the stamp.
+    instanceUpdateIs.mockResolvedValueOnce({ error: { message: "row locked" } });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "failed",
+          runType: "manual",
+          reason: "exit_status_1",
+        }),
+      }),
+      { params: Promise.resolve({ id: "11111111-1111-4111-8111-111111111111" }) }
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(json).toEqual({ success: false, error: "Failed to update instance status" });
+    // The failure report's own ops event was not recorded — the outage is
+    // carried by the error-log mirrors (the write failure plus the API
+    // 500), and the box's retry re-lands the whole report.
+    expect(reportOpsEvent).toHaveBeenCalledTimes(2);
+    expect(reportOpsEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "instance-update-status",
+        title: "update report received but the failed-state write failed",
+        severity: "error",
+        metadata: expect.objectContaining({
+          failureType: "update_report_state_write_failed",
+        }),
+      })
+    );
+    expect(reportOpsEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Manual update failed" })
+    );
+  });
+
   it("does not stamp the failed state on a succeeded report", async () => {
     const response = await POST(
       new NextRequest("http://localhost/api/instances/11111111-1111-4111-8111-111111111111/update-report", {
