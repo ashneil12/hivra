@@ -57,9 +57,8 @@ type ReceiptBearingCreateInput = CreateAgentInput & { launchRequestId: string };
 /** What a launch returns: the new computer's id, name and status. */
 export type LaunchResult = { id: string; name: string; status: string };
 
-// The launch route has a 180-second execution budget. Keep observing the
-// owner-bound receipt through that whole admission window, plus a small final
-// propagation margin, without ever resubmitting the POST.
+// Bound how long the UI observes the receipt, independently of how long
+// provisioning can run. Reaching this limit does not resubmit the POST.
 const RECEIPT_RECONCILIATION_MS = 195_000;
 const RECEIPT_POLL_MS = 750;
 /** A computer counts as this launch's only when it was created after the
@@ -163,67 +162,58 @@ function submitObserved(input: CreateAgentInput, draft: LaunchDraft, options: La
   return waitForRoom(() => submitObservedOnce(input, draft, options), options.onObserved);
 }
 
-type SubmissionOutcome =
-  | { state: "accepted"; agent: HivraAgent }
-  | { state: "failed"; error: unknown };
-
 function pause(milliseconds: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, milliseconds));
 }
 
-/** The provisioning POST can keep doing exact host-side confirmation after its
- * durable receipt already names the new computer. Reconcile that receipt in
- * parallel so the launch screen advances as soon as acceptance is known. */
+/** Either the POST or its durable owner-bound receipt can confirm acceptance
+ * first. The observation deadline stops receipt reads, not the provisioning
+ * POST; it never sends another create request. */
 async function submitWithReceiptOnce(
   input: ReceiptBearingCreateInput,
   onObserved?: LaunchSubmitOptions["onObserved"],
 ): Promise<HivraAgent> {
-  const state: { settled: SubmissionOutcome | null } = { settled: null };
+  const observation = new AbortController();
+  const neverSettles = new Promise<never>(() => {});
+  let uncertain: { error: unknown } | null = null;
   onObserved?.({ kind: "sent", at: Date.now() });
-  const submission = createAgent(input).then<SubmissionOutcome, SubmissionOutcome>(
-    agent => ({ state: "accepted", agent }),
-    error => ({ state: "failed", error }),
-  );
-  void submission.then(outcome => { state.settled = outcome; });
-  const currentSubmission = (): SubmissionOutcome | null => state.settled;
+  const submission = createAgent(input).catch(error => {
+    if (error instanceof HivraLaunchRejectedError || error instanceof HivraLaunchCorrectableError) throw error;
+    uncertain = { error };
+    return neverSettles;
+  });
 
-  const deadline = Date.now() + RECEIPT_RECONCILIATION_MS;
-  while (Date.now() < deadline) {
-    const current = currentSubmission();
-    if (current?.state === "accepted") return current.agent;
-    if (
-      current?.state === "failed"
-      && (current.error instanceof HivraLaunchRejectedError
-        || current.error instanceof HivraLaunchCorrectableError)
-    ) throw current.error;
-
-    try {
-      const receipt = await findHivraLaunchReceipt(input.launchRequestId);
-      if (receipt?.state === "accepted") return receipt.agent;
-      if (receipt?.state === "reconciling") onObserved?.({ kind: "receipt", phase: receipt.phase, at: Date.now() });
-    } catch (error) {
-      if (error instanceof HivraLaunchRejectedError) throw error;
-      // A temporarily unreadable/missing receipt is uncertainty, not proof
-      // that the original request failed. The original POST remains in flight.
+  const observeReceipt = async (): Promise<HivraAgent> => {
+    while (!observation.signal.aborted) {
+      try {
+        const receipt = await findHivraLaunchReceipt(input.launchRequestId, observation.signal);
+        if (observation.signal.aborted) break;
+        if (receipt?.state === "accepted") return receipt.agent;
+        if (receipt?.state === "reconciling") onObserved?.({ kind: "receipt", phase: receipt.phase, at: Date.now() });
+      } catch (error) {
+        if (error instanceof HivraLaunchRejectedError) throw error;
+        // A missing or unreadable receipt doesn't prove the launch failed.
+      }
+      if (!observation.signal.aborted) await pause(RECEIPT_POLL_MS);
     }
-    const afterReceipt = currentSubmission();
-    if (afterReceipt?.state === "accepted") return afterReceipt.agent;
-    if (currentSubmission() === null) {
-      await Promise.race([submission, pause(RECEIPT_POLL_MS)]);
-    } else {
-      await pause(RECEIPT_POLL_MS);
-    }
-  }
+    return neverSettles;
+  };
 
-  const outcome = currentSubmission();
-  if (!outcome) {
-    throw new HivraLaunchInProgressError(
-      input.launchRequestId,
-      "The launch is still being confirmed. Resume this same saved request instead of starting another computer.",
-    );
+  let timer: number | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => {
+      reject(uncertain ? uncertain.error : new HivraLaunchInProgressError(
+        input.launchRequestId,
+        "The launch is still being confirmed. Resume this same saved request instead of starting another computer.",
+      ));
+    }, RECEIPT_RECONCILIATION_MS);
+  });
+  try {
+    return await Promise.race([submission, observeReceipt(), deadline]);
+  } finally {
+    window.clearTimeout(timer);
+    observation.abort();
   }
-  if (outcome.state === "accepted") return outcome.agent;
-  throw outcome.error;
 }
 
 /** A Hivra agent launch started from a saved template names it; the server

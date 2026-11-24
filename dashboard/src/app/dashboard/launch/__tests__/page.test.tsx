@@ -273,6 +273,16 @@ function launchButton() {
   return screen.getByRole("button", { name: /^(Launch |Start Windows setup)/ });
 }
 
+async function submitAndWaitForReceiptDeadline() {
+  jest.useFakeTimers();
+  try {
+    fireEvent.click(launchButton());
+    await act(async () => { await jest.advanceTimersByTimeAsync(195_000); });
+  } finally {
+    jest.useRealTimers();
+  }
+}
+
 function expectCurrentStep(label: "Choose" | "Review") {
   const steps = screen.getByRole("list", { name: "Launch steps" });
   expect(within(steps).getAllByRole("listitem")).toHaveLength(2);
@@ -660,9 +670,7 @@ describe("LaunchPage", () => {
     chooseTile("Codex");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
     closeChanges();
-    const receiptClock = jest.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(30_001);
-    fireEvent.click(launchButton());
-    receiptClock.mockRestore();
+    await submitAndWaitForReceiptDeadline();
 
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toHaveFocus();
     expectCurrentStep("Review");
@@ -1697,9 +1705,7 @@ describe("LaunchPage", () => {
       chooseTile("Codex");
       await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
       closeChanges();
-      const receiptClock = jest.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(195_001);
-      fireEvent.click(launchButton());
-      receiptClock.mockRestore();
+      await submitAndWaitForReceiptDeadline();
 
       expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
       expect(createAgentMock).toHaveBeenCalledTimes(1);
@@ -1783,9 +1789,7 @@ describe("LaunchPage", () => {
     await waitFor(() => expect(ownInfrastructure).toBeEnabled());
     fireEvent.click(ownInfrastructure);
     closeChanges();
-    const receiptClock = jest.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(30_001);
-    fireEvent.click(launchButton());
-    receiptClock.mockRestore();
+    await submitAndWaitForReceiptDeadline();
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
     const firstInput = createAgentMock.mock.calls[0][0];
     first.unmount();
