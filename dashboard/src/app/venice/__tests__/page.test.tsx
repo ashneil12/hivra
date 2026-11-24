@@ -1,7 +1,7 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import type { ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import VenicePage, { metadata } from "../page";
 import VenicePromo from "@/components/venice/VenicePromo";
 import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
@@ -86,6 +86,30 @@ describe("/venice", () => {
       "href",
       `/sign-in?redirect_url=${encodeURIComponent(CLAIM_RETURN)}`,
     );
+  });
+
+  it("shows both brand marks and leaves film playback unmuted and user-initiated", async () => {
+    process.env[FLAG] = "true";
+    render(await VenicePage());
+
+    expect(screen.getByRole("img", { name: "Hivra" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Venice" })).toBeInTheDocument();
+    const film = screen.getByLabelText("Hivra × Venice launch film") as HTMLVideoElement;
+    expect(film).toHaveAttribute("poster", "https://ejzonwoikxinlk0x.public.blob.vercel-storage.com/venice/hivra-venice-poster.jpg");
+    expect(film).toHaveAttribute("preload", "none");
+    expect(film).toHaveAttribute("playsinline");
+    expect(film.controls).toBe(true);
+    expect(film.autoplay).toBe(false);
+    expect(film.muted).toBe(false);
+    expect(film.querySelector("source")).toHaveAttribute("src", "https://ejzonwoikxinlk0x.public.blob.vercel-storage.com/venice/hivra-venice-draft3b-16x9.mp4");
+    const play = jest.spyOn(film, "play").mockResolvedValue();
+    const playButton = screen.getByRole("button", { name: "Play Hivra × Venice launch film" });
+    fireEvent.click(playButton);
+    expect(play).toHaveBeenCalledTimes(1);
+    fireEvent.playing(film);
+    expect(playButton).not.toBeInTheDocument();
+    const claim = screen.getByRole("link", { name: /Claim your \$10/ });
+    expect(claim.compareDocumentPosition(film) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("links signed-in claimants directly to Launch", async () => {
