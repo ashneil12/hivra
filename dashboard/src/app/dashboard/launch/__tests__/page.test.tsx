@@ -1746,10 +1746,10 @@ describe("LaunchPage", () => {
     expect(storedDraftJson().launchRequestId).not.toBe(failedRequestId);
   });
 
-  it("returns an ordinary correctable 4xx to review without terminalizing the receipt", async () => {
+  it.each([409, 429])("returns a fresh correctable %i to review without terminalizing the receipt", async status => {
     createAgentMock.mockRejectedValue(new HivraLaunchCorrectableError(
       "Refresh the selected capacity and review this launch.",
-      409,
+      status,
       "target_revision_changed",
     ));
     render(<LaunchPage />);
@@ -1875,6 +1875,21 @@ describe("LaunchPage", () => {
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
     expect(screen.queryByText(/Continue your/)).not.toBeInTheDocument();
+  });
+
+  it("accepts the saved receipt when resuming an uncertain launch hits a rate limit", async () => {
+    const draft = { ...createLaunchDraft(), stage: "launch", resourceKind: "agent", profileId: "codex", name: "Codex 1",
+      launchState: "uncertain", submittedDeployment: { mode: "hivra-managed" } };
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    createAgentMock.mockRejectedValue(new HivraLaunchCorrectableError("Too many requests", 429));
+    findHivraLaunchReceiptMock.mockResolvedValueOnce(null).mockResolvedValue({
+      state: "accepted", phase: "accepted", agent: { id: "55555555-5555-4555-8555-555555555555", name: "Codex 1", status: "provisioning" },
+    });
+    render(<LaunchPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resume same launch" }));
+    expect(await screen.findByRole("link", { name: /^Open .+ now$/ }, { timeout: 3000 })).toBeInTheDocument();
+    expect(createAgentMock).toHaveBeenCalledTimes(1);
+    expect(createAgentMock.mock.calls[0][0].launchRequestId).toBe(draft.launchRequestId);
   });
 
   it("never sets an unconfirmed launch aside for a new launch link", async () => {

@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { launchResultHref, submitLaunchDraft } from "../launch-adapter";
+import { launchResultHref, SERVERS_FULL_RETRY_MS, submitLaunchDraft } from "../launch-adapter";
 import {
   createAgent,
   findHivraLaunchReceipt,
@@ -91,11 +91,24 @@ describe("bounded launch receipt reconciliation", () => {
     expect(jest.mocked(findHivraLaunchReceipt).mock.calls[0][1]?.aborted).toBe(true);
   });
 
+  it("returns a rate limit immediately after a definite capacity refusal", async () => {
+    const rateLimit = new HivraLaunchCorrectableError("Too many requests", 429);
+    jest.mocked(createAgent)
+      .mockRejectedValueOnce(new HivraLaunchCorrectableError("No room", 503, "servers_full"))
+      .mockRejectedValueOnce(rateLimit);
+    jest.mocked(findHivraLaunchReceipt).mockResolvedValue(null);
+    const result = submitLaunchDraft(draft as never, { mode: "hivra-managed" });
+    const rejection = expect(result).rejects.toBe(rateLimit);
+    await jest.advanceTimersByTimeAsync(SERVERS_FULL_RETRY_MS);
+    await rejection;
+    expect(createAgent).toHaveBeenCalledTimes(2);
+  });
+
   it("accepts a delayed owner receipt when the replay POST is rate-limited", async () => {
     jest.mocked(createAgent).mockRejectedValue(new HivraLaunchCorrectableError("Too many requests", 429));
     const receipt = deferred<{ state: "accepted"; phase: string; agent: HivraAgent }>();
     jest.mocked(findHivraLaunchReceipt).mockReturnValue(receipt.promise);
-    const result = submitLaunchDraft(draft as never, { mode: "hivra-managed" });
+    const result = submitLaunchDraft(draft as never, { mode: "hivra-managed" }, { resumingUncertain: true });
     await jest.advanceTimersByTimeAsync(1_000);
     receipt.resolve({ state: "accepted", phase: "accepted", agent: accepted });
     await expect(result).resolves.toEqual(accepted);
@@ -106,7 +119,7 @@ describe("bounded launch receipt reconciliation", () => {
   it("keeps the request resumable when rate-limited and no receipt is visible yet", async () => {
     jest.mocked(createAgent).mockRejectedValue(new HivraLaunchCorrectableError("Too many requests", 429));
     jest.mocked(findHivraLaunchReceipt).mockResolvedValue(null);
-    const result = submitLaunchDraft(draft as never, { mode: "hivra-managed" });
+    const result = submitLaunchDraft(draft as never, { mode: "hivra-managed" }, { resumingUncertain: true });
     const rejected = expect(result).rejects.toMatchObject({ name: HivraLaunchInProgressError.name, launchRequestId: requestId });
     await jest.advanceTimersByTimeAsync(195_000);
     await rejected;

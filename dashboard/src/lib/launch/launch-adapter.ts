@@ -74,6 +74,8 @@ export type LaunchObservation =
   | { kind: "waiting-for-room"; since: number; at: number };
 
 export type LaunchSubmitOptions = {
+  /** A previous submission of this same request may already have been accepted. */
+  resumingUncertain?: boolean;
   /** A key typed into this page for this launch. Never stored. */
   apiKey?: string | null;
   /** Saved Vault keys (never the keys themselves), for Hermes' memory key. */
@@ -153,9 +155,9 @@ export async function waitForRoom<T>(
 
 function submitWithReceipt(
   input: ReceiptBearingCreateInput,
-  onObserved?: LaunchSubmitOptions["onObserved"],
+  options: LaunchSubmitOptions,
 ): Promise<HivraAgent> {
-  return waitForRoom(() => submitWithReceiptOnce(input, onObserved), onObserved);
+  return waitForRoom(() => submitWithReceiptOnce(input, options), options.onObserved);
 }
 
 function submitObserved(input: CreateAgentInput, draft: LaunchDraft, options: LaunchSubmitOptions): Promise<LaunchResult> {
@@ -171,7 +173,7 @@ function pause(milliseconds: number): Promise<void> {
  * POST; it never sends another create request. */
 async function submitWithReceiptOnce(
   input: ReceiptBearingCreateInput,
-  onObserved?: LaunchSubmitOptions["onObserved"],
+  { onObserved, resumingUncertain }: LaunchSubmitOptions,
 ): Promise<HivraAgent> {
   const observation = new AbortController();
   const neverSettles = new Promise<never>(() => {});
@@ -179,7 +181,7 @@ async function submitWithReceiptOnce(
   onObserved?.({ kind: "sent", at: Date.now() });
   const submission = createAgent(input).catch(error => {
     // A replay can be rate-limited before the server looks up the original request.
-    if (error instanceof HivraLaunchCorrectableError && error.status === 429) {
+    if (resumingUncertain && error instanceof HivraLaunchCorrectableError && error.status === 429) {
       uncertain = { error: new HivraLaunchInProgressError(input.launchRequestId) };
       return neverSettles;
     }
@@ -443,13 +445,13 @@ async function submitCodex(draft: LaunchDraft, deployment: AgentDeploymentDestin
     launchRequestId: draft.launchRequestId,
   };
   if (access.mode === "native") {
-    return submitWithReceipt(withTemplate({ type: "codex", ...shared }, draft), options.onObserved);
+    return submitWithReceipt(withTemplate({ type: "codex", ...shared }, draft), options);
   }
   const model = effectiveModel("codex", access);
   const llm = access.mode === "credits"
     ? { mode: "managed" as const, model, walletType: creditsWallet(access, options.balance ?? { state: "unknown" }) }
     : { mode: "byok" as const, model, ...(await launchKey(draft, options)) };
-  return submitWithReceipt(withTemplate(codexModelRequest({ ...shared, llm }), draft), options.onObserved);
+  return submitWithReceipt(withTemplate(codexModelRequest({ ...shared, llm }), draft), options);
 }
 
 /** The key a DigitalOcean launch sends: the saved Vault key the owner
@@ -598,7 +600,7 @@ export async function submitLaunchDraft(
       browser: false,
       deployment,
       launchRequestId: draft.launchRequestId,
-    }, options.onObserved);
+    }, options);
   }
   if (profileId === "ubuntu-desktop" || profileId === "ubuntu-server") {
     // Both are stored as the linux-desktop type; the profile tells the route
@@ -614,7 +616,7 @@ export async function submitLaunchDraft(
       browser: false,
       deployment,
       launchRequestId: draft.launchRequestId,
-    }, options.onObserved);
+    }, options);
   }
   if (profileId === "codex") return submitCodex(draft, deployment, options);
   if (profileId === "hermes") {
