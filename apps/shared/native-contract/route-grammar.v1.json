@@ -1670,6 +1670,16 @@
     },
     {
       "family": "value-set",
+      "input": "/dashboard/launch?profile=wakapi&stage=choose",
+      "expect": "/dashboard/launch?profile=wakapi&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=wakapi",
+      "expect": "/dashboard/infrastructure?launch=wakapi"
+    },
+    {
+      "family": "value-set",
       "input": "/dashboard/launch?profile=artalk&stage=choose",
       "expect": "/dashboard/launch?profile=artalk&stage=choose"
     },

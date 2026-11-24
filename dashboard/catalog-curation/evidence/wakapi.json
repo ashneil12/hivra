@@ -1,0 +1,113 @@
+{
+  "slug": "wakapi",
+  "checkedAt": "2026-11-24T13:56:14.761Z",
+  "gitSha": "616a5513aa809204f63d5f4337a22dfb989db6cd",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "muety/wakapi is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "muety/wakapi",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/muety/wakapi:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/muety/wakapi:latest",
+        "digest": "sha256:7a14217db1b6a47816c8d8d0590cc40fa12fd409dfed6c194bbb4cd50f43d913",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-wakapi-gdwgqg",
+        "hostPort": 3295,
+        "image": "ghcr.io/muety/wakapi:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-wakapi-gdwgqg",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3295:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-wakapi-gdwgqg-data:/data",
+          "ghcr.io/muety/wakapi:latest"
+        ],
+        "runStdout": "da442502e307cbb40d6c7d5c9e0fab26b68049d0a8c06cf2360ef65e19848fdd",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "32.67MiB / 7.652GiB",
+        "memBytes": 34256978
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 63845,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n\n<head>\n    <title>Wakapi – Coding Statistics</title>\n    <base href=\"/\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1\"/>\n    <meta name=\"description\" content=\"Wakapi is an open-source tool that helps you keep track of the time you have spent coding on different projects in different programming languages and more. Ideal f",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 400,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n\n<head>\n    <title>Wakapi – Coding Statistics</title>\n    <base href=\"/\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1\"/>\n    <meta name=\"description\" content=\"Wakapi is an open-source tool that helps you keep track of the t"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 32.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 34256978,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}
