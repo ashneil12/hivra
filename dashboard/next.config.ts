@@ -388,7 +388,7 @@ const nextConfig: NextConfig = {
           //   style-src — Next.js / framer-motion inject inline styles.
           //   img-src — avatars, mux thumbnails, posthog assets, generic
           //     https + data: + blob: for user-uploaded images.
-          //   media-src — Mux video player.
+          //   media-src — Mux and the Hivra public media store.
           //   font-src — self-hosted fonts only; data: covers font preloads.
           //   connect-src — every host the app fetches/posts/streams to:
           //     Clerk (auth), Stripe (billing), Supabase (DB + storage),
@@ -423,7 +423,7 @@ const nextConfig: NextConfig = {
               `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://js.stripe.com https://*.stripe.com https://*.clerk.accounts.dev https://clerk.hivra.cloud https://cdn.jsdelivr.net https://www.googletagmanager.com https://challenges.cloudflare.com https://fpjscdn.net https://fpnpmcdn.net${posthogProxyCsp}`,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: https:",
-              "media-src 'self' blob: https://stream.mux.com https://*.mux.com",
+              "media-src 'self' blob: https://stream.mux.com https://*.mux.com https://ejzonwoikxinlk0x.public.blob.vercel-storage.com",
               "font-src 'self' data:",
               // Hivra rebrand (2026-06): Clerk's Frontend API moved to the
               // custom domain clerk.hivra.cloud — client bootstrap XHRs

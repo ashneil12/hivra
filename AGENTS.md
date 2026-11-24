@@ -73,6 +73,17 @@ For runtime bug fixes, updates, and meaningful user-facing changes, use [the liv
 
 After an authorised live change, verify that exact target. Record the target/revision, actual actions and results, preservation/cleanup, and anything unverified. If access or authority is missing, complete safe checks and state the gap; do not claim live success. This does not grant deployment authority or require deployments for docs-only or tiny local changes.
 
+## Seeing production errors
+
+Customer-impacting errors surface in the ops tables before users report them — check these first when triaging:
+
+- `ops_events` — the system of record for incidents and WARN/ERROR events: `message`, `route`, severity, `first_seen_at`/`last_seen_at`, `occurrence_count`, `metadata` (diagnosis, host/VM context), `archived_at`. Open incidents are rows with `archived_at IS NULL` — what the pager sees.
+- `ops_cron_heartbeats` — per-cron `last_run_at`, `consecutive_failures`, `last_detail`. A job that never reports is itself flagged as an incident, so a silent cron cannot hide.
+- `hivra_status_incidents` — public status-page incidents only; do not confuse curated status entries with the raw signals above.
+- Vercel function logs carry the cron WARN/ERROR lines for the served revision.
+
+The read-only query path (project refs, connection setup) is intentionally kept out of this public tree per the release tree-hygiene rules; on operator machines it is documented in the `hivra-supabase-ops` skill and the triage skills under `~/.claude/skills/`.
+
 ## Plain English
 
 Small changes get small checks. Important user-facing changes get stronger checks. The point is to catch real breakage without turning every tiny edit into a heavy release process.
