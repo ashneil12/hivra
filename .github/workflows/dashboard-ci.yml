@@ -65,7 +65,9 @@ jobs:
           cache-dependency-path: dashboard/package-lock.json
 
       - name: Check dashboard path casing
-        run: node scripts/check-path-casing.cjs
+        run: |
+          node --test scripts/check-path-casing.test.cjs
+          node scripts/check-path-casing.cjs
 
       - name: Determine migration diff range
         shell: bash

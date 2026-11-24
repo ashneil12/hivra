@@ -25,9 +25,8 @@ for (const file of files) {
     check(prefix, paths);
   }
   // Extensionless imports can resolve differently even when the extensions differ.
-  if (/\.(?:[cm]?[jt]s|[jt]sx)$/.test(file)) {
-    check(file.slice(0, file.lastIndexOf('.')), modules);
-  }
+  const moduleStem = file.replace(/(?:\.d\.[cm]?ts|\.[cm]?[jt]s|\.[jt]sx)$/, '');
+  if (moduleStem !== file) check(moduleStem, modules);
 }
 
 for (const conflict of conflicts) console.error(`Conflicting dashboard paths: ${conflict}`);
