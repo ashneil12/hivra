@@ -38,6 +38,8 @@ export type PlanSource =
 export type PlanPaymentPath = "card" | "token";
 /** The $HermesOS option: pay one year, or hold enough to qualify. */
 export type TokenPlanMode = "yearly" | "hold";
+/** Billing's server-resolved holder-admission state, plus its request states. */
+export type HolderAdmissionViewState = "loading" | "error" | "none" | "waitlisted" | "admitted";
 
 export function isPlanKey(value: unknown): value is PlanKey {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(PLANS, value);
@@ -358,6 +360,8 @@ export function planCardCta(params: {
   changePlanRequiresCheckout: boolean;
   /** The token the account pays in, e.g. "$HIVRA". Defaults to $HermesOS. */
   tokenUnit?: string;
+  /** Current-user holder admission from GET /api/billing/holder-admission. */
+  holderAdmission?: HolderAdmissionViewState;
 }): PlanCardCta {
   const { planKey } = params;
   const tokenUnit = params.tokenUnit ?? HERMESOS_DISPLAY_UNIT;
@@ -389,12 +393,23 @@ export function planCardCta(params: {
       return { kind: "note", note: "Your current plan already covers this" };
     }
     if (params.tokenMode === "hold") {
-      return {
-        kind: "hold_token",
-        label: "Verify a wallet to hold",
-        href: `/dashboard/wallet?from=billing&plan=${tier}`,
-        tier,
-      };
+      switch (params.holderAdmission ?? "admitted") {
+        case "loading":
+          return { kind: "note", note: "Checking holder access…" };
+        case "error":
+          return { kind: "note", note: "Holder access is unavailable right now" };
+        case "waitlisted":
+          return { kind: "note", note: "You're on the holder access waitlist" };
+        case "none":
+          return { kind: "note", note: "Holder access isn't open for this account yet" };
+        case "admitted":
+          return {
+            kind: "hold_token",
+            label: "Verify a wallet to hold",
+            href: `/dashboard/wallet?from=billing&plan=${tier}`,
+            tier,
+          };
+      }
     }
     return {
       kind: "pay_yearly_token",

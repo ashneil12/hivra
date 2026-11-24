@@ -125,6 +125,8 @@ describe("BillingPage", () => {
   let tokenHoldingData: Record<string, unknown>;
   let tokenRefreshData: Record<string, unknown>;
   let managedVeniceSummaryData: Record<string, unknown>;
+  let holderAdmissionPayload: { state: "none" | "waitlisted" | "admitted" };
+  let holderAdmissionStatus: number;
 
   function jsonResponse(data: Record<string, unknown>) {
     return {
@@ -170,6 +172,8 @@ describe("BillingPage", () => {
     process.env.NEXT_PUBLIC_CREDIT_TOPUPS_ENABLED = "true";
     delete process.env.NEXT_PUBLIC_SELF_SERVE_DOWNGRADE_ENABLED;
     global.fetch = fetchMock as typeof fetch;
+    holderAdmissionPayload = { state: "admitted" };
+    holderAdmissionStatus = 200;
     delete (window as unknown as { ethereum?: unknown }).ethereum;
 
     usageData = {
@@ -386,6 +390,12 @@ describe("BillingPage", () => {
 
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = requestUrl(input);
+      if (url.includes("/api/billing/holder-admission")) {
+        return Promise.resolve(apiResponse(holderAdmissionPayload, {
+          ok: holderAdmissionStatus < 400,
+          status: holderAdmissionStatus,
+        }));
+      }
       if (url.includes("/api/billing/wallet/challenge")) {
         return Promise.resolve(jsonResponse({
           challengeId: "challenge_123",
@@ -2395,6 +2405,31 @@ describe("BillingPage", () => {
       });
     });
     expect(await screen.findByRole("dialog", { name: /Pay Pro yearly with \$HermesOS/ })).toBeInTheDocument();
+  });
+
+  it("uses the server holder-admission state for Hold to qualify", async () => {
+    notSubscribed();
+    holderAdmissionPayload = { state: "waitlisted" };
+    render(<BillingPage />);
+
+    fireEvent.click(await screen.findByRole("radio", { name: "$HermesOS" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Hold to qualify" }));
+
+    expect(await screen.findAllByText("You're on the holder access waitlist")).toHaveLength(2);
+    expect(screen.queryByRole("link", { name: /verify a wallet to hold/i })).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/billing/holder-admission", { cache: "no-store" });
+  });
+
+  it("fails Hold to qualify closed when holder admission errors", async () => {
+    notSubscribed();
+    holderAdmissionStatus = 503;
+    render(<BillingPage />);
+
+    fireEvent.click(await screen.findByRole("radio", { name: "$HermesOS" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Hold to qualify" }));
+
+    expect(await screen.findAllByText("Holder access is unavailable right now")).toHaveLength(2);
+    expect(screen.queryByRole("link", { name: /verify a wallet to hold/i })).not.toBeInTheDocument();
   });
 
   it("shows the no-wallet token state without blocking billing", async () => {

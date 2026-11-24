@@ -105,6 +105,19 @@ export function PaymentMethodsTab({
   // new holder tiers only once $HIVRA is usable. USDC and card are unaffected.
   const tokenPaymentsOn = c.tokenPayments.available;
   const unit = c.tokenPayments.displayUnit;
+  const admission = c.holderAdmission.status === "ready" ? c.holderAdmission.state : c.holderAdmission.status;
+  const hasTokenHoldingAccess =
+    source === "token_holding" || c.holdAmounts?.pro.eligible === true || c.holdAmounts?.power.eligible === true;
+  const admissionLine =
+    admission === "loading"
+      ? "Checking holder access…"
+      : admission === "error"
+        ? "Holder access is unavailable right now. Try again later."
+        : admission === "waitlisted"
+          ? "You're on the holder access waitlist. Hold to qualify opens when your account is admitted."
+          : admission === "none"
+            ? "Holder access isn't open for this account yet."
+            : null;
   const hermesCreditTopUpsOffered =
     c.flags.billingV2Enabled && tokenFeatures && tokenPaymentsOn && Boolean(c.managedVeniceSummary);
 
@@ -289,31 +302,40 @@ export function PaymentMethodsTab({
                   Hold enough {unit} in a verified wallet and Pro or Power stays unlocked while you hold. No
                   payment, and you can move your tokens any time; access ends when the balance drops below the amount.
                 </p>
-                <HoldAmountsTable amounts={c.holdAmounts} />
-                {source === "token_holding" && (
-                  <p className={styles.blockStatus}>
-                    <ShieldCheck size={14} aria-hidden="true" />
-                    Your plan is active while you hold.
+                {admissionLine && (
+                  <p className={styles.blockText} role={admission === "error" ? "alert" : "status"}>
+                    {admissionLine}
                   </p>
                 )}
-                <div className={styles.nested}>
-                  <TokenHoldingPanel
-                    embedded
-                    tokenHolding={c.tokenHolding}
-                    loading={c.tokenLoading}
-                    refreshing={c.tokenRefreshing}
-                    connectingWallet={c.walletConnecting}
-                    error={c.tokenError}
-                    onRefresh={c.handleRefreshTokenHolding}
-                    onConnectWallet={c.handleConnectWallet}
-                  />
-                </div>
-                <div className={styles.panelActions}>
-                  <Link className={styles.link} href="/dashboard/wallet?from=billing">
-                    Verify a wallet and track your holding
-                    <ArrowRight size={13} aria-hidden="true" />
-                  </Link>
-                </div>
+                {(admission === "admitted" || source === "token_holding" || hasTokenHoldingAccess) && (
+                  <>
+                    <HoldAmountsTable amounts={c.holdAmounts} />
+                    {source === "token_holding" && (
+                      <p className={styles.blockStatus}>
+                        <ShieldCheck size={14} aria-hidden="true" />
+                        Your plan is active while you hold.
+                      </p>
+                    )}
+                    <div className={styles.nested}>
+                      <TokenHoldingPanel
+                        embedded
+                        tokenHolding={c.tokenHolding}
+                        loading={c.tokenLoading}
+                        refreshing={c.tokenRefreshing}
+                        connectingWallet={c.walletConnecting}
+                        error={c.tokenError}
+                        onRefresh={c.handleRefreshTokenHolding}
+                        onConnectWallet={c.handleConnectWallet}
+                      />
+                    </div>
+                    <div className={styles.panelActions}>
+                      <Link className={styles.link} href="/dashboard/wallet?from=billing">
+                        {hasTokenHoldingAccess ? "Manage your token holding" : "Verify a wallet and track your holding"}
+                        <ArrowRight size={13} aria-hidden="true" />
+                      </Link>
+                    </div>
+                  </>
+                )}
               </div>
 
               <UsdcTopUpBlock onGoTo={onGoTo} />
@@ -358,8 +380,8 @@ function formatUsd(value: number): string {
 }
 
 /**
- * The server's per-plan hold amounts for this account (they follow the token
- * price and the user's pricing epoch), plus the VVV compute boost.
+ * The server's per-plan hold amounts for this account (they follow the live
+ * token price and the account's locked qualification rows), plus the VVV compute boost.
  */
 function HoldAmountsTable({ amounts }: { amounts: BillingController["holdAmounts"] }) {
   if (!amounts) {

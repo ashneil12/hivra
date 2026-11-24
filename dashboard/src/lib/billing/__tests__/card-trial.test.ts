@@ -70,11 +70,12 @@ function fakeDb(results: Record<string, Result[]>, insertError: { code: string; 
   const from = jest.fn((table: string) => {
     const next = () => results[table]?.shift() ?? { data: [], error: null };
     const q: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "neq"]) q[m] = () => q;
+    for (const m of ["select", "eq", "neq", "or"]) q[m] = () => q;
     q.update = (patch: unknown) => {
       updates.push({ table, patch });
       const u: Record<string, unknown> = {};
       u.eq = () => u;
+      u.or = () => u;
       u.then = (r: (v: unknown) => void) => r({ error: null });
       return u;
     };

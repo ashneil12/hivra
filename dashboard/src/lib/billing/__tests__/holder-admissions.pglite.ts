@@ -1,0 +1,472 @@
+/**
+ * @jest-environment node
+ */
+// SQL-contract regression tests for holder admissions. They run the real
+// migration in PGlite, the repo's local disposable database harness. PGlite is
+// single-connection, so the independent-transaction concurrency proof is not
+// claimed here; the RPC's advisory transaction lock is exercised by repeated
+// concurrent-shaped calls and the exact locking contract is in SQL.
+import fs from "node:fs";
+import path from "node:path";
+
+import { PGlite } from "@electric-sql/pglite";
+
+const MIGRATION = path.resolve(
+  __dirname,
+  "../../../../supabase/migrations/20261124230000_holder_admissions.sql",
+);
+
+const FIXTURE_SQL = `
+    create role anon; create role authenticated; create role service_role bypassrls;
+    create table public.token_tier_qualifications(
+      user_id text, tier text, token_key text, currently_eligible boolean,
+      last_suspend_at timestamptz, last_breach_at timestamptz
+    );
+    create table public.hermes_subscriptions(user_id text, plan text, status text, instance_limit integer, grace_period_ends_at timestamptz);
+    create table public.apple_iap_subscriptions(user_id text, status text);
+    create table public.yearly_token_subscriptions(user_id text, status text);
+    create table public.hivra_agents(
+      id uuid, user_id text, deployment_mode text, status text, cpu numeric, ram integer, proxmox_host text, vmid integer, sleep_state text, seat_funding text
+    );
+    create table public.hermes_instances(
+      user_id text, status text, lifecycle_state text, cpu_limit numeric, ram_limit integer, proxmox_node text, seat_funding text
+    );
+    create function public.token_tier_row_counts_for_user(text, text, timestamptz)
+      returns boolean language sql stable as $$ select true $$;
+    create table public.proxmox_hosts(
+      id text primary key, total_cpu integer, total_ram_mb integer,
+      reserved_cpu integer default 2, reserved_ram_mb integer default 4096,
+      wake_headroom_ram_mb integer default 8192, cpu_overcommit_ratio numeric,
+      status text default 'active', decommissioned_at timestamptz, placement_skip_deep_sleep boolean default false
+    );
+  `;
+
+let pg: PGlite;
+jest.setTimeout(60_000);
+
+beforeAll(async () => {
+  pg = new PGlite();
+  await pg.exec(FIXTURE_SQL);
+  await pg.exec(fs.readFileSync(MIGRATION, "utf8"));
+});
+
+afterAll(async () => {
+  await pg.close();
+});
+
+beforeEach(async () => {
+  await pg.exec(`
+    truncate public.holder_admissions, public.token_tier_qualifications,
+      public.hermes_subscriptions, public.apple_iap_subscriptions,
+      public.yearly_token_subscriptions, public.hivra_agents,
+      public.hermes_instances, public.proxmox_hosts;
+  `);
+});
+
+async function advance() {
+  const { rows } = await pg.query<{ r: Record<string, unknown> }>(
+    "select public.advance_holder_admissions() as r",
+  );
+  return rows[0].r;
+}
+
+async function qualify(user: string, tier: "pro" | "power", eligible = true) {
+  await pg.query(
+    `insert into public.token_tier_qualifications(user_id,tier,token_key,currently_eligible)
+     values ($1,$2,'hermesos',$3)`,
+    [user, tier, eligible],
+  );
+}
+
+async function admission(user: string) {
+  const { rows } = await pg.query<Record<string, unknown>>(
+    "select * from public.holder_admissions where user_id=$1",
+    [user],
+  );
+  return rows[0] ?? null;
+}
+
+async function host(id: string, cpu: number, ramMb: number, overcommit = 1) {
+  await pg.query(
+    `insert into public.proxmox_hosts(id,total_cpu,total_ram_mb,cpu_overcommit_ratio)
+     values ($1,$2,$3,$4)`,
+    [id, cpu, ramMb, overcommit],
+  );
+}
+
+describe("holder admissions SQL authority", () => {
+  it("does not entitle a user merely for joining the queue, admits on advancement, and retries idempotently", async () => {
+    await host("h1", 22, 112640); // 20 eligible vCPU / 100GB eligible RAM => 4 CPU / 20480MB ceiling
+    await qualify("u1", "pro");
+
+    expect(await advance()).toMatchObject({ inserted: 1, advanced: 1, status: "ok" });
+    const first = await admission("u1");
+    expect(first).toMatchObject({ state: "admitted", tier: "pro", assigned_host_id: "h1" });
+
+    const firstAdmittedAt = first!.admitted_at;
+    expect(await advance()).toMatchObject({ inserted: 0, advanced: 0, status: "ok" });
+    expect((await admission("u1"))!.admitted_at).toEqual(firstAdmittedAt);
+  });
+
+  it("enforces the exact one-fifth ceiling independently on vCPU and RAM", async () => {
+    // 20 eligible vCPU and 100GB RAM: exact vCPU ceiling is 4. Two Pro seats
+    // exactly fill it; a third must remain queued even though RAM has room.
+    await host("hcpu", 22, 112640);
+    await qualify("cpu1", "pro");
+    await qualify("cpu2", "pro");
+    await qualify("cpu3", "pro");
+    const cpuResult = await advance();
+    expect(cpuResult).toMatchObject({ advanced: 2, blockReason: "holder_capacity_ceiling", ceilingCpu: 4 });
+    expect((await admission("cpu3"))!.state).toBe("waitlisted");
+
+    await pg.exec("truncate public.holder_admissions, public.token_tier_qualifications, public.proxmox_hosts");
+    // Plenty of vCPU but only 20GB eligible RAM: exact RAM ceiling is 4096MB.
+    // One Pro seat exactly fills it; the second is blocked by RAM.
+    await pg.query(
+      `insert into public.proxmox_hosts(id,total_cpu,total_ram_mb,cpu_overcommit_ratio,reserved_cpu,reserved_ram_mb,wake_headroom_ram_mb)
+       values('hram',102,20480+4096+8192,1,2,4096,8192)`,
+    );
+    await qualify("ram1", "pro");
+    await qualify("ram2", "pro");
+    const ramResult = await advance();
+    expect(ramResult).toMatchObject({ advanced: 1, blockReason: "holder_capacity_ceiling", ceilingRamMb: 4096 });
+    expect((await admission("ram2"))!.state).toBe("waitlisted");
+  });
+
+  it("uses mixed tier sizes and requires a single unfragmented host fit in FIFO order", async () => {
+    // Two 10-eligible-vCPU hosts have 20 vCPU aggregate, exactly enough ceiling
+    // for one Power seat, but concurrent non-holder provisioning rows fragment
+    // free cores to 3+3 so neither host alone fits Power's indivisible 4 vCPU.
+    await host("ha", 12, 47104);
+    await host("hb", 12, 47104);
+    await pg.query(
+      `insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,proxmox_host)
+       values('nonholder','hivra-managed','provisioning',7,1,'ha'),
+             ('nonholder','hivra-managed','provisioning',7,1,'hb')`,
+    );
+    await qualify("power", "power");
+    await qualify("pro", "pro");
+    const result = await advance();
+    expect(result).toMatchObject({ advanced: 0, blockReason: "no_single_host_fit" });
+    expect((await admission("power"))!.state).toBe("waitlisted");
+    // Strict FIFO: the smaller Pro seat must not jump the Power waiter.
+    expect((await admission("pro"))!.state).toBe("waitlisted");
+  });
+
+  it("excludes paid seats from the holder cohort while counting existing token-funded seats", async () => {
+    await host("h1", 22, 112640); // holder vCPU ceiling 4
+    // A paid user already occupies scheduler resources but is not a token-funded
+    // holder seat, so it does not consume the holder cohort ceiling.
+    await pg.exec(
+      `insert into public.hermes_subscriptions(user_id,plan,status,instance_limit) values('paid','fleet','active',5);
+       insert into public.hermes_instances(user_id,status,lifecycle_state,cpu_limit,ram_limit,proxmox_node,seat_funding)
+       values('paid','running','active',4,8192,'h1','paid');`,
+    );
+    // An existing grandfathered token-funded holder occupies 2 vCPU. It
+    // consumes half the ceiling through its existing seat; the admission row
+    // reserves only the unlaunched remainder, so it is not double-counted.
+    await pg.exec(
+      `insert into public.token_tier_qualifications(user_id,tier,token_key,currently_eligible)
+       values('existing','pro','hermesos',true);
+       insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb,grandfathered)
+       values('existing','admitted','pro','hermesos',now(),2,4096,true);
+       insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,proxmox_host,seat_funding)
+       values('existing','hivra-managed','running',2,4,'h1','holder');`,
+    );
+    await qualify("new1", "pro");
+    await qualify("new2", "pro");
+    const result = await advance();
+    expect(result).toMatchObject({ advanced: 1, blockReason: "holder_capacity_ceiling" });
+    expect((await admission("new1"))!.state).toBe("admitted");
+    expect((await admission("new2"))!.state).toBe("waitlisted");
+  });
+
+  it("capacity growth advances qualified waiters and skips newly ineligible waiters", async () => {
+    await host("h1", 12, 57344); // 10 eligible vCPU => only one Pro seat fits ceiling
+    await qualify("ineligible", "pro");
+    await qualify("qualified", "pro");
+    let result = await advance();
+    expect(result).toMatchObject({ advanced: 1 });
+    expect((await admission("ineligible"))!.state).toBe("admitted");
+
+    // The first waiter loses eligibility before new capacity arrives. It is
+    // skipped; the later qualified waiter advances when capacity grows.
+    await pg.query("update public.holder_admissions set state='waitlisted', admitted_at=null, assigned_host_id=null");
+    await pg.query("update public.token_tier_qualifications set currently_eligible=false where user_id='ineligible'");
+    await host("h2", 12, 57344);
+    result = await advance();
+    expect(result).toMatchObject({ advanced: 1, skippedIneligible: 1 });
+    expect((await admission("ineligible"))!.state).toBe("waitlisted");
+    expect((await admission("qualified"))!.state).toBe("admitted");
+  });
+
+  it("reconciles a stale assigned host onto replacement eligible inventory", async () => {
+    await host("oldhost", 12, 57344);
+    await qualify("holder", "pro");
+    await advance();
+    expect((await admission("holder"))!.assigned_host_id).toBe("oldhost");
+
+    await pg.query("update public.proxmox_hosts set status='maintenance' where id='oldhost'");
+    await host("newhost", 12, 57344);
+    const result = await advance();
+
+    expect(result).toMatchObject({ advanced: 0, released: 0 });
+    const row = await admission("holder");
+    expect(row).toMatchObject({ state: "admitted", assigned_host_id: "newhost" });
+  });
+
+  it("keeps admissions through breach grace, releases them at suspension, and advances the next waiter", async () => {
+    await host("h1", 12, 57344); // one Pro seat of holder ceiling
+    await qualify("first", "pro");
+    await qualify("second", "pro");
+    let result = await advance();
+    expect((await admission("first"))!.state).toBe("admitted");
+    expect((await admission("second"))!.state).toBe("waitlisted");
+
+    // A fresh breach without suspension is the evaluator's grace state. The
+    // admitted seat is not released merely because currently_eligible flipped.
+    await pg.query(
+      `update public.token_tier_qualifications
+       set currently_eligible=false,last_breach_at=now(),last_suspend_at=null
+       where user_id='first'`,
+    );
+    result = await advance();
+    expect(result).toMatchObject({ released: 0, advanced: 0 });
+    expect((await admission("first"))!.state).toBe("admitted");
+
+    // Suspension is authoritative end-of-grace. Releasing that reservation in
+    // the same serialized transaction lets the next qualified waiter advance.
+    await pg.query(
+      `update public.token_tier_qualifications
+       set last_suspend_at=now()
+       where user_id='first'`,
+    );
+    result = await advance();
+    expect(result).toMatchObject({ released: 1, advanced: 1 });
+    expect((await admission("first"))!.state).toBe("released");
+    expect((await admission("second"))!.state).toBe("admitted");
+    const { rows } = await pg.query<{ r: { state: string } }>(
+      "select public.holder_admission_state('first') as r",
+    );
+    expect(rows[0].r).toEqual({ state: "none" });
+  });
+
+  it("serializes concurrent-shaped advancement calls without double admission", async () => {
+    await host("h1", 12, 57344); // ceiling exactly one Pro seat
+    await qualify("u1", "pro");
+    await qualify("u2", "pro");
+    const [a, b] = await Promise.all([advance(), advance()]);
+    expect(Number(a.advanced) + Number(b.advanced)).toBeLessThanOrEqual(2);
+    const { rows } = await pg.query<{ n: number }>(
+      "select count(*)::int as n from public.holder_admissions where state='admitted'",
+    );
+    expect(rows[0].n).toBe(1);
+  });
+
+  it("counts only persisted holder seats in mixed accounts and atomically rejects oversubscription", async () => {
+    await qualify("mixed", "pro");
+    await pg.exec(
+      `insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb)
+       values('mixed','admitted','pro','hermesos',now(),2,4096);
+       insert into public.hermes_subscriptions(user_id,plan,status,instance_limit)
+       values('mixed','fleet','active',5);
+       insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,proxmox_host,seat_funding)
+       values('mixed','hivra-managed','running',1,2,'h1','holder');
+       insert into public.hermes_instances(user_id,status,lifecycle_state,cpu_limit,ram_limit,proxmox_node,seat_funding)
+       values('mixed','running','active',4,8192,'h1','paid');`,
+    );
+
+    const { rows } = await pg.query<{ cpu: number; ram_mb: number }>(
+      "select cpu::float, ram_mb::float from public.holder_admission_existing_usage('mixed')",
+    );
+    // The paid Hermes seat in the same account is not charged to the holder
+    // reservation. Only the one persisted holder Hivra seat is.
+    expect(rows[0]).toEqual({ cpu: 1, ram_mb: 2048 });
+
+    // The remainder fits exactly once. The validating insert transaction is the
+    // same owner-serialized authority both Hivra and Hermes creation use.
+    await pg.query(
+      `insert into public.hermes_instances(user_id,status,lifecycle_state,cpu_limit,ram_limit,proxmox_node,seat_funding)
+       values('mixed','provisioning','provisioning',1,2048,'h1','holder')`,
+    );
+    await expect(pg.query(
+      `insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,proxmox_host,seat_funding)
+       values('mixed','hivra-managed','provisioning',0.5,1,'h1','holder')`,
+    )).rejects.toThrow(/holder seat funding is not admitted|exceeds the reserved seat resources/);
+  });
+
+  it("grandfathers only evidenced legacy token-funded seats, not mere qualification or paid accounts", async () => {
+    const isolated = new PGlite();
+    try {
+      await isolated.exec(FIXTURE_SQL);
+      await isolated.exec(
+        `insert into public.token_tier_qualifications(user_id,tier,token_key,currently_eligible)
+         values('legacy','pro','hermesos',true),
+               ('qualified_only','pro','hermesos',true),
+               ('paid_legacy','pro','hermesos',true);
+         insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,proxmox_host)
+         values('legacy','hivra-managed','running',2,4,'h1'),
+               ('paid_legacy','hivra-managed','running',2,4,'h1');
+         insert into public.hermes_subscriptions(user_id,plan,status,instance_limit)
+         values('paid_legacy','fleet','active',5);`,
+      );
+      await isolated.exec(fs.readFileSync(MIGRATION, "utf8"));
+
+      const { rows } = await isolated.query<Record<string, unknown>>(
+        `select a.user_id, a.state, a.grandfathered,
+                (select seat_funding from public.hivra_agents x where x.user_id=a.user_id limit 1) as hivra_funding
+         from public.holder_admissions a order by a.user_id`,
+      );
+      const byUser = Object.fromEntries(rows.map((row) => [row.user_id, row]));
+      expect(byUser.legacy).toMatchObject({ state: "admitted", grandfathered: true, hivra_funding: "holder" });
+      // Qualification alone is queue evidence, not proof that any pre-existing
+      // seat was token-funded. This user waits for capacity like a new holder.
+      expect(byUser.qualified_only).toMatchObject({ state: "waitlisted", grandfathered: false });
+      // A currently paid account is ambiguous: its pre-feature seats may have
+      // been paid, so the migration deliberately leaves them unknown rather
+      // than inventing holder funding.
+      expect(byUser.paid_legacy).toMatchObject({ state: "waitlisted", grandfathered: false, hivra_funding: null });
+    } finally {
+      await isolated.close();
+    }
+  });
+
+  it("writes and validates funding inside the launch-model reservation transaction", async () => {
+    // The real v1/v2 custody chain is older than this migration. This stub has
+    // the same essential contract for the funding handoff: it inserts the
+    // legacy-shape agent row and returns its agentId; the v3 replacement must
+    // then stamp and validate funding in the same transaction.
+    await pg.exec(`
+      create table if not exists public.hivra_launch_model_requests(user_id text, request_id uuid);
+      create or replace function public.lock_hivra_owner_agent_slots(text)
+      returns void language plpgsql as $$ begin return; end $$;
+      create or replace function public.hivra_owner_agent_slot_count(text)
+      returns integer language sql as $$ select 0 $$;
+      create or replace function public.reserve_hivra_launch_model_request_v2(p_user_id text,p_request_id uuid,p_fingerprints jsonb,p_model_operation_id uuid,p_agent jsonb,p_selection jsonb,p_encrypted_key text)
+      returns jsonb language plpgsql as $$
+      declare v_id uuid;
+      begin
+        v_id := (p_agent->>'id')::uuid;
+        insert into public.hivra_agents(id,user_id,deployment_mode,status,cpu,ram,proxmox_host)
+        values(v_id,p_user_id,p_agent->>'deployment_mode','provisioning',
+          (p_agent->>'cpu')::numeric,(p_agent->>'ram')::integer,p_agent->>'proxmox_host');
+        return jsonb_build_object('status','reserved','agentId',v_id,'phase','waiting');
+      end $$;
+    `);
+    await qualify("launch-model-holder", "pro");
+    await pg.exec(
+      `insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb)
+       values('launch-model-holder','admitted','pro','hermesos',now(),2,4096)`,
+    );
+
+    const agent = {
+      id: "22222222-2222-4222-8222-222222222222",
+      type: "codex",
+      name: "Holder seat",
+      cpu: 2,
+      ram: 4,
+      proxmox_host: "h1",
+      deployment_mode: "hivra-managed",
+      computer_substrate: "proxmox-kvm",
+      operation_id: "33333333-3333-4333-8333-333333333333",
+      infrastructure_binding_token_hash: "a".repeat(64),
+      seat_funding: "holder",
+    };
+    const result = await pg.query<{ r: Record<string, unknown> }>(
+      `select public.reserve_hivra_launch_model_request_v3(
+        'launch-model-holder','11111111-1111-4111-8111-111111111111','[]'::jsonb,
+        '44444444-4444-4444-8444-444444444444',$1::jsonb,'{}'::jsonb,null,1) as r`,
+      [JSON.stringify(agent)],
+    );
+    expect(result.rows[0].r).toMatchObject({ status: "reserved" });
+    const { rows } = await pg.query<{ seat_funding: string }>(
+      "select seat_funding from public.hivra_agents where id='22222222-2222-4222-8222-222222222222'",
+    );
+    expect(rows[0].seat_funding).toBe("holder");
+
+    // The reservation is exactly consumed. A second holder row cannot slip
+    // through the launch-model path even though the plan slot count would
+    // still allow it.
+    const second = { ...agent, id: "55555555-5555-4555-8555-555555555555" };
+    await expect(pg.query(
+      `select public.reserve_hivra_launch_model_request_v3(
+        'launch-model-holder','66666666-6666-4666-8666-666666666666','[]'::jsonb,
+        '77777777-7777-4777-8777-777777777777',$1::jsonb,'{}'::jsonb,null,2) as r`,
+      [JSON.stringify(second)],
+    )).rejects.toThrow(/holder seat funding is not admitted|exceeds the reserved seat resources/);
+
+    const withoutFunding = { ...second };
+    delete (withoutFunding as Record<string, unknown>).seat_funding;
+    const invalid = await pg.query<{ r: Record<string, unknown> }>(
+      `select public.reserve_hivra_launch_model_request_v3(
+        'launch-model-holder','88888888-8888-4888-8888-888888888888','[]'::jsonb,
+        '99999999-9999-4999-8999-999999999999',$1::jsonb,'{}'::jsonb,null,2) as r`,
+      [JSON.stringify(withoutFunding)],
+    );
+    expect(invalid.rows[0].r).toEqual({ status: "invalid_request" });
+  });
+
+  it("requires and atomically validates funding in the direct managed-agent writer", async () => {
+    await pg.exec(`
+      create or replace function public.lock_hivra_owner_agent_slots(text)
+      returns void language plpgsql as $$ begin return; end $$;
+      create or replace function public.hivra_owner_agent_slot_count(text)
+      returns integer language sql as $$ select 0 $$;
+    `);
+    const baseRow = {
+      user_id: "direct-holder",
+      deployment_mode: "hivra-managed",
+      status: "provisioning",
+      cpu: 2,
+      ram: 4,
+      proxmox_host: "h1",
+    };
+
+    const missing = await pg.query<{ r: Record<string, unknown> }>(
+      "select public.insert_hivra_managed_agent($1::jsonb,1) as r",
+      [JSON.stringify(baseRow)],
+    );
+    expect(missing.rows[0].r).toEqual({ status: "invalid_request" });
+
+    const paid = await pg.query<{ r: Record<string, unknown> }>(
+      "select public.insert_hivra_managed_agent($1::jsonb,1) as r",
+      [JSON.stringify({ ...baseRow, user_id: "direct-paid", seat_funding: "paid" })],
+    );
+    expect(paid.rows[0].r).toMatchObject({ status: "inserted", row: { seat_funding: "paid" } });
+
+    await qualify("direct-holder", "pro");
+    await pg.exec(
+      `insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb)
+       values('direct-holder','admitted','pro','hermesos',now(),2,4096)`,
+    );
+    const holder = await pg.query<{ r: Record<string, unknown> }>(
+      "select public.insert_hivra_managed_agent($1::jsonb,1) as r",
+      [JSON.stringify({ ...baseRow, seat_funding: "holder" })],
+    );
+    expect(holder.rows[0].r).toMatchObject({ status: "inserted", row: { seat_funding: "holder" } });
+
+    await expect(pg.query(
+      "select public.insert_hivra_managed_agent($1::jsonb,2) as r",
+      [JSON.stringify({ ...baseRow, seat_funding: "holder" })],
+    )).rejects.toThrow(/holder seat funding is not admitted|exceeds the reserved seat resources/);
+  });
+
+  it("keeps seat funding immutable and rejects holder rows without an admitted qualified reservation", async () => {
+    await qualify("unadmitted", "pro");
+    await expect(pg.query(
+      `insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,proxmox_host,seat_funding)
+       values('unadmitted','hivra-managed','provisioning',1,2,'h1','holder')`,
+    )).rejects.toThrow(/holder seat funding is not admitted/);
+
+    await qualify("immutable", "pro");
+    await pg.exec(
+      `insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb)
+       values('immutable','admitted','pro','hermesos',now(),2,4096);
+       insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,proxmox_host,seat_funding)
+       values('immutable','hivra-managed','provisioning',1,2,'h1','holder');`,
+    );
+    await expect(pg.query(
+      "update public.hivra_agents set seat_funding='paid' where user_id='immutable'",
+    )).rejects.toThrow(/seat_funding is immutable/);
+  });
+});

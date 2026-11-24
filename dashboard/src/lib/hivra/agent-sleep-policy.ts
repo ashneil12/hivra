@@ -131,6 +131,8 @@ export interface SleepPolicyInput {
   /** The agent's own switch. Defaults to `off`. */
   sleepPolicy?: AgentSleepPolicy;
   alwaysOn?: boolean;
+  /** Authoritative per-seat funding: a holder-funded seat is always on the full sleep policy. */
+  holderFunded?: boolean;
   /** The owner opted in to the Telegram peek, so long-poll no longer blocks sleep. */
   telegramOptIn?: boolean;
   napAfterSeconds?: number;
@@ -193,8 +195,8 @@ function allowsHibernate(policy: AgentSleepPolicy): boolean {
 /** Reasons the agent can never sleep, from the facts we do have. */
 function ineligibleReasons(signals: SleepSignals, input: SleepPolicyInput): string[] {
   const reasons: string[] = [];
-  if (input.alwaysOn) reasons.push("always_on");
-  if ((input.sleepPolicy ?? "off") === "off") reasons.push("policy_off");
+  if (!input.holderFunded && input.alwaysOn) reasons.push("always_on");
+  if (!input.holderFunded && (input.sleepPolicy ?? "off") === "off") reasons.push("policy_off");
   if (signals.agentType && AUTONOMOUS_KINDS.includes(signals.agentType)) {
     reasons.push(`autonomous_kind:${signals.agentType}`);
   }
@@ -275,7 +277,7 @@ export function decideSleep(
   // lastActivityAt === null (never active) is not idle time we can measure.
   if (idleSeconds === null) return { verdict: "awake", reasons: ["no_activity_baseline"], idleSeconds };
 
-  const policy = input.sleepPolicy ?? "off";
+  const policy = input.holderFunded ? "full" : input.sleepPolicy ?? "off";
   const napAfter = applyThrashBackoff(
     input.napAfterSeconds ?? DEFAULT_NAP_AFTER_SECONDS,
     input.recentWakes,

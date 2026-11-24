@@ -162,6 +162,40 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     timeBudgetMs: REFRESH_TIME_BUDGET_MS,
   });
 
+  // Advance holder admissions on this existing periodic qualification lane.
+  // The RPC is one serialized database transaction: it materializes newly
+  // qualified users as waitlisted, rechecks qualification from the rows this
+  // cron just refreshed, and admits only seats that fit both the global holder
+  // ceiling and a single placement-eligible host. A transient failure is
+  // reported and left for the next tick; it must not stop tier maintenance for
+  // users who already have seats.
+  let holderAdmission: unknown = null;
+  let holderAdmissionError: string | null = null;
+  try {
+    const advancement = await db.rpc("advance_holder_admissions", {});
+    if (advancement.error) {
+      holderAdmissionError = advancement.error.message;
+    } else {
+      holderAdmission = advancement.data;
+    }
+  } catch (error) {
+    holderAdmissionError = error instanceof Error ? error.message : String(error);
+  }
+  if (holderAdmissionError) {
+    await reportOpsEvent({
+      source: "cron.refresh-token-tiers",
+      severity: "warn",
+      title: "holder admission advancement failed",
+      message:
+        "The periodic holder admission advancement RPC failed. Qualified waiters remain waitlisted and existing admitted holders are unchanged; the next cron tick retries the same idempotent transaction.",
+      route: "/api/cron/refresh-token-tiers",
+      metadata: {
+        failureType: "holder_admission_advance_failed",
+        error: holderAdmissionError.slice(0, 500),
+      },
+    });
+  }
+
   // 2. For each user, decide the new tier from the strongest entitlement
   //    (see the header); with none, credit_base.
   //
@@ -441,6 +475,8 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     tier_changes: tierChanges.length,
     tier_change_details: tierChanges.slice(0, 50),
     tier_change_failures: tierFailures,
+    holder_admission: holderAdmission,
+    holder_admission_error: holderAdmissionError,
   });
 }
 

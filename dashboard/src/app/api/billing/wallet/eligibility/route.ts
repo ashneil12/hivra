@@ -15,10 +15,7 @@ import { auth } from "@clerk/nextjs/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { isBillingV2ServerEnabled, BILLING_V2_UNAVAILABLE_MESSAGE } from "@/lib/billing/billing-v2-availability";
 import { isCryptoBillingEnabled } from "@/lib/billing/crypto-availability";
-import {
-  HERMESOS_TOKEN_DECIMALS,
-  isFoundersRateUser,
-} from "@/lib/billing/tier-thresholds";
+import { HERMESOS_TOKEN_DECIMALS } from "@/lib/billing/tier-thresholds";
 import {
   getLiveActiveThresholds,
   LivePriceUnavailableError,
@@ -208,12 +205,7 @@ export async function GET() {
 
     let live;
     try {
-      // Allowlisted founders see the launch-epoch readout past the global
-      // promo window; everyone else gets the date-driven epoch.
-      live = await getLiveActiveThresholds({
-        forceLaunchEpoch: isFoundersRateUser(userId),
-        token,
-      });
+      live = await getLiveActiveThresholds({ token });
     } catch (error) {
       if (error instanceof LivePriceUnavailableError) {
         return apiError(

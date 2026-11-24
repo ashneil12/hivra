@@ -12,6 +12,7 @@ interface BuildInstanceInsertPayloadParams {
   ramLimit?: number;
   diskSizeGb?: number;
   resourceTier?: string;
+  seatFunding?: "paid" | "holder" | null;
   infrastructureProvider?: "hetzner" | "proxmox";
   backend?: "gateway" | "webui";
   productSurface?: "hermesos" | "workspace_cloud";
@@ -33,6 +34,7 @@ export function buildInstanceInsertPayload(params: BuildInstanceInsertPayloadPar
     ram_limit: params.ramLimit,
     disk_size_gb: params.diskSizeGb,
     resource_tier: params.resourceTier,
+    seat_funding: params.seatFunding ?? null,
     infrastructure_provider: params.infrastructureProvider,
     backend: params.backend,
     product_surface: params.productSurface ?? "hermesos",
@@ -52,6 +54,7 @@ export function buildInstanceInsertPayload(params: BuildInstanceInsertPayloadPar
     ram_limit?: number;
     disk_size_gb?: number;
     resource_tier?: string;
+    seat_funding?: "paid" | "holder" | null;
     infrastructure_provider?: "hetzner" | "proxmox";
     backend?: "gateway" | "webui";
     product_surface: "hermesos" | "workspace_cloud";

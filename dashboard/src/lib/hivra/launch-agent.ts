@@ -38,6 +38,9 @@ import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { applyCardTrialSleep } from "@/lib/billing/card-trial";
 import { FREE_PLAN_CLOSED_CODE, FREE_PLAN_CLOSED_MESSAGE, accountNeedsPlanForFree } from "@/lib/billing/free-plan-closure";
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
+import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { decideProvisionSeatFunding } from "@/lib/billing/provision-seat-funding";
+import type { SeatFunding } from "@/lib/hivra/seat-funding";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
 import { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, OPENCLAW_DEFAULT_MODEL, VENICE_DIRECT_BASE_URL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
@@ -1285,6 +1288,7 @@ export async function launchHivraAgentForUser(
     let capacityPolicy: ProxmoxHostCapacityPolicy = DEFAULT_PROXMOX_HOST_CAPACITY_POLICY;
     let stickyHost: string | null = null;
     let explicitClaudeHost: string | null = null;
+    let seatFunding: SeatFunding | null = null;
 
     if (deployment.mode === "self-managed") {
       // Subscription checks do not apply to user-owned compute, but the agent
@@ -1364,6 +1368,15 @@ export async function launchHivraAgentForUser(
       const resourceGate = await validateAgentResources({ userId, type, cpu, ram, maximumCpu, maximumRam, browser: wantBrowser, mode: "launch", poolExempt, floor, agentLabel: launchLabel, excludeInstanceIds });
       if (!resourceGate.ok) return apiError(resourceGate.message, resourceGate.status);
 
+      // Funding belongs to this one hosted seat, not mutably to the account.
+      // A paid entitlement wins in mixed accounts; only the admitted holder
+      // entitlement marks the new row holder. The database trigger revalidates
+      // the holder reservation atomically when the row is inserted.
+      seatFunding = decideProvisionSeatFunding(await resolveEffectiveSubscription(userId));
+      if (!seatFunding) {
+        return apiError("Active subscription required. Choose a plan to start deploying agents.", 403);
+      }
+
       explicitClaudeHost = LAUNCHABLE_BOX_TYPES.has(type) ? resolveHivraClaudeCodeProxmoxHost(process.env) : null;
       stickyHost = explicitClaudeHost ? null : await resolveStickyHivraProxmoxHost(userId);
       // With HIVRA_HOST_CAPACITY_ALERTS on, a host whose latest capacity reading
@@ -1377,6 +1390,7 @@ export async function launchHivraAgentForUser(
         neededRamMb: ram * 1024,
         neededDiskGb: HIVRA_AGENT_VM_DISK_GB,
         forceTargetId,
+        seatFunding,
         ...(excludeTargetIds ? { excludeTargetIds } : {}),
         skipTemplateAvailabilityCheck: true,
         // Managed-model agents (def.managedVenice) get HIVRA_MODEL_* at launch,
@@ -1655,6 +1669,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         id: randomUUID(), type: "codex", name, cpu, ram,
         ...(hasExplicitEnvelope ? { cpu_max: maximumCpu, ram_max: maximumRam } : {}),
         deployment_mode: deployment.mode,
+        seat_funding: seatFunding,
         computer_substrate: "proxmox-kvm", operation_id: provisionOperationId,
         managed_provisioner_channel: managedProvisionerChannel,
         proxmox_host: deployment.mode === "self-managed" ? SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL : host,
@@ -1681,6 +1696,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       name,
       status: "provisioning",
       deployment_mode: deployment.mode,
+      seat_funding: seatFunding,
       computer_substrate: "proxmox-kvm",
       managed_provisioner_channel: managedProvisionerChannel,
       desired_state: "running",

@@ -271,6 +271,54 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     expect(maxDuration).toBe(300);
   });
 
+  it("advances holder admissions after refreshing authoritative holdings and returns the advancement result", async () => {
+    mockSupabase({ instances: [], snapshots: [], subscriptions: [], qualifications: [] });
+    const order: string[] = [];
+    (refreshVerifiedHermesTokenHoldings as jest.Mock).mockImplementation(async () => {
+      order.push("refresh");
+      return { refreshed: 0, failed: 0 };
+    });
+    (supabaseAdmin!.rpc as jest.Mock).mockImplementation(async () => {
+      order.push("advance");
+      return { data: { advanced: 1, released: 0 }, error: null };
+    });
+
+    const res = await POST(makeRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(supabaseAdmin!.rpc).toHaveBeenCalledWith("advance_holder_admissions", {});
+    expect(order.slice(0, 2)).toEqual(["refresh", "advance"]);
+    expect(body.data.holder_admission).toEqual({ advanced: 1, released: 0 });
+    expect(body.data.holder_admission_error).toBeNull();
+  });
+
+  it("isolates a transient holder-admission RPC failure instead of failing the tier sweep", async () => {
+    mockSupabase({
+      instances: [
+        { user_id: "user_pro", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+      ],
+      snapshots: [],
+      subscriptions: [],
+      qualifications: [{ user_id: "user_pro", tier: "pro", currently_eligible: true }],
+    });
+    (applyTierChange as jest.Mock).mockResolvedValue({});
+    (supabaseAdmin!.rpc as jest.Mock).mockResolvedValueOnce({
+      data: null,
+      error: { message: "database is restarting" },
+    });
+
+    const res = await POST(makeRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(applyTierChange).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user_pro", newTier: "operator" })
+    );
+    expect(body.data.holder_admission).toBeNull();
+    expect(body.data.holder_admission_error).toBe("database is restarting");
+  });
+
   it("upgrades a Power-qualified token holder from credit_base to fleet", async () => {
     mockSupabase({
       instances: [

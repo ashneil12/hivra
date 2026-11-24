@@ -245,6 +245,16 @@ export function resolveTokenPaymentsView(params: {
   return { available: false, displayUnit: HERMESOS_DISPLAY_UNIT, pending: false };
 }
 
+
+function isHolderAdmissionState(value: unknown): value is "none" | "waitlisted" | "admitted" {
+  return value === "none" || value === "waitlisted" || value === "admitted";
+}
+
+export type HolderAdmissionControllerState =
+  | { status: "loading"; state: null }
+  | { status: "error"; state: null }
+  | { status: "ready"; state: "none" | "waitlisted" | "admitted" };
+
 export function useBillingController() {
   const router = useRouter();
   const searchParams = useBillingSearchParams();
@@ -512,6 +522,44 @@ export function useBillingController() {
       cancelled = true;
     };
   }, []);
+
+  // Holder admission is authoritative server-side cohort state. The route is
+  // owned by the admissions worker; Billing only consumes the current-user
+  // response and never infers identity or admission from client input. While
+  // it loads, or when it errors, new Hold-to-qualify CTAs stay quiet rather
+  // than flashing an offer the account may not use.
+  const [holderAdmission, setHolderAdmission] = useState<HolderAdmissionControllerState>({
+    status: "loading",
+    state: null,
+  });
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/billing/holder-admission", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`holder-admission ${response.status}`);
+        return response.json();
+      })
+      .then((payload) => {
+        if (cancelled) return;
+        if (isRecord(payload) && isHolderAdmissionState(payload.state)) {
+          setHolderAdmission({ status: "ready", state: payload.state });
+        } else {
+          setHolderAdmission({ status: "error", state: null });
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setHolderAdmission({ status: "error", state: null });
+        clientLog.warn("Billing holder admission fetch failed", {
+          source: "billing-page",
+          failureType: "billing_holder_admission_fetch_failed",
+          errorName: err instanceof Error ? err.name : typeof err,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const hivraPhaseActive = getHivraTokenPhase() === "active";
   const tokenPayments = resolveTokenPaymentsView({
     hivraPhaseActive,
@@ -520,8 +568,8 @@ export function useBillingController() {
     eligibilitySettled: !cryptoBillingEnabled || eligibilitySettled,
   });
 
-  // Per-plan hold amounts for this user (epoch- and founders-aware), from the
-  // wallet eligibility API. Refetched when the verified balance changes.
+  // Per-plan hold amounts for this user, resolved server-side from live token
+  // prices and any locked qualification rows. Refetched when the verified balance changes.
   const [holdAmounts, setHoldAmounts] = useState<HoldAmounts | null>(null);
   const tokenBalanceKey = tokenHolding?.snapshot?.balanceDisplay ?? null;
   useEffect(() => {
@@ -1319,6 +1367,8 @@ export function useBillingController() {
     tokenGeo,
     /** Token payments and new holder tiers for this account, and their token. */
     tokenPayments,
+    /** Current-user holder admission exactly as reported by the admissions API. */
+    holderAdmission,
     status: { loading, confirming },
     /** The page a plan change returns to, when one started elsewhere. */
     returnTo,

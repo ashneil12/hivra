@@ -1074,7 +1074,6 @@ export default function WalletPage() {
           powerQuote={quotes.power}
           proEligible={Boolean(eligibility?.tiers.pro.currentlyEligible)}
           powerEligible={Boolean(eligibility?.tiers.power.currentlyEligible)}
-          launchEpoch={eligibility?.thresholds?.epoch === 'launch'}
           mintingTier={mintingTier}
           depositAddress={tokenLockAddress}
           onMint={handleMintQuote}

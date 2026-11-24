@@ -95,6 +95,7 @@ const Reservation = z.object({
   id: Id, type: z.literal("codex"), name: z.string().min(1).max(256), cpu: z.number().min(0.5).max(9999).multipleOf(0.5), ram: z.number().int().positive(),
   cpu_max: z.number().min(0.5).max(9999).multipleOf(0.5).optional(), ram_max: z.number().int().positive().max(9999).optional(),
   proxmox_host: z.string().min(1).max(256), deployment_mode: z.enum(["hivra-managed", "self-managed"]),
+  seat_funding: z.enum(["paid", "holder"]).nullable().optional(),
   computer_substrate: z.enum(["proxmox-kvm", "provider-vm"]), operation_id: Id, infrastructure_binding_token_hash: Digest,
   managed_provisioner_channel: z.enum(["default", "canary"]),
   pool_id: Id.nullable().optional(), goal: z.string().max(32).nullable().optional(),
@@ -105,6 +106,18 @@ const Reservation = z.object({
   provider_capacity_order_id: Id.nullable().optional(), provider_enrollment_attempt_id: Id.nullable().optional(),
   provider_server_id: z.string().regex(/^[1-9][0-9]{0,15}$/).nullable().optional(),
 }).strict().superRefine((row, context) => {
+  if (row.deployment_mode === "hivra-managed" && row.seat_funding !== "paid" && row.seat_funding !== "holder") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Managed seats require an authoritative provisioning funding decision.",
+    });
+  }
+  if (row.deployment_mode === "self-managed" && row.seat_funding != null) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Self-managed computers are not Hivra-funded seats.",
+    });
+  }
   if (
     row.managed_provisioner_channel === "canary" &&
     (row.deployment_mode !== "hivra-managed" || row.computer_substrate !== "proxmox-kvm")

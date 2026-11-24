@@ -17,10 +17,8 @@ import { hermesosTransferUri } from '@/lib/billing/eip681';
 import { displayTokenUnit } from '@/lib/billing/token-plan-prices';
 import { HERMESOS_TOKEN, primaryPlatformToken } from '@/lib/billing/token-registry';
 import {
-  LAUNCH_PROMO_END,
   STANDARD_USD_CENTS,
   formatCountdown,
-  formatDaysRemaining,
   formatTokensWithCommas,
   formatUsdFromCents,
   interpolateCopy,
@@ -447,7 +445,6 @@ export function QuoteCard({
   tier,
   quote,
   alreadyEligible,
-  launchEpoch,
   minting,
   depositAddress,
   onMint,
@@ -455,8 +452,6 @@ export function QuoteCard({
   tier: 'pro' | 'power';
   quote: DepositQuotePayload | null;
   alreadyEligible: boolean;
-  /** Server-resolved epoch: true while the launch ("founders") rate applies. */
-  launchEpoch: boolean;
   minting: boolean;
   depositAddress: string | null;
   onMint: () => void;
@@ -507,17 +502,9 @@ export function QuoteCard({
     );
   }
 
-  // Launch-rate framing: $99 Pro / $199 Power vs $149 / $299 standard
-  // (~34% off Pro launch, 33% off Power launch). The savings badge + "lock
-  // the launch rate" copy only show while the server says we're in the
-  // launch epoch — after the global promo window closes (and for users not
-  // on the founders allowlist) we drop to plain standard-rate framing.
-  const launchUsdCents = tier === 'pro' ? 9900 : 19900;
-  const standardUsdCents = STANDARD_USD_CENTS[tier];
-  const savingsCents = standardUsdCents - launchUsdCents;
-  const savingsPctOff = Math.round((savingsCents / standardUsdCents) * 100);
-  // USD target the user actually pays right now (epoch-dependent).
-  const activeUsdCents = launchEpoch ? launchUsdCents : standardUsdCents;
+  // The current public USD target. The token amount itself is never static:
+  // minting a quote computes it from the live token price server-side.
+  const activeUsdCents = STANDARD_USD_CENTS[tier];
 
   return (
     <div
@@ -534,45 +521,16 @@ export function QuoteCard({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
         <span className="mono" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.18em', fontWeight: 700 }}>
           {tierLabel(tier)} tier
-          {quote && (
-            <span style={{ marginLeft: 8, opacity: 0.6 }}>
-              · {quote.epoch === 'launch' ? 'launch rate' : 'standard rate'}
-            </span>
-          )}
         </span>
-        {launchEpoch && (
-          <span
-            className="mono"
-            style={{
-              fontSize: 10,
-              padding: '3px 7px',
-              border: '1px solid var(--hg-stroke-strong)',
-              borderRadius: 7,
-              color: 'var(--hg-text)',
-              fontWeight: 700,
-              letterSpacing: '0.1em',
-            }}
-          >
-            Save {formatUsdFromCents(savingsCents)} · {savingsPctOff}% off
-          </span>
-        )}
       </div>
 
       {!quote && (
         <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {launchEpoch ? (
-              <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55 }}>
-                Pay <strong>{formatUsdFromCents(launchUsdCents)}</strong> in $HERMESOS now to lock the launch rate.{' '}
-                The standard rate ({formatUsdFromCents(standardUsdCents)}) applies once the launch
-                window closes.
-              </span>
-            ) : (
-              <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55 }}>
-                Pay <strong>{formatUsdFromCents(standardUsdCents)}</strong> in $HERMESOS to qualify
-                for {tierLabel(tier)}. Lock today&apos;s $HERMESOS price for 20 minutes.
-              </span>
-            )}
+            <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55 }}>
+              Hold <strong>{formatUsdFromCents(activeUsdCents)}</strong> worth of $HERMESOS to qualify
+              for {tierLabel(tier)}. Lock today&apos;s $HERMESOS price for 20 minutes.
+            </span>
           </div>
           <button
             type="button"
@@ -597,7 +555,7 @@ export function QuoteCard({
           >
             {minting
               ? 'Locking…'
-              : `Lock ${formatUsdFromCents(activeUsdCents)} · ${launchEpoch ? 'launch rate' : `${tierLabel(tier)} tier`}`}
+              : `Lock ${formatUsdFromCents(activeUsdCents)} · ${tierLabel(tier)} tier`}
           </button>
         </>
       )}
@@ -684,7 +642,6 @@ export function QuotePanel({
   powerQuote,
   proEligible,
   powerEligible,
-  launchEpoch,
   mintingTier,
   depositAddress,
   onMint,
@@ -693,17 +650,10 @@ export function QuotePanel({
   powerQuote: DepositQuotePayload | null;
   proEligible: boolean;
   powerEligible: boolean;
-  /** Server-resolved epoch: true while the launch ("founders") rate applies. */
-  launchEpoch: boolean;
   mintingTier: 'pro' | 'power' | null;
   depositAddress: string | null;
   onMint: (tier: 'pro' | 'power') => void;
 }) {
-  const panelNowMs = useNowMs(60_000);
-  // The global promo window — drives the live countdown. A founders-rate
-  // user keeps launchEpoch=true past this without a (now meaningless)
-  // countdown.
-  const launchWindowOpen = panelNowMs < LAUNCH_PROMO_END.getTime();
   return (
     <section
       aria-label="Deposit quotes"
@@ -751,7 +701,7 @@ export function QuotePanel({
             }}
           >
             <Zap size={10} fill="currentColor" />
-            Step 02 · {launchEpoch ? 'Lock launch rate' : 'Lock your tier'}
+            Step 02 · Lock your tier
           </span>
           <h2
             className="serif"
@@ -766,114 +716,12 @@ export function QuotePanel({
           >
             Lock today&apos;s rate.
           </h2>
-          {launchEpoch ? (
-            <p style={{ margin: '8px 0 0', fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-              Pro and Power are roughly <strong>33% off</strong> during the launch window — $99 / $199
-              instead of $149 / $299. Click a tier to lock today&apos;s $HERMESOS price for 20
-              minutes; send the quoted amount and you&apos;re qualified at that rate, even if the
-              price moves.
-            </p>
-          ) : (
-            <p style={{ margin: '8px 0 0', fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-              Pro is <strong>$149</strong> and Power is <strong>$299</strong> in $HERMESOS. Click a
-              tier to lock today&apos;s $HERMESOS price for 20 minutes; send the quoted amount and
-              you&apos;re qualified at that rate, even if the price moves.
-            </p>
-          )}
+          <p style={{ margin: '8px 0 0', fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            Pro requires <strong>$299</strong> worth and Power requires <strong>$599</strong> worth of
+            $HERMESOS. Click a tier to lock today&apos;s $HERMESOS price for 20 minutes; send the quoted amount and
+            you&apos;re qualified at that rate, even if the price moves.
+          </p>
         </div>
-        {launchWindowOpen ? (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 4,
-              border: '1px solid var(--hg-stroke-strong)',
-              borderRadius: 10,
-              padding: '14px 20px',
-              minWidth: 160,
-              background: 'var(--hg-fill-1)',
-              position: 'relative',
-            }}
-          >
-            <span
-              className="mono"
-              style={{
-                fontSize: 9,
-                letterSpacing: '0.22em',
-                textTransform: 'uppercase',
-                color: 'var(--hg-text)',
-                fontWeight: 800,
-              }}
-            >
-              Launch ends in
-            </span>
-            <span
-              className="serif"
-              style={{
-                fontSize: '1.85rem',
-                fontWeight: 700,
-                color: 'var(--hg-text)',
-                lineHeight: 1.05,
-                letterSpacing: '-0.01em',
-              }}
-            >
-              {formatDaysRemaining(LAUNCH_PROMO_END, panelNowMs)}
-            </span>
-            <span
-              className="mono"
-              style={{
-                fontSize: 8,
-                letterSpacing: '0.18em',
-                textTransform: 'uppercase',
-                opacity: 0.55,
-                fontWeight: 700,
-              }}
-            >
-              {LAUNCH_PROMO_END.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} cutoff
-            </span>
-          </div>
-        ) : launchEpoch ? (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 4,
-              border: '1px solid var(--hg-stroke-strong)',
-              borderRadius: 10,
-              padding: '14px 20px',
-              minWidth: 160,
-              background: 'var(--hg-fill-1)',
-            }}
-          >
-            <span
-              className="mono"
-              style={{
-                fontSize: 9,
-                letterSpacing: '0.22em',
-                textTransform: 'uppercase',
-                color: 'var(--hg-text)',
-                fontWeight: 800,
-              }}
-            >
-              Founder rate
-            </span>
-            <span
-              className="serif"
-              style={{
-                fontSize: '1.35rem',
-                fontWeight: 700,
-                color: 'var(--hg-text)',
-                lineHeight: 1.1,
-                letterSpacing: '-0.01em',
-                textAlign: 'center',
-              }}
-            >
-              Locked in for you
-            </span>
-          </div>
-        ) : null}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 10 }}>
@@ -881,7 +729,6 @@ export function QuotePanel({
           tier="pro"
           quote={proQuote}
           alreadyEligible={proEligible}
-          launchEpoch={launchEpoch}
           minting={mintingTier === 'pro'}
           depositAddress={depositAddress}
           onMint={() => onMint('pro')}
@@ -890,7 +737,6 @@ export function QuotePanel({
           tier="power"
           quote={powerQuote}
           alreadyEligible={powerEligible}
-          launchEpoch={launchEpoch}
           minting={mintingTier === 'power'}
           depositAddress={depositAddress}
           onMint={() => onMint('power')}

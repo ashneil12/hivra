@@ -421,7 +421,7 @@ describe("QuoteCard wallet link", () => {
       tier: "pro",
       thresholdTierCode: "PRO_STANDARD",
       epoch: "standard",
-      usdTargetCents: 14900,
+      usdTargetCents: 29900,
       priceUsdAtQuote: "0.0000025",
       tokensRequiredRaw: "59600000000000000000000000",
       tokensRequiredDisplay: "59600000",
@@ -441,7 +441,6 @@ describe("QuoteCard wallet link", () => {
         tier="pro"
         quote={quote}
         alreadyEligible={false}
-        launchEpoch={false}
         minting={false}
         depositAddress={depositAddress}
         onMint={jest.fn()}

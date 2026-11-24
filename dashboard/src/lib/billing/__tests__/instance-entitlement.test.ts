@@ -39,6 +39,9 @@ function mockTables(opts: {
   quals?: MockQualRow[];
   yearly?: MockYearlyRow | MockYearlyRow[] | null;
   apple?: MockAppleRow | null;
+  // Existing token-entitlement fixtures predate admissions: they represent
+  // admitted holders unless a test explicitly chooses another durable state.
+  admissionState?: "none" | "waitlisted" | "admitted";
 }) {
   const subQuery = {
     select: jest.fn().mockReturnThis(),
@@ -116,6 +119,13 @@ function mockTables(opts: {
     in: jest.fn().mockReturnThis(),
     maybeSingle: jest.fn().mockResolvedValue({ data: appleRow, error: null }),
   };
+
+  (supabaseAdmin!.rpc as jest.Mock).mockImplementation(async (fn: string) => {
+    if (fn === "holder_admission_state") {
+      return { data: { state: opts.admissionState ?? "admitted" }, error: null };
+    }
+    return { data: null, error: { message: `Unexpected rpc: ${fn}` } };
+  });
 
   (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
     if (table === "hermes_subscriptions") return subQuery;
@@ -513,6 +523,28 @@ describe("resolveEffectiveSubscription", () => {
       expect(result?.plan).toBe("fleet");
       expect(result?.tokenTier).toBe("power");
     });
+
+
+    it.each(["none", "waitlisted"] as const)(
+      "a token qualification does not entitle while admission is %s",
+      async (admissionState) => {
+        mockTables({
+          sub: {
+            plan: "free",
+            status: "active",
+            instance_limit: 1,
+            total_cpu_budget: 0.5,
+            total_ram_budget: 1024,
+          },
+          quals: [{ tier: "power", currently_eligible: true }],
+          admissionState,
+        });
+
+        const result = await resolveEffectiveSubscription("user_not_admitted");
+        expect(result?.source).toBe("free");
+        expect(result?.plan).toBe("free");
+      },
+    );
 
     it("Yearly token sub beats an active Free Stripe row", async () => {
       mockTables({

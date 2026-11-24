@@ -1,4 +1,5 @@
 import type { AgentWalletBalance, AgentWalletCardData } from "@/app/dashboard/wallet/agent-wallet-data";
+import { HOLDER_TIER_TERMS } from "@/lib/billing/holder-tier-terms";
 import { getActiveHivraToken } from "@/lib/billing/token-registry";
 
 /**
@@ -40,7 +41,7 @@ export interface EligibilityPayload {
     priceUsd?: string;
     /** ISO timestamp of when `priceUsd` was sampled. */
     priceFetchedAt?: string;
-    /** Active threshold epoch — "launch" while the launch promo runs, then "standard". */
+    /** Threshold epoch; current reads are always "standard" while historical rows can carry launch codes. */
     epoch?: "launch" | "standard";
   };
   tiers: { pro: EligibilityTierState; power: EligibilityTierState };
@@ -247,7 +248,6 @@ export function activeQuoteForTier(
   if (Date.parse(quote.expiresAt) <= Date.now()) return null;
   return quote;
 }
-export const LAUNCH_PROMO_END = new Date('2026-05-30T23:59:59Z');
 export function formatDaysRemaining(target: Date, fromMs: number): string {
   const diffMs = target.getTime() - fromMs;
   if (diffMs <= 0) return 'expired';
@@ -258,12 +258,11 @@ export function formatDaysRemaining(target: Date, fromMs: number): string {
   return `${hours}h ${minutes}m`;
 }
 /**
- * USD targets for the standard rate, used to compute "save $X vs
- * standard" badges when the active epoch is launch.
+ * USD targets for current Pro/Power holder qualification.
  */
 export const STANDARD_USD_CENTS: Record<'pro' | 'power', number> = {
-  pro: 14900,
-  power: 29900,
+  pro: HOLDER_TIER_TERMS.pro.usdCents,
+  power: HOLDER_TIER_TERMS.power.usdCents,
 };
 export function formatCountdown(msRemaining: number): string {
   if (msRemaining <= 0) return '0:00';

@@ -311,6 +311,8 @@ function LegacyPlansTab({ c, heading }: { c: BillingController; heading: string 
       selfServeDowngradeEnabled: c.flags.selfServeDowngradeEnabled,
       changePlanRequiresCheckout: c.changePlanRequiresCheckout,
       tokenUnit,
+      holderAdmission:
+        c.holderAdmission.status === "ready" ? c.holderAdmission.state : c.holderAdmission.status,
     });
 
   // Cadence only matters when a card goes through checkout: in-place plan

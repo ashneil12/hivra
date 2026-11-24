@@ -2095,7 +2095,10 @@ describe("POST /api/hivra/agents", () => {
     const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
     expect(response.status).toBe(201);
     expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_hivra_managed_agent", expect.objectContaining({
-      p_agent_limit: 1, p_row: expect.objectContaining({ user_id: "user-free", deployment_mode: "hivra-managed", type: "codex" }),
+      p_agent_limit: 1,
+      p_row: expect.objectContaining({
+        user_id: "user-free", deployment_mode: "hivra-managed", type: "codex", seat_funding: "paid",
+      }),
     }));
   });
 

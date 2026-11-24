@@ -32,8 +32,8 @@ import {
 } from "./price-feed";
 import { HERMESOS_TOKEN, type PlatformToken } from "./token-registry";
 import {
-  LAUNCH_PROMO_END_DATE,
   USD_TARGET_CENTS,
+  activeThresholdTierCode,
   type ResolvedThreshold,
   type ThresholdEpoch,
   type ThresholdTierCode,
@@ -81,12 +81,6 @@ interface GetLivePriceOptions {
   fetchImpl?: PriceFetch;
   /** Token to price. Defaults to $HermesOS. USD targets are the same for every token. */
   token?: PlatformToken;
-  /**
-   * Force the launch epoch regardless of the date — used to grant the
-   * founders rate to allowlisted users past the global promo window.
-   * See `isFoundersRateUser` in tier-thresholds.ts.
-   */
-  forceLaunchEpoch?: boolean;
 }
 
 /**
@@ -193,8 +187,7 @@ function buildResolved(
   epoch: ThresholdEpoch,
   amount: bigint
 ): ResolvedThreshold {
-  const code = `${tier.toUpperCase()}_${epoch.toUpperCase()}` as ThresholdTierCode;
-  return { tier, epoch, code, amount };
+  return { tier, epoch, code: activeThresholdTierCode(tier), amount };
 }
 
 function tokensFromUsd(
@@ -212,8 +205,8 @@ function tokensFromUsd(
 
 /**
  * Resolve the active tier thresholds in `options.token` (default $HermesOS)
- * using its live USD price. The USD targets, and so the launch/founders
- * discounts, are the same for every platform token.
+ * using its live USD price. The current USD targets are the same for every
+ * platform token; historical launch/founders locks are never recomputed here.
  * Throws {@link LivePriceUnavailableError} when neither live nor cached
  * price is available — callers must decide whether to skip the work
  * (cron writer) or surface a 503 to the user (HTTP route).
@@ -222,11 +215,10 @@ export async function getLiveActiveThresholds(
   options: GetLivePriceOptions = {}
 ): Promise<LiveTierThresholds> {
   const now = options.now ?? new Date();
-  const inLaunchWindow = options.forceLaunchEpoch === true || now < LAUNCH_PROMO_END_DATE;
-  const epoch: ThresholdEpoch = inLaunchWindow ? "launch" : "standard";
+  const epoch: ThresholdEpoch = "standard";
 
-  const proCode: ThresholdTierCode = inLaunchWindow ? "PRO_LAUNCH" : "PRO_STANDARD";
-  const powerCode: ThresholdTierCode = inLaunchWindow ? "POWER_LAUNCH" : "POWER_STANDARD";
+  const proCode: ThresholdTierCode = activeThresholdTierCode("pro");
+  const powerCode: ThresholdTierCode = activeThresholdTierCode("power");
 
   const token = options.token ?? HERMESOS_TOKEN;
   const { price, fetchedAt } = await getCachedOrFreshPrice({
@@ -237,7 +229,6 @@ export async function getLiveActiveThresholds(
 
   return {
     epoch,
-    promoEndsAt: LAUNCH_PROMO_END_DATE,
     pro: buildResolved("pro", epoch, tokensFromUsd(proCode, price.priceUsd, token.decimals)),
     power: buildResolved("power", epoch, tokensFromUsd(powerCode, price.priceUsd, token.decimals)),
     priceUsd: price.priceUsd,

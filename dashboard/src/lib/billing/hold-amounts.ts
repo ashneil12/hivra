@@ -1,8 +1,9 @@
 /**
- * How much $HermesOS (and VVV) a user must hold for each plan, read from
- * /api/billing/wallet/eligibility. The server resolves the amounts for the
- * user's pricing epoch and founders status, so the billing page shows these
- * numbers instead of hardcoding any. Client-safe: no server imports.
+ * How much of the platform token (and VVV) a user must hold for each plan,
+ * read from /api/billing/wallet/eligibility. The server resolves current
+ * amounts from the live token price and existing locked qualification rows,
+ * so the billing page shows these numbers instead of hardcoding any.
+ * Client-safe: no server imports.
  */
 import { displayTokenUnit } from "./token-plan-prices";
 
