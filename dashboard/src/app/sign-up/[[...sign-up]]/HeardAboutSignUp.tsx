@@ -14,6 +14,8 @@ import styles from "./sign-up.module.css";
 
 type HeardAboutSignUpProps = {
   fallbackRedirectUrl: string;
+  forceRedirectUrl?: string;
+  signInUrl?: string;
   appearance: ComponentProps<typeof SignUp>["appearance"];
 };
 
@@ -22,7 +24,7 @@ type HeardAboutSignUpProps = {
 // changed prop, so the answer only has to be in state before the visitor submits.
 // The question shows on the first step only: once the sign-up exists
 // (verify-email-address, continue, sso-callback) changing it would do nothing.
-export default function HeardAboutSignUp({ fallbackRedirectUrl, appearance }: HeardAboutSignUpProps) {
+export default function HeardAboutSignUp({ fallbackRedirectUrl, forceRedirectUrl, signInUrl, appearance }: HeardAboutSignUpProps) {
   const pathname = usePathname();
   const selectId = useId();
   const otherId = useId();
@@ -72,7 +74,13 @@ export default function HeardAboutSignUp({ fallbackRedirectUrl, appearance }: He
           ) : null}
         </div>
       ) : null}
-      <SignUp fallbackRedirectUrl={fallbackRedirectUrl} appearance={appearance} unsafeMetadata={unsafeMetadata} />
+      <SignUp
+        fallbackRedirectUrl={fallbackRedirectUrl}
+        forceRedirectUrl={forceRedirectUrl}
+        signInUrl={signInUrl}
+        appearance={appearance}
+        unsafeMetadata={unsafeMetadata}
+      />
     </>
   );
 }

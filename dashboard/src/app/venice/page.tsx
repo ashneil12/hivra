@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { auth } from "@clerk/nextjs/server";
 import { ArrowRight, Bot, MessagesSquare, Sparkles } from "lucide-react";
 import PublicSite from "@/components/public-site/PublicSite";
 import { Breadcrumbs } from "@/components/public-editorial/Editorial";
@@ -37,7 +38,8 @@ const STEPS = [
   { title: "Chat", body: "Talk to it. It keeps working when you close the tab." },
 ] as const;
 
-export default function VenicePage() {
+export default async function VenicePage() {
+  const { userId } = await auth();
   const setupCall = veniceSetupCallLink();
   return (
     <PublicSite className={editorial.page} data-page="venice" tokenSurfaces={false}>
@@ -47,7 +49,7 @@ export default function VenicePage() {
         <header className={`${editorial.masthead} ${styles.hero}`}>
           <h1>Run your Venice agent 24/7. No server setup.</h1>
           <p>Pick an agent. Hivra gives it a computer and runs it on Venice.</p>
-          <VenicePromo />
+          <VenicePromo signedIn={Boolean(userId)} />
         </header>
 
         <section aria-labelledby="venice-agents">
