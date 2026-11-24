@@ -1670,6 +1670,26 @@
     },
     {
       "family": "value-set",
+      "input": "/dashboard/launch?profile=artalk&stage=choose",
+      "expect": "/dashboard/launch?profile=artalk&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=artalk",
+      "expect": "/dashboard/infrastructure?launch=artalk"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=answer&stage=choose",
+      "expect": "/dashboard/launch?profile=answer&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=answer",
+      "expect": "/dashboard/infrastructure?launch=answer"
+    },
+    {
+      "family": "value-set",
       "input": "/dashboard/launch?profile=termix&stage=choose",
       "expect": "/dashboard/launch?profile=termix&stage=choose"
     },
