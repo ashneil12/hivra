@@ -86,6 +86,8 @@ export const UNIVERSAL_CATALOG_IDS = [
   "rsshub",
   "ezbookkeeping",
   "pairdrop",
+  "artalk",
+  "answer",
   "dashy",
   "homepage",
   "flame",
