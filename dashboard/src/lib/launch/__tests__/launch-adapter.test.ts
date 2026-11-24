@@ -91,6 +91,28 @@ describe("bounded launch receipt reconciliation", () => {
     expect(jest.mocked(findHivraLaunchReceipt).mock.calls[0][1]?.aborted).toBe(true);
   });
 
+  it("accepts a delayed owner receipt when the replay POST is rate-limited", async () => {
+    jest.mocked(createAgent).mockRejectedValue(new HivraLaunchCorrectableError("Too many requests", 429));
+    const receipt = deferred<{ state: "accepted"; phase: string; agent: HivraAgent }>();
+    jest.mocked(findHivraLaunchReceipt).mockReturnValue(receipt.promise);
+    const result = submitLaunchDraft(draft as never, { mode: "hivra-managed" });
+    await jest.advanceTimersByTimeAsync(1_000);
+    receipt.resolve({ state: "accepted", phase: "accepted", agent: accepted });
+    await expect(result).resolves.toEqual(accepted);
+    expect(createAgent).toHaveBeenCalledTimes(1);
+    expect(findHivraLaunchReceipt).toHaveBeenCalledWith(requestId, expect.anything());
+  });
+
+  it("keeps the request resumable when rate-limited and no receipt is visible yet", async () => {
+    jest.mocked(createAgent).mockRejectedValue(new HivraLaunchCorrectableError("Too many requests", 429));
+    jest.mocked(findHivraLaunchReceipt).mockResolvedValue(null);
+    const result = submitLaunchDraft(draft as never, { mode: "hivra-managed" });
+    const rejected = expect(result).rejects.toMatchObject({ name: HivraLaunchInProgressError.name, launchRequestId: requestId });
+    await jest.advanceTimersByTimeAsync(195_000);
+    await rejected;
+    expect(createAgent).toHaveBeenCalledTimes(1);
+  });
+
   it("settles from a terminal receipt failure while the POST remains slow", async () => {
     const failure = new HivraLaunchRejectedError("The saved launch stopped before a computer was accepted.", 409, "agent_insert_conflict");
     jest.mocked(createAgent).mockReturnValue(new Promise(() => undefined));

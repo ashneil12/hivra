@@ -178,6 +178,11 @@ async function submitWithReceiptOnce(
   let uncertain: { error: unknown } | null = null;
   onObserved?.({ kind: "sent", at: Date.now() });
   const submission = createAgent(input).catch(error => {
+    // A replay can be rate-limited before the server looks up the original request.
+    if (error instanceof HivraLaunchCorrectableError && error.status === 429) {
+      uncertain = { error: new HivraLaunchInProgressError(input.launchRequestId) };
+      return neverSettles;
+    }
     if (error instanceof HivraLaunchRejectedError || error instanceof HivraLaunchCorrectableError) throw error;
     uncertain = { error };
     return neverSettles;
