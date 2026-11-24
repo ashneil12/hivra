@@ -8,6 +8,7 @@ import { isFreePlanClosed } from "@/lib/billing/free-plan-closure";
 import { CONNECTED_SERVER_ELIGIBILITY, HOSTED_COMPUTE_NEEDS_PLAN, HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE } from "@/lib/blog/plan-facts";
 import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
 import { isHivraMemoryEnabled } from "@/lib/memory/flag";
+import { safeInternalPath } from "@/lib/safe-internal-path";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import HeardAboutSignUp from "./HeardAboutSignUp";
 import styles from "./sign-up.module.css";
@@ -40,7 +41,9 @@ export default async function SignUpPage({
   // its plan). The older reservation links (from=reserve) land here the same way.
   const agentType = typeof resolvedParams?.agentType === "string" ? resolvedParams.agentType : null;
   // The public /memory page sends people here with next=memory; they land on their memory key, not Launch.
-  const redirectUrl = resolvedParams?.next === "memory" && isHivraMemoryEnabled() ? "/dashboard/memory" : buildAgentLaunchHref(agentType);
+  const memoryIntent = resolvedParams?.next === "memory" && isHivraMemoryEnabled();
+  const requestedRedirect = memoryIntent ? null : safeInternalPath(resolvedParams?.redirect_url);
+  const redirectUrl = memoryIntent ? "/dashboard/memory" : requestedRedirect ?? buildAgentLaunchHref(agentType);
 
   // Public "start" links come here whether or not the visitor has an account;
   // one who is already signed in goes on to Launch.
@@ -72,6 +75,10 @@ export default async function SignUpPage({
           {/* "How did you hear about Hivra?" sits above the card and rides into Clerk (R8). */}
           <HeardAboutSignUp
             fallbackRedirectUrl={redirectUrl}
+            {...(requestedRedirect ? {
+              forceRedirectUrl: requestedRedirect,
+              signInUrl: `/sign-in?redirect_url=${encodeURIComponent(requestedRedirect)}`,
+            } : {})}
             appearance={authCardAppearance({
               headerTitle: "serif text-[2.2rem] font-normal text-[var(--ink-black)] leading-none mb-2",
             })}

@@ -20,6 +20,12 @@ jest.mock("@/lib/billing/live-thresholds", () => ({
   getLiveActiveThresholds: jest.fn(),
 }));
 
+jest.mock("@/lib/billing/token-holdings", () => ({
+  ...jest.requireActual("@/lib/billing/token-holdings"),
+  fetchTokenBalance: jest.fn(),
+  getTokenVerificationWallet: jest.fn(),
+}));
+import { fetchTokenBalance, getTokenVerificationWallet } from "@/lib/billing/token-holdings";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { getLiveActiveThresholds } from "@/lib/billing/live-thresholds";
 import {
@@ -31,6 +37,7 @@ import {
   computeUserTokenAccess,
   convertGrandfatheredUserToHivra,
   ensureHivraActivationRecorded,
+  readHolderTierCarryover,
   resolveTokenAccessForUsers,
   resolveUserTokenAccess,
   tierRowTokenCounts,
@@ -52,6 +59,7 @@ interface CohortRow {
 class FakeAccessDb {
   cohort = new Map<string, CohortRow>();
   evidence = new Set<string>();
+  tiers: Record<string, unknown>[] = [];
   activation: { address: string; activatedAt: string } | null = null;
   rpcCalls: Array<{ name: string; params: Record<string, unknown> }> = [];
 
@@ -75,6 +83,14 @@ class FakeAccessDb {
       }
       return { data: false, error: null };
     }
+    if (name === "switch_grandfathered_holder") {
+      const member = this.cohort.get(String(params.p_user_id))!;
+      return {data: {status: "converted", cohort: {...member, converted_at: params.p_now,
+        conversion_grace_ends_at: params.p_grace_ends_at, metadata: {conversion: {
+          source: "earned_holder_1_to_1", hivraThresholds: params.p_expected_tiers,
+        }},
+      }}, error: null};
+    }
     throw new Error(`unexpected rpc ${name}`);
   }
 
@@ -85,6 +101,7 @@ class FakeAccessDb {
   }
 
   from(name: string) {
+    if (name === "token_tier_qualifications") return {select: () => ({eq: async () => ({data: this.tiers, error: null})})};
     if (name === "platform_token_activations") {
       const activation = this.activation;
       const builder = {
@@ -307,4 +324,75 @@ describe("convertGrandfatheredUserToHivra", () => {
       TokenConversionError
     );
   });
+});
+
+describe("optional holder switch", () => {
+  const wallet = "0x2222222222222222222222222222222222222222";
+  const amount = (123_456n * ONE_TOKEN + 1n).toString();
+  const holderConsent = { tiers: [{ tier: "pro", amountRaw: amount }] };
+  let db: FakeAccessDb;
+  const previous = process.env.HIVRA_HOLDER_TIER_CARRYOVER;
+  beforeEach(() => {
+    process.env.HIVRA_HOLDER_TIER_CARRYOVER = "1";
+    db = new FakeAccessDb();
+    db.addMember("holder");
+    db.tiers = [{tier: "pro", token_key: "hermesos", qualifying_quantity: amount,
+      qualifying_threshold_tier: "PRO_LAUNCH", currently_eligible: true, last_suspend_at: null, last_breach_at: null}];
+    (getTokenVerificationWallet as jest.Mock).mockResolvedValue({id:"wallet-id", normalizedAddress: wallet});
+    (fetchTokenBalance as jest.Mock).mockResolvedValue({balanceRaw: amount, balanceDisplay:"123456.000000000000000001", blockNumber:11});
+  });
+  afterEach(() => {
+    if (previous === undefined) delete process.env.HIVRA_HOLDER_TIER_CARRYOVER;
+    else process.env.HIVRA_HOLDER_TIER_CARRYOVER = previous;
+  });
+  it("preserves exact 18-decimal amounts and reads the configured HIVRA contract on Base", async () => {
+    const preview = await readHolderTierCarryover("holder", await resolveUserTokenAccess("holder", {db, now: NOW}), db);
+    expect(preview?.tiers[0]).toMatchObject({tier:"pro", amountRaw:amount});
+    expect(fetchTokenBalance).not.toHaveBeenCalled();
+    const access = await convertGrandfatheredUserToHivra("holder", {db, now: NOW, holderConsent});
+    expect(fetchTokenBalance).toHaveBeenCalledWith({walletAddress:wallet, token:expect.objectContaining({
+      chainId:8453, tokenAddress:TEST_HIVRA_ADDRESS, tokenDecimals:18,
+    })});
+    expect(access.conversionThresholds).toEqual({pro:{amount: BigInt(amount),code:"PRO_LAUNCH"}});
+    expect(getLiveActiveThresholds).not.toHaveBeenCalled();
+  });
+  it.each(["missing_wallet","low_balance","rpc_failure","tier_breached"])("refuses %s before committing", async failure => {
+    const errors: Record<string, string> = {missing_wallet:"verified_wallet_required",low_balance:"insufficient_hivra",
+      rpc_failure:"wallet_unavailable",tier_breached:"tier_changed"};
+    if (failure === "missing_wallet") (getTokenVerificationWallet as jest.Mock).mockResolvedValue(null);
+    if (failure === "low_balance") (fetchTokenBalance as jest.Mock).mockResolvedValue({balanceRaw:(BigInt(amount)-1n).toString()});
+    if (failure === "rpc_failure") (fetchTokenBalance as jest.Mock).mockRejectedValue(new Error("RPC offline"));
+    if (failure === "tier_breached") db.tiers[0].last_breach_at = NOW.toISOString();
+    await expect(convertGrandfatheredUserToHivra("holder", {db, now:NOW, holderConsent})).rejects.toMatchObject({code:errors[failure]});
+    expect(db.rpcCalls.map(call => call.name)).not.toContain("switch_grandfathered_holder");
+    expect(db.rpcCalls.map(call => call.name)).not.toContain("ensure_token_grandfather_membership");
+    expect(getLiveActiveThresholds).not.toHaveBeenCalled();
+  });
+  it("switches an account without earned tiers without consulting a wallet or price", async () => {
+    db.tiers = [];
+    const access = await convertGrandfatheredUserToHivra("holder", {db, now: NOW, holderConsent: {tiers: []}});
+    expect(access.conversionThresholds).toEqual({});
+    expect(getTokenVerificationWallet).not.toHaveBeenCalled();
+    expect(fetchTokenBalance).not.toHaveBeenCalled();
+    expect(getLiveActiveThresholds).not.toHaveBeenCalled();
+  });
+  it("rejects stale consent across both flag rotations before reading or writing the account", async () => {
+    await expect(convertGrandfatheredUserToHivra("holder", {db, now: NOW})).rejects.toMatchObject({code:"tier_changed"});
+    delete process.env.HIVRA_HOLDER_TIER_CARRYOVER;
+    await expect(convertGrandfatheredUserToHivra("holder", {db, now: NOW, holderConsent})).rejects.toMatchObject({code:"tier_changed"});
+    expect(db.rpcCalls).toEqual([]);
+  });
+
+  it.each([
+    { tiers: [] },
+    { tiers: [{ tier: "pro", amountRaw: "1" }] },
+    { tiers: [{ tier: "power", amountRaw: amount }] },
+  ])(
+    "rejects stale reviewed amounts without looking up a wallet", async ({ tiers }) => {
+      await expect(convertGrandfatheredUserToHivra("holder", {db, now: NOW, holderConsent: { tiers }}))
+        .rejects.toMatchObject({code:"tier_changed"});
+      expect(getTokenVerificationWallet).not.toHaveBeenCalled();
+      expect(db.rpcCalls.map(call => call.name)).not.toContain("switch_grandfathered_holder");
+    }
+  );
 });

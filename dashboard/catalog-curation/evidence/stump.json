@@ -1,0 +1,109 @@
+{
+  "slug": "stump",
+  "checkedAt": "2026-11-24T17:06:59.770Z",
+  "gitSha": "616a5513aa809204f63d5f4337a22dfb989db6cd",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "stumpapp/stump is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "stumpapp/stump",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "aaronleopold/stump:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "aaronleopold/stump:latest",
+        "digest": "sha256:3f9ab90b52200b614df2fa14696f1c1e8cb036db8c33998559f0dabdfcdb8230",
+        "platforms": [
+          "linux/arm64/v8",
+          "linux/amd64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-stump-wu3yr0",
+        "hostPort": 3298,
+        "image": "aaronleopold/stump:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-stump-wu3yr0",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3298:10801",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-stump-wu3yr0-data:/data",
+          "aaronleopold/stump:latest"
+        ],
+        "runStdout": "bc4c8e3cbe011f185c18fe031e34d8457b793540d31408faebe282654be79e13",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "12.86MiB / 7.652GiB",
+        "memBytes": 13484687
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 53853,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\">\n\t<head>\n\t\t<meta charset=\"utf-8\" />\n\t\t<title>Stump</title>\n\t\t<script>\n\t\t\ttry {\n\t\t\t\tconst zustandState = JSON.parse(\n\t\t\t\t\tlocalStorage.getItem('stump-user-store') || '{\"state\": {}}',\n\t\t\t\t).state\n\t\t\t\tconst locale = zustandState.userPreferences?.locale\n\t\t\t\tif (typeof locale === 'string' && locale.length > 0) {\n\t\t\t\t\tdocument.documentElement.lang = locale\n\t\t\t\t}\n\t\t\t\tlet a",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 405,
+          "bodyHead": ""
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 12.9MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 13484687,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

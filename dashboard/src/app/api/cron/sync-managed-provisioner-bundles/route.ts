@@ -95,6 +95,7 @@ export async function GET(req: NextRequest) {
       requestedVersion: summary.requestedVersion,
       synced: summary.synced,
       pending: summary.pending,
+      retiredHostReferences: summary.retiredHostReferences,
       hosts: summary.hosts.map((host) => ({
         targetId: host.targetId,
         status: host.status,
@@ -102,6 +103,17 @@ export async function GET(req: NextRequest) {
         liveComputers: host.liveComputers,
       })),
     });
+
+    for (const reference of summary.retiredHostReferences) {
+      await reportOpsEvent({
+        source: "cron.sync_managed_provisioner_bundles",
+        severity: "warn",
+        title: `Computer records still reference retired host ${reference.targetId} (${summary.channel})`,
+        message: "Reconcile these records with their archive or replacement computer and verify where each can be restored.",
+        route: ROUTE,
+        metadata: { ...reference, channel: summary.channel },
+      });
+    }
 
     for (const host of summary.hosts) {
       if (host.status === "synced") {

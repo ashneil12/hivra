@@ -90,3 +90,21 @@ it("requires sign-in", async () => {
   expect((await GET()).status).toBe(401);
   expect((await POST(post({ action: "convert" }))).status).toBe(401);
 });
+
+it.each([
+  ["insufficient_hivra", 409],
+  ["already_converted", 409],
+  ["wallet_unavailable", 503],
+] as const)("returns a machine-readable %s error", async (code, status) => {
+  (convertGrandfatheredUserToHivra as jest.Mock).mockRejectedValueOnce(new TokenConversionError(code, "Try again."));
+  const response = await POST(post({ action: "convert" }));
+  expect(response.status).toBe(status);
+  expect(await response.json()).toMatchObject({ code });
+});
+
+it("binds holder conversion to the signed-in account and the amounts the client reviewed", async () => {
+  const tiers = [{ tier: "pro", amountRaw: "1000000000000000001" }];
+  (convertGrandfatheredUserToHivra as jest.Mock).mockResolvedValueOnce(member);
+  expect((await POST(post({ action: "carry_over_holder", userId: "other", tiers }))).status).toBe(200);
+  expect(convertGrandfatheredUserToHivra).toHaveBeenCalledWith("u", { holderConsent: { tiers } });
+});

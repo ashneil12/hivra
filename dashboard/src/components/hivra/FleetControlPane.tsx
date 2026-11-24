@@ -3,7 +3,7 @@
 import { AlertTriangle, Bot, Link2, Monitor, Plus, RotateCcw, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useWorkspaceAgents } from "@/components/workspace/useWorkspaceAgents";
 import {
@@ -36,7 +36,7 @@ const NO_RECENTS: RecentVisit[] = [];
  * the others you used recently. Only opening the app at Home resumes it
  * straight away; the Home link and the logo inside the app always show the
  * list. */
-export function FleetControlPane({ requested = false, attentionRequested = false }: { requested?: boolean; attentionRequested?: boolean }) {
+export function FleetControlPane({ requested = false, attentionRequested = false, holderNotice }: { requested?: boolean; attentionRequested?: boolean; holderNotice?: ReactNode }) {
   const router = useRouter();
   // Whether this view opened the app. Decided before paint, after the first
   // render, so the server and the first client render agree on the list.
@@ -165,6 +165,8 @@ export function FleetControlPane({ requested = false, attentionRequested = false
 
         </>
       )}
+
+      {!attentionOnly && !searching ? holderNotice : null}
 
       {/* Day-one guide: after a first launch, for two weeks. It decides for
           itself whether to show. */}

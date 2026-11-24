@@ -1,3 +1,4 @@
+import type { HolderTierCarryover } from "@/lib/billing/token-access";
 import {
   HERMESOS_TOKEN,
   getConfiguredHivraToken,
@@ -34,6 +35,8 @@ export const HERMESOS_CONTRACT_ADDRESS = HERMESOS_TOKEN.publishedAddress;
  * Null means the access engine can't say (surface off, or it failed).
  */
 export type ConversionAccessGate = {
+  /** Absent on the legacy switch path. Null means the account cannot use the enabled carryover. */
+  carryover?: HolderTierCarryover | null;
   grandfathered: boolean;
   convertedAt: string | null;
   /** End of the post-switch window in which either token keeps the tier. */
@@ -57,18 +60,17 @@ export type AirdropSnapshot = { block: number; url: string; takenAt: string | nu
 /**
  * What the page may say about this user's tier:
  * - unknown: $HIVRA is not live yet, or the access engine can't be read.
- * - hermesos: grandfathered, not switched, and switching is not offered yet
- *   because the claim window has not closed. Their $HermesOS access continues.
- * - switch-available: grandfathered, not switched, and the claim window has
- *   closed, so they may choose to switch their tier to $HIVRA.
+ * - hermesos: their existing access continues and no switch is offered.
+ * - switch-available: they may choose to use $HIVRA. The carryover preview
+ *   describes the tiers the account can keep, independently of claim timing.
  * - hivra: their tier counts $HIVRA. graceEndsAt is set for a holder who
  *   switched: either token keeps the tier until then.
  */
 export type ConversionAccess =
   | { kind: "unknown" }
-  | { kind: "hermesos" }
-  | { kind: "switch-available" }
-  | { kind: "hivra"; graceEndsAt: string | null };
+  | { kind: "hermesos"; carryoverUnavailable?: boolean }
+  | { kind: "switch-available"; carryover?: HolderTierCarryover }
+  | { kind: "hivra"; graceEndsAt: string | null; showSwitchReceipt?: boolean };
 
 /**
  * - dormant: $HIVRA is not in the token registry. No contract and nothing about
@@ -140,7 +142,7 @@ export function resolveConversionState({ hivra, phase, airdrop, access, now }: C
     senderAddress: facts.senderAddress,
     snapshot: facts.snapshot,
     claim: facts.claim ?? NO_CLAIM,
-    // The claim only counts as closed once the snapshot it belongs to is published.
+    // The legacy switch uses the closing date of a published snapshot.
     access: resolveAccess(phase, access, facts.snapshot !== null && facts.claim?.phase === "closed"),
     problems: facts.problems,
   };
@@ -220,12 +222,21 @@ function resolveAccess(phase: HivraTokenPhase, access: ConversionAccessGate, cla
   // user's access must be readable, or the page could cost them their tier.
   if (phase !== "active" || !access) return { kind: "unknown" };
   if (access.grandfathered && !access.convertedAt) {
-    // Offer the switch only once the claim window has closed (the conservative
+    if (access.carryover !== undefined) {
+      return access.carryover
+        ? { kind: "switch-available", carryover: access.carryover }
+        : { kind: "hermesos", carryoverUnavailable: true };
+    }
+    // On the legacy path, offer the switch only once the claim window has closed (the conservative
     // gate): after the switch's grace only $HIVRA counts, so switching while
     // holders can still claim could drop a tier.
     return claimClosed ? { kind: "switch-available" } : { kind: "hermesos" };
   }
-  return { kind: "hivra", graceEndsAt: access.convertedAt ? access.conversionGraceEndsAt : null };
+  return {
+    kind: "hivra",
+    graceEndsAt: access.convertedAt ? access.conversionGraceEndsAt : null,
+    ...(access.carryover !== undefined && access.convertedAt ? { showSwitchReceipt: true } : {}),
+  };
 }
 
 /**
