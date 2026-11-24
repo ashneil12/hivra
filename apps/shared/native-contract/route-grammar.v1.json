@@ -1670,6 +1670,36 @@
     },
     {
       "family": "value-set",
+      "input": "/dashboard/launch?profile=silverbullet&stage=choose",
+      "expect": "/dashboard/launch?profile=silverbullet&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=silverbullet",
+      "expect": "/dashboard/infrastructure?launch=silverbullet"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=wakapi&stage=choose",
+      "expect": "/dashboard/launch?profile=wakapi&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=wakapi",
+      "expect": "/dashboard/infrastructure?launch=wakapi"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=stump&stage=choose",
+      "expect": "/dashboard/launch?profile=stump&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=stump",
+      "expect": "/dashboard/infrastructure?launch=stump"
+    },
+    {
+      "family": "value-set",
       "input": "/dashboard/launch?profile=artalk&stage=choose",
       "expect": "/dashboard/launch?profile=artalk&stage=choose"
     },
