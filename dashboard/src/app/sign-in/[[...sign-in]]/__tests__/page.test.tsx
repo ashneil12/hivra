@@ -131,6 +131,7 @@ describe("SignInPage", () => {
     expect(mockSignIn.mock.calls[0][0]).toMatchObject({
       forceRedirectUrl: returnPath,
       fallbackRedirectUrl: returnPath,
+      signUpUrl: `/sign-up?redirect_url=${encodeURIComponent(returnPath)}`,
     });
   });
 

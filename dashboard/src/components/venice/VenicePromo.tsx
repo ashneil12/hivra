@@ -7,8 +7,10 @@ import styles from "./venice-promo.module.css";
 export const VENICE_PROMO_CODE = "VENICE";
 
 /** The launch offer. Renders nothing unless NEXT_PUBLIC_HIVRA_VENICE_PROMO_ENABLED is "true". */
-export default function VenicePromo() {
+export default function VenicePromo({ signedIn }: { signedIn: boolean }) {
   if (!isVenicePromoEnabled()) return null;
+  const launchHref = buildVeniceLaunchHref("hermes", "venice", "venice", VENICE_PROMO_CODE);
+  const claimHref = signedIn ? launchHref : `/sign-in?redirect_url=${encodeURIComponent(launchHref)}`;
   return (
     <aside className={styles.promo} data-venice-promo="" aria-labelledby="venice-promo-title">
       <div className={styles.offer}>
@@ -24,7 +26,7 @@ export default function VenicePromo() {
       <div className={styles.ticket}>
         <span className={styles.ticketLabel}>Your code</span>
         <CopyPromoCode code={VENICE_PROMO_CODE} />
-        <a className={styles.claim} href={buildVeniceLaunchHref("hermes", "venice", "venice", VENICE_PROMO_CODE)} data-cta="venice-promo-claim">
+        <a className={styles.claim} href={claimHref} data-cta="venice-promo-claim">
           Claim your $10 <ArrowRight size={16} aria-hidden="true" />
         </a>
         <p className={styles.fine}>One per account. Unused promo credit expires 30 days after it is added.</p>
