@@ -1670,6 +1670,26 @@
     },
     {
       "family": "value-set",
+      "input": "/dashboard/launch?profile=profilarr&stage=choose",
+      "expect": "/dashboard/launch?profile=profilarr&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=profilarr",
+      "expect": "/dashboard/infrastructure?launch=profilarr"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=apache-solr&stage=choose",
+      "expect": "/dashboard/launch?profile=apache-solr&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=apache-solr",
+      "expect": "/dashboard/infrastructure?launch=apache-solr"
+    },
+    {
+      "family": "value-set",
       "input": "/dashboard/launch?profile=silverbullet&stage=choose",
       "expect": "/dashboard/launch?profile=silverbullet&stage=choose"
     },

@@ -1,0 +1,121 @@
+{
+  "slug": "apache-solr",
+  "checkedAt": "2026-11-24T23:47:36.735Z",
+  "gitSha": "167b71547fed97288af13102bd7d2d4d10751999",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "apache/solr is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "apache/solr",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "solr:9 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "solr:9",
+        "digest": "sha256:f56a6620f014724af050e457f723490f11a24f54fb7adce285425f2cd75ff848",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64/v8",
+          "unknown/unknown",
+          "linux/ppc64le",
+          "unknown/unknown",
+          "linux/s390x",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /solr/ -> 200 in 3s",
+      "evidence": {
+        "container": "hivra-verify-apache-solr-mn6k54",
+        "hostPort": 3301,
+        "image": "solr:9",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-apache-solr-mn6k54",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3301:8983",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-apache-solr-mn6k54-data:/var/solr",
+          "solr:9"
+        ],
+        "runStdout": "53c5417f949fdbca14765d0bff9a4abafc5e600c6a9848ea1adc567df06d6f1e",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 3,
+          "attempts": 2
+        },
+        "memUsage": "652.4MiB / 7.652GiB",
+        "memBytes": 684090982
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /solr/",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65129,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/solr/"
+          },
+          {
+            "hop": 2,
+            "path": "/solr/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/solr/",
+        "bodyHead": "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">\n<html ng-app=\"solrAdminApp\" ng-csp>\n<!--\nLicensed to the Apache Software Foundation (ASF) under one or more\ncontributor license agreements.  See the NOTICE file distributed with\nthis work for additional information regarding copyright ownership.\nThe ASF licenses this file to You under the Apache License, Ver",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<html>\n<head>\n<meta http-equiv=\"Content-Type\" content=\"text/html;charset=ISO-8859-1\"/>\n<title>Error 404 Not Found</title>\n</head>\n<body><h2>HTTP ERROR 404 Not Found</h2>\n<table>\n<tr><th>URI:</th><td>/login</td></tr>\n<tr><th>STATUS:</th><td>404</td></tr>\n<tr><th>MESSAGE:</th><td>Not Found</td></tr>\n<"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 652.4MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 684090982,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

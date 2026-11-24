@@ -68,6 +68,7 @@ export const UNIVERSAL_CATALOG_IDS = [
   "convertx",
   "termix",
   "dagu",
+  "apache-solr",
   "memos",
   "wallos",
   "shiori",
@@ -113,6 +114,7 @@ export const UNIVERSAL_CATALOG_IDS = [
   "suwayomi",
   "komga",
   "immich",
+  "profilarr",
 ] as const;
 
 export type UniversalCatalogAppId = (typeof UNIVERSAL_CATALOG_IDS)[number];
