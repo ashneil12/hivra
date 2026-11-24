@@ -105,6 +105,8 @@ export const UNIVERSAL_CATALOG_IDS = [
   "umami",
   "openobserve",
   "adguard-home",
+  "zoraxy",
+  "librespeed",
   "audiobookshelf",
   "kavita",
   "calibre-web",

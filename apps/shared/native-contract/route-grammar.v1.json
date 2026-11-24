@@ -1969,6 +1969,26 @@
       "family": "value-set",
       "input": "/dashboard/infrastructure?launch=adguard-home",
       "expect": "/dashboard/infrastructure?launch=adguard-home"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=zoraxy&stage=choose",
+      "expect": "/dashboard/launch?profile=zoraxy&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=zoraxy",
+      "expect": "/dashboard/infrastructure?launch=zoraxy"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=librespeed&stage=choose",
+      "expect": "/dashboard/launch?profile=librespeed&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=librespeed",
+      "expect": "/dashboard/infrastructure?launch=librespeed"
     }
   ]
 }
