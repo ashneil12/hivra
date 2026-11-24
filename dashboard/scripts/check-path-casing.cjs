@@ -26,7 +26,12 @@ for (const file of files) {
   }
   // Extensionless imports can resolve differently even when the extensions differ.
   const moduleStem = file.replace(/(?:\.d\.[cm]?ts|\.[cm]?[jt]s|\.[jt]sx)$/, '');
-  if (moduleStem !== file) check(moduleStem, modules);
+  if (moduleStem !== file) {
+    check(moduleStem, modules);
+    const slash = moduleStem.lastIndexOf('/');
+    const basename = moduleStem.slice(slash + 1);
+    if (slash !== -1 && basename.toLowerCase() === 'index') check(moduleStem.slice(0, slash), modules);
+  }
 }
 
 for (const conflict of conflicts) console.error(`Conflicting dashboard paths: ${conflict}`);
