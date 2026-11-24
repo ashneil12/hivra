@@ -62,6 +62,7 @@ export async function GET(req: NextRequest) {
     });
     const message =
       err instanceof Error ? err.message : "Migration drift check failed";
+    await checkCronHeartbeats();
     return apiError(message, 500);
   }
 
@@ -127,13 +128,23 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Cron dead-man watchdog. Co-located here because migration-drift-check runs
-  // every 10 min and is itself one of the most reliable crons (pure DB read,
-  // no SSH/network fan-out), so it's a stable host for the heartbeat sweep.
-  // Best-effort: a watchdog hiccup must not fail the drift check it rides on.
-  let cronWatchdog: CronHeartbeatWatchdogResult | null = null;
+  const cronWatchdog = await checkCronHeartbeats();
+  // Check the previous heartbeat before stamping this successful drift run.
+  await recordCronHeartbeat("migration-drift-check");
+
+  return apiSuccess({
+    totalLocal: result.totalLocal,
+    totalApplied: result.totalApplied,
+    missing: result.missing,
+    unexpected: result.unexpected,
+    versionMismatched: result.versionMismatched,
+    cronWatchdog,
+  });
+}
+
+async function checkCronHeartbeats(): Promise<CronHeartbeatWatchdogResult | null> {
   try {
-    cronWatchdog = await runCronHeartbeatWatchdog();
+    const cronWatchdog = await runCronHeartbeatWatchdog();
     if (cronWatchdog.stale.length > 0) {
       log.error(
         "cron dead-man watchdog detected stalled crons",
@@ -147,30 +158,13 @@ export async function GET(req: NextRequest) {
         },
       );
     }
+    return cronWatchdog;
   } catch (err) {
     log.warn("cron dead-man watchdog failed", {
       source: MIGRATION_DRIFT_LOG_SOURCE,
       failureType: "cron_heartbeat_watchdog_failed",
       errorMessage: err instanceof Error ? err.message : String(err),
     });
+    return null;
   }
-
-  // Self-heartbeat. The dead-man watchdog for the WHOLE fleet is parasitically
-  // hosted in THIS route, yet migration-drift-check has no heartbeat of its own
-  // and (currently) isn't in CRON_REGISTRY — so if it ever stops being
-  // scheduled, the watchdog goes dark with no self-detection. Stamping its own
-  // heartbeat here means that once it's added to CRON_REGISTRY (a one-line
-  // change in src/lib/cron-heartbeat.ts — see note; that file is owned
-  // elsewhere) the watchdog will detect its own silence on the next run that
-  // DOES fire. Best-effort.
-  await recordCronHeartbeat("migration-drift-check");
-
-  return apiSuccess({
-    totalLocal: result.totalLocal,
-    totalApplied: result.totalApplied,
-    missing: result.missing,
-    unexpected: result.unexpected,
-    versionMismatched: result.versionMismatched,
-    cronWatchdog,
-  });
 }
