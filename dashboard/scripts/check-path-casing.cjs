@@ -52,17 +52,21 @@ function moduleStem(file) {
 
 const packages = new Map();
 
-function hasResolvableDirectory(directory, visited, root) {
-  if (fileRequests.has(path.posix.join(directory, 'index'))) return true;
+function hasResolvableDirectory(directory, visited, root, requests) {
+  if (requests.has(path.posix.join(directory, 'index'))) return true;
   if (visited.has(directory)) return false;
   visited.add(directory);
   return (packages.get(directory)?.targets ?? []).some(({ field, target }) => {
     const candidate = target.replace(/\/$/, '');
     // Returning to the original request can only rediscover the competing file.
     if (candidate === root) return false;
-    if (field === 'main' && jestFileRequests.has(candidate)) return true;
-    if (!target.endsWith('/') && fileRequests.has(target)) return true;
-    return hasResolvableDirectory(candidate, visited, root);
+    if (requests === jestFileRequests) {
+      if (field !== 'main') return false;
+      if (requests.has(candidate)) return true;
+    } else if (!target.endsWith('/') && requests.has(target)) {
+      return true;
+    }
+    return hasResolvableDirectory(candidate, visited, root, requests);
   });
 }
 
@@ -96,7 +100,8 @@ for (const file of files) {
   const stem = moduleStem(file) ?? file;
   const foldedFile = file.toLowerCase();
   fileRequests.add(foldedFile);
-  fileRequests.add(stem.toLowerCase());
+  // Only the Jest resolver probes a native addon for an extensionless target.
+  if (!foldedFile.endsWith('.node')) fileRequests.add(stem.toLowerCase());
   jestFileRequests.add(foldedFile);
   const extension = path.posix.extname(foldedFile);
   if (JEST_EXTENSIONS.has(extension)) jestFileRequests.add(foldedFile.slice(0, -extension.length));
@@ -131,7 +136,10 @@ for (const entry of indexEntries) {
 }
 
 for (const [folded, { directory }] of packages) {
-  if (directory !== '.' && hasResolvableDirectory(folded, new Set(), folded)) check(directory, modules);
+  if (directory === '.') continue;
+  const resolves = [fileRequests, jestFileRequests].some(requests =>
+    hasResolvableDirectory(folded, new Set(), folded, requests));
+  if (resolves) check(directory, modules);
 }
 
 for (const conflict of conflicts) console.error(`Conflicting dashboard paths: ${conflict}`);

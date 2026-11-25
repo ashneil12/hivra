@@ -222,6 +222,27 @@ for (const [field, tracked] of [['types', 'dist.js'], ['main', 'dist.d.ts']]) {
   });
 }
 
+for (const field of ['types', 'typings', 'module', 'browser', 'edge-light', 'main']) {
+  for (const nativeEntry of ['entry.node', 'entry/index.node']) {
+    test(`checks native target ${nativeEntry} through ${field}`, t => {
+      const result = runGuard(t, ['foo.ts', packageFixture('Foo/package.json', { [field]: './entry' }), `Foo/${nativeEntry}`]);
+      if (field === 'main') assertConflict(result, ['foo', 'Foo']);
+      else assert.equal(result.status, 0, result.stderr);
+    });
+  }
+}
+
+for (const [outer, inner] of [['main', 'main'], ['types', 'main'], ['main', 'types']]) {
+  test(`checks a nested native target through ${outer} then ${inner}`, t => {
+    const result = runGuard(t, [
+      'foo.ts', packageFixture('Foo/package.json', { [outer]: './dist' }),
+      packageFixture('Foo/dist/package.json', { [inner]: './entry' }), 'Foo/dist/entry.node',
+    ]);
+    if (outer === 'main' && inner === 'main') assertConflict(result, ['foo', 'Foo']);
+    else assert.equal(result.status, 0, result.stderr);
+  });
+}
+
 test('reads collisions beyond one MiB of staged paths', t => {
   const padding = Array.from({ length: 6000 }, (_, index) => `padding/${'x'.repeat(132)}${index}`);
   assertConflict(runGuard(t, ['z/Foo', 'z/foo.ts'], padding), ['z/Foo', 'z/foo']);
