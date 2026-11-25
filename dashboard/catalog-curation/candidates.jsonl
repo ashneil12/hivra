@@ -165,25 +165,25 @@
 {"slug": "analog", "name": "ANALOG", "sourceUrl": "https://github.com/orangecoloured/analog", "status": "rejected", "reason": "no official prebuilt container image", "checkedAt": "2026-11-24"}
 {"slug": "anonaddy", "name": "AnonAddy", "sourceUrl": "https://github.com/anonaddy/anonaddy", "status": "compose-needed", "reason": "requires MySQL, Redis and Postfix", "checkedAt": "2026-11-24"}
 {"slug": "answer", "name": "Answer", "sourceUrl": "https://github.com/apache/answer", "status": "accepted", "reason": "evidence catalog-curation/evidence/answer.json", "checkedAt": "2026-11-24"}
-{"slug": "anubis", "name": "Anubis", "sourceUrl": "https://github.com/TecharoHQ/anubis", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
+{"slug": "anubis", "name": "Anubis", "sourceUrl": "https://github.com/TecharoHQ/anubis", "status": "rejected", "reason": "HTTP AI scraper defense proxy; requires an upstream TARGET to proxy to, not a standalone app", "checkedAt": "2026-11-25"}
 {"slug": "anycable", "name": "AnyCable", "sourceUrl": "https://github.com/anycable/anycable", "status": "rejected", "reason": "image pull/verify timed out", "checkedAt": "2026-11-24"}
 {"slug": "apache-airflow", "name": "Apache Airflow", "sourceUrl": "https://github.com/apache/airflow", "status": "compose-needed", "reason": "requires Postgres and Redis", "checkedAt": "2026-11-24"}
 {"slug": "apache-http-server", "name": "Apache HTTP Server", "sourceUrl": "https://svn.apache.org/repos/asf/httpd/httpd/trunk", "status": "rejected", "reason": "document root /usr/local/apache2/htdocs is under forbidden /usr mount path", "checkedAt": "2026-11-25"}
 {"slug": "apache-solr", "name": "Apache Solr", "sourceUrl": "https://github.com/apache/solr", "status": "accepted", "reason": "evidence catalog-curation/evidence/apache-solr.json", "checkedAt": "2026-11-24"}
 {"slug": "apprise", "name": "Apprise", "sourceUrl": "https://github.com/caronc/apprise", "status": "rejected", "reason": "license BSD-2-Clause not in CATALOG_OSI_LICENSES", "checkedAt": "2026-11-24"}
-{"slug": "aptabase", "name": "Aptabase", "sourceUrl": "https://github.com/aptabase/aptabase", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
+{"slug": "aptabase", "name": "Aptabase", "sourceUrl": "https://github.com/aptabase/aptabase", "status": "compose-needed", "reason": "requires ClickHouse and PostgreSQL", "checkedAt": "2026-11-25"}
 {"slug": "archivebox", "name": "ArchiveBox", "sourceUrl": "https://github.com/ArchiveBox/ArchiveBox", "status": "rejected", "reason": "gateway: login form POST rejected as origin/host/CSRF issue (status 403)", "checkedAt": "2026-11-24"}
 {"slug": "artalk", "name": "Artalk", "sourceUrl": "https://github.com/ArtalkJS/Artalk", "status": "accepted", "reason": "evidence catalog-curation/evidence/artalk.json", "checkedAt": "2026-11-24"}
-{"slug": "asciinema", "name": "asciinema", "sourceUrl": "https://github.com/asciinema/asciinema-server", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
+{"slug": "asciinema", "name": "asciinema", "sourceUrl": "https://github.com/asciinema/asciinema-server", "status": "compose-needed", "reason": "requires PostgreSQL and Redis", "checkedAt": "2026-11-25"}
 {"slug": "atheos", "name": "Atheos", "sourceUrl": "https://github.com/Atheos/Atheos", "status": "rejected", "reason": "license null not in CATALOG_OSI_LICENSES", "checkedAt": "2026-11-24"}
 {"slug": "atomic-server", "name": "Atomic Server", "sourceUrl": "https://github.com/ontola/atomic-server", "status": "rejected", "reason": "license NOASSERTION not in CATALOG_OSI_LICENSES", "checkedAt": "2026-11-24"}
 {"slug": "atsumeru", "name": "Atsumeru", "sourceUrl": "https://github.com/Atsumeru-xyz/Atsumeru", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
 {"slug": "automad", "name": "Automad", "sourceUrl": "https://github.com/marcantondahmen/automad", "status": "rejected", "reason": "license NOASSERTION not in CATALOG_OSI_LICENSES", "checkedAt": "2026-11-24"}
 {"slug": "automatisch", "name": "Automatisch", "sourceUrl": "https://github.com/automatisch/automatisch", "status": "rejected", "reason": "GitHub SPDX license NOASSERTION not in allowlist", "checkedAt": "2026-11-25"}
 {"slug": "azimutt", "name": "Azimutt", "sourceUrl": "https://github.com/azimuttapp/azimutt", "status": "compose-needed", "reason": "requires postgres", "checkedAt": "2026-11-25"}
-{"slug": "azuracast", "name": "AzuraCast", "sourceUrl": "https://github.com/AzuraCast/AzuraCast", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
+{"slug": "azuracast", "name": "AzuraCast", "sourceUrl": "https://github.com/AzuraCast/AzuraCast", "status": "compose-needed", "reason": "multi-container radio suite", "checkedAt": "2026-11-25"}
 {"slug": "bar-assistant", "name": "Bar Assistant", "sourceUrl": "https://github.com/karlomikus/bar-assistant", "status": "compose-needed", "reason": "requires redis, meilisearch, and rustfs", "checkedAt": "2026-11-25"}
-{"slug": "baserow", "name": "Baserow", "sourceUrl": "https://gitlab.com/baserow/baserow", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
+{"slug": "baserow", "name": "Baserow", "sourceUrl": "https://gitlab.com/baserow/baserow", "status": "compose-needed", "reason": "requires PostgreSQL and Redis", "checkedAt": "2026-11-25"}
 {"slug": "beaver-habit-tracker", "name": "Beaver Habit Tracker", "sourceUrl": "https://github.com/daya0576/beaverhabits", "status": "rejected", "reason": "image: daya0576/beaverhabits:latest: spawnSync docker ETIMEDOUT", "checkedAt": "2026-11-24"}
 {"slug": "homelable", "name": "Homelable", "sourceUrl": "https://github.com/Pouzor/homelable", "status": "compose-needed", "reason": "requires multi-container setup (backend, frontend, mcp)", "checkedAt": "2026-11-24"}
 {"slug": "snapotter", "name": "SnapOtter", "sourceUrl": "https://github.com/snapotter-hq/SnapOtter", "status": "rejected", "reason": "image pull timed out / too large for single-container verification", "checkedAt": "2026-11-25"}
@@ -200,3 +200,7 @@
 {"slug": "aionui", "name": "AionUi", "sourceUrl": "https://github.com/iOfficeAI/AionUi", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
 {"slug": "ryot", "name": "Ryot", "sourceUrl": "https://github.com/IgnisDa/ryot", "status": "rejected", "reason": "boot: health / never returned <400 (needs Postgres)", "checkedAt": "2026-11-24"}
 {"slug": "pocket-id", "name": "Pocket ID", "sourceUrl": "https://github.com/pocket-id/pocket-id", "status": "rejected", "reason": "BSD-2-Clause license not in CATALOG_OSI_LICENSES allowlist", "checkedAt": "2026-11-25"}
+{"slug": "yesplaymusic", "name": "YesPlayMusic", "sourceUrl": "https://github.com/qier222/YesPlayMusic", "status": "pending", "reason": "", "checkedAt": "2026-11-25"}
+{"slug": "owncast", "name": "Owncast", "sourceUrl": "https://github.com/owncast/owncast", "status": "pending", "reason": "", "checkedAt": "2026-11-25"}
+{"slug": "thelounge", "name": "The Lounge", "sourceUrl": "https://github.com/thelounge/thelounge", "status": "pending", "reason": "", "checkedAt": "2026-11-25"}
+{"slug": "wekan", "name": "WeKan", "sourceUrl": "https://github.com/wekan/wekan", "status": "compose-needed", "reason": "requires MongoDB", "checkedAt": "2026-11-25"}
