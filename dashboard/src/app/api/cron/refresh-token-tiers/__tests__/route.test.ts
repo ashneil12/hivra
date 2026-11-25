@@ -706,14 +706,14 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     expect(applyTierChange).not.toHaveBeenCalled();
   });
 
-  it("removes an old boost that exceeds a holder reservation", async () => {
+  it.each([1024, 2048])("repairs a holder allocation exceeding its RAM cap by %i MB", async (excessRam) => {
     mockSupabase({
       instances: [
         {
           user_id: "user_boosted_steady", seat_funding: "holder",
           resource_tier: "fleet",
           cpu_limit: FLEET_CPU + 1,
-          ram_limit: FLEET_RAM + 2048,
+          ram_limit: FLEET_RAM + excessRam,
         },
       ],
       snapshots: [

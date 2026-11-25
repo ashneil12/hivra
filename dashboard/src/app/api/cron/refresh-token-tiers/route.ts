@@ -460,6 +460,7 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     const changed = rows.find((row) => {
       const atBase = row.cpu_limit === baseSpec.cpuLimit && row.ram_limit === baseSpec.ramLimitMb;
       const atBoosted = row.cpu_limit === boostedSpec.cpuLimit && row.ram_limit === boostedSpec.ramLimitMb;
+      if (holder && ((row.cpu_limit ?? 0) > baseSpec.cpuLimit || (row.ram_limit ?? 0) > baseSpec.ramLimitMb)) return true;
       return (row.resource_tier ?? "credit_base") !== desiredTier || (boostActive ? atBase : atBoosted);
     });
     if (!changed) continue;

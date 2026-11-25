@@ -236,7 +236,7 @@ function mockDefaultRpc(name: string, args: Record<string, unknown>) {
     return Promise.resolve({ data: mockSlotCountOverride ?? counted, error: null });
   }
   if (name === "holder_admission_state") {
-    return Promise.resolve({ data: { state: "admitted" }, error: null });
+    return Promise.resolve({ data: { state: "admitted", tier: "pro" }, error: null });
   }
   if (name === "insert_hivra_managed_agent") {
     const row = args.p_row as Record<string, unknown>;
@@ -3039,7 +3039,20 @@ describe("POST /api/hivra/agents", () => {
     expect(mockResolveProxmoxTargetConfiguration).not.toHaveBeenCalledWith(expect.anything(), "fixturenode10");
   });
 
+  it("refuses a new Aeon holder seat before placement while keeping the owner's admission", async () => {
+    mockTokenQualificationRows = [{ tier: "pro", currently_eligible: true }];
+    const response = await POST(makeRequest({ type: "aeon", name: "HOLDER_AEON" }) as never);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining("cannot nap") });
+    expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
   it("lets the holder admission host win over the sticky host on a normal holder launch", async () => {
+    const priorMode = process.env.HIVRA_SLEEP_MODE;
+    process.env.HIVRA_SLEEP_MODE = "canary";
+    mockTunnelConfigured = true;
+    mockCreateBoxTunnel.mockResolvedValue({ token: "synthetic", url: "https://fixture.example.test", tunnelId: "fixture-tunnel", hostname: "fixture.example.test" });
     mockTokenQualificationRows = [{ tier: "pro", currently_eligible: true }];
     mockExistingAgents = [
       {
@@ -3058,18 +3071,23 @@ describe("POST /api/hivra/agents", () => {
       name: "HOLDER_AGENT",
       cpu: 0.5,
       ram: 1,
-    }) as never);
+    }) as never).finally(() => {
+      if (priorMode === undefined) delete process.env.HIVRA_SLEEP_MODE;
+      else process.env.HIVRA_SLEEP_MODE = priorMode;
+    });
 
     expect(response.status).toBe(201);
     expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledTimes(1);
     expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledWith(expect.objectContaining({
       forceTargetId: null,
+      neededCpu: 0.5, neededRamMb: 1024,
       seatFunding: "holder",
       skipTemplateAvailabilityCheck: true,
     }));
+    expect(mockSupabaseFrom).not.toHaveBeenCalledWith("venice_compute_boost_qualifications");
     expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({
       type: "claude-code",
-      seat_funding: "holder",
+      seat_funding: "holder", cpu: 0.5, ram: 1,
       proxmox_host: "fixturenode7",
     }));
   });

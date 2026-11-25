@@ -510,4 +510,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261123220000", name: "optional_holder_switch" },
   { version: "20261124010000", name: "hivra_agent_seat_funding" },
   { version: "20261124230000", name: "holder_admissions" },
+  { version: "20261125010000", name: "hermes_holder_idle_claim" },
+  { version: "20261125020000", name: "holder_allocation_updates" },
 ];

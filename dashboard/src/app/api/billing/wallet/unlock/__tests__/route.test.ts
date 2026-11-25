@@ -45,15 +45,6 @@ jest.mock("@/lib/services/pending-resize", () => ({
   redeployPendingResizes: jest.fn().mockResolvedValue({ redeployed: 0, failed: 0, skipped: 0, results: [] }),
   PENDING_RESIZE_SELECT: "id",
 }));
-jest.mock("@/lib/services/tier-specs", () => ({
-  tierFromPlanKey: (k: string) => (["operator", "fleet", "command"].includes(k) ? k : "credit_base"),
-  isPaidTier: (t: string) => ["operator", "fleet", "command"].includes(t),
-  resolveEffectiveTierSpec: (tier: string, boost: boolean) =>
-    tier === "operator"
-      ? { cpuLimit: boost ? 3 : 2, ramLimitMb: boost ? 6144 : 4096, label: "Operator" }
-      : { cpuLimit: 0.5, ramLimitMb: 1024, label: tier },
-}));
-
 const mockAuth = auth as unknown as jest.Mock;
 const mockRefresh = refreshPrimaryHermesTokenHolding as jest.Mock;
 const mockLatest = getLatestHermesTokenHoldingSnapshot as jest.Mock;
@@ -134,6 +125,14 @@ describe("POST /api/billing/wallet/unlock", () => {
     expect(mockApply).toHaveBeenCalledWith(
       expect.objectContaining({ userId: "user_a", newTier: "operator", veniceBoost: true, source: "manual" })
     );
+  });
+
+  it("keeps an admitted Power holder at 4 vCPU and 8 GB despite qualifying for Venice", async () => {
+    mockSub.mockResolvedValue({ plan: "fleet", status: "active", source: "token_holding" });
+    const body = await (await POST()).json();
+    expect(body.data.veniceBoostActive).toBe(false);
+    expect(body.data.applied).toMatchObject({ cpuLimit: 4, ramLimit: 8192 });
+    expect(mockApply).toHaveBeenCalledWith(expect.objectContaining({ holderSeats: true, veniceBoost: false }));
   });
 
   it("still unlocks the base tier when the VVV price feed is down (boost skipped)", async () => {

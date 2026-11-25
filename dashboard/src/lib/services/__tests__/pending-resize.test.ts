@@ -29,8 +29,9 @@ let consoleInfo: jest.SpyInstance;
 
 beforeEach(() => {
   jest.clearAllMocks();
-  eqMock = jest.fn().mockResolvedValue({ error: null });
-  updateMock = jest.fn(() => ({ eq: eqMock }));
+  const clear = { eq: jest.fn().mockReturnThis(), is: jest.fn().mockReturnThis(), error: null };
+  eqMock = clear.eq;
+  updateMock = jest.fn(() => clear);
   fromMock.mockReturnValue({ update: updateMock });
   mockResolveIp.mockResolvedValue("203.0.113.4");
   mockApply.mockResolvedValue({ applied: true, initiator: SWEEP, inFlightGate: null });
@@ -51,6 +52,15 @@ function row(over: Record<string, unknown> = {}) {
 }
 
 describe("redeployPendingResizes", () => {
+  it("keeps a paused holder offline and clears only the allocation actually redeployed", async () => {
+    const paused = await redeployPendingResizes([row({ seat_funding: "holder", lifecycle_state: "paused", status: "stopped" })], sweep);
+    expect(paused.skipped).toBe(1);
+    expect(mockApply).not.toHaveBeenCalled();
+    await redeployPendingResizes([row({ seat_funding: "holder", lifecycle_state: "active", status: "running", cpu_limit: 2, ram_limit: 4096 })], sweep);
+    expect(eqMock).toHaveBeenCalledWith("cpu_limit", 2);
+    expect(eqMock).toHaveBeenCalledWith("ram_limit", 4096);
+  });
+
   it.each(["cold_archived", "pending_deletion", "archiving", "restoring", "deleting", "failed"])(
     "skips %s before IP resolution or update without clearing its pending flag",
     async (lifecycle_state) => {

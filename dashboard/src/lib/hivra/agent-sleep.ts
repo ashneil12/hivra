@@ -11,8 +11,7 @@ import { resolveHivraProxmoxHost } from "./proxmox-target";
 import { isStartBlockedForLapse } from "./lapse-gate";
 import { isFastWakeEnabled } from "./fast-wake-flags";
 import {
-  AUTONOMOUS_KINDS,
-  DESKTOP_KINDS,
+  supportsIdleNap,
   isSleepMemoryTrimEnabled,
   parseSleepMode,
   type SleepMode,
@@ -212,7 +211,7 @@ export function sleepEligibility(
   if (row.infrastructure_binding_token_enforced !== true) reasons.push("binding_not_enforced");
 
   const kind = typeof row.type === "string" ? row.type : "";
-  if (AUTONOMOUS_KINDS.includes(kind) || DESKTOP_KINDS.includes(kind)) reasons.push(`kind_${kind}`);
+  if (!supportsIdleNap(kind)) reasons.push(`kind_${kind}`);
 
   if (effectiveAlwaysOn(row) || (row.always_on !== false && !isHolderFundedSeat(row))) reasons.push("always_on");
   reasons.push(...seedsPending(row));

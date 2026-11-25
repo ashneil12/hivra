@@ -36,6 +36,15 @@ a free account works with a server the person connects.
 | OpenBot (CopilotKit) | Preview, off by default | Hivra Cloud only, on a paid plan, when `NEXT_PUBLIC_HIVRA_OPENBOT_AGENT` is `1` on the deployment. It needs provisioner release 2026.11.12.4 or later |
 | Nuphos | Preview, off by default | Hivra Cloud only, on a paid plan, when `NEXT_PUBLIC_HIVRA_NUPHOS_AGENT` is `1` on the deployment. It needs provisioner release 2026.11.12.5 or later |
 
+Local #57 implementation, pending release verification: an existing Classic
+Hermes computer evidenced as holder-funded keeps its admission and allocation.
+Classic has no supported four-minute nap, memory save at sixteen minutes, or
+wake from that saved memory. Its inactivity sweep therefore leaves those
+computers running. New Classic holder launches are unavailable. On eligible
+managed Hivra computers the holder policy requires four idle minutes before
+nap and twelve minutes in nap before memory save. Host controls, activity
+checks and wake readiness still apply.
+
 Claude Code can sign in with the person's own Claude account, or run on Hivra
 credits: Hivra translates its requests for Venice's Claude models and bills the
 credits. Credits need a host on provisioner release 2026.11.10.2 or later.

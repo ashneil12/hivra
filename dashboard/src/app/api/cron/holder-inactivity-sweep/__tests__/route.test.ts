@@ -21,12 +21,11 @@ it("requires cron authentication before selecting any holder VMs", async () => {
   expect(runInactivitySweep).not.toHaveBeenCalled();
 });
 
-it("runs only the holder pass on the minute tick", async () => {
-  (runInactivitySweep as jest.Mock).mockResolvedValue({ scanned: 0, swept: 0, failed: 0 });
+it("reports the Classic limitation without powering down a grandfathered VM", async () => {
   const response = await GET(new NextRequest("http://localhost/api/cron/holder-inactivity-sweep", {
     headers: { authorization: "Bearer local-fixture" },
   }));
-  expect(response.status).toBe(200);
-  expect(runInactivitySweep).toHaveBeenCalledWith({ holderOnly: true, timeBudgetMs: 50_000 });
-  expect(recordCronHeartbeat).toHaveBeenCalledWith("holder-inactivity-sweep");
+  expect(response.status).toBe(501);
+  expect(runInactivitySweep).not.toHaveBeenCalled();
+  expect(recordCronHeartbeat).not.toHaveBeenCalled();
 });

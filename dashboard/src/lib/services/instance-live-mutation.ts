@@ -73,11 +73,20 @@ export async function readInstanceLiveMutationBlock(
   supabase: SupabaseClient,
   instanceId: string,
   expectedCoordinates?: InstanceLiveMutationCoordinates,
+  holderAllocation?: { cpu: number; ramMb: number },
 ): Promise<string | null> {
   try {
-    const { data, error } = await supabase.from("hermes_instances")
-      .select(LIVE_MUTATION_STATE_SELECT).eq("id", instanceId).maybeSingle();
+    const columns = holderAllocation ? LIVE_MUTATION_STATE_SELECT + ",seat_funding,cpu_limit,ram_limit" : LIVE_MUTATION_STATE_SELECT;
+    const { data: result, error } = await supabase.from("hermes_instances")
+      .select(columns).eq("id", instanceId).maybeSingle();
+    const data = result as (InstanceLiveMutationState & InstanceLiveMutationCoordinates & {
+      seat_funding?: string; cpu_limit?: number; ram_limit?: number;
+    }) | null;
     if (error || !data) return "Could not confirm the computer's current lifecycle state. Refresh before updating.";
+    if (holderAllocation && (data.seat_funding !== "holder" || data.status !== "running" || data.lifecycle_state !== "active"
+      || data.cpu_limit !== holderAllocation.cpu || data.ram_limit !== holderAllocation.ramMb)) {
+      return "The holder allocation or power state changed. Refresh before resizing.";
+    }
     if (blocksInstanceLiveMutation(data)) {
       return "This computer must finish restoration or its current lifecycle operation before it can be updated.";
     }

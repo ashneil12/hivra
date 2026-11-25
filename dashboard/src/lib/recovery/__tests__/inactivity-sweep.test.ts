@@ -71,14 +71,13 @@ function buildSweepStub(params: {
   // Simulate the pre-shutdown re-read returning a CHANGED row (e.g. the user
   // resumed since selection), keyed by instance id, to exercise the raced path.
   recheckOverrides?: Record<string, RecheckOverride>;
-  busyHolderIds?: string[];
   // The sweep now REFUSES to pause an instance whose agent activity it cannot
   // see, so every fixture needs a probe stamp or it would be spared as UNKNOWN.
   // Default to a fresh one (1h before `now`) and let the probe-specific tests
   // override it per row. `now` must match what the test hands runInactivitySweep.
   now?: Date;
 }) {
-  type Filter = { tier: string[]; cutoff: string; agentActivityOr: string | null; holderOnly: boolean; excludesHolder: boolean };
+  type Filter = { tier: string[]; cutoff: string; agentActivityOr: string | null; excludesHolder: boolean };
   const filters: Filter[] = [];
   const updates: Array<{
     id: string;
@@ -174,7 +173,7 @@ function buildSweepStub(params: {
     if (table !== "hermes_instances") {
       throw new Error(`Unexpected table lookup: ${table}`);
     }
-    const filter: Filter = { tier: [], cutoff: "", agentActivityOr: null, holderOnly: false, excludesHolder: false };
+    const filter: Filter = { tier: [], cutoff: "", agentActivityOr: null, excludesHolder: false };
     const captured: {
       patch: Record<string, unknown>;
       or: string | null;
@@ -235,18 +234,13 @@ function buildSweepStub(params: {
       return query;
     });
     query.eq = jest.fn((col: string, value: string) => {
-      if (mode === "select-candidates" && col === "seat_funding" && value === "holder") filter.holderOnly = true;
       if (mode === "update" && col === "id") updateId = value;
       if (mode === "select-recheck" && col === "id") recheckId = value;
       return query;
     });
     query.limit = jest.fn(async () => {
       filters.push(filter);
-      const selected = filter.holderOnly
-        ? allRows.filter((row) => row.seat_funding === "holder")
-        : filter.excludesHolder
-          ? rows.filter((row) => row.seat_funding !== "holder")
-          : rows;
+      const selected = filter.excludesHolder ? rows.filter(row => row.seat_funding !== "holder") : rows;
       return { data: selected, error: null };
     });
     query.maybeSingle = jest.fn(async () => {
@@ -255,6 +249,7 @@ function buildSweepStub(params: {
       if (!row && !override) return { data: null, error: null };
       return {
         data: {
+          seat_funding: row?.seat_funding ?? null,
           lifecycle_state: override?.lifecycle_state ?? "active",
           last_activity_at:
             override?.last_activity_at ?? row?.last_activity_at ?? null,
@@ -279,8 +274,7 @@ function buildSweepStub(params: {
           or: captured.or,
           select: captured.select,
         });
-        const busy = updateId && captured.or?.includes("holder_idle_claimed_at.lt.") && params.busyHolderIds?.includes(updateId);
-        resolve({ data: updateId && !busy ? [{ id: updateId }] : [], error: null });
+        resolve({ data: updateId ? [{ id: updateId }] : [], error: null });
       } else {
         resolve({ data: null, error: null });
       }
@@ -479,57 +473,6 @@ describe("runInactivitySweep", () => {
     } finally {
       delete process.env.HERMES_INACTIVITY_PAID_DAYS;
     }
-  });
-
-  it("pauses a holder-funded paid-tier Hermes seat at the fixed 16-minute holder boundary even when the legacy tier sweep is not opted in", async () => {
-    delete process.env.HERMES_INACTIVITY_SWEEP_ENABLED;
-    const holderRow: CandidateRow = {
-      id: "inst_holder_idle",
-      user_id: "user_holder",
-      resource_tier: "operator",
-      proxmox_node: "fixturenode1",
-      proxmox_vmid: 216,
-      host_id: null,
-      config: { infrastructure: baseProxmoxInfra },
-      last_activity_at: "2026-05-10T11:43:59.000Z",
-      last_agent_probe_at: NOW_EARLY.toISOString(),
-      last_agent_activity_at: "2026-05-10T11:40:00.000Z",
-      seat_funding: "holder",
-    };
-    const paidRow: CandidateRow = {
-      ...holderRow,
-      id: "inst_paid_idle",
-      user_id: "user_paid",
-      proxmox_vmid: 217,
-      seat_funding: "paid",
-    };
-
-    const rows = [
-      holderRow, paidRow,
-      { ...holderRow, id: "recent-dashboard", last_activity_at: "2026-05-10T11:44:01.000Z" },
-      { ...holderRow, id: "recent-agent", last_agent_activity_at: "2026-05-10T11:44:01.000Z" },
-      { ...holderRow, id: "unobserved", last_agent_probe_at: "2026-05-10T11:00:00.000Z" },
-      { ...holderRow, id: "busy" },
-      { ...holderRow, id: "session-today" },
-      { ...holderRow, id: "legacy", seat_funding: null },
-    ];
-    const { filters } = buildSweepStub({
-      freeRows: [], paidRows: rows,
-      busyHolderIds: ["busy"],
-      agentUsage: { "session-today": "2026-05-10" },
-    });
-    const summary = await runInactivitySweep({ now: NOW_EARLY, holderOnly: true });
-
-    expect(filters).toHaveLength(1);
-    expect(filters[0].holderOnly).toBe(true);
-    expect(filters[0].cutoff).toBe("2026-05-10T11:44:00.000Z");
-
-    expect(summary).toMatchObject({ swept: 1, agentActive: 1, activityUnknown: 1, failed: 0 });
-    expect(shutdownProxmoxInstance).toHaveBeenCalledTimes(1);
-    expect(shutdownProxmoxInstance).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ expectedInstanceId: "inst_holder_idle" }),
-    );
   });
 
   it("pushes the agent-activity anchor into the candidate SELECT and the pause UPDATE", async () => {

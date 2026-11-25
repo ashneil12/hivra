@@ -1,4 +1,5 @@
 import type { EffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { isPaidTier } from "@/lib/services/tier-boost";
 import type { SeatFunding } from "@/lib/hivra/seat-funding";
 
 /**
@@ -14,4 +15,8 @@ export function decideProvisionSeatFunding(
 ): SeatFunding | null {
   if (!sub) return null;
   return sub.source === "token_holding" ? "holder" : "paid";
+}
+
+export function provisionSeatCanReceiveBoost(sub: Pick<EffectiveSubscription, "source" | "plan">): boolean {
+  return decideProvisionSeatFunding(sub) === "paid" && isPaidTier(sub.plan);
 }

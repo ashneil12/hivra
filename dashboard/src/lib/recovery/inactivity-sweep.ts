@@ -12,7 +12,8 @@ import {
 } from "@/lib/services/proxmox-instance-service";
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { reportOpsEvent } from "@/lib/ops-events";
-import { HOLDER_SEAT_HIBERNATE_TOTAL_SECONDS, NOT_HOLDER_SEAT_FILTER } from "@/lib/hivra/seat-funding";
+
+import { NOT_HOLDER_SEAT_FILTER } from "@/lib/hivra/seat-funding";
 
 const LOG_SOURCE = "inactivity-sweep";
 
@@ -21,11 +22,6 @@ const PAID_TIER_VALUES = ["operator", "fleet", "command"] as const;
 
 const FREE_TIER_IDLE_DAYS_DEFAULT = 4;
 const SWEEP_BATCH_LIMIT = 50;
-// Only the minute immediately after a successful guest read is eligible.
-// The hourly harvester can delay a legacy holder pause until its next sample.
-const HOLDER_PROBE_MAX_AGE_MS = 60_000;
-// Outlive the holder cron's 300-second execution ceiling.
-const HOLDER_PAUSE_LEASE_MS = 6 * 60_000;
 // Page size of the instance_usage_snapshots read (PostgREST's per-request cap).
 const AGENT_USAGE_PAGE_SIZE = 1000;
 const AGENT_USAGE_MAX_PAGES = 20;
@@ -52,16 +48,16 @@ type SweepCandidate = {
   last_agent_activity_at: string | null;
   // When that state.db was last read successfully. NULL/stale => activity unknown.
   last_agent_probe_at: string | null;
-  seat_funding: string | null;
 };
 
 // One DB scan per distinct idle window. Grouping by cutoff (rather than one wide
 // scan) keeps SWEEP_BATCH_LIMIT meaningful per tier — an opted-in paid window and
 // the 4-day free window cannot starve each other's batch.
-type TierGroup = { idleDays: number; cutoffIso: string } & (
-  | { tiers: readonly string[] }
-  | { holderProbeSince: string }
-);
+type TierGroup = {
+  tiers: readonly string[];
+  idleDays: number;
+  cutoffIso: string;
+};
 
 export type InactivitySweepSummary = {
   scanned: number;
@@ -323,7 +319,8 @@ async function fetchChannelConnectedInstanceIds(
 }
 
 async function fetchSweepCandidates(
-  group: TierGroup
+  tiers: readonly string[],
+  cutoffIso: string
 ): Promise<SweepCandidate[]> {
   const supabase = supabaseAdmin;
   if (!supabase) throw new Error("Database not configured");
@@ -347,29 +344,17 @@ async function fetchSweepCandidates(
   // "unknown") so the in-memory fail-safe — not this query — decides what to do
   // with an unprobed instance, and so its skip is COUNTED and logged instead of
   // silently vanishing from `scanned`.
-  let query = supabase
+  const { data, error } = await supabase
     .from("hermes_instances")
     .select(
-      "id, user_id, resource_tier, proxmox_node, proxmox_vmid, host_id, config, last_activity_at, created_at, last_lifecycle_transition_at, last_agent_activity_at, last_agent_probe_at, seat_funding"
+      "id, user_id, resource_tier, proxmox_node, proxmox_vmid, host_id, config, last_activity_at, created_at, last_lifecycle_transition_at, last_agent_activity_at, last_agent_probe_at"
     )
     .eq("lifecycle_state", "active")
-    .lt("last_activity_at", group.cutoffIso);
-
-  if ("holderProbeSince" in group) {
-    query = query.eq("seat_funding", "holder")
-      .gte("last_agent_probe_at", group.holderProbeSince);
-  } else {
-    query = query
-      .in("resource_tier", Array.from(group.tiers))
-      // A holder-funded seat is never governed by the tier's paid/free idle
-      // terms. Excluding it here keeps a paid-tier holder row out of the
-      // paid exemption and prevents double-selection by the holder sweep.
-      .or(NOT_HOLDER_SEAT_FILTER);
-  }
-
-  const { data, error } = await query
+    .in("resource_tier", Array.from(tiers))
+    .or(NOT_HOLDER_SEAT_FILTER)
+    .lt("last_activity_at", cutoffIso)
     .or(
-      `last_agent_activity_at.is.null,last_agent_activity_at.lt.${group.cutoffIso}`
+      `last_agent_activity_at.is.null,last_agent_activity_at.lt.${cutoffIso}`
     )
     .limit(SWEEP_BATCH_LIMIT);
 
@@ -399,7 +384,7 @@ async function pauseInstance(
   const { data: current, error: recheckError } = await supabase
     .from("hermes_instances")
     .select(
-      "lifecycle_state, last_activity_at, last_agent_activity_at, last_agent_probe_at"
+      "lifecycle_state, last_activity_at, last_agent_activity_at, last_agent_probe_at, seat_funding"
     )
     .eq("id", candidate.id)
     .maybeSingle();
@@ -411,6 +396,7 @@ async function pauseInstance(
   if (
     !current ||
     current.lifecycle_state !== "active" ||
+    current.seat_funding === "holder" ||
     (current.last_activity_at &&
       new Date(current.last_activity_at).getTime() >= cutoffMs) ||
     // A Telegram/Discord message landing mid-batch is a resume too. The harvester
@@ -450,28 +436,6 @@ async function pauseInstance(
     // already have their own lifecycle handling and don't participate
     // in pve packing. Skip rather than ssh-shutdown a customer box.
     return "not_proxmox_backed";
-  }
-
-  if (candidate.seat_funding === "holder") {
-    // Minute ticks can overlap a slow shutdown. Claim only the observed idle
-    // row, once, before touching the VM. A crashed worker's lease expires.
-    const probedAt = parseTime(current.last_agent_probe_at);
-    if (probedAt === null || probedAt > probe.nowMs) return "activity_unknown";
-    const observedCutoff = new Date(probedAt - HOLDER_SEAT_HIBERNATE_TOTAL_SECONDS * 1000).toISOString();
-    if (!isConfirmedDormant(candidate, observedCutoff)) return "raced";
-    const expired = new Date(probe.nowMs - HOLDER_PAUSE_LEASE_MS).toISOString();
-    const { data: claimed, error } = await supabase.from("hermes_instances")
-      .update({ holder_idle_claimed_at: new Date(probe.nowMs).toISOString() })
-      .eq("id", candidate.id)
-      .eq("lifecycle_state", "active")
-      .eq("seat_funding", "holder")
-      .eq("last_agent_probe_at", current.last_agent_probe_at)
-      .lt("last_activity_at", observedCutoff)
-      .or(`last_agent_activity_at.is.null,last_agent_activity_at.lt.${observedCutoff}`)
-      .or(`holder_idle_claimed_at.is.null,holder_idle_claimed_at.lt.${expired}`)
-      .select("id, last_agent_activity_at, holder_idle_claimed_at");
-    if (error) throw new Error(`Failed to claim holder idle pause: ${error.message}`);
-    if (!claimed?.length) return "raced";
   }
 
   const result = await shutdownProxmoxInstance(infra, {
@@ -590,7 +554,7 @@ async function pauseInstance(
 }
 
 export async function runInactivitySweep(
-  options: { now?: Date; timeBudgetMs?: number; clock?: () => number; holderOnly?: boolean } = {}
+  options: { now?: Date; timeBudgetMs?: number; clock?: () => number } = {}
 ): Promise<InactivitySweepSummary> {
   const now = options.now ?? new Date();
   // Wall-clock budget for the pause loop. Each pause SSHes the pve host
@@ -612,11 +576,7 @@ export async function runInactivitySweep(
   );
   const paidIdleDays = readPaidIdleDays();
 
-  // The legacy days-based tier sweep stays behind its production opt-in.
-  // Holder enforcement does not: the fixed idle terms are part of the seat's
-  // funding contract, so a missing rollout flag must not turn an admitted
-  // holder seat into an always-on paid-tier seat.
-  if (!options.holderOnly && !isSweepEnabled()) {
+  if (!isSweepEnabled()) {
     log.warn("inactivity sweep is disabled", {
       source: LOG_SOURCE,
       reason: "explicit_opt_in_required",
@@ -641,46 +601,32 @@ export async function runInactivitySweep(
   const supabase = supabaseAdmin;
   if (!supabase) throw new Error("Database not configured");
 
-  const probeMaxAgeMs = options.holderOnly ? HOLDER_PROBE_MAX_AGE_MS : readProbeMaxAgeMs();
+  const probeMaxAgeMs = readProbeMaxAgeMs();
   const nowMs = now.getTime();
   const cutoffFor = (idleDays: number): string =>
     new Date(nowMs - idleDays * 24 * 60 * 60 * 1000).toISOString();
 
   // One group per distinct idle window. credit_base keeps 4 days; paid tiers stay
-  // exempt unless HERMES_INACTIVITY_PAID_DAYS opts them in. Holder-funded seats
-  // are deliberately outside both tier groups: their funding terms are fixed per
-  // seat, so a holder row in an otherwise paid tier must not inherit the paid
-  // always-on exemption. The dedicated holder sweep uses the final holder sleep
-  // boundary (16 minutes idle). Hermes has no nap/hibernate intermediate state;
-  // a graceful power-off is the lane's capacity-freeing sleep action.
-  const holderIdleDays = HOLDER_SEAT_HIBERNATE_TOTAL_SECONDS / (24 * 60 * 60);
-  const tierGroups: TierGroup[] = options.holderOnly
-    ? [
-        {
-          idleDays: holderIdleDays,
-          cutoffIso: cutoffFor(holderIdleDays),
-          holderProbeSince: new Date(nowMs - probeMaxAgeMs).toISOString(),
-        },
-      ]
-    : [
-        {
-          tiers: FREE_TIER_VALUES,
-          idleDays: freeIdleDays,
-          cutoffIso: cutoffFor(freeIdleDays),
-        },
-        ...(paidIdleDays === null
-          ? []
-          : [
-              {
-                tiers: PAID_TIER_VALUES,
-                idleDays: paidIdleDays,
-                cutoffIso: cutoffFor(paidIdleDays),
-              },
-            ]),
-      ];
+  // exempt unless HERMES_INACTIVITY_PAID_DAYS opts them in.
+  const tierGroups: TierGroup[] = [
+    {
+      tiers: FREE_TIER_VALUES,
+      idleDays: freeIdleDays,
+      cutoffIso: cutoffFor(freeIdleDays),
+    },
+    ...(paidIdleDays === null
+      ? []
+      : [
+          {
+            tiers: PAID_TIER_VALUES,
+            idleDays: paidIdleDays,
+            cutoffIso: cutoffFor(paidIdleDays),
+          },
+        ]),
+  ];
 
   const groupCandidates = await Promise.all(
-    tierGroups.map((group) => fetchSweepCandidates(group))
+    tierGroups.map((group) => fetchSweepCandidates(group.tiers, group.cutoffIso))
   );
 
   // idleDays rides along purely so the logs say which window a box was judged
@@ -876,7 +822,7 @@ export async function runInactivitySweep(
 
     try {
       const outcome = await pauseInstance(candidate, cutoffIso, {
-        nowMs: options.now?.getTime() ?? Date.now(),
+        nowMs,
         maxAgeMs: probeMaxAgeMs,
       });
       if (outcome === "paused") {

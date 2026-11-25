@@ -77,6 +77,10 @@ export const STALE_SLEEP_LEASE_MS = 6 * 60_000;
 export const AUTONOMOUS_KINDS: readonly string[] = ["aeon"];
 /** Kinds with a live display: a paused guest would freeze it, so hibernate only. */
 export const DESKTOP_KINDS: readonly string[] = ["linux-desktop"];
+export function supportsIdleNap(kind: string): boolean {
+  return !AUTONOMOUS_KINDS.includes(kind) && !DESKTOP_KINDS.includes(kind);
+}
+
 /** Channels held open by a live socket, which a sleeping guest would drop. */
 export const SOCKET_CHANNELS: readonly string[] = ["discord", "whatsapp", "slack"];
 

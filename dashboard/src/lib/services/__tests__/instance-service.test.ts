@@ -3829,10 +3829,12 @@ describe("InstanceService.createInstance free-tier guard", () => {
   });
 
   it.each([
-    ["holder", "holder", "fixturenode2"],
-    ["holder", "paid", "fixturenode1"],
-    ["other", "holder", "fixturenode1"],
-  ] as const)("routes %s's %s seat to %s when only reserved capacity remains", async (userId, seatFunding, expectedHost) => {
+    ["holder", "holder", null, "on", "fixturenode2"],
+    ["holder", "paid", null, "on", "fixturenode1"],
+    ["holder", "paid", "fixturenode2", "on", false],
+    ["holder", "holder", "fixturenode2", "off", false],
+    ["other", "holder", null, "canary", "fixturenode1"],
+  ] as const)("checks %s / %s with pin %s and sleep mode %s when only reserved capacity remains", async (userId, seatFunding, forceTargetId, sleepMode, expectedHost) => {
     delete process.env.HERMES_PROXMOX_TARGETS;
     delete process.env.HERMES_PROXMOX_TARGET;
     process.env.HERMES_PROXMOX_MAX_TENANT_INSTANCES = "0";
@@ -3840,6 +3842,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
     const host = (id: string) => ({
       id,
       status: "active",
+      sleep_mode: sleepMode,
       env_prefix: null,
       total_cpu: 12,
       total_ram_mb: id === "fixturenode2" ? 16384 : 65536,
@@ -3847,7 +3850,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
       reserved_ram_mb: 4096,
       wake_headroom_ram_mb: 8192,
       max_tenant_instances: null,
-      thinpool_size_gb: null,
+      thinpool_size_gb: 80,
       thinpool_overcommit_ratio: null,
     });
     const proxmoxHostsQuery = {
@@ -3865,7 +3868,14 @@ describe("InstanceService.createInstance free-tier guard", () => {
     const admissionsQuery = holderAdmissionsRowsQuery([
       { user_id: "holder", assigned_host_id: "fixturenode2", reserved_cpu: 2, reserved_ram_mb: 4096 },
     ], userId === "holder" ? { assigned_host_id: "fixturenode2" } : null);
+    const diskAvailability = jest.fn(async (_name: string, args: { p_ignore_user_id: string | null }) => ({
+      data: [
+        { host_id: "fixturenode1", free_disk_gb: 80 },
+        { host_id: "fixturenode2", free_disk_gb: args.p_ignore_user_id === "holder" ? 40 : 0 },
+      ], error: null,
+    }));
     const fakeSupabase = {
+      rpc: diskAvailability,
       from: jest.fn((tableName: string) => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
         if (tableName === "hermes_instances") return legacyAllocationQuery;
@@ -3884,8 +3894,13 @@ describe("InstanceService.createInstance free-tier guard", () => {
       neededRamMb: 4096,
       neededDiskGb: 30,
       seatFunding,
+      forceTargetId,
+      rankManagedTarget: true,
     });
 
+    expect(diskAvailability).toHaveBeenCalledWith("holder_admission_host_availability", expect.objectContaining({
+      p_ignore_user_id: seatFunding === "holder" ? userId : null,
+    }));
     expect(selection.ok && selection.targetId).toBe(expectedHost);
   });
 

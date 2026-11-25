@@ -40,6 +40,7 @@ import { FREE_PLAN_CLOSED_CODE, FREE_PLAN_CLOSED_MESSAGE, accountNeedsPlanForFre
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { decideProvisionSeatFunding } from "@/lib/billing/provision-seat-funding";
+import { parseSleepMode, supportsIdleNap } from "@/lib/hivra/agent-sleep-policy";
 import type { SeatFunding } from "@/lib/hivra/seat-funding";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
@@ -1377,6 +1378,16 @@ export async function launchHivraAgentForUser(
         return apiError("Active subscription required. Choose a plan to start deploying agents.", 403);
       }
 
+      if (seatFunding === "holder") {
+        if (!supportsIdleNap(type)) {
+          return apiError("This runtime cannot nap and save its memory on holder terms. Choose a sleep-capable computer.", 409);
+        }
+        const mode = parseSleepMode(process.env.HIVRA_SLEEP_MODE);
+        if ((mode !== "on" && mode !== "canary") || !isTunnelConfigured()) {
+          return apiError("Holder launches need automatic sleep and a configured wake connection.", 503);
+        }
+      }
+
       explicitClaudeHost = LAUNCHABLE_BOX_TYPES.has(type) ? resolveHivraClaudeCodeProxmoxHost(process.env) : null;
       // Holder launches enter registry ranking so they can spend their admission reservation.
       if (!explicitClaudeHost && seatFunding !== "holder") {
@@ -1393,6 +1404,7 @@ export async function launchHivraAgentForUser(
         neededRamMb: ram * 1024,
         neededDiskGb: HIVRA_AGENT_VM_DISK_GB,
         forceTargetId,
+        rankManagedTarget: true,
         seatFunding,
         ...(excludeTargetIds ? { excludeTargetIds } : {}),
         skipTemplateAvailabilityCheck: true,
@@ -1863,7 +1875,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       let t;
       try {
         t = await provisionHivraAgentTunnel({ userId, agentId: String(agent.id), operationId: provisionOperationId });
-        if (launchAdmission && !t) throw new Error("Named model-settings access was not confirmed");
+        if ((launchAdmission || seatFunding === "holder") && !t?.hostname) throw new Error("Named computer access was not confirmed");
       } catch (tunnelError) {
         let cleanupVerified = tunnelError instanceof BoxTunnelProvisionError && tunnelError.cleanupVerified;
         let message = cleanupVerified

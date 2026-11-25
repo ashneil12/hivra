@@ -49,6 +49,7 @@ export const PENDING_RESIZE_SELECT = [
   "name",
   "status",
   "lifecycle_state",
+  "seat_funding",
   "archive_uri",
   "archive_sha256",
   "backend",
@@ -69,6 +70,7 @@ export const PENDING_RESIZE_SELECT = [
 ].join(", ");
 
 export type PendingResizeRow = InstanceRowForOrchestration & {
+  seat_funding?: string | null;
   name?: string | null;
   backend?: string | null;
 };
@@ -128,7 +130,7 @@ async function redeployOne(
 ): Promise<PendingResizeResult> {
   if (!supabaseAdmin) return { id: row.id, redeployed: false, error: "db_unavailable" };
 
-  if (blocksInstanceLiveMutation(row)) {
+  if (blocksInstanceLiveMutation(row) || (row.seat_funding === "holder" && (row.status !== "running" || row.lifecycle_state !== "active"))) {
     return { id: row.id, redeployed: false, skipped: true, error: "lifecycle_operation_pending" };
   }
 
@@ -176,10 +178,14 @@ async function redeployOne(
 
   // Container now carries the new caps — clear the flag. Best-effort: if the
   // clear fails the next sweep simply redeploys again (idempotent).
-  const { error: clearErr } = await supabaseAdmin
+  let clear = supabaseAdmin
     .from("hermes_instances")
     .update({ tier_change_pending: false })
     .eq("id", row.id);
+  // A new tier change while the guest was being updated owns its pending flag.
+  clear = row.cpu_limit == null ? clear.is("cpu_limit", null) : clear.eq("cpu_limit", row.cpu_limit);
+  clear = row.ram_limit == null ? clear.is("ram_limit", null) : clear.eq("ram_limit", row.ram_limit);
+  const { error: clearErr } = await clear;
   if (clearErr) {
     log.warn("pending resize flag clear failed", {
       source: LOG_SOURCE,

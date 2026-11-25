@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { resolveEffectiveTierSpec } from "@/lib/services/tier-specs";
 import { resizeProxmoxVm } from "@/lib/services/proxmox-instance-service";
+import { isVeniceBoostEligible } from "@/lib/billing/venice-compute-boost";
 import { PATCH } from "../route";
 
 jest.mock("@clerk/nextjs/server", () => ({
@@ -63,6 +64,8 @@ function mockInstanceAndUpdate(updateResult: { error: { message: string } | null
     error: null,
   }));
 
+  selectChain.maybeSingle = selectChain.single;
+
   (supabaseAdmin!.from as jest.Mock).mockImplementation(() => ({
     select: selectChain.select,
     update: updateSpy,
@@ -92,6 +95,16 @@ describe("PATCH /api/instances/[id]/resize", () => {
     expect(updateChain.eq).toHaveBeenCalledWith("user_id", "user_1");
   });
 
+  it("retains the qualified boost when repairing a paid seat", async () => {
+    mockInstanceAndUpdate({ error: null }, { seat_funding: "paid" });
+    (isVeniceBoostEligible as jest.Mock).mockResolvedValueOnce(true);
+    const response = await PATCH(new NextRequest("http://localhost/api/instances/inst-1/resize"), {
+      params: Promise.resolve({ id: "inst-1" }),
+    });
+    expect(response.status).toBe(200);
+    expect(resizeProxmoxVm).toHaveBeenCalledWith(expect.objectContaining({ cpuLimit: 3, memoryMb: 6144 }), expect.anything());
+  });
+
   it.each([true, false])("rechecks the saved holder allocation before a manual VM repair (admitted=%s)", async (valid) => {
     const { updateSpy } = mockInstanceAndUpdate({ error: null }, {
       seat_funding: "holder", resource_tier: "command", cpu_limit: 1, ram_limit: 2048,
@@ -102,6 +115,7 @@ describe("PATCH /api/instances/[id]/resize", () => {
       params: Promise.resolve({ id: "inst-1" }),
     });
     expect(response.status).toBe(valid ? 200 : 409);
+    expect(isVeniceBoostEligible).not.toHaveBeenCalled();
     if (valid) expect(resizeProxmoxVm).toHaveBeenCalledWith(
       expect.objectContaining({ cpuLimit: 1, memoryMb: 2048 }), expect.anything(),
     );

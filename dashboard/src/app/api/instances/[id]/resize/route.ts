@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
+import { readInstanceLiveMutationBlock } from "@/lib/services/instance-live-mutation";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 import { resolveEffectiveTierSpec, type TierKey } from "@/lib/services/tier-specs";
 import {
@@ -89,6 +90,10 @@ export async function PATCH(
       501
     );
   }
+
+  const blocked = await readInstanceLiveMutationBlock(supabaseAdmin, id, instance,
+    holder ? { cpu: spec.cpuLimit, ramMb: spec.ramLimitMb } : undefined);
+  if (blocked) return apiError(blocked, 409);
 
   const result = await resizeProxmoxVm({
     vmid: infrastructure.vmid,

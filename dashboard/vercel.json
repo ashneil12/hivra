@@ -165,10 +165,6 @@
       "schedule": "15 * * * *"
     },
     {
-      "path": "/api/cron/holder-inactivity-sweep",
-      "schedule": "* * * * *"
-    },
-    {
       "path": "/api/cron/capacity-pressure-sweep",
       "schedule": "25 * * * *"
     },

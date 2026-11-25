@@ -200,18 +200,6 @@ export async function applyTierChange(
     return outcome;
   }
 
-  // 2. Resolve each row's target size, then write.
-  //
-  //    The entitlement label (resource_tier) is uniform and goes to every row
-  //    in one atomic write, so the user is never left half-tiered. Sizes are
-  //    per-row, so they're written grouped by identical target — when every
-  //    row lands on the same size (the common case: a single instance) that
-  //    collapses back into the one base write it has always been.
-  //
-  //    Every write here throws on failure so the Stripe webhook retries; the
-  //    tier write is load-bearing for billing/delivery correctness. Retry is
-  //    safe because resolveTargetSize is idempotent — clamping only ever moves
-  //    a row toward its target, never past it.
   let singleAllocation = rows.length === 1;
   if (params.holderSeats && singleAllocation
     && ((rows[0].cpu_limit ?? 0) < spec.cpuLimit || (rows[0].ram_limit ?? 0) < spec.ramLimitMb)) {
@@ -230,50 +218,27 @@ export async function applyTierChange(
     rows.map((r) => [r.id, resolveTargetSize(r, spec, singleAllocation)])
   );
 
-  const sizeGroups = new Map<string, { size: TargetSize; rowIds: string[] }>();
-  for (const row of rows) {
+  // Commit the whole cohort and its pending container resizes together. An
+  // allocation changed by a concurrent worker invalidates the entire batch.
+  const changes = rows.map(row => {
     const target = targets.get(row.id)!;
-    const key = `${target.cpu}:${target.ramMb}`;
-    const group = sizeGroups.get(key);
-    if (group) group.rowIds.push(row.id);
-    else sizeGroups.set(key, { size: target, rowIds: [row.id] });
-  }
-
-  const updatedAt = new Date().toISOString();
-  const uniformSize =
-    sizeGroups.size === 1 ? [...sizeGroups.values()][0].size : null;
-
-  const baseUpdate = {
-    resource_tier: params.newTier,
-    ...(uniformSize
-      ? { cpu_limit: uniformSize.cpu, ram_limit: uniformSize.ramMb }
-      : {}),
-    updated_at: updatedAt,
-  };
-
-  const { error: updateErr } = await supabaseAdmin
-    .from("hermes_instances")
-    .update(baseUpdate)
-    .eq("user_id", params.userId)
-    .in("id", rows.map((r) => r.id));
-
-  if (updateErr) {
-    throw new Error(`Failed to write new tier: ${updateErr.message}`);
-  }
-
-  // Mixed sizes: one follow-up write per distinct target. Skipped entirely
-  // when the base write already carried a uniform size.
-  if (!uniformSize) {
-    for (const { size, rowIds } of sizeGroups.values()) {
-      const { error: sizeErr } = await supabaseAdmin
-        .from("hermes_instances")
-        .update({ cpu_limit: size.cpu, ram_limit: size.ramMb, updated_at: updatedAt })
-        .eq("user_id", params.userId)
-        .in("id", rowIds);
-      if (sizeErr) {
-        throw new Error(`Failed to write instance sizes: ${sizeErr.message}`);
-      }
-    }
+    return {
+      id: row.id,
+      previous_tier: row.resource_tier ?? null,
+      previous_cpu: row.cpu_limit,
+      previous_ram: row.ram_limit,
+      cpu_limit: target.cpu,
+      ram_limit: target.ramMb,
+    };
+  });
+  const { data: written, error } = await supabaseAdmin.rpc("apply_hermes_tier_allocations", {
+    p_owner: params.userId,
+    p_holder: Boolean(params.holderSeats),
+    p_tier: params.newTier,
+    p_changes: changes,
+  });
+  if (error || written !== rows.length) {
+    throw new Error(`Failed to write new tier: ${error?.message ?? "allocation changed"}`);
   }
   outcome.instancesUpdated = rows.length;
 
@@ -297,19 +262,6 @@ export async function applyTierChange(
     });
   }
 
-  // 2b. Raise tier_change_pending on every instance whose per-container caps
-  //     ACTUALLY changed — BOTH backends. The CPU/RAM limits are baked into
-  //     the container's compose (`deploy.resources.limits`), so even a Proxmox
-  //     VM (whose VM-level ceiling is raised live by the qm-set in step 3)
-  //     still needs a volume-safe container redeploy to pick up the new cgroup
-  //     limits — otherwise the extra compute (e.g. the Venice boost) never
-  //     reaches the agent. The instant unlock flow and the apply-pending-resizes
-  //     cron consume this flag (run applyLiveUpdate, then clear it).
-  //
-  //     Only flag rows whose caps differ from what they already had, so a
-  //     steady-state re-apply (same tier, same boost) doesn't trigger a
-  //     needless container restart. NON-FATAL: a failed flag just means the
-  //     redeploy waits for the next fleet sync.
   // A cold-storage transition may have happened while the tier writes ran.
   // Never resize a missing guest or one owned by another lifecycle operation.
   const liveRowIds = new Set<string>();
@@ -329,25 +281,6 @@ export async function applyTierChange(
     })
     .map((r) => r.id);
 
-  if (capsChangedRowIds.length > 0) {
-    // Cold archives contain the previous compose/container caps. Keep this
-    // obligation even while archived: the lifecycle-aware worker skips it
-    // until restoration, then recreates the container with the paid caps.
-    const { error: flagErr } = await supabaseAdmin
-      .from("hermes_instances")
-      .update({ tier_change_pending: true })
-      .eq("user_id", params.userId)
-      .in("id", capsChangedRowIds);
-    if (flagErr) {
-      log.error("failed to raise tier_change_pending", flagErr, {
-        source: LOG_SOURCE,
-        failureType: "tier_change_pending_flag_failed",
-        userId: params.userId,
-        affectedInstanceCount: capsChangedRowIds.length,
-      });
-    }
-  }
-
   // 3. For Proxmox-backed instances, kick a live VM resize. Hetzner
   //    instances would need a docker-compose recreate (drops in-flight chats);
   //    MVP defers that path — they pick up new caps on next provision.
@@ -356,8 +289,8 @@ export async function applyTierChange(
     const provider = row.config?.infrastructure?.provider;
     const vmid = row.config?.infrastructure?.vmid;
     if (provider === "proxmox" && typeof vmid === "number") {
-      if (await readInstanceLiveMutationBlock(supabaseAdmin, row.id, row)) continue;
       const target = targets.get(row.id)!;
+      if (await readInstanceLiveMutationBlock(supabaseAdmin, row.id, row, params.holderSeats ? target : undefined)) continue;
       outcome.resizesAttempted += 1;
       try {
         const result = await resizeProxmoxVm({
