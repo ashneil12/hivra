@@ -52,6 +52,13 @@ describe("universal catalog manifests", () => {
     }
   });
 
+  it("keeps the STATUS.md catalog count in sync with the registry", () => {
+    const status = readFileSync(resolve(__dirname, "../../../../../docs/STATUS.md"), "utf8");
+    const match = /catalog now holds (\d+) entries/.exec(status);
+    expect(match).not.toBeNull();
+    expect(Number(match![1])).toBe(UNIVERSAL_CATALOG_MANIFESTS.length);
+  });
+
   it("covers all four Wave 1 categories with OSI-approved open-source licenses only", () => {
     const categories = new Set(UNIVERSAL_CATALOG_MANIFESTS.map((m) => m.category));
     expect(categories).toEqual(new Set(["agent", "app"]));

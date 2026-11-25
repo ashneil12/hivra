@@ -17,6 +17,13 @@ trap 'rm -rf "$LOCK"' EXIT
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 git -C "$REPO" fetch -q origin canary
+# Close only curation PRs whose apps are already on Canary or duplicated by a
+# newer open pass. Ledger-only or unique-app PRs are reported but kept. Never
+# let reconciliation block curation itself.
+reconcile_log="$STATE/reconcile-$(date -u +%Y%m%dT%H%M%SZ).log"
+if ! node "$REPO/dashboard/scripts/catalog-curator/reconcile-stale-prs.mjs" >"$reconcile_log" 2>&1; then
+  echo "stale curation PR reconciliation failed; see $reconcile_log" >&2
+fi
 branch="curation/$(date -u +%Y%m%d-%H%M)"
 if [ -d "$WORKTREE/.git" ] || [ -f "$WORKTREE/.git" ]; then
   git -C "$WORKTREE" reset -q --hard && git -C "$WORKTREE" clean -qfd
@@ -35,10 +42,28 @@ agent="${CURATOR_AGENT:-}"
 if [ -z "$agent" ]; then
   if ! devin auth status 2>&1 | grep -q "Not logged in"; then agent=devin; else agent=codex; fi
 fi
+run_devin() {
+  devin -p "$prompt" ${CURATOR_MODEL:+--model "$CURATOR_MODEL"} \
+    --permission-mode dangerous --respect-workspace-trust false >"$log" 2>&1
+}
+run_codex() {
+  codex exec ${CURATOR_MODEL:+-m "$CURATOR_MODEL"} --skip-git-repo-check \
+    --dangerously-bypass-approvals-and-sandbox -C "$WORKTREE" "$prompt" >>"$log" 2>&1
+}
+status=0
 case "$agent" in
-  devin) devin -p "$prompt" ${CURATOR_MODEL:+--model "$CURATOR_MODEL"} \
-           --permission-mode dangerous --respect-workspace-trust false >"$log" 2>&1 ;;
-  codex) codex exec ${CURATOR_MODEL:+-m "$CURATOR_MODEL"} --skip-git-repo-check \
-           --dangerously-bypass-approvals-and-sandbox -C "$WORKTREE" "$prompt" >"$log" 2>&1 ;;
+  devin) run_devin || status=$? ;;
+  codex) run_codex || status=$? ;;
   *) echo "unknown CURATOR_AGENT=$agent" >"$log"; exit 1 ;;
-esac || echo "pass exited $? (agent=$agent)" >>"$log"
+esac
+if [ "$status" -ne 0 ] && [ "$agent" = devin ] && command -v codex >/dev/null 2>&1 \
+  && grep -Eiq 'quota|usage limit|weekly limit|out of credits' "$log"; then
+  if [ -z "$(git -C "$WORKTREE" status --porcelain)" ]; then
+    echo "devin quota/limit failure (exit $status); retrying this same pass with codex" >>"$log"
+    status=0
+    run_codex || status=$?
+  else
+    echo "devin quota/limit failure (exit $status) after the worktree changed; not falling back over a partial pass" >>"$log"
+  fi
+fi
+[ "$status" -eq 0 ] || echo "pass exited $status (agent=$agent)" >>"$log"
