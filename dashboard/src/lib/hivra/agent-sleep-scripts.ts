@@ -1521,7 +1521,9 @@ ${coldStart ? `    EXPECT=hibernated
       EXPECT=cold
     fi
 ` : ""}    capacity_inputs || finish false capacity_inputs ${expect}
-    install -d -m 0755 /run/lock
+${coldStart ? `    # A disk boot needs startup memory before the balloon can reclaim it.
+    if [ "$EXPECT" = cold ]; then TARGET_FLOOR_MB="$TARGET_MAX_MB"; fi
+` : ""}    install -d -m 0755 /run/lock
     exec 8>/run/lock/hivra-allocation.lock
     flock -w 60 8 || finish false lock_timeout ${expect}
     # The state may have changed while this waited for the lock.
