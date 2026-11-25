@@ -31,18 +31,8 @@ const modules = new Map();
 const conflicts = new Set();
 
 // Extensions probed by an extensionless request in TypeScript, Next or Jest.
-const MODULE_EXTENSIONS = [
-  '.d.ts',
-  '.tsx',
-  '.ts',
-  '.mjs',
-  '.cjs',
-  '.jsx',
-  '.js',
-  '.json',
-  '.wasm',
-];
 const JEST_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.node']);
+const MODULE_EXTENSIONS = ['.d.ts', ...JEST_EXTENSIONS, '.wasm'];
 const PACKAGE_ENTRY_FIELDS = ['types', 'typings', 'main', 'module', 'browser', 'edge-light'];
 
 function check(spelling, seen) {

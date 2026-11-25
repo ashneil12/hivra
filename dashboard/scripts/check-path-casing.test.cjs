@@ -63,7 +63,7 @@ test('accepts distinct modules and matching-case declaration companions', t => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-for (const companion of ['.ts', '.d.ts', '.TS', '.D.TS', '.json', '.wasm']) {
+for (const companion of ['.ts', '.d.ts', '.TS', '.D.TS', '.json', '.wasm', '.node']) {
   test(`rejects a differently cased module with extension ${companion}`, t => {
     const result = runGuard(t, ['PromptOutline.tsx', `promptOutline${companion}`]);
     assertConflict(result, ['PromptOutline', 'promptOutline']);
@@ -122,7 +122,7 @@ for (const indexFile of ['index.tsx', 'Index.tsx']) {
   });
 }
 
-for (const indexFile of ['index.ts', 'index.d.ts', 'Index.tsx']) {
+for (const indexFile of ['index.ts', 'index.d.ts', 'Index.tsx', 'index.node']) {
   test(`rejects a nested file and differently cased directory index ${indexFile}`, t => {
     const result = runGuard(t, ['src/nested/foo.ts', `src/nested/Foo/${indexFile}`]);
     assertConflict(result, ['src/nested/foo', 'src/nested/Foo']);
