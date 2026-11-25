@@ -192,6 +192,21 @@ describe("universal catalog manifests", () => {
     expect(zeroclaw.runtime.setup?.commands.join("\n")).toContain("$OPENAI_API_KEY");
   });
 
+  it("pins PicoClaw's launcher to the gateway port without opening a guest browser", () => {
+    const picoclaw = getCatalogAppManifest("picoclaw");
+    expect(picoclaw?.runtime.kind).toBe("cli-web");
+    if (picoclaw?.runtime.kind !== "cli-web" || !picoclaw.runtime.webService) return;
+    expect(picoclaw.runtime.webService.binName).toBe("picoclaw-launcher");
+    expect(picoclaw.runtime.webService.args).toEqual([
+      "-no-browser",
+      "-host",
+      "127.0.0.1",
+      "-port",
+      "3202",
+    ]);
+    expect(picoclaw.runtime.webService.hostPort).toBe(3202);
+  });
+
   it("pins Sun-Panel to its last open-source release and mounts all three persistence paths", () => {
     // Upstream (hslr-s/sun-panel) went closed-source after v1.3.0 — its own
     // README states v1.3.0 is the latest open-source release — so floating

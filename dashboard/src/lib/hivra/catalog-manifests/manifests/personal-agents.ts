@@ -178,7 +178,7 @@ export const PERSONAL_AGENT_MANIFESTS: readonly CatalogAppManifest[] = [
       },
       webService: {
         binName: "picoclaw-launcher",
-        args: ["--host", "127.0.0.1", "--port", "3202"],
+        args: ["-no-browser", "-host", "127.0.0.1", "-port", "3202"],
         hostPort: 3202,
         healthPath: "/",
         proxyMode: "standard",
