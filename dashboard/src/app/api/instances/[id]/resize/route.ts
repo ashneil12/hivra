@@ -17,6 +17,7 @@ import {
 import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
 import { priorityForResourceTier } from "@/lib/subscription/agent-slots";
 import { isVeniceBoostEligible } from "@/lib/billing/venice-compute-boost";
+import { proxmoxPlacementRpcPolicy } from "@/lib/proxmox/placement-policy";
 
 /**
  * PATCH /api/instances/[id]/resize
@@ -119,6 +120,7 @@ export async function PATCH(
         p_cpu: spec.cpuLimit,
         p_ram_mb: spec.ramLimitMb,
         p_operation_id: resizeOperationId,
+        ...proxmoxPlacementRpcPolicy(process.env),
       }
     );
     if (allocationError) {

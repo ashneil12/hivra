@@ -191,10 +191,13 @@ begin
 end;
 $$;
 
--- Eligible scheduler inventory. This mirrors the registry-backed placement
--- authority: active hosts only, never maintenance/draining/decommissioned
--- inventory; host-reserved cores/RAM and the wake headroom are not scheduler
--- capacity; the host CPU overcommit ratio applies to vCPU only.
+-- Scheduler placement capacity. This mirrors the registry-backed placement
+-- authority exactly: active hosts only, never maintenance/draining/
+-- decommissioned inventory; host-reserved cores/RAM and the wake headroom are
+-- not scheduler capacity; the host CPU overcommit ratio applies to vCPU only.
+-- The owner contract for the holder ceiling is "20% of scheduler placement
+-- capacity": sleep-ineligible active hosts still count because this is the
+-- capacity the scheduler can allocate, not a holder-only subset.
 create or replace function public.holder_admission_host_capacity(
   p_target_host_ids text[] default null,
   p_cpu_overcommit_ratio numeric default null
@@ -339,7 +342,7 @@ as $$
   limit 1;
 $$;
 
--- The holder-cohort resources charged against the global one-fifth ceiling.
+-- The holder-cohort resources charged against the 20%-of-scheduler-placement-capacity ceiling.
 -- An admission reserves the unlaunched remainder of the seat budget; existing
 -- compute plus that remainder is exactly max(existing, reservation) per axis.
 -- This avoids double-counting a launched admitted seat while retaining an
@@ -561,7 +564,10 @@ begin
     v_needed_cpu := greatest(v_reservation.reserved_cpu - v_powered_cpu, 0);
     v_needed_ram := greatest(v_reservation.reserved_ram_mb - v_powered_ram, 0);
 
-    if v_needed_cpu <= 0 and v_needed_ram <= 0 then
+    -- A fully used reservation still needs a durable backing host when it was
+    -- never assigned (notably a grandfathered row): otherwise the fail-closed
+    -- validator could never be unlocked by advancement.
+    if v_needed_cpu <= 0 and v_needed_ram <= 0 and v_reservation.assigned_host_id is not null then
       continue;
     end if;
 
@@ -573,6 +579,9 @@ begin
       continue;
     end if;
 
+    -- NULL is deliberate fail-closed unplaced state, not a silently spendable
+    -- reservation: holder_seat_funding_valid rejects it until a later advance
+    -- finds replacement placement and writes a host here.
     update public.holder_admissions
     set assigned_host_id = v_fit_host_id,
         updated_at = now()
@@ -626,7 +635,7 @@ begin
     select res.cpu, res.ram_mb into v_reserve_cpu, v_reserve_ram_mb
     from public.holder_admission_tier_resources(v_tier) res;
 
-    -- Exact independent one-fifth ceilings. numeric arithmetic keeps half-core
+    -- Exact independent 20%-of-scheduler-placement-capacity ceilings. numeric arithmetic keeps half-core
     -- sizes exact; both axes must fit before any state transition is written.
     select greatest(v_reserve_cpu-u.cpu,0), greatest(v_reserve_ram_mb-u.ram_mb,0)
       into v_new_cohort_cpu, v_new_cohort_ram
@@ -773,6 +782,13 @@ begin
   for update;
 
   if not found then
+    return false;
+  end if;
+
+  -- An admitted row whose reservation currently fits no placement host is
+  -- explicitly unplaced (assigned_host_id NULL). It remains admitted and the
+  -- next advancement can re-place it, but it is not consumable while unbacked.
+  if v_admission.assigned_host_id is null then
     return false;
   end if;
 

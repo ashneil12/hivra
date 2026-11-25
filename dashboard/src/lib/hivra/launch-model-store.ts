@@ -7,6 +7,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { MAX_CONTEXT_LEN } from "./agent-limits";
 import { ModelKeySelectionSchema } from "./model-key-selection";
 import { ModelKeyStoreError } from "./model-key-store";
+import { proxmoxPlacementRpcPolicy } from "@/lib/proxmox/placement-policy";
 
 const Id = z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
 const Digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -183,7 +184,7 @@ export function createLaunchModelStore(db = supabaseAdmin) {
           p_fingerprints: input.fingerprints, p_model_operation_id: input.modelOperationId, p_agent: row.data,
           p_selection: { provider: selection.provider, mode: selection.mode, model: selection.model,
             ...(selection.mode === "managed" ? { walletType: selection.walletType } : {}) }, p_encrypted_key: encryptedKey,
-          p_agent_limit: input.agentLimit });
+          p_agent_limit: input.agentLimit, ...proxmoxPlacementRpcPolicy(process.env) });
       } catch {
         // Lost acknowledgement is not permission for another insert or guest
         // dispatch. Read the stable original request, or retain uncertainty.

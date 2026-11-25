@@ -2,6 +2,7 @@ import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { cleanupHivraAgentAccess, HivraAgentDeleteCleanupError } from "./agent-delete-cleanup";
+import { proxmoxPlacementRpcPolicy } from "@/lib/proxmox/placement-policy";
 
 import type {
   HivraAgentDesiredState,
@@ -93,6 +94,7 @@ export async function claimHivraAgentOperation(input: {
     p_operation_kind: input.operationKind,
     p_desired_state: input.desiredState,
     p_operation_payload: input.operationPayload ?? null,
+    ...proxmoxPlacementRpcPolicy(process.env),
   });
 }
 

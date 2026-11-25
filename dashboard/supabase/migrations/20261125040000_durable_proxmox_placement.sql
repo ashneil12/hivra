@@ -81,6 +81,14 @@ $$;
 -- used by placement. The lock key is deliberately the holder-admission key:
 -- advance_holder_admissions already holds it for the whole reservation batch,
 -- and every managed placement write now holds it for its check-and-write.
+--
+-- Lock ordering is a partial order, never inverted by a caller:
+--   holder-admissions-v1 -> owner agent-slot advisory / resource row locks
+--   -> holder-seat-funding-v1:<owner> -> holder_admissions row locks.
+-- A path that does not need an earlier layer may start later (Classic sleep
+-- starts at its instance row), but no path may acquire an earlier layer after
+-- a later one. In particular, holder funding is never taken before waiting on
+-- an instance/agent row, which removes the sleep/wake versus resize deadlock.
 create or replace function public.assert_proxmox_placement_capacity(
   p_host_id text,
   p_owner_id text,
@@ -114,6 +122,10 @@ declare
   v_reservation_disk boolean := false;
   v_old_cpu numeric := 0;
   v_old_ram numeric := 0;
+  v_existing_host text;
+  v_prior_cpu numeric := 0;
+  v_prior_ram numeric := 0;
+  v_requires_reservation_backing boolean := true;
 begin
   if p_host_id is null or btrim(p_host_id)=''
     or p_cpu is null or p_ram_mb is null or p_cpu <= 0 or p_ram_mb <= 0
@@ -122,10 +134,10 @@ begin
     raise exception 'invalid Proxmox placement allocation' using errcode='22023';
   end if;
 
+  perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
   if coalesce(p_seat_funding,'paid') = 'holder' and p_owner_id is not null then
     perform pg_advisory_xact_lock(hashtextextended('holder-seat-funding-v1:' || p_owner_id, 0));
   end if;
-  perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
 
   select c.host_id into v_host
   from public.holder_admission_host_capacity(array[p_host_id],p_ratio) c;
@@ -156,6 +168,33 @@ begin
     end if;
     raise exception 'proxmox host is not available for placement' using errcode='P0058';
   end if;
+
+  -- Read the replaced row before host-scoping the capacity add-back. A row
+  -- already on this host may be shrunk or revalidated without consuming any
+  -- unlaunched reservation; moving it to another host is new placement and
+  -- does consume backing.
+  if p_hivra_agent_id is not null then
+    select a.proxmox_host, sz.cpu, sz.ram_mb
+      into v_existing_host, v_prior_cpu, v_prior_ram
+    from public.hivra_agents a
+    cross join lateral public.holder_hivra_size(a.cpu,a.ram,a.operation_kind,a.operation_payload) sz
+    where a.id=p_hivra_agent_id and a.status <> 'deleted';
+  elsif p_hermes_instance_id is not null then
+    select h.proxmox_node, h.cpu_limit::numeric, h.ram_limit::numeric
+      into v_existing_host, v_prior_cpu, v_prior_ram
+    from public.hermes_instances h
+    where h.id=p_hermes_instance_id
+      and (h.lifecycle_state in ('provisioning','active')
+        or (h.lifecycle_state='paused' and h.seat_funding='holder' and h.paused_reason='holder_idle'));
+  end if;
+  v_prior_cpu := coalesce(v_prior_cpu,0);
+  v_prior_ram := coalesce(v_prior_ram,0);
+  v_requires_reservation_backing := not (
+    v_existing_host is not null
+    and public.holder_admission_normalize_host_id(v_existing_host)=public.holder_admission_normalize_host_id(v_host)
+    and p_cpu <= v_prior_cpu
+    and p_ram_mb <= v_prior_ram
+  );
 
   -- Add back the allocation being replaced. Resize validation must compare the
   -- proposed row with other occupants, not with its own current allocation.
@@ -212,14 +251,28 @@ begin
 
   -- A holder launch on its admission host spends the unlaunched remainder of
   -- its reservation. The generic availability result has already charged that
-  -- remainder, so hand back only the part this launch consumes. Reservations
-  -- on another host are not spendable here and remain fully charged.
+  -- remainder, so hand back only the part this launch consumes. A reservation
+  -- assigned nowhere or to another host is not merely non-spendable: the write
+  -- fails closed instead of silently consuming unreserved scheduler capacity.
   if p_seat_funding='holder' and p_owner_id is not null then
     select * into v_admission
     from public.holder_admissions a
-    where a.user_id=p_owner_id and a.state='admitted'
-      and public.normalize_proxmox_capacity_scope_id(a.assigned_host_id)=public.normalize_proxmox_capacity_scope_id(v_host);
-    if found then
+    where a.user_id=p_owner_id and a.state='admitted';
+    if v_requires_reservation_backing
+      and (
+        not found
+        or v_admission.assigned_host_id is null
+        or public.normalize_proxmox_capacity_scope_id(v_admission.assigned_host_id)
+          is distinct from public.normalize_proxmox_capacity_scope_id(v_host)
+      )
+    then
+      raise exception 'holder admission is not placed on the target proxmox host' using errcode='P0058';
+    end if;
+    if found
+      and v_admission.assigned_host_id is not null
+      and public.normalize_proxmox_capacity_scope_id(v_admission.assigned_host_id)
+        is not distinct from public.normalize_proxmox_capacity_scope_id(v_host)
+    then
       select * into v_powered from public.holder_admission_powered_usage(p_owner_id,array[v_host],p_skip_sleep);
       v_remaining_cpu := greatest(0,v_admission.reserved_cpu - coalesce(v_powered.cpu,0));
       v_remaining_ram := greatest(0,v_admission.reserved_ram_mb - coalesce(v_powered.ram_mb,0));
@@ -264,7 +317,12 @@ grant execute on function public.assert_proxmox_placement_capacity(text,text,tex
 -- Atomic check-and-insert for Classic rows. The application still chooses a
 -- candidate order, but the host assignment becomes durable in this same
 -- transaction; a competing launch cannot use a stale pre-insert snapshot.
-create or replace function public.insert_hermes_instance(p_row jsonb)
+drop function if exists public.insert_hermes_instance(jsonb);
+create or replace function public.insert_hermes_instance(
+  p_row jsonb,
+  p_cpu_overcommit_ratio numeric default null,
+  p_skip_sleep boolean default false
+)
 returns jsonb
 language plpgsql volatile security definer set search_path=pg_catalog,pg_temp
 as $$
@@ -287,7 +345,8 @@ begin
     perform public.assert_proxmox_placement_capacity(
       p_row->>'proxmox_node', p_row->>'user_id', coalesce(p_row->>'seat_funding','paid'),
       (p_row->>'cpu_limit')::numeric, (p_row->>'ram_limit')::numeric,
-      coalesce((p_row->>'disk_size_gb')::numeric,30), null, null, null, false,
+      coalesce((p_row->>'disk_size_gb')::numeric,30), null, null,
+      p_cpu_overcommit_ratio, p_skip_sleep,
       p_row->>'product_surface' = 'workspace_cloud', true
     );
   end if;
@@ -299,12 +358,18 @@ begin
 end;
 $$;
 
-revoke all on function public.insert_hermes_instance(jsonb) from public,anon,authenticated;
-grant execute on function public.insert_hermes_instance(jsonb) to service_role;
+revoke all on function public.insert_hermes_instance(jsonb,numeric,boolean) from public,anon,authenticated;
+grant execute on function public.insert_hermes_instance(jsonb,numeric,boolean) to service_role;
 
 -- Managed Hivra direct inserts use the same host authority before the row is
 -- created. Everything else about the prior reviewed writer is unchanged.
-create or replace function public.insert_hivra_managed_agent(p_row jsonb, p_agent_limit integer)
+drop function if exists public.insert_hivra_managed_agent(jsonb,integer);
+create or replace function public.insert_hivra_managed_agent(
+  p_row jsonb,
+  p_agent_limit integer,
+  p_cpu_overcommit_ratio numeric default null,
+  p_skip_sleep boolean default false
+)
 returns jsonb language plpgsql volatile security definer set search_path=pg_catalog,pg_temp as $$
 declare
   v_owner text;
@@ -328,6 +393,12 @@ begin
       and attnum>0 and not attisdropped and attname=k);
   if v_unknown<>0 then return jsonb_build_object('status','invalid_request'); end if;
 
+  -- Placement writers take the global admission lock before owner/row locks.
+  -- The slot lock remains ahead of the row insert, preserving the reviewed
+  -- launch/attachment order while never nesting it inside the holder funding lock.
+  if nullif(p_row->>'proxmox_host','') is not null then
+    perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
+  end if;
   perform public.lock_hivra_owner_agent_slots(v_owner);
   v_count := public.hivra_owner_agent_slot_count(v_owner);
   if v_count>=p_agent_limit then
@@ -337,7 +408,7 @@ begin
     perform public.assert_proxmox_placement_capacity(
       p_row->>'proxmox_host', v_owner, p_row->>'seat_funding',
       (p_row->>'cpu')::numeric, ((p_row->>'ram')::numeric)*1024,
-      40, null, null, null, false, false, true
+      40, null, null, p_cpu_overcommit_ratio, p_skip_sleep, false, true
     );
   end if;
 
@@ -352,9 +423,12 @@ $$;
 
 -- Launch-model reservations write the row inside the nested v2 RPC, so the
 -- capacity check must happen in this same transaction before entering it.
+drop function if exists public.reserve_hivra_launch_model_request_v3(text,uuid,jsonb,uuid,jsonb,jsonb,text,integer);
 create or replace function public.reserve_hivra_launch_model_request_v3(
   p_user_id text,p_request_id uuid,p_fingerprints jsonb,p_model_operation_id uuid,
-  p_agent jsonb,p_selection jsonb,p_encrypted_key text,p_agent_limit integer
+  p_agent jsonb,p_selection jsonb,p_encrypted_key text,p_agent_limit integer,
+  p_cpu_overcommit_ratio numeric default null,
+  p_skip_sleep boolean default false
 ) returns jsonb language plpgsql security definer set search_path=pg_catalog,pg_temp as $$
 declare
   v_count integer;
@@ -383,6 +457,9 @@ begin
     return public.reserve_hivra_launch_model_request_v2(p_user_id,p_request_id,p_fingerprints,
       p_model_operation_id,v_legacy_agent,p_selection,p_encrypted_key);
   end if;
+  if nullif(p_agent->>'proxmox_host','') is not null then
+    perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
+  end if;
   perform public.lock_hivra_owner_agent_slots(p_user_id);
   if p_request_id is not null and exists(select 1 from public.hivra_launch_model_requests
       where user_id=p_user_id and request_id=p_request_id) then
@@ -397,7 +474,7 @@ begin
     perform public.assert_proxmox_placement_capacity(
       p_agent->>'proxmox_host', p_user_id, v_funding,
       (p_agent->>'cpu')::numeric, ((p_agent->>'ram')::numeric)*1024,
-      40, null, null, null, false, false, true
+      40, null, null, p_cpu_overcommit_ratio, p_skip_sleep, false, true
     );
   end if;
   perform set_config('hivra.agent_slot_checked','on',true);
@@ -440,7 +517,9 @@ create or replace function public.resize_hermes_instance_allocation(
   p_user_id text,
   p_cpu numeric,
   p_ram_mb numeric,
-  p_operation_id uuid
+  p_operation_id uuid,
+  p_cpu_overcommit_ratio numeric default null,
+  p_skip_sleep boolean default false
 )
 returns jsonb
 language plpgsql volatile security definer set search_path=pg_catalog,pg_temp
@@ -451,6 +530,9 @@ begin
   if p_operation_id is null then
     raise exception 'invalid resize operation' using errcode='22023';
   end if;
+  -- Global placement first, then the resource row; holder funding is acquired
+  -- only inside the capacity assertion after that row lock.
+  perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
   select * into v_row
   from public.hermes_instances
   where id=p_instance_id and user_id=p_user_id
@@ -474,7 +556,7 @@ begin
     v_row.proxmox_node,p_user_id,coalesce(v_row.seat_funding,'paid'),
     greatest(coalesce(v_row.cpu_limit,p_cpu),p_cpu),
     greatest(coalesce(v_row.ram_limit,p_ram_mb),p_ram_mb),
-    null,null,p_instance_id,null,false,
+    null,null,p_instance_id,p_cpu_overcommit_ratio,p_skip_sleep,
     coalesce(v_row.product_surface,'')='workspace_cloud',true
   );
   update public.hermes_instances
@@ -570,8 +652,8 @@ begin
 end;
 $$;
 
-revoke all on function public.resize_hermes_instance_allocation(uuid,text,numeric,numeric,uuid) from public,anon,authenticated;
-grant execute on function public.resize_hermes_instance_allocation(uuid,text,numeric,numeric,uuid) to service_role;
+revoke all on function public.resize_hermes_instance_allocation(uuid,text,numeric,numeric,uuid,numeric,boolean) from public,anon,authenticated;
+grant execute on function public.resize_hermes_instance_allocation(uuid,text,numeric,numeric,uuid,numeric,boolean) to service_role;
 revoke all on function public.mark_hermes_instance_resize_host_config_applied(uuid,text,uuid) from public,anon,authenticated;
 grant execute on function public.mark_hermes_instance_resize_host_config_applied(uuid,text,uuid) to service_role;
 revoke all on function public.complete_hermes_instance_resize_allocation(uuid,text,uuid) from public,anon,authenticated;
@@ -582,11 +664,14 @@ grant execute on function public.rollback_hermes_instance_resize_allocation(uuid
 -- Host-local failover is itself placement. Move the durable row before the
 -- next provision attempt so capacity is charged to the host being tried, not
 -- to the host that just failed.
+drop function if exists public.move_hermes_instance_placement(uuid,text,text,numeric);
 create or replace function public.move_hermes_instance_placement(
   p_instance_id uuid,
   p_user_id text,
   p_host_id text,
-  p_disk_gb numeric default null
+  p_disk_gb numeric default null,
+  p_cpu_overcommit_ratio numeric default null,
+  p_skip_sleep boolean default false
 )
 returns boolean
 language plpgsql volatile security definer set search_path=pg_catalog,pg_temp
@@ -594,6 +679,7 @@ as $$
 declare
   v_row public.hermes_instances%rowtype;
 begin
+  perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
   select * into v_row
   from public.hermes_instances
   where id=p_instance_id and user_id=p_user_id
@@ -603,7 +689,8 @@ begin
   perform public.assert_proxmox_placement_capacity(
     p_host_id,p_user_id,coalesce(v_row.seat_funding,'paid'),
     v_row.cpu_limit,v_row.ram_limit,
-    coalesce(p_disk_gb,v_row.disk_size_gb,30),null,p_instance_id,null,false,
+    coalesce(p_disk_gb,v_row.disk_size_gb,30),null,p_instance_id,
+    p_cpu_overcommit_ratio,p_skip_sleep,
     coalesce(v_row.product_surface,'')='workspace_cloud',true
   );
   update public.hermes_instances
@@ -614,16 +701,19 @@ begin
 end;
 $$;
 
-revoke all on function public.move_hermes_instance_placement(uuid,text,text,numeric) from public,anon,authenticated;
-grant execute on function public.move_hermes_instance_placement(uuid,text,text,numeric) to service_role;
+revoke all on function public.move_hermes_instance_placement(uuid,text,text,numeric,numeric,boolean) from public,anon,authenticated;
+grant execute on function public.move_hermes_instance_placement(uuid,text,text,numeric,numeric,boolean) to service_role;
 
 -- Batch tier writes share the placement authority for every allocation
 -- increase. Every live Proxmox size change is fenced like a resize: the row
 -- keeps the larger allocation on each axis until completion. Reductions
 -- therefore do not free capacity before the host mutation is confirmed, and a
 -- conflicting resize claim rejects the batch.
+drop function if exists public.apply_hermes_tier_allocations(text,boolean,text,jsonb);
 create or replace function public.apply_hermes_tier_allocations(
-  p_owner text, p_holder boolean, p_tier text, p_changes jsonb
+  p_owner text, p_holder boolean, p_tier text, p_changes jsonb,
+  p_cpu_overcommit_ratio numeric default null,
+  p_skip_sleep boolean default false
 )
 returns integer language plpgsql security invoker set search_path=pg_catalog,pg_temp
 as $$
@@ -631,15 +721,52 @@ declare
   v_change record;
   v_row public.hermes_instances%rowtype;
   v_written integer := 0;
+  v_locked integer := 0;
   v_increase boolean;
   v_size_change boolean;
   v_needs_fence boolean;
   v_reconcile boolean;
   v_operation_id uuid;
 begin
+  -- One placement-critical-section order for every batch, including batches
+  -- that turn out not to grow anything: placement advisory, then instance row
+  -- locks in stable id order, then the per-owner holder funding advisory. The
+  -- owner lock is deliberately absent while waiting for rows; a Classic wake
+  -- already holding one row may therefore finish its owner validation and
+  -- release the row instead of deadlocking with this batch.
+  perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
+
+  for v_change in
+    select * from jsonb_to_recordset(p_changes) as c(
+      id uuid, previous_tier text, previous_cpu numeric, previous_ram integer, cpu_limit numeric, ram_limit integer, operation_id uuid
+    )
+    order by c.id
+  loop
+    select * into v_row
+    from public.hermes_instances h
+    where h.id=v_change.id and h.user_id=p_owner
+      and (h.seat_funding is not distinct from 'holder')=p_holder
+      and h.status not in ('deleted','scheduled_for_deletion')
+    for update;
+    if not found
+      or not (v_row.resource_tier is not distinct from v_change.previous_tier)
+      or not (v_row.cpu_limit is not distinct from v_change.previous_cpu)
+      or not (v_row.ram_limit is not distinct from v_change.previous_ram) then
+      raise exception 'tier allocation changed before the update';
+    end if;
+    v_locked := v_locked + 1;
+  end loop;
+  if v_locked <> jsonb_array_length(p_changes) then
+    raise exception 'tier allocation changed before the update';
+  end if;
+
   if p_holder then
     perform pg_advisory_xact_lock(hashtextextended('holder-seat-funding-v1:' || p_owner, 0));
   end if;
+
+  -- Capacity reductions are written before increases, but only after every
+  -- row lock above is already held in id order. Processing order is therefore
+  -- an accounting choice, not a lock order.
   for v_change in
     select * from jsonb_to_recordset(p_changes) as c(
       id uuid, previous_tier text, previous_cpu numeric, previous_ram integer, cpu_limit numeric, ram_limit integer, operation_id uuid
@@ -650,8 +777,7 @@ begin
     from public.hermes_instances h
     where h.id=v_change.id and h.user_id=p_owner
       and (h.seat_funding is not distinct from 'holder')=p_holder
-      and h.status not in ('deleted','scheduled_for_deletion')
-    for update;
+      and h.status not in ('deleted','scheduled_for_deletion');
     if not found
       or not (v_row.resource_tier is not distinct from v_change.previous_tier)
       or not (v_row.cpu_limit is not distinct from v_change.previous_cpu)
@@ -682,7 +808,8 @@ begin
       perform public.assert_proxmox_placement_capacity(
         v_row.proxmox_node,p_owner,coalesce(v_row.seat_funding,'paid'),
         greatest(coalesce(v_row.cpu_limit,v_change.cpu_limit),v_change.cpu_limit),
-        greatest(coalesce(v_row.ram_limit,v_change.ram_limit),v_change.ram_limit),null,null,v_row.id,null,false,
+        greatest(coalesce(v_row.ram_limit,v_change.ram_limit),v_change.ram_limit),null,null,v_row.id,
+        p_cpu_overcommit_ratio,p_skip_sleep,
         coalesce(v_row.product_surface,'')='workspace_cloud',true
       );
     end if;
@@ -722,19 +849,22 @@ begin
   return v_written;
 end;
 $$;
-revoke all on function public.apply_hermes_tier_allocations(text,boolean,text,jsonb) from public, anon, authenticated;
-grant execute on function public.apply_hermes_tier_allocations(text,boolean,text,jsonb) to service_role;
+revoke all on function public.apply_hermes_tier_allocations(text,boolean,text,jsonb,numeric,boolean) from public, anon, authenticated;
+grant execute on function public.apply_hermes_tier_allocations(text,boolean,text,jsonb,numeric,boolean) to service_role;
 
 -- Resize claims reserve host capacity before the durable operation is
 -- visible to other placements. The rest of the reviewed operation-claim
 -- fencing is unchanged.
+drop function if exists public.claim_hivra_agent_operation(text,uuid,uuid,text,text,jsonb);
 create or replace function public.claim_hivra_agent_operation(
   p_user_id text,
   p_agent_id uuid,
   p_operation_id uuid,
   p_operation_kind text,
   p_desired_state text,
-  p_operation_payload jsonb
+  p_operation_payload jsonb,
+  p_cpu_overcommit_ratio numeric default null,
+  p_skip_sleep boolean default false
 )
 returns boolean
 language plpgsql
@@ -781,6 +911,12 @@ begin
     and p_operation_payload is not null
   ) then
     raise exception 'invalid Hivra operation payload' using errcode = '22023';
+  end if;
+
+  -- Only resize can consume placement. Serialize that class before waiting
+  -- for the agent row; other operation claims keep their prior concurrency.
+  if p_operation_kind = 'resize' then
+    perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
   end if;
 
   select * into v_agent
@@ -856,8 +992,8 @@ begin
       null,
       p_agent_id,
       null,
-      null,
-      false,
+      p_cpu_overcommit_ratio,
+      p_skip_sleep,
       false,
       true
     );
@@ -874,3 +1010,17 @@ begin
   return true;
 end;
 $$;
+
+revoke all on function public.claim_hivra_agent_operation(text,uuid,uuid,text,text,jsonb,numeric,boolean)
+  from public,anon,authenticated;
+grant execute on function public.claim_hivra_agent_operation(text,uuid,uuid,text,text,jsonb,numeric,boolean)
+  to service_role;
+
+revoke all on function public.insert_hivra_managed_agent(jsonb,integer,numeric,boolean)
+  from public,anon,authenticated;
+grant execute on function public.insert_hivra_managed_agent(jsonb,integer,numeric,boolean)
+  to service_role;
+revoke all on function public.reserve_hivra_launch_model_request_v3(text,uuid,jsonb,uuid,jsonb,jsonb,text,integer,numeric,boolean)
+  from public,anon,authenticated;
+grant execute on function public.reserve_hivra_launch_model_request_v3(text,uuid,jsonb,uuid,jsonb,jsonb,text,integer,numeric,boolean)
+  to service_role;

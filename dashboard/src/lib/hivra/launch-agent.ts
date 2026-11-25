@@ -25,6 +25,7 @@ import {
 import { buildVmidReferenceLedgerScript, type VmidReferenceLedger } from "@/lib/proxmox/vmid-reference-ledger";
 import { resolveRamBurst } from "@/lib/services/ram-burst";
 import { selectAvailableProxmoxProvisionTarget } from "@/lib/services/instance-service";
+import { proxmoxPlacementRpcPolicy } from "@/lib/proxmox/placement-policy";
 import { BoxTunnelProvisionError, deleteBoxTunnel, isTunnelConfigured } from "@/lib/services/cloudflare-tunnel";
 import { provisionHivraAgentTunnel } from "@/lib/hivra/agent-tunnel-provisioning";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
@@ -1750,7 +1751,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       }
       // A Hivra-managed row is written only by the database, after it counts
       // the owner's plan slots under the slot lock (T35).
-      const { data, error } = await supabaseAdmin!.rpc("insert_hivra_managed_agent", { p_row: agentRow, p_agent_limit: agentLimit });
+      const { data, error } = await supabaseAdmin!.rpc("insert_hivra_managed_agent", { p_row: agentRow, p_agent_limit: agentLimit, ...proxmoxPlacementRpcPolicy(process.env) });
       if (error) return { data: null, error };
       const result = data as { status?: unknown; row?: unknown; activeCount?: unknown; limit?: unknown } | null;
       if (result?.status === "plan_agent_limit") {

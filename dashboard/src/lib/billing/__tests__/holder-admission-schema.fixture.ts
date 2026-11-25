@@ -24,6 +24,10 @@ export const FIXTURE_SQL = `
     create table public.channel_connections(target_kind text, target_id text);
     create function public.token_tier_row_counts_for_user(text, text, timestamptz)
       returns boolean language sql stable as $$ select true $$;
+    create function public.lock_hivra_owner_agent_slots(p_owner text)
+      returns void language sql volatile as $$ select pg_advisory_xact_lock(hashtextextended('hivra-agent-slots-v1:' || p_owner, 0)) $$;
+    create function public.hivra_owner_agent_slot_count(p_owner text)
+      returns integer language sql stable as $$ select 0 $$;
     create table public.proxmox_hosts(
       id text primary key, total_cpu integer, total_ram_mb integer,
       reserved_cpu integer default 2, reserved_ram_mb integer default 4096,

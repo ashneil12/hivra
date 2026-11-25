@@ -46,6 +46,7 @@ import {
   resizeProxmoxVm,
 } from "@/lib/services/proxmox-instance-service";
 import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
+import { proxmoxPlacementRpcPolicy } from "@/lib/proxmox/placement-policy";
 import { priorityForResourceTier } from "@/lib/subscription/agent-slots";
 import { isVeniceBoostEligible } from "@/lib/billing/venice-compute-boost";
 import { log } from "@/lib/logger";
@@ -260,6 +261,7 @@ export async function applyTierChange(
     p_holder: Boolean(params.holderSeats),
     p_tier: params.newTier,
     p_changes: changes,
+    ...proxmoxPlacementRpcPolicy(process.env),
   });
   if (error || written !== rows.length) {
     throw new Error(`Failed to write new tier: ${error?.message ?? "allocation changed"}`);

@@ -29,6 +29,7 @@
  */
 
 import { NextRequest } from "next/server";
+import { proxmoxPlacementPolicy } from "@/lib/proxmox/placement-policy";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { hasPlanAccessStatus } from "@/lib/billing/subscription-status";
@@ -164,12 +165,6 @@ function declaredProxmoxTargetIds(env: NodeJS.ProcessEnv = process.env): string[
   return ids.length > 0 ? ids : null;
 }
 
-function proxmoxCpuOvercommitRatio(env: NodeJS.ProcessEnv = process.env): number | null {
-  const raw = env.HERMES_PROXMOX_CPU_OVERCOMMIT_RATIO?.trim();
-  if (!raw) return null;
-  const parsed = Number.parseFloat(raw);
-  return Number.isFinite(parsed) && parsed >= 1 ? parsed : null;
-}
 
 // Pass only capacity settings to SQL. Undeclared rotations still honor
 // per-host disk overrides for registry hosts, using placement's precedence.
@@ -206,8 +201,8 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   try {
     const advancement = await db.rpc("advance_holder_admissions", {
       p_target_host_ids: declaredProxmoxTargetIds(),
-      p_cpu_overcommit_ratio: proxmoxCpuOvercommitRatio(),
-      p_skip_sleep: ["1", "on", "true"].includes(process.env.HIVRA_PLACEMENT_SKIP_DEEP_SLEEP?.trim().toLowerCase() ?? ""),
+      p_cpu_overcommit_ratio: proxmoxPlacementPolicy(process.env).cpuOvercommitRatio,
+      p_skip_sleep: proxmoxPlacementPolicy(process.env).skipDeepSleep,
       p_disk_sizes: placementDiskSizes(process.env),
     });
     if (advancement.error) {

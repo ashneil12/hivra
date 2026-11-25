@@ -57,7 +57,14 @@ import {
   type ProxmoxHostLocalFailureClass,
 } from "@/lib/services/proxmox-host-guards";
 import { stripProxmoxInfrastructure } from "@/lib/services/proxmox-infrastructure";
+export { placementSkipsDeepSleep, resolveHostCpuOvercommitRatio } from "@/lib/proxmox/placement-policy";
 import { HIVRA_AGENT_VM_DISK_GB } from "@/lib/infrastructure/portable-provisioner-contract";
+import {
+  placementSkipsDeepSleep,
+  proxmoxPlacementRpcPolicy,
+  resolveHostCpuOvercommitRatio,
+  resolveProxmoxCpuOvercommitRatio,
+} from "@/lib/proxmox/placement-policy";
 import { buildInstanceInsertPayload } from "@/lib/instance-record";
 import { decideProvisionSeatFunding, provisionSeatCanReceiveBoost } from "@/lib/billing/provision-seat-funding";
 import type { SeatFunding } from "@/lib/hivra/seat-funding";
@@ -567,20 +574,6 @@ const PROXMOX_HOST_STATUS_ACTIVE = "active";
 // A sleeping Classic holder still owns its disk and consumes its reserved seat.
 const CLASSIC_HOST_ALLOCATION_FILTER =
   "lifecycle_state.in.(provisioning,active),and(lifecycle_state.eq.paused,seat_funding.eq.holder,paused_reason.eq.holder_idle)";
-const DEFAULT_PROXMOX_CPU_OVERCOMMIT_RATIO = 5;
-
-function resolveProxmoxCpuOvercommitRatio(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
-): number {
-  const raw = env.HERMES_PROXMOX_CPU_OVERCOMMIT_RATIO?.trim();
-  if (!raw) return DEFAULT_PROXMOX_CPU_OVERCOMMIT_RATIO;
-
-  const parsed = Number.parseFloat(raw);
-  return Number.isFinite(parsed) && parsed >= 1
-    ? parsed
-    : DEFAULT_PROXMOX_CPU_OVERCOMMIT_RATIO;
-}
-
 /**
  * What the registry read actually told us. The distinction between `empty` and
  * `query_failed` is the whole point of this type:
@@ -751,19 +744,6 @@ const HIVRA_AGENT_POWERED_STATUSES: ReadonlySet<string> = new Set(["provisioning
 // free memory before it starts one again, so placement may give their CPU and
 // RAM to new agents. Opt-in: HIVRA_PLACEMENT_SKIP_DEEP_SLEEP=1.
 const HIVRA_AGENT_DEEP_SLEEP_STATES: ReadonlySet<string> = new Set(["hibernated"]);
-
-export function resolveHostCpuOvercommitRatio(
-  hostValue: number | string | null | undefined,
-  fallback: number
-): number {
-  const parsed = typeof hostValue === "string" ? Number(hostValue) : hostValue;
-  return typeof parsed === "number" && Number.isFinite(parsed) && parsed > 0 && parsed <= 20 ? parsed : fallback;
-}
-
-export function placementSkipsDeepSleep(env: Record<string, string | undefined>): boolean {
-  const raw = env.HIVRA_PLACEMENT_SKIP_DEEP_SLEEP?.trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "on";
-}
 
 export function hivraAgentHoldsCpuAndRam(
   row: { status?: string | null; sleep_state?: string | null },
@@ -3311,6 +3291,7 @@ export class InstanceService {
     const { data: instance, error: insertError } = infraProvider === "proxmox"
       ? await supabaseAdmin.rpc("insert_hermes_instance", {
           p_row: instanceInsertPayload,
+          ...proxmoxPlacementRpcPolicy(process.env),
         })
       : await supabaseAdmin
           .from("hermes_instances")
@@ -3719,6 +3700,7 @@ export class InstanceService {
             p_user_id: userId,
             p_host_id: nextTargetSelection.targetId,
             p_disk_gb: nextTargetSelection.diskSizeGb,
+            ...proxmoxPlacementRpcPolicy(process.env),
           }
         );
         if (placementMoveError || placementMoved !== true) {

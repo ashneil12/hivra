@@ -140,7 +140,7 @@ describe("holder admissions SQL authority", () => {
     }
   });
 
-  it("enforces the exact one-fifth ceiling independently on vCPU and RAM", async () => {
+  it("enforces exactly 20% of scheduler placement capacity independently on vCPU and RAM", async () => {
     // 20 eligible vCPU and 100GB RAM: exact vCPU ceiling is 4. Two Pro seats
     // exactly fill it; a third must remain queued even though RAM has room.
     await host("hcpu", 22, 112640);
@@ -200,8 +200,8 @@ describe("holder admissions SQL authority", () => {
     await pg.exec(
       `insert into public.token_tier_qualifications(user_id,tier,token_key,currently_eligible)
        values('existing','pro','hermesos',true);
-       insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb,grandfathered)
-       values('existing','admitted','pro','hermesos',now(),2,4096,true);
+       insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb,grandfathered,assigned_host_id)
+       values('existing','admitted','pro','hermesos',now(),2,4096,true,'h1');
        insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,proxmox_host,seat_funding)
        values('existing','hivra-managed','running',2,4,'h1','holder');`,
     );
@@ -245,6 +245,132 @@ describe("holder admissions SQL authority", () => {
     expect(result).toMatchObject({ advanced: 0, released: 0 });
     const row = await admission("holder");
     expect(row).toMatchObject({ state: "admitted", assigned_host_id: "newhost" });
+  });
+
+  it("fails closed while an admitted reservation has no replacement host fit", async () => {
+    await host("oldhost", 12, 57344);
+    await qualify("holder", "pro");
+    await advance();
+    expect((await admission("holder"))!.assigned_host_id).toBe("oldhost");
+
+    await pg.query("update public.proxmox_hosts set status='maintenance' where id='oldhost'");
+    await advance();
+    const unplaced = await admission("holder");
+    expect(unplaced).toMatchObject({ state: "admitted", assigned_host_id: null });
+
+    // The reservation is still admitted but must not be consumable while its
+    // remainder is unbacked. This is the same trigger validation used by both
+    // managed lanes, not merely a read-model state.
+    await expect(pg.exec(
+      `insert into public.hermes_instances(user_id,status,lifecycle_state,cpu_limit,ram_limit,proxmox_node,seat_funding)
+       values('holder','provisioning','provisioning',1,2048,'oldhost','holder')`,
+    )).rejects.toThrow(/holder seat funding is not admitted|exceeds the reserved seat resources/);
+
+    // Reactivating the old host does not make the reservation spendable
+    // there after the serialized re-fit chooses the replacement host.
+    await pg.query("update public.proxmox_hosts set status='active' where id='oldhost'");
+    await host("newhost", 12, 57344);
+    await advance();
+    expect((await admission("holder"))!).toMatchObject({ state: "admitted", assigned_host_id: "newhost" });
+    const placementRow = (hostId: string) => JSON.stringify({
+      user_id: "holder", status: "provisioning", lifecycle_state: "provisioning",
+      infrastructure_provider: "proxmox", proxmox_node: hostId,
+      cpu_limit: 1, ram_limit: 2048, disk_size_gb: 30, seat_funding: "holder",
+    });
+    await expect(pg.query(
+      "select public.insert_hermes_instance($1::jsonb)",
+      [placementRow("oldhost")],
+    )).rejects.toThrow(/holder admission is not placed on the target proxmox host/);
+    await pg.query("select public.insert_hermes_instance($1::jsonb)", [placementRow("newhost")]);
+  });
+
+  it("allows shrink-only revalidation on a placed row while refusing mismatched growth", async () => {
+    await host("zold", 12, 57344);
+    await host("anew", 12, 57344);
+    await qualify("split", "pro");
+    await advance();
+    expect((await admission("split"))!.assigned_host_id).toBe("anew");
+    await pg.exec(
+      `insert into public.hermes_instances(id,user_id,status,lifecycle_state,cpu_limit,ram_limit,proxmox_node,disk_size_gb,seat_funding,infrastructure_provider)
+       values('abababab-abab-4aba-8aba-abababababab','split','running','active',2,4096,'zold',30,'holder','proxmox')`,
+    );
+
+    const shrink = await pg.query<{ r: Record<string, unknown> }>(
+      `select public.resize_hermes_instance_allocation(
+        'abababab-abab-4aba-8aba-abababababab','split',1,2048,
+        '12121212-1212-4212-8212-121212121212') as r`,
+    );
+    expect(shrink.rows[0].r).toMatchObject({ status: "claimed" });
+    await expect(pg.query(
+      `select public.assert_proxmox_placement_capacity(
+        'zold','split','holder',3,4096,null,null,
+        'abababab-abab-4aba-8aba-abababababab')`,
+    )).rejects.toThrow(/holder admission is not placed on the target proxmox host/);
+  });
+
+  it("backs a never-assigned admitted reservation even when existing seats fully use it", async () => {
+    await host("h1", 12, 57344);
+    await qualify("full", "pro");
+    await pg.exec(
+      `alter table public.hermes_instances disable trigger hermes_instances_enforce_seat_funding;
+       insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb)
+       values('full','admitted','pro','hermesos',now(),2,4096);
+       insert into public.hermes_instances(user_id,status,lifecycle_state,cpu_limit,ram_limit,proxmox_node,seat_funding)
+       values('full','running','active',2,4096,'h1','holder');
+       alter table public.hermes_instances enable trigger hermes_instances_enforce_seat_funding`,
+    );
+    // The direct fixture insert above bypasses advancement. The next serialized
+    // advancement must give the reservation a host even though there is no
+    // unlaunched remainder; otherwise wake/resize validation would remain
+    // fail-closed forever for a grandfathered fully used seat.
+    await advance();
+    expect((await admission("full"))!.assigned_host_id).toBe("h1");
+  });
+
+  it("passes configured CPU overcommit and deep-sleep inputs into durable writes while preserving host overrides", async () => {
+    await host("fallback-host", 3, 32768, 1);
+    await pg.query("update public.proxmox_hosts set cpu_overcommit_ratio=null, reserved_cpu=1 where id='fallback-host'");
+    const row = {
+      user_id: "policy-user",
+      status: "provisioning",
+      lifecycle_state: "provisioning",
+      infrastructure_provider: "proxmox",
+      proxmox_node: "fallback-host",
+      cpu_limit: 3,
+      ram_limit: 1024,
+      disk_size_gb: 30,
+      seat_funding: "paid",
+    };
+    // Host capacity is (3 physical - 1 reserved) * configured 2 = 4 vCPU.
+    // With the old hard-coded fallback of 5, both 3+2 vCPU rows would fit.
+    await pg.query("select public.insert_hermes_instance($1::jsonb,2,false)", [JSON.stringify(row)]);
+    await expect(pg.query("select public.insert_hermes_instance($1::jsonb,2,false)", [
+      JSON.stringify({ ...row, cpu_limit: 2 }),
+    ])).rejects.toThrow(/remaining compute capacity/);
+
+    await host("override-host", 3, 32768, 1);
+    await pg.query("update public.proxmox_hosts set reserved_cpu=1 where id='override-host'");
+    // A configured fleet ratio of 5 must not erase the host's authoritative
+    // ratio of 1: capacity remains 2 vCPU.
+    await pg.query("select public.insert_hermes_instance($1::jsonb,5,false)", [
+      JSON.stringify({ ...row, proxmox_node: "override-host", cpu_limit: 2 }),
+    ]);
+    await expect(pg.query("select public.insert_hermes_instance($1::jsonb,5,false)", [
+      JSON.stringify({ ...row, proxmox_node: "override-host", cpu_limit: 1 }),
+    ])).rejects.toThrow(/remaining compute capacity/);
+
+    await host("sleep-policy-host", 2, 32768, 1);
+    await pg.query("update public.proxmox_hosts set reserved_cpu=1 where id='sleep-policy-host'");
+    await pg.exec(
+      `insert into public.hermes_instances(user_id,status,lifecycle_state,lifecycle_substate,cpu_limit,ram_limit,proxmox_node,seat_funding)
+       values('sleeper','stopped','paused','holder_hibernated',2,2048,'sleep-policy-host','paid')`,
+    );
+    // Physical capacity is one vCPU, but the configured deep-sleep switch lets
+    // the write authority reuse compute held by the hibernated row even when
+    // the host override remains false.
+    await pg.query("select public.insert_hermes_instance($1::jsonb,1,true)", [
+      JSON.stringify({ ...row, proxmox_node: "sleep-policy-host", cpu_limit: 1 }),
+    ]);
   });
 
   it("keeps admissions through breach grace, releases them at suspension, and advances the next waiter", async () => {
@@ -298,8 +424,8 @@ describe("holder admissions SQL authority", () => {
   it("counts only persisted holder seats in mixed accounts and atomically rejects oversubscription", async () => {
     await qualify("mixed", "pro");
     await pg.exec(
-      `insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb)
-       values('mixed','admitted','pro','hermesos',now(),2,4096);
+      `insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb,assigned_host_id)
+       values('mixed','admitted','pro','hermesos',now(),2,4096,'h1');
        insert into public.hermes_subscriptions(user_id,plan,status,instance_limit)
        values('mixed','fleet','active',5);
        insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,proxmox_host,seat_funding)
@@ -336,7 +462,6 @@ describe("holder admissions SQL authority", () => {
       values('split','hivra-managed','running',1,2,'holder')`);
     // Load the deployed-shape operation functions used by the action route.
     for (const [migration, name] of [
-      ["20260830180000_hivra_agent_restore_points.sql", "claim_hivra_agent_operation"],
       ["20260915150000_hivra_resource_envelopes.sql", "continue_hivra_agent_resize_operation"],
     ]) {
       const sql = fs.readFileSync(path.join(path.dirname(MIGRATION), migration), "utf8");
@@ -742,9 +867,9 @@ describe("holder admissions SQL authority", () => {
     // then stamp and validate funding in the same transaction.
     await pg.exec(`
       create table if not exists public.hivra_launch_model_requests(user_id text, request_id uuid);
-      create or replace function public.lock_hivra_owner_agent_slots(text)
+      create or replace function public.lock_hivra_owner_agent_slots(p_owner text)
       returns void language plpgsql as $$ begin return; end $$;
-      create or replace function public.hivra_owner_agent_slot_count(text)
+      create or replace function public.hivra_owner_agent_slot_count(p_owner text)
       returns integer language sql as $$ select 0 $$;
       create or replace function public.reserve_hivra_launch_model_request_v2(p_user_id text,p_request_id uuid,p_fingerprints jsonb,p_model_operation_id uuid,p_agent jsonb,p_selection jsonb,p_encrypted_key text)
       returns jsonb language plpgsql as $$
@@ -759,8 +884,8 @@ describe("holder admissions SQL authority", () => {
     `);
     await qualify("launch-model-holder", "pro");
     await pg.exec(
-      `insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb)
-       values('launch-model-holder','admitted','pro','hermesos',now(),2,4096)`,
+      `insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb,assigned_host_id)
+       values('launch-model-holder','admitted','pro','hermesos',now(),2,4096,'h1')`,
     );
 
     const agent = {
@@ -813,9 +938,9 @@ describe("holder admissions SQL authority", () => {
   it("requires and atomically validates funding in the direct managed-agent writer", async () => {
     await host("h1", 32, 131072);
     await pg.exec(`
-      create or replace function public.lock_hivra_owner_agent_slots(text)
+      create or replace function public.lock_hivra_owner_agent_slots(p_owner text)
       returns void language plpgsql as $$ begin return; end $$;
-      create or replace function public.hivra_owner_agent_slot_count(text)
+      create or replace function public.hivra_owner_agent_slot_count(p_owner text)
       returns integer language sql as $$ select 0 $$;
     `);
     const baseRow = {
@@ -841,8 +966,8 @@ describe("holder admissions SQL authority", () => {
 
     await qualify("direct-holder", "pro");
     await pg.exec(
-      `insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb)
-       values('direct-holder','admitted','pro','hermesos',now(),2,4096)`,
+      `insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb,assigned_host_id)
+       values('direct-holder','admitted','pro','hermesos',now(),2,4096,'h1')`,
     );
     const holder = await pg.query<{ r: Record<string, unknown> }>(
       "select public.insert_hivra_managed_agent($1::jsonb,1) as r",
@@ -865,8 +990,8 @@ describe("holder admissions SQL authority", () => {
 
     await qualify("immutable", "pro");
     await pg.exec(
-      `insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb)
-       values('immutable','admitted','pro','hermesos',now(),2,4096);
+      `insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb,assigned_host_id)
+       values('immutable','admitted','pro','hermesos',now(),2,4096,'h1');
        insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,proxmox_host,seat_funding)
        values('immutable','hivra-managed','provisioning',1,2,'h1','holder');`,
     );
@@ -1229,23 +1354,38 @@ describe("holder admissions SQL authority", () => {
     )).rows[0]).toEqual({ cpu_limit: 2, resize_operation_id: firstOperation });
   });
 
-  it("takes the holder funding lock before the placement lock on capacity write paths", () => {
+  it("keeps placement, row, and holder-funding locks in the documented order", () => {
     const placementSql = fs.readFileSync(path.join(path.dirname(MIGRATION), "20261125040000_durable_proxmox_placement.sql"), "utf8");
-    const assertStart = placementSql.indexOf("create or replace function public.assert_proxmox_placement_capacity(");
-    const assertEnd = placementSql.indexOf("$$;", assertStart);
-    const assertBody = placementSql.slice(assertStart, assertEnd);
-    const ownerLock = assertBody.indexOf("holder-seat-funding-v1:");
-    const placementLock = assertBody.indexOf("holder-admissions-v1");
-    expect(ownerLock).toBeGreaterThanOrEqual(0);
-    expect(placementLock).toBeGreaterThan(ownerLock);
+    const bodyOf = (name: string) => {
+      const start = placementSql.indexOf(`create or replace function public.${name}(`);
+      expect(start).toBeGreaterThanOrEqual(0);
+      return placementSql.slice(start, placementSql.indexOf("$$;", start));
+    };
 
-    const applyStart = placementSql.indexOf("create or replace function public.apply_hermes_tier_allocations(");
-    const applyEnd = placementSql.indexOf("$$;", applyStart);
-    const applyBody = placementSql.slice(applyStart, applyEnd);
+    const assertBody = bodyOf("assert_proxmox_placement_capacity");
+    const assertPlacementLock = assertBody.indexOf("holder-admissions-v1");
+    const assertOwnerLock = assertBody.indexOf("holder-seat-funding-v1:");
+    expect(assertPlacementLock).toBeGreaterThanOrEqual(0);
+    expect(assertOwnerLock).toBeGreaterThan(assertPlacementLock);
+
+    const applyBody = bodyOf("apply_hermes_tier_allocations");
+    const applyPlacementLock = applyBody.indexOf("holder-admissions-v1");
+    const applyRowLock = applyBody.indexOf("for update");
     const applyOwnerLock = applyBody.indexOf("holder-seat-funding-v1:");
-    const applyCapacityCheck = applyBody.indexOf("assert_proxmox_placement_capacity");
-    expect(applyOwnerLock).toBeGreaterThanOrEqual(0);
-    expect(applyCapacityCheck).toBeGreaterThan(applyOwnerLock);
+    expect(applyPlacementLock).toBeGreaterThanOrEqual(0);
+    expect(applyRowLock).toBeGreaterThan(applyPlacementLock);
+    expect(applyOwnerLock).toBeGreaterThan(applyRowLock);
+
+    for (const name of ["resize_hermes_instance_allocation", "move_hermes_instance_placement"]) {
+      const body = bodyOf(name);
+      const placementLock = body.indexOf("holder-admissions-v1");
+      const rowLock = body.indexOf("for update");
+      expect(placementLock).toBeGreaterThanOrEqual(0);
+      expect(rowLock).toBeGreaterThan(placementLock);
+    }
+
+    const claimBody = bodyOf("claim_hivra_agent_operation");
+    expect(claimBody.indexOf("for update")).toBeGreaterThan(claimBody.indexOf("holder-admissions-v1"));
   });
 
   it("keeps the Node VM modules flag in the shared and CI Jest invocations", () => {

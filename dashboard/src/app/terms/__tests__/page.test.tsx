@@ -18,8 +18,8 @@ describe("/terms holder-compute disclosures", () => {
     render(<TermsPage />);
 
     const billing = screen.getByRole("heading", { name: "4. Subscription and Billing" }).parentElement as HTMLElement;
-    expect(billing).toHaveTextContent("admitted only up to 20% of CPU capacity and 20% of RAM capacity");
-    expect(billing).toHaveTextContent("these are admission ceilings, and grandfathering can preserve usage above them");
+    expect(billing).toHaveTextContent("admitted only up to 20% of scheduler placement capacity");
+    expect(billing).toHaveTextContent("this is an admission ceiling, and grandfathering can preserve usage above it");
     expect(billing).toHaveTextContent("holders join a waitlist and hosted compute starts only after admission");
     expect(billing).toHaveTextContent("automatic idle sleep enabled");
     expect(billing).toHaveTextContent("conditional on host support and activity checks");
