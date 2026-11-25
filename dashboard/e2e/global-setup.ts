@@ -5,7 +5,7 @@ import { dirname } from 'node:path';
 import { CANARY_QA_EMAIL_ENV } from './canary-qa/config';
 import { CANARY_QA_STORAGE_STATE, saveCanaryQaStorageState } from './canary-qa/auth';
 import { assertTicketSignInDisabled } from './first-run-audit/config';
-import { browserLaunchOptions } from '../scripts/lib/playwright-launch.cjs';
+import { launchOptions } from '../scripts/lib/playwright-launch.cjs';
 
 /**
  * Ordinary Playwright auth state.
@@ -26,7 +26,7 @@ export default async function globalSetup(config: FullConfig) {
 
   if (process.env[CANARY_QA_EMAIL_ENV]) {
     const baseUrl = String(config.projects[0]?.use.baseURL ?? process.env.E2E_BASE_URL ?? 'https://canary.hermesos.cloud');
-    const browser = await chromium.launch(browserLaunchOptions());
+    const browser = await chromium.launch(launchOptions());
     try {
       await saveCanaryQaStorageState(browser, { baseUrl, path: AUTH_FILE });
     } finally {
