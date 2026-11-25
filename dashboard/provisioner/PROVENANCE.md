@@ -1468,3 +1468,7 @@ reservations conservatively, and deducts disk already committed in QEMU
 inventory. The provision and start paths close the second inherited lock
 descriptor before `qm start`, so a long-lived KVM child cannot pin the
 allocation or lifecycle lock open. Guest desktop assets are unchanged.
+
+Release `2026.11.25.2` carries forward `2026.11.25.1` and reserves the configured
+startup memory for an existing stopped guest even when no launch reservation
+is pending. The allocation and lifecycle lock behavior stays unchanged.

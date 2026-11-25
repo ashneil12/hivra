@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -458,4 +458,89 @@ printf 'local-lvm lvmthin active 200000000 100000000 %s 50\n' "\${PVESM_AVAILABL
     expect(sufficient.stdout).toContain("pending_disk_gb=1");
   });
 
+  describe("ordinary Proxmox wake without a pending launch intent", () => {
+    const startSource = readFileSync(path.join(path.dirname(HELPER), "hivra-start-on-host.sh"), "utf8");
+    // Execute the admission and power-on block without the real host lock,
+    // guest SSH, or health checks. The shared capacity helper runs unchanged.
+    const wakeBlock = startSource.match(/^qm status "\$VMID" >\/dev\/null[\s\S]*?(?=^release_lifecycle_lock$)/m)?.[0];
+    const bindingTag = `hivra-bind-${"a".repeat(32)}`;
+
+    function wake(totalMb: number, overrides: Record<string, string> = {}) {
+      expect(wakeBlock).toBeDefined();
+      const started = path.join(fixtureDir, "started");
+      writeFileSync(path.join(fixtureDir, "meminfo"), `MemTotal: ${totalMb * 1024} kB\n`);
+      writeExecutable("qm", `#!/usr/bin/env bash
+set -eu
+case "$1" in
+  list) printf 'VMID NAME STATUS\n101 fixture %s\n' "$QM_STATUS" ;;
+  status) printf 'status: %s\n' "$QM_STATUS" ;;
+  config) printf 'memory: 2048\nballoon: %s\ncores: 2\ntags: %s\n' "$BALLOON_MB" "$VM_TAG" ;;
+  start) touch "$STARTED" ;;
+  *) exit 44 ;;
+esac
+`);
+      const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-euc", wakeBlock!], {
+        encoding: "utf8",
+        timeout: 5000,
+        env: {
+          PATH: `${fixtureDir}:/usr/bin:/bin`,
+          BASH_ENV: "/dev/null",
+          NODE_ENV: "test",
+          PROVISIONER_DIR: path.dirname(HELPER),
+          HIVRA_CAPACITY_MEMINFO_PATH: path.join(fixtureDir, "meminfo"),
+          HIVRA_PROVISION_OPERATIONS_DIR: path.join(fixtureDir, "intents"),
+          VMID: "101",
+          BINDING_TAG_ENFORCED: "1",
+          BINDING_TAG: bindingTag,
+          VM_TAG: bindingTag,
+          QM_STATUS: "stopped",
+          BALLOON_MB: "1024",
+          HOST_RESERVE_MB: "512",
+          ENFORCE_CEILINGS: "0",
+          CPU_DENSITY_MILLI: "1000",
+          MEMORY_DENSITY_MILLI: "1000",
+          STARTED: started,
+          ...overrides,
+        },
+      });
+      expect(result.error).toBeUndefined();
+      return { status: result.status, stderr: result.stderr, started: existsSync(started) };
+    }
+
+    it("refuses 2304 MiB before qm start when startup plus reserve requires 2560 MiB", () => {
+      expect(wake(2304)).toMatchObject({
+        status: 1,
+        stderr: expect.stringContaining("active memory floors plus host reserve exceed physical memory"),
+        started: false,
+      });
+    });
+
+    it("starts at exactly 2560 MiB", () => {
+      expect(wake(2560)).toEqual({ status: 0, stderr: "", started: true });
+    });
+
+    it("rejects a balloon floor above configured startup memory", () => {
+      expect(wake(8192, { BALLOON_MB: "4096" })).toMatchObject({
+        status: 1,
+        stderr: expect.stringContaining("invalid requested memory maximum"),
+        started: false,
+      });
+    });
+
+    it("still requires the exact Hivra binding tag", () => {
+      expect(wake(8192, { VM_TAG: `hivra-bind-${"b".repeat(32)}` })).toMatchObject({
+        status: 1,
+        stderr: expect.stringContaining("without its exact Hivra binding tag"),
+        started: false,
+      });
+    });
+
+    it("skips admission and power-on for a running VM", () => {
+      expect(wake(2304, { QM_STATUS: "running", BALLOON_MB: "4096" })).toEqual({
+        status: 0,
+        stderr: "",
+        started: false,
+      });
+    });
+  });
 });

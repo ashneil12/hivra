@@ -149,6 +149,8 @@ if [ "$CURRENT_STATUS" != "running" ]; then
   [[ "$TARGET_FLOOR_MB" =~ ^[0-9]+$ ]] && [ "$TARGET_FLOOR_MB" -gt 0 ] \
     || TARGET_FLOOR_MB="$(printf '%s\n' "$TARGET_CONFIG" | awk '$1=="memory:" {print $2; exit}')"
   TARGET_MAX_MB="$(printf '%s\n' "$TARGET_CONFIG" | awk '$1=="memory:" {print $2; exit}')"
+  [[ "$TARGET_MAX_MB" =~ ^[0-9]+$ ]] && [ "$TARGET_MAX_MB" -ge "$TARGET_FLOOR_MB" ] \
+    || { echo "invalid requested memory maximum" >&2; exit 1; }
   TARGET_MAX_CPU="$(printf '%s\n' "$TARGET_CONFIG" | awk '$1=="cpulimit:" {print $2; exit}')"
   if ! [[ "$TARGET_MAX_CPU" =~ ^[0-9]+([.][0-9]+)?$ ]] || [ "$TARGET_MAX_CPU" = "0" ]; then
     TARGET_CORES="$(printf '%s\n' "$TARGET_CONFIG" | awk '$1=="cores:" {print $2; exit}')"
@@ -159,7 +161,9 @@ if [ "$CURRENT_STATUS" != "running" ]; then
       || { echo "could not inspect target CPU maximum" >&2; exit 1; }
     TARGET_MAX_CPU="$((TARGET_CORES * TARGET_SOCKETS))"
   fi
-  bash "${PROVISIONER_DIR}/hivra-host-capacity-admission" "$VMID" "$TARGET_FLOOR_MB" "$TARGET_MAX_MB" "$TARGET_MAX_CPU" \
+  # A stopped VM needs its configured startup memory before ballooning can reclaim it.
+  # Use the existing physical reservation argument, even without a pending launch intent.
+  bash "${PROVISIONER_DIR}/hivra-host-capacity-admission" "$VMID" "$TARGET_MAX_MB" "$TARGET_MAX_MB" "$TARGET_MAX_CPU" \
     "$HOST_RESERVE_MB" "$ENFORCE_CEILINGS" "$CPU_DENSITY_MILLI" "$MEMORY_DENSITY_MILLI" 0
 fi
 # qm forks a long-lived kvm child; without 8>&- and 9>&- it would inherit any

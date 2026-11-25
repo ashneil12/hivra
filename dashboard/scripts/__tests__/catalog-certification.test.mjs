@@ -17,7 +17,7 @@ import { parseServedRevision } from "../catalog-certification/served-canary-revi
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98";
 const HOST = "canary.hermesos.cloud";
-const PROVISIONER = "2026.11.25.1";
+const PROVISIONER = "2026.11.25.2";
 const NOW = new Date("2026-11-25T12:00:00.000Z");
 
 function inspectFixture(overrides = {}) {

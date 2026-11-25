@@ -947,6 +947,17 @@ async function main() {
     });
     await db.exec(allocationLock);
     assert.deepEqual(await admissionDefinitions(), admittedAllocationLock, "re-applying the allocation-lock admission changes nothing");
+    const settledWake = migration("20261125204500_provider_release_admission_2026_11_25_2.sql");
+    await db.exec(settledWake);
+    const admittedSettledWake = await admissionDefinitions();
+    admittedSettledWake.forEach((definition, index) => {
+      for (const version of ["2026.11.25.1", "2026.11.25.2"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["e31772cddbca5f2c0480ced6247792366e0ec4ba438dd2735979dabf75fc379a", "666c410c373d21a1f36cf96c2776cb8e31495703cb96f8e1bd5446bc4d566587"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(settledWake);
+    assert.deepEqual(await admissionDefinitions(), admittedSettledWake, "re-applying the settled wake admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
