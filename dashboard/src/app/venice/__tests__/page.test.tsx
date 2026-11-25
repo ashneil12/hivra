@@ -82,9 +82,15 @@ describe("/venice", () => {
     expect(screen.getByRole("heading", { name: /\$10\s*of Venice inference, on us/ })).toBeInTheDocument();
     expect(screen.getByText("VENICE", { selector: "strong" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy code VENICE" })).toBeInTheDocument();
+  });
+
+  it("sends signed-out claimants to sign-up with their Venice launch destination", async () => {
+    process.env[FLAG] = "true";
+    render(await VenicePage());
+
     expect(screen.getByRole("link", { name: /Claim your \$10/ })).toHaveAttribute(
       "href",
-      `/sign-in?redirect_url=${encodeURIComponent(CLAIM_RETURN)}`,
+      `/sign-up?redirect_url=${encodeURIComponent(CLAIM_RETURN)}`,
     );
   });
 
