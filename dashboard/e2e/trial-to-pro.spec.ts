@@ -21,8 +21,7 @@
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
 import { assertNotProduction, auditEmail, AUDIT_EMAIL_DOMAIN, newRunId } from './first-run-audit/config';
-import { createAuditUser } from './first-run-audit/clerk-admin';
-import { establishAuditSession } from './first-run-audit/session';
+import { signUpAuditUser } from './first-run-audit/signup';
 import { proveChat } from './launch-sweep/chat';
 import { launchFromTile, openFromLaunch, waitForReady } from './launch-sweep/journey';
 import { SWEEP_TARGETS, type SweepTarget } from './launch-sweep/targets';
@@ -139,16 +138,14 @@ async function checkoutFromPricing(page: Page, name: string, customer: TrialCust
 
 async function newCustomer(browser: Browser, env: JourneyEnv, label: string, customers: TrialCustomer[]) {
   const email = auditEmail(`trial-${label}-${env.runId}`, AUDIT_EMAIL_DOMAIN);
-  const user = await createAuditUser(env.clerkSecretKey, email);
-  const customer: TrialCustomer = { userId: user.id };
-  customers.push(customer);
-  const context = await establishAuditSession(browser, {
+  const signup = await signUpAuditUser(browser, {
     baseUrl: env.baseUrl,
+    clerkSecretKey: env.clerkSecretKey,
     email,
-    onContext: (created) => { customer.context = created; },
   });
-  customer.signedIn = true;
-  return { customer, context };
+  const customer: TrialCustomer = { userId: signup.userId, context: signup.context, signedIn: true };
+  customers.push(customer);
+  return { customer, context: signup.context };
 }
 
 test.describe('trial to Pro', () => {

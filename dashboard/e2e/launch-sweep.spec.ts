@@ -32,9 +32,9 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
 import { assertNotProduction, auditEmail, AUDIT_EMAIL_DOMAIN, newRunId } from './first-run-audit/config';
-import { createAuditUser, deleteAuditUser } from './first-run-audit/clerk-admin';
+import { deleteAuditUser } from './first-run-audit/clerk-admin';
 import { destroyAllHivraAgents, destroyAllInstances, listHivraAgents, listInstances } from './first-run-audit/instances';
-import { establishAuditSession } from './first-run-audit/session';
+import { signUpAuditUser } from './first-run-audit/signup';
 import { proveAppOpen } from './launch-sweep/app-open';
 import { proveChat, proveComputerOpen } from './launch-sweep/chat';
 import { measureIdle } from './launch-sweep/idle';
@@ -136,10 +136,10 @@ async function screenshot(page: Page | null, recorder: SweepRecorder, outDir: st
   );
 }
 
-async function signedInContext(browser: Browser, env: SweepEnv, email: string): Promise<BrowserContext> {
-  const context = await establishAuditSession(browser, { baseUrl: env.baseUrl, email });
-  context.setDefaultTimeout(30_000);
-  return context;
+async function signUpSweepAccount(browser: Browser, env: SweepEnv, email: string) {
+  const signup = await signUpAuditUser(browser, { baseUrl: env.baseUrl, clerkSecretKey: env.clerkSecretKey, email });
+  signup.context.setDefaultTimeout(30_000);
+  return signup;
 }
 
 /** Delete everything the account owns, then the account. Never throws. */
@@ -193,11 +193,13 @@ test.describe('launch sweep', () => {
   test('every tile Launch offers is covered by the sweep', async ({ browser }) => {
     const env = sweepEnv();
     const email = auditEmail(`sweep-tiles-${env.runId}`, AUDIT_EMAIL_DOMAIN);
-    const user = await createAuditUser(env.clerkSecretKey, email);
+    let userId: string | null = null;
     let context: BrowserContext | null = null;
     try {
-      await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, user.id);
-      context = await signedInContext(browser, env, email);
+      const signup = await signUpSweepAccount(browser, env, email);
+      userId = signup.userId;
+      context = signup.context;
+      await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, userId);
       const page = await context.newPage();
       const offered = await offeredTileNames(page);
       const known = new Set([...SWEEP_TARGETS.map((target) => target.tile), ...OWN_SERVER_ONLY_TILES]);
@@ -205,8 +207,10 @@ test.describe('launch sweep', () => {
       expect(uncovered, `Launch offers tiles the sweep doesn't test. Add them to e2e/launch-sweep/targets.ts`).toEqual([]);
     } finally {
       await context?.close().catch(() => undefined);
-      await removeSweepPlan(env.supabaseUrl, env.serviceRoleKey, user.id);
-      await deleteAuditUser(env.clerkSecretKey, user.id).catch(() => undefined);
+      if (userId) {
+        await removeSweepPlan(env.supabaseUrl, env.serviceRoleKey, userId);
+        await deleteAuditUser(env.clerkSecretKey, userId).catch(() => undefined);
+      }
     }
   });
 
@@ -239,10 +243,10 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
 
   try {
     const email = auditEmail(`sweep-${target.profileId}-${env.runId}`, AUDIT_EMAIL_DOMAIN);
-    const user = await createAuditUser(env.clerkSecretKey, email);
-    userId = user.id;
-    await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, user.id);
-    context = await signedInContext(browser, env, email);
+    const signup = await signUpSweepAccount(browser, env, email);
+    userId = signup.userId;
+    context = signup.context;
+    await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, userId);
     page = await context.newPage();
     recorder.done('account');
 
