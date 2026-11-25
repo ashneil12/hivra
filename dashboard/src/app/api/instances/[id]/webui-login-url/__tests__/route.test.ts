@@ -169,6 +169,18 @@ describe("GET /api/instances/[id]/webui-login-url", () => {
     expect(mockedGetSecureUserInstance).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["reservation_released", "reservation_ineligible"] as const)(
+    "returns a permanent holder-reservation refusal instead of a pending restore: %s",
+    async (outcome) => {
+      mockReadinessSingle.mockResolvedValue({ data: { status: "stopped", paused_reason: "holder_idle", seat_funding: "holder" }, error: null });
+      jest.mocked(transitionClassicHolder).mockResolvedValueOnce(outcome);
+      const response = await callRoute();
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ kind: "error", reason: outcome });
+      expect(mockedGetSecureUserInstance).not.toHaveBeenCalled();
+    },
+  );
+
   it("returns a sidecar cookie handoff URL that redirects to the iframe hash-token URL", async () => {
     const response = await callRoute();
     expect(response.status).toBe(200);

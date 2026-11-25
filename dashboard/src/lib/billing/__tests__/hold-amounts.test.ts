@@ -55,6 +55,21 @@ describe("readHoldAmounts", () => {
     expect(amounts?.power).toMatchObject({ tokenUnit: "$HIVRA", amountDisplay: null, usdApprox: null });
   });
 
+  it("withholds balance-asset quantities from new payment-token quotes when the balance is still pre-conversion", () => {
+    const amounts = readHoldAmounts({
+      ...eligibility,
+      tokenSymbol: "HermesOS",
+      tokenAccess: { paymentToken: "hivra" },
+      tiers: {
+        pro: { currentlyEligible: false, tokenKey: "hermesos", currentThresholdDisplay: "99,999" },
+        power: { currentlyEligible: false, tokenKey: "hermesos", currentThresholdDisplay: "199,999" },
+      },
+    });
+    expect(amounts?.pro).toMatchObject({ tokenUnit: "$HIVRA", amountDisplay: null, usdApprox: null });
+    expect(amounts?.power).toMatchObject({ tokenUnit: "$HIVRA", amountDisplay: null, usdApprox: null });
+    expect(amounts?.tokenUnit).toBe("$HermesOS");
+  });
+
   it("names the token the server priced the amounts in", () => {
     expect(readHoldAmounts(eligibility)?.tokenUnit).toBe("$HermesOS");
     expect(readHoldAmounts({ ...eligibility, tokenSymbol: "HIVRA" })?.tokenUnit).toBe("$HIVRA");

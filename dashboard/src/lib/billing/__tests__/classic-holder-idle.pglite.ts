@@ -5,6 +5,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { NextRequest } from "next/server";
 import { GET as tick } from "@/app/api/cron/holder-inactivity-sweep/route";
 import { GET as wakeStatus } from "@/app/api/instances/[id]/wake/route";
+import { GET as webuiHandoff } from "@/app/api/instances/[id]/webui-login-url/route";
 import { POST as power } from "@/app/api/instances/[id]/route";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveProxmoxHostEnv, runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
@@ -46,6 +47,9 @@ async function sweep() {
 async function start() {
   return power(new NextRequest(base, { method: "POST", body: JSON.stringify({ action: "start", wakeSource: "wake_page" }) }), params);
 }
+async function handoff() {
+  return webuiHandoff(new NextRequest(base + "/webui-login-url"), params);
+}
 // Move fixture timestamps together without sleeping for sixteen wall-clock minutes.
 const ageFixture = (sql: string) => db.exec("begin; alter table hermes_instances disable trigger keep_classic_holder_activity_watermark;" +
   sql + "; alter table hermes_instances enable trigger keep_classic_holder_activity_watermark; commit");
@@ -57,7 +61,8 @@ beforeAll(async () => {
   await db.exec(FIXTURE_SQL);
   const dir = path.resolve(__dirname, "../../../../supabase/migrations");
   for (const name of ["20261124230000_holder_admissions", "20261125010000_hermes_holder_idle_claim",
-    "20261125020000_holder_allocation_updates", "20261125030000_classic_holder_sleep"]) {
+    "20261125020000_holder_allocation_updates", "20261125030000_classic_holder_sleep",
+    "20261125050000_classic_holder_lifecycle_repairs"]) {
     await db.exec(readFileSync(path.join(dir, name + ".sql"), "utf8"));
   }
 });
@@ -89,8 +94,8 @@ beforeEach(async () => {
     let sql: string;
     let values: unknown[];
     if (name === "claim_classic_holder_idle") {
-      sql = "select claim_classic_holder_idle($1,$2,$3) value";
-      values = [args.p_id,args.p_owner,args.p_allow_sleep];
+      sql = "select claim_classic_holder_idle($1,$2,$3,$4) value";
+      values = [args.p_id,args.p_owner,args.p_allow_sleep,args.p_exclude_hosts];
     } else if (name === "finish_classic_holder_idle") {
       sql = "select finish_classic_holder_idle($1,$2,$3,$4,$5) value";
       values = [args.p_id,args.p_generation,args.p_node,args.p_vmid,args.p_state];
@@ -190,7 +195,12 @@ it("reconciles an expired operation, and refuses an owner mismatch or a released
   expect(await sweep()).toEqual({ napping: 1 });
   await db.exec("update holder_admissions set state='released'");
   const dispatched = transport.mock.calls.length;
-  expect((await start()).status).not.toBe(200);
+  const powerResponse = await start();
+  expect(powerResponse.status).toBe(409);
+  expect(await powerResponse.json()).toMatchObject({ retryable: false, reason: "reservation_released" });
+  const handoffResponse = await handoff();
+  expect(handoffResponse.status).toBe(409);
+  expect(await handoffResponse.json()).toMatchObject({ kind: "error", reason: "reservation_released" });
   expect(transport).toHaveBeenCalledTimes(dispatched);
   expect(vm.qmp).toBe("paused");
 });
@@ -227,4 +237,96 @@ it("defers a lapsed qualification without dispatching or ending the sweep as emp
   expect(await sweep()).toEqual({ deferred: 1 });
   expect(transport).not.toHaveBeenCalled();
   expect(await row()).toMatchObject({ status: "running", paused_reason: null });
+});
+
+it("resumes an already-napped holder when automatic sleep is disabled", async () => {
+  expect(await sweep()).toEqual({ napping: 1 });
+  expect(vm.qmp).toBe("paused");
+  delete process.env.HERMES_CLASSIC_HOLDER_SLEEP_ENABLED;
+  await db.exec("update hermes_instances set holder_idle_claimed_at=now()-interval '31 seconds'");
+  expect(await sweep()).toEqual({ awake: 1 });
+  expect(vm).toMatchObject({ qmp: "running", volatileData: "in-memory-session" });
+  expect(await row()).toMatchObject({ status: "running", lifecycle_state: "active", paused_reason: null });
+  expect(calls).not.toContain("qm suspend " + VMID + " --todisk 1");
+});
+
+it("completes a due save on a draining host but takes the safe nap exit on maintenance", async () => {
+  expect(await sweep()).toEqual({ napping: 1 });
+  await ageNap();
+  await db.exec("update proxmox_hosts set status='draining'");
+  expect(await sweep()).toEqual({ hibernated: 1 });
+  expect(vm).toMatchObject({ status: "stopped", vmstate: true, savedData: "in-memory-session" });
+});
+
+it("resumes instead of deepening a nap when the host enters maintenance", async () => {
+  expect(await sweep()).toEqual({ napping: 1 });
+  await db.exec("update proxmox_hosts set status='maintenance'");
+  await db.exec("update hermes_instances set holder_idle_claimed_at=now()-interval '31 seconds'");
+  expect(await sweep()).toEqual({ awake: 1 });
+  expect(vm).toMatchObject({ qmp: "running", volatileData: "in-memory-session" });
+  expect(calls).not.toContain("qm suspend " + VMID + " --todisk 1");
+});
+
+it("returns a permanent ineligibility at both owner wake routes without host dispatch", async () => {
+  expect(await sweep()).toEqual({ napping: 1 });
+  await db.exec("delete from token_tier_qualifications");
+  const dispatched = transport.mock.calls.length;
+  const powerResponse = await start();
+  expect(powerResponse.status).toBe(409);
+  expect(await powerResponse.json()).toMatchObject({ retryable: false, reason: "reservation_ineligible" });
+  const handoffResponse = await handoff();
+  expect(handoffResponse.status).toBe(409);
+  expect(await handoffResponse.json()).toMatchObject({ kind: "error", reason: "reservation_ineligible" });
+  expect(transport).toHaveBeenCalledTimes(dispatched);
+  expect((await row()).lifecycle_substate).toBe("holder_napping");
+});
+
+it("keeps a slow host operation fenced while another host proceeds", async () => {
+  const secondId = "22345678-0123-4567-89ab-000000000057";
+  const thirdId = "32345678-0123-4567-89ab-000000000057";
+  const secondVmid = 2234;
+  const thirdVmid = 3234;
+  await db.exec(`insert into proxmox_hosts(id,total_cpu,total_ram_mb,cpu_overcommit_ratio) values
+    ('fixture-a',40,120000,1),('fixture-b',40,120000,1);
+    update token_tier_qualifications set tier='power';
+    update holder_admissions set tier='power',reserved_cpu=4,reserved_ram_mb=8192;
+    update hermes_instances set cpu_limit=1,proxmox_node='fixture-a',
+      config=jsonb_set(config,'{infrastructure,node}','"fixture-a"'::jsonb);`);
+  for (const [otherId, otherVmid, node] of [[secondId, secondVmid, "fixture-b"], [thirdId, thirdVmid, "fixture-a"]] as const) {
+    await db.query(`insert into hermes_instances(id,user_id,status,lifecycle_state,seat_funding,cpu_limit,ram_limit,
+      proxmox_node,proxmox_vmid,created_at,last_activity_at,config) values ($1,'owner','running','active','holder',1,2048,
+      $2,$3,now()-interval '1 day',now()-interval '4 minutes',$4)`, [otherId, node, otherVmid, JSON.stringify({
+      infrastructure: { provider: "proxmox", node, vmid: otherVmid, gatewayHost: gateway, privateIpv4: ip },
+    })]);
+  }
+
+  await ageFixture(`update hermes_instances set lifecycle_state='paused',status='stopped',paused_reason='holder_idle',
+    lifecycle_substate='holder_napping',holder_napped_at=now()-interval '13 minutes',holder_idle_claimed_at=now()-interval '13 minutes',
+    last_activity_at=now()-interval '16 minutes',last_agent_activity_at=null`);
+
+  let releaseSlow!: () => void;
+  const slowGate = new Promise<void>(resolve => { releaseSlow = resolve; });
+  const started: number[] = [];
+  transport.mockImplementation(async (script) => {
+    const vmid = Number(script.match(/^VMID=(\d+)/m)?.[1]);
+    started.push(vmid);
+    if (vmid === VMID) await slowGate;
+    return {
+      ok: true,
+      stdout: `HIVRA_SLEEP_RESULT {"ok":true,"vmid":${vmid},"tier":"hibernate","from":"napping","to":"hibernated","reason":"hibernated","ms":1,"steps":{},"probe":null}\n`,
+      stderr: "",
+    };
+  });
+
+  const pendingSweep = tick(new NextRequest("http://localhost/api/cron/holder-inactivity-sweep", { headers: { authorization: "Bearer fixture" } }));
+  for (let i = 0; i < 100 && !started.includes(secondVmid); i++) await new Promise(resolve => setTimeout(resolve, 10));
+  expect(started).toEqual([VMID, secondVmid]);
+  expect(started).not.toContain(thirdVmid);
+  expect((await row()).lifecycle_substate).toBe("holder_save");
+  releaseSlow();
+  const response = await pendingSweep;
+  expect(response.status).toBe(200);
+  expect((await response.json()).data.outcomes).toEqual({ hibernated: 2 });
+  expect(await sweep()).toEqual({ hibernated: 1 });
+  expect(started.filter(value => value === thirdVmid)).toHaveLength(1);
 });

@@ -3176,6 +3176,17 @@ export async function POST(
       if (action !== "start") return apiError("Wake this computer before changing its power or runtime.", 409);
       const result = await transitionClassicHolder({ id, userId });
       if (result === "awake") return apiSuccess({ action });
+      if (result === "reservation_released" || result === "reservation_ineligible") {
+        const released = result === "reservation_released";
+        return apiError(
+          released
+            ? "This computer's token-holder reservation was released, so its saved session cannot be restored."
+            : "This computer no longer fits its token-holder reservation, so its saved session cannot be restored.",
+          409,
+          undefined,
+          { retryable: false, reason: result },
+        );
+      }
       // Another request may have completed between the read and the claim.
       if (result === "unclaimed" || result === "superseded") {
         const current = await getInstanceOrError(id, userId);

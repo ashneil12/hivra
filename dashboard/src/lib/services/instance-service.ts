@@ -3283,32 +3283,37 @@ export class InstanceService {
           : storedConfig),
     };
 
-    const { data: instance, error: insertError } = await supabaseAdmin
-      .from("hermes_instances")
-      .insert(
-        buildInstanceInsertPayload({
-          userId,
-          name,
-          subdomain,
-          provider,
-          encryptedApiKey: encryptApiKey(finalApiKey),
-          apiKeyPreview: formatStoredProviderSecretPreview(provider, finalApiKey),
-          config: effectiveStoredConfig,
-          honchoApiKeyEncrypted,
-          hostId,
-          cpuLimit,
-          ramLimit,
-          resourceTier,
-          seatFunding,
-          backend,
-          infrastructureProvider: infraProvider,
-          productSurface,
-          diskSizeGb:
-            infraProvider === "proxmox" ? proxmoxProvisionedDiskGb : undefined,
+    const instanceInsertPayload = buildInstanceInsertPayload({
+      userId,
+      name,
+      subdomain,
+      provider,
+      encryptedApiKey: encryptApiKey(finalApiKey),
+      apiKeyPreview: formatStoredProviderSecretPreview(provider, finalApiKey),
+      config: effectiveStoredConfig,
+      honchoApiKeyEncrypted,
+      hostId,
+      cpuLimit,
+      ramLimit,
+      resourceTier,
+      seatFunding,
+      backend,
+      infrastructureProvider: infraProvider,
+      productSurface,
+      diskSizeGb:
+        infraProvider === "proxmox" ? proxmoxProvisionedDiskGb : undefined,
+      proxmoxNode:
+        infraProvider === "proxmox" ? proxmoxProvisionTargetId ?? undefined : undefined,
+    });
+    const { data: instance, error: insertError } = infraProvider === "proxmox"
+      ? await supabaseAdmin.rpc("insert_hermes_instance", {
+          p_row: instanceInsertPayload,
         })
-      )
-      .select()
-      .single();
+      : await supabaseAdmin
+          .from("hermes_instances")
+          .insert(instanceInsertPayload)
+          .select()
+          .single();
 
     if (insertError || !instance) {
       const insertFailure = new Error(
@@ -3701,6 +3706,30 @@ export class InstanceService {
               vmidEnd: proxmoxResult.vmidEnd,
             };
           }
+          break;
+        }
+
+        const { data: placementMoved, error: placementMoveError } = await supabaseAdmin.rpc(
+          "move_hermes_instance_placement",
+          {
+            p_instance_id: instance.id,
+            p_user_id: userId,
+            p_host_id: nextTargetSelection.targetId,
+            p_disk_gb: nextTargetSelection.diskSizeGb,
+          }
+        );
+        if (placementMoveError || placementMoved !== true) {
+          log.error("failed to move durable Proxmox placement before failover", placementMoveError, {
+            source: LOG_SOURCE,
+            failureType: "proxmox_placement_move_failed",
+            userId,
+            instanceId: instance.id,
+            targetId: nextTargetSelection.targetId,
+          });
+          result = {
+            ok: false,
+            error: "Selected Proxmox host filled before failover could start",
+          } as ProxmoxProvisionResult;
           break;
         }
 

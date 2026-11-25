@@ -25,7 +25,7 @@ beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(FIXTURE_SQL);
   await pg.exec(fs.readFileSync(MIGRATION, "utf8"));
-  for (const file of ["20261125010000_hermes_holder_idle_claim.sql", "20261125020000_holder_allocation_updates.sql", "20261125030000_classic_holder_sleep.sql"]) {
+  for (const file of ["20261125010000_hermes_holder_idle_claim.sql", "20261125020000_holder_allocation_updates.sql", "20261125030000_classic_holder_sleep.sql", "20261125040000_durable_proxmox_placement.sql"]) {
     await pg.exec(fs.readFileSync(path.join(path.dirname(MIGRATION), file), "utf8"));
   }
 });
@@ -522,6 +522,7 @@ describe("holder admissions SQL authority", () => {
   });
 
   it("writes and validates funding inside the launch-model reservation transaction", async () => {
+    await host("h1", 32, 131072);
     // The real v1/v2 custody chain is older than this migration. This stub has
     // the same essential contract for the funding handoff: it inserts the
     // legacy-shape agent row and returns its agentId; the v3 replacement must
@@ -597,6 +598,7 @@ describe("holder admissions SQL authority", () => {
   });
 
   it("requires and atomically validates funding in the direct managed-agent writer", async () => {
+    await host("h1", 32, 131072);
     await pg.exec(`
       create or replace function public.lock_hivra_owner_agent_slots(text)
       returns void language plpgsql as $$ begin return; end $$;
@@ -658,5 +660,100 @@ describe("holder admissions SQL authority", () => {
     await expect(pg.query(
       "update public.hivra_agents set seat_funding='paid' where user_id='immutable'",
     )).rejects.toThrow(/seat_funding is immutable/);
+  });
+
+  it("makes paid Classic insertion, cross-lane insertion and resize consume the same host authority", async () => {
+    await pg.exec(`
+      insert into public.proxmox_hosts(id,total_cpu,total_ram_mb,reserved_cpu,reserved_ram_mb,wake_headroom_ram_mb,cpu_overcommit_ratio)
+      values('cap',2,8192,1,0,0,1);
+    `);
+    const classicRow = (id: string, user: string) => ({
+      id, user_id: user, status: "provisioning", lifecycle_state: "provisioning",
+      cpu_limit: 1, ram_limit: 4096, proxmox_node: "cap", disk_size_gb: 30,
+      seat_funding: "paid", infrastructure_provider: "proxmox",
+    });
+    const first = await pg.query(
+      "select public.insert_hermes_instance($1::jsonb) as r",
+      [JSON.stringify(classicRow("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "paid-a"))],
+    );
+    expect(first.rows[0].r).toMatchObject({ user_id: "paid-a" });
+    await expect(pg.query(
+      "select public.insert_hermes_instance($1::jsonb)",
+      [JSON.stringify(classicRow("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "paid-b"))],
+    )).rejects.toThrow(/remaining compute capacity/);
+    await expect(pg.query(
+      "select public.insert_hivra_managed_agent($1::jsonb,10)",
+      [JSON.stringify({ user_id: "hivra-paid", deployment_mode: "hivra-managed", status: "provisioning", cpu: 1, ram: 4, proxmox_host: "cap", seat_funding: "paid" })],
+    )).rejects.toThrow(/remaining compute capacity/);
+
+    await pg.exec(`
+      update public.proxmox_hosts set total_cpu=4 where id='cap';
+      insert into public.hermes_instances(id,user_id,status,lifecycle_state,cpu_limit,ram_limit,proxmox_node,disk_size_gb,seat_funding,infrastructure_provider)
+      values('cccccccc-cccc-4ccc-8ccc-cccccccccccc','resize-b','provisioning','provisioning',1,4096,'cap',30,'paid','proxmox');
+    `);
+    const grown = await pg.query(
+      "select public.resize_hermes_instance_allocation('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','paid-a',2,4096) as r",
+    );
+    expect(grown.rows[0].r).toBe(true);
+    await expect(pg.query(
+      "select public.resize_hermes_instance_allocation('cccccccc-cccc-4ccc-8ccc-cccccccccccc','resize-b',2,4096)",
+    )).rejects.toThrow(/remaining compute capacity/);
+  });
+
+  it("reserves a Hivra resize claim before completion without losing hibernation disk backing", async () => {
+    await pg.exec(`
+      insert into public.proxmox_hosts(id,total_cpu,total_ram_mb,reserved_cpu,reserved_ram_mb,wake_headroom_ram_mb,cpu_overcommit_ratio)
+      values('resizehost',3,24576,1,0,0,1);
+      insert into public.hivra_agents(id,user_id,deployment_mode,status,desired_state,cpu,ram,proxmox_host,vmid,seat_funding)
+      values('dddddddd-dddd-4ddd-8ddd-dddddddddddd','resize-owner','hivra-managed','running','running',1,1,'resizehost',501,'paid');
+    `);
+    const claimed = await pg.query(
+      `select public.claim_hivra_agent_operation(
+        'resize-owner','dddddddd-dddd-4ddd-8ddd-dddddddddddd','eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        'resize','running','{"cpu":2,"ram":1}'::jsonb) as r`,
+    );
+    expect(claimed.rows[0].r).toBe(true);
+    await expect(pg.query(
+      "select public.insert_hermes_instance($1::jsonb)",
+      [JSON.stringify({ user_id: "other-paid", status: "provisioning", lifecycle_state: "provisioning", cpu_limit: 1, ram_limit: 1024, proxmox_node: "resizehost", disk_size_gb: 30, seat_funding: "paid", infrastructure_provider: "proxmox" })],
+    )).rejects.toThrow(/remaining compute capacity/);
+
+    await pg.exec(`
+      truncate public.hivra_agents, public.hermes_instances;
+      update public.proxmox_hosts set placement_skip_deep_sleep=true, thinpool_size_gb=30, thinpool_overcommit_ratio=1 where id='resizehost';
+    `);
+    await qualify("sleep-holder", "pro");
+    await pg.exec(`
+      insert into public.holder_admissions(user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb,assigned_host_id)
+      values('sleep-holder','admitted','pro','hermesos',now(),2,4096,'resizehost');
+      insert into public.hermes_instances(user_id,status,lifecycle_state,cpu_limit,ram_limit,proxmox_node,disk_size_gb,seat_funding,paused_reason,lifecycle_substate)
+      values('sleep-holder','stopped','paused',2,4096,'resizehost',30,'holder','holder_idle','holder_hibernated');
+    `);
+    await expect(pg.query(
+      "select public.insert_hermes_instance($1::jsonb)",
+      [JSON.stringify({ user_id: "disk-paid", status: "provisioning", lifecycle_state: "provisioning", cpu_limit: 1, ram_limit: 1024, proxmox_node: "resizehost", disk_size_gb: 30, seat_funding: "paid", infrastructure_provider: "proxmox" })],
+    )).rejects.toThrow(/remaining disk capacity/);
+    await pg.exec("update public.proxmox_hosts set thinpool_size_gb=90 where id='resizehost'");
+    const reuse = await pg.query(
+      "select public.insert_hermes_instance($1::jsonb) as r",
+      [JSON.stringify({ user_id: "disk-paid", status: "provisioning", lifecycle_state: "provisioning", cpu_limit: 1, ram_limit: 1024, proxmox_node: "resizehost", disk_size_gb: 30, seat_funding: "paid", infrastructure_provider: "proxmox" })],
+    );
+    expect(reuse.rows[0].r).toMatchObject({ user_id: "disk-paid" });
+  });
+
+  it("keeps token requalification grace bounded to the product's 24-hour window", async () => {
+    await pg.exec(`
+      insert into public.token_tier_qualifications(user_id,tier,token_key,currently_eligible,last_breach_at)
+      values('grace-user','pro','hermesos',false,now() - interval '1 hour');
+    `);
+    const fresh = await pg.query<{ r: string | null }>(
+      "select public.holder_admission_current_tier('grace-user') as r",
+    );
+    expect(fresh.rows[0].r).toBe("pro");
+    await pg.exec("update public.token_tier_qualifications set last_breach_at=now()-interval '25 hours' where user_id='grace-user'");
+    const expired = await pg.query<{ r: string | null }>(
+      "select public.holder_admission_current_tier('grace-user') as r",
+    );
+    expect(expired.rows[0].r).toBeNull();
   });
 });

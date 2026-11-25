@@ -25,6 +25,7 @@ export interface EligibilityTierState {
 }
 export interface EligibilityPayload {
   tokenSymbol: string;
+  tokenAddress?: string | null;
   tokenDecimals: number;
   balance: {
     balanceRaw: string;

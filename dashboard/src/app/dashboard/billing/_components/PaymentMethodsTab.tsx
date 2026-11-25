@@ -406,7 +406,7 @@ function HoldAmountsTable({ amounts }: { amounts: BillingController["holdAmounts
           {rows.map(({ name, tier }) => (
             <tr key={name}>
               <th scope="row">{name}</th>
-              <td className={styles.holdAmount}>{tier.amountDisplay ?? "See wallet quote in"} {tier.tokenUnit}</td>
+              <td className={styles.holdAmount}>{tier.amountDisplay ?? "Wallet quote in"} {tier.tokenUnit}</td>
               <td>{tier.usdApprox !== null ? formatUsd(tier.usdApprox) : "—"}</td>
               <td>{tier.eligible ? "Qualified" : "Not yet"}</td>
             </tr>

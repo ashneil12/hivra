@@ -894,6 +894,41 @@ describe("WalletPage custody migration", () => {
     expect(screen.getByLabelText("Tier eligibility")).toHaveTextContent(`100 ${lockedUnit}`);
   });
 
+  it("does not label a pre-conversion live target as the converted quote asset", async () => {
+    const defaultFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input) === "/api/billing/wallet/eligibility") {
+        return json({
+          success: true,
+          data: {
+            ...eligibility.data,
+            tokenAccess: { grandfathered: true, paymentToken: "hivra", newTiersAvailable: true },
+            tiers: {
+              pro: {
+                ...eligibility.data.tiers.pro,
+                tokenKey: "hermesos",
+                currentThresholdDisplay: "100",
+              },
+              power: {
+                ...eligibility.data.tiers.power,
+                tokenKey: "hermesos",
+                currentThresholdDisplay: "200",
+              },
+            },
+          },
+        });
+      }
+      return defaultFetch(input, init);
+    });
+
+    render(<WalletPage />);
+    const panel = await screen.findByLabelText("Tier eligibility");
+    expect(panel).not.toHaveTextContent("100 $HIVRA");
+    expect(panel).not.toHaveTextContent("200 $HIVRA");
+    expect(panel).toHaveTextContent("Lock a Pro quote to see the amount of $HIVRA required.");
+    expect(panel).toHaveTextContent("Lock a Power quote to see the amount of $HIVRA required.");
+  });
+
   function renderLegacyCustodyOnTouch(snapshotWalletAddress: string | null) {
     const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {

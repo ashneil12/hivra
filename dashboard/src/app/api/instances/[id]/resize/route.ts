@@ -95,6 +95,26 @@ export async function PATCH(
     holder ? { cpu: spec.cpuLimit, ramMb: spec.ramLimitMb } : undefined);
   if (blocked) return apiError(blocked, 409);
 
+  if (!holder) {
+    const { data: allocationUpdated, error: allocationError } = await supabaseAdmin.rpc(
+      "resize_hermes_instance_allocation",
+      {
+        p_instance_id: id,
+        p_user_id: userId,
+        p_cpu: spec.cpuLimit,
+        p_ram_mb: spec.ramLimitMb,
+      }
+    );
+    if (allocationError) {
+      const conflict = allocationError.code === "P0058" || /capacity/i.test(allocationError.message);
+      return apiError(
+        conflict ? "The selected host does not have enough remaining capacity for this allocation." : "Could not reserve the resized allocation.",
+        conflict ? 409 : 503,
+      );
+    }
+    if (allocationUpdated !== true) return apiError("Instance not found", 404);
+  }
+
   const result = await resizeProxmoxVm({
     vmid: infrastructure.vmid,
     expectedInstanceId: instance.id,
@@ -108,36 +128,28 @@ export async function PATCH(
   });
 
   if (!result.ok) {
-    return apiError(`Resize failed: ${result.error || result.stderr || "unknown"}`, 500);
-  }
-
-  // The VM now runs at the spec caps. Record them on the row: the capacity
-  // checks, usage and memory-pressure routes read the stored columns, so a
-  // stale row would keep reporting the old size.
-  if (!holder) {
-    const { error: sizeUpdateError } = await supabaseAdmin
-      .from("hermes_instances")
-      .update({
-        cpu_limit: spec.cpuLimit,
-        ram_limit: spec.ramLimitMb,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", id)
-      .eq("user_id", userId);
-    if (sizeUpdateError) {
-      log.error("instance resize database update failed after VM resize", sizeUpdateError, {
-        source: "instances",
-        route: "/api/instances/[id]/resize",
-        method: "PATCH",
-        instanceId: id,
-        userId,
-        failureType: "instance_resize_row_update_failed",
-      });
-      return apiError(
-        "The VM was resized, but its saved allocation could not be updated. Retry the resize.",
-        500,
-      );
+    if (!holder) {
+      // The intended allocation was reserved before the host mutation so
+      // concurrent placements could not consume the same headroom. Releasing
+      // it after a failed mutation is capacity-reducing and therefore safe to
+      // write directly; the next successful repair reserves it again.
+      const { error: rollbackError } = await supabaseAdmin
+        .from("hermes_instances")
+        .update({ cpu_limit: instance.cpu_limit, ram_limit: instance.ram_limit })
+        .eq("id", id)
+        .eq("user_id", userId);
+      if (rollbackError) {
+        log.error("instance resize allocation rollback failed", rollbackError, {
+          source: "instances",
+          route: "/api/instances/[id]/resize",
+          method: "PATCH",
+          instanceId: id,
+          userId,
+          failureType: "instance_resize_allocation_rollback_failed",
+        });
+      }
     }
+    return apiError(`Resize failed: ${result.error || result.stderr || "unknown"}`, 500);
   }
 
   return apiSuccess({

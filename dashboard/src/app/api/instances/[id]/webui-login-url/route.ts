@@ -424,6 +424,17 @@ export async function GET(
       return NextResponse.json({ error: "This computer needs an active entitlement to wake." }, { status: 402 });
     }
     const outcome = await transitionClassicHolder({ id, userId });
+    if (outcome === "reservation_released" || outcome === "reservation_ineligible") {
+      const released = outcome === "reservation_released";
+      return NextResponse.json({
+        kind: "error",
+        reason: outcome,
+        retryable: false,
+        error: released
+          ? "This computer's token-holder reservation was released, so its saved session cannot be restored."
+          : "This computer no longer fits its token-holder reservation, so its saved session cannot be restored.",
+      }, { status: 409, headers: { "Cache-Control": "no-store" } });
+    }
     if (outcome !== "awake") {
       return NextResponse.json({ kind: "pending", reason: "instance_not_ready", instanceStatus: "stopped",
         retryAfterMs: PENDING_HANDOFF_RETRY_AFTER_MS, message: "Restoring your workspace session." },

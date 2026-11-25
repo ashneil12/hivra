@@ -4,7 +4,7 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { log } from "@/lib/logger";
 
-import { transitionClassicHolder } from "@/lib/recovery/classic-holder-idle";
+import { runClassicHolderSweep } from "@/lib/recovery/classic-holder-idle";
 import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 
 export const maxDuration = 400;
@@ -30,13 +30,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const deadline = Date.now() + 45_000;
-    const outcomes: Record<string, number> = {};
-    for (let i = 0; i < 25 && Date.now() < deadline; i++) {
-      const outcome = await transitionClassicHolder();
-      if (outcome === "unclaimed") break;
-      outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
-    }
+    const outcomes = await runClassicHolderSweep();
     await recordCronHeartbeat("holder-inactivity-sweep");
     return apiSuccess({ outcomes });
   } catch (err) {

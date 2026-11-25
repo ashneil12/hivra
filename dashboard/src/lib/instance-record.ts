@@ -11,6 +11,7 @@ interface BuildInstanceInsertPayloadParams {
   cpuLimit?: number;
   ramLimit?: number;
   diskSizeGb?: number;
+  proxmoxNode?: string;
   resourceTier?: string;
   seatFunding?: "paid" | "holder" | null;
   infrastructureProvider?: "hetzner" | "proxmox";
@@ -33,6 +34,7 @@ export function buildInstanceInsertPayload(params: BuildInstanceInsertPayloadPar
     cpu_limit: params.cpuLimit,
     ram_limit: params.ramLimit,
     disk_size_gb: params.diskSizeGb,
+    proxmox_node: params.proxmoxNode,
     resource_tier: params.resourceTier,
     seat_funding: params.seatFunding ?? null,
     infrastructure_provider: params.infrastructureProvider,
@@ -53,6 +55,7 @@ export function buildInstanceInsertPayload(params: BuildInstanceInsertPayloadPar
     cpu_limit?: number;
     ram_limit?: number;
     disk_size_gb?: number;
+    proxmox_node?: string;
     resource_tier?: string;
     seat_funding?: "paid" | "holder" | null;
     infrastructure_provider?: "hetzner" | "proxmox";

@@ -44,7 +44,7 @@ export function EligibilityPanel({
 }) {
   const { copy } = useLocale();
   const eligibilityCopy = copy.dashboard.wallet.eligibility;
-  const sym = displayTokenUnit(eligibility.tokenSymbol);
+  const sym = displayTokenUnit(eligibility.tokenSymbol, eligibility.tokenAddress);
   const quoteUnit = newQuoteUnit(eligibility);
   const balanceDisplay = eligibility.balance?.balanceDisplay ?? '—';
 
