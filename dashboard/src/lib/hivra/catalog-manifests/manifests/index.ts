@@ -92,6 +92,7 @@ export const UNIVERSAL_CATALOG_IDS = [
   "silverbullet",
   "wakapi",
   "stump",
+  "thelounge",
   "dashy",
   "homepage",
   "flame",
@@ -115,6 +116,7 @@ export const UNIVERSAL_CATALOG_IDS = [
   "komga",
   "immich",
   "profilarr",
+  "owncast",
 ] as const;
 
 export type UniversalCatalogAppId = (typeof UNIVERSAL_CATALOG_IDS)[number];
