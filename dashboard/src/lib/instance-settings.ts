@@ -366,7 +366,15 @@ export function getAutoUpdateConfig(config: Record<string, unknown> | undefined)
 // endpoint never needs these characters.
 const CUSTOM_LLM_BASE_URL_FORBIDDEN_CHARS = /[\s\x00-\x1f\x7f`$\\"'<>;|(){}]/;
 
-function validateCustomLlmBaseUrl(rawValue: string): string {
+/**
+ * Shared validation for every write path that persists a custom LLM base URL:
+ * the advanced-settings PATCH payload, instance creation, and any future caller
+ * of buildStoredInstanceConfig (which re-validates the patch it is handed).
+ * Exported so write paths that build stored config WITHOUT going through
+ * buildStoredInstanceConfig (e.g. the managed-Venice enabler) can apply the
+ * same rule instead of inventing their own.
+ */
+export function validateCustomLlmBaseUrl(rawValue: string): string {
   const trimmed = rawValue.trim();
   if (!trimmed) return "";
 
@@ -621,9 +629,30 @@ export function buildStoredInstanceConfig(
   const currentAutoUpdate = resolveStoredAutoUpdate(currentConfig);
   const currentMemorySystem = resolveStoredMemorySystem(currentConfig);
 
+  // Chokepoint validation: every write path that persists a custom LLM base
+  // URL flows through here — instance creation passes the full agentSettings
+  // object, the advanced-settings PATCH passes the allowlisted patch (already
+  // validated once in buildAdvancedInstanceConfigPayload). The value reaches
+  // host shell scripts and bash-sourced .env files at provisioning time, so an
+  // unvalidated create would be a shell-injection hole even with the PATCH
+  // path covered. Only the INCOMING patch value is validated: legacy rows
+  // written before validation existed must remain readable
+  // (getPublicInstanceConfig passes an empty patch, so reads never throw).
+  const patchAgentSettings = patch.agentSettings
+    ? { ...patch.agentSettings }
+    : undefined;
+  if (
+    patchAgentSettings &&
+    typeof patchAgentSettings.customLlmBaseUrl === "string"
+  ) {
+    patchAgentSettings.customLlmBaseUrl = validateCustomLlmBaseUrl(
+      patchAgentSettings.customLlmBaseUrl
+    );
+  }
+
   const nextAgentSettings: StoredAgentSettings = {
     ...currentAgentSettings,
-    ...(patch.agentSettings || {}),
+    ...(patchAgentSettings || {}),
   };
 
   if (patch.agentSettings?.runtimeMode === "managed") {

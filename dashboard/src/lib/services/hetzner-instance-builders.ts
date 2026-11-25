@@ -14,6 +14,7 @@ import {
   type MemorySystemConfig,
 } from "@/lib/instance-settings";
 import { PROVIDER_ID_MAP, resolveProviderBaseUrl, resolveProviderFallbackModel } from "@/lib/services/provider-config";
+import { serializeEnvAssignmentLine } from "@/lib/services/env-file-lines";
 import { HETZNER_BOOTSTRAP_SIDECAR_SERVER_CODE } from "@/lib/services/sidecar-script";
 import { buildInstanceUpdateReporterShell } from "@/lib/services/update-status-reporting";
 import { buildPlatformRegistryCredentialScrubScript } from "@/lib/services/registry-credential-scrub";
@@ -2638,9 +2639,12 @@ export function buildHermesEnvLines(params: {
   }
 
   // SEC-04: every interpolated value above (apiServerKey, model, agent-settings
-  // keys, memory-system values) lands verbatim in .env — sanitize every emitted
-  // line so a value containing a line break can never inject an extra
-  // KEY=value assignment into the generated env file.
+  // keys, memory-system values) lands verbatim in .env. serializeEnvAssignmentLine
+  // both strips line breaks (no smuggled KEY=value assignment) AND shell-quotes
+  // values, because this file is bash-sourced by the profile-gateway launch and
+  // supervisor scripts — unquoted `$(...)`/backticks in a user-controlled base
+  // URL or key would otherwise execute as root when sourced. Values in the
+  // conservative safe charset stay byte-identical (unquoted).
   return [
     `API_SERVER_ENABLED=true`,
     `API_SERVER_HOST=0.0.0.0`,
@@ -2669,7 +2673,7 @@ export function buildHermesEnvLines(params: {
       ...(agentSettings.browserUseApiKey ? [`BROWSER_USE_API_KEY=${agentSettings.browserUseApiKey}`] : []),
     ] : []),
     ...memoryEnvLines,
-  ].map(sanitizeEnvValue);
+  ].map(serializeEnvAssignmentLine);
 }
 
 export function buildHonchoConfig(settings?: HonchoSettings): string | null {

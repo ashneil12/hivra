@@ -61,6 +61,7 @@ import {
   WEBUI_PERSISTENT_INSTALL_ENV_LINES,
 } from "@/lib/services/webui-runtime-env";
 import { PROVIDER_ID_MAP, resolveProviderBaseUrl } from "@/lib/services/provider-config";
+import { serializeEnvAssignmentLine } from "@/lib/services/env-file-lines";
 import { ONBOARDING_RITUAL } from "@/lib/onboarding-ritual";
 import {
   isOperatorosAgentImage,
@@ -2605,7 +2606,7 @@ export function buildWebUIComposeEnv(p: WebUIDeployParams): string {
   if (p.daytonaApiKey) lines.push(`DAYTONA_API_KEY=${p.daytonaApiKey}`);
   // SEC-04: sanitize every emitted line — interpolated values (provider, model,
   // bot name, keys, base URL) must not be able to inject extra env lines.
-  return lines.map(sanitizeEnvValue).join("\n") + "\n";
+  return lines.map(serializeEnvAssignmentLine).join("\n") + "\n";
 }
 
 // ── hermes-agent .env (lives inside the volume, scoped to the agent run) ─
@@ -2697,7 +2698,7 @@ export function buildHermesEnvFile(p: WebUIDeployParams): string {
       ...(p.tavilyApiKey ? [`TAVILY_API_KEY=${p.tavilyApiKey}`] : []),
       ...(p.firecrawlApiKey ? [`FIRECRAWL_API_KEY=${p.firecrawlApiKey}`] : []),
       ...(p.daytonaApiKey ? [`DAYTONA_API_KEY=${p.daytonaApiKey}`] : []),
-    ].map(sanitizeEnvValue).join("\n") + "\n";
+    ].map(serializeEnvAssignmentLine).join("\n") + "\n";
   }
 
   if (p.inferenceProvider === "openai-codex" || p.inferenceProvider === "xai-oauth") {
@@ -2717,7 +2718,7 @@ export function buildHermesEnvFile(p: WebUIDeployParams): string {
       ...(p.tavilyApiKey ? [`TAVILY_API_KEY=${p.tavilyApiKey}`] : []),
       ...(p.firecrawlApiKey ? [`FIRECRAWL_API_KEY=${p.firecrawlApiKey}`] : []),
       ...(p.daytonaApiKey ? [`DAYTONA_API_KEY=${p.daytonaApiKey}`] : []),
-    ].map(sanitizeEnvValue).join("\n") + "\n";
+    ].map(serializeEnvAssignmentLine).join("\n") + "\n";
   }
 
   // Determine the right env-var name for the API key based on provider.
@@ -2747,7 +2748,7 @@ export function buildHermesEnvFile(p: WebUIDeployParams): string {
   // SEC-04: sanitize every emitted line — interpolated values (provider, key,
   // base URL, bankr fields, gateway token) must not be able to inject extra
   // env lines into /state/.env.
-  return lines.map(sanitizeEnvValue).join("\n") + "\n";
+  return lines.map(serializeEnvAssignmentLine).join("\n") + "\n";
 }
 
 function buildBankrEnvLines(bankr?: InstanceBankrAgentConfig | null): string[] {
