@@ -19,6 +19,7 @@ export interface HostState {
   lock: string;
   tags: string;
   memory: number;
+  balloon?: number;
   onboot: number;
   vmstate: boolean;
   /** Behaviour switches. */
@@ -71,7 +72,10 @@ a = sys.argv[1:]
 open(os.path.join(d, "calls.log"), "a").write("qm " + " ".join(a) + "\n")
 def save(): json.dump(s, open(p, "w"))
 def out(t): sys.stdout.write(t + "\n")
-if a[0] == "status":
+if a[0] == "list":
+    out("VMID")
+    out("1234")
+elif a[0] == "status":
     out("status: " + s["status"])
     if "--verbose" in a and s["qmp"]: out("qmpstatus: " + s["qmp"])
 elif a[0] == "config":
@@ -80,6 +84,7 @@ elif a[0] == "config":
     out("cores: 2")
     out("ide2: local-lvm:vm-%s-cloudinit,media=cdrom" % a[1])
     out("memory: %d" % s["memory"])
+    if "balloon" in s: out("balloon: %d" % s["balloon"])
     out("onboot: %d" % s["onboot"])
     out("scsi0: local-lvm:vm-%s-disk-0,iothread=1,size=20G" % a[1])
     out("tags: " + s["tags"])
