@@ -14,8 +14,10 @@ import {
 } from "@/lib/infrastructure/connection-store";
 import { isGvisorDeploymentTarget } from "@/lib/infrastructure/contracts";
 import { HIVRA_GVISOR_ADAPTER_VERSION, isGvisorPreflightFresh } from "@/lib/hivra/gvisor-computer-contract";
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import {
+  managedGvisorAuthorityConfig,
+  type ManagedGvisorAuthorityConfig,
+} from "@/lib/hivra/managed-gvisor-launch-config";
 
 export type ManagedGvisorLaunchGateCode =
   | "managed_gvisor_disabled"
@@ -31,13 +33,6 @@ export type ManagedGvisorLaunchGateFailure = {
   code: ManagedGvisorLaunchGateCode;
   status: number;
   message: string;
-};
-
-type ManagedGvisorAuthorityConfig = {
-  authorityUserId: string;
-  connectionId: string;
-  targetId: string;
-  connectionRevision: number;
 };
 
 export type ManagedGvisorAuthority = ManagedGvisorAuthorityConfig & {
@@ -63,18 +58,6 @@ function switchEnabled(value: string | undefined): boolean {
   return flag === "1" || flag === "true";
 }
 
-function authorityConfig(env: NodeJS.ProcessEnv): ManagedGvisorAuthorityConfig | null {
-  const authorityUserId = env.HIVRA_MANAGED_GVISOR_AUTHORITY_USER_ID?.trim() ?? "";
-  const connectionId = env.HIVRA_MANAGED_GVISOR_CONNECTION_ID?.trim() ?? "";
-  const targetId = env.HIVRA_MANAGED_GVISOR_TARGET_ID?.trim() ?? "";
-  const connectionRevision = Number(env.HIVRA_MANAGED_GVISOR_CONNECTION_REVISION);
-  if (!authorityUserId || !UUID.test(connectionId) || !UUID.test(targetId)
-    || !Number.isSafeInteger(connectionRevision) || connectionRevision < 1) {
-    return null;
-  }
-  return { authorityUserId, connectionId, targetId, connectionRevision };
-}
-
 export async function checkManagedGvisorLaunchAuthority(userId: string, env: NodeJS.ProcessEnv = process.env): Promise<ManagedGvisorLaunchGateFailure | { ok: true; authority: ManagedGvisorAuthority }> {
   if (!switchEnabled(env.HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED)) {
     return failure("managed_gvisor_disabled", 404, "Managed Linux terminal sandboxes are not available.");
@@ -92,7 +75,7 @@ export async function checkManagedGvisorLaunchAuthority(userId: string, env: Nod
   if (typeof agentLimit !== "number" || !Number.isInteger(agentLimit) || agentLimit < 0) {
     return failure("managed_gvisor_billing_unavailable", 503, "The hosted compute plan could not be verified. Nothing was created.");
   }
-  const config = authorityConfig(env);
+  const config = managedGvisorAuthorityConfig(env);
   if (!config) {
     return failure("managed_gvisor_not_configured", 503, "Managed Linux terminal sandboxes are not configured safely in this environment.");
   }
