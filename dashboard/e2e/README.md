@@ -355,7 +355,10 @@ LAUNCH_SWEEP_ONLY=vaultwarden,umami,nanobot,openhands LAUNCH_SWEEP_IDLE_MINUTES=
 
 After each live sequence, run the read-only reaper inventory with `--dry-run`,
 then the active reaper with the same explicit opt-in if anything owned by the
-audit prefix remains. Do not certify while cleanup is unconfirmed.
+audit prefix remains. Do not certify while cleanup is unconfirmed. Accounts
+created before the `+clerk_test` migration cannot use the OTP reaper path; if
+inventory shows one, treat it as a manual recovery incident rather than working
+around the auth guard.
 
 For the Promote gate, run the customer path plus one reference agent on the
 exact served SHA, then a small rotating catalog sample. Full-catalog
