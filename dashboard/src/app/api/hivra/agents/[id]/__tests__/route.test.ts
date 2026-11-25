@@ -316,6 +316,58 @@ describe("DELETE /api/hivra/agents/[id]", () => {
     expect(mockSupabaseRpc).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["cancelled", 200],
+    ["unconfirmed", 409],
+  ])("returns %s managed gVisor cancellation through the normal DELETE path", async (outcome, expectedStatus) => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    const sandbox = "00000000-0000-4000-8000-000000000002";
+    mockAgentRow = { ...mockAgentRow, id, deployment_mode: "hivra-managed", computer_substrate: "gvisor",
+      type: "linux-terminal", computer_profile: "linux-terminal", gvisor_sandbox_id: sandbox, vmid: null, status: "provisioning" };
+    const { mutateGvisorComputer } = jest.requireActual("@/lib/hivra/gvisor-computer-service");
+    mockMutateGvisorComputer.mockImplementationOnce(mutateGvisorComputer);
+    mockSupabaseRpc.mockResolvedValueOnce({ data: outcome === "cancelled"
+      ? { status: outcome, agent: { ...mockAgentRow, status: "deleted", operation_id: null } }
+      : { status: outcome }, error: null });
+    const request = new NextRequest(`https://hivra.cloud/api/hivra/agents/${id}`, {
+      method: "DELETE",
+      headers: { host: "hivra.cloud", origin: "https://hivra.cloud", "sec-fetch-site": "same-origin" },
+    });
+
+    const response = await DELETE(request, { params: Promise.resolve({ id }) });
+
+    expect(response.status).toBe(expectedStatus);
+    expect(mockSupabaseRpc).toHaveBeenCalledTimes(1);
+    expect(mockSupabaseRpc).toHaveBeenCalledWith("cancel_undispatched_hivra_managed_gvisor", {
+      p_customer: "user-free", p_computer: id,
+    });
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    expect(updates).toEqual([]);
+  });
+
+  it("keeps an unresolved ready gVisor delete on the managed claim path", async () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    const sandbox = "00000000-0000-4000-8000-000000000002";
+    mockAgentRow = { ...mockAgentRow, id, deployment_mode: "hivra-managed", computer_substrate: "gvisor",
+      type: "linux-terminal", computer_profile: "linux-terminal", gvisor_sandbox_id: sandbox, vmid: null, status: "running" };
+    const { mutateGvisorComputer } = jest.requireActual("@/lib/hivra/gvisor-computer-service");
+    mockMutateGvisorComputer.mockImplementationOnce(mutateGvisorComputer);
+    mockSupabaseRpc.mockResolvedValueOnce({ data: { status: "held" }, error: null });
+    const request = new NextRequest(`https://hivra.cloud/api/hivra/agents/${id}`, {
+      method: "DELETE",
+      headers: { host: "hivra.cloud", origin: "https://hivra.cloud", "sec-fetch-site": "same-origin" },
+    });
+    const response = await DELETE(request, { params: Promise.resolve({ id }) });
+
+    expect(response.status).toBe(409);
+    expect(mockSupabaseRpc).toHaveBeenCalledTimes(1);
+    expect(mockSupabaseRpc).toHaveBeenCalledWith("claim_hivra_managed_gvisor_lifecycle", {
+      p_customer: "user-free", p_computer: id, p_action: "delete",
+    });
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    expect(updates).toEqual([]);
+  });
+
   describe("dedicated provider computers", () => {
     const request = (headers: Record<string, string> = {}) => new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1", {
       method: "DELETE", headers: { host: "hivra.cloud", origin: "https://hivra.cloud", "sec-fetch-site": "same-origin", ...headers },

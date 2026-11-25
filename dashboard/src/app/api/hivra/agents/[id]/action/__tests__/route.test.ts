@@ -299,6 +299,24 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
+  it.each([["sleep", "stop", "stopped"], ["wake", "start", "running"]])(
+    "routes managed gVisor %s through the owner's sandbox lifecycle", async (action, adapterAction, status) => {
+      mockAgent = { ...mockAgent, deployment_mode: "hivra-managed", computer_substrate: "gvisor",
+        type: "linux-terminal", computer_profile: "linux-terminal", vmid: null };
+      mockMutateGvisorComputer.mockResolvedValue({ ...mockAgent, status });
+      const request = new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1/action", {
+        method: "POST",
+        headers: { Host: "hivra.cloud", Origin: "https://hivra.cloud", "Sec-Fetch-Site": "same-origin", "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const response = await POST(request, { params: Promise.resolve({ id: "agent-1" }) });
+
+      expect(response.status).toBe(200);
+      expect(mockMutateGvisorComputer).toHaveBeenCalledWith("user-free", "agent-1", { action: adapterAction });
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects a gVisor resize whose maximum differs from its reservation", async () => {
     mockAgent = { ...mockAgent, computer_substrate: "gvisor", vmid: null, type: "linux-terminal", computer_profile: "linux-terminal" };
     const request = new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1/action", {
