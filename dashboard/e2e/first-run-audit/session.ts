@@ -21,6 +21,7 @@ import type { Browser, BrowserContext } from '@playwright/test';
 import {
   assertClerkTestAuditEmail,
   assertLiveManagedHostingAuditAllowed,
+  assertNotProduction,
   CLERK_TEST_OTP_CODE,
 } from './config';
 import {
@@ -71,6 +72,7 @@ export async function establishAuditSession(
   { baseUrl, email, onContext }: SessionOptions,
 ): Promise<BrowserContext> {
   assertLiveManagedHostingAuditAllowed();
+  assertNotProduction(baseUrl);
   assertClerkTestAuditEmail(email);
   // NB: browser.newContext() does NOT inherit the project's `use` options, so
   // the UA here is the raw (headless) one unless we set it explicitly.

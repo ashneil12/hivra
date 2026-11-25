@@ -8,8 +8,9 @@
  *   2. sign in, open /dashboard/launch, click the tile, Review, pick Hivra
  *      credits (the $2 starter credit every new paid account gets), Launch;
  *   3. wait on the after-launch screen until it says ready, press Open;
- *   4. ask the agent "What is 389 + 448?" in the box a customer types into
- *      and wait for 837 on screen (computers: their desktop or terminal opens);
+ *   4. prove the customer surface in the way that fits the tile: chat agents
+ *      answer "What is 389 + 448?" with 837, catalog apps render their real
+ *      authenticated web app, and computers open their desktop or terminal;
  *   4b. on an agent using Hivra credits, turn on "private models only" the way
  *      its owner does and ask a second question, which must still be answered
  *      (LAUNCH_SWEEP_PRIVATE_ONLY=0 skips; not offered where the switch is off);
@@ -22,8 +23,8 @@
  * the first-run audit: the project only exists with LAUNCH_SWEEP=1, and every
  * test skips without it. Canary only: production hosts are refused.
  *
- * Run:   LAUNCH_SWEEP=1 CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… \
- *        LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… npm run test:launch-sweep
+ * Run:   LAUNCH_SWEEP=1 HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp CLERK_SECRET_KEY=sk_test_… \
+ *        LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… npm run test:launch-sweep
  * One:   LAUNCH_SWEEP_ONLY=agent-zero,openclaw npm run test:launch-sweep
  */
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';

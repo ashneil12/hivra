@@ -10,6 +10,7 @@
  */
 
 import {
+  assertCanaryClerkSecretKey,
   assertClerkTestAuditEmail,
   assertLiveManagedHostingAuditAllowed,
   assertTicketSignInDisabled,
@@ -39,6 +40,7 @@ async function clerkFetch(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
+  assertCanaryClerkSecretKey(secretKey);
   return fetch(`${CLERK_API}${path}`, {
     ...init,
     headers: {

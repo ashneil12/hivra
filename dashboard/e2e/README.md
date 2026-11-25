@@ -56,8 +56,8 @@ test model access before they can be enabled.
 ## Playwright (not part of the weekly check)
 
 Playwright targets a deployed site and is separate from the offline baseline.
-Do not use the full suite during the live-auth pause, or assume every public
-spec is read-only: the telemetry spec checks real ingestion.
+Do not assume every public spec is read-only: the telemetry spec checks real
+ingestion. Live managed-hosting projects still need their explicit opt-in.
 
 ## Layout
 - `public.public.spec.ts` — logged-out routes render (HTTP < 400 + real content) + VRT.
@@ -75,10 +75,11 @@ E2E_BASE_URL=https://<vercel-preview>.vercel.app npm run test:e2e   # gate a PR 
 ```
 
 ## Env (authed path only)
-- `CLERK_SECRET_KEY` — Backend API key for the **canary** Clerk instance (`splendid-longhorn-99`).
-- `QA_USER_ID` — the `qa-agent@hermesos.cloud` Clerk user id.
 
-Without them, setup writes empty storage state and the golden-path specs skip.
+The standing `QA_USER_ID` ticket-auth path is disabled. If both
+`CLERK_SECRET_KEY` and `QA_USER_ID` are present, setup fails closed rather than
+minting a Clerk sign-in ticket; without them it writes empty storage state and
+the golden-path specs skip. Do not re-enable that path with sign-in tickets.
 
 ## VRT baselines
 Screenshots are OS-sensitive — **generate baselines on the Linux CI runner**, never commit
@@ -316,12 +317,59 @@ would show Canary's internals. The schedule (weekly, and before every release in
 operations runner that checks out this repository and runs the commands below with
 the Canary test credentials.
 
+### Required isolated-runner setup
+
+Use a dedicated Linux x86_64 runner with no customer shell, no production
+secrets and no persistent browser profile. Node 22, `npm ci` and
+`npx playwright install --with-deps chromium` are the host setup. The runner
+checks out the exact public `canary` merge commit being certified; it does not
+deploy or use the Vercel CLI.
+
+Required Canary test secrets, injected by the private runner secret store only:
+`CLERK_SECRET_KEY` (`sk_test_…`), `LAUNCH_SWEEP_SUPABASE_URL`, and
+`LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY`. The trial journey also needs
+`TRIAL_JOURNEY_STRIPE_SECRET_KEY` (`sk_test_…`). Every live command also needs
+`HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp`; without it the harness fails before
+network or browser setup. Never provide `sk_live_…` keys or production Supabase
+credentials. Model use stays bounded to the throwaway account's Hivra-credit
+allowance; do not install a standing operator model key.
+
+Before certifying a release, confirm through the managed-release verification
+path that `canary.hermesos.cloud` serves the same Git commit the runner checked
+out. Record that SHA, the start time and the operator/runner identity beside the
+sweep output. A sweep against a mismatched or unknown served revision is only a
+diagnostic run, never release evidence.
+
+First live smoke sequence, with idle measurement off until the auth path is proven:
+
 ```bash
-HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \
-  npm run test:launch-sweep                         # everything, one at a time
+# cheap docker-web catalog app
+LAUNCH_SWEEP_ONLY=it-tools LAUNCH_SWEEP_IDLE_MINUTES=0 npm run test:launch-sweep
+# reference computer
+LAUNCH_SWEEP_ONLY=ubuntu-server LAUNCH_SWEEP_IDLE_MINUTES=0 npm run test:launch-sweep
+# runtime matrix pilot
+LAUNCH_SWEEP_ONLY=vaultwarden,umami,nanobot,openhands LAUNCH_SWEEP_IDLE_MINUTES=0 npm run test:launch-sweep
+```
+
+After each live sequence, run the read-only reaper inventory with `--dry-run`,
+then the active reaper with the same explicit opt-in if anything owned by the
+audit prefix remains. Do not certify while cleanup is unconfirmed.
+
+For the Promote gate, run the customer path plus one reference agent on the
+exact served SHA, then a small rotating catalog sample. Full-catalog
+certification is a separate batch campaign, not the per-release gate: certify
+every entry once per meaningful manifest or provisioner-runtime change, and
+record pass/blocker status per manifest. Do not merge the Promote gate until
+that exact-revision customer-path sweep and reference-agent launch have passed
+and cleanup is clean.
+
+```bash
+export HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp CLERK_SECRET_KEY=sk_test_…
+export LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=…
+npm run test:launch-sweep                           # everything, one at a time
 LAUNCH_SWEEP_ONLY=agent-zero,openclaw npm run test:launch-sweep   # a few
-LAUNCH_SWEEP_KEEP_FAILED=1 …                         # keep a failed computer to read its logs
-LAUNCH_SWEEP_KEEP_PASSED=claude-code,codex …         # keep these after a pass, to read inside them
+LAUNCH_SWEEP_KEEP_FAILED=1 npm run test:launch-sweep             # keep a failed computer to read its logs
+LAUNCH_SWEEP_KEEP_PASSED=claude-code,codex npm run test:launch-sweep  # keep these after a pass
 npm run test:launch-sweep:summary                    # Markdown table; exits 1 if a launch is broken
 npm run audit:first-run:cleanup                      # reaps any leftover sweep accounts too
 ```

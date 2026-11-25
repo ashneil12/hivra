@@ -663,7 +663,8 @@ async function bootDockerWeb(spec, platforms) {
   try {
     // Pull separately so a registry or Docker-desktop stall is evidence, not an
     // unattended runner sitting in `docker run` for the whole curation pass.
-    const pull = shOut("docker", ["pull", ref], { timeout: 240_000 });
+    const pullArgs = ["pull", ...(!hasArm64 ? ["--platform", "linux/amd64"] : []), ref];
+    const pull = shOut("docker", pullArgs, { timeout: 240_000 });
     evidence.pullStdout = pull.stdout.slice(-500);
     if (pull.status !== 0) {
       evidence.pullStderr = (pull.stderr || pull.error || "").slice(-800);

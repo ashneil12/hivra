@@ -17,6 +17,13 @@ trap 'rm -rf "$LOCK"' EXIT
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 git -C "$REPO" fetch -q origin canary
+# Close only curation PRs whose apps are already on Canary or duplicated by a
+# newer open pass. Ledger-only or unique-app PRs are reported but kept. Never
+# let reconciliation block curation itself.
+reconcile_log="$STATE/reconcile-$(date -u +%Y%m%dT%H%M%SZ).log"
+if ! node "$REPO/dashboard/scripts/catalog-curator/reconcile-stale-prs.mjs" >"$reconcile_log" 2>&1; then
+  echo "stale curation PR reconciliation failed; see $reconcile_log" >&2
+fi
 branch="curation/$(date -u +%Y%m%d-%H%M)"
 if [ -d "$WORKTREE/.git" ] || [ -f "$WORKTREE/.git" ]; then
   git -C "$WORKTREE" reset -q --hard && git -C "$WORKTREE" clean -qfd
@@ -51,8 +58,12 @@ case "$agent" in
 esac
 if [ "$status" -ne 0 ] && [ "$agent" = devin ] && command -v codex >/dev/null 2>&1 \
   && grep -Eiq 'quota|usage limit|weekly limit|out of credits' "$log"; then
-  echo "devin quota/limit failure (exit $status); retrying this same pass with codex" >>"$log"
-  status=0
-  run_codex || status=$?
+  if [ -z "$(git -C "$WORKTREE" status --porcelain)" ]; then
+    echo "devin quota/limit failure (exit $status); retrying this same pass with codex" >>"$log"
+    status=0
+    run_codex || status=$?
+  else
+    echo "devin quota/limit failure (exit $status) after the worktree changed; not falling back over a partial pass" >>"$log"
+  fi
 fi
 [ "$status" -eq 0 ] || echo "pass exited $status (agent=$agent)" >>"$log"

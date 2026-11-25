@@ -50,6 +50,18 @@ describe('managed-hosting audit mail pause', () => {
     expect(loadPlaywrightConfig).not.toThrow();
   });
 
+  it.each(liveFlags)('allows %s only with the explicit Clerk test-OTP opt-in', (flag) => {
+    process.env[flag] = '1';
+    process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
+    expect(loadPlaywrightConfig).not.toThrow();
+  });
+
+  it('rejects an unknown live-auth mode even when a live flag is set', () => {
+    process.env.LAUNCH_SWEEP = '1';
+    process.env[LIVE_AUDIT_AUTH_ENV] = 'tickets';
+    expect(loadPlaywrightConfig).toThrow(blocked);
+  });
+
   it('blocks ordinary Playwright setup from minting or redeeming a ticket for the standing QA user', async () => {
     process.env.CLERK_SECRET_KEY = key;
     process.env.QA_USER_ID = existingAuditUser.id;
@@ -100,6 +112,23 @@ describe('managed-hosting audit mail pause', () => {
 
     await expect(createAuditUser(key, 'firstrun-audit-real@example.test')).rejects.toThrow(/not a Clerk test address/);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects live or unrecognized Clerk keys before any network call', async () => {
+    process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
+    const fetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'));
+
+    await expect(createAuditUser('sk_live_fixture', freshEmail)).rejects.toThrow(/test key/);
+    await expect(createAuditUser('service-role-fixture', freshEmail)).rejects.toThrow(/test key/);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a production target even with the explicit opt-in', async () => {
+    process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
+    const browser = { newContext: jest.fn() };
+
+    await expect(establishAuditSession(browser as never, { baseUrl: 'https://hivra.cloud', email: freshEmail })).rejects.toThrow(/refusing to target/);
+    expect(browser.newContext).not.toHaveBeenCalled();
   });
 
   it('rejects active cleanup before contacting Clerk but keeps its read-only inventory', async () => {

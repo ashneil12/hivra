@@ -49,6 +49,13 @@ export function assertTicketSignInDisabled(): never {
   throw new Error('[managed-hosting-audit] Clerk sign-in tickets are disabled for live audits because ticket sign-in sent mail.');
 }
 
+/** The audit creates and deletes real users; only a Clerk development/test key is acceptable. */
+export function assertCanaryClerkSecretKey(secretKey: string | null | undefined): void {
+  if (!secretKey?.startsWith('sk_test_')) {
+    throw new Error('[managed-hosting-audit] CLERK_SECRET_KEY must be a Canary Clerk test key (sk_test_…); live or unrecognized keys are refused.');
+  }
+}
+
 export interface AuditConfig {
   /** Deployed target. NEVER point this at production. */
   baseUrl: string;
