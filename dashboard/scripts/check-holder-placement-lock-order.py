@@ -142,7 +142,7 @@ def main() -> None:
               created_at,last_activity_at,last_agent_activity_at
             ) values(
               '{INSTANCE_ID}','{OWNER}','stopped','paused',1,2048,'operator',
-              'h1',101,30,'holder','proxmox','{{}}'::jsonb,'192.0.2.2','https://gateway.example',
+              'h1',101,30,'holder','proxmox','{{}}'::jsonb,'10.0.0.2','https://gateway.example',
               'holder_idle','holder_hibernated',now()-interval '1 hour',now()-interval '1 hour',now()-interval '1 hour'
             );
             """,
