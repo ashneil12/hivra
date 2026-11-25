@@ -41,6 +41,9 @@ const internalWorkingPaths = [
 ];
 
 const uuidExemptPaths = new Set([
+  // Holder capacity PGlite fixtures use deterministic synthetic UUID-shaped ids.
+  'dashboard/src/lib/billing/__tests__/classic-holder-idle.pglite.ts',
+  'dashboard/src/lib/billing/__tests__/holder-admissions.pglite.ts',
   // Upstream/artifact identities with separately reviewed provenance.
   'dashboard/scripts/omarchy-proxmox-lab.ts',
   'dashboard/src/data/agency-templates.json',
