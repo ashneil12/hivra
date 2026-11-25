@@ -204,4 +204,17 @@
 {"slug":"owncast","name":"Owncast","sourceUrl":"https://github.com/owncast/owncast","status":"accepted","reason":"evidence catalog-curation/evidence/owncast.json","checkedAt":"2026-11-25"}
 {"slug":"thelounge","name":"The Lounge","sourceUrl":"https://github.com/thelounge/thelounge","status":"accepted","reason":"evidence catalog-curation/evidence/thelounge.json","checkedAt":"2026-11-25"}
 {"slug":"wekan","name":"WeKan","sourceUrl":"https://github.com/wekan/wekan","status":"compose-needed","reason":"requires MongoDB","checkedAt":"2026-11-25"}
-{"slug":"forgejo","name":"Forgejo","sourceUrl":"https://codeberg.org/forgejo/forgejo","status":"pending","reason":"","checkedAt":"2026-11-25"}
+{"slug":"forgejo","name":"Forgejo","sourceUrl":"https://codeberg.org/forgejo/forgejo","status":"rejected","reason":"source host is not available through the required GitHub licence check","checkedAt":"2026-11-25"}
+{"slug":"netbootxyz","name":"netboot.xyz","sourceUrl":"https://github.com/netbootxyz/netboot.xyz","status":"rejected","reason":"requires host network and privileged boot/network integration","checkedAt":"2026-11-25"}
+{"slug":"hermes-agent","name":"Hermes Agent","sourceUrl":"https://github.com/NousResearch/hermes-agent","status":"rejected","reason":"CLI agent requires host tool and model integration outside the catalog web runtime contract","checkedAt":"2026-11-25"}
+{"slug":"autogpt","name":"AutoGPT","sourceUrl":"https://github.com/Significant-Gravitas/AutoGPT","status":"rejected","reason":"GitHub SPDX license NOASSERTION not in allowlist","checkedAt":"2026-11-25"}
+{"slug":"firecrawl","name":"Firecrawl","sourceUrl":"https://github.com/firecrawl/firecrawl","status":"compose-needed","reason":"requires a multi-service stack including database and browser workers","checkedAt":"2026-11-25"}
+{"slug":"chatwoot","name":"Chatwoot","sourceUrl":"https://github.com/chatwoot/chatwoot","status":"compose-needed","reason":"requires PostgreSQL, Redis and background worker services","checkedAt":"2026-11-25"}
+{"slug":"portainer","name":"Portainer","sourceUrl":"https://github.com/portainer/portainer","status":"rejected","reason":"requires docker.sock host integration","checkedAt":"2026-11-25"}
+{"slug":"minecraft-server","name":"Minecraft Server","sourceUrl":"https://github.com/itzg/docker-minecraft-server","status":"rejected","reason":"dedicated game server is not an installable web app or CLI agent for the catalog runtime","checkedAt":"2026-11-25"}
+{"slug":"glance-dashboard","name":"Glance","sourceUrl":"https://github.com/glanceapp/glance","status":"rejected","reason":"AGPL-3.0 license not in CATALOG_OSI_LICENSES allowlist","checkedAt":"2026-11-25"}
+{"slug":"beszel","name":"Beszel","sourceUrl":"https://github.com/henrygd/beszel","status":"rejected","reason":"requires a separate host agent and host metrics integration","checkedAt":"2026-11-25"}
+{"slug":"dashy-dashboard","name":"Dashy","sourceUrl":"https://github.com/Lissy93/dashy","status":"rejected","reason":"duplicate catalog capability: dashy is already registered as dashy","checkedAt":"2026-11-25"}
+{"slug":"netdata","name":"Netdata","sourceUrl":"https://github.com/netdata/netdata","status":"rejected","reason":"requires host mounts and privileged host metrics integration","checkedAt":"2026-11-25"}
+{"slug":"stirling-pdf","name":"Stirling PDF","sourceUrl":"https://github.com/Stirling-Tools/Stirling-PDF","status":"rejected","reason":"GitHub SPDX license NOASSERTION not in allowlist","checkedAt":"2026-11-25"}
+{"slug":"open-webui","name":"Open WebUI","sourceUrl":"https://github.com/open-webui/open-webui","status":"rejected","reason":"GitHub SPDX license NOASSERTION not in allowlist","checkedAt":"2026-11-25"}
