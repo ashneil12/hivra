@@ -253,7 +253,7 @@ function launchProvisionerVersion(
 // Phase 1 (synchronous over SSH): pick a free VMID in range, kick the host
 // orchestrator in the background (it does VM create + provisioner + tunnel,
 // ~10 min), and print a marker so this call returns in seconds.
-function phase1Script(params: {
+export function phase1Script(params: {
   cpu: number;
   cpuLimit: number;
   memMb: number;
@@ -345,7 +345,9 @@ fi`
     maximumMemoryMb: params.memMb,
     maximumCpu: params.cpuLimit,
     policy: params.capacityPolicy,
-  });
+  }) + (runtime
+    ? ` ${shellQuote(runtime.storage)} ${HIVRA_AGENT_VM_DISK_GB} ${HIVRA_AGENT_VM_STORAGE_HEADROOM_GB}`
+    : "");
   const portableStorageAdmission = runtime
     ? `STORAGE_AVAILABLE_KB="$(pvesm status --content images 2>/dev/null | awk -v target=${shellQuote(runtime.storage)} 'NR>1 && $1==target && $3=="active" {print $6; exit}')"
 [[ "$STORAGE_AVAILABLE_KB" =~ ^[0-9]+$ ]] \
@@ -448,7 +450,7 @@ disown
     local cmd
     [ -r "/proc/$PROVISION_PID/cmdline" ] && [ -r "/proc/$PROVISION_PID/environ" ] || return 1
     cmd="$(tr '\\0' ' ' < "/proc/$PROVISION_PID/cmdline")"
-    printf '%s' "$cmd" | grep -Fq ${shellQuote(`hivra-provision-on-host.sh $VMID `)} || return 1
+    printf '%s' "$cmd" | grep -Fq "hivra-provision-on-host.sh $VMID " || return 1
     tr '\\0' '\\n' < "/proc/$PROVISION_PID/environ" \
       | grep -Fxq ${shellQuote(`HIVRA_OPERATION_ID=${params.operationId}`)} || return 1
     tr '\\0' '\\n' < "/proc/$PROVISION_PID/environ" \
@@ -571,11 +573,17 @@ SECRET_ENV_FILE="/run/hivra-provision/$VMID.env"
 INTENT_FILE=${shellQuote(`/var/lib/hivra/provision-operations/operation-${params.operationId}.selected`)}
 INTENT_TMP="$INTENT_FILE.tmp.$$"
 {
+  printf 'schema_version=%s\\n' 1
   printf 'operation_id=%s\\n' ${shellQuote(params.operationId)}
   printf 'vmid=%s\\n' "$VMID"
   printf 'ip=${params.subnetPrefix}.%s\\n' "$OCTET"
   printf 'binding_tag=%s\\n' ${shellQuote(params.infrastructureBindingTag)}
   printf 'binding_enforced=%s\\n' 1
+  printf 'floor_memory_mb=%s\\n' ${Math.round(params.guaranteedMemMb)}
+  printf 'maximum_memory_mb=%s\\n' ${Math.round(params.memMb)}
+  printf 'maximum_cpu_milli=%s\\n' ${Math.round(params.cpuLimit * 1000)}
+  printf 'disk_gb=%s\\n' ${HIVRA_AGENT_VM_DISK_GB}
+  printf 'storage=%s\\n' ${shellQuote(runtimePaths.storage)}
 } > "$INTENT_TMP"
 chmod 0600 "$INTENT_TMP"
 mv -f -- "$INTENT_TMP" "$INTENT_FILE"
