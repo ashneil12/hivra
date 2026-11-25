@@ -35,7 +35,7 @@ describe("serializeEnvValue", () => {
       "true",
       "0.0.0.0",
       "8642",
-      "sk-or-v1-abc123",
+      "test-provider-key",
       "https://api.openai.com/v1",
       "https://llm.example.com/v1/api-version,2024-01-01",
       "anthropic/claude-opus-4.1",
@@ -64,7 +64,7 @@ describe("serializeEnvValue", () => {
   it("strips line breaks and NUL bytes before quoting (SEC-04 contract)", () => {
     // Line break removal can drop a value back into the safe charset.
     expect(serializeEnvValue("abcd\n")).toBe("abcd");
-    expect(serializeEnvValue("sk-real\nINJECTED=1")).toBe("sk-realINJECTED=1");
+    expect(serializeEnvValue("test-key\nINJECTED=1")).toBe("test-keyINJECTED=1");
     expect(serializeEnvValue("tv\0INJECTED=1")).toBe("tvINJECTED=1");
   });
 
@@ -143,7 +143,7 @@ describe("bash-source behavior of serialized env files", () => {
       containerName: "agent-x",
       apiServerKey: "x".repeat(64),
       provider: "venice",
-      apiKey: "sk-test",
+      apiKey: "test-api-key",
       model: "m",
       agentSettings: {
         maxIterations: 60,
@@ -158,7 +158,7 @@ describe("bash-source behavior of serialized env files", () => {
 
     expect(existsSync(marker)).toBe(false);
     expect(read.OPENAI_BASE_URL).toBe(`https://x/$(touch ${marker})/v1`);
-    expect(read.OPENAI_API_KEY).toBe("sk-test");
+    expect(read.OPENAI_API_KEY).toBe("test-api-key");
   });
 
   it("does not execute backticks or splat a semi-colon payload into a second command", () => {
@@ -197,7 +197,7 @@ describe("bash-source behavior of serialized env files", () => {
       containerName: "agent-x",
       apiServerKey: "a".repeat(64),
       provider: "openai",
-      apiKey: "sk-proj-abc123",
+      apiKey: "test-openai-key",
       model: "gpt-5.4",
       agentSettings: {
         maxIterations: 60,
@@ -224,7 +224,7 @@ describe("bash-source behavior of serialized env files", () => {
       "OPENAI_BASE_URL",
     ]);
     expect(read.API_SERVER_KEY).toBe("a".repeat(64));
-    expect(read.OPENAI_API_KEY).toBe("sk-proj-abc123");
+    expect(read.OPENAI_API_KEY).toBe("test-openai-key");
     expect(read.HERMES_MODEL).toBe("gpt-5.4");
     expect(read.OPENAI_BASE_URL).toBe("https://api.openai.com/v1");
   });
@@ -236,7 +236,7 @@ describe("builder output: hostile values become inert in generated env files", (
       containerName: "agent-x",
       apiServerKey: "x".repeat(64),
       provider: "venice",
-      apiKey: "sk-test",
+      apiKey: "test-api-key",
       model: "m",
       agentSettings: {
         maxIterations: 60,
@@ -261,7 +261,7 @@ describe("builder output: hostile values become inert in generated env files", (
       containerName: "agent-x",
       apiServerKey: "x".repeat(64),
       provider: "openai",
-      apiKey: "sk-test",
+      apiKey: "test-api-key",
       model: "gpt-5.4",
       memorySystem: {
         provider: "mem0",
@@ -283,7 +283,7 @@ describe("builder output: hostile values become inert in generated env files", (
         containerName: "agent-x",
         apiServerKey: "x".repeat(64),
         provider: "openai",
-        apiKey: "sk-test",
+        apiKey: "test-api-key",
         model: "gpt-5.4",
         agentSettings: {
           maxIterations: 60,
