@@ -5,7 +5,7 @@ const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { test } = require('node:test');
 
-function runGuard(t, fixtures) {
+function runGuard(t, fixtures, padding = []) {
   const cwd = mkdtempSync(path.join(tmpdir(), 'dashboard-casing-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q'], { cwd });
@@ -37,6 +37,12 @@ function runGuard(t, fixtures) {
       encoding: 'utf8',
     }).trim();
     execFileSync('git', ['update-index', '--add', '--cacheinfo', `100644,${object},${entry.name}`], { cwd });
+  }
+
+  if (padding.length) {
+    const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd, input: '', encoding: 'utf8' }).trim();
+    const input = padding.map(name => `100644 ${blob}\t${name}\0`).join('');
+    execFileSync('git', ['update-index', '-z', '--index-info'], { cwd, input });
   }
 
   return spawnSync(process.execPath, [script], { cwd, encoding: 'utf8' });
@@ -141,4 +147,37 @@ test('accepts matching-case file and package entry directory companions', t => {
     'src/nested/Foo/entry.ts',
   ]);
   assert.equal(result.status, 0, result.stderr);
+});
+
+for (const entry of ['Foo', 'Foo/index']) {
+  test(`rejects differently cased extensionless ${entry}`, t => {
+    assertConflict(runGuard(t, ['src/foo.ts', `src/${entry}`]), ['src/foo', 'src/Foo']);
+  });
+}
+
+for (const [description, manifest, entries] of [
+  ['dotted target', { main: './entry.min' }, ['entry.min.js']],
+  ['trailing slash', { main: './dist/' }, ['dist/index.js']],
+  ['nested package', { main: './dist' }, [packageFixture('dist/package.json', { main: './entry' }), 'dist/entry.js']],
+  ['edge-light', { 'edge-light': './entry' }, ['entry.js']],
+]) {
+  test(`rejects differently cased package with ${description}`, t => {
+    const contents = entries.map(entry => typeof entry === 'string' ? `Foo/${entry}` : { ...entry, name: `Foo/${entry.name}` });
+    assertConflict(runGuard(t, ['foo.ts', packageFixture('Foo/package.json', manifest), ...contents]), ['foo', 'Foo']);
+  });
+}
+
+test('accepts a package cycle without a resolvable entry', t => {
+  const result = runGuard(t, ['foo.ts', packageFixture('Foo/package.json', { main: './dist' }), packageFixture('Foo/dist/package.json', { main: '..' })]);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('a directory-only target cannot resolve a sibling file', t => {
+  const result = runGuard(t, ['foo.ts', packageFixture('Foo/package.json', { main: './dist/' }), 'Foo/dist.js']);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('reads collisions beyond one MiB of staged paths', t => {
+  const padding = Array.from({ length: 6000 }, (_, index) => `padding/${'x'.repeat(132)}${index}`);
+  assertConflict(runGuard(t, ['z/Foo', 'z/foo.ts'], padding), ['z/Foo', 'z/foo']);
 });
