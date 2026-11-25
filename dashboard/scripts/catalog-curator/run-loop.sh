@@ -37,17 +37,16 @@ export CURATOR_WORKTREE="$WORKTREE"
 cd "$WORKTREE"
 log="$STATE/pass-$(date -u +%Y%m%dT%H%M%SZ).log"
 prompt="Run the catalog-curator skill (.devin/skills/catalog-curator/SKILL.md) for one pass in $WORKTREE on branch $branch. Follow it exactly."
-# CURATOR_AGENT: devin (default when its CLI is signed in) or codex.
-agent="${CURATOR_AGENT:-}"
-if [ -z "$agent" ]; then
-  if ! devin auth status 2>&1 | grep -q "Not logged in"; then agent=devin; else agent=codex; fi
-fi
+# CURATOR_AGENT: codex is the cheap unattended default. Devin is opt-in.
+agent="${CURATOR_AGENT:-codex}"
+codex_model="${CURATOR_MODEL:-gpt-reserve}"
 run_devin() {
-  devin -p "$prompt" ${CURATOR_MODEL:+--model "$CURATOR_MODEL"} \
-    --permission-mode dangerous --respect-workspace-trust false >"$log" 2>&1
+  devin_args=(-p "$prompt" --permission-mode dangerous --respect-workspace-trust false)
+  if [ -n "${CURATOR_DEVIN_MODEL:-}" ]; then devin_args+=(--model "$CURATOR_DEVIN_MODEL"); fi
+  devin "${devin_args[@]}" >"$log" 2>&1
 }
 run_codex() {
-  codex exec ${CURATOR_MODEL:+-m "$CURATOR_MODEL"} --skip-git-repo-check \
+  codex exec -m "$codex_model" -c 'model_reasoning_effort="low"' --skip-git-repo-check \
     --dangerously-bypass-approvals-and-sandbox -C "$WORKTREE" "$prompt" >>"$log" 2>&1
 }
 status=0
