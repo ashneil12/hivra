@@ -168,7 +168,7 @@
 {"slug": "anubis", "name": "Anubis", "sourceUrl": "https://github.com/TecharoHQ/anubis", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
 {"slug": "anycable", "name": "AnyCable", "sourceUrl": "https://github.com/anycable/anycable", "status": "rejected", "reason": "image pull/verify timed out", "checkedAt": "2026-11-24"}
 {"slug": "apache-airflow", "name": "Apache Airflow", "sourceUrl": "https://github.com/apache/airflow", "status": "compose-needed", "reason": "requires Postgres and Redis", "checkedAt": "2026-11-24"}
-{"slug": "apache-http-server", "name": "Apache HTTP Server", "sourceUrl": "https://svn.apache.org/repos/asf/httpd/httpd/trunk", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
+{"slug": "apache-http-server", "name": "Apache HTTP Server", "sourceUrl": "https://svn.apache.org/repos/asf/httpd/httpd/trunk", "status": "rejected", "reason": "document root /usr/local/apache2/htdocs is under forbidden /usr mount path", "checkedAt": "2026-11-25"}
 {"slug": "apache-solr", "name": "Apache Solr", "sourceUrl": "https://github.com/apache/solr", "status": "accepted", "reason": "evidence catalog-curation/evidence/apache-solr.json", "checkedAt": "2026-11-24"}
 {"slug": "apprise", "name": "Apprise", "sourceUrl": "https://github.com/caronc/apprise", "status": "rejected", "reason": "license BSD-2-Clause not in CATALOG_OSI_LICENSES", "checkedAt": "2026-11-24"}
 {"slug": "aptabase", "name": "Aptabase", "sourceUrl": "https://github.com/aptabase/aptabase", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
@@ -179,17 +179,17 @@
 {"slug": "atomic-server", "name": "Atomic Server", "sourceUrl": "https://github.com/ontola/atomic-server", "status": "rejected", "reason": "license NOASSERTION not in CATALOG_OSI_LICENSES", "checkedAt": "2026-11-24"}
 {"slug": "atsumeru", "name": "Atsumeru", "sourceUrl": "https://github.com/Atsumeru-xyz/Atsumeru", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
 {"slug": "automad", "name": "Automad", "sourceUrl": "https://github.com/marcantondahmen/automad", "status": "rejected", "reason": "license NOASSERTION not in CATALOG_OSI_LICENSES", "checkedAt": "2026-11-24"}
-{"slug": "automatisch", "name": "Automatisch", "sourceUrl": "https://github.com/automatisch/automatisch", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
-{"slug": "azimutt", "name": "Azimutt", "sourceUrl": "https://github.com/azimuttapp/azimutt", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
+{"slug": "automatisch", "name": "Automatisch", "sourceUrl": "https://github.com/automatisch/automatisch", "status": "rejected", "reason": "GitHub SPDX license NOASSERTION not in allowlist", "checkedAt": "2026-11-25"}
+{"slug": "azimutt", "name": "Azimutt", "sourceUrl": "https://github.com/azimuttapp/azimutt", "status": "compose-needed", "reason": "requires postgres", "checkedAt": "2026-11-25"}
 {"slug": "azuracast", "name": "AzuraCast", "sourceUrl": "https://github.com/AzuraCast/AzuraCast", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
-{"slug": "bar-assistant", "name": "Bar Assistant", "sourceUrl": "https://github.com/karlomikus/bar-assistant", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
+{"slug": "bar-assistant", "name": "Bar Assistant", "sourceUrl": "https://github.com/karlomikus/bar-assistant", "status": "compose-needed", "reason": "requires redis, meilisearch, and rustfs", "checkedAt": "2026-11-25"}
 {"slug": "baserow", "name": "Baserow", "sourceUrl": "https://gitlab.com/baserow/baserow", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
 {"slug": "beaver-habit-tracker", "name": "Beaver Habit Tracker", "sourceUrl": "https://github.com/daya0576/beaverhabits", "status": "rejected", "reason": "image: daya0576/beaverhabits:latest: spawnSync docker ETIMEDOUT", "checkedAt": "2026-11-24"}
 {"slug": "homelable", "name": "Homelable", "sourceUrl": "https://github.com/Pouzor/homelable", "status": "compose-needed", "reason": "requires multi-container setup (backend, frontend, mcp)", "checkedAt": "2026-11-24"}
-{"slug": "snapotter", "name": "SnapOtter", "sourceUrl": "https://github.com/snapotter-hq/SnapOtter", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
+{"slug": "snapotter", "name": "SnapOtter", "sourceUrl": "https://github.com/snapotter-hq/SnapOtter", "status": "rejected", "reason": "image pull timed out / too large for single-container verification", "checkedAt": "2026-11-25"}
 {"slug": "librespeed", "name": "LibreSpeed", "sourceUrl": "https://github.com/librespeed/speedtest", "status": "accepted", "reason": "evidence catalog-curation/evidence/librespeed.json", "checkedAt": "2026-11-24"}
 {"slug": "profilarr", "name": "Profilarr", "sourceUrl": "https://github.com/Dictionarry-Hub/profilarr", "status": "accepted", "reason": "evidence catalog-curation/evidence/profilarr.json", "checkedAt": "2026-11-24"}
-{"slug": "speedtest-tracker", "name": "Speedtest Tracker", "sourceUrl": "https://github.com/alexjustesen/speedtest-tracker", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
+{"slug": "speedtest-tracker", "name": "Speedtest Tracker", "sourceUrl": "https://github.com/alexjustesen/speedtest-tracker", "status": "needs-secret", "reason": "Laravel app requiring APP_KEY", "checkedAt": "2026-11-25"}
 {"slug": "mirotalk", "name": "MiroTalk", "sourceUrl": "https://github.com/miroslavpejic85/mirotalk", "status": "rejected", "reason": "boot: health / never returned <400 (last status none)", "checkedAt": "2026-11-24"}
 {"slug": "silverbullet", "name": "SilverBullet", "sourceUrl": "https://github.com/silverbulletmd/silverbullet", "status": "accepted", "reason": "evidence catalog-curation/evidence/silverbullet.json", "checkedAt": "2026-11-24"}
 {"slug": "privatebin", "name": "PrivateBin", "sourceUrl": "https://github.com/PrivateBin/PrivateBin", "status": "rejected", "reason": "Zlib licence not in CATALOG_OSI_LICENSES", "checkedAt": "2026-11-24"}
@@ -199,4 +199,4 @@
 {"slug": "baikal", "name": "Baikal", "sourceUrl": "https://github.com/sabre-io/Baikal", "status": "needs-public-url", "reason": "gateway: redirect to loopback 127.0.0.1:3299/admin/install/", "checkedAt": "2026-11-24"}
 {"slug": "aionui", "name": "AionUi", "sourceUrl": "https://github.com/iOfficeAI/AionUi", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
 {"slug": "ryot", "name": "Ryot", "sourceUrl": "https://github.com/IgnisDa/ryot", "status": "rejected", "reason": "boot: health / never returned <400 (needs Postgres)", "checkedAt": "2026-11-24"}
-{"slug": "pocket-id", "name": "Pocket ID", "sourceUrl": "https://github.com/pocket-id/pocket-id", "status": "pending", "reason": "", "checkedAt": "2026-11-24"}
+{"slug": "pocket-id", "name": "Pocket ID", "sourceUrl": "https://github.com/pocket-id/pocket-id", "status": "rejected", "reason": "BSD-2-Clause license not in CATALOG_OSI_LICENSES allowlist", "checkedAt": "2026-11-25"}
