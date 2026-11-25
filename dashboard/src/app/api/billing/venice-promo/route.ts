@@ -5,7 +5,7 @@ import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { RATE_LIMIT_PRESETS, enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { getStarterCreditLine, tryGrantStarterCredit } from "@/lib/billing/starter-credit";
-import { isVenicePromoEnabled } from "@/lib/venice/promo/core";
+import { isVenicePromoEnabled } from "@/lib/venice/promo-flag";
 import { getUserPromoLines, recordVeniceAttribution, redeemVeniceCode, tryGrantLaunchCredit, type RedeemStatus } from "@/lib/venice/promo/service";
 import { VENICE_ATTRIBUTION_COOKIE, parseVeniceAttribution } from "@/lib/venice/attribution";
 import { log } from "@/lib/logger";
@@ -77,6 +77,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const { userId } = await auth();
   if (!userId) return apiError("Unauthorized", 401);
+  if (!isVenicePromoEnabled()) return apiError("Not found", 404);
 
   const rateLimitError = enforceAuthenticatedRouteRateLimit(request, {
     routeKey: "venice_promo_redeem",

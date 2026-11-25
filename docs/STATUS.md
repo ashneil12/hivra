@@ -40,6 +40,9 @@ Claude Code can sign in with the person's own Claude account, or run on Hivra
 credits: Hivra translates its requests for Venice's Claude models and bills the
 credits. Credits need a host on provisioner release 2026.11.10.2 or later.
 
+The Venice launch promotion is an opt-in on Canary only. Its offer and claims
+are unavailable in production; normal Venice model access is separate.
+
 Hermes on a Hivra computer is the official Hermes Agent, unmodified: Hivra
 creates the computer, runs Hermes's own installer, points it at Venice inference
 (default model `deepseek-v4-1-flash`, or the person's own Venice key), and opens
