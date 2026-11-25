@@ -67,12 +67,18 @@ export const PENDING_RESIZE_SELECT = [
   "ram_limit",
   "infrastructure_provider",
   "proxmox_vmid",
+  "resize_operation_id",
+  "resize_target_cpu",
+  "resize_target_ram_mb",
 ].join(", ");
 
 export type PendingResizeRow = InstanceRowForOrchestration & {
   seat_funding?: string | null;
   name?: string | null;
   backend?: string | null;
+  resize_operation_id?: string | null;
+  resize_target_cpu?: number | null;
+  resize_target_ram_mb?: number | null;
 };
 
 interface PendingResizeResult {
@@ -132,6 +138,10 @@ async function redeployOne(
 
   if (blocksInstanceLiveMutation(row) || (row.seat_funding === "holder" && (row.status !== "running" || row.lifecycle_state !== "active"))) {
     return { id: row.id, redeployed: false, skipped: true, error: "lifecycle_operation_pending" };
+  }
+
+  if (row.resize_operation_id) {
+    return { id: row.id, redeployed: false, skipped: true, error: "resize_operation_pending" };
   }
 
   // Only webfree-backed instances have the applyLiveUpdate recreate path.

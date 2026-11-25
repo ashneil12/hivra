@@ -55,6 +55,47 @@ describe("readHoldAmounts", () => {
     expect(amounts?.power).toMatchObject({ tokenUnit: "$HIVRA", amountDisplay: null, usdApprox: null });
   });
 
+  it("keeps the locked amount and token through the recovery grace period", () => {
+    const amounts = readHoldAmounts({
+      ...eligibility,
+      tokenSymbol: "HermesOS",
+      tokenAccess: { paymentToken: "hivra" },
+      tiers: {
+        pro: {
+          currentlyEligible: false,
+          tokenKey: "hermesos",
+          qualifyingQuantityDisplay: "12,345",
+          currentThresholdDisplay: "99,999",
+          lastBreachAt: "2026-09-24T11:59:43.827Z",
+        },
+        power: { currentlyEligible: false, currentThresholdDisplay: "199,999" },
+      },
+    });
+    expect(amounts?.pro).toMatchObject({ tokenUnit: "$HermesOS", amountDisplay: "12,345", eligible: false });
+    expect(amounts?.power).toMatchObject({ tokenUnit: "$HIVRA", amountDisplay: null });
+  });
+
+  it("uses the live-priced threshold after suspension instead of the historical lock", () => {
+    const amounts = readHoldAmounts({
+      ...eligibility,
+      tokenSymbol: "HermesOS",
+      tiers: {
+        pro: {
+          currentlyEligible: false,
+          tokenKey: "hermesos",
+          qualifyingQuantityDisplay: "12,345",
+          lockedQualificationDisplay: null,
+          lockedQualificationActive: false,
+          currentThresholdDisplay: "99,999",
+          lastBreachAt: "2026-09-24T11:59:43.827Z",
+          lastSuspendAt: "2026-09-25T11:59:43.827Z",
+        },
+        power: { currentlyEligible: false, currentThresholdDisplay: "199,999" },
+      },
+    });
+    expect(amounts?.pro).toMatchObject({ tokenUnit: "$HermesOS", amountDisplay: "99,999", eligible: false });
+  });
+
   it("withholds balance-asset quantities from new payment-token quotes when the balance is still pre-conversion", () => {
     const amounts = readHoldAmounts({
       ...eligibility,

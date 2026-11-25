@@ -885,6 +885,9 @@ async function rankProxmoxHostsForPlacement(params: {
   for (const row of rows ?? []) {
     const node = (row as { proxmox_node?: string | null }).proxmox_node;
     if (!node) continue;
+    if (row.lifecycle_state === "provisioning") {
+      launchesInProgressByHost.set(node, (launchesInProgressByHost.get(node) ?? 0) + 1);
+    }
     const acc = allocByHost.get(node) ?? { cpu: 0, ram: 0, disk: 0 };
     const rowCpu = Number((row as { cpu_limit?: number | null }).cpu_limit ?? 0);
     const rowRamMb = Number((row as { ram_limit?: number | null }).ram_limit ?? 0);

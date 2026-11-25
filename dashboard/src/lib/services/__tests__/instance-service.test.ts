@@ -43,12 +43,32 @@ jest.mock("@clerk/nextjs/server", () => ({
   clerkClient: jest.fn(),
 }));
 
-jest.mock("@/lib/supabase", () => ({
-  supabaseAdmin: {
-    from: jest.fn(),
-    storage: { from: jest.fn() },
-  },
-}));
+jest.mock("@/lib/supabase", () => {
+  let insertCounter = 0;
+  const supabaseAdmin: Record<string, unknown> = { from: jest.fn() };
+  // The production write is the durable RPC, but these older table fixtures
+  // encode their pre/post-provision reads by hermes_instances lookup ordinal.
+  // Drive the RPC payload through the fixture's insert builder so that ordinal
+  // sequence remains explicit while the assertions are migrated to RPC shape.
+  supabaseAdmin.rpc = jest.fn(async (name: string, args: Record<string, unknown>) => {
+    if (name === "insert_hermes_instance") {
+      insertCounter += 1;
+      const row = (args?.p_row ?? {}) as Record<string, unknown>;
+      const table = (supabaseAdmin.from as jest.Mock)("hermes_instances") as Record<string, jest.Mock> | undefined;
+      if (table?.insert) {
+        const inserted = table.insert(row);
+        const selected = inserted?.select ? inserted.select() : inserted;
+        const single = selected?.single ? await selected.single() : null;
+        if (single) return single;
+      }
+      return { data: { id: row.id ?? `inst_inserted_${insertCounter}`, ...row }, error: null };
+    }
+    if (name === "move_hermes_instance_placement") return { data: true, error: null };
+    return { data: null, error: null };
+  });
+  supabaseAdmin.storage = { from: jest.fn() };
+  return { supabaseAdmin };
+});
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 

@@ -23,13 +23,16 @@ begin
       and deleted_at is null and paused_reason is null;
     if found then return jsonb_build_object('action','already_awake'); end if;
   end if;
-  select h.*, choice.action into r
+  select h.*, choice.action, wake_state.wake_reconciliation into r
   from public.hermes_instances h
-  cross join lateral (select (
-    p_allow_sleep and exists(select 1 from public.proxmox_hosts host
+  cross join lateral (select
+    (p_allow_sleep and exists(select 1 from public.proxmox_hosts host
       where host.id=h.proxmox_node and host.sleep_mode in ('on','canary')
-        and host.status in ('active','draining'))
-  ) as sleep_allowed) policy
+        and host.status = 'active')) as nap_allowed,
+    (p_allow_sleep and exists(select 1 from public.proxmox_hosts host
+      where host.id=h.proxmox_node and host.sleep_mode in ('on','canary')
+        and host.status in ('active','draining'))) as save_allowed
+  ) policy
   cross join lateral (select case
     when h.lifecycle_state='paused' and h.status='stopped' and h.paused_reason='holder_idle' then
       case
@@ -48,9 +51,19 @@ begin
         -- memory write to finish. Maintenance, a missing row, observe/off, and a
         -- disabled feature flag are not safe to deepen, so those naps resume.
         when h.lifecycle_substate='holder_napping' and h.holder_idle_claimed_at <= t-interval '30 seconds'
-          and not policy.sleep_allowed then 'wake'
+          and not policy.save_allowed then 'wake'
         when h.lifecycle_substate='holder_napping' and h.holder_napped_at <= t-interval '12 minutes'
-          and h.holder_idle_claimed_at <= t-interval '30 seconds' then 'hibernate'
+          and h.holder_idle_claimed_at <= t-interval '30 seconds'
+          and not exists(select 1 from public.hermes_instances busy
+            where busy.id <> h.id
+              and busy.proxmox_node = h.proxmox_node
+              and busy.seat_funding='holder'
+              and busy.lifecycle_state='paused'
+              and busy.status='stopped'
+              and busy.paused_reason='holder_idle'
+              and busy.lifecycle_substate='holder_save'
+              and busy.holder_idle_claimed_at > t-interval '6 minutes'
+              and busy.deleted_at is null) then 'hibernate'
       end
     when p_id is null and h.lifecycle_state='active' and h.status='running'
       and h.paused_reason is null and h.lifecycle_substate is null
@@ -58,9 +71,16 @@ begin
       and greatest(h.created_at,h.last_activity_at,h.last_agent_activity_at) <= t-interval '4 minutes'
       and (h.holder_idle_claimed_at is null or h.holder_idle_claimed_at <= t-interval '1 minute')
       and not exists(select 1 from public.channel_connections c where c.target_kind='hermes' and c.target_id=h.id::text)
-      and policy.sleep_allowed
+      and policy.nap_allowed
       then 'nap'
   end as action) choice
+  cross join lateral (select
+    coalesce((
+      h.lifecycle_state='paused' and h.status='stopped' and h.paused_reason='holder_idle'
+      and h.lifecycle_substate in ('holder_wake','holder_retry')
+      and h.holder_idle_claimed_at is not null
+    ), false) as wake_reconciliation
+  ) wake_state
   where h.seat_funding='holder' and h.deleted_at is null and h.archive_uri is null
     and h.scheduled_deletion_at is null and h.entitlement_state is distinct from 'suspended'
     and (p_id is null or (h.id=p_id and h.user_id=p_owner))
@@ -80,11 +100,16 @@ begin
       and h.infrastructure_provider='proxmox' and nullif(h.ipv4_address,'') is not null
       and h.gateway_url like 'https://%'
     ))
-    and exists(select 1 from public.holder_admissions a where a.user_id=h.user_id and a.state='admitted')
+    and (
+      exists(select 1 from public.holder_admissions a where a.user_id=h.user_id and a.state='admitted')
+      or (p_id is not null and choice.action='wake' and wake_state.wake_reconciliation)
+    )
     and not exists (select 1 from public.hermes_computer_moves m where m.instance_id=h.id
       and m.state in ('queued','launching','packing','uploading','unpacking','finishing','undoing'))
     and choice.action is not null
-    and (choice.action='wake' or policy.sleep_allowed)
+    and (choice.action='wake'
+      or (choice.action='nap' and policy.nap_allowed)
+      or (choice.action='hibernate' and policy.save_allowed))
   order by (choice.action='wake') desc,h.holder_idle_claimed_at nulls first,h.id
   limit 1 for update of h skip locked;
   if not found then
@@ -102,7 +127,32 @@ begin
     end if;
     return null;
   end if;
-  if not public.holder_seat_funding_valid(r.user_id,r.cpu_limit,r.ram_limit,null,r.id) then
+  if r.action = 'hibernate' then
+    perform 1 from public.proxmox_hosts host
+    where host.id = r.proxmox_node
+    for update;
+    if exists(select 1 from public.hermes_instances busy
+      where busy.id <> r.id
+        and busy.proxmox_node = r.proxmox_node
+        and busy.seat_funding='holder'
+        and busy.lifecycle_state='paused'
+        and busy.status='stopped'
+        and busy.paused_reason='holder_idle'
+        and busy.lifecycle_substate='holder_save'
+        and busy.holder_idle_claimed_at > t-interval '6 minutes'
+        and busy.deleted_at is null
+    ) then
+      return null;
+    end if;
+  end if;
+  if not (
+      r.wake_reconciliation
+      and not exists(
+        select 1 from public.holder_admissions a
+        where a.user_id = r.user_id and a.state = 'admitted'
+      )
+    )
+    and not public.holder_seat_funding_valid(r.user_id,r.cpu_limit,r.ram_limit,null,r.id) then
     update public.hermes_instances set holder_idle_claimed_at=t where id=r.id;
     -- An ineligible seat must not end this tick before other seats are visited.
     if p_id is null then return jsonb_build_object('action','skipped'); end if;
@@ -116,6 +166,81 @@ begin
   return jsonb_build_object('id',r.id,'owner',r.user_id,'action',r.action,'generation',r.holder_idle_generation+1,
     'node',r.proxmox_node,'vmid',r.proxmox_vmid,'host_id',r.host_id,'infrastructure',r.config->'infrastructure',
     'ipv4_address',r.ipv4_address,'gateway_url',r.gateway_url);
+end;
+$$;
+
+create or replace function public.holder_admission_has_active_wake(p_user_id text)
+returns boolean
+language sql stable security definer set search_path=pg_catalog,pg_temp
+as $$
+  select exists (
+    select 1
+    from public.hermes_instances h
+    where h.user_id = p_user_id
+      and h.seat_funding = 'holder'
+      and h.lifecycle_state = 'paused'
+      and h.status = 'stopped'
+      and h.paused_reason = 'holder_idle'
+      and h.lifecycle_substate = 'holder_wake'
+      and h.holder_idle_claimed_at > now() - interval '6 minutes'
+      and h.deleted_at is null
+  );
+$$;
+
+revoke all on function public.holder_admission_has_active_wake(text) from public,anon,authenticated,service_role;
+grant execute on function public.holder_admission_has_active_wake(text) to service_role;
+
+create or replace function public.enforce_hermes_instance_seat_funding()
+returns trigger
+language plpgsql security definer set search_path=pg_catalog,pg_temp
+as $$
+declare
+  holder_idle_awake_reconciliation boolean := false;
+begin
+  if tg_op = 'UPDATE' then
+    holder_idle_awake_reconciliation := coalesce((
+      old.seat_funding = 'holder'
+      and new.seat_funding = 'holder'
+      and old.lifecycle_state = 'paused'
+      and old.status = 'stopped'
+      and old.paused_reason = 'holder_idle'
+      and old.lifecycle_substate = 'holder_wake'
+      and old.holder_idle_generation is not null
+      and old.holder_idle_claimed_at is not null
+      and new.holder_idle_generation is not distinct from old.holder_idle_generation
+      and new.user_id is not distinct from old.user_id
+      and new.cpu_limit is not distinct from old.cpu_limit
+      and new.ram_limit is not distinct from old.ram_limit
+      and new.proxmox_node is not distinct from old.proxmox_node
+      and new.proxmox_vmid is not distinct from old.proxmox_vmid
+      and new.lifecycle_state = 'active'
+      and new.status = 'running'
+      and new.paused_reason is null
+      and new.lifecycle_substate is null
+    ), false);
+  end if;
+
+  if tg_op = 'UPDATE'
+    and new.seat_funding is distinct from old.seat_funding
+    and coalesce(current_setting('hivra.seat_funding_writer', true), 'off') <> 'on'
+  then
+    raise exception 'seat_funding is immutable after provisioning';
+  end if;
+
+  if new.seat_funding='holder' and not holder_idle_awake_reconciliation and (
+    tg_op='INSERT' or new.seat_funding is distinct from old.seat_funding
+    or new.user_id is distinct from old.user_id
+    or new.cpu_limit > coalesce(old.cpu_limit,0) or new.ram_limit > coalesce(old.ram_limit,0)
+    or (public.holder_hermes_allocated(new.status,new.lifecycle_state)
+        and not public.holder_hermes_allocated(old.status,old.lifecycle_state))
+    or (new.lifecycle_state in ('active','provisioning','restoring') and old.lifecycle_state in ('paused','suspended','cold_archived'))
+    or (new.status in ('running','provisioning') and old.status='stopped')
+  ) then
+    if not public.holder_seat_funding_valid(new.user_id,new.cpu_limit,new.ram_limit,null,new.id) then
+      raise exception using errcode='P0057', message='holder seat funding is not admitted or exceeds the reserved seat resources';
+    end if;
+  end if;
+  return new;
 end;
 $$;
 

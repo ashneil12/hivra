@@ -52,6 +52,22 @@ function row(over: Record<string, unknown> = {}) {
 }
 
 describe("redeployPendingResizes", () => {
+  it("keeps the container recreate pending while a VM resize operation is unresolved", async () => {
+    const summary = await redeployPendingResizes([row({
+      lifecycle_state: "active",
+      status: "running",
+      resize_operation_id: "resize-op-1",
+      resize_target_cpu: 2,
+      resize_target_ram_mb: 4096,
+    })], sweep);
+
+    expect(summary).toMatchObject({ skipped: 1, redeployed: 0, failed: 0 });
+    expect(summary.results[0]).toMatchObject({ error: "resize_operation_pending" });
+    expect(mockResolveIp).not.toHaveBeenCalled();
+    expect(mockApply).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
   it("keeps a paused holder offline and clears only the allocation actually redeployed", async () => {
     const paused = await redeployPendingResizes([row({ seat_funding: "holder", lifecycle_state: "paused", status: "stopped" })], sweep);
     expect(paused.skipped).toBe(1);

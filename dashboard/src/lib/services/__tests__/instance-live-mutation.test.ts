@@ -39,6 +39,39 @@ describe("live mutation lifecycle authority", () => {
     const coordinates = { proxmox_vmid: 201, config: { infrastructure: { provider: "proxmox", vmid: 201, node: "host-a", privateIpv4: "10.250.0.1" } } };
     expect(await readInstanceLiveMutationBlock(db({ ...coordinates, lifecycle_state: "active" }), "i1", coordinates)).toBeNull();
   });
+  it("accepts a holder downgrade when the stored resize operation and target match", async () => {
+    expect(await readInstanceLiveMutationBlock(db({
+      lifecycle_state: "active",
+      status: "running",
+      seat_funding: "holder",
+      cpu_limit: 4,
+      ram_limit: 8192,
+      resize_operation_id: "op-1",
+      resize_target_cpu: 2,
+      resize_target_ram_mb: 4096,
+    }), "i1", undefined, { cpu: 2, ramMb: 4096 }, { operationId: "op-1", cpu: 2, ramMb: 4096 })).toBeNull();
+  });
+
+  it("rejects a stale resize executor before dispatch", async () => {
+    expect(await readInstanceLiveMutationBlock(db({
+      lifecycle_state: "active",
+      status: "running",
+      resize_operation_id: "op-current",
+      resize_target_cpu: 2,
+      resize_target_ram_mb: 4096,
+    }), "i1", undefined, undefined, { operationId: "op-stale", cpu: 2, ramMb: 4096 })).toMatch(/superseded/);
+  });
+
+  it("rejects a resize executor whose stored target changed", async () => {
+    expect(await readInstanceLiveMutationBlock(db({
+      lifecycle_state: "active",
+      status: "running",
+      resize_operation_id: "op-1",
+      resize_target_cpu: 1,
+      resize_target_ram_mb: 2048,
+    }), "i1", undefined, undefined, { operationId: "op-1", cpu: 2, ramMb: 4096 })).toMatch(/superseded/);
+  });
+
   it.each([[null, null], [null, { message: "offline" }]])("fails closed when lifecycle cannot be read", async (data, error) => {
     expect(await readInstanceLiveMutationBlock(db(data, error), "i1")).toMatch(/Could not confirm/);
   });

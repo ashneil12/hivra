@@ -65,13 +65,19 @@ export function readHoldAmounts(data: unknown): HoldAmounts | null {
   function tier(key: "pro" | "power"): HoldTier {
     const row = record(tiers?.[key]);
     const eligible = row?.currentlyEligible === true;
+    // Current API payloads mark whether the historical row is still the active
+    // recovery lock. The qualifying-quantity fallback keeps older test/fixture
+    // payloads compatible; a present null lock means requalification is live-priced.
+    const lockedAmountDisplay = text(row?.lockedQualificationDisplay)
+      ?? (row && Object.prototype.hasOwnProperty.call(row, "lockedQualificationDisplay") ? null : text(row?.qualifyingQuantityDisplay));
+    const usesLockedQualification = lockedAmountDisplay !== null;
     const heldUnit = isPlatformTokenKey(row?.tokenKey) ? tokenUnitForKey(row.tokenKey) : balanceUnit;
-    const tokenUnit = eligible ? heldUnit : quoteUnit;
+    const tokenUnit = usesLockedQualification ? heldUnit : quoteUnit;
     // Live thresholds and their USD price belong to the balance readout asset.
     const liveAmount = tokenUnit === balanceUnit
       ? text(row?.currentThresholdDisplay) ?? text(thresholds?.[`${key}Display`])
       : null;
-    const amountDisplay = (eligible ? text(row?.qualifyingQuantityDisplay) : null) ?? liveAmount;
+    const amountDisplay = lockedAmountDisplay ?? liveAmount;
     return {
       amountDisplay,
       tokenUnit,

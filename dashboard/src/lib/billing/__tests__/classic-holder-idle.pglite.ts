@@ -258,6 +258,18 @@ it("completes a due save on a draining host but takes the safe nap exit on maint
   expect(vm).toMatchObject({ status: "stopped", vmstate: true, savedData: "in-memory-session" });
 });
 
+it("does not start a fresh nap on a draining host while still finishing an existing nap there", async () => {
+  await db.exec("update proxmox_hosts set status='draining'");
+  expect(await sweep()).toEqual({});
+  expect(vm.qmp).toBe("running");
+  await db.exec("update proxmox_hosts set status='active'");
+  expect(await sweep()).toEqual({ napping: 1 });
+  await ageNap();
+  await db.exec("update proxmox_hosts set status='draining'");
+  expect(await sweep()).toEqual({ hibernated: 1 });
+  expect(vm).toMatchObject({ status: "stopped", vmstate: true, savedData: "in-memory-session" });
+});
+
 it("resumes instead of deepening a nap when the host enters maintenance", async () => {
   expect(await sweep()).toEqual({ napping: 1 });
   await db.exec("update proxmox_hosts set status='maintenance'");
@@ -323,10 +335,117 @@ it("keeps a slow host operation fenced while another host proceeds", async () =>
   expect(started).toEqual([VMID, secondVmid]);
   expect(started).not.toContain(thirdVmid);
   expect((await row()).lifecycle_substate).toBe("holder_save");
+  const overlappingResponse = await tick(new NextRequest("http://localhost/api/cron/holder-inactivity-sweep", { headers: { authorization: "Bearer fixture" } }));
+  expect(overlappingResponse.status).toBe(200);
+  expect((await overlappingResponse.json()).data.outcomes).toEqual({});
+  expect(started).not.toContain(thirdVmid);
   releaseSlow();
   const response = await pendingSweep;
   expect(response.status).toBe(200);
   expect((await response.json()).data.outcomes).toEqual({ hibernated: 2 });
   expect(await sweep()).toEqual({ hibernated: 1 });
   expect(started.filter(value => value === thirdVmid)).toHaveLength(1);
+});
+
+it("holds reservation release during an in-flight wake and reconciles after the host resumes", async () => {
+  expect(await sweep()).toEqual({ napping: 1 });
+  const dispatched = transport.mock.calls.length;
+  let releaseWake!: () => void;
+  const wakeGate = new Promise<void>(resolve => { releaseWake = resolve; });
+  transport.mockImplementationOnce(async (script) => {
+    const result = host.run(script, vm);
+    vm = result.state;
+    await wakeGate;
+    return { ok: result.status === 0, stdout: result.stdout, stderr: result.stderr };
+  });
+  const pendingStart = start();
+  for (let i = 0; i < 100 && transport.mock.calls.length === dispatched; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  expect(transport).toHaveBeenCalledTimes(dispatched + 1);
+  expect(vm.qmp).toBe("running");
+  expect(await row()).toMatchObject({ lifecycle_state: "paused", status: "stopped", lifecycle_substate: "holder_wake" });
+  await db.exec("delete from token_tier_qualifications");
+  await db.exec("select advance_holder_admissions()");
+  expect(await query("select state from holder_admissions where user_id='owner'")).toEqual([{ state: "admitted" }]);
+  releaseWake();
+  const response = await pendingStart;
+  expect(response.status).toBe(200);
+  expect(await row()).toMatchObject({ lifecycle_state: "active", status: "running", paused_reason: null });
+  await db.exec("select advance_holder_admissions()");
+  expect(await query("select state from holder_admissions where user_id='owner'")).toEqual([{ state: "released" }]);
+});
+
+it("rejects growth, reassignment and generation drift in a released wake completion", async () => {
+  expect(await sweep()).toEqual({ napping: 1 });
+  await db.query(
+    "update hermes_instances set lifecycle_substate='holder_wake',holder_idle_claimed_at=now()-interval '7 minutes' where id=$1",
+    [id],
+  );
+  await db.exec("delete from token_tier_qualifications");
+  await db.exec("select advance_holder_admissions()");
+  expect(await query("select state from holder_admissions where user_id='owner'")).toEqual([{ state: "released" }]);
+
+  const finishShape = "lifecycle_state='active',status='running',paused_reason=null,lifecycle_substate=null";
+  const write = (extra: string) => `update hermes_instances set ${finishShape}${extra} where id='${id}'`;
+  await expect(db.exec(write(",cpu_limit=3"))).rejects.toThrow(/holder seat funding is not admitted/);
+  await expect(db.exec(write(",ram_limit=8192"))).rejects.toThrow(/holder seat funding is not admitted/);
+  await expect(db.exec(write(",user_id='other'"))).rejects.toThrow(/holder seat funding is not admitted/);
+  await expect(db.exec(write(",holder_idle_generation=holder_idle_generation+1"))).rejects.toThrow(/holder seat funding is not admitted/);
+
+  await db.query("update hermes_instances set lifecycle_substate='holder_nap' where id=$1", [id]);
+  await expect(db.exec(write(""))).rejects.toThrow(/holder seat funding is not admitted/);
+  const stored = await db.query<Record<string, unknown>>(
+    "select user_id,lifecycle_state,status,paused_reason,lifecycle_substate,cpu_limit::float,ram_limit::float from hermes_instances where id=$1",
+    [id],
+  );
+  expect(stored.rows[0]).toEqual({
+    user_id: "owner",
+    lifecycle_state: "paused",
+    status: "stopped",
+    paused_reason: "holder_idle",
+    lifecycle_substate: "holder_nap",
+    cpu_limit: 2,
+    ram_limit: 4096,
+  });
+});
+
+it("reconciles a lost wake receipt after release instead of stranding the row in retry", async () => {
+  expect(await sweep()).toEqual({ napping: 1 });
+  await db.query(
+    "update hermes_instances set lifecycle_substate='holder_retry',holder_idle_claimed_at=now()-interval '7 minutes' where id=$1",
+    [id],
+  );
+  await db.exec("delete from token_tier_qualifications");
+  await db.exec("select advance_holder_admissions()");
+  expect(await query("select state from holder_admissions where user_id='owner'")).toEqual([{ state: "released" }]);
+
+  const dispatched = transport.mock.calls.length;
+  const response = await start();
+  expect(response.status).toBe(200);
+  expect(transport.mock.calls.length).toBeGreaterThan(dispatched);
+  expect(await row()).toMatchObject({ lifecycle_state: "active", status: "running", paused_reason: null, seat_funding: "holder" });
+});
+
+it("reconciles a confirmed wake after an expired operation outlives the reservation", async () => {
+  expect(await sweep()).toEqual({ napping: 1 });
+  const dispatched = transport.mock.calls.length;
+  let releaseWake!: () => void;
+  const wakeGate = new Promise<void>(resolve => { releaseWake = resolve; });
+  transport.mockImplementationOnce(async (script) => {
+    const result = host.run(script, vm);
+    vm = result.state;
+    await wakeGate;
+    return { ok: result.status === 0, stdout: result.stdout, stderr: result.stderr };
+  });
+  const pendingStart = start();
+  for (let i = 0; i < 100 && transport.mock.calls.length === dispatched; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  expect(transport).toHaveBeenCalledTimes(dispatched + 1);
+  expect(vm.qmp).toBe("running");
+  await db.exec("update hermes_instances set holder_idle_claimed_at=now()-interval '7 minutes'");
+  await db.exec("delete from token_tier_qualifications");
+  await db.exec("select advance_holder_admissions()");
+  expect(await query("select state from holder_admissions where user_id='owner'")).toEqual([{ state: "released" }]);
+  releaseWake();
+  const response = await pendingStart;
+  expect(response.status).toBe(200);
+  expect(await row()).toMatchObject({ lifecycle_state: "active", status: "running", paused_reason: null, seat_funding: "holder" });
 });

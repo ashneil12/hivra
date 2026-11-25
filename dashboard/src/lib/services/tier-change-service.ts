@@ -28,6 +28,8 @@
 
 import "server-only";
 
+import { randomUUID } from "crypto";
+
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   resolveEffectiveTierSpec,
@@ -38,7 +40,11 @@ import {
   getProxmoxHostRoutingConfigFromInfrastructure,
   type ProxmoxInfrastructure,
 } from "@/lib/services/proxmox-infrastructure";
-import { resizeProxmoxVm } from "@/lib/services/proxmox-instance-service";
+import {
+  PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER,
+  isProxmoxResizeOutcomeIndeterminateConservative,
+  resizeProxmoxVm,
+} from "@/lib/services/proxmox-instance-service";
 import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
 import { priorityForResourceTier } from "@/lib/subscription/agent-slots";
 import { isVeniceBoostEligible } from "@/lib/billing/venice-compute-boost";
@@ -85,6 +91,10 @@ interface InstanceRow extends InstanceLiveMutationState {
   id: string;
   config: { infrastructure?: Partial<ProxmoxInfrastructure> } | null;
   hetzner_server_id: number | null;
+  proxmox_node: string | null;
+  resize_operation_id: string | null;
+  resize_target_cpu: number | null;
+  resize_target_ram_mb: number | null;
   cpu_limit: number | null;
   ram_limit: number | null;
   resource_tier: string | null;
@@ -146,6 +156,19 @@ function resolveTargetSize(
   };
 }
 
+function resizeOperationIdForTarget(row: InstanceRow, target: TargetSize): string {
+  if (
+    row.resize_operation_id
+    && row.resize_target_cpu != null
+    && row.resize_target_ram_mb != null
+    && Number(row.resize_target_cpu) === target.cpu
+    && Number(row.resize_target_ram_mb) === target.ramMb
+  ) {
+    return row.resize_operation_id;
+  }
+  return randomUUID();
+}
+
 export async function applyTierChange(
   params: ApplyTierChangeParams
 ): Promise<TierChangeOutcome> {
@@ -179,7 +202,7 @@ export async function applyTierChange(
   // 1. Find all instances owned by this user that aren't deleted/scheduled
   const { data: instances, error: listErr } = await supabaseAdmin
     .from("hermes_instances")
-    .select("id, config, hetzner_server_id, host_id, cpu_limit, ram_limit, resource_tier, seat_funding, gateway_url, status, lifecycle_state, archive_uri, archive_sha256, proxmox_vmid")
+    .select("id, config, hetzner_server_id, host_id, proxmox_node, resize_operation_id, resize_target_cpu, resize_target_ram_mb, cpu_limit, ram_limit, resource_tier, seat_funding, gateway_url, status, lifecycle_state, archive_uri, archive_sha256, proxmox_vmid")
     .eq("user_id", params.userId)
     .not("status", "in", '("deleted","scheduled_for_deletion")');
 
@@ -229,6 +252,7 @@ export async function applyTierChange(
       previous_ram: row.ram_limit,
       cpu_limit: target.cpu,
       ram_limit: target.ramMb,
+      operation_id: resizeOperationIdForTarget(row, target),
     };
   });
   const { data: written, error } = await supabaseAdmin.rpc("apply_hermes_tier_allocations", {
@@ -290,7 +314,22 @@ export async function applyTierChange(
     const vmid = row.config?.infrastructure?.vmid;
     if (provider === "proxmox" && typeof vmid === "number") {
       const target = targets.get(row.id)!;
-      if (await readInstanceLiveMutationBlock(supabaseAdmin, row.id, row, params.holderSeats ? target : undefined)) continue;
+      const resizeOperationId =
+        changes.find((change) => change.id === row.id)?.operation_id ?? null;
+      const allocationFenced =
+        Boolean(row.proxmox_node)
+        && (row.lifecycle_state === "provisioning" || row.lifecycle_state === "active")
+        && (row.cpu_limit !== target.cpu || row.ram_limit !== target.ramMb || row.resize_operation_id === resizeOperationId);
+      const resizeClaim = resizeOperationId && allocationFenced
+        ? { operationId: resizeOperationId, cpu: target.cpu, ramMb: target.ramMb }
+        : undefined;
+      if (await readInstanceLiveMutationBlock(
+        supabaseAdmin,
+        row.id,
+        row,
+        params.holderSeats ? target : undefined,
+        resizeClaim
+      )) continue;
       outcome.resizesAttempted += 1;
       try {
         const result = await resizeProxmoxVm({
@@ -305,6 +344,26 @@ export async function applyTierChange(
             host_id: row.host_id ?? null,
           }),
         });
+        const vmConfigApplied = result.ok || (result.stdout ?? "").includes(PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER);
+        if (resizeOperationId && allocationFenced) {
+          if (vmConfigApplied) {
+            const { data: completed, error: completionError } = await supabaseAdmin.rpc(
+              "complete_hermes_instance_resize_allocation",
+              { p_instance_id: row.id, p_user_id: params.userId, p_operation_id: resizeOperationId }
+            );
+            if (completionError || completed !== true) {
+              throw new Error(`Proxmox resize applied, but allocation completion failed: ${completionError?.message ?? "resize operation fence mismatch"}`);
+            }
+          } else if (!isProxmoxResizeOutcomeIndeterminateConservative(result)) {
+            const { data: rolledBack, error: rollbackError } = await supabaseAdmin.rpc(
+              "rollback_hermes_instance_resize_allocation",
+              { p_instance_id: row.id, p_user_id: params.userId, p_operation_id: resizeOperationId }
+            );
+            if (rollbackError || rolledBack !== true) {
+              throw new Error(`Proxmox resize allocation rollback failed: ${rollbackError?.message ?? "resize operation fence mismatch"}`);
+            }
+          }
+        }
         if (!result.ok) {
           throw new Error("Proxmox resize failed");
         }

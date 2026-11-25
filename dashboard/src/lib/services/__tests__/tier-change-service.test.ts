@@ -36,6 +36,7 @@ jest.mock("@/lib/supabase", () => {
 });
 
 jest.mock("../proxmox-instance-service", () => ({
+  ...jest.requireActual("../proxmox-instance-service"),
   getProxmoxHostRoutingConfigFromInfrastructure: jest.fn().mockReturnValue(null),
   resizeProxmoxVm: jest.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "" }),
 }));
@@ -63,6 +64,9 @@ function mockInstanceList(rows: unknown[]) {
     not: jest.fn().mockResolvedValue({ data: rows, error: null }),
   });
   (supabaseAdmin!.rpc as jest.Mock).mockImplementation(async (name, args) => {
+    if (name === "complete_hermes_instance_resize_allocation" || name === "rollback_hermes_instance_resize_allocation") {
+      return { data: true, error: null };
+    }
     if (name !== "apply_hermes_tier_allocations") throw new Error("unexpected allocation RPC");
     for (const change of args.p_changes) allocations.push({ ...change, resource_tier: args.p_tier });
     return { data: args.p_changes.length, error: null };
@@ -586,6 +590,164 @@ describe("applyTierChange", () => {
     expect(resizeCalls).toContainEqual(
       expect.objectContaining({ vmid: 921, cpuLimit: 3, memoryMb: 6144 })
     );
+  });
+
+  it("completes a fenced tier allocation with the same operation after host confirmation", async () => {
+    mockInstanceList([
+      {
+        id: "inst-fenced",
+        config: { infrastructure: { provider: "proxmox", vmid: 950 } },
+        hetzner_server_id: null,
+        proxmox_node: "h1",
+        resize_operation_id: null,
+        cpu_limit: 1,
+        ram_limit: 2048,
+        resource_tier: "operator",
+        gateway_url: null,
+        status: "running",
+        lifecycle_state: "active",
+      },
+    ]);
+
+    await applyTierChange({ userId: "user-fenced", newTier: "fleet", source: "stripe" });
+
+    const applyCall = (supabaseAdmin!.rpc as jest.Mock).mock.calls.find(([name]) => name === "apply_hermes_tier_allocations");
+    const operationId = applyCall?.[1].p_changes[0].operation_id;
+    expect(operationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(supabaseAdmin!.rpc).toHaveBeenCalledWith("complete_hermes_instance_resize_allocation", {
+      p_instance_id: "inst-fenced",
+      p_user_id: "user-fenced",
+      p_operation_id: operationId,
+    });
+  });
+
+  it("rolls back a fenced tier allocation only for a determinate host failure", async () => {
+    (resizeProxmoxVm as jest.Mock).mockResolvedValueOnce({ ok: false, stdout: "", stderr: "qm set failed" });
+    mockInstanceList([
+      {
+        id: "inst-determinate-failure",
+        config: { infrastructure: { provider: "proxmox", vmid: 951 } },
+        hetzner_server_id: null,
+        proxmox_node: "h1",
+        resize_operation_id: null,
+        cpu_limit: 4,
+        ram_limit: 8192,
+        resource_tier: "fleet",
+        gateway_url: null,
+        status: "running",
+        lifecycle_state: "active",
+      },
+    ]);
+
+    const outcome = await applyTierChange({ userId: "user-determinate", newTier: "operator", source: "stripe" });
+
+    expect(outcome.resizesFailed).toHaveLength(1);
+    const applyCall = (supabaseAdmin!.rpc as jest.Mock).mock.calls.find(([name]) => name === "apply_hermes_tier_allocations");
+    expect(supabaseAdmin!.rpc).toHaveBeenCalledWith("rollback_hermes_instance_resize_allocation", {
+      p_instance_id: "inst-determinate-failure",
+      p_user_id: "user-determinate",
+      p_operation_id: applyCall?.[1].p_changes[0].operation_id,
+    });
+  });
+
+  it("keeps a fenced tier allocation reserved after an indeterminate SSH failure", async () => {
+    (resizeProxmoxVm as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      stdout: "",
+      stderr: "",
+      error: "SSH connection reset before remote output was lost",
+    });
+    mockInstanceList([
+      {
+        id: "inst-indeterminate-failure",
+        config: { infrastructure: { provider: "proxmox", vmid: 952 } },
+        hetzner_server_id: null,
+        proxmox_node: "h1",
+        resize_operation_id: null,
+        cpu_limit: 4,
+        ram_limit: 8192,
+        resource_tier: "fleet",
+        gateway_url: null,
+        status: "running",
+        lifecycle_state: "active",
+      },
+    ]);
+
+    const outcome = await applyTierChange({ userId: "user-indeterminate", newTier: "operator", source: "stripe" });
+
+    expect(outcome.resizesFailed).toHaveLength(1);
+    const rpcNames = (supabaseAdmin!.rpc as jest.Mock).mock.calls.map(([name]) => name);
+    expect(rpcNames).not.toContain("complete_hermes_instance_resize_allocation");
+    expect(rpcNames).not.toContain("rollback_hermes_instance_resize_allocation");
+  });
+
+  it("dispatches a fenced holder downgrade against its stored target instead of the charged caps", async () => {
+    const existingOperationId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    mockInstanceList([
+      {
+        id: "inst-holder-downgrade",
+        config: { infrastructure: { provider: "proxmox", vmid: 954 } },
+        hetzner_server_id: null,
+        proxmox_node: "h1",
+        resize_operation_id: existingOperationId,
+        resize_target_cpu: 2,
+        resize_target_ram_mb: 4096,
+        cpu_limit: 4,
+        ram_limit: 8192,
+        resource_tier: "operator",
+        seat_funding: "holder",
+        gateway_url: null,
+        status: "running",
+        lifecycle_state: "active",
+      },
+    ]);
+
+    await applyTierChange({ userId: "user-holder-downgrade", newTier: "operator", source: "token_snapshot", holderSeats: true });
+
+    const applyCall = (supabaseAdmin!.rpc as jest.Mock).mock.calls.find(([name]) => name === "apply_hermes_tier_allocations");
+    expect(applyCall?.[1].p_changes[0].operation_id).toBe(existingOperationId);
+    expect(readInstanceLiveMutationBlock).toHaveBeenCalledWith(
+      supabaseAdmin,
+      "inst-holder-downgrade",
+      expect.objectContaining({ id: "inst-holder-downgrade" }),
+      { cpu: 2, ramMb: 4096 },
+      { operationId: existingOperationId, cpu: 2, ramMb: 4096 }
+    );
+    expect(resizeProxmoxVm).toHaveBeenCalledWith(
+      expect.objectContaining({ vmid: 954, cpuLimit: 2, memoryMb: 4096 }),
+      expect.anything()
+    );
+  });
+
+  it("keeps a fenced tier allocation reserved when the remote exit status is missing", async () => {
+    (resizeProxmoxVm as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      stdout: "",
+      stderr: "Remote bash exited with code undefined",
+      error: "Remote bash exited with code undefined",
+    });
+    mockInstanceList([
+      {
+        id: "inst-undefined-exit",
+        config: { infrastructure: { provider: "proxmox", vmid: 955 } },
+        hetzner_server_id: null,
+        proxmox_node: "h1",
+        resize_operation_id: null,
+        cpu_limit: 4,
+        ram_limit: 8192,
+        resource_tier: "fleet",
+        gateway_url: null,
+        status: "running",
+        lifecycle_state: "active",
+      },
+    ]);
+
+    const outcome = await applyTierChange({ userId: "user-undefined-exit", newTier: "operator", source: "stripe" });
+
+    expect(outcome.resizesFailed).toHaveLength(1);
+    const rpcNames = (supabaseAdmin!.rpc as jest.Mock).mock.calls.map(([name]) => name);
+    expect(rpcNames).not.toContain("complete_hermes_instance_resize_allocation");
+    expect(rpcNames).not.toContain("rollback_hermes_instance_resize_allocation");
   });
 });
 

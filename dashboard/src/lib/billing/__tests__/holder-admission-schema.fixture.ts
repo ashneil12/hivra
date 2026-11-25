@@ -7,6 +7,7 @@ export const FIXTURE_SQL = `
     create table public.hermes_subscriptions(user_id text, plan text, status text, instance_limit integer, grace_period_ends_at timestamptz);
     create table public.apple_iap_subscriptions(user_id text, status text);
     create table public.yearly_token_subscriptions(user_id text, status text);
+    create table public.workspace_cloud_subscriptions(user_id text primary key, plan text, status text, instance_limit integer, total_cpu_budget numeric, total_ram_budget integer, stripe_customer_id text, stripe_subscription_id text, current_period_end timestamptz, created_at timestamptz, updated_at timestamptz);
     create table public.hivra_agents(
       id uuid default gen_random_uuid(), operation_kind text, operation_id uuid, operation_started_at timestamptz,
       operation_payload jsonb, desired_state text, error text, cpu_max numeric, ram_max integer, user_id text, deployment_mode text, status text, cpu numeric, ram integer, proxmox_host text, vmid integer, sleep_state text, seat_funding text
@@ -16,7 +17,8 @@ export const FIXTURE_SQL = `
       deleted_at timestamptz, archive_uri text, scheduled_deletion_at timestamptz, entitlement_state text,
       created_at timestamptz, last_activity_at timestamptz, last_agent_activity_at timestamptz,
       last_lifecycle_transition_at timestamptz, host_id text, proxmox_vmid int, config jsonb,
-      paused_reason text, lifecycle_substate text, gateway_url text, ipv4_address text, infrastructure_provider text
+      paused_reason text, lifecycle_substate text, gateway_url text, ipv4_address text, infrastructure_provider text,
+      product_surface text default 'hermesos'
     );
     create table public.hermes_computer_moves(instance_id uuid, state text);
     create table public.channel_connections(target_kind text, target_id text);

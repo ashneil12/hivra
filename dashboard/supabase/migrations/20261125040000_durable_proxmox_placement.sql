@@ -49,7 +49,7 @@ as $$
   select h.proxmox_node, h.user_id, h.seat_funding = 'holder',
          case when saved.reusable then 0 else h.cpu_limit::numeric end,
          case when saved.reusable then 0 else h.ram_limit::numeric end,
-         coalesce(h.disk_size_gb,30)::numeric, 0, h.cpu_limit::numeric, h.ram_limit::numeric
+         coalesce(h.disk_size_gb,30)::numeric, case when h.lifecycle_state = 'provisioning' then 1 else 0 end, h.cpu_limit::numeric, h.ram_limit::numeric
   from public.hermes_instances h join hosts on hosts.host_id = h.proxmox_node
   cross join lateral (select h.seat_funding='holder' and h.lifecycle_state='paused' and h.paused_reason='holder_idle'
     and h.lifecycle_substate='holder_hibernated' and (p_skip_sleep or coalesce(hosts.placement_skip_deep_sleep,false)) as reusable) saved
@@ -91,7 +91,9 @@ create or replace function public.assert_proxmox_placement_capacity(
   p_hivra_agent_id uuid default null,
   p_hermes_instance_id uuid default null,
   p_ratio numeric default null,
-  p_skip_sleep boolean default false
+  p_skip_sleep boolean default false,
+  p_allow_inactive_registered_host boolean default false,
+  p_allow_empty_registry_host boolean default false
 )
 returns void
 language plpgsql volatile security definer set search_path=pg_catalog,pg_temp
@@ -120,11 +122,38 @@ begin
     raise exception 'invalid Proxmox placement allocation' using errcode='22023';
   end if;
 
+  if coalesce(p_seat_funding,'paid') = 'holder' and p_owner_id is not null then
+    perform pg_advisory_xact_lock(hashtextextended('holder-seat-funding-v1:' || p_owner_id, 0));
+  end if;
   perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
 
   select c.host_id into v_host
   from public.holder_admission_host_capacity(array[p_host_id],p_ratio) c;
   if v_host is null then
+    -- Two reviewed legacy placement contracts predate the active-host registry:
+    -- Workspace Cloud owns a dedicated host outside the Hivra rotation, and a
+    -- genuinely empty registry uses the explicit env-order fallback. Those
+    -- callers serialize here, but there is no active registry capacity authority
+    -- to validate against. A registered active host never uses this exception:
+    -- if the capacity authority rejects it, placement must fail rather than
+    -- bypass validation.
+    if p_allow_inactive_registered_host and exists (
+      select 1 from public.proxmox_hosts h
+      where public.holder_admission_normalize_host_id(h.id)=public.holder_admission_normalize_host_id(p_host_id)
+        and h.decommissioned_at is null
+        and coalesce(h.status,'active') <> 'active'
+    ) then
+      return;
+    end if;
+    if p_allow_inactive_registered_host and not exists (
+      select 1 from public.proxmox_hosts h
+      where public.holder_admission_normalize_host_id(h.id)=public.holder_admission_normalize_host_id(p_host_id)
+    ) then
+      return;
+    end if;
+    if p_allow_empty_registry_host and not exists(select 1 from public.proxmox_hosts) then
+      return;
+    end if;
     raise exception 'proxmox host is not available for placement' using errcode='P0058';
   end if;
 
@@ -227,9 +256,9 @@ begin
 end;
 $$;
 
-revoke all on function public.assert_proxmox_placement_capacity(text,text,text,numeric,numeric,numeric,uuid,uuid,numeric,boolean)
+revoke all on function public.assert_proxmox_placement_capacity(text,text,text,numeric,numeric,numeric,uuid,uuid,numeric,boolean,boolean,boolean)
   from public,anon,authenticated;
-grant execute on function public.assert_proxmox_placement_capacity(text,text,text,numeric,numeric,numeric,uuid,uuid,numeric,boolean)
+grant execute on function public.assert_proxmox_placement_capacity(text,text,text,numeric,numeric,numeric,uuid,uuid,numeric,boolean,boolean,boolean)
   to service_role;
 
 -- Atomic check-and-insert for Classic rows. The application still chooses a
@@ -258,7 +287,8 @@ begin
     perform public.assert_proxmox_placement_capacity(
       p_row->>'proxmox_node', p_row->>'user_id', coalesce(p_row->>'seat_funding','paid'),
       (p_row->>'cpu_limit')::numeric, (p_row->>'ram_limit')::numeric,
-      coalesce((p_row->>'disk_size_gb')::numeric,30), null, null, null, false
+      coalesce((p_row->>'disk_size_gb')::numeric,30), null, null, null, false,
+      p_row->>'product_surface' = 'workspace_cloud', true
     );
   end if;
 
@@ -307,7 +337,7 @@ begin
     perform public.assert_proxmox_placement_capacity(
       p_row->>'proxmox_host', v_owner, p_row->>'seat_funding',
       (p_row->>'cpu')::numeric, ((p_row->>'ram')::numeric)*1024,
-      40, null, null, null, false
+      40, null, null, null, false, false, true
     );
   end if;
 
@@ -367,7 +397,7 @@ begin
     perform public.assert_proxmox_placement_capacity(
       p_agent->>'proxmox_host', p_user_id, v_funding,
       (p_agent->>'cpu')::numeric, ((p_agent->>'ram')::numeric)*1024,
-      40, null, null, null, false
+      40, null, null, null, false, false, true
     );
   end if;
   perform set_config('hivra.agent_slot_checked','on',true);
@@ -392,38 +422,162 @@ begin
 end;
 $$;
 
+alter table public.hermes_instances
+  add column if not exists resize_operation_id uuid,
+  add column if not exists resize_operation_started_at timestamptz,
+  add column if not exists resize_previous_cpu numeric,
+  add column if not exists resize_previous_ram_mb integer,
+  add column if not exists resize_target_cpu numeric,
+  add column if not exists resize_target_ram_mb integer,
+  add column if not exists resize_host_config_applied_at timestamptz;
+
 -- Validate a Classic allocation increase in the same transaction that writes
 -- it. The patch route uses this before persisting a live resize; batch tier
 -- transitions use apply_hermes_tier_allocations below.
+drop function if exists public.resize_hermes_instance_allocation(uuid,text,numeric,numeric,uuid);
 create or replace function public.resize_hermes_instance_allocation(
   p_instance_id uuid,
   p_user_id text,
   p_cpu numeric,
-  p_ram_mb numeric
+  p_ram_mb numeric,
+  p_operation_id uuid
+)
+returns jsonb
+language plpgsql volatile security definer set search_path=pg_catalog,pg_temp
+as $$
+declare
+  v_row public.hermes_instances%rowtype;
+begin
+  if p_operation_id is null then
+    raise exception 'invalid resize operation' using errcode='22023';
+  end if;
+  select * into v_row
+  from public.hermes_instances
+  where id=p_instance_id and user_id=p_user_id
+  for update;
+  if not found then
+    return jsonb_build_object('status','not_found');
+  end if;
+  if v_row.resize_operation_id is not null then
+    if v_row.resize_operation_id = p_operation_id
+      and v_row.resize_target_cpu is not distinct from p_cpu
+      and v_row.resize_target_ram_mb is not distinct from p_ram_mb then
+      return jsonb_build_object(
+        'status','reused',
+        'operationId',v_row.resize_operation_id,
+        'hostConfigApplied',(v_row.resize_host_config_applied_at is not null)
+      );
+    end if;
+    raise exception 'instance resize operation already in progress' using errcode='P0058';
+  end if;
+  perform public.assert_proxmox_placement_capacity(
+    v_row.proxmox_node,p_user_id,coalesce(v_row.seat_funding,'paid'),
+    greatest(coalesce(v_row.cpu_limit,p_cpu),p_cpu),
+    greatest(coalesce(v_row.ram_limit,p_ram_mb),p_ram_mb),
+    null,null,p_instance_id,null,false,
+    coalesce(v_row.product_surface,'')='workspace_cloud',true
+  );
+  update public.hermes_instances
+  set resize_operation_id=p_operation_id,
+      resize_operation_started_at=now(),
+      resize_previous_cpu=v_row.cpu_limit,
+      resize_previous_ram_mb=v_row.ram_limit,
+      resize_target_cpu=p_cpu,
+      resize_target_ram_mb=p_ram_mb,
+      resize_host_config_applied_at=null,
+      cpu_limit=greatest(coalesce(v_row.cpu_limit,p_cpu),p_cpu),
+      ram_limit=greatest(coalesce(v_row.ram_limit,p_ram_mb),p_ram_mb),
+      updated_at=now()
+  where id=p_instance_id and user_id=p_user_id;
+  if not found then
+    return jsonb_build_object('status','not_found');
+  end if;
+  return jsonb_build_object(
+    'status','claimed',
+    'operationId',p_operation_id,
+    'hostConfigApplied',false
+  );
+end;
+$$;
+
+create or replace function public.mark_hermes_instance_resize_host_config_applied(
+  p_instance_id uuid,
+  p_user_id text,
+  p_operation_id uuid
 )
 returns boolean
 language plpgsql volatile security definer set search_path=pg_catalog,pg_temp
 as $$
-declare
-  v_node text;
 begin
-  select proxmox_node into v_node
-  from public.hermes_instances
-  where id=p_instance_id and user_id=p_user_id
-  for update;
-  if v_node is null then return false; end if;
-  perform public.assert_proxmox_placement_capacity(
-    v_node,p_user_id,'paid',p_cpu,p_ram_mb,null,null,p_instance_id,null,false
-  );
   update public.hermes_instances
-  set cpu_limit=p_cpu, ram_limit=p_ram_mb
-  where id=p_instance_id and user_id=p_user_id;
+  set resize_host_config_applied_at=now(),
+      updated_at=now()
+  where id=p_instance_id and user_id=p_user_id
+    and resize_operation_id=p_operation_id;
   return found;
 end;
 $$;
 
-revoke all on function public.resize_hermes_instance_allocation(uuid,text,numeric,numeric) from public,anon,authenticated;
-grant execute on function public.resize_hermes_instance_allocation(uuid,text,numeric,numeric) to service_role;
+create or replace function public.complete_hermes_instance_resize_allocation(
+  p_instance_id uuid,
+  p_user_id text,
+  p_operation_id uuid
+)
+returns boolean
+language plpgsql volatile security definer set search_path=pg_catalog,pg_temp
+as $$
+begin
+  update public.hermes_instances
+  set cpu_limit=resize_target_cpu,
+      ram_limit=resize_target_ram_mb,
+      resize_operation_id=null,
+      resize_operation_started_at=null,
+      resize_previous_cpu=null,
+      resize_previous_ram_mb=null,
+      resize_target_cpu=null,
+      resize_target_ram_mb=null,
+      resize_host_config_applied_at=null,
+      updated_at=now()
+  where id=p_instance_id and user_id=p_user_id
+    and resize_operation_id=p_operation_id;
+  return found;
+end;
+$$;
+
+create or replace function public.rollback_hermes_instance_resize_allocation(
+  p_instance_id uuid,
+  p_user_id text,
+  p_operation_id uuid
+)
+returns boolean
+language plpgsql volatile security definer set search_path=pg_catalog,pg_temp
+as $$
+begin
+  update public.hermes_instances
+  set cpu_limit=resize_previous_cpu,
+      ram_limit=resize_previous_ram_mb,
+      resize_operation_id=null,
+      resize_operation_started_at=null,
+      resize_previous_cpu=null,
+      resize_previous_ram_mb=null,
+      resize_target_cpu=null,
+      resize_target_ram_mb=null,
+      resize_host_config_applied_at=null,
+      updated_at=now()
+  where id=p_instance_id and user_id=p_user_id
+    and resize_operation_id=p_operation_id;
+  return found;
+end;
+$$;
+
+revoke all on function public.resize_hermes_instance_allocation(uuid,text,numeric,numeric,uuid) from public,anon,authenticated;
+grant execute on function public.resize_hermes_instance_allocation(uuid,text,numeric,numeric,uuid) to service_role;
+revoke all on function public.mark_hermes_instance_resize_host_config_applied(uuid,text,uuid) from public,anon,authenticated;
+grant execute on function public.mark_hermes_instance_resize_host_config_applied(uuid,text,uuid) to service_role;
+revoke all on function public.complete_hermes_instance_resize_allocation(uuid,text,uuid) from public,anon,authenticated;
+grant execute on function public.complete_hermes_instance_resize_allocation(uuid,text,uuid) to service_role;
+revoke all on function public.rollback_hermes_instance_resize_allocation(uuid,text,uuid) from public,anon,authenticated;
+grant execute on function public.rollback_hermes_instance_resize_allocation(uuid,text,uuid) to service_role;
 
 -- Host-local failover is itself placement. Move the durable row before the
 -- next provision attempt so capacity is charged to the host being tried, not
@@ -449,7 +603,8 @@ begin
   perform public.assert_proxmox_placement_capacity(
     p_host_id,p_user_id,coalesce(v_row.seat_funding,'paid'),
     v_row.cpu_limit,v_row.ram_limit,
-    coalesce(p_disk_gb,v_row.disk_size_gb,30),null,p_instance_id,null,false
+    coalesce(p_disk_gb,v_row.disk_size_gb,30),null,p_instance_id,null,false,
+    coalesce(v_row.product_surface,'')='workspace_cloud',true
   );
   update public.hermes_instances
   set proxmox_node=p_host_id,
@@ -461,6 +616,114 @@ $$;
 
 revoke all on function public.move_hermes_instance_placement(uuid,text,text,numeric) from public,anon,authenticated;
 grant execute on function public.move_hermes_instance_placement(uuid,text,text,numeric) to service_role;
+
+-- Batch tier writes share the placement authority for every allocation
+-- increase. Every live Proxmox size change is fenced like a resize: the row
+-- keeps the larger allocation on each axis until completion. Reductions
+-- therefore do not free capacity before the host mutation is confirmed, and a
+-- conflicting resize claim rejects the batch.
+create or replace function public.apply_hermes_tier_allocations(
+  p_owner text, p_holder boolean, p_tier text, p_changes jsonb
+)
+returns integer language plpgsql security invoker set search_path=pg_catalog,pg_temp
+as $$
+declare
+  v_change record;
+  v_row public.hermes_instances%rowtype;
+  v_written integer := 0;
+  v_increase boolean;
+  v_size_change boolean;
+  v_needs_fence boolean;
+  v_reconcile boolean;
+  v_operation_id uuid;
+begin
+  if p_holder then
+    perform pg_advisory_xact_lock(hashtextextended('holder-seat-funding-v1:' || p_owner, 0));
+  end if;
+  for v_change in
+    select * from jsonb_to_recordset(p_changes) as c(
+      id uuid, previous_tier text, previous_cpu numeric, previous_ram integer, cpu_limit numeric, ram_limit integer, operation_id uuid
+    )
+    order by ((c.cpu_limit > coalesce(c.previous_cpu,0) or c.ram_limit > coalesce(c.previous_ram,0))) asc, c.id
+  loop
+    select * into v_row
+    from public.hermes_instances h
+    where h.id=v_change.id and h.user_id=p_owner
+      and (h.seat_funding is not distinct from 'holder')=p_holder
+      and h.status not in ('deleted','scheduled_for_deletion')
+    for update;
+    if not found
+      or not (v_row.resource_tier is not distinct from v_change.previous_tier)
+      or not (v_row.cpu_limit is not distinct from v_change.previous_cpu)
+      or not (v_row.ram_limit is not distinct from v_change.previous_ram) then
+      raise exception 'tier allocation changed before the update';
+    end if;
+    v_operation_id := coalesce(v_change.operation_id, gen_random_uuid());
+    v_size_change := v_row.cpu_limit is distinct from v_change.cpu_limit
+      or v_row.ram_limit is distinct from v_change.ram_limit;
+    v_reconcile := false;
+    if v_row.resize_operation_id is not null then
+      if v_row.resize_operation_id = v_operation_id
+        and v_row.resize_target_cpu is not distinct from v_change.cpu_limit
+        and v_row.resize_target_ram_mb is not distinct from v_change.ram_limit then
+        v_reconcile := true;
+      else
+        raise exception 'instance resize operation already in progress' using errcode='P0058';
+      end if;
+    end if;
+    v_needs_fence := v_reconcile or (
+      nullif(v_row.proxmox_node,'') is not null
+      and v_row.lifecycle_state in ('provisioning','active')
+      and v_size_change
+    );
+    v_increase := v_change.cpu_limit > coalesce(v_row.cpu_limit,0)
+      or v_change.ram_limit > coalesce(v_row.ram_limit,0);
+    if v_increase and v_row.infrastructure_provider='proxmox' and nullif(v_row.proxmox_node,'') is not null then
+      perform public.assert_proxmox_placement_capacity(
+        v_row.proxmox_node,p_owner,coalesce(v_row.seat_funding,'paid'),
+        greatest(coalesce(v_row.cpu_limit,v_change.cpu_limit),v_change.cpu_limit),
+        greatest(coalesce(v_row.ram_limit,v_change.ram_limit),v_change.ram_limit),null,null,v_row.id,null,false,
+        coalesce(v_row.product_surface,'')='workspace_cloud',true
+      );
+    end if;
+    update public.hermes_instances h
+    set resource_tier=p_tier,
+        cpu_limit=case when v_needs_fence then greatest(coalesce(v_row.cpu_limit,v_change.cpu_limit),v_change.cpu_limit) else v_change.cpu_limit end,
+        ram_limit=case when v_needs_fence then greatest(coalesce(v_row.ram_limit,v_change.ram_limit),v_change.ram_limit) else v_change.ram_limit end,
+        updated_at=now(),
+        resize_operation_id=case when v_needs_fence then v_operation_id else null end,
+        resize_operation_started_at=case
+          when v_needs_fence and v_reconcile then v_row.resize_operation_started_at
+          when v_needs_fence then now()
+          else null end,
+        resize_previous_cpu=case
+          when v_needs_fence and v_reconcile then v_row.resize_previous_cpu
+          when v_needs_fence then v_row.cpu_limit
+          else null end,
+        resize_previous_ram_mb=case
+          when v_needs_fence and v_reconcile then v_row.resize_previous_ram_mb
+          when v_needs_fence then v_row.ram_limit
+          else null end,
+        resize_target_cpu=case when v_needs_fence then v_change.cpu_limit else null end,
+        resize_target_ram_mb=case when v_needs_fence then v_change.ram_limit else null end,
+        resize_host_config_applied_at=case
+          when v_needs_fence and v_reconcile then v_row.resize_host_config_applied_at
+          else null end,
+        tier_change_pending=case
+          when h.lifecycle_state is distinct from 'deleting' and h.lifecycle_state is distinct from 'deleted'
+           and (h.cpu_limit is distinct from v_change.cpu_limit or h.ram_limit is distinct from v_change.ram_limit)
+          then true else h.tier_change_pending end
+    where h.id=v_row.id;
+    v_written := v_written + 1;
+  end loop;
+  if v_written <> jsonb_array_length(p_changes) then
+    raise exception 'tier allocation changed before the update';
+  end if;
+  return v_written;
+end;
+$$;
+revoke all on function public.apply_hermes_tier_allocations(text,boolean,text,jsonb) from public, anon, authenticated;
+grant execute on function public.apply_hermes_tier_allocations(text,boolean,text,jsonb) to service_role;
 
 -- Resize claims reserve host capacity before the durable operation is
 -- visible to other placements. The rest of the reviewed operation-claim
@@ -594,7 +857,9 @@ begin
       p_agent_id,
       null,
       null,
-      false
+      false,
+      false,
+      true
     );
   end if;
 

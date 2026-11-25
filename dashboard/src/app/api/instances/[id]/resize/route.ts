@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
@@ -9,6 +10,8 @@ import { resolveEffectiveTierSpec, type TierKey } from "@/lib/services/tier-spec
 import {
   getProxmoxHostRoutingConfigFromInfrastructure,
   getProxmoxInfrastructure,
+  PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER,
+  isProxmoxResizeOutcomeIndeterminateConservative,
   resizeProxmoxVm,
 } from "@/lib/services/proxmox-instance-service";
 import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
@@ -44,7 +47,7 @@ export async function PATCH(
 
   const { data: instance, error } = await supabaseAdmin
     .from("hermes_instances")
-    .select("id, user_id, resource_tier, seat_funding, cpu_limit, ram_limit, config, hetzner_server_id, host_id, status, lifecycle_state")
+    .select("id, user_id, resource_tier, seat_funding, cpu_limit, ram_limit, config, hetzner_server_id, host_id, status, lifecycle_state, resize_operation_id, resize_target_cpu, resize_target_ram_mb, resize_host_config_applied_at")
     .eq("id", id)
     .eq("user_id", userId)
     .neq("status", "deleted")
@@ -91,10 +94,22 @@ export async function PATCH(
     );
   }
 
-  const blocked = await readInstanceLiveMutationBlock(supabaseAdmin, id, instance,
-    holder ? { cpu: spec.cpuLimit, ramMb: spec.ramLimitMb } : undefined);
+  const storedResizeOperationId = typeof instance.resize_operation_id === "string" ? instance.resize_operation_id : null;
+  const storedTargetMatches = storedResizeOperationId !== null
+    && instance.resize_target_cpu != null
+    && instance.resize_target_ram_mb != null
+    && Number(instance.resize_target_cpu) === Number(spec.cpuLimit)
+    && Number(instance.resize_target_ram_mb) === Number(spec.ramLimitMb);
+  if (storedResizeOperationId && !storedTargetMatches) {
+    return apiError("Another resize operation is already in progress for this instance.", 409);
+  }
+  const resizeOperationId = storedResizeOperationId ?? randomUUID();
+  const resizeOperationPersisted = !holder || storedResizeOperationId !== null;
+
+  const blocked = await readInstanceLiveMutationBlock(supabaseAdmin, id, instance);
   if (blocked) return apiError(blocked, 409);
 
+  let hostConfigAlreadyApplied = false;
   if (!holder) {
     const { data: allocationUpdated, error: allocationError } = await supabaseAdmin.rpc(
       "resize_hermes_instance_allocation",
@@ -103,19 +118,44 @@ export async function PATCH(
         p_user_id: userId,
         p_cpu: spec.cpuLimit,
         p_ram_mb: spec.ramLimitMb,
+        p_operation_id: resizeOperationId,
       }
     );
     if (allocationError) {
-      const conflict = allocationError.code === "P0058" || /capacity/i.test(allocationError.message);
+      const conflict = allocationError.code === "P0058" || /capacity|already in progress/i.test(allocationError.message);
       return apiError(
         conflict ? "The selected host does not have enough remaining capacity for this allocation." : "Could not reserve the resized allocation.",
         conflict ? 409 : 503,
       );
     }
-    if (allocationUpdated !== true) return apiError("Instance not found", 404);
+    const allocation = allocationUpdated as { status?: unknown; hostConfigApplied?: unknown } | null;
+    const allocationStatus = allocation?.status;
+    if (allocationStatus === "not_found") return apiError("Instance not found", 404);
+    if (allocationStatus !== "claimed" && allocationStatus !== "reused") {
+      return apiError("Could not reserve the resized allocation.", 503);
+    }
+    hostConfigAlreadyApplied = allocationStatus === "reused" && allocation?.hostConfigApplied === true;
   }
 
-  const result = await resizeProxmoxVm({
+  const preDispatchBlock = await readInstanceLiveMutationBlock(
+    supabaseAdmin,
+    id,
+    instance,
+    holder ? { cpu: spec.cpuLimit, ramMb: spec.ramLimitMb } : undefined,
+    resizeOperationPersisted
+      ? { operationId: resizeOperationId, cpu: spec.cpuLimit, ramMb: spec.ramLimitMb }
+      : undefined
+  );
+  if (preDispatchBlock) {
+    if (!holder && !storedResizeOperationId) {
+      await supabaseAdmin.rpc("rollback_hermes_instance_resize_allocation", {
+        p_instance_id: id, p_user_id: userId, p_operation_id: resizeOperationId,
+      });
+    }
+    return apiError(preDispatchBlock, 409);
+  }
+
+  const result = hostConfigAlreadyApplied ? null : await resizeProxmoxVm({
     vmid: infrastructure.vmid,
     expectedInstanceId: instance.id,
     node: infrastructure.node,
@@ -127,19 +167,48 @@ export async function PATCH(
     hostConfig: getProxmoxHostRoutingConfigFromInfrastructure(infrastructure, { host_id: instance.host_id ?? null }),
   });
 
-  if (!result.ok) {
-    if (!holder) {
-      // The intended allocation was reserved before the host mutation so
-      // concurrent placements could not consume the same headroom. Releasing
-      // it after a failed mutation is capacity-reducing and therefore safe to
-      // write directly; the next successful repair reserves it again.
-      const { error: rollbackError } = await supabaseAdmin
-        .from("hermes_instances")
-        .update({ cpu_limit: instance.cpu_limit, ram_limit: instance.ram_limit })
-        .eq("id", id)
-        .eq("user_id", userId);
-      if (rollbackError) {
-        log.error("instance resize allocation rollback failed", rollbackError, {
+  const vmConfigApplied = hostConfigAlreadyApplied
+    || (result !== null && (result.ok || result.stdout.includes(PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER)));
+  if (resizeOperationPersisted) {
+    if (vmConfigApplied) {
+      if (!hostConfigAlreadyApplied) {
+        const { data: hostApplicationRecorded, error: hostApplicationError } = await supabaseAdmin.rpc(
+          "mark_hermes_instance_resize_host_config_applied",
+          { p_instance_id: id, p_user_id: userId, p_operation_id: resizeOperationId }
+        );
+        if (hostApplicationError || hostApplicationRecorded !== true) {
+          log.error("instance resize host application record failed", hostApplicationError ?? new Error("resize operation fence mismatch"), {
+            source: "instances",
+            route: "/api/instances/[id]/resize",
+            method: "PATCH",
+            instanceId: id,
+            userId,
+            failureType: "instance_resize_host_application_record_failed",
+          });
+        }
+      }
+      const { data: completed, error: completionError } = await supabaseAdmin.rpc(
+        "complete_hermes_instance_resize_allocation",
+        { p_instance_id: id, p_user_id: userId, p_operation_id: resizeOperationId }
+      );
+      if (completionError || completed !== true) {
+        log.error("instance resize allocation completion failed", completionError ?? new Error("resize operation fence mismatch"), {
+          source: "instances",
+          route: "/api/instances/[id]/resize",
+          method: "PATCH",
+          instanceId: id,
+          userId,
+          failureType: "instance_resize_allocation_completion_failed",
+        });
+        return apiError("Resize completed on the host, but its allocation could not be finalized. Retry the repair before launching more agents.", 500);
+      }
+    } else if (result !== null && !isProxmoxResizeOutcomeIndeterminateConservative(result)) {
+      const { data: rolledBack, error: rollbackError } = await supabaseAdmin.rpc(
+        "rollback_hermes_instance_resize_allocation",
+        { p_instance_id: id, p_user_id: userId, p_operation_id: resizeOperationId }
+      );
+      if (rollbackError || rolledBack !== true) {
+        log.error("instance resize allocation rollback failed", rollbackError ?? new Error("resize operation fence mismatch"), {
           source: "instances",
           route: "/api/instances/[id]/resize",
           method: "PATCH",
@@ -148,7 +217,19 @@ export async function PATCH(
           failureType: "instance_resize_allocation_rollback_failed",
         });
       }
+    } else if (result !== null) {
+      log.error("instance resize outcome is indeterminate; allocation remains reserved", new Error(String(result.error || result.stderr || "resize outcome unavailable")), {
+        source: "instances",
+        route: "/api/instances/[id]/resize",
+        method: "PATCH",
+        instanceId: id,
+        userId,
+        failureType: "instance_resize_outcome_indeterminate",
+      });
     }
+  }
+
+  if (result !== null && !result.ok) {
     return apiError(`Resize failed: ${result.error || result.stderr || "unknown"}`, 500);
   }
 
@@ -157,7 +238,7 @@ export async function PATCH(
     tier: tierKey,
     cpu_limit: spec.cpuLimit,
     ram_limit_mb: spec.ramLimitMb,
-    output: result.stdout.split("\n").filter(Boolean).slice(-3),
+    output: (result?.stdout ?? "").split("\n").filter(Boolean).slice(-3),
   });
 }
 

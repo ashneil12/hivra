@@ -73,6 +73,17 @@ as $$
       select 1 from public.yearly_token_subscriptions y
       where y.user_id = p_user_id
         and y.status in ('active','grace')
+    )
+    or exists (
+      select 1 from public.workspace_cloud_subscriptions w
+      where w.user_id = p_user_id
+        and w.status in ('active','trialing','past_due')
+        and coalesce(w.instance_limit, 0) > 0
+        and (
+          w.status <> 'past_due'
+          or w.current_period_end is null
+          or w.current_period_end > now()
+        )
     );
 $$;
 
@@ -436,8 +447,15 @@ as $$
   where q.user_id = p_user_id
     and q.tier in ('pro','power')
     and q.last_suspend_at is null
-    and (q.currently_eligible or q.last_breach_at is not null)
+    and (q.currently_eligible or q.last_breach_at > now() - interval '24 hours')
     and public.token_tier_row_counts_for_user(q.user_id, coalesce(q.token_key, 'hermesos'), now());
+$$;
+
+create or replace function public.holder_admission_has_active_wake(p_user_id text)
+returns boolean
+language sql stable security definer set search_path=pg_catalog,pg_temp
+as $$
+  select false;
 $$;
 
 -- Advance the durable FIFO queue. A single advisory lock makes independent
@@ -511,6 +529,7 @@ begin
         updated_at = now()
     where a.state = 'admitted'
       and public.holder_admission_current_tier(a.user_id) is null
+      and not public.holder_admission_has_active_wake(a.user_id)
     returning 1
   )
   select count(*) into v_released from released;
@@ -836,7 +855,26 @@ create or replace function public.enforce_hermes_instance_seat_funding()
 returns trigger
 language plpgsql security definer set search_path=pg_catalog,pg_temp
 as $$
+declare
+  holder_idle_awake_reconciliation boolean := false;
 begin
+  if tg_op = 'UPDATE' then
+    holder_idle_awake_reconciliation := coalesce((
+      old.seat_funding = 'holder'
+      and old.lifecycle_state = 'paused'
+      and old.status = 'stopped'
+      and old.paused_reason = 'holder_idle'
+      and old.lifecycle_substate = 'holder_wake'
+      and new.lifecycle_state = 'active'
+      and new.status = 'running'
+      and new.paused_reason is null
+      and new.lifecycle_substate is null
+      and new.user_id is not distinct from old.user_id
+      and new.cpu_limit is not distinct from old.cpu_limit
+      and new.ram_limit is not distinct from old.ram_limit
+    ), false);
+  end if;
+
   if tg_op = 'UPDATE'
     and new.seat_funding is distinct from old.seat_funding
     and coalesce(current_setting('hivra.seat_funding_writer', true), 'off') <> 'on'
@@ -844,7 +882,7 @@ begin
     raise exception 'seat_funding is immutable after provisioning';
   end if;
 
-  if new.seat_funding='holder' and (
+  if new.seat_funding='holder' and not holder_idle_awake_reconciliation and (
     tg_op='INSERT' or new.seat_funding is distinct from old.seat_funding
     or new.user_id is distinct from old.user_id
     or new.cpu_limit > coalesce(old.cpu_limit,0) or new.ram_limit > coalesce(old.ram_limit,0)
@@ -1020,7 +1058,8 @@ with ranked as (
          case when bool_or(q.tier = 'power') then 'power' else 'pro' end as tier,
          (array_agg(q.token_key order by q.tier = 'power' desc, q.tier))[1] as token_key
   from public.token_tier_qualifications q
-  where q.currently_eligible = true
+  where q.last_suspend_at is null
+    and (q.currently_eligible or q.last_breach_at > now() - interval '24 hours')
     and q.tier in ('pro','power')
     and public.token_tier_row_counts_for_user(q.user_id, coalesce(q.token_key, 'hermesos'), now())
   group by q.user_id
@@ -1042,6 +1081,7 @@ with ranked as (
         where h.user_id = r.user_id
           and h.status <> 'deleted'
           and h.lifecycle_state not in ('deleted','cold_archived','pending_deletion')
+          and h.product_surface = 'hermesos'
       )
     )
 )
@@ -1058,7 +1098,8 @@ with ranked as (
          case when bool_or(q.tier = 'power') then 'power' else 'pro' end as tier,
          (array_agg(q.token_key order by q.tier = 'power' desc, q.tier))[1] as token_key
   from public.token_tier_qualifications q
-  where q.currently_eligible = true
+  where q.last_suspend_at is null
+    and (q.currently_eligible or q.last_breach_at > now() - interval '24 hours')
     and q.tier in ('pro','power')
     and public.token_tier_row_counts_for_user(q.user_id, coalesce(q.token_key, 'hermesos'), now())
   group by q.user_id
@@ -1080,6 +1121,7 @@ with ranked as (
         where h.user_id = r.user_id
           and h.status <> 'deleted'
           and h.lifecycle_state not in ('deleted','cold_archived','pending_deletion')
+          and h.product_surface = 'hermesos'
       )
     )
 )
@@ -1089,6 +1131,7 @@ from evidenced e
 where h.user_id = e.user_id
   and h.status <> 'deleted'
   and h.lifecycle_state not in ('deleted','cold_archived','pending_deletion')
+  and h.product_surface = 'hermesos'
   and h.seat_funding is null;
 
 with ranked as (
@@ -1096,7 +1139,8 @@ with ranked as (
          case when bool_or(q.tier = 'power') then 'power' else 'pro' end as tier,
          (array_agg(q.token_key order by q.tier = 'power' desc, q.tier))[1] as token_key
   from public.token_tier_qualifications q
-  where q.currently_eligible = true
+  where q.last_suspend_at is null
+    and (q.currently_eligible or q.last_breach_at > now() - interval '24 hours')
     and q.tier in ('pro','power')
     and public.token_tier_row_counts_for_user(q.user_id, coalesce(q.token_key, 'hermesos'), now())
   group by q.user_id
@@ -1119,24 +1163,38 @@ with ranked as (
         where h.user_id = r.user_id
           and h.status <> 'deleted'
           and h.lifecycle_state not in ('deleted','cold_archived','pending_deletion')
+          and h.product_surface = 'hermesos'
           and h.seat_funding = 'holder'
       )
     )
 )
-update public.holder_admissions a
-set state = 'admitted',
-    tier = e.tier,
-    token_key = e.token_key,
-    admitted_at = now(),
-    reserved_cpu = res.cpu,
-    reserved_ram_mb = res.ram_mb,
-    qualification_checked_at = now(),
-    grandfathered = true,
-    updated_at = now()
+insert into public.holder_admissions as a (
+  user_id, state, tier, token_key, queued_at, admitted_at,
+  reserved_cpu, reserved_ram_mb, qualification_checked_at, grandfathered
+)
+select e.user_id,
+       'admitted',
+       e.tier,
+       e.token_key,
+       now(),
+       now(),
+       res.cpu,
+       res.ram_mb,
+       now(),
+       true
 from evidenced e
 cross join lateral public.holder_admission_tier_resources(e.tier) res
-where a.user_id = e.user_id
-  and a.state = 'waitlisted';
+on conflict (user_id) do update
+set state = 'admitted',
+    tier = excluded.tier,
+    token_key = excluded.token_key,
+    admitted_at = excluded.admitted_at,
+    reserved_cpu = excluded.reserved_cpu,
+    reserved_ram_mb = excluded.reserved_ram_mb,
+    qualification_checked_at = excluded.qualification_checked_at,
+    grandfathered = true,
+    updated_at = now()
+where a.state = 'waitlisted';
 
 drop trigger if exists hivra_agents_enforce_seat_funding on public.hivra_agents;
 create trigger hivra_agents_enforce_seat_funding
@@ -1151,6 +1209,7 @@ for each row execute function public.enforce_hermes_instance_seat_funding();
 revoke all on table public.holder_admissions from public, anon, authenticated;
 revoke all on function public.holder_admission_tier_resources(text),
   public.holder_admission_has_paid_access(text),
+  public.holder_admission_has_active_wake(text),
   public.holder_seat_funding_valid(text,numeric,numeric,uuid,uuid,numeric,numeric),
   public.enforce_hivra_agent_seat_funding(),
   public.enforce_hermes_instance_seat_funding(),
@@ -1174,6 +1233,7 @@ revoke all on function public.holder_admission_tier_resources(text),
 from public, anon, authenticated, service_role;
 grant execute on function public.holder_admission_tier_resources(text),
   public.holder_admission_has_paid_access(text),
+  public.holder_admission_has_active_wake(text),
   public.holder_seat_funding_valid(text,numeric,numeric,uuid,uuid,numeric,numeric),
   public.enforce_hivra_agent_seat_funding(),
   public.enforce_hermes_instance_seat_funding(),

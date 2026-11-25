@@ -126,6 +126,7 @@ jest.mock("@/lib/billing/tier-thresholds", () => ({
     power: { amount: 500000n },
   }),
   HERMESOS_TOKEN_DECIMALS: 18,
+  REQUALIFICATION_GRACE_HOURS: 24,
   isFoundersRateUser: () => false,
 }));
 
@@ -292,6 +293,42 @@ describe("GET /api/billing/wallet/eligibility", () => {
     expect(body.data.balance).toMatchObject({
       walletAddress: "0x000000000000000000000000000000000000abcd",
       normalizedWalletAddress: "0x000000000000000000000000000000000000abcd",
+    });
+  });
+
+  it("marks the locked quantity active through grace and inactive after suspension", async () => {
+    const qualification = {
+      tier: "pro",
+      token_key: "hermesos",
+      qualifying_quantity: "12345000000000000000000",
+      threshold_at_qualification: "12345000000000000000000",
+      qualified_at: "2026-04-01T00:00:00.000Z",
+      currently_eligible: false,
+      last_balance_seen: "1",
+      last_evaluated_at: null,
+      last_breach_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      last_suspend_at: null,
+    };
+    (mockQualResponse as { data: unknown[] }).data = [qualification];
+
+    const grace = await GET();
+    const graceBody = await grace.json();
+    expect(graceBody.data.tiers.pro).toMatchObject({
+      qualifyingQuantityDisplay: "12,345",
+      lockedQualificationDisplay: "12,345",
+      lockedQualificationActive: true,
+    });
+
+    (mockQualResponse as { data: unknown[] }).data = [{
+      ...qualification,
+      last_suspend_at: new Date(Date.now() - 60 * 1000).toISOString(),
+    }];
+    const suspended = await GET();
+    const suspendedBody = await suspended.json();
+    expect(suspendedBody.data.tiers.pro).toMatchObject({
+      qualifyingQuantityDisplay: "12,345",
+      lockedQualificationDisplay: null,
+      lockedQualificationActive: false,
     });
   });
 
