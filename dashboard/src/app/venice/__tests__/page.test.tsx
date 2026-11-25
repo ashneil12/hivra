@@ -82,7 +82,7 @@ describe("/venice", () => {
     expect(screen.getByRole("link", { name: "Launch with my key" })).toBeInTheDocument();
   });
 
-  it("links signed-out claimants through sign-in on Canary", async () => {
+  it("shows the offer on Canary when both flags are on", async () => {
     setPromoEnv();
     render(await VenicePage());
     expect(screen.getByRole("heading", { name: /\$10\s*of Venice inference, on us/ })).toBeInTheDocument();
@@ -91,7 +91,7 @@ describe("/venice", () => {
   });
 
   it("sends signed-out claimants to sign-up with their Venice launch destination", async () => {
-    process.env[FLAG] = "true";
+    setPromoEnv();
     render(await VenicePage());
 
     expect(screen.getByRole("link", { name: /Claim your \$10/ })).toHaveAttribute(
