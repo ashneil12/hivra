@@ -204,4 +204,18 @@
 {"slug":"owncast","name":"Owncast","sourceUrl":"https://github.com/owncast/owncast","status":"accepted","reason":"evidence catalog-curation/evidence/owncast.json","checkedAt":"2026-11-25"}
 {"slug":"thelounge","name":"The Lounge","sourceUrl":"https://github.com/thelounge/thelounge","status":"accepted","reason":"evidence catalog-curation/evidence/thelounge.json","checkedAt":"2026-11-25"}
 {"slug":"wekan","name":"WeKan","sourceUrl":"https://github.com/wekan/wekan","status":"compose-needed","reason":"requires MongoDB","checkedAt":"2026-11-25"}
-{"slug":"forgejo","name":"Forgejo","sourceUrl":"https://codeberg.org/forgejo/forgejo","status":"pending","reason":"","checkedAt":"2026-11-25"}
+{"slug":"forgejo","name":"Forgejo","sourceUrl":"https://codeberg.org/forgejo/forgejo","status":"pending","reason":"source is on Codeberg; license and official image still require a dedicated Codeberg/docs check","checkedAt":"2026-11-25"}
+{"slug":"n8n","name":"n8n","sourceUrl":"https://github.com/n8n-io/n8n","status":"pending","reason":"candidate needs official-image, SQLite boot and licence verification before manifest work","checkedAt":"2026-11-25"}
+{"slug":"open-webui","name":"Open WebUI","sourceUrl":"https://github.com/open-webui/open-webui","status":"pending","reason":"candidate needs official-image, CPU-only boot and licence verification before manifest work","checkedAt":"2026-11-25"}
+{"slug":"stirling-pdf","name":"Stirling PDF","sourceUrl":"https://github.com/Stirling-Tools/Stirling-PDF","status":"pending","reason":"candidate needs official-image, storage path and licence verification before manifest work","checkedAt":"2026-11-25"}
+{"slug":"uptime-kuma","name":"Uptime Kuma","sourceUrl":"https://github.com/louislam/uptime-kuma","status":"rejected","reason":"already present in the catalog registry","checkedAt":"2026-11-25"}
+{"slug":"netdata","name":"Netdata","sourceUrl":"https://github.com/netdata/netdata","status":"rejected","reason":"requires host integration and privileged or host mounts for its documented monitoring mode","checkedAt":"2026-11-25"}
+{"slug":"glance","name":"Glance","sourceUrl":"https://github.com/glanceapp/glance","status":"rejected","reason":"already present in the catalog registry","checkedAt":"2026-11-25"}
+{"slug":"beszel","name":"Beszel","sourceUrl":"https://github.com/henrygd/beszel","status":"rejected","reason":"already present in the catalog registry","checkedAt":"2026-11-25"}
+{"slug":"dashy","name":"Dashy","sourceUrl":"https://github.com/Lissy93/dashy","status":"rejected","reason":"already present in the catalog registry","checkedAt":"2026-11-25"}
+{"slug":"termix","name":"Termix","sourceUrl":"https://github.com/Termix-SSH/Termix","status":"rejected","reason":"already present in the catalog registry","checkedAt":"2026-11-25"}
+{"slug":"chatwoot","name":"Chatwoot","sourceUrl":"https://github.com/chatwoot/chatwoot","status":"rejected","reason":"licence metadata is NOASSERTION; this pass cannot establish an allowlisted licence","checkedAt":"2026-11-25"}
+{"slug":"portainer","name":"Portainer","sourceUrl":"https://github.com/portainer/portainer","status":"rejected","reason":"Zlib licence not in CATALOG_OSI_LICENSES","checkedAt":"2026-11-25"}
+{"slug":"ollama","name":"Ollama","sourceUrl":"https://github.com/ollama/ollama","status":"rejected","reason":"already present in the catalog registry","checkedAt":"2026-11-25"}
+{"slug":"langflow","name":"Langflow","sourceUrl":"https://github.com/langflow-ai/langflow","status":"pending","reason":"candidate needs official-image, dependency boot and licence verification before manifest work","checkedAt":"2026-11-25"}
+{"slug":"audiobookshelf","name":"Audiobookshelf","sourceUrl":"https://github.com/advplyr/audiobookshelf","status":"rejected","reason":"already present in the catalog registry","checkedAt":"2026-11-25"}
