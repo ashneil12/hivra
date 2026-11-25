@@ -112,6 +112,7 @@ let mockAgentInsertThrows: unknown;
 const mockHivraAgentEqCalls: Array<[string, unknown]> = [];
 const mockAgentUpdates: Array<Record<string, unknown>> = [];
 let mockSubscriptionRow: Record<string, unknown> | null;
+let mockTokenQualificationRows: Array<{ tier: "pro" | "power"; currently_eligible: boolean }>;
 // The Free-account refusal (hosted compute is paid) has its own tests below and
 // in resource-gate.test.ts. Everything else in this file exercises pool, slot,
 // placement and idempotency behaviour through the small Free-sized fixture, so
@@ -233,6 +234,9 @@ function mockDefaultRpc(name: string, args: Record<string, unknown>) {
     const counted = mockExistingAgents.filter(row => (row.deployment_mode ?? "hivra-managed") === "hivra-managed"
       && ["provisioning", "running", "stopped"].includes(String(row.status))).length;
     return Promise.resolve({ data: mockSlotCountOverride ?? counted, error: null });
+  }
+  if (name === "holder_admission_state") {
+    return Promise.resolve({ data: { state: "admitted", tier: "pro" }, error: null });
   }
   if (name === "insert_hivra_managed_agent") {
     const row = args.p_row as Record<string, unknown>;
@@ -447,6 +451,7 @@ describe("POST /api/hivra/agents", () => {
     delete process.env.NEXT_PUBLIC_APP_URL;
     delete process.env.VERCEL_TARGET_ENV;
     mockEnforceFreeAccountRefusal = false;
+    mockTokenQualificationRows = [];
     mockSubscriptionRow = {
       plan: "free",
       status: "active",
@@ -552,7 +557,7 @@ describe("POST /api/hivra/agents", () => {
         } = {
           select: jest.fn(),
           eq: jest.fn(),
-          then: (resolve) => resolve({ data: [], error: null }),
+          then: (resolve) => resolve({ data: mockTokenQualificationRows, error: null }),
         };
         chain.select.mockReturnValue(chain);
         chain.eq.mockReturnValue(chain);
@@ -2095,7 +2100,10 @@ describe("POST /api/hivra/agents", () => {
     const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
     expect(response.status).toBe(201);
     expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_hivra_managed_agent", expect.objectContaining({
-      p_agent_limit: 1, p_row: expect.objectContaining({ user_id: "user-free", deployment_mode: "hivra-managed", type: "codex" }),
+      p_agent_limit: 1,
+      p_row: expect.objectContaining({
+        user_id: "user-free", deployment_mode: "hivra-managed", type: "codex", seat_funding: "paid",
+      }),
     }));
   });
 
@@ -3031,7 +3039,61 @@ describe("POST /api/hivra/agents", () => {
     expect(mockResolveProxmoxTargetConfiguration).not.toHaveBeenCalledWith(expect.anything(), "fixturenode10");
   });
 
-  it("keeps Claude Code on the user's sticky host when no dedicated host override is configured", async () => {
+  it("refuses a new Aeon holder seat before placement while keeping the owner's admission", async () => {
+    mockTokenQualificationRows = [{ tier: "pro", currently_eligible: true }];
+    const response = await POST(makeRequest({ type: "aeon", name: "HOLDER_AEON" }) as never);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining("cannot nap") });
+    expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
+  it("lets the holder admission host win over the sticky host on a normal holder launch", async () => {
+    const priorMode = process.env.HIVRA_SLEEP_MODE;
+    process.env.HIVRA_SLEEP_MODE = "canary";
+    mockTunnelConfigured = true;
+    mockCreateBoxTunnel.mockResolvedValue({ token: "synthetic", url: "https://fixture.example.test", tunnelId: "fixture-tunnel", hostname: "fixture.example.test" });
+    mockTokenQualificationRows = [{ tier: "pro", currently_eligible: true }];
+    mockExistingAgents = [
+      {
+        id: "agent-existing",
+        type: "claude-code",
+        status: "running",
+        proxmox_host: "fixturenode5",
+        cpu: 0.5,
+        ram: 1,
+        created_at: "2026-06-08T10:00:00.000Z",
+      },
+    ];
+
+    const response = await POST(makeRequest({
+      type: "claude-code",
+      name: "HOLDER_AGENT",
+      cpu: 0.5,
+      ram: 1,
+    }) as never).finally(() => {
+      if (priorMode === undefined) delete process.env.HIVRA_SLEEP_MODE;
+      else process.env.HIVRA_SLEEP_MODE = priorMode;
+    });
+
+    expect(response.status).toBe(201);
+    expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledTimes(1);
+    expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledWith(expect.objectContaining({
+      forceTargetId: null,
+      neededCpu: 0.5, neededRamMb: 1024,
+      seatFunding: "holder",
+      skipTemplateAvailabilityCheck: true,
+    }));
+    expect(mockSupabaseFrom).not.toHaveBeenCalledWith("venice_compute_boost_qualifications");
+    expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({
+      type: "claude-code",
+      seat_funding: "holder", cpu: 0.5, ram: 1,
+      proxmox_host: "fixturenode7",
+    }));
+  });
+
+  it("keeps a paid seat on the sticky host when its owner also qualifies for holder funding", async () => {
+    mockTokenQualificationRows = [{ tier: "pro", currently_eligible: true }];
     mockSubscriptionRow = {
       plan: "operator",
       status: "active",
@@ -3082,11 +3144,13 @@ describe("POST /api/hivra/agents", () => {
     expect(response.status).toBe(201);
     expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledWith(expect.objectContaining({
       forceTargetId: "fixturenode5",
+      seatFunding: "paid",
       skipTemplateAvailabilityCheck: true,
     }));
     expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({
       type: "claude-code",
       proxmox_host: "fixturenode5",
+      seat_funding: "paid",
     }));
     expect(mockGetReservedProxmoxVmidsForNode).toHaveBeenCalledWith({
       proxmoxNode: "fixturenode5",

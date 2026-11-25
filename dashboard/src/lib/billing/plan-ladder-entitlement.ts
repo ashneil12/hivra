@@ -5,6 +5,7 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase";
+import { NOT_HOLDER_SEAT_FILTER } from "@/lib/hivra/seat-funding";
 import { log } from "@/lib/logger";
 import { hasPlanAccessStatus } from "@/lib/billing/subscription-status";
 import {
@@ -67,6 +68,7 @@ export async function countAlwaysOnAgents(userId: string, excludeAgentId?: strin
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
     .eq("always_on", true)
+    .or(NOT_HOLDER_SEAT_FILTER)
     .neq("status", "deleted");
   if (excludeAgentId) query = query.neq("id", excludeAgentId);
   const { count, error } = await query;

@@ -23,7 +23,7 @@ const row: LaunchModelRequest = { user_id: "owner", request_id: requestId, agent
   phase: "waiting", attempted_at: null, attempt_id: null, attempt_expires_at: null, created_at: "2026-08-28T12:00:00Z", promoted_at: null, closed_at: null };
 const reservation = { id: agentId, type: "codex" as const, name: "My computer", cpu: 2, ram: 4, proxmox_host: "fixture",
   deployment_mode: "hivra-managed" as const, computer_substrate: "proxmox-kvm" as const, operation_id: provisionId,
-  managed_provisioner_channel: "default" as const,
+  managed_provisioner_channel: "default" as const, seat_funding: "paid" as const,
   infrastructure_binding_token_hash: "a".repeat(64) };
 function fixture() {
   const query = { select: jest.fn(), eq: jest.fn(), maybeSingle: jest.fn().mockResolvedValue({ data: row, error: null }) };
@@ -101,6 +101,14 @@ describe("private launch custody store", () => {
     const { db, store, input } = fixture();
     await store.reserve({ ...input, agent: { ...reservation, cpu_max: 4, ram_max: 8 } });
     expect(db.rpc.mock.calls[0][1].p_agent).toEqual(expect.objectContaining({ cpu_max: 4, ram_max: 8 }));
+  });
+  it("requires the server's funding decision on managed reservations", async () => {
+    const { db, store, input } = fixture();
+    await store.reserve(input);
+    expect(db.rpc.mock.calls[0][1].p_agent).toEqual(expect.objectContaining({ seat_funding: "paid" }));
+    const withoutFunding = { ...reservation } as Record<string, unknown>;
+    delete withoutFunding.seat_funding;
+    await expect(store.reserve({ ...input, agent: withoutFunding as never })).rejects.toMatchObject({ code: "invalid_request" });
   });
   it("keeps managed wallet choice without minting or storing a candidate key", async () => {
     const { db, store, input } = fixture();

@@ -19,6 +19,10 @@ export interface HostState {
   lock: string;
   tags: string;
   memory: number;
+  name?: string;
+  ip?: string;
+  volatileData?: string;
+  savedData?: string;
   onboot: number;
   vmstate: boolean;
   /** Behaviour switches. */
@@ -78,6 +82,8 @@ elif a[0] == "config":
     if s.get("configFail"): sys.exit(2)
     out("boot: order=scsi0")
     out("cores: 2")
+    if s.get("name"): out("name: " + s["name"])
+    if s.get("ip"): out("ipconfig0: ip=" + s["ip"] + "/24")
     out("ide2: local-lvm:vm-%s-cloudinit,media=cdrom" % a[1])
     out("memory: %d" % s["memory"])
     out("onboot: %d" % s["onboot"])
@@ -88,6 +94,7 @@ elif a[0] == "config":
 elif a[0] == "suspend":
     if "--todisk" in a:
         if s.get("hibernateFail"): sys.exit(1)
+        if "volatileData" in s: s["savedData"] = s.pop("volatileData")
         s.update(status="stopped", qmp="", lock="suspended", vmstate=True)
     else:
         if s.get("suspendFail"): sys.exit(1)
@@ -98,6 +105,7 @@ elif a[0] == "resume":
     s["qmp"] = "running"; save()
 elif a[0] == "start":
     if s.get("startFail"): sys.exit(1)
+    if s["vmstate"] and "savedData" in s: s["volatileData"] = s.pop("savedData")
     if not s.get("startNoop"): s.update(status="running", qmp="running", lock="", vmstate=False)
     save()
 elif a[0] == "set":
@@ -114,7 +122,7 @@ elif a[0] == "guest" and a[1] == "exec":
     if s.get("pingFail"): sys.exit(1)
     rest = a[a.index("--") + 1:]
     text = " ".join(rest)
-    if rest[0].endswith("python3"):
+    if rest[0].endswith("python3") or ("CLASSIC_IDLE" in text and rest[0] == "/bin/bash"):
         data, code = s.get("probeStdout") or "", 0 if s.get("probeStdout") is not None else 1
     else:
         data, code = "", 1 if s.get("execFailMatch") and s["execFailMatch"] in text else 0
@@ -284,7 +292,7 @@ export interface HostHarness {
   cleanup(): void;
 }
 
-export function makeHostHarness(): HostHarness {
+export function makeHostHarness(options: { socketless?: boolean } = {}): HostHarness {
   const dir = mkdtempSync(path.join(tmpdir(), "hivra-sleep-host-"));
   const bin = path.join(dir, "bin");
   const provisionerDir = path.join(dir, "provisioner");
@@ -301,13 +309,37 @@ export function makeHostHarness(): HostHarness {
   put(path.join(bin, "sleep"), SLEEP);
   put(path.join(bin, "pvesm"), PVESM);
   put(path.join(provisionerDir, "hivra-host-capacity-admission"), ADMISSION);
+  if (options.socketless) {
+    // For sandboxes which cannot bind Unix sockets. Stub the QMP transport
+    // only; the generated host scripts, receipt parsing and qm calls still run.
+    put(path.join(bin, "python3"), `#!/bin/sh
+if [ "$1" != "-I" ]; then exec /usr/bin/python3 "$@"; fi
+shift 4
+exec /usr/bin/python3 - "$@" <<'PYCTL'
+import json, os, sys
+from pathlib import Path
+p = Path(os.environ["STUB_DIR"]) / "state.json"
+s = json.loads(p.read_text())
+op, vm, action = sys.argv[1:4]
+ok = op == "qmp" and s["status"] == "running"
+if ok and action in ("stop", "cont"):
+    s["qmp"] = "paused" if action == "stop" else "running"
+    p.write_text(json.dumps(s))
+print("HIVRA_VM_CTL " + json.dumps(dict(op=op, ok=ok, reason="ok" if ok else "socket_missing", ms=1, steps={}, status=s["qmp"])))
+PYCTL
+`);
+    put(path.join(bin, "systemctl"), "#!/bin/sh\n[ \"$*\" = 'is-active --quiet caddy' ]\n");
+    put(path.join(bin, "stat"), `#!/bin/sh
+if [ "$1" = -c ]; then wc -c < "$3"; else exec /usr/bin/stat "$@"; fi
+`);
+  }
   return {
     dir,
     provisionerDir,
     run(script, state, env = {}) {
       const runDir = path.join(dir, "run");
-      rmSync(runDir, { recursive: true, force: true });
-      mkdirSync(runDir);
+      if (!options.socketless) rmSync(runDir, { recursive: true, force: true });
+      mkdirSync(runDir, { recursive: true });
       writeFileSync(path.join(dir, "state.json"), JSON.stringify(state));
       writeFileSync(path.join(dir, "calls.log"), "");
       // The script writes to /run and talks to /var/run/qemu-server; point both at the temp directory.
@@ -327,8 +359,10 @@ export function makeHostHarness(): HostHarness {
         .replaceAll("@@PVECONF@@", path.join(dir, "pve-qemu-server"));
       const pidFile = path.join(dir, "qemu.pid");
       rmSync(pidFile, { force: true });
-      const started = spawnSync("python3", [qemu, dir, qemuDir, String(VMID)], { stdio: "ignore", timeout: 15_000 });
-      if (started.status !== 0) throw new Error("the fake QEMU did not start");
+      if (!options.socketless) {
+        const started = spawnSync("python3", [qemu, dir, qemuDir, String(VMID)], { stdio: "ignore", timeout: 15_000 });
+        if (started.status !== 0) throw new Error("the fake QEMU did not start");
+      }
       let result;
       try {
         result = spawnSync("bash", ["-s"], {

@@ -11,8 +11,7 @@ import { resolveHivraProxmoxHost } from "./proxmox-target";
 import { isStartBlockedForLapse } from "./lapse-gate";
 import { isFastWakeEnabled } from "./fast-wake-flags";
 import {
-  AUTONOMOUS_KINDS,
-  DESKTOP_KINDS,
+  supportsIdleNap,
   isSleepMemoryTrimEnabled,
   parseSleepMode,
   type SleepMode,
@@ -39,6 +38,14 @@ import {
   type ObservedSleepState,
   type SleepReceipt,
 } from "./agent-sleep-scripts";
+import {
+  effectiveAlwaysOn,
+  effectiveSleepPolicy,
+  holderHibernateBoundaryReason,
+  HOLDER_SEAT_HIBERNATE_AFTER_NAP_SECONDS,
+  HOLDER_SEAT_NAP_AFTER_SECONDS,
+  isHolderFundedSeat,
+} from "./seat-funding";
 import { type TelegramSleepContext } from "./telegram-wake/lifecycle";
 import { TELEGRAM_ADAPTER } from "./channel-wake/adapters/telegram";
 import {
@@ -111,6 +118,21 @@ export function resolveSleepTimings(env: Record<string, string | undefined> = pr
     napAfterSeconds: envSeconds(env.HIVRA_SLEEP_NAP_AFTER_SECONDS, DEFAULT_NAP_AFTER_SECONDS),
     hibernateAfterSeconds: envSeconds(env.HIVRA_SLEEP_HIBERNATE_AFTER_SECONDS, DEFAULT_HIBERNATE_AFTER_SECONDS),
     horizonSeconds: SLEEP_JOB_HORIZON_SECONDS,
+  };
+}
+
+/**
+ * Runtime timings for one seat. Holder-funded seats use the fixed holder terms
+ * (4 minutes to nap, 12 minutes in nap before save-to-disk), never an operator
+ * tuning knob. Other seats keep the existing configurable scheduler timings.
+ */
+export function resolveSeatSleepTimings(row: AgentRow, env: Record<string, string | undefined> = process.env): SleepTimings {
+  const timings = resolveSleepTimings(env);
+  if (!isHolderFundedSeat(row)) return timings;
+  return {
+    ...timings,
+    napAfterSeconds: HOLDER_SEAT_NAP_AFTER_SECONDS,
+    hibernateAfterSeconds: HOLDER_SEAT_HIBERNATE_AFTER_NAP_SECONDS,
   };
 }
 
@@ -189,9 +211,9 @@ export function sleepEligibility(
   if (row.infrastructure_binding_token_enforced !== true) reasons.push("binding_not_enforced");
 
   const kind = typeof row.type === "string" ? row.type : "";
-  if (AUTONOMOUS_KINDS.includes(kind) || DESKTOP_KINDS.includes(kind)) reasons.push(`kind_${kind}`);
+  if (!supportsIdleNap(kind)) reasons.push(`kind_${kind}`);
 
-  if (row.always_on !== false) reasons.push("always_on");
+  if (effectiveAlwaysOn(row) || (row.always_on !== false && !isHolderFundedSeat(row))) reasons.push("always_on");
   reasons.push(...seedsPending(row));
 
   if (facts.activeMove === null) reasons.push("move_unknown");
@@ -211,7 +233,7 @@ export function sleepEligibility(
   }
 
   if (!manual) {
-    const policy = row.sleep_policy ?? "off";
+    const policy = effectiveSleepPolicy(row);
     if (options.serverMode === "canary" && policy === "off") reasons.push("policy_off");
     else if (policy !== "off" && options.tier && !policyAllowsTier(policy, options.tier)) {
       reasons.push("policy_tier_not_allowed");
@@ -386,7 +408,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   }
   if (!row) return { outcome: "ineligible", reason: "not_found", reasons: ["not_found"] };
 
-  const timings = resolveSleepTimings(env);
+  const timings = resolveSeatSleepTimings(row, env);
   const [facts, host] = await Promise.all([readSleepFacts(row), readSleepHostRow(row)]);
   const eligibility = sleepEligibility(row, host, facts, { manual, serverMode, tier });
   if (!eligibility.eligible) {
@@ -396,6 +418,29 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   const state = String(row.sleep_state ?? "awake");
   if (tier === "nap" && state !== "awake") return { outcome: "skipped", reason: "not_awake" };
   if (tier === "hibernate" && state !== "awake" && state !== "napping") return { outcome: "skipped", reason: "not_awake_or_napping" };
+  const holderBoundary = holderHibernateBoundaryReason({
+    row,
+    tier,
+    state,
+    nowMs: now(),
+    hibernateAfterNapSeconds: timings.hibernateAfterSeconds,
+  });
+  if (holderBoundary) return { outcome: "not_idle", reason: holderBoundary, reasons: [holderBoundary] };
+  // The sweep deliberately widens its candidate window so holder seats are not
+  // excluded by a longer tunable paid-seat window. Re-check the exact per-seat
+  // hibernate window here, before any host call or lease: paid seats therefore
+  // keep their configured timing and holder seats keep their fixed 12 minutes.
+  if (!holderBoundary && tier === "hibernate" && trigger === "sweep" && state === "napping") {
+    const changedAt = typeof row.sleep_tier_changed_at === "string" || typeof row.sleep_tier_changed_at === "number"
+      ? Date.parse(String(row.sleep_tier_changed_at))
+      : Number.NaN;
+    if (!Number.isFinite(changedAt)) {
+      return { outcome: "not_idle", reason: "hibernate_window_unknown", reasons: ["hibernate_window_unknown"] };
+    }
+    if (now() - changedAt < timings.hibernateAfterSeconds * 1000) {
+      return { outcome: "not_idle", reason: "hibernate_window_open", reasons: ["hibernate_window_open"] };
+    }
+  }
   const expectedGeneration = parseSleepGeneration(row.sleep_generation);
   if (expectedGeneration === null) return { outcome: "skipped", reason: "generation_unknown" };
 

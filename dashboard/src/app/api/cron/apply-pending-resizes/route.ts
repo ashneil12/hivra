@@ -70,6 +70,7 @@ async function handle(req: NextRequest) {
     .eq("tier_change_pending", true)
     .not("status", "in", '("deleted","scheduled_for_deletion")')
     .not("lifecycle_state", "in", LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST)
+    .or("seat_funding.is.null,seat_funding.neq.holder,and(status.eq.running,lifecycle_state.eq.active)")
     .or(LIVE_MUTATION_NOT_FAILED_ARCHIVE_FILTER)
     .order("last_activity_at", { ascending: true, nullsFirst: true })
     .limit(BATCH_LIMIT);
@@ -120,6 +121,7 @@ async function handle(req: NextRequest) {
       .eq("tier_change_pending", true)
       .not("status", "in", '("deleted","scheduled_for_deletion")')
       .not("lifecycle_state", "in", LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST)
+      .or("seat_funding.is.null,seat_funding.neq.holder,and(status.eq.running,lifecycle_state.eq.active)")
       .or(LIVE_MUTATION_NOT_FAILED_ARCHIVE_FILTER);
     totalPending = count ?? null;
   }

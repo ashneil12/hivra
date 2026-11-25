@@ -405,7 +405,7 @@ describe("legacy withdraw lane", () => {
 
   it("gives the unlock prompt a 44px dismiss named Close", () => {
     const onDismiss = jest.fn();
-    render(<UnlockPromptCard mode="holding" unlocking={false} onUnlock={jest.fn()} onDismiss={onDismiss} />);
+    render(<UnlockPromptCard quoteUnit="$HermesOS" mode="holding" unlocking={false} onUnlock={jest.fn()} onDismiss={onDismiss} />);
     const close = screen.getByRole("button", { name: "Close" });
     expect(close.style.width).toBe("44px");
     expect(close.style.height).toBe("44px");
@@ -421,7 +421,7 @@ describe("QuoteCard wallet link", () => {
       tier: "pro",
       thresholdTierCode: "PRO_STANDARD",
       epoch: "standard",
-      usdTargetCents: 14900,
+      usdTargetCents: 29900,
       priceUsdAtQuote: "0.0000025",
       tokensRequiredRaw: "59600000000000000000000000",
       tokensRequiredDisplay: "59600000",
@@ -438,10 +438,10 @@ describe("QuoteCard wallet link", () => {
   function renderQuote(quote: DepositQuotePayload, depositAddress: string | null = WALLET) {
     return render(
       <QuoteCard
+        quoteUnit="$HermesOS"
         tier="pro"
         quote={quote}
         alreadyEligible={false}
-        launchEpoch={false}
         minting={false}
         depositAddress={depositAddress}
         onMint={jest.fn()}

@@ -295,33 +295,46 @@ export async function resolveEffectiveSubscription(
 
   const quals = (qualRows as QualificationRow[] | null) ?? [];
   if (quals.length > 0) {
-    // Power outranks Pro when the user qualifies for both — give them the
-    // larger compute pool they paid for.
-    const tier: "pro" | "power" = quals.some((q) => q.tier === "power")
-      ? "power"
-      : "pro";
+    // A qualification joins the holder queue; it does not itself grant hosted
+    // compute. Only the durable admitted state entitles the user. Existing
+    // qualified holders were admitted by the holder-admissions migration, so
+    // grandfathering is part of the same authoritative state rather than a
+    // client-visible special case.
+    const { data: admission, error: admissionError } = await supabaseAdmin.rpc(
+      "holder_admission_state",
+      { p_user_id: userId }
+    );
+    failOnQueryError(options, "holder_admission_state", admissionError);
+    const admitted = admission as { state?: unknown; tier?: unknown } | null;
+    if (admitted?.state === "admitted" && (admitted.tier === "pro" || admitted.tier === "power")) {
+      // The admission row is the authority: its tier is reconciled against
+      // Pro/Power transitions and capacity in the database. A merely larger
+      // current qualification must not outrun the reservation that was
+      // actually admitted.
+      const tier = admitted.tier === "power" && quals.some((q) => q.tier === "power") ? "power" : "pro";
 
-    return tier === "power"
-      ? {
-          plan: "fleet",
-          status: "active",
-          instance_limit: PLANS.fleet.maxAgents,
-          total_cpu_budget: PLANS.fleet.totalCpu,
-          total_ram_budget: PLANS.fleet.totalRam,
-          source: "token_holding",
-          tokenTier: "power",
-          canChangePlanInPlace: false,
-        }
-      : {
-          plan: "operator",
-          status: "active",
-          instance_limit: PLANS.operator.maxAgents,
-          total_cpu_budget: PLANS.operator.totalCpu,
-          total_ram_budget: PLANS.operator.totalRam,
-          source: "token_holding",
-          tokenTier: "pro",
-          canChangePlanInPlace: false,
-        };
+      return tier === "power"
+        ? {
+            plan: "fleet",
+            status: "active",
+            instance_limit: PLANS.fleet.maxAgents,
+            total_cpu_budget: PLANS.fleet.totalCpu,
+            total_ram_budget: PLANS.fleet.totalRam,
+            source: "token_holding",
+            tokenTier: "power",
+            canChangePlanInPlace: false,
+          }
+        : {
+            plan: "operator",
+            status: "active",
+            instance_limit: PLANS.operator.maxAgents,
+            total_cpu_budget: PLANS.operator.totalCpu,
+            total_ram_budget: PLANS.operator.totalRam,
+            source: "token_holding",
+            tokenTier: "pro",
+            canChangePlanInPlace: false,
+          };
+    }
   }
 
   // Free Stripe row is the FALLBACK. We get here when there is no paid

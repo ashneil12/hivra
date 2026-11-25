@@ -77,6 +77,10 @@ export const STALE_SLEEP_LEASE_MS = 6 * 60_000;
 export const AUTONOMOUS_KINDS: readonly string[] = ["aeon"];
 /** Kinds with a live display: a paused guest would freeze it, so hibernate only. */
 export const DESKTOP_KINDS: readonly string[] = ["linux-desktop"];
+export function supportsIdleNap(kind: string): boolean {
+  return !AUTONOMOUS_KINDS.includes(kind) && !DESKTOP_KINDS.includes(kind);
+}
+
 /** Channels held open by a live socket, which a sleeping guest would drop. */
 export const SOCKET_CHANNELS: readonly string[] = ["discord", "whatsapp", "slack"];
 
@@ -131,6 +135,8 @@ export interface SleepPolicyInput {
   /** The agent's own switch. Defaults to `off`. */
   sleepPolicy?: AgentSleepPolicy;
   alwaysOn?: boolean;
+  /** Authoritative per-seat funding: a holder-funded seat is always on the full sleep policy. */
+  holderFunded?: boolean;
   /** The owner opted in to the Telegram peek, so long-poll no longer blocks sleep. */
   telegramOptIn?: boolean;
   napAfterSeconds?: number;
@@ -193,8 +199,8 @@ function allowsHibernate(policy: AgentSleepPolicy): boolean {
 /** Reasons the agent can never sleep, from the facts we do have. */
 function ineligibleReasons(signals: SleepSignals, input: SleepPolicyInput): string[] {
   const reasons: string[] = [];
-  if (input.alwaysOn) reasons.push("always_on");
-  if ((input.sleepPolicy ?? "off") === "off") reasons.push("policy_off");
+  if (!input.holderFunded && input.alwaysOn) reasons.push("always_on");
+  if (!input.holderFunded && (input.sleepPolicy ?? "off") === "off") reasons.push("policy_off");
   if (signals.agentType && AUTONOMOUS_KINDS.includes(signals.agentType)) {
     reasons.push(`autonomous_kind:${signals.agentType}`);
   }
@@ -275,7 +281,7 @@ export function decideSleep(
   // lastActivityAt === null (never active) is not idle time we can measure.
   if (idleSeconds === null) return { verdict: "awake", reasons: ["no_activity_baseline"], idleSeconds };
 
-  const policy = input.sleepPolicy ?? "off";
+  const policy = input.holderFunded ? "full" : input.sleepPolicy ?? "off";
   const napAfter = applyThrashBackoff(
     input.napAfterSeconds ?? DEFAULT_NAP_AFTER_SECONDS,
     input.recentWakes,

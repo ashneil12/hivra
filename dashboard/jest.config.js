@@ -13,6 +13,7 @@ const config = {
   testMatch: [
     "**/__tests__/**/*.test.ts",
     "**/__tests__/**/*.test.tsx",
+    "**/__tests__/**/*.pglite.ts",
   ],
   roots: [
     "<rootDir>/src",

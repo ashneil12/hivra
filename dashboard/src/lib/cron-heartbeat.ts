@@ -41,6 +41,7 @@ export const CRON_REGISTRY: readonly CronHeartbeatDefinition[] = [
   // Runs every 4h (vercel.json "0 */4 * * *"), so a genuinely stalled archive
   // cron pages within ~8h (2x) instead of ~2 days. See archive-stopped-vms route.
   { name: "archive-stopped-vms", periodMinutes: 240 },
+  { name: "holder-inactivity-sweep", periodMinutes: 1 },
   { name: "inactivity-sweep", periodMinutes: 60 },
   { name: "redeploy-webui-instances", periodMinutes: 1440 },
   { name: "migration-drift-check", periodMinutes: 10 },

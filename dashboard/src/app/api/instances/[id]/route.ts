@@ -42,6 +42,7 @@ import {
   normalizeWakeRamMb,
   releaseHostWakeSlot,
 } from "@/lib/proxmox/wake-admission";
+import { transitionClassicHolder } from "@/lib/recovery/classic-holder-idle";
 import { captureWakeEvent, type WakeTelemetrySource } from "@/lib/telemetry/wake-events";
 import { deriveDnsDomainFromGatewayUrl, removeInstanceDnsBestEffort } from "@/lib/services/cloudflare-dns";
 import { buildResolveAgentContainerScript } from "@/lib/services/agent-container";
@@ -345,6 +346,7 @@ export interface HermesInstanceRow {
   entitlement_suspended_at?: string | null;
   entitlement_last_resumed_at?: string | null;
   paused_reason?: string | null;
+  seat_funding?: string | null;
   resource_tier?: string | null;
   disk_size_gb?: number | null;
   archive_uri?: string | null;
@@ -3166,6 +3168,34 @@ export async function POST(
           }
         );
       }
+    }
+
+    if ((instance!.paused_reason === "holder_idle" && instance!.lifecycle_state === "paused")
+      || (action === "start" && instance!.seat_funding === "holder" && instance!.status === "running"
+        && instance!.lifecycle_state === "active")) {
+      if (action !== "start") return apiError("Wake this computer before changing its power or runtime.", 409);
+      const result = await transitionClassicHolder({ id, userId });
+      if (result === "awake") return apiSuccess({ action });
+      if (result === "reservation_released" || result === "reservation_ineligible") {
+        const released = result === "reservation_released";
+        return apiError(
+          released
+            ? "This computer's token-holder reservation was released, so its saved session cannot be restored."
+            : "This computer no longer fits its token-holder reservation, so its saved session cannot be restored.",
+          409,
+          undefined,
+          { retryable: false, reason: result },
+        );
+      }
+      // Another request may have completed between the read and the claim.
+      if (result === "unclaimed" || result === "superseded") {
+        const current = await getInstanceOrError(id, userId);
+        if (current.instance?.status === "running" && current.instance.lifecycle_state === "active") return apiSuccess({ action });
+      }
+      const response = apiError("The computer is waiting to restore its session. Retry shortly.", 429,
+        undefined, { retryable: true, retryAfterSeconds: 5 });
+      response.headers.set("Retry-After", "5");
+      return response;
     }
 
     // Detect Proxmox-backed instances early so power/lifecycle actions can

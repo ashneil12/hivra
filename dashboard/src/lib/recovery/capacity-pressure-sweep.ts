@@ -80,6 +80,7 @@ type HostRow = {
 };
 
 type ParkCandidate = {
+  seat_funding?: string | null;
   id: string;
   user_id: string;
   name: string | null;
@@ -241,7 +242,7 @@ async function fetchHostActiveInstances(hostId: string): Promise<ParkCandidate[]
   const { data, error } = await supabase
     .from("hermes_instances")
     .select(
-      "id, user_id, name, agent_type, resource_tier, proxmox_node, proxmox_vmid, host_id, config, ram_limit, last_activity_at, created_at, last_lifecycle_transition_at, notifications_sent"
+      "id, user_id, name, agent_type, seat_funding, resource_tier, proxmox_node, proxmox_vmid, host_id, config, ram_limit, last_activity_at, created_at, last_lifecycle_transition_at, notifications_sent"
     )
     .eq("proxmox_node", hostId)
     .eq("lifecycle_state", "active")
@@ -272,6 +273,7 @@ function rankParkCandidates(
   const paid: ParkCandidate[] = [];
 
   for (const instance of instances) {
+    if (instance.seat_funding === "holder") continue;
     const anchor = getMostRecentActivityAnchor(instance);
     // No usable activity anchor at all — never park blind.
     if (anchor === null) continue;

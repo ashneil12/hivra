@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/holder-inactivity-sweep",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/seo/gsc-pull",
       "schedule": "10 6 * * *"
     },

@@ -147,6 +147,20 @@ describe("TokenHoldingPanel", () => {
     expect(copyMock).toHaveBeenLastCalledWith("0x000000000000000000000000000000000000dEaD");
   });
 
+  it("resolves a converted balance's unit from the token contract before a legacy symbol spelling", () => {
+    renderPanel({
+      ...holding,
+      token: {
+        ...holding.token,
+        tokenAddress: "0xe3a1f26440a9fdf5d17b6b3f12f5ebb290080871",
+        tokenSymbol: "Hivra",
+      },
+    });
+
+    expect(screen.getByText("0.75 $HIVRA")).toBeInTheDocument();
+    expect(screen.queryByText("0.75 $HermesOS")).not.toBeInTheDocument();
+  });
+
   it("never presents the 1-token base-tier minimum or its verdict (they are not plan requirements)", () => {
     for (const qualifies of [false, true]) {
       const { container, unmount } = renderPanel({

@@ -271,6 +271,18 @@ describe("planCardCta", () => {
       tier: "power",
     });
     expect(planCardCta({ ...base, path: "token", planKey: "free", currentPlanKey: null }).kind).toBe("note");
+    expect(
+      planCardCta({ ...base, path: "token", tokenMode: "hold", planKey: "fleet", currentPlanKey: null, holderAdmission: "loading" })
+    ).toEqual({ kind: "note", note: "Checking holder access…" });
+    expect(
+      planCardCta({ ...base, path: "token", tokenMode: "hold", planKey: "fleet", currentPlanKey: null, holderAdmission: "waitlisted" })
+    ).toEqual({ kind: "note", note: "You're on the holder access waitlist" });
+    expect(
+      planCardCta({ ...base, path: "token", tokenMode: "hold", planKey: "fleet", currentPlanKey: null, holderAdmission: "none" })
+    ).toMatchObject({ kind: "hold_token", href: "/dashboard/wallet?from=billing&plan=power" });
+    expect(
+      planCardCta({ ...base, path: "token", tokenMode: "hold", planKey: "fleet", currentPlanKey: null, holderAdmission: "error" })
+    ).toEqual({ kind: "note", note: "Holder access is unavailable right now" });
     // A token plan already at Power is not offered a lower $HermesOS year.
     expect(
       planCardCta({ ...base, path: "token", planKey: "operator", currentPlanKey: "fleet", source: "token_yearly" })

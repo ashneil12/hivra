@@ -508,4 +508,11 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261123121000", name: "proxmox_hosts_decommissioned_at" },
   { version: "20261123122000", name: "protect_hermes_archive_lifecycle" },
   { version: "20261123220000", name: "optional_holder_switch" },
+  { version: "20261124010000", name: "hivra_agent_seat_funding" },
+  { version: "20261124230000", name: "holder_admissions" },
+  { version: "20261125010000", name: "hermes_holder_idle_claim" },
+  { version: "20261125020000", name: "holder_allocation_updates" },
+  { version: "20261125030000", name: "classic_holder_sleep" },
+  { version: "20261125040000", name: "durable_proxmox_placement" },
+  { version: "20261125050000", name: "classic_holder_lifecycle_repairs" },
 ];

@@ -34,9 +34,8 @@ import {
   type UserTokenAccess,
 } from "./token-access";
 import {
-  isFoundersRateUser,
-  resolveActiveThresholdForTier,
-  USD_TARGET_CENTS,
+  activeHolderUsdTargetCents,
+  activeThresholdTierCode,
   type ThresholdTierCode,
   type TierKey,
   type ThresholdEpoch,
@@ -204,14 +203,11 @@ export async function createDepositQuote(
     now,
   });
 
-  // Resolve the active threshold tier (launch vs standard) — that's
-  // what determines the USD target locked in this quote. Allowlisted
-  // founders lock the launch USD target past the global promo window.
-  const active = resolveActiveThresholdForTier(params.tier, now, {
-    forceLaunchEpoch: isFoundersRateUser(params.userId),
-  });
-  const thresholdTierCode = active.code;
-  const usdTargetCents = USD_TARGET_CENTS[thresholdTierCode];
+  // New quotes always use the current standard holder price. Historical
+  // launch/founders rows are never reissued; already locked rows keep their
+  // original code and amount when decoded above.
+  const thresholdTierCode = activeThresholdTierCode(params.tier);
+  const usdTargetCents = activeHolderUsdTargetCents(params.tier);
 
   const priceQuote =
     params.priceQuote ?? (await fetchPlatformTokenPriceUsd(token));
