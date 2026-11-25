@@ -43,7 +43,7 @@ export async function PATCH(
 
   const { data: instance, error } = await supabaseAdmin
     .from("hermes_instances")
-    .select("id, user_id, resource_tier, config, hetzner_server_id, host_id, status")
+    .select("id, user_id, resource_tier, seat_funding, cpu_limit, ram_limit, config, hetzner_server_id, host_id, status, lifecycle_state")
     .eq("id", id)
     .eq("user_id", userId)
     .neq("status", "deleted")
@@ -57,13 +57,29 @@ export async function PATCH(
   // an "admin" PATCH silently re-applies smaller UN-boosted caps. Best-effort:
   // a boost-table read hiccup degrades to "no boost" rather than failing the
   // resize.
+  const holder = instance.seat_funding === "holder";
+  if (holder && (instance.status !== "running" || instance.lifecycle_state !== "active")) {
+    return apiError("Start this holder-funded instance before repairing its live caps.", 409);
+  }
   let veniceBoost = false;
   try {
-    veniceBoost = await isVeniceBoostEligible(instance.user_id);
+    veniceBoost = !holder && await isVeniceBoostEligible(instance.user_id);
   } catch {
     veniceBoost = false;
   }
-  const spec = resolveEffectiveTierSpec(tierKey, veniceBoost);
+  const spec = holder
+    ? { cpuLimit: instance.cpu_limit, ramLimitMb: instance.ram_limit }
+    : resolveEffectiveTierSpec(tierKey, veniceBoost);
+  if (holder) {
+    // This repair re-applies exactly the allocation already charged to the
+    // row. Only a validated DB allocation change may grant a larger size.
+    const { data: valid, error: validationError } = await supabaseAdmin.rpc("holder_seat_funding_valid", {
+      p_user_id: userId, p_cpu: spec.cpuLimit, p_ram_mb: spec.ramLimitMb,
+      p_exclude_hermes_instance_id: id,
+    });
+    if (validationError) return apiError("Could not verify the token-holder reservation.", 503);
+    if (valid !== true) return apiError("This allocation exceeds the available token-holder reservation.", 409);
+  }
 
   const infrastructure = getProxmoxInfrastructure(instance.config);
 
@@ -93,28 +109,30 @@ export async function PATCH(
   // The VM now runs at the spec caps. Record them on the row: the capacity
   // checks, usage and memory-pressure routes read the stored columns, so a
   // stale row would keep reporting the old size.
-  const { error: sizeUpdateError } = await supabaseAdmin
-    .from("hermes_instances")
-    .update({
-      cpu_limit: spec.cpuLimit,
-      ram_limit: spec.ramLimitMb,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id)
-    .eq("user_id", userId);
-  if (sizeUpdateError) {
-    log.error("instance resize database update failed after VM resize", sizeUpdateError, {
-      source: "instances",
-      route: "/api/instances/[id]/resize",
-      method: "PATCH",
-      instanceId: id,
-      userId,
-      failureType: "instance_resize_row_update_failed",
-    });
-    return apiError(
-      "The VM was resized, but its saved allocation could not be updated. Retry the resize.",
-      500,
-    );
+  if (!holder) {
+    const { error: sizeUpdateError } = await supabaseAdmin
+      .from("hermes_instances")
+      .update({
+        cpu_limit: spec.cpuLimit,
+        ram_limit: spec.ramLimitMb,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .eq("user_id", userId);
+    if (sizeUpdateError) {
+      log.error("instance resize database update failed after VM resize", sizeUpdateError, {
+        source: "instances",
+        route: "/api/instances/[id]/resize",
+        method: "PATCH",
+        instanceId: id,
+        userId,
+        failureType: "instance_resize_row_update_failed",
+      });
+      return apiError(
+        "The VM was resized, but its saved allocation could not be updated. Retry the resize.",
+        500,
+      );
+    }
   }
 
   return apiSuccess({
@@ -144,7 +162,7 @@ export async function POST(
 
   const { data: instance, error } = await supabaseAdmin
     .from("hermes_instances")
-    .select("user_id, resource_tier")
+    .select("user_id, resource_tier, seat_funding")
     .eq("id", id)
     .eq("user_id", userId)
     .neq("status", "deleted")
@@ -152,9 +170,20 @@ export async function POST(
 
   if (error || !instance) return apiError("Instance not found", 404);
 
+  const holderSeats = instance.seat_funding === "holder";
+  let newTier = (instance.resource_tier || "credit_base") as TierKey;
+  if (holderSeats) {
+    const { data, error } = await supabaseAdmin.rpc("holder_admission_state", { p_user_id: userId });
+    if (error) return apiError("Could not verify the token-holder reservation.", 503);
+    if (data?.state !== "admitted" || !["power", "pro"].includes(data.tier)) {
+      return apiError("An active holder reservation is required to reapply these caps.", 409);
+    }
+    newTier = data.tier === "power" ? "fleet" : "operator";
+  }
   const outcome = await applyTierChange({
     userId,
-    newTier: (instance.resource_tier || "credit_base") as TierKey,
+    newTier,
+    holderSeats,
     source: "manual",
     reason: `manual resize on instance ${id}`,
   });

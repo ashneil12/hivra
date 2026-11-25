@@ -710,6 +710,18 @@ ${start}
     }));
   });
 
+  it("returns a holder reservation refusal before any host resize even when the paid plan gate passes", async () => {
+    mockAgent = { ...mockAgent, seat_funding: "holder" };
+    mockSupabaseRpc.mockImplementation(async (name: string) => name === "claim_hivra_agent_operation"
+      ? { data: null, error: { code: "P0057" } } : { data: true, error: null });
+    const response = await POST(makeRequest({ action: "resize", cpu: 4, ram: 8 }) as never, {
+      params: Promise.resolve({ id: "agent-1" }),
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: expect.stringMatching(/token-holder reservation/) });
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+  });
+
   it("rejects an explicit resize maximum below the reserved allocation before mutation", async () => {
     const response = await POST(
       makeRequest({ action: "resize", cpu: 2, ram: 4, maximumCpu: 1, maximumRam: 2 }) as never,

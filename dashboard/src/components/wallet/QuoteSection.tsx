@@ -192,6 +192,7 @@ export function SelfCustodyVerificationPanel({
   lockTier,
   lockQuote,
   lockedAmountDisplay,
+  quoteUnit,
   tokenSymbol,
   veniceBoostEligible,
   error,
@@ -209,6 +210,7 @@ export function SelfCustodyVerificationPanel({
   lockQuote: DepositQuotePayload | null;
   lockedAmountDisplay: string | null;
   tokenSymbol: string;
+  quoteUnit: string | null;
   veniceBoostEligible: boolean;
   error: string | null;
   success: string | null;
@@ -371,11 +373,11 @@ export function SelfCustodyVerificationPanel({
                 text siblings it throws NotFoundError (removeChild/insertBefore)
                 and trips the dashboard error boundary. The token amounts are
                 marked notranslate so translators never rewrite live numbers. */}
-            {lockTierName && quoteAmountDisplay ? (
+            {lockTierName && lockQuote && quoteAmountDisplay ? (
               <span key="quote-locked">
                 {interpolateCopy(verificationCopy.lockedFor20, { tier: lockTierName })}{' '}
                 <strong>
-                  <code className="mono notranslate" translate="no">{quoteAmountDisplay} {displayTokenUnit(tokenSymbol)}</code>
+                  <code className="mono notranslate" translate="no">{quoteAmountDisplay} {displayTokenUnit(lockQuote.tokenSymbol, lockQuote.tokenAddress)}</code>
                 </strong>
                 . {verificationCopy.holdAtLeastThatAmount}
               </span>
@@ -411,7 +413,7 @@ export function SelfCustodyVerificationPanel({
         </div>
       ) : (
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.55 }}>
-          {verificationCopy.disconnectedBody}
+          {quoteUnit && verificationCopy.disconnectedBody.replace(/\$hermesos/gi, quoteUnit)}
         </p>
       )}
       {success && (
@@ -447,6 +449,7 @@ export function QuoteCard({
   alreadyEligible,
   minting,
   depositAddress,
+  quoteUnit,
   onMint,
 }: {
   tier: 'pro' | 'power';
@@ -454,6 +457,7 @@ export function QuoteCard({
   alreadyEligible: boolean;
   minting: boolean;
   depositAddress: string | null;
+  quoteUnit: string | null;
   onMint: () => void;
 }) {
   // Lazy initial state: lint disallows calling Date.now() inline as
@@ -528,8 +532,8 @@ export function QuoteCard({
         <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55 }}>
-              Hold <strong>{formatUsdFromCents(activeUsdCents)}</strong> worth of $HERMESOS to qualify
-              for {tierLabel(tier)}. Lock today&apos;s $HERMESOS price for 20 minutes.
+              Hold <strong>{formatUsdFromCents(activeUsdCents)}</strong> worth of {quoteUnit ?? 'the quoted token'} to qualify
+              for {tierLabel(tier)}. Lock today&apos;s {quoteUnit} price for 20 minutes.
             </span>
           </div>
           <button
@@ -568,7 +572,7 @@ export function QuoteCard({
             </span>
             <span className="serif notranslate" translate="no" style={{ fontSize: '1.65rem', fontWeight: 700, lineHeight: 1.1, overflowWrap: 'anywhere' }}>
               {formatTokensWithCommas(quote.tokensRequiredDisplay)}{' '}
-              <span style={{ fontSize: '0.95rem', opacity: 0.7 }}>{displayTokenUnit(quote.tokenSymbol)}</span>
+              <span style={{ fontSize: '0.95rem', opacity: 0.7 }}>{displayTokenUnit(quote.tokenSymbol, quote.tokenAddress)}</span>
             </span>
             <div className={touchStyles.copyRow} style={{ margin: '4px 0 2px' }}>
               <CopyAmountButton amount={quote.tokensRequiredDisplay} />
@@ -644,6 +648,7 @@ export function QuotePanel({
   powerEligible,
   mintingTier,
   depositAddress,
+  quoteUnit,
   onMint,
 }: {
   proQuote: DepositQuotePayload | null;
@@ -652,6 +657,7 @@ export function QuotePanel({
   powerEligible: boolean;
   mintingTier: 'pro' | 'power' | null;
   depositAddress: string | null;
+  quoteUnit: string | null;
   onMint: (tier: 'pro' | 'power') => void;
 }) {
   return (
@@ -717,9 +723,9 @@ export function QuotePanel({
             Lock today&apos;s rate.
           </h2>
           <p style={{ margin: '8px 0 0', fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            Pro requires <strong>$299</strong> worth and Power requires <strong>$599</strong> worth of
-            $HERMESOS. Click a tier to lock today&apos;s $HERMESOS price for 20 minutes; send the quoted amount and
-            you&apos;re qualified at that rate, even if the price moves.
+            New quotes use <strong>{formatUsdFromCents(STANDARD_USD_CENTS.pro)}</strong> worth of {quoteUnit ?? 'the quoted token'} for Pro
+            and <strong>{formatUsdFromCents(STANDARD_USD_CENTS.power)}</strong> for Power. Select a tier to lock the price for
+            20 minutes. Use the token and amount shown on your quote.
           </p>
         </div>
       </div>
@@ -728,6 +734,7 @@ export function QuotePanel({
         <QuoteCard
           tier="pro"
           quote={proQuote}
+          quoteUnit={quoteUnit}
           alreadyEligible={proEligible}
           minting={mintingTier === 'pro'}
           depositAddress={depositAddress}
@@ -736,6 +743,7 @@ export function QuotePanel({
         <QuoteCard
           tier="power"
           quote={powerQuote}
+          quoteUnit={quoteUnit}
           alreadyEligible={powerEligible}
           minting={mintingTier === 'power'}
           depositAddress={depositAddress}

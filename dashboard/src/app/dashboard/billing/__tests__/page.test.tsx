@@ -172,7 +172,7 @@ describe("BillingPage", () => {
     process.env.NEXT_PUBLIC_CREDIT_TOPUPS_ENABLED = "true";
     delete process.env.NEXT_PUBLIC_SELF_SERVE_DOWNGRADE_ENABLED;
     global.fetch = fetchMock as typeof fetch;
-    holderAdmissionPayload = { state: "admitted" };
+    holderAdmissionPayload = { state: "none" };
     holderAdmissionStatus = 200;
     delete (window as unknown as { ethereum?: unknown }).ethereum;
 
@@ -1401,6 +1401,7 @@ describe("BillingPage", () => {
   });
 
   it("puts card first and the $HermesOS holder controls in Payment methods", async () => {
+    holderAdmissionPayload = { state: "admitted" };
     render(<BillingPage />);
 
     await openTab("Payment methods");
@@ -2405,6 +2406,39 @@ describe("BillingPage", () => {
       });
     });
     expect(await screen.findByRole("dialog", { name: /Pay Pro yearly with \$HermesOS/ })).toBeInTheDocument();
+  });
+
+  it("lets a first-time holder verify a wallet, then shows the waitlist on returning to Billing", async () => {
+    notSubscribed();
+    const verifiedHolding = tokenHoldingData;
+    tokenHoldingData = {
+      ...verifiedHolding,
+      wallet: null,
+      snapshot: null,
+      entitlement: { verified: false, qualifiesBaseTier: false },
+    };
+    const firstVisit = render(<BillingPage />);
+    fireEvent.click(await screen.findByRole("radio", { name: "$HermesOS" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Hold to qualify" }));
+    for (const [plan, tier] of [["Pro", "pro"], ["Power", "power"]]) {
+      expect(within(screen.getByRole("article", { name: plan })).getByRole("link", { name: /verify a wallet/i }))
+        .toHaveAttribute("href", `/dashboard/wallet?from=billing&plan=${tier}`);
+    }
+    await openTab("Payment methods");
+    expect(await screen.findByText(/qualify to join the holder access waitlist/i)).toBeVisible();
+    expect(screen.getByRole("button", { name: /connect wallet/i })).toBeEnabled();
+    expect(screen.getByRole("link", { name: /verify a wallet and track your holding/i }))
+      .toHaveAttribute("href", "/dashboard/wallet?from=billing");
+
+    firstVisit.unmount();
+    tokenHoldingData = verifiedHolding;
+    holderAdmissionPayload = { state: "waitlisted" };
+    render(<BillingPage />);
+    await openTab("Payment methods");
+    expect(await screen.findByText(/on the holder access waitlist.*capacity/i)).toBeVisible();
+    expect(screen.getByRole("link", { name: /manage your token holding/i })).toBeVisible();
+    expect(screen.queryByText("Your plan is active while you hold.")).toBeNull();
+    expect(screen.getByRole("button", { name: "Pro · $49 a year" })).toBeEnabled();
   });
 
   it("uses the server holder-admission state for Hold to qualify", async () => {

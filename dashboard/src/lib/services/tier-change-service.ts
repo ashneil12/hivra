@@ -7,7 +7,7 @@
  *
  * What it does, per call:
  *   1. Update `hermes_instances.resource_tier` for every instance owned by the
- *      user (DB write).
+ *      user in the affected funding cohort (DB write).
  *   2. Resolve each instance's TARGET SIZE against the new tier (see
  *      resolveTargetSize below) and write it.
  *   3. For each instance, kick a live VM resize to that target (Proxmox
@@ -15,8 +15,8 @@
  *      more disruptive code path (full container recreate); MVP defers
  *      Hetzner live resize to next provisioning.
  *
- * `resource_tier` is the ENTITLEMENT LABEL and is uniform across the user's
- * instances. cpu_limit/ram_limit are the box's ACTUAL SIZE and are per-row —
+ * `resource_tier` is the ENTITLEMENT LABEL and is uniform within the funding
+ * cohort. cpu_limit/ram_limit are the box's ACTUAL SIZE and are per-row —
  * they are NOT the same thing, and conflating them is what this service used
  * to get wrong. See resolveTargetSize for why.
  *
@@ -68,6 +68,8 @@ export interface ApplyTierChangeParams {
    * takes effect on paid tiers (see resolveEffectiveTierSpec).
    */
   veniceBoost?: boolean;
+  /** Token admissions own their cohort separately from account-wide paid changes. */
+  holderSeats?: boolean;
 }
 
 export interface TierChangeOutcome {
@@ -86,6 +88,7 @@ interface InstanceRow extends InstanceLiveMutationState {
   cpu_limit: number | null;
   ram_limit: number | null;
   resource_tier: string | null;
+  seat_funding: string | null;
   gateway_url: string | null;
   host_id: string | null;
 }
@@ -132,9 +135,9 @@ interface TargetSize {
 function resolveTargetSize(
   row: InstanceRow,
   spec: { cpuLimit: number; ramLimitMb: number },
-  instanceCount: number
+  singleAllocation: boolean
 ): TargetSize {
-  if (instanceCount === 1) {
+  if (singleAllocation) {
     return { cpu: spec.cpuLimit, ramMb: spec.ramLimitMb };
   }
   return {
@@ -155,7 +158,7 @@ export async function applyTierChange(
   // only stacks on paid tiers — resolveEffectiveTierSpec enforces that.
   // Best-effort: a boost-table read hiccup must never fail a tier change, so
   // an error degrades to "no boost" rather than throwing.
-  let veniceBoost = params.veniceBoost;
+  let veniceBoost = params.holderSeats ? false : params.veniceBoost;
   if (veniceBoost === undefined) {
     try {
       veniceBoost = await isVeniceBoostEligible(params.userId);
@@ -176,7 +179,7 @@ export async function applyTierChange(
   // 1. Find all instances owned by this user that aren't deleted/scheduled
   const { data: instances, error: listErr } = await supabaseAdmin
     .from("hermes_instances")
-    .select("id, config, hetzner_server_id, host_id, cpu_limit, ram_limit, resource_tier, gateway_url, status, lifecycle_state, archive_uri, archive_sha256, proxmox_vmid")
+    .select("id, config, hetzner_server_id, host_id, cpu_limit, ram_limit, resource_tier, seat_funding, gateway_url, status, lifecycle_state, archive_uri, archive_sha256, proxmox_vmid")
     .eq("user_id", params.userId)
     .not("status", "in", '("deleted","scheduled_for_deletion")');
 
@@ -184,7 +187,9 @@ export async function applyTierChange(
     throw new Error(`Failed to list user instances: ${listErr.message}`);
   }
 
-  const rows = (instances || []) as InstanceRow[];
+  const rows = ((instances || []) as InstanceRow[]).filter(
+    (row) => (row.seat_funding === "holder") === Boolean(params.holderSeats)
+  );
   if (rows.length === 0) {
     log.info("no active instances, no-op", {
       source: LOG_SOURCE,
@@ -207,8 +212,22 @@ export async function applyTierChange(
   //    tier write is load-bearing for billing/delivery correctness. Retry is
   //    safe because resolveTargetSize is idempotent — clamping only ever moves
   //    a row toward its target, never past it.
+  let singleAllocation = rows.length === 1;
+  if (params.holderSeats && singleAllocation
+    && ((rows[0].cpu_limit ?? 0) < spec.cpuLimit || (rows[0].ram_limit ?? 0) < spec.ramLimitMb)) {
+    // The holder pool spans Hermes and Hivra. A lone Hermes row sharing
+    // with a stopped computer or an in-flight claim is still a split pool.
+    const { data, error } = await supabaseAdmin.rpc("holder_admission_existing_usage", {
+      p_user_id: params.userId, p_exclude_hermes_instance_id: rows[0].id,
+    });
+    const other = data?.[0];
+    if (error || other?.cpu == null || other?.ram_mb == null) {
+      throw new Error("Could not verify other token-holder allocations.");
+    }
+    singleAllocation = Number(other.cpu) === 0 && Number(other.ram_mb) === 0;
+  }
   const targets = new Map<string, TargetSize>(
-    rows.map((r) => [r.id, resolveTargetSize(r, spec, rows.length)])
+    rows.map((r) => [r.id, resolveTargetSize(r, spec, singleAllocation)])
   );
 
   const sizeGroups = new Map<string, { size: TargetSize; rowIds: string[] }>();
@@ -295,6 +314,8 @@ export async function applyTierChange(
   // Never resize a missing guest or one owned by another lifecycle operation.
   const liveRowIds = new Set<string>();
   for (const row of rows) {
+    // Proxmox topology changes can restart a guest. Keep a paused holder offline.
+    if (params.holderSeats && (row.status !== "running" || row.lifecycle_state !== "active")) continue;
     if (!blocksInstanceLiveMutation(row)
       && !(await readInstanceLiveMutationBlock(supabaseAdmin, row.id, row))) {
       liveRowIds.add(row.id);

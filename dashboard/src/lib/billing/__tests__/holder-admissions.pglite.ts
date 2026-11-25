@@ -26,10 +26,11 @@ const FIXTURE_SQL = `
     create table public.apple_iap_subscriptions(user_id text, status text);
     create table public.yearly_token_subscriptions(user_id text, status text);
     create table public.hivra_agents(
-      id uuid, user_id text, deployment_mode text, status text, cpu numeric, ram integer, proxmox_host text, vmid integer, sleep_state text, seat_funding text
+      id uuid default gen_random_uuid(), operation_kind text, operation_id uuid, operation_started_at timestamptz,
+      operation_payload jsonb, desired_state text, error text, cpu_max numeric, ram_max integer, user_id text, deployment_mode text, status text, cpu numeric, ram integer, proxmox_host text, vmid integer, sleep_state text, seat_funding text
     );
     create table public.hermes_instances(
-      user_id text, status text, lifecycle_state text, cpu_limit numeric, ram_limit integer, proxmox_node text, seat_funding text
+      id uuid default gen_random_uuid(), user_id text, status text, lifecycle_state text, cpu_limit numeric, ram_limit integer, proxmox_node text, disk_size_gb integer, seat_funding text
     );
     create function public.token_tier_row_counts_for_user(text, text, timestamptz)
       returns boolean language sql stable as $$ select true $$;
@@ -37,7 +38,9 @@ const FIXTURE_SQL = `
       id text primary key, total_cpu integer, total_ram_mb integer,
       reserved_cpu integer default 2, reserved_ram_mb integer default 4096,
       wake_headroom_ram_mb integer default 8192, cpu_overcommit_ratio numeric,
-      status text default 'active', decommissioned_at timestamptz, placement_skip_deep_sleep boolean default false
+      status text default 'active', decommissioned_at timestamptz, placement_skip_deep_sleep boolean default false,
+      thinpool_size_gb integer, thinpool_overcommit_ratio numeric default 1.5,
+      capacity_reading jsonb, capacity_reading_at timestamptz
     );
   `;
 
@@ -248,7 +251,7 @@ describe("holder admissions SQL authority", () => {
     const { rows } = await pg.query<{ r: { state: string } }>(
       "select public.holder_admission_state('first') as r",
     );
-    expect(rows[0].r).toEqual({ state: "none" });
+    expect(rows[0].r).toEqual({ state: "none", tier: null });
   });
 
   it("serializes concurrent-shaped advancement calls without double admission", async () => {
@@ -293,6 +296,161 @@ describe("holder admissions SQL authority", () => {
       `insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,proxmox_host,seat_funding)
        values('mixed','hivra-managed','provisioning',0.5,1,'h1','holder')`,
     )).rejects.toThrow(/holder seat funding is not admitted|exceeds the reserved seat resources/);
+  });
+
+
+  it("holds both sides of a resize claim until rollback or completion, including cross-lane launches", async () => {
+    await host("h1", 12, 57344);
+    await qualify("split", "pro");
+    await advance();
+    await pg.exec(`insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,seat_funding)
+      values('split','hivra-managed','running',1,2,'holder')`);
+    // Load the deployed-shape operation functions used by the action route.
+    for (const [migration, name] of [
+      ["20260830180000_hivra_agent_restore_points.sql", "claim_hivra_agent_operation"],
+      ["20260915150000_hivra_resource_envelopes.sql", "continue_hivra_agent_resize_operation"],
+    ]) {
+      const sql = fs.readFileSync(path.join(path.dirname(MIGRATION), migration), "utf8");
+      const start = sql.indexOf(`create or replace function public.${name}(`);
+      expect(start).toBeGreaterThanOrEqual(0);
+      await pg.exec(sql.slice(start, sql.indexOf("$$;", start) + 3));
+    }
+    const claim = (cpu: number, ram: number, maximumCpu = cpu) => pg.query(
+      `select public.claim_hivra_agent_operation(user_id,id,gen_random_uuid(),'resize','running',
+        jsonb_build_object('cpu',$1::numeric,'ram',$2::int,'maximumCpu',$3::numeric))
+       from public.hivra_agents where user_id='split'`, [cpu, ram, maximumCpu]);
+    const complete = (cpu: number, ram: number) => pg.query<{ ok: boolean }>(
+      `select public.continue_hivra_agent_resize_operation(user_id,id,operation_id,'running','provisioning',
+        $1::numeric,$2::int,$1::numeric,$2::int) ok from public.hivra_agents where user_id='split'`, [cpu, ram]);
+    const launch = () => pg.exec(`insert into public.hermes_instances(user_id,status,lifecycle_state,cpu_limit,ram_limit,seat_funding)
+      values('split','provisioning','provisioning',1,2048,'holder')`);
+    const release = "update public.hivra_agents set operation_kind=null, operation_id=null, operation_payload=null";
+    await expect(claim(3, 2)).rejects.toThrow(/reserved seat resources/);
+    await expect(claim(1, 2, 4)).rejects.toThrow(/reserved seat resources/);
+    await claim(2, 4);
+    await expect(launch()).rejects.toThrow(/reserved seat resources/);
+    await pg.exec(release);
+    await claim(2, 4);
+    expect((await complete(2, 4)).rows[0].ok).toBe(true);
+    await pg.exec(release);
+    await claim(1, 2);
+    await expect(launch()).rejects.toThrow(/reserved seat resources/);
+    expect((await complete(1, 2)).rows[0].ok).toBe(true);
+    await pg.exec(release);
+    await launch();
+    await expect(pg.exec("update public.hermes_instances set cpu_limit=2")).rejects.toThrow(/reserved seat resources/);
+    await expect(pg.exec("update public.hivra_agents set ram=3")).rejects.toThrow(/reserved seat resources/);
+  });
+
+  it("charges released stopped and paused seats until freed, refuses resume, and allows reduction and deletion", async () => {
+    await host("h1", 12, 57344);
+    await qualify("first", "pro");
+    await advance();
+    await pg.exec(`insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,seat_funding)
+      values('first','hivra-managed','stopped',1,2,'holder');
+      insert into public.hermes_instances(user_id,status,lifecycle_state,cpu_limit,ram_limit,seat_funding)
+      values('first','stopped','paused',1,2048,'holder');
+      update public.token_tier_qualifications set currently_eligible=false,last_suspend_at=now()`);
+    await qualify("waiter", "pro");
+    expect(await advance()).toMatchObject({ released: 1, advanced: 0, usedCpu: 2, usedRamMb: 4096 });
+    for (const sql of [
+      "update public.hivra_agents set status='running'",
+      "update public.hivra_agents set operation_kind='start',operation_id=gen_random_uuid()",
+      "update public.hermes_instances set lifecycle_state='active',status='running'",
+      "update public.hermes_instances set ram_limit=4096",
+    ]) await expect(pg.exec(sql)).rejects.toThrow(/holder seat funding is not admitted/);
+    await pg.exec("update public.hermes_instances set cpu_limit=0.5,ram_limit=1024");
+    expect(await advance()).toMatchObject({ advanced: 0, usedCpu: 1.5, usedRamMb: 3072 });
+    await pg.exec("update public.hivra_agents set status='deleted'; update public.hermes_instances set lifecycle_state='cold_archived'");
+    expect(await advance()).toMatchObject({ advanced: 1, usedCpu: 2 });
+  });
+
+  it("readmits a requalified owner with a surviving allocation without charging it twice", async () => {
+    await host("h1", 12, 57344);
+    await qualify("back", "pro");
+    await advance();
+    await pg.exec(`insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,seat_funding,proxmox_host)
+      values('back','hivra-managed','running',2,4,'holder','h1');
+      update public.token_tier_qualifications set currently_eligible=false,last_suspend_at=now()`);
+    expect(await advance()).toMatchObject({ released: 1, usedCpu: 2 });
+    await pg.exec("update public.token_tier_qualifications set currently_eligible=true,last_suspend_at=null");
+    expect(await advance()).toMatchObject({ advanced: 1, usedCpu: 2 });
+  });
+
+  it("reconciles Power only after waiters and capacity, then charges an oversized allocation until it shrinks", async () => {
+    await host("h1", 12, 57344);
+    await qualify("existing", "pro");
+    await advance();
+    await qualify("existing", "power");
+    await qualify("waiter", "pro");
+    expect(await advance()).toMatchObject({ advanced: 0, retiered: 0 });
+    await host("h2", 12, 57344);
+    expect(await advance()).toMatchObject({ advanced: 1, retiered: 0 });
+    expect(await admission("existing")).toMatchObject({ tier: "pro" });
+    await host("h3", 12, 57344);
+    expect(await advance()).toMatchObject({ advanced: 0, retiered: 1, usedCpu: 6 });
+    await pg.exec(`insert into public.hivra_agents(user_id,deployment_mode,status,cpu,ram,seat_funding)
+      values('existing','hivra-managed','stopped',4,8,'holder');
+      update public.token_tier_qualifications set currently_eligible=false,last_suspend_at=now() where tier='power'`);
+    const state = await pg.query<{ r: unknown }>("select public.holder_admission_state('existing') r");
+    expect(state.rows[0].r).toEqual({ state: "admitted", tier: "pro" });
+    expect(await advance()).toMatchObject({ retiered: 1, usedCpu: 6 });
+    expect(await admission("existing")).toMatchObject({ tier: "pro", reserved_ram_mb: 4096 });
+    await pg.exec("update public.hivra_agents set cpu=2,ram=4");
+    expect(await advance()).toMatchObject({ usedCpu: 4 });
+  });
+
+  it("filters the declared rotation, applies per-host disk size and counts disks on stopped VMs", async () => {
+    await host("off-rotation", 102, 112640);
+    await host("Node.A", 12, 57344);
+    await qualify("holder", "pro");
+    await pg.exec(`update public.proxmox_hosts set thinpool_size_gb=100,thinpool_overcommit_ratio=1;
+      insert into public.hivra_agents(user_id,status,proxmox_host,vmid)
+      values('other','stopped','Node.A',501), ('failed-launch','error','Node.A',null)`);
+    const scoped = (required: number) => pg.query<{ r: unknown }>(
+      "select public.advance_holder_admissions(array['node_a'],null,false,jsonb_build_object('node_a',$1::int)) r", [required]);
+    expect((await scoped(61)).rows[0].r).toMatchObject({ blockReason: "no_single_host_fit", capacityCpu: 10 });
+    expect((await scoped(60)).rows[0].r).toMatchObject({ advanced: 1, ceilingCpu: 2 });
+    expect(await admission("holder")).toMatchObject({ assigned_host_id: "Node.A" });
+  });
+
+  it("uses fresh measured disk, reserves in-flight launches and falls back on stale or malformed readings", async () => {
+    await host("h", 22, 112640);
+    await qualify("a", "pro");
+    await qualify("b", "pro");
+    await pg.exec(`update public.proxmox_hosts set thinpool_size_gb=20,thinpool_overcommit_ratio=1;
+      insert into public.hivra_agents(user_id,status,proxmox_host,cpu,ram)
+      values('launch','provisioning','h',1,1)`);
+    const reading = (at: string, version: string, used: number) => pg.query(
+      `update public.proxmox_hosts set capacity_reading=jsonb_build_object('v',$1::jsonb,
+        'at',now()-$2::interval,'pool',jsonb_build_object('sizeMb',102400,'usedPercent',$3::numeric))`,
+      [version, at, used]);
+    await reading("16 min", "1", 0);
+    expect(await advance()).toMatchObject({ advanced: 0, blockReason: "no_single_host_fit" });
+    await reading("1 min", '"1"', 0);
+    expect(await advance()).toMatchObject({ advanced: 0 });
+    await reading("1 min", "1", 46); // 85 - 46 - 20 = 19GB
+    expect(await advance()).toMatchObject({ advanced: 0 });
+    await reading("1 min", "1", 45);
+    expect(await advance()).toMatchObject({ advanced: 1, blockReason: "no_single_host_fit" });
+  });
+
+  it("ranks by free RAM, disk and CPU and respects both placement deep-sleep switches", async () => {
+    await host("small", 22, 57344);
+    await host("big", 22, 112640);
+    await qualify("one", "pro");
+    await pg.exec(`insert into public.hivra_agents(user_id,status,proxmox_host,cpu,ram,sleep_state)
+      values('sleep','running','big',20,90,'hibernated')`);
+    expect(await advance()).toMatchObject({ advanced: 1 });
+    expect(await admission("one")).toMatchObject({ assigned_host_id: "small" });
+    await pg.exec("update public.proxmox_hosts set placement_skip_deep_sleep=true where id='big'");
+    await qualify("two", "pro");
+    await advance();
+    expect(await admission("two")).toMatchObject({ assigned_host_id: "big" });
+    await pg.exec("update public.proxmox_hosts set placement_skip_deep_sleep=false");
+    await qualify("three", "pro");
+    await pg.query("select public.advance_holder_admissions(null,null,true)");
+    expect(await admission("three")).toMatchObject({ assigned_host_id: "big" });
   });
 
   it("grandfathers only evidenced legacy token-funded seats, not mere qualification or paid accounts", async () => {

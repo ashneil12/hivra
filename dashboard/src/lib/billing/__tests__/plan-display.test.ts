@@ -279,7 +279,7 @@ describe("planCardCta", () => {
     ).toEqual({ kind: "note", note: "You're on the holder access waitlist" });
     expect(
       planCardCta({ ...base, path: "token", tokenMode: "hold", planKey: "fleet", currentPlanKey: null, holderAdmission: "none" })
-    ).toEqual({ kind: "note", note: "Holder access isn't open for this account yet" });
+    ).toMatchObject({ kind: "hold_token", href: "/dashboard/wallet?from=billing&plan=power" });
     expect(
       planCardCta({ ...base, path: "token", tokenMode: "hold", planKey: "fleet", currentPlanKey: null, holderAdmission: "error" })
     ).toEqual({ kind: "note", note: "Holder access is unavailable right now" });

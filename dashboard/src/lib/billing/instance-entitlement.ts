@@ -305,12 +305,13 @@ export async function resolveEffectiveSubscription(
       { p_user_id: userId }
     );
     failOnQueryError(options, "holder_admission_state", admissionError);
-    if ((admission as { state?: unknown } | null)?.state === "admitted") {
-      // Power outranks Pro when the user qualifies for both — give them the
-      // larger compute pool they paid for.
-      const tier: "pro" | "power" = quals.some((q) => q.tier === "power")
-        ? "power"
-        : "pro";
+    const admitted = admission as { state?: unknown; tier?: unknown } | null;
+    if (admitted?.state === "admitted" && (admitted.tier === "pro" || admitted.tier === "power")) {
+      // The admission row is the authority: its tier is reconciled against
+      // Pro/Power transitions and capacity in the database. A merely larger
+      // current qualification must not outrun the reservation that was
+      // actually admitted.
+      const tier = admitted.tier === "power" && quals.some((q) => q.tier === "power") ? "power" : "pro";
 
       return tier === "power"
         ? {

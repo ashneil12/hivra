@@ -10,6 +10,7 @@ import type {
 
 type HivraAgentOperationStoreErrorCode =
   | "database_unavailable"
+  | "holder_capacity"
   | "database_error"
   | "conflict";
 
@@ -37,6 +38,7 @@ export function isHivraAgentAuthorityConflict(error: unknown): boolean {
 }
 
 function operationError(error: DatabaseError): HivraAgentOperationStoreError {
+  if (error?.code === "P0057") return new HivraAgentOperationStoreError("holder_capacity");
   return new HivraAgentOperationStoreError(
     isHivraAgentAuthorityConflict(error) ? "conflict" : "database_error",
   );

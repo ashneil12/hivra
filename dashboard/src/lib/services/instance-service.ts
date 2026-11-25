@@ -822,6 +822,7 @@ async function rankProxmoxHostsForPlacement(params: {
   neededCpu: number;
   neededRamMb: number;
   neededDiskGb: number;
+  holderUserId?: string;
   onCapacityFull?: (hostId: string) => void;
 }): Promise<RankedProxmoxHost[]> {
   const hostIds = params.hosts.map((h) => h.id);
@@ -921,19 +922,24 @@ async function rankProxmoxHostsForPlacement(params: {
     // owns one only if it recorded a vmid: a stopped computer keeps its disk,
     // and an errored one may have allocated before it failed.
     const ownsVm = powered || (vmid !== null && vmid !== undefined);
+    const rowCpu = Number((row as { cpu?: number | null }).cpu ?? 0);
+    const rowRamMb = Number((row as { ram?: number | null }).ram ?? 0) * 1024;
+    // Holder reservation consumption follows the database authority: seat
+    // lifecycle (provisioning/running), not whether deep-sleep placement reuse
+    // currently makes the VM's CPU/RAM available to other tenants. Without this
+    // split a hibernated holder seat would be subtracted nowhere and its full
+    // reservation would be charged again as unlaunched remainder below.
+    if (powered && (row as { seat_funding?: unknown }).seat_funding === "holder") {
+      addHolderUsage((row as { user_id?: unknown }).user_id, rowCpu, rowRamMb);
+    }
     if (!ownsVm) continue;
     if (status === "provisioning") {
       launchesInProgressByHost.set(node, (launchesInProgressByHost.get(node) ?? 0) + 1);
     }
     const acc = allocByHost.get(node) ?? { cpu: 0, ram: 0, disk: 0 };
     if (holdsCpuAndRam) {
-      const rowCpu = Number((row as { cpu?: number | null }).cpu ?? 0);
-      const rowRamMb = Number((row as { ram?: number | null }).ram ?? 0) * 1024;
       acc.cpu += rowCpu;
       acc.ram += rowRamMb;
-      if ((row as { seat_funding?: unknown }).seat_funding === "holder") {
-        addHolderUsage((row as { user_id?: unknown }).user_id, rowCpu, rowRamMb);
-      }
     }
     acc.disk += HIVRA_AGENT_VM_DISK_GB;
     allocByHost.set(node, acc);
@@ -955,8 +961,11 @@ async function rankProxmoxHostsForPlacement(params: {
     const remainingRamMb = Math.max(0, Number(reservation.reserved_ram_mb ?? 0) - usage.ramMb);
     if (remainingCpu <= 0 && remainingRamMb <= 0) continue;
     const acc = allocByHost.get(node) ?? { cpu: 0, ram: 0, disk: 0 };
-    acc.cpu += remainingCpu;
-    acc.ram += remainingRamMb;
+    // This launch draws from its own reservation on this host. Ranking later
+    // checks the entire request against free capacity, including disk.
+    const spendsReservation = params.holderUserId !== undefined && reservation.user_id === params.holderUserId;
+    acc.cpu += Math.max(0, remainingCpu - (spendsReservation ? params.neededCpu : 0));
+    acc.ram += Math.max(0, remainingRamMb - (spendsReservation ? params.neededRamMb : 0));
     allocByHost.set(node, acc);
   }
 
@@ -1209,6 +1218,7 @@ async function buildProxmoxProvisionTargetCandidates(params: {
   neededCpu: number;
   neededRamMb: number;
   neededDiskGb: number;
+  holderUserId?: string;
   forceTargetId?: string | null;
 }): Promise<ProxmoxProvisionTargetCandidateSet> {
   // Forced single-host placement (Workspace Cloud lane). Resolve the host's
@@ -1339,6 +1349,7 @@ async function buildProxmoxProvisionTargetCandidates(params: {
       supabase: params.supabase,
       env: params.env,
       hosts: registryForPlacement,
+      holderUserId: params.holderUserId,
       neededCpu: params.neededCpu,
       neededRamMb: params.neededRamMb,
       neededDiskGb: params.neededDiskGb,
@@ -1437,6 +1448,7 @@ export async function selectAvailableProxmoxProvisionTarget(params: {
     neededRamMb: params.neededRamMb,
     neededDiskGb: params.neededDiskGb,
     forceTargetId: params.forceTargetId,
+    holderUserId: params.seatFunding === "holder" ? params.userId : undefined,
   });
 
   // Hard stop: the host registry could not be read, so no host is vetted.
@@ -2621,16 +2633,24 @@ export class InstanceService {
       };
     }
 
-    // Persist the entitlement cohort that is actually funding this seat. Paid
-    // access wins for mixed accounts; only the admitted holder entitlement
-    // creates a holder-funded Hermes row. The value is immutable after insert,
-    // so a later plan/token change cannot rewrite this seat's terms.
+    // Resolve funding per seat so a paid launch on a mixed account stays paid.
     const seatFunding = decideProvisionSeatFunding(sub);
     if (!seatFunding) {
       return {
         success: false,
         status: 403,
         message: "Active subscription required. Choose a plan to start deploying agents.",
+      };
+    }
+
+    // Classic Hermes can power off an idle VM, but its lifecycle has no
+    // memory-preserving nap/hibernate and wake path for holder-funded seats.
+    if (seatFunding === "holder") {
+      return {
+        success: false,
+        status: 403,
+        failureType: "holder_sleep_unsupported",
+        message: "Choose a Hivra Agent Computer with sleep support to use your holder access. This Hermes computer requires a paid plan.",
       };
     }
 

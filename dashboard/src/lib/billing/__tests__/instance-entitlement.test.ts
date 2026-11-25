@@ -42,6 +42,7 @@ function mockTables(opts: {
   // Existing token-entitlement fixtures predate admissions: they represent
   // admitted holders unless a test explicitly chooses another durable state.
   admissionState?: "none" | "waitlisted" | "admitted";
+  admissionTier?: "pro" | "power";
 }) {
   const subQuery = {
     select: jest.fn().mockReturnThis(),
@@ -122,7 +123,8 @@ function mockTables(opts: {
 
   (supabaseAdmin!.rpc as jest.Mock).mockImplementation(async (fn: string) => {
     if (fn === "holder_admission_state") {
-      return { data: { state: opts.admissionState ?? "admitted" }, error: null };
+      const tier = opts.admissionTier ?? (opts.quals?.some((q) => q.tier === "power") ? "power" : "pro");
+      return { data: { state: opts.admissionState ?? "admitted", tier }, error: null };
     }
     return { data: null, error: { message: `Unexpected rpc: ${fn}` } };
   });
@@ -524,6 +526,14 @@ describe("resolveEffectiveSubscription", () => {
       expect(result?.tokenTier).toBe("power");
     });
 
+
+    it.each([["pro", "power"], ["power", "pro"]] as const)(
+      "caps a %s qualification with a %s reservation at Pro",
+      async (qualification, reservation) => {
+        mockTables({ sub: null, quals: [{ tier: qualification, currently_eligible: true }], admissionTier: reservation });
+        await expect(resolveEffectiveSubscription("holder")).resolves.toMatchObject({ plan: "operator", tokenTier: "pro" });
+      },
+    );
 
     it.each(["none", "waitlisted"] as const)(
       "a token qualification does not entitle while admission is %s",

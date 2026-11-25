@@ -13,6 +13,7 @@ import {
   resolveInstanceResourceTier,
   selectAvailableProxmoxProvisionTarget,
 } from "../instance-service";
+import * as entitlement from "@/lib/billing/instance-entitlement";
 import { clerkClient } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { posthogClient } from "@/lib/posthog";
@@ -208,9 +209,13 @@ jest.mock("@/lib/venice/managed-endpoints", () => ({
   ),
 }));
 
-jest.mock("@/lib/instance-record", () => ({
-  buildInstanceInsertPayload: jest.fn((payload: Record<string, unknown>) => payload),
-}));
+jest.mock("@/lib/instance-record", () => {
+  const actual = jest.requireActual<typeof import("@/lib/instance-record")>("@/lib/instance-record");
+  return {
+    ...actual,
+    buildInstanceInsertPayload: jest.fn(actual.buildInstanceInsertPayload),
+  };
+});
 
 jest.mock("@/lib/instance-settings", () => ({
   buildStoredInstanceConfig: jest.fn(() => ({})),
@@ -3761,7 +3766,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
     expect(selection).toEqual(expect.objectContaining({ ok: true, targetId: "fixturenode1" }));
   });
 
-  it("prefers the holder's reserved host even when another host ranks first", async () => {
+  it("counts a hibernated holder Hivra seat against its reservation even when deep-sleep CPU/RAM reuse is enabled", async () => {
     delete process.env.HERMES_PROXMOX_TARGETS;
     delete process.env.HERMES_PROXMOX_TARGET;
     process.env.HERMES_PROXMOX_MAX_TENANT_INSTANCES = "0";
@@ -3789,12 +3794,77 @@ describe("InstanceService.createInstance free-tier guard", () => {
         .mockImplementationOnce(function (this: unknown) { return legacyAllocationQuery; })
         .mockImplementationOnce(async () => ({ data: [], error: null })),
     };
-    // No existing use: charging the reservation to fixturenode2 makes
-    // fixturenode1 rank first, but the admitted holder still tries its
-    // reserved host first because it fits.
+    const hivraAllocationQuery = hivraAllocationRowsQuery([
+      { proxmox_host: "fixturenode1", user_id: "other", cpu: 1, ram: 10, status: "running", vmid: 1101 },
+      { proxmox_host: "fixturenode2", user_id: "other", cpu: 1, ram: 7, status: "running", vmid: 1102 },
+      // Deep-sleep placement may reuse this seat's CPU/RAM because the VM is
+      // saved to disk. It is still a launched provisioning/running holder seat,
+      // so 3 vCPU / 6GB of the 4/8GB admission is already consumed.
+      { proxmox_host: "fixturenode2", user_id: "holder", cpu: 3, ram: 6, status: "running", vmid: 1103, sleep_state: "hibernated", seat_funding: "holder" },
+    ]);
+    const admissionsQuery = holderAdmissionsRowsQuery([
+      { user_id: "holder", assigned_host_id: "fixturenode2", reserved_cpu: 4, reserved_ram_mb: 8192 },
+    ], null);
+    const fakeSupabase = {
+      from: jest.fn((tableName: string) => {
+        if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
+        if (tableName === "hermes_instances") return legacyAllocationQuery;
+        if (tableName === "hivra_agents") return hivraAllocationQuery;
+        if (tableName === "holder_admissions") return admissionsQuery;
+        throw new Error(`Unexpected table lookup: ${tableName}`);
+      }),
+    } as unknown as typeof supabaseAdmin;
+
+    const selection = await selectAvailableProxmoxProvisionTarget({
+      supabase: fakeSupabase,
+      env: { ...process.env, HIVRA_PLACEMENT_SKIP_DEEP_SLEEP: "1" },
+      hostConfig: null,
+      userId: "nonholder",
+      neededCpu: 0.5,
+      neededRamMb: 1024,
+      neededDiskGb: 30,
+    });
+
+    expect(selection).toEqual(expect.objectContaining({ ok: true, targetId: "fixturenode2" }));
+  });
+
+  it.each([
+    ["holder", "holder", "fixturenode2"],
+    ["holder", "paid", "fixturenode1"],
+    ["other", "holder", "fixturenode1"],
+  ] as const)("routes %s's %s seat to %s when only reserved capacity remains", async (userId, seatFunding, expectedHost) => {
+    delete process.env.HERMES_PROXMOX_TARGETS;
+    delete process.env.HERMES_PROXMOX_TARGET;
+    process.env.HERMES_PROXMOX_MAX_TENANT_INSTANCES = "0";
+
+    const host = (id: string) => ({
+      id,
+      status: "active",
+      env_prefix: null,
+      total_cpu: 12,
+      total_ram_mb: id === "fixturenode2" ? 16384 : 65536,
+      reserved_cpu: 2,
+      reserved_ram_mb: 4096,
+      wake_headroom_ram_mb: 8192,
+      max_tenant_instances: null,
+      thinpool_size_gb: null,
+      thinpool_overcommit_ratio: null,
+    });
+    const proxmoxHostsQuery = {
+      select: jest.fn().mockResolvedValue({ data: [host("fixturenode1"), host("fixturenode2")], error: null }),
+    };
+    const legacyAllocationQuery = {
+      select: jest.fn().mockReturnThis(),
+      in: jest.fn()
+        .mockReturnThis()
+        .mockImplementationOnce(function (this: unknown) { return legacyAllocationQuery; })
+        .mockImplementationOnce(async () => ({ data: [], error: null })),
+    };
+    // After host reserves there are exactly 4 GiB left on node2, all reserved.
+    // Only the matching holder launch can spend that capacity.
     const admissionsQuery = holderAdmissionsRowsQuery([
       { user_id: "holder", assigned_host_id: "fixturenode2", reserved_cpu: 2, reserved_ram_mb: 4096 },
-    ]);
+    ], userId === "holder" ? { assigned_host_id: "fixturenode2" } : null);
     const fakeSupabase = {
       from: jest.fn((tableName: string) => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
@@ -3809,14 +3879,14 @@ describe("InstanceService.createInstance free-tier guard", () => {
       supabase: fakeSupabase,
       env: process.env,
       hostConfig: null,
-      userId: "holder",
-      neededCpu: 0.5,
-      neededRamMb: 1024,
+      userId,
+      neededCpu: 2,
+      neededRamMb: 4096,
       neededDiskGb: 30,
-      seatFunding: "holder",
+      seatFunding,
     });
 
-    expect(selection).toEqual(expect.objectContaining({ ok: true, targetId: "fixturenode2" }));
+    expect(selection.ok && selection.targetId).toBe(expectedHost);
   });
 
   it("counts stopped Hivra computers' disk but not their CPU/RAM when ranking hosts", async () => {
@@ -6424,6 +6494,24 @@ describe("InstanceService.createInstance free-tier guard", () => {
     );
   });
 
+  it("refuses a new holder-funded Hermes seat before placement or insert", async () => {
+    const resolve = jest.spyOn(entitlement, "resolveEffectiveSubscription").mockResolvedValueOnce({
+      source: "token_holding", plan: "operator", status: "active", instance_limit: 2,
+      total_cpu_budget: 2, total_ram_budget: 4096, canChangePlanInPlace: false,
+    });
+    try {
+      const result = await InstanceService.createInstance("user_holder", CreateInstanceSchema.parse({
+        name: "Holder computer", provider: "openrouter",
+      }));
+      expect(result).toMatchObject({ success: false, status: 403, failureType: "holder_sleep_unsupported" });
+      expect(supabaseAdmin!.from).not.toHaveBeenCalled();
+      expect(buildInstanceInsertPayload).not.toHaveBeenCalled();
+      expect(provisionProxmoxInstance).not.toHaveBeenCalled();
+    } finally {
+      resolve.mockRestore();
+    }
+  });
+
   it("refuses a Hivra-hosted computer for a Free account before any placement or record", async () => {
     // The Free account is the platform: bring your own computer or buy ours.
     // resolveEffectiveSubscription falls through to apple + yearly + token-tier
@@ -6678,7 +6766,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
     expect(result).toEqual(expect.objectContaining({ success: true }));
     expect(capacityEqCalls).toContainEqual({ column: "proxmox_node", value: "fixturelegacy" });
     expect(buildInstanceInsertPayload).toHaveBeenCalledWith(expect.objectContaining({ seatFunding: "paid" }));
-    expect(insertQuery.insert).toHaveBeenCalledWith(expect.objectContaining({ seatFunding: "paid" }));
+    expect(insertQuery.insert).toHaveBeenCalledWith(expect.objectContaining({ seat_funding: "paid" }));
     expect(provisionProxmoxInstance).toHaveBeenCalled();
   });
 

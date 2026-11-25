@@ -145,18 +145,18 @@ export function planPriceDisplay(
     if (!tier) return cardMonthly(key);
     if (options.tokenMode === "hold") {
       const held = options.holdAmounts?.[tier];
-      if (held) {
+      if (held?.amountDisplay) {
         return {
           amount: held.usdApprox !== null ? `≈$${held.usdApprox.toLocaleString("en-US")}` : "Hold",
           // The amounts are in the token the server priced them in.
-          unit: `held in ${options.holdAmounts?.tokenUnit ?? tokenUnit}`,
-          subline: `Hold ${held.amountDisplay} ${options.holdAmounts?.tokenUnit ?? tokenUnit} in a verified wallet · move it any time`,
+          unit: `held in ${held.tokenUnit}`,
+          subline: `Hold ${held.amountDisplay} ${held.tokenUnit} in a verified wallet · move it any time`,
         };
       }
       return {
         amount: "Hold",
-        unit: tokenUnit,
-        subline: `Keep enough ${tokenUnit} in a verified wallet · withdraw any time`,
+        unit: held?.tokenUnit ?? tokenUnit,
+        subline: `Keep enough ${held?.tokenUnit ?? tokenUnit} in a verified wallet · withdraw any time`,
       };
     }
     return {
@@ -401,7 +401,6 @@ export function planCardCta(params: {
         case "waitlisted":
           return { kind: "note", note: "You're on the holder access waitlist" };
         case "none":
-          return { kind: "note", note: "Holder access isn't open for this account yet" };
         case "admitted":
           return {
             kind: "hold_token",

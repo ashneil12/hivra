@@ -397,6 +397,10 @@ function LegacyPlansTab({ c, heading }: { c: BillingController; heading: string 
         </div>
       )}
 
+      {path === "token" && tokenMode === "hold" && c.holderAdmission.state === "none" && (
+        <p className={styles.changeNote}>Qualify to join the holder access waitlist. Hosted compute starts after admission.</p>
+      )}
+
       {isApple && (
         <p className={styles.changeNote}>
           <Info size={14} aria-hidden="true" />

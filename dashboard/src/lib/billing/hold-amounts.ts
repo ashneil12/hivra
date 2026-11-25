@@ -5,11 +5,13 @@
  * so the billing page shows these numbers instead of hardcoding any.
  * Client-safe: no server imports.
  */
-import { displayTokenUnit } from "./token-plan-prices";
+import { isPlatformTokenKey } from "./token-registry";
+import { displayTokenUnit, tokenUnitForKey } from "./token-plan-prices";
 
 export interface HoldTier {
   /** Whole-token amount to hold, as the server formatted it (e.g. "134,476,535"). */
-  amountDisplay: string;
+  amountDisplay: string | null;
+  tokenUnit: string;
   /** Rough USD value at the price the server last read, or null when unknown. */
   usdApprox: number | null;
   eligible: boolean;
@@ -18,7 +20,7 @@ export interface HoldTier {
 export interface HoldAmounts {
   pro: HoldTier;
   power: HoldTier;
-  /** The token the amounts and balance are in, e.g. "$HermesOS" or "$HIVRA". */
+  /** The token the verified balance is in, e.g. "$HermesOS" or "$HIVRA". */
   tokenUnit: string;
   /** The user's verified balance in that token, or null when no wallet is verified. */
   balanceDisplay: string | null;
@@ -49,17 +51,6 @@ function wholeUsd(amountDisplay: string, priceUsd: string | null): number | null
   return Math.round(amount * price);
 }
 
-function tier(tiers: Record<string, unknown> | null, thresholds: Record<string, unknown>, key: "pro" | "power", priceUsd: string | null): HoldTier | null {
-  const row = record(tiers?.[key]);
-  const amountDisplay = text(row?.currentThresholdDisplay) ?? text(thresholds[`${key}Display`]);
-  if (!amountDisplay) return null;
-  return {
-    amountDisplay,
-    usdApprox: wholeUsd(amountDisplay, priceUsd),
-    eligible: row?.currentlyEligible === true,
-  };
-}
-
 /** Parses the eligibility payload's `data`; null when thresholds aren't configured. */
 export function readHoldAmounts(data: unknown): HoldAmounts | null {
   const root = record(data);
@@ -67,9 +58,27 @@ export function readHoldAmounts(data: unknown): HoldAmounts | null {
   if (!root || !thresholds || thresholds.configured !== true) return null;
   const priceUsd = text(thresholds.priceUsd);
   const tiers = record(root.tiers);
-  const pro = tier(tiers, thresholds, "pro", priceUsd);
-  const power = tier(tiers, thresholds, "power", priceUsd);
-  if (!pro || !power) return null;
+  const balanceUnit = displayTokenUnit(text(root.tokenSymbol), text(root.tokenAddress));
+  const paymentToken = record(root.tokenAccess)?.paymentToken;
+  const quoteUnit = isPlatformTokenKey(paymentToken) ? tokenUnitForKey(paymentToken) : balanceUnit;
+
+  function tier(key: "pro" | "power"): HoldTier {
+    const row = record(tiers?.[key]);
+    const eligible = row?.currentlyEligible === true;
+    const heldUnit = isPlatformTokenKey(row?.tokenKey) ? tokenUnitForKey(row.tokenKey) : balanceUnit;
+    const tokenUnit = eligible ? heldUnit : quoteUnit;
+    // Live thresholds and their USD price belong to the balance readout asset.
+    const liveAmount = tokenUnit === balanceUnit
+      ? text(row?.currentThresholdDisplay) ?? text(thresholds?.[`${key}Display`])
+      : null;
+    const amountDisplay = (eligible ? text(row?.qualifyingQuantityDisplay) : null) ?? liveAmount;
+    return {
+      amountDisplay,
+      tokenUnit,
+      usdApprox: amountDisplay && tokenUnit === balanceUnit ? wholeUsd(amountDisplay, priceUsd) : null,
+      eligible,
+    };
+  }
 
   const balance = record(root.balance);
   const boost = record(root.veniceBoost);
@@ -79,9 +88,9 @@ export function readHoldAmounts(data: unknown): HoldAmounts | null {
   const ramBonusMb = typeof boost?.ramBonusMb === "number" ? boost.ramBonusMb : null;
 
   return {
-    pro,
-    power,
-    tokenUnit: displayTokenUnit(text(root.tokenSymbol), text(root.tokenAddress)),
+    pro: tier("pro"),
+    power: tier("power"),
+    tokenUnit: balanceUnit,
     balanceDisplay: text(balance?.balanceDisplay),
     priceFetchedAt: text(thresholds.priceFetchedAt),
     vvvBoost:

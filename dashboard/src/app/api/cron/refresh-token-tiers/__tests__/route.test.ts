@@ -31,6 +31,7 @@ const BASE_CPU = 0.5;
 const BASE_RAM = 1024;
 
 interface InstanceFixture {
+  seat_funding?: "holder" | "paid" | null;
   user_id: string;
   resource_tier: string | null;
   cpu_limit: number | null;
@@ -113,6 +114,7 @@ function mockSupabase(opts: {
   snapshots: SnapshotFixture[];
   subscriptions: SubscriptionFixture[];
   qualifications: QualificationFixture[];
+  admissions?: Array<{ user_id: string; state: string; tier: "pro" | "power" }>;
   yearly?: YearlyFixture[];
   yearlyError?: string;
   apple?: AppleFixture[];
@@ -193,6 +195,7 @@ function mockSupabase(opts: {
   );
 
   (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+    if (table === "holder_admissions") return filteringBuilder(opts.admissions ?? []);
     if (table === "hermes_instances") return instancesBuilder;
     if (table === "token_holding_snapshots") return snapshotsBuilder;
     if (table === "hermes_subscriptions") return subscriptionsBuilder;
@@ -273,6 +276,11 @@ describe("POST /api/cron/refresh-token-tiers", () => {
 
   it("advances holder admissions after refreshing authoritative holdings and returns the advancement result", async () => {
     mockSupabase({ instances: [], snapshots: [], subscriptions: [], qualifications: [] });
+    process.env.HERMES_PROXMOX_TARGETS = "Node-A node_a,Node-B";
+    process.env.HERMES_PROXMOX_CPU_OVERCOMMIT_RATIO = "2";
+    process.env.HIVRA_PLACEMENT_SKIP_DEEP_SLEEP = "on";
+    process.env.PROXMOX_VM_DISK_GB = "48";
+    process.env.PROXMOX_HOST_NODE_A_VM_DISK_GB = "96";
     const order: string[] = [];
     (refreshVerifiedHermesTokenHoldings as jest.Mock).mockImplementation(async () => {
       order.push("refresh");
@@ -287,17 +295,21 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(supabaseAdmin!.rpc).toHaveBeenCalledWith("advance_holder_admissions", {});
+    expect(supabaseAdmin!.rpc).toHaveBeenCalledWith("advance_holder_admissions", {
+      p_target_host_ids: ["node_a", "node_b"], p_cpu_overcommit_ratio: 2, p_skip_sleep: true,
+      p_disk_sizes: expect.objectContaining({ defaultDiskGb: 48, node_a: 96 }),
+    });
     expect(order.slice(0, 2)).toEqual(["refresh", "advance"]);
     expect(body.data.holder_admission).toEqual({ advanced: 1, released: 0 });
     expect(body.data.holder_admission_error).toBeNull();
   });
 
-  it("isolates a transient holder-admission RPC failure instead of failing the tier sweep", async () => {
+  it("keeps a qualified waitlisted legacy seat at credit_base when advancement fails", async () => {
     mockSupabase({
       instances: [
         { user_id: "user_pro", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
       ],
+      admissions: [{ user_id: "user_pro", state: "waitlisted", tier: "pro" }],
       snapshots: [],
       subscriptions: [],
       qualifications: [{ user_id: "user_pro", tier: "pro", currently_eligible: true }],
@@ -312,17 +324,39 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(applyTierChange).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: "user_pro", newTier: "operator" })
-    );
+    expect(applyTierChange).not.toHaveBeenCalled();
     expect(body.data.holder_admission).toBeNull();
     expect(body.data.holder_admission_error).toBe("database is restarting");
+  });
+
+  it("reconciles both funding cohorts and caps stale admission or qualification data at the lower tier", async () => {
+    mockSupabase({
+      instances: [
+        { user_id: "mixed", seat_funding: "paid", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+        { user_id: "mixed", seat_funding: "holder", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        { user_id: "pending", seat_funding: "holder", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+      ],
+      admissions: [
+        { user_id: "mixed", state: "admitted", tier: "power" }, { user_id: "pending", state: "admitted", tier: "pro" },
+      ],
+      qualifications: [
+        { user_id: "mixed", tier: "pro", currently_eligible: true }, { user_id: "pending", tier: "power", currently_eligible: true },
+      ],
+      subscriptions: [{ user_id: "mixed", status: "active", plan: "command" }], snapshots: [], boosts: ["mixed"],
+    });
+    (supabaseAdmin!.rpc as jest.Mock).mockResolvedValueOnce({ data: null, error: { message: "retry next sweep" } });
+    expect((await POST(makeRequest())).status).toBe(200);
+    expect(applyTierChange).toHaveBeenCalledTimes(3);
+    expect(applyTierChange).toHaveBeenCalledWith(expect.objectContaining({ userId: "mixed", newTier: "command", holderSeats: false, veniceBoost: true }));
+    for (const userId of ["mixed", "pending"]) {
+      expect(applyTierChange).toHaveBeenCalledWith(expect.objectContaining({ userId, newTier: "operator", holderSeats: true, veniceBoost: false }));
+    }
   });
 
   it("upgrades a Power-qualified token holder from credit_base to fleet", async () => {
     mockSupabase({
       instances: [
-        { user_id: "user_power", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+        { user_id: "user_power", seat_funding: "holder", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
       ],
       snapshots: [
         {
@@ -333,6 +367,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
         },
       ],
       subscriptions: [],
+      admissions: [{ user_id: "user_power", state: "admitted", tier: "power" }],
       qualifications: [
         { user_id: "user_power", tier: "power", currently_eligible: true },
       ],
@@ -364,6 +399,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     // was never scanned and kept a stale tier, however strong their qualification.
     const instances = Array.from({ length: 1005 }, (_, i) => ({
       user_id: `user_${i}`,
+      seat_funding: "holder" as const,
       resource_tier: "credit_base",
       cpu_limit: BASE_CPU,
       ram_limit: BASE_RAM,
@@ -372,6 +408,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
       instances,
       snapshots: [],
       subscriptions: [],
+      admissions: [{ user_id: "user_1004", state: "admitted", tier: "power" }],
       qualifications: [{ user_id: "user_1004", tier: "power", currently_eligible: true }],
     });
     (applyTierChange as jest.Mock).mockResolvedValue({});
@@ -410,7 +447,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
   it("upgrades a Pro-qualified token holder from credit_base to operator", async () => {
     mockSupabase({
       instances: [
-        { user_id: "user_pro", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+        { user_id: "user_pro", seat_funding: "holder", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
       ],
       snapshots: [
         {
@@ -421,6 +458,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
         },
       ],
       subscriptions: [],
+      admissions: [{ user_id: "user_pro", state: "admitted", tier: "pro" }],
       qualifications: [
         { user_id: "user_pro", tier: "pro", currently_eligible: true },
       ],
@@ -437,7 +475,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
   it("prefers Power over Pro when a user qualifies for both", async () => {
     mockSupabase({
       instances: [
-        { user_id: "user_both", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+        { user_id: "user_both", seat_funding: "holder", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
       ],
       snapshots: [
         {
@@ -448,6 +486,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
         },
       ],
       subscriptions: [],
+      admissions: [{ user_id: "user_both", state: "admitted", tier: "power" }],
       qualifications: [
         { user_id: "user_both", tier: "pro", currently_eligible: true },
         { user_id: "user_both", tier: "power", currently_eligible: true },
@@ -465,7 +504,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
   it("does not downgrade a Power-qualified user already on fleet with correct caps", async () => {
     mockSupabase({
       instances: [
-        { user_id: "user_steady", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        { user_id: "user_steady", seat_funding: "holder", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
       ],
       snapshots: [
         {
@@ -476,6 +515,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
         },
       ],
       subscriptions: [],
+      admissions: [{ user_id: "user_steady", state: "admitted", tier: "power" }],
       qualifications: [
         { user_id: "user_steady", tier: "power", currently_eligible: true },
       ],
@@ -543,10 +583,11 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     it("reads eligible rows and rows inside their breach grace", async () => {
       const { qualificationsBuilder } = mockSupabase({
         instances: [
-          { user_id: "user_dipped", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+          { user_id: "user_dipped", seat_funding: "holder", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
         ],
         snapshots: [],
         subscriptions: [],
+        admissions: [{ user_id: "user_dipped", state: "admitted", tier: "power" }],
         qualifications: [{ user_id: "user_dipped", tier: "power", currently_eligible: false }],
       });
 
@@ -638,14 +679,10 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     );
   });
 
-  it("re-applies on a boost-only change for a token-tier user (base tier unchanged)", async () => {
-    // Regression for the old `desiredTier === currentTier` skip: a user who
-    // newly earns the boost while staying on fleet would have been skipped,
-    // so the +1/+2 would never reach the VM. The effective-spec compare must
-    // catch it.
+  it("keeps a holder-funded seat inside its Power reservation when its owner earns a boost", async () => {
     mockSupabase({
       instances: [
-        { user_id: "user_boost_only", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
+        { user_id: "user_boost_only", seat_funding: "holder", resource_tier: "fleet", cpu_limit: FLEET_CPU, ram_limit: FLEET_RAM },
       ],
       snapshots: [
         {
@@ -656,6 +693,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
         },
       ],
       subscriptions: [],
+      admissions: [{ user_id: "user_boost_only", state: "admitted", tier: "power" }],
       qualifications: [
         { user_id: "user_boost_only", tier: "power", currently_eligible: true },
       ],
@@ -665,20 +703,14 @@ describe("POST /api/cron/refresh-token-tiers", () => {
 
     const res = await POST(makeRequest());
     expect(res.status).toBe(200);
-    expect(applyTierChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: "user_boost_only",
-        newTier: "fleet",
-        veniceBoost: true,
-      })
-    );
+    expect(applyTierChange).not.toHaveBeenCalled();
   });
 
-  it("does not re-apply when the boost is already reflected in the stored caps", async () => {
+  it("removes an old boost that exceeds a holder reservation", async () => {
     mockSupabase({
       instances: [
         {
-          user_id: "user_boosted_steady",
+          user_id: "user_boosted_steady", seat_funding: "holder",
           resource_tier: "fleet",
           cpu_limit: FLEET_CPU + 1,
           ram_limit: FLEET_RAM + 2048,
@@ -693,6 +725,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
         },
       ],
       subscriptions: [],
+      admissions: [{ user_id: "user_boosted_steady", state: "admitted", tier: "power" }],
       qualifications: [
         { user_id: "user_boosted_steady", tier: "power", currently_eligible: true },
       ],
@@ -701,7 +734,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
 
     const res = await POST(makeRequest());
     expect(res.status).toBe(200);
-    expect(applyTierChange).not.toHaveBeenCalled();
+    expect(applyTierChange).toHaveBeenCalledWith(expect.objectContaining({ holderSeats: true, veniceBoost: false }));
   });
 
   it("processes Free-row users with Pro token qualification (cron upgrades resource_tier)", async () => {
@@ -710,7 +743,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
     // upgrade the user's resource_tier when they qualify via $HermesOS.
     mockSupabase({
       instances: [
-        { user_id: "user_free_pro", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
+        { user_id: "user_free_pro", seat_funding: "holder", resource_tier: "credit_base", cpu_limit: BASE_CPU, ram_limit: BASE_RAM },
       ],
       snapshots: [
         {
@@ -723,6 +756,7 @@ describe("POST /api/cron/refresh-token-tiers", () => {
       subscriptions: [
         { user_id: "user_free_pro", status: "active", plan: "free" },
       ],
+      admissions: [{ user_id: "user_free_pro", state: "admitted", tier: "pro" }],
       qualifications: [
         { user_id: "user_free_pro", tier: "pro", currently_eligible: true },
       ],

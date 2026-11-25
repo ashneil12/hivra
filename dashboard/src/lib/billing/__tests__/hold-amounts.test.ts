@@ -28,8 +28,8 @@ const eligibility = {
 describe("readHoldAmounts", () => {
   it("reads the server's per-plan hold amounts with a rough dollar value", () => {
     const amounts = readHoldAmounts(eligibility);
-    expect(amounts?.pro).toEqual({ amountDisplay: "134,476,535", usdApprox: 149, eligible: false });
-    expect(amounts?.power).toEqual({ amountDisplay: "269,855,596", usdApprox: 299, eligible: true });
+    expect(amounts?.pro).toEqual({ tokenUnit: "$HermesOS", amountDisplay: "134,476,535", usdApprox: 149, eligible: false });
+    expect(amounts?.power).toEqual({ tokenUnit: "$HermesOS", amountDisplay: "269,855,596", usdApprox: 299, eligible: true });
     expect(amounts?.balanceDisplay).toBeNull();
     expect(amounts?.vvvBoost).toEqual({
       requiredDisplay: "7",
@@ -39,6 +39,20 @@ describe("readHoldAmounts", () => {
       eligible: false,
       countsStaked: true,
     });
+  });
+
+  it("keeps the locked Pro quantity and requests a new Power quote in the conversion asset", () => {
+    const amounts = readHoldAmounts({
+      ...eligibility,
+      tokenSymbol: "HermesOS",
+      tokenAccess: { paymentToken: "hivra" },
+      tiers: {
+        pro: { currentlyEligible: true, tokenKey: "hermesos", qualifyingQuantityDisplay: "12,345", currentThresholdDisplay: "99,999" },
+        power: { currentlyEligible: false, currentThresholdDisplay: "199,999" },
+      },
+    });
+    expect(amounts?.pro).toMatchObject({ tokenUnit: "$HermesOS", amountDisplay: "12,345", eligible: true });
+    expect(amounts?.power).toMatchObject({ tokenUnit: "$HIVRA", amountDisplay: null, usdApprox: null });
   });
 
   it("names the token the server priced the amounts in", () => {

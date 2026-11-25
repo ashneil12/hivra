@@ -42,6 +42,7 @@ export const CRON_REGISTRY: readonly CronHeartbeatDefinition[] = [
   // cron pages within ~8h (2x) instead of ~2 days. See archive-stopped-vms route.
   { name: "archive-stopped-vms", periodMinutes: 240 },
   { name: "inactivity-sweep", periodMinutes: 60 },
+  { name: "holder-inactivity-sweep", periodMinutes: 1 },
   { name: "redeploy-webui-instances", periodMinutes: 1440 },
   { name: "migration-drift-check", periodMinutes: 10 },
   { name: "fleet-status-reconcile", periodMinutes: 30 },

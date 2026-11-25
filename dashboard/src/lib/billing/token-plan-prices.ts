@@ -16,6 +16,7 @@ import {
   HIVRA_DISPLAY_UNIT,
   HIVRA_SYMBOL,
   platformTokenByAddress,
+  type PlatformTokenKey,
 } from "./token-registry";
 
 export const YEARLY_TOKEN_USD = {
@@ -33,6 +34,10 @@ export const YEARLY_TOKEN_TIER_PLAN = {
 
 /** What people call the legacy Base token everywhere in the product. */
 export const HERMESOS_DISPLAY_UNIT = HERMESOS_TOKEN.displayUnit;
+
+export function tokenUnitForKey(key: PlatformTokenKey): string {
+  return key === "hivra" ? HIVRA_DISPLAY_UNIT : HERMESOS_DISPLAY_UNIT;
+}
 
 /**
  * Unit label to show next to a platform-token amount.

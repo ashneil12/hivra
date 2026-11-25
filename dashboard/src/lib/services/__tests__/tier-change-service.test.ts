@@ -30,7 +30,7 @@ jest.mock("@/lib/supabase", () => {
   const updateInMock = jest.fn().mockResolvedValue({ error: null });
   const fromMock = jest.fn();
   return {
-    supabaseAdmin: { from: fromMock },
+    supabaseAdmin: { from: fromMock, rpc: jest.fn() },
     __mocks: { fromMock, updateEqMock, updateInMock },
   };
 });
@@ -93,6 +93,35 @@ beforeEach(() => {
 });
 
 describe("applyTierChange", () => {
+  it("applies a paid plan to its own seat even when a holder seat belongs to the same user", async () => {
+    const base = { cpu_limit: 1, ram_limit: 2048, resource_tier: "operator", status: "running" };
+    const updates = mockInstanceListCapturingUpdates([
+      { ...base, id: "holder", seat_funding: "holder", config: { infrastructure: { provider: "proxmox", vmid: 100 } } },
+      { ...base, id: "paid", seat_funding: "paid", config: { infrastructure: { provider: "proxmox", vmid: 101 } } },
+    ]);
+    const outcome = await applyTierChange({ userId: "mixed", newTier: "fleet", source: "stripe", veniceBoost: true });
+    expect(outcome).toMatchObject({ instancesUpdated: 1, resizesSucceeded: 1 });
+    for (const write of updates) expect(write.rowIds).toEqual(["paid"]);
+    expect(resizeProxmoxVm).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedInstanceId: "paid", cpuLimit: 5, memoryMb: 10240 }), expect.anything(),
+    );
+  });
+
+  it("preserves a holder split with another lane and never applies a paid boost or touches the paid seat", async () => {
+    const base = { cpu_limit: 1, ram_limit: 2048, status: "running", config: null };
+    const updates = mockInstanceListCapturingUpdates([
+      { ...base, id: "holder", seat_funding: "holder" }, { ...base, id: "paid", seat_funding: "paid" },
+    ]);
+    (supabaseAdmin!.rpc as jest.Mock).mockResolvedValue({ data: [{ cpu: 1, ram_mb: 2048 }], error: null });
+    await applyTierChange({ userId: "mixed", newTier: "fleet", source: "token_snapshot", holderSeats: true, veniceBoost: true });
+    expect(supabaseAdmin!.rpc).toHaveBeenCalledWith("holder_admission_existing_usage", {
+      p_user_id: "mixed", p_exclude_hermes_instance_id: "holder",
+    });
+    expect(updates).toEqual([{ rowIds: ["holder"], payload: expect.objectContaining({
+      resource_tier: "fleet", cpu_limit: 1, ram_limit: 2048,
+    }) }]);
+  });
+
   it("no-ops when the user has no active instances", async () => {
     mockInstanceList([]);
     const outcome = await applyTierChange({

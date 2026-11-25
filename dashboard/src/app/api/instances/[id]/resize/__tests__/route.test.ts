@@ -12,7 +12,7 @@ jest.mock("@clerk/nextjs/server", () => ({
 
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {
-    from: jest.fn(),
+    from: jest.fn(), rpc: jest.fn(),
   },
 }));
 
@@ -37,7 +37,7 @@ jest.mock("@/lib/services/proxmox-instance-service", () => ({
 const TIER = "operator";
 const SPEC = resolveEffectiveTierSpec(TIER, false);
 
-function mockInstanceAndUpdate(updateResult: { error: { message: string } | null }) {
+function mockInstanceAndUpdate(updateResult: { error: { message: string } | null }, fields: Record<string, unknown> = {}) {
   const updateChain = {
     eq: jest.fn(),
   };
@@ -57,7 +57,8 @@ function mockInstanceAndUpdate(updateResult: { error: { message: string } | null
       config: { infrastructure: { vmid: 201, node: "fixturenode1" } },
       hetzner_server_id: null,
       host_id: "host-1",
-      status: "running",
+      status: "running", lifecycle_state: "active",
+      ...fields,
     },
     error: null,
   }));
@@ -89,6 +90,23 @@ describe("PATCH /api/instances/[id]/resize", () => {
       expect.objectContaining({ cpu_limit: SPEC.cpuLimit, ram_limit: SPEC.ramLimitMb }),
     );
     expect(updateChain.eq).toHaveBeenCalledWith("user_id", "user_1");
+  });
+
+  it.each([true, false])("rechecks the saved holder allocation before a manual VM repair (admitted=%s)", async (valid) => {
+    const { updateSpy } = mockInstanceAndUpdate({ error: null }, {
+      seat_funding: "holder", resource_tier: "command", cpu_limit: 1, ram_limit: 2048,
+    });
+    (supabaseAdmin!.rpc as jest.Mock).mockResolvedValue({ data: valid, error: null });
+    (resizeProxmoxVm as jest.Mock).mockClear();
+    const response = await PATCH(new NextRequest("http://localhost/api/instances/inst-1/resize"), {
+      params: Promise.resolve({ id: "inst-1" }),
+    });
+    expect(response.status).toBe(valid ? 200 : 409);
+    if (valid) expect(resizeProxmoxVm).toHaveBeenCalledWith(
+      expect.objectContaining({ cpuLimit: 1, memoryMb: 2048 }), expect.anything(),
+    );
+    else expect(resizeProxmoxVm).not.toHaveBeenCalled();
+    expect(updateSpy).not.toHaveBeenCalled();
   });
 
   it("does not report success when the row write fails after the VM was resized", async () => {

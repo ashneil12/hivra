@@ -1,6 +1,7 @@
 import type { AgentWalletBalance, AgentWalletCardData } from "@/app/dashboard/wallet/agent-wallet-data";
 import { HOLDER_TIER_TERMS } from "@/lib/billing/holder-tier-terms";
-import { getActiveHivraToken } from "@/lib/billing/token-registry";
+import { displayTokenUnit, tokenUnitForKey } from "@/lib/billing/token-plan-prices";
+import { getActiveHivraToken, type PlatformTokenKey } from "@/lib/billing/token-registry";
 
 /**
  * Pure formatters, validators and payload readers for the wallet dashboard.
@@ -12,6 +13,7 @@ export function interpolateCopy(template: string, values: Record<string, string>
   return template.replace(/\{(\w+)\}/g, (_, key: string) => values[key] ?? `{${key}}`);
 }
 export interface EligibilityTierState {
+  tokenKey?: PlatformTokenKey | null;
   currentlyEligible: boolean;
   qualifyingQuantity: string | null;
   qualifyingQuantityDisplay: string | null;
@@ -46,7 +48,7 @@ export interface EligibilityPayload {
   };
   tiers: { pro: EligibilityTierState; power: EligibilityTierState };
   /** The account's token access. newTiersAvailable is false while new $HIVRA tiers are off. */
-  tokenAccess?: { newTiersAvailable?: boolean };
+  tokenAccess?: { paymentToken?: PlatformTokenKey; newTiersAvailable?: boolean };
   /**
    * Venice compute boost: hold ≥ thresholdUsd of VVV to add cpuBonus vCPU /
    * ramBonusMb RAM per instance on top of a PAID tier. Optional so older API
@@ -68,6 +70,16 @@ export interface EligibilityPayload {
     countsStakedVvv?: boolean;
   };
 }
+/** The eligibility API's payment token is also its first new-qualification token.
+ * Its top-level symbol describes the balance, which may still be in a pre-conversion asset.
+ */
+export function newQuoteUnit(eligibility: EligibilityPayload | null): string | null {
+  const key = eligibility?.tokenAccess?.paymentToken;
+  if (key) return tokenUnitForKey(key);
+  // Older responses predate per-account token access.
+  return eligibility?.tokenSymbol ? displayTokenUnit(eligibility.tokenSymbol) : null;
+}
+
 export function shorten(address: string | null | undefined): string {
   if (!address) return '—';
   if (address.length <= 14) return address;
@@ -203,14 +215,14 @@ export function formatTokensWithCommas(digitString: string): string {
 }
 /**
  * If the user has an active (non-expired) deposit-quote lock, return its
- * comma-formatted token amount so the eligibility row can display the
+ * comma-formatted token amount with its unit so the eligibility row can display the
  * locked number instead of the live threshold. Returns null when no lock
  * exists or the lock has expired — the live threshold then takes over.
  */
 export function lockedThresholdFor(quote: DepositQuotePayload | null): string | null {
   if (!quote) return null;
   if (Date.parse(quote.expiresAt) <= Date.now()) return null;
-  return formatTokensWithCommas(quote.tokensRequiredDisplay);
+  return `${formatTokensWithCommas(quote.tokensRequiredDisplay)} ${displayTokenUnit(quote.tokenSymbol, quote.tokenAddress)}`;
 }
 export function walletAddressFromEligibility(eligibility: EligibilityPayload | null): string | null {
   return eligibility?.balance?.normalizedWalletAddress ?? eligibility?.balance?.walletAddress ?? null;

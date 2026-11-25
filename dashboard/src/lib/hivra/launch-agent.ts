@@ -1378,7 +1378,10 @@ export async function launchHivraAgentForUser(
       }
 
       explicitClaudeHost = LAUNCHABLE_BOX_TYPES.has(type) ? resolveHivraClaudeCodeProxmoxHost(process.env) : null;
-      stickyHost = explicitClaudeHost ? null : await resolveStickyHivraProxmoxHost(userId);
+      // Holder launches enter registry ranking so they can spend their admission reservation.
+      if (!explicitClaudeHost && seatFunding !== "holder") {
+        stickyHost = await resolveStickyHivraProxmoxHost(userId);
+      }
       // With HIVRA_HOST_CAPACITY_ALERTS on, a host whose latest capacity reading
       // is critical is tried only when no other host can take the launch.
       const placeOn = (forceTargetId: string | null) => selectAvoidingCriticalHosts(excludeTargetIds => selectAvailableProxmoxProvisionTarget({
@@ -1409,10 +1412,8 @@ export async function launchHivraAgentForUser(
         }),
       }), { forced: Boolean(forceTargetId) });
       let placement = await placeOn(explicitClaudeHost ?? stickyHost);
-      // The owner's usual server is a preference, not a rule: when it cannot
-      // take this launch (full, or not ready), the launch moves to any other
-      // server in rotation instead of failing.
-      if (!placement.ok && stickyHost && !explicitClaudeHost) {
+      // A paid user's usual host may be full or unavailable. Try the rotation.
+      if (!placement.ok && stickyHost) {
         log.warn("hivra sticky host could not take the launch; trying the other servers", {
           source: "hivra/agents",
           failureType: "hivra_agent_sticky_host_spillover",
