@@ -96,18 +96,25 @@ function occurrences(text: string, needle: string): number {
   return text.split(needle).length - 1;
 }
 
+export interface SweepConsolePasswordState {
+  value?: string;
+}
+
 /**
  * Some agents ask their owner to set a password for their own console before
  * the chat appears (Nuphos: "Choose the password that protects this console",
- * then Connect). A customer does that once; so does the sweep, with a random
- * password it never reuses.
+ * then Connect). PicoClaw's setup form then redirects to a separate sign-in
+ * without creating a session. A customer remembers the password they just
+ * chose, so the sweep keeps it and reuses it for that sign-in instead of
+ * inventing a new one.
  */
-async function completeConsolePassword(frame: Frame): Promise<boolean> {
+export async function completeConsolePassword(frame: Frame, state: SweepConsolePasswordState): Promise<boolean> {
   const fields = frame.locator('input[type="password"]:not([readonly]):not([disabled])');
   const count = await fields.count().catch(() => 0);
   if (count === 0 || !(await fields.first().isVisible().catch(() => false))) return false;
   if (!/password/i.test(await bodyText(frame))) return false;
-  const password = `Sweep-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}!`;
+  state.value ??= `Sweep-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}!`;
+  const password = state.value;
   for (let index = 0; index < count; index++) {
     const field = fields.nth(index);
     if (await field.isVisible().catch(() => false)) await field.fill(password).catch(() => undefined);
@@ -204,6 +211,7 @@ async function findComposer(
   let passwordAttempts = 0;
   let noticeAttempts = 0;
   let workspaceAttempts = 0;
+  const consolePassword: SweepConsolePasswordState = {};
   let lastSeen = '';
   while (Date.now() < end) {
     // Opening can land on another tab (Codex opened on Settings). A customer
@@ -239,7 +247,7 @@ async function findComposer(
           await sleep(2_000);
           continue;
         }
-        if (passwordAttempts < 3 && await completeConsolePassword(frame)) {
+        if (passwordAttempts < 3 && await completeConsolePassword(frame, consolePassword)) {
           passwordAttempts++;
           await sleep(5_000);
           continue;

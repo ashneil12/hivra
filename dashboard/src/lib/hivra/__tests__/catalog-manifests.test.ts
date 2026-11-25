@@ -205,6 +205,10 @@ describe("universal catalog manifests", () => {
       "3202",
     ]);
     expect(picoclaw.runtime.webService.hostPort).toBe(3202);
+    expect(picoclaw.runtime.setup?.commands).toEqual([
+      'if [ ! -f "$HOME/.picoclaw/config.json" ]; then picoclaw onboard; fi',
+      'if [ -n "$OPENAI_API_KEY" ] && [ -n "$OPENAI_BASE_URL" ] && [ -n "$OPENAI_MODEL" ]; then picoclaw model add --api-base "$OPENAI_BASE_URL" --api-key "$OPENAI_API_KEY" --model "$OPENAI_MODEL" --name hivra; fi',
+    ]);
   });
 
   it("pins Sun-Panel to its last open-source release and mounts all three persistence paths", () => {
