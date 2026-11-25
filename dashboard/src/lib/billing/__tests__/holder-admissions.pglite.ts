@@ -292,19 +292,19 @@ describe("holder admissions SQL authority", () => {
     expect((await admission("split"))!.assigned_host_id).toBe("anew");
     await pg.exec(
       `insert into public.hermes_instances(id,user_id,status,lifecycle_state,cpu_limit,ram_limit,proxmox_node,disk_size_gb,seat_funding,infrastructure_provider)
-       values('abababab-abab-4aba-8aba-abababababab','split','running','active',2,4096,'zold',30,'holder','proxmox')`,
+       values('00000000-0000-4513-8f00-5d6688fe50a7','split','running','active',2,4096,'zold',30,'holder','proxmox')`,
     );
 
     const shrink = await pg.query<{ r: Record<string, unknown> }>(
       `select public.resize_hermes_instance_allocation(
-        'abababab-abab-4aba-8aba-abababababab','split',1,2048,
-        '12121212-1212-4212-8212-121212121212') as r`,
+        '00000000-0000-4513-8f00-5d6688fe50a7','split',1,2048,
+        '00000000-0000-4cd2-8a20-671fb6b3d5a3') as r`,
     );
     expect(shrink.rows[0].r).toMatchObject({ status: "claimed" });
     await expect(pg.query(
       `select public.assert_proxmox_placement_capacity(
         'zold','split','holder',3,4096,null,null,
-        'abababab-abab-4aba-8aba-abababababab')`,
+        '00000000-0000-4513-8f00-5d6688fe50a7')`,
     )).rejects.toThrow(/holder admission is not placed on the target proxmox host/);
   });
 
@@ -1030,15 +1030,15 @@ describe("holder admissions SQL authority", () => {
       values('cccccccc-cccc-4ccc-8ccc-cccccccccccc','resize-b','provisioning','provisioning',1,4096,'cap',30,'paid','proxmox');
     `);
     const grown = await pg.query<{ r: ResizeClaim }>(
-      "select public.resize_hermes_instance_allocation('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','paid-a',2,4096,'01010101-0101-4010-8010-010101010101') as r",
+      "select public.resize_hermes_instance_allocation('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','paid-a',2,4096,'00000000-0000-4ec6-89a9-5077d5dae467') as r",
     );
     expect(grown.rows[0].r).toEqual({
       status: "claimed",
-      operationId: "01010101-0101-4010-8010-010101010101",
+      operationId: "00000000-0000-4ec6-89a9-5077d5dae467",
       hostConfigApplied: false,
     });
     await expect(pg.query(
-      "select public.resize_hermes_instance_allocation('cccccccc-cccc-4ccc-8ccc-cccccccccccc','resize-b',2,4096,'02020202-0202-4020-8020-020202020202')",
+      "select public.resize_hermes_instance_allocation('cccccccc-cccc-4ccc-8ccc-cccccccccccc','resize-b',2,4096,'00000000-0000-4324-8a11-f19d646276f4')",
     )).rejects.toThrow(/remaining compute capacity/);
   });
 

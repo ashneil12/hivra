@@ -25,7 +25,7 @@ jest.mock("@/lib/hivra/managed-provisioner-channel", () => ({
   managedHivraProvisionerChannelConfiguration: () => ({ runtime: { provisionerDirectory: host.provisionerDir } }),
 }));
 
-const id = "12345678-0123-4567-89ab-000000000057";
+const id = "00000000-0000-49a1-83d1-c38ab7c4e853";
 const params = { params: Promise.resolve({ id }) };
 const base = "http://localhost/api/instances/" + id;
 const gateway = "fixture.example.test";
@@ -312,8 +312,8 @@ it("refuses a hibernated wake while its admitted backing is on another host", as
 });
 
 it("keeps a slow host operation fenced while another host proceeds", async () => {
-  const secondId = "22345678-0123-4567-89ab-000000000057";
-  const thirdId = "32345678-0123-4567-89ab-000000000057";
+  const secondId = "00000000-0000-412f-8727-d2cb6d40a855";
+  const thirdId = "00000000-0000-4467-89cb-c07a7768427b";
   const secondVmid = 2234;
   const thirdVmid = 3234;
   await db.exec(`insert into proxmox_hosts(id,total_cpu,total_ram_mb,cpu_overcommit_ratio) values
