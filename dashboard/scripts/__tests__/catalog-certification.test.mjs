@@ -260,7 +260,7 @@ function sweepResult(overrides = {}) {
 
 test("append row keeps certification evidence but strips account and agent identifiers", () => {
   const row = certificationRowFromSweep({
-    result: sweepResult({ agentId: "6f38f0f6-94b5-4f4e-a383-65dcbdcc24f1" }),
+    result: sweepResult({ agentId: "00000000-0000-4000-8000-000000000000" }),
     file: "/tmp/abcd1234-it-tools.json",
     target: "it-tools",
     canarySha: SHA,
