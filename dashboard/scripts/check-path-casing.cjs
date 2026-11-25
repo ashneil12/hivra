@@ -25,6 +25,7 @@ const indexEntries = git(['ls-files', '-z', '--stage', '--', '.'], { maxBuffer: 
   });
 const files = indexEntries.map(({ file }) => file);
 const fileRequests = new Set();
+const jestFileRequests = new Set();
 const paths = new Map();
 const modules = new Map();
 const conflicts = new Set();
@@ -41,6 +42,7 @@ const MODULE_EXTENSIONS = [
   '.json',
   '.wasm',
 ];
+const JEST_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.node']);
 const PACKAGE_ENTRY_FIELDS = ['types', 'typings', 'main', 'module', 'browser', 'edge-light'];
 
 function check(spelling, seen) {
@@ -58,15 +60,19 @@ function moduleStem(file) {
   return null;
 }
 
-const packageTargets = new Map();
+const packages = new Map();
 
-function hasResolvableDirectory(directory, visited) {
+function hasResolvableDirectory(directory, visited, root) {
   if (fileRequests.has(path.posix.join(directory, 'index'))) return true;
   if (visited.has(directory)) return false;
   visited.add(directory);
-  return (packageTargets.get(directory) ?? []).some(target => {
+  return (packages.get(directory)?.targets ?? []).some(({ field, target }) => {
+    const candidate = target.replace(/\/$/, '');
+    // Returning to the original request can only rediscover the competing file.
+    if (candidate === root) return false;
+    if (field === 'main' && jestFileRequests.has(candidate)) return true;
     if (!target.endsWith('/') && fileRequests.has(target)) return true;
-    return hasResolvableDirectory(target.replace(/\/$/, ''), visited);
+    return hasResolvableDirectory(candidate, visited, root);
   });
 }
 
@@ -98,12 +104,20 @@ for (const file of files) {
   // Extensionless imports can resolve differently even when the extensions differ.
   // A literal file (even a dotted one) wins the exact-file probe before extension expansion.
   const stem = moduleStem(file) ?? file;
-  fileRequests.add(file);
-  fileRequests.add(stem);
+  const foldedFile = file.toLowerCase();
+  fileRequests.add(foldedFile);
+  fileRequests.add(stem.toLowerCase());
+  jestFileRequests.add(foldedFile);
+  const extension = path.posix.extname(foldedFile);
+  if (JEST_EXTENSIONS.has(extension)) jestFileRequests.add(foldedFile.slice(0, -extension.length));
+  if (/\.[jt]sx?$/.test(foldedFile)) {
+    fileRequests.add(`${stem.toLowerCase()}.js`);
+    fileRequests.add(`${stem.toLowerCase()}.jsx`);
+  }
   const explicitTypeScriptSuffix = /(?:\.d)?\.([mc])ts$/i.exec(file);
   if (explicitTypeScriptSuffix) {
     const request = `${file.slice(0, explicitTypeScriptSuffix.index)}.${explicitTypeScriptSuffix[1].toLowerCase()}js`;
-    fileRequests.add(request);
+    fileRequests.add(request.toLowerCase());
     check(request, modules);
   }
   if (stem !== file) check(file, modules);
@@ -114,16 +128,20 @@ for (const file of files) {
 }
 
 for (const entry of indexEntries) {
-  if (path.posix.basename(entry.file) !== 'package.json') continue;
+  if (path.posix.basename(entry.file).toLowerCase() !== 'package.json') continue;
   const directory = path.posix.dirname(entry.file);
   const manifest = readPackageManifest(entry);
   if (!manifest) continue;
-  const targets = PACKAGE_ENTRY_FIELDS.map(field => normalizePackageEntry(directory, manifest[field])).filter(Boolean);
-  packageTargets.set(directory, targets);
+  const targets = [];
+  for (const field of PACKAGE_ENTRY_FIELDS) {
+    const target = normalizePackageEntry(directory, manifest[field]);
+    if (target) targets.push({ field, target: target.toLowerCase() });
+  }
+  packages.set(directory.toLowerCase(), { directory, targets });
 }
 
-for (const directory of packageTargets.keys()) {
-  if (directory !== '.' && hasResolvableDirectory(directory, new Set())) check(directory, modules);
+for (const [folded, { directory }] of packages) {
+  if (directory !== '.' && hasResolvableDirectory(folded, new Set(), folded)) check(directory, modules);
 }
 
 for (const conflict of conflicts) console.error(`Conflicting dashboard paths: ${conflict}`);

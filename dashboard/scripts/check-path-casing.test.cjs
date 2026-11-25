@@ -194,10 +194,33 @@ test('accepts a package cycle without a resolvable entry', t => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-test('a directory-only target cannot resolve a sibling file', t => {
-  const result = runGuard(t, ['foo.ts', packageFixture('Foo/package.json', { main: './dist/' }), 'Foo/dist.js']);
-  assert.equal(result.status, 0, result.stderr);
+for (const [manifest, target, tracked] of [
+  ['package.json', './Entry', 'entry.ts'],
+  ['package.json', './dist', 'dist/Index.ts'],
+  ['Package.json', './entry', 'entry.ts'],
+  ['package.json', './dist/', 'dist.js'],
+  ['package.json', './entry.js', 'entry.ts'],
+  ['package.json', './entry.jsx', 'entry.tsx'],
+  ['package.json', './entry.js', 'entry.d.ts'],
+]) {
+  test(`resolves ${manifest} main ${target} through ${tracked}`, t => {
+    assertConflict(runGuard(t, ['foo.ts', packageFixture(`Foo/${manifest}`, { main: target }), `Foo/${tracked}`]), ['foo', 'Foo']);
+  });
+}
+
+test('resolves a Jest main ending in ../ through a sibling file', t => {
+  assertConflict(runGuard(t, [
+    'foo.ts', 'Foo/a.js', packageFixture('Foo/package.json', { main: './a/b' }),
+    packageFixture('Foo/a/b/package.json', { main: '../' }),
+  ]), ['foo', 'Foo']);
 });
+
+for (const [field, tracked] of [['types', 'dist.js'], ['main', 'dist.d.ts']]) {
+  test(`keeps ${field} ending in / directory-only for ${tracked}`, t => {
+    const result = runGuard(t, ['foo.ts', packageFixture('Foo/package.json', { [field]: './dist/' }), `Foo/${tracked}`]);
+    assert.equal(result.status, 0, result.stderr);
+  });
+}
 
 test('reads collisions beyond one MiB of staged paths', t => {
   const padding = Array.from({ length: 6000 }, (_, index) => `padding/${'x'.repeat(132)}${index}`);
