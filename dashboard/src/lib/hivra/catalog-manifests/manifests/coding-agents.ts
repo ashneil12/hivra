@@ -41,7 +41,10 @@ export const CODING_AGENT_MANIFESTS: readonly CatalogAppManifest[] = [
       kind: "cli-web",
       installer: { method: "npm-global", packageName: "@opencode/cli", binName: "opencode" },
       webService: {
-        args: ["web", "--hostname", "127.0.0.1", "--port", "3203"],
+        // `web` is the interactive desktop-oriented command and may try to
+        // open a browser. The guest runs a resident service, so use the
+        // headless server command instead.
+        args: ["serve", "--hostname", "127.0.0.1", "--port", "3203"],
         hostPort: 3203,
         healthPath: "/",
         proxyMode: "standard",

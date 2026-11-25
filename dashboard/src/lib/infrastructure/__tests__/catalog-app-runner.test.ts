@@ -50,6 +50,20 @@ describe("provisioner hivra-catalog-app.py validator", () => {
     expect(JSON.parse(res.stdout).runtime.webService.args).toContain("--yes");
   });
 
+  it("uses OpenCode's headless server command for the resident web service", () => {
+    const manifest = UNIVERSAL_CATALOG_MANIFESTS.find((entry) => entry.id === "opencode");
+    if (!manifest || manifest.runtime.kind !== "cli-web" || !manifest.runtime.webService) {
+      throw new Error("expected OpenCode cli-web manifest");
+    }
+    expect(manifest.runtime.webService.args[0]).toBe("serve");
+    expect(manifest.runtime.webService.args[0]).not.toBe("web");
+
+    const spec = buildCatalogAppLaunchSpec(manifest);
+    const res = runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(spec));
+    expect(res.status).toBe(0);
+    expect(JSON.parse(res.stdout).runtime.webService.args[0]).toBe("serve");
+  });
+
   it("rejects forbidden container mounts, invalid ports, and shell metacharacters", () => {
     const base = buildCatalogAppLaunchSpec(UNIVERSAL_CATALOG_MANIFESTS.find((m) => m.id === "anythingllm")!);
     const cases = [
