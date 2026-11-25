@@ -31,6 +31,8 @@ import { reportOpsEvent } from "@/lib/ops-events";
  */
 export const dynamic = "force-dynamic";
 
+const CRON_WATCHDOG_TIMEOUT_MS = 5000;
+
 export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
@@ -50,6 +52,8 @@ export async function GET(req: NextRequest) {
     return apiError("Unauthorized", 401);
   }
 
+  const cronWatchdogPromise = checkCronHeartbeats();
+
   let result: MigrationDriftResult;
   try {
     result = await runMigrationDriftCheck();
@@ -62,7 +66,18 @@ export async function GET(req: NextRequest) {
     });
     const message =
       err instanceof Error ? err.message : "Migration drift check failed";
-    await checkCronHeartbeats();
+    try {
+      await withBoundedWait(cronWatchdogPromise, CRON_WATCHDOG_TIMEOUT_MS);
+    } catch (watchdogErr) {
+      log.warn("cron dead-man watchdog did not settle before error response", {
+        source: MIGRATION_DRIFT_LOG_SOURCE,
+        failureType: "cron_heartbeat_watchdog_unsettled",
+        errorMessage:
+          watchdogErr instanceof Error
+            ? watchdogErr.message
+            : String(watchdogErr),
+      });
+    }
     return apiError(message, 500);
   }
 
@@ -128,7 +143,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const cronWatchdog = await checkCronHeartbeats();
+  const cronWatchdog = await cronWatchdogPromise;
   // Check the previous heartbeat before stamping this successful drift run.
   await recordCronHeartbeat("migration-drift-check");
 
@@ -139,6 +154,18 @@ export async function GET(req: NextRequest) {
     unexpected: result.unexpected,
     versionMismatched: result.versionMismatched,
     cronWatchdog,
+  });
+}
+
+function withBoundedWait<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error(`cron heartbeat watchdog timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  return Promise.race<T>([promise, timeoutPromise]).finally(() => {
+    if (timeout !== undefined) clearTimeout(timeout);
   });
 }
 
