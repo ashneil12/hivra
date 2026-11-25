@@ -85,8 +85,9 @@ describe('managed-hosting audit mail pause', () => {
     expect(browser.newContext).not.toHaveBeenCalled();
   });
 
-  it('makes every new audit email a Clerk test address', () => {
+  it('makes every new audit email a Clerk test address on a reserved domain', () => {
     expect(auditEmail('abc123xy', 'example.test')).toBe('firstrun-audit-abc123xy+clerk_test@example.test');
+    expect(() => auditEmail('abc123xy', 'hermesos.cloud')).toThrow(/reserved example domain/);
   });
 
   it('creates a passwordless Clerk test user after explicit opt-in, without touching sign-in tickets', async () => {

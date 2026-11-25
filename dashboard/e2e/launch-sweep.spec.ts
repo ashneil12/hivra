@@ -31,7 +31,7 @@ import { expect, test, type Browser, type BrowserContext, type Page } from '@pla
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
-import { assertNotProduction, auditEmail, newRunId } from './first-run-audit/config';
+import { assertNotProduction, auditEmail, AUDIT_EMAIL_DOMAIN, newRunId } from './first-run-audit/config';
 import { createAuditUser, deleteAuditUser } from './first-run-audit/clerk-admin';
 import { destroyAllHivraAgents, destroyAllInstances, listHivraAgents, listInstances } from './first-run-audit/instances';
 import { establishAuditSession } from './first-run-audit/session';
@@ -192,7 +192,7 @@ test.describe('launch sweep', () => {
 
   test('every tile Launch offers is covered by the sweep', async ({ browser }) => {
     const env = sweepEnv();
-    const email = auditEmail(`sweep-tiles-${env.runId}`, 'hermesos.cloud');
+    const email = auditEmail(`sweep-tiles-${env.runId}`, AUDIT_EMAIL_DOMAIN);
     const user = await createAuditUser(env.clerkSecretKey, email);
     let context: BrowserContext | null = null;
     try {
@@ -238,7 +238,7 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
   let stage: SweepFailure['stage'] = 'account';
 
   try {
-    const email = auditEmail(`sweep-${target.profileId}-${env.runId}`, 'hermesos.cloud');
+    const email = auditEmail(`sweep-${target.profileId}-${env.runId}`, AUDIT_EMAIL_DOMAIN);
     const user = await createAuditUser(env.clerkSecretKey, email);
     userId = user.id;
     await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, user.id);

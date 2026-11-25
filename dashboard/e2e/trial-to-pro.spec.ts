@@ -20,7 +20,7 @@
  */
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
-import { assertNotProduction, auditEmail, newRunId } from './first-run-audit/config';
+import { assertNotProduction, auditEmail, AUDIT_EMAIL_DOMAIN, newRunId } from './first-run-audit/config';
 import { createAuditUser } from './first-run-audit/clerk-admin';
 import { establishAuditSession } from './first-run-audit/session';
 import { proveChat } from './launch-sweep/chat';
@@ -138,7 +138,7 @@ async function checkoutFromPricing(page: Page, name: string, customer: TrialCust
 }
 
 async function newCustomer(browser: Browser, env: JourneyEnv, label: string, customers: TrialCustomer[]) {
-  const email = auditEmail(`trial-${label}-${env.runId}`, 'hermesos.cloud');
+  const email = auditEmail(`trial-${label}-${env.runId}`, AUDIT_EMAIL_DOMAIN);
   const user = await createAuditUser(env.clerkSecretKey, email);
   const customer: TrialCustomer = { userId: user.id };
   customers.push(customer);

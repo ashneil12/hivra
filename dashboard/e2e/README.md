@@ -3,8 +3,8 @@
 > **Live managed-hosting audits are blocked by default.** First-run, launch sweep,
 > remote-desktop and trial-to-Pro require the explicit isolated-runner opt-in
 > `HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp`. The approved path creates passwordless
-> `+clerk_test` users in the Canary Clerk development instance and signs in through
-> the normal email-code flow with Clerk's fixed test OTP. Clerk sign-in tickets are
+> `+clerk_test` users on reserved `example.com` addresses in the Canary Clerk
+> development instance and signs in through the normal email-code flow with Clerk's fixed test OTP. Clerk sign-in tickets are
 > hard-disabled because ticket redemption sent mail, including for a reused audit
 > account. Active cleanup follows the same opt-in; read-only inventory remains
 > available separately.

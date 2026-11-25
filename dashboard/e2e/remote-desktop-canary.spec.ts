@@ -16,6 +16,7 @@ import {
   assertNotProduction,
   auditAgentName,
   auditEmail,
+  AUDIT_EMAIL_DOMAIN,
   newRunId,
 } from "./first-run-audit/config";
 import {
@@ -190,7 +191,7 @@ test.describe("REMOTE DESKTOP AUDIT: disposable Hivra VM over the public WAN pat
     const env = environment();
     const runId = newRunId();
     activeRunId = runId;
-    const email = auditEmail(runId, "hermesos.cloud");
+    const email = auditEmail(runId, AUDIT_EMAIL_DOMAIN);
     const agentName = auditAgentName(runId);
     const startedAt = new Date().toISOString();
     let clerkUserId: string | null = null;

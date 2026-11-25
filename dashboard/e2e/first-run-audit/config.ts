@@ -56,12 +56,26 @@ export function assertCanaryClerkSecretKey(secretKey: string | null | undefined)
   }
 }
 
+/**
+ * Audit accounts must not use a real customer or company domain. Reserved
+ * example domains cannot receive mail and cannot confer domain-based trust if
+ * an application ever uses email domains as a signal.
+ */
+export const AUDIT_EMAIL_DOMAIN = 'example.com';
+const AUDIT_EMAIL_DOMAINS = new Set(['example.com', 'example.net', 'example.org', 'example.test']);
+
+export function assertAuditEmailDomain(domain: string): void {
+  if (!AUDIT_EMAIL_DOMAINS.has(domain.toLowerCase())) {
+    throw new Error(`[managed-hosting-audit] audit email domain must be a reserved example domain, not "${domain}".`);
+  }
+}
+
 export interface AuditConfig {
   /** Deployed target. NEVER point this at production. */
   baseUrl: string;
   /** Clerk **canary** Backend API key (sk_test_…). */
   clerkSecretKey: string;
-  /** Domain for the throwaway account, e.g. `hermesos.cloud`. */
+  /** Reserved non-deliverable domain for the throwaway account. */
   emailDomain: string;
   /** Where run-<id>.json verdicts are written. */
   outDir: string;
@@ -167,11 +181,13 @@ export function loadAuditConfig(): AuditConfig {
   }
 
   const requireAgentReply = envBool('FIRST_RUN_AUDIT_REQUIRE_AGENT_REPLY');
+  const emailDomain = process.env.FIRST_RUN_AUDIT_EMAIL_DOMAIN?.trim() || AUDIT_EMAIL_DOMAIN;
+  assertAuditEmailDomain(emailDomain);
 
   return {
     baseUrl,
     clerkSecretKey,
-    emailDomain: process.env.FIRST_RUN_AUDIT_EMAIL_DOMAIN?.trim() || 'hermesos.cloud',
+    emailDomain,
     outDir: process.env.FIRST_RUN_AUDIT_OUT_DIR?.trim() || 'e2e/.first-run-audit',
     readyTimeoutMs: envInt('FIRST_RUN_AUDIT_READY_TIMEOUT_MS', 15 * 60_000),
     workspaceTimeoutMs: envInt('FIRST_RUN_AUDIT_WORKSPACE_TIMEOUT_MS', 5 * 60_000),
@@ -223,6 +239,7 @@ export function newRunId(): string {
 }
 
 export function auditEmail(runId: string, domain: string): string {
+  assertAuditEmailDomain(domain);
   return `${AUDIT_EMAIL_PREFIX}${runId}${CLERK_TEST_EMAIL_TAG}@${domain}`;
 }
 
