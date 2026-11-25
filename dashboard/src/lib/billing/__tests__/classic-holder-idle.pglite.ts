@@ -293,6 +293,24 @@ it("returns a permanent ineligibility at both owner wake routes without host dis
   expect((await row()).lifecycle_substate).toBe("holder_napping");
 });
 
+it("refuses a hibernated wake while its admitted backing is on another host", async () => {
+  expect(await sweep()).toEqual({ napping: 1 });
+  await ageNap();
+  expect(await sweep()).toEqual({ hibernated: 1 });
+
+  await db.exec("update holder_admissions set assigned_host_id='replacement-host'");
+  const dispatched = transport.mock.calls.length;
+  const refused = await start();
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({ retryable: false, reason: "reservation_ineligible" });
+  expect(transport).toHaveBeenCalledTimes(dispatched);
+  expect((await row()).lifecycle_substate).toBe("holder_hibernated");
+
+  await db.exec("update holder_admissions set assigned_host_id='fixture'");
+  expect((await start()).status).toBe(200);
+  expect(vm).toMatchObject({ qmp: "running", volatileData: "in-memory-session" });
+});
+
 it("keeps a slow host operation fenced while another host proceeds", async () => {
   const secondId = "22345678-0123-4567-89ab-000000000057";
   const thirdId = "32345678-0123-4567-89ab-000000000057";

@@ -152,7 +152,20 @@ begin
         where a.user_id = r.user_id and a.state = 'admitted'
       )
     )
-    and not public.holder_seat_funding_valid(r.user_id,r.cpu_limit,r.ram_limit,null,r.id) then
+    -- Nap/save validation may span hosts because those transitions do not consume
+    -- unlaunched backing. A wake does consume it, so its admission host must match.
+    and (
+      not public.holder_seat_funding_valid(r.user_id,r.cpu_limit,r.ram_limit,null,r.id)
+      or (
+        r.action = 'wake'
+        and not exists(
+          select 1 from public.holder_admissions a
+          where a.user_id = r.user_id and a.state = 'admitted'
+            and public.holder_admission_normalize_host_id(a.assigned_host_id)
+              = public.holder_admission_normalize_host_id(r.proxmox_node)
+        )
+      )
+    ) then
     update public.hermes_instances set holder_idle_claimed_at=t where id=r.id;
     -- An ineligible seat must not end this tick before other seats are visited.
     if p_id is null then return jsonb_build_object('action','skipped'); end if;
