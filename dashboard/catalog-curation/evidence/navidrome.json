@@ -1,0 +1,159 @@
+{
+  "slug": "navidrome",
+  "checkedAt": "2026-11-21T04:11:24.892Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "navidrome/navidrome is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "navidrome/navidrome",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "deluan/navidrome:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "deluan/navidrome:latest",
+        "digest": "sha256:38dc2727bfcfd5ede290f8ada114fc90368146f265ae4701ddddbcbe2a44ee52",
+        "platforms": [
+          "linux/riscv64",
+          "unknown/unknown",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "linux/arm/v6",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown",
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/386",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /ping -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-navidrome-sbzw5t",
+        "hostPort": 3248,
+        "image": "deluan/navidrome:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-navidrome-sbzw5t",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3248:4533",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-navidrome-sbzw5t-data:/data",
+          "deluan/navidrome:latest"
+        ],
+        "runStdout": "d4dbe8c5c27d12bb43ecec6ed2e6399e08660f71b261c7f8d89715b4ff6e5d4e",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "54.65MiB / 7.652GiB",
+        "memBytes": 57304678
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "redirect chain exceeded 10 hops",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65191,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/app/"
+          },
+          {
+            "hop": 2,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 3,
+            "path": "/",
+            "status": 302,
+            "location": "/app/"
+          },
+          {
+            "hop": 4,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 5,
+            "path": "/",
+            "status": 302,
+            "location": "/app/"
+          },
+          {
+            "hop": 6,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 7,
+            "path": "/",
+            "status": 302,
+            "location": "/app/"
+          },
+          {
+            "hop": 8,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 9,
+            "path": "/",
+            "status": 302,
+            "location": "/app/"
+          }
+        ]
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 54.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 57304678,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "gateway: redirect chain exceeded 10 hops"
+  ]
+}

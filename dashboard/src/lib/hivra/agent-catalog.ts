@@ -7,8 +7,15 @@
 import { AGENT_SLOTS } from "@/lib/subscription/agent-slots";
 import { isNuphosAgentEnabled } from "./nuphos-flag";
 import { isOpenBotAgentEnabled } from "./openbot-flag";
+import {
+  catalogAppHostingDisclaimer,
+  catalogAppToAgentDef,
+  getCatalogAppManifest,
+  UNIVERSAL_CATALOG_MANIFESTS,
+  type UniversalCatalogAppId,
+} from "./catalog-manifests/index";
 
-export type AgentId = "hermes" | "claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero" | "openbot" | "nuphos" | "deepseek-harness" | "linux-desktop" | "linux-terminal";
+export type AgentId = "hermes" | "claude-code" | "codex" | "aeon" | "openclaw" | "agent-zero" | "openbot" | "nuphos" | "deepseek-harness" | "linux-desktop" | "linux-terminal" | UniversalCatalogAppId;
 export type PlanTier = "free" | "pro" | "power";
 
 export interface AgentDef {
@@ -39,10 +46,11 @@ export interface AgentDef {
   provisionKind?: "claude" | "linux-desktop";
   /**
    * Which CLI the box runs — selects the chat stream parser + login flow.
+   * "generic" = a catalog cli-web app whose box emits plain `_text` events.
    * Omitted for non-CLI agents (e.g. Aeon, which hosts a web dashboard and has
    * no chat surface).
    */
-  cliKind?: "claude" | "codex";
+  cliKind?: "claude" | "codex" | "generic";
   /**
    * What the per-box page renders. "chat" = the HivraChat CLI-agent surface
    * (default). "dashboard" = embed a web dashboard the box hosts (iframe), no
@@ -357,6 +365,7 @@ export const ALL_AGENTS: AgentDef[] = [
     managedVenice: true,
     llm: { wire: "openai", providers: ["venice"] },
   },
+  ...UNIVERSAL_CATALOG_MANIFESTS.map((manifest) => catalogAppToAgentDef(manifest)),
 ];
 
 // Launch catalog for the welcome/deploy picker. All available agents are
@@ -471,6 +480,10 @@ export function hostingDisclaimer(def?: AgentDef, deploymentMode: "hivra-managed
   }
   if (def.id === "agent-zero") {
     return `This hosts Agent Zero in a container on the agent's private virtual machine. Its dashboard is bound to localhost and reached through Hivra's authenticated gateway. Configure your own model provider in Agent Zero's Settings, or use a supported managed model option. ${credentialNotice} Hivra is an independent hosting service and isn't affiliated with or endorsed by the Agent Zero project.`;
+  }
+  const catalogManifest = getCatalogAppManifest(def.id);
+  if (catalogManifest) {
+    return catalogAppHostingDisclaimer(catalogManifest, deploymentMode);
   }
   const views = def.browser ? "chat, terminal, files, skills, and browser" : "chat, terminal, files, and skills";
   const authentication = def.id === "codex"

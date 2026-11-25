@@ -40,11 +40,18 @@ export interface MemoryDbError {
   message: string;
 }
 
-type FilterOp = "eq" | "neq" | "in" | "lt" | "lte" | "gt" | "gte" | "is";
+type FilterOp = "eq" | "neq" | "in" | "lt" | "lte" | "gt" | "gte" | "is" | "not" | "or";
 
 interface Filter {
   column: string;
   op: FilterOp;
+  value: unknown;
+}
+
+// One `col.op.value` term inside a PostgREST or(...) expression.
+interface OrTerm {
+  column: string;
+  op: Exclude<FilterOp, "not" | "or">;
   value: unknown;
 }
 
@@ -65,7 +72,11 @@ export interface MemoryDbCall {
 export interface InjectedFailure {
   table: string;
   op: MutationKind;
-  /** Only fail when the insert row / update patch matches. */
+  /**
+   * Only fail when the insert row / update patch matches. For `select` ops
+   * the payload is `{ filters }` — the query's filter list — so a test can
+   * fail one specific SELECT in a flow that issues several.
+   */
   match?: (payload: MemoryRow) => boolean;
   error?: MemoryDbError;
   /** How many matching operations fail before the rule is spent (default 1). */
@@ -148,6 +159,7 @@ const DEFAULT_TABLES = [
   "yearly_token_quotes",
   "yearly_token_subscriptions",
   "bankr_deposit_wallet_credentials",
+  "ops_cron_heartbeats",
 ];
 
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
@@ -197,7 +209,49 @@ function readColumn(row: MemoryRow, column: string): unknown {
   return typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
-function rowMatches(row: MemoryRow, filter: Filter) {
+// Parse a PostgREST or(...) body: comma-separated `column.op.value` terms,
+// commas inside parentheses (in.(...)) do not split. Enough of the grammar
+// for the filters the codebase actually sends.
+function parseOrExpression(expression: string): OrTerm[] {
+  const terms: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const char of expression) {
+    if (char === "(") depth += 1;
+    if (char === ")") depth -= 1;
+    if (char === "," && depth === 0) {
+      terms.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  if (current.trim()) terms.push(current);
+  return terms.map((term) => {
+    const firstDot = term.indexOf(".");
+    const secondDot = term.indexOf(".", firstDot + 1);
+    const column = term.slice(0, firstDot).trim();
+    const op = term.slice(firstDot + 1, secondDot).trim() as OrTerm["op"];
+    let raw = term.slice(secondDot + 1).trim();
+    if (raw.startsWith('"') && raw.endsWith('"')) raw = raw.slice(1, -1);
+    let value: unknown = raw === "null" ? null : raw;
+    if (op === "in" && raw.startsWith("(") && raw.endsWith(")")) {
+      value = raw
+        .slice(1, -1)
+        .split(",")
+        .map((entry) => entry.trim().replace(/^"|"$/g, ""));
+    }
+    return { column, op, value };
+  });
+}
+
+function rowMatches(row: MemoryRow, filter: Filter): boolean {
+  if (filter.op === "or") {
+    const alternatives = filter.value as OrTerm[];
+    return alternatives.some((term) =>
+      rowMatches(row, { column: term.column, op: term.op, value: term.value })
+    );
+  }
   const value = readColumn(row, filter.column);
   switch (filter.op) {
     case "eq":
@@ -216,6 +270,11 @@ function rowMatches(row: MemoryRow, filter: Filter) {
       return value != null && compareValues(value, filter.value) >= 0;
     case "is":
       return filter.value === null ? value == null : value === filter.value;
+    case "not": {
+      // .not(column, op, value) stores the inner predicate in value.
+      const inner = filter.value as { op: FilterOp; value: unknown };
+      return !rowMatches(row, { column: filter.column, op: inner.op, value: inner.value });
+    }
   }
 }
 
@@ -301,15 +360,18 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
     const filters: Filter[] = [];
     const orders: Order[] = [];
     let rowLimit: number | null = null;
+    let rowRange: { from: number; to: number } | null = null;
 
     const run = () => {
-      const failure = takeFailure(tableName, "select", {});
+      const failure = takeFailure(tableName, "select", { filters: [...filters] });
       if (failure) return { rows: null, error: failure };
       const selected = sortRows(
         readRows().filter((row) => filters.every((filter) => rowMatches(row, filter))),
         orders
       );
-      return { rows: (rowLimit === null ? selected : selected.slice(0, rowLimit)).map(clone), error: null };
+      const limited = rowLimit === null ? selected : selected.slice(0, rowLimit);
+      const ranged = rowRange === null ? limited : limited.slice(rowRange.from, rowRange.to + 1);
+      return { rows: ranged.map(clone), error: null };
     };
 
     const query: Record<string, unknown> = {};
@@ -319,6 +381,14 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
         return query;
       };
     }
+    query.not = (column: string, op: FilterOp, value: unknown) => {
+      filters.push({ column, op: "not", value: { op, value } });
+      return query;
+    };
+    query.or = (expression: string) => {
+      filters.push({ column: "", op: "or", value: parseOrExpression(expression) });
+      return query;
+    };
     query.select = () => query;
     query.order = (column: string, options?: { ascending?: boolean }) => {
       orders.push({ column, ascending: options?.ascending !== false });
@@ -326,6 +396,10 @@ export function createManagedVeniceMemoryDb(seed: Record<string, MemoryRow[]> = 
     };
     query.limit = (count: number) => {
       rowLimit = count;
+      return query;
+    };
+    query.range = (from: number, to: number) => {
+      rowRange = { from: Number(from), to: Number(to) };
       return query;
     };
     query.maybeSingle = async () => {

@@ -60,6 +60,7 @@ import {
 import { ensureWalletHasGas } from "./treasury-gas";
 import { USDC_BASE_TOKEN_ADDRESS, CRYPTO_TOPUP_ASSETS } from "./crypto-topups";
 import { getLogsInBlockChunks } from "./base-rpc-logs";
+import { RpcHttpError, baseRpcPayloadError } from "./base-rpc-retry";
 
 const USDC_DECIMALS = CRYPTO_TOPUP_ASSETS.usdc_base.tokenDecimals;
 const ERC20_BALANCE_OF_SELECTOR = "70a08231";
@@ -102,6 +103,7 @@ type JsonRpcFetch = (
     method: "POST";
     headers: { "Content-Type": "application/json" };
     body: string;
+    signal?: AbortSignal;
   }
 ) => Promise<{
   ok: boolean;
@@ -190,6 +192,12 @@ export interface CreditDepositSweepResult {
   txHash?: string | null;
   amountSweptDisplay?: string;
   error?: string;
+  /**
+   * The outcome cannot resolve itself from later chain evidence — an
+   * operator must look (wrong transfer mined, or no transfer inside the
+   * evidence window). in_doubt results WITHOUT this flag still self-heal.
+   */
+  needsOperator?: boolean;
 }
 
 interface SweepOptions {
@@ -197,6 +205,11 @@ interface SweepOptions {
   rpcUrl?: string;
   env?: Record<string, string | undefined>;
   fetchImpl?: JsonRpcFetch;
+  /**
+   * Per-request deadline covering the Base RPC call AND a non-OK response's
+   * error-body read. Defaults to RPC_REQUEST_TIMEOUT_MS (10 s).
+   */
+  rpcRequestTimeoutMs?: number;
 }
 
 interface SweepContext {
@@ -238,19 +251,92 @@ function addressTopic(address: string) {
   return `0x${normalizeEvmAddress(address).slice(2).padStart(64, "0")}`;
 }
 
-function createBaseRpc(rpcUrl: string, fetchImpl: JsonRpcFetch) {
+// One deadline covers the request AND reading a response body: a provider
+// that answers the headers and then stalls the body stream (e.g. a 503
+// whose error detail never arrives) must not hold the sweep. Same bound the
+// other Base RPC wrappers use.
+const RPC_REQUEST_TIMEOUT_MS = 10_000;
+
+// `fetch` aborts an in-flight body read itself, but a transport that
+// detaches the body from the request signal (or a test double) may not —
+// bound the read on the same deadline explicitly.
+function withRpcDeadline<T>(promise: Promise<T>, signal: AbortSignal, method: string, timeoutMs: number): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(new TypeError(`Base RPC ${method} timed out after ${timeoutMs} ms`));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () =>
+      reject(new TypeError(`Base RPC ${method} timed out after ${timeoutMs} ms`));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    );
+  });
+}
+
+// Best-effort read of the provider's JSON-RPC error on a non-OK response.
+// Base's public endpoint answers an oversized eth_getLogs range with HTTP
+// 413 AND a JSON-RPC body (-32614, "eth_getLogs is limited to a N range"):
+// throwing on the status alone drops the stated cap, so the range-adaptive
+// log scan (matchLogRangeCap) sees an unclassifiable failure instead of the
+// span it must re-tile at. The code rides along in the message too — an
+// unworded -32614 body still names itself. The read is bounded by the
+// request deadline: a stalled body falls back to the bare HTTP status so
+// the sweep still reports (and, for a retryable status, retries) promptly.
+async function readRpcErrorDetail(
+  response: { json: () => Promise<unknown> },
+  signal: AbortSignal,
+  method: string,
+  timeoutMs: number
+): Promise<string | undefined> {
+  try {
+    const payload = (await withRpcDeadline(response.json(), signal, method, timeoutMs)) as JsonRpcResponse | null;
+    const rpcError = payload?.error;
+    if (!rpcError) return undefined;
+    const message = typeof rpcError.message === "string" ? rpcError.message : "unknown RPC error";
+    const code = typeof rpcError.code === "number" && Number.isFinite(rpcError.code) ? rpcError.code : null;
+    return `${message}${code != null ? ` (code ${code})` : ""}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function createBaseRpc(rpcUrl: string, fetchImpl: JsonRpcFetch, requestTimeoutMs: number) {
   async function call(method: string, params: unknown[]): Promise<unknown> {
-    const response = await fetchImpl(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    });
-    if (!response.ok) {
-      throw new Error(`Base RPC ${method} failed with status ${response.status}`);
+    const signal = AbortSignal.timeout(requestTimeoutMs);
+    let response: Awaited<ReturnType<JsonRpcFetch>>;
+    try {
+      response = await fetchImpl(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal,
+      });
+    } catch (error) {
+      const name = (error as { name?: unknown } | null)?.name;
+      if (name === "TimeoutError" || name === "AbortError") {
+        // A network-level failure, like fetch's own TypeError: retryable on
+        // the next sweep run.
+        throw new TypeError(`Base RPC ${method} timed out after ${requestTimeoutMs} ms`);
+      }
+      throw error;
     }
-    const payload = (await response.json()) as JsonRpcResponse;
+    if (!response.ok) {
+      throw new RpcHttpError(
+        response.status,
+        await readRpcErrorDetail(response, signal, method, requestTimeoutMs)
+      );
+    }
+    const payload = (await withRpcDeadline(response.json(), signal, method, requestTimeoutMs)) as JsonRpcResponse;
     if (payload.error) {
-      throw new Error(payload.error.message || `Base RPC ${method} returned an error`);
+      throw baseRpcPayloadError(method, payload.error);
     }
     return payload.result;
   }
@@ -285,6 +371,7 @@ function createBaseRpc(rpcUrl: string, fetchImpl: JsonRpcFetch) {
         },
         fromBlock: params.fromBlock,
         toBlock: params.toBlock,
+        endpoint: rpcUrl,
       });
     },
   };
@@ -485,7 +572,8 @@ async function settleSubmittedSweep(
         await reportForReview(receipt, "credit_deposit_sweep_transfer_mismatch", `${error}.`, {
           sweepTxHash: txHash,
         });
-        return result("in_doubt", { txHash, error });
+        // A mined tx moved the wrong thing — no later evidence can fix it.
+        return result("in_doubt", { txHash, error, needsOperator: true });
       }
       minedAt = Number(parseQuantity(tx.blockNumber, "receipt block number"));
     } else {
@@ -513,6 +601,9 @@ async function settleSubmittedSweep(
             "sweep_status to 'failed' to retry it, or record the sweep tx hash if it was swept another way.",
           { claimBlock: String(receipt.sweep_claim_block) }
         );
+        // The evidence window is exhausted — only an operator can move this
+        // receipt now. Before the window this same in_doubt self-heals.
+        return result("in_doubt", { needsOperator: true });
       }
       return result("in_doubt");
     }
@@ -809,6 +900,8 @@ export async function sweepPendingCreditDepositReceipts(
   confirmed: number;
   awaitingConfirmation: number;
   inDoubt: number;
+  /** in_doubt results that need an operator — the rest self-heal from chain evidence. */
+  needsOperator: number;
   failed: number;
   skipped: number;
   noTreasury: number;
@@ -824,7 +917,11 @@ export async function sweepPendingCreditDepositReceipts(
     nowIso: now.toISOString(),
     env,
     rpcUrl,
-    rpc: createBaseRpc(rpcUrl, options.fetchImpl ?? ((input, init) => fetch(input, init))),
+    rpc: createBaseRpc(
+      rpcUrl,
+      options.fetchImpl ?? ((input, init) => fetch(input, init)),
+      options.rpcRequestTimeoutMs ?? RPC_REQUEST_TIMEOUT_MS
+    ),
   };
 
   const results: CreditDepositSweepResult[] = [];
@@ -849,6 +946,7 @@ export async function sweepPendingCreditDepositReceipts(
     confirmed: count("confirmed"),
     awaitingConfirmation: count("awaiting_confirmation"),
     inDoubt: count("in_doubt"),
+    needsOperator: results.filter((entry) => entry.needsOperator === true).length,
     failed: count("released", "no_credentials", "gas_topup_failed", "transfer_failed", "error"),
     skipped: count("held_for_review"),
     noTreasury: count("no_treasury_configured"),

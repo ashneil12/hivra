@@ -314,6 +314,10 @@
 
 .planCard > * + * { border-top: 1px solid var(--etched-border); }
 
+.modelAccessRow {
+  align-items: start;
+}
+
 .planLabel {
   color: var(--text-secondary);
   font: 600 0.8rem var(--font-sans);

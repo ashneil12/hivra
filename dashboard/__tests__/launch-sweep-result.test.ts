@@ -5,6 +5,8 @@ import path from "node:path";
 import { SweepFailure, SweepRecorder, readResults, sweepMarkdown, sweepVerdict, verdictCounts } from "../e2e/launch-sweep/result";
 import { SWEEP_CHAT_ANSWER, SWEEP_CHAT_PROMPT, SWEEP_TARGETS, selectedTargets } from "../e2e/launch-sweep/targets";
 import { PRIVATE_ONLY_QUESTION } from "../e2e/launch-sweep/private-only";
+import { softwareEvidenceFromResponse } from "../e2e/launch-sweep/software";
+import { UNIVERSAL_CATALOG_MANIFESTS } from "../src/lib/hivra/catalog-manifests/manifests/index";
 
 function recorder(profileId: string, tile: string, knownBroken?: string) {
   return new SweepRecorder({ runId: "r1", baseUrl: "https://canary.example", profileId, tile, kind: "agent", knownBroken });
@@ -79,12 +81,37 @@ describe("launch sweep results", () => {
   it("writes and reads results for one run", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "sweep-"));
     try {
-      const row = recorder("codex", "Codex");
+      const row = new SweepRecorder({
+        runId: "r1",
+        baseUrl: "https://canary.example",
+        profileId: "it-tools",
+        tile: "IT Tools",
+        kind: "agent",
+        checkoutSha: "d".repeat(40),
+        expectedCanarySha: "a".repeat(40),
+        expectedProvisionerVersion: "2026.01.01.1",
+        catalog: {
+          manifestSha256: "b".repeat(64),
+          runtimeKind: "docker-web",
+          hostPort: 3201,
+          healthPath: "/",
+          runtimeRefs: ["corentinth/it-tools:latest"],
+        },
+      });
       row.fail(new Error("boom\nstack"), "chat");
       row.write(dir);
       const read = readResults(dir, "r1");
       expect(read).toHaveLength(1);
       expect(read[0].failure).toEqual({ stage: "chat", category: "product", reason: "boom" });
+      expect(read[0].checkoutSha).toBe("d".repeat(40));
+      expect(read[0].expectedCanarySha).toBe("a".repeat(40));
+      expect(read[0].expectedProvisionerVersion).toBe("2026.01.01.1");
+      expect(read[0].catalog).toMatchObject({
+        manifestSha256: "b".repeat(64),
+        runtimeKind: "docker-web",
+        hostPort: 3201,
+        runtimeRefs: ["corentinth/it-tools:latest"],
+      });
       expect(readResults(dir, "other")).toHaveLength(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -105,6 +132,38 @@ describe("launch sweep targets", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(selectedTargets("agent-zero, OpenClaw").map(target => target.profileId)).toEqual(["openclaw", "agent-zero"]);
     expect(selectedTargets("")).toHaveLength(SWEEP_TARGETS.length);
+  });
+
+  it("reduces the owner software API response to compact sweep evidence", () => {
+    expect(softwareEvidenceFromResponse({ supported: false })).toEqual({ supported: false });
+    expect(softwareEvidenceFromResponse({
+      supported: true,
+      app: "it-tools",
+      cli: null,
+      observedAt: "2026-01-01T00:00:00Z",
+      view: { kind: "current", installed: "sha256:" + "c".repeat(64) },
+    })).toEqual({
+      supported: true,
+      name: "it-tools",
+      state: "current",
+      installed: "sha256:" + "c".repeat(64),
+      observedAt: "2026-01-01T00:00:00Z",
+    });
+  });
+
+  it("attaches reproducible manifest evidence to every universal-catalog target", () => {
+    const catalogTargets = SWEEP_TARGETS.filter((target) => target.catalog);
+    expect(catalogTargets).toHaveLength(UNIVERSAL_CATALOG_MANIFESTS.length);
+    expect(catalogTargets.map((target) => target.profileId)).toContain("it-tools");
+    for (const target of catalogTargets) {
+      expect(target.catalog!.manifestSha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(target.catalog!.runtimeRefs.length).toBeGreaterThan(0);
+      if (target.proof === "app-open" || target.proof === "agent-ui-chat") {
+        expect(target.catalog!.hostPort).not.toBeNull();
+        expect(target.catalog!.healthPath).toMatch(/^\//);
+      }
+    }
+    expect(SWEEP_TARGETS.find((target) => target.profileId === "claude-code")!.catalog).toBeUndefined();
   });
 
   it("lists idle use per agent, lightest first, and names agents it couldn't read", () => {

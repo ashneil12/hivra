@@ -273,6 +273,16 @@ function launchButton() {
   return screen.getByRole("button", { name: /^(Launch |Start Windows setup)/ });
 }
 
+async function submitAndWaitForReceiptDeadline() {
+  jest.useFakeTimers();
+  try {
+    fireEvent.click(launchButton());
+    await act(async () => { await jest.advanceTimersByTimeAsync(195_000); });
+  } finally {
+    jest.useRealTimers();
+  }
+}
+
 function expectCurrentStep(label: "Choose" | "Review") {
   const steps = screen.getByRole("list", { name: "Launch steps" });
   expect(within(steps).getAllByRole("listitem")).toHaveLength(2);
@@ -513,7 +523,9 @@ describe("LaunchPage", () => {
     // page's tabs and the note Hivra gives the agent (ATT-15).
     expect(within(review).getByText("You can see its work in").nextElementSibling).toHaveTextContent(
       "Chat, Codex session, Terminal, Files, Browser (view-only) and Git");
-    expect(within(review).getByText(/^Hivra credits.* · DeepSeek V4\.1 Flash \(via Venice · recommended\)$/)).toBeInTheDocument();
+    const model = within(review).getByRole("combobox", { name: "Model" });
+    expect(model).toHaveValue("deepseek-v4-1-flash");
+    expect(model).toHaveAccessibleDescription("Recommended Private");
     expect(within(review).getByText(/^No extra charge. Uses your Operator plan allowance. Model usage is paid from your Hivra credits/)).toBeInTheDocument();
     expect(within(screen.getByRole("group", { name: "Launch settings" })).queryByText(/Proxmox|KVM|launch request|virtual machine/i)).not.toBeInTheDocument();
     expect(within(screen.getByLabelText("Launch review")).queryByText(/Proxmox|KVM|launch request/i)).not.toBeInTheDocument();
@@ -658,9 +670,7 @@ describe("LaunchPage", () => {
     chooseTile("Codex");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
     closeChanges();
-    const receiptClock = jest.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(30_001);
-    fireEvent.click(launchButton());
-    receiptClock.mockRestore();
+    await submitAndWaitForReceiptDeadline();
 
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toHaveFocus();
     expectCurrentStep("Review");
@@ -1695,9 +1705,7 @@ describe("LaunchPage", () => {
       chooseTile("Codex");
       await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
       closeChanges();
-      const receiptClock = jest.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(195_001);
-      fireEvent.click(launchButton());
-      receiptClock.mockRestore();
+      await submitAndWaitForReceiptDeadline();
 
       expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
       expect(createAgentMock).toHaveBeenCalledTimes(1);
@@ -1738,10 +1746,10 @@ describe("LaunchPage", () => {
     expect(storedDraftJson().launchRequestId).not.toBe(failedRequestId);
   });
 
-  it("returns an ordinary correctable 4xx to review without terminalizing the receipt", async () => {
+  it.each([409, 429])("returns a fresh correctable %i to review without terminalizing the receipt", async status => {
     createAgentMock.mockRejectedValue(new HivraLaunchCorrectableError(
       "Refresh the selected capacity and review this launch.",
-      409,
+      status,
       "target_revision_changed",
     ));
     render(<LaunchPage />);
@@ -1781,9 +1789,7 @@ describe("LaunchPage", () => {
     await waitFor(() => expect(ownInfrastructure).toBeEnabled());
     fireEvent.click(ownInfrastructure);
     closeChanges();
-    const receiptClock = jest.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(30_001);
-    fireEvent.click(launchButton());
-    receiptClock.mockRestore();
+    await submitAndWaitForReceiptDeadline();
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
     const firstInput = createAgentMock.mock.calls[0][0];
     first.unmount();
@@ -1869,6 +1875,21 @@ describe("LaunchPage", () => {
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
     expect(screen.queryByText(/Continue your/)).not.toBeInTheDocument();
+  });
+
+  it("accepts the saved receipt when resuming an uncertain launch hits a rate limit", async () => {
+    const draft = { ...createLaunchDraft(), stage: "launch", resourceKind: "agent", profileId: "codex", name: "Codex 1",
+      launchState: "uncertain", submittedDeployment: { mode: "hivra-managed" } };
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    createAgentMock.mockRejectedValue(new HivraLaunchCorrectableError("Too many requests", 429));
+    findHivraLaunchReceiptMock.mockResolvedValueOnce(null).mockResolvedValue({
+      state: "accepted", phase: "accepted", agent: { id: "55555555-5555-4555-8555-555555555555", name: "Codex 1", status: "provisioning" },
+    });
+    render(<LaunchPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resume same launch" }));
+    expect(await screen.findByRole("link", { name: /^Open .+ now$/ }, { timeout: 3000 })).toBeInTheDocument();
+    expect(createAgentMock).toHaveBeenCalledTimes(1);
+    expect(createAgentMock.mock.calls[0][0].launchRequestId).toBe(draft.launchRequestId);
   });
 
   it("never sets an unconfirmed launch aside for a new launch link", async () => {

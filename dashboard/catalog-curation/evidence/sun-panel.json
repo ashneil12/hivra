@@ -1,0 +1,113 @@
+{
+  "slug": "sun-panel",
+  "checkedAt": "2026-11-22T15:32:52.437Z",
+  "gitSha": "ae8dbbd512dabfdf73fd6b119655f93f4aebd567",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "hslr-s/sun-panel is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "hslr-s/sun-panel",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "hslr/sun-panel:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "hslr/sun-panel:latest",
+        "digest": "sha256:dc8fea427bf5ee825b81ebbc5bd6f39e61123ecbf8173601a57b1ec00637c444",
+        "platforms": [
+          "linux/arm/v7",
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-sun-panel-up0z1y",
+        "hostPort": 3288,
+        "image": "hslr/sun-panel:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-sun-panel-up0z1y",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3288:3002",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-sun-panel-up0z1y-conf:/app/conf",
+          "hslr/sun-panel:latest"
+        ],
+        "runStdout": "b06a002ce63e11a3f2ebf19ad3af4b39a9dafe48b517ed70549757e0d89d9e27",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "19.17MiB / 7.652GiB",
+        "memBytes": 20101202
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 61499,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html>\n<head>\n\t<meta charset=\"UTF-8\">\n\t<link rel=\"icon\" href=\"/favicon.ico\">\n\t<meta content=\"yes\" name=\"apple-mobile-web-app-capable\"/>\n\t<meta name=\"referrer\" content=\"never\">\n\t<link rel=\"apple-touch-icon\" href=\"/favicon.ico\">\n\t<link rel=\"stylesheet\"  href=\"/custom/index.css\">\n\t<meta name=\"viewport\"\n\t\tcontent=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 200,
+          "bodyHead": "<!DOCTYPE html>\n<html>\n<head>\n\t<meta charset=\"UTF-8\">\n\t<link rel=\"icon\" href=\"/favicon.ico\">\n\t<meta content=\"yes\" name=\"apple-mobile-web-app-capable\"/>\n\t<meta name=\"referrer\" content=\"never\">\n\t<link rel=\"apple-touch-icon\" href=\"/favicon.ico\">\n\t<link rel=\"stylesheet\"  href=\"/custom/index.css\">\n\t<meta"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 19.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 20101202,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

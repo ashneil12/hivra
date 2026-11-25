@@ -66,7 +66,9 @@ import {
   requestHivraAgentDelete,
 } from "@/lib/hivra/agent-operation-store";
 import {
+  hivraPrivateAccessAuthority,
   prepareHivraTailscaleForDelete,
+  sameHivraPrivateAccessAuthority,
   type HivraPrivateAccessAgentRow,
 } from "@/lib/hivra/tailscale-private-access";
 import {
@@ -985,14 +987,32 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
         });
         return { ...base, action: "skipped", reason: "owner-bound teardown context unavailable" };
       }
-      const privateAccessCleanup = await prepareHivraTailscaleForDelete({
+      const privateAccessAgent = {
         ...row,
         type: row.type ?? "",
-        computer_profile: row.computer_profile,
         desired_state: row.desired_state ?? "",
-      } as HivraPrivateAccessAgentRow, teardownContext);
-      if (!privateAccessCleanup.ok) {
-        return { ...base, action: "skipped", reason: "private-access logout could not be verified" };
+      } as HivraPrivateAccessAgentRow;
+      let needsGuestLogout = true;
+      if (prepared) {
+        // Once a prepared binding is released, guest logout can no longer
+        // prove ownership. As with interactive Delete, only try it for a
+        // recorded connection that belongs to this exact claim.
+        const { data: connection, error } = await supabaseAdmin!
+          .from("hivra_private_access_connections")
+          .select("authority")
+          .eq("agent_id", row.id)
+          .eq("user_id", row.user_id)
+          .maybeSingle();
+        if (error) return { ...base, action: "skipped", reason: "private-access authority could not be checked" };
+        needsGuestLogout = Boolean(connection && sameHivraPrivateAccessAuthority(
+          connection.authority, hivraPrivateAccessAuthority(privateAccessAgent),
+        ));
+      }
+      if (needsGuestLogout) {
+        const privateAccessCleanup = await prepareHivraTailscaleForDelete(privateAccessAgent, teardownContext);
+        if (!privateAccessCleanup.ok) {
+          return { ...base, action: "skipped", reason: "private-access logout could not be verified" };
+        }
       }
       const cleanup = prepared
         ? await releasePreparedComputerClaim(row, prepared)

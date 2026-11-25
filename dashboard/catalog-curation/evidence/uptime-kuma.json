@@ -1,0 +1,119 @@
+{
+  "slug": "uptime-kuma",
+  "checkedAt": "2026-11-21T14:50:53.143Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "louislam/uptime-kuma is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "louislam/uptime-kuma",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "louislam/uptime-kuma:2 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "louislam/uptime-kuma:2",
+        "digest": "sha256:8e4b6bef96417ec98a35dc103c99cc64fc229a01e584e56d95d9004d2003c02a",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 16.6s",
+      "evidence": {
+        "container": "hivra-verify-uptime-kuma-ft0b4z",
+        "hostPort": 3207,
+        "image": "louislam/uptime-kuma:2",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-uptime-kuma-ft0b4z",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3207:3001",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-uptime-kuma-ft0b4z-data:/app/data",
+          "louislam/uptime-kuma:2"
+        ],
+        "runStdout": "7f6ae3f56afb314e0b374ed3dbb9895f2133e84bcde08e780181462e2f84db2a",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 16.6,
+          "attempts": 9
+        },
+        "memUsage": "200.8MiB / 7.652GiB",
+        "memBytes": 210554061
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /setup-database",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 54567,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/setup-database"
+          },
+          {
+            "hop": 2,
+            "path": "/setup-database",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/setup-database",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\" />\n    <link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple-touch-icon.png\">\n    <link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />\n    <link rel=\"manifest\" href=\"/manifest.json\" />\n    <meta name=\"theme-color\" id=\"theme-colo",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot POST /login</pre>\n</body>\n</html>\n"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 200.8MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 210554061,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

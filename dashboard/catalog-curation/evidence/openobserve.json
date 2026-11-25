@@ -1,0 +1,115 @@
+{
+  "slug": "openobserve",
+  "checkedAt": "2026-11-21T14:30:15.827Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "openobserve/openobserve is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "openobserve/openobserve",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "openobserve/openobserve:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "openobserve/openobserve:latest",
+        "digest": "sha256:4a154849432f75c4fb024de32fe34163c02406c905dab22bf8d213d2e3386392",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /healthz -> 200 in 42.8s",
+      "evidence": {
+        "container": "hivra-verify-openobserve-820wwh",
+        "hostPort": 3267,
+        "image": "openobserve/openobserve:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-openobserve-820wwh",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3267:5080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-openobserve-820wwh-data:/data",
+          "openobserve/openobserve:latest"
+        ],
+        "runStdout": "e7561afab9b4844e93dff0301c04b9eef5a1572519ebc17a0dee889000ea70d5",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 42.8,
+          "attempts": 21
+        },
+        "memUsage": "158.7MiB / 7.652GiB",
+        "memBytes": 166409011
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 308 / -> 200 /web/",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 50527,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 308,
+            "location": "/web/"
+          },
+          {
+            "hop": 2,
+            "path": "/web/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/web/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <script>self[\"MonacoEnvironment\"] = (function (paths) {\n          return {\n            globalAPI: false,\n            getWorkerUrl : function (moduleId, label) {\n              var result =  paths[label];\n              if (/^((http:)|(https:)|(file:)|(\\/\\/))/.test(result)) {\n                var currentUrl = String(window.location);\n                var cu",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 401,
+          "bodyHead": "{\"code\":401,\"message\":\"Unauthorized Access\"}"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 158.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 166409011,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

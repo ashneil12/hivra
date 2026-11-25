@@ -7,6 +7,7 @@
  */
 
 import { getAgent, resizeFloor, type AgentId, type PlanTier } from "@/lib/hivra/agent-catalog";
+import { getCatalogAppManifest } from "@/lib/hivra/catalog-manifests";
 import type { PlanInfo } from "@/lib/hivra/agent-api";
 import { targetSupportsCatalogRuntime } from "@/lib/hivra/agent-placement";
 import { providerComputerResourceFloor } from "@/lib/hivra/provider-computer-resource-floor";
@@ -334,6 +335,19 @@ export function sizePresets(profileId: LaunchProfileId, { browser = false }: { b
     // Small is Nuphos's minimum; Medium is the size Hivra recommends.
     return presets(pinned(1, 3), pinned(2, 4), pinned(4, 8));
   }
+  const catalogManifest = getCatalogAppManifest(profileId);
+  if (catalogManifest) {
+    const small = pinned(catalogManifest.floor.cpu, catalogManifest.floor.ram);
+    const medium = pinned(
+      Math.max(catalogManifest.recommended.cpu, small.cpu),
+      Math.max(catalogManifest.recommended.ram, small.ram),
+    );
+    const large = pinned(
+      Math.min(8, Math.max(4, medium.cpu * 2)),
+      Math.min(16, Math.max(8, medium.ram * 2)),
+    );
+    return presets(small, medium, large);
+  }
   if (profileId === "hermes") {
     return presets(pinned(0.5, 1), pinned(2, 4), pinned(4, 8));
   }
@@ -559,6 +573,8 @@ export function capabilitySummary(profileId: LaunchProfileId, { browser }: { bro
   if (profileId === "agent-zero") return "Agent Zero's dashboard with its own browser, a terminal and files on its own computer.";
   if (profileId === "openbot") return "OpenBot's own workspace, with AI coworkers that have their own browser and files, on its own computer.";
   if (profileId === "nuphos") return "Nuphos's own console, with Claude Code you chat with from the Nuphos app, on its own computer.";
+  const catalogManifest = getCatalogAppManifest(profileId);
+  if (catalogManifest) return catalogManifest.capabilityLine;
   if (profileId === "aeon") return "Aeon's dashboard on its own computer. Its tasks run on your GitHub Actions after you connect GitHub.";
   if (profileId === "deepseek-harness") return "DeepSeek's own interface on its own computer.";
   if (profileId === "ubuntu-desktop") return "A desktop, terminal and files on this computer.";
@@ -572,12 +588,15 @@ export function costSummary({
   profileId,
   substrate,
   planName,
+  cloudPlanAccess,
   modelNote = null,
   planOnHold = null,
 }: {
   profileId: LaunchProfileId;
   substrate: LaunchSubstrate;
   planName: string | null;
+  /** Whether a verified Hivra Cloud plan can cover this launch. */
+  cloudPlanAccess: "paid" | "free" | "unknown";
   /** How model usage is paid, when it isn't set up inside the agent. */
   modelNote?: string | null;
   /** A paid plan holds the account but is on hold until it is settled. */
@@ -587,6 +606,12 @@ export function costSummary({
   if (profileId === "omarchy") return "Nothing is bought. It uses a computer Hivra already set up.";
   if (substrate === "hivra-cloud" && planOnHold) {
     return withModel(`Uses your ${planOnHold} plan allowance once the plan is active again.`);
+  }
+  if (substrate === "hivra-cloud" && cloudPlanAccess === "free") {
+    return withModel("Requires a paid plan to launch on Hivra Cloud.");
+  }
+  if (substrate === "hivra-cloud" && cloudPlanAccess === "unknown") {
+    return withModel("Checking your Hivra Cloud plan before launch.");
   }
   if (substrate === "hivra-cloud" && profileId === "aeon") {
     return withModel(`No extra charge. Uses one agent slot on your ${planName ?? "Hivra Cloud"} plan, not its CPU and memory.`);

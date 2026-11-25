@@ -36,6 +36,11 @@ import {
   normalizeWebUIProfileName,
 } from "../src/lib/webui/profiles";
 import { redactSensitiveCommandOutput } from "../src/lib/command-output-redaction";
+import {
+  buildProfileRuntimeValidationScript,
+  buildProfileSeedScript,
+  shQuote,
+} from "../src/lib/webui/migration-scripts";
 
 dotenv.config({ path: path.join(__dirname, "../.env.local"), quiet: true });
 
@@ -84,7 +89,6 @@ type Args = {
   publicUrl?: string;
 };
 
-const WEBUI_HERMES_HOME = "/home/hermes/.hermes";
 const WEBUI_TIMEOUT_MS = 10 * 60_000;
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -181,17 +185,6 @@ function getCustomBaseUrl(instance: InstanceRow): string | undefined {
   const settings = getAgentSettings(instance.config);
   const baseUrl = settings.customLlmBaseUrl;
   return typeof baseUrl === "string" && baseUrl.trim() ? baseUrl.trim() : undefined;
-}
-
-function profileHome(profileName?: string | null): string {
-  const normalized = normalizeWebUIProfileName(profileName);
-  return normalized === "default"
-    ? WEBUI_HERMES_HOME
-    : `${WEBUI_HERMES_HOME}/profiles/${normalized.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
-}
-
-function b64(value: string): string {
-  return Buffer.from(value, "utf8").toString("base64");
 }
 
 function formatRemoteError(result: { stderr?: string; error?: string }): string {
@@ -324,8 +317,8 @@ function buildWebUIParams(input: {
 function buildBackupPrefix(instanceId: string, backupDir: string): string {
   return [
     `set -euo pipefail`,
-    `INSTANCE_DIR=${JSON.stringify(`/opt/hermes/instances/${instanceId}`)}`,
-    `BACKUP_DIR=${JSON.stringify(backupDir)}`,
+    `INSTANCE_DIR=${shQuote(`/opt/hermes/instances/${instanceId}`)}`,
+    `BACKUP_DIR=${shQuote(backupDir)}`,
     `mkdir -p "$(dirname "$BACKUP_DIR")"`,
     `if [ -d "$INSTANCE_DIR" ] && [ ! -d "$BACKUP_DIR" ]; then`,
     `  cp -a "$INSTANCE_DIR" "$BACKUP_DIR"`,
@@ -339,9 +332,9 @@ function buildRollbackScript(instanceId: string, backupDir: string): string {
   const failedDir = `${backupDir}.webui-failed`;
   return [
     `set -euo pipefail`,
-    `INSTANCE_DIR=${JSON.stringify(instanceDir)}`,
-    `BACKUP_DIR=${JSON.stringify(backupDir)}`,
-    `FAILED_DIR=${JSON.stringify(failedDir)}`,
+    `INSTANCE_DIR=${shQuote(instanceDir)}`,
+    `BACKUP_DIR=${shQuote(backupDir)}`,
+    `FAILED_DIR=${shQuote(failedDir)}`,
     `test -d "$BACKUP_DIR"`,
     `rm -rf "$FAILED_DIR"`,
     `if [ -d "$INSTANCE_DIR" ]; then mv "$INSTANCE_DIR" "$FAILED_DIR"; fi`,
@@ -373,98 +366,6 @@ async function getSupportedWebUIProviderIds(client: WebUIClient): Promise<Set<st
       .map(webUIProviderId)
       .filter((providerId): providerId is string => Boolean(providerId))
   );
-}
-
-function buildProfileSeedScript(input: {
-  instanceId: string;
-  profileName: string;
-  configYaml: string;
-  envFile: string;
-  authStoreFile?: string;
-  systemPrompt?: string | null;
-}): string {
-  const soulB64 = input.systemPrompt?.trim() ? b64(input.systemPrompt) : "";
-  const authStoreB64 = input.authStoreFile ? b64(input.authStoreFile) : "";
-  return [
-    `set -euo pipefail`,
-    `CONTAINER_NAME=${JSON.stringify(`agent-${input.instanceId}`)}`,
-    `PROFILE_HOME=${JSON.stringify(profileHome(input.profileName))}`,
-    `CONFIG_B64=${JSON.stringify(b64(input.configYaml))}`,
-    `ENV_B64=${JSON.stringify(b64(input.envFile))}`,
-    `AUTH_B64=${JSON.stringify(authStoreB64)}`,
-    `SOUL_B64=${JSON.stringify(soulB64)}`,
-    `docker exec -u root -i -e PROFILE_HOME="$PROFILE_HOME" -e CONFIG_B64="$CONFIG_B64" -e ENV_B64="$ENV_B64" -e AUTH_B64="$AUTH_B64" -e SOUL_B64="$SOUL_B64" "$CONTAINER_NAME" sh -s <<'SH'`,
-    `set -e`,
-    `mkdir -p "$PROFILE_HOME"`,
-    `printf "%s" "$CONFIG_B64" | base64 -d > "$PROFILE_HOME/config.yaml"`,
-    `printf "%s" "$ENV_B64" | base64 -d > "$PROFILE_HOME/.env"`,
-    `chmod 600 "$PROFILE_HOME/.env"`,
-    `if [ -n "$AUTH_B64" ]; then`,
-    `  printf "%s" "$AUTH_B64" | base64 -d > "$PROFILE_HOME/auth.json"`,
-    `  touch "$PROFILE_HOME/auth.lock"`,
-    `  chmod 600 "$PROFILE_HOME/auth.json" "$PROFILE_HOME/auth.lock"`,
-    `fi`,
-    `if [ -n "$SOUL_B64" ]; then`,
-    `  printf "%s" "$SOUL_B64" | base64 -d > "$PROFILE_HOME/SOUL.md"`,
-    `fi`,
-    `chown -R 1024:1024 "$PROFILE_HOME" 2>/dev/null || true`,
-    `SH`,
-  ].join("\n");
-}
-
-function buildProfileRuntimeValidationScript(input: {
-  instanceId: string;
-  profileName: string;
-  inferenceProvider: string;
-  baseUrl?: string;
-  requiredKeyEnvVar?: string;
-}): string {
-  return [
-    `set -euo pipefail`,
-    `CONTAINER_NAME=${JSON.stringify(`agent-${input.instanceId}`)}`,
-    `PROFILE_HOME=${JSON.stringify(profileHome(input.profileName))}`,
-    `EXPECTED_PROVIDER=${JSON.stringify(input.inferenceProvider)}`,
-    `EXPECTED_BASE_URL=${JSON.stringify(input.baseUrl ?? "")}`,
-    `REQUIRED_KEY_ENV_VAR=${JSON.stringify(input.requiredKeyEnvVar ?? "")}`,
-    `docker exec -u root -i -e PROFILE_HOME="$PROFILE_HOME" -e EXPECTED_PROVIDER="$EXPECTED_PROVIDER" -e EXPECTED_BASE_URL="$EXPECTED_BASE_URL" -e REQUIRED_KEY_ENV_VAR="$REQUIRED_KEY_ENV_VAR" "$CONTAINER_NAME" python3 - <<'PY'`,
-    `import os`,
-    `from pathlib import Path`,
-    ``,
-    `profile_home = Path(os.environ["PROFILE_HOME"])`,
-    `expected_provider = os.environ["EXPECTED_PROVIDER"]`,
-    `expected_base_url = os.environ["EXPECTED_BASE_URL"]`,
-    `required_key_env_var = os.environ["REQUIRED_KEY_ENV_VAR"]`,
-    `config_path = profile_home / "config.yaml"`,
-    `env_path = profile_home / ".env"`,
-    `errors = []`,
-    ``,
-    `config = config_path.read_text() if config_path.exists() else ""`,
-    `env = {}`,
-    `if env_path.exists():`,
-    `    for line in env_path.read_text().splitlines():`,
-    `        if "=" in line and not line.lstrip().startswith("#"):`,
-    `            key, value = line.split("=", 1)`,
-    `            env[key] = value`,
-    `else:`,
-    `    errors.append(f"missing {env_path}")`,
-    ``,
-    `provider_markers = (f'provider: "{expected_provider}"', f"provider: {expected_provider}")`,
-    `if not config or not any(marker in config for marker in provider_markers):`,
-    `    errors.append(f"config.yaml does not select provider {expected_provider}")`,
-    `if expected_base_url:`,
-    `    base_url_markers = (f'base_url: "{expected_base_url}"', f"base_url: {expected_base_url}")`,
-    `    if not any(marker in config for marker in base_url_markers):`,
-    `        errors.append("config.yaml does not include the expected provider base URL")`,
-    `if env.get("HERMES_INFERENCE_PROVIDER") != expected_provider:`,
-    `    errors.append("runtime env does not match the expected provider")`,
-    `if required_key_env_var and not env.get(required_key_env_var):`,
-    `    errors.append(f"runtime env is missing a non-empty {required_key_env_var}")`,
-    ``,
-    `if errors:`,
-    `    raise SystemExit("; ".join(errors))`,
-    `print("runtime_config_validated")`,
-    `PY`,
-  ].join("\n");
 }
 
 async function waitForWebUI(client: WebUIClient): Promise<void> {

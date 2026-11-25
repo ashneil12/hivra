@@ -5,6 +5,113 @@
   gap: 0.7rem;
 }
 
+.connections {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.connection {
+  min-width: 0;
+}
+
+.connectionButton {
+  width: 100%;
+  min-height: 60px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: clamp(0.45rem, 1.5cqi, 0.75rem);
+  border: 1px solid var(--etched-border);
+  border-radius: var(--hg-radius-sm);
+  padding: 0.55rem clamp(0.5rem, 1.5cqi, 0.75rem);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.connectionButton:not(:disabled):hover {
+  background: var(--hg-fill-2);
+}
+
+.connectionButton[aria-pressed="true"] {
+  border-color: var(--launch-accent, var(--hg-fg));
+  background: var(--hg-fill-2);
+}
+
+.connectionButton:disabled {
+  cursor: not-allowed;
+  color: var(--text-secondary);
+}
+
+.connectionIcon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  aspect-ratio: 1;
+  border-radius: var(--hg-radius-sm);
+  background: var(--hg-fill-2);
+}
+
+.connectionCopy {
+  display: grid;
+  gap: 0.16rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.connectionHeading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.5rem;
+}
+
+.connectionHeading strong {
+  font-size: 0.875rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.connectionCopy small {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.badge,
+.field .badge {
+  border: 1px solid var(--etched-border);
+  border-radius: 999px;
+  padding: 0.08rem 0.4rem;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.selection {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 17px;
+  aspect-ratio: 1;
+  border: 2px solid var(--text-secondary);
+  border-radius: 50%;
+}
+
+.connectionButton[aria-pressed="true"] .selection {
+  border-color: var(--hg-fg);
+  background: var(--hg-fg);
+  color: var(--hg-on-accent);
+}
+
+.connectionButton:disabled[aria-pressed="false"] .selection {
+  visibility: hidden;
+}
+
 .options {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
@@ -86,7 +193,7 @@
 }
 
 .field > label:not(.checkbox),
-.advanced label {
+.modelHeading label {
   color: var(--text-secondary);
   font: 600 0.8rem var(--font-sans);
   letter-spacing: 0;
@@ -95,8 +202,7 @@
 
 .field input:not([type="checkbox"]),
 .field select,
-.field textarea,
-.advanced input {
+.field textarea {
   width: 100%;
   min-width: 0;
   max-width: 28rem;
@@ -109,8 +215,20 @@
   border-radius: var(--hg-radius-sm);
 }
 
+.modelHeading,
+.modelBadges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.5rem;
+}
+
+.field select.modelSelect {
+  max-width: none;
+  font-family: var(--font-sans);
+}
+
 .field small,
-.advanced small,
 .note {
   color: var(--text-secondary);
   font-size: 0.78rem;
@@ -169,8 +287,6 @@
 .consent small { color: var(--text-secondary); font-size: 0.78rem; line-height: 1.45; }
 .checkbox span { color: var(--text-secondary); font-size: 0.8rem; line-height: 1.45; }
 
-.advanced { display: grid; gap: 0.35rem; }
-
 .advanced summary {
   min-height: 44px;
   display: flex;
@@ -189,6 +305,7 @@
   line-height: 1.45;
 }
 
+.connectionButton:focus-visible,
 .option > button:focus-visible,
 .inlineAction:focus-visible,
 .keySource button:focus-visible,
@@ -196,7 +313,6 @@
 .field input:not([type="checkbox"]):focus-visible,
 .field select:focus-visible,
 .field textarea:focus-visible,
-.advanced input:focus-visible,
 .consent input:focus-visible,
 .checkbox input:focus-visible {
   outline: 2px solid var(--launch-accent, var(--hg-fg));
@@ -208,7 +324,7 @@
   line-height: 1.45;
   resize: vertical;
 }
-.question { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--hg-text, inherit); }
+.question { margin: 0; font-size: 0.9rem; font-weight: 600; color: var(--hg-text, inherit); }
 
 .note a,
 .field small a {

@@ -1,7 +1,8 @@
 /**
  * first-run-audit-cleanup — reap orphaned audit accounts and their instances.
  *
- * Active cleanup is paused because ticket sign-in can send mail. Only --dry-run is available.
+ * Active cleanup uses the same explicit Clerk test-OTP live-audit opt-in as the
+ * audits themselves. `--dry-run` remains read-only and does not need that opt-in.
  *
  * A crashed audit run, a killed CI job, or a Playwright timeout can leave a
  * synthetic account owning a REAL, BILLING Proxmox VM. That is exactly the orphan
@@ -62,8 +63,8 @@ async function main(): Promise<void> {
 
   const clerkSecretKey = process.env.CLERK_SECRET_KEY;
   if (!clerkSecretKey) throw new Error('CLERK_SECRET_KEY (canary) is required.');
-  if (clerkSecretKey.startsWith('sk_live_')) {
-    throw new Error('refusing to run the reaper against a LIVE Clerk instance.');
+  if (!clerkSecretKey.startsWith('sk_test_')) {
+    throw new Error('refusing to run the reaper without a Canary Clerk test key (sk_test_…).');
   }
 
   console.log(

@@ -1,0 +1,115 @@
+{
+  "slug": "beszel",
+  "checkedAt": "2026-11-21T14:23:44.790Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "henrygd/beszel is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "henrygd/beszel",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "henrygd/beszel:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "henrygd/beszel:latest",
+        "digest": "sha256:b0be90bd4aee2993fde763032a5098ce4386fba43cfe5031ec017b8d9e8c97a2",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v6",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 23.8s",
+      "evidence": {
+        "container": "hivra-verify-beszel-nih2pc",
+        "hostPort": 3243,
+        "image": "henrygd/beszel:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-beszel-nih2pc",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3243:8090",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-beszel-nih2pc-data:/beszel_data",
+          "henrygd/beszel:latest"
+        ],
+        "runStdout": "b3902f399a9c91de2fe7a5ff630cd0f2df3f923910f59d02968b8e8c6bc30182",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 23.8,
+          "attempts": 9
+        },
+        "memUsage": "37.24MiB / 7.652GiB",
+        "memBytes": 39048970
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 49251,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\" dir=\"ltr\">\n\t<head>\n\t\t<meta charset=\"UTF-8\" />\n\t\t<link rel=\"manifest\" href=\"/static/manifest.json\" crossorigin=\"use-credentials\" />\n\t\t<link rel=\"icon\" type=\"image/svg+xml\" href=\"/static/icon.svg\" />\n\t\t<link rel=\"apple-touch-icon\" href=\"/static/icon.png\" />\n\t\t<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0,maximum-scale=1.0, user-scalable=no, view",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "{\"data\":{},\"message\":\"The requested resource wasn't found.\",\"status\":404}"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 37.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 39048970,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

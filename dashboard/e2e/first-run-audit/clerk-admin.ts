@@ -5,11 +5,16 @@
  * "can a user with history deploy again", not "does a new signup work". So each
  * run mints its own throwaway Clerk user and deletes it in teardown.
  *
- * The sign-in-token → `strategy: 'ticket'` redemption is the same mechanism
- * e2e/global-setup.ts already uses in production CI; it is proven.
+ * Sign-in tickets are deliberately not used: Clerk sent mail after ticket
+ * redemption. Live runs sign in through Clerk test-mode email OTP instead.
  */
 
-import { assertLiveManagedHostingAuditAllowed } from './config';
+import {
+  assertCanaryClerkSecretKey,
+  assertClerkTestAuditEmail,
+  assertLiveManagedHostingAuditAllowed,
+  assertTicketSignInDisabled,
+} from './config';
 
 const CLERK_API = 'https://api.clerk.com/v1';
 
@@ -35,6 +40,7 @@ async function clerkFetch(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
+  assertCanaryClerkSecretKey(secretKey);
   return fetch(`${CLERK_API}${path}`, {
     ...init,
     headers: {
@@ -51,14 +57,15 @@ function primaryEmail(payload: ClerkUserPayload): string | null {
 
 /**
  * Create the throwaway account. `skip_password_requirement` lets us create an
- * account with no credentials — we authenticate via a sign-in ticket, never a
- * password, so no secret is ever stored for these users.
+ * account with no credentials — we authenticate through Clerk's test-mode
+ * email-code path, never a password, so no secret is ever stored for these users.
  */
 export async function createAuditUser(
   secretKey: string,
   email: string,
 ): Promise<ClerkUser> {
   assertLiveManagedHostingAuditAllowed();
+  assertClerkTestAuditEmail(email);
   const res = await clerkFetch(secretKey, '/users', {
     method: 'POST',
     body: JSON.stringify({
@@ -83,36 +90,35 @@ export async function createAuditUser(
   };
 }
 
-/** Short-lived ticket the browser redeems to become this user. */
+/** Sign-in tickets are retained only as a hard-disabled legacy symbol; never mint one. */
 export async function mintSignInTicket(
-  secretKey: string,
-  userId: string,
-  expiresInSeconds = 1800,
+  _secretKey: string,
+  _userId: string,
+  _expiresInSeconds = 1800,
 ): Promise<string> {
-  assertLiveManagedHostingAuditAllowed();
-  const res = await clerkFetch(secretKey, '/sign_in_tokens', {
-    method: 'POST',
-    body: JSON.stringify({ user_id: userId, expires_in_seconds: expiresInSeconds }),
-  });
-
-  const body = (await res.json().catch(() => null)) as { token?: string } | null;
-  if (!res.ok || !body?.token) {
-    throw new Error(
-      `[clerk] ticket mint failed: HTTP ${res.status} ${JSON.stringify(body ?? {}).slice(0, 300)}`,
-    );
-  }
-  return body.token;
+  assertTicketSignInDisabled();
 }
 
 /**
  * Delete the account. Returns false rather than throwing on a 404 — a user that
  * is already gone is the state we wanted, and teardown must be idempotent.
  */
-export async function deleteAuditUser(secretKey: string, userId: string): Promise<boolean> {
-  const res = await clerkFetch(secretKey, `/users/${userId}`, { method: 'DELETE' });
+export async function deleteAuditUser(
+  secretKey: string,
+  userId: string,
+  { verifyDeletion = false } = {},
+): Promise<boolean> {
+  const res = await clerkFetch(secretKey, `/users/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+    ...(verifyDeletion ? { redirect: 'error', signal: AbortSignal.timeout(20_000) } : {}),
+  });
   if (res.status === 404) return false;
   if (!res.ok) {
     throw new Error(`[clerk] delete user ${userId} failed: HTTP ${res.status}`);
+  }
+  if (verifyDeletion) {
+    const body = await res.json().catch(() => null);
+    if (body?.id !== userId || body.deleted !== true) throw new Error('Clerk user deletion not confirmed');
   }
   return true;
 }

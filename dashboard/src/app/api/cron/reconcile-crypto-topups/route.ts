@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
+import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { reconcilePendingCryptoTopUps } from "@/lib/billing/crypto-reconciliation";
 import { sweepPendingCreditDepositReceipts } from "@/lib/billing/credit-deposit-sweep";
 import { sweepPendingManagedVeniceTokenQuotes } from "@/lib/billing/managed-venice-token-sweep";
@@ -39,9 +40,14 @@ export async function GET(req: NextRequest) {
   try {
     const limit = parseLimit(req);
     const reconciliation = await reconcilePendingCryptoTopUps({ limit });
-    if (reconciliation.failed > 0) {
+    const staleRetryLoadFailed = reconciliation.staleRetryLoadFailed === true;
+    const staleRetryClaimFailed = reconciliation.staleRetryClaimFailed === true;
+    if (reconciliation.failed > 0 || staleRetryLoadFailed || staleRetryClaimFailed) {
       // Per-intent failures (an RPC rejecting the scan, a DB error) used to
-      // vanish into a 200 while paid top-ups went uncredited. Surface them.
+      // vanish into a 200 while paid top-ups went uncredited. Surface them —
+      // and the once-a-day stale pass failing to LOAD or to claim its day,
+      // which produces no per-intent failures at all while leaving the
+      // day's retry unrun.
       const failures = reconciliation.results.filter(
         (result) =>
           result.status === "failed" ||
@@ -53,6 +59,12 @@ export async function GET(req: NextRequest) {
         method: "GET",
         failureType: "crypto_topup_reconciliation_intent_failed",
         failed: reconciliation.failed,
+        // Open intents past the stale cutoff this run skipped on purpose —
+        // context so a nonzero count is not mistaken for missing work.
+        staleExcluded: reconciliation.staleExcluded,
+        staleRetried: reconciliation.staleRetried,
+        staleRetryLoadFailed,
+        staleRetryClaimFailed,
       });
       await reportOpsEvent({
         source: "cron.reconcile-crypto-topups",
@@ -65,6 +77,10 @@ export async function GET(req: NextRequest) {
         metadata: {
           failureType: "crypto_topup_reconciliation_intent_failed",
           failed: reconciliation.failed,
+          staleExcluded: reconciliation.staleExcluded,
+          staleRetried: reconciliation.staleRetried,
+          staleRetryLoadFailed,
+          staleRetryClaimFailed,
           sample: failures.slice(0, 5).map((result) => ({
             referenceId: result.referenceId,
             errorName: "errorName" in result ? result.errorName : undefined,
@@ -150,6 +166,59 @@ export async function GET(req: NextRequest) {
       };
     }
 
+    // Honest heartbeat: per-intent failures and sweep failures used to leave
+    // the run looking 100% ok. in_doubt sweeps count only when they need an
+    // operator — the rest resolve themselves from chain evidence. noTreasury
+    // items count too: a reconciled deposit the sweep could not move because
+    // no treasury is configured is stuck funds, not a clean run — and unlike
+    // a thrown sweep it produces no error field anywhere else.
+    const creditSweepNeedsOperator =
+      "needsOperator" in sweep && typeof sweep.needsOperator === "number"
+        ? sweep.needsOperator
+        : 0;
+    const creditSweepItemFailures =
+      "failed" in sweep && typeof sweep.failed === "number"
+        ? sweep.failed + creditSweepNeedsOperator
+        : 0;
+    const creditSweepNoTreasury =
+      "noTreasury" in sweep && typeof sweep.noTreasury === "number"
+        ? sweep.noTreasury
+        : 0;
+    const managedVeniceItemFailures =
+      !("error" in managedVeniceSweep) && typeof managedVeniceSweep.failed === "number"
+        ? managedVeniceSweep.failed + (managedVeniceSweep.needsOperator ?? 0)
+        : 0;
+    const managedVeniceNoTreasury =
+      !("error" in managedVeniceSweep) && typeof managedVeniceSweep.noTreasury === "number"
+        ? managedVeniceSweep.noTreasury
+        : 0;
+    const heartbeatFailed =
+      reconciliation.failed > 0 ||
+      staleRetryLoadFailed ||
+      staleRetryClaimFailed ||
+      creditSweepFailed ||
+      creditSweepItemFailures > 0 ||
+      creditSweepNoTreasury > 0 ||
+      managedVeniceSweepFailed ||
+      managedVeniceItemFailures > 0 ||
+      managedVeniceNoTreasury > 0;
+    await recordCronHeartbeat(
+      "reconcile-crypto-topups",
+      heartbeatFailed
+        ? {
+            ok: false,
+            detail:
+              `recon_failed=${reconciliation.failed} ` +
+              `stale_retry=${staleRetryLoadFailed ? "load_failed" : staleRetryClaimFailed ? "claim_failed" : (reconciliation.staleRetried ?? 0)} ` +
+              `credit_sweep=${creditSweepFailed ? "threw" : creditSweepItemFailures} ` +
+              `credit_sweep_op_review=${creditSweepNeedsOperator} ` +
+              `credit_sweep_no_treasury=${creditSweepNoTreasury} ` +
+              `mv_sweep=${managedVeniceSweepFailed ? "threw" : managedVeniceItemFailures} ` +
+              `mv_sweep_no_treasury=${managedVeniceNoTreasury}`,
+          }
+        : undefined,
+    );
+
     // Honest top-level flag: an operator polling only HTTP status (200) won't
     // see the soft per-sweep {error} fields; expose a single boolean so a
     // treasury-sweep failure is visible at a glance.
@@ -167,6 +236,13 @@ export async function GET(req: NextRequest) {
       route: "/api/cron/reconcile-crypto-topups",
       method: "GET",
       failureType: "crypto_topup_reconciliation_failed",
+    });
+    // The run threw — record the failure on the heartbeat so cron_unhealthy
+    // sees it now instead of after the staleness window. Auth failures return
+    // above and never reach this branch.
+    await recordCronHeartbeat("reconcile-crypto-topups", {
+      ok: false,
+      detail: `exception: ${error instanceof Error ? error.name : typeof error}`,
     });
     return apiError("Failed to reconcile crypto top-ups", 500, {
       failureType: "crypto_topup_reconciliation_failed",

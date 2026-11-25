@@ -91,6 +91,12 @@ Do not overwrite Canary experiments with a blanket reset to main.
    authenticated user workflow and preservation of existing state. If it regresses,
    use the [rollback decision](#rollback-decision) before switching traffic back.
 
+When a change in the candidate fixes a problem a customer reported, the Promote
+packet must name it as customer-waiting. Do not tell the customer it is fixed
+until `hivra.cloud` serves a deployment containing the fix — and, where the fix
+touches a box runtime or provisioner component, until the customer's own box
+reports the matching version.
+
 A source/tree match is necessary but insufficient: production environment values
 can differ from Canary. Check changed configuration and migration compatibility.
 Keep the previous deployment available. Vercel rollback does not undo database

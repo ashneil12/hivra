@@ -166,4 +166,64 @@ describe("managed Venice deposits after $HIVRA activation", () => {
       expect.objectContaining({ reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.wrongToken, token_address: HIVRA }),
     ]);
   });
+
+  it("keeps the quote open when a deadline stops the wrong-token surface with items still owed", async () => {
+    // The stale pass arms rpcOptions.shouldStop at its deadline. If it fires
+    // inside the wrong-token surface loop, the scan reports the pass
+    // incomplete — and the retire gate must honor that: a cancelled quote
+    // leaves the open set, so the unwritten wrong-token item would never be
+    // retried and the operator would never see the confirmed transfer.
+    const memory = seed("hermesos");
+    const rpc = createBaseRpcFake({
+      latestBlock: ANCHOR_BLOCK,
+      latestTimestamp: ANCHOR_TIME,
+      transfers: [
+        transfer("0xwrong_a", HIVRA, "2026-05-16T10:21:00.000Z"),
+        transfer("0xwrong_b", HIVRA, "2026-05-16T10:22:00.000Z"),
+      ],
+    });
+    rpc.setLatestBlock(blockAt("2026-05-20T00:00:00.000Z"));
+    const reconcile = (rpcOptions?: { shouldStop?: () => boolean }) =>
+      reconcileManagedVeniceTokenQuote({
+        quoteId: "quote_1",
+        userId: "user_1",
+        db: memory.db,
+        rpcUrl: "https://base.test",
+        fetchImpl: rpc.fetchImpl,
+        minConfirmations: 3,
+        now: new Date("2026-05-20T00:00:00.000Z"),
+        rpcOptions,
+      });
+
+    // The deadline fires the moment the first owed item is on disk — the
+    // second item's write is then stopped short.
+    const stopped = await reconcile({
+      shouldStop: () => (memory.tables.managed_venice_reconciliation_items ?? []).length > 0,
+    });
+    expect(stopped.status).toBe("no_match");
+    if (stopped.status !== "no_match") throw new Error("expected a no_match outcome");
+    expect(stopped.windowFullyScanned).toBe(false);
+    expect(memory.tables.managed_venice_reconciliation_items).toHaveLength(1);
+    // The quote stays open — the durable retry obligation — instead of
+    // retiring over the unwritten item.
+    expect(memory.tables.managed_venice_token_quotes[0]).toMatchObject({
+      status: "active",
+      transaction_hash: null,
+    });
+
+    // The next attempt writes the remaining item and only then retires.
+    const finished = await reconcile();
+    expect(finished.status).toBe("cancelled");
+    expect(memory.tables.managed_venice_token_quotes[0].status).toBe("cancelled");
+    expect(
+      (memory.tables.managed_venice_reconciliation_items ?? []).map(
+        (item) => (item.metadata as Record<string, unknown>).transactionHash
+      ).sort()
+    ).toEqual(["0xwrong_a", "0xwrong_b"]);
+    expect(memory.tables.managed_venice_reconciliation_items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: MANAGED_VENICE_TOKEN_DEPOSIT_REASONS.wrongToken }),
+      ])
+    );
+  });
 });

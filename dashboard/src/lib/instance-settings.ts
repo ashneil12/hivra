@@ -362,9 +362,19 @@ export function getAutoUpdateConfig(config: Record<string, unknown> | undefined)
  * (resolveProviderBaseUrl("custom_llm")) keeps "http://localhost:11434/v1"
  * for local-dev unit tests; production overrides go through this checker.
  */
+// The base URL ends up in host shell scripts and config files; a real provider
+// endpoint never needs these characters.
+const CUSTOM_LLM_BASE_URL_FORBIDDEN_CHARS = /[\s\x00-\x1f\x7f`$\\"'<>;|(){}]/;
+
 function validateCustomLlmBaseUrl(rawValue: string): string {
   const trimmed = rawValue.trim();
   if (!trimmed) return "";
+
+  if (CUSTOM_LLM_BASE_URL_FORBIDDEN_CHARS.test(trimmed)) {
+    throw new SettingsValidationError(
+      "Custom LLM base URL contains characters that are not allowed (whitespace, quotes, or shell metacharacters such as $, `, ;, |)."
+    );
+  }
 
   const result = checkOutboundUrlSafety(trimmed);
   if (!result.ok) {

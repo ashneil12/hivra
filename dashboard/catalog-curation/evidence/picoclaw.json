@@ -1,0 +1,83 @@
+{
+  "slug": "picoclaw",
+  "checkedAt": "2026-11-21T14:15:02.066Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "sipeed/picoclaw is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "sipeed/picoclaw",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "package",
+      "status": "pass",
+      "detail": "release v0.3.1 has 36 assets",
+      "evidence": {
+        "assets": [
+          "picoclaw-android-universal.zip",
+          "picoclaw_0.3.1_checksums.txt",
+          "picoclaw_aarch64.deb",
+          "picoclaw_aarch64.rpm",
+          "picoclaw_armv6.deb",
+          "picoclaw_armv6.rpm",
+          "picoclaw_armv7.deb",
+          "picoclaw_armv7.rpm",
+          "picoclaw_Darwin_arm64.tar.gz",
+          "picoclaw_Darwin_x86_64.tar.gz",
+          "picoclaw_Freebsd_arm64.tar.gz",
+          "picoclaw_Freebsd_armv6.tar.gz",
+          "picoclaw_Freebsd_armv7.tar.gz",
+          "picoclaw_Freebsd_x86_64.tar.gz",
+          "picoclaw_Linux_arm64.tar.gz",
+          "picoclaw_Linux_armv6.tar.gz",
+          "picoclaw_Linux_armv7.tar.gz",
+          "picoclaw_Linux_loong64.tar.gz",
+          "picoclaw_Linux_mipsle.tar.gz",
+          "picoclaw_Linux_riscv64.tar.gz",
+          "picoclaw_Linux_s390x.tar.gz",
+          "picoclaw_Linux_x86_64.tar.gz",
+          "picoclaw_loong64.deb",
+          "picoclaw_loong64.rpm",
+          "picoclaw_mipsle.deb",
+          "picoclaw_mipsle.rpm",
+          "picoclaw_Netbsd_arm64.tar.gz",
+          "picoclaw_Netbsd_x86_64.tar.gz",
+          "picoclaw_riscv64.deb",
+          "picoclaw_riscv64.rpm",
+          "picoclaw_s390x.deb",
+          "picoclaw_s390x.rpm",
+          "picoclaw_Windows_arm64.zip",
+          "picoclaw_Windows_x86_64.zip",
+          "picoclaw_x86_64.deb",
+          "picoclaw_x86_64.rpm"
+        ],
+        "tag_name": "v0.3.1"
+      }
+    },
+    {
+      "name": "install",
+      "status": "pass",
+      "detail": "release v0.3.1 asset picoclaw_Linux_arm64.tar.gz executed --help in linux/arm64"
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "release binary ran --help inside linux container",
+      "evidence": {
+        "exitStatus": 0
+      }
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "cli-web installs a CLI; no resident service to measure"
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

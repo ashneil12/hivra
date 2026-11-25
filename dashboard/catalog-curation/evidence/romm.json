@@ -1,0 +1,75 @@
+{
+  "slug": "romm",
+  "checkedAt": "2026-11-21T03:58:10.499Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "rommapp/romm is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "rommapp/romm",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/rommapp/romm:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/rommapp/romm:latest",
+        "digest": "sha256:8677fb7b81b1d3db20b849e989a1dadc2a11159e51eb34a2acdcb01102274edf",
+        "platforms": [
+          "linux/arm64",
+          "unknown/unknown",
+          "linux/amd64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "fail",
+      "detail": "health / never returned <400 (last status none)",
+      "evidence": {
+        "container": "hivra-verify-romm-0yfm10",
+        "hostPort": 61599,
+        "image": "ghcr.io/rommapp/romm:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-romm-0yfm10",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:61599:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-romm-0yfm10-data:/romm/data",
+          "ghcr.io/rommapp/romm:latest"
+        ],
+        "runStdout": "423911bc2feb042b1065fdf4aa48e5970a7bbcb320a94d877932d6aa69de4bf0",
+        "health": {
+          "ok": false,
+          "status": null,
+          "seconds": 240.2,
+          "attempts": 120,
+          "error": "fetch failed"
+        },
+        "logsTail": "INFO:     \u001b[0;34m[RomM]\u001b[0;95m[init]\u001b[0;36m[2026-11-21 03:54:10]\u001b[0;00m \n\u001b[0;32mINFO:     \u001b[0;34m[RomM]\u001b[0;95m[init]\u001b[0;36m[2026-11-21 03:54:10]\u001b[0;00m The beautiful, powerful, self-hosted Rom manager and player\n\u001b[0;32mINFO:     \u001b[0;34m[RomM]\u001b[0;95m[init]\u001b[0;36m[2026-11-21 03:54:10]\u001b[0;00m \n\u001b[0;32mINFO:     \u001b[0;34m[RomM]\u001b[0;95m[init]\u001b[0;36m[2026-11-21 03:54:10]\u001b[0;00m Version: 5.4.1\n\u001b[0;32mINFO:     \u001b[0;34m[RomM]\u001b[0;95m[init]\u001b[0;36m[2026-11-21 03:54:10]\u001b[0;00m \n\u001b[0;32mINFO:     \u001b[0;34m[RomM]\u001b[0;95m[init]\u001b[0;36m[2026-11-21 03:54:10]\u001b[0;00m No OpenTelemetry environment variables found, disabling OpenTelemetry SDK\n\u001b[0;33mWARNING:  \u001b[0;34m[RomM]\u001b[0;95m[init]\u001b[0;36m[2026-11-21 03:54:10]\u001b[0;00m ROMM_AUTH_SECRET_KEY not set, generating a random secret key!\n\u001b[0;32mINFO:     \u001b[0;34m[RomM]\u001b[0;95m[init]\u001b[0;36m[2026-11-21 03:54:10]\u001b[0;00m Starting internal valkey\n\u001b[0;32mINFO:     \u001b[0;34m[RomM]\u001b[0;95m[init]\u001b[0;36m[2026-11-21 03:54:10]\u001b[0;00m Running database migrations\n\u001b[33mWARNING\u001b[39m:  \u001b[34m[RomM]\u001b[95m[config_manager]\u001b[36m[2026-11-21 03:54:11] \u001b[0mConfig file not found, creating an empty config at \u001b[34m/romm/config/config.yml\u001b[0m\n\u001b[31mCRITICAL\u001b[39m: \u001b[34m[RomM]\u001b[95m[config_manager]\u001b[36m[2026-11-21 03:54:12] \u001b[0mMissing database credentials, check your environment variables!\n\u001b[0;31mERROR:    \u001b[0;34m[RomM]\u001b[0;95m[init]\u001b[0;36m[2026-11-21 03:54:12]\u001b[0;00m Failed to run database migrations\n\u001b[0;32mINFO:     \u001b[0;34m[RomM]\u001b[0;95m[init]\u001b[0;36m[2026-11-21 03:54:12]\u001b[0;00m Stopping valkey-server\n"
+      }
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "no floor.ram in spec or no memory reading"
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "boot: health / never returned <400 (last status none)"
+  ]
+}

@@ -33,7 +33,7 @@ ${origin}/dashboard/launch?agent=<agent id>&inference=venice&ref=agent-setup
 
 For example, Claude Code on Hivra credits: ${exampleLink}
 
-- \`inference=venice\` uses Hivra credits for the model, with nothing to set up. Use \`inference=venice-key\` if they want to paste their own Venice API key, or leave \`inference\` out to let them choose on the page (for example their own Anthropic or OpenAI key, or a Claude or ChatGPT sign-in).
+- \`inference=venice\` selects Hivra credits. Leave \`inference\` out to let them choose from the options on Launch.
 - Open the link in their browser if you can (\`open <url>\` on macOS, \`xdg-open <url>\` on Linux, \`start <url>\` on Windows). Otherwise print it and ask them to open it.
 - Tell them: sign in or create an account, check the choices, press Launch. Setup takes a few minutes and the agent's page shows progress. Their agent then appears under Agents at ${origin}/dashboard/agents.`;
 
@@ -106,6 +106,8 @@ ${agentRows}
 More agents, and what each one suits: ${origin}/agents
 
 ## 2. Send them to Launch
+
+Use \`venice-key\` only for Hermes or Codex if they want to use their own Venice API key. Other agents in this list do not accept a Venice key on Launch.
 
 ${handshake ? handshakeFlow : linkFlow}
 

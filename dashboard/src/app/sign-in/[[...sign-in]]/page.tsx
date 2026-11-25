@@ -27,9 +27,14 @@ export default async function SignInPage({
   const redirectUrl = plan
     ? `/get-started/activate?plan=${plan}${agentTypeQuery}`
     : requestedRedirect ?? agentLaunch ?? "/dashboard";
-  const signUpUrl = plan
-    ? `/get-started?plan=${plan}${agentTypeQuery}`
-    : agentLaunch ? `/sign-up?agentType=${encodeURIComponent(agentTypeParam ?? "")}` : "/sign-up";
+  let signUpUrl = "/sign-up";
+  if (plan) {
+    signUpUrl = `/get-started?plan=${plan}${agentTypeQuery}`;
+  } else if (requestedRedirect && !isLocalAuthMode()) {
+    signUpUrl = `/sign-up?redirect_url=${encodeURIComponent(requestedRedirect)}`;
+  } else if (agentLaunch) {
+    signUpUrl = `/sign-up?agentType=${encodeURIComponent(agentTypeParam ?? "")}`;
+  }
 
   return (
     <>

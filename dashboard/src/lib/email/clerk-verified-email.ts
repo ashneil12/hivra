@@ -4,9 +4,11 @@
  * Clerk lets a user hold an address that was typed in but never verified. That address
  * can belong to someone who never signed up, so only an address Clerk reports as
  * verified may be mailed or enrolled. Preference: the primary address when it is
- * verified, else the first verified address, else null. This follows the same rule as
- * verifiedPrimaryEmailOf in lib/ops-access.ts.
+ * verified, else the first verified address, else null. A selected Canary test
+ * address at example.com is not a deliverable recipient, even if Clerk verified it.
  */
+
+import { isCanaryDeployment } from "@/lib/deployment-channel";
 
 export type ClerkVerifiableEmail = {
   id: string;
@@ -24,8 +26,12 @@ export function pickVerifiedEmail(user: ClerkUserWithEmails): string | null {
     (address) => address.verification?.status === "verified" && Boolean(address.email_address?.trim()),
   );
   const primary = verified.find((address) => address.id === user.primary_email_address_id);
-  const chosen = (primary ?? verified[0])?.email_address;
-  return chosen ? chosen.trim() : null;
+  const chosen = (primary ?? verified[0])?.email_address.trim();
+  if (!chosen) return null;
+  if (/^[^@\s]+\+clerk_test@example\.com$/i.test(chosen) && isCanaryDeployment()) {
+    return null;
+  }
+  return chosen;
 }
 
 /**

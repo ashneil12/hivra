@@ -58,4 +58,30 @@ describe("first-run audit Hivra cleanup", () => {
       }),
     );
   });
+
+  it.each([
+    [503, {}, "HTTP 503"],
+    [200, { success: true, data: {} }, "response was not verified"],
+  ])("rejects an unreadable inventory in strict cleanup (HTTP %s)", async (status, body, error) => {
+    const request = {
+      get: jest.fn().mockResolvedValue(response(status, body)),
+      delete: jest.fn(),
+    };
+
+    await expect(destroyAllHivraAgents(request as never, "https://canary.example.test", 1, 0, { verifyDisappearance: true }))
+      .rejects.toThrow(error);
+    expect(request.delete).not.toHaveBeenCalled();
+  });
+
+  it("does not treat an acknowledged delete as disappearance in strict cleanup", async () => {
+    const request = {
+      get: jest.fn().mockResolvedValue(response(200, {
+        success: true, data: { agents: [{ id: "agent-1", status: "running" }] },
+      })),
+      delete: jest.fn().mockResolvedValue(response(200, { success: true })),
+    };
+
+    await expect(destroyAllHivraAgents(request as never, "https://canary.example.test", 1, 0, { verifyDisappearance: true }))
+      .resolves.toMatchObject({ survived: [{ id: "agent-1", deleted: false }] });
+  });
 });

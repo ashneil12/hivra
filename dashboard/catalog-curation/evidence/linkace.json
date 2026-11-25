@@ -1,0 +1,77 @@
+{
+  "slug": "linkace",
+  "checkedAt": "2026-11-21T03:25:31.228Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "Kovah/LinkAce is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "Kovah/LinkAce",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "linkace/linkace:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "linkace/linkace:latest",
+        "digest": "sha256:7fad9fb69b421c7428bab8bc820cfd372df4da5f4ff06e9dd1149d20b3e4abd7",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "fail",
+      "detail": "health / never returned <400 (last status 400)",
+      "evidence": {
+        "container": "hivra-verify-linkace-cjah6f",
+        "hostPort": 55133,
+        "image": "linkace/linkace:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-linkace-cjah6f",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:55133:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-linkace-cjah6f-data:/linkace",
+          "linkace/linkace:latest"
+        ],
+        "runStdout": "e6b7bcaa462f562fb45af1313feeb3874a5efd9c9d636d60705883f5f9e6a35c",
+        "health": {
+          "ok": false,
+          "status": 400,
+          "seconds": 241.7,
+          "attempts": 120,
+          "error": "fetch failed"
+        },
+        "logsTail": ""
+      }
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "no floor.ram in spec or no memory reading"
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "boot: health / never returned <400 (last status 400)"
+  ]
+}

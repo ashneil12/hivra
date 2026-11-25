@@ -1,5 +1,10 @@
 # Canary release testing runner
 
+> **On hold.** Do not install or run this template. Before enablement, it needs
+> to support Canary's guarded Clerk test OTP path and be verified on an isolated
+> runner. The Promote gate still requires a passing customer path and clean
+> cleanup on the exact served Canary revision before it can be enabled.
+
 `launch-sweep.yml` is the workflow for a **private** runner repository. Its cost
 stays flat however many agents the catalog has:
 
@@ -21,13 +26,11 @@ Stripe test secrets, and public run logs would show Canary's internals.
 
 ## Test accounts
 
-The sweep needs no standing test account. Each run creates throwaway Canary users
-through Clerk's admin API (emails starting `firstrun-audit-`), signs in with a
-one-time sign-in ticket, grants the plan under test, and deletes the user, its
-agents and its computers at the end. `npm run audit:first-run:cleanup` removes
-anything a crashed run left; the workflow runs it after every sweep.
+The sweep needs no standing test account. Follow the [isolated-runner contract](../../dashboard/e2e/README.md#required-isolated-runner-setup)
+for test identities, authentication and cleanup. Do not re-enable Clerk
+sign-in tickets. Cleanup must be confirmed before a pass is recorded.
 
-## Set it up once
+## Proposed setup after approval
 
 1. Create a private repository (for example `ashneil12/hivra-launch-sweep`).
    From the same reviewed source revision, copy `launch-sweep.yml` to its

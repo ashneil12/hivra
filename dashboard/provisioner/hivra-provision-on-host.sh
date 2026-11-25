@@ -36,7 +36,7 @@ case "$PROVISION_MODE" in install|empty) ;; *)
   echo "[hivra-prov] unsupported provision mode" >&2
   exit 1
 ;; esac
-case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|deepseek-harness|linux-desktop|linux-server) ;; *)
+case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|catalog-app|deepseek-harness|linux-desktop|linux-server) ;; *)
   echo "[hivra-prov] unsupported agent kind" >&2
   exit 1
 ;; esac
@@ -203,6 +203,7 @@ if [ -n "$SECRET_ENV_FILE" ]; then
   HIVRA_MODEL_BASE_URL="$(read_secret_b64 HIVRA_MODEL_BASE_URL_B64)"
   HIVRA_HERMES_MODEL="$(read_secret_b64 HIVRA_HERMES_MODEL_B64)"
   HIVRA_ACTIVITY_TELEMETRY="$(read_optional_secret_b64 HIVRA_ACTIVITY_TELEMETRY_B64)"
+  HIVRA_CATALOG_APP="$(read_optional_secret_b64 HIVRA_CATALOG_APP_B64)"
   rm -f -- "$SECRET_ENV_FILE"
   SECRET_ENV_FILE=""
 else
@@ -212,10 +213,11 @@ else
   HIVRA_MODEL_BASE_URL="${HIVRA_MODEL_BASE_URL:-}"
   HIVRA_HERMES_MODEL="${HIVRA_HERMES_MODEL:-}"
   HIVRA_ACTIVITY_TELEMETRY="${HIVRA_ACTIVITY_TELEMETRY:-}"
+  HIVRA_CATALOG_APP="${HIVRA_CATALOG_APP:-}"
 fi
-# The reporter credential reaches the guest only inside the stdin launch
-# document; no child process of this script inherits it.
-export -n HIVRA_ACTIVITY_TELEMETRY
+# The reporter credential and catalog app spec reach the guest only inside the
+# stdin launch document; no child process of this script inherits them.
+export -n HIVRA_ACTIVITY_TELEMETRY HIVRA_CATALOG_APP
 HIVRA_COMPUTER_ID="${HIVRA_COMPUTER_ID:-}"
 HIVRA_CONTROL_ORIGIN="${HIVRA_CONTROL_ORIGIN:-}"
 validate_named_tunnel_input() {
@@ -532,7 +534,7 @@ fi
 guest_launch_document() {
   printf '%s\0' "$AGENT_KIND" "${HIVRA_WANT_BROWSER:-}" "$HIVRA_MODEL_KEY" \
     "$HIVRA_MODEL_BASE_URL" "$HIVRA_HERMES_MODEL" "${HIVRA_TUNNEL_TOKEN:-}" "${HIVRA_TUNNEL_URL:-}" \
-    "$HIVRA_COMPUTER_ID" "$HIVRA_CONTROL_ORIGIN" "${HIVRA_ACTIVITY_TELEMETRY:-}" \
+    "$HIVRA_COMPUTER_ID" "$HIVRA_CONTROL_ORIGIN" "${HIVRA_ACTIVITY_TELEMETRY:-}" "${HIVRA_CATALOG_APP:-}" \
     | python3 -I -B -c '
 import datetime, json, re, sys
 def unique_object(pairs):
@@ -568,25 +570,32 @@ try:
     if len(raw) > 32768:
         raise ValueError()
     values = raw.decode("utf-8").split("\0")
-    if len(values) != 11 or values[-1] != "" or values[1] not in ("", "0", "1"):
+    if len(values) != 12 or values[-1] != "" or values[1] not in ("", "0", "1"):
         raise ValueError()
     native = values[0] == "deepseek-harness"
     desktop = values[0] in ("linux-desktop", "linux-server")
+    catalog_app = values[0] == "catalog-app"
     # DeepSeek Harness takes its model at install time: key, base URL and model
     # together, or none of them. The guest parser owns the typed checks.
     if native and (bool(values[2]) != bool(values[3]) or bool(values[3]) != bool(values[4]) or not values[5] or not values[6]):
         raise ValueError()
     if desktop and (values[1] or values[2] or values[3] or values[4] or not values[5] or not values[6] or not values[7] or not values[8]):
         raise ValueError()
-    document = {"version": 3 if desktop else 2 if native else 1, "agentKind": values[0], "computerSubstrate": "proxmox-kvm",
+    if catalog_app and not values[10]:
+        raise ValueError()
+    if not catalog_app and values[10]:
+        raise ValueError()
+    document = {"version": 5 if catalog_app else 3 if desktop else 2 if native else 1, "agentKind": values[0], "computerSubstrate": "proxmox-kvm",
         "wantBrowser": None if values[1] == "" else values[1] == "1", "modelKey": values[2],
         "modelBaseUrl": values[3], "model": values[4], "tunnelToken": values[5] or None,
         "accessHostname": None}
-    if native or desktop:
+    if native or desktop or catalog_app:
         document["publicOrigin"] = values[6]
     if desktop:
         document["computerId"] = values[7]
         document["controlOrigin"] = values[8]
+    if catalog_app:
+        document["catalogApp"] = json.loads(values[10], object_pairs_hook=unique_object)
     if values[9]:
         # Only Claude Code and Codex write the transcripts the reporter reads.
         if values[0] not in ("claude", "codex"):

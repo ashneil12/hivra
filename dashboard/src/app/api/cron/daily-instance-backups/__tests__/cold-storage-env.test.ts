@@ -102,6 +102,7 @@ describe("GET /api/cron/daily-instance-backups: cold-storage address comes from 
 
     const scripts = backupScripts();
     expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toContain("timeout --kill-after=10s 690s /usr/local/sbin/backup-vm-restic.sh");
     expect(scripts[0]).toContain("# BEGIN HERMES COLD STORAGE");
     expect(scripts[0]).toContain(`  HostName ${TEST_HOST}`);
     expect(scripts[0]).toContain(`  User ${TEST_USER}`);

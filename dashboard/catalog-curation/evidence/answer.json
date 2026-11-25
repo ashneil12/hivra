@@ -1,0 +1,117 @@
+{
+  "slug": "answer",
+  "checkedAt": "2026-11-24T07:27:15.024Z",
+  "gitSha": "2f6e618e50cbb3fdf3aafceb84880b2d3dc5186f",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "apache/answer is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "apache/answer",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "apache/answer:2.0.3 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "apache/answer:2.0.3",
+        "digest": "sha256:0863470d8293294b899f8b39a373df6d6250c3f3e412ea0e483924b41e23428f",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-answer-9j8qo6",
+        "hostPort": 3292,
+        "image": "apache/answer:2.0.3",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-answer-9j8qo6",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3292:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-answer-9j8qo6-data:/data",
+          "apache/answer:2.0.3"
+        ],
+        "runStdout": "8999d56735007699b54833e021589479bdc2774452eb958f88c0a864127c8dab",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "159.5MiB / 7.652GiB",
+        "memBytes": 167247872
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /install",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 63596,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/install"
+          },
+          {
+            "hop": 2,
+            "path": "/install",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/install",
+        "bodyHead": "<!--\n\n    Licensed to the Apache Software Foundation (ASF) under one\n    or more contributor license agreements.  See the NOTICE file\n    distributed with this work for additional information\n    regarding copyright ownership.  The ASF licenses this file\n    to you under the Apache License, Version 2.0 (the\n    \"License\"); you may not use this file except in compliance\n    with the License.  You m",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 302,
+          "bodyHead": ""
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 159.5MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 167247872,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

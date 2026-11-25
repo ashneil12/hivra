@@ -1,0 +1,111 @@
+{
+  "slug": "mealie",
+  "checkedAt": "2026-11-21T14:19:25.040Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "mealie-recipes/mealie is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "mealie-recipes/mealie",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/mealie-recipes/mealie:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/mealie-recipes/mealie:latest",
+        "digest": "sha256:97e21ac96e9a8d1ee15aaf558ba3f14998936b9d6f334e40ebb4c6c2127dc12f",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /api/app/about -> 200 in 35.9s",
+      "evidence": {
+        "container": "hivra-verify-mealie-cv6h4f",
+        "hostPort": 3227,
+        "image": "ghcr.io/mealie-recipes/mealie:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-mealie-cv6h4f",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3227:9000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-mealie-cv6h4f-data:/app/data",
+          "ghcr.io/mealie-recipes/mealie:latest"
+        ],
+        "runStdout": "3ca8bbdb8f84d1a3efcd7856262e0b6c01e031a440ae3fa5e2a3b70160ce1917",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 35.9,
+          "attempts": 13
+        },
+        "memUsage": "321.2MiB / 7.652GiB",
+        "memBytes": 336802611
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64815,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Mealie</title><script type=\"importmap\">{\"imports\":{\"#entry\":\"/_nuxt/03cEW2S9.js\"}}</script><script type=\"text/javascript\">(function(){try{var d=localStorage.getItem('vueuse-color-scheme');var m=d==='dark'||(d!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches);docum",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 405,
+          "bodyHead": "{\"detail\":\"Method Not Allowed\"}"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 321.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 336802611,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

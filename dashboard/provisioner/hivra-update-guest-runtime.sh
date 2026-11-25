@@ -178,6 +178,10 @@ grep -Fxq HIVRA_GUEST_RUNTIME_UPDATED "$GUEST_RESULT" \
 AGENT_CLI_LINE="$(grep -m1 -xE 'HIVRA_AGENT_CLI name=(claude-code|codex) version=([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|unknown) target=latest state=(current|scheduled|running|failed)' "$GUEST_RESULT" || true)"
 # The agent app report likewise, each version in its app's own form.
 AGENT_APP_LINE="$(grep -m1 -xE 'HIVRA_AGENT_APP (name=aeon version=([0-9a-f]{40}|unknown)|name=openclaw version=([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|unknown)|name=agent-zero version=(sha256:[0-9a-f]{64}|unknown)|name=(hermes|openbot|nuphos) version=([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}|unknown)) target=latest state=(current|scheduled|running|failed)' "$GUEST_RESULT" || true)"
+if [ -z "$AGENT_APP_LINE" ]; then
+  AGENT_APP_LINE="$(grep -vE '^HIVRA_AGENT_APP name=(aeon|openclaw|agent-zero|hermes|openbot|nuphos) ' "$GUEST_RESULT" \
+    | grep -m1 -xE 'HIVRA_AGENT_APP name=[a-z][a-z0-9-]{1,38}[a-z0-9] version=(sha256:[0-9a-f]{64}|v?[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(-[A-Za-z0-9._-]{1,32})?|latest|unknown) target=latest state=(current|scheduled|running|failed)' || true)"
+fi
 
 # (Re)install the agent-run reporter with the fresh credential, as the start
 # helper does after a boot. The gateway update above is already committed; every

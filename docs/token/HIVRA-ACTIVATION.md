@@ -223,8 +223,26 @@ server-side (HTTP 403 `token_not_allowed`) for hold-for-tier, yearly and
 managed-Venice deposits. $HermesOS balances do not count toward their tiers
 or the token base tier.
 
-**Conversion rule** (`POST /api/billing/token-access {"action":"convert"}`,
-used by the /dashboard/convert page):
+**Account conversion.** The dashboard at `/dashboard/convert` submits the
+confirmed choice to `POST /api/billing/token-access`.
+
+The optional holder switch is controlled by `HIVRA_HOLDER_TIER_CARRYOVER=1`.
+With the switch enabled, a grandfathered account can choose when to move to
+$HIVRA in the dashboard. Claiming an airdrop and switching the account are
+separate actions. The dashboard submits `carry_over_holder` with the tiers
+and amounts the user reviewed. If those terms change, the user must review
+them again. Neither signing in nor receiving tokens converts the account.
+Existing holders can continue using their grandfathered access indefinitely.
+
+The switch uses each active $HermesOS Pro or Power qualification's recorded
+token quantity, one for one. The verified wallet must hold enough $HIVRA to
+cover those qualifications. This check does not use a market quote. Switching
+does not purchase or renew a subscription or award a higher tier. Accounts
+without an active holder tier can switch without a wallet check. A prepaid
+subscription keeps its original paid-through date. Token payments
+and new tier qualifications still require their normal price and liquidity checks.
+
+With the optional switch disabled, the original `convert` action uses a price-based conversion.
 
 1. At conversion, the current $HIVRA thresholds for Pro and Power are locked,
    and a grace of `TOKEN_CONVERSION_GRACE_HOURS` (72 hours) starts. Conversion
@@ -240,7 +258,7 @@ used by the /dashboard/convert page):
 4. If no live $HIVRA price is available at the end of the grace, the row stays
    on the either-token rule and moves on a later tick.
 
-Users should convert before (or as) they swap tokens. The grace protects a
+For the price-based conversion, users should convert before (or as) they swap tokens. The grace protects a
 converted user, and a swap made before converting drops the $HermesOS balance
 without it.
 
@@ -491,13 +509,10 @@ runbook:
   $HIVRA quotes and new $HIVRA tier qualification fail closed (section 5),
   while claiming $HIVRA, holding $HIVRA and keeping an existing tier
   are unaffected.
-- The conversion rule in section 4 (switch access, 72-hour grace) still
-  applies. The convert page offers the switch to a grandfathered holder only
-  once the Sablier claim window has **closed** (the claim's phase is `closed`
-  and the snapshot is published; `resolveConversionState`), because after the
-  grace only $HIVRA counts and a holder who can
-  still claim should not be moved onto a $HIVRA-only tier early. This is a
-  conservative gate and Ash's call: it can be relaxed in a reviewed PR.
+- The Sablier claim deadline applies to the airdrop. When the optional holder
+  switch is enabled, eligible users can review their account switch while the
+  claim is still open or after it closes. With the flag disabled, the convert
+  page offers the original price-based switch only after the published claim closes.
 
 ### The claim config
 

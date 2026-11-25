@@ -1,0 +1,122 @@
+{
+  "slug": "freshrss",
+  "checkedAt": "2026-11-21T14:20:24.317Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "FreshRSS/FreshRSS is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "FreshRSS/FreshRSS",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/freshrss/freshrss:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/freshrss/freshrss:latest",
+        "digest": "sha256:af44385229541bee24aa9148d0ff8f3b40e095373c63a2c0f74e09a27d3c59df",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v7",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 37.4s",
+      "evidence": {
+        "container": "hivra-verify-freshrss-r99m26",
+        "hostPort": 3232,
+        "image": "ghcr.io/freshrss/freshrss:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-freshrss-r99m26",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3232:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-freshrss-r99m26-data:/var/www/FreshRSS/data",
+          "ghcr.io/freshrss/freshrss:latest"
+        ],
+        "runStdout": "de3f3961e4ebe88b06e3cf81d782b92dc05efa6ec917ead9f666eada5c4e9169",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 37.4,
+          "attempts": 14
+        },
+        "memUsage": "52.12MiB / 7.652GiB",
+        "memBytes": 54651781
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /i/?rid=6b01a8a4ce767; form POST -> 200",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65025,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/i/?rid=6b01a8a4ce767"
+          },
+          {
+            "hop": 2,
+            "path": "/i/?rid=6b01a8a4ce767",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/i/?rid=6b01a8a4ce767",
+        "bodyHead": "<!DOCTYPE html>\n<html >\n\t<head>\n\t\t<meta charset=\"UTF-8\" />\n\t\t<meta name=\"viewport\" content=\"initial-scale=1.0\" />\n\t\t<script id=\"jsonVars\" type=\"application/json\">{}</script>\n\t\t<title>Installation · FreshRSS: step 1</title>\n\t\t<link rel=\"stylesheet\" href=\"../themes/base-theme/frss.css?1792615573\" />\n\t\t<link rel=\"stylesheet\" href=\"../themes/Origine/origine.css?1792615573\" />\n\t\t<link rel=\"shortcut ico",
+        "formPost": {
+          "path": "/i/index.php?step=0",
+          "status": 200,
+          "location": null,
+          "bodyHead": "<!DOCTYPE html>\n<html >\n\t<head>\n\t\t<meta charset=\"UTF-8\" />\n\t\t<meta name=\"viewport\" content=\"initial-scale=1.0\" />\n\t\t<script id=\"jsonVars\" type=\"application/json\">{}</script>\n\t\t<title>Installation · FreshRSS: step 1</title>\n\t\t<link rel=\"stylesheet\" href=\"../themes/base-theme/frss.css?1792615573\" />\n\t\t<link rel=\"stylesheet\" href=\"../themes/Origine/origine.css?1792615573\" />\n\t\t<link rel=\"shortcut ico"
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">\n<html><head>\n<title>404 Not Found</title>\n</head><body>\n<h1>Not Found</h1>\n<p>The requested URL was not found on this server.</p>\n</body></html>\n"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 52.1MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 54651781,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

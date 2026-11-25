@@ -20,6 +20,7 @@ import path from "node:path";
 import {
   getLogsInBlockChunks,
   MAX_BASE_RPC_LOG_RANGE_BLOCKS,
+  resetDiscoveredBaseLogRangeCap,
 } from "@/lib/billing/base-rpc-logs";
 import {
   createBaseChainReader,
@@ -34,6 +35,12 @@ import { createManagedVeniceMemoryDb, managedVeniceQuoteRow } from "@/test-utils
 
 const PUBLIC_BASE_RPC_LOG_RANGE_LIMIT = 2_000;
 const LATEST_BLOCK = 51_655_528;
+
+// The discovered range cap is process state inside base-rpc-logs; reset it so
+// one case's discovery cannot shrink the next case's first request.
+beforeEach(() => {
+  resetDiscoveredBaseLogRangeCap();
+});
 const now = new Date("2026-09-22T12:00:00.000Z");
 const usdcDepositAddress = "0x000000000000000000000000000000000000dead";
 const veniceDepositAddress = "0x000000000000000000000000000000000000ba5e";
@@ -102,8 +109,13 @@ function createRangeLimitedBaseRpc(params: {
   logs: FakeLog[];
   latestBlock?: number;
   failGetLogsOnce?: { request: number; status: number };
+  // The provider's live eth_getLogs span cap. Defaults to the public
+  // endpoint's long-standing 2,000; pass a smaller value to exercise the
+  // adaptive re-tiling against a cap that has moved.
+  rangeLimitBlocks?: number;
 }) {
   const latestBlock = params.latestBlock ?? LATEST_BLOCK;
+  const rangeLimitBlocks = params.rangeLimitBlocks ?? PUBLIC_BASE_RPC_LOG_RANGE_LIMIT;
   const ranges: LogRange[] = [];
   let getLogsRequests = 0;
   let failureUsed = false;
@@ -149,11 +161,14 @@ function createRangeLimitedBaseRpc(params: {
         });
       }
 
-      if (range.toBlock - range.fromBlock + 1 > PUBLIC_BASE_RPC_LOG_RANGE_LIMIT) {
+      if (range.toBlock - range.fromBlock + 1 > rangeLimitBlocks) {
         return jsonResponse(413, {
           jsonrpc: "2.0",
           id: 1,
-          error: { code: -32614, message: "eth_getLogs is limited to a 2,000 range" },
+          error: {
+            code: -32614,
+            message: `eth_getLogs is limited to a ${rangeLimitBlocks.toLocaleString("en-US")} range`,
+          },
         });
       }
 
@@ -300,6 +315,75 @@ describe("getLogsInBlockChunks", () => {
       "status 413"
     );
   });
+
+  it("publishes onChunk coverage for each answered tile of a re-tiled chunk before an abort", async () => {
+    // A checkpointing caller used to lose every tile inside a chunk that
+    // died: onChunk only fired after the WHOLE top-level chunk returned, so
+    // a 2,000-block chunk re-tiled at a moved provider cap and aborted on
+    // its third tile left no coverage — the next attempt repeated the same
+    // requests every pass without ever advancing.
+    const covered: number[] = [];
+    const call = (async (_method: string, args: unknown[]) => {
+      const request = args[0] as { fromBlock: string; toBlock: string };
+      const from = Number.parseInt(request.fromBlock, 16);
+      const to = Number.parseInt(request.toBlock, 16);
+      if (to - from + 1 > 500) {
+        const error = new Error("eth_getLogs is limited to a 500 range");
+        (error as { code?: number }).code = -32614;
+        throw error;
+      }
+      // The third tile dies (a cooperative abort would land the same way):
+      // the two tiles before it were answered and must be published.
+      if (from === 1_000) throw new Error("Base RPC request aborted at the stale-scan deadline");
+      return [`logs ${from}-${to}`];
+    }) as unknown as Parameters<typeof getLogsInBlockChunks>[0]["call"];
+
+    await expect(
+      getLogsInBlockChunks<string>({
+        call,
+        filter,
+        fromBlock: 0,
+        toBlock: 1_999,
+        onChunk: (endBlock) => {
+          covered.push(endBlock);
+        },
+      })
+    ).rejects.toThrow("stale-scan deadline");
+
+    // The two contiguous tiles that completed were published in order; the
+    // tile that threw never was.
+    expect(covered).toEqual([499, 999]);
+  });
+
+  it("publishes onChunk coverage for the answered half of an oversized-result split before the other half fails", async () => {
+    const covered: Array<{ endBlock: number; logs: unknown[] }> = [];
+    const call = (async (_method: string, args: unknown[]) => {
+      const request = args[0] as { fromBlock: string; toBlock: string };
+      const from = Number.parseInt(request.fromBlock, 16);
+      const to = Number.parseInt(request.toBlock, 16);
+      // Only the full 2,000-block chunk is refused as oversized; the split
+      // halves are served — except the second, which dies on its request.
+      if (to - from + 1 > 1_500) throw new Error("query returned more than 10000 results");
+      if (from === 1_000) throw new Error("Base RPC request failed with status 500");
+      return [`logs ${from}-${to}`];
+    }) as unknown as Parameters<typeof getLogsInBlockChunks>[0]["call"];
+
+    await expect(
+      getLogsInBlockChunks<string>({
+        call,
+        filter,
+        fromBlock: 0,
+        toBlock: 1_999,
+        onChunk: (endBlock, logs) => {
+          covered.push({ endBlock, logs });
+        },
+      })
+    ).rejects.toThrow("status 500");
+
+    // The split point is mid = 999: the first half published its coverage,
+    // the second's failure published nothing.
+    expect(covered).toEqual([{ endBlock: 999, logs: ["logs 0-999"] }]);
+  });
 });
 
 describe("USDC top-up transfer scan within Base's 2,000-block eth_getLogs limit", () => {
@@ -394,6 +478,55 @@ describe("USDC top-up transfer scan within Base's 2,000-block eth_getLogs limit"
     // The rate-limited chunk is re-requested, so its range appears twice.
     expect(ranges[2]).toEqual(ranges[1]);
     expectContiguousWithinLimit([ranges[0], ...ranges.slice(2)], ranges[0].fromBlock, ranges[ranges.length - 1].toBlock);
+  });
+
+  it("finds the payment when the provider's cap has moved below the configured ceiling", async () => {
+    // The public endpoint no longer honours 2,000-block ranges; it answers
+    // 413 "limited to a 500 range". The scan must re-tile at 500 and still
+    // cover the whole window exactly once.
+    const cap = 500;
+    const paidBlock = LATEST_BLOCK - 5_000;
+    const { fetchImpl, ranges } = createRangeLimitedBaseRpc({
+      logs: [
+        transferLog({
+          token: USDC_BASE_TOKEN_ADDRESS,
+          to: usdcDepositAddress,
+          amount: 50_000_000,
+          blockNumber: paidBlock,
+          transactionHash: "0xpaid",
+        }),
+      ],
+      rangeLimitBlocks: cap,
+    });
+
+    const scan = await scanErc20TransfersInWindow({
+      chain: chainFor(fetchImpl),
+      tokenAddress: USDC_BASE_TOKEN_ADDRESS,
+      toAddress: usdcDepositAddress,
+      fromMs: windowStartMs,
+      toMs: windowEndMs,
+      minConfirmations: 3,
+    });
+
+    expect(scan.transfers).toEqual([
+      expect.objectContaining({ transactionHash: "0xpaid", blockNumber: paidBlock, amount: 50_000_000n }),
+    ]);
+    const served = ranges.filter((range) => range.toBlock - range.fromBlock + 1 <= cap);
+    expect(served[0].fromBlock).toBeLessThanOrEqual(paidBlock);
+    expect(served[served.length - 1].toBlock).toBeGreaterThanOrEqual(LATEST_BLOCK - 800);
+    for (let index = 1; index < served.length; index += 1) {
+      expect(served[index].fromBlock).toBe(served[index - 1].toBlock + 1);
+    }
+    expect(served[0].fromBlock).toBe(ranges[0].fromBlock);
+    // The first request(s) were refused at the ceiling before the cap was
+    // learned; every request after that stays inside it.
+    const firstServedIndex = ranges.findIndex(
+      (range) => range.toBlock - range.fromBlock + 1 <= cap
+    );
+    expect(firstServedIndex).toBeGreaterThan(0);
+    for (const range of ranges.slice(firstServedIndex)) {
+      expect(range.toBlock - range.fromBlock + 1).toBeLessThanOrEqual(cap);
+    }
   });
 });
 
@@ -503,5 +636,247 @@ describe("getLogsInBlockChunks with a provider result-size limit", () => {
       })
     ).rejects.toThrow("invalid params");
     expect(call).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("getLogsInBlockChunks with a moving provider range cap", () => {
+  // The public endpoint's cap is not the configured 2,000: it has answered
+  // "limited to a 2,000 range", then 1,000, then a few hundred. These cases
+  // pin the adaptive behaviour: parse the stated cap, re-tile exactly once,
+  // and remember the discovery for the process.
+  const filter = { address: USDC_BASE_TOKEN_ADDRESS, topics: [] };
+
+  // A call that refuses any span wider than `cap` blocks with `errorFor`,
+  // records every requested range, and answers [] otherwise.
+  function capLimitedCall(cap: number, errorFor: () => Error) {
+    const requests: LogRange[] = [];
+    const call = jest.fn(async (_method: string, params: unknown[]) => {
+      const request = params[0] as { fromBlock: string; toBlock: string };
+      const range = {
+        fromBlock: Number.parseInt(request.fromBlock, 16),
+        toBlock: Number.parseInt(request.toBlock, 16),
+      };
+      requests.push(range);
+      if (range.toBlock - range.fromBlock + 1 > cap) throw errorFor();
+      return [];
+    });
+    return { call: call as never, requests };
+  }
+
+  // Requests the provider served (span <= cap) must tile fromBlock..toBlock
+  // exactly once: contiguous, no gap a payment could fall into, no overlap.
+  function expectExactTiling(
+    requests: LogRange[],
+    cap: number,
+    fromBlock: number,
+    toBlock: number
+  ) {
+    const served = requests.filter((range) => range.toBlock - range.fromBlock + 1 <= cap);
+    expect(served.length).toBeGreaterThan(0);
+    expect(served[0].fromBlock).toBe(fromBlock);
+    for (let index = 1; index < served.length; index += 1) {
+      expect(served[index].fromBlock).toBe(served[index - 1].toBlock + 1);
+    }
+    expect(served[served.length - 1].toBlock).toBe(toBlock);
+  }
+
+  it.each([
+    ["the HTTP 413 detail", "Base RPC eth_getLogs failed with status 413: eth_getLogs is limited to a 500 range"],
+    ["the JSON-RPC error body", "Base RPC eth_getLogs returned an error: eth_getLogs is limited to a 500 range"],
+    ["a comma-grouped count", "Base RPC eth_getLogs returned an error: eth_getLogs is limited to a 1,000 range"],
+  ])("re-tiles at the stated cap from %s", async (_label, message) => {
+    const cap = message.includes("1,000") ? 1_000 : 500;
+    const { call, requests } = capLimitedCall(cap, () => new Error(message));
+
+    await getLogsInBlockChunks({ call, filter, fromBlock: 10_000, toBlock: 11_999 });
+
+    expectExactTiling(requests, cap, 10_000, 11_999);
+    // The refused 2,000-block request came first, then tiles at the cap.
+    expect(requests[0]).toEqual({ fromBlock: 10_000, toBlock: 11_999 });
+    expect(requests[1]).toEqual({ fromBlock: 10_000, toBlock: 10_000 + cap - 1 });
+  });
+
+  it("halves the range when the cap error names no number", async () => {
+    const { call, requests } = capLimitedCall(700, () => new Error("Base RPC eth_getLogs returned an error: -32614 range limit exceeded"));
+
+    await getLogsInBlockChunks({ call, filter, fromBlock: 0, toBlock: 1_999 });
+
+    // 2,000 -> 1,000 -> 500-block tiles once the halved span fits.
+    expectExactTiling(requests, 700, 0, 1_999);
+  });
+
+  it("re-tiles when the JSON-RPC error keeps code and message in separate fields", async () => {
+    // The provider answers a 200 JSON-RPC body whose error carries the range
+    // cap as `code: -32614` while the message names no block count. The RPC
+    // wrapper must preserve the code on the thrown error or the scan fails
+    // instead of re-tiling — this drives the real rpcCallOnce + retry path.
+    const cap = 700;
+    const requests: LogRange[] = [];
+    const fetchImpl = jest.fn(async (_input: string, init: { body: string }) => {
+      const request = JSON.parse(init.body) as { method: string; params: unknown[] };
+      if (request.method !== "eth_getLogs") {
+        throw new Error(`Unexpected RPC method ${request.method}`);
+      }
+      const req = request.params[0] as { fromBlock: string; toBlock: string };
+      const range = {
+        fromBlock: Number.parseInt(req.fromBlock, 16),
+        toBlock: Number.parseInt(req.toBlock, 16),
+      };
+      requests.push(range);
+      if (range.toBlock - range.fromBlock + 1 > cap) {
+        return jsonResponse(200, {
+          jsonrpc: "2.0",
+          id: 1,
+          error: { code: -32614, message: "range limit exceeded" },
+        });
+      }
+      return jsonResponse(200, { jsonrpc: "2.0", id: 1, result: [] });
+    });
+    const chain = createBaseChainReader({ rpcUrl: "https://base.test", fetchImpl: fetchImpl as never });
+
+    await getLogsInBlockChunks({
+      call: chain.call,
+      filter,
+      fromBlock: 10_000,
+      toBlock: 11_999,
+    });
+
+    expectExactTiling(requests, cap, 10_000, 11_999);
+  });
+
+  it("halves when the stated cap is not below the refused span", async () => {
+    const { call, requests } = capLimitedCall(1_500, () => new Error("eth_getLogs is limited to a 5,000 range"));
+
+    await getLogsInBlockChunks({ call, filter, fromBlock: 0, toBlock: 1_999 });
+
+    // The provider claims 5,000 yet refused 2,000: halve rather than trust it.
+    expectExactTiling(requests, 1_500, 0, 1_999);
+    expect(requests[1]).toEqual({ fromBlock: 0, toBlock: 999 });
+  });
+
+  it("remembers the discovered cap for later scans in the process", async () => {
+    const { call, requests } = capLimitedCall(500, () => new Error("eth_getLogs is limited to a 500 range"));
+
+    await getLogsInBlockChunks({ call, filter, fromBlock: 0, toBlock: 999 });
+    const firstScanRequests = requests.length;
+    await getLogsInBlockChunks({ call, filter, fromBlock: 2_000, toBlock: 2_999 });
+
+    const secondScan = requests.slice(firstScanRequests);
+    // Without the memory the second scan would ask for 1,000 blocks first and
+    // be refused; with it every request starts at the discovered 500.
+    expect(secondScan).toEqual([
+      { fromBlock: 2_000, toBlock: 2_499 },
+      { fromBlock: 2_500, toBlock: 2_999 },
+    ]);
+  });
+
+  it("records no cap when the provider refuses every fallback range too", async () => {
+    // The provider is down/degraded for every span — the refusal cascades
+    // down to single-block requests, which fail too. Nothing was CONFIRMED,
+    // so nothing may be remembered: a cap of 1 recorded on the way down would
+    // make a later 2,000-block scan pay 2,000 one-block requests once the
+    // provider recovers.
+    const refusing = jest.fn(async () => {
+      throw new Error("Base RPC eth_getLogs returned an error: -32614 range limit exceeded");
+    });
+
+    await expect(
+      getLogsInBlockChunks({ call: refusing as never, filter, fromBlock: 0, toBlock: 1_999 })
+    ).rejects.toThrow("range limit");
+
+    // Recovered provider: the scan must start at the configured ceiling.
+    const { call, requests } = capLimitedCall(2_000, () => new Error("unreachable"));
+    await getLogsInBlockChunks({ call, filter, fromBlock: 0, toBlock: 3_999 });
+    expect(requests).toEqual([
+      { fromBlock: 0, toBlock: 1_999 },
+      { fromBlock: 2_000, toBlock: 3_999 },
+    ]);
+  });
+
+  it("scopes the confirmed cap to the endpoint that produced it", async () => {
+    const endpointA = capLimitedCall(500, () => new Error("eth_getLogs is limited to a 500 range"));
+    await getLogsInBlockChunks({
+      call: endpointA.call,
+      filter,
+      fromBlock: 0,
+      toBlock: 999,
+      endpoint: "https://a.test",
+    });
+
+    // A different endpoint keeps probing at the configured ceiling — a cap
+    // learned on one provider must not shrink another's scans.
+    const endpointB = capLimitedCall(2_000, () => new Error("unreachable"));
+    await getLogsInBlockChunks({
+      call: endpointB.call,
+      filter,
+      fromBlock: 0,
+      toBlock: 3_999,
+      endpoint: "https://b.test",
+    });
+    expect(endpointB.requests[0]).toEqual({ fromBlock: 0, toBlock: 1_999 });
+
+    // And endpoint A still starts at its own confirmed 500-block cap.
+    const endpointAAgain = capLimitedCall(500, () => new Error("unreachable"));
+    await getLogsInBlockChunks({
+      call: endpointAAgain.call,
+      filter,
+      fromBlock: 0,
+      toBlock: 999,
+      endpoint: "https://a.test",
+    });
+    expect(endpointAAgain.requests).toEqual([
+      { fromBlock: 0, toBlock: 499 },
+      { fromBlock: 500, toBlock: 999 },
+    ]);
+  });
+
+  it("re-probes the ceiling once a confirmed cap outlives its TTL", async () => {
+    const first = capLimitedCall(500, () => new Error("eth_getLogs is limited to a 500 range"));
+    await getLogsInBlockChunks({
+      call: first.call,
+      filter,
+      fromBlock: 0,
+      toBlock: 999,
+      endpoint: "https://a.test",
+    });
+
+    // A cap confirmed during a degraded window is reused for an hour, not
+    // pinned for the life of the process: past the TTL the next scan probes
+    // at the configured ceiling again (and re-learns only on a new refusal).
+    const dateNow = jest.spyOn(Date, "now").mockReturnValue(Date.now() + 61 * 60_000);
+    try {
+      const second = capLimitedCall(2_000, () => new Error("unreachable"));
+      await getLogsInBlockChunks({
+        call: second.call,
+        filter,
+        fromBlock: 0,
+        toBlock: 3_999,
+        endpoint: "https://a.test",
+      });
+      expect(second.requests[0]).toEqual({ fromBlock: 0, toBlock: 1_999 });
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
+  it("does not mistake a rate-limit message for a range cap", async () => {
+    const call = jest.fn(async () => {
+      throw new Error("Base RPC eth_getLogs returned an error: rate limited to a certain number of requests");
+    });
+
+    await expect(
+      getLogsInBlockChunks({ call: call as never, filter, fromBlock: 0, toBlock: 1_999 })
+    ).rejects.toThrow("rate limited");
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it("still fails when the provider refuses even a single block", async () => {
+    const call = jest.fn(async () => {
+      throw new Error("eth_getLogs is limited to a 0 range");
+    });
+
+    await expect(
+      getLogsInBlockChunks({ call: call as never, filter, fromBlock: 5, toBlock: 5 })
+    ).rejects.toThrow("limited to a 0 range");
   });
 });

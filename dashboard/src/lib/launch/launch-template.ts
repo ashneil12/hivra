@@ -1,3 +1,4 @@
+import { isCatalogAppId } from "@/lib/hivra/catalog-manifests";
 import type { LaunchAgentProfileId } from "./contracts";
 
 /** A saved template a launch starts from, as far as Launch needs to know it:
@@ -30,7 +31,9 @@ const TEMPLATE_PROFILES: Readonly<Record<string, LaunchAgentProfileId>> = {
 };
 
 export function launchProfileForTemplate(type: unknown): LaunchAgentProfileId | null {
-  return typeof type === "string" && Object.hasOwn(TEMPLATE_PROFILES, type) ? TEMPLATE_PROFILES[type] : null;
+  if (typeof type !== "string") return null;
+  if (Object.hasOwn(TEMPLATE_PROFILES, type)) return TEMPLATE_PROFILES[type];
+  return isCatalogAppId(type) ? type : null;
 }
 
 export type LaunchTemplateLookup =

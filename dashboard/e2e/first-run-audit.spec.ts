@@ -122,7 +122,7 @@ import {
   type AuditConfig,
 } from './first-run-audit/config';
 import { probeAgentChatOverWs } from './first-run-audit/agent-chat';
-import { createAuditUser, deleteAuditUser, mintSignInTicket } from './first-run-audit/clerk-admin';
+import { createAuditUser, deleteAuditUser } from './first-run-audit/clerk-admin';
 import {
   destroyAllInstances,
   getInstance,
@@ -243,10 +243,9 @@ test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real out
       }
 
       // ── 2. Land authed, exactly as a real signup does ────────────────────
-      const ticket = await mintSignInTicket(cfg.clerkSecretKey, user.id);
       context = await establishAuditSession(browser, {
         baseUrl: cfg.baseUrl,
-        ticket,
+        email,
         onContext: (ctx) => {
           posthog.attach(ctx);
           iframes.attach(ctx);

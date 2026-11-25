@@ -1,0 +1,158 @@
+{
+  "slug": "immich",
+  "checkedAt": "2026-11-21T15:10:45.145Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "immich-app/immich is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "immich-app/immich",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "4 service images have linux/amd64",
+      "evidence": {
+        "services": [
+          {
+            "name": "db",
+            "ref": "ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0",
+            "digest": "sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23",
+            "platforms": [
+              "linux/amd64",
+              "linux/arm64",
+              "unknown/unknown",
+              "unknown/unknown"
+            ]
+          },
+          {
+            "name": "redis",
+            "ref": "valkey/valkey:9",
+            "digest": "sha256:1c2b25b09f354c66fe994733acdf12fcfd4bdf6f3bd92b88a93a70378d884056",
+            "platforms": [
+              "linux/amd64",
+              "linux/arm64",
+              "linux/arm/v7",
+              "linux/ppc64le"
+            ]
+          },
+          {
+            "name": "ml",
+            "ref": "ghcr.io/immich-app/immich-machine-learning:release",
+            "digest": "sha256:739405742a79bd7447227c553bb62ed5491aa36acf00bc667af7f9c93b6fae91",
+            "platforms": [
+              "linux/arm64",
+              "unknown/unknown",
+              "linux/amd64",
+              "unknown/unknown"
+            ]
+          },
+          {
+            "name": "server",
+            "ref": "ghcr.io/immich-app/immich-server:release",
+            "digest": "sha256:fc880c1bf665b4aab1e74c15e56ab871225989cd546536e6b77e771869af06bd",
+            "platforms": [
+              "linux/amd64",
+              "unknown/unknown",
+              "linux/arm64",
+              "unknown/unknown"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "stack up; health /api/server/ping -> 200 in 28.6s across 4 container(s)",
+      "evidence": {
+        "project": "hivra-verify-immich-ebnae7",
+        "composeFile": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-immich-NVcwiy/rendered/compose.yaml",
+        "renderedDir": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-immich-NVcwiy/rendered",
+        "renderStdout": "{\"outDir\":\"/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-immich-NVcwiy/rendered\"}",
+        "defaultPlatform": "host",
+        "upStdout": "",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 28.6,
+          "attempts": 15
+        },
+        "containerCount": 4,
+        "perContainerMem": [
+          {
+            "id": "345e549566c3",
+            "memUsage": "1.061GiB / 7.652GiB",
+            "memBytes": 1139240075
+          },
+          {
+            "id": "0cac0d9fd34b",
+            "memUsage": "139.7MiB / 7.652GiB",
+            "memBytes": 146486067
+          },
+          {
+            "id": "c9f7dd925a74",
+            "memUsage": "11.54MiB / 7.652GiB",
+            "memBytes": 12100567
+          },
+          {
+            "id": "a58f66fcc1dd",
+            "memUsage": "205.7MiB / 7.652GiB",
+            "memBytes": 215692083
+          }
+        ],
+        "memBytes": 1513518792
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 57587,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html class=\"dark\">\n  <head>\n    <!-- (used for SSR) -->\n    <!-- metadata:tags -->\n\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1\" />\n    <link rel=\"icon\" type=\"image/x-icon\" sizes=\"32x32\" href=\"/favicon.ico\" />\n    <link rel=\"icon\" type=\"image/svg+xml\" sizes=\"any\" href=\"/icon.svg\" />\n    <link rel=\"apple-touch",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot POST /login</pre>\n</body>\n</html>\n"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 1443.4MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 1513518792,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

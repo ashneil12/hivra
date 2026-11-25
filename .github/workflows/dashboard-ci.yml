@@ -64,6 +64,11 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
+      - name: Check dashboard path casing
+        run: |
+          node --test scripts/check-path-casing.test.cjs
+          node scripts/check-path-casing.cjs
+
       - name: Determine migration diff range
         shell: bash
         run: |
@@ -104,6 +109,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Catalog certification runner tests
+        run: node --test scripts/__tests__/catalog-certification.test.mjs
 
       - name: Lint
         run: npm run lint

@@ -693,6 +693,23 @@ export interface SshResult {
     stdout: string;
     stderr: string;
     error?: string;
+    /**
+     * How far the attempt got before it ended, so a caller can tell "the
+     * command provably never ran" from "the transport died and it may have".
+     *   - "connect": the transport/auth handshake never completed — the
+     *     command provably never ran on the remote.
+     *   - "ready": the session authenticated but the command channel never
+     *     opened — the command may have run.
+     *   - "command": the command channel opened — the command may have run.
+     * A bare timeout or error string cannot make this distinction: the same
+     * "SSH operation timed out" result is produced whether the handshake
+     * stalled (nothing reached the box) or the channel hung after the
+     * command was dispatched (it may be running). Only instrumented SSH2
+     * attempts set it; results synthesized before a connect (config/env
+     * refusals, the Proxmox guest path's own host-script result) carry their
+     * own evidence instead.
+     */
+    stage?: "connect" | "ready" | "command";
 }
 
 /**
@@ -798,18 +815,22 @@ export async function sshExec(
             const conn = new Client();
             let settled = false;
             const timerObj: { current?: NodeJS.Timeout } = {};
+            // How far this attempt got when it ended — stamped onto every
+            // result the attempt produced so a timeout's evidence is honest.
+            let stage: SshResult["stage"] = "connect";
 
             const finish = (result: SshResult) => {
                 if (settled) return;
                 settled = true;
                 if (timerObj.current !== undefined) clearTimeout(timerObj.current);
 
-                if (!result.ok) {
+                const stamped = result.stage === undefined ? { ...result, stage } : result;
+                if (!stamped.ok) {
                     conn.destroy();
                 } else {
                     conn.end();
                 }
-                resolve(result);
+                resolve(stamped);
             };
 
             // Global timeout for the entire operation
@@ -823,6 +844,9 @@ export async function sshExec(
             }, timeoutMs);
 
             conn.on("ready", () => {
+                // The session authenticated — from here on a dead result can
+                // no longer prove the command never ran.
+                stage = "ready";
                 conn.exec(command, (err, stream) => {
                     if (err) {
                         finish({
@@ -833,6 +857,10 @@ export async function sshExec(
                         });
                         return;
                     }
+                    // The channel opened: the remote side accepted the
+                    // command — it may be running even if everything below
+                    // never reports back.
+                    stage = "command";
 
                     if (stdin !== undefined) {
                         try {
@@ -915,6 +943,7 @@ export async function sshExec(
                                 error: `${errorMessage}. Fingerprint refresh failed: ${
                                     refreshErr instanceof Error ? refreshErr.message : String(refreshErr)
                                 }`,
+                                stage,
                             });
                             return;
                         }
@@ -924,6 +953,7 @@ export async function sshExec(
                             stdout: "",
                             stderr: "",
                             error: errorMessage,
+                            stage,
                         });
                     })();
                     return;

@@ -1,0 +1,173 @@
+{
+  "slug": "paperless-ngx",
+  "checkedAt": "2026-11-21T15:22:41.541Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "paperless-ngx/paperless-ngx is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "paperless-ngx/paperless-ngx",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "3 service images have linux/amd64",
+      "evidence": {
+        "services": [
+          {
+            "name": "db",
+            "ref": "postgres:16-alpine",
+            "digest": "sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857",
+            "platforms": [
+              "linux/amd64",
+              "unknown/unknown",
+              "linux/arm/v6",
+              "unknown/unknown",
+              "linux/arm/v7",
+              "unknown/unknown",
+              "linux/arm64/v8",
+              "unknown/unknown",
+              "linux/386",
+              "unknown/unknown",
+              "linux/ppc64le",
+              "unknown/unknown",
+              "linux/riscv64",
+              "unknown/unknown",
+              "linux/s390x",
+              "unknown/unknown"
+            ]
+          },
+          {
+            "name": "redis",
+            "ref": "redis:7-alpine",
+            "digest": "sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe",
+            "platforms": [
+              "linux/amd64",
+              "unknown/unknown",
+              "linux/arm/v6",
+              "unknown/unknown",
+              "linux/arm/v7",
+              "unknown/unknown",
+              "linux/arm64/v8",
+              "unknown/unknown",
+              "linux/386",
+              "unknown/unknown",
+              "linux/ppc64le",
+              "unknown/unknown",
+              "linux/riscv64",
+              "unknown/unknown",
+              "linux/s390x",
+              "unknown/unknown"
+            ]
+          },
+          {
+            "name": "app",
+            "ref": "ghcr.io/paperless-ngx/paperless-ngx:latest",
+            "digest": "sha256:8508853b8a0f8394074260957d0be186c8c64f346973b24a7583de4580f306b9",
+            "platforms": [
+              "linux/amd64",
+              "unknown/unknown",
+              "linux/arm64",
+              "unknown/unknown"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "stack up; health / -> 200 in 46.3s across 3 container(s)",
+      "evidence": {
+        "project": "hivra-verify-paperless-ngx-6zne7z",
+        "composeFile": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-paperless-ngx-LP22AW/rendered/compose.yaml",
+        "renderedDir": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-paperless-ngx-LP22AW/rendered",
+        "renderStdout": "{\"outDir\":\"/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-paperless-ngx-LP22AW/rendered\"}",
+        "defaultPlatform": "host",
+        "upStdout": "",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 46.3,
+          "attempts": 24
+        },
+        "containerCount": 3,
+        "perContainerMem": [
+          {
+            "id": "2ad9f6229a6f",
+            "memUsage": "570.8MiB / 7.652GiB",
+            "memBytes": 598527181
+          },
+          {
+            "id": "97625bcbdd85",
+            "memUsage": "30.14MiB / 7.652GiB",
+            "memBytes": 31604081
+          },
+          {
+            "id": "cb69d64fdad8",
+            "memUsage": "4.777MiB / 7.652GiB",
+            "memBytes": 5009048
+          }
+        ],
+        "memBytes": 635140310
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "login form POST rejected as origin/host/CSRF issue (status 403)",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 59823,
+        "proxyMode": "loopback-origin",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/accounts/login/?next=/"
+          },
+          {
+            "hop": 2,
+            "path": "/accounts/login/?next=/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/accounts/login/?next=/",
+        "bodyHead": "<!doctype html>\n\n\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, shrink-to-fit=no\">\n        <meta name=\"author\" content=\"Paperless-ngx project and contributors\">\n        <meta name=\"robots\" content=\"noindex,nofollow\">\n\n        <title>\n            \n    Paperless-ngx sign in\n\n        </title>\n        <link href=\"",
+        "formPost": {
+          "path": "/accounts/login/?next=/",
+          "status": 403,
+          "location": null,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\">\n  <meta name=\"robots\" content=\"NONE,NOARCHIVE\">\n  <title>403 Forbidden</title>\n  <style>\n    html * { padding:0; margin:0; }\n    body * { padding:10px 20px; }\n    body * * { padding:0; }\n    body { font-family: sans-serif; background:#eee; color:#000; }\n    body>div { border-bottom:1px sol"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 605.7MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 635140310,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "gateway: login form POST rejected as origin/host/CSRF issue (status 403)"
+  ]
+}

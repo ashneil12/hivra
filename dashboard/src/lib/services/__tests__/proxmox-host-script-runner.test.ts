@@ -332,6 +332,7 @@ describe("runProxmoxHostScript earlyFinishMarker", () => {
     const result = await promise;
     expect(result).toEqual({
       ok: false,
+      stage: "command",
       stdout: "a".repeat(20),
       stderr: "b".repeat(12),
       error: "Proxmox host script output exceeded 32 bytes",

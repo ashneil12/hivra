@@ -1,0 +1,124 @@
+{
+  "slug": "kanboard",
+  "checkedAt": "2026-11-21T14:18:17.595Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "kanboard/kanboard is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "kanboard/kanboard",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "kanboard/kanboard:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "kanboard/kanboard:latest",
+        "digest": "sha256:51a912ecd3b6df0cca2cfb521edb2cb92462c59fff427a4938465178b1f54d19",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v6",
+          "linux/arm/v7",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 3.9s",
+      "evidence": {
+        "container": "hivra-verify-kanboard-ejpaht",
+        "hostPort": 3220,
+        "image": "kanboard/kanboard:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-kanboard-ejpaht",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3220:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-kanboard-ejpaht-data:/var/www/html/data",
+          "kanboard/kanboard:latest"
+        ],
+        "runStdout": "4e0ba2578690f63d436e9e003bb18137b04c18df59513b5aa1cc7736342ba2ea",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 3.9,
+          "attempts": 2
+        },
+        "memUsage": "27.05MiB / 7.652GiB",
+        "memBytes": 28363981
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /login; form POST -> 200",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64034,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/login"
+          },
+          {
+            "hop": 2,
+            "path": "/login",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/login",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">\n        <meta name=\"mobile-web-app-capable\" content=\"yes\">\n        <meta name=\"apple-mobile-web-app-capable\" content=\"yes\">\n        <meta name=\"robots\" content=\"noindex,nofollow\">\n        <meta http-equiv=\"X-U",
+        "formPost": {
+          "path": "/login/check",
+          "status": 200,
+          "location": null,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">\n        <meta name=\"mobile-web-app-capable\" content=\"yes\">\n        <meta name=\"apple-mobile-web-app-capable\" content=\"yes\">\n        <meta name=\"robots\" content=\"noindex,nofollow\">\n        <meta http-equiv=\"X-U"
+        },
+        "loginProbe": {
+          "status": 200,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n    <head>\n        <meta charset=\"utf-8\">\n        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">\n        <meta name=\"mobile-web-app-capable\" content=\"yes\">\n        <meta name=\"apple-mobile-web-app-capable\" "
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 27.1MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 28363981,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

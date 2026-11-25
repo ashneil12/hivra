@@ -64,7 +64,8 @@ describe("ModelAccessControl", () => {
   it("explains Venice on Hivra credits and offers a setup call", () => {
     render(<Harness profileId="hermes" />);
     fireEvent.click(choice(/^Hivra credits/));
-    expect(screen.getByText(/Models come from Venice through Hivra, so you don't need a Venice account/)).toBeInTheDocument();
+    expect(choice(/^Hivra credits/)).toHaveAccessibleDescription(/Powered by Venice. No separate account or API key needed./);
+    expect(screen.getByText(/Venice says models marked Private don't retain your prompts/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Book a setup call" }).getAttribute("href")).toMatch(/^mailto:.*Codex\+1/);
   });
 
@@ -80,9 +81,35 @@ describe("ModelAccessControl", () => {
   it("shows every choice as a one-click button with no disclosure step first", () => {
     render(<Harness profileId="codex" />);
     const group = within(choices());
-    expect(group.getAllByRole("button").length).toBeGreaterThan(1);
-    expect(group.getByRole("button", { name: /^Hivra credits/ })).toBeEnabled();
+    expect(group.getAllByRole("button")).toHaveLength(3);
+    expect(choices()).toHaveAccessibleDescription("How would you like to connect your agent to AI?");
+    const credits = group.getByRole("button", { name: "Hivra credits" });
+    expect(credits).toBeEnabled();
+    expect(credits).toHaveAccessibleDescription(/\$4\.25 available/);
+    fireEvent.click(credits);
+    expect(credits).toHaveAttribute("aria-pressed", "true");
+    expect(group.getByRole("button", { name: "Sign in with my existing account" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("combobox", { name: "Model" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Change/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the paying wallet balance and updates it when the wallet changes", () => {
+    render(<Harness profileId="codex" initial={{ mode: "credits", walletType: "card" }}
+      balance={{ state: "known", cardMicroUsd: 4_250_000, hermesosMicroUsd: 2_000_000 }} />);
+    const credits = screen.getByRole("button", { name: "Hivra credits" });
+    expect(credits).toHaveAccessibleDescription(/\$4\.25 available/);
+    fireEvent.change(screen.getByRole("combobox", { name: "Pay from" }), { target: { value: "hermesos" } });
+    expect(credits).toHaveAccessibleDescription(/\$2\.00 available/);
+  });
+
+  it("distinguishes a loading or unavailable balance from a zero balance", () => {
+    const { rerender } = render(<Harness profileId="codex" balance={{ state: "loading" }} />);
+    const credits = screen.getByRole("button", { name: "Hivra credits" });
+    expect(credits).toHaveAccessibleDescription(/Checking balance…/);
+    rerender(<Harness profileId="codex" balance={{ state: "unknown" }} />);
+    expect(credits).toBeEnabled();
+    expect(credits).toHaveAccessibleDescription(/Balance unavailable/);
+    expect(screen.queryByRole("button", { name: "Add credit" })).not.toBeInTheDocument();
   });
 
   it("defaults Codex to signing in inside it, with a key and Hivra credits as the other choices", () => {
@@ -154,11 +181,30 @@ describe("ModelAccessControl", () => {
     fireEvent.click(choice(/^Hivra credits/));
     const model = screen.getByRole("combobox", { name: "Model" });
     expect(model).toHaveValue("deepseek-v4-1-flash");
+    expect(model).toHaveAccessibleDescription("Recommended Private");
+    expect(within(model).getByRole("option", { name: "DeepSeek V4.1 Flash" })).toHaveProperty("selected", true);
     const advanced = screen.getByText("Advanced").closest("details")!;
     expect(advanced).not.toHaveAttribute("open");
-    fireEvent.change(within(advanced).getByLabelText("Model ID"), { target: { value: "my-model-1" } });
+    fireEvent.click(within(advanced).getByText("Advanced"));
+    const modelId = within(advanced).getByRole("textbox", { name: "Model ID" });
+    expect(modelId).toHaveAccessibleDescription("Leave it empty to use the model chosen above.");
+    fireEvent.change(modelId, { target: { value: "my-model-1" } });
     expect(latest.access.model).toBe("my-model-1");
     expect(model).toHaveValue("__custom");
+    expect(model).not.toHaveAccessibleDescription();
+  });
+
+  it("shows the selected model's privacy outside the dropdown even for a long name", () => {
+    render(<Harness profileId="codex" initial={{ mode: "credits" }} />);
+    const model = screen.getByRole("combobox", { name: "Model" });
+    fireEvent.change(model, { target: { value: "qwen3-235b-a22b-thinking-2507" } });
+    expect(model).toHaveValue("qwen3-235b-a22b-thinking-2507");
+    expect(model).toHaveAccessibleDescription("Private");
+    expect(model).not.toContainElement(screen.getByText("Private"));
+
+    fireEvent.change(model, { target: { value: "claude-opus-4-8" } });
+    expect(model).not.toHaveAccessibleDescription();
+    expect(screen.queryByText("Private")).not.toBeInTheDocument();
   });
 
   it("disables credits at $0 and offers to add some", () => {
@@ -224,7 +270,8 @@ describe("ModelAccessControl", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(screen.getByText("Key works.")).toBeInTheDocument();
       const model = screen.getByRole("combobox", { name: "Model" });
-      expect(within(model).getAllByRole("option").map(option => option.textContent)).toEqual(["Kimi K2.6 · Private", "Claude Sonnet 4.6"]);
+      expect(within(model).getAllByRole("option").map(option => option.textContent)).toEqual(["Kimi K2.6", "Claude Sonnet 4.6"]);
+      expect(model).toHaveAccessibleDescription("Private");
     });
 
     it("says plainly when Venice doesn't accept the key", async () => {

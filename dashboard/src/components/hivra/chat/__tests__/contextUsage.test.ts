@@ -1,5 +1,5 @@
 import { contextPercent, contextRatio, contextUsageOf, formatTokens, mergeContextUsage } from "../contextUsage";
-import { activePromptId, promptMessages } from "../promptOutline";
+import { activePromptId, promptMessages } from "../promptOutlineModel";
 import { findTranscriptMessages } from "../TranscriptFind";
 import type { ChatMessage } from "../types";
 

@@ -107,9 +107,10 @@ npm run self-host:init -- --state-dir /absolute/private/hivra-state
 
 The command refuses to overwrite an existing installation. It never runs
 `supabase db reset`, never links a cloud Supabase project and never prints secret
-values. For non-interactive test automation only, provide the password through
-the process environment as `HIVRA_SETUP_PASSWORD`; it is removed from build and
-runtime child environments after hashing.
+values. For non-interactive test automation only, set the operator email with
+`HIVRA_SETUP_EMAIL` or `--email`, and the password with `HIVRA_SETUP_PASSWORD`.
+Without a terminal the email prompt does not run, and setup stops. The password
+is removed from build and runtime child environments after hashing.
 
 Options use separate name/value pairs, such as `--state-dir /absolute/path`.
 Unknown, command-inappropriate and duplicate options are rejected before any
