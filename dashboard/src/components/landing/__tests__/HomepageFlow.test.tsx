@@ -39,6 +39,8 @@ afterEach(() => {
 test("the first screen says what it is and asks once", async () => {
   await renderHome();
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Give your AI agent a computer of its own.");
+  // Chrome drops a lone whitespace text node from the heading's accessible name ("yourAI"); keep the space inside the lead text.
+  expect(document.getElementById("home-title")?.firstChild?.textContent).toBe("Give your ");
   expect(screen.getByText((_, element) => element?.tagName === "P" && /^Run Claude Code, Codex, Hermes and other AI agents on computers separate from your own\./.test(element.textContent ?? ""))).toBeInTheDocument();
   expect(document.getElementById("hero-primary-cta")).toHaveAttribute("href", AGENT_LAUNCH_HREF);
   const hero = within(document.querySelector("#home-title")?.closest("section") as HTMLElement);
