@@ -129,6 +129,7 @@ describe('managed-hosting audit mail pause', () => {
     const browser = { newContext: jest.fn() };
 
     await expect(establishAuditSession(browser as never, { baseUrl: 'https://hivra.cloud', email: freshEmail })).rejects.toThrow(/refusing to target/);
+    await expect(establishAuditSession(browser as never, { baseUrl: 'https://canary.evil.example', email: freshEmail })).rejects.toThrow(/refusing to target/);
     expect(browser.newContext).not.toHaveBeenCalled();
   });
 

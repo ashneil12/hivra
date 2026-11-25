@@ -217,14 +217,14 @@ export function assertNotProduction(baseUrl: string): void {
     throw new Error(`[first-run-audit] invalid base URL: ${baseUrl}`);
   }
 
-  // Allow the canary subdomain and localhost. Everything else — in particular
-  // the bare apex domains that serve production — is refused.
-  const allowed = host === 'localhost' || host === '127.0.0.1' || host.startsWith('canary.');
+  // Allow only the real canary host and localhost. A `canary.` prefix on an
+  // attacker-controlled domain is not a canary environment.
+  const allowed = host === 'localhost' || host === '127.0.0.1' || host === 'canary.hermesos.cloud';
   if (!allowed) {
     throw new Error(
       `[first-run-audit] refusing to target "${host}". ` +
         'This harness creates + destroys real users and real VMs. ' +
-        'It is canary-only (canary.*), or localhost.',
+        'It is canary-only (canary.hermesos.cloud), or localhost.',
     );
   }
 }
