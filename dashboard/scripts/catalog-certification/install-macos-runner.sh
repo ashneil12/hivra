@@ -63,6 +63,7 @@ script = os.environ["SCRIPT"]
 logbase = os.environ["LOGBASE"]
 outfile = os.environ["OUTFILE"]
 env = {
+    "HOME": os.environ.get("HOME", ""),
     "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
     "HIVRA_CANARY_VERCEL_PROJECT_ID": os.environ["PROJECT_ID"],
     "HIVRA_VERCEL_SCOPE": os.environ["SCOPE_VALUE"],
