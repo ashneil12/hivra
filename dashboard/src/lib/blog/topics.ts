@@ -33,6 +33,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "codex-resume-session",
       "codex-mobile",
       "how-to-install-codex-cli",
+      "claude-code-mcp",
     ],
   },
   {
