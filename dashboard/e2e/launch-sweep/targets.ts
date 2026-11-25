@@ -19,6 +19,8 @@ export type SweepProof =
   | 'hivra-chat'
   /** The agent's own web UI in the agent page's iframe: type in its composer, wait for a reply. */
   | 'agent-ui-chat'
+  /** A self-hosted app: its authenticated web surface renders real app content. */
+  | 'app-open'
   /** A computer: its page opens running, with a terminal or desktop surface. */
   | 'computer-open';
 
@@ -39,15 +41,17 @@ export interface SweepTarget {
 /**
  * Universal catalog apps come from the manifest registry, so a new manifest
  * is covered here without a second per-app list. The proof follows the
- * runtime: an app with its own web UI is proven inside that UI (the same
- * check catalogAppHasWebSurface makes); a chat-only CLI is proven in Hivra's
- * own chat.
+ * runtime and category: a self-hosted app with its own web UI must render
+ * through the authenticated gateway; a catalog agent with a web UI must answer
+ * in that UI; a chat-only CLI is proven in Hivra's own chat.
  */
 const CATALOG_TARGETS: readonly SweepTarget[] = UNIVERSAL_CATALOG_MANIFESTS.map((manifest) => ({
   profileId: manifest.id,
   tile: manifest.name,
   kind: 'agent',
-  proof: catalogAppHasWebSurface(manifest) ? 'agent-ui-chat' : 'hivra-chat',
+  proof: catalogAppHasWebSurface(manifest)
+    ? (manifest.category === 'app' ? 'app-open' : 'agent-ui-chat')
+    : 'hivra-chat',
 }));
 
 export const SWEEP_TARGETS: readonly SweepTarget[] = [

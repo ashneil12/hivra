@@ -1,5 +1,7 @@
 /**
- * Turns a Clerk sign-in ticket into a live, authenticated browser context.
+ * Turns a Clerk test-mode email-code sign-in into a live, authenticated browser
+ * context. The account address must be a +clerk_test address; in a test-mode
+ * Clerk instance Clerk suppresses mail to it and accepts the fixed test OTP.
  *
  * TWO things must be true before posthog will capture a single event, and the
  * audit needs both or a failed run cannot tell us where it died:
@@ -16,7 +18,11 @@
  */
 import type { Browser, BrowserContext } from '@playwright/test';
 
-import { assertLiveManagedHostingAuditAllowed } from './config';
+import {
+  assertClerkTestAuditEmail,
+  assertLiveManagedHostingAuditAllowed,
+  CLERK_TEST_OTP_CODE,
+} from './config';
 import {
   applyHumanBrowserSignals,
   humanBrowserContextOptions,
@@ -28,12 +34,20 @@ import {
 import { CONSENT_STORAGE_KEY, CONSENT_VERSION } from '../../src/lib/consent/cookie-consent';
 
 /** Minimal shape of the Clerk client we touch. Types erase at runtime. */
+type ClerkSignInResource = {
+  createdSessionId: string | null;
+  status?: string;
+  supportedFirstFactors?: Array<{ strategy?: string; emailAddressId?: string }>;
+  prepareFirstFactor(o: { strategy: 'email_code'; emailAddressId: string }): Promise<unknown>;
+  attemptFirstFactor(o: { strategy: 'email_code'; code: string }): Promise<ClerkSignInResource>;
+};
+
 type ClerkWin = {
   Clerk?: {
     loaded?: boolean;
     client: {
       signIn: {
-        create(o: { strategy: 'ticket'; ticket: string }): Promise<{ createdSessionId: string }>;
+        create(o: { identifier: string }): Promise<ClerkSignInResource>;
       };
     };
     setActive(o: { session: string }): Promise<void>;
@@ -42,21 +56,22 @@ type ClerkWin = {
 
 export interface SessionOptions {
   baseUrl: string;
-  ticket: string;
+  email: string;
   /** Attach network listeners etc. before the first navigation. */
   onContext?: (context: BrowserContext) => void | Promise<void>;
 }
 
 /**
  * Creates a fresh context (no storage state — a virgin browser for a virgin
- * user), grants analytics consent, redeems the ticket, and lands on /dashboard
- * so the session cookie is fully established.
+ * user), grants analytics consent, completes Clerk's email-code sign-in, and
+ * lands on /dashboard so the session cookie is fully established.
  */
 export async function establishAuditSession(
   browser: Browser,
-  { baseUrl, ticket, onContext }: SessionOptions,
+  { baseUrl, email, onContext }: SessionOptions,
 ): Promise<BrowserContext> {
   assertLiveManagedHostingAuditAllowed();
+  assertClerkTestAuditEmail(email);
   // NB: browser.newContext() does NOT inherit the project's `use` options, so
   // the UA here is the raw (headless) one unless we set it explicitly.
   const context = await browser.newContext({
@@ -90,12 +105,21 @@ export async function establishAuditSession(
     await page.waitForFunction(() => !!(window as unknown as ClerkWin).Clerk?.loaded, {
       timeout: 45_000,
     });
-    await page.evaluate(async (t) => {
+    await page.evaluate(async ({ email, code }) => {
       const clerk = (window as unknown as ClerkWin).Clerk;
       if (!clerk) throw new Error('Clerk failed to load on /sign-in');
-      const signIn = await clerk.client.signIn.create({ strategy: 'ticket', ticket: t });
-      await clerk.setActive({ session: signIn.createdSessionId });
-    }, ticket);
+      const signIn = await clerk.client.signIn.create({ identifier: email });
+      const emailFactor = signIn.supportedFirstFactors?.find((factor) => factor.strategy === 'email_code');
+      if (!emailFactor?.emailAddressId) {
+        throw new Error('Clerk did not offer email-code sign-in for the audit account');
+      }
+      await signIn.prepareFirstFactor({ strategy: 'email_code', emailAddressId: emailFactor.emailAddressId });
+      const completed = await signIn.attemptFirstFactor({ strategy: 'email_code', code });
+      if (!completed.createdSessionId) {
+        throw new Error(`Clerk email-code sign-in did not complete (status ${completed.status ?? 'unknown'})`);
+      }
+      await clerk.setActive({ session: completed.createdSessionId });
+    }, { email, code: CLERK_TEST_OTP_CODE });
 
     // Land authed so the session cookie is written for subsequent API calls.
     await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });

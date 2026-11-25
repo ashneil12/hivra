@@ -3,6 +3,7 @@ import globalSetup from '../e2e/global-setup';
 import { createAuditUser, mintSignInTicket } from '../e2e/first-run-audit/clerk-admin';
 import { reapAuditAccounts } from '../e2e/first-run-audit/reaper';
 import { establishAuditSession } from '../e2e/first-run-audit/session';
+import { auditEmail, LIVE_AUDIT_AUTH_ENV, LIVE_AUDIT_AUTH_CLERK_TEST_OTP } from '../e2e/first-run-audit/config';
 
 jest.mock('@playwright/test', () => ({
   defineConfig: (config: unknown) => config,
@@ -14,7 +15,7 @@ const liveFlags = ['FIRST_RUN_AUDIT', 'LAUNCH_SWEEP', 'REMOTE_DESKTOP_AUDIT', 'T
 const blocked = /Live runs are paused/;
 const baseUrl = 'https://canary.example.test';
 const key = 'sk_test_fixture';
-const freshEmail = 'firstrun-audit-fresh@example.test';
+const freshEmail = 'firstrun-audit-fresh+clerk_test@example.test';
 const existingAuditUser = {
   id: 'user_audit_existing',
   email_addresses: [{ email_address: 'firstrun-audit-existing@example.test' }],
@@ -54,7 +55,7 @@ describe('managed-hosting audit mail pause', () => {
     process.env.QA_USER_ID = existingAuditUser.id;
     const fetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'));
 
-    await expect(globalSetup({ projects: [] } as never)).rejects.toThrow(blocked);
+    await expect(globalSetup({ projects: [] } as never)).rejects.toThrow(/sign-in tickets are disabled/);
 
     expect(fetch).not.toHaveBeenCalled();
     expect(chromium.launch).not.toHaveBeenCalled();
@@ -65,11 +66,40 @@ describe('managed-hosting audit mail pause', () => {
     const browser = { newContext: jest.fn() };
 
     await expect(createAuditUser(key, freshEmail)).rejects.toThrow(blocked);
-    await expect(mintSignInTicket(key, existingAuditUser.id)).rejects.toThrow(blocked);
-    await expect(establishAuditSession(browser as never, { baseUrl, ticket: 'fixture' })).rejects.toThrow(blocked);
+    await expect(mintSignInTicket(key, existingAuditUser.id)).rejects.toThrow(/sign-in tickets are disabled/);
+    await expect(establishAuditSession(browser as never, { baseUrl, email: freshEmail })).rejects.toThrow(blocked);
 
     expect(fetch).not.toHaveBeenCalled();
     expect(browser.newContext).not.toHaveBeenCalled();
+  });
+
+  it('makes every new audit email a Clerk test address', () => {
+    expect(auditEmail('abc123xy', 'example.test')).toBe('firstrun-audit-abc123xy+clerk_test@example.test');
+  });
+
+  it('creates a passwordless Clerk test user after explicit opt-in, without touching sign-in tickets', async () => {
+    process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
+    const fetch = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        id: 'user_new_test',
+        email_addresses: [{ email_address: freshEmail }],
+        created_at: 123,
+      })),
+    );
+
+    await expect(createAuditUser(key, freshEmail)).resolves.toMatchObject({ id: 'user_new_test', email: freshEmail });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/users'), expect.objectContaining({ method: 'POST' }));
+    expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining('/sign_in_tokens'), expect.anything());
+  });
+
+  it('still rejects a non-test email after explicit opt-in', async () => {
+    process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
+    const fetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'));
+
+    await expect(createAuditUser(key, 'firstrun-audit-real@example.test')).rejects.toThrow(/not a Clerk test address/);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('rejects active cleanup before contacting Clerk but keeps its read-only inventory', async () => {

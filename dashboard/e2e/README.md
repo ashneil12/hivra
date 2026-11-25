@@ -1,11 +1,13 @@
 # Dashboard E2E — Tier 1 of the QA pyramid
 
-> **Live managed-hosting audits are paused.** First-run, launch sweep, remote-desktop
-> and trial-to-Pro reject live runs before Playwright setup. Ordinary Playwright
-> setup also rejects ticket sign-in when QA credentials are present. Clerk sent
-> mail shortly after ticket sign-in, including for a reused audit account.
-> Active cleanup remains paused; read-only inventory remains available separately.
-> The live instructions below are for when the pause is lifted.
+> **Live managed-hosting audits are blocked by default.** First-run, launch sweep,
+> remote-desktop and trial-to-Pro require the explicit isolated-runner opt-in
+> `HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp`. The approved path creates passwordless
+> `+clerk_test` users in the Canary Clerk development instance and signs in through
+> the normal email-code flow with Clerk's fixed test OTP. Clerk sign-in tickets are
+> hard-disabled because ticket redemption sent mail, including for a reused audit
+> account. Active cleanup follows the same opt-in; read-only inventory remains
+> available separately.
 
 ## Weekly general check
 
@@ -47,8 +49,8 @@ This does not change protected CI or the [managed release process](../../docs/re
 It must not publish a `launch-sweep` status or replace a required sweep.
 The proposed [Promote gate](https://github.com/ashneil12/hivra/pull/593) stays
 held until an isolated runner using an approved auth path records a passing
-sweep on the exact served Canary revision. Live auth and release sweeps remain
-paused; changed-agent installers need isolated execution and bounded, revocable
+sweep on the exact served Canary revision. Live auth and release sweeps still require
+the explicit opt-in above; changed-agent installers need isolated execution and bounded, revocable
 test model access before they can be enabled.
 
 ## Playwright (not part of the weekly check)
@@ -61,11 +63,11 @@ spec is read-only: the telemetry spec checks real ingestion.
 - `public.public.spec.ts` — logged-out routes render (HTTP < 400 + real content) + VRT.
 - `golden-deploy.authed.spec.ts` — the **login → dashboard → deploy** golden path. Skips if no QA session.
 - `first-run-audit.spec.ts` + `first-run-audit/` — the **19/20 gate**. Real provisioning. See below.
-- `global-setup.ts` — rejects ticket sign-in during the pause; without both QA credentials it writes empty storage state.
+- `global-setup.ts` — always rejects legacy ticket sign-in; without both QA credentials it writes empty storage state.
 - `playwright.config.ts` (repo root of `dashboard/`) — projects: `public` (no auth), `authed` (storage state),
   and `first-run-audit` (only exists when `FIRST_RUN_AUDIT=1`).
 
-## Run it after the pause
+## Run it
 ```bash
 npm run test:e2e            # all, against E2E_BASE_URL (default https://canary.hermesos.cloud)
 npm run test:e2e:public     # public smoke + VRT only (no secrets needed)
@@ -190,11 +192,11 @@ new user has a path to a box that boots with inference configured.
 
 ```bash
 # one audit (provisions + destroys one real canary VM)
-CLERK_SECRET_KEY=sk_test_… npm run audit:first-run
+HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp CLERK_SECRET_KEY=sk_test_… npm run audit:first-run
 
 # reap anything a crashed run left behind — ALWAYS run this after a campaign
-CLERK_SECRET_KEY=sk_test_… npm run audit:first-run:cleanup
-CLERK_SECRET_KEY=sk_test_… npm run audit:first-run:cleanup -- --dry-run
+HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp CLERK_SECRET_KEY=sk_test_… npm run audit:first-run:cleanup
+HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp CLERK_SECRET_KEY=sk_test_… npm run audit:first-run:cleanup -- --dry-run
 
 # tally N verdict files against the 19/20 bar
 npm run audit:first-run:tally
@@ -289,10 +291,11 @@ Hivra Cloud, in its own throwaway Canary account, it:
 2. signs in, opens `/dashboard/launch`, clicks the tile, Review, picks **Hivra
    credits** (the starter credit every new paid account gets) and presses Launch;
 3. waits on the after-launch screen until it says ready, then presses Open;
-4. asks "What is 389 + 448? Reply with only the number." in the box a customer
-   types into (Hivra's chat for Claude Code and Codex, the agent's own web UI
-   for the rest) and waits for `837` on screen. Computers pass when their page
-   shows the desktop or terminal;
+4. uses the proof that matches the tile: coding and chat agents answer
+   "What is 389 + 448?" with `837` in the customer-visible chat surface;
+   self-hosted catalog apps pass when their authenticated `/app/` web surface
+   renders real app content rather than a gateway error or loopback redirect;
+   computers pass when their page shows the desktop or terminal;
 5. closes the agent's tab and, for `LAUNCH_SWEEP_IDLE_MINUTES` (default 10, `0`
    skips), reads what it uses idle every 30 s from the owner's own usage view
    (Manage › Overview): RAM, CPU and disk. The summary adds an **Idle use** table,
@@ -314,7 +317,7 @@ operations runner that checks out this repository and runs the commands below wi
 the Canary test credentials.
 
 ```bash
-CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \
+HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \
   npm run test:launch-sweep                         # everything, one at a time
 LAUNCH_SWEEP_ONLY=agent-zero,openclaw npm run test:launch-sweep   # a few
 LAUNCH_SWEEP_KEEP_FAILED=1 …                         # keep a failed computer to read its logs
@@ -359,13 +362,13 @@ It launches one computer and tries to clean up its disposable accounts and
 their resources even if the test fails. Unconfirmed cleanup fails the journey
 and reports the affected account and step. It keeps the account if agent,
 Stripe, or database cleanup cannot be confirmed; do not run the active reaper
-while live audits are paused.
+without the explicit live-audit opt-in.
 
 It needs the card trial on Canary (`HIVRA_CARD_TRIAL=on` and its migration) and
 is opt-in: it runs only with `TRIAL_JOURNEY=1`, refuses production and refuses
 live Clerk or Stripe keys. Never retried, because a retry would start a second checkout.
 
 ```bash
-CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \
+HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \
   TRIAL_JOURNEY_STRIPE_SECRET_KEY=sk_test_… npm run test:trial-journey
 ```

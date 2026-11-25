@@ -16,9 +16,37 @@ export const AUDIT_EMAIL_PREFIX = 'firstrun-audit-';
 /** Agent name prefix — becomes part of the Proxmox VM name, so keep it greppable. */
 export const AUDIT_AGENT_PREFIX = 'firstrun-audit-';
 
+/** The only live-auth mechanism the managed-hosting audits may use. */
+export const LIVE_AUDIT_AUTH_ENV = 'HIVRA_LIVE_AUDIT_AUTH';
+export const LIVE_AUDIT_AUTH_CLERK_TEST_OTP = 'clerk-test-otp';
+export const CLERK_TEST_OTP_CODE = '424242';
+export const CLERK_TEST_EMAIL_TAG = '+clerk_test';
+
+export function liveAuditAuthMode(): string | null {
+  return process.env[LIVE_AUDIT_AUTH_ENV]?.trim().toLowerCase() || null;
+}
+
 export function assertLiveManagedHostingAuditAllowed(): void {
-  // Clerk sent mail during synthetic ticket sign-in, even for an existing audit user.
-  throw new Error('[managed-hosting-audit] Live runs are paused. Use offline fixtures for fresh-state coverage.');
+  if (liveAuditAuthMode() === LIVE_AUDIT_AUTH_CLERK_TEST_OTP) return;
+  throw new Error(
+    '[managed-hosting-audit] Live runs are paused. ' +
+      `Set ${LIVE_AUDIT_AUTH_ENV}=${LIVE_AUDIT_AUTH_CLERK_TEST_OTP} only on an owner-approved isolated runner; ` +
+      'it uses Clerk test-mode +clerk_test accounts and no sign-in tickets.',
+  );
+}
+
+export function assertClerkTestAuditEmail(email: string | null | undefined): asserts email is string {
+  if (!email?.toLowerCase().includes(CLERK_TEST_EMAIL_TAG)) {
+    throw new Error(
+      `[managed-hosting-audit] audit email ${email ?? '(missing)'} is not a Clerk test address. ` +
+        `Every live audit account must include ${CLERK_TEST_EMAIL_TAG} so Clerk suppresses test mail.`,
+    );
+  }
+}
+
+/** Sign-in tickets are not an approved audit auth path: Clerk sent mail after ticket redemption. */
+export function assertTicketSignInDisabled(): never {
+  throw new Error('[managed-hosting-audit] Clerk sign-in tickets are disabled for live audits because ticket sign-in sent mail.');
 }
 
 export interface AuditConfig {
@@ -188,7 +216,7 @@ export function newRunId(): string {
 }
 
 export function auditEmail(runId: string, domain: string): string {
-  return `${AUDIT_EMAIL_PREFIX}${runId}@${domain}`;
+  return `${AUDIT_EMAIL_PREFIX}${runId}${CLERK_TEST_EMAIL_TAG}@${domain}`;
 }
 
 export function auditAgentName(runId: string): string {

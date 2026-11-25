@@ -661,7 +661,16 @@ async function bootDockerWeb(spec, platforms) {
   };
   let memBytes = null;
   try {
-    const runRes = shOut("docker", args, { timeout: 300_000 });
+    // Pull separately so a registry or Docker-desktop stall is evidence, not an
+    // unattended runner sitting in `docker run` for the whole curation pass.
+    const pull = shOut("docker", ["pull", ref], { timeout: 240_000 });
+    evidence.pullStdout = pull.stdout.slice(-500);
+    if (pull.status !== 0) {
+      evidence.pullStderr = (pull.stderr || pull.error || "").slice(-800);
+      const why = /timed out|ETIMEDOUT/i.test(pull.error ?? "") ? "image pull timed out after 4 minutes" : `image pull failed: ${evidence.pullStderr.slice(0, 240)}`;
+      return { checks: [check("boot", "fail", why, evidence), check("gateway", "skipped", "image did not pull")], memBytes };
+    }
+    const runRes = shOut("docker", args, { timeout: 180_000 });
     evidence.runStdout = runRes.stdout.trim().slice(0, 300);
     if (runRes.status !== 0) {
       evidence.runStderr = runRes.stderr.slice(0, 600);
@@ -733,7 +742,14 @@ async function bootDockerStack(spec, imageEvidence) {
     const composeEnv = { ...process.env, ...(allArm64 ? {} : { DOCKER_DEFAULT_PLATFORM: "linux/amd64" }) };
     evidence.defaultPlatform = allArm64 ? "host" : "linux/amd64";
 
-    const up = shOut("docker", ["compose", "-p", project, "-f", composeFile, "up", "-d"], { timeout: 600_000, env: composeEnv });
+    const pull = shOut("docker", ["compose", "-p", project, "-f", composeFile, "pull", "--quiet"], { timeout: 480_000, env: composeEnv });
+    evidence.pullStdout = pull.stdout.slice(-500);
+    if (pull.status !== 0) {
+      evidence.pullStderr = (pull.stderr || pull.error || "").slice(-800);
+      const why = /timed out|ETIMEDOUT/i.test(pull.error ?? "") ? "compose image pull timed out after 8 minutes" : `compose image pull failed: ${evidence.pullStderr.slice(0, 240)}`;
+      return { checks: [check("boot", "fail", why, evidence), check("gateway", "skipped", "stack images did not pull")], memBytes };
+    }
+    const up = shOut("docker", ["compose", "-p", project, "-f", composeFile, "up", "-d"], { timeout: 300_000, env: composeEnv });
     evidence.upStdout = up.stdout.slice(-800);
     if (up.status !== 0) {
       evidence.upStderr = up.stderr.slice(-1200);

@@ -35,10 +35,24 @@ agent="${CURATOR_AGENT:-}"
 if [ -z "$agent" ]; then
   if ! devin auth status 2>&1 | grep -q "Not logged in"; then agent=devin; else agent=codex; fi
 fi
+run_devin() {
+  devin -p "$prompt" ${CURATOR_MODEL:+--model "$CURATOR_MODEL"} \
+    --permission-mode dangerous --respect-workspace-trust false >"$log" 2>&1
+}
+run_codex() {
+  codex exec ${CURATOR_MODEL:+-m "$CURATOR_MODEL"} --skip-git-repo-check \
+    --dangerously-bypass-approvals-and-sandbox -C "$WORKTREE" "$prompt" >>"$log" 2>&1
+}
+status=0
 case "$agent" in
-  devin) devin -p "$prompt" ${CURATOR_MODEL:+--model "$CURATOR_MODEL"} \
-           --permission-mode dangerous --respect-workspace-trust false >"$log" 2>&1 ;;
-  codex) codex exec ${CURATOR_MODEL:+-m "$CURATOR_MODEL"} --skip-git-repo-check \
-           --dangerously-bypass-approvals-and-sandbox -C "$WORKTREE" "$prompt" >"$log" 2>&1 ;;
+  devin) run_devin || status=$? ;;
+  codex) run_codex || status=$? ;;
   *) echo "unknown CURATOR_AGENT=$agent" >"$log"; exit 1 ;;
-esac || echo "pass exited $? (agent=$agent)" >>"$log"
+esac
+if [ "$status" -ne 0 ] && [ "$agent" = devin ] && command -v codex >/dev/null 2>&1 \
+  && grep -Eiq 'quota|usage limit|weekly limit|out of credits' "$log"; then
+  echo "devin quota/limit failure (exit $status); retrying this same pass with codex" >>"$log"
+  status=0
+  run_codex || status=$?
+fi
+[ "$status" -eq 0 ] || echo "pass exited $status (agent=$agent)" >>"$log"

@@ -21,7 +21,6 @@ import {
 import {
   createAuditUser,
   deleteAuditUser,
-  mintSignInTicket,
 } from "./first-run-audit/clerk-admin";
 import {
   destroyAllHivraAgents,
@@ -212,8 +211,7 @@ test.describe("REMOTE DESKTOP AUDIT: disposable Hivra VM over the public WAN pat
       clerkUserId = user.id;
       await grantRemoteDesktopAuditPlan(env.supabaseUrl, env.supabaseServiceRoleKey, user.id);
       await preclearAbuseGate(env.supabaseUrl, env.supabaseServiceRoleKey, user.id);
-      const ticket = await mintSignInTicket(env.clerkSecretKey, user.id);
-      context = await establishAuditSession(browser, { baseUrl: env.baseUrl, ticket });
+      context = await establishAuditSession(browser, { baseUrl: env.baseUrl, email });
       const page = await context.newPage();
       await page.goto(`${env.baseUrl}/dashboard/launch`, { waitUntil: "domcontentloaded" });
 

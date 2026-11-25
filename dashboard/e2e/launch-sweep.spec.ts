@@ -30,9 +30,10 @@ import { expect, test, type Browser, type BrowserContext, type Page } from '@pla
 import path from 'node:path';
 
 import { assertNotProduction, auditEmail, newRunId } from './first-run-audit/config';
-import { createAuditUser, deleteAuditUser, mintSignInTicket } from './first-run-audit/clerk-admin';
+import { createAuditUser, deleteAuditUser } from './first-run-audit/clerk-admin';
 import { destroyAllHivraAgents, destroyAllInstances, listHivraAgents, listInstances } from './first-run-audit/instances';
 import { establishAuditSession } from './first-run-audit/session';
+import { proveAppOpen } from './launch-sweep/app-open';
 import { proveChat, proveComputerOpen } from './launch-sweep/chat';
 import { measureIdle } from './launch-sweep/idle';
 import { checkPrivateOnly, privateOnlyCheckEnabled } from './launch-sweep/private-only';
@@ -114,9 +115,8 @@ async function screenshot(page: Page | null, recorder: SweepRecorder, outDir: st
   );
 }
 
-async function signedInContext(browser: Browser, env: SweepEnv, userId: string): Promise<BrowserContext> {
-  const ticket = await mintSignInTicket(env.clerkSecretKey, userId);
-  const context = await establishAuditSession(browser, { baseUrl: env.baseUrl, ticket });
+async function signedInContext(browser: Browser, env: SweepEnv, email: string): Promise<BrowserContext> {
+  const context = await establishAuditSession(browser, { baseUrl: env.baseUrl, email });
   context.setDefaultTimeout(30_000);
   return context;
 }
@@ -171,11 +171,12 @@ test.describe('launch sweep', () => {
 
   test('every tile Launch offers is covered by the sweep', async ({ browser }) => {
     const env = sweepEnv();
-    const user = await createAuditUser(env.clerkSecretKey, auditEmail(`sweep-tiles-${env.runId}`, 'hermesos.cloud'));
+    const email = auditEmail(`sweep-tiles-${env.runId}`, 'hermesos.cloud');
+    const user = await createAuditUser(env.clerkSecretKey, email);
     let context: BrowserContext | null = null;
     try {
       await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, user.id);
-      context = await signedInContext(browser, env, user.id);
+      context = await signedInContext(browser, env, email);
       const page = await context.newPage();
       const offered = await offeredTileNames(page);
       const known = new Set([...SWEEP_TARGETS.map((target) => target.tile), ...OWN_SERVER_ONLY_TILES]);
@@ -212,10 +213,11 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
   let stage: SweepFailure['stage'] = 'account';
 
   try {
-    const user = await createAuditUser(env.clerkSecretKey, auditEmail(`sweep-${target.profileId}-${env.runId}`, 'hermesos.cloud'));
+    const email = auditEmail(`sweep-${target.profileId}-${env.runId}`, 'hermesos.cloud');
+    const user = await createAuditUser(env.clerkSecretKey, email);
     userId = user.id;
     await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, user.id);
-    context = await signedInContext(browser, env, user.id);
+    context = await signedInContext(browser, env, email);
     page = await context.newPage();
     recorder.done('account');
 
@@ -235,13 +237,15 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
     stage = 'chat';
     const proof = target.proof === 'computer-open'
       ? await proveComputerOpen(page, env.readyTimeoutMs)
-      : await proveChat(page, target, { composerTimeoutMs: env.composerTimeoutMs, replyTimeoutMs: env.replyTimeoutMs });
+      : target.proof === 'app-open'
+        ? await proveAppOpen(page, target.tile, env.composerTimeoutMs)
+        : await proveChat(page, target, { composerTimeoutMs: env.composerTimeoutMs, replyTimeoutMs: env.replyTimeoutMs });
     recorder.result.chat = proof;
     recorder.done('chat');
     recorder.result.passed = true;
     await screenshot(page, recorder, env.outDir, 'pass');
 
-    if (target.proof !== 'computer-open' && privateOnlyCheckEnabled() && recorder.result.agentId) {
+    if (target.proof !== 'computer-open' && target.proof !== 'app-open' && privateOnlyCheckEnabled() && recorder.result.agentId) {
       stage = 'private';
       // Its own result: the launch above has already passed either way.
       recorder.result.privateOnly = await checkPrivateOnly(page, context.request, env.baseUrl, recorder.result.agentId, target, {

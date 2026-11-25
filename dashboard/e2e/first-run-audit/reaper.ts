@@ -15,7 +15,7 @@
 import { chromium } from '@playwright/test';
 
 import { assertLiveManagedHostingAuditAllowed, isAuditEmail } from './config';
-import { deleteAuditUser, listAuditUsers, mintSignInTicket, type ClerkUser } from './clerk-admin';
+import { deleteAuditUser, listAuditUsers, type ClerkUser } from './clerk-admin';
 import { destroyAllHivraAgents, destroyAllInstances } from './instances';
 import { establishAuditSession } from './session';
 
@@ -94,10 +94,10 @@ export async function reapAuditAccounts(opts: ReapOptions): Promise<ReapReport> 
       };
 
       try {
-        const ticket = await mintSignInTicket(opts.clerkSecretKey, user.id);
+        if (!user.email) throw new Error('audit user has no email address for Clerk test-OTP sign-in');
         const context = await establishAuditSession(browser, {
           baseUrl: opts.baseUrl,
-          ticket,
+          email: user.email,
         });
 
         try {
