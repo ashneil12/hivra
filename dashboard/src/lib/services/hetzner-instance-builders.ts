@@ -14,7 +14,7 @@ import {
   type MemorySystemConfig,
 } from "@/lib/instance-settings";
 import { PROVIDER_ID_MAP, resolveProviderBaseUrl, resolveProviderFallbackModel } from "@/lib/services/provider-config";
-import { serializeEnvAssignmentLine } from "@/lib/services/env-file-lines";
+import { serializeEnvAssignmentLine, stripEnvValueLineBoundaries } from "@/lib/services/env-file-lines";
 import { HETZNER_BOOTSTRAP_SIDECAR_SERVER_CODE } from "@/lib/services/sidecar-script";
 import { buildInstanceUpdateReporterShell } from "@/lib/services/update-status-reporting";
 import { buildPlatformRegistryCredentialScrubScript } from "@/lib/services/registry-credential-scrub";
@@ -27,6 +27,7 @@ import {
   buildWebUIPersistentStatePermissionRepairCommand,
   buildWebUIPersistentStateShimCommand,
   buildWebUIToolchainDiagnosticCommand,
+  BUSYBOX_ENV_FILE_SURGICAL_SH,
   WEBUI_PERSISTENT_INSTALL_ENV_KEYS,
   WEBUI_PERSISTENT_INSTALL_ENV_LINES,
 } from "@/lib/services/webui-runtime-env";
@@ -60,15 +61,12 @@ else
   : > "$managed_env_tmp"
 fi
 managed_env_keys='${managedEnvKeys}'
+${BUSYBOX_ENV_FILE_SURGICAL_SH}
 echo "[webui-update] Repair dashboard-managed toolchain env keys in persisted WebUI state"
 for managed_env_key in $managed_env_keys; do
   managed_env_line="$(grep -m1 "^\${managed_env_key}=" /tmp/hermes-managed-env || true)"
   [ -n "$managed_env_line" ] || continue
-  if grep -q "^\${managed_env_key}=" "$managed_env_tmp"; then
-    sed -i "s|^\${managed_env_key}=.*|\${managed_env_line}|" "$managed_env_tmp"
-  else
-    printf "\\n%s\\n" "$managed_env_line" >> "$managed_env_tmp"
-  fi
+  env_file_surgical_upsert "$managed_env_tmp" "$managed_env_key" "$managed_env_line"
 done
 chmod 600 "$managed_env_tmp"
 # Publish atomically, and only when something actually changed, so routine
@@ -265,12 +263,6 @@ export interface AgentSettings {
 function env(key: string, fallback: string): string {
   const v = process.env[key];
   return v && v.trim() ? v.trim() : fallback;
-}
-
-// SEC-04: a CR/LF/NUL in a dashboard-provided value (API key, base URL, model,
-// bot name) must never smuggle an extra KEY=value line into a generated .env.
-function sanitizeEnvValue(val: string): string {
-  return String(val).replace(/[\r\n\0]/g, "");
 }
 
 // YAML double-quoted scalar. Byte-identical to `"${val}"` for ordinary values,
@@ -2407,9 +2399,9 @@ ${buildAutoUpdateTimerProvisioningScript({
 export function buildProviderEnv(provider: string, apiKey: string, customLlmBaseUrl?: string): string[] {
   // SEC-04: the key and any user-supplied base URL land verbatim in .env lines
   // below — strip line breaks/NUL so they can't inject extra assignments.
-  const apiKeySafe = sanitizeEnvValue(apiKey);
+  const apiKeySafe = stripEnvValueLineBoundaries(apiKey);
   const customLlmBaseUrlSafe =
-    customLlmBaseUrl === undefined ? undefined : sanitizeEnvValue(customLlmBaseUrl);
+    customLlmBaseUrl === undefined ? undefined : stripEnvValueLineBoundaries(customLlmBaseUrl);
   switch (provider) {
     case "openrouter":
       return [`HERMES_INFERENCE_PROVIDER=openrouter`, `OPENROUTER_API_KEY=${apiKeySafe}`];

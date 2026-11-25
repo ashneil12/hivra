@@ -68,6 +68,24 @@ describe("serializeEnvValue", () => {
     expect(serializeEnvValue("tv\0INJECTED=1")).toBe("tvINJECTED=1");
   });
 
+  it("strips every Python splitlines delimiter plus NUL with a benign placeholder", () => {
+    for (const delimiter of [
+      "\x00",
+      "\x0a",
+      "\x0b",
+      "\x0c",
+      "\x0d",
+      "\x1c",
+      "\x1d",
+      "\x1e",
+      "\x85",
+      "\u2028",
+      "\u2029",
+    ]) {
+      expect(serializeEnvValue(`alpha${delimiter}omega`)).toBe("alphaomega");
+    }
+  });
+
   it("double-quotes apostrophe-only values (no shell-active chars present)", () => {
     expect(serializeEnvValue("it's a name")).toBe('"it\'s a name"');
     expect(serializeEnvValue("Ash's helper")).toBe('"Ash\'s helper"');
