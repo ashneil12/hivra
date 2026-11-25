@@ -314,20 +314,24 @@ A separate test reads the live Launch page and fails if it offers a tile that
 
 **Where it runs.** Not from this repository's Actions: the public-tree rules keep
 workflows bound to live infrastructure out of the public tree, and public run logs
-would show Canary's internals. The schedule (weekly, and before every release into `main`) runs from a private
-operations runner that checks out this repository and runs the commands below with
-the Canary test credentials.
+would show Canary's internals. The reference continuous implementation is the
+operator-run catalog certification runner in
+`dashboard/scripts/catalog-certification/`; its operating contract is documented in
+`docs/release/CATALOG-CERTIFICATION-RUNNER.md`. It serially certifies catalog entries
+against the exact public Canary revision and runs the scoped reaper after every attempt.
 
 ### Required isolated-runner setup
 
-Use a dedicated Linux x86_64 runner with no customer shell, no production
-secrets and no persistent browser profile. Node 22, `npm ci` and
-`npx playwright install --with-deps chromium` are the host setup. The runner
-checks out the exact public `canary` merge commit being certified; it does not
-deploy or use the Vercel CLI.
+Use a dedicated runner with no customer shell, no production secrets and no
+persistent browser profile. Node 22, `npm ci` and Playwright Chromium are the host
+setup. The runner checks out the exact public `canary` merge commit being certified;
+it does not deploy, promote, re-alias or otherwise mutate Vercel. The continuous
+macOS runner may use the operator's authenticated Vercel CLI read-only to resolve
+the served revision and fetch Canary test env values just-in-time.
 
-Required Canary test secrets, injected by the private runner secret store only:
-`CLERK_SECRET_KEY` (`sk_test_…`), `LAUNCH_SWEEP_SUPABASE_URL`, and
+Required Canary test secrets, injected by the runner secret store or fetched
+just-in-time only for the life of the test process: `CLERK_SECRET_KEY`
+(`sk_test_…`), `LAUNCH_SWEEP_SUPABASE_URL`, and
 `LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY`. The trial journey also needs
 `TRIAL_JOURNEY_STRIPE_SECRET_KEY` (`sk_test_…`). Every live command also needs
 `HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp`; without it the harness fails before
