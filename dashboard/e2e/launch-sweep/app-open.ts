@@ -14,7 +14,7 @@ const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?$/i;
 
 export interface AppOpenProof {
   surface: string;
-  /** Milliseconds from first check until meaningful app content appeared. */
+  /** Seconds from first check until meaningful app content appeared. */
   openSeconds: number;
   /** Short visible text sample recorded in the result JSON. */
   textSample: string;

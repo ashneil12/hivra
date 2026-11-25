@@ -36,12 +36,17 @@ export function assertLiveManagedHostingAuditAllowed(): void {
 }
 
 export function assertClerkTestAuditEmail(email: string | null | undefined): asserts email is string {
-  if (!email?.toLowerCase().includes(CLERK_TEST_EMAIL_TAG)) {
+  const normalized = email?.toLowerCase();
+  const at = normalized?.lastIndexOf('@') ?? -1;
+  const localPart = at > 0 ? normalized!.slice(0, at) : '';
+  const domain = at > 0 ? normalized!.slice(at + 1) : '';
+  if (!localPart.endsWith(CLERK_TEST_EMAIL_TAG)) {
     throw new Error(
       `[managed-hosting-audit] audit email ${email ?? '(missing)'} is not a Clerk test address. ` +
-        `Every live audit account must include ${CLERK_TEST_EMAIL_TAG} so Clerk suppresses test mail.`,
+        `Every live audit account must end its local part with ${CLERK_TEST_EMAIL_TAG} so Clerk suppresses test mail.`,
     );
   }
+  assertAuditEmailDomain(domain);
 }
 
 /** Sign-in tickets are not an approved audit auth path: Clerk sent mail after ticket redemption. */

@@ -90,6 +90,15 @@ describe('managed-hosting audit mail pause', () => {
     expect(() => auditEmail('abc123xy', 'hermesos.cloud')).toThrow(/reserved example domain/);
   });
 
+  it('requires the exact Clerk test tag and a reserved domain after explicit opt-in', async () => {
+    process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
+    const fetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'));
+
+    await expect(createAuditUser(key, 'firstrun-audit-x+clerk_test.evil@example.test')).rejects.toThrow(/not a Clerk test address/);
+    await expect(createAuditUser(key, 'firstrun-audit-x+clerk_test@hermesos.cloud')).rejects.toThrow(/reserved example domain/);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('creates a passwordless Clerk test user after explicit opt-in, without touching sign-in tickets', async () => {
     process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
     const fetch = jest.spyOn(globalThis, 'fetch').mockResolvedValue(

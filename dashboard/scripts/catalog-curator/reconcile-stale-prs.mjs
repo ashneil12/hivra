@@ -28,7 +28,7 @@ function gh(args) {
 function tryGh(args) {
   try {
     return gh(args);
-  } catch (err) {
+  } catch {
     return null;
   }
 }
@@ -58,6 +58,18 @@ function ghApi(endpoint, extra = []) {
 function filePaths(prNumber) {
   const raw = tryGh(["pr", "view", String(prNumber), "--json", "files", "--jq", ".files[].path"]);
   return raw ? raw.split("\n").map((line) => line.trim()).filter(Boolean) : [];
+}
+
+/**
+ * Manifest ids a PR still uniquely carries. An entry already on canary needs no
+ * recovery; an entry also carried by a newer open curation PR is superseded.
+ * PR numbers increase in creation order for this one-pass branch flow.
+ */
+export function catalogIdsNeedingRecovery(ids, presentOnCanary, slugOwners, prNumber) {
+  return ids.filter((id) => {
+    if (presentOnCanary.has(id)) return false;
+    return !(slugOwners.get(id) ?? []).some((number) => number > prNumber);
+  });
 }
 
 function parseLedger(text) {
@@ -142,15 +154,16 @@ function main() {
   for (const row of rows) {
     const { pr, ids, ledgerOnly, ledgerUnique } = row;
     const alreadyInCanary = ids.length > 0 && ids.every((id) => present.has(id));
-    const duplicateOfNewer = ids.find((id) => (slugOwners.get(id) ?? []).some((number) => number > pr.number));
+    const needingRecovery = catalogIdsNeedingRecovery(ids, present, slugOwners, pr.number);
+    const fullySuperseded = !alreadyInCanary && ids.length > 0 && needingRecovery.length === 0;
     let action = "keep";
     let reason = null;
     if (alreadyInCanary) {
       action = "close";
       reason = `all added catalog entries already exist on canary (${ids.join(", ")})`;
-    } else if (duplicateOfNewer) {
+    } else if (fullySuperseded) {
       action = "close";
-      reason = `a newer open curation PR also carries ${duplicateOfNewer}`;
+      reason = `every added catalog entry not yet on canary is carried by a newer open curation PR (${ids.filter((id) => !present.has(id)).join(", ")})`;
     } else if (ledgerOnly && ledgerUnique.length === 0) {
       action = "close";
       reason = "its ledger transitions are already represented or superseded on canary";
@@ -177,4 +190,5 @@ function main() {
   console.log(JSON.stringify({ repo: GH_REPO, dryRun: DRY_RUN, openCurationPrs: prs.length, report }, null, 2));
 }
 
-main();
+const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) main();

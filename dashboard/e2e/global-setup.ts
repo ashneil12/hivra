@@ -21,12 +21,6 @@ export default async function globalSetup(_config: FullConfig) {
   if (CLERK_SECRET_KEY && QA_USER_ID) assertTicketSignInDisabled();
 
   mkdirSync(dirname(AUTH_FILE), { recursive: true });
-  if (!CLERK_SECRET_KEY || !QA_USER_ID) {
-    console.warn('[global-setup] CLERK_SECRET_KEY / QA_USER_ID not set — authed specs will skip.');
-  } else {
-    // Unreachable while the ticket guard above is active; kept explicit so a
-    // future auth redesign does not silently fall back to tickets.
-    console.warn('[global-setup] standing QA ticket auth is disabled — authed specs will skip.');
-  }
+  console.warn('[global-setup] no approved standing QA auth path — authed specs will skip.');
   writeFileSync(AUTH_FILE, JSON.stringify({ cookies: [], origins: [] }));
 }
