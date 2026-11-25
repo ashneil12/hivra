@@ -572,21 +572,20 @@ export async function submitLaunchDraft(
     return payload.data.agent;
   }
   if (profileId === "linux-terminal") {
-    if (deployment.mode !== "self-managed") {
-      throw new HivraLaunchCorrectableError("Linux Sandbox requires a compatible gVisor host you connected.", 409, "gvisor_self_managed_only");
-    }
-    const host = options.selfManagedTarget?.id === deployment.targetId ? options.selfManagedTarget : null;
-    if (gvisorNeedsRecheck(host, Date.now())) {
-      options.onObserved?.({ kind: "checking-host", at: Date.now() });
-      try {
-        await recheckGvisorForLaunch(host);
-      } catch (error) {
-        if (!(error instanceof GvisorRecheckError)) throw error;
-        throw new LaunchCorrectableError(error.message, error.status, "gvisor_recheck_failed", {
-          kind: "open",
-          label: "Check it in Capacity",
-          href: buildInfrastructureSetupHref("linux-terminal", { unified: true }),
-        });
+    if (deployment.mode === "self-managed") {
+      const host = options.selfManagedTarget?.id === deployment.targetId ? options.selfManagedTarget : null;
+      if (gvisorNeedsRecheck(host, Date.now())) {
+        options.onObserved?.({ kind: "checking-host", at: Date.now() });
+        try {
+          await recheckGvisorForLaunch(host);
+        } catch (error) {
+          if (!(error instanceof GvisorRecheckError)) throw error;
+          throw new LaunchCorrectableError(error.message, error.status, "gvisor_recheck_failed", {
+            kind: "open",
+            label: "Check it in Capacity",
+            href: buildInfrastructureSetupHref("linux-terminal", { unified: true }),
+          });
+        }
       }
     }
     return submitWithReceipt({

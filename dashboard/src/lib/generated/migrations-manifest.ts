@@ -509,5 +509,6 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261123122000", name: "protect_hermes_archive_lifecycle" },
   { version: "20261123220000", name: "optional_holder_switch" },
   { version: "20261125120000", name: "provider_release_admission_2026_11_25_1" },
+  { version: "20261125190000", name: "managed_gvisor_reservation" },
   { version: "20261125204500", name: "provider_release_admission_2026_11_25_2" },
 ];

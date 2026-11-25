@@ -12,7 +12,10 @@ import {
 import {
   HivraLaunchCorrectableError,
   HivraLaunchRejectedError,
+  type HivraAgent,
 } from "@/lib/hivra/agent-api";
+import { GvisorComputerManage } from "@/components/hivra/GvisorComputerManage";
+import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
 import LaunchPage from "../page";
 import { createLaunchDraft, launchDraftStorageKey } from "@/lib/launch/draft-store";
 
@@ -192,11 +195,30 @@ const PRIOR_PREPARED_ENV = Object.fromEntries(
 function configurePreparedSlot() {
   for (const [key, value] of Object.entries(PREPARED_ENV)) process.env[key] = value;
 }
+
+const MANAGED_GVISOR_ENV = {
+  HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED: "true",
+  HIVRA_MANAGED_GVISOR_AUTHORITY_USER_ID: "user_managed_fixture",
+  HIVRA_MANAGED_GVISOR_CONNECTION_ID: "11111111-1111-4111-8111-111111111111",
+  HIVRA_MANAGED_GVISOR_TARGET_ID: "22222222-2222-4222-8222-222222222222",
+  HIVRA_MANAGED_GVISOR_CONNECTION_REVISION: "1",
+} as const;
+const PRIOR_MANAGED_GVISOR_ENV = Object.fromEntries(
+  Object.keys(MANAGED_GVISOR_ENV).map((key) => [key, process.env[key]]),
+) as Record<keyof typeof MANAGED_GVISOR_ENV, string | undefined>;
+function configureManagedLinuxSandbox() {
+  for (const [key, value] of Object.entries(MANAGED_GVISOR_ENV)) process.env[key] = value;
+}
 afterEach(() => {
   for (const key of Object.keys(PREPARED_ENV)) delete process.env[key];
+  for (const key of Object.keys(MANAGED_GVISOR_ENV)) delete process.env[key];
 });
 afterAll(() => {
   for (const [key, value] of Object.entries(PRIOR_PREPARED_ENV)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  for (const [key, value] of Object.entries(PRIOR_MANAGED_GVISOR_ENV)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
@@ -388,6 +410,120 @@ describe("LaunchPage", () => {
       type: "linux-terminal", computerProfile: "linux-terminal", cpu: 1, ram: 1, maximumCpu: 1, maximumRam: 1,
       deployment: expect.objectContaining({ mode: "self-managed", targetId: GVISOR_TARGET.id }),
     })));
+  });
+
+  it("launches Linux Sandbox on Hivra Cloud and runs a command in the same ready sandbox", async () => {
+    configureManagedLinuxSandbox();
+    const created = {
+      id: "77777777-7777-4777-8777-777777777777", type: "linux-terminal", name: "Linux Sandbox 1", status: "running", cpu: 1, ram: 1,
+      computer_profile: "linux-terminal", computer_substrate: "gvisor", deployment_mode: "hivra-managed",
+    } as const;
+    createAgentMock.mockResolvedValue(created);
+    const launch = render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseTile("Linux Sandbox");
+
+    await waitFor(() => expect(launchButton()).toBeEnabled());
+    expect(screen.getByText("Hivra Cloud")).toBeInTheDocument();
+    expect(screen.getByText("gVisor application-kernel sandbox on Hivra Cloud")).toBeInTheDocument();
+    expect(screen.getByText("A terminal and files, without administrator access. No desktop, public ports or host folders.")).toBeInTheDocument();
+    closeChanges();
+    fireEvent.click(launchButton());
+
+    await waitFor(() => expect(createAgentMock).toHaveBeenCalledTimes(1));
+    const input = createAgentMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(input).toEqual(expect.objectContaining({
+      type: "linux-terminal",
+      computerProfile: "linux-terminal",
+      cpu: 1,
+      ram: 1,
+      maximumCpu: 1,
+      maximumRam: 1,
+      browser: false,
+      deployment: { mode: "hivra-managed" },
+      launchRequestId: expect.any(String),
+    }));
+    expect(input).not.toHaveProperty("templateRef");
+    expect(input).not.toHaveProperty("llm");
+    expect(input).not.toHaveProperty("managedVenice");
+    expect(gvisorChecks).toBe(0);
+    const open = await screen.findByRole("link", { name: "Open Linux Sandbox" });
+    expect(open).toHaveAttribute("href", `/dashboard/agent/${created.id}?tab=manage`);
+    launch.unmount();
+
+    const execBodies: unknown[] = [];
+    const execUrls: string[] = [];
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/gvisor/exec")) {
+        execUrls.push(url);
+        execBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { result: { exitCode: 0, stdout: "ready", stderr: "" } } }) } as Response;
+      }
+      if (url.endsWith("/gvisor")) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { observation: { state: "running" } } }) } as Response;
+      }
+      if (url.endsWith("/events")) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { events: [] } }) } as Response;
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: {} }) } as Response;
+    });
+    const manageAgent: HivraAgent = { ...created, manage: manageCapabilitiesFor(created, { preparedMatch: false }) };
+    window.history.replaceState(null, "", `/dashboard/agent/${created.id}?tab=manage`);
+    render(<GvisorComputerManage agent={manageAgent} onChanged={jest.fn()} onDestroyed={jest.fn()} />);
+
+    expect(screen.getByText("Linux Sandbox · Hivra Cloud")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Run a command" }));
+    const run = screen.getByRole("button", { name: "Run in /workspace" });
+    await waitFor(() => expect(run).toBeEnabled());
+    fireEvent.click(run);
+    expect(await screen.findByText("Exit 0")).toBeInTheDocument();
+    expect(execBodies).toHaveLength(1);
+    expect(execUrls[0]).toContain(`/agents/${created.id}/`);
+  });
+
+  it("keeps the connected-server Linux Sandbox path available when the managed lane is configured", async () => {
+    configureManagedLinuxSandbox();
+    infrastructureTargets = [GVISOR_TARGET];
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseTile("Linux Sandbox");
+
+    await waitFor(() => expect(whereButton(/My infrastructure/i)).toBeEnabled());
+    fireEvent.click(whereButton(/My infrastructure/i));
+    closeChanges();
+    fireEvent.click(launchButton());
+
+    await waitFor(() => expect(createAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      type: "linux-terminal",
+      deployment: expect.objectContaining({ mode: "self-managed", targetId: GVISOR_TARGET.id }),
+    })));
+  });
+
+  it("keeps Linux Sandbox server-only when the managed lane is not configured", async () => {
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseTile("Linux Sandbox");
+
+    expect(await screen.findByText("Linux Sandbox needs a server you've connected, and none is ready for it yet.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Hivra Cloud/i })).toBeDisabled();
+    expect(screen.getByText(/Not available for Linux Sandbox/i)).toBeInTheDocument();
+    expect(launchButton()).toBeDisabled();
+    fireEvent.click(launchButton());
+    expect(createAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("does not submit managed Linux Sandbox for a Free account when the lane is configured", async () => {
+    configureManagedLinuxSandbox();
+    fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
+    render(<LaunchPage />);
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseTile("Linux Sandbox");
+
+    expect(await screen.findByText(/Linux Sandbox on Hivra Cloud needs a paid plan/i)).toBeInTheDocument();
+    expect(launchButton()).toBeDisabled();
+    fireEvent.click(launchButton());
+    expect(createAgentMock).not.toHaveBeenCalled();
   });
 
   // B2 review: a host chosen near the end of its 15-minute readiness window

@@ -55,7 +55,8 @@ import {
   DEFAULT_PROXMOX_HOST_CAPACITY_POLICY,
 } from "@/lib/infrastructure/host-capacity-policy";
 import { launchProviderAgent, ProviderAgentLaunchError, type ProviderAgentLaunchInput } from "@/lib/hivra/provider-agent-launch";
-import { GvisorComputerError, launchGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
+import { findGvisorComputerByLaunchRequest, GvisorComputerError, launchGvisorComputer, reserveAndDispatchManagedGvisor } from "@/lib/hivra/gvisor-computer-service";
+import { checkManagedGvisorLaunchAuthority } from "@/lib/hivra/managed-gvisor-authority";
 import { createLaunchModelAdmissionService, type LaunchModelAdmission } from "@/lib/hivra/launch-model-admission";
 import { LaunchModelRequestError, LaunchPlanAgentLimitError } from "@/lib/hivra/launch-model-store";
 import { ModelKeyStoreError } from "@/lib/hivra/model-key-store";
@@ -924,7 +925,7 @@ export async function launchHivraAgentForUser(
     const def = getAgent(type);
     const name = String(pick(body.name, template?.name) || def?.name || "Agent").trim();
     if (type === "linux-terminal") {
-      if (templateRef || deployment.mode !== "self-managed") {
+      if (templateRef) {
         return apiError("Linux terminal sandboxes require an exact connected gVisor host target.", 400);
       }
       if (body.computerProfile !== undefined && body.computerProfile !== "linux-terminal") {
@@ -946,6 +947,36 @@ export async function launchHivraAgentForUser(
         || !Number.isInteger(ram) || ram < 1 || ram > 128
         || maximumCpu !== cpu || maximumRam !== ram) {
         return apiError("gVisor computers reserve their full CPU and memory limit; reserved and maximum values must match.", 400);
+      }
+      if (deployment.mode === "hivra-managed") {
+        const managedGate = await checkManagedGvisorLaunchAuthority(userId);
+        if (managedGate.ok === false) {
+          return apiError(managedGate.message, managedGate.status, undefined, { code: managedGate.code, launchRequestId });
+        }
+        try {
+          const result = await reserveAndDispatchManagedGvisor({ userId, launchRequestId, name, cpu, ramGb: ram,
+            authority: managedGate.authority });
+          if (result.state === "cleaned") {
+            return apiError("The sandbox was removed after it could not start.", 409, undefined,
+              { code: "managed_gvisor_cleaned", launchRequestId, computerId: result.computerId });
+          }
+          if (result.state === "ready") {
+            // A created Computer uses the same launch receipt shape as the
+            // self-managed path. Never return a fabricated running agent.
+            const agent = await findGvisorComputerByLaunchRequest(userId, launchRequestId).catch(() => null);
+            if (agent?.id === result.computerId && agent.deployment_mode === "hivra-managed"
+              && (agent.status === "running" || agent.status === "stopped")) {
+              return apiSuccess({ agent: sanitizeHivraAgentRow(agent), launchRequestId, computerId: result.computerId,
+                launch: { state: "accepted", phase: "accepted" } }, 201);
+            }
+          }
+          return apiSuccess({ launchRequestId, computerId: result.computerId,
+            launch: { state: "reconciling", phase: "reconciling" } }, 202);
+        } catch (error) {
+          if (!(error instanceof GvisorComputerError)) throw error;
+          return apiError(error.message, error.code === "capacity_limit" ? 403 : error.code === "conflict" ? 409 : 503,
+            undefined, { code: error.code, launchRequestId });
+        }
       }
       let target;
       try {
