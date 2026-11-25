@@ -131,7 +131,10 @@ describe("blog registry", () => {
   });
 
   it("never prints a raw template placeholder in article copy", () => {
-    const leaky = BLOG_ARTICLES_LIST.filter((article) => /\$\{[A-Za-z_][\w.]*\}/.test(JSON.stringify(article))).map((article) => article.slug);
+    // Code spans and fenced blocks are skipped: guides quote shell and .mcp.json variable syntax such as ${VAR} on purpose.
+    const withoutCode = (article: unknown) =>
+      JSON.stringify(article).replace(/```[\s\S]*?```/g, "").replace(/`[^`]*`/g, "");
+    const leaky = BLOG_ARTICLES_LIST.filter((article) => /\$\{[A-Za-z_][\w.]*\}/.test(withoutCode(article))).map((article) => article.slug);
     expect(leaky).toEqual([]);
   });
 
