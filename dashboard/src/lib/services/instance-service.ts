@@ -564,11 +564,9 @@ type ProxmoxHostRegistryRow = {
 // legacy env-order fallback.
 const PROXMOX_HOST_STATUS_ACTIVE = "active";
 
-// Lifecycle states that consume host RAM/CPU right now. Stopped (paused/
-// suspended), pending-but-not-yet-provisioned, deleting, deleted, and
-// failed rows do not — that's what enables aggressive packing once the
-// inactivity-shutdown cron lands.
-const PROXMOX_HOST_ALLOCATION_STATES = ["provisioning", "active"] as const;
+// A sleeping Classic holder still owns its disk and consumes its reserved seat.
+const CLASSIC_HOST_ALLOCATION_FILTER =
+  "lifecycle_state.in.(provisioning,active),and(lifecycle_state.eq.paused,seat_funding.eq.holder,paused_reason.eq.holder_idle)";
 const DEFAULT_PROXMOX_CPU_OVERCOMMIT_RATIO = 5;
 
 function resolveProxmoxCpuOvercommitRatio(
@@ -831,9 +829,9 @@ async function rankProxmoxHostsForPlacement(params: {
 
   const { data: rows, error } = await params.supabase
     .from("hermes_instances")
-    .select("proxmox_node, user_id, cpu_limit, ram_limit, disk_size_gb, lifecycle_state, seat_funding")
+    .select("proxmox_node, user_id, cpu_limit, ram_limit, disk_size_gb, lifecycle_state, seat_funding, paused_reason, lifecycle_substate")
     .in("proxmox_node", hostIds)
-    .in("lifecycle_state", Array.from(PROXMOX_HOST_ALLOCATION_STATES));
+    .or(CLASSIC_HOST_ALLOCATION_FILTER);
   // Every Hivra row that is not deleted, not only the powered-on ones: a
   // stopped or errored computer still owns its thin-pool disk. The
   // delete paths flip a row to `deleted` only after the VM and its local-lvm
@@ -890,8 +888,11 @@ async function rankProxmoxHostsForPlacement(params: {
     const acc = allocByHost.get(node) ?? { cpu: 0, ram: 0, disk: 0 };
     const rowCpu = Number((row as { cpu_limit?: number | null }).cpu_limit ?? 0);
     const rowRamMb = Number((row as { ram_limit?: number | null }).ram_limit ?? 0);
-    acc.cpu += rowCpu;
-    acc.ram += rowRamMb;
+    const holderSleep = row.lifecycle_state === "paused" && row.seat_funding === "holder" && row.paused_reason === "holder_idle";
+    if (!(holderSleep && row.lifecycle_substate === "holder_hibernated" && (skipDeepSleepEverywhere || skipDeepSleepHosts.has(node)))) {
+      acc.cpu += rowCpu;
+      acc.ram += rowRamMb;
+    }
     if ((row as { seat_funding?: unknown }).seat_funding === "holder") {
       addHolderUsage((row as { user_id?: unknown }).user_id, rowCpu, rowRamMb);
     }
@@ -2677,8 +2678,7 @@ export class InstanceService {
       };
     }
 
-    // Classic Hermes can power off an idle VM, but its lifecycle has no
-    // memory-preserving nap/hibernate and wake path for holder-funded seats.
+    // Classic holder seats are grandfathered. New holder seats use Hivra Agent Computers.
     if (seatFunding === "holder") {
       return {
         success: false,

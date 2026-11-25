@@ -3484,13 +3484,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
     // Allocation query: fixturenodea has zero allocated, fixturenodea already runs a
     // big agent (8 vCPU / 49 GB). Both hosts can still fit a 4 GB
     // request, but fixturenodea has more free RAM, so worst-fit picks fixturenodea.
-    let allocInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocInCalls += 1;
-      if (allocInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({
         data: [
           {
@@ -3655,13 +3653,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     };
 
-    let allocationInCalls = 0;
     const legacyAllocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    legacyAllocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return legacyAllocationQuery;
+    legacyAllocationQuery.in = jest.fn().mockReturnThis();
+    legacyAllocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -3728,10 +3724,8 @@ describe("InstanceService.createInstance free-tier guard", () => {
     };
     const legacyAllocationQuery = {
       select: jest.fn().mockReturnThis(),
-      in: jest.fn()
-        .mockReturnThis()
-        .mockImplementationOnce(function (this: unknown) { return legacyAllocationQuery; })
-        .mockImplementationOnce(async () => ({ data: [], error: null })),
+      in: jest.fn().mockReturnThis(),
+      or: jest.fn().mockImplementationOnce(async () => ({ data: [], error: null })),
     };
     const hivraAllocationQuery = hivraAllocationRowsQuery([
       { proxmox_host: "fixturenode1", user_id: "other", cpu: 1, ram: 10, status: "running", vmid: 1101 },
@@ -3766,7 +3760,13 @@ describe("InstanceService.createInstance free-tier guard", () => {
     expect(selection).toEqual(expect.objectContaining({ ok: true, targetId: "fixturenode1" }));
   });
 
-  it("counts a hibernated holder Hivra seat against its reservation even when deep-sleep CPU/RAM reuse is enabled", async () => {
+  it.each([
+    ["hivra", "hibernated", "1", "fixturenode2"],
+    ["classic", "hibernated", "1", "fixturenode2"],
+    ["classic", "hibernated", "0", "fixturenode1"],
+    ["classic", "napping", "1", "fixturenode1"],
+    ["classic", "retry", "1", "fixturenode1"],
+  ])("ranks %s holder in %s with compute reuse %s on %s", async (lane, state, reuse, expected) => {
     delete process.env.HERMES_PROXMOX_TARGETS;
     delete process.env.HERMES_PROXMOX_TARGET;
     process.env.HERMES_PROXMOX_MAX_TENANT_INSTANCES = "0";
@@ -3789,10 +3789,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
     };
     const legacyAllocationQuery = {
       select: jest.fn().mockReturnThis(),
-      in: jest.fn()
-        .mockReturnThis()
-        .mockImplementationOnce(function (this: unknown) { return legacyAllocationQuery; })
-        .mockImplementationOnce(async () => ({ data: [], error: null })),
+      in: jest.fn().mockReturnThis(),
+      or: jest.fn().mockResolvedValue({ data: lane === "classic" ? [{
+        proxmox_node: "fixturenode2", user_id: "holder", cpu_limit: 3, ram_limit: 6144, lifecycle_state: "paused",
+        seat_funding: "holder", paused_reason: "holder_idle", lifecycle_substate: "holder_" + state,
+      }] : [], error: null }),
     };
     const hivraAllocationQuery = hivraAllocationRowsQuery([
       { proxmox_host: "fixturenode1", user_id: "other", cpu: 1, ram: 10, status: "running", vmid: 1101 },
@@ -3800,7 +3801,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
       // Deep-sleep placement may reuse this seat's CPU/RAM because the VM is
       // saved to disk. It is still a launched provisioning/running holder seat,
       // so 3 vCPU / 6GB of the 4/8GB admission is already consumed.
-      { proxmox_host: "fixturenode2", user_id: "holder", cpu: 3, ram: 6, status: "running", vmid: 1103, sleep_state: "hibernated", seat_funding: "holder" },
+      ...(lane === "hivra" ? [{ proxmox_host: "fixturenode2", user_id: "holder", cpu: 3, ram: 6, status: "running", vmid: 1103, sleep_state: state, seat_funding: "holder" }] : []),
     ]);
     const admissionsQuery = holderAdmissionsRowsQuery([
       { user_id: "holder", assigned_host_id: "fixturenode2", reserved_cpu: 4, reserved_ram_mb: 8192 },
@@ -3817,7 +3818,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
 
     const selection = await selectAvailableProxmoxProvisionTarget({
       supabase: fakeSupabase,
-      env: { ...process.env, HIVRA_PLACEMENT_SKIP_DEEP_SLEEP: "1" },
+      env: { ...process.env, HIVRA_PLACEMENT_SKIP_DEEP_SLEEP: reuse },
       hostConfig: null,
       userId: "nonholder",
       neededCpu: 0.5,
@@ -3825,7 +3826,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
       neededDiskGb: 30,
     });
 
-    expect(selection).toEqual(expect.objectContaining({ ok: true, targetId: "fixturenode2" }));
+    expect(selection).toEqual(expect.objectContaining({ ok: true, targetId: expected }));
   });
 
   it.each([
@@ -3858,10 +3859,8 @@ describe("InstanceService.createInstance free-tier guard", () => {
     };
     const legacyAllocationQuery = {
       select: jest.fn().mockReturnThis(),
-      in: jest.fn()
-        .mockReturnThis()
-        .mockImplementationOnce(function (this: unknown) { return legacyAllocationQuery; })
-        .mockImplementationOnce(async () => ({ data: [], error: null })),
+      in: jest.fn().mockReturnThis(),
+      or: jest.fn().mockImplementationOnce(async () => ({ data: [], error: null })),
     };
     // After host reserves there are exactly 4 GiB left on node2, all reserved.
     // Only the matching holder launch can spend that capacity.
@@ -3952,13 +3951,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     };
 
-    let allocationInCalls = 0;
     const legacyAllocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    legacyAllocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return legacyAllocationQuery;
+    legacyAllocationQuery.in = jest.fn().mockReturnThis();
+    legacyAllocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -4035,11 +4032,9 @@ describe("InstanceService.createInstance free-tier guard", () => {
         error: null,
       }),
     };
-    let allocationInCalls = 0;
     const legacyAllocationQuery: Record<string, unknown> = { select: jest.fn().mockReturnThis() };
-    legacyAllocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return legacyAllocationQuery;
+    legacyAllocationQuery.in = jest.fn().mockReturnThis();
+    legacyAllocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
     const hivraAllocationQuery = hivraAllocationRowsQuery(
@@ -4109,13 +4104,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
         error: null,
       }),
     };
-    let allocationInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -4195,13 +4188,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     };
 
-    let allocationInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -4354,10 +4345,8 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     };
     const allocationQuery: Record<string, unknown> = { select: jest.fn().mockReturnThis() };
-    let allocationInCalls = 0;
-    allocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls % 2 === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -4412,10 +4401,8 @@ describe("InstanceService.createInstance free-tier guard", () => {
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    let allocationInCalls = 0;
-    allocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls % 2 === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
     (getProxmoxVmidAvailability as jest.Mock).mockResolvedValue({
@@ -5327,11 +5314,9 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     });
 
-    let allocationInCalls = 0;
     const allocationQuery: Record<string, unknown> = { select: jest.fn().mockReturnThis() };
-    allocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -5484,13 +5469,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     };
 
-    let allocationInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -5634,13 +5617,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
     // Both hosts over-allocated: cpu_limit far exceeds total_cpu, so
     // rankProxmoxHostsForPlacement filters both out and the candidates
     // list is empty.
-    let allocInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocInCalls += 1;
-      if (allocInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({
         data: [
           {
@@ -5756,13 +5737,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     };
 
-    let allocInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocInCalls += 1;
-      if (allocInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({
         data: Array.from({ length: 49 }, (_, index) => ({
           proxmox_node: "fixturenode1",
@@ -5937,13 +5916,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }))
     );
 
-    let allocInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocInCalls += 1;
-      if (allocInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: allocationRows, error: null });
     });
 
@@ -6136,13 +6113,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       })),
     ];
 
-    let allocInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocInCalls += 1;
-      if (allocInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: allocationRows, error: null });
     });
 
@@ -6318,13 +6293,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       })),
     ];
 
-    let allocInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocInCalls += 1;
-      if (allocInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: allocationRows, error: null });
     });
 

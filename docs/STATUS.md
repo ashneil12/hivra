@@ -38,9 +38,12 @@ a free account works with a server the person connects.
 
 Local #57 implementation, pending release verification: an existing Classic
 Hermes computer evidenced as holder-funded keeps its admission and allocation.
-Classic has no supported four-minute nap, memory save at sixteen minutes, or
-wake from that saved memory. Its inactivity sweep therefore leaves those
-computers running. New Classic holder launches are unavailable. On eligible
+Classic holder sleep is off by default. When enabled with
+`HERMES_CLASSIC_HOLDER_SLEEP_ENABLED=true` on an eligible Proxmox host,
+the minute sweep pauses an idle VM after four minutes and saves guest memory
+after twelve more minutes in nap. Owner access resumes the session. The
+sweep needs a verifiable Classic VM, an idle Docker gateway and dashboard,
+and the browser wake route. Uncovered channels and scheduled jobs keep it awake. New Classic holder launches are unavailable. On eligible
 managed Hivra computers the holder policy requires four idle minutes before
 nap and twelve minutes in nap before memory save. Host controls, activity
 checks and wake readiness still apply.

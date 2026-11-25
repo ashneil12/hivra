@@ -1,9 +1,13 @@
 import { NextRequest } from "next/server";
 
-import { apiError } from "@/lib/api-response";
+import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { log } from "@/lib/logger";
 
+import { transitionClassicHolder } from "@/lib/recovery/classic-holder-idle";
+import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
+
+export const maxDuration = 400;
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
@@ -25,7 +29,18 @@ export async function GET(req: NextRequest) {
     return apiError("Unauthorized", 401);
   }
 
-  // Classic Hermes has no nap or memory-preserving save/resume lifecycle.
-  // A shutdown would discard the running guest's memory.
-  return apiError("Automatic holder sleep is unavailable for Classic Hermes.", 501);
+  try {
+    const deadline = Date.now() + 45_000;
+    const outcomes: Record<string, number> = {};
+    for (let i = 0; i < 25 && Date.now() < deadline; i++) {
+      const outcome = await transitionClassicHolder();
+      if (outcome === "unclaimed") break;
+      outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+    }
+    await recordCronHeartbeat("holder-inactivity-sweep");
+    return apiSuccess({ outcomes });
+  } catch (err) {
+    log.error("Classic holder sweep failed", err, { source: "holder-inactivity-sweep" });
+    return apiError("Classic holder sweep could not complete", 500);
+  }
 }

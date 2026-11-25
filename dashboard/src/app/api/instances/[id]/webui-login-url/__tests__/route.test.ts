@@ -41,6 +41,9 @@ jest.mock("@/lib/hetzner/ssh", () => ({
   sshExec: jest.fn(),
 }));
 
+jest.mock("@/lib/recovery/classic-holder-idle", () => ({ transitionClassicHolder: jest.fn() }));
+import { transitionClassicHolder } from "@/lib/recovery/classic-holder-idle";
+
 jest.mock("@/lib/instance-activity", () => ({
   recordInstanceUserActivity: jest.fn().mockResolvedValue({ ok: true }),
 }));
@@ -155,6 +158,16 @@ describe("GET /api/instances/[id]/webui-login-url", () => {
       { params: Promise.resolve({ id }) },
     );
   }
+
+  it("restores a holder on normal Web UI access before issuing its login URL", async () => {
+    mockReadinessSingle.mockResolvedValue({ data: { status: "stopped", paused_reason: "holder_idle", seat_funding: "holder" }, error: null });
+    jest.mocked(transitionClassicHolder).mockResolvedValueOnce("deferred").mockResolvedValueOnce("awake");
+    expect((await callRoute()).status).toBe(202);
+    expect(mockedGetSecureUserInstance).not.toHaveBeenCalled();
+    expect((await callRoute()).status).toBe(200);
+    expect(transitionClassicHolder).toHaveBeenCalledWith({ id: "inst_123", userId: "user_123" });
+    expect(mockedGetSecureUserInstance).toHaveBeenCalledTimes(1);
+  });
 
   it("returns a sidecar cookie handoff URL that redirects to the iframe hash-token URL", async () => {
     const response = await callRoute();

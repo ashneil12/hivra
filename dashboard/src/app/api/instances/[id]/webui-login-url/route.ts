@@ -4,6 +4,8 @@ import { auth } from "@clerk/nextjs/server";
 import { fetchFirstReachableGatewayResponse } from "@/lib/agent-gateway";
 import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 import { deriveWebUIBaseUrl } from "@/lib/instance-backend";
+import { transitionClassicHolder } from "@/lib/recovery/classic-holder-idle";
+import { isHostedInstanceStartBlockedForLapse } from "@/lib/hivra/lapse-gate";
 import { recordInstanceUserActivity } from "@/lib/instance-activity";
 import { getRuntimeAgentSettings } from "@/lib/instance-settings";
 import { sshExec } from "@/lib/hetzner/ssh";
@@ -52,7 +54,11 @@ const WEBUI_ADMIN_DOCUMENT_PROBE_PATH = "/dash/sessions";
 // route, which uses the same 401/403-means-ready contract).
 const GATEWAY_SIDECAR_READINESS_PROBE_PATH = "/_sidecar/dashboard-session-check";
 
+export const maxDuration = 400;
+
 type InstanceReadinessRow = {
+  paused_reason?: string | null;
+  seat_funding?: string | null;
   status: string | null;
 };
 
@@ -73,14 +79,14 @@ type WebuiGatewayProbeResult =
 async function getOwnedInstanceReadiness(
   id: string,
   userId: string,
-): Promise<{ ok: true; status: string | null } | { ok: false; error: string }> {
+): Promise<{ ok: true; holder: boolean; sleeping: boolean; status: string | null } | { ok: false; error: string }> {
   if (!supabaseAdmin) {
     throw new Error("Database not configured");
   }
 
   const { data, error } = await supabaseAdmin
     .from("hermes_instances")
-    .select("status")
+    .select("status, paused_reason, seat_funding")
     .eq("id", id)
     .eq("user_id", userId)
     .neq("status", "deleted")
@@ -90,7 +96,7 @@ async function getOwnedInstanceReadiness(
     return { ok: false, error: "Instance not found or unauthorized" };
   }
 
-  return { ok: true, status: data.status ?? null };
+  return { ok: true, status: data.status ?? null, holder: data.seat_funding === "holder", sleeping: data.paused_reason === "holder_idle" };
 }
 
 function resolveErrorStatus(error: string | null): number {
@@ -411,6 +417,19 @@ export async function GET(
   const readiness = await getOwnedInstanceReadiness(id, userId);
   if (!readiness.ok) {
     return NextResponse.json({ error: readiness.error }, { status: 404 });
+  }
+
+  if (readiness.holder && (readiness.status === "running" || (readiness.sleeping && readiness.status === "stopped"))) {
+    if (readiness.sleeping && await isHostedInstanceStartBlockedForLapse(userId, "start")) {
+      return NextResponse.json({ error: "This computer needs an active entitlement to wake." }, { status: 402 });
+    }
+    const outcome = await transitionClassicHolder({ id, userId });
+    if (outcome !== "awake") {
+      return NextResponse.json({ kind: "pending", reason: "instance_not_ready", instanceStatus: "stopped",
+        retryAfterMs: PENDING_HANDOFF_RETRY_AFTER_MS, message: "Restoring your workspace session." },
+      { status: 202, headers: { "Cache-Control": "no-store" } });
+    }
+    readiness.status = "running";
   }
 
   if (PENDING_HANDOFF_STATUSES.has(readiness.status ?? "")) {

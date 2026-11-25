@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
 import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
-import { runInactivitySweep } from "@/lib/recovery/inactivity-sweep";
+import { transitionClassicHolder } from "@/lib/recovery/classic-holder-idle";
 import { GET } from "../route";
 
 jest.mock("@/lib/cron-heartbeat", () => ({ recordCronHeartbeat: jest.fn() }));
-jest.mock("@/lib/recovery/inactivity-sweep", () => ({ runInactivitySweep: jest.fn() }));
+jest.mock("@/lib/recovery/classic-holder-idle", () => ({ transitionClassicHolder: jest.fn() }));
 jest.mock("@/lib/ops-events", () => ({ reportOpsEvent: jest.fn() }));
 jest.mock("@/lib/logger", () => ({ log: { error: jest.fn(), warn: jest.fn() } }));
 
@@ -18,14 +18,15 @@ afterEach(() => {
 it("requires cron authentication before selecting any holder VMs", async () => {
   const response = await GET(new NextRequest("http://localhost/api/cron/holder-inactivity-sweep"));
   expect(response.status).toBe(401);
-  expect(runInactivitySweep).not.toHaveBeenCalled();
+  expect(transitionClassicHolder).not.toHaveBeenCalled();
 });
 
-it("reports the Classic limitation without powering down a grandfathered VM", async () => {
+it("processes due transitions until the queue is empty", async () => {
+  jest.mocked(transitionClassicHolder).mockResolvedValueOnce("napping").mockResolvedValueOnce("unclaimed");
   const response = await GET(new NextRequest("http://localhost/api/cron/holder-inactivity-sweep", {
     headers: { authorization: "Bearer local-fixture" },
   }));
-  expect(response.status).toBe(501);
-  expect(runInactivitySweep).not.toHaveBeenCalled();
-  expect(recordCronHeartbeat).not.toHaveBeenCalled();
+  expect(response.status).toBe(200);
+  expect((await response.json()).data.outcomes).toEqual({ napping: 1 });
+  expect(recordCronHeartbeat).toHaveBeenCalledWith("holder-inactivity-sweep");
 });

@@ -16,33 +16,7 @@ const MIGRATION = path.resolve(
   "../../../../supabase/migrations/20261124230000_holder_admissions.sql",
 );
 
-const FIXTURE_SQL = `
-    create role anon; create role authenticated; create role service_role bypassrls;
-    create table public.token_tier_qualifications(
-      user_id text, tier text, token_key text, currently_eligible boolean,
-      last_suspend_at timestamptz, last_breach_at timestamptz
-    );
-    create table public.hermes_subscriptions(user_id text, plan text, status text, instance_limit integer, grace_period_ends_at timestamptz);
-    create table public.apple_iap_subscriptions(user_id text, status text);
-    create table public.yearly_token_subscriptions(user_id text, status text);
-    create table public.hivra_agents(
-      id uuid default gen_random_uuid(), operation_kind text, operation_id uuid, operation_started_at timestamptz,
-      operation_payload jsonb, desired_state text, error text, cpu_max numeric, ram_max integer, user_id text, deployment_mode text, status text, cpu numeric, ram integer, proxmox_host text, vmid integer, sleep_state text, seat_funding text
-    );
-    create table public.hermes_instances(
-      id uuid default gen_random_uuid(), user_id text, status text, lifecycle_state text, cpu_limit numeric, ram_limit integer, proxmox_node text, disk_size_gb integer, seat_funding text, resource_tier text, updated_at timestamptz, tier_change_pending boolean default false
-    );
-    create function public.token_tier_row_counts_for_user(text, text, timestamptz)
-      returns boolean language sql stable as $$ select true $$;
-    create table public.proxmox_hosts(
-      id text primary key, total_cpu integer, total_ram_mb integer,
-      reserved_cpu integer default 2, reserved_ram_mb integer default 4096,
-      wake_headroom_ram_mb integer default 8192, cpu_overcommit_ratio numeric,
-      status text default 'active', sleep_mode text default 'on', decommissioned_at timestamptz, placement_skip_deep_sleep boolean default false,
-      thinpool_size_gb integer, thinpool_overcommit_ratio numeric default 1.5,
-      capacity_reading jsonb, capacity_reading_at timestamptz
-    );
-  `;
+import { FIXTURE_SQL } from "./holder-admission-schema.fixture";
 
 let pg: PGlite;
 jest.setTimeout(60_000);
@@ -51,7 +25,9 @@ beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(FIXTURE_SQL);
   await pg.exec(fs.readFileSync(MIGRATION, "utf8"));
-  await pg.exec(fs.readFileSync(path.join(path.dirname(MIGRATION), "20261125020000_holder_allocation_updates.sql"), "utf8"));
+  for (const file of ["20261125010000_hermes_holder_idle_claim.sql", "20261125020000_holder_allocation_updates.sql", "20261125030000_classic_holder_sleep.sql"]) {
+    await pg.exec(fs.readFileSync(path.join(path.dirname(MIGRATION), file), "utf8"));
+  }
 });
 
 afterAll(async () => {

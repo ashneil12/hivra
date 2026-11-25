@@ -29,8 +29,8 @@ export type RecordInstanceUserActivityResult =
 
 // Activity on one instance is written at most once per window in this process.
 // Terminal input posts can arrive many times a second. Readers look at minutes
-// to days (the shortest is 45 minutes), so the stored time is never meaningfully
-// behind. Each serverless process keeps its own map.
+// to days. Classic holder seats use a four-minute boundary and persist every
+// action. Each serverless process keeps its own map for other seats.
 const ACTIVITY_WRITE_INTERVAL_MS = 60_000;
 const MAX_TRACKED_INSTANCES = 5_000;
 const lastWrittenAtMs = new Map<string, number>();
@@ -58,14 +58,16 @@ export async function recordInstanceUserActivity(
   }
 
   try {
-    const { error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("hermes_instances")
       .update({
         last_activity_at: recordedAt,
         updated_at: recordedAt,
       })
       .eq("id", input.instanceId)
-      .eq("user_id", input.userId);
+      .eq("user_id", input.userId)
+      .select("seat_funding")
+      .maybeSingle();
 
     if (error) {
       log.warn("failed to record instance user activity", {
@@ -82,7 +84,7 @@ export async function recordInstanceUserActivity(
     if (!lastWrittenAtMs.has(input.instanceId) && lastWrittenAtMs.size >= MAX_TRACKED_INSTANCES) {
       lastWrittenAtMs.clear();
     }
-    lastWrittenAtMs.set(input.instanceId, recordedAtMs);
+    if (data && data.seat_funding !== "holder") lastWrittenAtMs.set(input.instanceId, recordedAtMs);
     return { ok: true, recordedAt };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
