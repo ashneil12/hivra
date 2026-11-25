@@ -63,12 +63,34 @@ test('accepts distinct modules and matching-case declaration companions', t => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-for (const companion of ['.ts', '.d.ts', '.d.mts', '.d.cts', '.TS', '.D.TS', '.json', '.wasm']) {
+for (const companion of ['.ts', '.d.ts', '.TS', '.D.TS', '.json', '.wasm']) {
   test(`rejects a differently cased module with extension ${companion}`, t => {
     const result = runGuard(t, ['PromptOutline.tsx', `promptOutline${companion}`]);
     assertConflict(result, ['PromptOutline', 'promptOutline']);
   });
 }
+
+for (const [suffix, request] of [['.mts', '.mjs'], ['.d.mts', '.mjs'], ['.cts', '.cjs'], ['.d.cts', '.cjs']]) {
+  test(`accepts ${suffix} alongside an unrelated extensionless module`, t => {
+    const result = runGuard(t, ['foo.ts', `Foo${suffix}`]);
+    assert.equal(result.status, 0, result.stderr);
+  });
+
+  test(`detects ${suffix} colliding on the explicit ${request} request`, t => {
+    assertConflict(runGuard(t, [`foo${request}`, `Foo${suffix}`]), [`foo${request}`, `Foo${request}`]);
+  });
+}
+
+test('resolves a parent package target through the root index', t => {
+  assertConflict(runGuard(t, ['foo.ts', 'index.ts', packageFixture('Foo/package.json', { main: '..' })]), ['foo', 'Foo']);
+});
+
+test('resolves a nested parent target through a sibling file', t => {
+  assertConflict(runGuard(t, [
+    'foo.ts', 'Foo/a.ts', packageFixture('Foo/package.json', { main: './a/b' }),
+    packageFixture('Foo/a/b/package.json', { main: '..' }),
+  ]), ['foo', 'Foo']);
+});
 
 test('accepts matching-case module companions across supported extensions', t => {
   const result = runGuard(t, ['payload.js', 'payload.json', 'payload.wasm', 'payload.d.ts']);

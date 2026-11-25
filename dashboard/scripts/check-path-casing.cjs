@@ -24,20 +24,14 @@ const indexEntries = git(['ls-files', '-z', '--stage', '--', '.'], { maxBuffer: 
     };
   });
 const files = indexEntries.map(({ file }) => file);
-const trackedFilesLower = new Set(files.map(file => file.toLowerCase()));
+const fileRequests = new Set();
 const paths = new Map();
 const modules = new Map();
 const conflicts = new Set();
 
-// TypeScript declaration suffixes must come before their implementation suffixes.
-// The implementation/data list is the union of TypeScript's module files and the
-// extensions Next resolves extensionlessly (.js, .mjs, .tsx, .ts, .jsx, .json, .wasm).
+// Extensions probed by an extensionless request in TypeScript, Next or Jest.
 const MODULE_EXTENSIONS = [
-  '.d.mts',
-  '.d.cts',
   '.d.ts',
-  '.mts',
-  '.cts',
   '.tsx',
   '.ts',
   '.mjs',
@@ -66,18 +60,12 @@ function moduleStem(file) {
 
 const packageTargets = new Map();
 
-function hasResolvableModuleFile(candidate) {
-  const folded = candidate.toLowerCase();
-  return trackedFilesLower.has(folded) || MODULE_EXTENSIONS.some(extension => trackedFilesLower.has(`${folded}${extension}`));
-}
-
 function hasResolvableDirectory(directory, visited) {
-  if (hasResolvableModuleFile(`${directory}/index`)) return true;
-  const folded = directory.toLowerCase();
-  if (visited.has(folded)) return false;
-  visited.add(folded);
-  return (packageTargets.get(folded) ?? []).some(target => {
-    if (!target.endsWith('/') && hasResolvableModuleFile(target)) return true;
+  if (fileRequests.has(path.posix.join(directory, 'index'))) return true;
+  if (visited.has(directory)) return false;
+  visited.add(directory);
+  return (packageTargets.get(directory) ?? []).some(target => {
+    if (!target.endsWith('/') && fileRequests.has(target)) return true;
     return hasResolvableDirectory(target.replace(/\/$/, ''), visited);
   });
 }
@@ -88,8 +76,8 @@ function normalizePackageEntry(directory, specifier) {
   if (trimmed.startsWith('/') || /^[a-z]:[\\/]/i.test(trimmed) || trimmed.includes('\0')) return null;
   const relative = trimmed.replace(/\\/g, '/');
   const normalized = path.posix.normalize(`${directory}/${relative}`);
-  if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../')) return null;
-  return /(?:^|\/)\.{1,2}$/.test(relative) ? `${normalized}/` : normalized;
+  if (relative === '.' || relative === './' || normalized === '..' || normalized.startsWith('../')) return null;
+  return normalized;
 }
 
 function readPackageManifest(entry) {
@@ -110,6 +98,14 @@ for (const file of files) {
   // Extensionless imports can resolve differently even when the extensions differ.
   // A literal file (even a dotted one) wins the exact-file probe before extension expansion.
   const stem = moduleStem(file) ?? file;
+  fileRequests.add(file);
+  fileRequests.add(stem);
+  const explicitTypeScriptSuffix = /(?:\.d)?\.([mc])ts$/i.exec(file);
+  if (explicitTypeScriptSuffix) {
+    const request = `${file.slice(0, explicitTypeScriptSuffix.index)}.${explicitTypeScriptSuffix[1].toLowerCase()}js`;
+    fileRequests.add(request);
+    check(request, modules);
+  }
   if (stem !== file) check(file, modules);
   check(stem, modules);
   const slash = stem.lastIndexOf('/');
@@ -118,19 +114,16 @@ for (const file of files) {
 }
 
 for (const entry of indexEntries) {
-  if (!entry.file.toLowerCase().endsWith('/package.json')) continue;
-  const slash = entry.file.lastIndexOf('/');
-  const directory = entry.file.slice(0, slash);
+  if (path.posix.basename(entry.file) !== 'package.json') continue;
+  const directory = path.posix.dirname(entry.file);
   const manifest = readPackageManifest(entry);
   if (!manifest) continue;
   const targets = PACKAGE_ENTRY_FIELDS.map(field => normalizePackageEntry(directory, manifest[field])).filter(Boolean);
-  packageTargets.set(directory.toLowerCase(), targets);
+  packageTargets.set(directory, targets);
 }
 
-for (const entry of indexEntries) {
-  if (!entry.file.toLowerCase().endsWith('/package.json')) continue;
-  const directory = path.posix.dirname(entry.file);
-  if (hasResolvableDirectory(directory, new Set())) check(directory, modules);
+for (const directory of packageTargets.keys()) {
+  if (directory !== '.' && hasResolvableDirectory(directory, new Set())) check(directory, modules);
 }
 
 for (const conflict of conflicts) console.error(`Conflicting dashboard paths: ${conflict}`);
