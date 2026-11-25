@@ -30,6 +30,26 @@ describe("provisioner hivra-catalog-app.py validator", () => {
     expect(parsed.runtime.kind).toBe(manifest.runtime.kind);
   });
 
+  it("keeps Nanobot WebUI first-run setup non-interactive", () => {
+    const manifest = UNIVERSAL_CATALOG_MANIFESTS.find((entry) => entry.id === "nanobot");
+    if (!manifest || manifest.runtime.kind !== "cli-web" || !manifest.runtime.webService) {
+      throw new Error("expected Nanobot cli-web manifest");
+    }
+    expect(manifest.runtime.webService.args).toEqual([
+      "webui",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "3201",
+      "--yes",
+    ]);
+
+    const spec = buildCatalogAppLaunchSpec(manifest);
+    const res = runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(spec));
+    expect(res.status).toBe(0);
+    expect(JSON.parse(res.stdout).runtime.webService.args).toContain("--yes");
+  });
+
   it("rejects forbidden container mounts, invalid ports, and shell metacharacters", () => {
     const base = buildCatalogAppLaunchSpec(UNIVERSAL_CATALOG_MANIFESTS.find((m) => m.id === "anythingllm")!);
     const cases = [

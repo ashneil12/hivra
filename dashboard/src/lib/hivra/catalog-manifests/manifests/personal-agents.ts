@@ -41,7 +41,7 @@ export const PERSONAL_AGENT_MANIFESTS: readonly CatalogAppManifest[] = [
       kind: "cli-web",
       installer: { method: "uv-tool", packageName: "nanobot-ai", binName: "nanobot" },
       webService: {
-        args: ["webui", "--host", "127.0.0.1", "--port", "3201"],
+        args: ["webui", "--host", "127.0.0.1", "--port", "3201", "--yes"],
         hostPort: 3201,
         healthPath: "/",
         proxyMode: "standard",
