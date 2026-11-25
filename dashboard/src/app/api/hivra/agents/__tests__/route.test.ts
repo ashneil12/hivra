@@ -2097,6 +2097,8 @@ describe("POST /api/hivra/agents", () => {
     expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_hivra_managed_agent", expect.objectContaining({
       p_agent_limit: 1, p_row: expect.objectContaining({ user_id: "user-free", deployment_mode: "hivra-managed", type: "codex" }),
     }));
+    const inserted = mockSupabaseRpc.mock.calls.find(([name]) => name === "insert_hivra_managed_agent")?.[1]?.p_row as Record<string, unknown>;
+    expect(inserted.allocation_operation_id).toBe(inserted.operation_id);
   });
 
   it("refuses a launch the database counts past the plan limit, with the existing copy and no computer work (T35)", async () => {

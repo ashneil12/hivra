@@ -1694,6 +1694,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       desired_state: "running",
       operation_id: provisionOperationId,
       operation_kind: "provision",
+      allocation_operation_id: provisionOperationId,
       operation_payload: { stage: "pre_allocation_access" },
       operation_started_at: new Date().toISOString(),
       infrastructure_binding_token_hash: infrastructureBindingTokenHash,
