@@ -706,7 +706,9 @@ export async function saveAgentSleepSettings(
   return {
     sleep_policy: ["off", "t1", "t3", "full"].includes(String(data.sleep_policy)) ? data.sleep_policy as AgentSleepPolicy : null,
     always_on: data.always_on === true,
-    seat_funding: data.seat_funding === "paid" || data.seat_funding === "holder" ? data.seat_funding : null,
+    ...(Object.hasOwn(data, "seat_funding") && {
+      seat_funding: data.seat_funding === "paid" || data.seat_funding === "holder" ? data.seat_funding : null,
+    }),
   };
 }
 
