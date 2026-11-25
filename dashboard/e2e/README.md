@@ -336,14 +336,15 @@ allowance; do not install a standing operator model key.
 
 Before certifying a release, confirm through the managed-release verification
 path that `canary.hermesos.cloud` serves the same Git commit the runner checked
-out. Record that SHA, the start time and the operator/runner identity beside the
-sweep output. A sweep against a mismatched or unknown served revision is only a
-diagnostic run, never release evidence.
+out, then export that full lowercase SHA as `LAUNCH_SWEEP_CANARY_SHA` so every
+result JSON carries it. Record the start time and the operator/runner identity
+beside the sweep output. A sweep against a mismatched or unknown served revision
+is only a diagnostic run, never release evidence.
 
 First live smoke sequence, with idle measurement off until the auth path is proven:
 
 ```bash
-# cheap docker-web catalog app
+# cheap docker-web catalog app (set LAUNCH_SWEEP_CANARY_SHA first for evidence)
 LAUNCH_SWEEP_ONLY=it-tools LAUNCH_SWEEP_IDLE_MINUTES=0 npm run test:launch-sweep
 # reference computer
 LAUNCH_SWEEP_ONLY=ubuntu-server LAUNCH_SWEEP_IDLE_MINUTES=0 npm run test:launch-sweep
@@ -375,9 +376,14 @@ npm run audit:first-run:cleanup                      # reaps any leftover sweep 
 ```
 
 Results land in `e2e/.launch-sweep/` (one JSON per target, plus a screenshot).
-A failure says the stage (`choose`, `review`, `launch`, `ready`, `open`, `chat`)
-and what the screen or the agent record said. Targets marked `knownBroken` are
-reported but don't fail the run.
+Each catalog result carries the exact manifest hash, runtime image/package
+references, host port and health path from the checkout; after the customer-
+visible proof it also records the owner API's live software report, which for
+catalog Docker apps is normally the resolved image digest, plus the expected
+provisioner bundle version, the runner checkout SHA and `LAUNCH_SWEEP_CANARY_SHA`
+when supplied. A failure says the stage (`choose`, `review`, `launch`, `ready`,
+`open`, `chat`) and what the screen or the agent record said. Targets marked
+`knownBroken` are reported but don't fail the run.
 
 **Adding an agent to Launch** follows `.codex/skills/hivra-add-launch-agent/SKILL.md`:
 add it to `targets.ts`, launch it with the sweep, and record its idle use before

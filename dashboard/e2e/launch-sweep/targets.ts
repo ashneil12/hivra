@@ -8,8 +8,10 @@
  * missing from this list, so a new agent is never shipped untested.
  */
 
+import { createHash } from 'node:crypto';
+
 import { UNIVERSAL_CATALOG_MANIFESTS } from '../../src/lib/hivra/catalog-manifests/manifests/index';
-import { catalogAppHasWebSurface } from '../../src/lib/hivra/catalog-manifests/index';
+import { catalogAppHasWebSurface, catalogAppHostPort, type CatalogAppManifest } from '../../src/lib/hivra/catalog-manifests/index';
 
 export type SweepTargetKind = 'agent' | 'computer';
 
@@ -24,6 +26,16 @@ export type SweepProof =
   /** A computer: its page opens running, with a terminal or desktop surface. */
   | 'computer-open';
 
+export interface SweepCatalogEvidence {
+  /** sha256 of the exact manifest object in the checkout that launched it. */
+  manifestSha256: string;
+  runtimeKind: CatalogAppManifest['runtime']['kind'];
+  hostPort: number | null;
+  healthPath: string | null;
+  /** Container image references for docker runtimes; package/installer identity for CLIs. */
+  runtimeRefs: string[];
+}
+
 export interface SweepTarget {
   /** Launch profile id (src/lib/launch/contracts.ts). Also the test's slug. */
   profileId: string;
@@ -31,11 +43,36 @@ export interface SweepTarget {
   tile: string;
   kind: SweepTargetKind;
   proof: SweepProof;
+  /** Catalog manifest provenance, present only for universal-catalog targets. */
+  catalog?: SweepCatalogEvidence;
   /**
    * Known not to work on Canary today, with the reason. The sweep still runs it
    * and reports the result, but a failure here does not fail the run.
    */
   knownBroken?: string;
+}
+
+function catalogEvidence(manifest: CatalogAppManifest): SweepCatalogEvidence {
+  const runtime = manifest.runtime;
+  const healthPath = runtime.kind === 'docker-web'
+    ? runtime.healthPath
+    : runtime.kind === 'docker-stack'
+      ? runtime.web.healthPath
+      : runtime.webService?.healthPath ?? null;
+  const runtimeRefs = runtime.kind === 'docker-web'
+    ? [`${runtime.imageRepo}:${runtime.imageTag}`]
+    : runtime.kind === 'docker-stack'
+      ? runtime.services.map((service) => `${service.imageRepo}:${service.imageTag}`)
+      : runtime.installer.method === 'npm-global' || runtime.installer.method === 'uv-tool'
+        ? [`${runtime.installer.method}:${runtime.installer.packageName}#${runtime.installer.binName}`]
+        : [`github-release:${runtime.installer.repo}#${runtime.installer.assetX64}${runtime.installer.assetArm64 ? `,${runtime.installer.assetArm64}` : ''}#${runtime.installer.binName}`];
+  return {
+    manifestSha256: createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),
+    runtimeKind: runtime.kind,
+    hostPort: catalogAppHostPort(manifest),
+    healthPath,
+    runtimeRefs,
+  };
 }
 
 /**
@@ -52,6 +89,7 @@ const CATALOG_TARGETS: readonly SweepTarget[] = UNIVERSAL_CATALOG_MANIFESTS.map(
   proof: catalogAppHasWebSurface(manifest)
     ? (manifest.category === 'app' ? 'app-open' : 'agent-ui-chat')
     : 'hivra-chat',
+  catalog: catalogEvidence(manifest),
 }));
 
 export const SWEEP_TARGETS: readonly SweepTarget[] = [

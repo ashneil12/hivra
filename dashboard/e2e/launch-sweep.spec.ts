@@ -28,6 +28,7 @@
  * One:   LAUNCH_SWEEP_ONLY=agent-zero,openclaw npm run test:launch-sweep
  */
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
 import { assertNotProduction, auditEmail, newRunId } from './first-run-audit/config';
@@ -38,6 +39,8 @@ import { proveAppOpen } from './launch-sweep/app-open';
 import { proveChat, proveComputerOpen } from './launch-sweep/chat';
 import { measureIdle } from './launch-sweep/idle';
 import { checkPrivateOnly, privateOnlyCheckEnabled } from './launch-sweep/private-only';
+import { readSweepSoftware } from './launch-sweep/software';
+import { PORTABLE_HIVRA_PROVISIONER_VERSION } from '../src/lib/infrastructure/portable-provisioner-contract';
 import { launchFromTile, offeredTileNames, openFromLaunch, waitForReady } from './launch-sweep/journey';
 import { agentEvidence, agentsStillOnRecord, grantSweepPlan, removeSweepPlan } from './launch-sweep/plan';
 import { SweepFailure, SweepRecorder } from './launch-sweep/result';
@@ -63,6 +66,8 @@ interface SweepEnv {
   supabaseUrl: string;
   serviceRoleKey: string;
   outDir: string;
+  checkoutSha?: string;
+  expectedCanarySha?: string;
   runId: string;
   readyTimeoutMs: number;
   composerTimeoutMs: number;
@@ -71,6 +76,15 @@ interface SweepEnv {
   idleMinutes: number;
   /** Profile ids to keep running after a pass, to read inside them (reap later). */
   keepPassed: string[];
+}
+
+function checkoutSha(): string | undefined {
+  try {
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return /^[0-9a-f]{40}$/.test(sha) ? sha : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function sweepEnv(): SweepEnv {
@@ -85,12 +99,18 @@ function sweepEnv(): SweepEnv {
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error('[launch-sweep] LAUNCH_SWEEP_SUPABASE_URL and LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY (Canary) are required to give the test account its plan.');
   }
+  const expectedCanarySha = process.env.LAUNCH_SWEEP_CANARY_SHA?.trim() || undefined;
+  if (expectedCanarySha && !/^[0-9a-f]{40}$/.test(expectedCanarySha)) {
+    throw new Error('[launch-sweep] LAUNCH_SWEEP_CANARY_SHA must be the full lowercase merge-commit SHA verified as served by Canary.');
+  }
   return {
     baseUrl,
     clerkSecretKey,
     supabaseUrl,
     serviceRoleKey,
     outDir: process.env.LAUNCH_SWEEP_OUT_DIR?.trim() || 'e2e/.launch-sweep',
+    checkoutSha: checkoutSha(),
+    expectedCanarySha,
     // One id for the whole run, shared by every worker through the env.
     runId: process.env.LAUNCH_SWEEP_RUN_ID?.trim() || newRunId(),
     readyTimeoutMs: envInt('LAUNCH_SWEEP_READY_TIMEOUT_MS', 25 * 60_000),
@@ -207,6 +227,10 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
     tile: target.tile,
     kind: target.kind,
     knownBroken: target.knownBroken,
+    catalog: target.catalog,
+    checkoutSha: env.checkoutSha,
+    expectedCanarySha: env.expectedCanarySha,
+    expectedProvisionerVersion: PORTABLE_HIVRA_PROVISIONER_VERSION,
   });
   let userId: string | null = null;
   let context: BrowserContext | null = null;
@@ -242,6 +266,9 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
         ? await proveAppOpen(page, target.tile, env.composerTimeoutMs)
         : await proveChat(page, target, { composerTimeoutMs: env.composerTimeoutMs, replyTimeoutMs: env.replyTimeoutMs });
     recorder.result.chat = proof;
+    if (recorder.result.agentId) {
+      recorder.result.software = await readSweepSoftware(context.request, env.baseUrl, recorder.result.agentId);
+    }
     recorder.done('chat');
     recorder.result.passed = true;
     await screenshot(page, recorder, env.outDir, 'pass');
