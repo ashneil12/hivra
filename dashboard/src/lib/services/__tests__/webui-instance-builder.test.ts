@@ -2162,8 +2162,10 @@ ${script.slice(start, end)}`;
       };
       const artifacts = buildWebUIProvisioningArtifacts(malicious);
       expect(artifacts.envFile).not.toMatch(/(^|\n)__HERMES_EOF__(\r?\n|$)/);
+      // The collapsed value carries spaces, so the shell-safe serializer
+      // single-quotes it — literal in bash, stripped by dotenv readers.
       expect(artifacts.envFile).toContain(
-        "HERMES_WEBUI_BOT_NAME=ok__HERMES_EOF__rm -rf /"
+        "HERMES_WEBUI_BOT_NAME='ok__HERMES_EOF__rm -rf /'"
       );
 
       // If a heredoc body ever does carry a bare terminator (any artifact, any
@@ -2980,7 +2982,7 @@ ${script.slice(start, end)}`;
         expect(configYaml).toContain('provider: "custom"');
         expect(configYaml).not.toContain('provider: "deepseek"');
         expect(envFile).toContain(
-          "HERMES_MANAGED_VENICE_ENABLE_URL=https://app.hermesos.test/dashboard/billing?managedVenice=deposit&wallet=hermesos"
+          "HERMES_MANAGED_VENICE_ENABLE_URL='https://app.hermesos.test/dashboard/billing?managedVenice=deposit&wallet=hermesos'"
         );
 
         // Clean-slate (deploy-card "Managed (Venice)? = OFF") guard: even if a
