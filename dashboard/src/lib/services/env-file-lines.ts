@@ -45,6 +45,9 @@
  * Line-break and NUL bytes are stripped before quoting (the SEC-04 contract):
  * they can never be represented in this format at all, and letting one
  * through would split the line into a second, attacker-controlled assignment.
+ * "Line-break" means every delimiter Python's str.splitlines() recognizes —
+ * not just CR/LF — because the in-container agent's Python reader uses those
+ * boundaries when it consumes the same file.
  */
 
 // Characters that are literal in an unquoted bash assignment AND carry no
@@ -63,8 +66,19 @@ const DOUBLE_QUOTE_FORBIDDEN = /["$`\\]/;
 
 const ENV_KEY_LINE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
-function stripLineBreaks(value: string): string {
-  return String(value).replace(/[\r\n\0]/g, "");
+// Python str.splitlines() delimiters plus NUL: LF, VT, FF, CR, the three ASCII
+// record separators, NEL, and Unicode line/paragraph separators. This mirrors
+// the existing integrations sanitizer's character set exactly.
+const ENV_VALUE_LINE_BOUNDARY = /[\x00\x0a\x0b\x0c\x0d\x1c\x1d\x1e\x85\u2028\u2029]/;
+const ENV_VALUE_LINE_BOUNDARIES = new RegExp(ENV_VALUE_LINE_BOUNDARY.source, "g");
+
+/** Non-stateful predicate for writers that reject rather than strip line boundaries. */
+export function hasEnvValueLineBoundary(value: string): boolean {
+  return ENV_VALUE_LINE_BOUNDARY.test(value);
+}
+
+export function stripEnvValueLineBoundaries(value: string): string {
+  return String(value).replace(ENV_VALUE_LINE_BOUNDARIES, "");
 }
 
 /**
@@ -73,7 +87,7 @@ function stripLineBreaks(value: string): string {
  * quoting. Throws when no faithful cross-reader encoding exists.
  */
 export function serializeEnvValue(rawValue: string, keyForError?: string): string {
-  const value = stripLineBreaks(rawValue);
+  const value = stripEnvValueLineBoundaries(rawValue);
   const key = keyForError ?? "env value";
 
   if (SAFE_UNQUOTED_VALUE.test(value)) {
@@ -109,7 +123,7 @@ export function serializeEnvValue(rawValue: string, keyForError?: string): strin
  * line first, preserving the SEC-04 single-line invariant.
  */
 export function serializeEnvAssignmentLine(line: string): string {
-  const clean = stripLineBreaks(line);
+  const clean = stripEnvValueLineBoundaries(line);
   if (!ENV_KEY_LINE.test(clean)) {
     return clean;
   }
