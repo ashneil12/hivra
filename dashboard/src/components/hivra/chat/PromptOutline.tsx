@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { Popover } from "./Popover";
-import { activePromptId, barLift, barWindow, promptLabel, promptMessages, promptPreview, RIPPLE_SPAN, NEAR_END_PX, type OutlineAnchor } from "./promptOutline";
+import { activePromptId, barLift, barWindow, promptLabel, promptMessages, promptPreview, RIPPLE_SPAN, NEAR_END_PX, type OutlineAnchor } from "./promptOutlineModel";
 import type { ChatMessage } from "./types";
 import styles from "./chat.module.css";
 

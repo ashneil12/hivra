@@ -2045,6 +2045,7 @@ export function LaunchJourney(
         savedKeys,
         balance: creditsBalance,
         onObserved: setObservation,
+        resumingUncertain,
         digitalOceanTarget,
         selfManagedTarget: destination.selectedTarget,
         onKeySaved: (vaultKeyId, saved) => {

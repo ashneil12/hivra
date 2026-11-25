@@ -61,6 +61,7 @@ ingestion. Live managed-hosting projects still need their explicit opt-in.
 
 ## Layout
 - `public.public.spec.ts` — logged-out routes render (HTTP < 400 + real content) + VRT.
+- `venice.public.spec.ts` — the unsigned Venice acquisition contract: promo claim target, attribution cookie and auth-boundary Launch deep-link preservation. It deliberately stops before account creation; the authed claim → Launch → first-reply leg still needs an owner-approved disposable sign-up path before it can be automated.
 - `golden-deploy.authed.spec.ts` — the **login → dashboard → deploy** golden path. Skips if no QA session.
 - `first-run-audit.spec.ts` + `first-run-audit/` — the **19/20 gate**. Real provisioning. See below.
 - `global-setup.ts` — always rejects legacy ticket sign-in; without both QA credentials it writes empty storage state.
