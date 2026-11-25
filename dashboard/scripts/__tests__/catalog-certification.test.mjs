@@ -195,6 +195,28 @@ test("planner recertifies when the manifest or provisioner changes", () => {
   assert.equal(provisionerChanged.id, "it-tools");
 });
 
+test("planner closes a changed-input remediation loop before new uncertified entries", () => {
+  const entries = catalogEntries();
+  const failedFixed = entries[0];
+  const neverCertified = entries[2];
+  const failure = ledgerRow({
+    profileId: failedFixed.id,
+    passed: false,
+    canarySha: SHA,
+    finishedAt: "2026-11-25T11:00:00.000Z",
+    failure: { stage: "open", category: "product", reason: "broken" },
+  });
+  const chosen = chooseCertificationTarget({
+    catalog: [neverCertified, failedFixed],
+    ledgerRows: [failure],
+    currentCanarySha: OTHER_SHA,
+    currentProvisionerVersion: PROVISIONER,
+    now: NOW,
+  });
+  assert.equal(chosen.id, failedFixed.id);
+  assert.equal(chosen.reason, "inputs-changed-since-failure");
+});
+
 test("planner backs off same-revision product failures but retries after Canary moves", () => {
   const catalog = [catalogEntries()[1]];
   const failure = ledgerRow({

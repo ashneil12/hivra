@@ -197,8 +197,10 @@ function compareEntries(a, b) {
 
 /**
  * Return the next due entry, or null. The ordering is intentional: prove the
- * runtime matrix first, then new agents before new apps, then fixes whose
- * inputs changed, then backed-off failures, then periodic revalidation.
+ * runtime matrix first, then fixes whose inputs changed, then new agents
+ * before new apps, then backed-off failures, then periodic revalidation.
+ * Changed-input failures must not starve behind a continuously growing
+ * uncertified catalog, or the remediation loop would never close.
  */
 export function chooseCertificationTarget({
   catalog,
@@ -239,7 +241,10 @@ export function chooseCertificationTarget({
       if (aPilot && bPilot) return priorityIndex.get(a.entry.id) - priorityIndex.get(b.entry.id);
       return aPilot ? -1 : 1;
     }
-    if (a.state.group !== b.state.group) return a.state.group - b.state.group;
+    const rank = (candidate) => candidate.state.group === 1 ? 0 : candidate.state.group === 0 ? 1 : candidate.state.group;
+    const aRank = rank(a);
+    const bRank = rank(b);
+    if (aRank !== bRank) return aRank - bRank;
     if (!a.row && !b.row) {
       const aAgent = a.entry.category === "agent" ? 0 : 1;
       const bAgent = b.entry.category === "agent" ? 0 : 1;
