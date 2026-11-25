@@ -4095,6 +4095,54 @@ describe("GET /api/hivra/agents", () => {
     fetchSpy.mockRestore();
   });
 
+  it("includes prompts and software in one enrichment round trip after reading the agent list", async () => {
+    jest.useFakeTimers();
+    const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_INBOX_ANSWERS: "1" });
+    try {
+      mockExistingAgents = [
+        { id: "agent-codex", type: "codex", name: "Codex", status: "running", cpu: 2, ram: 4, computer_substrate: "proxmox-kvm" },
+      ];
+      const after = <T>(ms: number, data: T) => new Promise(resolve => {
+        setTimeout(() => resolve({ data, error: null }), ms);
+      });
+      const fixtureTimestamp = new Date().toISOString();
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        const query = {
+          select: () => query,
+          eq: () => query,
+          neq: () => query,
+          is: () => query,
+          gt: () => query,
+          in: () => table === "hivra_agent_cli_updates" ? after(120, [
+            { agent_id: "agent-codex", observation: "reported", installed_version: "0.149.1", observed_at: fixtureTimestamp },
+          ]) : query,
+          order: () => table === "hivra_agents" ? after(40, mockExistingAgents) : query,
+          limit: () => after(60, [{ agent_id: "agent-codex", prompt_id: "prompt-1", kind: "clarify", summary: "What next?" }]),
+        };
+        return query;
+      });
+
+      const startedAt = Date.now();
+      const response = GET().then(async result => ({
+        elapsedMs: Date.now() - startedAt,
+        agents: (await result.json()).data.agents,
+      }));
+      await jest.advanceTimersByTimeAsync(220);
+
+      await expect(response).resolves.toEqual({
+        elapsedMs: 160,
+        agents: [expect.objectContaining({
+          id: "agent-codex",
+          agent_software: expect.objectContaining({ installed: "0.149.1" }),
+          inbox_prompt: expect.objectContaining({ promptId: "prompt-1" }),
+        })],
+      });
+    } finally {
+      env.restore();
+      jest.useRealTimers();
+    }
+  });
+
   it("still lists agents when their software observations can't be read", async () => {
     mockExistingAgents = [{ id: "agent-running", type: "codex", name: "RUNNING", status: "running", cpu: 2, ram: 4 }];
     const response = await GET();
