@@ -8,6 +8,7 @@
     "dev:live-auth": "bash scripts/dev-live-auth.sh",
     "dev:keepalive": "bash scripts/dev-keepalive.sh",
     "ops:sweep": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/ops-daily-sweep.ts",
+    "qa:canary-account": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only scripts/ensure-canary-qa-account.ts",
     "ops:fleet-persistence": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ./scripts/register-server-only-noop.cjs -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/fleet-persistence-sweep.ts",
     "ops:fix-config-path-sweep": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/fleet-fix-config-path-sweep.ts",
     "ops:prune-chat-storage": "TS_NODE_TRANSPILE_ONLY=true TS_NODE_COMPILER_OPTIONS='{\"module\":\"commonjs\",\"moduleResolution\":\"node\"}' node -r ts-node/register/transpile-only -r tsconfig-paths/register scripts/prune-chat-storage.ts",
