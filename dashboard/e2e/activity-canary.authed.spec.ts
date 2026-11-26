@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { CANARY_QA_EMAIL_ENV } from "./canary-qa/config";
 import type { ActivitySnapshot } from "../src/lib/activity-observability/types";
 import {
   capabilityExplanation,
@@ -17,8 +18,8 @@ import {
 test.describe("Activity observatory (deployed canary)", () => {
   test.beforeEach(() => {
     test.skip(
-      !process.env.QA_USER_ID || !process.env.CLERK_SECRET_KEY,
-      "requires QA_USER_ID + CLERK_SECRET_KEY for a real signed-in account",
+      !process.env[CANARY_QA_EMAIL_ENV],
+      `requires ${CANARY_QA_EMAIL_ENV} for a real signed-in account`,
     );
   });
   test("renders the authenticated snapshot, inspector, filters and coverage truthfully", async ({

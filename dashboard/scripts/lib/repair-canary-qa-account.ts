@@ -14,8 +14,8 @@ import {
   CANARY_QA_PLAN,
   CANARY_QA_PLAN_SIZE,
   CANARY_QA_SUBSCRIPTION_ID,
-} from './config';
-import { assertClerkTestAuditEmail } from '../first-run-audit/config';
+} from '../../e2e/canary-qa/config';
+import { assertClerkTestAuditEmail } from '../../e2e/first-run-audit/config';
 
 const CLERK_API = 'https://api.clerk.com/v1';
 
@@ -47,7 +47,7 @@ interface ClerkUserPayload {
 
 async function readJson(res: Response, what: string): Promise<unknown> {
   const text = await res.text();
-  if (!res.ok) throw new Error(`[canary-qa] ${what} failed: HTTP ${res.status} ${text.slice(0, 300)}`);
+  if (!res.ok) throw new Error(`[canary-qa] ${what} failed: HTTP ${res.status}`);
   return text ? JSON.parse(text) : null;
 }
 

@@ -5,7 +5,7 @@
  * The values are fetched straight from the Canary Vercel project into the
  * runner process environment. They are never written to a disk env file and
  * this script never prints them except as shell assignments consumed by eval
- * in the parent runner. It deliberately refuses live-shaped Clerk keys.
+ * in the parent runner. Standing-account sign-in does not need a Clerk key.
  */
 
 import { execFileSync } from "node:child_process";
@@ -52,8 +52,6 @@ export function shellQuote(value) {
 }
 
 export function buildTestEnvExports(rows) {
-  const clerk = validateSecretValue("CLERK_SECRET_KEY", selectProductionEnvValue(rows, "CLERK_SECRET_KEY"));
-  if (!clerk.startsWith("sk_test_")) throw envError("CLERK_SECRET_KEY is not the Canary Clerk test key");
   const supabaseUrl = validateSecretValue("SUPABASE_URL", selectProductionEnvValue(rows, "SUPABASE_URL"));
   try {
     const url = new URL(supabaseUrl);
@@ -70,7 +68,6 @@ export function buildTestEnvExports(rows) {
   if (serviceRole.length < 20) throw envError("SUPABASE_SERVICE_ROLE_KEY is too short to be plausible");
 
   return [
-    `export CLERK_SECRET_KEY=${shellQuote(clerk)}`,
     `export LAUNCH_SWEEP_SUPABASE_URL=${shellQuote(supabaseUrl)}`,
     `export LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=${shellQuote(serviceRole)}`,
   ].join("\n");

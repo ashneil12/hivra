@@ -103,7 +103,7 @@ function main(): void {
   const excluded = verdicts.filter(
     (v) => v.verdict === 'fail' && v.failure && v.failure.category !== 'product',
   );
-  const leaks = verdicts.filter((v) => v.teardown.instances_survived.length > 0);
+  const leaks = verdicts.filter((v) => v.teardown.instances_survived.length > 0 || v.teardown.errors.length > 0);
 
   const counted = passes.length + productFailures.length;
 
@@ -227,7 +227,7 @@ function main(): void {
         console.log(`    run ${verdict.run_id}: instance ${survivor.id} survived teardown`);
       }
     }
-    console.log('    → run: npm run audit:first-run:cleanup');
+    for (const verdict of leaks) console.log(`    → npm run audit:first-run:cleanup -- --run-id=${verdict.run_id}`);
     console.log('─'.repeat(66));
   }
 

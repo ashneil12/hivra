@@ -16,12 +16,11 @@
  *      gate, NOT a missing analytics key, is why this harness recorded
  *      `posthog_captured: false` on canary.
  */
-import type { Browser, BrowserContext } from '@playwright/test';
+import type { Browser, BrowserContext, Page } from '@playwright/test';
 
 import {
   assertClerkTestAuditEmail,
   assertLiveManagedHostingAuditAllowed,
-  assertNotProduction,
   CLERK_TEST_OTP_CODE,
 } from './config';
 import {
@@ -46,6 +45,7 @@ type ClerkSignInResource = {
 type ClerkWin = {
   Clerk?: {
     loaded?: boolean;
+    user?: { id?: string };
     client: {
       signIn: {
         create(o: { identifier: string }): Promise<ClerkSignInResource>;
@@ -61,22 +61,22 @@ export interface AuditContextOptions {
   onContext?: (context: BrowserContext) => void | Promise<void>;
 }
 
-export interface SessionOptions extends AuditContextOptions {
+interface SessionOptions extends AuditContextOptions {
   email: string;
 }
 
 /**
  * Creates the virgin browser every live audit uses: no storage state, human
  * browser signals, and analytics consent installed before any page script.
- * Exported for the invitation signup path; do not use it to bypass the guards
- * or to create shared standing auth state.
  */
 export async function createAuditBrowserContext(
   browser: Browser,
   { baseUrl, onContext }: AuditContextOptions,
 ): Promise<BrowserContext> {
   assertLiveManagedHostingAuditAllowed();
-  assertNotProduction(baseUrl);
+  if (baseUrl !== 'https://canary.hermesos.cloud') {
+    throw new Error('[managed-hosting-audit] refusing to target any origin except public HTTPS Canary.');
+  }
   // NB: browser.newContext() does NOT inherit the project's `use` options, so
   // the UA here is the raw (headless) one unless we set it explicitly.
   const context = await browser.newContext({
@@ -102,25 +102,32 @@ export async function createAuditBrowserContext(
     [CONSENT_STORAGE_KEY, CONSENT_VERSION] as const,
   );
 
-  if (onContext) await onContext(context);
+  if (onContext) {
+    try {
+      await onContext(context);
+    } catch (error) {
+      await context.close();
+      throw error;
+    }
+  }
   return context;
 }
 
 /**
- * Creates a fresh context (no storage state — a virgin browser for a virgin
- * user), grants analytics consent, completes Clerk's email-code sign-in, and
- * lands on /dashboard so the session cookie is fully established.
+ * Signs in to an existing account in a fresh context, never to a sign-up flow.
  */
 export async function establishAuditSession(
   browser: Browser,
   { baseUrl, email, onContext }: SessionOptions,
-): Promise<BrowserContext> {
+): Promise<{ context: BrowserContext; page: Page; userId: string }> {
+  assertLiveManagedHostingAuditAllowed();
   assertClerkTestAuditEmail(email);
   const context = await createAuditBrowserContext(browser, { baseUrl, onContext });
-  const page = await context.newPage();
   try {
+    const page = await context.newPage();
     await page.goto('/sign-in', { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => !!(window as unknown as ClerkWin).Clerk?.loaded, {
+    if (new URL(page.url()).origin !== baseUrl) throw new Error('Sign-in left Canary');
+    await page.waitForFunction(() => !!(window as unknown as ClerkWin).Clerk?.loaded, undefined, {
       timeout: 45_000,
     });
     await page.evaluate(async ({ email, code }) => {
@@ -139,11 +146,26 @@ export async function establishAuditSession(
       await clerk.setActive({ session: completed.createdSessionId });
     }, { email, code: CLERK_TEST_OTP_CODE });
 
-    // Land authed so the session cookie is written for subsequent API calls.
-    await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
-  } finally {
-    await page.close();
+    const userId = await verifyAuditSession(page, baseUrl);
+    return { context, page, userId };
+  } catch {
+    await context.close().catch(() => undefined);
+    throw new Error('[managed-hosting-audit] standing Canary account did not complete Clerk email-code sign-in.');
   }
+}
 
-  return context;
+export async function verifyAuditSession(page: Page, baseUrl: string, expectedUserId?: string): Promise<string> {
+  await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
+  if (new URL(page.url()).origin !== baseUrl) throw new Error('Dashboard left Canary');
+  const userId = await page.waitForFunction(
+    (expected) => {
+      const id = (window as unknown as ClerkWin).Clerk?.user?.id;
+      return id && (!expected || id === expected) ? id : null;
+    },
+    expectedUserId,
+    { timeout: 30_000 },
+  );
+  const id = await userId.jsonValue();
+  if (!id) throw new Error('Standing account identity was not verified.');
+  return id;
 }

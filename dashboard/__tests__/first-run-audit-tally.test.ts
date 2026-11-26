@@ -7,7 +7,7 @@ const script = join(process.cwd(), "scripts/first-run-audit-tally.ts");
 
 function verdict(kind: "pass" | "fail") {
   return {
-    schema: "hivra.first-run-audit.v1",
+    schema: "hivra.first-run-audit.v2",
     run_id: `smoke-${kind}`,
     verdict: kind,
     outcome_level: "agent_replied",
@@ -26,8 +26,6 @@ function verdict(kind: "pass" | "fail") {
     started_at: "2026-08-29T00:00:00.000Z",
     finished_at: "2026-08-29T00:01:00.000Z",
     duration_ms: 60_000,
-    clerk_user_id: "test-user",
-    email: "test@hermesos.cloud",
     agent_name: "test-agent",
     instance: {
       id: "test-instance",
@@ -50,8 +48,6 @@ function verdict(kind: "pass" | "fail") {
       attempted: true,
       instances_destroyed: ["test-instance"],
       instances_survived: [],
-      clerk_user_deleted: true,
-      clerk_user_retained_for_reaper: false,
       errors: [],
     },
   };
