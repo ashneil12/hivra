@@ -521,4 +521,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261126161000", name: "restore_operator_usage_schema" },
   { version: "20261126162600", name: "reconcile_legacy_catalog_metadata" },
   { version: "20261126192500", name: "managed_launch_bridge" },
+  { version: "20261126194500", name: "classic_placement_bridge" },
 ];

@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/managed-launch-bridge.yml'
       - 'dashboard/supabase/migrations/20261126192500_managed_launch_bridge.sql'
+      - 'dashboard/supabase/migrations/20261126194500_classic_placement_bridge.sql'
       - 'scripts/release/test-managed-launch-bridge.sh'
       - 'scripts/release/fixtures/managed-launch-bridge-*'
   push:
@@ -12,6 +13,7 @@ on:
     paths:
       - '.github/workflows/managed-launch-bridge.yml'
       - 'dashboard/supabase/migrations/20261126192500_managed_launch_bridge.sql'
+      - 'dashboard/supabase/migrations/20261126194500_classic_placement_bridge.sql'
       - 'scripts/release/test-managed-launch-bridge.sh'
       - 'scripts/release/fixtures/managed-launch-bridge-*'
 

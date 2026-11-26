@@ -31,6 +31,7 @@ esac
 migrations=dashboard/supabase/migrations
 fixtures=scripts/release/fixtures
 bridge="$migrations/20261126192500_managed_launch_bridge.sql"
+classic_bridge="$migrations/20261126194500_classic_placement_bridge.sql"
 mkdir "$work/old" "$work/combined"
 git archive "$old" "$migrations" | tar -x -C "$work/old"
 git archive "$cutoff" "$migrations" | tar -x -C "$work/combined"
@@ -103,7 +104,7 @@ assert_install_rejected "create function public.insert_hivra_managed_agent(jsonb
 echo 'PASS bridge initialization refuses mixed schema, exposed ACL, modified search path and overload'
 {
   echo 'begin;'
-  cat "$bridge"
+  cat "$bridge" "$classic_bridge"
   printf '\n%s\n' 'commit;'
 } > "$work/bridge.sql"
 apply "$work/bridge.sql"
@@ -121,10 +122,24 @@ docker run --pull never --rm --detach --network "container:$container" --cidfile
 
 probe() {
   psql -q -v epoch="$1" -v raw_insert="$2" -v raw_reserve="$3" < "$fixtures/managed-launch-bridge-probe.sql"
+  psql -q -v epoch="$1" < "$fixtures/managed-launch-bridge-classic.sql"
+  local run_race=0
+  if [[ $1 == placement ]]; then
+    psql -q <<'SQL'
+insert into public.hermes_instances(id,user_id,name,status,lifecycle_state,product_surface,infrastructure_provider,
+  proxmox_node,proxmox_vmid,cpu_limit,ram_limit,disk_size_gb,seat_funding)
+values('00000000-0000-4000-8000-000000000201','synthetic-http-owner','Classic race fixture','stopped','paused',
+  'hermesos','proxmox','bridge-host',13001,1,2048,30,'paid');
+SQL
+    run_race=1
+  fi
   psql -qc "notify pgrst, 'reload schema'" </dev/null
-  docker run --pull never --rm --network "container:$container" --env PGRST_JWT_SECRET \
+  docker run --pull never --rm --network "container:$container" --env PGRST_JWT_SECRET --env "RUN_CLASSIC_START_RACE=$run_race" \
     --volume "$root/$fixtures/managed-launch-bridge-http.mjs:/managed-launch-bridge-http.mjs:ro" \
     "$node_image" node /managed-launch-bridge-http.mjs "$1" "$2" "$3"
+  if [[ $run_race == 1 ]]; then
+    psql -qc "delete from public.hermes_instances where id='00000000-0000-4000-8000-000000000201'" </dev/null
+  fi
 }
 
 read_epoch() {
@@ -192,6 +207,8 @@ while read -r path <&9; do
 done 9< <(git diff --diff-filter=A --name-only "$old" "$cutoff" -- "$migrations" | sort)
 [[ $(psql -Atc 'select count(*) from supabase_migrations.schema_migrations') == 12 ]]
 echo 'PASS applied the 12 pinned delta files'
+assert_transition_rejected "begin; alter function public.insert_hermes_instance(jsonb,numeric,boolean) set search_path=public; select public.managed_launch_bridge_epoch(); commit;" \
+  'managed launch bridge epoch does not match the reviewed schema'
 probe placement invalid_request invalid_request
 
 {
@@ -199,12 +216,15 @@ probe placement invalid_request invalid_request
 begin;
 drop function public.managed_launch_bridge_epoch(),
   public.insert_hivra_managed_agent_bridge_v1(text,jsonb,integer,numeric,boolean),
-  public.reserve_hivra_launch_model_bridge_v1(text,text,uuid,jsonb,uuid,jsonb,jsonb,text,integer,numeric,boolean);
+  public.reserve_hivra_launch_model_bridge_v1(text,text,uuid,jsonb,uuid,jsonb,jsonb,text,integer,numeric,boolean),
+  public.insert_hermes_instance_bridge_v1(text,jsonb,numeric,boolean),
+  public.claim_hermes_instance_start_bridge_v1(text,uuid,text,uuid,text,integer,numeric,boolean),
+  public.finish_hermes_instance_start_bridge_v1(uuid,text,uuid,text);
 drop schema managed_launch_bridge_private cascade;
 SQL
   cat "$work/combined/$migrations/20261123220000_optional_holder_switch.sql"
   echo
-  cat "$bridge"
+  cat "$bridge" "$classic_bridge"
   echo
   sed '1d;$d' "$fixtures/managed-launch-bridge-probe.sql"
   echo 'rollback;'

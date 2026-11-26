@@ -93,6 +93,18 @@ returns text language sql stable set search_path=pg_catalog,pg_temp as $$
         and (select md5(p.prosrc) from pg_proc p where p.oid=d.holder_check)='fcdd3dfeccd85fc94d9314860d5ea04a'
         and case when m.epoch='placement' then
           (select md5(p.prosrc) from pg_proc p where p.oid=d.placement_check)='4276e7e376197cab6337129625cdac2f'
+          and exists(
+            select 1 from pg_proc p where p.oid=to_regprocedure('public.insert_hermes_instance(jsonb,numeric,boolean)')
+              and md5(p.prosrc)='5eb825a93d94b2c8139a87e7b65c898b'
+              and p.proargnames=array['p_row','p_cpu_overcommit_ratio','p_skip_sleep']
+              and p.prosecdef and p.provolatile='v' and p.prorettype='jsonb'::regtype
+              and p.proconfig=array['search_path=pg_catalog, pg_temp']
+              and has_function_privilege('service_role',p.oid,'execute')
+              and not has_function_privilege('anon',p.oid,'execute')
+              and not has_function_privilege('authenticated',p.oid,'execute')
+          )
+          and (select md5(p.prosrc) from pg_proc p
+            where p.oid=to_regprocedure('public.holder_placement_accounting(text[],boolean)'))='838d3fc01ec324c2ffa79e831b7f8c81'
         else d.placement_check is null end
     end;
 $$;

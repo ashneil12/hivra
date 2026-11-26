@@ -13,16 +13,21 @@ function bearer(role) {
   return `Bearer ${claims}.${createHmac("sha256", secret).update(claims).digest("base64url")}`;
 }
 
-async function rpc(name, args, role = "service_role") {
+async function rpc(name, args, role = "service_role", tx = "rollback", expectedCode) {
   const response = await fetch(endpoint + name, {
     method: "POST",
-    headers: { Authorization: bearer(role), "Content-Type": "application/json", Prefer: "tx=rollback" },
+    headers: { Authorization: bearer(role), "Content-Type": "application/json", Prefer: `tx=${tx}` },
     body: JSON.stringify(args),
     signal: AbortSignal.timeout(5000),
   });
   const data = await response.json();
   if (role === "anon") {
     assert.ok([401, 403, 404].includes(response.status), `${name}: anon HTTP ${response.status}`);
+    return;
+  }
+  if (expectedCode) {
+    assert.equal(data?.code, expectedCode, `${name}: expected ${expectedCode}`);
+    assert.ok(response.status >= 400);
     return;
   }
   assert.equal(response.status, 200, `${name}: HTTP ${response.status} (${data?.code ?? "no error code"})`);
@@ -92,4 +97,50 @@ if (epoch === "placement") {
 await rpc("managed_launch_bridge_epoch", {}, "anon");
 await rpc(directBridge, { ...paidDirect, ...placement, p_epoch: epoch }, "anon");
 await rpc(receiptBridge, { ...paidReceipt, ...placement, p_epoch: epoch }, "anon");
+const classicCreate = "insert_hermes_instance_bridge_v1";
+const classicClaim = "claim_hermes_instance_start_bridge_v1";
+const classicFinish = "finish_hermes_instance_start_bridge_v1";
+const classic = {
+  p_epoch: epoch, ...placement,
+  p_row: {
+    user_id: owner, name: "Classic HTTP fixture", status: "provisioning", lifecycle_state: "provisioning",
+    product_surface: "hermesos", infrastructure_provider: "proxmox",
+    cpu_limit: 1, ram_limit: 2048, disk_size_gb: 30, seat_funding: "paid",
+    ...(epoch === "placement" ? { proxmox_node: "bridge-host" } : {}),
+  },
+};
+if (epoch === "funding") {
+  await rpc(classicCreate, classic, "service_role", "rollback", "P0058");
+} else {
+  assert.equal((await rpc(classicCreate, classic)).status, "inserted");
+}
+assert.equal((await rpc(classicCreate, { ...classic, p_epoch: otherEpoch })).status, "bridge_phase_changed");
+await rpc(classicCreate, classic, "anon");
+const startArgs = {
+  p_epoch: epoch, p_instance_id: randomUUID(), p_user_id: owner, p_operation_id: randomUUID(),
+  p_host_id: "bridge-host", p_vmid: 13001, ...placement,
+};
+const finishArgs = {
+  p_instance_id: startArgs.p_instance_id, p_user_id: owner, p_operation_id: startArgs.p_operation_id,
+  p_outcome: "unknown",
+};
+assert.equal((await rpc(classicClaim, { ...startArgs, p_epoch: otherEpoch })).status, "bridge_phase_changed");
+assert.equal((await rpc(classicClaim, startArgs)).status, "unavailable");
+assert.equal((await rpc(classicFinish, finishArgs)).status, "unavailable");
+await rpc(classicClaim, startArgs, "anon");
+await rpc(classicFinish, finishArgs, "anon");
+if (epoch === "placement" && process.env.RUN_CLASSIC_START_RACE === "1") {
+  const vm = "00000000-0000-4000-8000-000000000201";
+  const start = { ...startArgs, p_instance_id: vm };
+  const other = { ...start, p_operation_id: randomUUID() };
+  const results = await Promise.all([start, other].map(args => rpc(classicClaim, args, "service_role", "commit")));
+  assert.deepEqual(results.map(result => result.status).sort(), ["claimed", "pending"]);
+  const winningOp = results[0].status === "claimed" ? start.p_operation_id : other.p_operation_id;
+  const finish = { ...finishArgs, p_instance_id: vm, p_operation_id: winningOp };
+  assert.equal((await rpc(classicFinish, finish, "service_role", "commit")).status, "pending");
+  assert.equal((await rpc(classicClaim, { ...start, p_operation_id: randomUUID() })).status, "pending");
+  assert.equal((await rpc(classicFinish, { ...finish, p_outcome: "started" }, "service_role", "commit")).status, "awake");
+  assert.equal((await rpc(classicClaim, { ...start, p_operation_id: randomUUID() })).status, "awake");
+  console.log("PASS PostgREST Classic Start: concurrent claims dispatch once; unknown stays pending and confirmed start settles");
+}
 console.log(`PASS PostgREST ${epoch}: old, bridge, canonical and anonymous contracts`);
