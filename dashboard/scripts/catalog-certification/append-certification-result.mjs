@@ -48,6 +48,7 @@ function readSweepResult(file) {
 
 function safeReason(value) {
   return String(value ?? "")
+    .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, "email_redacted")
     .replace(/\buser_[A-Za-z0-9]{6,}\b/g, "user_redacted")
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "uuid_redacted")
     .replace(/https?:\/\/\S+[?#]\S+/g, "url-with-query-redacted")
@@ -84,7 +85,9 @@ export function certificationRowFromSweep({ result, file, target, canarySha, pro
       }
     : null;
   const cleanupLeaked = Boolean(teardown && (teardown.agentsLeft > 0 || teardown.instancesLeft > 0));
-  let passed = Boolean(result.passed) && revisionMatches && !cleanupLeaked;
+  const cleanupVerified = Boolean(teardown && !teardown.error &&
+    result.teardown.agentsLeft === 0 && result.teardown.instancesLeft === 0);
+  let passed = Boolean(result.passed) && revisionMatches && cleanupVerified && sweepExitCode === 0;
   let failure = result.failure
     ? {
         stage: result.failure.stage,
@@ -105,6 +108,18 @@ export function certificationRowFromSweep({ result, file, target, canarySha, pro
       stage: "teardown",
       category: "harness_environment",
       reason: "teardown left paid computers or agent records behind",
+    };
+  } else if (result.passed && !cleanupVerified) {
+    failure = {
+      stage: "teardown",
+      category: "harness_environment",
+      reason: "teardown did not verify an empty certification account",
+    };
+  } else if (result.passed && sweepExitCode !== 0) {
+    failure = {
+      stage: "runner",
+      category: "harness_environment",
+      reason: "launch sweep did not exit successfully",
     };
   }
 

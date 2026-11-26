@@ -414,7 +414,9 @@ would show Canary's internals. The reference continuous implementation is the
 operator-run catalog certification runner in
 `dashboard/scripts/catalog-certification/`; its operating contract is documented in
 `docs/release/CATALOG-CERTIFICATION-RUNNER.md`. It serially certifies catalog entries
-against the exact public Canary revision and runs the scoped reaper after every attempt.
+against the exact public Canary revision using a dedicated standing test account
+and verifies teardown without deleting the account. The scoped reaper still
+applies to the ordinary disposable-account sweep, not the continuous certifier.
 
 ### Required isolated-runner setup
 

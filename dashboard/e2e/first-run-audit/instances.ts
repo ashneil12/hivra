@@ -57,10 +57,17 @@ export interface WorkspaceHandoff {
 export async function listInstances(
   request: APIRequestContext,
   baseUrl: string,
+  requireVerifiedList = false,
 ): Promise<InstanceSummary[]> {
   const res = await request.get(`${baseUrl}/api/instances?summary=true`, { timeout: 90_000 });
-  if (!res.ok()) return [];
+  if (!res.ok()) {
+    if (requireVerifiedList) throw new Error(`Instance inventory failed: HTTP ${res.status()}`);
+    return [];
+  }
   const body = (await res.json().catch(() => null)) as ApiEnvelope<InstanceSummary[]> | null;
+  if (requireVerifiedList && (body?.success !== true || !Array.isArray(body.data))) {
+    throw new Error('Instance inventory response was not verified');
+  }
   return Array.isArray(body?.data) ? body.data : [];
 }
 
