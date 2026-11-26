@@ -19,8 +19,8 @@ export type PublicRepository =
       stars: GitHubStars | null;
     }>;
 
-// Only a macOS app is in development. There is no Windows desktop app.
-export type DesktopPlatform = "macos";
+// Desktop installers are published independently for each supported platform.
+export type DesktopPlatform = "macos" | "windows";
 
 export type DesktopRelease =
   | Readonly<{ status: "pending"; href: null }>
@@ -31,21 +31,40 @@ export type DesktopRelease =
       label: string;
     }>;
 
-export type DesktopDownloads = Readonly<Record<DesktopPlatform, DesktopRelease>>;
+export type DesktopDownloads = Readonly<
+  Record<DesktopPlatform, DesktopRelease>
+>;
 
 /**
  * The Mac download stays "coming soon" until NEXT_PUBLIC_HIVRA_MAC_DOWNLOAD_URL
  * names the signed, notarised installer (an https address, normally the
  * GitHub release asset). Anything else keeps the button disabled.
  */
-export function macDownloadFromEnv(value: string | undefined): DesktopRelease {
+function desktopDownloadFromEnv(
+  value: string | undefined,
+  label: string,
+): DesktopRelease {
   const href = value?.trim();
-  if (!href || !/^https:\/\/[^\s]+$/.test(href)) return { status: "pending", href: null };
+  if (!href || !/^https:\/\/[^\s]+$/.test(href))
+    return { status: "pending", href: null };
   return {
     status: "published",
     href: href as `https://${string}`,
-    label: "For Apple silicon and Intel Macs, macOS 14 or newer.",
+    label,
   };
+}
+
+export function macDownloadFromEnv(value: string | undefined): DesktopRelease {
+  return desktopDownloadFromEnv(
+    value,
+    "For Apple silicon and Intel Macs, macOS 14 or newer.",
+  );
+}
+
+export function windowsDownloadFromEnv(
+  value: string | undefined,
+): DesktopRelease {
+  return desktopDownloadFromEnv(value, "For 64-bit Windows 10 or newer.");
 }
 
 export const PUBLIC_PROJECT_LINKS: Readonly<{
@@ -55,9 +74,16 @@ export const PUBLIC_PROJECT_LINKS: Readonly<{
   /** Official X account, the same handle as twitter:site in app/layout.tsx. */
   x: `https://x.com/${string}`;
 }> = {
-  repository: { status: "published", href: "https://github.com/ashneil12/hivra", stars: null },
+  repository: {
+    status: "published",
+    href: "https://github.com/ashneil12/hivra",
+    stars: null,
+  },
   desktop: {
     macos: macDownloadFromEnv(process.env.NEXT_PUBLIC_HIVRA_MAC_DOWNLOAD_URL),
+    windows: windowsDownloadFromEnv(
+      process.env.NEXT_PUBLIC_HIVRA_WINDOWS_DOWNLOAD_URL,
+    ),
   },
   browser: "/dashboard",
   x: "https://x.com/HivraOS",
