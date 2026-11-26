@@ -16,6 +16,9 @@ import { isGvisorDeploymentTarget } from "@/lib/infrastructure/contracts";
 import { HIVRA_GVISOR_ADAPTER_VERSION, isGvisorPreflightFresh } from "@/lib/hivra/gvisor-computer-contract";
 import {
   managedGvisorAuthorityConfig,
+  managedGvisorGeneralLaunchEnabled,
+  managedGvisorLaunchAdmittedForUser,
+  managedGvisorQaEnrollmentEnabled,
   type ManagedGvisorAuthorityConfig,
 } from "@/lib/hivra/managed-gvisor-launch-config";
 
@@ -53,13 +56,13 @@ function failure(
   return { ok: false, code, status, message };
 }
 
-function switchEnabled(value: string | undefined): boolean {
-  const flag = value?.trim().toLowerCase();
-  return flag === "1" || flag === "true";
-}
-
 export async function checkManagedGvisorLaunchAuthority(userId: string, env: NodeJS.ProcessEnv = process.env): Promise<ManagedGvisorLaunchGateFailure | { ok: true; authority: ManagedGvisorAuthority }> {
-  if (!switchEnabled(env.HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED)) {
+  const admitted = managedGvisorLaunchAdmittedForUser(userId, env);
+  if (managedGvisorQaEnrollmentEnabled(env)) {
+    if (!admitted) {
+      return failure("managed_gvisor_disabled", 404, "Managed Linux terminal sandboxes are not available.");
+    }
+  } else if (!managedGvisorGeneralLaunchEnabled(env)) {
     return failure("managed_gvisor_disabled", 404, "Managed Linux terminal sandboxes are not available.");
   }
   let subscription;

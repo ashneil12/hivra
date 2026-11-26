@@ -22,6 +22,7 @@ import { createLaunchDraft, launchDraftStorageKey } from "@/lib/launch/draft-sto
 const createAgentMock = jest.fn();
 const findHivraLaunchReceiptMock = jest.fn();
 const fetchPlanStrictMock = jest.fn();
+const mockServerAuth = jest.fn();
 const routerPushMock = jest.fn();
 const searchParamsGetMock = jest.fn();
 const searchParamsGetAllMock = jest.fn();
@@ -35,12 +36,20 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => mockedSearchParams,
 }));
 
+jest.mock("@clerk/nextjs/server", () => ({
+  auth: () => mockServerAuth(),
+}));
+
 jest.mock("@/lib/hivra/agent-api", () => ({
   ...jest.requireActual("@/lib/hivra/agent-api"),
   createAgent: (input: unknown) => createAgentMock(input),
   findHivraLaunchReceipt: (launchRequestId: string) => findHivraLaunchReceiptMock(launchRequestId),
   fetchPlanStrict: () => fetchPlanStrictMock(),
 }));
+
+async function renderLaunchPage() {
+  return render(await LaunchPage());
+}
 
 const PROXMOX_TARGET: DeploymentTargetDto = {
   id: "22222222-2222-4222-8222-222222222222",
@@ -203,15 +212,37 @@ const MANAGED_GVISOR_ENV = {
   HIVRA_MANAGED_GVISOR_TARGET_ID: "22222222-2222-4222-8222-222222222222",
   HIVRA_MANAGED_GVISOR_CONNECTION_REVISION: "1",
 } as const;
+const MANAGED_GVISOR_QA_ENV = {
+  HIVRA_MANAGED_GVISOR_QA_ENROLLMENT_ENABLED: "true",
+  HIVRA_MANAGED_GVISOR_QA_OWNER_ID: "user_123",
+  HIVRA_MANAGED_GVISOR_QA_EXPIRES_AT: "2099-01-01T00:00:00.000Z",
+  VERCEL: "1",
+  VERCEL_ENV: "production",
+  VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+  VERCEL_GIT_COMMIT_REF: "canary",
+  VERCEL_GIT_REPO_OWNER: "ashneil12",
+  VERCEL_GIT_REPO_SLUG: "hivra",
+} as const;
+const MANAGED_GVISOR_ENV_KEYS = [
+  ...Object.keys(MANAGED_GVISOR_ENV),
+  ...Object.keys(MANAGED_GVISOR_QA_ENV),
+];
 const PRIOR_MANAGED_GVISOR_ENV = Object.fromEntries(
-  Object.keys(MANAGED_GVISOR_ENV).map((key) => [key, process.env[key]]),
-) as Record<keyof typeof MANAGED_GVISOR_ENV, string | undefined>;
+  MANAGED_GVISOR_ENV_KEYS.map((key) => [key, process.env[key]]),
+) as Record<string, string | undefined>;
 function configureManagedLinuxSandbox() {
   for (const [key, value] of Object.entries(MANAGED_GVISOR_ENV)) process.env[key] = value;
 }
+function configureManagedLinuxSandboxQa() {
+  delete process.env.HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED;
+  for (const [key, value] of Object.entries(MANAGED_GVISOR_ENV)) {
+    if (key !== "HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED") process.env[key] = value;
+  }
+  for (const [key, value] of Object.entries(MANAGED_GVISOR_QA_ENV)) process.env[key] = value;
+}
 afterEach(() => {
   for (const key of Object.keys(PREPARED_ENV)) delete process.env[key];
-  for (const key of Object.keys(MANAGED_GVISOR_ENV)) delete process.env[key];
+  for (const key of MANAGED_GVISOR_ENV_KEYS) delete process.env[key];
 });
 afterAll(() => {
   for (const [key, value] of Object.entries(PRIOR_PREPARED_ENV)) {
@@ -328,6 +359,7 @@ describe("LaunchPage", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockServerAuth.mockReset().mockResolvedValue({ userId: "user_123" });
     window.sessionStorage.clear();
     window.localStorage.clear();
     infrastructureTargets = [];
@@ -394,7 +426,7 @@ describe("LaunchPage", () => {
     infrastructureTargets = [GVISOR_TARGET];
     createAgentMock.mockResolvedValue({ id: "77777777-7777-4777-8777-777777777777", type: "linux-terminal",
       computer_profile: "linux-terminal", computer_substrate: "gvisor", name: "MY_LINUX_SANDBOX", status: "running", cpu: 1, ram: 1 });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Linux Sandbox");
     await waitFor(() => expect(whereButton(/My infrastructure/i)).toBeEnabled());
@@ -419,7 +451,7 @@ describe("LaunchPage", () => {
       computer_profile: "linux-terminal", computer_substrate: "gvisor", deployment_mode: "hivra-managed",
     } as const;
     createAgentMock.mockResolvedValue(created);
-    const launch = render(<LaunchPage />);
+    const launch = await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Linux Sandbox");
 
@@ -485,7 +517,7 @@ describe("LaunchPage", () => {
   it("keeps the connected-server Linux Sandbox path available when the managed lane is configured", async () => {
     configureManagedLinuxSandbox();
     infrastructureTargets = [GVISOR_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Linux Sandbox");
 
@@ -501,7 +533,7 @@ describe("LaunchPage", () => {
   });
 
   it("keeps Linux Sandbox server-only when the managed lane is not configured", async () => {
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Linux Sandbox");
 
@@ -516,7 +548,7 @@ describe("LaunchPage", () => {
   it("does not submit managed Linux Sandbox for a Free account when the lane is configured", async () => {
     configureManagedLinuxSandbox();
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Linux Sandbox");
 
@@ -526,13 +558,47 @@ describe("LaunchPage", () => {
     expect(createAgentMock).not.toHaveBeenCalled();
   });
 
+  it("shows managed Linux Sandbox to the exact QA owner on canonical Git Canary", async () => {
+    configureManagedLinuxSandboxQa();
+    await renderLaunchPage();
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseTile("Linux Sandbox");
+
+    await waitFor(() => expect(whereButton(/Hivra Cloud/i)).toBeEnabled());
+    expect(screen.getByText("gVisor application-kernel sandbox on Hivra Cloud")).toBeInTheDocument();
+  });
+
+  it("keeps managed Linux Sandbox closed to another paid owner in QA mode", async () => {
+    configureManagedLinuxSandboxQa();
+    mockServerAuth.mockResolvedValue({ userId: "user_other_paid" });
+    await renderLaunchPage();
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseTile("Linux Sandbox");
+
+    expect(whereButton(/Hivra Cloud/i)).toBeDisabled();
+    expect(screen.getByText(/Not available for Linux Sandbox/i)).toBeInTheDocument();
+    expect(launchButton()).toBeDisabled();
+  });
+
+  it("keeps managed Linux Sandbox closed when the server principal is anonymous", async () => {
+    configureManagedLinuxSandboxQa();
+    mockServerAuth.mockResolvedValue({ userId: null });
+    await renderLaunchPage();
+    await screen.findByRole("heading", { name: "What do you want to launch?" });
+    chooseTile("Linux Sandbox");
+
+    expect(whereButton(/Hivra Cloud/i)).toBeDisabled();
+    expect(screen.getByText(/Not available for Linux Sandbox/i)).toBeInTheDocument();
+    expect(launchButton()).toBeDisabled();
+  });
+
   // B2 review: a host chosen near the end of its 15-minute readiness window
   // was refused at Launch. Launch checks it again first (read-only).
   it("checks a Linux Sandbox host again before launching when its readiness is about to lapse", async () => {
     infrastructureTargets = [{ ...GVISOR_TARGET, lastPreflightAt: new Date(Date.now() - 14 * 60_000).toISOString() }];
     createAgentMock.mockResolvedValue({ id: "77777777-7777-4777-8777-777777777777", type: "linux-terminal",
       computer_profile: "linux-terminal", computer_substrate: "gvisor", name: "MY_LINUX_SANDBOX", status: "running", cpu: 1, ram: 1 });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Linux Sandbox");
     await waitFor(() => expect(whereButton(/My infrastructure/i)).toBeEnabled());
@@ -545,7 +611,7 @@ describe("LaunchPage", () => {
   });
 
   it("focuses each new step without stealing focus during name editing", async () => {
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: "What do you want to launch?" })).toHaveFocus();
     chooseTile("Ubuntu Desktop");
     expect(screen.getByRole("heading", { name: /^Review and launch/ })).toHaveFocus();
@@ -562,7 +628,7 @@ describe("LaunchPage", () => {
 
   it("shows agents and computers on one Choose screen and goes straight to the plan", async () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     expect(await screen.findByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
     expectCurrentStep("Choose");
@@ -598,7 +664,7 @@ describe("LaunchPage", () => {
   it("marks a computer as ready on the owner's server when the plan cannot hold it", async () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
     infrastructureTargets = [PROXMOX_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(screen.getByRole("button", { name: /^Ubuntu Desktop/ })).toHaveTextContent("Ready on your server"));
     // A server without gVisor evidence is still not one Linux Sandbox can use.
@@ -607,7 +673,7 @@ describe("LaunchPage", () => {
 
   it("puts computers first for a Start with a computer link", async () => {
     searchParamsGetMock.mockImplementation((key: string) => ({ kind: "computer", start: "1" } as Record<string, string>)[key] ?? null);
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     const agents = screen.getByRole("region", { name: "An agent" });
     const computers = screen.getByRole("region", { name: "A computer" });
@@ -615,7 +681,7 @@ describe("LaunchPage", () => {
   });
 
   it("lays out Codex as a plan card and reviews exactly what the launch does", async () => {
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
 
@@ -699,7 +765,7 @@ describe("LaunchPage", () => {
     global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => String(input) === "/api/hivra/agents"
       ? { ok: true, json: async () => ({ success: true, data: { agents: [{ name: "Codex 1" }, { name: "Codex 2" }, { name: "Ubuntu Desktop 1" }] } }) } as Response
       : respond(input, init));
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/hivra/agents", expect.anything()));
     await act(async () => { await Promise.resolve(); });
@@ -708,7 +774,7 @@ describe("LaunchPage", () => {
   });
 
   it("launches a chosen size preset and keeps presets the plan can't hold unavailable", async () => {
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Ubuntu Desktop");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
@@ -726,7 +792,7 @@ describe("LaunchPage", () => {
 
   it("shows which size presets are over a plan's per-computer limit", async () => {
     fetchPlanStrictMock.mockResolvedValue(SMALL_PAID_PLAN);
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     chooseTile("Codex");
@@ -747,7 +813,7 @@ describe("LaunchPage", () => {
       poolRam: 128,
       usage: { agentCount: 3, usedCpu: 21, usedRam: 120 },
     });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Ubuntu Desktop");
     await waitFor(() => expect(customField("Reserved CPU")).toBeVisible());
@@ -773,7 +839,7 @@ describe("LaunchPage", () => {
       .mockImplementationOnce(() => new Promise(resolve => {
         window.setTimeout(() => resolve({ state: "accepted", phase: "accepted", agent: acceptedAgent }), 100);
       }));
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
@@ -800,7 +866,7 @@ describe("LaunchPage", () => {
   it("ends an unconfirmed check window without waiting forever or issuing a second POST", async () => {
     createAgentMock.mockReturnValue(new Promise(() => undefined));
     findHivraLaunchReceiptMock.mockResolvedValue(null);
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
@@ -818,7 +884,7 @@ describe("LaunchPage", () => {
 
   it("does not offer Omarchy while new assignments are paused, even with a configured slot", async () => {
     configurePreparedSlot();
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
 
     const computers = screen.getByRole("region", { name: "A computer" });
@@ -837,7 +903,7 @@ describe("LaunchPage", () => {
       cpu: 4,
       ram: 8,
     });
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     expect(screen.getByRole("button", { name: /^Windows/i })).toBeEnabled();
@@ -876,7 +942,7 @@ describe("LaunchPage", () => {
   });
 
   it("keeps Windows visible while requiring exact customer-owned compatibility evidence", async () => {
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Windows");
@@ -895,7 +961,7 @@ describe("LaunchPage", () => {
 
   it("keeps a compatible Proxmox target blocked until a host-side ISO is observed", async () => {
     infrastructureTargets = [PROXMOX_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Windows");
@@ -921,7 +987,7 @@ describe("LaunchPage", () => {
         runtimeCompatibility: { contractVersion: 1, provisionerVersion: "2026.09.08.3", supportedCatalogRuntimeIds: ["codex", "linux-desktop"] },
       },
     }];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Windows");
     expect(await screen.findByRole("button", { name: /^My server/ })).toBeDisabled();
@@ -930,7 +996,7 @@ describe("LaunchPage", () => {
 
   it("starts a direct-to-host Microsoft download only after attestation", async () => {
     infrastructureTargets = [PROXMOX_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Windows");
     const customerCapacity = await screen.findByRole("button", { name: /^My server/ });
@@ -980,7 +1046,7 @@ describe("LaunchPage", () => {
       modifiedAtSeconds: 1_757_934_000, fileIdentitySha256: "c".repeat(64), source: "windows-server-evaluation" },
     { volume: "local:iso/Win11.iso", name: "Win11.iso", sizeBytes: 6_000_000_000,
       modifiedAtSeconds: 1_757_934_001, fileIdentitySha256: "d".repeat(64), source: "unknown" }];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Windows");
     const customerCapacity = await screen.findByRole("button", { name: /^My server/ });
@@ -1021,7 +1087,7 @@ describe("LaunchPage", () => {
 
   it("keeps a prepared Proxmox target revision-bound through review", async () => {
     infrastructureTargets = [PROXMOX_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
@@ -1046,7 +1112,7 @@ describe("LaunchPage", () => {
 
   it("launches the whole prepared provider computer without a fictitious RAM slice", async () => {
     infrastructureTargets = [PROVIDER_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     const own = await findWhereButton(/My infrastructure/i);
@@ -1069,7 +1135,7 @@ describe("LaunchPage", () => {
     const target={...PROVIDER_TARGET,capacity:{...PROVIDER_TARGET.capacity,
       memoryBytes:{total:8*1024**3,available:available*1024**3}}};
     infrastructureTargets=[target];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading",{name:"What do you want to launch?"});
     chooseTile("Ubuntu Desktop");
     const own=await findWhereButton(/My infrastructure/i);
@@ -1085,7 +1151,7 @@ describe("LaunchPage", () => {
   it("still blocks an exclusive provider computer without runtime memory headroom for the browser", async () => {
     infrastructureTargets = [{ ...PROVIDER_TARGET, capacity: { ...PROVIDER_TARGET.capacity,
       memoryBytes: { total: 4 * 1024 ** 3, available: 2 * 1024 ** 3 } } }];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     const own = await findWhereButton(/My infrastructure/i);
@@ -1104,7 +1170,7 @@ describe("LaunchPage", () => {
 
   it("keeps a disappeared restored target self-managed and blocks instead of falling back", async () => {
     infrastructureTargets = [PROXMOX_TARGET];
-    const first = render(<LaunchPage />);
+    const first = await renderLaunchPage();
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
@@ -1116,7 +1182,7 @@ describe("LaunchPage", () => {
     first.unmount();
 
     infrastructureTargets = [];
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
@@ -1127,7 +1193,7 @@ describe("LaunchPage", () => {
 
   it("ends plan preflight with a Check again action that re-runs the managed plan check", async () => {
     fetchPlanStrictMock.mockRejectedValueOnce(new Error("Plan service unavailable"));
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
@@ -1146,7 +1212,7 @@ describe("LaunchPage", () => {
 
   it("launches Codex without a browser at the base floor on a plan too small for the browser", async () => {
     fetchPlanStrictMock.mockResolvedValue(SMALL_PAID_PLAN);
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     chooseTile("Codex");
@@ -1179,7 +1245,7 @@ describe("LaunchPage", () => {
       ...PAID_PLAN, name: "Command", maxAgents: 999, maxCpuPerAgent: 8, maxRamPerAgent: 16, poolCpu: 24, poolRam: 128,
       usage: { agentCount: 10, usedCpu: 23, usedRam: 46 },
     });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     chooseTile("Codex");
@@ -1196,7 +1262,7 @@ describe("LaunchPage", () => {
       ...PAID_PLAN, name: "Pro", maxAgents: 3, maxCpuPerAgent: 2, maxRamPerAgent: 4, poolCpu: 2, poolRam: 4,
       usage: { agentCount: 1, usedCpu: 1, usedRam: 2 },
     });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     chooseTile("Codex");
@@ -1222,7 +1288,7 @@ describe("LaunchPage", () => {
   });
 
   it("keeps a paid plan's size when the browser is turned off and only lowers the floor", async () => {
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     chooseTile("Codex");
@@ -1249,7 +1315,7 @@ describe("LaunchPage", () => {
   });
 
   it("keeps an explicit size across browser changes and raises only what the browser needs", async () => {
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     chooseTile("Codex");
@@ -1274,7 +1340,7 @@ describe("LaunchPage", () => {
   it("starts Codex with the browser on for a host that holds it, even on a plan too small for it, and follows the destination", async () => {
     fetchPlanStrictMock.mockResolvedValue(SMALL_PAID_PLAN);
     infrastructureTargets = [PROXMOX_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     chooseTile("Codex");
@@ -1313,7 +1379,7 @@ describe("LaunchPage", () => {
     fetchPlanStrictMock.mockResolvedValue(null);
     infrastructureTargets = [PROXMOX_TARGET];
     try {
-      render(<LaunchPage />);
+      await renderLaunchPage();
       await screen.findByRole("heading", { name: "What do you want to launch?" });
       chooseTile("Codex");
       await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
@@ -1332,7 +1398,7 @@ describe("LaunchPage", () => {
 
   it("never overrides an explicit browser choice when the destination changes", async () => {
     infrastructureTargets = [PROXMOX_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     const browser = screen.getByRole("switch", { name: /Browser for Codex/ });
@@ -1349,7 +1415,7 @@ describe("LaunchPage", () => {
 
   it("uses Turn off the browser on a self-managed host that holds Codex only without it", async () => {
     infrastructureTargets = [SMALL_PROXMOX_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     const browser = screen.getByRole("switch", { name: /Browser for Codex/ });
@@ -1394,7 +1460,7 @@ describe("LaunchPage", () => {
   // owner's own 1 CPU / 2 GB size: below the browser floor, above the base.
   async function chooseSmallHostCustomCodex() {
     infrastructureTargets = [SMALL_PROXMOX_TARGET];
-    const view = render(<LaunchPage />);
+    const view = await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     chooseTile("Codex");
@@ -1440,7 +1506,7 @@ describe("LaunchPage", () => {
     (await chooseSmallHostCustomCodex()).unmount();
 
     const releaseTargets = holdTargetLookup();
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
@@ -1461,7 +1527,7 @@ describe("LaunchPage", () => {
 
     let resolvePlan: (plan: typeof PAID_PLAN) => void = () => undefined;
     fetchPlanStrictMock.mockReturnValue(new Promise(resolve => { resolvePlan = resolve; }));
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
     await waitFor(() => expect(whereButton(/My infrastructure/i)).toHaveAttribute("aria-pressed", "true"));
@@ -1473,7 +1539,7 @@ describe("LaunchPage", () => {
 
   it("never shows a Hivra Cloud browser default on a resumed self-managed draft before its host is restored", async () => {
     infrastructureTargets = [SMALL_PROXMOX_TARGET];
-    const first = render(<LaunchPage />);
+    const first = await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     const own = await findWhereButton(/My infrastructure/i);
@@ -1485,7 +1551,7 @@ describe("LaunchPage", () => {
     const releaseTargets = holdTargetLookup();
     const writes = jest.spyOn(Storage.prototype, "setItem");
     try {
-      render(<LaunchPage />);
+      await renderLaunchPage();
       expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
       openSize();
       await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
@@ -1539,7 +1605,7 @@ describe("LaunchPage", () => {
     expect(within(blocker).getByRole("button", { name: "Turn off the browser" })).toBeInTheDocument();
     first.unmount();
 
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
     fireEvent.click(await screen.findByRole("button", { name: "Turn off the browser" }));
@@ -1571,7 +1637,7 @@ describe("LaunchPage", () => {
 
   it("says how to get out when the owner's own size does not fit a smaller host", async () => {
     infrastructureTargets = [PROXMOX_TARGET, SMALL_PROXMOX_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     const own = await findWhereButton(/My infrastructure/i);
@@ -1628,7 +1694,7 @@ describe("LaunchPage", () => {
     const shown = storedDraft();
     first.unmount();
 
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
@@ -1646,7 +1712,7 @@ describe("LaunchPage", () => {
 
   it("turns a held-off browser default on in view when a raised size fits the host, and Refresh ready hosts keeps it", async () => {
     infrastructureTargets = [SMALL_PROXMOX_TARGET, PROXMOX_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     chooseTile("Codex");
@@ -1723,7 +1789,7 @@ describe("LaunchPage", () => {
   });
 
   it("shows Check again when the plan becomes unverified on Review, and recovers", async () => {
-    const first = render(<LaunchPage />);
+    const first = await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
@@ -1732,7 +1798,7 @@ describe("LaunchPage", () => {
     first.unmount();
 
     fetchPlanStrictMock.mockRejectedValueOnce(new Error("Plan service unavailable"));
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
     const message = await screen.findByText("Managed capacity could not be verified.");
@@ -1757,7 +1823,7 @@ describe("LaunchPage", () => {
   it("applies the plan-derived browser default when the plan resolves after Codex is chosen", async () => {
     let resolvePlan: (plan: typeof PAID_PLAN) => void = () => undefined;
     fetchPlanStrictMock.mockReturnValue(new Promise(resolve => { resolvePlan = resolve; }));
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     expect(screen.getByRole("switch", { name: /Browser for Codex/ })).not.toBeChecked();
@@ -1771,7 +1837,7 @@ describe("LaunchPage", () => {
 
   it("opens Linux Sandbox on the owner's infrastructure and offers host setup instead of plans", async () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Linux Sandbox");
 
@@ -1789,7 +1855,7 @@ describe("LaunchPage", () => {
 
   it("selects a ready gVisor host for Linux Sandbox without a destination click", async () => {
     infrastructureTargets = [GVISOR_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Linux Sandbox");
 
@@ -1801,7 +1867,7 @@ describe("LaunchPage", () => {
   });
 
   it("describes computers honestly without implying an agent can be attached later", async () => {
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     expect(within(screen.getByRole("region", { name: "An agent" })).getByText("An AI that works on its own computer.")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "A computer" })).getByText("A machine you use yourself. It runs on its own, without an agent.")).toBeInTheDocument();
@@ -1825,7 +1891,7 @@ describe("LaunchPage", () => {
       });
 
     try {
-      const view = render(<LaunchPage />);
+      const view = await renderLaunchPage();
       await screen.findByRole("heading", { name: "What do you want to launch?" });
       chooseTile("Codex");
 
@@ -1836,7 +1902,7 @@ describe("LaunchPage", () => {
       view.unmount();
       process.env.NEXT_PUBLIC_HIVRA_AUTH_MODE = "hosted";
       window.localStorage.clear();
-      render(<LaunchPage />);
+      await renderLaunchPage();
       await screen.findByRole("heading", { name: "What do you want to launch?" });
       chooseTile("Codex");
       await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
@@ -1863,7 +1929,7 @@ describe("LaunchPage", () => {
       409,
       "agent_insert_conflict",
     ));
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
@@ -1888,7 +1954,7 @@ describe("LaunchPage", () => {
       status,
       "target_revision_changed",
     ));
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
@@ -1917,7 +1983,7 @@ describe("LaunchPage", () => {
         cpu: 2,
         ram: 4,
       });
-    const first = render(<LaunchPage />);
+    const first = await renderLaunchPage();
 
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
@@ -1936,7 +2002,7 @@ describe("LaunchPage", () => {
       poolCpu: 2,
       poolRam: 3,
     });
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
@@ -1953,7 +2019,7 @@ describe("LaunchPage", () => {
   });
 
   async function leaveUnfinishedCodexDraft() {
-    const first = render(<LaunchPage />);
+    const first = await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
@@ -1969,7 +2035,7 @@ describe("LaunchPage", () => {
   it("asks before a new launch link replaces an unfinished draft, and starts fresh on request", async () => {
     const saved = await leaveUnfinishedCodexDraft();
     linkParams({ start: "1", kind: "computer" });
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     expect(await screen.findByRole("heading", { name: "Continue your Codex launch, or start a new one?" })).toHaveFocus();
     // Nothing is thrown away until the owner chooses.
@@ -1986,7 +2052,7 @@ describe("LaunchPage", () => {
   it("continues the unfinished draft exactly as it was", async () => {
     const saved = await leaveUnfinishedCodexDraft();
     linkParams({ start: "1", kind: "agent" });
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "Continue Codex launch" }));
     expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
@@ -1997,7 +2063,7 @@ describe("LaunchPage", () => {
   it("opens a new launch for the profile a link names after the owner picks start new", async () => {
     await leaveUnfinishedCodexDraft();
     linkParams({ start: "1", kind: "computer", profile: "ubuntu-desktop" });
-    render(<LaunchPage />);
+    await renderLaunchPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "Start a new Ubuntu Desktop launch" }));
     expect(screen.getByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
@@ -2007,7 +2073,7 @@ describe("LaunchPage", () => {
 
   it("opens the plan straight from a profile link when there is nothing to resume", async () => {
     linkParams({ start: "1", profile: "codex" });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
     expect(screen.queryByText(/Continue your/)).not.toBeInTheDocument();
@@ -2021,7 +2087,7 @@ describe("LaunchPage", () => {
     findHivraLaunchReceiptMock.mockResolvedValueOnce(null).mockResolvedValue({
       state: "accepted", phase: "accepted", agent: { id: "55555555-5555-4555-8555-555555555555", name: "Codex 1", status: "provisioning" },
     });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     fireEvent.click(await screen.findByRole("button", { name: "Resume same launch" }));
     expect(await screen.findByRole("link", { name: /^Open .+ now$/ }, { timeout: 3000 })).toBeInTheDocument();
     expect(createAgentMock).toHaveBeenCalledTimes(1);
@@ -2033,7 +2099,7 @@ describe("LaunchPage", () => {
       launchState: "uncertain", submittedDeployment: { mode: "hivra-managed" } };
     window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
     linkParams({ start: "1" });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: "Launch could not be confirmed." })).toBeInTheDocument();
     expect(screen.queryByText(/Continue your/)).not.toBeInTheDocument();
   });
@@ -2043,20 +2109,20 @@ describe("LaunchPage", () => {
     // account's launch to whoever signs in next in that tab. It is dropped.
     const legacy = { ...createLaunchDraft(), stage: "capacity", resourceKind: "agent", profileId: "codex", name: "Codex 1" };
     window.sessionStorage.setItem("hivra.launch-draft.v1", JSON.stringify(legacy));
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
     expect(window.sessionStorage.getItem("hivra.launch-draft.v1")).toBeNull();
   });
 
   it("restores the non-secret draft and stable request identity after a refresh", async () => {
-    const first = render(<LaunchPage />);
+    const first = await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     await waitFor(() => expect(sizeDetail(CODEX_BROWSER_SIZE)).toBeInTheDocument());
     const stored = storedDraftJson();
     first.unmount();
 
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
     closeChanges();
@@ -2068,7 +2134,7 @@ describe("LaunchPage", () => {
 
   it("preserves name, custom resources, target, and request identity when reselecting the same choices after Back", async () => {
     infrastructureTargets = [PROXMOX_TARGET];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     const ownInfrastructure = await findWhereButton(/My infrastructure/i);
@@ -2101,7 +2167,7 @@ describe("LaunchPage", () => {
   // changes the browser the owner saw.
   async function roundTripProfileOnHost() {
     infrastructureTargets = [PROXMOX_TARGET];
-    const view = render(<LaunchPage />);
+    const view = await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     chooseTile("Codex");
@@ -2149,7 +2215,7 @@ describe("LaunchPage", () => {
     expect(shown).toMatchObject({ browser: true, browserSource: "recommended", resources: RAISED_RESOURCES });
     first.unmount();
 
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
@@ -2177,7 +2243,7 @@ describe("LaunchPage", () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
     (await roundTripProfileOnHost()).unmount();
 
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: "What do you want to launch?" })).toBeInTheDocument();
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(2));
     chooseTile("Codex");
@@ -2190,7 +2256,7 @@ describe("LaunchPage", () => {
   it("does not carry a placement Linux Sandbox forces into the next computer's draft", async () => {
     const gvisorHost = { ...GVISOR_TARGET, id: "77777777-7777-4777-8777-777777777777" };
     infrastructureTargets = [gvisorHost, PROXMOX_TARGET];
-    const first = render(<LaunchPage />);
+    const first = await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Linux Sandbox");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
@@ -2204,7 +2270,7 @@ describe("LaunchPage", () => {
     expect(storedDraft().capacity).toEqual({ mode: "hivra-managed", targetId: null });
     first.unmount();
 
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
@@ -2213,7 +2279,7 @@ describe("LaunchPage", () => {
   });
 
   it("keeps the name before placement and leaves the final action in the active step", async () => {
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Ubuntu Desktop");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
@@ -2227,7 +2293,7 @@ describe("LaunchPage", () => {
 
   it("returns from an upgrade to the same launch and says the new plan is active", async () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
-    const first = render(<LaunchPage />);
+    const first = await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     chooseTile("Codex");
@@ -2243,7 +2309,7 @@ describe("LaunchPage", () => {
     const pro = { ...PAID_PLAN, name: "Pro", maxCpuPerAgent: 2, maxRamPerAgent: 4, poolCpu: 2, poolRam: 4 };
     fetchPlanStrictMock.mockResolvedValue(pro);
     linkParams({ draft: saved.launchRequestId, upgraded: "1" });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: /^Review and launch/ })).toBeInTheDocument();
     openSize();
     expect(await screen.findByText("Pro is active. Continue your Codex launch.")).toBeInTheDocument();
@@ -2263,7 +2329,7 @@ describe("LaunchPage", () => {
     const saved = await leaveUnfinishedCodexDraft();
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
     linkParams({ draft: saved.launchRequestId, upgraded: "1" });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     const waiting = await screen.findByText("Your new plan isn't showing yet. It can take a moment after checkout.");
     expect(screen.queryByText(/is active/)).not.toBeInTheDocument();
 
@@ -2275,7 +2341,7 @@ describe("LaunchPage", () => {
   it("never names a plan as active from the URL alone", async () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
     linkParams({ upgraded: "1" });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalled());
     expect(screen.queryByText(/is active/)).not.toBeInTheDocument();
@@ -2285,7 +2351,7 @@ describe("LaunchPage", () => {
 
   it("upgrades an Ubuntu Desktop launch from a free account to the Pro the badge named and launches it on Pro", async () => {
     fetchPlanStrictMock.mockResolvedValue(FREE_PLAN);
-    const first = render(<LaunchPage />);
+    const first = await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(screen.getByRole("button", { name: /^Ubuntu Desktop/ })).toHaveTextContent("Needs Pro or your own server"));
     chooseTile("Ubuntu Desktop");
@@ -2303,7 +2369,7 @@ describe("LaunchPage", () => {
     expect(saved.resources).toMatchObject({ cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "recommended" });
     fetchPlanStrictMock.mockResolvedValue(PRO_PLAN);
     linkParams({ draft: saved.launchRequestId, upgraded: "operator" });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByText("Pro is active. Continue your Ubuntu Desktop launch.")).toBeInTheDocument();
     openSize();
     await waitFor(() => expect(sizeDetail("Small · 2 CPU / 4 GB reserved · up to 2 CPU / 4 GB")).toBeInTheDocument());
@@ -2324,7 +2390,7 @@ describe("LaunchPage", () => {
     const draft = { ...createLaunchDraft(), stage: "plan", resourceKind: "computer", profileId: "ubuntu-desktop", name: "Ubuntu Desktop 1",
       resources: { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8, source: "custom" } };
     window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
-    render(<LaunchPage />);
+    await renderLaunchPage();
     const blocker = await screen.findByRole("alert");
     expect(blocker).toHaveTextContent("Ubuntu Desktop is set to use up to 4 CPU / 8 GB. Your Pro plan allows up to 2 CPU / 4 GB for each computer.");
     // The owner's size is never lowered for them, so its upgrade holds it exactly.
@@ -2343,7 +2409,7 @@ describe("LaunchPage", () => {
     const saved = await leaveUnfinishedCodexDraft();
     fetchPlanStrictMock.mockResolvedValue(PRO_PLAN);
     linkParams({ draft: saved.launchRequestId, upgraded: "fleet" });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     const waiting = await screen.findByText("Your Power plan isn't showing yet. It can take a moment after checkout. You're still on Pro.");
     expect(screen.queryByText(/is active/)).not.toBeInTheDocument();
 
@@ -2357,7 +2423,7 @@ describe("LaunchPage", () => {
     fetchPlanStrictMock.mockResolvedValue(PRO_PLAN);
     window.history.replaceState(null, "", `/dashboard/launch?draft=${saved.launchRequestId}&upgraded=operator`);
     linkParams({ draft: saved.launchRequestId, upgraded: "operator" });
-    const returned = render(<LaunchPage />);
+    const returned = await renderLaunchPage();
     expect(await screen.findByText("Pro is active. Continue your Codex launch.")).toBeInTheDocument();
     await waitFor(() => expect(new URLSearchParams(window.location.search).get("stage")).toBe("review"));
     expect(new URLSearchParams(window.location.search).has("upgraded")).toBe(false);
@@ -2371,7 +2437,7 @@ describe("LaunchPage", () => {
     // A reload reads the URL as it now is.
     const reloaded = new URLSearchParams(window.location.search);
     searchParamsGetMock.mockImplementation((key: string) => reloaded.get(key));
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: "Review and launch Codex 1" })).toBeInTheDocument();
     await waitFor(() => expect(fetchPlanStrictMock).toHaveBeenCalledTimes(3));
     expect(screen.queryByText(/is active/)).not.toBeInTheDocument();
@@ -2380,7 +2446,7 @@ describe("LaunchPage", () => {
 
   it("says the plan couldn't be checked on every Hivra Cloud tile instead of checking forever", async () => {
     fetchPlanStrictMock.mockRejectedValue(new Error("plan unavailable"));
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByText("We couldn't check your plan, so we can't show what fits it yet.");
     expect(screen.queryByText("Checking fit…")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Codex/ })).toHaveTextContent("Couldn't check your plan");
@@ -2392,7 +2458,7 @@ describe("LaunchPage", () => {
     global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => String(input).includes("/api/infrastructure/targets")
       ? { ok: false, status: 503, json: async () => ({ success: false, error: "Hosts unavailable" }) } as Response
       : respond(input, init));
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     await waitFor(() => expect(screen.getByRole("button", { name: /^Linux Sandbox/ })).toHaveTextContent("Couldn't check your servers"));
     expect(screen.getByRole("button", { name: /^Linux Sandbox/ })).not.toHaveTextContent("Needs your own server");
@@ -2405,7 +2471,7 @@ describe("LaunchPage", () => {
     createAgentMock.mockRejectedValue(new HivraLaunchCorrectableError(
       "The browser sidecar failed to start. Delete the computer and try again.", 409, "sidecar_failed", partialId,
     ));
-    const first = render(<LaunchPage />);
+    const first = await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Codex");
     await waitFor(() => expect(screen.getByTestId("launch-primary-action")).toBeEnabled());
@@ -2421,7 +2487,7 @@ describe("LaunchPage", () => {
     first.unmount();
 
     linkParams({ start: "1" });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: "Continue your Codex launch, or start a new one?" })).toBeInTheDocument();
     expect(screen.getByText("Your last try created part of Codex 1 before it stopped.")).toBeInTheDocument();
     expect(screen.queryByText(/haven't launched/)).not.toBeInTheDocument();
@@ -2438,7 +2504,7 @@ describe("LaunchPage", () => {
         targetId: PROXMOX_TARGET.id, expectedConnectionRevision: 7, source: "windows-11", storage: "local", filename: "Win11.iso", state: "running" } };
     window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
     linkParams({ start: "1" });
-    render(<LaunchPage />);
+    await renderLaunchPage();
     expect(await screen.findByRole("heading", { name: "Continue your Windows launch, or start a new one?" })).toBeInTheDocument();
     expect(screen.getByText("You set up Windows-1 but haven't launched it yet.")).toBeInTheDocument();
     expect(screen.getByText("When you left, your server was still downloading Win11.iso. Starting a new launch doesn't stop that download.")).toBeInTheDocument();
@@ -2448,7 +2514,7 @@ describe("LaunchPage", () => {
     infrastructureTargets = [PROXMOX_TARGET];
     windowsIsoImages = [{ volume: "local:iso/Win11.iso", name: "Win11.iso", sizeBytes: 6_000_000_000,
       modifiedAtSeconds: 1_757_934_001, fileIdentitySha256: "d".repeat(64), source: "unknown" }];
-    render(<LaunchPage />);
+    await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
     chooseTile("Windows");
     const myServer = await screen.findByRole("button", { name: /^My server/ });
