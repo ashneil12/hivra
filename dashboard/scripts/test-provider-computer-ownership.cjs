@@ -958,7 +958,7 @@ async function main() {
     });
     await db.exec(settledWake);
     assert.deepEqual(await admissionDefinitions(), admittedSettledWake, "re-applying the settled wake admission changes nothing");
-    const catalogDigest = migration("20261126180000_provider_release_admission_2026_11_26_1.sql");
+    const catalogDigest = migration("20261126180500_provider_release_admission_2026_11_26_1.sql");
     await db.exec(catalogDigest);
     const admittedCatalogDigest = await admissionDefinitions();
     admittedCatalogDigest.forEach((definition, index) => {
