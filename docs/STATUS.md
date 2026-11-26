@@ -117,6 +117,10 @@ in the Launch list unless the deployment sets `NEXT_PUBLIC_HIVRA_NUPHOS_AGENT=1`
 
 The one-command Ubuntu connect gives Linux Sandbox only. The agents above, and Ubuntu Desktop, need a Proxmox VE server connected with SSH details to run on your own server.
 
+## Desktop client
+
+Hivra for Mac 0.3.0 is available as a signed, notarized [Mac installer](https://github.com/ashneil12/hivra/releases/download/mac-v0.3.0/Hivra.dmg) for Apple silicon and Intel on macOS 14 or later. The website and dashboard advertise it where desktop browser sign-in is enabled. Browser sign-in and return are verified on Canary; production acceptance is separate. This is a client for Hivra, not a hosted macOS computer. No Windows or Linux desktop installer is publicly offered.
+
 ## Computers
 
 | Computer | Status | Condition |

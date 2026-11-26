@@ -1,12 +1,12 @@
 import { ArrowRight, Command, Download } from "lucide-react";
-import { PUBLIC_PROJECT_LINKS, type DesktopDownloads } from "@/lib/public-project-links";
+import { getDesktopDownloads, PUBLIC_PROJECT_LINKS, type DesktopDownloads } from "@/lib/public-project-links";
 import styles from "./downloads.module.css";
 
 const PLATFORMS = [
   { id: "macos", name: "macOS", icon: Command },
 ] as const;
 
-export default function DownloadsSection({ downloads = PUBLIC_PROJECT_LINKS.desktop, headingLevel = 2 }: { downloads?: DesktopDownloads; headingLevel?: 1 | 2 }) {
+export default function DownloadsSection({ downloads = getDesktopDownloads(), headingLevel = 2 }: { downloads?: DesktopDownloads; headingLevel?: 1 | 2 }) {
   const Heading = headingLevel === 1 ? "h1" : "h2";
   const hasRelease = PLATFORMS.some(platform => downloads[platform.id].status === "published");
 
@@ -24,7 +24,7 @@ export default function DownloadsSection({ downloads = PUBLIC_PROJECT_LINKS.desk
           <div className={styles.platformHeading}><Icon size={29} strokeWidth={1.4} aria-hidden="true" /><h3>For {name}</h3></div>
           <p id={`download-${id}-status`}>{release.status === "published" ? release.label : "Public download coming soon."}</p>
           {release.status === "published"
-            ? <a href={release.href} target="_blank" rel="noopener noreferrer" aria-describedby={`download-${id}-status`} className={styles.downloadButton}>Download for {name}<Download size={17} aria-hidden="true" /></a>
+            ? <a href={release.href} target="_blank" rel="noopener noreferrer" aria-describedby={`download-${id}-status`} className={styles.downloadButton}>Download for Mac<Download size={17} aria-hidden="true" /></a>
             : <button type="button" disabled aria-describedby={`download-${id}-status`} className={styles.downloadButton}>Download for {name}<span>Coming soon</span></button>}
         </article>;
       })}
