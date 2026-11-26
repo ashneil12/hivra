@@ -38,9 +38,11 @@ test("allowlist emits only clean, exact-revision passes and drops a subsequent p
     finishedAt: NOW.toISOString(),
     teardown: { agentsLeft: 0, instancesLeft: 0, accountDeleted: false },
   };
-  const apps = (...rows) => buildCertificationAllowlist([entry], rows, PROVISIONER).apps;
+  const launchSeals = { unpinned: [PROVISIONER, "2026.11.26.1"], pinned: "2026.11.26.1" };
+  const apps = (...rows) => buildCertificationAllowlist([entry], rows, launchSeals).apps;
   assert.deepEqual(apps(pass), { example: {
     manifestSha256: entry.manifestSha256,
+    provisionerVersion: PROVISIONER,
     canarySha: SHA,
     certifiedAt: NOW.toISOString(),
   } });
@@ -54,6 +56,10 @@ test("allowlist emits only clean, exact-revision passes and drops a subsequent p
   const denied = { ...pass, passed: false, failure: { category: "product" } };
   assert.deepEqual(apps(pass, denied), {});
   assert.deepEqual(apps(pass, { ...denied, failure: { category: "harness_environment" } }), apps(pass));
+  const pinned = { ...entry, requiresPinnedCatalogDigest: true };
+  assert.deepEqual(buildCertificationAllowlist([pinned], [pass], launchSeals).apps, {});
+  const pinnedPass = { ...pass, provisionerVersion: launchSeals.pinned, expectedProvisionerVersion: launchSeals.pinned };
+  assert.equal(buildCertificationAllowlist([pinned], [pinnedPass], launchSeals).apps.example.provisionerVersion, launchSeals.pinned);
 });
 
 function inspectFixture(overrides = {}) {
