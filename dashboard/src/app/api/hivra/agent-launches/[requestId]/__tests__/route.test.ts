@@ -100,6 +100,20 @@ it("accepts an owner-bound gVisor launch receipt when the original response was 
     agent: { id: agentId, name: "Sandbox", status: "running" } } });
   expect(JSON.stringify(result)).not.toContain("private-binding");
 });
+it.each(["provisioning", "deleted"])("keeps a %s managed gVisor receipt distinct from an accepted launch", async status => {
+  mockLegacyOriginal.mockResolvedValue(null);
+  mockFindGvisorReceipt.mockResolvedValue({ id: agentId, user_id: "owner", type: "linux-terminal",
+    computer_substrate: "gvisor", deployment_mode: "hivra-managed", status });
+
+  const response = await GET(req, params);
+  expect(response.status).toBe(status === "provisioning" ? 202 : 409);
+  expect(response.headers.get("Cache-Control")).toBe("no-store");
+  await expect(response.json()).resolves.toMatchObject(status === "provisioning"
+    ? { success: true, data: { launchRequestId: requestId, launch: { state: "reconciling" } } }
+    : { success: false, code: "managed_gvisor_cancelled", launchRequestId: requestId });
+  expect(mockFindGvisorReceipt).toHaveBeenCalledWith("owner", requestId);
+});
+
 it("reports unreadable state as uncertainty, not absence, and never reflects raw details", async () => {
   mockGenericOriginal.mockRejectedValue(new Error("PRIVATE model-key"));
   const response = await GET(req, params);

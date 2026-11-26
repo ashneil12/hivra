@@ -1,5 +1,8 @@
+/** @jest-environment node */
+import type { Page } from '@playwright/test';
+import * as auditConfig from '../e2e/first-run-audit/config';
 import { auditInvitationPayload } from '../e2e/first-run-audit/clerk-admin';
-import { assertClerkInvitationAcceptUrl, signUpUrlForInvitation } from '../e2e/first-run-audit/signup';
+import { acceptAuditInvitation, assertClerkInvitationAcceptUrl, signUpUrlForInvitation } from '../e2e/first-run-audit/signup';
 
 const EMAIL = 'qa-signup+clerk_test@example.test';
 const LAUNCH = '/dashboard/launch?agent=hermes&inference=venice&ref=venice&code=VENICE';
@@ -49,5 +52,54 @@ describe('Clerk invitation signup guards', () => {
 
   it('rejects production Canary targets', () => {
     expect(() => signUpUrlForInvitation('https://hivra.cloud', LAUNCH)).toThrow(/canary-only/);
+  });
+});
+
+describe('Failed Clerk signup cleanup', () => {
+  const clerkSecretKey = ['sk', 'test', 'fixture'].join('_');
+  const invitation = { id: 'fixture-invitation', url: 'https://hivra-canary.clerk.accounts.dev/v1/tickets/accept?ticket=fixture' };
+  const user = { id: 'fixture-user', email_addresses: [{ email_address: EMAIL }] };
+  const signup = () => acceptAuditInvitation(
+    { goto: jest.fn().mockRejectedValue(new Error('fixture browser failed')) } as unknown as Page,
+    { baseUrl: 'https://canary.hermesos.cloud', clerkSecretKey, email: EMAIL },
+  );
+
+  beforeEach(() => {
+    jest.spyOn(auditConfig, 'assertLiveManagedHostingAuditAllowed').mockImplementation(() => {});
+    jest.spyOn(global, 'fetch').mockRejectedValue(new Error('unexpected fixture request'))
+      .mockResolvedValueOnce(Response.json(invitation));
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each([
+    () => new Response(null, { status: 503 }),
+    () => Response.json({ unexpected: [] }),
+    () => new Response('{'),
+  ])('stops after an inconclusive lookup', async (response) => {
+    jest.mocked(fetch).mockResolvedValueOnce(response());
+    await expect(signup()).rejects.toThrow(/invitation signup cleanup: cleanup failed/);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([404, 503])('reports revocation failure (HTTP %i)', async (status) => {
+    jest.mocked(fetch).mockResolvedValueOnce(Response.json([])).mockResolvedValueOnce(new Response(null, { status }));
+    await expect(signup()).rejects.toThrow(/invitation signup cleanup: cleanup failed/);
+    expect(fetch).toHaveBeenLastCalledWith(expect.stringContaining('/revoke'), expect.objectContaining({ method: 'POST' }));
+  });
+
+  it('revokes only after a successful empty lookup', async () => {
+    jest.mocked(fetch).mockResolvedValueOnce(Response.json([])).mockResolvedValueOnce(Response.json({}));
+    await expect(signup()).rejects.toThrow('invitation signup cleanup: revoked unaccepted invitation');
+    expect(fetch).toHaveBeenLastCalledWith(expect.stringContaining('/revoke'), expect.objectContaining({ method: 'POST' }));
+  });
+
+  it.each([
+    [{ id: user.id, deleted: true }, /deleted partially-created user/],
+    [{ id: user.id, deleted: false }, /cleanup failed: Clerk user deletion not confirmed/],
+  ])('reports user deletion according to the exact receipt', async (receipt, expected) => {
+    jest.mocked(fetch).mockResolvedValueOnce(Response.json([user])).mockResolvedValueOnce(Response.json(receipt));
+    await expect(signup()).rejects.toThrow(expected);
+    expect(fetch).toHaveBeenLastCalledWith(expect.stringContaining('/users/fixture-user'), expect.objectContaining({ method: 'DELETE' }));
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 });

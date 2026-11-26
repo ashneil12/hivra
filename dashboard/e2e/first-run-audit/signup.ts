@@ -244,12 +244,14 @@ async function cleanupFailedSignup(secretKey: string, email: string, invitationI
   // If the browser died after Clerk created the user, delete that exact user.
   // Otherwise revoke the still-pending invitation so the bearer URL cannot be
   // replayed later. Cleanup errors are reported, never hidden.
-  const user = await findAuditUserByEmail(secretKey, email).catch(() => null);
+  const user = await findAuditUserByEmail(secretKey, email);
   if (user) {
-    await deleteAuditUser(secretKey, user.id);
-    return 'deleted partially-created user';
+    const deleted = await deleteAuditUser(secretKey, user.id, { verifyDeletion: true });
+    return deleted ? 'deleted partially-created user' : 'partially-created user already absent';
   }
-  await revokeAuditInvitation(secretKey, invitationId).catch(() => false);
+  if (!await revokeAuditInvitation(secretKey, invitationId)) {
+    throw new Error('[clerk-signup] invitation revocation not confirmed');
+  }
   return 'revoked unaccepted invitation';
 }
 

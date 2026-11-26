@@ -81,8 +81,9 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
   // What was just saved shows at once; until then the agent's own row says.
   const own = saved?.agentId === agent.id ? saved : null;
   const policy = own ? own.policy : agent.sleep_policy ?? null;
-  const alwaysOn = own ? own.alwaysOn : agent.always_on === true;
-  const sleepWhenIdle = policy === "full";
+  const holderSeat = agent.seat_funding === "holder";
+  const alwaysOn = holderSeat ? false : own ? own.alwaysOn : agent.always_on === true;
+  const sleepWhenIdle = holderSeat ? true : policy === "full";
   const asleep = view !== "awake";
 
   const save = async (which: "policy" | "always_on", patch: { sleep_policy?: "off" | "full"; always_on?: boolean }) => {
@@ -158,7 +159,7 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
           <Switch
             checked={sleepWhenIdle && !alwaysOn}
             label="Sleep when idle"
-            disabled={!idle || alwaysOn}
+            disabled={!idle || alwaysOn || holderSeat}
             busy={busy === "policy"}
             onToggle={() => void save("policy", { sleep_policy: sleepWhenIdle ? "off" : "full" })}
           />
@@ -168,7 +169,9 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
               {busy === "policy" ? <Loader2 size={12} style={{ ...manageSpin, color: "var(--text-muted)" }} /> : null}
             </div>
             <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-              Your agent naps when no one is using it and wakes when you open it.
+              {holderSeat
+                ? "This computer is funded by holding tokens. It naps after 4 minutes idle and saves to disk after 16 minutes total."
+                : "Your agent naps when no one is using it and wakes when you open it."}
             </div>
           </div>
         </div>
@@ -176,7 +179,7 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
           <Switch
             checked={alwaysOn}
             label="Keep awake"
-            disabled={!idle}
+            disabled={!idle || holderSeat}
             busy={busy === "always_on"}
             onToggle={() => void save("always_on", { always_on: !alwaysOn })}
           />
@@ -186,7 +189,9 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
               {busy === "always_on" ? <Loader2 size={12} style={{ ...manageSpin, color: "var(--text-muted)" }} /> : null}
             </div>
             <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-              Your agent never sleeps, so it answers at once.
+              {holderSeat
+                ? "Always on is only available on a paid seat. Token holder terms do not include it."
+                : "Your agent never sleeps, so it answers at once."}
             </div>
           </div>
         </div>

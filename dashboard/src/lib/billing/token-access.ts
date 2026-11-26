@@ -37,7 +37,7 @@ import {
   type HivraTokenPhase,
   type PlatformTokenKey,
 } from "./token-registry";
-import { isFoundersRateUser, type ThresholdTierCode, type TierKey } from "./tier-thresholds";
+import { type ThresholdTierCode, type TierKey } from "./tier-thresholds";
 import { getLiveActiveThresholds } from "./live-thresholds";
 import {
   fetchTokenBalance,
@@ -618,7 +618,6 @@ export async function convertGrandfatheredUserToHivra(
     thresholds = await getLiveActiveThresholds({
       now,
       token: hivra,
-      forceLaunchEpoch: isFoundersRateUser(userId),
     });
   } catch {
     throw new TokenConversionError(

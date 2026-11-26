@@ -1,11 +1,12 @@
 'use client';
 
 import { Info, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
-import { displayTokenUnit } from '@/lib/billing/token-plan-prices';
+import { displayTokenUnit, tokenUnitForKey } from '@/lib/billing/token-plan-prices';
 import { touchStyles } from "@/components/billing/TransferDetails";
 import { useLocale } from "@/components/i18n/LocaleProvider";
 import {
   interpolateCopy,
+  newQuoteUnit,
   type EligibilityPayload,
   type EligibilityTierState,
 } from "@/lib/wallet/format";
@@ -43,7 +44,8 @@ export function EligibilityPanel({
 }) {
   const { copy } = useLocale();
   const eligibilityCopy = copy.dashboard.wallet.eligibility;
-  const sym = displayTokenUnit(eligibility.tokenSymbol);
+  const sym = displayTokenUnit(eligibility.tokenSymbol, eligibility.tokenAddress);
+  const quoteUnit = newQuoteUnit(eligibility);
   const balanceDisplay = eligibility.balance?.balanceDisplay ?? '—';
 
   return (
@@ -68,7 +70,7 @@ export function EligibilityPanel({
           <h2 className="serif" style={{ fontSize: '1.25rem', fontWeight: 700, marginTop: 4, marginBottom: 0 }}>
             {eligibilityCopy.currentBalancePrefix} <code className="mono notranslate" translate="no" style={{ fontSize: '1.05rem', overflowWrap: 'anywhere' }}>{balanceDisplay} {sym}</code>
           </h2>
-          <TokenPriceLine thresholds={eligibility.thresholds} />
+          <TokenPriceLine thresholds={eligibility.thresholds} unit={sym} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           {eligibility.balance?.capturedAt && (
@@ -156,6 +158,7 @@ export function EligibilityPanel({
         tier="pro"
         state={eligibility.tiers.pro}
         symbol={sym}
+        quoteUnit={quoteUnit}
         lockedThresholdDisplay={proLockedThreshold}
         selfCustody={selfCustody}
       />
@@ -163,6 +166,7 @@ export function EligibilityPanel({
         tier="power"
         state={eligibility.tiers.power}
         symbol={sym}
+        quoteUnit={quoteUnit}
         lockedThresholdDisplay={powerLockedThreshold}
         selfCustody={selfCustody}
       />
@@ -301,13 +305,15 @@ export function VeniceBoostRow({
 }
 export function TokenPriceLine({
   thresholds,
+  unit,
 }: {
   thresholds: EligibilityPayload['thresholds'];
+  unit: string;
 }) {
   if (!thresholds.priceUsd) return null;
 
   const tooltip =
-    'Tier threshold = USD target ÷ live $HERMESOS price. ' +
+    `Tier threshold = USD target ÷ live ${unit} price. ` +
     'Price is fetched from CoinGecko and refreshed up to every 5 minutes. ' +
     'Existing holders are grandfathered at their original qualifying quantity ' +
     'and are not affected when the price (and threshold) move.';
@@ -324,7 +330,7 @@ export function TokenPriceLine({
         opacity: 0.7,
       }}
     >
-      <span>$HERMESOS price ${thresholds.priceUsd}</span>
+      <span>{unit} price ${thresholds.priceUsd}</span>
       <span
         role="img"
         aria-label={tooltip}
@@ -341,6 +347,7 @@ export function TierEligibilityRow({
   state,
   symbol,
   lockedThresholdDisplay,
+  quoteUnit,
   selfCustody,
 }: {
   tier: 'pro' | 'power';
@@ -348,6 +355,7 @@ export function TierEligibilityRow({
   symbol: string;
   /** Active deposit-quote token amount; takes precedence over the live threshold. */
   lockedThresholdDisplay?: string | null;
+  quoteUnit: string | null;
   selfCustody: boolean;
 }) {
   const { copy } = useLocale();
@@ -355,12 +363,16 @@ export function TierEligibilityRow({
   const tierName = tier === 'pro' ? 'Pro' : 'Power';
   const tierLabel = tier === 'pro' ? eligibilityCopy.proTier : eligibilityCopy.powerTier;
   const eligible = state.currentlyEligible;
+  const heldUnit = state.tokenKey ? tokenUnitForKey(state.tokenKey) : symbol;
   const breached = !eligible && state.lastBreachAt !== null;
   const neverQualified = !eligible && state.lastBreachAt === null && state.qualifyingQuantity === null;
   // While a 20-min lock is in flight, prefer the quote's token amount so the
   // tier-eligibility row matches the lock card. Falls back to the live
   // threshold once the lock expires.
-  const displayThreshold = lockedThresholdDisplay ?? state.currentThresholdDisplay;
+  const liveThreshold = symbol === quoteUnit && state.currentThresholdDisplay
+    ? `${state.currentThresholdDisplay} ${symbol}`
+    : null;
+  const displayThreshold = lockedThresholdDisplay ?? liveThreshold;
 
   return (
     <div
@@ -398,7 +410,7 @@ export function TierEligibilityRow({
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.55 }}>
           You&apos;ve locked in your qualifying quantity at{' '}
           <strong>
-            <code className="mono">{state.qualifyingQuantityDisplay} {symbol}</code>
+            <code className="mono">{state.qualifyingQuantityDisplay} {heldUnit}</code>
           </strong>
           . If your balance drops below this amount, your {tierName} tier eligibility ends after a grace period.
         </p>
@@ -408,21 +420,21 @@ export function TierEligibilityRow({
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.55 }}>
           Your balance dropped below your qualifying quantity of{' '}
           <strong>
-            <code className="mono">{state.qualifyingQuantityDisplay} {symbol}</code>
+            <code className="mono">{state.qualifyingQuantityDisplay} {heldUnit}</code>
           </strong>
-          . To regain {tierName} tier, {selfCustody ? 'hold' : 'deposit back to'} the current threshold of{' '}
-          <strong>
-            <code className="mono">{state.currentThresholdDisplay ?? '—'} {symbol}</code>
-          </strong>
-          . (Re-qualifying uses the current threshold, not your original quantity.)
+          . {displayThreshold && <>To qualify again, {selfCustody ? 'hold' : 'deposit'} <strong>{displayThreshold}</strong>.</>}
         </p>
+      )}
+
+      {(neverQualified || breached) && !displayThreshold && quoteUnit && (
+        <p>Lock a {tierName} quote to see the amount of {quoteUnit} required.</p>
       )}
 
       {neverQualified && displayThreshold && (
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.55 }}>
           {selfCustody ? eligibilityCopy.holdAtLeast : eligibilityCopy.depositAtLeast}{' '}
           <strong>
-            <code className="mono">{displayThreshold} {symbol}</code>
+            <code className="mono">{displayThreshold}</code>
           </strong>{' '}
           {selfCustody
             ? interpolateCopy(eligibilityCopy.selfCustodyQualifySuffix, { tier: tierName })

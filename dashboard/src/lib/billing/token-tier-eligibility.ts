@@ -80,7 +80,6 @@ import {
   REQUALIFICATION_COOLDOWN_DAYS,
   REQUALIFICATION_GRACE_HOURS,
   REQUALIFICATION_WINDOW_DAYS,
-  isFoundersRateUser,
   type ResolvedThreshold,
   type ThresholdTierCode,
   type TierKey,
@@ -834,8 +833,8 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
       return { ...suspendedResult, transition: "requalification_blocked_cap" };
     }
 
-    // Re-qualify at the *current* epoch's threshold and code (lose launch
-    // grandfathering if applicable).
+    // Re-qualify at the current standard holder price. Any earlier locked
+    // quantity or historical code remains only in the row being replaced.
     await updateRow(
       db,
       row,
@@ -1068,17 +1067,13 @@ export async function evaluateAndRecordTokenTierEligibility(
     params.access ??
     (await resolveUserTokenAccess(params.userId, { db: db as unknown as TokenAccessDb, now }));
 
-  // Allowlisted founders are pinned to the launch epoch past the global
-  // promo window, so they qualify against (and snapshot) the cheaper launch
-  // threshold, in whichever token. No-op for everyone else.
-  const forceLaunchEpoch = isFoundersRateUser(params.userId);
   const liveByToken = new Map<PlatformTokenKey, Promise<LiveTierThresholds | null>>();
   const liveThresholds = (key: PlatformTokenKey) => {
     let pending = liveByToken.get(key);
     if (!pending) {
       const token = platformTokenByKey(key);
       const live = (t: NonNullable<typeof token>) =>
-        getLiveActiveThresholds({ now, forceLaunchEpoch, token: t }).catch((error) => {
+        getLiveActiveThresholds({ now, token: t }).catch((error) => {
           const reason = error instanceof Error ? error.message : String(error);
           warnings.push(`Live ${t.displayUnit} price unavailable; new thresholds skipped: ${reason}`);
           return null;

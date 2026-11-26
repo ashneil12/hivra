@@ -715,6 +715,46 @@ host("wake script against a stub host", () => {
     rmSync(coldMark, { force: true });
   });
 
+  it.each([2304, 2560])("checks cold deep-sleep startup memory on a %i MiB host", (hostMemoryMb) => {
+    const fixture = makeHostHarness();
+    try {
+      const meminfo = path.join(fixture.dir, "meminfo");
+      const operations = path.join(fixture.dir, "operations");
+      const marks = path.join(fixture.dir, "var-lib-hivra-sleep");
+      mkdirSync(operations);
+      mkdirSync(marks);
+      writeFileSync(path.join(marks, `cold-${VMID}`), `${TAG}\n`);
+      writeFileSync(meminfo, `MemTotal: ${hostMemoryMb * 1024} kB\n`);
+      writeFileSync(path.join(fixture.dir, "bin", "nproc"), "#!/bin/sh\nprintf '8\\n'\n", { mode: 0o755 });
+      writeFileSync(
+        path.join(fixture.provisionerDir, "hivra-host-capacity-admission"),
+        readFileSync("provisioner/hivra-host-capacity-admission"),
+      );
+      const script = buildWakeHostScript({
+        vmid: VMID, bindingTag: TAG, coldStart: true,
+        admission: { ...ADMISSION(fixture.provisionerDir), hostReserveMb: 512 },
+      });
+      const result = fixture.run(script, { ...COLD, memory: 2048, balloon: 1024 }, {
+        HIVRA_CAPACITY_MEMINFO_PATH: meminfo,
+        HIVRA_PROVISION_OPERATIONS_DIR: operations,
+      });
+
+      if (hostMemoryMb === 2304) {
+        expect(receipt(result)).toMatchObject({ ok: false, reason: "capacity", to: "cold" });
+        expect(result.stderr).toContain("active memory floors plus host reserve exceed physical memory");
+        expect(result.calls).not.toContain(`qm start ${VMID}`);
+        expect(result.state.status).toBe("stopped");
+        expect(existsSync(path.join(marks, `cold-${VMID}`))).toBe(true);
+      } else {
+        expect(receipt(result)).toMatchObject({ ok: true, reason: "cold_started", to: "awake" });
+        expect(result.calls).toContain(`qm start ${VMID}`);
+        expect(result.state.status).toBe("running");
+      }
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   it("drops the saved memory of a hibernated computer, marks it, and then a cold start wakes it", () => {
     const coldMark = path.join(h.dir, "var-lib-hivra-sleep", `cold-${VMID}`);
     const drop = buildMemoryDropHostScript({ vmid: VMID, bindingTag: TAG });

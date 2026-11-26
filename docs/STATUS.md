@@ -36,6 +36,18 @@ a free account works with a server the person connects.
 | OpenBot (CopilotKit) | Preview, off by default | Hivra Cloud only, on a paid plan, when `NEXT_PUBLIC_HIVRA_OPENBOT_AGENT` is `1` on the deployment. It needs provisioner release 2026.11.12.4 or later |
 | Nuphos | Preview, off by default | Hivra Cloud only, on a paid plan, when `NEXT_PUBLIC_HIVRA_NUPHOS_AGENT` is `1` on the deployment. It needs provisioner release 2026.11.12.5 or later |
 
+Local #57 implementation, pending release verification: an existing Classic
+Hermes computer evidenced as holder-funded keeps its admission and allocation.
+Classic holder sleep is off by default. When enabled with
+`HERMES_CLASSIC_HOLDER_SLEEP_ENABLED=true` on an eligible Proxmox host,
+the minute sweep pauses an idle VM after four minutes and saves guest memory
+after twelve more minutes in nap. Owner access resumes the session. The
+sweep needs a verifiable Classic VM, an idle Docker gateway and dashboard,
+and the browser wake route. Uncovered channels and scheduled jobs keep it awake. New Classic holder launches are unavailable. On eligible
+managed Hivra computers the holder policy requires four idle minutes before
+nap and twelve minutes in nap before memory save. Host controls, activity
+checks and wake readiness still apply.
+
 Claude Code can sign in with the person's own Claude account, or run on Hivra
 credits: Hivra translates its requests for Venice's Claude models and bills the
 credits. Credits need a host on provisioner release 2026.11.10.2 or later.

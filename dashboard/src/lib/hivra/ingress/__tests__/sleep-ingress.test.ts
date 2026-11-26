@@ -224,7 +224,14 @@ describe("sleepHivraAgent with host ingress", () => {
   });
 
   it("asks the proxy before it hibernates a napping computer, which its proxy may have resumed for a client", async () => {
-    mockReadRow.mockResolvedValue({ data: eligibleRow({ sleep_state: "napping", cf_tunnel_id: "22222222-2222-4222-8222-222222222222" }), error: null });
+    mockReadRow.mockResolvedValue({
+      data: eligibleRow({
+        sleep_state: "napping",
+        sleep_tier_changed_at: new Date(NOW - 2 * 60 * 60_000).toISOString(),
+        cf_tunnel_id: "22222222-2222-4222-8222-222222222222",
+      }),
+      error: null,
+    });
     stubScripts({ probe: statsLine({ inflight: 1 }), sleep: sleepReceipt(), wake: wakeReceipt() });
     await expect(run({ tier: "hibernate", trigger: "sweep" })).resolves.toMatchObject({ outcome: "not_idle", reason: "ingress_active" });
     stubScripts({ probe: "", sleep: sleepReceipt(), wake: wakeReceipt() });

@@ -140,10 +140,14 @@ export async function findAuditUserByEmail(secretKey: string, email: string): Pr
   const params = new URLSearchParams({ email_address: email, limit: '10' });
   const res = await clerkFetch(secretKey, `/users?${params.toString()}`, { method: 'GET' });
   if (!res.ok) throw new Error(`[clerk] find user by email failed: HTTP ${res.status}`);
-  const rows = (await res.json().catch(() => null)) as ClerkUserPayload[] | null;
-  const matches = (Array.isArray(rows) ? rows : []).filter((row) =>
-    primaryEmail(row)?.toLowerCase() === email.toLowerCase() && row.id,
-  );
+  const rows = (await res.json()) as ClerkUserPayload[];
+  if (!Array.isArray(rows) || rows.some((row) =>
+    typeof row?.id !== 'string' || !row.id || !Array.isArray(row.email_addresses) ||
+    row.email_addresses.some((address) => typeof address?.email_address !== 'string'),
+  )) {
+    throw new Error('[clerk] exact email lookup returned an invalid user list');
+  }
+  const matches = rows.filter((row) => primaryEmail(row)?.toLowerCase() === email.toLowerCase());
   if (matches.length > 1) throw new Error(`[clerk] exact audit email ${email} matched ${matches.length} users`);
   const row = matches[0];
   if (!row?.id) return null;
