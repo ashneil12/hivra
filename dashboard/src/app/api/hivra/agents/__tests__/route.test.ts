@@ -472,7 +472,7 @@ const SELF_MANAGED_DEPLOYMENT = {
 };
 
 type ManagedReadinessResult =
-  | { ok: true }
+  | { ok: true; provisionerVersion?: string }
   | {
       ok: false;
       status?: number;
@@ -1356,7 +1356,8 @@ describe("POST /api/hivra/agents", () => {
     }));
   });
 
-  it("requires and launches the current bundle from the isolated Canary channel", async () => {
+  it.each(["2026.11.25.2", PORTABLE_HIVRA_PROVISIONER_VERSION])(
+    "requires a reviewed seal and launches the selected Canary bundle %s", async (version) => {
     process.env.VERCEL_TARGET_ENV = "canary";
     const candidateEnv: NodeJS.ProcessEnv = {
       NODE_ENV: "test",
@@ -1369,7 +1370,7 @@ describe("POST /api/hivra/agents", () => {
     };
     mockRunProxmoxHostScript
       .mockReset()
-      .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_HOST_READY\n" })
+      .mockResolvedValueOnce({ ok: true, stdout: `HIVRA_HOST_READY ${version}\n` })
       .mockResolvedValueOnce({
         ok: true,
         stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n',
@@ -1383,7 +1384,7 @@ describe("POST /api/hivra/agents", () => {
           env: candidateEnv,
         });
         return readiness.ok
-          ? { ok: true as const, targetId: "fixturenode7", env: candidateEnv }
+          ? { ok: true as const, targetId: "fixturenode7", env: candidateEnv, provisionerVersion: readiness.provisionerVersion }
           : { ok: false as const, status: readiness.status ?? 503, message: readiness.message };
       },
     );
@@ -1399,8 +1400,10 @@ describe("POST /api/hivra/agents", () => {
     expect(response.status).toBe(201);
     const readinessScript = String(mockRunProxmoxHostScript.mock.calls[0][0]);
     expect(readinessScript).toContain("PROVISIONER_DIR='/root/hivra-provisioner-canary'");
-    expect(readinessScript).toContain(`case "$OBSERVED_VERSION" in\n  '${PORTABLE_HIVRA_PROVISIONER_VERSION}') ;;`);
+    expect(readinessScript).toContain(`'${PORTABLE_HIVRA_PROVISIONER_VERSION}') EXPECTED_MANIFEST_SHA=`);
+    expect(readinessScript).toContain("'2026.11.25.2') EXPECTED_MANIFEST_SHA=");
     const kickoff = String(mockRunProxmoxHostScript.mock.calls[1][0]);
+    expect(kickoff).toContain(`'${version}') EXPECTED_MANIFEST_SHA=`);
     expect(kickoff).toContain("HIVRA_PROV_DIR='/root/hivra-provisioner-canary'");
     expect(kickoff).toContain("bash '/root/hivra-provisioner-canary'/hivra-provision-on-host.sh");
     expect(kickoff).not.toMatch(/HIVRA_PROV_DIR='\/root\/hivra-provisioner'/);
@@ -1428,7 +1431,7 @@ describe("POST /api/hivra/agents", () => {
     };
     mockRunProxmoxHostScript
       .mockReset()
-      .mockResolvedValueOnce({ ok: true, stdout: "HIVRA_HOST_READY\n" })
+      .mockResolvedValueOnce({ ok: true, stdout: `HIVRA_HOST_READY ${PORTABLE_HIVRA_PROVISIONER_VERSION}\n` })
       .mockResolvedValueOnce({
         ok: true,
         stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n',
@@ -1439,7 +1442,7 @@ describe("POST /api/hivra/agents", () => {
       async (options: ManagedPlacementOptions) => {
         const readiness = await options.readinessCheck!({ targetId: "fixturenode7", env: candidateEnv });
         return readiness.ok
-          ? { ok: true as const, targetId: "fixturenode7", env: candidateEnv }
+          ? { ok: true as const, targetId: "fixturenode7", env: candidateEnv, provisionerVersion: readiness.provisionerVersion }
           : { ok: false as const, status: readiness.status ?? 503, message: readiness.message };
       },
     );
@@ -1455,7 +1458,8 @@ describe("POST /api/hivra/agents", () => {
     expect(response.status).toBe(201);
     // Placement admits only a bundle that can install the kind.
     const readinessScript = String(mockRunProxmoxHostScript.mock.calls[0][0]);
-    expect(readinessScript).toContain(`case "$OBSERVED_VERSION" in\n  '${PORTABLE_HIVRA_PROVISIONER_VERSION}') ;;`);
+    expect(readinessScript).toContain(`'${PORTABLE_HIVRA_PROVISIONER_VERSION}') EXPECTED_MANIFEST_SHA=`);
+    expect(readinessScript).toContain("'2026.11.25.2') EXPECTED_MANIFEST_SHA=");
     const kickoff = String(mockRunProxmoxHostScript.mock.calls[1][0]);
     expect(kickoff).toContain('hivra-provision-on-host.sh "$VMID" "$OCTET" "2" "4096" "hermes"');
     expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({ type: "hermes" }));
@@ -4477,8 +4481,8 @@ ${fragment}`, "phase1", secretFile], { encoding: "utf8" });
     });
 
     it("issues to a pinned current bundle exactly when that release ships the reporter", async () => {
-      // Self-managed evidence and the managed Canary channel both pin the
-      // current release; the managed default fleet is covered above.
+      // Self-managed evidence and the selected Canary seal identify the host
+      // release; the managed default fleet is covered above.
       const expected = provisionerSupportsActivityTelemetry(PORTABLE_HIVRA_PROVISIONER_VERSION);
       // The pinned host runs the same bundle probe; it prints the staged
       // marker only when the probe passed, and only then is issuance recorded.
@@ -4498,6 +4502,19 @@ ${fragment}`, "phase1", secretFile], { encoding: "utf8" });
       expect(mockCollectorUpsert).toHaveBeenCalledTimes(expected ? 1 : 0);
 
       process.env.VERCEL_TARGET_ENV = "canary";
+      mockSelectAvailableProxmoxProvisionTarget.mockResolvedValueOnce({
+        ok: true,
+        targetId: "fixturenode7",
+        env: {
+          PROXMOX_NODE: "fixturenode7",
+          PROXMOX_VMID_START: "200",
+          PROXMOX_VMID_END: "249",
+          PROXMOX_IP_LAST_OCTET_START: "50",
+          PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
+          PROXMOX_PRIVATE_GATEWAY: "10.250.21.1",
+        },
+        provisionerVersion: PORTABLE_HIVRA_PROVISIONER_VERSION,
+      });
       mockRunProxmoxHostScript.mockReset()
         .mockImplementationOnce(phase1("10.250.21.50"))
         .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })

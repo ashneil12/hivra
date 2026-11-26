@@ -19,7 +19,18 @@ const MANAGED_PATHS = {
   logDirectory: "/var/log/hivra",
 };
 
-function renderedPhase1(portableRuntime: boolean) {
+it("revalidates the selected Canary seal while holding the allocation lock, before VM selection and handoff", () => {
+  const script = renderedPhase1(false, "2026.11.25.2");
+  const seal = script.indexOf("OBSERVED_MANIFEST_SHA=");
+  expect(seal).toBeGreaterThan(script.indexOf("flock -w"));
+  expect(seal).toBeLessThan(script.indexOf("local_vmids="));
+  expect(seal).toBeLessThan(script.indexOf("SECRET_ENV_FILE="));
+  expect(script).toContain("'2026.11.25.2') EXPECTED_MANIFEST_SHA=");
+  expect(script).not.toContain("'2026.11.26.1') EXPECTED_MANIFEST_SHA=");
+  expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+});
+
+function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: string) {
   return phase1Script({
     cpu: 2,
     cpuLimit: 2,
@@ -38,6 +49,7 @@ function renderedPhase1(portableRuntime: boolean) {
     operationId: OPERATION_ID,
     infrastructureBindingTag: BINDING_TAG,
     managedRuntimePaths: MANAGED_PATHS,
+    canaryProvisionerVersion,
     portableRuntime: portableRuntime
       ? {
           node: "pve-synthetic",

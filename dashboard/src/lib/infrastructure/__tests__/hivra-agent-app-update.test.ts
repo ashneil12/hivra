@@ -139,7 +139,7 @@ exit 0
 `,
 };
 
-type App = "openclaw" | "agent-zero" | "aeon" | "hermes";
+type App = "openclaw" | "agent-zero" | "aeon" | "hermes" | "catalog-app";
 interface Fixture {
   root: string; home: string; state: string; systemd: string; a0: string; fakes: string; lock: string; log: string;
   unit: string; dropin: string; env: NodeJS.ProcessEnv;
@@ -245,6 +245,24 @@ describe("hivra-agent-app-update.sh", () => {
   const made: Fixture[] = [];
   const make = (app: App) => { const f = fixture(app); made.push(f); return f; };
   afterEach(() => { for (const f of made.splice(0)) fs.rmSync(f.root, { recursive: true, force: true }); });
+
+  it.each([true, false])("keeps a pinned catalog app on its reviewed digest (intact: %s)", intact => {
+    const f = make("aeon");
+    f.env.HIVRA_CATALOG_APP_ROOT = path.join(f.root, "catalog");
+    f.env.HIVRA_CATALOG_APP_META = path.join(f.root, "catalog.json");
+    fs.mkdirSync(f.env.HIVRA_CATALOG_APP_ROOT);
+    fs.writeFileSync(f.env.HIVRA_CATALOG_APP_META, JSON.stringify({
+      appId: "pilot-app", kind: "docker-web", imageRepo: "vendor/image", imageTag: "latest",
+      imageDigest: OLD_DIGEST, hostPort: 3230, healthPath: "/", unit: path.basename(f.unit),
+    }));
+    const image = path.join(f.env.HIVRA_CATALOG_APP_ROOT, "image");
+    const ref = `vendor/image@${intact ? OLD_DIGEST : NEW_DIGEST}\n`;
+    fs.writeFileSync(image, ref);
+    const result = run(f, "catalog-app", NEW_DIGEST);
+    expect(result.status).toBe(intact ? 0 : 1);
+    expect(result.log.some(line => /^(docker|systemctl) /.test(line))).toBe(false);
+    expect(fs.readFileSync(image, "utf8")).toBe(ref);
+  });
 
   it("accepts only latest as a target for every app", () => {
     const f = make("openclaw");

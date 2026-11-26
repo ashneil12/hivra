@@ -171,6 +171,7 @@ export const DockerWebRuntimeSchema = z
     kind: z.literal("docker-web"),
     imageRepo: z.string().regex(IMAGE_REPO_RE),
     imageTag: z.string().regex(IMAGE_TAG_RE),
+    imageDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
     containerPort: z.number().int().min(1).max(65535),
     hostPort: z.number().int().min(CATALOG_APP_PORT_MIN).max(CATALOG_APP_PORT_MAX),
     healthPath: z.string().refine(isSafeHealthPath, "Invalid health path"),

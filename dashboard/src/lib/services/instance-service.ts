@@ -439,6 +439,7 @@ type ProxmoxProvisionTargetSelection =
       targetId: string | null;
       env: NodeJS.ProcessEnv;
       diskSizeGb: number;
+      provisionerVersion?: string;
     }
   | {
       ok: false;
@@ -451,7 +452,7 @@ type ProxmoxProvisionTargetReadinessCheck = (candidate: {
   targetId: string | null;
   env: NodeJS.ProcessEnv;
 }) => Promise<
-  | { ok: true }
+  | { ok: true; provisionerVersion?: string }
   | {
       ok: false;
       status?: number;
@@ -1728,6 +1729,7 @@ export async function selectAvailableProxmoxProvisionTarget(params: {
       continue;
     }
 
+    let provisionerVersion: string | undefined;
     if (params.readinessCheck) {
       const readiness = await params.readinessCheck({
         targetId: candidate.targetId,
@@ -1749,6 +1751,7 @@ export async function selectAvailableProxmoxProvisionTarget(params: {
         });
         continue;
       }
+      provisionerVersion = readiness.provisionerVersion;
     }
 
     return {
@@ -1756,6 +1759,7 @@ export async function selectAvailableProxmoxProvisionTarget(params: {
       targetId: candidate.targetId,
       env: candidate.env,
       diskSizeGb: candidate.diskSizeGb,
+      ...(provisionerVersion ? { provisionerVersion } : {}),
     };
   }
 

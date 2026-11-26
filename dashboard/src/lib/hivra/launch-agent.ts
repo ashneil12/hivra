@@ -100,7 +100,7 @@ import {
   resolveSelfManagedProxmoxExecutionContext,
   type PortableProxmoxRuntime,
 } from "@/lib/infrastructure/proxmox-execution-context";
-import { checkManagedHivraHostReadiness } from "@/lib/hivra/managed-provisioner-readiness";
+import { checkManagedHivraHostReadiness, managedCanaryLaunchSealScript } from "@/lib/hivra/managed-provisioner-readiness";
 import {
   managedHivraProvisionerChannelConfiguration,
   managedHivraProvisionerChannelForServerEnvironment,
@@ -126,7 +126,6 @@ import {
 import {
   HIVRA_AGENT_VM_DISK_GB,
   HIVRA_AGENT_VM_STORAGE_HEADROOM_GB,
-  PORTABLE_HIVRA_PROVISIONER_VERSION,
   isCompatibleProxmoxProvisionerVersion,
   provisionerVersionMeetsRuntimeMinimum,
   CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID,
@@ -244,19 +243,6 @@ function submittedLaunchRequestIntent(
   };
 }
 
-// The bundle version a Proxmox launch will execute, when admission pins it.
-// Self-managed targets carry verified evidence and the managed Canary channel
-// admits only the current release. Managed default hosts may run any
-// compatible predecessor, so it stays unknown and phase 1 probes the exact
-// bundle on the host before staging the credential.
-function launchProvisionerVersion(
-  portableRuntime: PortableProxmoxRuntime | null,
-  channel: ManagedHivraProvisionerChannel,
-): string | null {
-  if (portableRuntime) return portableRuntime.provisionerVersion;
-  return channel === "canary" ? PORTABLE_HIVRA_PROVISIONER_VERSION : null;
-}
-
 // Phase 1 (synchronous over SSH): pick a free VMID in range, kick the host
 // orchestrator in the background (it does VM create + provisioner + tunnel,
 // ~10 min), and print a marker so this call returns in seconds.
@@ -284,6 +270,7 @@ export function phase1Script(params: {
   infrastructureBindingTag: string;
   managedRuntimePaths: ManagedHivraRuntimePaths;
   portableRuntime?: PortableProxmoxRuntime | null;
+  canaryProvisionerVersion?: string;
   computerId?: string;
   controlOrigin?: string;
   capacityPolicy: ProxmoxHostCapacityPolicy;
@@ -519,6 +506,10 @@ install -d -m 0700 /var/lib/hivra/provision-operations
 # active and visible in the host inventory.
 exec 8>/run/lock/hivra-allocation.lock
 flock -w ${HIVRA_LAUNCH_ALLOCATION_LOCK_WAIT_SECONDS} 8 || { echo "timed out waiting for the Hivra allocation lock" >&2; exit 1; }
+${params.canaryProvisionerVersion
+    ? `PROVISIONER_DIR=${shellQuote(provisionerDirectory)}
+${managedCanaryLaunchSealScript([params.canaryProvisionerVersion])}`
+    : ""}
 # Inventory is intentionally captured only after FD 8 is held. A launcher that
 # waited behind another provision must observe the predecessor's committed VM
 # configuration and private IP, rather than allocate from its pre-wait snapshot.
@@ -1123,6 +1114,11 @@ export async function launchHivraAgentForUser(
       || (type === "openbot" && !isOpenBotAgentEnabled())) {
       return apiError("That agent isn't launchable yet", 400);
     }
+    const requiresPinnedCatalogDigest = catalogManifest?.runtime.kind === "docker-web" && Boolean(catalogManifest.runtime.imageDigest);
+    if (requiresPinnedCatalogDigest
+      && (deployment.mode !== "hivra-managed" || managedProvisionerChannel !== "canary")) {
+      return apiError("Digest-pinned catalog apps require the managed Canary provisioner.", 409);
+    }
     // DeepSeek Harness has acceptance only on Hivra's managed Proxmox hosts, with
     // the named HTTPS access its host script requires. A connected server or a
     // computer in the owner's own cloud has none (its typed provider adapter
@@ -1330,6 +1326,7 @@ export async function launchHivraAgentForUser(
     let env: Record<string, string | undefined>;
     let host: string;
     let portableRuntime: PortableProxmoxRuntime | null = null;
+    let canaryProvisionerVersion: string | undefined;
     let capacityPolicy: ProxmoxHostCapacityPolicy = DEFAULT_PROXMOX_HOST_CAPACITY_POLICY;
     let stickyHost: string | null = null;
     let explicitClaudeHost: string | null = null;
@@ -1458,6 +1455,7 @@ export async function launchHivraAgentForUser(
         readinessCheck: candidate => checkManagedHivraHostReadiness({
           ...candidate,
           channel: managedProvisionerChannel,
+          requirePinnedCatalogDigest: requiresPinnedCatalogDigest,
           runtimeId: anthropicCredits ? CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID : compatibilityRuntimeId,
           runtimeLabel: launchLabel,
           // Claude Code takes model settings only on Hivra credits; its native
@@ -1506,6 +1504,10 @@ export async function launchHivraAgentForUser(
         });
       }
       env = placement.env;
+      if (managedProvisionerChannel === "canary") {
+        canaryProvisionerVersion = placement.provisionerVersion;
+        if (!canaryProvisionerVersion) return apiError("Could not verify the selected Canary provisioner bundle.", 503);
+      }
       host = placement.targetId ?? env.PROXMOX_NODE ?? resolveHivraProxmoxHost();
       if (hasExplicitEnvelope) {
         const maximumEvidence = await runProxmoxHostScript(`set -euo pipefail
@@ -2073,7 +2075,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     // unreported and Activity shows missing coverage. Local-auth installs have
     // no guest-reachable ingest, and a bundle known to predate the reporter
     // would silently drop the credential, so neither receives one.
-    const hostProvisionerVersion = launchProvisionerVersion(portableRuntime, managedProvisionerChannel);
+    const hostProvisionerVersion = portableRuntime?.provisionerVersion ?? canaryProvisionerVersion ?? null;
     const activityTelemetryEligible = (agentKind === "claude" || agentKind === "codex")
       && supportsNativeTracing({ type, computer_substrate: agent.computer_substrate })
       && !isLocalAuthMode()
@@ -2114,6 +2116,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       infrastructureBindingTag,
       managedRuntimePaths,
       portableRuntime,
+      canaryProvisionerVersion,
       computerId: type === "linux-desktop" ? String(agent.id) : undefined,
       controlOrigin: desktopControlOrigin ?? undefined,
       capacityPolicy,
