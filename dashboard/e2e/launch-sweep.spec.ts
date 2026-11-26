@@ -186,7 +186,7 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
       : target.proof === 'app-open'
         ? target.profileId === 'rustpad'
           ? await proveRustpadCollaboration(page, env.composerTimeoutMs)
-          : await proveAppOpen(page, target.tile, env.composerTimeoutMs)
+          : await proveAppOpen(page, target, env.composerTimeoutMs)
         : await proveChat(page, target, { composerTimeoutMs: env.composerTimeoutMs, replyTimeoutMs: env.replyTimeoutMs });
     recorder.result.chat = proof;
     if (recorder.result.agentId) {

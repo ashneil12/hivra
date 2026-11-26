@@ -1886,6 +1886,8 @@ describe("AgentPage", () => {
     { type: "openclaw", name: "OpenClaw", destination: "/openclaw/" },
     { type: "agent-zero", name: "Agent Zero", destination: "/agent-zero/" },
     { type: "deepseek-harness", name: "DeepSeek Harness", destination: "/" },
+    { type: "chroma", name: "Chroma", destination: "/docs/" },
+    { type: "dufs", name: "Dufs", destination: "/app/" },
   ])("uses the same secure native-dashboard bootstrap for $name", async ({ type, name, destination }) => {
     mockGetAgent.mockResolvedValue({
       id: "agent_123", type, name: "NATIVE_AGENT", status: "running",

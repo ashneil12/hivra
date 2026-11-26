@@ -65,6 +65,7 @@ import {
   releaseHivraAgentOperation,
   requestHivraAgentDelete,
 } from "@/lib/hivra/agent-operation-store";
+import { COMPUTER_BACKUP_DELETE_LOCKS, REFUSE_COMPUTER_BACKUP_SNAPSHOTS } from "@/lib/hivra/computer-backups/scripts";
 import {
   hivraPrivateAccessAuthority,
   prepareHivraTailscaleForDelete,
@@ -227,6 +228,7 @@ OPERATION_TAG=${shellQuote(operationTag)}
 BINDING_TAG=${shellQuote(context.infrastructureBindingTag)}
 STORAGE=${shellQuote(context.paths.storage)}
 install -d -m 0755 /run/lock
+${COMPUTER_BACKUP_DELETE_LOCKS}
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for cancellation cleanup lock" >&2; exit 1; }
 PIDFILE="/run/hivra-provision/$VMID.pid"
@@ -255,6 +257,7 @@ if qm status "$VMID" >/dev/null 2>&1; then
     printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq "$OPERATION_TAG" \
       && printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq "$BINDING_TAG" \
       || { echo "VM ownership changed during cancellation" >&2; exit 1; }
+    ${REFUSE_COMPUTER_BACKUP_SNAPSHOTS}
     qm stop "$VMID" --timeout 30 >/dev/null 2>&1 || true
     qm destroy "$VMID" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || true
     sleep 1
@@ -296,6 +299,7 @@ BINDING_TAG=${shellQuote(context.infrastructureBindingTag)}
 ALLOCATION_TAG=${shellQuote(allocationTag ?? "")}
 ALLOW_MANAGED_LEGACY=${allowManagedLegacy ? "1" : "0"}
 install -d -m 0755 /run/lock
+${COMPUTER_BACKUP_DELETE_LOCKS}
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for delete reconciliation lock" >&2; exit 1; }
 # Migration-window managed provisioners predate operation/binding tags and did
@@ -327,6 +331,7 @@ if qm status "$VMID" >/dev/null 2>&1; then
   for _ in 1 2 3; do
     qm status "$VMID" >/dev/null 2>&1 || break
     owned || { echo "VM ownership changed during delete reconciliation" >&2; exit 1; }
+    ${REFUSE_COMPUTER_BACKUP_SNAPSHOTS}
     qm stop "$VMID" --timeout 30 >/dev/null 2>&1 || true
     qm destroy "$VMID" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || true
     sleep 1

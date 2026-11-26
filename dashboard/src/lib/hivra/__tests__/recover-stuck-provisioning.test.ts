@@ -1512,6 +1512,9 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     expect(summary).toMatchObject({ cancelled: 1, skipped: 0 });
     const cleanupScript = mockedRunScript.mock.calls[0][0];
     expect(cleanupScript).toContain("/run/lock/hivra-allocation.lock");
+    expect(cleanupScript).toContain("hivra-vm-$VMID.backup.lock");
+    expect(cleanupScript.indexOf("flock -n 7")).toBeLessThan(cleanupScript.indexOf("flock -w 60 8"));
+    expect(cleanupScript.indexOf("qm listsnapshot")).toBeLessThan(cleanupScript.indexOf("qm stop"));
     expect(cleanupScript).toContain(`hivra-bind-${"b".repeat(32)}`);
     expect(cleanupScript).toContain("hivra-op-aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa");
     expect(cleanupScript).toContain("VM volumes remain after cancellation");
@@ -1555,6 +1558,9 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     const cleanupScript = mockedRunScript.mock.calls[0][0];
     expect(cleanupScript).toContain("ALLOW_MANAGED_LEGACY=1");
     expect(cleanupScript).toContain("/run/lock/hivra-allocation.lock");
+    expect(cleanupScript).toContain("hivra-vm-$VMID.backup.lock");
+    expect(cleanupScript.indexOf("flock -n 7")).toBeLessThan(cleanupScript.indexOf("flock -w 60 8"));
+    expect(cleanupScript.indexOf("qm listsnapshot")).toBeLessThan(cleanupScript.indexOf("qm stop"));
     expect(cleanupScript).toContain("for PROC in /proc/[0-9]*");
     expect(cleanupScript).toContain("legacy provision process $PID did not stop");
     expect(cleanupScript).toContain("VM volumes remain after delete reconciliation");
