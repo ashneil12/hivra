@@ -50,7 +50,7 @@ describe("Windows download link", () => {
     const release = windowsDownloadFromEnv(
       "https://github.com/ashneil12/hivra/releases/download/windows-v0.1.0/Hivra-setup.exe",
     );
-    expect(release.status).toBe("published");
+    if (release.status !== "published") throw new Error("expected a published release");
     expect(release.href).toBe(
       "https://github.com/ashneil12/hivra/releases/download/windows-v0.1.0/Hivra-setup.exe",
     );
