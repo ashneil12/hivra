@@ -60,6 +60,16 @@ production candidate contains the tested changes, and use the separate promotion
 steps below. Neither merging into Canary nor accepting into main releases to live.
 Do not overwrite Canary experiments with a blanket reset to main.
 
+The Git build does not apply Supabase migrations. Before merging code that
+needs a schema change on deploy (or enabling a flag that needs one), verify the
+Canary database against the exact reviewed revision. Check the ledger and
+actual object definitions for all migrations the change needs, including
+prerequisites already on `canary`. Record the version and result in the release
+record. If a migration is missing, have an authorized operator apply that
+reviewed file and recheck both schema and ledger before enabling the dependent
+code. A same-name ledger entry at a different timestamp is not proof of
+equivalence, and the drift cron is not a release gate.
+
 ## Release one exact revision
 
 1. Review and merge an accepted contribution into `main`. CI is read-only and
