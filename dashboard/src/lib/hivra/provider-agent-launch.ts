@@ -30,11 +30,14 @@ import { parseProviderDesktopControlOrigin } from "@/lib/infrastructure/provider
 import { recordHivraAgentOperationFailure } from "./agent-operation-store";
 import { MAX_CONTEXT_LEN } from "./agent-limits";
 import { bindProviderDirectAccess } from "./provider-direct-access";
+import { UNIVERSAL_CATALOG_IDS } from "./catalog-manifests/index";
+import type { AgentId } from "./agent-catalog";
 
+const PROVIDER_AGENT_TYPES = ["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes", "deepseek-harness", "linux-desktop", ...UNIVERSAL_CATALOG_IDS] as [AgentId, ...AgentId[]];
 const Input = z.object({
   userId: z.string().min(1).max(256), targetId: z.string().uuid(), connectionId: z.string().uuid(),
   expectedConnectionRevision: z.number().int().positive().safe(),
-  type: z.enum(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes", "deepseek-harness", "linux-desktop"]),
+  type: z.enum(PROVIDER_AGENT_TYPES),
   computerProfile: z.literal("ubuntu-desktop").optional(),
   launchOperationId: z.string().uuid().optional(),
   name: z.string().trim().min(1).max(256), browser: z.boolean(),
@@ -106,7 +109,7 @@ function boundTarget(target: unknown, input: ProviderAgentLaunchInput): Provider
   const parsed = ProviderVmDeploymentTargetDtoSchema.safeParse(target);
   if (!parsed.success || parsed.data.id !== input.targetId || parsed.data.connectionId !== input.connectionId
     || parsed.data.evidenceConnectionRevision !== input.expectedConnectionRevision
-    || !targetSupportsCatalogRuntime(parsed.data, input.type)) throw new ProviderAgentLaunchError("not_ready");
+    || !targetSupportsCatalogRuntime(parsed.data, UNIVERSAL_CATALOG_IDS.includes(input.type as typeof UNIVERSAL_CATALOG_IDS[number]) ? "catalog-app" : input.type)) throw new ProviderAgentLaunchError("not_ready");
   return parsed.data;
 }
 
@@ -265,7 +268,7 @@ export async function launchProviderAgent(raw: ProviderAgentLaunchInput, depende
         modelKey: "", modelBaseUrl: "", model: "", ...access, publicOrigin } });
     } else {
       await deps.installer({ ...operation, action: "start", launch: { version: 1, computerSubstrate: "provider-vm",
-        agentKind: input.type === "claude-code" ? "claude" : input.type, wantBrowser: input.browser,
+        agentKind: UNIVERSAL_CATALOG_IDS.includes(input.type as typeof UNIVERSAL_CATALOG_IDS[number]) ? "catalog-app" : input.type === "claude-code" ? "claude" : input.type, wantBrowser: input.browser,
         modelKey: "", modelBaseUrl: "", model: "", ...access } });
     }
   } catch {
