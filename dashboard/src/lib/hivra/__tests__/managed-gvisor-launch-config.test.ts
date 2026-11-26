@@ -1,4 +1,5 @@
 import {
+  managedGvisorIdlePilotConfig,
   managedGvisorLaunchAdmittedForUser,
   managedGvisorLaunchConfigured,
 } from "../managed-gvisor-launch-config";
@@ -124,4 +125,20 @@ it.each([
 
 it("requires the QA operator to be distinct from the enrolled owner", () => {
   expect(managedGvisorLaunchAdmittedForUser(QA_OWNER, qaEnv({ HIVRA_MANAGED_GVISOR_AUTHORITY_USER_ID: QA_OWNER }), NOW)).toBe(false);
+});
+
+it("enables idle stop only with its own switch and exact expiring Canary QA scope", () => {
+  expect(managedGvisorIdlePilotConfig(qaEnv(), NOW)).toBeNull();
+  const flag = { HIVRA_MANAGED_GVISOR_IDLE_PILOT_ENABLED: "true" };
+  expect(managedGvisorIdlePilotConfig(qaEnv(flag), NOW)).toMatchObject({
+    ownerId: QA_OWNER, expiresAtMs: Date.parse(QA_EXPIRY), targetId: AUTHORITY.HIVRA_MANAGED_GVISOR_TARGET_ID,
+  });
+  for (const invalid of [
+    { HIVRA_MANAGED_GVISOR_QA_ENROLLMENT_ENABLED: "false" },
+    { HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED: "true" },
+    { VERCEL_GIT_COMMIT_REF: "main" },
+    { HIVRA_MANAGED_GVISOR_QA_EXPIRES_AT: "2026-11-26T00:00:00.000Z" },
+  ]) {
+    expect(managedGvisorIdlePilotConfig(qaEnv({ ...flag, ...invalid }), NOW)).toBeNull();
+  }
 });
