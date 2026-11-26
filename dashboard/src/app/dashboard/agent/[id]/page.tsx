@@ -1456,7 +1456,7 @@ export default function AgentPage() {
   // While that agent's Chat is on screen, the visit is the agent's own
   // (`a-<attachment id>`), not the computer's Desktop.
   const attachedVisit = Boolean(attachedAgent && agent?.id === id && tab === "chat");
-  const visitTab: Tab | null = agent && agent.id === id
+  const visitTab: Tab | null = agent && agent.id === id && agent.status !== "deleted"
     ? attachedVisit || agent.computer_substrate === "do-managed-session" ? "chat" : shownTab(agent, tab)
     : null;
   useRecordVisit(
@@ -1518,6 +1518,21 @@ export default function AgentPage() {
   if (!agent || agent.id !== id) {
     return <LoadingState label="Opening your workspace…" />;
   }
+  const def = catalogAgent(agent.type);
+  const isComputer = def?.surface === "computer";
+  if (agent.status === "deleted") {
+    return (
+      <div className={styles.statusPanel}>
+        <h3>{isComputer ? "Computer deleted" : "Agent deleted"}</h3>
+        <p>{agent.name} has been deleted and can no longer be opened.</p>
+        <div className={styles.statusActions}>
+          <button type="button" className={styles.statusPrimary} onClick={() => go(isComputer ? "/dashboard/computers" : "/dashboard")}>
+            {isComputer ? "Back to computers" : "Back to agents"}
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (agent.computer_substrate === "do-managed-session") {
     // DigitalOcean runs this agent's sandbox; Hivra is its chat and control
     // surface, with its own Chat, Files and Manage views. The computer tabs
@@ -1537,11 +1552,9 @@ export default function AgentPage() {
     );
   }
 
-  const def = catalogAgent(agent.type);
   const accent = def?.accent || "var(--gold-leaf)";
   const cliKind = def?.cliKind ?? "claude";
   const isDashboard = def?.surface === "dashboard";
-  const isComputer = def?.surface === "computer";
   const providerWorkspace = agent.computer_substrate === "provider-vm" && agent.type === "linux-desktop"
     && agent.computer_profile === "ubuntu-desktop";
   // For a computer, a running lifecycle record plus its provisioned chat_url
@@ -1622,6 +1635,7 @@ export default function AgentPage() {
   if (showManage && manageOpenedFor !== agent.id) setManageOpenedFor(agent.id);
   const manageMounted = manageOpenedFor === agent.id;
   const activity = agentActivityPresentation(agent, def?.name || "the agent");
+  const setupIssue = provisioning && activity.freshLaunch && Boolean(agent.error?.trim());
   // Every surface verifies the running gateway's auth capability, then POSTs
   // its bearer in the body for an opaque HttpOnly cookie and clean URL.
   // Provider ownership is not a proxy for the installed runtime protocol.
@@ -1749,7 +1763,7 @@ export default function AgentPage() {
         ) : null}
         {showManage ? null : !awake ? (
           <AgentWakePanel name={agent.name} failure={wake.failure} onRetry={wake.retry} resting={wake.resting} />
-        ) : provisioning && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
+        ) : provisioning && !setupIssue && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
           <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
             <div role="status" aria-live="polite">
               <div className="serif" style={{ fontSize: 24, color: "var(--ink-black)", marginBottom: 10 }}>Finish Windows setup on your Proxmox host</div>
@@ -1769,9 +1783,15 @@ export default function AgentPage() {
         ) : provisioning ? (
           <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
             <div role="status" aria-live="polite">
-              <div style={{ display: "flex", justifyContent: "center" }}><ThinkingOrb size={32} state="connecting" /></div>
-              <div className="serif" style={{ fontSize: 24, fontWeight: 600, color: "var(--ink-black)", margin: "14px 0 6px", overflowWrap: "anywhere" }}>{activity.verb} {agent.emoji ? `${agent.emoji} ` : ""}{agent.name}…</div>
-              <div style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>{activity.body}</div>
+              {!setupIssue ? <div style={{ display: "flex", justifyContent: "center" }}><ThinkingOrb size={32} state="connecting" /></div> : null}
+              <div className="serif" style={{ fontSize: 24, fontWeight: 600, color: "var(--ink-black)", margin: "14px 0 6px", overflowWrap: "anywhere" }}>
+                {setupIssue ? "Setup hit a problem" : `${activity.verb} ${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}…`}
+              </div>
+              <div style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>
+                {setupIssue
+                  ? "Hivra couldn’t confirm that setup finished. This page keeps checking. Don’t launch a replacement yet. Open Manage for details."
+                  : activity.body}
+              </div>
               {statusObservation?.agentId === id ? <div
                 aria-live="off"
                 style={{ fontSize: 12, maxWidth: 460, margin: "16px auto 0", lineHeight: 1.6 }}
@@ -1798,7 +1818,7 @@ export default function AgentPage() {
               onClick={() => selectTab("manage")}
               style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 18, padding: "10px 16px", border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", fontSize: 13, cursor: "pointer" }}
             ><Settings2 size={14} /> Open Manage</button>
-            {activity.freshLaunch && launchWelcome && !isDashboard && !isComputer ? <ProvisioningPersonalizationPanel agent={agent} /> : null}
+            {activity.freshLaunch && !setupIssue && launchWelcome && !isDashboard && !isComputer ? <ProvisioningPersonalizationPanel agent={agent} /> : null}
           </div>
         ) : agent.status === "error" ? (
           <Stub title={agent.provisioned_at ? "Computer isn’t ready" : "Provisioning failed"} body={agent.error || "Something went wrong bringing up the computer. Destroy it and try again."} />
@@ -1945,7 +1965,7 @@ export default function AgentPage() {
           {({ settings, busy, suggestion }) => (
           <AgentShell
             name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`}
-            status={provisioning ? activity.label : sleepView === "asleep" ? "asleep" : sleepView === "waking" ? "waking up" : agent.status}
+            status={setupIssue ? "error" : provisioning ? activity.label : sleepView === "asleep" ? "asleep" : sleepView === "waking" ? "waking up" : agent.status}
             nameTitle={isComputer ? undefined : computerNote}
             switcher={<ResourceSwitcher variant="sidebar" showKind={false} currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} />}
             titleExtras={isComputer ? null : <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />}
