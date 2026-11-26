@@ -21,6 +21,13 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
+case "$#:${1:-}" in
+  0:) ;;
+  1:--pull-test-images)
+    for ref in "$image" "$postgrest_image" "$node_image"; do docker pull "$ref"; done
+    ;;
+  *) printf 'Usage: %s [--pull-test-images]\n' "$0" >&2; exit 2 ;;
+esac
 migrations=dashboard/supabase/migrations
 fixtures=scripts/release/fixtures
 bridge="$migrations/20261126192500_managed_launch_bridge.sql"
