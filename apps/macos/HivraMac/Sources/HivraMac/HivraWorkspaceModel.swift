@@ -171,8 +171,9 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
 
     private func refreshInventoryIfDue() {
         guard snapshot?.ownerKey != nil,
-              Date().timeIntervalSince(lastInventoryRefreshAt) >= 15 else { return }
-        refresh()
+              Date().timeIntervalSince(lastInventoryRefreshAt) >= min(15, inventoryRefreshInterval) else { return }
+        lastInventoryRefreshAt = Date()
+        connectionBrowser.refreshWorkspace(reloadIfUnhandled: false)
     }
 
     func clearOwnedViews() {
@@ -257,11 +258,15 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
                 if let update {
                     if HivraWorkspacePolicy.invalidatesOwner(previous: snapshot?.ownerKey, next: update.ownerKey) { clearOwnedViews() }
                     snapshot = update
+                    let resourcesByUID = Dictionary(uniqueKeysWithValues: update.resources.map { ($0.uid, $0) })
                     for tab in tabs {
-                        if tab.pendingResourceUID == nil,
-                           let resource = update.resources.first(where: { $0.uid == tab.resource.uid }) {
-                            tab.resource = resource
-                            tab.pendingResourceUID = nil
+                        if tab.pendingResourceUID == nil {
+                            if let resource = resourcesByUID[tab.resource.uid] {
+                                tab.resource = resource
+                            } else if update.ownerKey != nil, !update.loading, update.errors[tab.resource.source] == nil {
+                                close(tab)
+                                continue
+                            }
                         }
                         if let tabURL = tab.browser.currentURL { adoptTabRoute(tab, url: tabURL) }
                     }
