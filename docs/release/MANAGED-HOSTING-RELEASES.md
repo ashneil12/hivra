@@ -46,6 +46,13 @@ deployment holds it, its source (Git or CLI) and its commit, and report it. A
 mismatch means a change is missing from or unmerged into `canary`, not a stale
 cache. To undo a Canary change, revert it by PR into `canary`.
 
+Project environment changes do not update a running deployment. When testing a
+Canary feature flag, finish saving its settings before the Git build starts.
+Verify the alias serves that build and check the flag through the authenticated
+workflow; a Ready deployment that started before the settings changed does not
+prove the flag took effect. Removing the settings also takes effect on a new
+Git build, so give temporary enrollment an expiry where the feature supports it.
+
 Keep experiments on feature branches. After reviewing a contributor's proposed
 code and build scripts, a maintainer can apply the selected commits to a branch
 based on `canary` and open a PR into `canary`. This allows testing before accepting
