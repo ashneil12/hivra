@@ -25,11 +25,28 @@ function frameBodies(frame: Frame): Promise<string> {
   return frame.evaluate(() => document.body?.innerText ?? '').catch(() => '');
 }
 
+function probeOllamaVersion(frame: Frame, origin: string): Promise<boolean> {
+  return frame.evaluate(async (appOrigin) => {
+    const response = await fetch(new URL('/api/version', appOrigin), {
+      method: 'GET',
+      mode: 'same-origin',
+      credentials: 'same-origin',
+      redirect: 'error',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok || !/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')) return false;
+    const payload = await response.json() as { version?: unknown } | null;
+    return typeof payload?.version === 'string' && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(payload.version);
+  }, origin).catch(() => false);
+}
+
 /** Wait for the embedded app to render real content, rejecting gateway and loopback failures. */
 export async function proveAppOpen(page: Page, { profileId, tile }: SweepTarget, timeoutMs: number): Promise<AppOpenProof> {
   const started = Date.now();
   const end = started + timeoutMs;
   let lastSeen = '';
+  let ollamaVersionFailed = false;
 
   while (Date.now() < end) {
     const iframe = page.locator('iframe[title$="· dashboard"]').first();
@@ -38,8 +55,9 @@ export async function proveAppOpen(page: Page, { profileId, tile }: SweepTarget,
     if (frame) {
       let host = '';
       let pathname = '';
+      let origin = '';
       try {
-        ({ host, pathname } = new URL(frame.url()));
+        ({ host, pathname, origin } = new URL(frame.url()));
       } catch {
         host = frame.url();
       }
@@ -51,9 +69,16 @@ export async function proveAppOpen(page: Page, { profileId, tile }: SweepTarget,
       if (GATEWAY_ERROR.test(text)) {
         throw new SweepFailure('chat', 'product', `${tile} showed a gateway/runtime error: "${text.slice(0, 240)}"`);
       }
-      const visibleApp = profileId === 'chroma'
-        ? pathname === '/docs/' && text.includes('chroma-frontend') && text.includes('/api/v2/heartbeat')
-        : text.length >= 20 || (profileId === 'dufs' && text === 'Empty folder');
+      let visibleApp = text.length >= 20 || (profileId === 'dufs' && text === 'Empty folder');
+      if (profileId === 'chroma') {
+        visibleApp = pathname === '/docs/' && text.includes('chroma-frontend') && text.includes('/api/v2/heartbeat');
+      } else if (profileId === 'ollama') {
+        visibleApp = false;
+        if (pathname === '/' && text === 'Ollama is running') {
+          visibleApp = await probeOllamaVersion(frame, origin);
+          ollamaVersionFailed = !visibleApp;
+        }
+      }
       if (visibleApp) {
         return {
           surface: `${tile} web app`,
@@ -68,7 +93,9 @@ export async function proveAppOpen(page: Page, { profileId, tile }: SweepTarget,
   throw new SweepFailure(
     'open',
     'product',
-    `${tile} did not render visible app content after ${Math.round(timeoutMs / 60_000)} min.` +
+    (ollamaVersionFailed
+      ? `${tile} opened, but its authenticated /api/version did not return an Ollama version.`
+      : `${tile} did not render visible app content after ${Math.round(timeoutMs / 60_000)} min.`) +
       (lastSeen ? ` Last frame text: "${lastSeen.slice(0, 240)}".` : ''),
   );
 }

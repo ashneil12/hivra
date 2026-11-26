@@ -6,7 +6,10 @@ jest.mock('../e2e/first-run-audit/instances', () => ({
 }));
 
 function appPage(text: string, url = 'https://box.example.test/') {
-  const frame = { url: () => url, evaluate: async () => text };
+  const frame = {
+    url: () => url,
+    evaluate: async (fn: (origin: string) => unknown, origin?: string) => origin ? fn(origin) : text,
+  };
   const handle = { contentFrame: async () => frame };
   const locator = { first: () => locator, elementHandle: async () => handle };
   return { locator: () => locator } as unknown as Page;
@@ -14,9 +17,13 @@ function appPage(text: string, url = 'https://box.example.test/') {
 
 const dufs = { profileId: 'dufs', tile: 'Dufs', kind: 'agent', proof: 'app-open' } as const;
 const chroma = { ...dufs, profileId: 'chroma', tile: 'Chroma' } as const;
+const ollama = { ...dufs, profileId: 'ollama', tile: 'Ollama' } as const;
 
 beforeEach(() => jest.useFakeTimers());
-afterEach(() => jest.useRealTimers());
+afterEach(() => {
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
 
 it('accepts the Dufs file browser when its new persistent folder is empty', async () => {
   await expect(proveAppOpen(appPage('  Empty\n folder  '), dufs, 1000)).resolves.toMatchObject({
@@ -46,4 +53,36 @@ it('requires the Chroma API reference to render its operations', async () => {
     .rejects.toMatchObject({ stage: 'open', category: 'product' });
   await expect(proveAppOpen(appPage('Failed to load API definition.', 'https://box.example.test/docs/'), chroma, 1000))
     .rejects.toMatchObject({ stage: 'open', category: 'product' });
+});
+
+it('requires a same-origin Ollama version read from the rendered root', async () => {
+  const fetchVersion = jest.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(Response.json({ version: '0.15.2-rc0' }));
+
+  await expect(proveAppOpen(appPage('Ollama is running'), ollama, 1000))
+    .resolves.toMatchObject({ surface: 'Ollama web app', textSample: 'Ollama is running' });
+  expect(fetchVersion).toHaveBeenCalledTimes(1);
+  expect(fetchVersion).toHaveBeenCalledWith(new URL('https://box.example.test/api/version'), expect.objectContaining({
+    method: 'GET', mode: 'same-origin', credentials: 'same-origin', redirect: 'error', cache: 'no-store',
+  }));
+});
+
+it.each([
+  ['a gateway denial', () => Response.json({ version: '0.15.2' }, { status: 401 })],
+  ['a catch-all HTML page', () => new Response('<html>Not the API</html>')],
+  ['invalid JSON', () => new Response('{', { headers: { 'content-type': 'application/json' } })],
+  ['missing version', () => Response.json({ status: 'ok' })],
+  ['malformed version', () => Response.json({ version: 'unknown' })],
+] as const)('rejects %s from the Ollama version probe', async (_, response) => {
+  jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(response());
+  await expect(proveAppOpen(appPage('Ollama is running'), ollama, 1000))
+    .rejects.toMatchObject({ stage: 'open', category: 'product', message: expect.stringContaining('/api/version') });
+});
+
+it('does not probe without seeing the actual Ollama root content', async () => {
+  const fetchVersion = jest.spyOn(globalThis, 'fetch');
+  for (const page of [appPage('An unrelated page with plenty of text'), appPage('Ollama is running', 'https://box.example.test/elsewhere')]) {
+    await expect(proveAppOpen(page, ollama, 1000)).rejects.toMatchObject({ stage: 'open', category: 'product' });
+  }
+  expect(fetchVersion).not.toHaveBeenCalled();
 });
