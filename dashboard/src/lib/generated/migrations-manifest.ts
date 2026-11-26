@@ -520,6 +520,7 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261125204500", name: "provider_release_admission_2026_11_25_2" },
   { version: "20261126161000", name: "restore_operator_usage_schema" },
   { version: "20261126162600", name: "reconcile_legacy_catalog_metadata" },
+  { version: "20261126180000", name: "managed_gvisor_idle_pilot" },
   { version: "20261126192500", name: "managed_launch_bridge" },
   { version: "20261126194500", name: "classic_placement_bridge" },
   { version: "20261126202000", name: "managed_writer_drain" },
