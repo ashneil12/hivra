@@ -204,4 +204,18 @@
 {"slug":"owncast","name":"Owncast","sourceUrl":"https://github.com/owncast/owncast","status":"accepted","reason":"evidence catalog-curation/evidence/owncast.json","checkedAt":"2026-11-25"}
 {"slug":"thelounge","name":"The Lounge","sourceUrl":"https://github.com/thelounge/thelounge","status":"accepted","reason":"evidence catalog-curation/evidence/thelounge.json","checkedAt":"2026-11-25"}
 {"slug":"wekan","name":"WeKan","sourceUrl":"https://github.com/wekan/wekan","status":"compose-needed","reason":"requires MongoDB","checkedAt":"2026-11-25"}
-{"slug":"forgejo","name":"Forgejo","sourceUrl":"https://codeberg.org/forgejo/forgejo","status":"pending","reason":"","checkedAt":"2026-11-25"}
+{"slug":"forgejo","name":"Forgejo","sourceUrl":"https://codeberg.org/forgejo/forgejo","status":"rejected","reason":"manifest schema only accepts GitHub sourceUrl values; Forgejo's canonical repository is on Codeberg","checkedAt":"2026-11-26"}
+{"slug":"copilotkit","name":"CopilotKit","sourceUrl":"https://github.com/CopilotKit/CopilotKit","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"graphify","name":"Graphify","sourceUrl":"https://github.com/Graphify-Labs/graphify","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"hermes-agent","name":"Hermes Agent","sourceUrl":"https://github.com/NousResearch/hermes-agent","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"browser-use","name":"Browser Use","sourceUrl":"https://github.com/browser-use/browser-use","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"deer-flow","name":"DeerFlow","sourceUrl":"https://github.com/bytedance/deer-flow","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"glance","name":"Glance","sourceUrl":"https://github.com/glanceapp/glance","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"open-webui","name":"Open WebUI","sourceUrl":"https://github.com/open-webui/open-webui","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"paperclip","name":"Paperclip","sourceUrl":"https://github.com/paperclipai/paperclip","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"streamlit","name":"Streamlit","sourceUrl":"https://github.com/streamlit/streamlit","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"crawl4ai","name":"Crawl4AI","sourceUrl":"https://github.com/unclecode/crawl4ai","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"hindsight","name":"Hindsight","sourceUrl":"https://github.com/vectorize-io/hindsight","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"strix","name":"Strix","sourceUrl":"https://github.com/usestrix/strix","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"appwrite","name":"Appwrite","sourceUrl":"https://github.com/appwrite/appwrite","status":"pending","reason":"","checkedAt":"2026-11-26"}
+{"slug":"chatwoot","name":"Chatwoot","sourceUrl":"https://github.com/chatwoot/chatwoot","status":"pending","reason":"","checkedAt":"2026-11-26"}
