@@ -1,27 +1,18 @@
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { CANARY_QA_EMAIL_ENV } from './canary-qa/config';
 
 /**
  * Tier-3 SYNTHETIC USER JOURNEY A: Launch readiness (assert-only).
  *
- * Walks the bounded Canary path from Choose -> Codex plan -> Review.
+ * Walks the bounded Canary path from Choose to Codex review.
  * Routine CI must stop before Launch so it cannot provision a VM. Actual
  * provisioning remains double-gated by the dedicated first-run audit.
  */
 
-function isAuthed(): boolean {
-  try {
-    const state = JSON.parse(readFileSync('e2e/.auth/qa-user.json', 'utf8'));
-    return (state.cookies?.length ?? 0) > 0;
-  } catch {
-    return false;
-  }
-}
-
 test.describe('Tier 3 Journey A: Launch Readiness', () => {
-  test.skip(!isAuthed(), 'No authenticated QA session (CLERK_SECRET_KEY/QA_USER_ID not set).');
+  test.skip(!process.env[CANARY_QA_EMAIL_ENV], `${CANARY_QA_EMAIL_ENV} is not set.`);
 
-  test('walks Choose -> Codex plan -> exact Review without provisioning', async ({ page }) => {
+  test('walks from Choose to Codex review without provisioning', async ({ page }) => {
     const consoleErrors: string[] = [];
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
@@ -29,38 +20,31 @@ test.describe('Tier 3 Journey A: Launch Readiness', () => {
 
     const response = await page.goto('/dashboard/launch?kind=agent', { waitUntil: 'domcontentloaded' });
     expect(response?.status()).toBeLessThan(400);
-    await expect(page.locator('body')).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator('body')).not.toContainText(/sign in|signed out/i);
+    await expect(page).toHaveURL(/\/dashboard\/launch\?kind=agent$/);
+    const chooser = page.getByRole('region', { name: 'What do you want to launch?', exact: true });
+    await chooser.getByRole('button', { name: /^Codex\b/ }).click();
 
-    await expect(page.getByRole('heading', { name: 'What do you want to launch?' })).toBeVisible({ timeout: 20_000 });
-    // Choosing a tile goes straight to the plan; there is no Continue step.
-    await page.getByRole('button', { name: /^Codex/i }).click();
+    const review = page.getByRole('region', { name: /^Review and launch Codex\b/ });
+    await expect(review.getByRole('textbox', { name: 'Agent name' })).toHaveValue(/^Codex\b/);
+    const settings = review.getByRole('group', { name: 'Launch settings' });
+    await settings.getByRole('button', { name: 'Change where it runs', exact: true }).click();
+    await expect(settings.getByRole('button', { name: /^Hivra Cloud\b/ })).toHaveAttribute('aria-pressed', 'true');
+    await expect(settings.getByRole('button', { name: 'Sign in with my existing account', exact: true })).toBeVisible();
+    await expect(settings.getByText(/^Use an eligible ChatGPT account after Codex opens/)).toBeVisible();
 
-    await expect(page.getByRole('heading', { name: "Codex — here's the plan" })).toBeVisible({ timeout: 20_000 });
-    await page.getByRole('button', { name: 'Change' }).click();
-    await expect(page.getByRole('button', { name: /Hivra Cloud/i })).toHaveAttribute('aria-pressed', 'true');
-
-    const continueCta = page.getByTestId('launch-primary-action');
-    const capacityAlert = page.getByRole('alert').filter({
+    const launch = review.getByRole('button', { name: 'Launch Codex', exact: true });
+    await expect(launch).toBeVisible();
+    const capacityAlert = review.getByRole('alert').filter({
       hasText: /no open agent slots|needs [\d.]+ CPU \/ [\d.]+ GB|is set to use up to|needs a paid (managed )?plan|could not be verified/i,
     });
     const readiness = async () => {
-      if (await continueCta.isEnabled()) return 'ready';
+      if (await launch.isEnabled()) return 'ready';
       if (await capacityAlert.isVisible()) return 'blocked';
       return 'pending';
     };
 
     await expect.poll(readiness, { timeout: 15_000 }).not.toBe('pending');
-    if ((await readiness()) === 'ready') {
-      await continueCta.click();
-      await expect(page.getByRole('heading', { name: /^Review and launch/ })).toBeVisible();
-      const review = page.getByLabel('Launch review');
-      await expect(review).toContainText('Codex');
-      await expect(review).toContainText('Hivra Cloud');
-      await expect(review).toContainText('Sign in to ChatGPT inside Codex after it opens.');
-      await expect(page.getByRole('button', { name: 'Launch Codex' })).toBeEnabled();
-    } else {
-      await expect(continueCta).toBeDisabled();
+    if (await launch.isDisabled()) {
       await expect(capacityAlert).toBeVisible();
     }
 

@@ -115,7 +115,8 @@ ingestion. Live managed-hosting projects still need their explicit opt-in.
 - `public.public.spec.ts` — logged-out routes render (HTTP < 400 + real content) + VRT.
 - `venice.public.spec.ts` — the unsigned Venice acquisition contract: promo claim target, attribution cookie and auth-boundary Launch deep-link preservation. It deliberately stops before account creation.
 - `venice-signup.acceptance.spec.ts` — the explicitly gated disposable-account continuation: `/venice` claim → invitation-based public signup → exact authenticated Launch handoff. It stops before the final launch action; the credit/first-reply leg remains separate.
-- `golden-deploy.authed.spec.ts` — the **login → dashboard → deploy** golden path. Skips if no QA session.
+- `golden-deploy.authed.spec.ts` — the signed-in **dashboard → Launch chooser** golden path.
+- `onboarding-deploy.journey.spec.ts` — the signed-in **Launch chooser → Codex review** journey. It checks launch readiness without clicking Launch Codex.
 - `first-run-audit.spec.ts` + `first-run-audit/` — the **19/20 gate**. Real provisioning. See below.
 - `global-setup.ts` — signs in as the standing Canary QA account when `CANARY_QA_EMAIL` is set; otherwise rejects legacy ticket sign-in and writes empty storage state.
 - `playwright.config.ts` (repo root of `dashboard/`) — projects: `public` (no auth), `authed` (storage state),
@@ -187,10 +188,8 @@ gh workflow run dashboard-e2e.yml -f update_snapshots=true   # uploads baselines
 ```
 Commit the artifact's `*-snapshots/` into `dashboard/e2e/` once, then VRT gates real diffs.
 
-## TODOs before the authed path is fully green
-- Replace the placeholder selectors in `golden-deploy.authed.spec.ts` with stable `data-testid`s.
-- ~~Decide the deploy assertion's safe stopping point~~ — settled: `golden-deploy` stays **assert-only** (it
-  runs on every PR), and the real click lives in the opt-in `first-run-audit` spec below.
+The golden and onboarding deploy specs stop before provisioning. The real launch
+is exercised by the opt-in `first-run-audit` spec below.
 
 ---
 
