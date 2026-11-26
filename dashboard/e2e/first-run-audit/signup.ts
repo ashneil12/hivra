@@ -133,13 +133,13 @@ async function clickSignupSubmit(page: Page): Promise<boolean> {
 
   // Fallback for a Clerk UI revision that drops the targetable class: use the
   // form's own submit control, never a social-button or footer link.
-  const submits = page.locator('form button[type="submit"]');
-  const count = Math.min(await submits.count().catch(() => 0), 5);
+  const buttons = page.locator('form button, form [role="button"]');
+  const count = Math.min(await buttons.count().catch(() => 0), 8);
   for (let index = 0; index < count; index += 1) {
-    const button = submits.nth(index);
+    const button = buttons.nth(index);
     if (!(await button.isVisible().catch(() => false))) continue;
     const text = ((await button.textContent().catch(() => '')) ?? '').trim();
-    if (/^(continue|sign up|create account)$/i.test(text)) {
+    if (/^(continue|sign up|create account)$/i.test(text) && !(await button.isDisabled().catch(() => false))) {
       await button.click();
       return true;
     }

@@ -10,17 +10,17 @@ import { completeClerkSignupUi } from './first-run-audit/signup';
 const EMAIL = 'qa-browser+clerk_test@example.test';
 const REDIRECT = '/dashboard/launch?agent=hermes&inference=venice&ref=venice&code=VENICE';
 
-function fixture(autoComplete: boolean): string {
+function fixture(autoComplete: boolean, nonSubmitButton = false): string {
   return `<!doctype html><html><body><script>
     window.Clerk = { client: { signUp: { status: 'missing_requirements', createdSessionId: null } } };
     setTimeout(() => {
       document.body.innerHTML = '<form>' +
         '<input name="emailAddress" value="${EMAIL}" disabled>' +
         '<input name="firstName"><input name="lastName">' +
-        '<button class="cl-formButtonPrimary" type="submit">Continue</button>' +
+        '<button class="cl-formButtonPrimary" type="${nonSubmitButton ? 'button' : 'submit'}">Continue</button>' +
       '</form>';
-      document.querySelector('form').addEventListener('submit', (event) => {
-        event.preventDefault();
+      const advance = (event) => {
+        event && event.preventDefault();
         document.body.innerHTML = '<input data-input-otp autocomplete="one-time-code" maxlength="6" style="width:120px;height:20px;opacity:0">';
         const otp = document.querySelector('input[data-input-otp]');
         const complete = () => {
@@ -34,16 +34,18 @@ function fixture(autoComplete: boolean): string {
         };
         otp.addEventListener('input', () => { if (otp.value.length === 6) setTimeout(complete, 100); });
         ${autoComplete ? 'setTimeout(complete, 100);' : ''}
-      });
+      };
+      document.querySelector('form').addEventListener('submit', advance);
+      document.querySelector('button').addEventListener('click', ${nonSubmitButton ? 'advance' : '() => {}'});
     }, 40);
   </script></body></html>`;
 }
 
-async function installFixture(page: import('@playwright/test').Page, autoComplete = false): Promise<void> {
+async function installFixture(page: import('@playwright/test').Page, autoComplete = false, nonSubmitButton = false): Promise<void> {
   await page.route('**/*', (route) => route.fulfill({
     status: 200,
     contentType: 'text/html',
-    body: fixture(autoComplete),
+    body: fixture(autoComplete, nonSubmitButton),
   }));
   await page.goto(`https://canary.hermesos.cloud/sign-up?redirect_url=${encodeURIComponent(REDIRECT)}`);
 }
@@ -57,6 +59,14 @@ test.describe('Clerk invitation signup UI driver (offline)', () => {
     expect(result).toMatchObject({ userId: 'user_browser_fixture', otpUsed: true });
     const finalUrl = new URL(result.finalUrl);
     expect(`${finalUrl.pathname}${finalUrl.search}`).toBe(REDIRECT);
+  });
+
+  test('clicks Clerk continue controls that are not typed as submit buttons', async ({ page }) => {
+    await installFixture(page, false, true);
+
+    const result = await completeClerkSignupUi(page, { email: EMAIL, timeoutMs: 8_000, requireOtpStep: true });
+
+    expect(result).toMatchObject({ userId: 'user_browser_fixture', otpUsed: true });
   });
 
   test('fails closed if the form completes without proving the OTP step', async ({ page }) => {
