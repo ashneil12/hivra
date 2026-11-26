@@ -311,6 +311,60 @@ it("refuses a hibernated wake while its admitted backing is on another host", as
   expect(vm).toMatchObject({ qmp: "running", volatileData: "in-memory-session" });
 });
 
+it.each(["holder_nap", "holder_save", "holder_wake"] as const)("keeps a same-host sweep claim behind a fresh %s operation", async (substate) => {
+  const secondId = "22345678-0123-4567-89ab-000000000057";
+  const secondVmid = 2234;
+  await db.exec("update hermes_instances set cpu_limit=1,ram_limit=2048");
+  await db.query(`insert into hermes_instances(id,user_id,status,lifecycle_state,seat_funding,cpu_limit,ram_limit,
+    proxmox_node,proxmox_vmid,created_at,last_activity_at,config) values ($1,'owner','running','active','holder',1,2048,
+    'fixture',$2,now()-interval '1 day',now()-interval '5 minutes',$3)`, [secondId, secondVmid, JSON.stringify({
+    infrastructure: { provider: "proxmox", node: "fixture", vmid: secondVmid, gatewayHost: gateway, privateIpv4: "192.0.2.58" },
+  })]);
+  await db.query(
+    "update hermes_instances set lifecycle_state='paused',status='stopped',paused_reason='holder_idle'," +
+      "lifecycle_substate=$1,holder_idle_claimed_at=now(),holder_napped_at=now() where id=$2",
+    [substate, id],
+  );
+
+  const [claim] = await query("select claim_classic_holder_idle(null,null,true) as claim");
+  expect(claim.claim).toBeNull();
+});
+
+it("lets an overlapping sweep claim another host and releases the busy host after finish", async () => {
+  const secondId = "22345678-0123-4567-89ab-000000000057";
+  const thirdId = "32345678-0123-4567-89ab-000000000057";
+  const secondVmid = 2234;
+  const thirdVmid = 3234;
+  await db.exec(`insert into proxmox_hosts(id,total_cpu,total_ram_mb,cpu_overcommit_ratio) values ('fixture-b',40,120000,1);
+    update token_tier_qualifications set tier='power';
+    update holder_admissions set tier='power',reserved_cpu=4,reserved_ram_mb=8192;
+    update hermes_instances set cpu_limit=1,ram_limit=2048;`);
+  for (const [otherId, otherVmid, node, otherIp] of [
+    [secondId, secondVmid, "fixture", "192.0.2.58"],
+    [thirdId, thirdVmid, "fixture-b", "192.0.2.59"],
+  ] as const) {
+    await db.query(`insert into hermes_instances(id,user_id,status,lifecycle_state,seat_funding,cpu_limit,ram_limit,
+      proxmox_node,proxmox_vmid,created_at,last_activity_at,config) values ($1,'owner','running','active','holder',1,2048,
+      $2,$3,now()-interval '1 day',now()-interval '5 minutes',$4)`, [otherId, node, otherVmid, JSON.stringify({
+      infrastructure: { provider: "proxmox", node, vmid: otherVmid, gatewayHost: gateway, privateIpv4: otherIp },
+    })]);
+  }
+  const claim = async () => (await db.query<{ claim: { id: string; action: string; node: string; generation: number } | null }>(
+    "select claim_classic_holder_idle(null,null,true) as claim",
+  )).rows[0].claim;
+
+  const first = await claim();
+  expect(first).toMatchObject({ id, action: "nap", node: "fixture" });
+  expect(await claim()).toMatchObject({ id: thirdId, action: "nap", node: "fixture-b" });
+  expect(await claim()).toBeNull();
+  const finished = (await db.query<{ result: string | null }>(
+    "select finish_classic_holder_idle($1,$2,'fixture',$3,'napping') result",
+    [id, first!.generation, VMID],
+  )).rows[0].result;
+  expect(finished).toBe("napping");
+  expect(await claim()).toMatchObject({ id: secondId, action: "nap", node: "fixture" });
+});
+
 it("keeps a slow host operation fenced while another host proceeds", async () => {
   const secondId = "22345678-0123-4567-89ab-000000000057";
   const thirdId = "32345678-0123-4567-89ab-000000000057";

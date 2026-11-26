@@ -568,7 +568,21 @@ export async function reserveAndDispatchManagedGvisor(input: {
       || claim.connectionId !== authority.connectionId || claim.revision !== authority.connectionRevision
       || claim.adapterSha !== authority.adapterSha || claim.runtimeSha !== authority.runtimeSha
       || claim.cpu !== cpu || claim.ram !== ramGb) return pending;
-    const created = await invokeManagedGvisor(claim, "create", "mutation");
+    let created: GvisorComputerReceipt;
+    try {
+      created = await invokeManagedGvisor(claim, "create", "mutation");
+    } catch (error) {
+      if (!(error instanceof GvisorComputerError) || !error.definiteAdmissionRejection) throw error;
+      const observation = await invokeManagedGvisor(claim, "status", "mutation").catch(() => null);
+      if (observation?.state !== "absent") return pending;
+      const fence = managedProvisionFence(claim);
+      const { data: cleanup, error: cleanupError } = await db().rpc("begin_hivra_managed_gvisor_cleanup", fence);
+      if (cleanup !== true || cleanupError) return pending;
+      const { data: released, error: releaseError } = await db().rpc("release_hivra_managed_gvisor_absent", {
+        ...fence, p_receipt: observation,
+      });
+      return released === true && !releaseError ? { state: "cleaned", computerId } : pending;
+    }
     const started = created.state === "stopped" ? await invokeManagedGvisor(claim, "start", "mutation") : created;
     if (started.state === "running") {
       return await completeManagedProvision(claim, started) ? { state: "ready", computerId } : pending;

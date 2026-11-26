@@ -9,7 +9,9 @@ hold its instance row immediately before holder-funding validation, then waits
 for holder tier maintenance to block on that row. In the corrected order the
 batch holds only the placement advisory while blocked; it does not already own
 the per-owner funding advisory, so the wake finishes and both transactions
-complete without deadlock detection.
+complete without deadlock detection. A second test overlaps two cron claims
+for distinct instances on one host, then checks the persisted claim after
+the first transaction commits.
 
 The container is disposable and is always removed. A local Docker daemon and a
 local postgres:16-alpine image are required; this is a verification harness,
@@ -90,6 +92,53 @@ def wait_for_backend(label: str, predicate: str, description: str) -> None:
 def fixture_sql() -> str:
     text = (APP / "src/lib/billing/__tests__/holder-admission-schema.fixture.ts").read_text()
     return text.split("export const FIXTURE_SQL = `", 1)[1].rsplit("`;", 1)[0]
+
+
+def check_overlapping_cron_claims() -> None:
+    sql(
+        """
+        insert into public.proxmox_hosts(id,total_cpu,total_ram_mb,cpu_overcommit_ratio)
+        values('overlap-host',12,57344,1);
+        insert into public.token_tier_qualifications(user_id,tier,token_key,currently_eligible)
+        values('overlap-first','pro','hermesos',true), ('overlap-second','pro','hermesos',true);
+        insert into public.holder_admissions(
+          user_id,state,tier,token_key,admitted_at,reserved_cpu,reserved_ram_mb,assigned_host_id
+        ) values
+          ('overlap-first','admitted','pro','hermesos',now(),2,4096,'overlap-host'),
+          ('overlap-second','admitted','pro','hermesos',now(),2,4096,'overlap-host');
+        insert into public.hermes_instances(
+          id,user_id,status,lifecycle_state,cpu_limit,ram_limit,resource_tier,
+          proxmox_node,proxmox_vmid,disk_size_gb,seat_funding,infrastructure_provider,
+          config,ipv4_address,gateway_url,created_at,last_activity_at
+        ) values
+          ('22222222-2222-4222-8222-222222222222','overlap-first','running','active',1,2048,'operator',
+           'overlap-host',201,30,'holder','proxmox','{}','192.0.2.3','https://gateway.example',
+           now()-interval '1 hour',now()-interval '1 hour'),
+          ('33333333-3333-4333-8333-333333333333','overlap-second','running','active',1,2048,'operator',
+           'overlap-host',202,30,'holder','proxmox','{}','192.0.2.4','https://gateway.example',
+           now()-interval '1 hour',now()-interval '1 hour');
+        """,
+        "overlap_setup",
+    )
+
+    claim = "select coalesce(public.claim_classic_holder_idle(null,null,true)::text,'NO_CLAIM');"
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        # The setup below restores the unpaced validator. Sleep only after the
+        # first claim has been written and while its transaction still owns it.
+        first = pool.submit(sql, "begin; " + claim + " select pg_sleep(5); commit;", "cron_first")
+        wait_for_backend("cron_first", "wait_event='PgSleep'", "the uncommitted first cron claim")
+        during = sql(claim, "cron_overlap")
+        if sql("select count(*) from pg_stat_activity where application_name='cron_first' and wait_event='PgSleep';") != "1":
+            raise AssertionError("the overlapping claim finished after the first transaction ended")
+        first_result = first.result(timeout=10)
+
+    after = sql(claim, "cron_after_commit")
+    claimed = json.loads(first_result)
+    if claimed.get("action") != "nap" or claimed.get("node") != "overlap-host":
+        raise AssertionError(f"first sweep did not claim the fixture host: {first_result!r}")
+    if during != "NO_CLAIM" or after != "NO_CLAIM":
+        raise AssertionError(f"second sweep claimed an occupied host: during={during!r}, after={after!r}")
+    print("PASS: overlapping cron claims never dispatched two operations on the same host.")
 
 
 def main() -> None:
@@ -208,6 +257,12 @@ def main() -> None:
         if apply_result != "1":
             raise AssertionError(f"tier allocation batch did not complete once: {apply_result!r}")
         print("PASS: Classic wake and holder tier maintenance completed in the corrected lock order.")
+        sql("""
+            drop function public.holder_seat_funding_valid(text,numeric,numeric,uuid,uuid,numeric,numeric);
+            alter function public.holder_seat_funding_valid_unpaced(text,numeric,numeric,uuid,uuid,numeric,numeric)
+              rename to holder_seat_funding_valid;
+        """, "restore_validator")
+        check_overlapping_cron_claims()
     finally:
         subprocess.run(["docker", "rm", "-f", NAME], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print("Removed the disposable Postgres container.")

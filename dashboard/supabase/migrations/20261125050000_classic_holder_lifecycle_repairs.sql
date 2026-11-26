@@ -53,17 +53,7 @@ begin
         when h.lifecycle_substate='holder_napping' and h.holder_idle_claimed_at <= t-interval '30 seconds'
           and not policy.save_allowed then 'wake'
         when h.lifecycle_substate='holder_napping' and h.holder_napped_at <= t-interval '12 minutes'
-          and h.holder_idle_claimed_at <= t-interval '30 seconds'
-          and not exists(select 1 from public.hermes_instances busy
-            where busy.id <> h.id
-              and busy.proxmox_node = h.proxmox_node
-              and busy.seat_funding='holder'
-              and busy.lifecycle_state='paused'
-              and busy.status='stopped'
-              and busy.paused_reason='holder_idle'
-              and busy.lifecycle_substate='holder_save'
-              and busy.holder_idle_claimed_at > t-interval '6 minutes'
-              and busy.deleted_at is null) then 'hibernate'
+          and h.holder_idle_claimed_at <= t-interval '30 seconds' then 'hibernate'
       end
     when p_id is null and h.lifecycle_state='active' and h.status='running'
       and h.paused_reason is null and h.lifecycle_substate is null
@@ -81,7 +71,19 @@ begin
       and h.holder_idle_claimed_at is not null
     ), false) as wake_reconciliation
   ) wake_state
+  cross join lateral (select exists(select 1 from public.hermes_instances busy
+    where busy.id <> h.id
+      and busy.proxmox_node = h.proxmox_node
+      and busy.seat_funding='holder'
+      and busy.lifecycle_state='paused'
+      and busy.status='stopped'
+      and busy.paused_reason='holder_idle'
+      and busy.lifecycle_substate in ('holder_nap','holder_save','holder_wake')
+      and busy.holder_idle_claimed_at > t-interval '6 minutes'
+      and busy.deleted_at is null) as occupied
+  ) occupancy
   where h.seat_funding='holder' and h.deleted_at is null and h.archive_uri is null
+    and not occupancy.occupied
     and h.scheduled_deletion_at is null and h.entitlement_state is distinct from 'suspended'
     and (p_id is null or (h.id=p_id and h.user_id=p_owner))
     and h.proxmox_node is not null and h.proxmox_vmid is not null
@@ -127,23 +129,27 @@ begin
     end if;
     return null;
   end if;
-  if r.action = 'hibernate' then
-    perform 1 from public.proxmox_hosts host
-    where host.id = r.proxmox_node
-    for update;
-    if exists(select 1 from public.hermes_instances busy
-      where busy.id <> r.id
-        and busy.proxmox_node = r.proxmox_node
-        and busy.seat_funding='holder'
-        and busy.lifecycle_state='paused'
-        and busy.status='stopped'
-        and busy.paused_reason='holder_idle'
-        and busy.lifecycle_substate='holder_save'
-        and busy.holder_idle_claimed_at > t-interval '6 minutes'
-        and busy.deleted_at is null
-    ) then
-      return null;
-    end if;
+  -- Serialize the check and claim across sweep and owner requests, including
+  -- wake recovery when the host is missing from the inventory. Never wait
+  -- behind the transaction while holding the selected instance row.
+  if not pg_try_advisory_xact_lock(hashtextextended('classic-holder-idle-host:' || r.proxmox_node, 0)) then
+    return null;
+  end if;
+  t := clock_timestamp();
+  -- The selection snapshot can predate a transaction that just committed.
+  -- The persisted claim keeps this host fenced after that transaction ends.
+  if exists(select 1 from public.hermes_instances busy
+    where busy.id <> r.id
+      and busy.proxmox_node = r.proxmox_node
+      and busy.seat_funding='holder'
+      and busy.lifecycle_state='paused'
+      and busy.status='stopped'
+      and busy.paused_reason='holder_idle'
+      and busy.lifecycle_substate in ('holder_nap','holder_save','holder_wake')
+      and busy.holder_idle_claimed_at > t-interval '6 minutes'
+      and busy.deleted_at is null
+  ) then
+    return null;
   end if;
   if not (
       r.wake_reconciliation
