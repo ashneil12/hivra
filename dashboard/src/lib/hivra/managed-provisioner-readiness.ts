@@ -1,5 +1,8 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+import previousCanaryRelease from "../../../provisioner-releases/2026.11.25.2.json";
+import digestPinRelease from "../../../provisioner-releases/2026.11.26.1.json";
 import {
   PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS,
   PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS,
@@ -20,7 +23,7 @@ import { HOST_READINESS_TIMEOUT_MS } from "./lifecycle-timeouts";
 export { MANAGED_HIVRA_RUNTIME_PATHS } from "./managed-provisioner-channel";
 
 export type ManagedHivraHostReadinessResult =
-  | { ok: true }
+  | { ok: true; provisionerVersion?: string }
   | {
       ok: false;
       status: number;
@@ -31,19 +34,47 @@ export type ManagedHivraHostReadinessResult =
 export type ManagedHivraHostReadinessPurpose = "provision" | "lifecycle" | "resize" | "runtime-update";
 type ManagedHivraHostEnvironment = Record<string, string | undefined>;
 
+const canaryLaunchSeals = new Map([previousCanaryRelease, digestPinRelease].map(release => [
+  release.version,
+  createHash("sha256").update([...release.files]
+    .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+    .map(file => `${file.sha256}  ${file.path}\n`).join("")).digest("hex"),
+]));
+
+export function managedCanaryLaunchSealScript(versions: readonly string[]): string {
+  const cases = versions.map(version => {
+    const digest = canaryLaunchSeals.get(version);
+    if (!digest) throw new Error("Unreviewed Canary launch provisioner seal");
+    return `  ${shellQuote(version)}) EXPECTED_MANIFEST_SHA=${shellQuote(digest)} ;;`;
+  }).join("\n");
+  return `OBSERVED_VERSION="$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")"
+case "$OBSERVED_VERSION" in
+${cases}
+  *) echo "Hivra provisioner version mismatch" >&2; exit 1 ;;
+esac
+OBSERVED_MANIFEST_SHA="$(LC_ALL=C sort -k2 "$PROVISIONER_DIR/BUNDLE.sha256" | sha256sum | cut -d ' ' -f1)"
+[ "$OBSERVED_MANIFEST_SHA" = "$EXPECTED_MANIFEST_SHA" ] || { echo "Hivra provisioner seal mismatch" >&2; exit 1; }
+(cd "$PROVISIONER_DIR" && sha256sum -c --status BUNDLE.sha256) || { echo "Hivra provisioner bundle integrity check failed" >&2; exit 1; }`;
+}
+
 export function managedHivraHostReadinessScript(
   channel: ManagedHivraProvisionerChannel,
   purpose: ManagedHivraHostReadinessPurpose = "provision",
   requireModelSettings = false,
   runtimeId: string | null = null,
+  requirePinnedCatalogDigest = false,
 ): string {
   const runtimeVersions = compatibleProxmoxVersionsForRuntime(runtimeId);
   const runtimePaths = managedHivraProvisionerChannelConfiguration(channel).runtime;
-  const versions = purpose === "runtime-update" || (channel === "canary" && purpose === "provision")
+  const canaryProvision = channel === "canary" && purpose === "provision";
+  const compatibleVersions = requireModelSettings
+    ? PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS.filter(v => runtimeVersions.includes(v))
+    : runtimeVersions;
+  const versions = purpose === "runtime-update"
     ? [PORTABLE_HIVRA_PROVISIONER_VERSION]
-    : requireModelSettings
-      ? PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS.filter(v => runtimeVersions.includes(v))
-      : runtimeVersions;
+    : canaryProvision
+      ? compatibleVersions.filter(v => canaryLaunchSeals.has(v) && (!requirePinnedCatalogDigest || v === digestPinRelease.version))
+      : compatibleVersions;
   const modelCapabilities = requireModelSettings ? `need_file "$PROVISIONER_DIR/hivra-chat/llm-application.js"
 need_file "$PROVISIONER_DIR/hivra-chat/server.js"` : "";
   // Only runtimes that install through the agent-app updater need it; a host
@@ -119,13 +150,13 @@ if [ -n "$missing" ]; then
 fi
 command -v qm >/dev/null || { echo "qm is not installed on this host" >&2; exit 1; }
 command -v sha256sum >/dev/null || { echo "sha256sum is not installed on this host" >&2; exit 1; }
-OBSERVED_VERSION="$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")"
+${canaryProvision ? managedCanaryLaunchSealScript(versions) : `OBSERVED_VERSION="$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")"
 case "$OBSERVED_VERSION" in
   ${versions.map(shellQuote).join("|")}) ;;
   *) echo "Hivra provisioner version mismatch" >&2; exit 1 ;;
 esac
 (cd "$PROVISIONER_DIR" && sha256sum -c --status BUNDLE.sha256) \
-  || { echo "Hivra provisioner bundle integrity check failed" >&2; exit 1; }
+  || { echo "Hivra provisioner bundle integrity check failed" >&2; exit 1; }`}
 # VERSION admission is backed by exact capability checks so a stale or
 # hand-copied script cannot opt into the current ownership contract merely by
 # changing one text file.
@@ -137,7 +168,7 @@ grep -Fq "printf 'HIVRA_OPERATION_ID %s\\n' \\\"\\\$OPERATION_ID\\\"" "$START_SC
 bash -n "$START_SCRIPT"
 ${purpose === "runtime-update" ? 'bash -n "$PROVISIONER_DIR/hivra-update-guest-runtime.sh"' : ""}
 ${needsCapacityAdmission ? 'bash -n "$CAPACITY_ADMISSION"' : ""}
-printf 'HIVRA_HOST_READY\\n'
+${canaryProvision ? `printf 'HIVRA_HOST_READY %s\\n' "$OBSERVED_VERSION"` : "printf 'HIVRA_HOST_READY\\n'"}
 `;
 }
 
@@ -148,6 +179,7 @@ export async function checkManagedHivraHostReadiness(
     channel: ManagedHivraProvisionerChannel;
     purpose?: ManagedHivraHostReadinessPurpose;
     requireModelSettings?: boolean;
+    requirePinnedCatalogDigest?: boolean;
     /** Catalog runtime being launched; gates the host's release per runtime. */
     runtimeId?: string | null;
     runtimeLabel?: string;
@@ -163,10 +195,18 @@ export async function checkManagedHivraHostReadiness(
     candidate.purpose,
     candidate.requireModelSettings,
     candidate.runtimeId ?? null,
+    candidate.requirePinnedCatalogDigest,
   ), candidate.env, {
     timeoutMs: HOST_READINESS_TIMEOUT_MS,
   });
-  if (result.ok && result.stdout.includes("HIVRA_HOST_READY")) return { ok: true };
+  if (result.ok && result.stdout.includes("HIVRA_HOST_READY")) {
+    if (candidate.channel !== "canary" || (candidate.purpose ?? "provision") !== "provision") return { ok: true };
+    const observedVersion = /^HIVRA_HOST_READY (\S+)$/m.exec(result.stdout)?.[1];
+    if (observedVersion && canaryLaunchSeals.has(observedVersion)
+      && (!candidate.requirePinnedCatalogDigest || observedVersion === digestPinRelease.version)) {
+      return { ok: true, provisionerVersion: observedVersion };
+    }
+  }
 
   // A host that is otherwise ready but predates this runtime's minimum release
   // must say so, not read as "no capacity".

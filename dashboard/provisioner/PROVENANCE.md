@@ -1472,3 +1472,9 @@ allocation or lifecycle lock open. Guest desktop assets are unchanged.
 Release `2026.11.25.2` carries forward `2026.11.25.1` and reserves the configured
 startup memory for an existing stopped guest even when no launch reservation
 is pending. The allocation and lifecycle lock behavior stays unchanged.
+
+Release `2026.11.26.1` adds an optional reviewed OCI digest for single-container
+catalog apps. Pinned launches pull and check the selected guest platform
+and digest before the app starts; the app updater cannot replace that
+pin with a tag. Existing tag-based catalog launches and the desktop
+and native workload contracts are unchanged.
