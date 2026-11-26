@@ -54,6 +54,17 @@ interface ClerkInvitationPayload {
   errors?: unknown;
 }
 
+export interface ClerkTestingToken {
+  token: string;
+  expiresAtMs: number | null;
+}
+
+interface ClerkTestingTokenPayload {
+  token?: string;
+  expires_at?: number;
+  errors?: unknown;
+}
+
 async function clerkFetch(
   secretKey: string,
   path: string,
@@ -122,6 +133,25 @@ export async function createAuditInvitation(
     url: body.url,
     createdAtMs: typeof body.created_at === 'number' ? body.created_at : Date.now(),
   };
+}
+
+/**
+ * Mint the short-lived token Clerk documents for end-to-end tests. It is not
+ * an auth credential and does not create or sign in a user; it only prevents
+ * Clerk's bot challenge from replacing the public sign-up form under test.
+ */
+export async function createClerkTestingToken(secretKey: string): Promise<ClerkTestingToken> {
+  assertLiveManagedHostingAuditAllowed();
+  const res = await clerkFetch(secretKey, '/testing_tokens', { method: 'POST', body: '{}' });
+  const body = (await res.json().catch(() => null)) as ClerkTestingTokenPayload | null;
+  if (!res.ok || typeof body?.token !== 'string' || !body.token) {
+    throw new Error(`[clerk] create testing token failed: HTTP ${res.status}`);
+  }
+  const expiresAtMs = typeof body.expires_at === 'number' ? body.expires_at * 1000 : null;
+  if (expiresAtMs !== null && expiresAtMs <= Date.now() + 60_000) {
+    throw new Error('[clerk] testing token expires too soon to start a signup audit');
+  }
+  return { token: body.token, expiresAtMs };
 }
 
 /** Best-effort invitation hygiene when sign-up fails before a user exists. */
