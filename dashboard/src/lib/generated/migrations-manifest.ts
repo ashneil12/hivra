@@ -520,4 +520,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261125204500", name: "provider_release_admission_2026_11_25_2" },
   { version: "20261126161000", name: "restore_operator_usage_schema" },
   { version: "20261126162600", name: "reconcile_legacy_catalog_metadata" },
+  { version: "20261126203500", name: "canary_qa_writer_fence" },
 ];
