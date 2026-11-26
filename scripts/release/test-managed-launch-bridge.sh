@@ -8,8 +8,8 @@ cutoff=4bfe13577cd2dd7baa8917b970b5a3a6fa133cab
 
 work=$(mktemp -d)
 container="managed-launch-bridge-test-$$"
-image=public.ecr.aws/supabase/postgres@sha256:28f0e16a019e648089fc1a6d333549a55548f6019c15ae4bd7cd58b989027518
-postgrest_image=public.ecr.aws/supabase/postgrest@sha256:5922bde07147b82b1c9d8f749e48c1e5b99ebb233f3888bb7ab65f07cf4ac82d
+image=docker.io/supabase/postgres@sha256:28f0e16a019e648089fc1a6d333549a55548f6019c15ae4bd7cd58b989027518
+postgrest_image=docker.io/postgrest/postgrest@sha256:5922bde07147b82b1c9d8f749e48c1e5b99ebb233f3888bb7ab65f07cf4ac82d
 node_image=node@sha256:7702d8aa4d5910871692af4480eb3ba86f23047a6417a44d857d06c95d060d3f
 cleanup() {
   if [[ -e "$work/postgrest-id" ]]; then
