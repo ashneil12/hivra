@@ -134,6 +134,9 @@ elif mode == "different-python3":
 # Owner .env must not redirect uv into another environment.
 other_venv = root / "owner-other-environment"
 (profile / ".env").write_text("UV_PROJECT_ENVIRONMENT=" + str(other_venv) + "\n", encoding="utf-8")
+if mode == "legacy-escaped-line-boundaries":
+    with (profile / ".env").open("a", encoding="utf-8") as env_file:
+        env_file.write('LEGACY_PLACEHOLDER="alpha\\nomega\\rvalue"\n')
 tree = ast.parse(request["supervisor"])
 prefix = []
 for node in tree.body:
@@ -167,6 +170,7 @@ result = {
     "rejected": False, "commands": commands, "venv": str(venv),
     "project": str(project),
     "environment": env.get("UV_PROJECT_ENVIRONMENT"),
+    "legacy_placeholder": env.get("LEGACY_PLACEHOLDER"),
     "exists": os.path.lexists(venv),
 }
 if mode.startswith("real-uv"):
@@ -281,6 +285,12 @@ describe("managed gateway Python selection", () => {
     expect(result.commands.status).toEqual([...prefix, "status"]);
     expect(result.commands.run).toEqual([...prefix, "run", "--replace", "--accept-hooks"]);
     expect(result.environment).toBeNull();
+  });
+
+  it("strips benign escaped line boundaries decoded from a legacy quoted env value", () => {
+    const result = runFixture("legacy-escaped-line-boundaries");
+    expect(result.rejected).toBe(false);
+    expect(result.legacy_placeholder).toBe("alphaomegavalue");
   });
 
   it("uses the qualified image Python only when the entire venv is absent", () => {

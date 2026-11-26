@@ -328,12 +328,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (agent.computer_substrate === "gvisor") {
       if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
-      if (!isGvisorAction(action)) {
+      const sandboxAction = agent.deployment_mode === "hivra-managed"
+        ? (action === "wake" ? "start" : action === "sleep" ? "stop" : action)
+        : action;
+      if (!isGvisorAction(sandboxAction)) {
         return apiError("This Linux terminal sandbox does not support that lifecycle operation.", 400);
       }
       let cpu: number | undefined;
       let ramGb: number | undefined;
-      if (action === "resize") {
+      if (sandboxAction === "resize") {
         cpu = Number(body.cpu);
         ramGb = Number(body.ram);
         const maximumCpu = body.maximumCpu === undefined ? cpu : Number(body.maximumCpu);
@@ -346,13 +349,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       try {
         const updated = await mutateGvisorComputer(userId, String(agent.id), {
-          action: action === "update_runtime" ? "update" : action,
-          ...(action === "resize" ? { cpu, ramGb } : {}),
+          action: sandboxAction === "update_runtime" ? "update" : sandboxAction,
+          ...(sandboxAction === "resize" ? { cpu, ramGb } : {}),
         });
         return apiSuccess({ agent: sanitizeHivraAgentRow(updated) });
       } catch (error) {
         if (error instanceof GvisorComputerError) {
-          const status = error.code === "not_found" ? 404
+          const status = error.code === "plan_required" ? 402 : error.code === "not_found" ? 404
             : error.code === "conflict" || error.code === "not_ready" ? 409 : 503;
           return apiError(error.message, status);
         }

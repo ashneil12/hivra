@@ -515,4 +515,7 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261125030000", name: "classic_holder_sleep" },
   { version: "20261125040000", name: "durable_proxmox_placement" },
   { version: "20261125050000", name: "classic_holder_lifecycle_repairs" },
+  { version: "20261125120000", name: "provider_release_admission_2026_11_25_1" },
+  { version: "20261125190000", name: "managed_gvisor_reservation" },
+  { version: "20261125204500", name: "provider_release_admission_2026_11_25_2" },
 ];

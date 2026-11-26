@@ -2,6 +2,7 @@ import { agentWebApi, type AgentWebApiClient } from "@/lib/agent-web-api";
 import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 import { decryptApiKey, encryptApiKey } from "@/lib/crypto";
 import { buildHermesWebConfigPayload } from "@/lib/hermes-web";
+import { validateCustomLlmBaseUrl } from "@/lib/instance-settings";
 import { putHermesConfigWithBindMountFallback } from "@/lib/hermes-config-write";
 import { resolveHermesHomeDirFromConfig } from "@/lib/hermes-home";
 import { sshExec, type ProxmoxSshHostConfig } from "@/lib/hetzner/ssh";
@@ -181,7 +182,11 @@ export function buildManagedVeniceStoredInstanceConfig(
     model: params.model,
     agentSettings: {
       ...currentAgentSettings,
-      customLlmBaseUrl: params.proxyBaseUrl,
+      // Platform-generated proxy URL (the dashboard's own public origin), so
+      // this validation never rejects in practice — it exists so a future
+      // caller can't turn this direct writer into a bypass of the shared
+      // customLlmBaseUrl validation every other write path goes through.
+      customLlmBaseUrl: validateCustomLlmBaseUrl(params.proxyBaseUrl),
     },
     managedVenice: {
       enabled: true,

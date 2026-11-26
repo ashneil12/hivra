@@ -1,4 +1,9 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  BUSYBOX_ENV_FILE_SURGICAL_SH,
   WEBUI_BANKR_RUNTIME_ENV_KEYS,
   WEBUI_HERMES_AGENT_DIR,
   WEBUI_HERMES_HOME,
@@ -277,5 +282,72 @@ describe("WEBUI_BANKR_RUNTIME_ENV_KEYS", () => {
       .filter((line) => line.startsWith("BANKR_"))
       .map((line) => line.slice(0, line.indexOf("=")));
     expect(emitted.sort()).toEqual([...WEBUI_BANKR_RUNTIME_ENV_KEYS].sort());
+  });
+});
+
+describe("BUSYBOX_ENV_FILE_SURGICAL_SH", () => {
+  function runFixture(scriptBody: string, initial: string): { status: number | null; stderr: string; content: string } {
+    const dir = mkdtempSync(join(tmpdir(), "hivra-env-surgical-"));
+    const fixture = join(dir, "fixture.env");
+    try {
+      writeFileSync(fixture, initial, "utf8");
+      const result = spawnSync("/bin/sh", ["-c", `${BUSYBOX_ENV_FILE_SURGICAL_SH}\n${scriptBody}`, "env-fixture", fixture], {
+        encoding: "utf8",
+      });
+      expect(result.error).toBeUndefined();
+      return {
+        status: result.status,
+        stderr: result.stderr,
+        content: readFileSync(fixture, "utf8"),
+      };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("upserts managed assignments without sed interpolation and preserves CRLF bytes plus a missing final newline", () => {
+    const initial = "# owner comment\r\nKEEP=original\r\nPATH=old\r\nTRAILING=last";
+    const result = runFixture(
+      "env_file_surgical_upsert \"$1\" PATH 'PATH=/opt/bin:alpha&omega|suffix'\n" +
+        "env_file_surgical_upsert \"$1\" NEW_KEY 'NEW_KEY=fresh'",
+      initial
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.content).toBe(
+      "# owner comment\r\nKEEP=original\r\nPATH=/opt/bin:alpha&omega|suffix\r\nTRAILING=last\r\nNEW_KEY=fresh"
+    );
+  });
+
+  it("preserves a standalone CR on an unrelated final line when upserting a managed key", () => {
+    const initial = "PATH=old\n# trailing comment\r";
+    const result = runFixture(
+      "env_file_surgical_upsert \"$1\" PATH 'PATH=/managed/bin'",
+      initial
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.content).toBe("PATH=/managed/bin\n# trailing comment\r");
+  });
+
+  it("deletes a managed assignment without rewriting surrounding records", () => {
+    const initial = "# kept\r\nMANAGED=removed\n\r\nOTHER=spaces   ";
+    const result = runFixture('env_file_surgical_delete "$1" MANAGED ""', initial);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.content).toBe("# kept\r\n\r\nOTHER=spaces   ");
+  });
+
+  it("sanitizes invalid env lines while preserving valid-line bytes and the file ending", () => {
+    const initial = "# owner comment\r\nGOOD=1\r\nnot an assignment\r\nEMPTY_OK=";
+    const result = runFixture('env_file_surgical_sanitize "$1" "runtime fixture"', initial);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("invalid env key at line 3 dropped from runtime fixture");
+    expect(result.stderr).not.toContain("GOOD=1");
+    expect(result.content).toBe("# owner comment\r\nGOOD=1\r\nEMPTY_OK=");
   });
 });

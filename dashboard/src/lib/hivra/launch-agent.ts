@@ -60,7 +60,8 @@ import {
   DEFAULT_PROXMOX_HOST_CAPACITY_POLICY,
 } from "@/lib/infrastructure/host-capacity-policy";
 import { launchProviderAgent, ProviderAgentLaunchError, type ProviderAgentLaunchInput } from "@/lib/hivra/provider-agent-launch";
-import { GvisorComputerError, launchGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
+import { findGvisorComputerByLaunchRequest, GvisorComputerError, launchGvisorComputer, reserveAndDispatchManagedGvisor } from "@/lib/hivra/gvisor-computer-service";
+import { checkManagedGvisorLaunchAuthority } from "@/lib/hivra/managed-gvisor-authority";
 import { createLaunchModelAdmissionService, type LaunchModelAdmission } from "@/lib/hivra/launch-model-admission";
 import { LaunchModelRequestError, LaunchPlanAgentLimitError } from "@/lib/hivra/launch-model-store";
 import { ModelKeyStoreError } from "@/lib/hivra/model-key-store";
@@ -258,7 +259,7 @@ function launchProvisionerVersion(
 // Phase 1 (synchronous over SSH): pick a free VMID in range, kick the host
 // orchestrator in the background (it does VM create + provisioner + tunnel,
 // ~10 min), and print a marker so this call returns in seconds.
-function phase1Script(params: {
+export function phase1Script(params: {
   cpu: number;
   cpuLimit: number;
   memMb: number;
@@ -350,7 +351,9 @@ fi`
     maximumMemoryMb: params.memMb,
     maximumCpu: params.cpuLimit,
     policy: params.capacityPolicy,
-  });
+  }) + (runtime
+    ? ` ${shellQuote(runtime.storage)} ${HIVRA_AGENT_VM_DISK_GB} ${HIVRA_AGENT_VM_STORAGE_HEADROOM_GB}`
+    : "");
   const portableStorageAdmission = runtime
     ? `STORAGE_AVAILABLE_KB="$(pvesm status --content images 2>/dev/null | awk -v target=${shellQuote(runtime.storage)} 'NR>1 && $1==target && $3=="active" {print $6; exit}')"
 [[ "$STORAGE_AVAILABLE_KB" =~ ^[0-9]+$ ]] \
@@ -453,7 +456,7 @@ disown
     local cmd
     [ -r "/proc/$PROVISION_PID/cmdline" ] && [ -r "/proc/$PROVISION_PID/environ" ] || return 1
     cmd="$(tr '\\0' ' ' < "/proc/$PROVISION_PID/cmdline")"
-    printf '%s' "$cmd" | grep -Fq ${shellQuote(`hivra-provision-on-host.sh $VMID `)} || return 1
+    printf '%s' "$cmd" | grep -Fq "hivra-provision-on-host.sh $VMID " || return 1
     tr '\\0' '\\n' < "/proc/$PROVISION_PID/environ" \
       | grep -Fxq ${shellQuote(`HIVRA_OPERATION_ID=${params.operationId}`)} || return 1
     tr '\\0' '\\n' < "/proc/$PROVISION_PID/environ" \
@@ -576,11 +579,17 @@ SECRET_ENV_FILE="/run/hivra-provision/$VMID.env"
 INTENT_FILE=${shellQuote(`/var/lib/hivra/provision-operations/operation-${params.operationId}.selected`)}
 INTENT_TMP="$INTENT_FILE.tmp.$$"
 {
+  printf 'schema_version=%s\\n' 1
   printf 'operation_id=%s\\n' ${shellQuote(params.operationId)}
   printf 'vmid=%s\\n' "$VMID"
   printf 'ip=${params.subnetPrefix}.%s\\n' "$OCTET"
   printf 'binding_tag=%s\\n' ${shellQuote(params.infrastructureBindingTag)}
   printf 'binding_enforced=%s\\n' 1
+  printf 'floor_memory_mb=%s\\n' ${Math.round(params.guaranteedMemMb)}
+  printf 'maximum_memory_mb=%s\\n' ${Math.round(params.memMb)}
+  printf 'maximum_cpu_milli=%s\\n' ${Math.round(params.cpuLimit * 1000)}
+  printf 'disk_gb=%s\\n' ${HIVRA_AGENT_VM_DISK_GB}
+  printf 'storage=%s\\n' ${shellQuote(runtimePaths.storage)}
 } > "$INTENT_TMP"
 chmod 0600 "$INTENT_TMP"
 mv -f -- "$INTENT_TMP" "$INTENT_FILE"
@@ -921,7 +930,7 @@ export async function launchHivraAgentForUser(
     const def = getAgent(type);
     const name = String(pick(body.name, template?.name) || def?.name || "Agent").trim();
     if (type === "linux-terminal") {
-      if (templateRef || deployment.mode !== "self-managed") {
+      if (templateRef) {
         return apiError("Linux terminal sandboxes require an exact connected gVisor host target.", 400);
       }
       if (body.computerProfile !== undefined && body.computerProfile !== "linux-terminal") {
@@ -943,6 +952,36 @@ export async function launchHivraAgentForUser(
         || !Number.isInteger(ram) || ram < 1 || ram > 128
         || maximumCpu !== cpu || maximumRam !== ram) {
         return apiError("gVisor computers reserve their full CPU and memory limit; reserved and maximum values must match.", 400);
+      }
+      if (deployment.mode === "hivra-managed") {
+        const managedGate = await checkManagedGvisorLaunchAuthority(userId);
+        if (managedGate.ok === false) {
+          return apiError(managedGate.message, managedGate.status, undefined, { code: managedGate.code, launchRequestId });
+        }
+        try {
+          const result = await reserveAndDispatchManagedGvisor({ userId, launchRequestId, name, cpu, ramGb: ram,
+            authority: managedGate.authority });
+          if (result.state === "cleaned") {
+            return apiError("The sandbox was removed after it could not start.", 409, undefined,
+              { code: "managed_gvisor_cleaned", launchRequestId, computerId: result.computerId });
+          }
+          if (result.state === "ready") {
+            // A created Computer uses the same launch receipt shape as the
+            // self-managed path. Never return a fabricated running agent.
+            const agent = await findGvisorComputerByLaunchRequest(userId, launchRequestId).catch(() => null);
+            if (agent?.id === result.computerId && agent.deployment_mode === "hivra-managed"
+              && (agent.status === "running" || agent.status === "stopped")) {
+              return apiSuccess({ agent: sanitizeHivraAgentRow(agent), launchRequestId, computerId: result.computerId,
+                launch: { state: "accepted", phase: "accepted" } }, 201);
+            }
+          }
+          return apiSuccess({ launchRequestId, computerId: result.computerId,
+            launch: { state: "reconciling", phase: "reconciling" } }, 202);
+        } catch (error) {
+          if (!(error instanceof GvisorComputerError)) throw error;
+          return apiError(error.message, error.code === "capacity_limit" ? 403 : error.code === "conflict" ? 409 : 503,
+            undefined, { code: error.code, launchRequestId });
+        }
       }
       let target;
       try {

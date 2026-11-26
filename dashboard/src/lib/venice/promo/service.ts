@@ -12,7 +12,7 @@
 // import it: whoever has the cookie (signup, billing page loader, the redeem
 // route) passes `{ ref, code }` to recordVeniceAttribution / redeemVeniceCode.
 //
-// HOOKS (all flag-gated by HIVRA_VENICE_PROMO_ENABLED, all best-effort: a promo
+// HOOKS (all Canary-only and flag-gated, all best-effort: a promo
 // failure is logged and never fails the launch, request or top-up it rides on):
 //   * launch credit: tryGrantLaunchCredit runs (1) when a managed Venice proxy
 //     key is minted for a card wallet (the launch of an agent in credits mode),
@@ -28,7 +28,6 @@ import {
   codeMatches,
   evaluateLaunchEligibility,
   isCampaignGrantable,
-  isVenicePromoEnabled,
   launchCreditReferenceId,
   normalizePromoCode,
   promoLineLabel,
@@ -40,6 +39,7 @@ import {
   type PromoCampaign,
   type PromoKind,
 } from "./core";
+import { isVenicePromoEnabled } from "../promo-flag";
 
 const SOURCE = "venice-promo";
 

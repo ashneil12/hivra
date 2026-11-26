@@ -51,6 +51,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ requ
       agent: sanitizeHivraAgentRow(saved.agent) }));
     const gvisor = await findGvisorComputerByLaunchRequest(userId, requestId);
     if (!gvisor) return noStore(apiError("No saved launch was found for this request.", 404));
+    if (gvisor.deployment_mode === "hivra-managed" && gvisor.status === "provisioning") {
+      return noStore(apiSuccess({ launchRequestId: requestId, phase: "reconciling",
+        launch: { state: "reconciling", phase: "reconciling" } }, 202));
+    }
+    if (gvisor.deployment_mode === "hivra-managed" && gvisor.status !== "running" && gvisor.status !== "stopped") {
+      return noStore(apiError("This managed launch reservation was closed.", 409, undefined,
+        { code: "managed_gvisor_cancelled", launchRequestId: requestId }));
+    }
     return noStore(apiSuccess({ launchRequestId: requestId, phase: "accepted",
       agent: sanitizeHivraAgentRow(gvisor) }));
   } catch {

@@ -972,7 +972,7 @@ ${script.slice(start, end)}`;
         'sanitize_runtime_env_file /tmp/hermes-compose-generated.env "generated compose env"'
       );
       const composeReplay = updateScript.indexOf(
-        "cat /tmp/hermes-compose-generated.env >> /seed/.env"
+        'env_file_surgical_upsert /seed/.env "$compose_env_key" "$compose_env_line"'
       );
       const composeStart = updateScript.indexOf("docker compose up -d");
 
@@ -1001,15 +1001,15 @@ ${script.slice(start, end)}`;
       // died on the container's next recreate.
       const snapshotIdx = updateScript.indexOf("cp /seed/.env /tmp/hermes-compose-generated.env");
       const clobberIdx = updateScript.indexOf("cp /state/.env /seed/.env");
-      const reseedIdx = updateScript.indexOf("cat /tmp/hermes-compose-generated.env >> /seed/.env");
+      const reseedIdx = updateScript.indexOf('env_file_surgical_upsert /seed/.env "$compose_env_key" "$compose_env_line"');
 
       expect(snapshotIdx).toBeGreaterThan(0);
       // Snapshot must be taken BEFORE the copy destroys the generated file...
       expect(snapshotIdx).toBeLessThan(clobberIdx);
       // ...and replayed AFTER it.
       expect(reseedIdx).toBeGreaterThan(clobberIdx);
-      // Delete-then-append, so the generated value wins and no key is duplicated.
-      expect(updateScript).toContain('sed -i "/^${compose_env_key}=/d" /seed/.env');
+      // Surgical upsert, so the generated value wins without rewriting unrelated bytes.
+      expect(updateScript).toContain('env_file_surgical_upsert /seed/.env "$compose_env_key" "$compose_env_line"');
     });
 
     it("update-mode compose-env re-seed covers the keys the runtime env cannot carry", () => {
@@ -2162,8 +2162,10 @@ ${script.slice(start, end)}`;
       };
       const artifacts = buildWebUIProvisioningArtifacts(malicious);
       expect(artifacts.envFile).not.toMatch(/(^|\n)__HERMES_EOF__(\r?\n|$)/);
+      // The collapsed value carries spaces, so the shell-safe serializer
+      // single-quotes it — literal in bash, stripped by dotenv readers.
       expect(artifacts.envFile).toContain(
-        "HERMES_WEBUI_BOT_NAME=ok__HERMES_EOF__rm -rf /"
+        "HERMES_WEBUI_BOT_NAME='ok__HERMES_EOF__rm -rf /'"
       );
 
       // If a heredoc body ever does carry a bare terminator (any artifact, any
@@ -2648,8 +2650,8 @@ ${script.slice(start, end)}`;
     expect(script).toContain("API_SERVER_ENABLED API_SERVER_HOST API_SERVER_PORT TERMINAL_ENV");
     expect(script).toContain("managed_env_keys='PATH GH_CONFIG_DIR XDG_CONFIG_HOME");
     expect(script).toContain("cp /seed/hermes.env /tmp/hermes-generated.env");
-    expect(script).toContain('sed -i "s|^${managed_env_key}=.*|${managed_env_line}|" "$webui_env_tmp"');
-    expect(script).toContain('printf "\\n%s\\n" "$managed_env_line" >> "$webui_env_tmp"');
+    expect(script).toContain('env_file_surgical_upsert "$webui_env_tmp" "$managed_env_key" "$managed_env_line"');
+    expect(script).not.toContain('sed -i "s|^${managed_env_key}=.*|${managed_env_line}|" "$webui_env_tmp"');
     expect(script).toContain("cp /state/.env /seed/hermes.env");
     // Atomic publish: build on a temp on the same volume and rename it over
     // /state/.env (which the gateway reloads every turn) — never edit in place,
@@ -2666,7 +2668,7 @@ ${script.slice(start, end)}`;
     expect(script).toContain("Remove retired WebUI password-auth env keys from persisted state");
     expect(script).toContain("retired_env_keys='HERMES_WEBUI_PASSWORD'");
     expect(script).toContain("for retired_env_key in $retired_env_keys; do");
-    expect(script).toContain('sed -i "/^${retired_env_key}=/d" "$webui_env_tmp"');
+    expect(script).toContain('env_file_surgical_delete "$webui_env_tmp" "$retired_env_key" ""');
 
     const stripIdx = script.indexOf("retired_env_keys='HERMES_WEBUI_PASSWORD'");
     const copyToComposeEnvIdx = script.indexOf("cp /state/.env /seed/.env");
@@ -2683,7 +2685,7 @@ ${script.slice(start, end)}`;
     expect(script).toContain("TELEGRAM_BOT_TOKEN");
     expect(script).toContain("CANARY_SHAPE_PROBE");
     expect(script).toContain("canary_probe_env_keys='TELEGRAM_BOT_TOKEN'");
-    expect(script).toContain('sed -i "/^${canary_probe_env_key}=.*CANARY_SHAPE_PROBE/d" "$webui_env_tmp"');
+    expect(script).toContain('env_file_surgical_delete "$webui_env_tmp" "$canary_probe_env_key" "CANARY_SHAPE_PROBE"');
 
     const scrubIdx = script.indexOf("canary_probe_env_keys='TELEGRAM_BOT_TOKEN'");
     const publishIdx = script.indexOf('mv -f "$webui_env_tmp" /state/.env');
@@ -2703,7 +2705,7 @@ ${script.slice(start, end)}`;
     expect(script).toContain("Remove stale model-pin env keys from persisted state");
     expect(script).toContain("stale_model_pin_env_keys='HERMES_MODEL HERMES_INFERENCE_MODEL'");
     expect(script).toContain("for stale_model_pin_env_key in $stale_model_pin_env_keys; do");
-    expect(script).toContain('sed -i "/^${stale_model_pin_env_key}=/d" "$webui_env_tmp"');
+    expect(script).toContain('env_file_surgical_delete "$webui_env_tmp" "$stale_model_pin_env_key" ""');
 
     // Must run on the temp env before the atomic publish back to /state/.env.
     const scrubIdx = script.indexOf("stale_model_pin_env_keys='HERMES_MODEL HERMES_INFERENCE_MODEL'");
@@ -2905,7 +2907,7 @@ ${script.slice(start, end)}`;
         // ...which is snapshotted before the clobber and replayed after it.
         const snapshotIdx = script.indexOf("cp /seed/.env /tmp/hermes-compose-generated.env");
         const clobberIdx = script.indexOf("cp /state/.env /seed/.env");
-        const reseedIdx = script.indexOf("cat /tmp/hermes-compose-generated.env >> /seed/.env");
+        const reseedIdx = script.indexOf('env_file_surgical_upsert /seed/.env "$compose_env_key" "$compose_env_line"');
         expect(snapshotIdx).toBeGreaterThan(-1);
         expect(clobberIdx).toBeGreaterThan(snapshotIdx);
         expect(reseedIdx).toBeGreaterThan(clobberIdx);
@@ -2980,7 +2982,7 @@ ${script.slice(start, end)}`;
         expect(configYaml).toContain('provider: "custom"');
         expect(configYaml).not.toContain('provider: "deepseek"');
         expect(envFile).toContain(
-          "HERMES_MANAGED_VENICE_ENABLE_URL=https://app.hermesos.test/dashboard/billing?managedVenice=deposit&wallet=hermesos"
+          "HERMES_MANAGED_VENICE_ENABLE_URL='https://app.hermesos.test/dashboard/billing?managedVenice=deposit&wallet=hermesos'"
         );
 
         // Clean-slate (deploy-card "Managed (Venice)? = OFF") guard: even if a
@@ -3751,7 +3753,7 @@ describe("clearing managed runtime env keys the user removed", () => {
     // A key still present in the generated env must be left to the upsert pass —
     // the `continue` is what stops this from deleting live values every redeploy.
     expect(script).toContain('if grep -q "^${clearable_env_key}=" /tmp/hermes-generated.env; then');
-    expect(script).toContain('sed -i "/^${clearable_env_key}=/d" "$webui_env_tmp"');
+    expect(script).toContain('env_file_surgical_delete "$webui_env_tmp" "$clearable_env_key" ""');
   });
 
   it("does not put BANKR_* anywhere near the clear pass", () => {
@@ -3873,15 +3875,14 @@ describe("BANKR_* reconcile for user-connected wallets (bankrRuntimeReconcile)",
     // BANKR_* reconcile piece lives, for every run that must not reconcile: no
     // wallet row or a failed lookup (bankr null), a Hivra-provisioned wallet, a
     // user wallet delivered without the flag, and flags the builder must ignore.
-    // Pinned to the bytes the script had before the reconcile existed (commit
-    // 046a85c4), so any change here shows up. Unlike the full script it does not
-    // depend on the deployment env. If you change the state-seed script on
-    // purpose, check the new body with this test's `body` and re-pin the hash.
+    // Pinned after the update switched to byte-preserving env edits. Unlike
+    // the full script, the body does not depend on the deployment environment.
+    // When intentionally changing this body, verify it and re-pin the hash.
     describe("pins the state-seed script of every run without a reconcile", () => {
-      const PRESERVE_BODY_SHA256 = "654642d45d4ef878201bbf37c1b63014e77dae40d75a8f073f9ef9ef2303a2f8";
-      const PRESERVE_BODY_LENGTH = 10377;
-      const MANAGED_VENICE_PRESERVE_BODY_SHA256 = "381e94468e0c4070b2f9715774e2ab25bc69cd80250b6eb08b79a83d322511f0";
-      const MANAGED_VENICE_PRESERVE_BODY_LENGTH = 14415;
+      const PRESERVE_BODY_SHA256 = "5a0b9ecb61e33456f6b2f5fbe4eeff09980745586e16f4564e4dfa8071718256";
+      const PRESERVE_BODY_LENGTH = 12812;
+      const MANAGED_VENICE_PRESERVE_BODY_SHA256 = "e7b61b1fe9cc7f689bb57b5262b0fc916332188462fa6da6df4a0819474e3588";
+      const MANAGED_VENICE_PRESERVE_BODY_LENGTH = 16850;
 
       function body(p: WebUIDeployParams): string {
         const full = script(p);
