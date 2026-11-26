@@ -2,20 +2,17 @@ import type { ReactNode } from "react";
 import { Download } from "lucide-react";
 
 import { ActionLinks } from "@/components/public-editorial/ActionLinks";
-import { PUBLIC_PROJECT_LINKS, type DesktopDownloads } from "@/lib/public-project-links";
+import { getDesktopDownloads, PUBLIC_PROJECT_LINKS, type DesktopDownloads } from "@/lib/public-project-links";
 import editorial from "../../components/public-editorial/secondary-site.module.css";
 import styles from "./download.module.css";
 
 const SUPPORT_EMAIL = "info@hivra.cloud";
 
 /**
- * /download, in Ash's words (08-download.md). What the macOS section says comes from one record,
- * PUBLIC_PROJECT_LINKS.desktop.macos: while it is "pending" there is no installer and the page says
- * so; when it becomes "published" the page links that release and shows its label. No address, version
- * or waitlist is written here.
+ * The macOS section does not advertise the installer when desktop sign-in is unavailable.
  */
 export default function DownloadPage({
-  downloads = PUBLIC_PROJECT_LINKS.desktop,
+  downloads = getDesktopDownloads(),
   browserHref = PUBLIC_PROJECT_LINKS.browser,
 }: {
   downloads?: DesktopDownloads;
@@ -47,7 +44,7 @@ export default function DownloadPage({
                   rel="noopener noreferrer"
                   aria-describedby="download-macos-status"
                 >
-                  Download for macOS
+                  Download for Mac
                   <Download size={17} aria-hidden="true" />
                 </a>
               ) : (

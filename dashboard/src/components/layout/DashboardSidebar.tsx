@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useMediaQuery } from '@/lib/client/media-query';
 import { UserButton } from '@clerk/nextjs';
-import { AlertCircle, Bot, ChevronLeft, ChevronRight, Monitor, Search } from 'lucide-react';
+import { AlertCircle, Bot, ChevronLeft, ChevronRight, Download, Monitor, Search } from 'lucide-react';
 import Link from '@/components/ui/NavigationLink';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/theme-toggle';
@@ -41,6 +41,7 @@ interface DashboardSidebarProps {
   switcherOpen?: boolean;
   onSwitcherOpenChange?: (open: boolean) => void;
   showOpsLink?: boolean;
+  macDownloadHref?: string | null;
   /**
    * A page that draws its own sidebar next to the rail (the agent view) keeps
    * the rail as icons only. Its toggle opens the full rail over the page, as it
@@ -63,7 +64,7 @@ const COMPACT_RAIL_QUERY = '(min-width: 768px) and (max-width: 1023px)';
 
 export const DashboardSidebar = React.memo(function DashboardSidebar({
   userName, userEmail, accountCode, resourceOwnerKey, onAttentionCountChange,
-  switcherOpen: controlledSwitcherOpen, onSwitcherOpenChange, compact = false,
+  switcherOpen: controlledSwitcherOpen, onSwitcherOpenChange, macDownloadHref, compact = false,
 }: DashboardSidebarProps) {
   const owner = resourceOwnerKey ?? userEmail;
   const pathname = usePathname();
@@ -232,7 +233,14 @@ export const DashboardSidebar = React.memo(function DashboardSidebar({
         </Link>}
         <div className={styles.footer}>
           <nav aria-label="Manage" data-navigation-group="secondary" className={styles.navigation}>{filterDashboardNavigation(DASHBOARD_SECONDARY_NAVIGATION).map(renderNavigationItem)}</nav>
-          <nav aria-label="Applications and help" className={styles.navigation}>{DASHBOARD_UTILITY_NAVIGATION.map(renderNavigationItem)}</nav>
+          <nav aria-label="Applications and help" className={styles.navigation}>
+            {DASHBOARD_UTILITY_NAVIGATION.map(renderNavigationItem)}
+            {macDownloadHref && <a href={macDownloadHref} className={styles.navItem}
+              aria-label="Download for Mac" title={!effectivelyExpanded ? "Download for Mac" : undefined}>
+              <Download size={17} aria-hidden />
+              {effectivelyExpanded ? <span>Download for Mac</span> : <span className={styles.railLabel} aria-hidden>Mac</span>}
+            </a>}
+          </nav>
           <div className={styles.account}>
             {mounted ? <UserButton /> : <span className={styles.userPlaceholder} />}
             {effectivelyExpanded && <span className={styles.accountName}><strong>{userName}</strong><small>{userEmail}</small>
