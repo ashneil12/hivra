@@ -24,7 +24,7 @@ export const maxDuration = 300;
 
 const ROUTE = "/api/cron/detect-hetzner-orphans";
 /** ops-events keeps at most 25 array items, so each alert carries one batch. */
-export const ORPHAN_ALERT_BATCH_SIZE = 25;
+const ORPHAN_ALERT_BATCH_SIZE = 25;
 
 function sweepEnabled(): boolean {
   const v = process.env.HETZNER_ORPHAN_SWEEP_ENABLED?.trim().toLowerCase();
