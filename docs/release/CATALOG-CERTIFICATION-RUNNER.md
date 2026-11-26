@@ -6,16 +6,16 @@ This runner closes the loop between catalog curation and customer truth:
    `canary`;
 2. the certifier serially launches catalog entries on the exact public Canary
    revision customers are being served;
-3. every run ends with teardown evidence plus the audit-account reaper;
+3. every launch ends with verified teardown and leaves the standing account intact;
 4. a separate cheap-agent remediation worker picks up actionable product
    failures and tries to repair them in a bounded PR;
 5. the certifier retries after Canary, the manifest, or the provisioner
    changes, so a fix is believed only after a new live pass.
 
 The runner never promotes to production, never mutates Vercel or Supabase
-configuration, and never uses production secrets. It creates only the same
-throwaway Clerk test accounts and paid Canary computers already defined by the
-launch sweep.
+configuration, and never uses production secrets. It signs into a dedicated
+standing Clerk test account and creates only paid Canary computers. The ordinary
+launch sweep retains disposable signup for first-run coverage.
 
 ## Components
 
@@ -36,9 +36,9 @@ The implementation lives in `dashboard/scripts/catalog-certification/`:
   revalidation cadence. Failures back off instead of hot-looping paid VMs.
 - `run-once.sh` — checks out the exact served commit in a dedicated worktree,
   installs lockfile dependencies when they change, runs one-target launch
-  sweep, appends sanitized evidence to the local ledger, then runs the reaper
-  dry-run inventory and the scoped active reaper with
-  `HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp`.
+  sweep in standing-account mode, and appends sanitized evidence to the local
+  ledger. The sweep checks that the account is empty before launch and verifies
+  there are no remaining computers afterward.
 - `run-continuous.sh` — keeps `run-once.sh` alive with idle/error backoff.
 - `catalog-remediation.mjs` — dedupes actionable product failures by target
   and manifest fingerprint, skipping targets with open fix branches or recent
@@ -69,7 +69,7 @@ Important state files:
 - `certification-ledger.jsonl` — sanitized certification decisions. It omits
   account ids, agent ids, emails and secrets.
 - `remediation-ledger.jsonl` — remediation attempts and dedupe state.
-- `results/<runId>/` — raw sweep JSON, screenshots, runner log and reaper logs
+- `results/<runId>/` — raw sweep JSON, screenshots and runner log
   for local operator diagnosis.
 - `remediation/` — sanitized fixer input evidence and cheap-agent logs.
 
@@ -96,6 +96,14 @@ The Vercel project id and scope are configuration, not credentials. Clerk and
 Supabase secret values are fetched process-locally at runtime and are never in
 the plist.
 
+Provision a separate standing `+clerk_test` account on Canary using the
+[standing QA account procedure](../../dashboard/e2e/README.md#standing-canary-qa-account).
+Do not use the shared QA account or use the certification account for other
+tests. Put only the dedicated address in `$CERT_STATE/certification-account-email`
+(under the default state directory when `CERT_STATE` is unset), owned by the
+runner with mode `0600`. Keep the address out of the plist and repository. The
+runner never resets the plan or creates a missing account.
+
 ## Install or refresh the 24/7 runners
 
 From a checkout that contains this commit:
@@ -110,6 +118,10 @@ This installs and starts:
 
 - `cloud.hivra.catalog-certifier` — continuous serial live certification
 - `cloud.hivra.catalog-fixer` — continuous cheap-agent remediation
+
+To refresh files without starting either worker, pass `--no-start`. The new
+certifier refuses to launch against an older Canary revision that doesn't
+contain the standing-account harness.
 
 The installer copies scripts into `~/.local/state/hivra-catalog-certification/bin`
 so the running shell files are not overwritten when the certification worktree
@@ -155,7 +167,11 @@ attempt with backoff. The certifier alone decides whether the fix worked.
 - exact public served Canary SHA recorded in every result;
 - Clerk key must be `sk_test_`;
 - audit emails stay `+clerk_test` on reserved example domains;
-- the scoped reaper runs after every certification attempt;
+- the sweep verifies teardown through the product and Canary agent records; the
+  disposable audit-account reaper is not used;
+- a nonempty certification account blocks the next launch; investigate pending
+  work or leaked resources before intervening, and verify cleanup before removing
+  any stale certification lock;
 - a passed sweep is invalidated if revision evidence mismatches or teardown
   leaves agents/instances behind;
 - no automatic production promotion, ever.

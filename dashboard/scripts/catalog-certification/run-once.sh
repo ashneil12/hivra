@@ -2,6 +2,7 @@
 # Certify one universal-catalog launch against the exact public Canary revision.
 # Serial by design: one paid customer-visible computer at a time. Never promotes.
 set -euo pipefail
+umask 077
 
 REPO="${CERT_REPO:-$HOME/Projects/Hivra-public-canary}"
 WORKTREE="${CERT_WORKTREE:-$HOME/Worktrees/hivra/catalog-certification-runner}"
@@ -15,11 +16,18 @@ PROJECT_ID="${HIVRA_CANARY_VERCEL_PROJECT_ID:-}"
 IDLE_MINUTES="${CERT_IDLE_MINUTES:-0}"
 
 mkdir -p "$STATE/results"
+account_file="$STATE/certification-account-email"
+if [ ! -f "$account_file" ] || [ -L "$account_file" ] || [ ! -O "$account_file" ] || [ "$(stat -f %Lp "$account_file")" != 600 ]; then
+  echo "[certify] provision the dedicated standing account and put its address in the runner's owner-only account file" >&2
+  exit 2
+fi
+export CERTIFICATION_ACCOUNT_EMAIL="$(cat "$account_file")"
 LOCK="$STATE/certification-lock.d"
 if ! mkdir "$LOCK" 2>/dev/null; then
-  if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +360 2>/dev/null)" ]; then rm -rf "$LOCK"; mkdir "$LOCK"; else echo "catalog certification already running" >&2; exit 0; fi
+  echo "[certify] certification lock exists; verify the previous run and its cleanup before removing a stale lock" >&2
+  exit 2
 fi
-trap 'rm -rf "$LOCK"' EXIT
+trap 'rmdir "$LOCK"' EXIT
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,6 +49,11 @@ echo "[certify] resolving served Canary revision"
 served_json="$(node "$SCRIPT_DIR/served-canary-revision.mjs" --host "$HOST" --owner "$OWNER" --repo "$GH_REPO" --ref "$REF" "${scope_args[@]}")"
 sha="$(printf '%s' "$served_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);process.stdout.write(j.sha)})')"
 deployment="$(printf '%s' "$served_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);process.stdout.write(j.deploymentId)})')"
+served_project="$(printf '%s' "$served_json" | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).projectId')"
+if [ "$served_project" != "$PROJECT_ID" ]; then
+  echo "[certify] configured project does not match the resolved deployment" >&2
+  exit 2
+fi
 echo "[certify] $HOST is $deployment at $sha"
 
 git -C "$REPO" fetch -q origin "$REF"
@@ -50,8 +63,10 @@ if ! git -C "$REPO" cat-file -e "$sha^{commit}" 2>/dev/null; then
 fi
 
 if [ -e "$WORKTREE/.git" ]; then
-  git -C "$WORKTREE" reset -q --hard
-  git -C "$WORKTREE" clean -qfd
+  if [ -n "$(git -C "$WORKTREE" status --porcelain)" ]; then
+    echo "[certify] refusing to overwrite changes in the certification checkout" >&2
+    exit 2
+  fi
   git -C "$WORKTREE" checkout -q --detach "$sha"
 else
   mkdir -p "$(dirname "$WORKTREE")"
@@ -64,6 +79,10 @@ if [ "$checkout_sha" != "$sha" ]; then
 fi
 
 cd "$WORKTREE/dashboard"
+if [ ! -f e2e/launch-sweep/standing-account.ts ]; then
+  echo "[certify] the served revision does not support standing-account certification" >&2
+  exit 2
+fi
 lock_hash="$(shasum -a 256 package-lock.json | awk '{print $1}')"
 hash_file="node_modules/.certification-package-lock-sha256"
 if [ ! -x node_modules/.bin/playwright ] || [ ! -f "$hash_file" ] || [ "$(cat "$hash_file" 2>/dev/null || true)" != "$lock_hash" ]; then
@@ -102,6 +121,8 @@ fi
 eval "$env_exports"
 unset env_exports
 export HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp
+export LAUNCH_SWEEP_CERTIFICATION=1
+export LAUNCH_SWEEP_BASE_URL="https://$HOST"
 export LAUNCH_SWEEP_CANARY_SHA="$sha"
 export LAUNCH_SWEEP_ONLY="$target"
 export LAUNCH_SWEEP_IDLE_MINUTES="$IDLE_MINUTES"
@@ -125,32 +146,17 @@ node "$HELPER_DIR/append-certification-result.mjs" \
 append_status=$?
 set -e
 
-# Required post-run verification: first inventory what an unscoped reaper would
-# touch, then actively reap only this run's audit account with the explicit
-# live-audit opt-in. The reaper is part of certification, not an optional helper.
-set +e
-npm run audit:first-run:cleanup -- --dry-run >"$out_dir/reaper-dry-run.log" 2>&1
-dry_reap_status=$?
-HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp npm run audit:first-run:cleanup -- --run-id="$run_id" --min-age-minutes=0 >"$out_dir/reaper-active.log" 2>&1
-active_reap_status=$?
-set -e
-
 row_passed=false
 if [ "$append_status" -eq 0 ]; then
   row_passed="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(j.passed?"true":"false")' "$out_dir/ledger-row.json")"
 fi
 
-echo "[certify] target=$target sweep_exit=$sweep_status certified=$row_passed reaper_dry=$dry_reap_status reaper_active=$active_reap_status"
-tail -30 "$out_dir/runner.log" || true
+echo "[certify] target=$target sweep_exit=$sweep_status certified=$row_passed"
 
 if [ "$append_status" -ne 0 ]; then
   echo "[certify] failed to append certification evidence" >&2
   cat "$out_dir/ledger-row-error.log" >&2 || true
   exit 2
-fi
-if [ "$active_reap_status" -ne 0 ]; then
-  echo "[certify] active scoped reaper failed or leaked; see $out_dir/reaper-active.log" >&2
-  exit 1
 fi
 if [ "$sweep_status" -ne 0 ] || [ "$row_passed" != "true" ]; then
   exit 1

@@ -40,6 +40,7 @@ import { proveChat, proveComputerOpen } from './launch-sweep/chat';
 import { measureIdle } from './launch-sweep/idle';
 import { checkPrivateOnly, privateOnlyCheckEnabled } from './launch-sweep/private-only';
 import { readSweepSoftware } from './launch-sweep/software';
+import { certificationEmail, cleanCertificationLaunch, openCertificationAccount } from './launch-sweep/standing-account';
 import { PORTABLE_HIVRA_PROVISIONER_VERSION } from '../src/lib/infrastructure/portable-provisioner-contract';
 import { launchFromTile, offeredTileNames, openFromLaunch, waitForReady } from './launch-sweep/journey';
 import { agentEvidence, agentsStillOnRecord, grantSweepPlan, removeSweepPlan } from './launch-sweep/plan';
@@ -47,6 +48,7 @@ import { SweepFailure, SweepRecorder } from './launch-sweep/result';
 import { OWN_SERVER_ONLY_TILES, SWEEP_TARGETS, selectedTargets, type SweepTarget } from './launch-sweep/targets';
 
 const ENABLED = process.env.LAUNCH_SWEEP === '1';
+const targets = selectedTargets();
 
 function envInt(name: string, fallback: number): number {
   const parsed = Number.parseInt(process.env[name] ?? '', 10);
@@ -76,6 +78,7 @@ interface SweepEnv {
   idleMinutes: number;
   /** Profile ids to keep running after a pass, to read inside them (reap later). */
   keepPassed: string[];
+  certificationEmail?: string;
 }
 
 function checkoutSha(): string | undefined {
@@ -122,6 +125,7 @@ function sweepEnv(): SweepEnv {
     // How long to watch each working agent sit idle (0 skips).
     idleMinutes: envMinutes('LAUNCH_SWEEP_IDLE_MINUTES', 10),
     keepPassed: (process.env.LAUNCH_SWEEP_KEEP_PASSED ?? '').split(',').map((value) => value.trim()).filter(Boolean),
+    certificationEmail: certificationEmail(process.env, targets, baseUrl),
   };
 }
 
@@ -191,6 +195,7 @@ test.describe('launch sweep', () => {
   test.skip(!ENABLED, 'LAUNCH_SWEEP=1 is required: this launches real computers.');
 
   test('every tile Launch offers is covered by the sweep', async ({ browser }) => {
+    test.skip(process.env.LAUNCH_SWEEP_CERTIFICATION === '1', 'Certification runs exactly one target and does not sign up users.');
     const env = sweepEnv();
     const email = auditEmail(`sweep-tiles-${env.runId}`, AUDIT_EMAIL_DOMAIN);
     let userId: string | null = null;
@@ -214,7 +219,7 @@ test.describe('launch sweep', () => {
     }
   });
 
-  for (const target of selectedTargets()) {
+  for (const target of targets) {
     test(`${target.tile} launches and answers`, async ({ browser }, testInfo) => {
       testInfo.setTimeout(envInt('LAUNCH_SWEEP_TEST_TIMEOUT_MS', 60 * 60_000));
       const env = sweepEnv();
@@ -242,12 +247,19 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
   let stage: SweepFailure['stage'] = 'account';
 
   try {
-    const email = auditEmail(`sweep-${target.profileId}-${env.runId}`, AUDIT_EMAIL_DOMAIN);
-    const signup = await signUpSweepAccount(browser, env, email);
-    userId = signup.userId;
-    context = signup.context;
-    await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, userId);
-    page = await context.newPage();
+    if (env.certificationEmail) {
+      const standing = await openCertificationAccount(browser, env, env.certificationEmail, (opened) => { context = opened; });
+      userId = standing.userId;
+      page = standing.page;
+      context = page.context();
+    } else {
+      const email = auditEmail(`sweep-${target.profileId}-${env.runId}`, AUDIT_EMAIL_DOMAIN);
+      const signup = await signUpSweepAccount(browser, env, email);
+      userId = signup.userId;
+      context = signup.context;
+      await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, userId);
+      page = await context.newPage();
+    }
     recorder.done('account');
 
     stage = 'choose';
@@ -301,10 +313,12 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
       recorder.done('idle');
     }
   } catch (err) {
-    recorder.fail(err, stage);
+    recorder.fail(env.certificationEmail && stage === 'account'
+      ? new SweepFailure('account', 'harness_environment', err instanceof Error ? err.message : 'Certification account setup failed')
+      : err, stage);
     await screenshot(page, recorder, env.outDir, 'fail');
   } finally {
-    if (!recorder.result.agentId && context) {
+    if (!recorder.result.agentId && context && (!env.certificationEmail || userId)) {
       recorder.result.agentId = (await listHivraAgents(context.request, env.baseUrl).catch(() => []))[0]?.id
         ?? (await listInstances(context.request, env.baseUrl).catch(() => []))[0]?.id
         ?? null;
@@ -314,7 +328,15 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
     }
     const keep = (env.keepFailed && !recorder.result.passed && recorder.result.failure?.category === 'product')
       || (recorder.result.passed && env.keepPassed.includes(target.profileId));
-    if (userId && !keep) {
+    if (env.certificationEmail && userId && page) {
+      try {
+        const inventory = await cleanCertificationLaunch(page, env, userId);
+        recorder.result.teardown = { ...inventory, accountDeleted: false };
+      } catch {
+        recorder.result.teardown = { agentsLeft: 0, instancesLeft: 0, accountDeleted: false, error: 'Standing account cleanup could not be verified' };
+      }
+      recorder.done('teardown');
+    } else if (userId && !keep) {
       await teardown(context, page, env, userId, recorder);
       recorder.done('teardown');
     }
@@ -325,6 +347,7 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
   }
 
   const { failure, teardown: torn } = recorder.result;
+  if (env.certificationEmail && torn?.error) throw new Error(torn.error);
   if (torn && (torn.agentsLeft > 0 || torn.instancesLeft > 0)) {
     throw new Error(`[launch-sweep] ${target.tile}: teardown left ${torn.agentsLeft} agent(s) and ${torn.instancesLeft} instance(s) running.`);
   }

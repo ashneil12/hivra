@@ -324,6 +324,20 @@ test("append row invalidates a pass when revision evidence or cleanup is wrong",
   assert.match(leaked.failure.reason, /left paid computers/);
 });
 
+test("a passing app requires a successful sweep and verified teardown without deleting the account", () => {
+  const args = { file: "/tmp/abcd1234-it-tools.json", target: "it-tools", canarySha: SHA,
+    provisionerVersion: PROVISIONER, runId: "abcd1234", now: () => NOW, sweepExitCode: 0 };
+  const teardown = { agentsLeft: 0, instancesLeft: 0, accountDeleted: false };
+  const result = sweepResult({ teardown });
+  assert.equal(certificationRowFromSweep({ ...args, result }).passed, true);
+  assert.equal(certificationRowFromSweep({ ...args, result, sweepExitCode: 1 }).passed, false);
+  for (const unverified of [undefined, {}, { ...teardown, error: "unverified" }]) {
+    const row = certificationRowFromSweep({ ...args, result: sweepResult({ teardown: unverified }) });
+    assert.equal(row.passed, false);
+    assert.equal(row.failure.stage, "teardown");
+  }
+});
+
 
 function certificationFailure(overrides = {}) {
   return {
