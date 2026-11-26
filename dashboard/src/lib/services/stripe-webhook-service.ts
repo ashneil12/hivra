@@ -1366,6 +1366,7 @@ export class StripeWebhookService {
         await applyTierChange({
           userId,
           newTier: tierFromPlanKey(otherLane.plan),
+          ...(otherLane.source === "token_holding" && { holderSeats: true }),
           source: "stripe",
           reason: `subscription deleted (${subscription.id}); ${otherLane.source} ${otherLane.plan} entitlement remains`,
         });

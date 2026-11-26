@@ -311,6 +311,8 @@ function LegacyPlansTab({ c, heading }: { c: BillingController; heading: string 
       selfServeDowngradeEnabled: c.flags.selfServeDowngradeEnabled,
       changePlanRequiresCheckout: c.changePlanRequiresCheckout,
       tokenUnit,
+      holderAdmission:
+        c.holderAdmission.status === "ready" ? c.holderAdmission.state : c.holderAdmission.status,
     });
 
   // Cadence only matters when a card goes through checkout: in-place plan
@@ -393,6 +395,10 @@ function LegacyPlansTab({ c, heading }: { c: BillingController; heading: string 
             </div>
           )}
         </div>
+      )}
+
+      {path === "token" && tokenMode === "hold" && c.holderAdmission.state === "none" && (
+        <p className={styles.changeNote}>Qualify to join the holder access waitlist. Hosted compute starts after admission.</p>
       )}
 
       {isApple && (

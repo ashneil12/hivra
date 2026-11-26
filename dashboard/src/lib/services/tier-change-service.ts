@@ -7,7 +7,7 @@
  *
  * What it does, per call:
  *   1. Update `hermes_instances.resource_tier` for every instance owned by the
- *      user (DB write).
+ *      user in the affected funding cohort (DB write).
  *   2. Resolve each instance's TARGET SIZE against the new tier (see
  *      resolveTargetSize below) and write it.
  *   3. For each instance, kick a live VM resize to that target (Proxmox
@@ -15,8 +15,8 @@
  *      more disruptive code path (full container recreate); MVP defers
  *      Hetzner live resize to next provisioning.
  *
- * `resource_tier` is the ENTITLEMENT LABEL and is uniform across the user's
- * instances. cpu_limit/ram_limit are the box's ACTUAL SIZE and are per-row —
+ * `resource_tier` is the ENTITLEMENT LABEL and is uniform within the funding
+ * cohort. cpu_limit/ram_limit are the box's ACTUAL SIZE and are per-row —
  * they are NOT the same thing, and conflating them is what this service used
  * to get wrong. See resolveTargetSize for why.
  *
@@ -28,6 +28,8 @@
 
 import "server-only";
 
+import { randomUUID } from "crypto";
+
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   resolveEffectiveTierSpec,
@@ -38,8 +40,13 @@ import {
   getProxmoxHostRoutingConfigFromInfrastructure,
   type ProxmoxInfrastructure,
 } from "@/lib/services/proxmox-infrastructure";
-import { resizeProxmoxVm } from "@/lib/services/proxmox-instance-service";
+import {
+  PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER,
+  isProxmoxResizeOutcomeIndeterminateConservative,
+  resizeProxmoxVm,
+} from "@/lib/services/proxmox-instance-service";
 import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
+import { proxmoxPlacementRpcPolicy } from "@/lib/proxmox/placement-policy";
 import { priorityForResourceTier } from "@/lib/subscription/agent-slots";
 import { isVeniceBoostEligible } from "@/lib/billing/venice-compute-boost";
 import { log } from "@/lib/logger";
@@ -68,6 +75,8 @@ export interface ApplyTierChangeParams {
    * takes effect on paid tiers (see resolveEffectiveTierSpec).
    */
   veniceBoost?: boolean;
+  /** Token admissions own their cohort separately from account-wide paid changes. */
+  holderSeats?: boolean;
 }
 
 export interface TierChangeOutcome {
@@ -83,9 +92,14 @@ interface InstanceRow extends InstanceLiveMutationState {
   id: string;
   config: { infrastructure?: Partial<ProxmoxInfrastructure> } | null;
   hetzner_server_id: number | null;
+  proxmox_node: string | null;
+  resize_operation_id: string | null;
+  resize_target_cpu: number | null;
+  resize_target_ram_mb: number | null;
   cpu_limit: number | null;
   ram_limit: number | null;
   resource_tier: string | null;
+  seat_funding: string | null;
   gateway_url: string | null;
   host_id: string | null;
 }
@@ -132,15 +146,28 @@ interface TargetSize {
 function resolveTargetSize(
   row: InstanceRow,
   spec: { cpuLimit: number; ramLimitMb: number },
-  instanceCount: number
+  singleAllocation: boolean
 ): TargetSize {
-  if (instanceCount === 1) {
+  if (singleAllocation) {
     return { cpu: spec.cpuLimit, ramMb: spec.ramLimitMb };
   }
   return {
     cpu: Math.min(row.cpu_limit ?? spec.cpuLimit, spec.cpuLimit),
     ramMb: Math.min(row.ram_limit ?? spec.ramLimitMb, spec.ramLimitMb),
   };
+}
+
+function resizeOperationIdForTarget(row: InstanceRow, target: TargetSize): string {
+  if (
+    row.resize_operation_id
+    && row.resize_target_cpu != null
+    && row.resize_target_ram_mb != null
+    && Number(row.resize_target_cpu) === target.cpu
+    && Number(row.resize_target_ram_mb) === target.ramMb
+  ) {
+    return row.resize_operation_id;
+  }
+  return randomUUID();
 }
 
 export async function applyTierChange(
@@ -155,7 +182,7 @@ export async function applyTierChange(
   // only stacks on paid tiers — resolveEffectiveTierSpec enforces that.
   // Best-effort: a boost-table read hiccup must never fail a tier change, so
   // an error degrades to "no boost" rather than throwing.
-  let veniceBoost = params.veniceBoost;
+  let veniceBoost = params.holderSeats ? false : params.veniceBoost;
   if (veniceBoost === undefined) {
     try {
       veniceBoost = await isVeniceBoostEligible(params.userId);
@@ -176,7 +203,7 @@ export async function applyTierChange(
   // 1. Find all instances owned by this user that aren't deleted/scheduled
   const { data: instances, error: listErr } = await supabaseAdmin
     .from("hermes_instances")
-    .select("id, config, hetzner_server_id, host_id, cpu_limit, ram_limit, resource_tier, gateway_url, status, lifecycle_state, archive_uri, archive_sha256, proxmox_vmid")
+    .select("id, config, hetzner_server_id, host_id, proxmox_node, resize_operation_id, resize_target_cpu, resize_target_ram_mb, cpu_limit, ram_limit, resource_tier, seat_funding, gateway_url, status, lifecycle_state, archive_uri, archive_sha256, proxmox_vmid")
     .eq("user_id", params.userId)
     .not("status", "in", '("deleted","scheduled_for_deletion")');
 
@@ -184,7 +211,9 @@ export async function applyTierChange(
     throw new Error(`Failed to list user instances: ${listErr.message}`);
   }
 
-  const rows = (instances || []) as InstanceRow[];
+  const rows = ((instances || []) as InstanceRow[]).filter(
+    (row) => (row.seat_funding === "holder") === Boolean(params.holderSeats)
+  );
   if (rows.length === 0) {
     log.info("no active instances, no-op", {
       source: LOG_SOURCE,
@@ -195,66 +224,47 @@ export async function applyTierChange(
     return outcome;
   }
 
-  // 2. Resolve each row's target size, then write.
-  //
-  //    The entitlement label (resource_tier) is uniform and goes to every row
-  //    in one atomic write, so the user is never left half-tiered. Sizes are
-  //    per-row, so they're written grouped by identical target — when every
-  //    row lands on the same size (the common case: a single instance) that
-  //    collapses back into the one base write it has always been.
-  //
-  //    Every write here throws on failure so the Stripe webhook retries; the
-  //    tier write is load-bearing for billing/delivery correctness. Retry is
-  //    safe because resolveTargetSize is idempotent — clamping only ever moves
-  //    a row toward its target, never past it.
+  let singleAllocation = rows.length === 1;
+  if (params.holderSeats && singleAllocation
+    && ((rows[0].cpu_limit ?? 0) < spec.cpuLimit || (rows[0].ram_limit ?? 0) < spec.ramLimitMb)) {
+    // The holder pool spans Hermes and Hivra. A lone Hermes row sharing
+    // with a stopped computer or an in-flight claim is still a split pool.
+    const { data, error } = await supabaseAdmin.rpc("holder_admission_existing_usage", {
+      p_user_id: params.userId, p_exclude_hermes_instance_id: rows[0].id,
+    });
+    const other = data?.[0];
+    if (error || other?.cpu == null || other?.ram_mb == null) {
+      throw new Error("Could not verify other token-holder allocations.");
+    }
+    singleAllocation = Number(other.cpu) === 0 && Number(other.ram_mb) === 0;
+  }
   const targets = new Map<string, TargetSize>(
-    rows.map((r) => [r.id, resolveTargetSize(r, spec, rows.length)])
+    rows.map((r) => [r.id, resolveTargetSize(r, spec, singleAllocation)])
   );
 
-  const sizeGroups = new Map<string, { size: TargetSize; rowIds: string[] }>();
-  for (const row of rows) {
+  // Commit the whole cohort and its pending container resizes together. An
+  // allocation changed by a concurrent worker invalidates the entire batch.
+  const changes = rows.map(row => {
     const target = targets.get(row.id)!;
-    const key = `${target.cpu}:${target.ramMb}`;
-    const group = sizeGroups.get(key);
-    if (group) group.rowIds.push(row.id);
-    else sizeGroups.set(key, { size: target, rowIds: [row.id] });
-  }
-
-  const updatedAt = new Date().toISOString();
-  const uniformSize =
-    sizeGroups.size === 1 ? [...sizeGroups.values()][0].size : null;
-
-  const baseUpdate = {
-    resource_tier: params.newTier,
-    ...(uniformSize
-      ? { cpu_limit: uniformSize.cpu, ram_limit: uniformSize.ramMb }
-      : {}),
-    updated_at: updatedAt,
-  };
-
-  const { error: updateErr } = await supabaseAdmin
-    .from("hermes_instances")
-    .update(baseUpdate)
-    .eq("user_id", params.userId)
-    .in("id", rows.map((r) => r.id));
-
-  if (updateErr) {
-    throw new Error(`Failed to write new tier: ${updateErr.message}`);
-  }
-
-  // Mixed sizes: one follow-up write per distinct target. Skipped entirely
-  // when the base write already carried a uniform size.
-  if (!uniformSize) {
-    for (const { size, rowIds } of sizeGroups.values()) {
-      const { error: sizeErr } = await supabaseAdmin
-        .from("hermes_instances")
-        .update({ cpu_limit: size.cpu, ram_limit: size.ramMb, updated_at: updatedAt })
-        .eq("user_id", params.userId)
-        .in("id", rowIds);
-      if (sizeErr) {
-        throw new Error(`Failed to write instance sizes: ${sizeErr.message}`);
-      }
-    }
+    return {
+      id: row.id,
+      previous_tier: row.resource_tier ?? null,
+      previous_cpu: row.cpu_limit,
+      previous_ram: row.ram_limit,
+      cpu_limit: target.cpu,
+      ram_limit: target.ramMb,
+      operation_id: resizeOperationIdForTarget(row, target),
+    };
+  });
+  const { data: written, error } = await supabaseAdmin.rpc("apply_hermes_tier_allocations", {
+    p_owner: params.userId,
+    p_holder: Boolean(params.holderSeats),
+    p_tier: params.newTier,
+    p_changes: changes,
+    ...proxmoxPlacementRpcPolicy(process.env),
+  });
+  if (error || written !== rows.length) {
+    throw new Error(`Failed to write new tier: ${error?.message ?? "allocation changed"}`);
   }
   outcome.instancesUpdated = rows.length;
 
@@ -278,23 +288,12 @@ export async function applyTierChange(
     });
   }
 
-  // 2b. Raise tier_change_pending on every instance whose per-container caps
-  //     ACTUALLY changed — BOTH backends. The CPU/RAM limits are baked into
-  //     the container's compose (`deploy.resources.limits`), so even a Proxmox
-  //     VM (whose VM-level ceiling is raised live by the qm-set in step 3)
-  //     still needs a volume-safe container redeploy to pick up the new cgroup
-  //     limits — otherwise the extra compute (e.g. the Venice boost) never
-  //     reaches the agent. The instant unlock flow and the apply-pending-resizes
-  //     cron consume this flag (run applyLiveUpdate, then clear it).
-  //
-  //     Only flag rows whose caps differ from what they already had, so a
-  //     steady-state re-apply (same tier, same boost) doesn't trigger a
-  //     needless container restart. NON-FATAL: a failed flag just means the
-  //     redeploy waits for the next fleet sync.
   // A cold-storage transition may have happened while the tier writes ran.
   // Never resize a missing guest or one owned by another lifecycle operation.
   const liveRowIds = new Set<string>();
   for (const row of rows) {
+    // Proxmox topology changes can restart a guest. Keep a paused holder offline.
+    if (params.holderSeats && (row.status !== "running" || row.lifecycle_state !== "active")) continue;
     if (!blocksInstanceLiveMutation(row)
       && !(await readInstanceLiveMutationBlock(supabaseAdmin, row.id, row))) {
       liveRowIds.add(row.id);
@@ -308,25 +307,6 @@ export async function applyTierChange(
     })
     .map((r) => r.id);
 
-  if (capsChangedRowIds.length > 0) {
-    // Cold archives contain the previous compose/container caps. Keep this
-    // obligation even while archived: the lifecycle-aware worker skips it
-    // until restoration, then recreates the container with the paid caps.
-    const { error: flagErr } = await supabaseAdmin
-      .from("hermes_instances")
-      .update({ tier_change_pending: true })
-      .eq("user_id", params.userId)
-      .in("id", capsChangedRowIds);
-    if (flagErr) {
-      log.error("failed to raise tier_change_pending", flagErr, {
-        source: LOG_SOURCE,
-        failureType: "tier_change_pending_flag_failed",
-        userId: params.userId,
-        affectedInstanceCount: capsChangedRowIds.length,
-      });
-    }
-  }
-
   // 3. For Proxmox-backed instances, kick a live VM resize. Hetzner
   //    instances would need a docker-compose recreate (drops in-flight chats);
   //    MVP defers that path — they pick up new caps on next provision.
@@ -335,8 +315,23 @@ export async function applyTierChange(
     const provider = row.config?.infrastructure?.provider;
     const vmid = row.config?.infrastructure?.vmid;
     if (provider === "proxmox" && typeof vmid === "number") {
-      if (await readInstanceLiveMutationBlock(supabaseAdmin, row.id, row)) continue;
       const target = targets.get(row.id)!;
+      const resizeOperationId =
+        changes.find((change) => change.id === row.id)?.operation_id ?? null;
+      const allocationFenced =
+        Boolean(row.proxmox_node)
+        && (row.lifecycle_state === "provisioning" || row.lifecycle_state === "active")
+        && (row.cpu_limit !== target.cpu || row.ram_limit !== target.ramMb || row.resize_operation_id === resizeOperationId);
+      const resizeClaim = resizeOperationId && allocationFenced
+        ? { operationId: resizeOperationId, cpu: target.cpu, ramMb: target.ramMb }
+        : undefined;
+      if (await readInstanceLiveMutationBlock(
+        supabaseAdmin,
+        row.id,
+        row,
+        params.holderSeats ? target : undefined,
+        resizeClaim
+      )) continue;
       outcome.resizesAttempted += 1;
       try {
         const result = await resizeProxmoxVm({
@@ -351,6 +346,26 @@ export async function applyTierChange(
             host_id: row.host_id ?? null,
           }),
         });
+        const vmConfigApplied = result.ok || (result.stdout ?? "").includes(PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER);
+        if (resizeOperationId && allocationFenced) {
+          if (vmConfigApplied) {
+            const { data: completed, error: completionError } = await supabaseAdmin.rpc(
+              "complete_hermes_instance_resize_allocation",
+              { p_instance_id: row.id, p_user_id: params.userId, p_operation_id: resizeOperationId }
+            );
+            if (completionError || completed !== true) {
+              throw new Error(`Proxmox resize applied, but allocation completion failed: ${completionError?.message ?? "resize operation fence mismatch"}`);
+            }
+          } else if (!isProxmoxResizeOutcomeIndeterminateConservative(result)) {
+            const { data: rolledBack, error: rollbackError } = await supabaseAdmin.rpc(
+              "rollback_hermes_instance_resize_allocation",
+              { p_instance_id: row.id, p_user_id: params.userId, p_operation_id: resizeOperationId }
+            );
+            if (rollbackError || rolledBack !== true) {
+              throw new Error(`Proxmox resize allocation rollback failed: ${rollbackError?.message ?? "resize operation fence mismatch"}`);
+            }
+          }
+        }
         if (!result.ok) {
           throw new Error("Proxmox resize failed");
         }

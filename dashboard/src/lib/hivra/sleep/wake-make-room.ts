@@ -3,6 +3,7 @@ import "server-only";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveHivraProxmoxHost } from "../proxmox-target";
+import { EFFECTIVE_SLEEP_CONTROL_FILTER } from "../seat-funding";
 
 /**
  * Making room for a wake on a server short of memory.
@@ -58,7 +59,7 @@ async function loadNappersOnHost(hostId: string, exceptAgentId: string): Promise
     .is("operation_id", null)
     .eq("deployment_mode", "hivra-managed")
     .eq("computer_substrate", "proxmox-kvm")
-    .eq("always_on", false)
+    .or(EFFECTIVE_SLEEP_CONTROL_FILTER)
     .neq("id", exceptAgentId)
     .order("sleep_tier_changed_at", { ascending: true })
     .limit(CANDIDATE_SCAN);

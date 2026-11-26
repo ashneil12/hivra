@@ -207,7 +207,7 @@ jobs:
       # (--runInBand): parallel jest workers on the 4-CPU runner made the
       # PostgreSQL, Python and shell-fixture suites time out or race.
       - name: Run jest shard
-        run: npm run test:ci -- --shard=${{ matrix.shard }}/8
+        run: NODE_OPTIONS=--experimental-vm-modules npm run test:ci -- --shard=${{ matrix.shard }}/8
 
   build:
     name: Production build

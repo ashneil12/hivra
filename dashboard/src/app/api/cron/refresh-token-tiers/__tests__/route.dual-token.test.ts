@@ -62,6 +62,7 @@ function thenable<T>(data: T) {
 
 function mockTables(tables: {
   instances: Array<{ user_id: string; resource_tier: string }>;
+  admissions?: Array<{ user_id: string; tier: string }>;
   snapshots: Array<{ user_id: string; token_address: string; balance_raw: string }>;
   qualifications?: Array<{ user_id: string; tier: "pro" | "power"; token_key: string }>;
 }) {
@@ -69,8 +70,9 @@ function mockTables(tables: {
     tables.snapshots.map((s) => ({ ...s, qualifies_base_tier: BigInt(s.balance_raw) >= BigInt(ONE), checked_at: new Date().toISOString() }))
   );
   (supabaseAdmin!.from as jest.Mock).mockImplementation((table: string) => {
+    if (table === "holder_admissions") return thenable((tables.admissions ?? []).map(a => ({ ...a, state: "admitted" })));
     if (table === "hermes_instances") {
-      return thenable(tables.instances.map((i) => ({ ...i, cpu_limit: 0.5, ram_limit: 1024 })));
+      return thenable(tables.instances.map((i) => ({ ...i, seat_funding: "holder", cpu_limit: 0.5, ram_limit: 1024 })));
     }
     if (table === "token_holding_snapshots") return snapshotBuilder;
     if (table === "token_tier_qualifications") {
@@ -129,6 +131,7 @@ it("counts a grandfathered user's $HermesOS Pro row and ignores a non-member's",
       { user_id: "new_pro", resource_tier: "credit_base" },
     ],
     snapshots: [],
+    admissions: [{ user_id: "old_pro", tier: "pro" }, { user_id: "new_pro", tier: "pro" }],
     qualifications: [
       { user_id: "old_pro", tier: "pro", token_key: "hermesos" },
       { user_id: "new_pro", tier: "pro", token_key: "hermesos" },

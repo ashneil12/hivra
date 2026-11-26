@@ -412,6 +412,11 @@ describe("/pricing questions", () => {
 
     expect(screen.getByText("Do I need to buy $HIVRA?")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "token information" })).toHaveAttribute("href", "/token");
+    const tokenAnswer = PRICING_FAQ.find((item) => item.q === "Do I need to buy $HIVRA?")?.a ?? "";
+    expect(tokenAnswer).toContain("$299 for Pro (2 vCPU and 4 GB)");
+    expect(tokenAnswer).toContain("$599 for Power (4 vCPU and 8 GB)");
+    expect(tokenAnswer).toContain("live market price");
+    expect(tokenAnswer).toContain("keep the amount locked when they qualified");
     const faq = faqGraph(container);
     expect(faq.mainEntity).toHaveLength(PRICING_FAQ.length);
     expect(faq.mainEntity.map((entry) => entry.name)).toContain("Do I need to buy $HIVRA?");

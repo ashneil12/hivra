@@ -151,7 +151,7 @@ export function buildEmailContent(params: SendParams): EmailContent | null {
           ? `A 7-day cooldown applies before you can re-qualify. Cooldown ends: ${cooldownStr}.`
           : `A 7-day cooldown applies before you can re-qualify.`,
         ``,
-        `When the cooldown ends, depositing back to the current threshold of ${thresholdStr} ${sym} will re-qualify you at the current rate. (Note: this means launch-rate holders who re-qualify after the launch promo window pay the standard threshold from then on.)`,
+        `When the cooldown ends, depositing back to the current threshold of ${thresholdStr} ${sym} will re-qualify you at the current holder rate.`,
         ``,
         `View your wallet: https://hermesos.cloud/dashboard/wallet`,
       ].join("\n"),

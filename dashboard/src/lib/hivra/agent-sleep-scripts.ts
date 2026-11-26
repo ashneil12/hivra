@@ -22,6 +22,10 @@
 // receipt rather than the exit code. An unexpected shell failure still prints a
 // receipt (reason script_error, state unknown) and keeps its non-zero exit.
 
+import { isIPv4 } from "node:net";
+import { buildProxmoxVmOwnedByInstanceCheck } from "@/lib/services/proxmox/script-builders";
+import { isSafeGatewayHostname } from "@/lib/services/proxmox-gateway-caddy-site";
+import { buildClassicHolderIdleProbe } from "@/lib/services/classic-holder-idle-probe";
 import { hibernationDiscardBody } from "./agent-power-scripts";
 import { buildVmidBoundGuestExecPrelude } from "@/lib/hivra/vmid-bound-guest-exec";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
@@ -375,7 +379,7 @@ export const INTERRUPTED_SAVE_SHELL = String.raw`recover_interrupted_save() {
   return 0
 }`.replaceAll("\\${", "${");
 
-function stateShell(fastConfig: boolean): string {
+function stateShell(fastConfig: boolean, classic = false): string {
   return `# One config read serves the binding check and the first state read.
 read_state() {
   local out
@@ -406,7 +410,7 @@ tier_of() {
 }
 observe() { if read_state; then OBS="$(tier_of)"; else OBS=unknown; fi; }
 # The exact binding tag, checked once per script, from the same config read the state read then reuses.
-require_binding() {
+${classic ? "" : `require_binding() {
   [ -n "$EXPECTED_BINDING_TAG" ] || finish false binding_missing
   local tags
   CONFIG="$(${fastConfig ? "hivra_fast_qm" : "qm"} config "$VMID" 2>/dev/null)" || finish false unreachable
@@ -414,7 +418,7 @@ require_binding() {
   printf '%s\\n' "$tags" | tr ';' '\\n' | grep -Fx -- "$EXPECTED_BINDING_TAG" >/dev/null \\
     || finish false binding_mismatch
   CONFIG_FRESH=1
-}`;
+}`}`;
 }
 
 /** Checks the instantaneous signals of a probe. Prints ok, active or invalid. */
@@ -1270,12 +1274,12 @@ mark marker "$STEP"
 ` : ""}finish true napped napping`;
 }
 
-function hibernateBody(hostIngress = false, trimMemory = false): string {
+function hibernateBody(hostIngress = false, trimMemory = false, nappingOnly = false): string {
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
 FROM="$(tier_of)"
-case "$FROM" in awake|napping) ;; *) finish false not_sleepable "$FROM" ;; esac
+case "$FROM" in ${nappingOnly ? "napping" : "awake|napping"}) ;; *) finish false not_sleepable "$FROM" ;; esac
 if [ "$FROM" = awake ]; then
   STEP="$(now_ms)"
   probe_or_finish
@@ -1330,7 +1334,8 @@ fi
 ` : ""}STEP="$(now_ms)"
 RC=0
 SAVE_SINCE="$(( $(date +%s) - 1 ))"
-command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} systemd-run --unit="hivra-sleep-$VMID" --collect --wait --quiet qm suspend "$VMID" --todisk 1 </dev/null >/dev/null 2>&1 || RC=$?
+${nappingOnly ? `printf '%s' "$SAVE_SINCE" > "$CLASSIC_SAVE_STAMP" || finish false fence_failed "$FROM"
+` : ""}command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} systemd-run --unit="hivra-sleep-$VMID" --collect --wait --quiet qm suspend "$VMID" --todisk 1 </dev/null >/dev/null 2>&1 || RC=$?
 observe
 # A save that did not end cleanly leaves the computer locked, in a state nothing reads: settle it here.
 if [ "$RC" != 0 ] && [ "$OBS" = unknown ] && recover_interrupted_save "$SAVE_SINCE"; then CONFIG_FRESH=0; observe; fi
@@ -1340,7 +1345,7 @@ ${hostIngress ? `# Only a computer that is still paused keeps its nap marker; th
 # Still running: requests flow again.
 if [ "$FROM" = awake ] && [ "$OBS" = awake ]; then ingress_undrain; fi
 ` : ""}HAS_VMSTATE=0
-if printf '%s\\n' "$CONFIG" | grep '^vmstate:' >/dev/null; then HAS_VMSTATE=1; fi
+if printf '%s\\n' "$CONFIG" | grep ${nappingOnly ? "-E '^vmstate:[[:space:]]+[^[:space:]]+'" : "'^vmstate:'"} >/dev/null; then HAS_VMSTATE=1; fi
 if [ "$OBS" = hibernated ] && [ "$HAS_VMSTATE" = 1 ]; then
   ONBOOT_PENDING=0
   finish true hibernated hibernated
@@ -1486,14 +1491,19 @@ capacity_inputs() {
 }`;
 }
 
-function wakeBody(hostIngress = false, coldStart = false): string {
+function wakeBody(hostIngress = false, coldStart = false, classic = false): string {
   // What the restore branch expects to find: saved memory, or (cold start) whichever of the two it saw first.
   const expect = coldStart ? '"$EXPECT"' : "hibernated";
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
-FROM="$(tier_of)"
-WOKE_REASON=resumed
+${classic ? `if [ "$LOCK" = suspending ] && [ -f "$CLASSIC_SLEEP_MARK" ] && [ -f "$CLASSIC_SAVE_STAMP" ]; then
+  recover_interrupted_save "$(cat "$CLASSIC_SAVE_STAMP")" || finish false save_unsettled unknown
+  read_state || finish false state_unreadable
+fi
+` : ""}FROM="$(tier_of)"
+${classic ? `if [ "$FROM" != awake ] && [ ! -f "$CLASSIC_SLEEP_MARK" ]; then finish false sleep_not_owned "$FROM"; fi
+` : ""}WOKE_REASON=resumed
 AGENT_WAIT=${WAKE_AGENT_WAIT_SECONDS}
 STEP="$(now_ms)"
 case "$ST/$QMP/$LOCK" in
@@ -1529,7 +1539,8 @@ ${coldStart ? `    # A disk boot needs startup memory before the balloon can rec
     # The state may have changed while this waited for the lock.
     read_state || finish false state_unreadable
     [ "$(tier_of)" = ${expect} ] || finish false state_changed "$(tier_of)"
-    ADMIT="$(now_ms)"
+${classic ? `    grep -Eq '^vmstate:[[:space:]]+[^[:space:]]+' <<<"$CONFIG" || finish false memory_missing unknown
+` : ""}    ADMIT="$(now_ms)"
     if ! run_admission "$VMID" "$TARGET_FLOOR_MB" "$TARGET_MAX_MB" "$TARGET_MAX_CPU" \\
         "$HOST_RESERVE_MB" "$ENFORCE_CEILINGS" "$CPU_DENSITY_MILLI" "$MEMORY_DENSITY_MILLI" 0 </dev/null >&2; then
       finish false capacity ${expect}
@@ -1578,13 +1589,24 @@ ingress_unmark
 # One guest exec over the guest agent socket: set the clock from this host, kill the tunnel hard, restart it.
 # After a restore the agent may need a few seconds to answer; the helper retries until AGENT_WAIT runs out.
 STEP="$(now_ms)"
-ctl $((AGENT_WAIT + 45)) fixup "$VMID" "$AGENT_WAIT"
+${classic ? `# Classic uses a host Caddy route, so only correct the frozen guest clock.
+for _ in $(seq 1 "$AGENT_WAIT"); do
+  if run_vmid_bound_guest_exec /bin/date -u -s "@$(date +%s)" </dev/null >/dev/null 2>&1; then
+    if [ -e "$ONBOOT_MARK" ]; then
+      qm set "$VMID" --onboot 1 >/dev/null && rm -f "$ONBOOT_MARK" || finish false onboot_failed awake
+    fi
+    rm -f "$CLASSIC_SLEEP_MARK" "$CLASSIC_SAVE_STAMP"
+    VIA=qm; finish true "$WOKE_REASON" awake
+  fi
+  sleep 1
+done
+finish false guest_clock awake` : `ctl $((AGENT_WAIT + 45)) fixup "$VMID" "$AGENT_WAIT"
 VIA="$CTL_VIA"
 TRIES="$CTL_TRIES"
 if [ -n "$CTL_STEPS" ]; then STEPS="\${STEPS:+$STEPS,}$CTL_STEPS"; fi
 mark fixup "$STEP"
 [ "$CTL_OK" = true ] || finish false "$CTL_REASON" awake
-finish true "$WOKE_REASON" awake`;
+finish true "$WOKE_REASON" awake`}`;
 }
 
 /**
@@ -1811,4 +1833,80 @@ export function parseWakeReceipt(stdout: string, expectedVmid?: number): WakeRec
   // A success went through a fixup, so it says how.
   if (base.ok && base.reason !== "cold" && via === "none" && row.via !== undefined) return null;
   return { ...base, via, tries: tries as number };
+}
+
+// Classic VMs predate Hivra binding tags. Bind the same shared power bodies
+// to Classic's existing VM name, IP, public wake route and Docker runtime.
+export function buildClassicHolderPowerScript(input: {
+  id: string; vmid: number; privateIpv4: string; gatewayHost: string;
+  sitesDirectory: string; generation: number; action: "nap" | "hibernate" | "wake"; admission: WakeAdmission;
+}): string {
+  const ownerCheck = buildProxmoxVmOwnedByInstanceCheck(input.vmid, input.id);
+  if (!isSafeGatewayHostname(input.gatewayHost) || !isIPv4(input.privateIpv4)
+    || !Number.isSafeInteger(input.generation) || input.generation < 1) throw new Error("Invalid Classic VM target");
+  assertAdmission(input.admission);
+  if (!["nap", "hibernate", "wake"].includes(input.action)) throw new Error("Invalid Classic VM action");
+  const wake = input.action === "wake";
+  const site = input.sitesDirectory + "/" + input.gatewayHost + ".caddy";
+  return `set -euo pipefail
+VMID=${input.vmid}
+TIER=${input.action}
+qm() { command timeout -k 5 30 qm "$@" </dev/null; }
+${buildVmidBoundGuestExecPrelude()}
+${receiptShell(wake ? "wake" : "sleep")}
+${ctlShell()}
+${stateShell(false, true)}
+${ownerCheck}
+${INTERRUPTED_SAVE_SHELL}
+${wake ? wakeAdmissionShell(input.admission, false) : ""}
+install -d -m 0755 /run/lock
+exec 9>/run/lock/hivra-vm-$VMID.lock
+flock -x -w 15 9 || finish false busy
+hermes_vm_owned_by_instance || finish false binding_mismatch
+CONFIG="$(qm config "$VMID")" || finish false unreachable
+if grep -Eq '^tags:.*hivra-bind-' <<<"$CONFIG"; then finish false binding_mismatch; fi
+ip="$(sed -nE '/^ipconfig0:/s#.*[ ,]ip=([0-9.]+)/.*#\\1#p' <<<"$CONFIG")"
+[ "$ip" = ${shellQuote(input.privateIpv4)} ] || finish false binding_mismatch
+CONFIG_FRESH=1
+# Reject delayed deliveries from an earlier DB claim under the same VM lock.
+install -d -m 0700 "$ONBOOT_MARK_DIR" || finish false fence_failed
+fence="$ONBOOT_MARK_DIR/classic-${input.id}.generation"
+if [ -e "$fence" ]; then
+  prior="$(cat "$fence")"
+  [[ "$prior" =~ ^[0-9]+$ ]] && (( prior < ${input.generation} )) || finish false superseded
+fi
+printf '%s' ${input.generation} > "$fence.tmp" && mv "$fence.tmp" "$fence" || finish false fence_failed
+ONBOOT_MARK="$ONBOOT_MARK_DIR/classic-onboot-${input.id}"
+CLASSIC_SLEEP_MARK="$ONBOOT_MARK_DIR/classic-own-${input.id}"
+CLASSIC_SAVE_STAMP="$ONBOOT_MARK_DIR/classic-save-${input.id}"
+${wake ? wakeBody(false, false, true) : `# A grandfathered VM without the browser door back in must stay awake.
+read_state || finish false state_unreadable
+FROM="$(tier_of)"
+[ "$FROM" = ${input.action === "nap" ? "awake" : "napping"} ] || finish false state_changed "$FROM"
+${input.action === "hibernate" ? 'test -f "$CLASSIC_SLEEP_MARK" || finish false sleep_not_owned "$FROM"' : ""}
+site=${shellQuote(site)}
+awk -v id=${shellQuote(input.id)} '$1=="redir" && $3=="302" {
+  n=split($2,parts,"/"); if (n==5 && parts[1]=="https:" && parts[3]!="" && parts[4]=="wake" && parts[5]==id) found=1
+} END {exit !found}' "$site" && systemctl is-active --quiet caddy && test -r ${shellQuote(input.admission.provisionerDirectory + "/hivra-host-capacity-admission")} || finish false wake_unavailable "$FROM"
+probe_or_finish() {
+  qga_lock || finish false probe_failed "$FROM"
+  answer="$(run_vmid_bound_guest_exec /bin/bash -c ${shellQuote(buildClassicHolderIdleProbe(input.id))} </dev/null)" || finish false activity_unconfirmed "$FROM"
+  qga_unlock
+  [ "$answer" = CLASSIC_IDLE ] || finish false activity_unconfirmed "$FROM"
+  : > "$CLASSIC_SLEEP_MARK" || finish false fence_failed awake
+  PROBE_JSON='{"classic_idle":true}'
+}
+${input.action === "nap" ? napBody() : hibernateBody(false, false, true)}`}
+`;
+}
+
+export function parseClassicHolderSleep(stdout: string, vmid: number, tier: SleepScriptTier) {
+  const row = readReceiptLine(stdout, SLEEP_RESULT_PREFIX);
+  if (!row || row.tier !== tier) return null;
+  const receipt = readReceiptBase(row, vmid);
+  if (!receipt || !receipt.ok) return receipt;
+  const idle = row.probe as { classic_idle?: unknown } | null;
+  if (tier === "nap" && (receipt.reason !== "napped" || idle?.classic_idle !== true || receipt.from !== "awake" || receipt.to !== "napping")) return null;
+  if (tier === "hibernate" && (receipt.reason !== "hibernated" || receipt.from !== "napping" || receipt.to !== "hibernated")) return null;
+  return receipt;
 }

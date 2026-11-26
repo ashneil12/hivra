@@ -65,6 +65,7 @@ import {
 import {
   beginHivraAgentSnapshot,
   beginHivraAgentSnapshotRestore,
+  HivraAgentOperationStoreError,
   claimHivraAgentOperation,
   completeHivraAgentSnapshot,
   completeHivraAgentSnapshotRestore,
@@ -1389,6 +1390,9 @@ ${startKickoff(operationId)}`,
 
     return apiError("Unknown action", 400);
   } catch (err) {
+    if (err instanceof HivraAgentOperationStoreError && err.code === "holder_capacity") {
+      return apiError("This action exceeds the available token-holder reservation.", 409);
+    }
     return handleApiError(err);
   }
 }

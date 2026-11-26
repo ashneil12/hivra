@@ -8,6 +8,7 @@
 
 import type Stripe from "stripe";
 import { supabaseAdmin } from "@/lib/supabase";
+import { NOT_HOLDER_SEAT_FILTER } from "@/lib/hivra/seat-funding";
 import { log } from "@/lib/logger";
 import { getStripePriceId, PLANS } from "@/lib/subscription/plans";
 import { activePlanLadder, isPlanLadderEnabled } from "@/lib/subscription/plan-ladder";
@@ -251,7 +252,8 @@ export async function releaseCardTrialSleep(userId: string, db: Db | null = supa
     .from("hivra_agents")
     .update({ sleep_policy: "off" })
     .eq("user_id", userId)
-    .eq("sleep_policy", "full");
+    .eq("sleep_policy", "full")
+    .or(NOT_HOLDER_SEAT_FILTER);
   if (updateError) throw new Error(`trial sleep release failed: ${updateError.message}`);
   return true;
 }
