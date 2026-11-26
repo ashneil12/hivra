@@ -39,6 +39,30 @@ function fixture(autoComplete: boolean): string {
   </script></body></html>`;
 }
 
+function invitationStepFixture(): string {
+  return `<!doctype html><html><body><script>
+    window.Clerk = { client: { signUp: { status: 'missing_requirements', createdSessionId: null } } };
+    document.body.innerHTML = '<button type="button">Accept invitation</button>';
+    document.querySelector('button').addEventListener('click', () => {
+      document.body.innerHTML = '<form><input name="emailAddress" value="${EMAIL}" disabled>' +
+        '<button class="cl-formButtonPrimary" type="submit">Continue</button></form>';
+      document.querySelector('form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const otp = document.createElement('input');
+        otp.setAttribute('data-input-otp', '');
+        document.body.innerHTML = '';
+        document.body.appendChild(otp);
+        otp.addEventListener('input', () => {
+          if (otp.value.length === 6) {
+            window.history.pushState({}, '', '/dashboard/launch');
+            window.Clerk = { user: { id: 'user_invitation_fixture' }, session: { id: 'sess_invitation_fixture' }, client: { signUp: { status: 'complete', createdSessionId: 'sess_invitation_fixture' } } };
+          }
+        });
+      });
+    });
+  </script></body></html>`;
+}
+
 async function installFixture(page: import('@playwright/test').Page, autoComplete = false): Promise<void> {
   await page.route('**/*', (route) => route.fulfill({
     status: 200,
@@ -46,6 +70,11 @@ async function installFixture(page: import('@playwright/test').Page, autoComplet
     body: fixture(autoComplete),
   }));
   await page.goto(`https://canary.hermesos.cloud/sign-up?redirect_url=${encodeURIComponent(REDIRECT)}`);
+}
+
+async function installInvitationStepFixture(page: import('@playwright/test').Page): Promise<void> {
+  await page.route('**/*', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: invitationStepFixture() }));
+  await page.goto('https://canary.hermesos.cloud/sign-up');
 }
 
 test.describe('Clerk invitation signup UI driver (offline)', () => {
@@ -64,5 +93,13 @@ test.describe('Clerk invitation signup UI driver (offline)', () => {
 
     await expect(completeClerkSignupUi(page, { email: EMAIL, timeoutMs: 8_000, requireOtpStep: true }))
       .rejects.toThrow(/without the Clerk test OTP step/);
+  });
+
+  test('accepts Clerk invitation acknowledgement before the signup form', async ({ page }) => {
+    await installInvitationStepFixture(page);
+
+    const result = await completeClerkSignupUi(page, { email: EMAIL, timeoutMs: 8_000, requireOtpStep: true });
+
+    expect(result).toMatchObject({ userId: 'user_invitation_fixture', otpUsed: true });
   });
 });
