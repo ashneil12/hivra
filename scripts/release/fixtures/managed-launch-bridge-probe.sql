@@ -69,9 +69,9 @@ begin
       operation,agent-'seat_funding',selection,null,1,1,false);
     if result->>'status' is distinct from 'invalid_request' then raise exception 'missing receipt funding: %',result; end if;
 
-    result := public.reserve_hivra_launch_model_bridge_v1(epoch,'bridge-grandfather','10101010-1010-4010-8010-101010101010',
+    result := public.reserve_hivra_launch_model_bridge_v1(epoch,'bridge-grandfather','00000000-0000-4000-8000-000000000101',
       fingerprints,operation,agent || '{"seat_funding":"holder"}',selection,null,0,1,false);
-    if result->>'status' is distinct from 'existing' or result->>'agentId' is distinct from '20202020-2020-4020-8020-202020202020' then
+    if result->>'status' is distinct from 'existing' or result->>'agentId' is distinct from '00000000-0000-4000-8000-000000000102' then
       raise exception 'pre-cutover request did not replay at %: %',epoch,result;
     end if;
     result := public.reserve_hivra_launch_model_bridge_v1(epoch,'bridge-grandfather',gen_random_uuid(),fingerprints,gen_random_uuid(),

@@ -12,10 +12,10 @@ declare
   result jsonb;
 begin
   result := public.reserve_hivra_launch_model_request_v3(
-    'bridge-grandfather','10101010-1010-4010-8010-101010101010',
+    'bridge-grandfather','00000000-0000-4000-8000-000000000101',
     jsonb_build_array(jsonb_build_object('version',2,'keyTag',repeat('a',64),'digest',repeat('b',64))),
-    '30303030-3030-4030-8030-303030303030',
-    jsonb_build_object('id','20202020-2020-4020-8020-202020202020','name','Old receipt',
+    '00000000-0000-4000-8000-000000000103',
+    jsonb_build_object('id','00000000-0000-4000-8000-000000000102','name','Old receipt',
       'type','codex','cpu',1,'ram',2,'deployment_mode','hivra-managed',
       'computer_substrate','proxmox-kvm','proxmox_host','bridge-host','operation_id',gen_random_uuid(),
       'infrastructure_binding_token_hash',repeat('c',64)),
