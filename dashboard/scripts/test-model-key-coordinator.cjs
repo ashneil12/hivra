@@ -30,11 +30,13 @@ function load(file) {
   const compiled = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
   }).outputText;
-  const resolveTs = base => (fs.existsSync(base + '.ts') ? base + '.ts' : path.join(base, 'index.ts'));
+  const loadSource = base => path.extname(base) === '.json'
+    ? require(base)
+    : load(fs.existsSync(base + '.ts') ? base + '.ts' : path.join(base, 'index.ts'));
   const localRequire = id => {
     if (stubs.has(id)) return stubs.get(id);
-    if (id.startsWith('@/')) return load(resolveTs(path.join(dashboard, 'src', id.slice(2))));
-    if (id.startsWith('.')) return load(resolveTs(path.resolve(path.dirname(file), id)));
+    if (id.startsWith('@/')) return loadSource(path.join(dashboard, 'src', id.slice(2)));
+    if (id.startsWith('.')) return loadSource(path.resolve(path.dirname(file), id));
     return require(id);
   };
   new Function('require', 'module', 'exports', '__filename', '__dirname', compiled)(localRequire, compiledModule, compiledModule.exports, file, path.dirname(file));

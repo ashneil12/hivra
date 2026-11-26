@@ -1,0 +1,50 @@
+{
+  "provisionerVersion": "2026.11.25.2",
+  "apps": {
+    "zeroclaw": {
+      "manifestSha256": "42853fc03455014879696bedf8c174e01c0b7483328ae69bb8a41b9a29e487b2",
+      "canarySha": "4bfe13577cd2dd7baa8917b970b5a3a6fa133cab",
+      "certifiedAt": "2026-11-26T18:13:34.127Z"
+    },
+    "anythingllm": {
+      "manifestSha256": "e4d4dbf9d5179da8b6175fc33d32e2351ffbd730c423f5c8c26e564369f974f6",
+      "canarySha": "043185e116d4de78373fa51d02a6c007ab023618",
+      "certifiedAt": "2026-11-26T19:37:21.272Z"
+    },
+    "qdrant": {
+      "manifestSha256": "8815dfa2e7f49fd3d169be6df1a13d1149344adfacdadf2d3e4623198f265895",
+      "canarySha": "043185e116d4de78373fa51d02a6c007ab023618",
+      "certifiedAt": "2026-11-26T19:42:35.259Z"
+    },
+    "jenkins": {
+      "manifestSha256": "d5e4153c3da18931e6bc75781e12504f2ca13ec51c2207ce1a4651faed49e9d6",
+      "canarySha": "3a962d7594208dd257a8e3e2a5000ab565292487",
+      "certifiedAt": "2026-11-26T16:48:59.014Z"
+    },
+    "clickhouse": {
+      "manifestSha256": "2fdfb8c69b3a6ac964b5fbceef9d7bb9f51d5500de9f353e37d91b13ad1e50e0",
+      "canarySha": "3a962d7594208dd257a8e3e2a5000ab565292487",
+      "certifiedAt": "2026-11-26T16:54:57.684Z"
+    },
+    "appsmith": {
+      "manifestSha256": "4c288a9578a94b1f9fa6ed68f6976c7cecce9ae3bcc7f0cf008f12b5e06bde2a",
+      "canarySha": "81008659a7eb44aa92abe04be4c3fb572a2777d5",
+      "certifiedAt": "2026-11-26T17:00:56.963Z"
+    },
+    "vaultwarden": {
+      "manifestSha256": "73afb1ce06a699ddb98b926cd8cee47076d01f6c9722e0718fa567e16242bb4a",
+      "canarySha": "b8cd42a3581dd330f3f9d62f18ca2c8f390c2923",
+      "certifiedAt": "2026-11-26T18:00:46.539Z"
+    },
+    "it-tools": {
+      "manifestSha256": "96f4a05266ce0ef8e01b0e2503ae64df14bcd718e23bb6e6e1b2a182329fb31f",
+      "canarySha": "b8cd42a3581dd330f3f9d62f18ca2c8f390c2923",
+      "certifiedAt": "2026-11-26T17:55:37.899Z"
+    },
+    "umami": {
+      "manifestSha256": "4aed2ec40090b0acd2e665a4d25a1c173b15dd81fd51cd5f4e0d2d4b20e29fb5",
+      "canarySha": "b8cd42a3581dd330f3f9d62f18ca2c8f390c2923",
+      "certifiedAt": "2026-11-26T18:07:14.998Z"
+    }
+  }
+}

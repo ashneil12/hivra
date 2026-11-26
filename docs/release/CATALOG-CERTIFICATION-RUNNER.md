@@ -79,6 +79,34 @@ Important state files:
 These files are local operator evidence. Do not paste raw ids, local paths,
 emails or secret-shaped strings into public git or GitHub output.
 
+## Publishing launch certification
+
+The public chooser and launch endpoint use the reviewed snapshot in
+`dashboard/src/lib/hivra/catalog-manifests/certification-allowlist.json`.
+The global `NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG=1` switch enables only entries
+whose manifest hash and provisioner release still match that snapshot. It
+does not grant new launch access to the rest of the registry.
+
+Configure `HIVRA_CATALOG_CERTIFIER_OWNER_ID` server-side in the Canary project
+with the Clerk user ID of the existing dedicated standing account before
+rolling out this gate. Only that signed-in account on canonical Git Canary
+can see and launch uncertified entries for certification. Do not set the
+variable on production or commit the account ID.
+
+After passes or product regressions, generate a proposed snapshot from the
+current release checkout and the operator ledger:
+
+```bash
+node dashboard/scripts/catalog-certification/export-allowlist.mjs dashboard \
+  "$HOME/.local/state/hivra-catalog-certification/certification-ledger.jsonl" \
+  > /tmp/hivra-certification-allowlist.json
+```
+
+Review the sanitized output and submit the snapshot and status change as a
+PR. An infrastructure retry does not erase a clean pass for unchanged
+inputs; a later product failure for those inputs removes it on refresh.
+The export never changes a project setting or promotes a deployment.
+
 ## Required operator configuration
 
 The LaunchAgents need only non-secret configuration:

@@ -8,6 +8,7 @@
 import type { AgentDef } from "@/lib/hivra/agent-catalog";
 import type { AgentWakeProfile } from "@/lib/hivra/agent-profiles/types";
 import { isUniversalCatalogEnabled } from "@/lib/hivra/universal-catalog-flag";
+import { hasCurrentCatalogCertification } from "./certification";
 import {
   buildCatalogAppLaunchSpec,
   CATALOG_APP_PORT_MAX,
@@ -62,6 +63,10 @@ export function isCatalogAppId(id: unknown): id is UniversalCatalogAppId {
   return typeof id === "string" && MANIFEST_BY_ID.has(id);
 }
 
+export function isCatalogAppLaunchable(manifest: CatalogAppManifest, certifier = false): boolean {
+  return isUniversalCatalogEnabled() && (certifier || hasCurrentCatalogCertification(manifest));
+}
+
 /** True when this catalog app renders its own web UI behind Hivra's token gate. */
 export function catalogAppHasWebSurface(manifest: CatalogAppManifest): boolean {
   return manifest.runtime.kind === "docker-web" || manifest.runtime.kind === "docker-stack" || Boolean(manifest.runtime.webService);
@@ -81,7 +86,7 @@ export const CATALOG_APP_GATEWAY_ENTRY = "/app/";
  * resource-gate, Manage, and the agent page. */
 export function catalogAppToAgentDef(
   manifest: CatalogAppManifest,
-  enabled = isUniversalCatalogEnabled(),
+  enabled = isCatalogAppLaunchable(manifest),
 ): AgentDef {
   const hostPort = catalogAppHostPort(manifest);
   const webSurface = catalogAppHasWebSurface(manifest);

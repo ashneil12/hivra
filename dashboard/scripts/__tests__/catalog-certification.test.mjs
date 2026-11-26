@@ -5,6 +5,7 @@ import test from "node:test";
 
 import { buildTestEnvExports, selectProductionEnvValue, shellQuote } from "../catalog-certification/canary-test-env.mjs";
 import { certificationRowFromSweep } from "../catalog-certification/append-certification-result.mjs";
+import { buildCertificationAllowlist } from "../catalog-certification/export-allowlist.mjs";
 import { chooseRemediation, remediationFingerprint, remediationRow, REMEDIATION_LEDGER_SCHEMA } from "../catalog-certification/catalog-remediation.mjs";
 import {
   CERTIFICATION_LEDGER_SCHEMA,
@@ -19,6 +20,41 @@ const OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98";
 const HOST = "canary.hermesos.cloud";
 const PROVISIONER = "2026.11.25.2";
 const NOW = new Date("2026-11-25T12:00:00.000Z");
+
+test("allowlist emits only clean, exact-revision passes and drops a subsequent product failure", () => {
+  const entry = { id: "example", manifestSha256: "a".repeat(64) };
+  const pass = {
+    profileId: entry.id,
+    manifestSha256: entry.manifestSha256,
+    canarySha: SHA,
+    checkoutSha: SHA,
+    expectedCanarySha: SHA,
+    provisionerVersion: PROVISIONER,
+    expectedProvisionerVersion: PROVISIONER,
+    passed: true,
+    sweepPassed: true,
+    sweepExitCode: 0,
+    reached: "teardown",
+    finishedAt: NOW.toISOString(),
+    teardown: { agentsLeft: 0, instancesLeft: 0, accountDeleted: false },
+  };
+  const apps = (...rows) => buildCertificationAllowlist([entry], rows, PROVISIONER).apps;
+  assert.deepEqual(apps(pass), { example: {
+    manifestSha256: entry.manifestSha256,
+    canarySha: SHA,
+    certifiedAt: NOW.toISOString(),
+  } });
+  for (const invalid of [
+    { canarySha: OTHER_SHA },
+    { manifestSha256: "b".repeat(64) },
+    { expectedProvisionerVersion: "2026.11.20.5" },
+    { sweepExitCode: 1 },
+    { teardown: { agentsLeft: 1, instancesLeft: 0, accountDeleted: false } },
+  ]) assert.deepEqual(apps({ ...pass, ...invalid }), {});
+  const denied = { ...pass, passed: false, failure: { category: "product" } };
+  assert.deepEqual(apps(pass, denied), {});
+  assert.deepEqual(apps(pass, { ...denied, failure: { category: "harness_environment" } }), apps(pass));
+});
 
 function inspectFixture(overrides = {}) {
   return JSON.stringify({
