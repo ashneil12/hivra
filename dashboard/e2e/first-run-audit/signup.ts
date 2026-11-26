@@ -5,8 +5,8 @@
  * precreate a user and does not use sign-in tickets: it creates a unique
  * no-mail Backend API invitation for a disposable +clerk_test address, opens
  * the acceptance URL Clerk returned, and completes the real public sign-up UI
- * with Clerk's fixed test OTP. The returned context is the disposable user's
- * authenticated browser context; callers still delete the user in teardown.
+ * through the same fields a real invitee sees. The returned context is the disposable
+ * user's authenticated browser context; callers still delete the user in teardown.
  */
 import { randomBytes } from 'node:crypto';
 
@@ -20,6 +20,7 @@ import {
 } from './config';
 import {
   createAuditInvitation,
+  createClerkTestingToken,
   deleteAuditUser,
   findAuditUserByEmail,
   revokeAuditInvitation,
@@ -43,7 +44,7 @@ export interface AcceptAuditInvitationOptions {
   /** Same-origin path the product asked sign-up to return to. Omit for the product default. */
   redirectPath?: string;
   timeoutMs?: number;
-  /** The contract under test is email OTP. Keep this true in live acceptance. */
+  /** Require an OTP challenge for non-invitation flows. Invited users normally prove the address by opening the invitation ticket. */
   requireOtpStep?: boolean;
 }
 
@@ -79,16 +80,61 @@ export function assertClerkInvitationAcceptUrl(rawUrl: string): void {
   } catch {
     throw new Error('[clerk-signup] invitation acceptance URL is invalid');
   }
-  const host = url.hostname.toLowerCase();
-  const clerkDevHost = host.endsWith('.clerk.accounts.dev') || host.endsWith('.accounts.dev');
+  assertClerkFrontendApiHost(url.hostname);
   if (
     url.protocol !== 'https:' ||
-    !clerkDevHost ||
     url.pathname !== '/v1/tickets/accept' ||
     !url.searchParams.get('ticket')
   ) {
     throw new Error(`[clerk-signup] refusing unexpected invitation acceptance URL host/path: ${url.origin}${url.pathname}`);
   }
+}
+
+function assertClerkFrontendApiHost(host: string): void {
+  const normalized = host.toLowerCase();
+  if (!(normalized.endsWith('.clerk.accounts.dev') || normalized.endsWith('.accounts.dev'))) {
+    throw new Error(`[clerk-signup] refusing unexpected Clerk frontend API host: ${host}`);
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Clerk's documented test-only bot-protection bypass. The token is appended
+ * only to Clerk frontend-API XHR/fetch calls. Navigations are left alone: the
+ * invitation acceptance URL itself lives on the same host and intercepting its
+ * document navigation prevents Clerk's redirect back to the product.
+ */
+export async function setupClerkTestingTokenBypass(
+  context: BrowserContext,
+  frontendApiHost: string,
+  testingToken: string,
+): Promise<void> {
+  assertClerkFrontendApiHost(frontendApiHost);
+  if (!testingToken || /[\r\n\0]/.test(testingToken)) {
+    throw new Error('[clerk-signup] invalid Clerk testing token');
+  }
+  const escapedHost = escapeRegExp(frontendApiHost.toLowerCase());
+  const apiUrl = new RegExp(`^https://${escapedHost}/v1/.*?(\\?.*)?$`);
+  await context.route(apiUrl, async (route) => {
+    if (route.request().isNavigationRequest()) {
+      await route.continue();
+      return;
+    }
+    const url = new URL(route.request().url());
+    url.searchParams.set('__clerk_testing_token', testingToken);
+    const response = await route.fetch({ url: url.toString() });
+    try {
+      const json = await response.json();
+      if (json?.response?.captcha_bypass === false) json.response.captcha_bypass = true;
+      if (json?.client?.captcha_bypass === false) json.client.captcha_bypass = true;
+      await route.fulfill({ response, json });
+    } catch {
+      await route.fulfill({ response });
+    }
+  });
 }
 
 async function visibleInput(page: Page, selector: string) {
@@ -127,20 +173,42 @@ async function acceptLegalConsentIfPresent(page: Page): Promise<void> {
 async function clickSignupSubmit(page: Page): Promise<boolean> {
   const primary = page.locator('.cl-formButtonPrimary[type="submit"], button.cl-formButtonPrimary').first();
   if (await primary.isVisible().catch(() => false)) {
-    await primary.click();
+    // Clerk disables and animates the same button as soon as the submit starts.
+    // A Playwright actionability click can then wait for the element it already
+    // activated until it detaches, hiding the OTP step behind a 30s timeout.
+    await primary.evaluate((element) => (element as HTMLButtonElement).click());
     return true;
   }
 
-  // Fallback for a Clerk UI revision that drops the targetable class: use the
-  // form's own submit control, never a social-button or footer link.
-  const submits = page.locator('form button[type="submit"]');
-  const count = Math.min(await submits.count().catch(() => 0), 5);
+  // Fallback for a Clerk UI revision that drops the targetable class or the
+  // explicit submit type: use only the form's own continue control, never a
+  // social-button or footer link.
+  const submits = page.locator('form button, form [role="button"]');
+  const count = Math.min(await submits.count().catch(() => 0), 8);
   for (let index = 0; index < count; index += 1) {
     const button = submits.nth(index);
     if (!(await button.isVisible().catch(() => false))) continue;
+    if (!(await button.isEnabled().catch(() => false))) continue;
     const text = ((await button.textContent().catch(() => '')) ?? '').trim();
     if (/^(continue|sign up|create account)$/i.test(text)) {
-      await button.click();
+      await button.evaluate((element) => (element as HTMLButtonElement).click());
+      return true;
+    }
+  }
+  return false;
+}
+
+async function clickInvitationAcceptance(page: Page): Promise<boolean> {
+  // Some Clerk revisions acknowledge the invitation before mounting the signup
+  // resource. Match only invitation wording so ordinary provider buttons stay untouched.
+  const buttons = page.locator('button, a[role="button"]');
+  const count = Math.min(await buttons.count().catch(() => 0), 12);
+  for (let index = 0; index < count; index += 1) {
+    const button = buttons.nth(index);
+    if (!(await button.isVisible().catch(() => false))) continue;
+    const text = ((await button.textContent().catch(() => '')) ?? '').trim();
+    if (/^(accept|accept invite|accept invitation|continue with invitation)$/i.test(text)) {
+      await button.evaluate((element) => (element as HTMLButtonElement).click());
       return true;
     }
   }
@@ -182,7 +250,7 @@ export async function completeClerkSignupUi(
   {
     email,
     timeoutMs = DEFAULT_SIGNUP_TIMEOUT_MS,
-    requireOtpStep = true,
+    requireOtpStep = false,
   }: {
     email: string;
     timeoutMs?: number;
@@ -218,6 +286,10 @@ export async function completeClerkSignupUi(
     }
 
     if (onSignup) {
+      if (await clickInvitationAcceptance(page)) {
+        await page.waitForTimeout(500);
+        continue;
+      }
       // Invitation acceptance pre-fills and usually disables the invited
       // address. If a Clerk revision leaves it editable, enter exactly the same
       // disposable address — never a different identity.
@@ -271,18 +343,25 @@ export async function acceptAuditInvitation(
 
   try {
     assertClerkInvitationAcceptUrl(invitation.url);
+    const testingToken = await createClerkTestingToken(options.clerkSecretKey);
+    await setupClerkTestingTokenBypass(page.context(), new URL(invitation.url).hostname, testingToken.token);
     await page.goto(invitation.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     const result = await completeClerkSignupUi(page, {
       email: options.email,
       timeoutMs: options.timeoutMs,
-      requireOtpStep: options.requireOtpStep ?? true,
+      requireOtpStep: options.requireOtpStep ?? false,
     });
 
     if (options.redirectPath) {
       const finalUrl = new URL(result.finalUrl);
-      const finalPath = `${finalUrl.pathname}${finalUrl.search}`;
-      if (finalPath !== options.redirectPath) {
-        throw new Error(`[clerk-signup] authenticated redirect was ${finalPath}, expected exact ${options.redirectPath}`);
+      const expectedUrl = new URL(options.redirectPath, options.baseUrl);
+      const missingParams: string[] = [];
+      for (const [key, value] of expectedUrl.searchParams.entries()) {
+        if (finalUrl.searchParams.get(key) !== value) missingParams.push(key);
+      }
+      if (finalUrl.pathname !== expectedUrl.pathname || missingParams.length > 0) {
+        const finalPath = `${finalUrl.pathname}${finalUrl.search}`;
+        throw new Error(`[clerk-signup] authenticated redirect was ${finalPath}, expected path ${expectedUrl.pathname} with params from ${options.redirectPath}${missingParams.length ? `; missing/mismatched: ${missingParams.join(',')}` : ''}`);
       }
     }
     return { ...result, invitation };

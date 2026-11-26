@@ -10,14 +10,23 @@ import { completeClerkSignupUi } from './first-run-audit/signup';
 const EMAIL = 'qa-browser+clerk_test@example.test';
 const REDIRECT = '/dashboard/launch?agent=hermes&inference=venice&ref=venice&code=VENICE';
 
-function fixture(autoComplete: boolean): string {
+type FixtureOptions = {
+  autoComplete?: boolean;
+  invitationButtonLabel?: string;
+  bareContinueButton?: boolean;
+};
+
+function fixture({ autoComplete = false, invitationButtonLabel, bareContinueButton = false }: FixtureOptions = {}): string {
+  const button = bareContinueButton
+    ? '<button>Continue</button>'
+    : '<button class="cl-formButtonPrimary" type="submit">Continue</button>';
   return `<!doctype html><html><body><script>
     window.Clerk = { client: { signUp: { status: 'missing_requirements', createdSessionId: null } } };
-    setTimeout(() => {
+    const mountForm = () => {
       document.body.innerHTML = '<form>' +
         '<input name="emailAddress" value="${EMAIL}" disabled>' +
         '<input name="firstName"><input name="lastName">' +
-        '<button class="cl-formButtonPrimary" type="submit">Continue</button>' +
+        '${button}' +
       '</form>';
       document.querySelector('form').addEventListener('submit', (event) => {
         event.preventDefault();
@@ -35,15 +44,22 @@ function fixture(autoComplete: boolean): string {
         otp.addEventListener('input', () => { if (otp.value.length === 6) setTimeout(complete, 100); });
         ${autoComplete ? 'setTimeout(complete, 100);' : ''}
       });
-    }, 40);
+      ${bareContinueButton ? `document.querySelector('button').addEventListener('click', () => {
+        document.querySelector('form').dispatchEvent(new Event('submit', { cancelable: true }));
+      });` : ''}
+    };
+    ${invitationButtonLabel ? `
+      document.body.innerHTML = '<button>${invitationButtonLabel}</button>';
+      document.querySelector('button').addEventListener('click', mountForm);
+    ` : 'setTimeout(mountForm, 40);'}
   </script></body></html>`;
 }
 
-async function installFixture(page: import('@playwright/test').Page, autoComplete = false): Promise<void> {
+async function installFixture(page: import('@playwright/test').Page, options: FixtureOptions = {}): Promise<void> {
   await page.route('**/*', (route) => route.fulfill({
     status: 200,
     contentType: 'text/html',
-    body: fixture(autoComplete),
+    body: fixture(options),
   }));
   await page.goto(`https://canary.hermesos.cloud/sign-up?redirect_url=${encodeURIComponent(REDIRECT)}`);
 }
@@ -59,8 +75,24 @@ test.describe('Clerk invitation signup UI driver (offline)', () => {
     expect(`${finalUrl.pathname}${finalUrl.search}`).toBe(REDIRECT);
   });
 
+  test('accepts an invitation acknowledgement before the signup form mounts', async ({ page }) => {
+    await installFixture(page, { invitationButtonLabel: 'Accept invitation' });
+
+    const result = await completeClerkSignupUi(page, { email: EMAIL, timeoutMs: 8_000, requireOtpStep: true });
+
+    expect(result).toMatchObject({ userId: 'user_browser_fixture', otpUsed: true });
+  });
+
+  test('uses a continue control that relies on the browser default submit type', async ({ page }) => {
+    await installFixture(page, { bareContinueButton: true });
+
+    const result = await completeClerkSignupUi(page, { email: EMAIL, timeoutMs: 8_000, requireOtpStep: true });
+
+    expect(result).toMatchObject({ userId: 'user_browser_fixture', otpUsed: true });
+  });
+
   test('fails closed if the form completes without proving the OTP step', async ({ page }) => {
-    await installFixture(page, true);
+    await installFixture(page, { autoComplete: true });
 
     await expect(completeClerkSignupUi(page, { email: EMAIL, timeoutMs: 8_000, requireOtpStep: true }))
       .rejects.toThrow(/without the Clerk test OTP step/);

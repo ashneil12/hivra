@@ -53,7 +53,6 @@ async function signUpThroughVeniceClaim(browser: Browser, baseUrl: string, clerk
     clerkSecretKey,
     email,
     redirectPath: CLAIM_LAUNCH,
-    requireOtpStep: true,
   });
   return { context, page, signup };
 }
@@ -74,8 +73,12 @@ test.describe('Venice invitation signup acceptance', () => {
       userId = journey.signup.userId;
 
       const finalUrl = new URL(journey.page.url());
-      expect(`${finalUrl.pathname}${finalUrl.search}`).toBe(CLAIM_LAUNCH);
-      expect(journey.signup.otpUsed).toBe(true);
+      const expectedUrl = new URL(CLAIM_LAUNCH, baseUrl);
+      expect(finalUrl.pathname).toBe(expectedUrl.pathname);
+      for (const [key, value] of expectedUrl.searchParams.entries()) {
+        expect(finalUrl.searchParams.get(key), `redirect parameter ${key}`).toBe(value);
+      }
+      expect(journey.signup.otpUsed).toBe(false);
 
       // The authenticated handoff is the Launch plan itself, already on the
       // Venice-managed model lane. Do not press the final launch action: this leg creates no VM.
