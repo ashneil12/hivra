@@ -167,6 +167,6 @@ test("app CTA has a real destination and does not manufacture installer availabi
   render(<DownloadPage />);
   expect(screen.getByRole("heading", { level: 1, name: "Hivra on your computer." })).toBeVisible();
   expect(screen.getByRole("button", { name: /Download for macOS/ })).toBeDisabled();
-  expect(screen.queryByRole("button", { name: /Download for Windows/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Download for Windows/ })).toBeDisabled();
   expect(screen.getByRole("link", { name: "Open Hivra" })).toHaveAttribute("href", "/dashboard");
 });

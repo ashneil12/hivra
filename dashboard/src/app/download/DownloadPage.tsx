@@ -40,7 +40,7 @@ export default function DownloadPage({
       </header>
 
       <div className={styles.sections}>
-        {DESKTOP_SECTIONS.map((platform) => {
+        {DESKTOP_SECTIONS.map((platform, platformIndex) => {
           const release = downloads[platform.id];
           const statusId = `download-${platform.id}-status`;
           return (
@@ -91,11 +91,13 @@ export default function DownloadPage({
                   If the desktop app is not available for this computer yet, you
                   can still use Hivra in your browser.
                 </p>
-                <ActionLinks
-                  items={[
-                    { label: "Open Hivra", href: browserHref, kind: "primary" },
-                  ]}
-                />
+                {platformIndex === 0 ? (
+                  <ActionLinks
+                    items={[
+                      { label: "Open Hivra", href: browserHref, kind: "primary" },
+                    ]}
+                  />
+                ) : null}
               </div>
             </section>
           );
