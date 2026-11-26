@@ -1,14 +1,36 @@
+import { ArrowRight } from "lucide-react";
+import CopyPromoCode from "@/components/venice/CopyPromoCode";
 import { isVenicePromoEnabled } from "@/lib/venice/promo-flag";
-import styles from "@/app/venice/venice.module.css";
+import { buildVeniceLaunchHref } from "@/lib/venice/launch-link";
+import styles from "./venice-promo.module.css";
 
 export const VENICE_PROMO_CODE = "VENICE";
 
 /** The launch offer. Renders nothing unless NEXT_PUBLIC_HIVRA_VENICE_PROMO_ENABLED is "true". */
-export default function VenicePromo() {
+export default function VenicePromo({ signedIn }: { signedIn: boolean }) {
   if (!isVenicePromoEnabled()) return null;
+  const launchHref = buildVeniceLaunchHref("hermes", "venice", "venice", VENICE_PROMO_CODE);
+  const claimHref = signedIn ? launchHref : `/sign-in?redirect_url=${encodeURIComponent(launchHref)}`;
   return (
-    <p className={styles.promo} data-venice-promo="">
-      New to Hivra? Get $10 of Venice inference with code <strong>{VENICE_PROMO_CODE}</strong>
-    </p>
+    <aside className={styles.promo} data-venice-promo="" aria-labelledby="venice-promo-title">
+      <div className={styles.offer}>
+        <span className={styles.eyebrow}><span className={styles.dot} aria-hidden="true" />Launch offer · New to Hivra</span>
+        <h2 className={styles.headline} id="venice-promo-title">
+          <span className={styles.amount}>$10</span>
+          <span>of Venice inference, on us</span>
+        </h2>
+        <p className={styles.body}>
+          Start a plan and launch your agent with Hivra credits. We add $10 to your balance for it to spend on Venice models.
+        </p>
+      </div>
+      <div className={styles.ticket}>
+        <span className={styles.ticketLabel}>Your code</span>
+        <CopyPromoCode code={VENICE_PROMO_CODE} />
+        <a className={styles.claim} href={claimHref} data-cta="venice-promo-claim">
+          Claim your $10 <ArrowRight size={16} aria-hidden="true" />
+        </a>
+        <p className={styles.fine}>One per account. Unused promo credit expires 30 days after it is added.</p>
+      </div>
+    </aside>
   );
 }

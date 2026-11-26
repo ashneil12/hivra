@@ -8,6 +8,7 @@
 
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
+import { CARD_TRIAL_STARTER_CREDIT_USD, isInCardTrial } from "@/lib/billing/card-trial";
 
 const SOURCE = "starter-credit";
 const MICRO_USD_PER_USD = 1_000_000;
@@ -36,6 +37,8 @@ export interface StarterCreditDeps {
   resolveSubscription?: (userId: string) => Promise<{ plan: string; status: string } | null>;
   /** When the account signed up, or null when it can't be read. */
   resolveAccountCreatedAt?: (userId: string) => Promise<Date | null>;
+  /** Whether the account is inside a card trial, which caps the grant. */
+  resolveCardTrial?: (userId: string) => Promise<boolean>;
   env?: Record<string, string | undefined>;
   now?: Date;
 }
@@ -67,8 +70,8 @@ export async function tryGrantStarterCredit(
   dbArg?: StarterCreditDb | null
 ): Promise<StarterCreditResult> {
   try {
-    const amountMicroUsd = starterCreditMicroUsd(params.env);
-    if (amountMicroUsd <= 0) return { attempted: false, skipped: "disabled" };
+    const fullAmountMicroUsd = starterCreditMicroUsd(params.env);
+    if (fullAmountMicroUsd <= 0) return { attempted: false, skipped: "disabled" };
 
     const db = dbArg ?? (supabaseAdmin as unknown as StarterCreditDb | null);
     if (!db || typeof db.rpc !== "function") return { attempted: false, skipped: "no_database" };
@@ -76,6 +79,11 @@ export async function tryGrantStarterCredit(
     const sub = await (params.resolveSubscription ?? defaultResolveSubscription)(params.userId);
     const paid = Boolean(sub && sub.plan !== "free" && (sub.status === "active" || sub.status === "trialing"));
     if (!paid) return { attempted: false, skipped: "no_paid_plan" };
+
+    const inTrial = await (params.resolveCardTrial ?? ((id: string) => isInCardTrial(id)))(params.userId);
+    const amountMicroUsd = inTrial
+      ? Math.min(fullAmountMicroUsd, CARD_TRIAL_STARTER_CREDIT_USD * MICRO_USD_PER_USD)
+      : fullAmountMicroUsd;
 
     // The SQL function decides whether this sign-up time counts as a new account.
     const accountCreatedAt = await (params.resolveAccountCreatedAt ?? defaultResolveAccountCreatedAt)(params.userId);

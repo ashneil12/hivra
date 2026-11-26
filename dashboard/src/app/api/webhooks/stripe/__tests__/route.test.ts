@@ -26,6 +26,46 @@ describe("POST /api/webhooks/stripe", () => {
     });
   }
 
+  it("applies current Stripe state instead of an out-of-order trial event", async () => {
+    const trialing = {
+      id: "sub_trial",
+      status: "trialing",
+      metadata: { hivra_trial: "card_7d", plan_ladder: "2026-11" },
+    };
+    const active = { ...trialing, status: "active" };
+    const retrieve = jest.fn().mockResolvedValue(active);
+    const handleSubscriptionChange = jest.fn();
+    jest.doMock("@/lib/stripe", () => ({
+      getStripe: () => ({
+        webhooks: { constructEvent: () => ({
+          id: "evt_trial_late",
+          type: "customer.subscription.created",
+          data: { object: trialing },
+        }) },
+        subscriptions: { retrieve },
+      }),
+    }));
+    jest.doMock("@/lib/rate-limit", () => ({
+      enforceRateLimit: () => ({ success: true }),
+      getIP: () => "127.0.0.1",
+    }));
+    jest.doMock("@/lib/services/stripe-webhook-service", () => ({
+      StripeWebhookService: { handleSubscriptionChange },
+    }));
+    jest.doMock("@/lib/stripe-webhook-events", () => ({
+      beginStripeWebhookEvent: jest.fn().mockResolvedValue("reserved"),
+      markStripeWebhookEventProcessed: jest.fn().mockResolvedValue(undefined),
+      markStripeWebhookEventFailed: jest.fn(),
+    }));
+
+    const { POST } = await import("../route");
+    const res = await POST(createRequest());
+
+    expect(res.status).toBe(200);
+    expect(retrieve).toHaveBeenCalledWith(trialing.id);
+    expect(handleSubscriptionChange).toHaveBeenCalledWith(active);
+  });
+
   it("dispatches checkout.session.completed events and marks them processed", async () => {
     const constructEvent = jest.fn().mockReturnValue({
       id: "evt_123",

@@ -1,0 +1,52 @@
+{
+  "slug": "aider",
+  "checkedAt": "2026-11-21T04:19:33.451Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "Aider-AI/aider is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "Aider-AI/aider",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "package",
+      "status": "pass",
+      "detail": "PyPI aider-chat 0.86.2",
+      "evidence": {
+        "version": "0.86.2"
+      }
+    },
+    {
+      "name": "install",
+      "status": "pass",
+      "detail": "uv tool install aider-chat"
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "binary --version ran (exit 0)",
+      "evidence": {
+        "mode": "--version",
+        "status": 0,
+        "head": "aider 0.86.2\n\n"
+      }
+    },
+    {
+      "name": "cli-flags",
+      "status": "pass",
+      "detail": "help mentions --exit, --yes-always, --no-git, --message"
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "cli-web installs a CLI; no resident service to measure"
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -1,5 +1,44 @@
 .hero h1 { max-width: 900px; }
-.promo { display: inline-block; margin: 0 0 28px; padding: 10px 16px; border: 1px solid var(--gold-leaf); color: var(--ink-black); font: 13px/1.6 var(--font-sans); }
+.lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  padding: 7px 16px 7px 7px;
+  border: 1px solid #273541;
+  border-radius: var(--hg-radius-md);
+  background: #0a121a;
+  color: #f7f5ed;
+}
+.lockup > span { width: 1px; height: 24px; background: #58636f; }
+.film {
+  position: relative;
+  max-width: 980px;
+  margin-top: clamp(24px, 4vw, 40px);
+}
+.film > video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--hg-radius-xl);
+  background: #080c0e;
+}
+.filmPlay {
+  position: absolute;
+  right: clamp(16px, 3vw, 28px);
+  bottom: clamp(48px, 7vw, 64px);
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border: 1px solid #f7f5ed80;
+  border-radius: 50%;
+  background: #0a121a;
+  color: #f7f5ed;
+  cursor: pointer;
+}
+.filmPlay:hover { background: #273541; }
+.film > video:focus-visible, .filmPlay:focus-visible { outline: 2px solid var(--hg-focus); outline-offset: 4px; }
 .section { margin-top: 64px; }
 .sectionTitle { margin: 0 0 24px; }
 .section h2, .sectionTitle { margin: 0 0 24px; font-size: clamp(24px, 2.6vw, 34px); line-height: 1.15; font-weight: 500; letter-spacing: -.04em; }

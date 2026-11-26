@@ -26,6 +26,11 @@ jest.mock("@/lib/supabase", () => ({
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 const mockEnsure = jest.fn();
 jest.mock("@/lib/hivra/agent-wake", () => ({ ensureHivraAgentAwake: (...a: unknown[]) => mockEnsure(...a) }));
+const mockInCardTrial = jest.fn();
+jest.mock("@/lib/billing/card-trial", () => ({
+  ...jest.requireActual("@/lib/billing/card-trial"),
+  isInCardTrial: (...a: unknown[]) => mockInCardTrial(...a),
+}));
 const mockAfter = jest.fn();
 jest.mock("next/server", () => ({ ...jest.requireActual("next/server"), after: (...a: unknown[]) => mockAfter(...a) }));
 
@@ -56,6 +61,14 @@ describe("PATCH /api/hivra/agents/[id]/sleep-settings", () => {
     mockRateLimit.mockReturnValue({ success: true });
     mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: true, sleep_policy: "full" }, error: null });
     mockEnsure.mockResolvedValue({ state: "awake" });
+    mockInCardTrial.mockResolvedValue(false);
+  });
+
+  it.each([{ always_on: true }, { sleep_policy: "off" }])("refuses %j during a card trial", async (body) => {
+    mockInCardTrial.mockResolvedValueOnce(true);
+    const res = await PATCH(request(body), params);
+    expect(res.status).toBe(403);
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 
   it("requires sign-in and same origin, and is rate limited", async () => {

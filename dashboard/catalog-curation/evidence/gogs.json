@@ -1,0 +1,119 @@
+{
+  "slug": "gogs",
+  "checkedAt": "2026-11-21T15:12:25.902Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "gogs/gogs is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "gogs/gogs",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "gogs/gogs:0.13 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "gogs/gogs:0.13",
+        "digest": "sha256:2fed2f7ce8dcf7bfdde3e6c309d934254ae8eb1cf8053a3f394baa184461dbfa",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.3s",
+      "evidence": {
+        "container": "hivra-verify-gogs-m7dppp",
+        "hostPort": 3206,
+        "image": "gogs/gogs:0.13",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-gogs-m7dppp",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3206:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-gogs-m7dppp-data:/data",
+          "gogs/gogs:0.13"
+        ],
+        "runStdout": "6ebb639ce556e3ed048a27bcfc0c37cc2b064f2fb19d64bb3196409e555d5fca",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.3,
+          "attempts": 2
+        },
+        "memUsage": "46.06MiB / 7.652GiB",
+        "memBytes": 48297411
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /install; form POST -> 200",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 57959,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/install"
+          },
+          {
+            "hop": 2,
+            "path": "/install",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/install",
+        "bodyHead": "<!DOCTYPE html>\n<html>\n<head data-suburl=\"\">\n\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\n\t<meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\"/>\n\t\n\t\t<meta name=\"author\" content=\"Gogs\" />\n\t\t<meta name=\"description\" content=\"Gogs is a painless self-hosted Git service\" />\n\t\t<meta name=\"keywords\" content=\"go, git, self-hosted, gogs\">\n\t\n\t<meta name=\"referrer\" content=\"no-refe",
+        "formPost": {
+          "path": "/install",
+          "status": 200,
+          "location": null,
+          "bodyHead": "<!DOCTYPE html>\n<html>\n<head data-suburl=\"\">\n\t<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\n\t<meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\"/>\n\t\n\t\t<meta name=\"author\" content=\"Gogs\" />\n\t\t<meta name=\"description\" content=\"Gogs is a painless self-hosted Git service\" />\n\t\t<meta name=\"keywords\" content=\"go, git, self-hosted, gogs\">\n\t\n\t<meta name=\"referrer\" content=\"no-refe"
+        },
+        "loginProbe": {
+          "status": 500,
+          "bodyHead": "template: base/footer:15:47: executing \"base/footer\" at <.PageStartTime>: invalid value; expected time.Time\n"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 46.1MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 48297411,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

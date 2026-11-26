@@ -1,0 +1,81 @@
+{
+  "slug": "odoo",
+  "checkedAt": "2026-11-21T14:57:37.520Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "fail",
+      "detail": "spdx_id NOASSERTION not in allowlist",
+      "evidence": {
+        "archived": false,
+        "full_name": "odoo/odoo",
+        "spdx_id": "NOASSERTION"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "2 service images have linux/amd64",
+      "evidence": {
+        "services": [
+          {
+            "name": "db",
+            "ref": "postgres:16-alpine",
+            "digest": "sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857",
+            "platforms": [
+              "linux/amd64",
+              "unknown/unknown",
+              "linux/arm/v6",
+              "unknown/unknown",
+              "linux/arm/v7",
+              "unknown/unknown",
+              "linux/arm64/v8",
+              "unknown/unknown",
+              "linux/386",
+              "unknown/unknown",
+              "linux/ppc64le",
+              "unknown/unknown",
+              "linux/riscv64",
+              "unknown/unknown",
+              "linux/s390x",
+              "unknown/unknown"
+            ]
+          },
+          {
+            "name": "app",
+            "ref": "odoo:18",
+            "digest": "sha256:0bd79cf07f59105c5697667c2241b86447e99c6adb036200df0e4e295785bdf3",
+            "platforms": [
+              "linux/amd64",
+              "unknown/unknown",
+              "linux/arm64/v8",
+              "unknown/unknown",
+              "linux/ppc64le",
+              "unknown/unknown"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "skipped",
+      "detail": "earlier gate failed"
+    },
+    {
+      "name": "gateway",
+      "status": "skipped",
+      "detail": "earlier gate failed"
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "earlier gate failed"
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "license: spdx_id NOASSERTION not in allowlist"
+  ]
+}

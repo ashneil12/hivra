@@ -105,6 +105,11 @@ export const LAPTOP_POST_SLUG_VARIANTS = [
 ] as const;
 
 const nextConfig: NextConfig = {
+  // Next discards test diagnostics only after checking those files. Keep them
+  // in the full npm typecheck, not in the production build's compiler graph.
+  typescript: {
+    tsconfigPath: process.env.NODE_ENV === "production" ? "tsconfig.build.json" : "tsconfig.json",
+  },
   env: {
     NEXT_PUBLIC_BUILD_GENERATED_AT: buildGeneratedAt,
     NEXT_PUBLIC_HIVRA_AUTH_MODE: selfHostAuthEnabled ? "local" : "hosted",
@@ -280,6 +285,7 @@ const nextConfig: NextConfig = {
       { source: "/roadmap/HermesOS_Roadmap_2026.pdf", destination: "/roadmap", permanent: true },
       // Keep the static document's relative assets under /docs/litepaper/.
       // trailingSlash:false normalizes the directory URL before this redirect.
+      { source: "/litepaper", destination: "/docs/litepaper/index.html", permanent: false },
       { source: "/docs/litepaper", destination: "/docs/litepaper/index.html", permanent: false },
     ];
   },
@@ -383,7 +389,7 @@ const nextConfig: NextConfig = {
           //   style-src — Next.js / framer-motion inject inline styles.
           //   img-src — avatars, mux thumbnails, posthog assets, generic
           //     https + data: + blob: for user-uploaded images.
-          //   media-src — Mux video player.
+          //   media-src — Mux and the Hivra public media store.
           //   font-src — self-hosted fonts only; data: covers font preloads.
           //   connect-src — every host the app fetches/posts/streams to:
           //     Clerk (auth), Stripe (billing), Supabase (DB + storage),
@@ -399,7 +405,11 @@ const nextConfig: NextConfig = {
           //     turnstile, Mux player iframe.
           //   frame-ancestors 'self' — preserves the X-Frame-Options
           //     SAMEORIGIN behaviour.
-          //   form-action 'self' — POSTs target only the dashboard.
+          //   form-action — 'self' plus the box gateway origins: the agent
+          //     page POSTs hidden bootstrap forms to /auth/bootstrap on the
+          //     same per-instance hostnames frame-src allows (prod CSP reports
+          //     show form-action violations on /dashboard/agent/* for live
+          //     boxes; report-only today, broken the day this enforces).
           //   base-uri 'self' — block <base href="..."> injection.
           {
             key: "Content-Security-Policy-Report-Only",
@@ -414,7 +424,7 @@ const nextConfig: NextConfig = {
               `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://js.stripe.com https://*.stripe.com https://*.clerk.accounts.dev https://clerk.hivra.cloud https://cdn.jsdelivr.net https://www.googletagmanager.com https://challenges.cloudflare.com https://fpjscdn.net https://fpnpmcdn.net${posthogProxyCsp}`,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: https:",
-              "media-src 'self' blob: https://stream.mux.com https://*.mux.com",
+              "media-src 'self' blob: https://stream.mux.com https://*.mux.com https://ejzonwoikxinlk0x.public.blob.vercel-storage.com",
               "font-src 'self' data:",
               // Hivra rebrand (2026-06): Clerk's Frontend API moved to the
               // custom domain clerk.hivra.cloud — client bootstrap XHRs
@@ -437,7 +447,7 @@ const nextConfig: NextConfig = {
               "frame-src 'self' https://js.stripe.com https://*.stripe.com https://*.clerk.accounts.dev https://clerk.hivra.cloud https://challenges.cloudflare.com https://stream.mux.com https://*.hermesos.cloud https://*.agents.hermesos.cloud https://*.hivra.cloud https://*.agents.hivra.cloud https://*.sslip.io",
               "worker-src 'self' blob:",
               "frame-ancestors 'self'",
-              "form-action 'self'",
+              "form-action 'self' https://*.hermesos.cloud https://*.agents.hermesos.cloud https://*.hivra.cloud https://*.agents.hivra.cloud https://*.sslip.io",
               "base-uri 'self'",
               // Receiver for CSP violations — the 2026-04-30 debug session
               // had a 6-hour stretch where Chrome was CSP-blocking the SW's

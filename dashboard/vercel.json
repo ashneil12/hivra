@@ -129,6 +129,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/customer-incidents",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/probe-instance-egress",
       "schedule": "*/5 * * * *"
     },
@@ -191,6 +195,10 @@
     {
       "path": "/api/cron/detect-proxmox-orphans",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/detect-hetzner-orphans",
+      "schedule": "15 6 * * *"
     },
     {
       "path": "/api/cron/fleet-status-reconcile",

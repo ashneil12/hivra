@@ -3,15 +3,14 @@ import { findBannedClaims } from "@/lib/tools/copy-rules";
 import {
   ENTRY_PLAN_PRICE,
   ENTRY_PLAN_SIZE,
-  FREE_ACCOUNT_SENTENCE,
-  HOSTED_COMPUTE_NEEDS_PLAN,
+  CONNECTED_SERVER_ELIGIBILITY,
   HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
   HOSTED_COMPUTE_NEEDS_PLAN_SHORT,
   MONEY_BACK_GUARANTEE,
 } from "../plan-facts";
 
 // Owner decisions of 21 October 2026: every computer that Hivra Cloud runs for you is paid, whichever agent
-// it runs, and a free account works with a computer or server you connect yourself. The copy is written
+// it runs, and connecting your own server requires an eligible account. The copy is written
 // for the world with lapse enforcement on: it ships together with the HIVRA_LAPSE_ENFORCE_LIVE switch.
 // These tests also keep the pricing figures the 21 October rescale made honest: a total appears only
 // where the volume behind it is stated in the same article.
@@ -62,13 +61,12 @@ describe("hosted computers need a paid plan, whichever agent runs on them", () =
     expect(HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE).toBe(
       "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM."
     );
-    expect(FREE_ACCOUNT_SENTENCE).toBe("A free account works with a computer or server you connect yourself.");
-    expect(HOSTED_COMPUTE_NEEDS_PLAN).toBe(`${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${FREE_ACCOUNT_SENTENCE}`);
+    expect(CONNECTED_SERVER_ELIGIBILITY).toBe("To connect your own server to the Hivra dashboard, your account must be eligible.");
     expect(HOSTED_COMPUTE_NEEDS_PLAN_SHORT).toBe("Every Hivra Cloud computer needs a paid plan.");
   });
 
   it("passes the banned-claim rules the public pages are scanned against, and writes no dash", () => {
-    for (const text of [HOSTED_COMPUTE_NEEDS_PLAN, HOSTED_COMPUTE_NEEDS_PLAN_SHORT, FREE_ACCOUNT_SENTENCE]) {
+    for (const text of [HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, HOSTED_COMPUTE_NEEDS_PLAN_SHORT, CONNECTED_SERVER_ELIGIBILITY]) {
       expect({ text, hits: findBannedClaims(text) }).toEqual({ text, hits: [] });
       expect(text).not.toMatch(/[\u2013\u2014]/);
     }
@@ -90,7 +88,7 @@ describe("hosted computers need a paid plan, whichever agent runs on them", () =
       expect({ old, hits: selectivePaidPlanClaims(old) }).not.toEqual({ old, hits: [] });
     }
     for (const current of [
-      HOSTED_COMPUTE_NEEDS_PLAN,
+      HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
       "Every Hivra Cloud computer needs a paid plan, and that includes the one OpenClaw runs on.",
       "Every Hivra Cloud computer needs a paid plan, and OpenClaw's starts at $9.99 a month for 2 vCPU and 4 GB of RAM.",
       "Hivra hosts both on managed VMs, each on a paid plan: [OpenClaw itself](/agents/openclaw), and Hermes launched from the dashboard.",
@@ -111,11 +109,11 @@ describe("hosted computers need a paid plan, whichever agent runs on them", () =
   });
 
   it("says the same thing on the pages that used to single out OpenClaw and Agent Zero", () => {
-    expect(copyOf("ai-agent-hosting-guide")).toContain(HOSTED_COMPUTE_NEEDS_PLAN);
+    expect(copyOf("ai-agent-hosting-guide")).toContain(HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE);
     // The pointer to the OpenClaw and Agent Zero comparison names its two agents, so the paid-plan sentences cannot sit between "those last two" and the list.
     expect(copyOf("ai-agent-hosting-guide")).toContain("If you're weighing OpenClaw against Agent Zero, see");
     expect(copyOf("ai-agent-hosting-guide")).not.toMatch(/those last two/);
-    expect(copyOf("ai-agent-vps")).toContain(`${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} ${FREE_ACCOUNT_SENTENCE}`);
+    expect(copyOf("ai-agent-vps")).toContain(`${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} ${CONNECTED_SERVER_ELIGIBILITY}`);
     expect(copyOf("agent-zero-vs-openclaw-hosting")).toContain("Every Hivra Cloud computer needs a paid plan, whichever agent runs on it");
     expect(copyOf("openclaw-broken-after-update")).toContain("Every Hivra Cloud computer needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM.");
     expect(faqAnswer("openclaw-broken-after-update", /without running the server myself/i)).toContain(
@@ -126,7 +124,7 @@ describe("hosted computers need a paid plan, whichever agent runs on them", () =
     const openclaw = BLOG_ARTICLES["is-openclaw-free-what-it-costs-to-run"];
     const free = openclaw.faqs.find(({ q }) => /free hosted plan/i.test(q));
     expect(free?.a).toBe(
-      `Not on Hivra. ${HOSTED_COMPUTE_NEEDS_PLAN} A machine you already own, or a Pi you buy outright, is the route with no monthly hosting bill.`
+      `Not on Hivra. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY} A machine you already own, or a Pi you buy outright, is the route with no monthly hosting bill.`
     );
     // The price in that answer is the interpolated entry price with its size, not a hand-typed "$9.99".
     expect(free?.a).toContain(`${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}`);
@@ -281,7 +279,7 @@ describe("Hetzner prices: one basis, and the stock warning", () => {
   ];
 
   it("says in the same paragraph, answer or snippet that a CX23, CX33 or CX43 price excludes VAT and IPv4", () => {
-    expect(cheapestMentions.length).toBeGreaterThanOrEqual(8);
+    expect(cheapestMentions.length).toBeGreaterThanOrEqual(7);
     const missing = BLOG_ARTICLES_LIST.flatMap((article) =>
       strings(article)
         .filter((text) => HETZNER_PRICE.test(text))
@@ -302,7 +300,7 @@ describe("Hetzner prices: one basis, and the stock warning", () => {
     expect(article.shortAnswer).toContain("Hetzner showed both as unavailable in October 2026, so check stock");
     expect(faqAnswer("best-vps-for-hermes-agent", /cheapest server/i)).toContain("unavailable in October 2026");
     expect(faqAnswer("what-is-hermes-agent", /Hermes Agent free/i)).toContain("unavailable in October 2026");
-    expect(faqAnswer("how-to-self-host-hermes-agent", /cheapest server/i)).toContain("unavailable in October 2026");
+    expect(faqAnswer("how-to-self-host-hermes-agent", /cheapest server/i)).not.toMatch(/Hetzner|€5\.49|CX23|2 vCPU|4 GB RAM|unavailable in October 2026/i);
   });
 
   it("gives the with-IPv4 prices Hetzner lists, and warns that stock is limited, where servers are recommended", () => {

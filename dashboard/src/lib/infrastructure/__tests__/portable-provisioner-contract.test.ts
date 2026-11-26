@@ -35,7 +35,7 @@ const source = (relativePath: string) =>
 const updaterSource = () =>
   `${source("hivra-update-guest-runtime.sh")}\n${source("hivra-guest-runtime-update.sh")}`;
 const LEGACY_RUNTIME_IDS = [
-  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes", "deepseek-harness",
+  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "catalog-app", "hermes", "deepseek-harness",
 ];
 
 // Releases before 2026.10.20.2 lack agent-app-versions.json, which the aeon,
@@ -125,6 +125,11 @@ describe("portable provisioner source contract", () => {
     expect(isCompatibleProxmoxProvisionerVersion("2026.09.22.1")).toBe(true);
     expect(portableProvisionerSupportsCatalogRuntime("2026.09.22.1", "linux-desktop")).toBe(true);
     expect(provisionerSupportsWindowsInstaller("2026.09.22.1")).toBe(true);
+  });
+
+  it("continues to admit the Agent Zero browser release for provider VM agents", () => {
+    expect(isCompatibleProviderVmProvisionerVersion("2026.11.19.1")).toBe(true);
+    expect(providerProvisionerSupportsCatalogRuntime("2026.11.19.1", "codex")).toBe(true);
   });
   it("does not confuse native launch compatibility with model-settings delivery", () => {
     expect(supportsModelSettingsProvisionerVersion("2026.08.28.2")).toBe(true);
@@ -231,6 +236,7 @@ describe("portable provisioner source contract", () => {
         "agent-zero",
         "openbot",
         "nuphos",
+        "catalog-app",
         "hermes",
         "deepseek-harness",
         "linux-desktop",
@@ -258,7 +264,7 @@ describe("portable provisioner source contract", () => {
     const hostProvisioner = source("hivra-provision-on-host.sh");
     const runtimeInstaller = source("provision-claude-code-box.sh");
     expect(hostProvisioner).toContain(
-      'case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|deepseek-harness|linux-desktop|linux-server)',
+      'case "$AGENT_KIND" in claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|catalog-app|deepseek-harness|linux-desktop|linux-server)',
     );
     for (const agentKind of ["codex", "aeon", "openclaw", "agent-zero", "hermes"]) {
       expect(runtimeInstaller).toContain(`[ "$AGENT_KIND" = "${agentKind}" ]`);
@@ -955,7 +961,7 @@ describe("deepseek-harness provisioner minimum", () => {
   });
 
   it("skips an older managed host in placement and leaves other runtimes' lists alone", () => {
-    expect(compatibleProxmoxVersionsForRuntime("deepseek-harness")).toEqual(["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    expect(compatibleProxmoxVersionsForRuntime("deepseek-harness")).toEqual(["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", PORTABLE_HIVRA_PROVISIONER_VERSION]);
     expect(compatibleProxmoxVersionsForRuntime("claude-code")).toEqual(compatibleProxmoxVersionsForRuntime(null));
     expect(compatibleProxmoxVersionsForRuntime("codex")).toEqual(compatibleProxmoxVersionsForRuntime(null));
   });
@@ -986,7 +992,7 @@ describe("linux-server provisioner minimum", () => {
     expect(portableProvisionerSupportsCatalogRuntime("2026.11.10.4", "linux-desktop")).toBe(true);
     expect(portableRuntimeCompatibilityForProvisioner({ ready: true, version: "2026.11.10.4" })?.supportedCatalogRuntimeIds)
       .toEqual(expect.arrayContaining(["linux-desktop", "linux-server"]));
-    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    expect(compatibleProxmoxVersionsForRuntime("linux-server")).toEqual(["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", PORTABLE_HIVRA_PROVISIONER_VERSION]);
     expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(expect.arrayContaining(["2026.11.10.3", "2026.11.10.4"]));
     // Linux Desktop has no per-runtime minimum, so host readiness is the same list as before.
     expect(compatibleProxmoxVersionsForRuntime("linux-desktop")).toEqual(compatibleProxmoxVersionsForRuntime(null));
@@ -1000,7 +1006,7 @@ describe("linux-server provisioner minimum", () => {
   it("wraps the accepted AGENT_KIND values with the same shell, Python and gateway allowlists", () => {
     expect(source("hivra-install-agent.py")).toContain('LINUX_COMPUTER_KINDS = {"linux-desktop", "linux-server"}');
     expect(source("hivra-runtime-receipt.py")).toContain('"linux-desktop", "linux-server"), required=True');
-    expect(source("hivra-agent-shell")).toContain("aeon|openclaw|agent-zero|hermes|openbot|nuphos|linux-desktop|linux-server)");
+    expect(source("hivra-agent-shell")).toContain("aeon|openclaw|agent-zero|hermes|openbot|nuphos|catalog-app|linux-desktop|linux-server)");
     expect(source("hivra-chat/server.js")).toContain('["deepseek-harness", "linux-desktop", "linux-server"].includes(process.env.HIVRA_AGENT_KIND)');
   });
 });

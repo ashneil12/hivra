@@ -18,9 +18,8 @@
  * or after the targeted missing-VM recreate route succeeds provider-side but
  * loses the final database write to a stale unique-key conflict.
  *
- * Recovery: scan known Proxmox hosts for a VM whose name embeds this
- * instance's ID prefix (provisioner uses `hermes-<name>-<id-prefix>`
- * format). When found, lift the VMID, private IP, gateway FQDN, and the
+ * Recovery: scan known Proxmox hosts for the instance's full UUID or short ID
+ * suffix. When found, lift the VMID, private IP, gateway FQDN, and the
  * Caddyfile bearer back into the DB row. The bearer is in the per-instance
  * Caddyfile inside the guest VM; we read it via the existing Proxmox host
  * → guest bastion pattern.
@@ -29,6 +28,8 @@
  *
  * Schedule: every 5 minutes via vercel.json.
  */
+
+import { z } from "zod";
 
 import { encryptApiKey } from "@/lib/crypto";
 import { log } from "@/lib/logger";
@@ -42,6 +43,7 @@ import {
   runProxmoxHostScript,
   type ProxmoxHostRoutingConfig,
 } from "@/lib/services/proxmox-instance-service";
+import { shQuote } from "@/lib/services/proxmox/script-builders";
 import { supabaseAdmin } from "@/lib/supabase";
 
 const SOURCE = "recover-orphan-provisioning";
@@ -53,6 +55,35 @@ const ORPHAN_GRACE_MS = 10 * 60 * 1000;
 // the Vercel cron 300s ceiling.
 const MAX_CANDIDATES_PER_RUN = 8;
 const SAFE_PROXMOX_HOST_SLUG = /^[a-z][a-z0-9_]{0,62}$/;
+
+const ProxmoxHostRegistry = z.array(z.object({
+  id: z.string().trim().toLowerCase().min(1),
+  status: z.string(),
+  decommissioned_at: z.string().datetime({ offset: true }).nullable(),
+}));
+
+type ProxmoxFleetInventory =
+  | { source: "registry"; slugs: string[]; decommissionedSlugs: Set<string> }
+  | { source: "configuration"; slugs: string[] };
+
+function declaredProxmoxHostSlugs(env: NodeJS.ProcessEnv): string[] {
+  const configured = [
+    env.HERMES_PROXMOX_TARGETS,
+    env.PROXMOX_TARGETS,
+    env.HERMES_PROXMOX_TARGET,
+    env.PROXMOX_TARGET,
+    env.PROXMOX_NODE,
+    env.HERMES_PROXMOX_DEFAULT_HOST_SLUG,
+    env.HERMES_PROXMOX_LEGACY_HOST_SLUG,
+  ].flatMap((value) => value?.split(/[,\s]+/).filter(Boolean) ?? []);
+  for (const [key, value] of Object.entries(env)) {
+    if (!value?.trim()) continue;
+    const match = key.match(/^PROXMOX_(?:HOST_(?:ID_)?)?([A-Z0-9_]+)_SSH_HOST$/)
+      ?? key.match(/^([A-Z0-9_]+)_PROXMOX_SSH_HOST$/);
+    if (match?.[1]) configured.push(match[1]);
+  }
+  return [...new Set(configured.map((slug) => slug.toLowerCase()))];
+}
 
 function configuredFallbackProxmoxHostSlugs(env: NodeJS.ProcessEnv): string[] {
   const configuredList = env.HERMES_PROXMOX_TARGETS?.trim() || env.PROXMOX_TARGETS?.trim() || "";
@@ -125,12 +156,13 @@ export interface RecoverOrphanProvisioningOptions {
   instanceId?: string | null;
 }
 
-function configInfraNode(config: Record<string, unknown> | null | undefined): string | null {
-  if (!config || typeof config !== "object") return null;
-  const infra = (config as { infrastructure?: { node?: unknown } }).infrastructure;
-  if (!infra || typeof infra !== "object") return null;
-  const node = (infra as { node?: unknown }).node;
-  return typeof node === "string" && node.trim() ? node.trim() : null;
+function infrastructureHostHints(config: Record<string, unknown> | null | undefined): unknown[] {
+  const infrastructure = config?.infrastructure;
+  if (!infrastructure || typeof infrastructure !== "object") return [];
+  return [
+    "node" in infrastructure ? infrastructure.node : null,
+    "hostSlug" in infrastructure ? infrastructure.hostSlug : null,
+  ];
 }
 
 /**
@@ -143,6 +175,7 @@ function configInfraNode(config: Record<string, unknown> | null | undefined): st
  *   RESULT NO_IP         (VM exists but has no ipconfig0)
  *   RESULT NO_FQDN       (VM exists but no caddy site routes to its IP)
  *   RESULT NO_BEARER     (VM unreachable over SSH or Caddyfile bearer missing)
+ *   RESULT IDENTITY_UNVERIFIED (a legacy VM may have had its ID truncated)
  *
  * Failures other than NOT_FOUND are diagnostic. One safe exception is a
  * NO_BEARER result for a row that already has an encrypted bearer: this is the
@@ -150,7 +183,8 @@ function configInfraNode(config: Record<string, unknown> | null | undefined): st
  * without guest SSH or secret replacement.
  */
 function buildDiscoveryScript(instanceId: string): string {
-  const idPrefix = instanceId.slice(0, 8);
+  const fullId = isHermesInstanceId(instanceId) ? instanceId.toLowerCase() : "";
+  const idPrefix = instanceId.slice(0, 8).toLowerCase();
   const guestSshPrelude = buildHermesVmidBoundGuestSshPrelude({
     sshUser: "hermes",
     connectTimeoutSeconds: 5,
@@ -159,8 +193,84 @@ function buildDiscoveryScript(instanceId: string): string {
   });
   return `
 set -uo pipefail
+EXPECTED_INSTANCE_ID=${shQuote(fullId)}
 
-VMID=$(qm list 2>/dev/null | awk -v p="-${idPrefix}$" 'NR>1 && $2 ~ p {print $1; exit}')
+# Provisioning used to truncate the whole VM name at 48 characters. A
+# truncated VM can only be ruled out by an independent full-ID claim and
+# the matching wake route to the IP from its current Proxmox configuration.
+legacy_vm_belongs_to_other_instance() {
+  local vmid="$1" claim_file vm_config claim ip site
+  claim_file="/run/hermes-vm-claims/$vmid.claim"
+  vm_config="/etc/pve/qemu-server/$vmid.conf"
+  claim=$(cat "$claim_file") || return 1
+  if ! [[ "$claim" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \\
+    || [ "$claim" = "$EXPECTED_INSTANCE_ID" ]; then
+    return 1
+  fi
+  ip=$(awk '
+    /^\\[/ { exit }
+    /^ipconfig0:/ {
+      if (match($0, /ip=[0-9.]+/)) print substr($0, RSTART + 3, RLENGTH - 3)
+      exit
+    }
+  ' "$vm_config") || return 1
+  [[ "$ip" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]] || return 1
+  site=$(awk -v endpoint="$ip:80" -v wake="/wake/$claim" '
+    function tally() {
+      if (routed) {
+        routes++
+        if (claimed) {
+          matches++
+          site = path
+        }
+      }
+    }
+    FNR==1 { tally(); path = FILENAME; routed = 0; claimed = 0 }
+    $1 == "reverse_proxy" && $2 == endpoint { routed = 1 }
+    $1 == "redir" && $2 ~ /^https?:/ && substr($2, length($2) - length(wake) + 1) == wake { claimed = 1 }
+    END {
+      tally()
+      if (routes != 1 || matches != 1) exit 1
+      print site
+    }
+  ' /etc/caddy/hermes.d/*.caddy) || return 1
+  # The claim precedes clone and the route follows configuration. A stale
+  # claim and route from before a VMID recycle cannot clear a replacement.
+  [[ -f "$claim_file" && -f "$vm_config" && -f "$site" ]] \\
+    && [[ ! "$claim_file" -nt "$vm_config" && ! "$vm_config" -nt "$site" ]]
+}
+
+if ! VM_LIST=$(qm list); then
+  exit 1
+fi
+if ! VMID=$(awk -v id8=${shQuote(`-${idPrefix}`)} -v uuid="$EXPECTED_INSTANCE_ID" '
+  NR==1 { header = ($1 == "VMID" && $2 == "NAME") }
+  NR>1 && NF {
+    if ($1 !~ /^[0-9]+$/ || NF < 3) invalid = 1
+    name = tolower($2)
+    if (uuid != "" && index(name, uuid)) full_match = $1
+    else if (substr(name, length(name) - length(id8) + 1) == id8 && !short_match) short_match = $1
+    else if (length(name) == 48 && name ~ /^hermes-/) legacy[++count] = $1
+  }
+  END {
+    if (!header || invalid) exit 1
+    if (full_match) print full_match
+    else if (short_match) print short_match
+    else for (i = 1; i <= count; i++) print "legacy:" legacy[i]
+  }
+' <<< "$VM_LIST"); then
+  echo "Unrecognized Proxmox VM list" >&2
+  exit 1
+fi
+if [[ "$VMID" == legacy:* ]]; then
+  while IFS=: read -r _ legacy_vmid; do
+    if ! legacy_vm_belongs_to_other_instance "$legacy_vmid" 2>/dev/null; then
+      echo "RESULT IDENTITY_UNVERIFIED"
+      exit 0
+    fi
+  done <<< "$VMID"
+  VMID=""
+fi
 if [ -z "$VMID" ]; then
   echo "RESULT NOT_FOUND"
   exit 0
@@ -226,7 +336,7 @@ echo "BEARER=$BEARER"
 }
 
 function parseDiscoveryStdout(stdout: string): {
-  result: "OK" | "NOT_FOUND" | "NO_IP" | "NO_FQDN" | "NO_BEARER" | "UNKNOWN";
+  result: "OK" | "NOT_FOUND" | "NO_IP" | "NO_FQDN" | "NO_BEARER" | "IDENTITY_UNVERIFIED" | "UNKNOWN";
   vmid?: number;
   privip?: string;
   fqdn?: string;
@@ -237,7 +347,8 @@ function parseDiscoveryStdout(stdout: string): {
   if (lines.length === 0) return { result: "UNKNOWN" };
   const head = lines[0]?.replace(/^RESULT\s+/, "");
   const result =
-    head === "OK" || head === "NOT_FOUND" || head === "NO_IP" || head === "NO_FQDN" || head === "NO_BEARER"
+    head === "OK" || head === "NOT_FOUND" || head === "NO_IP" || head === "NO_FQDN"
+    || head === "NO_BEARER" || head === "IDENTITY_UNVERIFIED"
       ? head
       : "UNKNOWN";
   const fields: Record<string, string> = {};
@@ -340,7 +451,7 @@ async function searchHost(hostSlug: string, instanceId: string): Promise<HostSea
     log.debug("recover-orphan: discovery did not find VM on host", logPayload);
     return "absent";
   }
-  if (parsed.result === "UNKNOWN") {
+  if (parsed.result === "UNKNOWN" || parsed.result === "IDENTITY_UNVERIFIED") {
     log.warn("recover-orphan: discovery returned an unrecoverable result", logPayload);
     return "inconclusive";
   }
@@ -350,98 +461,109 @@ async function searchHost(hostSlug: string, instanceId: string): Promise<HostSea
   return "present";
 }
 
-/**
- * Live list of Proxmox host slugs to search, sourced from the proxmox_hosts
- * registry so newly-added hosts are covered automatically. Searches every
- * registered host regardless of status — an orphan VM can sit on a
- * draining/maintenance host too. If the registry is unreadable or empty, only
- * explicitly configured host identities are safe to probe; an invented static
- * fleet list could route credentials to the wrong machine.
- */
-export async function loadKnownProxmoxHostSlugs(): Promise<string[]> {
-  const configuredFallback = configuredFallbackProxmoxHostSlugs(process.env);
-  if (!supabaseAdmin) return configuredFallback;
+async function loadRegisteredProxmoxFleet(): Promise<Extract<ProxmoxFleetInventory, { source: "registry" }> | null> {
+  if (!supabaseAdmin) return null;
   try {
-    const { data, error } = await supabaseAdmin.from("proxmox_hosts").select("id");
-    if (error || !data || data.length === 0) {
-      log.warn("recover-orphan: proxmox_hosts registry unreadable/empty; using configured fallback host list", {
+    const { data, error, count } = await supabaseAdmin.from("proxmox_hosts")
+      .select("id,status,decommissioned_at", { count: "exact" });
+    const parsed = ProxmoxHostRegistry.safeParse(data);
+    if (error || !parsed.success || parsed.data.length === 0 || parsed.data.length !== count) {
+      log.warn("recover-orphan: incomplete Proxmox host registry", {
         source: SOURCE,
-        failureType: "recover_orphan_host_list_fallback",
+        failureType: "recover_orphan_host_list_incomplete",
         errorMessage: error?.message,
       });
-      return configuredFallback;
+      return null;
     }
-    const slugs = data
-      .map((row) => (row as { id?: unknown }).id)
-      .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
-    return slugs.length > 0 ? slugs : configuredFallback;
+    const slugs: string[] = [];
+    const decommissionedSlugs = new Set<string>();
+    for (const host of parsed.data) {
+      if (host.status === "maintenance" && host.decommissioned_at) {
+        decommissionedSlugs.add(host.id);
+      } else {
+        slugs.push(host.id);
+      }
+    }
+    return { source: "registry", slugs, decommissionedSlugs };
   } catch (err) {
-    log.warn("recover-orphan: proxmox_hosts registry query threw; using configured fallback host list", {
+    log.warn("recover-orphan: proxmox_hosts registry query threw", {
       source: SOURCE,
       failureType: "recover_orphan_host_list_threw",
       errorMessage: err instanceof Error ? err.message : String(err),
     });
-    return configuredFallback;
+    return null;
   }
+}
+
+// Configuration can enable positive recovery when the registry is unavailable,
+// but it cannot account for all hosts that could still hold an instance.
+export async function loadKnownProxmoxFleet(): Promise<ProxmoxFleetInventory> {
+  return await loadRegisteredProxmoxFleet()
+    ?? { source: "configuration", slugs: configuredFallbackProxmoxHostSlugs(process.env) };
 }
 
 async function searchAllHosts(
   row: RecoverableProxmoxRow,
-  knownSlugs: string[],
+  fleet: ProxmoxFleetInventory,
   allowStopped = false,
 ): Promise<{ found: FoundProxmoxVm } | { found: null; gone: boolean }> {
-  // Prefer hosts the row already names (config.infrastructure.node, then
-  // proxmox_node column). Even though Vercel's UPDATE didn't persist these
-  // for true orphans, sometimes they were partially populated.
-  const preferred: string[] = [];
-  const fromConfig = configInfraNode(row.config);
-  if (fromConfig) preferred.push(fromConfig);
-  if (row.proxmox_node && !preferred.includes(row.proxmox_node)) preferred.push(row.proxmox_node);
-  const remaining = knownSlugs.filter((s) => !preferred.includes(s));
+  // Row hints only change probe order. A stale hint cannot route credentials
+  // to a retired host, and an unregistered hint leaves absence unverified.
+  const hints = new Set([
+    ...infrastructureHostHints(row.config),
+    row.proxmox_node,
+  ].flatMap((value) => typeof value === "string" && value.trim() ? [value.trim().toLowerCase()] : []));
+  const preferred = [...hints].filter((slug) => fleet.slugs.includes(slug));
+  const remaining = fleet.slugs.filter((slug) => !hints.has(slug));
+  const unknownHints = fleet.source === "registry"
+    ? [...hints].filter((slug) => !fleet.slugs.includes(slug) && !fleet.decommissionedSlugs.has(slug))
+    : [];
+  if (unknownHints.length > 0) {
+    log.warn("recover-orphan: VM host hints are missing from the Proxmox registry", {
+      source: SOURCE,
+      failureType: "recover_orphan_host_hint_unregistered",
+      instanceId: row.id,
+      hostSlugs: unknownHints,
+    });
+  }
+  const unregisteredConfiguredHosts = fleet.source === "registry"
+    ? declaredProxmoxHostSlugs(process.env).filter((slug) => {
+      const normalize = (value: string) => value.replace(/-/g, "_");
+      return ![...fleet.slugs, ...fleet.decommissionedSlugs].some((registered) => normalize(registered) === normalize(slug));
+    })
+    : [];
+  if (unregisteredConfiguredHosts.length > 0) {
+    log.warn("recover-orphan: configured Proxmox hosts are missing from the registry", {
+      source: SOURCE,
+      failureType: "recover_orphan_configured_host_unregistered",
+      instanceId: row.id,
+      hostSlugs: unregisteredConfiguredHosts,
+    });
+  }
+  const registryCanProveAbsence = fleet.source === "registry" && fleet.slugs.length > 0
+    && unknownHints.length === 0 && unregisteredConfiguredHosts.length === 0;
   const canRecover = (hit: FoundProxmoxVm) =>
     Boolean(hit.bearer) ||
     (allowStopped && hit.vmStatus === "stopped" && Boolean(row.api_server_key_encrypted));
+  const probe = (slug: string) => searchHost(slug, row.id).catch(() => "inconclusive" as const);
 
-  let sawPresent = false;
-  let sawAbsent = false;
-  let sawInconclusive = false;
-  const tally = (r: "absent" | "present" | "inconclusive") => {
-    if (r === "absent") sawAbsent = true;
-    else if (r === "present") sawPresent = true;
-    else sawInconclusive = true;
-  };
-
+  let preferredHostsAbsent = true;
   for (const slug of preferred) {
-    const hit = await searchHost(slug, row.id);
-    if (typeof hit === "object") {
-      if (canRecover(hit)) return { found: hit };
-      tally("present");
-      continue;
-    }
-    tally(hit);
+    const hit = await probe(slug);
+    if (typeof hit === "object" && canRecover(hit)) return { found: hit };
+    if (hit !== "absent") preferredHostsAbsent = false;
   }
-  // Fan out across remaining hosts in parallel — first hit wins.
-  const probes = remaining.map((slug) =>
-    searchHost(slug, row.id).catch(() => "inconclusive" as const)
-  );
-  const results = await Promise.all(probes);
+  const results = await Promise.all(remaining.map(probe));
   for (const r of results) {
     if (typeof r === "object" && canRecover(r)) {
       return { found: r };
     }
   }
-  for (const r of results) {
-    if (typeof r === "object") tally("present");
-    else tally(r);
-  }
 
-  // The VM is conclusively gone only when at least one host positively reported
-  // NOT_FOUND and NO host saw the VM (present) or was inconclusive (env
-  // unresolved, script/transport failure, UNKNOWN). This keeps DNS cleanup from
-  // firing for a VM that still exists-but-unrecoverable (e.g. a phase-2 still
-  // finishing) or that a transient error merely hid from us this run.
-  const gone = sawAbsent && !sawPresent && !sawInconclusive;
-  return { found: null, gone };
+  return {
+    found: null,
+    gone: registryCanProveAbsence && preferredHostsAbsent && results.every((hit) => hit === "absent"),
+  };
 }
 
 function isDuplicateProxmoxMetadataError(error: unknown): boolean {
@@ -636,22 +758,17 @@ export async function locateProxmoxInstanceAcrossFleet(
   // "Gone" proves a teardown, so it needs the whole fleet: the env fallback
   // list used by the recovery sweeps may be partial, and a VM on a host
   // missing from it would read as gone. No registry, no verdict.
-  if (!supabaseAdmin) return { status: "inconclusive" };
-  const { data, error } = await supabaseAdmin.from("proxmox_hosts").select("id");
-  const slugs = (data ?? [])
-    .map((entry) => (entry as { id?: unknown }).id)
-    .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
-  if (error || slugs.length === 0) {
+  const fleet = await loadRegisteredProxmoxFleet();
+  if (!fleet || fleet.slugs.length === 0) {
     log.warn("proxmox fleet locate: host registry unreadable or empty; no verdict", {
       source: SOURCE,
       failureType: "proxmox_locate_registry_unavailable",
       instanceId: row.id,
-      errorMessage: error?.message,
     });
     return { status: "inconclusive" };
   }
   // Stopped VMs count as present: a teardown must not call a stopped VM gone.
-  const search = await searchAllHosts(row, slugs, true);
+  const search = await searchAllHosts(row, fleet, true);
   if (search.found) return { status: "found", found: search.found };
   return { status: search.gone ? "gone" : "inconclusive" };
 }
@@ -670,7 +787,7 @@ export async function recoverProxmoxInstanceAcrossFleet(
   // stopped VM for a ready runtime.
   const search = await searchAllHosts(
     row,
-    await loadKnownProxmoxHostSlugs(),
+    await loadKnownProxmoxFleet(),
     options.allowStopped === true,
   );
   if (!search.found) {
@@ -780,11 +897,11 @@ export async function runRecoverOrphanProvisioningSweep(
   let notFound = 0;
   let errors = 0;
 
-  const knownSlugs = await loadKnownProxmoxHostSlugs();
+  const fleet = await loadKnownProxmoxFleet();
 
   for (const row of orphans) {
     try {
-      const search = await searchAllHosts(row, knownSlugs);
+      const search = await searchAllHosts(row, fleet);
       if (!search.found) {
         notFound += 1;
         log.warn("recover-orphan: no matching VM across all hosts", {

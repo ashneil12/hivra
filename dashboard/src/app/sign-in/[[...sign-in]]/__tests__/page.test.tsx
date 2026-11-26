@@ -124,6 +124,25 @@ describe("SignInPage", () => {
     });
   });
 
+  it("passes the complete Venice Claim return path to Clerk", async () => {
+    const returnPath = "/dashboard/launch?agent=hermes&inference=venice&ref=venice&code=VENICE";
+    render(await SignInPage({ searchParams: Promise.resolve({ redirect_url: returnPath }) }));
+
+    expect(mockSignIn.mock.calls[0][0]).toMatchObject({
+      forceRedirectUrl: returnPath,
+      fallbackRedirectUrl: returnPath,
+      signUpUrl: `/sign-up?redirect_url=${encodeURIComponent(returnPath)}`,
+    });
+  });
+
+  it("does not force a return URL over Clerk's hosted Venice redirect", async () => {
+    const redirectUrl = "https://canary.example.test/dashboard/launch?agent=hermes&inference=venice&ref=venice&code=VENICE";
+    render(await SignInPage({ searchParams: Promise.resolve({ redirect_url: redirectUrl }) }));
+
+    expect(mockSignIn.mock.calls[0][0]).toMatchObject({ fallbackRedirectUrl: "/dashboard" });
+    expect(mockSignIn.mock.calls[0][0]).not.toHaveProperty("forceRedirectUrl");
+  });
+
   it.each([
     ["a backslash after the leading slash", "/\\attacker.example"],
     ["an encoded backslash", "/%5Cattacker.example"],

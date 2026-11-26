@@ -1,0 +1,136 @@
+{
+  "slug": "wiki-js",
+  "checkedAt": "2026-11-21T14:35:53.311Z",
+  "gitSha": "87ec3b0f7e4460f978a63e5a4d023b78fb6e4784",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "requarks/wiki is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "requarks/wiki",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "2 service images have linux/amd64",
+      "evidence": {
+        "services": [
+          {
+            "name": "db",
+            "ref": "postgres:16-alpine",
+            "digest": "sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857",
+            "platforms": [
+              "linux/amd64",
+              "unknown/unknown",
+              "linux/arm/v6",
+              "unknown/unknown",
+              "linux/arm/v7",
+              "unknown/unknown",
+              "linux/arm64/v8",
+              "unknown/unknown",
+              "linux/386",
+              "unknown/unknown",
+              "linux/ppc64le",
+              "unknown/unknown",
+              "linux/riscv64",
+              "unknown/unknown",
+              "linux/s390x",
+              "unknown/unknown"
+            ]
+          },
+          {
+            "name": "wiki",
+            "ref": "ghcr.io/requarks/wiki:2",
+            "digest": "sha256:e4708eed80c014449c0c8426c8d466c7a52a62131555bb44372fa48378b448b8",
+            "platforms": [
+              "linux/amd64",
+              "linux/arm64"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "stack up; health / -> 200 in 9.3s across 2 container(s)",
+      "evidence": {
+        "project": "hivra-verify-wiki-js-sczsp1",
+        "composeFile": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-wiki-js-tlle5S/rendered/compose.yaml",
+        "renderedDir": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-wiki-js-tlle5S/rendered",
+        "renderStdout": "{\"outDir\":\"/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-wiki-js-tlle5S/rendered\"}",
+        "defaultPlatform": "host",
+        "upStdout": "",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 9.3,
+          "attempts": 5
+        },
+        "containerCount": 2,
+        "perContainerMem": [
+          {
+            "id": "af43600cc002",
+            "memUsage": "80.56MiB / 7.652GiB",
+            "memBytes": 84473283
+          },
+          {
+            "id": "9ac51cd15e20",
+            "memUsage": "40.81MiB / 7.652GiB",
+            "memBytes": 42792387
+          }
+        ],
+        "memBytes": 127265670
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 51963,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html><html><head><meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\"><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"user-scalable=yes, width=device-width, initial-scale=1, maximum-scale=5\"><meta name=\"theme-color\" content=\"#1976d2\"><meta name=\"msapplication-TileColor\" content=\"#1976d2\"><meta name=\"msapplication-TileImage\" content=\"/_assets/favicons/mstile-150x150.png\"><title>Wiki.",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "{\"message\":\"Not Found\",\"error\":{}}"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 121.4MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 127265670,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

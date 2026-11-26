@@ -1,3 +1,4 @@
+import { UNIVERSAL_CATALOG_IDS } from "@/lib/hivra/catalog-manifests";
 import {
   AgentComputerSchema,
   type AgentComputer,
@@ -74,6 +75,7 @@ const HIVRA_TYPES = new Set([
   "aeon",
   "deepseek-harness",
   "linux-desktop",
+  ...UNIVERSAL_CATALOG_IDS,
 ]);
 
 type UnknownRecord = Record<string, unknown>;

@@ -14,7 +14,7 @@
  */
 import { chromium } from '@playwright/test';
 
-import { isAuditEmail } from './config';
+import { assertLiveManagedHostingAuditAllowed, isAuditEmail } from './config';
 import { deleteAuditUser, listAuditUsers, mintSignInTicket, type ClerkUser } from './clerk-admin';
 import { destroyAllHivraAgents, destroyAllInstances } from './instances';
 import { establishAuditSession } from './session';
@@ -65,6 +65,7 @@ function eligible(user: ClerkUser, opts: ReapOptions): boolean {
 }
 
 export async function reapAuditAccounts(opts: ReapOptions): Promise<ReapReport> {
+  if (!opts.dryRun) assertLiveManagedHostingAuditAllowed();
   const all = await listAuditUsers(opts.clerkSecretKey, isAuditEmail);
   const targets = all.filter((u) => eligible(u, opts));
 

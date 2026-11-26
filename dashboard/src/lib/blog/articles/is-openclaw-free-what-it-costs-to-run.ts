@@ -1,5 +1,5 @@
 import { BlogArticle } from "../types";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, FREE_ACCOUNT_SENTENCE, HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, MONEY_BACK_GUARANTEE } from "../plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, CONNECTED_SERVER_ELIGIBILITY, HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, MONEY_BACK_GUARANTEE } from "../plan-facts";
 
 // Written 2026-10-14 for "is openclaw free" (590 US searches a month, KD 18, Aug 2026 data),
 // with "openclaw pricing" (260) and "openclaw cost" (140) folded into the same page. Demand
@@ -127,7 +127,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Is there a free hosted plan for OpenClaw?",
-      a: `Not on Hivra. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${FREE_ACCOUNT_SENTENCE} A machine you already own, or a Pi you buy outright, is the route with no monthly hosting bill.`,
+      a: `Not on Hivra. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY} A machine you already own, or a Pi you buy outright, is the route with no monthly hosting bill.`,
     },
   ],
   relatedArticles: [

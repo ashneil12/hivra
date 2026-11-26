@@ -231,7 +231,7 @@ function AccessSection({ state, geoNotice }: { state: LaunchedState; geoNotice: 
         wallet lowers that balance. Billing shows your tier.
       </p>
       {/* Only with a known closing time and a published snapshot: the switch opens only after both (resolveConversionState), so without them the line would promise a switch that never opens. */}
-      {access.kind === "hermesos" && !geoNotice && state.snapshot && state.claim.closesAt && state.claim.phase !== "closed" ? (
+      {access.kind === "hermesos" && !access.carryoverUnavailable && !geoNotice && state.snapshot && state.claim.closesAt && state.claim.phase !== "closed" ? (
         <p data-testid="convert-switch-later" style={muted}>{SWITCH_AFTER_CLAIM_MESSAGE}</p>
       ) : null}
     </Section>
@@ -330,9 +330,8 @@ function LaunchedPanel({
  * one, and pay the claim fee; nothing is pushed to a wallet and no burn or
  * surrender of $HermesOS is needed. It never builds or sends a transaction and
  * carries no Sablier link of its own (it points at /token/airdrop, where the
- * official link lives). $HIVRA comes from the token registry; the claim facts
- * from lib/claim/hivra-airdrop-config.ts. The optional "switch your access"
- * step stays hidden until the claim window has closed.
+ * official link lives). Eligible holders see their optional access switch and
+ * existing requirements first when carryover is enabled.
  */
 export function ConvertPanel({
   state,
@@ -353,6 +352,27 @@ export function ConvertPanel({
   migrationHref?: string | null;
 }) {
   if (state.status === "dormant") return <DormantPanel state={state} geoNotice={geoNotice} />;
+  const access = state.access;
+  if (!geoNotice && ((access.kind === "switch-available" && access.carryover) || (access.kind === "hivra" && access.showSwitchReceipt))) {
+    return (
+      <article className="mx-auto max-w-2xl text-[var(--hg-text)]">
+        <header className="mb-5">
+          <h1 className="text-2xl font-semibold" id="convert-access">Your holder access</h1>
+          {access.kind === "switch-available" ? <p className="mt-2 text-[var(--text-secondary)]">Your account currently uses $HermesOS.</p> : (
+            <p role="status" className="mt-2">Your account has switched to $HIVRA.
+              {access.graceEndsAt ? ` Both tokens count toward holder access until ${formatUtc(access.graceEndsAt)}. After that only $HIVRA counts.` : ""}
+            </p>
+          )}
+        </header>
+        {access.kind === "switch-available" ? <SwitchAccessStep key={JSON.stringify(access.carryover?.tiers)} carryover={access.carryover} /> : null}
+        <Section id="holder-claim" title="Claiming tokens">
+          <p style={body}>The Sablier claim is a separate wallet transaction. Switching access leaves your claim eligibility unchanged.</p>
+          {airdropLookupHref ? <Link href={airdropLookupHref}>Check your token claim</Link> : null}
+        </Section>
+        <Link href="/dashboard/billing">Return to Billing</Link>
+      </article>
+    );
+  }
   return (
     <LaunchedPanel
       state={state}

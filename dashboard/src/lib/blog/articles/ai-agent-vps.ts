@@ -1,5 +1,5 @@
 import { BlogArticle } from "../types";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, FREE_ACCOUNT_SENTENCE, HOSTED_COMPUTE_NEEDS_PLAN_SHORT, LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "../plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, CONNECTED_SERVER_ELIGIBILITY, HOSTED_COMPUTE_NEEDS_PLAN_SHORT, LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "../plan-facts";
 
 export const article: BlogArticle = {
   slug: "ai-agent-vps",
@@ -63,7 +63,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "The DIY route above works. Counted properly, it costs $5-10/month in server rent, 1-3 hours of setup, and a slow drip of maintenance: OS patches, agent updates, disk cleanup, and the occasional evening lost to a gateway that stopped restarting. If you enjoy that work, nothing here needs improving. (And if you're still deciding whether a VPS is even the right shape, the [AI agent hosting guide](/blog/ai-agent-hosting-guide) compares all four options: own hardware, VPS, serverless, and managed.)",
         "[Hivra](/) is the version where most of the checklist above is someone else's job. Each agent runs on its own private VM, and Claude Code and Codex are the vendors' official CLIs. Claude Code uses your own Anthropic login and Codex uses your own ChatGPT login, so usage bills through those accounts with no Hivra markup. Hivra is independent and is not affiliated with Anthropic or OpenAI. You get a browser view of the running session instead of a bare SSH terminal.",
-        `The plan math: the ${ENTRY_PLAN_PRICE}/month plan is ${ENTRY_PLAN_SIZE}, and the ${LARGER_PLAN_PRICE}/month plan is ${LARGER_PLAN_SIZE}, shared across the agents you run. Paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. Hermes, Claude Code, Codex, Aeon, OpenClaw, and Agent Zero all launch on Hivra. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} ${FREE_ACCOUNT_SENTENCE} Full details on the [pricing page](/pricing).`,
+        `The plan math: the ${ENTRY_PLAN_PRICE}/month plan is ${ENTRY_PLAN_SIZE}, and the ${LARGER_PLAN_PRICE}/month plan is ${LARGER_PLAN_SIZE}, shared across the agents you run. Paid plans are not paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}. Hermes, Claude Code, Codex, Aeon, OpenClaw, and Agent Zero all launch on Hivra. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} ${CONNECTED_SERVER_ELIGIBILITY} Full details on the [pricing page](/pricing).`,
         `A reasonable decision rule: if you were going to buy one Hetzner box for one agent and follow this guide carefully, the DIY route saves a few dollars and teaches you things. If you want several agents, want them reachable from your phone, or don't want to own the security section personally, managed is cheaper than your time. If you're not sure your usage justifies always-on hosting at all, the [agent survival check](/tools/agent-survival-check) is a two-minute sanity test.`,
       ],
     },

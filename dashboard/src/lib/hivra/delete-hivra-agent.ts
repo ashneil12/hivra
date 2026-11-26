@@ -29,6 +29,10 @@ import {
 } from "@/lib/hivra/tailscale-private-access";
 import { log } from "@/lib/logger";
 import { wakeForUserAction } from "@/lib/hivra/sleep-aware";
+import {
+  preparedComputerForDelete,
+  releasePreparedComputerClaim,
+} from "@/lib/hivra/prepared-canary-computers";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -210,6 +214,20 @@ export async function deleteProxmoxHivraAgent(
           409,
         );
       }
+      const preparedMatch = preparedComputerForDelete(agent);
+      const prepared = preparedMatch === "unconfigured" ? null : preparedMatch;
+      if (preparedMatch === "unconfigured") {
+        await releaseHivraAgentOperation({
+          ...deleteLease,
+          error: "Prepared computer slot is not configured for this deployment.",
+          markError: true,
+        }).catch(() => false);
+        deleteLease = null;
+        return fail(
+          "This prepared computer does not match a configured prepared slot, so it was kept. Retry from the deployment that serves it.",
+          409,
+        );
+      }
       let context: HivraAgentExecutionContext;
       try {
         context = await resolveHivraAgentTeardownExecutionContext(userId, agent);
@@ -263,7 +281,9 @@ export async function deleteProxmoxHivraAgent(
           );
         }
       }
-      const destroy = await runProxmoxHostScript(
+      const destroy = prepared
+        ? await releasePreparedComputerClaim(agent, prepared)
+        : await runProxmoxHostScript(
         verifiedDestroyHivraVmScript({
           vmid,
           storage: context.paths.storage,
@@ -278,6 +298,7 @@ export async function deleteProxmoxHivraAgent(
         }),
         context.env,
       );
+      const failureReason = prepared ? "delete_prepared_release_failed" : "delete_destroy_failed";
       if (!destroy.ok) {
         await releaseHivraAgentOperation({
           ...deleteLease,
@@ -291,7 +312,7 @@ export async function deleteProxmoxHivraAgent(
           agentId: agent.id,
           agentType: agent.type,
           detail: {
-            reason: "delete_destroy_failed",
+            reason: failureReason,
             vmid,
             proxmox_host: context.host,
             error: (destroy.error || destroy.stderr || "destroy failed").slice(0, 200),
@@ -308,7 +329,7 @@ export async function deleteProxmoxHivraAgent(
           stderr: destroy.stderr?.slice(0, 500) ?? null,
           verboseErrors: true,
         });
-        return fail("Agent VM destroy failed", 502);
+        return fail(prepared ? "The prepared computer could not be released. Retry Delete." : "Agent VM destroy failed", 502);
       }
     }
     // The shared finalizer verifies tunnel/DNS/key revocation before the

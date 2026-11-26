@@ -47,7 +47,7 @@ export const howToInstallCodexCli: BlogArticle = {
     "As of November 2026, on macOS or Linux run `curl -fsSL https://chatgpt.com/codex/install.sh | sh`. On Windows run the PowerShell command in step two below, or use WSL. `npm install -g @openai/codex` and `brew install --cask codex` also work. Then run `codex` and choose Sign in with ChatGPT.",
   sections: [
     {
-      heading: "The short version: one command, then `codex`",
+      heading: "The short version: one install command, then sign in",
       paragraphs: [
         "OpenAI's [Codex CLI README](https://github.com/openai/codex) lists the install commands. They are the same ones OpenAI's [Codex CLI docs](https://learn.chatgpt.com/docs/cli) show in their install tabs. As of November 2026:",
         "- **macOS or Linux:** `curl -fsSL https://chatgpt.com/codex/install.sh | sh`\n- **Windows (PowerShell):** `powershell -ExecutionPolicy ByPass -c \"irm https://chatgpt.com/codex/install.ps1 | iex\"`\n- **Any system with npm:** `npm install -g @openai/codex`\n- **macOS with Homebrew:** `brew install --cask codex`\n- **Manual:** download an archive from the [latest GitHub Release](https://github.com/openai/codex/releases/latest), extract it and rename the binary to `codex`.",
@@ -138,7 +138,7 @@ export const howToInstallCodexCli: BlogArticle = {
       paragraphs: [
         "OpenAI's CLI page gives a three-step first run. Open a project directory, run `codex`, and describe a task. The page's own example prompt is `Tell me about this project`, and it suggests making a focused change or debugging an issue next.",
         "Its one piece of advice is worth taking: create Git checkpoints before and after a task, so you can revert anything you don't like. Start in a repository with a clean working tree, commit before you ask for a big change, and review the diff afterward.",
-        "Once you are using it, the commands you will want first are `codex resume` (continue a previous session) and `codex update`. Our guide to [resuming a Codex session](/blog/codex-resume-session) covers the first in detail.",
+        "Once you are using it, the commands you will want first are `codex resume` (continue a previous session) and `codex update`. Our guide to [resuming a Codex session](/blog/codex-resume-session) covers the first in detail. To connect tools such as a docs server or your issue tracker, see [Codex MCP: how to add MCP servers to the Codex CLI](/blog/codex-mcp).",
       ],
     },
     {

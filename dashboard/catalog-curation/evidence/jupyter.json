@@ -1,0 +1,75 @@
+{
+  "slug": "jupyter",
+  "checkedAt": "2026-11-21T03:24:27.808Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "jupyter/docker-stacks is BSD-3-Clause",
+      "evidence": {
+        "archived": false,
+        "full_name": "jupyter/docker-stacks",
+        "spdx_id": "BSD-3-Clause"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "quay.io/jupyter/base-notebook:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "quay.io/jupyter/base-notebook:latest",
+        "digest": "sha256:21eeabb12e91285915285c112ba8084dca64a363b8464cb910808448b7d20cd5",
+        "platforms": [
+          "linux/arm64",
+          "unknown/unknown",
+          "linux/amd64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "fail",
+      "detail": "health /api/status never returned <400 (last status 403)",
+      "evidence": {
+        "container": "hivra-verify-jupyter-qpav14",
+        "hostPort": 54636,
+        "image": "quay.io/jupyter/base-notebook:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-jupyter-qpav14",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:54636:8888",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-jupyter-qpav14-work:/home/jovyan/work",
+          "quay.io/jupyter/base-notebook:latest"
+        ],
+        "runStdout": "2e209032fbed806a3f4c0ce491cb3ae3a3d8c16ee0a898229743e14d7594476f",
+        "health": {
+          "ok": false,
+          "status": 403,
+          "seconds": 240.4,
+          "attempts": 120,
+          "error": "fetch failed"
+        },
+        "logsTail": ""
+      }
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "no floor.ram in spec or no memory reading"
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "boot: health /api/status never returned <400 (last status 403)"
+  ]
+}

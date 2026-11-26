@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import { launchOptions } from '../scripts/lib/playwright-launch.cjs';
+import { assertLiveManagedHostingAuditAllowed } from './first-run-audit/config';
 
 /**
  * Mints a short-lived Clerk sign-in ticket for the dedicated QA user and saves
@@ -14,8 +15,8 @@ import { launchOptions } from '../scripts/lib/playwright-launch.cjs';
  *   { "user_id": QA_USER_ID, "expires_in_seconds": 2700 }
  * then redeem it client-side via Clerk's ticket strategy.
  *
- * If the secrets are absent (e.g. a fork PR with no access), this no-ops — the
- * authed project's specs skip rather than fail the whole run.
+ * Ticket sign-in is paused. Without the secrets, write an empty state so
+ * unauthenticated checks can still run.
  */
 const AUTH_FILE = 'e2e/.auth/qa-user.json';
 
@@ -27,6 +28,7 @@ export default async function globalSetup(config: FullConfig) {
 
   const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY;
   const QA_USER_ID = process.env.QA_USER_ID;
+  if (CLERK_SECRET_KEY && QA_USER_ID) assertLiveManagedHostingAuditAllowed();
 
   // Write an empty state so the `authed` project can load it; specs guard on it.
   mkdirSync(dirname(AUTH_FILE), { recursive: true });

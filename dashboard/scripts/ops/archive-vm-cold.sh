@@ -125,6 +125,20 @@ if ! qm config "$VMID" >/dev/null 2>&1; then
   echo "[$VMID] no such VM on $(hostname)" >&2; exit 1
 fi
 
+# Per-VM storage-operation interlock, shared with backup-vm-daily.sh: refuse
+# while a daily backup of this VM is in flight. The dashboard finishes a
+# successful archive with `qm destroy --skiplock`, which ignores vzdump's own
+# lock — without this mutual exclusion a long backup could be torn down
+# mid-dump or mid-upload by the archive it precedes. Refusing costs nothing:
+# the dashboard reverts the row and a later archive tick retries once the
+# backup has finished.
+STORAGE_OP_LOCK="/run/hermes-vm-${VMID}.storage-op.lock"
+exec 9>"$STORAGE_OP_LOCK"
+if ! flock -n 9; then
+  echo "[$VMID] REFUSING_ARCHIVE_STORAGE_OP_IN_FLIGHT lock=$STORAGE_OP_LOCK" >&2
+  exit 10
+fi
+
 BACKUP_ENCRYPTION=off
 BACKUP_AGE_RECIPIENT=""
 case "${HERMES_BACKUP_ENCRYPTION:-}" in

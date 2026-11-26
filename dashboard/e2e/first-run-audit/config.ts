@@ -16,6 +16,11 @@ export const AUDIT_EMAIL_PREFIX = 'firstrun-audit-';
 /** Agent name prefix — becomes part of the Proxmox VM name, so keep it greppable. */
 export const AUDIT_AGENT_PREFIX = 'firstrun-audit-';
 
+export function assertLiveManagedHostingAuditAllowed(): void {
+  // Clerk sent mail during synthetic ticket sign-in, even for an existing audit user.
+  throw new Error('[managed-hosting-audit] Live runs are paused. Use offline fixtures for fresh-state coverage.');
+}
+
 export interface AuditConfig {
   /** Deployed target. NEVER point this at production. */
   baseUrl: string;

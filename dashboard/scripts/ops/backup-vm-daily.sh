@@ -216,6 +216,20 @@ if [ "${HERMES_DAILY_BACKUP_PREFLIGHT_ONLY:-0}" = "1" ]; then
   exit 0
 fi
 
+# Per-VM storage-operation interlock, shared with archive-vm-cold.sh: held for
+# the whole write path so the cold-archive lifecycle can never reach its
+# `qm destroy --skiplock` step while a backup of this VM is in flight — that
+# step ignores vzdump's own lock, so only this mutual exclusion lets a long
+# backup finish safely past the pause→archive window. Refusing here while an
+# archive holds the lock also makes the dispatcher's pgrep guard exact: two
+# detached starts racing within the spawn gap used to both reach vzdump.
+STORAGE_OP_LOCK="/run/hermes-vm-${VMID}.storage-op.lock"
+exec 9>"$STORAGE_OP_LOCK"
+if ! flock -n 9; then
+  echo "REFUSING_BACKUP_STORAGE_OP_IN_FLIGHT vmid=$VMID lock=$STORAGE_OP_LOCK" >&2
+  exit 10
+fi
+
 PVE_HOST="$(hostname)"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 SCRATCH="$(mktemp -d "$SCRATCH_ROOT/hermes-daily-backup-$VMID-XXXX")"

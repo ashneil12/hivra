@@ -5,6 +5,7 @@ import { BLOG_ARTICLES } from "@/lib/blog-data";
 import { DOCS, DOCS_IN_ORDER, DOC_SECTIONS } from "@/lib/docs/registry";
 import type { DocPage } from "@/lib/docs/types";
 import { ALL_AGENTS, getAgent } from "@/lib/hivra/agent-catalog";
+import { isCatalogAppId } from "@/lib/hivra/catalog-manifests";
 import { AGENT_SEO_ENTRIES } from "@/lib/hivra/agent-seo-catalog";
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 import {
@@ -129,7 +130,7 @@ describe("docs hub", () => {
   });
 
   it("has a page for every agent in the catalog, with the status docs/STATUS.md gives it", () => {
-    const catalogAgents = ALL_AGENTS.filter((agent) => agent.resourceKind !== "computer").map((agent) => agent.id);
+    const catalogAgents = ALL_AGENTS.filter((agent) => agent.resourceKind !== "computer" && !isCatalogAppId(agent.id)).map((agent) => agent.id);
     expect([...AGENT_DOCS].sort()).toEqual([...catalogAgents].sort());
     const previews = ["openbot", "nuphos"];
     for (const slug of AGENT_DOCS) {

@@ -51,6 +51,10 @@ Everything in this repository is public: every branch, commit message, PR title 
 
 Use enough verification for the risk of the change:
 
+- Scope discretionary tests to the behavior that changed and the callers,
+  dependencies and shared contracts it can affect. Broaden the selection when
+  changing a shared path or when the impact is uncertain. This does not change
+  protected CI checks or required release verification.
 - Tiny or local change: run the smallest relevant check. Examples: a focused unit test, lint on the touched file, or a docs/script smoke check. No post-deploy check is expected.
 - Normal change: run the relevant tests plus a basic sanity check for the affected workflow. If the change is user-facing, check canary after the Vercel Git build of the `canary` merge.
 - Risky or user-facing hot path: run focused hot-path or smoke-contract tests, broader verification when practical, and a post-deploy canary check after the build.
@@ -59,11 +63,26 @@ High-risk areas include auth, billing, chat, provisioning, instance lifecycle, g
 
 For dashboard changes, `cd dashboard && npm run verify:plan -- --risk <tiny|normal|high>` prints the expected verification level.
 
+The [weekly general check](dashboard/e2e/README.md#weekly-general-check) runs
+representative offline coverage separately from per-change verification. It is
+not a live test or release approval.
+
 ## Live Environment Acceptance
 
 For runtime bug fixes, updates, and meaningful user-facing changes, use [the live-environment-verification skill](.codex/skills/live-environment-verification/SKILL.md). Reproduce the issue in the actual environment where safely possible, then verify the affected user flow against the deployed revision. Use the browser for UI changes and the public connection path for integration checks; a build, health endpoint, or internal API alone is not end-to-end acceptance.
 
 After an authorised live change, verify that exact target. Record the target/revision, actual actions and results, preservation/cleanup, and anything unverified. If access or authority is missing, complete safe checks and state the gap; do not claim live success. This does not grant deployment authority or require deployments for docs-only or tiny local changes.
+
+## Seeing production errors
+
+Customer-impacting errors surface in the ops tables before users report them — check these first when triaging:
+
+- `ops_events` — the system of record for incidents and WARN/ERROR events: `message`, `route`, severity, `first_seen_at`/`last_seen_at`, `occurrence_count`, `metadata` (diagnosis, host/VM context), `archived_at`. Open incidents are rows with `archived_at IS NULL` — what the pager sees.
+- `ops_cron_heartbeats` — per-cron `last_run_at`, `consecutive_failures`, `last_detail`. A job that never reports is itself flagged as an incident, so a silent cron cannot hide.
+- `hivra_status_incidents` — public status-page incidents only; do not confuse curated status entries with the raw signals above.
+- Vercel function logs carry the cron WARN/ERROR lines for the served revision.
+
+The read-only query path (project refs, connection setup) is intentionally kept out of this public tree per the release tree-hygiene rules; on operator machines it is documented in the `hivra-supabase-ops` skill and the triage skills under `~/.claude/skills/`.
 
 ## Plain English
 

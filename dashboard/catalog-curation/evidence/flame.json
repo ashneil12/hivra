@@ -1,0 +1,110 @@
+{
+  "slug": "flame",
+  "checkedAt": "2026-11-21T14:47:27.834Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "pawelmalak/flame is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "pawelmalak/flame",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "pawelmalak/flame:latest linux/amd64 only",
+      "evidence": {
+        "ref": "pawelmalak/flame:latest",
+        "digest": "sha256:7a5edc859235486a82871eb624f03048e44f603cba42ea3f60dc7cfe60ca6b3f",
+        "platforms": [
+          "linux/amd64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 14.7s",
+      "evidence": {
+        "container": "hivra-verify-flame-06wgob",
+        "hostPort": 3237,
+        "image": "pawelmalak/flame:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-flame-06wgob",
+          "--security-opt",
+          "no-new-privileges",
+          "--platform",
+          "linux/amd64",
+          "-p",
+          "127.0.0.1:3237:5005",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-flame-06wgob-data:/app/data",
+          "pawelmalak/flame:latest"
+        ],
+        "runStdout": "6a8d98c5105479c794761e21835ed6551a0501c9bfecbd51febbfdd58275e6f3",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 14.7,
+          "attempts": 8
+        },
+        "memUsage": "160.2MiB / 7.652GiB",
+        "memBytes": 167981875
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 53876,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/><link rel=\"icon\" href=\"/icons/favicon.ico\"/><link rel=\"apple-touch-icon\" href=\"/icons/apple-touch-icon.png\"/><link rel=\"apple-touch-icon\" sizes=\"57x57\" href=\"/icons/apple-touch-icon-57x57.png\"/><link rel=\"apple-touch-icon\" sizes=\"72x72\" href=\"/icons/apple-touch-icon-72x72.png\"/><link rel=\"apple-touch-icon\" sizes=\"76x76\" href=\"/icons/apple",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot POST /login</pre>\n</body>\n</html>\n"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 160.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 167981875,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

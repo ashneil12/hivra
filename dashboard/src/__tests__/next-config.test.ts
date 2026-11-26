@@ -373,4 +373,29 @@ describe('next config', () => {
 
     expect(scriptSrc).toContain("'unsafe-eval'");
   });
+
+  it('allows the agent page box bootstrap form POSTs through form-action', async () => {
+    // /dashboard/agent/[id] submits hidden POST forms to
+    // https://<box>/auth/bootstrap on per-instance gateway hostnames — the same
+    // origins frame-src allows. Prod CSP reports showed form-action violations
+    // on /dashboard/agent/* for live boxes; the policy is report-only today but
+    // these origins must be present before it is ever promoted to enforcing.
+    const headers = await nextConfig.headers?.();
+    const documentHeaders = headers?.find((entry) => entry.source === '/(.*)')?.headers ?? [];
+    const csp = documentHeaders.find(
+      (header) => header.key === 'Content-Security-Policy-Report-Only',
+    )?.value;
+    const formAction = csp?.split('; ').find((directive) => directive.startsWith('form-action '));
+
+    expect(formAction).toContain("'self'");
+    for (const origin of [
+      'https://*.hermesos.cloud',
+      'https://*.agents.hermesos.cloud',
+      'https://*.hivra.cloud',
+      'https://*.agents.hivra.cloud',
+      'https://*.sslip.io',
+    ]) {
+      expect(formAction).toContain(origin);
+    }
+  });
 });

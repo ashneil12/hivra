@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { UNIVERSAL_CATALOG_IDS } from "@/lib/hivra/catalog-manifests";
 import { computerHasDesktop } from "@/lib/hivra/resource-landing";
 
 export const CANONICAL_AGENT_COMPUTER_CONTRACT_VERSION = "2026-09-04" as const;
@@ -309,6 +310,7 @@ const KNOWN_HIVRA_CLI_RUNTIMES = new Set([
   "openbot",
   "nuphos",
   "deepseek-harness",
+  ...UNIVERSAL_CATALOG_IDS,
 ]);
 const KNOWN_HIVRA_DASHBOARD_RUNTIMES = new Set(["aeon"]);
 

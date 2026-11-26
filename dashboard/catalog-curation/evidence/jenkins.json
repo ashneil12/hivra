@@ -1,0 +1,120 @@
+{
+  "slug": "jenkins",
+  "checkedAt": "2026-11-21T14:30:46.735Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "jenkinsci/jenkins is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "jenkinsci/jenkins",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "jenkins/jenkins:lts-jdk21 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "jenkins/jenkins:lts-jdk21",
+        "digest": "sha256:74401de6a6f92e1afe1b02d1c8e3d0c33f263bfb5275dd8813f9150355f2367b",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/s390x",
+          "linux/ppc64le",
+          "linux/riscv64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 75.5s",
+      "evidence": {
+        "container": "hivra-verify-jenkins-jujha7",
+        "hostPort": 3268,
+        "image": "jenkins/jenkins:lts-jdk21",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-jenkins-jujha7",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3268:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-jenkins-jujha7-home:/var/jenkins_home",
+          "jenkins/jenkins:lts-jdk21"
+        ],
+        "runStdout": "a1da50cd5e11e62a1467ed358797d6c90e07d416be9f3d4974a4915c4341bb8f",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 75.5,
+          "attempts": 18
+        },
+        "memUsage": "597MiB / 7.652GiB",
+        "memBytes": 625999872
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /; form POST -> 403",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 50678,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "\n  \n  <!DOCTYPE html><html data-disable-sticky=\"false\"><head resURL=\"/static/72c91cf0\" data-rooturl=\"\" data-resurl=\"/static/72c91cf0\" data-extensions-available=\"true\" data-unit-test=\"false\" data-imagesurl=\"/static/72c91cf0/images\" data-crumb-header=\"Jenkins-Crumb\" data-crumb-value=\"9867c06c55802d58da7c08b0c76eee718d441735c0421322626caf8c549e1fcb\">\n    \n    \n\n    <title>Dashboard - Jenkins</title><",
+        "formPost": {
+          "path": "/submitDescription",
+          "status": 403,
+          "location": null,
+          "bodyHead": "<html>\n<head>\n<meta http-equiv=\"Content-Type\" content=\"text/html;charset=ISO-8859-1\"/>\n<title>Error 403 No valid crumb was included in the request</title>\n</head>\n<body><h2>HTTP ERROR 403 No valid crumb was included in the request</h2>\n<table>\n<tr><th>URI:</th><td>/submitDescription</td></tr>\n<tr><th>STATUS:</th><td>403</td></tr>\n<tr><th>MESSAGE:</th><td>No valid crumb was included in the request<"
+        },
+        "loginProbe": {
+          "status": 403,
+          "bodyHead": "<html>\n<head>\n<meta http-equiv=\"Content-Type\" content=\"text/html;charset=ISO-8859-1\"/>\n<title>Error 403 No valid crumb was included in the request</title>\n</head>\n<body><h2>HTTP ERROR 403 No valid crumb was included in the request</h2>\n<table>\n<tr><th>URI:</th><td>/login</td></tr>\n<tr><th>STATUS:</t"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 597.0MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 625999872,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -1,9 +1,7 @@
 import "server-only";
 
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
-import { PreparedDesktopSlotSchema, PREPARED_OMARCHY_REFRESH_STAGE, preparedOmarchyRefreshPending, type OmarchyRefreshRelease } from "./prepared-omarchy-refresh-contract";
-import { advancePreparedOmarchyRefresh, latestPreparedOmarchyRelease } from "./prepared-omarchy-refresh";
+import { PreparedDesktopSlotSchema, preparedOmarchyRefreshPending } from "./prepared-omarchy-refresh-contract";
 
 import { shellQuote } from "@/lib/hivra/proxmox-target";
 import {
@@ -14,7 +12,6 @@ import {
 import { supabaseAdmin } from "@/lib/supabase";
 import type { ComputerTemplateId } from "./computer-catalog";
 import { managedHivraProvisionerChannelForServerEnvironment } from "./managed-provisioner-channel";
-import { resolvePlanAgentSlots } from "./resource-gate";
 
 const Slot = PreparedDesktopSlotSchema;
 const Slots = z.object({ omarchy: Slot.optional(), windows: Slot.optional() }).strict()
@@ -143,10 +140,8 @@ ${displayWake}`;
 }
 
 /**
- * The prepared desktop slots this deployment can serve, or null when it serves
- * none. The configuration is the switch: a deployment offers (and can claim)
- * exactly the fixtures it names here, and the claim route fails closed when a
- * profile is absent or its host carries no credentials for this deployment.
+ * The prepared desktop slots this deployment can manage, or null when it
+ * manages none. Slot identity is not proof that the guest is clean.
  */
 export function readPreparedSlots(
   env: NodeJS.ProcessEnv = process.env,
@@ -172,15 +167,6 @@ export function readPreparedSlot(
   env: NodeJS.ProcessEnv = process.env,
 ): PreparedCanarySlot | null {
   return readPreparedSlots(env)?.[profile] ?? null;
-}
-
-/** The profiles this deployment can claim, for the surfaces that offer them. */
-export function preparedProfilesForDeployment(
-  env: NodeJS.ProcessEnv = process.env,
-): PreparedCanaryProfile[] {
-  const slots = readPreparedSlots(env);
-  if (!slots) return [];
-  return PREPARED_PROFILES.filter((profile) => slots[profile] !== undefined);
 }
 
 /** A slot host is usable only where this deployment holds that host's own
@@ -227,94 +213,12 @@ type AgentRow = Record<string, unknown> & {
 
 export type PreparedCanaryAgentRow = AgentRow;
 
-type Dependencies = {
-  runHost: (script: string, slot: PreparedCanarySlot) => Promise<HostScriptResult>;
-  findOwnerProfile: (userId: string, profile: PreparedCanaryProfile) => Promise<AgentRow | null>;
-  findSlotOwner: (slot: PreparedCanarySlot) => Promise<AgentRow | null>;
-  insert: (row: Record<string, unknown>) => Promise<AgentRow>;
-  markBindingEnforced: (row: AgentRow) => Promise<AgentRow>;
-  latestRelease: () => Promise<OmarchyRefreshRelease>;
-  reserveRefresh: (row: Record<string, unknown>, release: OmarchyRefreshRelease, slot: PreparedCanarySlot) => Promise<AgentRow>;
-  advanceRefresh: (userId: string, row: AgentRow) => Promise<AgentRow>;
-};
-
-async function insertPreparedRow(row: Record<string, unknown>, release?: OmarchyRefreshRelease, slot?: PreparedCanarySlot): Promise<AgentRow> {
+async function findPreparedSlotOwner(slot: PreparedCanarySlot): Promise<AgentRow | null> {
   if (!supabaseAdmin) throw new Error("database_unavailable");
-  const access = await resolvePlanAgentSlots(String(row.user_id));
-  if (!access) throw new Error("plan_access_required");
-  if (access.freeAccount) throw new Error("hosted_compute_requires_plan");
-  const { data, error } = await supabaseAdmin.rpc(release ? "reserve_hivra_prepared_omarchy" : "insert_hivra_managed_agent", {
-    p_row: row, p_agent_limit: access.agentLimit, ...(release ? { p_release: release, p_slot: slot } : {}),
-  });
+  const { data, error } = await supabaseAdmin.from("hivra_agents").select("*")
+    .eq("proxmox_host", slot.host).eq("vmid", slot.vmid).neq("status", "deleted").maybeSingle();
   if (error) throw error;
-  const result = data as { status?: unknown; row?: unknown } | null;
-  if (result?.status === "plan_agent_limit") throw new Error("plan_agent_limit");
-  if (result?.status === "prepared_slot_claimed") throw new Error("prepared_slot_claimed");
-  if (result?.status !== "inserted" || !result.row || typeof result.row !== "object") throw new Error("insert_unconfirmed");
-  return result.row as AgentRow;
-}
-
-const defaults: Dependencies = {
-  latestRelease: latestPreparedOmarchyRelease,
-  reserveRefresh: (row, release, slot) => insertPreparedRow(row, release, slot),
-  advanceRefresh: (userId, row) => advancePreparedOmarchyRefresh(userId, row),
-  runHost: (script, slot) => runProxmoxHostScript(
-    script,
-    resolveProxmoxTargetConfiguration(process.env, slot.host).env,
-    { timeoutMs: 30_000, maxOutputBytes: 16_384 },
-  ),
-  findOwnerProfile: async (userId, profile) => {
-    if (!supabaseAdmin) throw new Error("database_unavailable");
-    const { data, error } = await supabaseAdmin.from("hivra_agents").select("*")
-      .eq("user_id", userId).eq("computer_profile", profile).neq("status", "deleted")
-      .order("created_at", { ascending: false }).limit(1).maybeSingle();
-    if (error) throw error;
-    return data as AgentRow | null;
-  },
-  findSlotOwner: async slot => {
-    if (!supabaseAdmin) throw new Error("database_unavailable");
-    const { data, error } = await supabaseAdmin.from("hivra_agents").select("*")
-      .eq("proxmox_host", slot.host).eq("vmid", slot.vmid).neq("status", "deleted").maybeSingle();
-    if (error) throw error;
-    return data as AgentRow | null;
-  },
-  insert: row => insertPreparedRow(row),
-  markBindingEnforced: async row => {
-    if (!supabaseAdmin) throw new Error("database_unavailable");
-    const { data, error } = await supabaseAdmin.from("hivra_agents")
-      .update({ infrastructure_binding_token_enforced: true })
-      .eq("id", row.id).eq("user_id", row.user_id).eq("proxmox_host", row.proxmox_host)
-      .eq("vmid", row.vmid).eq("infrastructure_binding_token_hash", row.infrastructure_binding_token_hash)
-      .eq("infrastructure_binding_token_enforced", false).select().single();
-    if (error || !data) throw error ?? new Error("binding_update_unconfirmed");
-    return data as AgentRow;
-  },
-};
-
-function verificationScript(profile: PreparedCanaryProfile, slot: PreparedCanarySlot): string {
-  const encodedMarker = `hivra-${profile}-operation%3A${slot.claim}`;
-  const plainMarker = `hivra-${profile}-operation:${slot.claim}`;
-  return `set -euo pipefail
-VMID=${slot.vmid}
-install -d -m 0755 /run/lock
-exec 8>/run/lock/hivra-prepared-${slot.vmid}.lock
-flock -w 5 8 || exit 30
-CONFIG="$(qm config "$VMID")"
-case "$CONFIG" in *${shellQuote(encodedMarker)}*|*${shellQuote(plainMarker)}*) ;; *) exit 31 ;; esac
-printf '%s\\n' "$CONFIG" | grep -F -- ${shellQuote(`name: ${preparedSlotName(profile, slot)}`)} >/dev/null
-qm set "$VMID" --onboot 1 --startup order=30,up=15,down=60 >/dev/null
-STATUS="$(qm status "$VMID" | awk '{print $2}')"
-if [ "$STATUS" = stopped ]; then qm start "$VMID" 8>&- >/dev/null; fi
-for _ in $(seq 1 20); do
-  if [ "$(qm status "$VMID" | awk '{print $2}')" = running ] \
-    && qm agent "$VMID" ping >/dev/null 2>&1; then
-    echo HIVRA_PREPARED_COMPUTER_READY
-    exit 0
-  fi
-  sleep 1
-done
-echo "prepared computer guest agent is unavailable" >&2
-exit 32`;
+  return data as AgentRow | null;
 }
 
 export function preparedCanaryBindingScript(
@@ -346,89 +250,108 @@ qm config "$VMID" | sed -n 's/^tags:[[:space:]]*//p' | tr ';' '\n' | grep -Fxq "
 echo HIVRA_PREPARED_BINDING_READY`;
 }
 
-export async function enforcePreparedCanaryBinding(
-  row: AgentRow,
+/**
+ * Deleting a claim releases the prepared computer instead of destroying it
+ * (docs/release/OMARCHY-PREPARED-REFRESH.md): under the slot's VM lock, the
+ * claim's own binding tag is removed and every other tag is kept. The VM is
+ * never stopped or destroyed. A slot bound to another claim is refused, and a
+ * slot whose tag is already gone (a retried delete) succeeds unchanged.
+ */
+export function preparedCanaryReleaseScript(
   profile: PreparedCanaryProfile,
   slot: PreparedCanarySlot,
-  deps: Dependencies = defaults,
-): Promise<AgentRow> {
-  if (row.infrastructure_binding_token_enforced === true) return row;
-  const bindingHash = typeof row.infrastructure_binding_token_hash === "string"
-    ? row.infrastructure_binding_token_hash : "";
-  const script = preparedCanaryBindingScript(profile, slot, bindingHash);
-  const verified = await deps.runHost(script, slot);
-  if (!verified.ok || !verified.stdout.split(/\r?\n/).includes("HIVRA_PREPARED_BINDING_READY")) {
-    throw new Error("prepared_binding_unavailable");
-  }
-  return deps.markBindingEnforced(row);
+  bindingHash: string | null,
+): string {
+  if (bindingHash !== null && !/^[a-f0-9]{64}$/.test(bindingHash)) throw new Error("prepared_binding_unavailable");
+  const encodedMarker = `hivra-${profile}-operation%3A${slot.claim}`;
+  const plainMarker = `hivra-${profile}-operation:${slot.claim}`;
+  const bindingTag = bindingHash ? `hivra-bind-${bindingHash.slice(0, 32)}` : "";
+  return `set -euo pipefail
+VMID=${slot.vmid}
+install -d -m 0755 /run/lock
+exec 8>/run/lock/hivra-prepared-${slot.vmid}.lock
+flock -x -w 60 8 || { echo "prepared computer lifecycle is busy" >&2; exit 50; }
+CONFIG="$(qm config "$VMID")"
+case "$CONFIG" in *${shellQuote(encodedMarker)}*|*${shellQuote(plainMarker)}*) ;; *) echo "prepared computer identity mismatch" >&2; exit 51 ;; esac
+printf '%s\\n' "$CONFIG" | grep -F -- ${shellQuote(`name: ${preparedSlotName(profile, slot)}`)} >/dev/null \\
+  || { echo "prepared computer name mismatch" >&2; exit 52; }
+TAGS="$(printf '%s\\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p')"
+EXPECTED_TAG=${shellQuote(bindingTag)}
+HELD=""; OTHER=""; KEEP=""
+for TAG in $(printf '%s' "$TAGS" | tr ';,' '  '); do
+  if [ -n "$EXPECTED_TAG" ] && [ "$TAG" = "$EXPECTED_TAG" ]; then HELD=1; continue; fi
+  case "$TAG" in hivra-bind-*) OTHER=1 ;; esac
+  KEEP="\${KEEP:+$KEEP;}$TAG"
+done
+if [ -n "$OTHER" ]; then
+  echo "prepared computer is bound to another claim" >&2
+  exit 53
+fi
+if [ -n "$HELD" ]; then
+  if [ -n "$KEEP" ]; then qm set "$VMID" --tags "$KEEP" >/dev/null; else qm set "$VMID" --delete tags >/dev/null; fi
+  AFTER="$(qm config "$VMID" | sed -n 's/^tags:[[:space:]]*//p')"
+  for TAG in $(printf '%s' "$AFTER" | tr ';,' '  '); do
+    [ "$TAG" != "$EXPECTED_TAG" ] || { echo "prepared computer binding was not released" >&2; exit 54; }
+  done
+fi
+echo HIVRA_PREPARED_BINDING_RELEASED`;
 }
 
-export async function claimPreparedCanaryComputer(
-  input: { userId: string; profile: PreparedCanaryProfile; name: string },
-  dependencies: Partial<Dependencies> = {},
+/**
+ * Which prepared slot a Hivra-managed prepared-profile row's Delete must
+ * release: the matched slot, "unconfigured" when the row matches no slot
+ * configured here (Delete must then keep the VM and refuse), or null for any
+ * other row (including a self-managed Windows computer), which owns its VM.
+ */
+export function preparedComputerForDelete(
+  row: PreparedCanaryComputerRow & { deployment_mode?: unknown },
+  env: NodeJS.ProcessEnv = process.env,
+): { profile: PreparedCanaryProfile; slot: PreparedCanarySlot } | "unconfigured" | null {
+  if (row.deployment_mode !== "hivra-managed") return null;
+  if (row.computer_profile !== "omarchy" && row.computer_profile !== "windows") return null;
+  return matchPreparedCanaryComputer(row, env) ?? "unconfigured";
+}
+
+/** Deleting a prepared claim releases its binding and keeps the VM. */
+export async function releasePreparedComputerClaim(
+  row: { infrastructure_binding_token_hash?: unknown },
+  prepared: { profile: PreparedCanaryProfile; slot: PreparedCanarySlot },
+  runHost: (script: string, slot: PreparedCanarySlot) => Promise<HostScriptResult> = (script, slot) => runProxmoxHostScript(
+    script,
+    resolveProxmoxTargetConfiguration(process.env, slot.host).env,
+    { timeoutMs: 90_000, maxOutputBytes: 16_384 },
+  ),
+): Promise<HostScriptResult> {
+  const bindingHash = typeof row.infrastructure_binding_token_hash === "string"
+    && /^[a-f0-9]{64}$/.test(row.infrastructure_binding_token_hash)
+    ? row.infrastructure_binding_token_hash
+    : null;
+  const result = await runHost(preparedCanaryReleaseScript(prepared.profile, prepared.slot, bindingHash), prepared.slot);
+  if (result.ok && !result.stdout.split(/\r?\n/).includes("HIVRA_PREPARED_BINDING_RELEASED")) {
+    return { ...result, ok: false, error: "prepared computer release was not confirmed" };
+  }
+  return result;
+}
+
+export async function resumePreparedCanaryComputer(
+  input: { userId: string; profile: PreparedCanaryProfile; operator: boolean },
+  findSlotOwner = findPreparedSlotOwner,
 ): Promise<AgentRow> {
-  const deps = { ...defaults, ...dependencies };
+  if (input.operator !== true) throw new Error("prepared_computer_operator_only");
   const slot = readPreparedSlot(input.profile);
   if (!slot) throw new Error("prepared_profile_unavailable");
-  const name = input.name.trim().slice(0, 80);
-  if (!name) throw new Error("invalid_name");
 
-  const prior = await deps.findOwnerProfile(input.userId, input.profile);
-  if (prior) {
-    if (prior.proxmox_host !== slot.host || prior.vmid !== slot.vmid) throw new Error("profile_already_claimed");
-    return preparedOmarchyRefreshPending(prior) ? deps.advanceRefresh(input.userId, prior) : enforcePreparedCanaryBinding(prior, input.profile, slot, deps);
+  // An empty slot or absent binding is not proof of a clean guest. Until a
+  // trusted reset exists this endpoint is read-only and cannot assign a slot.
+  const row = await findSlotOwner(slot);
+  if (!row || row.status === "deleted") throw new Error("prepared_profile_unavailable");
+  if (row.user_id !== input.userId) throw new Error("prepared_slot_claimed");
+  if (row.deployment_mode !== "hivra-managed" || row.computer_profile !== input.profile
+    || !matchPreparedCanaryComputer(row)
+    || row.operation_kind === "delete" || row.desired_state === "deleted"
+    || (row.infrastructure_binding_token_enforced !== true
+      && !(row.status === "provisioning" && preparedOmarchyRefreshPending(row)))) {
+    throw new Error("prepared_profile_unavailable");
   }
-  const currentOwner = await deps.findSlotOwner(slot);
-  if (currentOwner) {
-    if (currentOwner.user_id !== input.userId || currentOwner.computer_profile !== input.profile) {
-      throw new Error("prepared_slot_claimed");
-    }
-    return preparedOmarchyRefreshPending(currentOwner) ? deps.advanceRefresh(input.userId, currentOwner) : enforcePreparedCanaryBinding(currentOwner, input.profile, slot, deps);
-  }
-
-  // Fail closed: a row written on a guessed lane is refused by this deployment's
-  // own lifecycle, usage and console paths while it still holds a live VM.
-  const channel = deploymentChannel(process.env);
-  if (!channel) throw new Error("prepared_profile_unavailable");
-
-  if (input.profile === "omarchy") {
-    let release: OmarchyRefreshRelease;
-    try { release = await deps.latestRelease(); } catch { throw new Error("prepared_omarchy_release_unavailable"); }
-    const operationId = randomUUID();
-    const reserved = await deps.reserveRefresh({
-      user_id: input.userId, type: "linux-desktop", computer_profile: "omarchy", name,
-      status: "provisioning", desired_state: "running", deployment_mode: "hivra-managed", computer_substrate: "proxmox-kvm",
-      managed_provisioner_channel: channel, proxmox_host: slot.host, vmid: slot.vmid, ip: slot.ip, cpu: 4, ram: 8,
-      operation_id: operationId, allocation_operation_id: operationId, operation_kind: "provision", operation_started_at: new Date().toISOString(),
-      operation_payload: { stage: PREPARED_OMARCHY_REFRESH_STAGE, refreshId: operationId }, infrastructure_binding_token_enforced: false,
-    }, release, slot);
-    // A durable pending row exists even if HTTP disappears before host dispatch.
-    // Its detail GET resumes this same refresh instead of allocating again.
-    try { return await deps.advanceRefresh(input.userId, reserved); } catch { return reserved; }
-  }
-
-  const verified = await deps.runHost(verificationScript(input.profile, slot), slot);
-  if (!verified.ok || !verified.stdout.split(/\r?\n/).includes("HIVRA_PREPARED_COMPUTER_READY")) {
-    throw new Error("prepared_guest_unavailable");
-  }
-  const inserted = await deps.insert({
-    user_id: input.userId,
-    type: "linux-desktop",
-    computer_profile: input.profile,
-    name,
-    status: "running",
-    desired_state: "running",
-    deployment_mode: "hivra-managed",
-    computer_substrate: "proxmox-kvm",
-    managed_provisioner_channel: channel,
-    proxmox_host: slot.host,
-    vmid: slot.vmid,
-    ip: slot.ip,
-    cpu: 4,
-    ram: 8,
-    provisioned_at: new Date().toISOString(),
-    infrastructure_binding_token_enforced: false,
-  });
-  const bound = await enforcePreparedCanaryBinding(inserted, input.profile, slot, deps);
-  return bound;
+  return row;
 }

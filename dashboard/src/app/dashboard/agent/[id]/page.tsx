@@ -410,12 +410,35 @@ function AuthenticatedSurface({
   const [connectBusy, setConnectBusy] = useState<"mint" | "revoke" | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connectCopied, setConnectCopied] = useState<string | null>(null);
-  const [connectPair, setConnectPair] = useState<{ url: string; username: string; password: string } | null>(null);
-  const mintConnect = useCallback(async () => {
+  const [connection, setConnection] = useState<
+    | { kind: "grant"; url: string; username: string; password: string }
+    | { kind: "hermes-desktop"; url: string; sessionToken: string }
+    | null
+  >(null);
+  const connectPair = connection?.kind === "grant" ? connection : null;
+  const mintConnect = useCallback(async (mode = connectName === "Hermes" ? "desktop" : "browser") => {
     if (!surfaceOrigin || !destination || !token) return;
     setConnectBusy("mint");
     setConnectError(null);
     try {
+      if (mode === "desktop") {
+        const response = await fetch(`${surfaceOrigin}/api/hermes-desktop-connection`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        if (response.status === 503) {
+          setConnectError("The Hermes Desktop backend is unavailable. In Manage, update Hermes and then update the connection service.");
+          return;
+        }
+        if (!response.ok) throw new Error(String(response.status));
+        const details: unknown = await response.json();
+        if (!details || typeof details !== "object" || !("path" in details) || details.path !== "/hermes-desktop"
+          || !("token" in details) || typeof details.token !== "string" || !/^[a-f0-9]{64}$/.test(details.token)) {
+          throw new Error("Invalid Hermes Desktop connection details");
+        }
+        setConnection({ kind: "hermes-desktop", url: `${surfaceOrigin}${details.path}`, sessionToken: details.token });
+        return;
+      }
       const username = "hivra";
       const password = Array.from(crypto.getRandomValues(new Uint8Array(32))).map((b) => b.toString(16).padStart(2, "0")).join("");
       const answer = await fetch(`${surfaceOrigin}/connect/grant`, {
@@ -425,7 +448,8 @@ function AuthenticatedSurface({
         cache: "no-store",
       });
       if (!answer.ok) throw new Error(String(answer.status));
-      setConnectPair({
+      setConnection({
+        kind: "grant",
         url: `${surfaceOrigin}${destination}`,
         username,
         password,
@@ -435,13 +459,17 @@ function AuthenticatedSurface({
     } finally {
       setConnectBusy(null);
     }
-  }, [surfaceOrigin, destination, token]);
+  }, [surfaceOrigin, destination, token, connectName]);
   const revokeConnect = useCallback(async () => {
     if (!surfaceOrigin || !token) return;
     setConnectBusy("revoke");
+    setConnectError(null);
     try {
-      await fetch(`${surfaceOrigin}/connect/grant`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
-      setConnectPair(null);
+      const response = await fetch(`${surfaceOrigin}/connect/grant`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+      if (!response.ok) throw new Error(String(response.status));
+      setConnection(current => current?.kind === "grant" ? null : current);
+    } catch {
+      setConnectError("Couldn’t revoke browser links. Try again.");
     } finally {
       setConnectBusy(null);
     }
@@ -460,6 +488,76 @@ function AuthenticatedSurface({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [connectOpen]);
+
+  // "Direct sign-in": an owner-set password on the box itself. With one saved,
+  // opening the box's URL shows its sign-in page — the computer can be opened
+  // straight from a bookmark without passing through the dashboard first.
+  const [signinOpen, setSigninOpen] = useState(false);
+  const [signinBusy, setSigninBusy] = useState<"load" | "save" | "clear" | null>(null);
+  const [signinError, setSigninError] = useState<string | null>(null);
+  const [signinSet, setSigninSet] = useState<boolean | null>(null);
+  const [signinPw, setSigninPw] = useState("");
+  const signinUnsupported = "This computer’s connection service doesn’t support direct sign-in yet. Open Manage and choose Update connection service, then try again.";
+  const loadSigninStatus = useCallback(async () => {
+    if (!surfaceOrigin || !token) return;
+    setSigninBusy("load");
+    setSigninError(null);
+    try {
+      const answer = await fetch(`${surfaceOrigin}/api/signin-password`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+      if (answer.status === 404 || answer.status === 405) throw new Error("unsupported");
+      if (!answer.ok) throw new Error(String(answer.status));
+      const body = (await answer.json()) as { set?: boolean };
+      setSigninSet(Boolean(body && body.set));
+    } catch (error) {
+      setSigninError(error instanceof Error && error.message === "unsupported" ? signinUnsupported : "The computer didn’t answer — try again.");
+    } finally {
+      setSigninBusy(null);
+    }
+  }, [surfaceOrigin, token]);
+  const saveSigninPassword = useCallback(async () => {
+    if (!surfaceOrigin || !token) return;
+    setSigninBusy("save");
+    setSigninError(null);
+    try {
+      const answer = await fetch(`${surfaceOrigin}/api/signin-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ password: signinPw }),
+        cache: "no-store",
+      });
+      if (answer.status === 404 || answer.status === 405) throw new Error("unsupported");
+      if (answer.status === 400) throw new Error("invalid");
+      if (!answer.ok) throw new Error(String(answer.status));
+      setSigninSet(true);
+      setSigninPw("");
+    } catch (error) {
+      setSigninError(error instanceof Error && error.message === "unsupported" ? signinUnsupported
+        : error instanceof Error && error.message === "invalid" ? "Password needs 8–128 characters, no spaces."
+        : "The computer didn’t answer — try again.");
+    } finally {
+      setSigninBusy(null);
+    }
+  }, [surfaceOrigin, token, signinPw]);
+  const clearSigninPassword = useCallback(async () => {
+    if (!surfaceOrigin || !token) return;
+    setSigninBusy("clear");
+    setSigninError(null);
+    try {
+      const answer = await fetch(`${surfaceOrigin}/api/signin-password`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+      if (!answer.ok) throw new Error(String(answer.status));
+      setSigninSet(false);
+    } catch {
+      setSigninError("The computer didn’t answer — try again.");
+    } finally {
+      setSigninBusy(null);
+    }
+  }, [surfaceOrigin, token]);
+  useEffect(() => {
+    if (!signinOpen) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setSigninOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [signinOpen]);
 
   // "Open in new tab" is the everyday action of this surface, so it belongs in
   // the title bar with the rest of the chrome. The button below still drives
@@ -482,13 +580,23 @@ function AuthenticatedSurface({
             icon: "link" as const,
             onSelect: () => {
               setConnectOpen(true);
-              if (!connectPair && connectBusy !== "mint") void mintConnect();
+              if (!connection && connectBusy !== "mint") void mintConnect();
             },
             disabled: accessStatus !== "ready",
           }]
         : []),
+      {
+        id: "direct-signin",
+        label: "Direct sign-in",
+        icon: "link" as const,
+        onSelect: () => {
+          setSigninOpen(true);
+          if (signinSet === null && signinBusy !== "load") void loadSigninStatus();
+        },
+        disabled: accessStatus !== "ready",
+      },
     ],
-    [openInNewTab, accessStatus, connectName, connectPair, connectBusy, mintConnect],
+    [openInNewTab, accessStatus, connectName, connection, connectBusy, mintConnect, signinSet, signinBusy, loadSigninStatus],
   );
   const { published: actionsLifted } = useSurfaceAction(
     surfaceId,
@@ -508,7 +616,22 @@ function AuthenticatedSurface({
         >
           <div style={{ background: "var(--bg-surface)", border: "1px solid var(--etched-border)", boxShadow: "0 18px 50px rgba(0,0,0,0.35)", maxWidth: 520, width: "100%", padding: "22px 24px", color: "var(--ink-black)" }}>
             <div className="serif" style={{ fontSize: 20, marginBottom: 4 }}>Connect the {connectName} app</div>
-            {connectPair ? (
+            {connection?.kind === "hermes-desktop" ? (
+              <>
+                <p className="mono" style={{ fontSize: 12, lineHeight: 1.7 }}>In Hermes Desktop, open Settings → Gateways → Remote gateway. Enter the Remote URL and session token, then choose Save and reconnect.</p>
+                {([
+                  ["Remote URL", connection.url],
+                  ["Session token", connection.sessionToken],
+                ] as const).map(([field, value]) => (
+                  <div key={field} className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 8 }}>
+                    <span style={{ width: 96, color: "var(--ink-soft)" }}>{field}</span>
+                    <code style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</code>
+                    <button type="button" onClick={() => void copyConnect(field, value)}>{connectCopied === field ? "Copied ✓" : "Copy"}</button>
+                  </div>
+                ))}
+                <p style={{ fontSize: 12, color: "var(--ink-soft)" }}>Keep the session token private. It grants access to this Hermes computer.</p>
+              </>
+            ) : connectPair ? (
               <>
                 <ol className="mono" style={{ fontSize: 12, lineHeight: 1.7, margin: "8px 0 14px", paddingLeft: 18, color: "var(--ink-soft)" }}>
                   <li>Open the {connectName} app on your computer.</li>
@@ -541,6 +664,11 @@ function AuthenticatedSurface({
                     </div>
                   </>
                 ) : null}
+                {connectName === "Agent Zero" ? (
+                  <p className="mono" style={{ fontSize: 12, lineHeight: 1.6, margin: "14px 0 0", color: "var(--ink-soft)" }}>
+                    Using the A0 CLI? Run <code>a0 --host {surfaceOrigin}</code> and sign in with the username and password above.
+                  </p>
+                ) : null}
                 <p style={{ fontSize: 12, lineHeight: 1.6, margin: "14px 0 0", color: "var(--ink-soft)" }}>
                   Anyone with the password or the link can open your dashboard — keep them private. They stop working after 30 days or when you Disconnect.
                 </p>
@@ -550,18 +678,86 @@ function AuthenticatedSurface({
             ) : (
               <p style={{ fontSize: 13, lineHeight: 1.6, margin: "8px 0 0" }}>{connectBusy === "revoke" ? "Disconnecting…" : "Creating your sign-in…"}</p>
             )}
+            {connection && connectError ? <p style={{ color: "var(--danger)", fontSize: 12 }}>{connectError}</p> : null}
             <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+              {connectName === "Hermes" ? (
+                <button type="button" className="mono" onClick={() => void mintConnect(connectPair ? "desktop" : "browser")} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                  {connectPair ? "Show Desktop connection" : "Create browser link"}
+                </button>
+              ) : null}
               {connectPair ? (
-                <button type="button" className="mono" onClick={() => void mintConnect()} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                <button type="button" className="mono" onClick={() => void mintConnect("browser")} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
                   New link
                 </button>
               ) : null}
-              {connectPair ? (
+              {connectPair || connectName === "Hermes" ? (
                 <button type="button" className="mono" onClick={() => void revokeConnect()} disabled={connectBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
-                  Disconnect
+                  {connectName === "Hermes" ? "Revoke browser links" : "Disconnect"}
                 </button>
               ) : null}
               <button type="button" className="mono" onClick={() => setConnectOpen(false)} style={{ marginLeft: "auto", border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {signinOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Direct sign-in"
+          onClick={(event) => { if (event.target === event.currentTarget) setSigninOpen(false); }}
+          style={{ position: "absolute", inset: 0, zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(12,12,12,0.5)", padding: 20 }}
+        >
+          <div style={{ background: "var(--bg-surface)", border: "1px solid var(--etched-border)", boxShadow: "0 18px 50px rgba(0,0,0,0.35)", maxWidth: 520, width: "100%", padding: "22px 24px", color: "var(--ink-black)" }}>
+            <div className="serif" style={{ fontSize: 20, marginBottom: 4 }}>Direct sign-in</div>
+            {signinSet === null && signinBusy === "load" ? (
+              <p style={{ fontSize: 13, lineHeight: 1.6, margin: "8px 0 0" }}>Checking the computer…</p>
+            ) : (
+              <>
+                <p style={{ fontSize: 13, lineHeight: 1.6, margin: "8px 0 14px" }}>
+                  Set a password for this computer and you can open it straight from its address — no dashboard first:
+                </p>
+                {surfaceOrigin ? (
+                  <div className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 14 }}>
+                    <code style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "var(--bg-page)", padding: "6px 8px", border: "1px solid var(--etched-border)" }}>{surfaceOrigin}</code>
+                    <button type="button" className="mono" onClick={() => void copyConnect("signin-url", surfaceOrigin)} style={{ minWidth: 68, border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "6px 10px", cursor: "pointer" }}>
+                      {connectCopied === "signin-url" ? "Copied ✓" : "Copy"}
+                    </button>
+                  </div>
+                ) : null}
+                <p style={{ fontSize: 13, lineHeight: 1.6, margin: "0 0 8px" }}>
+                  {signinSet
+                    ? "A password is set — visitors see a sign-in page instead of the closed notice."
+                    : "No password yet. Without one the address stays closed to anyone who isn’t signed in."}
+                </p>
+                <div className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder={signinSet ? "New password" : "Choose a password"}
+                    value={signinPw}
+                    onChange={(event) => setSigninPw(event.target.value)}
+                    style={{ flex: 1, background: "var(--bg-page)", border: "1px solid var(--etched-border)", padding: "7px 8px", color: "var(--ink-black)", font: "inherit" }}
+                  />
+                </div>
+                <p style={{ fontSize: 12, lineHeight: 1.6, margin: "8px 0 0", color: "var(--ink-soft)" }}>
+                  8–128 characters, no spaces. Anyone with it can open your dashboard — keep it private.
+                </p>
+                {signinError ? <p style={{ fontSize: 13, lineHeight: 1.6, margin: "10px 0 0", color: "var(--ink-black)" }}>{signinError}</p> : null}
+              </>
+            )}
+            <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+              <button type="button" className="mono" onClick={() => void saveSigninPassword()} disabled={signinBusy !== null || signinPw.trim().length < 8} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                {signinBusy === "save" ? "Saving…" : signinSet ? "Change password" : "Set password"}
+              </button>
+              {signinSet ? (
+                <button type="button" className="mono" onClick={() => void clearSigninPassword()} disabled={signinBusy !== null} style={{ border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
+                  {signinBusy === "clear" ? "Removing…" : "Remove password"}
+                </button>
+              ) : null}
+              <button type="button" className="mono" onClick={() => setSigninOpen(false)} style={{ marginLeft: "auto", border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", padding: "8px 12px", cursor: "pointer" }}>
                 Close
               </button>
             </div>
@@ -1618,7 +1814,7 @@ export default function AgentPage() {
             // sees HivraGitHubConnect, whose "your Aeon fork" copy is Aeon-specific.
             <DashboardView url={def?.id === "deepseek-harness"
               ? `${agent.chat_url.replace(/\/$/, "")}/`
-              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "openbot" ? "openbot" : def?.id === "nuphos" ? "nuphos" : def?.id === "hermes" ? "hermes" : "aeon"}/`}
+              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "openbot" ? "openbot" : def?.id === "nuphos" ? "nuphos" : def?.id === "hermes" ? "hermes" : def?.id === "aeon" ? "aeon" : "app"}/`}
               token={tok} label={`${def?.name || "Agent"} · dashboard`} surfaceId="aeon" active={effectiveTab === "aeon"} onManage={() => selectTab("manage")} connectName={def?.name} />
           ) : (
             <HivraGitHubConnect boxUrl={agent.chat_url} boxId={agent.id} onDone={() => setReloadKey(k => k + 1)} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} defaultManagedCredits={Boolean(agent.managed_venice)} />

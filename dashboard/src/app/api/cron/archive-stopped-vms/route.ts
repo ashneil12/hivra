@@ -329,6 +329,7 @@ async function handle(req: NextRequest) {
     try {
       result = await archiveInstance(supabaseAdmin!, candidate.id, undefined, {
         maxScriptTimeoutMs: scriptTimeoutMs,
+        pausedBefore: cutoff,
       });
     } catch (err) {
       results.failed += 1;

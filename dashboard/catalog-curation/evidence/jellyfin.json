@@ -1,0 +1,106 @@
+{
+  "slug": "jellyfin",
+  "checkedAt": "2026-11-21T14:57:21.989Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "jellyfin/jellyfin is GPL-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "jellyfin/jellyfin",
+        "spdx_id": "GPL-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "jellyfin/jellyfin:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "jellyfin/jellyfin:latest",
+        "digest": "sha256:fea863d0cd9ec445985d9c75fc6ed64e38a1d2766cf0c250a33d553f4fc1b771",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /health -> 200 in 4.4s",
+      "evidence": {
+        "container": "hivra-verify-jellyfin-z95z5c",
+        "hostPort": 3247,
+        "image": "jellyfin/jellyfin:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-jellyfin-z95z5c",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3247:8096",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-jellyfin-z95z5c-config:/config",
+          "-v",
+          "hivra-verify-jellyfin-z95z5c-cache:/cache",
+          "jellyfin/jellyfin:latest"
+        ],
+        "runStdout": "26ee18dc3b4ed3603530c20dc2242ead69e78153832e7c9a81a111c3bed71907",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 4.4,
+          "attempts": 3
+        },
+        "memUsage": "76.9MiB / 7.652GiB",
+        "memBytes": 80635494
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "final status 503 after 2 hop(s)",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 55734,
+        "proxyMode": "loopback-origin",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 503,
+            "location": null
+          }
+        ],
+        "finalStatus": 503,
+        "finalPath": "/",
+        "bodyHead": "﻿<!DOCTYPE html>\n<html lang=\"en\">\n\n<head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <meta name=\"color-scheme\" content=\"dark\" />\n    <meta name=\"theme-color\" content=\"#202020\" />\n    <title>\n        \n        Jellyfin\n    </title>\n    <style>\n        /* Noto Sans (latin), matching the Jellyfin web client font. Embedded so the page ren"
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 76.9MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 80635494,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "gateway: final status 503 after 2 hop(s)"
+  ]
+}

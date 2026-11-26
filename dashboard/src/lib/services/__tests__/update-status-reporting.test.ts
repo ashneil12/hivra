@@ -36,6 +36,27 @@ describe("update-status-reporting", () => {
     expect(shell).toContain("//p' .env | head -1");
   });
 
+  it("bakes the attempt stamp into the callback URL only when one is given", () => {
+    // `a=` is the correlation token the report route matches against the
+    // row's last_lifecycle_transition_at — the launcher stamps the same
+    // value when it marks the attempt 'redeploying'. Wrappers built without
+    // it (scheduled-update timers, older launches) must emit no `a`, or a
+    // report would carry a marker no attempt stamped and always mismatch.
+    const stamped = buildInstanceUpdateReporterShell({
+      instanceId: "abc-123",
+      runType: "manual",
+      attemptId: "2026-04-23T06:00:00.000Z",
+    });
+    expect(stamped).toContain("?s=$1&t=manual&a=2026-04-23T06:00:00.000Z$4");
+
+    const unstamped = buildInstanceUpdateReporterShell({
+      instanceId: "abc-123",
+      runType: "manual",
+    });
+    expect(unstamped).toContain("?s=$1&t=manual$4");
+    expect(unstamped).not.toContain("&a=");
+  });
+
   // Regression for the fleet-wide "redeploys emit no update telemetry" bug: the
   // box-side `ru` reporter must read HERMES_DASHBOARD_URL + API_SERVER_KEY by
   // scanning the whole .env. The previous `sed ...;q` quit after line 1, but

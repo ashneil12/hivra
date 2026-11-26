@@ -135,6 +135,20 @@ describe("SignUpPage", () => {
     expect(screen.getByRole("main")).toContainElement(heading);
   });
 
+  it("does not offer a Free plan to a new signup after the cutoff", async () => {
+    const env = jest.replaceProperty(process, "env", {
+      ...process.env,
+      HIVRA_FREE_PLAN_CLOSED_AT: "2000-01-01T00:00:00Z",
+    });
+    try {
+      render(await SignUpPage({ searchParams: Promise.resolve({}) }));
+      expect(screen.queryByText(/a free account works/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/your account must be eligible/i)).toBeInTheDocument();
+    } finally {
+      env.restore();
+    }
+  });
+
   // Owner decision, 21 October 2026: Hivra runs no free computer. Someone who creates an account is told so
   // before the form, instead of meeting a paywall in Launch after sign-up.
   it("says under the introduction that a Hivra Cloud computer is paid and a free account works with your own", async () => {
@@ -185,6 +199,26 @@ describe("SignUpPage", () => {
     expect(mockSignUp).toHaveBeenCalledWith(expect.objectContaining({
       fallbackRedirectUrl: "/dashboard/launch?kind=agent&start=1&profile=hermes",
     }));
+  });
+
+  it("returns a Venice claimant to Launch and preserves the return when switching to sign-in", async () => {
+    const returnPath = "/dashboard/launch?agent=hermes&inference=venice&ref=venice&code=VENICE";
+    render(await SignUpPage({ searchParams: Promise.resolve({ redirect_url: returnPath }) }));
+
+    expect(mockSignUp).toHaveBeenCalledWith(expect.objectContaining({
+      forceRedirectUrl: returnPath,
+      fallbackRedirectUrl: returnPath,
+      signInUrl: `/sign-in?redirect_url=${encodeURIComponent(returnPath)}`,
+    }));
+  });
+
+  it("ignores external return targets", async () => {
+    render(await SignUpPage({ searchParams: Promise.resolve({ redirect_url: "https://example.com/" }) }));
+
+    const props = mockSignUp.mock.calls[0][0];
+    expect(props.fallbackRedirectUrl).toBe("/dashboard/launch?kind=agent&start=1");
+    expect(props.forceRedirectUrl).toBeUndefined();
+    expect(props.signInUrl).toBeUndefined();
   });
 
   it("themes the Clerk card from tokens, so it stays legible in dark mode", async () => {

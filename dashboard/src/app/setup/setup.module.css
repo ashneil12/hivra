@@ -1,0 +1,16 @@
+.promptBox { margin-top: 40px; padding: 28px; border: 1px solid var(--etched-border); }
+.label { margin: 0 0 14px; color: var(--text-muted); font: 600 11px/1.6 var(--font-sans); letter-spacing: .08em; text-transform: uppercase; }
+.prompt { margin: 0; color: var(--ink-black); font-size: 17px; line-height: 1.6; overflow-wrap: anywhere; }
+.prompt code { font-family: var(--font-mono); font-size: 15px; }
+.section { margin-top: 64px; }
+.section h2 { margin: 0 0 24px; font-size: clamp(24px, 2.6vw, 34px); line-height: 1.15; font-weight: 500; letter-spacing: -.04em; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; counter-reset: step; }
+.steps li { counter-increment: step; color: var(--text-secondary); font-size: 15px; line-height: 1.6; }
+.steps li::before { content: "0" counter(step); display: block; margin-bottom: 8px; color: var(--gold-leaf); font: 11px/1.7 var(--font-sans); letter-spacing: .08em; }
+.steps strong { display: block; color: var(--ink-black); font-size: 20px; font-weight: 550; letter-spacing: -.03em; }
+.body { margin: 40px 0 24px; max-width: 64ch; color: var(--text-secondary); font-size: 15px; line-height: 1.7; }
+.section .body { margin-top: 0; }
+@media (max-width: 760px) {
+  .steps { grid-template-columns: minmax(0, 1fr); }
+  .promptBox { padding: 20px; }
+}

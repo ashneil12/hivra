@@ -236,6 +236,45 @@ describe("OpsPage", () => {
     expect(screen.getAllByText(/req_123/).length).toBeGreaterThan(0);
   });
 
+  it("falls back to last_seen_at when a watchdog event_at is not a parseable date", async () => {
+    mockedIsOpsAdminUser.mockReturnValue(true);
+    mockQuery.then = (resolve: (value: { data: unknown[]; error: null }) => void) =>
+      resolve({
+        data: [
+          {
+            id: "evt_bad_event_at",
+            source: "box.surface_watchdog.gateway",
+            severity: "error",
+            title: "Watchdog: gateway down",
+            message: "The box reported its gateway is down.",
+            route: null,
+            user_id: null,
+            instance_id: "inst_123",
+            conversation_id: null,
+            profile_name: null,
+            metadata: { event_at: "not-a-date", event_type: "gateway_down" },
+            sample_stack: null,
+            first_seen_at: "2026-05-05T10:00:00.000Z",
+            last_seen_at: "2026-05-05T10:05:00.000Z",
+            occurrence_count: 1,
+          },
+        ],
+        error: null,
+      });
+
+    const ui = await OpsPage({
+      searchParams: Promise.resolve({}),
+    });
+
+    render(ui);
+
+    // The row renders the relay time, not the bogus event_at — and does not
+    // crash on Date parsing.
+    expect(screen.getByText("Watchdog: gateway down")).toBeInTheDocument();
+    expect(screen.getByText(/^seen /)).toBeInTheDocument();
+    expect(screen.queryByText(/^event /)).not.toBeInTheDocument();
+  });
+
   it("keeps synthetic observability failures visible in the internal ops feed", async () => {
     mockedIsOpsAdminUser.mockReturnValue(true);
     mockQuery.then = (resolve: (value: { data: unknown[]; error: null }) => void) =>

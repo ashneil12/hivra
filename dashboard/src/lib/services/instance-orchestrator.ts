@@ -26,6 +26,7 @@ import { PROVIDER_ID_MAP, resolveProviderBaseUrl } from "@/lib/services/provider
 import type { CodexVaultBundle } from "@/lib/codex-oauth";
 import type { NousVaultBundle } from "@/lib/nous-oauth";
 import { sshExec } from "@/lib/hetzner/ssh";
+import { provisionedHetznerServerId } from "@/lib/hetzner/creation-receipt";
 import { redactSensitiveCommandOutput } from "@/lib/command-output-redaction";
 import { decryptApiKey } from "@/lib/crypto";
 import {
@@ -62,6 +63,7 @@ import { getProfileDeploymentState } from "@/lib/profile-deployment";
 import { isIpv4Literal } from "@/lib/network-address";
 import {
   GUEST_SSH_REFUSED_MARKER,
+  GUEST_SSH_UNREACHABLE_MESSAGE,
   buildHermesVmidBoundGuestSshPrelude,
   isHermesInstanceId,
   buildPinnedGuestSshReadinessWait,
@@ -73,8 +75,15 @@ import {
   isBrowserSidecarDeploymentGateEnabled,
   instanceCanFitBrowserSidecar,
 } from "@/lib/browser-sidecar/deployment-gate";
-import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import {
+  buildInstanceLifecyclePatch,
+  LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE,
+  LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
+  LIVE_UPDATE_FAILED_VM_UNREACHABLE_SUBSTATE,
+} from "@/lib/instance-lifecycle";
+import {
+  LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST,
+  LIVE_MUTATION_NOT_FAILED_ARCHIVE_FILTER,
   readInstanceLiveMutationBlock,
   type InstanceLiveMutationState,
 } from "@/lib/services/instance-live-mutation";
@@ -116,6 +125,8 @@ export interface InstanceRowForOrchestration extends InstanceLiveMutationState {
   name?: string | null;
   subdomain?: string | null;
   hetzner_server_id?: number | null;
+  /** Needed to tell a Hetzner creation receipt from a live server (F090). */
+  status?: string | null;
   gateway_url?: string | null;
   api_key_encrypted: string;
   api_server_key_encrypted?: string | null;
@@ -194,9 +205,11 @@ export async function resolveInstanceIpv4(
     }
   }
 
-  // 2. Try to resolve via direct hetzner_server_id (legacy single-node)
-  if (instance.hetzner_server_id) {
-    const hs = await getHetznerInstanceStatus(instance.hetzner_server_id);
+  // 2. Try to resolve via direct hetzner_server_id (legacy single-node). A
+  // creation receipt is not the live server yet, so it is skipped (F090).
+  const liveHetznerServerId = provisionedHetznerServerId(instance);
+  if (liveHetznerServerId) {
+    const hs = await getHetznerInstanceStatus(liveHetznerServerId);
     if (hs.ipv4 && supabaseAdmin) {
       await supabaseAdmin
         .from("hermes_instances")
@@ -259,6 +272,21 @@ export type BankrRuntimeEnvPlan =
   | { action: "clear"; reason: "user_disconnected"; walletAddresses: string[] };
 
 const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+
+// How long a 'redeploying' stamp may sit before the update attempt that
+// wrote it is presumed abandoned rather than in-flight — the bound a new
+// attempt may take the row over at. The launcher returns within seconds of
+// dispatching the wrapper, but the wrapper itself pulls the image,
+// recreates the agent and waits on its health check, which a loaded host
+// can stretch past several minutes. A false takeover launches a second
+// wrapper on the same guest — the exact double-launch the in-flight check
+// below exists to prevent — so the bound errs long: 25 minutes matches
+// the sibling "still possibly in-flight" bounds (RESTORING_STALE_MS in
+// recover-stuck-instances, LAUNCH_FAILED_STUCK_MS in customer-incidents).
+// A row whose attempt dies younger is recovered by the next fleet-sync /
+// sweep tick that lands after the bound, and recover-stuck's probe owns
+// the box's health meanwhile.
+export const LIVE_UPDATE_ATTEMPT_TAKEOVER_MS = 25 * 60 * 1000;
 
 function warnBankrAgentConfigUnavailable(instanceId: string, err: unknown): void {
   log.warn("bankr agent config unavailable during live update", {
@@ -381,6 +409,67 @@ function launchedPid(stdout: string): string {
   return lines[lines.length - 1] ?? "";
 }
 
+/**
+ * Did the failed launch get a command onto the guest before it died — and
+ * how sure is the answer?
+ *
+ *   - "reached": positive evidence the launch ran on the box — guest-side
+ *     stderr (the guest-bound script only writes there once the VMID-bound
+ *     prelude and the SSH readiness wait passed, and the direct sshExec
+ *     path only fills stderr once a command channel ran), or a remote
+ *     shell exit code, which only a dispatched command produces.
+ *   - "maybe_reached": the transport died without a verdict — the SSH
+ *     attempt's own stage says the session was past connect (the command
+ *     channel had opened, or at least auth had completed), or an
+ *     uninstrumented result reports only an operation timeout or a
+ *     host-side exit. The launch may be running on the guest; nothing
+ *     proves it did not.
+ *   - "unreachable": PROVEN never reached — the prelude refused the target
+ *     or its readiness wait gave up (both print their own marker), the
+ *     connect handshake itself failed (stage "connect"), or a result
+ *     carries no evidence at all (config refusal, bad fingerprint).
+ *
+ * The split matters because the fleet-sync sweep retries a failed row whose
+ * last update ran ON the box while the recovery crons own every other
+ * case — a binary "not proven reached ⇒ unreachable" took a timed-out
+ * launch (the classic channel-hang after dispatch, empty stderr) OUT of the
+ * sweep even though the update may have been running, while stamping a
+ * maybe-reached box as reached would be a claim the evidence cannot
+ * support. MAYBE_REACHED stays sweep-eligible like REACHED; only proven
+ * unreachable drops to recovery.
+ */
+export type LiveUpdateLaunchReach = "reached" | "maybe_reached" | "unreachable";
+
+export function liveUpdateLaunchReach(result: {
+  stdout?: string;
+  stderr?: string;
+  error?: string;
+  stage?: "connect" | "ready" | "command";
+}): LiveUpdateLaunchReach {
+  const detail = `${result.stderr ?? ""}\n${result.error ?? ""}`;
+  if (detail.includes(GUEST_SSH_REFUSED_MARKER)) return "unreachable";
+  if (detail.includes(GUEST_SSH_UNREACHABLE_MESSAGE)) return "unreachable";
+  if ((result.stderr ?? "").trim().length > 0) return "reached";
+  if (/^Command exited with code \d+/.test(result.error ?? "")) return "reached";
+  if (result.stage === "ready" || result.stage === "command") return "maybe_reached";
+  // An instrumented connect-phase timeout is the one timeout that is
+  // honest "unreachable": the handshake never completed, so nothing was
+  // dispatched. It must outrank the uninstrumented-timeout arm below.
+  if (result.stage === "connect") return "unreachable";
+  // Results without a stage (the spawned/local host script, early config
+  // refusals, or instrumentation written before the field existed): an
+  // operation timeout or a host-side exit code still cannot prove the
+  // command never ran — the launch may be mid-flight on the box.
+  if (
+    /operation timed out after|host script timed out after|exited with code \d+/.test(
+      result.error ?? ""
+    )
+  ) {
+    return "maybe_reached";
+  }
+  return "unreachable";
+}
+
 export async function applyLiveUpdate(
   instance: InstanceRowForOrchestration,
   ipv4: string,
@@ -392,7 +481,8 @@ export async function applyLiveUpdate(
   const lifecycleBlock = await readInstanceLiveMutationBlock(supabaseAdmin, instance.id, instance);
   if (lifecycleBlock) return { applied: false as const, error: lifecycleBlock, initiator };
   const proxmoxInfrastructure = getProxmoxInfrastructure(instance.config);
-  if (!proxmoxInfrastructure && !instance.host_id && !instance.hetzner_server_id) {
+  const liveHetznerServerId = provisionedHetznerServerId(instance);
+  if (!proxmoxInfrastructure && !instance.host_id && !liveHetznerServerId) {
     return { applied: false as const, error: "No host attached", initiator };
   }
   if (!proxmoxInfrastructure && !ipv4) {
@@ -514,7 +604,7 @@ export async function applyLiveUpdate(
   const backend: InstanceBackend = instance.backend === "webui" ? "webui" : "gateway";
   const isolatedCustomerVm =
     Boolean(proxmoxInfrastructure) ||
-    (!instance.host_id && typeof instance.hetzner_server_id === "number");
+    (!instance.host_id && liveHetznerServerId !== null);
   const gatewayDockerAccess =
     isWebfreeBackend(backend) &&
     isolatedCustomerVm &&
@@ -766,6 +856,15 @@ if [ -d /opt/hermes/instances ]; then
 fi
 `
     : "";
+// One identity for this whole update attempt: the wrapper's `ru` callback
+// URL carries it as `a=`, and the 'redeploying' stamp below writes the same
+// value into last_lifecycle_transition_at. The report route can then prove
+// that a failure callback belongs to THIS attempt — a stale callback from
+// an earlier attempt (even toward the same digest, and even when no
+// occurredAt rides along) cannot claw the newer attempt's row back to
+// failed, and a registry that repins mid-attempt cannot make this attempt's
+// valid report look stale.
+const updateAttemptStamp = new Date().toISOString();
 const wrapperScript = `#!/usr/bin/env bash
 set -euo pipefail
 ${buildInstanceUpdateReporterShell({
@@ -773,6 +872,7 @@ ${buildInstanceUpdateReporterShell({
   dashboardUrl: process.env.NEXT_PUBLIC_APP_URL,
   apiServerKey,
   runType: "manual",
+  attemptId: updateAttemptStamp,
 })}
 ${singleTenantGuard}
 ${buildUpdateResultExtrasShell(instance.id)}
@@ -938,6 +1038,164 @@ fi
   // computer archived or claimed for restoration since the caller loaded it.
   const launchBlock = await readInstanceLiveMutationBlock(supabaseAdmin, instance.id, instance);
   if (launchBlock) return { applied: false as const, error: launchBlock, initiator };
+
+  // Snapshot the fields the attempt stamp below overwrites, so a launch the
+  // in-flight gate defers — where nothing ran on the box — can hand the row
+  // its exact prior state back (the deferral contract: nothing changed).
+  const { data: preAttemptRow, error: preAttemptError } = await supabaseAdmin
+    .from("hermes_instances")
+    .select("status,lifecycle_state,lifecycle_substate,last_lifecycle_transition_at,paused_reason,gateway_url")
+    .eq("id", instance.id)
+    .maybeSingle();
+  if (preAttemptError || !preAttemptRow) {
+    return {
+      applied: false as const,
+      error: "Could not confirm the computer's current lifecycle state. Refresh before updating.",
+      initiator,
+    };
+  }
+
+  // A 'redeploying' row is an update attempt already in flight — its
+  // wrapper may be running on the box right now. The compare-and-swap
+  // claim below verifies the snapshot this attempt read, so adopting an
+  // in-flight snapshot would let this attempt claim the row with the
+  // PREVIOUS attempt's stamp as its expected value: two wrappers writing
+  // the same deploy and report paths on one guest. Ordinary launches
+  // refuse while the stamp is fresh enough that the earlier attempt could
+  // still be running. Only a stamp old enough to prove the launcher died
+  // mid-attempt (or missing entirely — no live `a=` can correlate to it)
+  // is a takeover: this attempt's claim re-stamps the row, after which
+  // the abandoned wrapper's `a=` matches nothing and its reports fall to
+  // the stale-callback refusals.
+  if (preAttemptRow.status === "redeploying") {
+    const priorAttemptStampMs = Date.parse(preAttemptRow.last_lifecycle_transition_at ?? "");
+    const attemptAbandoned =
+      !Number.isFinite(priorAttemptStampMs) ||
+      Date.now() - priorAttemptStampMs >= LIVE_UPDATE_ATTEMPT_TAKEOVER_MS;
+    if (!attemptAbandoned) {
+      log.info("live update refused: an attempt is already in flight", {
+        source: LOG_SOURCE,
+        failureType: "live_update_attempt_in_flight",
+        instanceId: instance.id,
+        userId: instance.user_id,
+        priorAttemptStamp: preAttemptRow.last_lifecycle_transition_at,
+      });
+      return {
+        applied: false as const,
+        error: "An update is already in flight on this computer. Wait for it to finish before launching another.",
+        initiator,
+      };
+    }
+    log.info("live update taking over an abandoned attempt stamp", {
+      source: LOG_SOURCE,
+      failureType: "live_update_attempt_takeover",
+      instanceId: instance.id,
+      userId: instance.user_id,
+      priorAttemptStamp: preAttemptRow.last_lifecycle_transition_at,
+    });
+  }
+
+  // Claim the row for THIS attempt BEFORE the box can possibly report back.
+  // The wrapper's `ru` callback URL carries updateAttemptStamp as `a=`, and
+  // the update-report route correlates a report to this attempt by matching
+  // last_lifecycle_transition_at — so the stamp must already be down when
+  // the inner script reaches the box: a fast failure callback (the
+  // single-tenant guard's `ru`, a wrapper dying on first boot) used to
+  // arrive while the row still carried the previous transition value — the
+  // failed-stamp predicate could never match and the row sat 'redeploying'
+  // with its verdict refused.
+  //
+  // The claim is compare-and-swap on the exact state this attempt just
+  // verified at the boundary — same status/lifecycle/transition the
+  // snapshot read, same guest coordinates the caller loaded. A racing
+  // attempt, pause, restore or delete since makes the write match nothing
+  // and this attempt stands down BEFORE launch, where the old post-launch
+  // stamp would have clobbered the row's new owner.
+  let attemptClaim = supabaseAdmin
+    .from("hermes_instances")
+    .update({
+      ...buildInstanceLifecyclePatch("redeploying", { now: updateAttemptStamp }),
+      // The previous attempt's reach marker describes ITS failed launch,
+      // not this one — a row mid-retry must not keep advertising it. The
+      // fleet-sync sweep reads 'redeploying' + a reached marker as the
+      // update-report degraded write asking for a retry; leaving a stale
+      // value here would make every in-flight retry look like one.
+      // (The deferred-revert below restores the snapshot's value.)
+      lifecycle_substate: null,
+      // Never write null over a good gateway_url — a proxmox row whose safe
+      // derivation failed (no subdomain, host env unresolved) must keep its
+      // existing value, not get nulled out. This is the exact write that
+      // poisoned 5 prod rows with https://10.250.20.1 on 2026-06-30/07-01.
+      ...(gatewayUrl ? { gateway_url: gatewayUrl } : {}),
+    })
+    .eq("id", instance.id)
+    // blocksInstanceLiveMutation's exclusions, in the or-form that keeps the
+    // same NULL semantics the read applies (unset status/lifecycle is not
+    // blocked, where a plain not.in refuses NULL rows outright).
+    .or('status.is.null,status.not.in.("deleted","scheduled_for_deletion")')
+    .or(`lifecycle_state.is.null,lifecycle_state.not.in.${LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST}`)
+    .or(LIVE_MUTATION_NOT_FAILED_ARCHIVE_FILTER);
+  // The verified snapshot, as write predicates: status, lifecycle and the
+  // transition marker must still be what the boundary read saw. The
+  // transition column is bumped by every lifecycle write, so the eq also
+  // catches a concurrent attempt that stamped after the snapshot read —
+  // its attempt owns the row now.
+  attemptClaim =
+    preAttemptRow.status == null
+      ? attemptClaim.is("status", null)
+      : attemptClaim.eq("status", preAttemptRow.status);
+  attemptClaim =
+    preAttemptRow.lifecycle_state == null
+      ? attemptClaim.is("lifecycle_state", null)
+      : attemptClaim.eq("lifecycle_state", preAttemptRow.lifecycle_state);
+  attemptClaim =
+    preAttemptRow.last_lifecycle_transition_at == null
+      ? attemptClaim.is("last_lifecycle_transition_at", null)
+      : attemptClaim.eq("last_lifecycle_transition_at", preAttemptRow.last_lifecycle_transition_at);
+  // The same guest-identity coordinates the boundary reads compared: the
+  // claim may only stamp the box this attempt is about to launch against.
+  for (const [column, value] of [
+    ["proxmox_vmid", instance.proxmox_vmid],
+    ["proxmox_node", instance.proxmox_node],
+    ["host_id", instance.host_id],
+    ["hetzner_server_id", instance.hetzner_server_id],
+    ["ipv4_address", instance.ipv4_address],
+  ] as const) {
+    if (value === undefined) continue;
+    attemptClaim =
+      value === null ? attemptClaim.is(column, null) : attemptClaim.eq(column, value);
+  }
+  const { data: attemptClaimRow, error: attemptClaimError } = await attemptClaim
+    .select("id")
+    .maybeSingle();
+  if (attemptClaimError) {
+    const message = attemptClaimError.message;
+    log.error("update attempt stamp write failed", new Error("live_update_state_write_failed"), {
+      source: LOG_SOURCE,
+      failureType: "live_update_state_write_failed",
+      instanceId: instance.id,
+      userId: instance.user_id,
+      redactedMessage: redactSensitiveCommandOutput(message, 600),
+    });
+    return { applied: false as const, error: message, initiator };
+  }
+  if (!attemptClaimRow) {
+    // Error-free zero-match: the row moved under this attempt — another
+    // attempt's stamp, a restore, a delete. That move owns the row; launch
+    // nothing on top of it.
+    log.warn("update attempt stamp matched nothing; the row moved before launch", {
+      source: LOG_SOURCE,
+      failureType: "live_update_state_write_superseded",
+      instanceId: instance.id,
+      userId: instance.user_id,
+    });
+    return {
+      applied: false as const,
+      error: "This computer moved or was restored since it was loaded. Refresh before updating.",
+      initiator,
+    };
+  }
+
   const launchResult = proxmoxLaunchScript
     ? await runProxmoxHostScript(proxmoxLaunchScript, proxmoxScriptEnv, launchTimeoutMs(90_000))
     : await sshExec(ipv4, "bash -s", {
@@ -966,10 +1224,87 @@ fi
     // previously-active row is left orphaned with no recovery path — the cause
     // of the 7 stuck instances on 2026-06-09 (a whole fleet-sync wave failed on
     // a shared host and none of the rows ever became recovery candidates).
-    const { error: failedStateError } = await supabaseAdmin
+    //
+    // The failure also carries WHERE the launch died in lifecycle_substate:
+    // the fleet-sync sweep retries a failed row only when the update actually
+    // ran on the box (an image pull or script failure is a real retry), while
+    // a launch refused before reaching the guest (powered off, wrong VMID,
+    // dead agent) stays with recovery. The middle stamp keeps a launch whose
+    // transport timed out PAST connect — the script may already be running —
+    // in the sweep's retry queue: claiming it reached would overstate the
+    // evidence, but dropping it to unreachable would orphan a row whose
+    // update is already mid-flight. Both retry-eligible stamps converge with
+    // recovery's own path: it can always re-drive the row, and the sweep
+    // reads the substate to keep unreachable boxes out of its queue.
+    const launchReach = liveUpdateLaunchReach(launchResult);
+    // The completionBlock read above is advisory — between it and this write a
+    // racing update attempt or lifecycle operation can move the row, and
+    // stamping by id alone would clobber that newer state (an overlapping
+    // attempt's 'redeploying' marker, a restore, a delete) or resurrect one
+    // its owner already resolved. The stamp may land only while the row is
+    // still in-flight under THIS attempt — the pre-launch claim wrote
+    // 'redeploying' + this attempt's transition stamp, so matching both
+    // proves the row's owner without trusting the (now stamped-over)
+    // snapshot state. A box-side callback verdict that landed first rewrote
+    // the transition or the status, so the stamp then stands down — a
+    // timed-out SSH must never claw a reported success back to failed.
+    // last_lifecycle_transition_at doubles as this attempt's identity
+    // (`a=`): the transport may have died AFTER the wrapper started — a
+    // post-connect timeout cannot prove otherwise — so the wrapper can
+    // still be finishing the update on the box. The failure patch must
+    // keep THIS attempt's stamp (not a fresh "now"): a late `ru` verdict
+    // from the wrapper correlates to the row only while the stamp
+    // matches, and a reported success may still settle this same attempt
+    // to running. The write's own predicates prove the row still belongs
+    // to this attempt, so carrying the stamp through cannot adopt a
+    // newer owner's identity; updated_at records when the transition
+    // actually landed.
+    const { last_lifecycle_transition_at: _launchStampedAt, ...failedLifecyclePatch } =
+      buildInstanceLifecyclePatch("failed");
+    let failedStampQuery = supabaseAdmin
       .from("hermes_instances")
-      .update(buildInstanceLifecyclePatch("failed"))
-      .eq("id", instance.id);
+      .update({
+        ...failedLifecyclePatch,
+        last_lifecycle_transition_at: updateAttemptStamp,
+        lifecycle_substate:
+          launchReach === "reached"
+            ? LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE
+            : launchReach === "maybe_reached"
+              ? LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE
+              : LIVE_UPDATE_FAILED_VM_UNREACHABLE_SUBSTATE,
+      })
+      .eq("id", instance.id)
+      // blocksInstanceLiveMutation's exclusions. The or-form keeps the same
+      // NULL semantics the read applies — an unset status/lifecycle is not
+      // blocked, where a plain not.in would refuse NULL rows outright.
+      .or('status.is.null,status.not.in.("deleted","scheduled_for_deletion")')
+      .or(`lifecycle_state.is.null,lifecycle_state.not.in.${LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST}`)
+      .or(LIVE_MUTATION_NOT_FAILED_ARCHIVE_FILTER)
+      // The launch-pending state this attempt owns: still redeploying under
+      // this attempt's stamp. Any move since — the box's own report, another
+      // attempt's claim, a recovery verdict — means that move owns the row
+      // and this stale failure stands down.
+      .eq("status", "redeploying")
+      .eq("last_lifecycle_transition_at", updateAttemptStamp);
+    // The same guest-identity coordinates the boundary reads compared: this
+    // failure may only stamp the box this attempt actually launched
+    // against. Coordinates the caller never loaded stay unchecked — exactly
+    // like instanceLiveMutationCoordinatesChanged.
+    for (const [column, value] of [
+      ["proxmox_vmid", instance.proxmox_vmid],
+      ["proxmox_node", instance.proxmox_node],
+      ["host_id", instance.host_id],
+      ["hetzner_server_id", instance.hetzner_server_id],
+      ["ipv4_address", instance.ipv4_address],
+    ] as const) {
+      if (value === undefined) continue;
+      failedStampQuery = value === null
+        ? failedStampQuery.is(column, null)
+        : failedStampQuery.eq(column, value);
+    }
+    const { data: failedStamp, error: failedStateError } = await failedStampQuery
+      .select("id")
+      .maybeSingle();
     if (failedStateError) {
       // Without this stamp the row is not a recovery candidate; make it visible.
       log.error("update launch failed and the failed state write also failed", new Error("live_update_state_write_failed"), {
@@ -978,6 +1313,17 @@ fi
         instanceId: instance.id,
         userId: instance.user_id,
         redactedMessage: redactSensitiveCommandOutput(failedStateError.message, 600),
+      });
+    } else if (!failedStamp) {
+      // Error-free zero-match: the row moved to a state or guest identity
+      // this attempt no longer owns — another attempt's stamp, a restore,
+      // a delete. The launch failure is already logged above; the stale
+      // stamp must not land over the row's new owner.
+      log.warn("update launch failed but the row moved before the failed stamp; leaving the row's new owner alone", {
+        source: LOG_SOURCE,
+        failureType: "live_update_state_write_superseded",
+        instanceId: instance.id,
+        userId: instance.user_id,
       });
     }
     return {
@@ -992,10 +1338,50 @@ fi
     inFlightGate = parseInFlightUpdateGateReport(launchResult.stdout);
     if (inFlightGate?.action === "defer") {
       // Nothing was written or launched on the box, so the row keeps its
-      // status and last_synced_at; the caller's next tick retries. A turn in
-      // flight is routine; a box that cannot confirm it is idle (gateway state
-      // stale or unreadable while it runs) may have a failing gateway, so that
-      // one is loud.
+      // status and last_synced_at; the caller's next tick retries. The
+      // pre-launch attempt claim DID write the row — hand it the exact
+      // state the snapshot read captured, guarded on our own stamp so a
+      // row that moved on under another owner is left alone.
+      //
+      // The stamp alone is NOT enough: the transition value survives
+      // writes that change what the row IS — an orphan cleanup that moved
+      // it to 'scheduled_for_deletion', a recovery verdict that settled
+      // it, a purge that armed it. The claim wrote 'redeploying' +
+      // 'provisioning', so the revert may only land while the row is
+      // still exactly that claimed attempt; anything else now belongs to
+      // whatever moved it, and writing the snapshot back would resurrect
+      // a teardown the purge already owns (the same clobber class
+      // isAwaitingTeardown guards the attempt path against).
+      const { error: revertError } = await supabaseAdmin
+        .from("hermes_instances")
+        .update({
+          status: preAttemptRow.status,
+          lifecycle_state: preAttemptRow.lifecycle_state,
+          lifecycle_substate: preAttemptRow.lifecycle_substate,
+          last_lifecycle_transition_at: preAttemptRow.last_lifecycle_transition_at,
+          paused_reason: preAttemptRow.paused_reason,
+          gateway_url: preAttemptRow.gateway_url,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", instance.id)
+        .eq("status", "redeploying")
+        .eq("lifecycle_state", "provisioning")
+        .eq("last_lifecycle_transition_at", updateAttemptStamp);
+      if (revertError) {
+        // The row is left stamped 'redeploying' for an update that never
+        // ran — recover-stuck-instances picks it up, but say so loudly.
+        log.error("deferred update could not revert the attempt stamp", new Error("live_update_state_write_failed"), {
+          source: LOG_SOURCE,
+          failureType: "live_update_state_write_failed",
+          instanceId: instance.id,
+          userId: instance.user_id,
+          trigger: initiator.trigger,
+          redactedMessage: redactSensitiveCommandOutput(revertError.message, 600),
+        });
+      }
+      // A turn in flight is routine; a box that cannot confirm it is idle
+      // (gateway state stale or unreadable while it runs) may have a failing
+      // gateway, so that one is loud.
       const deferral = describeInFlightDeferral(inFlightGate);
       const context = {
         source: LOG_SOURCE,
@@ -1049,12 +1435,13 @@ fi
     }
   }
 
-  // Mark as redeploying immediately so the UI shows progress. We MUST go
-  // through buildInstanceLifecyclePatch so `lifecycle_state` flips to
-  // "provisioning" alongside `status`; otherwise the recover-stuck-instances
-  // cron (filtered by lifecycle_state) can't recover rows whose in-VM
-  // success callback fails to land, and they sit at "redeploying" forever
-  // (verified 2026-05-17 on 124 fleet-sync rows).
+  // The row is already stamped 'redeploying'/'provisioning' with this
+  // attempt's transition marker — the pre-launch claim above wrote it so
+  // the UI shows progress and recover-stuck-instances (filtered by
+  // lifecycle_state) can recover a row whose in-VM success callback never
+  // lands (verified 2026-05-17 on 124 fleet-sync rows), and so the
+  // update-report route can match the wrapper's `a=` callback to exactly
+  // this attempt.
   //
   // Also stamp last_synced_at: the launch succeeded, so this VM is now on the
   // latest :stable image. The daily fleet-sync cron orders by this column
@@ -1062,23 +1449,24 @@ fi
   // bump every run would re-roll the same ~50 VMs and the fleet never
   // converges. Every applyLiveUpdate caller (fleet-sync, manual redeploy,
   // resize, recovery) recreates from :stable, so all of them advance the cursor.
+  // The write is predicated on this attempt's stamp plus a status that
+  // still means the update is or was succeeding: a box-side callback
+  // verdict that already landed settled the attempt but KEEPS the stamp
+  // (a failed report flips status to 'failed' — that box must NOT be
+  // counted synced, while a reported success may still advance the
+  // cursor), a takeover re-stamped it, and a row that moved owners no
+  // longer belongs to this launch.
   const { error: redeployStateError } = await supabaseAdmin
     .from("hermes_instances")
-    .update({
-      ...buildInstanceLifecyclePatch("redeploying"),
-      // Never write null over a good gateway_url — a proxmox row whose safe
-      // derivation failed (no subdomain, host env unresolved) must keep its
-      // existing value, not get nulled out. This is the exact write that
-      // poisoned 5 prod rows with https://10.250.20.1 on 2026-06-30/07-01.
-      ...(gatewayUrl ? { gateway_url: gatewayUrl } : {}),
-      last_synced_at: new Date().toISOString(),
-    })
-    .eq("id", instance.id);
+    .update({ last_synced_at: new Date().toISOString() })
+    .eq("id", instance.id)
+    .eq("last_lifecycle_transition_at", updateAttemptStamp)
+    .or('status.eq.redeploying,status.eq.running');
   if (redeployStateError) {
-    // The update is already running on the box, but the row still shows the
-    // old state. Log it so the stale row is visible.
+    // The update is already running on the box, but the fleet-sync cursor
+    // did not advance. Log it so the stale row is visible.
     const message = redeployStateError.message;
-    log.error("live update launched but the redeploying state write failed", new Error("live_update_state_write_failed"), {
+    log.error("live update launched but the synced marker write failed", new Error("live_update_state_write_failed"), {
       source: LOG_SOURCE,
       failureType: "live_update_state_write_failed",
       instanceId: instance.id,

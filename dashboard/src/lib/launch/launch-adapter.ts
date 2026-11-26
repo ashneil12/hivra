@@ -12,6 +12,7 @@ import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
 import { launchManagedSession, ManagedSessionApiError } from "@/lib/hivra/managed-session-client";
 import { DIGITALOCEAN_HARNESS_LABELS } from "@/lib/hivra/managed-session-contracts";
 import type { DeploymentTargetDto, DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import { isCatalogAppId } from "@/lib/hivra/catalog-manifests";
 import { buildInfrastructureSetupHref } from "@/lib/hivra/launch-navigation";
 import { getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
 import { getFingerprintRequestId } from "@/lib/abuse/client-fingerprint";
@@ -113,6 +114,7 @@ export function launchResumeModeFor(draft: Pick<LaunchDraft, "profileId" | "capa
 export function launchResumeMode(profileId: LaunchProfileId): "resend" | "observe" {
   return profileId === "claude-code" || profileId === "hermes" || profileId === "hermes-computer" || profileId === "openclaw"
     || profileId === "agent-zero" || profileId === "openbot" || profileId === "nuphos" || profileId === "aeon" || profileId === "deepseek-harness"
+    || isCatalogAppId(profileId)
     ? "observe"
     : "resend";
 }
@@ -518,10 +520,7 @@ export async function submitLaunchDraft(
     let payload: { success?: boolean; error?: string; code?: string; data?: { agent?: HivraAgent } } | null = null;
     try { payload = await response.json(); } catch { /* handled below */ }
     if (!response.ok || payload?.success !== true || !payload.data?.agent) {
-      // `prepared_profile_unavailable` is decided before any host work or row
-      // insert: this deployment has no prepared-computer slot. That is a
-      // definite rejection, never the "may already have reached Hivra" screen,
-      // which also leaves the draft stuck on that receipt.
+      // A prepared-computer refusal never starts a new reservation.
       if (payload?.code === "prepared_profile_unavailable") {
         throw new HivraLaunchRejectedError(
           "Omarchy is not available on this site. Choose another computer.",

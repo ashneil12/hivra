@@ -12,8 +12,10 @@ import styles from "@/components/public-editorial/secondary-site.module.css";
 import StructuredData from "@/components/StructuredData";
 import { glossify } from "@/components/gloss/glossify";
 import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
+import { getCardTrialOffer } from "@/lib/billing/card-trial";
+import { isFreePlanClosed } from "@/lib/billing/free-plan-closure";
 import { getTokenSurfaceView, tokenSurfacesVisible } from "@/lib/compliance/token-surface-view";
-import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
+import { buildAbsoluteTitleMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import { renderLinkedText } from "./linked-text";
 import page from "./pricing.module.css";
@@ -24,33 +26,34 @@ import {
   PRICING_CLOSING,
   PRICING_COMPARISON,
   PRICING_FAQ,
+  CARD_TRIAL_PRICING,
   PRICING_FAQ_HEADING,
   PRICING_INTRO,
+  PRICING_INTRO_FREE_CLOSED,
   PRICING_OPTIONS,
   PRICING_PAYING,
   PRICING_REFUNDS,
   buildPricingOffers,
   formatPricesAsOf,
   visiblePricingFaq,
+  withFreeClosedAnswer,
   type PricingFaqItem,
 } from "./pricing-content";
 
-// The finished browser title and description from the pricing rewrite. The title
-// is written out here, not imported, so app/__tests__/absolute-title-metadata.test.ts
-// can read it; absoluteTitle() keeps the root layout from appending " | Hivra"
-// a second time. __tests__/page.test.tsx checks both against the plans' price.
-const PAGE_TITLE = "Hivra Pricing | Self-host free or cloud from $9.99/month";
-const PAGE_DESCRIPTION = `Run Hivra on your own infrastructure for free, or choose a managed agent computer from ${ENTRY_PLAN_PRICE}/month. Compare resources, AI costs and hosting options.`;
+function entryPriceForOffer(offer: ReturnType<typeof getCardTrialOffer>): string {
+  return offer ? `$${(offer.monthlyCents / 100).toFixed(2)}` : ENTRY_PLAN_PRICE;
+}
 
-// /pricing states only what can be bought today (see pricing-content.ts); larger
-// sizes are described as planned and never listed as available.
-export const metadata: Metadata = {
-  title: absoluteTitle(PAGE_TITLE),
-  description: PAGE_DESCRIPTION,
-  ...buildWebsiteMetadata({ path: "/pricing", title: PAGE_TITLE, description: PAGE_DESCRIPTION }),
-};
+export function generateMetadata(): Metadata {
+  const price = entryPriceForOffer(getCardTrialOffer());
+  return buildAbsoluteTitleMetadata({
+    path: "/pricing",
+    title: `Hivra Pricing | Self-host free or cloud from ${price}/month`,
+    description: `Run Hivra on your own infrastructure for free, or choose a managed agent computer from ${price}/month. Compare resources, AI costs and hosting options.`,
+  });
+}
 
-function buildPricingSchema(faq: PricingFaqItem[]) {
+function buildPricingSchema(faq: PricingFaqItem[], entryPrice: string) {
   return {
     "@context": "https://schema.org",
     "@graph": [
@@ -68,7 +71,7 @@ function buildPricingSchema(faq: PricingFaqItem[]) {
         name: "Hivra",
         applicationCategory: "DeveloperApplication",
         url: SITE_URL,
-        offers: buildPricingOffers(SITE_URL),
+        offers: buildPricingOffers(SITE_URL, entryPrice),
       },
       {
         // The visible questions and answers, word for word.
@@ -94,20 +97,38 @@ export default async function PricingPage() {
   const view = await getTokenSurfaceView();
   const showToken = tokenSurfacesVisible(view);
   const options = PRICING_OPTIONS;
+  const cardTrial = getCardTrialOffer();
+  const entryPrice = entryPriceForOffer(cardTrial);
+  const withEntryPrice = (text: string) => text.replaceAll(ENTRY_PLAN_PRICE, entryPrice);
+  // Once the Free plan is closed to new sign-ups, the page stops offering it.
+  const freeClosed = isFreePlanClosed();
+  const intro = freeClosed ? PRICING_INTRO_FREE_CLOSED : PRICING_INTRO;
 
   return (
-    <PublicSite className={styles.page} data-page="pricing" tokenSurfaces={showToken}>
-      <StructuredData schema={buildPricingSchema(visiblePricingFaq(showToken))} />
+    <PublicSite className={styles.page} data-page="pricing" tokenSurfaces={showToken} freePlanClosed={freeClosed}>
+      <StructuredData schema={buildPricingSchema(
+        visiblePricingFaq(showToken, freeClosed).map((item) => ({ ...item, a: withEntryPrice(item.a) })),
+        entryPrice,
+      )} />
       <main className={styles.main} id="main-content">
         <Breadcrumbs items={[{ label: "Pricing" }]} />
 
         <header className={styles.masthead}>
           <h1>
-            Start free. <strong className={page.headlineTail}>Connect your own server.</strong>
+            {freeClosed ? (
+              <>
+                Hivra Cloud from {entryPrice}/month.{" "}
+                <strong className={page.headlineTail}>{cardTrial ? "Try it free for 7 days." : "Or self-host it."}</strong>
+              </>
+            ) : (
+              <>
+                Start free. <strong className={page.headlineTail}>Connect your own server.</strong>
+              </>
+            )}
           </h1>
-          {PRICING_INTRO.map((paragraph) => (
+          {intro.map((paragraph) => (
             <p key={paragraph} className={page.introLine}>
-              {paragraph}
+              {withEntryPrice(paragraph)}
             </p>
           ))}
         </header>
@@ -118,16 +139,18 @@ export default async function PricingPage() {
             <p>{options.pool}</p>
           </div>
 
-          <div className={page.ownServer}>
-            <div>
-              <h3>{options.ownServer.title}</h3>
-              <p>{options.ownServer.body}</p>
+          {freeClosed ? null : (
+            <div className={page.ownServer}>
+              <div>
+                <h3>{options.ownServer.title}</h3>
+                <p>{options.ownServer.body}</p>
+              </div>
+              <Link className={page.action} href={PRICING_ACTIONS.connectServer.href}>
+                {PRICING_ACTIONS.connectServer.label}
+                <ArrowRight size={18} aria-hidden="true" />
+              </Link>
             </div>
-            <Link className={page.action} href={PRICING_ACTIONS.connectServer.href}>
-              {PRICING_ACTIONS.connectServer.label}
-              <ArrowRight size={18} aria-hidden="true" />
-            </Link>
-          </div>
+          )}
 
           <div className={page.offers}>
             <article className={`${page.offer} ${page.offerSelf}`} aria-labelledby="offer-self-host">
@@ -159,7 +182,7 @@ export default async function PricingPage() {
             <article className={`${page.offer} ${page.offerCloud}`} aria-labelledby="offer-hivra-cloud">
               <h3 id="offer-hivra-cloud">{options.entry.title}</h3>
               <p className={page.price}>
-                <strong>{options.entry.price}</strong>
+                <strong>{entryPrice}</strong>
                 <span>{options.entry.priceNote}</span>
               </p>
               <p className={page.meta}>
@@ -169,8 +192,9 @@ export default async function PricingPage() {
                 <p key={paragraph}>{paragraph}</p>
               ))}
               <p>{options.entry.goodFor}</p>
+              {cardTrial ? <p className={page.trialNote} data-testid="card-trial-note">{CARD_TRIAL_PRICING.note(entryPrice)}</p> : null}
               <Link className={`${page.action} ${page.actionPrimary}`} href={PRICING_ACTIONS.chooseEntry.href}>
-                {PRICING_ACTIONS.chooseEntry.label}
+                {cardTrial ? CARD_TRIAL_PRICING.label : PRICING_ACTIONS.chooseEntry.label}
                 <ArrowRight size={18} aria-hidden="true" />
               </Link>
             </article>
@@ -203,7 +227,7 @@ export default async function PricingPage() {
           <ComparisonTable
             caption={PRICING_COMPARISON.caption}
             columns={PRICING_COMPARISON.columns}
-            rows={PRICING_COMPARISON.rows.map((row) => ({ label: row.label, cells: row.cells }))}
+            rows={PRICING_COMPARISON.rows.map((row) => ({ label: row.label, cells: row.cells.map(withEntryPrice) }))}
           />
           <p className={page.asOf}>
             Prices as of <time dateTime={PRICES_AS_OF}>{formatPricesAsOf()}</time>.
@@ -228,7 +252,7 @@ export default async function PricingPage() {
               {PRICING_AGENTS.items.map((item) => (
                 <li key={item.name}>
                   <strong>{item.name}</strong>{" "}
-                  <span>{"link" in item ? renderLinkedText(item.text, [item.link]) : item.text}</span>
+                  <span>{"link" in item ? renderLinkedText(item.text, [item.link]) : freeClosed && "textFreeClosed" in item ? item.textFreeClosed : item.text}</span>
                 </li>
               ))}
             </ul>
@@ -259,7 +283,8 @@ export default async function PricingPage() {
             {PRICING_FAQ_HEADING}
           </h2>
           <div>
-            {PRICING_FAQ.map((item) => {
+            {PRICING_FAQ.map((faqItem) => {
+              const item = freeClosed ? withFreeClosedAnswer(faqItem) : faqItem;
               const entry = (
                 <details key={item.q} open>
                   <summary>
@@ -267,7 +292,7 @@ export default async function PricingPage() {
                     <span aria-hidden="true">+</span>
                   </summary>
                   <div className={`${extras.answerNode} ${page.answer}`}>
-                    <p>{renderLinkedText(item.a, item.links)}</p>
+                    <p>{renderLinkedText(withEntryPrice(item.a), item.links)}</p>
                   </div>
                 </details>
               );

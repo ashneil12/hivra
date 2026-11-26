@@ -18,12 +18,22 @@
  * times) emits `unit_failing` once per cooldown instead of failing forever
  * without a signal.
  *
- * Dedup is free: each box event carries a unique id, so an event's ops row has
- * a unique fingerprint and re-reads of it only bump occurrence_count.
+ * Dedup: each box event carries a unique id that lands in its ops row's title
+ * (`...[<event id>]`) and metadata.event_id. Before relaying a box's events
+ * the sweep batch-looks-up which of those titles already have an ops_events
+ * row and relays only the new ones — a re-read of the receipt list must not
+ * touch last_seen_at or occurrence_count (re-reads used to make an old outage
+ * look current, with counts in the hundreds). The batch lookup is only the
+ * fast path: correctness rests on the write itself — each relay goes through
+ * an INSERT keyed on the event's fingerprint (reportOpsEventOnce), which the
+ * unique constraint resolves atomically, so two overlapping sweeps that both
+ * read "not stored" cannot have the second one's write land on the dedupe
+ * UPDATE branch and bump the row the first just inserted.
  */
 
 import { log } from "@/lib/logger";
-import { reportOpsEvent, type OpsEventInput } from "@/lib/ops-events";
+import { reportOpsEventOnce, type OpsEventInput } from "@/lib/ops-events";
+import { rotateByScanTick } from "@/lib/recovery/scan-rotation";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   readSurfaceWatchdogFromBox,
@@ -52,6 +62,13 @@ const MAX_RELAY_PER_BOX = 10;
 // origins must not ride into the function ceiling.
 const SOFT_BUDGET_MS = 4 * 60 * 1000;
 const MAX_CANDIDATES = 500;
+// PostgREST caps every response at max_rows even when the query asks for
+// more — the candidate read pages by keyset like the incident scan's
+// subject reads so a fleet past one page is never silently truncated.
+const CANDIDATE_PAGE_SIZE = 1000;
+// The cron's */5-minute schedule in vercel.json — the tick bucket used to
+// rotate which slice of a capped fleet the sweep reads each pass.
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 interface WatchdogCandidateRow {
   id: string;
@@ -64,6 +81,14 @@ interface WatchdogCandidateRow {
 
 export interface SurfaceWatchdogSweepSummary {
   scanned: number;
+  /**
+   * Awake, probeable candidates that fell OUTSIDE this tick's bounded
+   * window — boxes the sweep did not even attempt to read. Distinct from
+   * the per-box failure counts: a fleet larger than MAX_CANDIDATES leaves
+   * a slice unwatched every pass, and that omission must be visible in
+   * the heartbeat rather than reading as a clean sweep.
+   */
+  capped: number;
   reported: number;
   notInstalled: number;
   unreachable: number;
@@ -73,7 +98,7 @@ export interface SurfaceWatchdogSweepSummary {
 }
 
 function emptySummary(): SurfaceWatchdogSweepSummary {
-  return { scanned: 0, reported: 0, notInstalled: 0, unreachable: 0, notReached: 0, relayed: 0, failed: 0 };
+  return { scanned: 0, capped: 0, reported: 0, notInstalled: 0, unreachable: 0, notReached: 0, relayed: 0, failed: 0 };
 }
 
 /**
@@ -129,48 +154,129 @@ async function inPool<T>(items: T[], concurrency: number, work: (item: T) => Pro
   }));
 }
 
+type SweepDb = NonNullable<typeof supabaseAdmin>;
+
+/**
+ * The subset of `titles` that already have an ops_events row for this
+ * instance. Matching on the deterministic title — which embeds the box event
+ * id — is equivalent to matching metadata.event_id without a JSON-path
+ * filter, and archived rows count as stored (an operator archived them on
+ * purpose; the relay must not resurrect them). Returns null when the lookup
+ * itself fails so the caller can decide; the sweep treats null as "unknown"
+ * and still relays (delivery beats count accuracy for one tick, and the
+ * failure is logged loudly).
+ */
+export async function lookupRelayedWatchdogTitles(
+  db: SweepDb,
+  instanceId: string,
+  titles: string[],
+): Promise<Set<string> | null> {
+  if (titles.length === 0) return new Set();
+  const { data, error } = await db
+    .from("ops_events")
+    .select("title")
+    .eq("instance_id", instanceId)
+    .in("title", titles);
+  if (error) {
+    log.error("surface watchdog relay dedupe lookup failed", error, {
+      source: SOURCE,
+      failureType: "watchdog_relay_dedupe_lookup_failed",
+      instanceId,
+    });
+    return null;
+  }
+  return new Set(
+    ((data ?? []) as Array<{ title: string | null }>)
+      .map((row) => row.title)
+      .filter((title): title is string => typeof title === "string"),
+  );
+}
+
 export interface SurfaceWatchdogSweepOptions {
   now?: () => number;
   read?: typeof readSurfaceWatchdogFromBox;
-  report?: typeof reportOpsEvent;
+  /**
+   * Insert-only persistence for one relayed receipt: writes the ops row iff
+   * its fingerprint is not already stored and reports whether THIS call
+   * wrote it — the atomic guard two overlapping sweeps need.
+   */
+  insertOnce?: typeof reportOpsEventOnce;
+  /** Test hook: which of a box's event titles are already stored. Defaults to a real ops_events lookup. */
+  lookupRelayedTitles?: (instanceId: string, titles: string[]) => Promise<Set<string>>;
 }
 
 export async function runSurfaceWatchdogSweep(options: SurfaceWatchdogSweepOptions = {}): Promise<SurfaceWatchdogSweepSummary> {
-  const now = options.now ?? Date.now;
-  const read = options.read ?? readSurfaceWatchdogFromBox;
-  const report = options.report ?? reportOpsEvent;
-  const summary = emptySummary();
   const db = supabaseAdmin;
   if (!db) {
     log.error("supabaseAdmin not configured; skipping surface watchdog sweep", new Error("supabaseAdmin missing"), {
       source: SOURCE, failureType: "supabase_admin_unavailable",
     });
-    return summary;
+    return emptySummary();
   }
 
-  const { data, error } = await db
-    .from("hivra_agents")
-    .select("id, user_id, type, chat_url, cf_hostname, api_token")
-    .eq("status", "running")
-    // A sleeping computer cannot answer; "unreachable" would be a false alarm.
-    .eq("sleep_state", "awake")
-    .not("chat_url", "is", null)
-    .not("api_token", "is", null)
-    .order("id", { ascending: true })
-    .limit(MAX_CANDIDATES);
+  const now = options.now ?? Date.now;
+  const read = options.read ?? readSurfaceWatchdogFromBox;
+  const insertOnce = options.insertOnce ?? reportOpsEventOnce;
+  const lookupRelayedTitles =
+    options.lookupRelayedTitles ??
+    ((instanceId: string, titles: string[]) =>
+      lookupRelayedWatchdogTitles(db, instanceId, titles).then((found) => found ?? new Set<string>()));
+  const summary = emptySummary();
 
-  if (error) {
-    log.error("surface watchdog candidate query failed", error, {
-      source: SOURCE, failureType: "watchdog_candidates_unreadable",
-    });
-    summary.failed += 1;
-    return summary;
+  // The full candidate set, paged by keyset — the per-tick bound below caps
+  // how many boxes the sweep READS, not how many it can see. A bare
+  // `.limit(MAX_CANDIDATES)` on the read made the tail invisible: boxes
+  // past the cap were excluded before the sweep counted them, so failed=0
+  // notReached=0 read as a clean heartbeat while part of the fleet went
+  // unwatched every tick.
+  const candidates: WatchdogCandidateRow[] = [];
+  {
+    let cursor: string | null = null;
+    let failed = false;
+    for (;;) {
+      let query = db
+        .from("hivra_agents")
+        .select("id, user_id, type, chat_url, cf_hostname, api_token")
+        .eq("status", "running")
+        // A sleeping computer cannot answer; "unreachable" would be a false alarm.
+        .eq("sleep_state", "awake")
+        .not("chat_url", "is", null)
+        .not("api_token", "is", null)
+        .order("id", { ascending: true })
+        .limit(CANDIDATE_PAGE_SIZE);
+      if (cursor != null) query = query.gt("id", cursor);
+      const { data, error } = await query;
+      if (error) {
+        log.error("surface watchdog candidate query failed", error, {
+          source: SOURCE, failureType: "watchdog_candidates_unreadable",
+        });
+        summary.failed += 1;
+        failed = true;
+        break;
+      }
+      const page = (data as WatchdogCandidateRow[] | null) ?? [];
+      candidates.push(...page);
+      if (page.length < CANDIDATE_PAGE_SIZE) break;
+      cursor = page[page.length - 1].id;
+    }
+    if (failed) return summary;
   }
 
-  const rows = ((data as WatchdogCandidateRow[] | null) ?? [])
-    .filter((row) => typeof row.id === "string" && typeof row.user_id === "string");
-  summary.scanned = rows.length;
   const started = now();
+  // The per-run read bound stays — but the window it admits ROTATES by the
+  // sweep tick so a capped fleet walks its tail across passes instead of the
+  // same boxes being excluded forever. Candidates outside the window are
+  // counted separately from per-box failures: the heartbeat reads them as
+  // an incomplete sweep.
+  const readable = candidates.filter(
+    (row) => typeof row.id === "string" && typeof row.user_id === "string",
+  );
+  const rows = rotateByScanTick(
+    readable,
+    Math.floor(started / SWEEP_INTERVAL_MS),
+  ).slice(0, MAX_CANDIDATES);
+  summary.capped = readable.length - rows.length;
+  summary.scanned = rows.length;
 
   await inPool(rows, READ_CONCURRENCY, async (row) => {
     if (now() - started > SOFT_BUDGET_MS) {
@@ -201,9 +307,36 @@ export async function runSurfaceWatchdogSweep(options: SurfaceWatchdogSweepOptio
     summary.reported += 1;
     // Newest-cap keeps a long-unswept box from bursting ops rows; the rest
     // stay in the box's events file and dedupe when they surface later.
-    for (const event of reading.report.events.slice(-MAX_RELAY_PER_BOX)) {
+    const pending = reading.report.events.slice(-MAX_RELAY_PER_BOX).map((event) =>
+      opsEventForWatchdogEvent(row, event),
+    );
+    // One batch lookup per box: events whose ops row already exists are skipped
+    // entirely so a re-read never bumps last_seen_at / occurrence_count.
+    const alreadyRelayed = await lookupRelayedTitles(
+      row.id,
+      pending.map((ops) => ops.title),
+    );
+    for (const ops of pending) {
+      if (alreadyRelayed.has(ops.title)) continue;
       try {
-        await report(opsEventForWatchdogEvent(row, event));
+        const inserted = await insertOnce(ops);
+        if (inserted == null) {
+          // reportOpsEventOnce answers null when the write itself failed — a
+          // receipt that never persisted is a failed relay, not a relayed
+          // one, or the route heartbeat reads clean while receipts drop.
+          summary.failed += 1;
+          log.error("surface watchdog event relay did not persist", new Error("reportOpsEventOnce returned null"), {
+            source: SOURCE, failureType: "watchdog_event_relay_unpersisted", instanceId: row.id, userId: row.user_id,
+          });
+          continue;
+        }
+        if (!inserted.inserted) {
+          // A fingerprint conflict resolved to "already stored" — a racing
+          // sweep relayed this receipt between our lookup and our insert.
+          // That is the dedupe WINNING, not a failure: nothing was bumped
+          // or reopened, and the receipt needs no write from us.
+          continue;
+        }
         summary.relayed += 1;
       } catch (error) {
         summary.failed += 1;

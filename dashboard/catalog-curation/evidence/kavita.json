@@ -1,0 +1,113 @@
+{
+  "slug": "kavita",
+  "checkedAt": "2026-11-21T14:34:13.024Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "Kareadita/Kavita is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "Kareadita/Kavita",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "jvmilazz0/kavita:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "jvmilazz0/kavita:latest",
+        "digest": "sha256:31181a32f0dda73cae68721867028a7253d57881b58bea5754cd9e578e75421a",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v7",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /api/health -> 200 in 173.8s",
+      "evidence": {
+        "container": "hivra-verify-kavita-cp0p64",
+        "hostPort": 3250,
+        "image": "jvmilazz0/kavita:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-kavita-cp0p64",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3250:5000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-kavita-cp0p64-config:/kavita/config",
+          "jvmilazz0/kavita:latest"
+        ],
+        "runStdout": "3ce9cc76c58fc3b56002bd0eb584a97d960d4e6f53b7438c5615170b795add3f",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 173.8,
+          "attempts": 75
+        },
+        "memUsage": "374.9MiB / 7.652GiB",
+        "memBytes": 393111142
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 51631,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "﻿<!doctype html>\n<html lang=\"en\" role=\"main\" data-beasties-container>\n<head>\n  <meta charset=\"utf-8\">\n  <title>Kavita</title>\n  <base href=\"/\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"assets/icons/apple-touch-icon.png\">\n  <link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"assets/icons/favicon-32x32.png\">\n  <link",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 200,
+          "bodyHead": "﻿<!doctype html>\n<html lang=\"en\" role=\"main\" data-beasties-container>\n<head>\n  <meta charset=\"utf-8\">\n  <title>Kavita</title>\n  <base href=\"/\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"assets/icons/apple-touch-icon.pn"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 374.9MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 393111142,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

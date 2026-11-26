@@ -107,6 +107,7 @@ const AGENT_KIND = _agentKindRaw === "codex" ? "codex"
   : _agentKindRaw === "hermes" ? "hermes"
   : _agentKindRaw === "openbot" ? "openbot"
   : _agentKindRaw === "nuphos" ? "nuphos"
+  : _agentKindRaw === "catalog-app" ? "catalog-app"
   : _agentKindRaw === "deepseek-harness" ? "deepseek-harness"
   : _agentKindRaw === "linux-desktop" ? "linux-desktop"
   : _agentKindRaw === "linux-server" ? "linux-server"
@@ -222,18 +223,47 @@ function agentCliUpdateRefusal() {
 // is asked for its version like the CLIs (the agent's user owns its npm
 // prefix); Aeon's dashboard build and Agent Zero's image are only ever changed
 // by root, which records them in a root-owned file.
+const CATALOG_APP_META_FILE = process.env.HIVRA_CATALOG_APP_META || "/etc/hivra/catalog-app.json";
+function readCatalogAppMeta() {
+  if (AGENT_KIND !== "catalog-app") return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(CATALOG_APP_META_FILE, "utf8"));
+    if (!raw || typeof raw !== "object") return null;
+    if (typeof raw.appId !== "string" || !/^[a-z][a-z0-9-]{1,38}[a-z0-9]$/.test(raw.appId)) return null;
+    const hostPort = Number.isInteger(raw.hostPort) && raw.hostPort >= 3200 && raw.hostPort <= 3999 ? raw.hostPort : null;
+    const healthPath = typeof raw.healthPath === "string" && raw.healthPath.startsWith("/") ? raw.healthPath : "/";
+    const proxyMode = raw.proxyMode === "loopback-origin" ? "loopback-origin" : "standard";
+    return {
+      appId: raw.appId,
+      name: typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : raw.appId,
+      kind: raw.kind === "cli-web" ? "cli-web" : raw.kind === "docker-stack" ? "docker-stack" : "docker-web",
+      hostPort,
+      healthPath,
+      proxyMode,
+      cliChat: raw.cliChat && typeof raw.cliChat === "object" ? raw.cliChat : null,
+    };
+  } catch {
+    return null;
+  }
+}
+const CATALOG_APP = readCatalogAppMeta();
+const CATALOG_APP_VERSION_RE = /^(?:sha256:[0-9a-f]{64}|v?\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[A-Za-z0-9._-]{1,32})?|latest)$/;
 const AGENT_APP = AGENT_KIND === "aeon" ? { name: "aeon", label: "Aeon", ports: [AEON_PORT] }
   : AGENT_KIND === "openclaw" ? { name: "openclaw", label: "OpenClaw", ports: [OPENCLAW_PORT] }
   : AGENT_KIND === "agent-zero" ? { name: "agent-zero", label: "Agent Zero", ports: [AGENT_ZERO_PORT] }
   : AGENT_KIND === "hermes" ? { name: "hermes", label: "Hermes", ports: [HERMES_PORT, HERMES_WEBAPP_PORT] }
   : AGENT_KIND === "openbot" ? { name: "openbot", label: "OpenBot", ports: [OPENBOT_PORT] }
-  : AGENT_KIND === "nuphos" ? { name: "nuphos", label: "Nuphos", ports: [NUPHOS_PORT] } : null;
+  : AGENT_KIND === "nuphos" ? { name: "nuphos", label: "Nuphos", ports: [NUPHOS_PORT] }
+  : AGENT_KIND === "catalog-app" && CATALOG_APP ? { name: CATALOG_APP.appId, label: CATALOG_APP.name, ports: CATALOG_APP.hostPort ? [CATALOG_APP.hostPort] : [] } : null;
 const AGENT_APP_RECORD = process.env.HIVRA_AGENT_APP_RECORD || "/var/lib/hivra/agent-app.json";
 const AGENT_APP_STATUS = process.env.HIVRA_AGENT_APP_STATUS || "/var/lib/hivra/agent-app-update.json";
 const AGENT_APP_LOCK = process.env.HIVRA_AGENT_APP_LOCK || "/run/hivra-agent-app-update.lock";
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/bux/.npm-global/bin/openclaw";
 const HERMES_BIN = process.env.HERMES_BIN || "/home/bux/.local/bin/hermes";
-const AGENT_APP_VERSION = { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, openbot: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, nuphos: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ };
+const AGENT_APP_VERSION = Object.assign(
+  { aeon: /^[0-9a-f]{40}$/, openclaw: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, "agent-zero": /^sha256:[0-9a-f]{64}$/, hermes: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, openbot: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/, nuphos: /^\d{1,6}\.\d{1,6}\.\d{1,6}$/ },
+  CATALOG_APP ? { [CATALOG_APP.appId]: CATALOG_APP_VERSION_RE } : {},
+);
 // What an update status may name as its target: always the word "latest",
 // since every update goes to whatever upstream publishes as newest.
 const AGENT_APP_TARGET = /^latest$/;
@@ -707,9 +737,22 @@ const DEEPSEEK_BROKER = DEEPSEEK_CONFIG ? require("./deepseek-harness/native-bro
 // owner-bound session authority; the long-lived Hivra management token is
 // deliberately not an alternate login path for /desktop.
 const REMOTE_DESKTOP_BROKER_PORT = Number(process.env.HIVRA_REMOTE_DESKTOP_BROKER_PORT || 8090);
-function denyHtml(res) {
+function denyHtml(req, res) {
+  // Callers on credential endpoints pass only res — those keep the plain 401.
+  if (!res) { res = req; req = null; }
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
+  // A browser navigation gets the sign-in page: opening the box's URL directly
+  // shows the same door the dashboard opens, instead of a bare refusal. The
+  // credential endpoints and non-HTML clients keep the plain 401.
+  const u = req && req.url ? req.url.split("?")[0] : "";
+  const navigates = req && (req.method === "GET" || req.method === "HEAD")
+    && AGENT_KIND !== "catalog-app"
+    && (/text\/html/i.test(String(req.headers.accept || "")) || String(req.headers["sec-fetch-mode"] || "") === "navigate");
+  if (navigates && u !== "/login" && !u.startsWith("/connect/") && u !== "/auth/bootstrap") {
+    res.writeHead(303, { Location: "/login?next=" + encodeURIComponent(req.url) });
+    return res.end();
+  }
   res.writeHead(401, { "Content-Type": "text/html; charset=utf-8" });
   res.end("<body style=\"font-family:monospace;background:#0c0c0c;color:#8a8a8a;padding:28px\">401 — this box is private. Open it from your Hivra dashboard.</body>");
 }
@@ -719,6 +762,15 @@ function safeBootstrapDestination(raw) {
   if (!destination.startsWith("/") || destination.startsWith("//") || destination.includes("\\")) return null;
   if (destination.length > 4096 || /[\u0000-\u001f\u007f]/.test(destination)) return null;
   return destination;
+}
+function nativeBoxHome() {
+  if (AGENT_KIND === "agent-zero") return "/agent-zero/";
+  if (AGENT_KIND === "hermes") return "/hermes/";
+  return "/";
+}
+function directSigninDestination(destination) {
+  const target = destination === "/" ? nativeBoxHome() : destination;
+  return hermesEntry(target) ? HERMES_SIGN_IN : target;
 }
 function handleAuthBootstrap(req, res) {
   let body = ""; let tooBig = false;
@@ -867,13 +919,130 @@ function redeemConnectGrant(username, password) {
   if (!grant || grant.e <= Date.now()) return null;
   return grant.d;
 }
+// ---- Owner sign-in password ----
+// POST /api/signin-password (management bearer only, set by the dashboard's
+// "Direct sign-in" action) registers a password whose sha256 digest is kept in
+// ~/.hivra/signin-password: owner-only 0600, replaced atomically. DELETE
+// clears it. It redeems through POST /login — the form GET /login serves —
+// minting the same ordinary surface cookie a connect grant does.
+const SIGNIN_PASSWORD_FILE = path.join(HOME, ".hivra", "signin-password");
+const SIGNIN_PASSWORD_RULE = /^[\x21-\x7e]{8,128}$/;
+let SIGNIN_PASSWORD_HASH = "";
+function signinPasswordDigest(password) {
+  return crypto.createHash("sha256").update("signin:" + String(password)).digest("hex");
+}
+(function loadSigninPassword() {
+  if (!authStoreDirectoryTrusted()) return;
+  let fd = null;
+  try {
+    fd = fs.openSync(SIGNIN_PASSWORD_FILE, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0 || stat.size > 128) {
+      authStoreWarn("sign-in password: the saved file is not a private regular file of this user");
+      return;
+    }
+    const raw = fs.readFileSync(fd, "utf8").trim();
+    if (!/^[a-f0-9]{64}$/.test(raw)) { authStoreWarn("sign-in password: the saved file is not a digest"); return; }
+    SIGNIN_PASSWORD_HASH = raw;
+  } catch (error) {
+    if (error && error.code !== "ENOENT") authStoreWarn("sign-in password: " + ((error.code || error.message) || "unreadable"));
+  } finally { if (fd !== null) { try { fs.closeSync(fd); } catch {} } }
+})();
+function writeSigninPassword() {
+  if (!authStoreDirectoryTrusted()) return false;
+  const directory = path.dirname(SIGNIN_PASSWORD_FILE);
+  const temp = path.join(directory, ".signin-password." + crypto.randomBytes(8).toString("hex") + ".tmp");
+  let fd = null;
+  try {
+    fd = fs.openSync(temp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, SIGNIN_PASSWORD_HASH + "\n");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(temp, SIGNIN_PASSWORD_FILE);
+    return true;
+  } catch (error) {
+    authStoreWarn("sign-in password: cannot save: " + ((error && (error.code || error.message)) || "write failed"));
+    if (fd !== null) { try { fs.closeSync(fd); } catch {} }
+    try { fs.unlinkSync(temp); } catch {}
+    return false;
+  }
+}
+function handleSigninPasswordStatus(res) {
+  return jsonRes(res, 200, { set: Boolean(SIGNIN_PASSWORD_HASH) });
+}
+function handleSigninPasswordSet(req, res) {
+  readBody(req, (body) => {
+    let parsed = null;
+    try { parsed = JSON.parse(body); } catch {}
+    const password = parsed && typeof parsed.password === "string" ? parsed.password : "";
+    if (!SIGNIN_PASSWORD_RULE.test(password)) {
+      return jsonRes(res, 400, { error: "password must be 8-128 printable characters, no spaces" });
+    }
+    SIGNIN_PASSWORD_HASH = signinPasswordDigest(password);
+    return jsonRes(res, 200, { ok: true, set: true, persisted: writeSigninPassword() });
+  });
+}
+function handleSigninPasswordClear(res) {
+  SIGNIN_PASSWORD_HASH = "";
+  try { fs.unlinkSync(SIGNIN_PASSWORD_FILE); } catch (error) {
+    if (error && error.code !== "ENOENT") authStoreWarn("sign-in password: cannot remove: " + (error.code || error.message || "unwritable"));
+  }
+  return jsonRes(res, 200, { ok: true, set: false });
+}
+// A human-chosen password is guessable where a 64-hex grant is not, so failed
+// sign-ins slow down. Every connection arrives through the tunnel's own
+// loopback, so the delay is global rather than per-address; a real owner who
+// mistypes waits a few seconds, a guessing script waits much longer.
+const LOGIN_FAIL_UNIT_MS = 1500;
+const LOGIN_FAIL_CAP_MS = 30000;
+let loginFails = 0;
+let loginBlockedUntil = 0;
+function loginPage(destination, error) {
+  const notice = error ? "<p style=\"color:#c96f5f;margin:0 0 14px\">" + error + "</p>" : "";
+  const hint = SIGNIN_PASSWORD_HASH || CONNECT_GRANTS.size
+    ? "This computer is private. Sign in with its password."
+    : "This computer is private. Set a sign-in password from your Hivra dashboard, or open it from there.";
+  return "<!doctype html><body style=\"font-family:monospace;background:#0c0c0c;color:#8a8a8a;padding:28px;max-width:340px\">"
+    + "<p style=\"margin:0 0 14px\">" + hint + "</p>"
+    + notice
+    + "<form method=\"POST\" action=\"/login\" style=\"display:flex;gap:8px\">"
+    + "<input type=\"hidden\" name=\"next\" value=\"" + escapeHtml(destination) + "\">"
+    + "<input name=\"password\" type=\"password\" autocomplete=\"current-password\" autofocus "
+    + "style=\"flex:1;min-width:0;background:#161616;border:1px solid #333;color:#dedede;padding:9px 10px;font-family:inherit;font-size:14px\">"
+    + "<button type=\"submit\" style=\"background:#dedede;border:0;color:#0c0c0c;padding:9px 14px;font-family:inherit;font-size:14px;cursor:pointer\">Sign in</button>"
+    + "</form></body>";
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[c]);
+}
+function serveLoginPage(res, destination, error, status) {
+  const target = safeBootstrapDestination(destination) || "/";
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'");
+  res.writeHead(status || 200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(loginPage(target, error));
+}
+// GET /login — the sign-in page an unauthenticated surface navigation is sent
+// to. An already signed-in browser goes straight to its destination.
+function handleLoginPage(req, res, q) {
+  const next = safeBootstrapDestination(q && q.get("next")) || "/";
+  if (authed(req)) {
+    res.setHeader("Cache-Control", "no-store");
+    res.writeHead(303, { Location: directSigninDestination(next) });
+    return res.end();
+  }
+  return serveLoginPage(res, next, null);
+}
 function answerConnectSession(res, destination) {
   const session = createAuthSession();
   res.setHeader("Set-Cookie", AUTH_COOKIE + "=" + session + "; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=" + Math.floor(AUTH_SESSION_TTL_MS / 1000));
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("Content-Security-Policy", "default-src 'none'");
-  res.writeHead(303, { Location: destination });
+  res.writeHead(303, { Location: directSigninDestination(destination) });
   res.end();
 }
 function handleConnectGrantCreate(req, res) {
@@ -914,7 +1083,9 @@ function handleConnectRedeem(req, res, rawCode) {
 // A0 desktop app) POSTs {username, password, next} exactly as it would to a
 // self-hosted Agent Zero; here the pair is checked against this box's connect
 // grants instead of Agent Zero's own login, which the /agent-zero proxy logs
-// into upstream already.
+// into upstream already. The same endpoint serves the sign-in page GET /login
+// shows: a password-only post tries the dashboard's minted username against the
+// grants, then the owner's sign-in password.
 function handleConnectLogin(req, res) {
   let body = ""; let tooBig = false;
   req.on("data", (chunk) => {
@@ -923,14 +1094,46 @@ function handleConnectLogin(req, res) {
   });
   req.on("end", () => {
     if (tooBig) return;
-    const form = new URLSearchParams(body);
-    const granted = redeemConnectGrant(String(form.get("username") || "").trim(), String(form.get("password") || ""));
-    if (!granted) return denyHtml(res);
-    // Agent Zero's own semantics: honour the form's `next` when it points at a
-    // real path on this box; its default "/" (what a self-hosted A0 root would
-    // be) means the surface the grant was minted for.
-    const next = safeBootstrapDestination(form.get("next"));
-    return answerConnectSession(res, next && next !== "/" ? next : granted);
+    let username = "", password = "", next = null;
+    if (/json/i.test(String(req.headers["content-type"] || ""))) {
+      try {
+        const parsed = JSON.parse(body);
+        username = String(parsed && parsed.username || "").trim();
+        password = String(parsed && parsed.password || "");
+        next = safeBootstrapDestination(parsed && parsed.next);
+      } catch {}
+    } else {
+      const form = new URLSearchParams(body);
+      username = String(form.get("username") || "").trim();
+      password = String(form.get("password") || "");
+      next = safeBootstrapDestination(form.get("next"));
+    }
+    // A failed guess delays the next answer rather than rejecting it outright:
+    // a script's attempts stay throttled while a real owner who mistyped once
+    // only waits a moment before the right password goes through.
+    const process = () => {
+      if (res.writableEnded) return;
+      // The dashboard only ever mints the username "hivra", so a password-only
+      // post still redeems a grant; an explicit different username is honoured.
+      const granted = redeemConnectGrant(username || "hivra", password);
+      if (granted) {
+        loginFails = 0;
+        // Agent Zero's own semantics: honour the form's `next` when it points at a
+        // real path on this box; its default "/" (what a self-hosted A0 root would
+        // be) means the surface the grant was minted for.
+        return answerConnectSession(res, next && next !== "/" ? next : granted);
+      }
+      if (SIGNIN_PASSWORD_HASH && safeEq(signinPasswordDigest(password), SIGNIN_PASSWORD_HASH)) {
+        loginFails = 0;
+        return answerConnectSession(res, next || "/");
+      }
+      loginFails += 1;
+      loginBlockedUntil = Date.now() + Math.min(loginFails * LOGIN_FAIL_UNIT_MS, LOGIN_FAIL_CAP_MS);
+      return serveLoginPage(res, next || "/", "Wrong password.", 401);
+    };
+    const wait = loginBlockedUntil - Date.now();
+    if (wait > 0) return setTimeout(process, wait);
+    return process();
   });
 }
 
@@ -2242,9 +2445,9 @@ function chatEffortAdvertised() {
 // `effort` is a level already checked by chatEffortLevel(), or null.
 function resolveChatSpawn(message, sessionId, images, effort) {
   if (COMPUTER_PROFILE) return { error: "this computer has no agent chat surface" };
-  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos") {
-    // Aeon + OpenClaw + Agent Zero + Hermes + OpenBot + Nuphos are hosted dashboards, not chat-CLI agents — no
-    // /api/chat surface; the user works in the agent's own web UI behind the gate.
+  if (AGENT_KIND === "aeon" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos"
+    || (AGENT_KIND === "catalog-app" && (!CATALOG_APP || CATALOG_APP.hostPort))) {
+    // Hosted dashboard runtimes have no /api/chat surface; the user works in the app's own web UI behind the gate.
     return { error: "this agent has no chat surface" };
   }
   const restrict = readRestrict();
@@ -2303,11 +2506,25 @@ function resolveChatSpawn(message, sessionId, images, effort) {
       : ["exec", ...flags, "-C", AGENT_WORKDIR, message];
     return { bin: CODEX, args, useStdin: false, textMode: false, env: llmEnv };
   }
-  if (AGENT_KIND === "generic") {
+  if (AGENT_KIND === "generic" || AGENT_KIND === "catalog-app") {
     const cmd = readGenericCmd();
     if (!cmd) return { error: "no generic agent command configured (~/.hivra/agent-cmd.json)" };
     const args = cmd.promptVia === "arg" ? [...cmd.args, message] : [...cmd.args];
-    return { bin: cmd.bin, args, useStdin: cmd.promptVia !== "arg", textMode: true };
+    let extraEnv = null;
+    if (cmd.envFile && typeof cmd.envFile === "string") {
+      try {
+        const parsedEnv = {};
+        for (const line of fs.readFileSync(cmd.envFile, "utf8").split(/\r?\n/)) {
+          const idx = line.indexOf("=");
+          if (idx > 0) {
+            const k = line.slice(0, idx).trim();
+            if (/^[A-Z][A-Z0-9_]{0,63}$/.test(k)) parsedEnv[k] = line.slice(idx + 1);
+          }
+        }
+        extraEnv = Object.assign({}, chatSpawnEnv(), parsedEnv);
+      } catch {}
+    }
+    return { bin: cmd.bin, args, useStdin: cmd.promptVia !== "arg", textMode: true, env: extraEnv };
   }
   // claude: restrict=readonly drops the permission skip (headless print mode then
   // auto-denies mutating tools); limited keeps it but disallows the shell.
@@ -2324,7 +2541,9 @@ function resolveChatSpawn(message, sessionId, images, effort) {
 // Chat turns run detached from the HTTP request that starts them (see
 // ./chat-runs.cjs): the request starts a run and tails its log, so closing the
 // browser no longer ends the agent's work. Only chat runtimes load the store.
-const CHAT_RUNS_MODULE = !COMPUTER_PROFILE && ["claude", "codex", "generic"].includes(AGENT_KIND) ? require("./chat-runs.cjs") : null;
+const CHAT_RUNS_MODULE = !COMPUTER_PROFILE && (["claude", "codex", "generic"].includes(AGENT_KIND)
+  || (AGENT_KIND === "catalog-app" && CATALOG_APP && !CATALOG_APP.hostPort && Boolean(CATALOG_APP.cliChat)))
+  ? require("./chat-runs.cjs") : null;
 const CHAT_RUNS = CHAT_RUNS_MODULE ? CHAT_RUNS_MODULE.createChatRunStore({ root: path.join(HOME, ".hivra", "chat-runs") }) : null;
 function logChatStreamError(error) {
   console.error("hivra-chat: chat run stream failed: " + ((error && error.stack) || error));
@@ -2544,7 +2763,7 @@ function proxyHttp(req, res, port, strip, preserveAuthority = false, setHeaders 
 // Agent Zero always gates its OWN web UI with a form login (username/password ->
 // session cookie; no basic-auth, no open-loopback mode). Since our token gate
 // already authenticates the box owner, that second login is pure friction — so we
-// log in transparently with the credential seeded at provision and inject the
+// log in transparently with the credential synced by the watchdog and inject the
 // session cookie, and the user only ever passes our gate.
 let _a0Cookie = null;
 let _a0SessionName = null, _a0SessionRevision = 0, _a0CsrfAttempt = 0, _a0Csrf = null;
@@ -2579,6 +2798,18 @@ function retainA0Cookies(setCookies) {
   _a0Cookie = [...cookies].map(([name, value]) => name + "=" + value).join("; ") || null;
 }
 function readA0Creds() {
+  let fd;
+  try {
+    fd = fs.openSync(path.join(HOME, ".hivra", "agent-zero-runtime-login.json"),
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const file = fs.fstatSync(fd);
+    if (file.isFile() && file.uid === process.getuid() && (file.mode & 0o077) === 0 && file.size <= 1024 * 1024) {
+      const synced = JSON.parse(fs.readFileSync(fd, "utf8"));
+      if (typeof synced?.login === "string" && synced.login && typeof synced.password === "string" && synced.password) return synced;
+    }
+  } catch {}
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+  // The provisioned credential still works before the first watchdog pass.
   try {
     const raw = fs.readFileSync(path.join(HOME, ".hivra", "agent-zero-login"), "utf8");
     const login = (raw.match(/^AUTH_LOGIN=(.*)$/m) || [])[1];
@@ -2605,6 +2836,43 @@ function a0Login(cb, isCurrent) {
   r.write(body); r.end();
   return r;
 }
+// The A0 CLI (agent0ai/a0-connector) talks to the host's ROOT, not to a mount:
+// POST /api/plugins/_a0_connector/v1/*, GET /api/csrf_token, the file/upload
+// helpers it uses, and /socket.io. It signs in once through POST /login with a
+// Connect app grant, then holds the ordinary surface cookie. A non-browser
+// client does not send an Origin header on those calls, which the cookie gate
+// for mutations requires, so this narrow path set accepts the same cookie
+// without one. A browser always sends Origin (and Sec-Fetch-Site) on a write, so
+// a page on another site still cannot ride the cookie. The capability probe is
+// A0's own public discovery endpoint and needs no sign-in.
+const A0_CONNECTOR_REQS = new WeakSet();
+// Agent Zero gives Xpra a root-absolute path for both its assets and its
+// stream. Only its browser sessions belong to A0, not the desktop broker.
+function a0BrowserSession(pathname) {
+  return AGENT_KIND === "agent-zero" && /^\/desktop\/session\/browser-[a-f0-9]{32}(?:\/|$)/.test(pathname);
+}
+function a0SocketIoPath(pathname) {
+  return AGENT_KIND === "agent-zero" && (pathname === "/socket.io" || pathname === "/socket.io/");
+}
+function a0SocketIoUrl(url) {
+  return "/socket.io/" + url.slice("/socket.io".length).replace(/^\//, "");
+}
+function a0SocketIoForwardedOrigin(req) {
+  // Engine.IO sees loopback HTTP. Give it the public origin only after it
+  // matches the box, without trusting incoming proxy headers.
+  return sameBoxOrigin(req) ? { "x-forwarded-host": new URL(req.headers.origin).host, "x-forwarded-proto": "https" } : {};
+}
+const A0_CONNECTOR_PROBE = "/api/plugins/_a0_connector/v1/capabilities";
+const A0_CONNECTOR_CORE_API = new Set(["/api/csrf_token", "/api/image_get", "/api/download_work_dir_file", "/api/chat_files_path_get", "/api/get_work_dir_files"]);
+function a0ConnectorRootPath(req, u) {
+  if (u.startsWith("/api/plugins/") || A0_CONNECTOR_CORE_API.has(u)) return true;
+  // The gateway's own /api/upload takes the management bearer; the CLI sends the web session and a CSRF header.
+  return u === "/api/upload" && Boolean(req.headers["x-csrf-token"]) && !bearerAuthed(req);
+}
+function a0ConnectorRootAuthed(req) {
+  if (authed(req)) return true;
+  return validAuthSession(cookieVal(req, AUTH_COOKIE)) && !req.headers["origin"] && !req.headers["sec-fetch-site"];
+}
 // Proxy to Agent Zero with the login session injected. On a cache miss — or when
 // the container rotates the session and 302s back to /login — (re)log in and retry
 // the (GET) request once, so the owner never sees Agent Zero's own login screen.
@@ -2622,7 +2890,7 @@ function a0CanonicalEntryHtml(html) {
   return seen["index.js"] === 1 && seen["js/initFw.js"] === 1 ? rewritten : null;
 }
 function a0Proxy(req, res, retried, csrfContext, editorContext) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req) && !A0_CONNECTOR_REQS.has(req)) return denyHtml(req, res);
   if (!retried && isAgentAppPort(AGENT_ZERO_PORT) && agentAppHold(req, res)) return;
   let apath = req.url.slice("/agent-zero".length); if (!apath.startsWith("/")) apath = "/" + apath;
   // Newer Agent Zero serves a splash bootstrap at / that installs the real
@@ -2693,6 +2961,11 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
     if (csrf && csrf.done) return;
     if (csrf && csrf.attempt !== _a0CsrfAttempt) return rejectCsrf("session-changed");
     const headers = Object.assign({}, req.headers, { host: "127.0.0.1:" + AGENT_ZERO_PORT });
+    if (a0SocketIoPath(apath.split("?")[0])) {
+      delete headers["x-forwarded-host"];
+      delete headers["x-forwarded-proto"];
+      Object.assign(headers, a0SocketIoForwardedOrigin(req));
+    }
     const requestSessionRevision = _a0SessionRevision;
     const entryDocument = (req.method === "GET" || req.method === "HEAD") && ["/", "/index.html"].includes(apath.split("?")[0]);
     // Newer Agent Zero serves a splash bootstrap at / and the pinned app
@@ -2743,8 +3016,15 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
         pr.destroy(); return rejectCsrf("session-changed");
       }
       const loc = String(pr.headers["location"] || "");
-      if (pr.statusCode === 302 && /\/login(\?|$)/.test(loc) && !retried && (req.method === "GET" || editorAsset)) {
+      if (pr.statusCode === 302 && /\/login(\?|$)/.test(loc) && (req.method === "GET" || editorAsset)) {
         if (csrf || editor) pr.destroy(); else pr.resume();
+        if (retried) {
+          if (csrf) return rejectCsrf("upstream-login");
+          if (editor) return editor.settle("upstream-login");
+          console.warn("Agent Zero refused the managed runtime login");
+          res.writeHead(502, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
+          return res.end("Agent Zero could not sign in to its runtime.");
+        }
         _a0Cookie = null; _a0SessionName = null; _a0SessionRevision++; _a0Csrf = null;
         return loginThen(() => a0Proxy(req, res, true, csrf, editor));
       }
@@ -2916,7 +3196,7 @@ function a0Proxy(req, res, retried, csrfContext, editorContext) {
 // iframe first POSTs its bearer to /auth/bootstrap, which replaces it with a
 // short-lived HttpOnly cookie before navigating here with a clean URL.
 function gateProxy(req, res, port, strip) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   if (isAgentAppPort(port) && agentAppHold(req, res)) return;
   return proxyHttp(req, res, port, strip, false, openclawPort(port) ? OPENCLAW_SET_HEADERS : null);
 }
@@ -2954,9 +3234,10 @@ function openclawStrip() {
 // could steer Hermes's idea of its public address is dropped.
 const HERMES_MOUNT = "/hermes";
 const HERMES_SIGN_IN = "/hermes-sign-in";
+const HERMES_DESKTOP_MOUNT = "/hermes-desktop";
 const HERMES_DROPPED_HEADERS = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port", "x-real-ip"];
-function hermesHeaders(origin, port) {
-  const set = { "x-forwarded-prefix": HERMES_MOUNT };
+function hermesHeaders(origin, port, mount = HERMES_MOUNT) {
+  const set = { "x-forwarded-prefix": mount };
   for (const name of HERMES_DROPPED_HEADERS) set[name] = null;
   set.origin = origin ? "http://127.0.0.1:" + port : null;
   return set;
@@ -3007,7 +3288,7 @@ function hermesPort() {
 // browser never sends to a server. Without the Webapp, /hermes is the dashboard.
 const HERMES_LAUNCH_FRAGMENT = /\/webapp\/launch#(ticket=[A-Za-z0-9_-]{43}(?:&[A-Za-z0-9_.~%=&+-]{0,512})?)(?:\s|$)/;
 function hermesSignIn(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   const go = (location) => {
     res.writeHead(303, { Location: location, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
       "Content-Security-Policy": "default-src 'none'" });
@@ -3027,10 +3308,78 @@ function hermesSignIn(req, res) {
   });
 }
 function hermesProxy(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   if (agentAppHold(req, res)) return;
   const port = hermesPort();
   return proxyHttp(req, res, port, HERMES_MOUNT, false, hermesHeaders(Boolean(req.headers.origin), port));
+}
+
+// The installed Desktop client speaks the dashboard API on 9119. The browser
+// Webapp on 9120 uses different sign-in and must keep its own Hivra cookie gate.
+function hermesDashboardToken() {
+  let fd;
+  try {
+    fd = fs.openSync(path.join(HOME, ".hivra", "hermes-desktop-token"),
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const file = fs.fstatSync(fd);
+    if (!file.isFile() || file.uid !== process.getuid() || (file.mode & 0o077) !== 0 || file.size !== 65) return "";
+    const token = fs.readFileSync(fd, "utf8").trim();
+    return /^[a-f0-9]{64}$/.test(token) ? token : "";
+  } catch { return ""; }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+function hermesDesktopToken(dashboardToken) {
+  // The loopback dashboard may embed its own token in its browser HTML.
+  // A browser sign-in must never disclose the independently scoped remote key.
+  return dashboardToken && crypto.createHmac("sha256", API_TOKEN)
+    .update("hermes-desktop:v1:" + dashboardToken).digest("hex");
+}
+function hermesDesktopMounted(pathname) {
+  return AGENT_KIND === "hermes" && pathname.startsWith(HERMES_DESKTOP_MOUNT + "/api/");
+}
+function hermesDesktopAuthed(req, token, queryToken = "") {
+  return Boolean(token && [req.headers["x-hermes-session-token"], queryToken].some(
+    value => typeof value === "string" && safeEq(value, token)));
+}
+function hermesDesktopReady(token, done) {
+  // The initial unauthenticated probe discovers the auth mode. Do not relay
+  // the dashboard's full status, which contains local paths and profile data.
+  let completed = false;
+  const finish = (healthy) => {
+    if (completed) return;
+    completed = true;
+    done(healthy);
+  };
+  const probe = http.get({
+    host: "127.0.0.1", port: HERMES_PORT, path: "/api/auth/me", timeout: 3000,
+    headers: { "x-hermes-session-token": token },
+  }, upstream => {
+    upstream.resume();
+    finish(upstream.statusCode === 200);
+  });
+  probe.on("timeout", () => probe.destroy());
+  probe.on("error", () => finish(false));
+}
+function hermesDesktopProxy(req, res, pathname, query) {
+  res.setHeader("Cache-Control", "no-store");
+  const dashboardToken = hermesDashboardToken();
+  if (!dashboardToken) return jsonRes(res, 404, { error: "Hermes Desktop is unavailable" });
+  const queryToken = pathname === HERMES_DESKTOP_MOUNT + "/api/files/download" ? query.get("token") : "";
+  if (!hermesDesktopAuthed(req, hermesDesktopToken(dashboardToken), queryToken)) {
+    if (req.method === "GET" && pathname === HERMES_DESKTOP_MOUNT + "/api/status"
+      && !req.headers["x-hermes-session-token"]) {
+      return hermesDesktopReady(dashboardToken, healthy => healthy
+        ? jsonRes(res, 200, { auth_required: false })
+        : jsonRes(res, 503, { error: "Hermes Desktop backend unavailable" }));
+    }
+    return jsonRes(res, 401, { error: "unauthorized" });
+  }
+  if (agentAppHold(req, res)) return;
+  const headers = hermesHeaders(Boolean(req.headers.origin), HERMES_PORT, HERMES_DESKTOP_MOUNT);
+  return proxyHttp(req, res, HERMES_PORT, HERMES_DESKTOP_MOUNT, false, {
+    ...headers, authorization: null, cookie: null,
+    "x-hermes-session-token": dashboardToken,
+  });
 }
 
 // ---- OpenBot (CopilotKit) at the box root --------------------------------
@@ -3117,7 +3466,7 @@ function openbotSetupForm(res, error) {
 // OpenBot starts, then OpenBot itself at /. GET /openbot/setup always shows the
 // form (to replace the key).
 function openbotEntry(req, res, u) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   if (req.method !== "GET" && req.method !== "HEAD") return jsonRes(res, 405, { error: "method not allowed" });
   if (u === OPENBOT_SETUP || u === OPENBOT_SETUP + "/" || !openbotKeySaved()) return openbotSetupForm(res, null);
   if (agentAppHold(req, res)) return;
@@ -3127,7 +3476,7 @@ function openbotEntry(req, res, u) {
   });
 }
 function openbotSaveKey(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   let body = ""; let tooBig = false;
   req.on("data", (chunk) => { body += chunk; if (body.length > 4096) { tooBig = true; req.destroy(); } });
   req.on("end", () => {
@@ -3154,7 +3503,7 @@ function openbotSaveKey(req, res) {
   });
 }
 function openbotProxy(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   // Before the key is saved OpenBot is not running: a page load goes to setup.
   if ((req.method === "GET" || req.method === "HEAD") && String(req.headers.accept || "").includes("text/html") && !openbotKeySaved()) {
     res.writeHead(303, { Location: OPENBOT_ENTRY + "/", "Cache-Control": "no-store" });
@@ -3198,7 +3547,7 @@ function nuphosAnswers(done) {
 }
 // GET /nuphos/: the runtime's console at / once it answers, a short wait before.
 function nuphosEntry(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   if (agentAppHold(req, res)) return;
   nuphosAnswers((up) => {
     if (up) { res.writeHead(303, { Location: "/", "Cache-Control": "no-store" }); return res.end(); }
@@ -3207,9 +3556,85 @@ function nuphosEntry(req, res) {
   });
 }
 function nuphosProxy(req, res) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   if (agentAppHold(req, res)) return;
   return proxyHttp(req, res, NUPHOS_PORT, null, false, nuphosHeaders(req));
+}
+
+// ---- Universal catalog app at the box root (/app/ entry) -------------------
+const CATALOG_APP_ENTRY = "/app";
+// The entry owns exactly its two URLs (/app and /app/) — a landing that
+// health-checks the app and 303s to /. Everything deeper is the app's own
+// URL space: a Dufs share folder literally named "app", an Appsmith
+// /app/<slug> page, any app's /app/* asset. Intercepting the whole prefix
+// answered those with the entry's 303, and a PUT redirected that way was
+// followed as a GET — the write never reached the app while its UI read the
+// root page's 200 as an upload success.
+const CATALOG_APP_GATEWAY_PATHS = OPENBOT_GATEWAY_PATHS.filter((p) => p !== OPENBOT_ENTRY);
+function catalogAppGatewayPath(u) {
+  return CATALOG_APP_GATEWAY_PATHS.some((prefix) => u === prefix || u.startsWith(prefix + "/"));
+}
+function catalogAppEntryPath(u) {
+  return u === CATALOG_APP_ENTRY || u === CATALOG_APP_ENTRY + "/";
+}
+function escapeHtmlSimple(text) {
+  return String(text || "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]));
+}
+function catalogAppHeaders(req) {
+  if (!CATALOG_APP || !CATALOG_APP.hostPort) return {};
+  if (CATALOG_APP.proxyMode === "loopback-origin") {
+    const set = {};
+    for (const name of OPENBOT_DROPPED_HEADERS) set[name] = null;
+    if (req.headers.origin !== undefined) {
+      let own = false;
+      try { own = new URL(String(req.headers.origin)).host.toLowerCase() === String(req.headers.host || "").trim().toLowerCase(); } catch {}
+      if (own) set.origin = "http://127.0.0.1:" + CATALOG_APP.hostPort;
+    }
+    return set;
+  }
+  return nuphosHeaders(req);
+}
+function catalogAppAnswers(done) {
+  if (!CATALOG_APP || !CATALOG_APP.hostPort) return done(false);
+  let settled = false;
+  const finish = (up) => { if (!settled) { settled = true; done(up); } };
+  const probe = http.request({
+    host: "127.0.0.1",
+    port: CATALOG_APP.hostPort,
+    method: "GET",
+    path: CATALOG_APP.healthPath || "/",
+    headers: { host: "127.0.0.1:" + CATALOG_APP.hostPort, accept: "text/html,*/*" },
+    timeout: 3000,
+  }, (pr) => {
+    pr.resume();
+    finish(pr.statusCode >= 200 && pr.statusCode < 400);
+  });
+  probe.on("timeout", () => probe.destroy());
+  probe.on("error", () => finish(false));
+  probe.end();
+}
+function catalogAppEntry(req, res) {
+  if (!authed(req)) return denyHtml(req, res);
+  if (!CATALOG_APP || !CATALOG_APP.hostPort) return jsonRes(res, 404, { error: "no web surface configured" });
+  if (agentAppHold(req, res)) return;
+  const safeName = escapeHtmlSimple(CATALOG_APP.name);
+  catalogAppAnswers((up) => {
+    if (up) { res.writeHead(303, { Location: "/", "Cache-Control": "no-store" }); return res.end(); }
+    return openbotPage(
+      res,
+      200,
+      "Starting " + safeName,
+      "<h1>Starting " + safeName + "…</h1><p>" + safeName + " is starting on its computer. This page opens automatically when it is ready.</p>",
+      5,
+      CATALOG_APP_ENTRY,
+    );
+  });
+}
+function catalogAppProxy(req, res) {
+  if (!authed(req)) return denyHtml(req, res);
+  if (!CATALOG_APP || !CATALOG_APP.hostPort) return jsonRes(res, 404, { error: "no web surface configured" });
+  if (agentAppHold(req, res)) return;
+  return proxyHttp(req, res, CATALOG_APP.hostPort, null, false, catalogAppHeaders(req));
 }
 
 // ---- terminals on owner-only unix sockets -----------------------------------
@@ -3245,7 +3670,7 @@ function terminalUpstream(port) {
   return terminalUnitUsesSocket(port) ? { unavailable: true } : { port };
 }
 function terminalGate(req, res, port) {
-  if (!authed(req)) return denyHtml(res);
+  if (!authed(req)) return denyHtml(req, res);
   const upstream = terminalUpstream(port);
   if (upstream.unavailable) {
     res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "2" });
@@ -3392,7 +3817,7 @@ function handleLoginStatus(res) {
   // so report logged-in to avoid gating the chat behind a login it doesn't have.
   // OpenClaw manages its own model credentials inside its Control UI, so there is
   // no box-managed login to gate on — report connected like a generic agent.
-  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
+  if (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "nuphos" || AGENT_KIND === "catalog-app") return jsonRes(res, 200, { loggedIn: true, email: null, sub: null });
   if (AGENT_KIND === "aeon") {
     // "Connected" = gh is authenticated (the dashboard can drive the user's repo
     // + Actions). Runs as the box user, so no sudo. gh prints to stderr.
@@ -4502,7 +4927,7 @@ function syncAeonFork(reason, attempt) {
 
 function managementCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hermes-Session-Token");
   res.setHeader("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
 }
 // Opt-in only from the installed computer service. Historical/managed guests
@@ -4556,13 +4981,40 @@ const server = http.createServer((req, res) => {
     res.writeHead(ready ? 200 : 503); return res.end(ready ? "ok" : "native runtime not ready");
   }
   if (req.method === "POST" && u === "/auth/bootstrap") return handleAuthBootstrap(req, res);
+  if (AGENT_KIND === "hermes" && req.method === "GET" && u === "/api/hermes-desktop-connection") {
+    res.setHeader("Cache-Control", "no-store");
+    if (!bearerAuthed(req)) return jsonRes(res, 401, { error: "unauthorized" });
+    const dashboardToken = hermesDashboardToken();
+    if (!dashboardToken) return jsonRes(res, 404, { error: "Hermes Desktop is unavailable" });
+    return hermesDesktopReady(dashboardToken, healthy => healthy
+      ? jsonRes(res, 200, { path: HERMES_DESKTOP_MOUNT, token: hermesDesktopToken(dashboardToken) })
+      : jsonRes(res, 503, { error: "Hermes Desktop backend unavailable" }));
+  }
+  if (hermesDesktopMounted(u)) return hermesDesktopProxy(req, res, u, q);
   // Connect links: minted/revoked with the bearer only (the dashboard's
   // "Connect app" action); redeemed without one — the pair in the URL or the
   // sign-in form is the credential until its expiry.
   if (req.method === "POST" && u === "/connect/grant") return bearerAuthed(req) ? handleConnectGrantCreate(req, res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "DELETE" && u === "/connect/grant") return bearerAuthed(req) ? handleConnectGrantRevoke(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "GET" && u.startsWith("/connect/")) return handleConnectRedeem(req, res, u.slice("/connect/".length));
-  if (req.method === "POST" && u === "/login") return handleConnectLogin(req, res);
+  // POST /login is Agent Zero's own sign-in form. A catalog app's login form
+  // posts to the same path, so for catalog-app the request belongs to the app;
+  // connect links still redeem through GET /connect/<pair> above. The paths a
+  // catalog app never sees stay reserved: /healthz, /auth/bootstrap,
+  // /connect/grant (mint/revoke), GET /connect/<pair>, the whole /api/*
+  // management surface and the /app entry's own two URLs — everything else,
+  // including every path deeper than /app/, proxies through.
+  if (req.method === "GET" && u === "/login"
+    && !(AGENT_KIND === "catalog-app" && CATALOG_APP && CATALOG_APP.hostPort && !ATTACHED)) return handleLoginPage(req, res, q);
+  // Direct sign-in password: set/cleared/read with the management bearer only
+  // (the dashboard's "Direct sign-in" action); never echoed.
+  if (u === "/api/signin-password") {
+    if (req.method === "GET") return bearerAuthed(req) ? handleSigninPasswordStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
+    if (req.method === "POST") return bearerAuthed(req) ? handleSigninPasswordSet(req, res) : jsonRes(res, 401, { error: "unauthorized" });
+    if (req.method === "DELETE") return bearerAuthed(req) ? handleSigninPasswordClear(res) : jsonRes(res, 401, { error: "unauthorized" });
+  }
+  if (req.method === "POST" && u === "/login"
+    && !(AGENT_KIND === "catalog-app" && CATALOG_APP && CATALOG_APP.hostPort && !ATTACHED)) return handleConnectLogin(req, res);
   if (AGENT_KIND === "openbot" && !ATTACHED) {
     if (req.method === "POST" && u === OPENBOT_SETUP) return openbotSaveKey(req, res);
     if (u === OPENBOT_ENTRY || u.startsWith(OPENBOT_ENTRY + "/")) return openbotEntry(req, res, u);
@@ -4571,6 +5023,10 @@ const server = http.createServer((req, res) => {
   if (AGENT_KIND === "nuphos" && !ATTACHED) {
     if (u === NUPHOS_ENTRY || u.startsWith(NUPHOS_ENTRY + "/")) return nuphosEntry(req, res);
     if (!nuphosGatewayPath(u)) return nuphosProxy(req, res);
+  }
+  if (AGENT_KIND === "catalog-app" && CATALOG_APP && CATALOG_APP.hostPort && !ATTACHED) {
+    if (catalogAppEntryPath(u)) return catalogAppEntry(req, res);
+    if (!catalogAppGatewayPath(u)) return catalogAppProxy(req, res);
   }
   // Aeon dashboard client code issues root-absolute requests (fetch("/api/strategy"),
   // <img src="/...">): Next's basePath only rewrites URLs the router/asset pipeline
@@ -4605,11 +5061,15 @@ const server = http.createServer((req, res) => {
   // in-app request (Referer is the /agent-zero surface) back under /agent-zero, where
   // the mount below strips the prefix before forwarding to the container.
   if (AGENT_KIND === "agent-zero" && !u.startsWith("/agent-zero")) {
-    // The native Socket.IO client uses its default root transport path for
-    // both polling and WebSocket upgrades. Keep that one exact endpoint at
-    // root; a0Proxy applies the same owner/Origin gate as mounted native RPC.
-    if (u === "/socket.io/" && (req.method === "GET" || req.method === "POST")) {
+    if (a0BrowserSession(u) && (req.method === "GET" || req.method === "HEAD")) {
       req.url = "/agent-zero" + req.url;
+      return a0Proxy(req, res);
+    }
+    // The native Socket.IO client uses its default root transport path for
+    // both polling and WebSocket upgrades. The CLI's polling probe omits the
+    // trailing slash. Keep both forms behind the native owner/Origin gate.
+    if (a0SocketIoPath(u) && (req.method === "GET" || req.method === "POST")) {
+      req.url = "/agent-zero" + a0SocketIoUrl(req.url);
       return a0Proxy(req, res);
     }
     let refPath = "";
@@ -4631,13 +5091,19 @@ const server = http.createServer((req, res) => {
       return a0Proxy(req, res);
     }
     if (refPath === "/agent-zero" || refPath.startsWith("/agent-zero/")) {
-      if (!authed(req)) return denyHtml(res);
+      if (!authed(req)) return denyHtml(req, res);
       // Other document-origin requests retain the existing mounted route;
       // only the explicit static namespaces above use canonical root URLs.
       if (req.method === "GET" || req.method === "HEAD") {
         res.writeHead(307, { Location: "/agent-zero" + req.url, "Cache-Control": "no-store" });
         return res.end();
       }
+      req.url = "/agent-zero" + req.url;
+      return a0Proxy(req, res);
+    }
+    if (a0ConnectorRootPath(req, u)) {
+      if (!(req.method === "POST" && u === A0_CONNECTOR_PROBE) && !a0ConnectorRootAuthed(req)) return jsonRes(res, 401, { error: "unauthorized" });
+      A0_CONNECTOR_REQS.add(req);
       req.url = "/agent-zero" + req.url;
       return a0Proxy(req, res);
     }
@@ -4686,9 +5152,15 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && u === "/api/mcp") return authed(req) ? handleMcpList(res) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "POST" && u === "/api/mcp") return authed(req) ? readBody(req, (b) => handleMcpAdd(res, b)) : jsonRes(res, 401, { error: "unauthorized" });
   if (req.method === "DELETE" && u.startsWith("/api/mcp/")) return authed(req) ? handleMcpRemove(res, decodeURIComponent(u.slice("/api/mcp/".length))) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "GET" && (u === "/" || u === "/index.html")) return COMPUTER_PROFILE
-    ? jsonRes(res, 404, { error: "agent chat is unavailable for this computer" })
-    : serveFile(res, "index.html", "text/html; charset=utf-8");
+  if (req.method === "GET" && (u === "/" || u === "/index.html")) {
+    if (COMPUTER_PROFILE) return jsonRes(res, 404, { error: "agent chat is unavailable for this computer" });
+    const home = nativeBoxHome();
+    if (home !== "/") {
+      res.writeHead(303, { Location: home, "Cache-Control": "no-store" });
+      return res.end();
+    }
+    return serveFile(res, "index.html", "text/html; charset=utf-8");
+  }
   if (req.method === "GET" && u === "/app.js") return serveFile(res, "app.js", "application/javascript; charset=utf-8");
   // Code execution + account login are token-gated (was: open to anyone with the URL).
   if (req.method === "POST" && u === "/api/chat") return authed(req)
@@ -4707,8 +5179,8 @@ const server = http.createServer((req, res) => {
     }
   }
   if (req.method === "GET" && u === "/api/login/status") return authed(req) ? handleLoginStatus(res) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "POST" && u === "/api/login/start") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") ? jsonRes(res, 400, { error: "login not required for this agent" }) : AGENT_KIND === "aeon" ? jsonRes(res, 400, { error: "GitHub connect has no start step" }) : AGENT_KIND === "codex" ? handleLoginStartCodex(res) : handleLoginStart(res)) : jsonRes(res, 401, { error: "unauthorized" });
-  if (req.method === "POST" && u === "/api/login/complete") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot") ? jsonRes(res, 200, { ok: true }) : AGENT_KIND === "aeon" ? readBody(req, (b) => handleLoginCompleteAeon(res, b)) : AGENT_KIND === "codex" ? handleLoginCompleteCodex(res) : readBody(req, (b) => handleLoginComplete(res, b))) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/login/start") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "catalog-app") ? jsonRes(res, 400, { error: "login not required for this agent" }) : AGENT_KIND === "aeon" ? jsonRes(res, 400, { error: "GitHub connect has no start step" }) : AGENT_KIND === "codex" ? handleLoginStartCodex(res) : handleLoginStart(res)) : jsonRes(res, 401, { error: "unauthorized" });
+  if (req.method === "POST" && u === "/api/login/complete") return authed(req) ? (COMPUTER_PROFILE ? jsonRes(res, 409, { error: "agent login is unavailable for this computer" }) : (AGENT_KIND === "generic" || AGENT_KIND === "openclaw" || AGENT_KIND === "agent-zero" || AGENT_KIND === "hermes" || AGENT_KIND === "openbot" || AGENT_KIND === "catalog-app") ? jsonRes(res, 200, { ok: true }) : AGENT_KIND === "aeon" ? readBody(req, (b) => handleLoginCompleteAeon(res, b)) : AGENT_KIND === "codex" ? handleLoginCompleteCodex(res) : readBody(req, (b) => handleLoginComplete(res, b))) : jsonRes(res, 401, { error: "unauthorized" });
   // Introspection endpoints (token-gated): chat history, file browser, skills.
   if (req.method === "GET" && (u === "/api/sessions" || u.startsWith("/api/sessions/"))) {
     if (!authed(req)) return jsonRes(res, 401, { error: "unauthorized" });
@@ -4777,13 +5249,26 @@ server.on("upgrade", (req, socket, head) => {
   // the one WebSocket that passes without the Hivra gate, and it never counts
   // as use of the app through Hivra.
   const nuphosAcp = AGENT_KIND === "nuphos" && u === NUPHOS_ACP;
-  const remoteDesktopUpgrade = u.startsWith("/desktop/");
+  const a0BrowserUpgrade = a0BrowserSession(u);
+  const a0SocketIoUpgrade = a0SocketIoPath(u);
+  const remoteDesktopUpgrade = !a0BrowserUpgrade && u.startsWith("/desktop/");
+  const hermesDesktopUpgrade = hermesDesktopMounted(u);
+  let hermesDesktopUpstreamUrl = null;
+  if (hermesDesktopUpgrade && ["/api/ws", "/api/pty"].some(p => u === HERMES_DESKTOP_MOUNT + p)) {
+    const query = new URLSearchParams(req.url.split("?").slice(1).join("?"));
+    const dashboardToken = hermesDashboardToken();
+    const token = hermesDesktopToken(dashboardToken);
+    if (token && safeEq(query.get("token") || "", token)) {
+      query.set("token", dashboardToken);
+      hermesDesktopUpstreamUrl = u.slice(HERMES_DESKTOP_MOUNT.length) + "?" + query;
+    }
+  }
   // The ttyd/noVNC websockets carry the actual terminal/VNC I/O — gate them too.
   // The browser sends the hivra_auth cookie (set on the iframe's first load) on
   // the upgrade handshake automatically.
   // /desktop has a separate short-lived session cookie and must never accept
   // the management bearer/cookie as equivalent authority.
-  if (!remoteDesktopUpgrade && !nuphosAcp && !authed(req)) { try { socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); } catch (e) {} socket.destroy(); return; }
+  if (!remoteDesktopUpgrade && !nuphosAcp && !(hermesDesktopUpgrade ? hermesDesktopUpstreamUrl : authed(req))) { try { socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); } catch (e) {} socket.destroy(); return; }
   let port = null, strip = null;
   if (remoteDesktopUpgrade) port = REMOTE_DESKTOP_BROKER_PORT;
   else if (u.startsWith("/terminal")) port = 7681;
@@ -4792,10 +5277,12 @@ server.on("upgrade", (req, socket, head) => {
   else if (u.startsWith("/aeon")) port = AEON_PORT; // Next.js HMR ws (dev); no strip (basePath=/aeon)
   else if (u.startsWith("/openclaw")) { port = OPENCLAW_PORT; strip = openclawStrip(); } // gateway WS control/RPC (at its basePath, or at root on an older computer)
   else if (u.startsWith("/agent-zero")) { port = AGENT_ZERO_PORT; strip = "/agent-zero"; } // Agent Zero WS (served at root)
-  else if (AGENT_KIND === "agent-zero" && u === "/socket.io/") port = AGENT_ZERO_PORT;
+  else if (a0BrowserUpgrade || a0SocketIoUpgrade) port = AGENT_ZERO_PORT;
+  else if (hermesDesktopUpgrade) { port = HERMES_PORT; strip = HERMES_DESKTOP_MOUNT; }
   else if (hermesMounted(u)) { port = hermesPort(); strip = HERMES_MOUNT; } // Hermes's WebSockets (served at root)
   else if (AGENT_KIND === "openbot" && !openbotGatewayPath(u)) port = OPENBOT_PORT; // OpenBot's WebSockets (served at the root)
   else if (AGENT_KIND === "nuphos" && !nuphosGatewayPath(u)) port = NUPHOS_PORT; // the runtime's /acp and console sockets
+  else if (AGENT_KIND === "catalog-app" && CATALOG_APP && CATALOG_APP.hostPort && !catalogAppGatewayPath(u)) port = CATALOG_APP.hostPort; // universal catalog app WebSockets
   if (!port) { socket.destroy(); return; }
   // The app's WebSockets count as use for as long as they stay open.
   if (isAgentAppPort(port) && !nuphosAcp) {
@@ -4816,15 +5303,16 @@ server.on("upgrade", (req, socket, head) => {
     socket.once("end", closed);
     socket.once("close", closed);
   }
-  let fwdUrl = req.url;
+  let fwdUrl = a0SocketIoUpgrade ? a0SocketIoUrl(req.url) : req.url;
   if (strip) { fwdUrl = req.url.slice(strip.length); if (!fwdUrl.startsWith("/")) fwdUrl = "/" + fwdUrl; }
+  if (hermesDesktopUpstreamUrl) fwdUrl = hermesDesktopUpstreamUrl;
   // Agent Zero's WS also rides its form-login session (the browser never holds one —
   // we inject our managed cookie), so its live chat/canvas connect behind our gate.
   const a0Ws = port === AGENT_ZERO_PORT;
   // Hermes accepts a WebSocket only from its own loopback Host and Origin (or
   // none) and reads its path prefix from X-Forwarded-Prefix.
-  const hermesWs = hermesMounted(u);
-  const hermesSet = hermesWs ? hermesHeaders(Boolean(req.headers.origin), port) : null;
+  const hermesWs = hermesMounted(u) || hermesDesktopUpgrade;
+  const hermesSet = hermesWs ? hermesHeaders(Boolean(req.headers.origin), port, strip) : null;
   // OpenBot's live sockets present its own loopback Host and (from this origin) Origin.
   const openbotWs = AGENT_KIND === "openbot" && port === OPENBOT_PORT;
   const openbotSet = openbotWs ? openbotHeaders(req) : null;
@@ -4844,7 +5332,9 @@ server.on("upgrade", (req, socket, head) => {
     for (const [k, raw] of Object.entries(req.headers)) {
       const key = k.toLowerCase();
       if (a0Ws && key === "cookie") continue;
+      if (a0SocketIoUpgrade && (key === "x-forwarded-host" || key === "x-forwarded-proto")) continue;
       if (hermesWs && (key === "host" || key in hermesSet)) continue;
+      if (hermesDesktopUpgrade && (key === "cookie" || key === "authorization" || key === "x-hermes-session-token")) continue;
       if (openbotWs && (key === "host" || key in openbotSet)) continue;
       if (nuphosWs && key in NUPHOS_SET_HEADERS) continue;
       if (openclawWs && key in OPENCLAW_SET_HEADERS) continue;
@@ -4872,6 +5362,9 @@ server.on("upgrade", (req, socket, head) => {
     }
     const nativeCookie = a0Ws ? a0UpstreamCookie() : null;
     if (nativeCookie) hdr += "cookie: " + nativeCookie + "\r\n";
+    if (a0SocketIoUpgrade) {
+      for (const [name, value] of Object.entries(a0SocketIoForwardedOrigin(req))) hdr += name + ": " + value + "\r\n";
+    }
     hdr += "\r\n";
     proxy.write(hdr);
     if (head && head.length) proxy.write(head);

@@ -10,6 +10,10 @@ import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { buildReconcileMirrorsScript } from "@/lib/services/restic-mirror-reconcile";
 import {
+  buildRestoreDrillScript,
+  parseRestoreDrillResult,
+} from "@/lib/services/restic-restore-drill";
+import {
   resolveProxmoxHostEnv,
   runProxmoxHostScript,
 } from "@/lib/services/proxmox-instance-service";
@@ -25,6 +29,7 @@ export const maxDuration = 800;
 // far above the 800s wall). Leave ~100s margin for the surrounding handler +
 // response. Mirrors daily-vm-backups' HOST_BACKUP_TIMEOUT_MS.
 const HOST_BACKUP_TIMEOUT_MS = 700_000;
+const HOST_BACKUP_DEADLINE = `timeout --kill-after=10s ${HOST_BACKUP_TIMEOUT_MS / 1000 - 10}s`;
 
 const LOG_SOURCE = "cron:daily-instance-backups";
 const ROUTE = "/api/cron/daily-instance-backups";
@@ -145,8 +150,18 @@ function buildRunScript(row: BackupCandidate, password: string, apply: boolean):
   return `set -euo pipefail
 ${buildInstallResticScript()}
 export RESTIC_PASSWORD=${shellQuote(password)}
-/usr/local/sbin/backup-vm-restic.sh ${args}
+${HOST_BACKUP_DEADLINE} /usr/local/sbin/backup-vm-restic.sh ${args}
 `;
+}
+
+// Restore drill: restore the latest snapshot into a scratch folder on the host,
+// check it, compare it with the live box and delete it. It reads the repo with
+// the same per-instance password the backup wrote it with.
+function buildRestoreDrillHostScript(instanceId: string, vmid: number, password: string): string {
+  return `set -euo pipefail
+${buildColdStorageInstallScriptOrExit()}
+export RESTIC_PASSWORD=${shellQuote(password)}
+${buildRestoreDrillScript({ instanceId, vmid })}`;
 }
 
 function validateCandidate(row: BackupCandidate): string | null {
@@ -334,6 +349,50 @@ async function handle(req: NextRequest) {
         message: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  // Prove one instance's backup restores (?action=restore-drill&instanceId=<id>).
+  // Nothing is written to the guest or the database; see restic-restore-drill.ts.
+  if (manualAction === "restore-drill") {
+    if (!envBool("DAILY_INSTANCE_BACKUP_RESTORE_DRILL_ENABLED", false)) {
+      return apiError("restore drill is disabled (DAILY_INSTANCE_BACKUP_RESTORE_DRILL_ENABLED)", 403);
+    }
+    const instanceId = req.nextUrl.searchParams.get("instanceId")?.trim() ?? "";
+    if (!SAFE_INSTANCE_ID.test(instanceId)) return apiError("instanceId is required", 400);
+    const { data: target, error: targetError } = await supabaseAdmin
+      .from("hermes_instances")
+      .select("id, proxmox_node, proxmox_vmid")
+      .eq("id", instanceId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (targetError) return apiError(`instance lookup failed: ${targetError.message}`, 500);
+    const placed = target as { id: string; proxmox_node: string | null; proxmox_vmid: number | null } | null;
+    if (!placed || !placed.proxmox_node || !SAFE_HOST.test(placed.proxmox_node) || !placed.proxmox_vmid) {
+      return apiError("instance not found or not placed on a host", 404);
+    }
+    const hostEnv = resolveProxmoxHostEnv(
+      { hostId: null, hostSlug: placed.proxmox_node, envPrefix: null, failClosed: true },
+      process.env
+    );
+    const result = await runProxmoxHostScript(
+      buildRestoreDrillHostScript(placed.id, placed.proxmox_vmid, deriveResticPassword(placed.id)),
+      hostEnv,
+      { timeoutMs: HOST_BACKUP_TIMEOUT_MS }
+    );
+    const drill = parseRestoreDrillResult(result.stdout ?? "");
+    const payload = {
+      mode: "restore-drill",
+      instance: { id: placed.id, proxmox_node: placed.proxmox_node, proxmox_vmid: placed.proxmox_vmid },
+      drill,
+      stdout: redactHostOutput(result.stdout ?? "", 6000),
+      stderr: redactHostOutput(result.stderr ?? "", 6000),
+    };
+    if (!result.ok || !drill?.pass) {
+      return apiError(result.error ?? "restore drill failed", 500, undefined, payload, {
+        source: LOG_SOURCE, route: ROUTE, failureType: "daily_instance_backup_restore_drill_failed", logLevel: "warn",
+      });
+    }
+    return apiSuccess({ ok: true, ...payload });
   }
 
   // Run a single candidate synchronously (manual smoke test / on-demand backup).

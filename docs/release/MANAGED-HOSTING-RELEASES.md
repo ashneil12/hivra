@@ -82,12 +82,48 @@ Do not overwrite Canary experiments with a blanket reset to main.
    merging a PR, passing CI, or preparing a candidate does not authorize it.
 5. Confirm the custom domain points to that deployment, then verify the affected
    authenticated user workflow and preservation of existing state. If it regresses,
-   restore the recorded prior deployment and investigate before trying again.
+   use the [rollback decision](#rollback-decision) before switching traffic back.
+
+When a change in the candidate fixes a problem a customer reported, the Promote
+packet must name it as customer-waiting. Do not tell the customer it is fixed
+until `hivra.cloud` serves a deployment containing the fix — and, where the fix
+touches a box runtime or provisioner component, until the customer's own box
+reports the matching version.
 
 A source/tree match is necessary but insufficient: production environment values
 can differ from Canary. Check changed configuration and migration compatibility.
 Keep the previous deployment available. Vercel rollback does not undo database
 migrations or external side effects; those require a separately reviewed plan.
+
+## Rollback decision
+
+Before Promote, record the exact fallback deployment and have an authorized
+operator verify the target's migration ledger and affected schema. A Git diff
+and a synthetic rehearsal cannot establish what is in the target database.
+If the release regresses, use these checks before sending traffic or background
+work to the fallback:
+
+1. **Stop if the fallback could grant paid access to a trial.** Check active
+   card trials against Stripe and the database, and include pending checkouts
+   and webhook deliveries or retries. Turning off new trial offers does not
+   cancel an existing trial or its events. If any trial or event can reach a
+   build that treats `trialing` as paid, or the inventory is unknown, **do not
+   switch to that build**. Keep a trial-aware handler or roll forward. Before
+   resuming affected writes, reconcile subscription status, quotas, credits and
+   sleep policy; verify that replaying a trial event cannot grant paid limits.
+2. **Keep compatible database changes in place.** An app rollback does not
+   reverse setup claims, provider bundle admissions, or a Stripe charge or
+   cancellation. Check open claims, in-flight server creation receipts and
+   installed bundles against the fallback; do not resume lifecycle or deletion
+   work that cannot distinguish those states.
+3. **Do not restore a pre-release snapshot over the live database to undo a
+   migration.** It would also discard unrelated writes after the snapshot.
+   Prefer a narrowly scoped, reviewed correction. If a restore is unavoidable,
+   record the recovery point, preserve subsequent writes and external events
+   through a consistent cutover, and restore into an isolated database first.
+   Rehearse replay without duplicating side effects; verify that unrelated
+   later records survive and billing still agrees with Stripe. If any interval
+   is unaccounted for, stop. Require separate owner approval for live recovery.
 
 ## Queued database steps
 
