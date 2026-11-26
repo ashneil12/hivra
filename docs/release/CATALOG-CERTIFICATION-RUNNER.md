@@ -15,7 +15,8 @@ This runner closes the loop between catalog curation and customer truth:
 The runner never promotes to production, never mutates Vercel or Supabase
 configuration, and never uses production secrets. It signs into a dedicated
 standing Clerk test account and creates only paid Canary computers. The ordinary
-launch sweep retains disposable signup for first-run coverage.
+launch sweep also signs into a standing account. Neither runner creates a Clerk
+user or invitation.
 
 ## Components
 
@@ -25,11 +26,10 @@ The implementation lives in `dashboard/scripts/catalog-certification/`:
   read-only to prove which READY Git-sourced production deployment holds
   `canary.hermesos.cloud`, then validates repo, branch and exact commit SHA.
 - `canary-test-env.mjs` — reads the Canary project's production-scoped test
-  env through the Vercel v8 API and exports only `CLERK_SECRET_KEY`,
-  `LAUNCH_SWEEP_SUPABASE_URL`, and
-  `LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY` to the runner process. It refuses a
-  non-`sk_test_` Clerk key. Values are not written to an env file or printed in
-  logs.
+  env through the Vercel v8 API and exports only `LAUNCH_SWEEP_SUPABASE_URL` and
+  `LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY` to the runner process. Standing
+  sign-in doesn't need a Clerk key. Values aren't written to an env file or
+  printed in logs.
 - `certification-plan.mjs` — chooses one due target. New entries come first,
   with the runtime pilot matrix first of all. Passed entries are recertified
   when the manifest or provisioner changes and otherwise on a periodic
@@ -92,12 +92,11 @@ The machine must already have:
 - Playwright Chromium (`run-once.sh` installs/validates it after dependency
   installation).
 
-The Vercel project id and scope are configuration, not credentials. Clerk and
-Supabase secret values are fetched process-locally at runtime and are never in
-the plist.
+The Vercel project id and scope are configuration, not credentials. Supabase
+credentials are fetched process-locally at runtime and are never in the plist.
 
-Provision a separate standing `+clerk_test` account on Canary using the
-[standing QA account procedure](../../dashboard/e2e/README.md#standing-canary-qa-account).
+Use the operator-configured standing `+clerk_test` certification account on
+Canary. If it's not available, stop instead of signing up.
 Do not use the shared QA account or use the certification account for other
 tests. Put only the dedicated address in `$CERT_STATE/certification-account-email`
 (under the default state directory when `CERT_STATE` is unset), owned by the
@@ -165,10 +164,9 @@ attempt with backoff. The certifier alone decides whether the fix worked.
 - one certification launch at a time;
 - one remediation agent at a time;
 - exact public served Canary SHA recorded in every result;
-- Clerk key must be `sk_test_`;
 - audit emails stay `+clerk_test` on reserved example domains;
-- the sweep verifies teardown through the product and Canary agent records; the
-  disposable audit-account reaper is not used;
+- the sweep verifies teardown through the product and Canary agent records
+  without deleting the standing account;
 - a nonempty certification account blocks the next launch; investigate pending
   work or leaked resources before intervening, and verify cleanup before removing
   any stale certification lock;

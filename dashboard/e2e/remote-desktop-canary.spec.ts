@@ -1,11 +1,6 @@
 /**
- * Disposable public-WAN acceptance for Hivra's contained desktop preview.
- *
- * This is intentionally separate from the ordinary first-run audit. It creates
- * one throwaway Canary Clerk user, grants that synthetic identity the smallest
- * realistic 2 CPU / 4 GB test envelope without purchasing anything, launches a
- * real managed Hivra Codex VM, installs the exact pinned desktop bundle, drives
- * the public broker through the shipped UI, then destroys the VM and account.
+ * Public-WAN acceptance for Hivra's contained desktop preview. The existing
+ * QA account launches a run-owned Codex VM on its preconfigured plan.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -13,37 +8,23 @@ import path from "node:path";
 import { expect, test, type BrowserContext, type Page, type WebSocket } from "@playwright/test";
 
 import {
-  assertNotProduction,
   auditAgentName,
-  auditEmail,
-  AUDIT_EMAIL_DOMAIN,
   newRunId,
 } from "./first-run-audit/config";
-import { deleteAuditUser } from "./first-run-audit/clerk-admin";
-import {
-  destroyAllHivraAgents,
-  sleep,
-} from "./first-run-audit/instances";
-import {
-  grantRemoteDesktopAuditPlan,
-  preclearAbuseGate,
-  remoteDesktopAuditRows,
-  removeRemoteDesktopAuditPlan,
-  removeRiskPreclear,
-} from "./first-run-audit/probes";
+import { assertCanaryQaSupabaseUrl, readCanaryQaEmail } from "./canary-qa/config";
+import { assertUnusedRunId, destroyRunResources, runInventory, sleep } from "./first-run-audit/instances";
+import { remoteDesktopAuditRows } from "./first-run-audit/probes";
 import {
   buildGuestCommandInvocation,
   runGuestCommandProcess,
 } from "./first-run-audit/guest-command";
-import { reapAuditAccounts } from "./first-run-audit/reaper";
-import { signUpAuditUser } from "./first-run-audit/signup";
+import { establishAuditSession, verifyAuditSession } from "./first-run-audit/session";
 
 const ENABLED = process.env.REMOTE_DESKTOP_AUDIT === "1";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type AuditEnvironment = {
   baseUrl: string;
-  clerkSecretKey: string;
   supabaseUrl: string;
   supabaseServiceRoleKey: string;
   outDir: string;
@@ -53,17 +34,13 @@ type IssuedSession = { id: string; brokerOrigin: string; issuedAtMs: number };
 
 function environment(): AuditEnvironment {
   const baseUrl = (process.env.REMOTE_DESKTOP_AUDIT_BASE_URL || "https://canary.hermesos.cloud").replace(/\/$/, "");
-  assertNotProduction(baseUrl);
-  const clerkSecretKey = process.env.CLERK_SECRET_KEY ?? "";
-  if (!clerkSecretKey.startsWith("sk_test_")) throw new Error("A Canary sk_test_ Clerk key is required.");
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const supabaseUrl = assertCanaryQaSupabaseUrl(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL);
   const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (!supabaseUrl.startsWith("https://") || !supabaseServiceRoleKey) {
+  if (!supabaseServiceRoleKey) {
     throw new Error("Canary Supabase service-role configuration is required.");
   }
   return {
     baseUrl,
-    clerkSecretKey,
     supabaseUrl,
     supabaseServiceRoleKey,
     outDir: process.env.REMOTE_DESKTOP_AUDIT_OUT_DIR || "e2e/.remote-desktop-audit",
@@ -164,39 +141,24 @@ async function revokeOwnerSession(page: Page, env: AuditEnvironment, sessionId: 
   if (!result.ok) throw new Error(`Owner desktop revoke failed: HTTP ${result.status}`);
 }
 
-let activeRunId: string | null = null;
-let teardownComplete = false;
-
 test.describe.configure({ mode: "serial" });
-test.describe("REMOTE DESKTOP AUDIT: disposable Hivra VM over the public WAN path", () => {
+test.describe("REMOTE DESKTOP AUDIT: run-owned Hivra VM over the public WAN path", () => {
   test.skip(!ENABLED, "Set REMOTE_DESKTOP_AUDIT=1 — this test creates and destroys a real Canary VM.");
-
-  test.afterAll(async () => {
-    if (!ENABLED || teardownComplete || !activeRunId) return;
-    const env = environment();
-    const report = await reapAuditAccounts({
-      clerkSecretKey: env.clerkSecretKey,
-      baseUrl: env.baseUrl,
-      minAgeMs: 0,
-      onlyRunId: activeRunId,
-    });
-    if (report.leaked) throw new Error(`Remote desktop afterAll reaper leaked run ${activeRunId}.`);
-  });
 
   test("installs, connects, reconnects, revokes, restarts, persists, and tears down", async ({ browser }, testInfo) => {
     test.setTimeout(55 * 60_000);
     const env = environment();
     const runId = newRunId();
-    activeRunId = runId;
-    const email = auditEmail(runId, AUDIT_EMAIL_DOMAIN);
+    console.log(`[remote-desktop-audit] resource run ${runId}`);
+    const email = readCanaryQaEmail();
     const agentName = auditAgentName(runId);
     const startedAt = new Date().toISOString();
-    let clerkUserId: string | null = null;
-    let context: BrowserContext | null = null;
+    let session: Awaited<ReturnType<typeof establishAuditSession>> | undefined;
+    let launchAttempted = false;
     let agentId: string | null = null;
     let failure: string | null = null;
     const evidence: Record<string, unknown> = {
-      schema: "hivra.remote-desktop-canary-audit.v1",
+      schema: "hivra.remote-desktop-canary-audit.v2",
       runId,
       target: env.baseUrl,
       gitSha: process.env.GITHUB_SHA || null,
@@ -205,14 +167,12 @@ test.describe("REMOTE DESKTOP AUDIT: disposable Hivra VM over the public WAN pat
     };
 
     try {
-      const signup = await signUpAuditUser(browser, { baseUrl: env.baseUrl, clerkSecretKey: env.clerkSecretKey, email });
-      clerkUserId = signup.userId;
-      context = signup.context;
-      await grantRemoteDesktopAuditPlan(env.supabaseUrl, env.supabaseServiceRoleKey, clerkUserId);
-      await preclearAbuseGate(env.supabaseUrl, env.supabaseServiceRoleKey, clerkUserId);
-      const page = await context.newPage();
+      session = await establishAuditSession(browser, { baseUrl: env.baseUrl, email });
+      const { context, page } = session;
+      await assertUnusedRunId(context.request, env.baseUrl, runId);
       await page.goto(`${env.baseUrl}/dashboard/launch`, { waitUntil: "domcontentloaded" });
 
+      launchAttempted = true;
       agentId = await launchAgent(page, env, agentName);
       evidence.agentId = agentId;
       const runningAgent = await waitForRunning(context, env, agentId);
@@ -351,7 +311,6 @@ test.describe("REMOTE DESKTOP AUDIT: disposable Hivra VM over the public WAN pat
         allClosedAfterOwnerRevoke: sockets.every(item => item.closedAt !== null),
       };
       evidence.urlSecretLeakCount = unsafeUrls.length;
-      await page.close();
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
       throw error;
@@ -359,14 +318,17 @@ test.describe("REMOTE DESKTOP AUDIT: disposable Hivra VM over the public WAN pat
       const cleanupErrors: string[] = [];
       let destroyed: string[] = [];
       let survived: Array<{ id: string; httpStatus: number; error?: string }> = [];
-      if (context) {
-        const result = await destroyAllHivraAgents(context.request, env.baseUrl).catch(error => {
-          cleanupErrors.push(error instanceof Error ? error.message : String(error));
-          return { destroyed: [], survived: [] };
-        });
-        destroyed = result.destroyed;
-        survived = result.survived.map(item => ({ id: item.id, httpStatus: item.httpStatus, error: item.error }));
-      } else if (agentId) cleanupErrors.push("No authenticated context remained for agent teardown.");
+      if (session && launchAttempted) {
+        try {
+          await verifyAuditSession(session.page, env.baseUrl, session.userId);
+          agentId ??= (await runInventory(session.context.request, env.baseUrl, runId)).agents[0]?.id ?? null;
+          const result = await destroyRunResources(session.context.request, env.baseUrl, runId);
+          destroyed = result.destroyed;
+          survived = result.survived.map(item => ({ id: item.id, httpStatus: item.httpStatus, error: item.error }));
+        } catch {
+          cleanupErrors.push("Could not verify run-owned resource cleanup.");
+        }
+      }
 
       let finalDesktop: Awaited<ReturnType<typeof remoteDesktopAuditRows>> | null = null;
       if (agentId) {
@@ -382,24 +344,15 @@ test.describe("REMOTE DESKTOP AUDIT: disposable Hivra VM over the public WAN pat
         }
       }
 
-      if (clerkUserId) {
-        if (!await removeRemoteDesktopAuditPlan(env.supabaseUrl, env.supabaseServiceRoleKey, clerkUserId)) cleanupErrors.push("Audit plan row cleanup failed.");
-        await removeRiskPreclear(env.supabaseUrl, env.supabaseServiceRoleKey, clerkUserId);
-        if (survived.length === 0 && cleanupErrors.length === 0) {
-          try { await deleteAuditUser(env.clerkSecretKey, clerkUserId); }
-          catch (error) { cleanupErrors.push(error instanceof Error ? error.message : String(error)); }
-        }
-      }
-      await context?.close().catch(() => undefined);
+      await session?.context.close().catch(() => undefined);
 
-      teardownComplete = survived.length === 0 && cleanupErrors.length === 0;
+      const teardownComplete = survived.length === 0 && cleanupErrors.length === 0;
       evidence.finishedAt = new Date().toISOString();
       evidence.failure = failure;
       evidence.teardown = {
         destroyed,
         survived,
         cleanupErrors,
-        clerkUserDeleted: teardownComplete,
         finalDesktop,
       };
       evidence.verdict = failure || !teardownComplete ? "fail" : "pass";
@@ -408,7 +361,7 @@ test.describe("REMOTE DESKTOP AUDIT: disposable Hivra VM over the public WAN pat
       writeFileSync(verdictPath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
       await testInfo.attach("remote-desktop-canary-verdict.json", { path: verdictPath, contentType: "application/json" });
       if (survived.length > 0 || cleanupErrors.length > 0) {
-        throw new Error(`Remote desktop audit cleanup failed: ${JSON.stringify({ survived, cleanupErrors })}`);
+        throw new Error(`Remote desktop audit cleanup failed for run ${runId}: ${JSON.stringify({ survived, cleanupErrors })}`);
       }
     }
   });

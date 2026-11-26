@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+import { CANARY_QA_STORAGE_STATE } from './e2e/canary-qa/auth';
+import { assertCanaryQaBaseUrl, CANARY_QA_EMAIL_ENV, readCanaryQaEmail } from './e2e/canary-qa/config';
 import { assertLiveManagedHostingAuditAllowed } from './e2e/first-run-audit/config';
 import { browserLaunchOptions } from './scripts/lib/playwright-launch.cjs';
 
@@ -10,18 +12,19 @@ import { browserLaunchOptions } from './scripts/lib/playwright-launch.cjs';
  * the runner — matches the qa-e2e agent's approach and keeps CI light. Point it
  * at a Vercel preview URL per-PR later via E2E_BASE_URL.
  *
- * Ticket sign-in for golden-path specs is paused (see e2e/global-setup.ts).
- * Public specs need no auth.
+ * Public specs need no auth. Authenticated specs use the standing Canary QA
+ * account; ticket sign-in remains disabled.
  */
 const BASE_URL = process.env.E2E_BASE_URL || 'https://canary.hermesos.cloud';
+const privateBrowserArtifacts = { screenshot: 'off', video: 'off', trace: 'off' } as const;
 
 /**
  * The FIRST-RUN AUDIT provisions REAL PAID INFRASTRUCTURE (a Proxmox VM on the
  * canary host) on every run. It must never fire on an ordinary `playwright test`.
  *
  * So its project only EXISTS when FIRST_RUN_AUDIT=1. Without that flag no project's
- * testMatch selects e2e/first-run-audit.spec.ts, so the file is collected and never
- * run. The spec carries the same guard independently — two locks, because the
+ * testMatch selects e2e/first-run-audit.spec.ts, so the file is not run. The
+ * spec carries the same guard independently — two locks, because the
  * failure mode is spending money.
  */
 const FIRST_RUN_AUDIT_ENABLED = process.env.FIRST_RUN_AUDIT === '1';
@@ -34,16 +37,22 @@ const REMOTE_DESKTOP_AUDIT_ENABLED = process.env.REMOTE_DESKTOP_AUDIT === '1';
  * The LAUNCH SWEEP launches every agent and computer on Canary through the real
  * Launch page (e2e/launch-sweep.spec.ts). Real infrastructure, so it is gated
  * the same way as the first-run audit: the project only exists with
- * LAUNCH_SWEEP=1. Each target runs in its own throwaway account; workers
- * decide how many launch at once (Canary has one host: keep it at 1).
+ * LAUNCH_SWEEP=1. Keep one worker on the shared Canary host and account.
  */
 const LAUNCH_SWEEP_ENABLED = process.env.LAUNCH_SWEEP === '1';
 // The trial-to-Pro journey (e2e/trial-to-pro.spec.ts): Stripe test mode on
 // Canary, opt-in only with TRIAL_JOURNEY=1.
 const TRIAL_JOURNEY_ENABLED = process.env.TRIAL_JOURNEY === '1';
-// Venice signup acceptance creates one disposable Clerk user but no VM or inference.
-const VENICE_SIGNUP_ACCEPTANCE_ENABLED = process.env.VENICE_SIGNUP_ACCEPTANCE === '1';
-if (FIRST_RUN_AUDIT_ENABLED || REMOTE_DESKTOP_AUDIT_ENABLED || LAUNCH_SWEEP_ENABLED || TRIAL_JOURNEY_ENABLED || VENICE_SIGNUP_ACCEPTANCE_ENABLED) {
+const VENICE_CLAIM_ACCEPTANCE_ENABLED = process.env.VENICE_CLAIM_ACCEPTANCE === '1';
+if (VENICE_CLAIM_ACCEPTANCE_ENABLED) {
+  assertCanaryQaBaseUrl(BASE_URL);
+  try {
+    readCanaryQaEmail();
+  } catch {
+    throw new Error(`[venice-claim-acceptance] Set ${CANARY_QA_EMAIL_ENV} to the standing Canary QA account from private notes.`);
+  }
+}
+if (FIRST_RUN_AUDIT_ENABLED || REMOTE_DESKTOP_AUDIT_ENABLED || LAUNCH_SWEEP_ENABLED || TRIAL_JOURNEY_ENABLED) {
   assertLiveManagedHostingAuditAllowed();
 }
 // One run id shared by every worker (they inherit this process's env).
@@ -53,7 +62,6 @@ if (LAUNCH_SWEEP_ENABLED && !process.env.LAUNCH_SWEEP_RUN_ID) {
 
 export default defineConfig({
   testDir: './e2e',
-  // Setup rejects ticket sign-in during the pause and otherwise writes empty state.
   globalSetup: './e2e/global-setup.ts',
   timeout: 60_000,
   expect: {
@@ -119,9 +127,8 @@ export default defineConfig({
             retries: 0,
             use: {
               ...devices['Desktop Chrome'],
-              // The audit mints its own virgin session — it must not inherit the
-              // QA user's storage state.
               storageState: undefined,
+              ...privateBrowserArtifacts,
             },
           },
         ]
@@ -136,6 +143,7 @@ export default defineConfig({
             use: {
               ...devices['Desktop Chrome'],
               storageState: undefined,
+              ...privateBrowserArtifacts,
             },
           },
         ]
@@ -148,7 +156,7 @@ export default defineConfig({
             timeout: 80 * 60_000,
             // Never retried: a retry would start a second checkout.
             retries: 0,
-            use: { ...devices['Desktop Chrome'], storageState: undefined },
+            use: { ...devices['Desktop Chrome'], storageState: undefined, ...privateBrowserArtifacts },
           },
         ]
       : []),
@@ -164,16 +172,16 @@ export default defineConfig({
         storageState: undefined,
       },
     },
-    ...(VENICE_SIGNUP_ACCEPTANCE_ENABLED
+    ...(VENICE_CLAIM_ACCEPTANCE_ENABLED
       ? [
           {
-            name: 'venice-signup-acceptance',
-            testMatch: /venice-signup\.acceptance\.spec\.ts/,
-            timeout: 6 * 60_000,
+            name: 'venice-claim-acceptance',
+            testMatch: /venice-claim\.acceptance\.spec\.ts/,
             retries: 0,
             use: {
               ...devices['Desktop Chrome'],
-              storageState: undefined,
+              storageState: CANARY_QA_STORAGE_STATE,
+              ...privateBrowserArtifacts,
             },
           },
         ]
@@ -190,9 +198,7 @@ export default defineConfig({
             use: {
               ...devices['Desktop Chrome'],
               storageState: undefined,
-              screenshot: 'off' as const,
-              video: 'off' as const,
-              trace: 'off' as const,
+              ...privateBrowserArtifacts,
             },
           },
         ]

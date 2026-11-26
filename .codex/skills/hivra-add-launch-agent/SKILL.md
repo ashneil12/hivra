@@ -18,11 +18,10 @@ what it costs to keep running. All three come from the launch sweep
    exact visible name, `kind`, and how it proves itself (`hivra-chat`,
    `agent-ui-chat` or `computer-open`). The "every tile is covered" test fails
    until you do.
-4. **Launch it on Canary like a customer**, one target, keeping a failure:
-   `LAUNCH_SWEEP_ONLY=<profile-id> LAUNCH_SWEEP_KEEP_FAILED=1 npm run test:launch-sweep`
-   then `npm run test:launch-sweep:summary`. It must reach `chat` and answer.
-   On a failure, read the kept computer's logs before fixing, then
-   `npm run audit:first-run:cleanup`.
+4. **Launch it on Canary like a customer**, one target on the standing account:
+   `LAUNCH_SWEEP_ONLY=<profile-id> npm run test:launch-sweep` then
+   `npm run test:launch-sweep:summary`. It must reach its proof stage. Inspect
+   the recorded evidence if it fails, and verify the run's computer was removed.
 5. **Read its idle use** from the summary's Idle use table (10 minutes by
    default): RAM median and peak, CPU median, disk used. Compare it with the
    Linux computer row, the bare computer every agent runs on; the difference is
@@ -39,4 +38,4 @@ what it costs to keep running. All three come from the launch sweep
 
 - Ship a tile the sweep has not launched and chatted with.
 - Guess idle cost from the agent's docs; measure it.
-- Leave sweep accounts or computers running (`npm run audit:first-run:cleanup`).
+- Leave computers from the sweep running. Keep the standing account intact.
