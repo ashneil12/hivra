@@ -313,7 +313,7 @@ final class HivraBrowserModel: NSObject, ObservableObject {
         )
     }
 
-    func refreshWorkspace() {
+    func refreshWorkspace(reloadIfUnhandled: Bool = true) {
         let currentURL = webView.url
         webView.callAsyncJavaScript(
             "return !window.dispatchEvent(new Event('hivra:refresh', {cancelable: true}));",
@@ -321,7 +321,7 @@ final class HivraBrowserModel: NSObject, ObservableObject {
             completionHandler: { [weak self] result in
                 guard let self, webView.url == currentURL else { return }
                 if case .success(let value) = result, value as? Bool == true { return }
-                reload()
+                if reloadIfUnhandled { reload() }
             }
         )
     }
