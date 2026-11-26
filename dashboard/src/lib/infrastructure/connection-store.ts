@@ -547,6 +547,12 @@ export async function getInfrastructureConnection(
   return dtoFromRow(row, configured);
 }
 
+/** Owner-scoped authority metadata without loading credential material. */
+export async function getInfrastructureConnectionAuthority(userId: string, connectionId: string) {
+  const { id, provider, status, revision } = await ownerConnectionRow(userId, connectionId);
+  return { id, provider, status, revision };
+}
+
 export async function listInfrastructureDeploymentTargets(
   userId: string,
   options: { connectionId?: string } = {},

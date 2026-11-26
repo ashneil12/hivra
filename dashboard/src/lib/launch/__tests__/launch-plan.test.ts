@@ -195,6 +195,13 @@ describe("launchFit", () => {
     expect(launchFit(launchProfileFitSubject("codex"), evidence(null, [PROXMOX], { selfHosted: true }))).toEqual({ label: "Ready on your server", tone: "fits" });
     expect(launchFit(launchProfileFitSubject("codex"), evidence(null, [], { selfHosted: true }))).toEqual({ label: "Needs a connected server", tone: "needs" });
   });
+
+  it("keeps Linux Sandbox off Hivra Cloud unless the server-provided capability is present", () => {
+    expect(launchProfileFitSubject("linux-terminal").hivraCloud).toBe("unavailable");
+    expect(launchFit(launchProfileFitSubject("linux-terminal"), evidence(PRO))).toEqual({ label: "Needs your own server", tone: "needs" });
+    expect(launchFit(launchProfileFitSubject("linux-terminal", { managedLinuxSandboxEligible: true }), evidence(PRO))).toEqual({ label: "Fits your Pro plan", tone: "fits" });
+    expect(launchFit(launchProfileFitSubject("linux-terminal", { managedLinuxSandboxEligible: true }), evidence(FREE))).toEqual({ label: "Needs Pro or your own server", tone: "needs" });
+  });
 });
 
 describe("cheapestPlanForSize", () => {

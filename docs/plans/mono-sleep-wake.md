@@ -17,9 +17,9 @@ its next message, request or scheduled job, on whichever server has room. The
 owner sees the same address, the same files and, ideally, the same running
 session. Freed memory lets the same servers hold several times more agents.
 
-**No free compute.** Sleeping agents still live on Hivra's servers, so they
-still need a paid plan. Sleep changes what a plan holds, not who can use
-Hivra-run computers.
+**No free compute.** Sleep does not grant hosting access. For current hosting
+requirements, including gated token-holder admission, see
+[what Hivra offers today](../STATUS.md#token-holder-access).
 
 ---
 

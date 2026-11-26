@@ -29,9 +29,11 @@ final class HivraBrowserSignInCoordinator: ObservableObject {
     private var pending: (request: HivraBrowserSignIn.Request, profile: HivraConnectionProfile, intent: HivraBrowserSignIn.Intent)?
     private var probing: Set<UUID> = []
     private let session: URLSession
+    private let openURL: (URL) -> Void
 
-    init(session: URLSession = .shared) {
+    init(session: URLSession = .shared, openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }) {
         self.session = session
+        self.openURL = openURL
     }
 
     func isSupported(_ profile: HivraConnectionProfile) -> Bool {
@@ -63,13 +65,14 @@ final class HivraBrowserSignInCoordinator: ObservableObject {
         }
         pending = (request, profile, intent)
         phase = .waitingForBrowser
-        NSWorkspace.shared.open(url)
+        openURL(url)
     }
 
     /// Opens the browser again for the sign-in already waiting.
     func reopenBrowser() {
-        guard let pending else { return }
-        start(pending.intent, for: pending.profile)
+        guard let pending,
+              let url = pending.request.browserURL(connection: pending.profile.url, intent: pending.intent) else { return }
+        openURL(url)
     }
 
     func cancel() {

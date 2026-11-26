@@ -48,6 +48,25 @@ enum HivraLocalRuntimeState: Equatable {
     }
 }
 
+struct HivraLocalDashboardReadySignal {
+    private static let line = Array("OPEN   http://127.0.0.1:3000\n".utf8)
+    private var matched: Int? = 0
+
+    mutating func consume(_ bytes: Data) -> Bool {
+        guard matched != Self.line.count else { return false }
+        // A pipe read can end anywhere in the launcher's newline-delimited output.
+        for byte in bytes {
+            if let count = matched, byte == Self.line[count] {
+                matched = count + 1
+                if matched == Self.line.count { return true }
+            } else {
+                matched = byte == UInt8(ascii: "\n") ? 0 : nil
+            }
+        }
+        return false
+    }
+}
+
 @MainActor
 final class HivraLocalRuntimeManager: ObservableObject {
     @Published private(set) var checkoutURL: URL?
@@ -61,7 +80,7 @@ final class HivraLocalRuntimeManager: ObservableObject {
     private let checkoutKey = "hivra.mac.local-checkout.v1"
     private var operationProcess: Process?
     private var runtimeProcess: Process?
-    private var didSignalReady = false
+    private var readySignal = HivraLocalDashboardReadySignal()
     private let credentialStore = HivraLocalCredentialStore()
 
     init(defaults: UserDefaults = .standard) {
@@ -213,14 +232,14 @@ final class HivraLocalRuntimeManager: ObservableObject {
 
         state = .starting
         output = ""
-        didSignalReady = false
+        readySignal = HivraLocalDashboardReadySignal()
 
         let command = installation.command(for: .start, stateDirectory: stateDirectoryURL)
         let process = configuredProcess(for: command, environment: [:])
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
-        attachOutput(pipe)
+        attachOutput(pipe, startupProcess: process)
         runtimeProcess = process
 
         process.terminationHandler = { [weak self] process in
@@ -390,17 +409,16 @@ final class HivraLocalRuntimeManager: ObservableObject {
         return process
     }
 
-    private func attachOutput(_ pipe: Pipe) {
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+    private func attachOutput(_ pipe: Pipe, startupProcess: Process? = nil) {
+        pipe.fileHandleForReading.readabilityHandler = { [weak self, weak startupProcess] handle in
             let data = handle.availableData
             guard !data.isEmpty else {
                 // EOF: the process closed its end. Clear the handler, or Foundation keeps calling it.
                 handle.readabilityHandler = nil
                 return
             }
-            guard let text = String(data: data, encoding: .utf8) else { return }
-            Task { @MainActor [weak self] in
-                self?.consumeOutput(text)
+            DispatchQueue.main.async { [weak self, weak startupProcess] in
+                self?.consumeOutput(data, startupProcess: startupProcess)
             }
         }
     }
@@ -409,14 +427,14 @@ final class HivraLocalRuntimeManager: ObservableObject {
         pipe.fileHandleForReading.readabilityHandler = nil
     }
 
-    private func consumeOutput(_ text: String) {
-        output += text
+    private func consumeOutput(_ data: Data, startupProcess: Process?) {
+        output += String(decoding: data, as: UTF8.self)
         if output.count > 20_000 {
             output = String(output.suffix(20_000))
         }
 
-        if !didSignalReady, text.contains("OPEN   http://127.0.0.1:3000") {
-            didSignalReady = true
+        if let startupProcess, runtimeProcess === startupProcess, state == .starting,
+           readySignal.consume(data) {
             state = .running
             readyGeneration += 1
         }

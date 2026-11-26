@@ -41,7 +41,7 @@ export const PERSONAL_AGENT_MANIFESTS: readonly CatalogAppManifest[] = [
       kind: "cli-web",
       installer: { method: "uv-tool", packageName: "nanobot-ai", binName: "nanobot" },
       webService: {
-        args: ["webui", "--host", "127.0.0.1", "--port", "3201"],
+        args: ["webui", "--host", "127.0.0.1", "--port", "3201", "--yes"],
         hostPort: 3201,
         healthPath: "/",
         proxyMode: "standard",
@@ -178,10 +178,19 @@ export const PERSONAL_AGENT_MANIFESTS: readonly CatalogAppManifest[] = [
       },
       webService: {
         binName: "picoclaw-launcher",
-        args: ["--host", "127.0.0.1", "--port", "3202"],
+        args: ["-no-browser", "-host", "127.0.0.1", "-port", "3202"],
         hostPort: 3202,
         healthPath: "/",
         proxyMode: "standard",
+      },
+      setup: {
+        // PicoClaw does not read OPENAI_* directly. Initialise its config,
+        // then use its non-interactive OpenAI-compatible endpoint command so
+        // the launcher can start the gateway with a usable default model.
+        commands: [
+          'if [ ! -f "$HOME/.picoclaw/config.json" ]; then picoclaw onboard; fi',
+          'if [ -n "$OPENAI_API_KEY" ] && [ -n "$OPENAI_BASE_URL" ] && [ -n "$OPENAI_MODEL" ]; then picoclaw model add --api-base "$OPENAI_BASE_URL" --api-key "$OPENAI_API_KEY" --model "$OPENAI_MODEL" --name hivra; fi',
+        ],
       },
       modelEnv: {
         apiKeyVar: "OPENAI_API_KEY",

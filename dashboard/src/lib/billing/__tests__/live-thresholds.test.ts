@@ -15,10 +15,7 @@ import {
   _resetLivePriceCacheForTests,
   getLiveActiveThresholds,
 } from "../live-thresholds";
-import {
-  LAUNCH_PROMO_END_DATE,
-  HERMESOS_TOKEN_DECIMALS,
-} from "../tier-thresholds";
+import { HERMESOS_TOKEN_DECIMALS } from "../tier-thresholds";
 import { PlatformTokenPriceGateError, type HermesPriceQuote } from "../price-feed";
 
 const NOW_DURING_LAUNCH = new Date("2026-04-29T12:00:00.000Z");
@@ -32,7 +29,7 @@ describe("getLiveActiveThresholds", () => {
     _resetLivePriceCacheForTests();
   });
 
-  it("derives token threshold from live USD target ÷ live price (launch epoch)", async () => {
+  it("derives token thresholds from the current USD targets ÷ live price", async () => {
     let calls = 0;
     const fetchImpl = async () => {
       calls += 1;
@@ -41,19 +38,19 @@ describe("getLiveActiveThresholds", () => {
 
     const result = await getLiveActiveThresholds({ now: NOW_DURING_LAUNCH, fetchImpl });
 
-    expect(result.epoch).toBe("launch");
+    expect(result.epoch).toBe("standard");
     expect(result.priceUsd).toBe("0.00002609");
     expect(calls).toBe(1);
 
-    // $99 / $0.00002609 = 3,794,558 tokens (ceiling). × 10^18 base units.
-    const expectedPro = 3_794_558n * 10n ** BigInt(HERMESOS_TOKEN_DECIMALS);
+    // $299 / $0.00002609 = 11,460,330 tokens (ceiling). × 10^18 base units.
+    const expectedPro = 11_460_330n * 10n ** BigInt(HERMESOS_TOKEN_DECIMALS);
     expect(result.pro.amount).toBe(expectedPro);
-    expect(result.pro.code).toBe("PRO_LAUNCH");
+    expect(result.pro.code).toBe("PRO_STANDARD");
 
-    // $199 / $0.00002609 = 7,627,444 tokens (ceiling).
-    const expectedPower = 7_627_444n * 10n ** BigInt(HERMESOS_TOKEN_DECIMALS);
+    // $599 / $0.00002609 = 22,958,989 tokens (ceiling).
+    const expectedPower = 22_958_989n * 10n ** BigInt(HERMESOS_TOKEN_DECIMALS);
     expect(result.power.amount).toBe(expectedPower);
-    expect(result.power.code).toBe("POWER_LAUNCH");
+    expect(result.power.code).toBe("POWER_STANDARD");
   });
 
   it("serves a fresh cache hit without re-fetching", async () => {
@@ -164,35 +161,12 @@ describe("getLiveActiveThresholds", () => {
     ).rejects.toBeInstanceOf(LivePriceUnavailableError);
   });
 
-  it("uses the standard epoch after the launch promo window closes", async () => {
-    const afterLaunch = new Date(LAUNCH_PROMO_END_DATE.getTime() + 24 * 60 * 60 * 1000);
+  it("never re-enters the launch epoch, even for dates inside the retired promo window", async () => {
     const fetchImpl = async () => priceQuote("0.00002609");
-
-    const result = await getLiveActiveThresholds({ now: afterLaunch, fetchImpl });
-
+    const result = await getLiveActiveThresholds({ now: NOW_DURING_LAUNCH, fetchImpl });
     expect(result.epoch).toBe("standard");
     expect(result.pro.code).toBe("PRO_STANDARD");
     expect(result.power.code).toBe("POWER_STANDARD");
-  });
-
-  it("pins the launch epoch past the window when forceLaunchEpoch is set (founders rate)", async () => {
-    const afterLaunch = new Date(LAUNCH_PROMO_END_DATE.getTime() + 30 * 24 * 60 * 60 * 1000);
-    const fetchImpl = async () => priceQuote("0.00002609");
-
-    const standard = await getLiveActiveThresholds({ now: afterLaunch, fetchImpl });
-    const founder = await getLiveActiveThresholds({
-      now: afterLaunch,
-      fetchImpl,
-      forceLaunchEpoch: true,
-    });
-
-    // Same moment, same price — only the per-user override flips the epoch.
-    expect(standard.epoch).toBe("standard");
-    expect(founder.epoch).toBe("launch");
-    expect(founder.pro.code).toBe("PRO_LAUNCH");
-    expect(founder.power.code).toBe("POWER_LAUNCH");
-    // The launch threshold is cheaper, so the required token amount is lower.
-    expect(founder.pro.amount).toBeLessThan(standard.pro.amount);
   });
 
   it("dedupes concurrent cache-miss fetches into a single in-flight call", async () => {

@@ -39,6 +39,7 @@ type HostRow = {
 };
 
 type CandidateRow = {
+  seat_funding?: string | null;
   id: string;
   user_id: string;
   name: string | null;
@@ -471,6 +472,14 @@ describe("runCapacityPressureSweep", () => {
     expect(summary.parked).toBe(3);
     expect(summary.hosts[0].parked).toHaveLength(3);
     expect(summary.hosts[1].parked).toEqual([]);
+  });
+
+  it("keeps holder seats out of the shutdown path under host pressure", async () => {
+    const instances = buildHotHostInstances("fixturenode2");
+    instances[0].seat_funding = "holder";
+    buildSweepStub({ hosts: [buildHost("fixturenode2")], instancesByHost: { fixturenode2: instances } });
+    const summary = await runCapacityPressureSweep({ now: NOW });
+    expect(summary.hosts[0].parked.map(row => row.id)).toEqual(["fixturenode2_free_older", "fixturenode2_free_idle"]);
   });
 
   it("includes paid tiers only when opted in AND idle past the 7-day floor", async () => {

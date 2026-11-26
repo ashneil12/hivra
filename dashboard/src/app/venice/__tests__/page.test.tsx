@@ -3,7 +3,6 @@ import "@testing-library/jest-dom";
 import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import VenicePage, { metadata } from "../page";
-import VenicePromo from "@/components/venice/VenicePromo";
 import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
 
 jest.mock("@/components/public-site/PublicSite", () => ({
@@ -15,14 +14,17 @@ const mockAuth = jest.fn();
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
 
 const CLAIM_RETURN = "/dashboard/launch?agent=hermes&inference=venice&ref=venice&code=VENICE";
-const FLAG = "NEXT_PUBLIC_HIVRA_VENICE_PROMO_ENABLED";
-const original = process.env[FLAG];
-beforeEach(() => mockAuth.mockReset().mockResolvedValue({ userId: null }));
+const promoFlags = {
+  NEXT_PUBLIC_HIVRA_VENICE_PROMO_ENABLED: "true",
+  HIVRA_VENICE_PROMO_ENABLED: "true",
+};
 
-afterEach(() => {
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
-});
+function setPromoEnv(domain = "canary.hermesos.cloud", flags = promoFlags) {
+  jest.replaceProperty(process, "env", { ...process.env, VERCEL_PROJECT_PRODUCTION_URL: domain, ...flags });
+}
+
+beforeEach(() => mockAuth.mockReset().mockResolvedValue({ userId: null }));
+afterEach(() => jest.restoreAllMocks());
 
 describe("/venice", () => {
   it("renders the headline, three agents and the right deep links", async () => {
@@ -67,29 +69,39 @@ describe("/venice", () => {
     expect(metadata.openGraph).toBeDefined();
   });
 
-  it("hides the promo when the flag is off and shows it when on", async () => {
-    delete process.env[FLAG];
-    const { unmount } = render(await VenicePage());
-    expect(screen.queryByText(/VENICE/, { selector: "strong" })).not.toBeInTheDocument();
+  it.each([
+    ["on production with both flags on", "hivra.cloud", promoFlags],
+    ["on Canary with the server flag off", "canary.hermesos.cloud", { ...promoFlags, HIVRA_VENICE_PROMO_ENABLED: "false" }],
+    ["on Canary with the banner flag off", "canary.hermesos.cloud", { ...promoFlags, NEXT_PUBLIC_HIVRA_VENICE_PROMO_ENABLED: "false" }],
+  ])("hides the promo %s", async (_scenario, domain, flags) => {
+    setPromoEnv(domain, flags);
+    render(await VenicePage());
     expect(document.querySelector("[data-venice-promo]")).toBeNull();
-    unmount();
-    process.env[FLAG] = "false";
-    const off = render(<VenicePromo signedIn={false} />);
-    expect(off.container).toBeEmptyDOMElement();
-    off.unmount();
-    process.env[FLAG] = "true";
+    expect(screen.queryByRole("link", { name: /Claim your \$10/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Launch with Hivra credits" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Launch with my key" })).toBeInTheDocument();
+  });
+
+  it("shows the offer on Canary when both flags are on", async () => {
+    setPromoEnv();
     render(await VenicePage());
     expect(screen.getByRole("heading", { name: /\$10\s*of Venice inference, on us/ })).toBeInTheDocument();
     expect(screen.getByText("VENICE", { selector: "strong" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy code VENICE" })).toBeInTheDocument();
+  });
+
+  it("sends signed-out claimants to sign-up with their Venice launch destination", async () => {
+    setPromoEnv();
+    render(await VenicePage());
+
     expect(screen.getByRole("link", { name: /Claim your \$10/ })).toHaveAttribute(
       "href",
-      `/sign-in?redirect_url=${encodeURIComponent(CLAIM_RETURN)}`,
+      `/sign-up?redirect_url=${encodeURIComponent(CLAIM_RETURN)}`,
     );
   });
 
   it("shows both brand marks and leaves film playback unmuted and user-initiated", async () => {
-    process.env[FLAG] = "true";
+    setPromoEnv();
     render(await VenicePage());
 
     expect(screen.getByRole("img", { name: "Hivra" })).toBeInTheDocument();
@@ -112,8 +124,8 @@ describe("/venice", () => {
     expect(claim.compareDocumentPosition(film) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("links signed-in claimants directly to Launch", async () => {
-    process.env[FLAG] = "true";
+  it("links signed-in claimants directly to Launch on Canary", async () => {
+    setPromoEnv();
     mockAuth.mockResolvedValue({ userId: "user_venice" });
     render(await VenicePage());
 

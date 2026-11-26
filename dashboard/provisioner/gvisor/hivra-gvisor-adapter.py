@@ -8,6 +8,7 @@ import os
 import re
 import selectors
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -15,6 +16,7 @@ from pathlib import Path
 
 VERSION = "2026.10.20.1"
 IMAGE = "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285"
+OFFLINE_IMAGE_CONFIG = Path("/opt/hivra/gvisor-adapter/offline-image")
 # Sandboxes this adapter manages, by the adapter release that created each
 # resource (a volume or network keeps the label it was created with) and the
 # image its container runs. Update moves a container to this release's IMAGE.
@@ -136,6 +138,36 @@ def docker(*args, check=True, timeout=120, capture_limit=None):
     if check and result.returncode != 0:
         raise subprocess.CalledProcessError(result.returncode, argv, result.stdout, result.stderr)
     return result
+
+
+def prepare_image():
+    try:
+        fd = os.open(OFFLINE_IMAGE_CONFIG, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
+        return ()
+    with os.fdopen(fd, "rb") as config:
+        info = os.fstat(config.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022
+                or config.read(len(IMAGE) + 2) not in (IMAGE.encode(), (IMAGE + "\n").encode())):
+            fail("The gVisor offline image setting must be root-owned and name the exact pinned image")
+
+    result = docker("image", "inspect", IMAGE, check=False)
+    if result.returncode != 0:
+        fail("The pinned gVisor offline image is not available locally")
+    _, digest = IMAGE.split("@")
+    try:
+        [image] = json.loads(result.stdout)
+        repo_digests = image["RepoDigests"]
+        verified = (image["Os"] == "linux" and image["Architecture"] == "amd64"
+                    and isinstance(repo_digests, list)
+                    and any(f"{repo}@{digest}" in repo_digests
+                            for repo in ("python", "library/python", "docker.io/library/python")))
+    except (ValueError, TypeError, KeyError):
+        verified = False
+    if not verified:
+        fail("The local gVisor offline image does not match the pinned digest and linux/amd64 platform")
+    return ("--pull=never", "--platform", "linux/amd64")
 
 
 def valid_input(document):
@@ -381,12 +413,12 @@ def admit(name, cpu, memory, host_memory_reserve):
         fail("The connected host does not have enough uncommitted capacity")
 
 
-def initialize_workspace(request, volume):
+def initialize_workspace(request, volume, pull_options=()):
     helper = helper_name(request)
     helper_labels = expected_helper_labels(request)
     helper_label_args = [value for pair in helper_labels.items()
                          for value in ("--label", f"{pair[0]}={pair[1]}")]
-    docker("run", "--name", helper, "--runtime=runsc", "--network=none",
+    docker("run", *pull_options, "--name", helper, "--runtime=runsc", "--network=none",
            "--cap-drop=ALL", "--cap-add=CHOWN", "--security-opt=no-new-privileges",
            "--read-only", "--pids-limit", "32", "--cpus", "0.5",
            "--memory", "128m", "--memory-swap", "128m", *helper_label_args,
@@ -397,13 +429,13 @@ def initialize_workspace(request, volume):
     require_helper_absent(request)
 
 
-def create_container(request, cpu, memory, name=None):
+def create_container(request, cpu, memory, name=None, *, pull_options=()):
     """The sandbox container: this release's labels and IMAGE, the owned
     network and the existing workspace volume, never copied into."""
     default_name, volume, network = names(request)
     labels = expected_labels(request)
     label_args = [value for pair in labels.items() for value in ("--label", f"{pair[0]}={pair[1]}")]
-    docker("create", "--name", name or default_name, "--runtime=runsc", "--init", "--read-only",
+    docker("create", *pull_options, "--name", name or default_name, "--runtime=runsc", "--init", "--read-only",
            "--user", "65534:65534", "--cap-drop=ALL", "--security-opt=no-new-privileges",
            "--pids-limit", "256", "--cpus", str(cpu), "--memory", f"{memory}m",
            "--memory-swap", f"{memory}m", "--network", network,
@@ -446,12 +478,12 @@ def update(request):
     memory = int(item["HostConfig"]["Memory"]) // (1024 * 1024)
     if running:
         admit(name, cpu, memory, int(request["hostMemoryReserveMb"]))
-    docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
+    pull_options = prepare_image()
     if running:
         docker("stop", "--time", "20", name)
     docker("rename", name, previous_name(request))
     try:
-        create_container(request, cpu, memory)
+        create_container(request, cpu, memory, pull_options=pull_options)
         if running:
             docker("start", name)
         inspect_container(name, request)
@@ -480,15 +512,15 @@ def create(request):
     created_volume = False
     created_network = False
     try:
-        docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
+        pull_options = prepare_image()
         if not inspect_resource("volume", volume, request):
             docker("volume", "create", *label_args, volume)
             created_volume = True
         if not inspect_resource("network", network, request):
             docker("network", "create", "--driver", "bridge", *label_args, network)
             created_network = True
-        initialize_workspace(request, volume)
-        create_container(request, cpu, memory)
+        initialize_workspace(request, volume, pull_options)
+        create_container(request, cpu, memory, pull_options=pull_options)
         docker("start", name)
         return status(request)
     except BaseException:

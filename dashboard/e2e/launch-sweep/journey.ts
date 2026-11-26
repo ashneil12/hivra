@@ -8,7 +8,8 @@
  */
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
 
-import { listHivraAgents, sleep } from '../first-run-audit/instances';
+import { auditAgentName } from '../first-run-audit/config';
+import { runInventory, sleep } from '../first-run-audit/instances';
 import { SweepFailure } from './result';
 import type { SweepTarget } from './targets';
 
@@ -89,7 +90,7 @@ async function journeyProblem(page: Page): Promise<string> {
  * Choose → Review → Launch. Returns once Hivra accepted the launch and shows
  * the after-launch screen.
  */
-export async function launchFromTile(page: Page, target: SweepTarget): Promise<void> {
+export async function launchFromTile(page: Page, target: SweepTarget, runId: string, onLaunch: () => void): Promise<void> {
   await openChoose(page);
 
   const tile = tileButton(page, target.tile);
@@ -111,6 +112,7 @@ export async function launchFromTile(page: Page, target: SweepTarget): Promise<v
     throw new SweepFailure('review', 'product', `Review never opened. ${await journeyProblem(page)}`);
   }
 
+  await page.getByRole('textbox', { name: target.kind === 'computer' ? 'Computer name' : 'Agent name' }).fill(auditAgentName(runId));
   await chooseHivraCredits(page);
 
   const launch = page.getByTestId('launch-primary-action');
@@ -121,6 +123,7 @@ export async function launchFromTile(page: Page, target: SweepTarget): Promise<v
     }
     await sleep(1_000);
   }
+  onLaunch();
   await launch.click();
 
   // Submitting can take minutes: Hivra answers once the computer is created.
@@ -188,12 +191,16 @@ export async function waitForReady(
   baseUrl: string,
   target: SweepTarget,
   timeoutMs: number,
+  runId: string,
 ): Promise<ReadyOutcome> {
-  const agentId = await currentAgentId(request, baseUrl);
+  async function findResourceId() {
+    const { agents, instances } = await runInventory(request, baseUrl, runId);
+    return agents[0]?.id ?? instances[0]?.id ?? null;
+  }
   if (target.kind === 'computer') {
     // Computers don't hold on the Launch page: it says "is being created" and
     // offers Open. Readiness is proven on the computer's own page.
-    return { agentId, ready: false };
+    return { agentId: await findResourceId(), ready: false };
   }
 
   const ready = page.getByRole('heading', { name: "Your agent's computer is ready." });
@@ -201,9 +208,9 @@ export async function waitForReady(
   const checkAgain = page.getByRole('button', { name: 'Check again' });
   const end = Date.now() + timeoutMs;
   while (Date.now() < end) {
-    if (await ready.isVisible().catch(() => false)) return { agentId, ready: true };
+    if (await ready.isVisible().catch(() => false)) return { agentId: await findResourceId(), ready: true };
     if (await failed.isVisible().catch(() => false)) {
-      throw new SweepFailure('ready', 'product', `Launch says it couldn't start. ${await agentError(request, baseUrl, agentId)}`);
+      throw new SweepFailure('ready', 'product', `Launch says it couldn't start. ${await agentError(request, baseUrl, await findResourceId())}`);
     }
     if (await checkAgain.isVisible().catch(() => false)) await checkAgain.click().catch(() => undefined);
     await sleep(5_000);
@@ -211,7 +218,7 @@ export async function waitForReady(
   throw new SweepFailure(
     'ready',
     'product',
-    `Not ready after ${Math.round(timeoutMs / 60_000)} minutes. ${await agentError(request, baseUrl, agentId)}`,
+    `Not ready after ${Math.round(timeoutMs / 60_000)} minutes. ${await agentError(request, baseUrl, await findResourceId())}`,
   );
 }
 
@@ -221,12 +228,6 @@ export async function openFromLaunch(page: Page): Promise<void> {
   if (!new URL(page.url()).pathname.startsWith('/dashboard/launch')) return;
   await page.getByTestId('launch-primary-action').click();
   await page.waitForURL(/\/dashboard\//, { timeout: 60_000 });
-}
-
-/** The throwaway account owns exactly what the sweep launched. */
-async function currentAgentId(request: APIRequestContext, baseUrl: string): Promise<string | null> {
-  const agents = await listHivraAgents(request, baseUrl).catch(() => []);
-  return agents[0]?.id ?? null;
 }
 
 /** The agent row's own error text, to say why a launch failed. */

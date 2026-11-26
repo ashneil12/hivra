@@ -39,6 +39,7 @@ type CandidateRow = {
   // marker: absent/stale => activity UNKNOWN => the sweep must not pause.
   last_agent_activity_at?: string | null;
   last_agent_probe_at?: string | null;
+  seat_funding?: string | null;
 };
 
 type RecheckOverride = {
@@ -76,7 +77,7 @@ function buildSweepStub(params: {
   // override it per row. `now` must match what the test hands runInactivitySweep.
   now?: Date;
 }) {
-  type Filter = { tier: string[]; cutoff: string; agentActivityOr: string | null };
+  type Filter = { tier: string[]; cutoff: string; agentActivityOr: string | null; excludesHolder: boolean };
   const filters: Filter[] = [];
   const updates: Array<{
     id: string;
@@ -172,7 +173,7 @@ function buildSweepStub(params: {
     if (table !== "hermes_instances") {
       throw new Error(`Unexpected table lookup: ${table}`);
     }
-    const filter: Filter = { tier: [], cutoff: "", agentActivityOr: null };
+    const filter: Filter = { tier: [], cutoff: "", agentActivityOr: null, excludesHolder: false };
     const captured: {
       patch: Record<string, unknown>;
       or: string | null;
@@ -219,12 +220,16 @@ function buildSweepStub(params: {
       else rows = paidRows;
       return query;
     });
+    query.gte = jest.fn().mockReturnValue(query);
     query.lt = jest.fn((_column: string, value: string) => {
       if (mode === "select-candidates") filter.cutoff = value;
       return query;
     });
     query.or = jest.fn((expr: string) => {
-      if (mode === "select-candidates") filter.agentActivityOr = expr;
+      if (mode === "select-candidates") {
+        if (expr.includes("seat_funding.is.null")) filter.excludesHolder = true;
+        else filter.agentActivityOr = expr;
+      }
       if (mode === "update") captured.or = expr;
       return query;
     });
@@ -235,7 +240,8 @@ function buildSweepStub(params: {
     });
     query.limit = jest.fn(async () => {
       filters.push(filter);
-      return { data: rows, error: null };
+      const selected = filter.excludesHolder ? rows.filter(row => row.seat_funding !== "holder") : rows;
+      return { data: selected, error: null };
     });
     query.maybeSingle = jest.fn(async () => {
       const row = allRows.find((r) => r.id === recheckId);
@@ -243,6 +249,7 @@ function buildSweepStub(params: {
       if (!row && !override) return { data: null, error: null };
       return {
         data: {
+          seat_funding: row?.seat_funding ?? null,
           lifecycle_state: override?.lifecycle_state ?? "active",
           last_activity_at:
             override?.last_activity_at ?? row?.last_activity_at ?? null,
@@ -428,6 +435,41 @@ describe("runInactivitySweep", () => {
       expect(summary.paidIdleDays).toBe(7);
       const paid = filters.find((f) => f.tier.includes("operator"));
       expect(paid?.cutoff).toBe("2026-05-03T12:00:00.000Z");
+    } finally {
+      delete process.env.HERMES_INACTIVITY_PAID_DAYS;
+    }
+  });
+
+  it("keeps holder-funded seats out of the hourly tier sweep even when paid tiers are opted in", async () => {
+    process.env.HERMES_INACTIVITY_PAID_DAYS = "7";
+    const holderRow: CandidateRow = {
+      id: "inst_holder_hourly",
+      user_id: "user_holder",
+      resource_tier: "operator",
+      proxmox_node: "fixturenode1",
+      proxmox_vmid: 214,
+      host_id: null,
+      config: { infrastructure: baseProxmoxInfra },
+      last_activity_at: "2026-05-01T12:00:00.000Z",
+      seat_funding: "holder",
+    };
+    const paidRow: CandidateRow = {
+      ...holderRow,
+      id: "inst_paid_hourly",
+      user_id: "user_paid",
+      proxmox_vmid: 215,
+      seat_funding: "paid",
+    };
+
+    try {
+      buildSweepStub({ freeRows: [], paidRows: [holderRow, paidRow] });
+      const summary = await runInactivitySweep({ now: NOW_EARLY });
+
+      // The paid row is still governed by the opted-in seven-day tier window;
+      // the holder row is not a second tier-row duplicate. Both are idle beyond
+      // seven days here, so exactly one pause should be attempted.
+      expect(summary.scanned).toBe(1);
+      expect(shutdownProxmoxInstance).toHaveBeenCalledTimes(1);
     } finally {
       delete process.env.HERMES_INACTIVITY_PAID_DAYS;
     }

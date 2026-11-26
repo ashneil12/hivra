@@ -78,6 +78,29 @@ async function main() {
     await db.exec(`create table public.hermes_instances (id uuid primary key, user_id text not null, status text, lifecycle_state text);
       create table public.hivra_agent_attachments (id uuid primary key, user_id text not null, source_id uuid, phase text)`);
     await db.exec(migration('20260925100000_hivra_agent_slot_limit.sql'));
+    // Keep the real reservation and capacity SQL in this custody fixture.
+    // Its empty host registry exercises the existing env-order fallback.
+    await db.exec(`alter table public.hivra_agents add column seat_funding text;
+      create table public.proxmox_hosts (
+        id text primary key, total_cpu integer, reserved_cpu integer, cpu_overcommit_ratio numeric,
+        total_ram_mb integer, reserved_ram_mb integer, wake_headroom_ram_mb integer,
+        thinpool_size_gb integer, thinpool_overcommit_ratio numeric,
+        capacity_reading jsonb, status text, decommissioned_at timestamptz
+      );
+      drop function public.reserve_hivra_launch_model_request_v3(text,uuid,jsonb,uuid,jsonb,jsonb,text,integer);`);
+    const loadFunction = async (file, name) => {
+      const sql = migration(file);
+      const start = sql.indexOf(`create or replace function public.${name}(`);
+      const end = sql.indexOf('$$;', start);
+      assert.ok(start >= 0 && end > start, `Missing SQL fixture function: ${name}`);
+      await db.exec(sql.slice(start, end + 3));
+    };
+    await loadFunction('20261124230000_holder_admissions.sql', 'holder_admission_normalize_host_id');
+    await loadFunction('20261124230000_holder_admissions.sql', 'holder_admission_host_capacity');
+    await loadFunction('20261125040000_durable_proxmox_placement.sql', 'assert_proxmox_placement_capacity');
+    await loadFunction('20261125040000_durable_proxmox_placement.sql', 'reserve_hivra_launch_model_request_v3');
+    await db.exec(`grant execute on function public.reserve_hivra_launch_model_request_v3(
+      text,uuid,jsonb,uuid,jsonb,jsonb,text,integer,numeric,boolean) to service_role`);
     const id = randomUUID(), token = 'a'.repeat(64), accountId = randomUUID();
     await db.query("insert into public.managed_venice_wallet_accounts(id,user_id) values($1,'owner')", [accountId]);
     await db.query(`insert into public.hivra_agents(id,user_id,type,name,status,desired_state,vmid,api_token,cf_hostname,cf_tunnel_id,chat_url)
@@ -110,8 +133,7 @@ async function main() {
           admit_hivra_model_key_operation: ['p_user_id', 'p_agent_id', 'p_operation_id', 'p_binding', 'p_request'],
           claim_hivra_model_key_delivery: ['p_user_id', 'p_agent_id', 'p_operation_id'],
           settle_hivra_model_key_operation: ['p_user_id', 'p_agent_id', 'p_operation_id', 'p_lease_id', 'p_receipt'],
-          // v3 counts the owner's plan slots under the slot lock (migration 20260925100000).
-          reserve_hivra_launch_model_request_v3: ['p_user_id','p_request_id','p_fingerprints','p_model_operation_id','p_agent','p_selection','p_encrypted_key','p_agent_limit'],
+          reserve_hivra_launch_model_request_v3: ['p_user_id','p_request_id','p_fingerprints','p_model_operation_id','p_agent','p_selection','p_encrypted_key','p_agent_limit','p_cpu_overcommit_ratio','p_skip_sleep'],
           claim_hivra_launch_model_attempt: ['p_user_id','p_agent_id','p_request_id','p_automatic'],
           promote_hivra_launch_model_request: ['p_user_id','p_agent_id','p_request_id','p_attempt_id','p_binding','p_request'],
           cancel_hivra_launch_model_request: ['p_user_id','p_agent_id','p_request_id'],
@@ -230,7 +252,7 @@ async function main() {
         templateSkills:[],deployment:{mode:'hivra-managed'},llm};
       const fingerprints=launchModelFingerprints('owner',requestId,intent,[encryptionKey]);
       const reservation={id:agentId,type:'codex',name:intent.name,cpu:intent.cpu,ram:intent.ram,proxmox_host:'fixture-host',
-        deployment_mode:'hivra-managed',computer_substrate:'proxmox-kvm',operation_id:provisionId,infrastructure_binding_token_hash:'c'.repeat(64)};
+        deployment_mode:'hivra-managed',seat_funding:'paid',computer_substrate:'proxmox-kvm',operation_id:provisionId,infrastructure_binding_token_hash:'c'.repeat(64)};
       reservation.managed_provisioner_channel='default';
       return {requestId,agentId,provisionId,modelId,intent,fingerprints,
         input:{userId:'owner',requestId,modelOperationId:modelId,fingerprints,agent:reservation,llm,agentLimit:100}};
@@ -245,6 +267,7 @@ async function main() {
     loseReservation=true;
     equal(await launches.reserve(launchByok.input,encrypt),{created:false,agentId:launchByok.agentId,phase:'waiting'});
     const retained=await launches.byRequest('owner',launchByok.requestId), beforePosts=posts, beforeCandidates=candidates;
+    equal((await db.query('select seat_funding from public.hivra_agents where id=$1',[launchByok.agentId])).rows[0].seat_funding,'paid');
     equal((await launchCoordinator.summary('owner',launchByok.agentId)).state,'waiting_for_computer');
     equal(await launchCoordinator.continue('owner',launchByok.agentId,launchByok.requestId,true),
       {requestId:launchByok.requestId,operationId:launchByok.modelId,status:'waiting',reason:'computer_not_ready'});

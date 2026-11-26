@@ -5,6 +5,8 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { IdleUsage } from './idle';
+import type { SweepCatalogEvidence } from './targets';
+import type { SweepSoftwareEvidence } from './software';
 import type { PrivateOnlyCheck } from './private-only';
 
 export const SWEEP_SCHEMA = 'hivra.launch-sweep.v1';
@@ -34,11 +36,22 @@ export class SweepFailure extends Error {
 export interface SweepResult {
   schema: typeof SWEEP_SCHEMA;
   runId: string;
+  resourceRunId?: string;
   baseUrl: string;
   profileId: string;
   tile: string;
   kind: string;
   knownBroken?: string;
+  /** Universal-catalog manifest provenance when this target came from the catalog. */
+  catalog?: SweepCatalogEvidence;
+  /** Git SHA of the checkout whose test code and manifests ran the sweep. */
+  checkoutSha?: string;
+  /** Optional operator-supplied SHA verified externally as the served Canary revision. */
+  expectedCanarySha?: string;
+  /** Provisioner bundle version required by the checkout that ran the sweep. */
+  expectedProvisionerVersion?: string;
+  /** Live software version/digest evidence read after the customer-visible proof. */
+  software?: SweepSoftwareEvidence;
   startedAt: string;
   finishedAt?: string;
   passed: boolean;
@@ -62,7 +75,7 @@ export class SweepRecorder {
   readonly result: SweepResult;
   private stageStart = Date.now();
 
-  constructor(init: Pick<SweepResult, 'runId' | 'baseUrl' | 'profileId' | 'tile' | 'kind' | 'knownBroken'>) {
+  constructor(init: Pick<SweepResult, 'runId' | 'resourceRunId' | 'baseUrl' | 'profileId' | 'tile' | 'kind' | 'knownBroken' | 'catalog' | 'checkoutSha' | 'expectedCanarySha' | 'expectedProvisionerVersion'>) {
     this.result = {
       schema: SWEEP_SCHEMA,
       ...init,
@@ -140,7 +153,7 @@ export function sweepVerdict(results: SweepResult[]): {
     (row) => !row.passed && row.failure?.category === 'product' && !row.knownBroken,
   );
   const leaked = results.filter(
-    (row) => row.teardown && (row.teardown.agentsLeft > 0 || row.teardown.instancesLeft > 0),
+    (row) => row.teardown && (row.teardown.agentsLeft > 0 || row.teardown.instancesLeft > 0 || row.teardown.error),
   );
   const privateOnlyFailed = results.filter((row) => row.privateOnly?.state === 'failed' && !row.knownBroken);
   return { ok: broken.length === 0 && leaked.length === 0 && privateOnlyFailed.length === 0, broken, leaked, privateOnlyFailed };
@@ -216,7 +229,8 @@ export function sweepMarkdown(results: SweepResult[]): string {
     if (unread.length) lines.push('', `No idle reading: ${unread.map((row) => `${row.tile} (${row.idle!.note ?? 'no samples'})`).join(', ')}.`);
   }
   if (verdict.leaked.length) {
-    lines.push('', `Left running after teardown: ${verdict.leaked.map((row) => row.tile).join(', ')}. Run \`npm run audit:first-run:cleanup\`.`);
+    lines.push('', `Cleanup failed or could not be verified: ${verdict.leaked.map((row) =>
+      row.resourceRunId ? `${row.tile} (run ${row.resourceRunId})` : row.tile).join(', ')}.`);
   }
   return `${lines.join('\n')}\n`;
 }

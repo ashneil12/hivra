@@ -1,0 +1,111 @@
+{
+  "slug": "owncast",
+  "checkedAt": "2026-11-25T13:13:25.543Z",
+  "gitSha": "9ec3ad75bbb32c61ce21eb4dee7b648b4c48072f",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "owncast/owncast is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "owncast/owncast",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "owncast/owncast:0.2.0 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "owncast/owncast:0.2.0",
+        "digest": "sha256:f4d43e1772f1a5d07309d515c205b620abf3274564de6aa5a735d9879a221ddb",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v7",
+          "linux/arm64",
+          "linux/386"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 4.4s",
+      "evidence": {
+        "container": "hivra-verify-owncast-bb47ay",
+        "hostPort": 3303,
+        "image": "owncast/owncast:0.2.0",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-owncast-bb47ay",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3303:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-owncast-bb47ay-data:/app/data",
+          "owncast/owncast:0.2.0"
+        ],
+        "runStdout": "72060e4a7843f8bfcea7cf25e6ee8a87ed749ff70dc3291aaa76e6c5e0b2d359",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 4.4,
+          "attempts": 3
+        },
+        "memUsage": "95.06MiB / 7.652GiB",
+        "memBytes": 99677635
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 51772,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html><html lang=\"en\"><head><meta charSet=\"utf-8\"/><script id=\"server-side-hydration\" nonce=\"rW1-Nf0=\">\n\twindow.configHydration = \"{\\\"appearanceVariables\\\":{},\\\"name\\\":\\\"New Owncast Server\\\",\\\"customStyles\\\":\\\"\\\",\\\"offlineMessage\\\":\\\"\\\",\\\"logo\\\":\\\"/logo\\\",\\\"version\\\":\\\"Owncast v0.2.0-linux-arm64 (a669686b16740f6b6b289bd2d07cf1449e68acb5)\\\",\\\"extraPageContent\\\":\\\"\\\\u003ch1\\\\u003eWelcome to",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "404 page not found\n"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 95.1MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 99677635,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

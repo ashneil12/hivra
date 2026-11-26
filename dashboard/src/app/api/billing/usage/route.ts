@@ -12,7 +12,8 @@ import {
 import { isBillingV2ServerEnabled } from "@/lib/billing/billing-v2-availability";
 import { readPlanOnHold, resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { readCardTrialEndsAt } from "@/lib/billing/card-trial";
-import { isPaidTier, VENICE_BOOST_CPU, VENICE_BOOST_RAM_MB } from "@/lib/services/tier-boost";
+import { provisionSeatCanReceiveBoost } from "@/lib/billing/provision-seat-funding";
+import { VENICE_BOOST_CPU, VENICE_BOOST_RAM_MB } from "@/lib/services/tier-boost";
 import { isVeniceBoostEligible } from "@/lib/billing/venice-compute-boost";
 import { isActiveComputeStatus } from "@/lib/hivra/resource-gate";
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
@@ -157,7 +158,7 @@ export async function GET() {
     // is on a paid tier (the boost only stacks on paid). Best-effort: a
     // boost-table read hiccup degrades to "no boost", never fails the page.
     const veniceBoostRead: Promise<boolean> = (async () => {
-      if (!isPaidTier(sub.plan)) return false;
+      if (!provisionSeatCanReceiveBoost(sub)) return false;
       try {
         return await isVeniceBoostEligible(userId);
       } catch (boostErr) {

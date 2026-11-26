@@ -15,10 +15,7 @@ import { auth } from "@clerk/nextjs/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { isBillingV2ServerEnabled, BILLING_V2_UNAVAILABLE_MESSAGE } from "@/lib/billing/billing-v2-availability";
 import { isCryptoBillingEnabled } from "@/lib/billing/crypto-availability";
-import {
-  HERMESOS_TOKEN_DECIMALS,
-  isFoundersRateUser,
-} from "@/lib/billing/tier-thresholds";
+import { HERMESOS_TOKEN_DECIMALS, REQUALIFICATION_GRACE_HOURS } from "@/lib/billing/tier-thresholds";
 import {
   getLiveActiveThresholds,
   LivePriceUnavailableError,
@@ -66,12 +63,16 @@ interface QualificationRow {
   last_balance_seen: string | null;
   last_evaluated_at: string | null;
   last_breach_at: string | null;
+  last_suspend_at: string | null;
 }
 
 interface TierState {
   currentlyEligible: boolean;
   qualifyingQuantity: string | null;       // base units, as string for JSON safety
-  qualifyingQuantityDisplay: string | null; // human-readable
+  qualifyingQuantityDisplay: string | null; // human-readable historical row amount
+  /** The historical amount only while it is still the valid recovery lock. */
+  lockedQualificationDisplay: string | null;
+  lockedQualificationActive: boolean;
   thresholdAtQualification: string | null;
   qualifiedAt: string | null;
   lastBreachAt: string | null;
@@ -94,14 +95,29 @@ function formatTokenAmount(raw: bigint, decimals = HERMESOS_TOKEN_DECIMALS): str
 
 function buildTierState(
   qualification: QualificationRow | undefined,
-  currentThreshold: bigint | null
+  currentThreshold: bigint | null,
+  now = new Date()
 ): TierState {
+  // The locked quantity is authoritative while the qualification is held and
+  // through the 24-hour recovery grace. Once suspended (or once an unevaluated
+  // breach is already beyond that grace), requalification uses the current
+  // live-priced threshold instead of the historical amount.
+  const breachAtMs = qualification?.last_breach_at ? Date.parse(qualification.last_breach_at) : NaN;
+  const withinRecoveryGrace = Number.isFinite(breachAtMs)
+    && breachAtMs > now.getTime() - REQUALIFICATION_GRACE_HOURS * 60 * 60 * 1000;
+  const lockedQualificationActive = !!qualification && (
+    qualification.currently_eligible
+    || (!qualification.last_suspend_at && withinRecoveryGrace)
+  );
+  const qualifyingQuantityDisplay = qualification
+    ? formatTokenAmount(BigInt(qualification.qualifying_quantity))
+    : null;
   return {
     currentlyEligible: qualification?.currently_eligible ?? false,
     qualifyingQuantity: qualification?.qualifying_quantity ?? null,
-    qualifyingQuantityDisplay: qualification
-      ? formatTokenAmount(BigInt(qualification.qualifying_quantity))
-      : null,
+    qualifyingQuantityDisplay,
+    lockedQualificationDisplay: lockedQualificationActive ? qualifyingQuantityDisplay : null,
+    lockedQualificationActive,
     thresholdAtQualification: qualification?.threshold_at_qualification ?? null,
     qualifiedAt: qualification?.qualified_at ?? null,
     lastBreachAt: qualification?.last_breach_at ?? null,
@@ -132,7 +148,7 @@ export async function GET() {
       // ::text on numeric columns to dodge JSON-Number precision loss
       // for values that exceed 2^53 base units.
       .select(
-        "tier, token_key, qualifying_quantity::text, threshold_at_qualification::text, qualified_at, currently_eligible, last_balance_seen::text, last_evaluated_at, last_breach_at"
+        "tier, token_key, qualifying_quantity::text, threshold_at_qualification::text, qualified_at, currently_eligible, last_balance_seen::text, last_evaluated_at, last_breach_at, last_suspend_at"
       )
       .eq("user_id", userId);
 
@@ -208,12 +224,7 @@ export async function GET() {
 
     let live;
     try {
-      // Allowlisted founders see the launch-epoch readout past the global
-      // promo window; everyone else gets the date-driven epoch.
-      live = await getLiveActiveThresholds({
-        forceLaunchEpoch: isFoundersRateUser(userId),
-        token,
-      });
+      live = await getLiveActiveThresholds({ token });
     } catch (error) {
       if (error instanceof LivePriceUnavailableError) {
         return apiError(

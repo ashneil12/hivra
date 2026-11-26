@@ -1,11 +1,29 @@
 # Dashboard E2E — Tier 1 of the QA pyramid
 
-> **Live managed-hosting audits are paused.** First-run, launch sweep, remote-desktop
-> and trial-to-Pro reject live runs before Playwright setup. Ordinary Playwright
-> setup also rejects ticket sign-in when QA credentials are present. Clerk sent
-> mail shortly after ticket sign-in, including for a reused audit account.
-> Active cleanup remains paused; read-only inventory remains available separately.
-> The live instructions below are for when the pause is lifted.
+**Tests never create accounts**, in CI or by hand. Don't create Clerk users or
+invitations, and don't submit a sign-up form. Authenticated checks sign in as
+standing Canary test accounts from environment variables; logged-out checks
+must stop at the auth boundary. Don't log or commit account addresses, session
+state, or browser artifacts from sign-in. The operator-run repair command below
+is the only exception, and only when its configured standing account is missing.
+
+**Live managed-hosting audits are blocked by default.** Run them only on an
+owner-approved isolated runner with `HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp` and
+the relevant project flag. Sign-in uses Clerk's fixed test OTP, not tickets.
+Tear down only the resources owned by the run, never the account.
+
+### Venice claim acceptance — no provisioning or credit grants
+
+```bash
+cd dashboard
+CANARY_QA_EMAIL=… npm run test:venice-claim
+```
+
+The spec signs in as the standing account, opens `/venice`, and follows the
+rendered claim link to the exact authenticated Launch URL. JavaScript is
+disabled for this check, so the Launch client cannot run its credit-grant or
+provisioning requests. This checks the document handoff, not the hydrated
+review UI or credit redemption.
 
 ## Weekly general check
 
@@ -47,25 +65,28 @@ This does not change protected CI or the [managed release process](../../docs/re
 It must not publish a `launch-sweep` status or replace a required sweep.
 The proposed [Promote gate](https://github.com/ashneil12/hivra/pull/593) stays
 held until an isolated runner using an approved auth path records a passing
-sweep on the exact served Canary revision. Live auth and release sweeps remain
-paused; changed-agent installers need isolated execution and bounded, revocable
+sweep on the exact served Canary revision. Live auth and release sweeps still require
+the explicit opt-in above; changed-agent installers need isolated execution and bounded, revocable
 test model access before they can be enabled.
 
 ## Playwright (not part of the weekly check)
 
 Playwright targets a deployed site and is separate from the offline baseline.
-Do not use the full suite during the live-auth pause, or assume every public
-spec is read-only: the telemetry spec checks real ingestion.
+Do not assume every public spec is read-only: the telemetry spec checks real
+ingestion. Live managed-hosting projects still need their explicit opt-in.
 
 ## Layout
 - `public.public.spec.ts` — logged-out routes render (HTTP < 400 + real content) + VRT.
-- `golden-deploy.authed.spec.ts` — the **login → dashboard → deploy** golden path. Skips if no QA session.
+- `venice.public.spec.ts` — the unsigned Venice acquisition contract: promo claim target, attribution cookie and auth-boundary Launch deep-link preservation. It deliberately stops before account creation.
+- `venice-claim.acceptance.spec.ts` — opt-in standing-account check for the signed-in claim link and Launch document.
+- `golden-deploy.authed.spec.ts` — the signed-in **dashboard → Launch chooser** golden path.
+- `onboarding-deploy.journey.spec.ts` — the signed-in **Launch chooser → Codex review** journey. It checks launch readiness without clicking Launch Codex.
 - `first-run-audit.spec.ts` + `first-run-audit/` — the **19/20 gate**. Real provisioning. See below.
-- `global-setup.ts` — rejects ticket sign-in during the pause; without both QA credentials it writes empty storage state.
+- `global-setup.ts` — signs in as the standing Canary QA account when `CANARY_QA_EMAIL` is set; otherwise rejects legacy ticket sign-in and writes empty storage state.
 - `playwright.config.ts` (repo root of `dashboard/`) — projects: `public` (no auth), `authed` (storage state),
-  and `first-run-audit` (only exists when `FIRST_RUN_AUDIT=1`).
+  `offline-browser` (local routed fixtures), and the explicitly gated live audit projects.
 
-## Run it after the pause
+## Run it
 ```bash
 npm run test:e2e            # all, against E2E_BASE_URL (default https://canary.hermesos.cloud)
 npm run test:e2e:public     # public smoke + VRT only (no secrets needed)
@@ -73,10 +94,52 @@ E2E_BASE_URL=https://<vercel-preview>.vercel.app npm run test:e2e   # gate a PR 
 ```
 
 ## Env (authed path only)
-- `CLERK_SECRET_KEY` — Backend API key for the **canary** Clerk instance (`splendid-longhorn-99`).
-- `QA_USER_ID` — the `qa-agent@hermesos.cloud` Clerk user id.
 
-Without them, setup writes empty storage state and the golden-path specs skip.
+Authed specs sign in as the standing Canary QA account when `CANARY_QA_EMAIL`
+is set (see below); without it setup writes empty storage state and they skip.
+The old `QA_USER_ID` ticket-auth path stays disabled: if both
+`CLERK_SECRET_KEY` and `QA_USER_ID` are present and `CANARY_QA_EMAIL` is not,
+setup fails closed rather than minting a Clerk sign-in ticket. Do not re-enable
+sign-in tickets.
+
+## Standing Canary QA account
+
+One passwordless `+clerk_test` account on the Canary Clerk development
+instance, with the Pro plan and a small Hivra credit balance, is shared by every
+person and agent that needs a signed-in Canary session. Use it instead of
+inventing a new login flow. Its address is the only thing that guards it (the
+code is public and Clerk's test code is fixed), so it is never written in this
+repository, a PR or a comment. Ask the owner for it; it is kept in private
+notes.
+
+**Sign in by hand:** open `https://canary.hermesos.cloud/sign-in`, enter the
+address, press Continue and type `424242`. No mail is sent.
+
+**Sign in from Playwright:** set `CANARY_QA_EMAIL` and run any authed project.
+`global-setup.ts` signs in through the real sign-in page and writes
+`e2e/.auth/qa-user.json`, which the `authed`, `vrt` and `journey` projects
+already load. A spec that needs its own context can call
+`signInAsCanaryQa(page, { baseUrl })` or `saveCanaryQaStorageState` from
+`e2e/canary-qa/auth.ts`. Neither needs a Clerk secret.
+
+```bash
+CANARY_QA_EMAIL=… npx playwright test --project=authed
+```
+
+**Repair it:** `npm run qa:canary-account` creates the Clerk user if it is
+missing and resets its Canary rows: Pro plan and pool, a low-risk sign-up
+assessment, and Hivra credit set back to $2 (`CANARY_QA_CREDIT_USD`, at most
+$5). It is idempotent. It needs `CANARY_QA_EMAIL`, the Canary
+`CLERK_SECRET_KEY` (`sk_test_…`), and the Canary Supabase URL and
+service-role key (`CANARY_QA_SUPABASE_URL`, `CANARY_QA_SUPABASE_SERVICE_ROLE_KEY`).
+It refuses `sk_live_` keys, any Supabase project but Canary, and any address
+that is not a `+clerk_test` address on a reserved example domain. It prints the
+user id, plan and credit, never the address or a key.
+
+**Limits:** the account holds the Pro plan only, so it can run at most three
+agents within 2 vCPU and 4 GB in total, and model use stops when its credit runs
+out. Delete agents you launch with it when you are done, and run the repair
+script to put the credit back.
 
 ## VRT baselines
 Screenshots are OS-sensitive — **generate baselines on the Linux CI runner**, never commit
@@ -86,38 +149,27 @@ gh workflow run dashboard-e2e.yml -f update_snapshots=true   # uploads baselines
 ```
 Commit the artifact's `*-snapshots/` into `dashboard/e2e/` once, then VRT gates real diffs.
 
-## TODOs before the authed path is fully green
-- Replace the placeholder selectors in `golden-deploy.authed.spec.ts` with stable `data-testid`s.
-- ~~Decide the deploy assertion's safe stopping point~~ — settled: `golden-deploy` stays **assert-only** (it
-  runs on every PR), and the real click lives in the opt-in `first-run-audit` spec below.
+The golden and onboarding deploy specs stop before provisioning. The real launch
+is exercised by the opt-in `first-run-audit` spec below.
 
 ---
 
 # FIRST-RUN AUDIT — the 19/20 gate
 
-> "new signup → first agent deployed → first real outcome, working clean
-> 19 out of 20 times, zero manual intervention." — the bar that gates the
-> reactivation campaign and Product Hunt.
+This audit measures launch through first real outcome, with a 19/20 pass
+target. It starts signed in with the standing account's existing plan; it
+doesn't measure account creation or a new user's first entitlement.
 
-**This is the only test in the repo that provisions real, paid infrastructure.**
-One Proxmox VM on the canary host per run. It is double-gated and can never fire
-on an ordinary CI push:
+It provisions one Canary computer per run and cannot fire on an ordinary CI push:
 
 1. `playwright.config.ts` only *defines* the `first-run-audit` project when `FIRST_RUN_AUDIT=1`.
 2. The spec itself `test.skip`s unless the same var is set.
 
 ## What "first real outcome" means here
 
-A virgin free account **cannot** reach an agent that answers a question today:
-
-- **Managed (Venice)** — the deploy card's default — early-returns an unfunded
-  account into a wallet-funding screen. The Deploy button isn't even rendered.
-- **"Bring your own"** deploys a *clean-slate* box: no provider, no model, no key.
-  The card's own copy says "paste your key from the agent after it's live."
-
-So the audit certifies what the product actually promises a new user —
-**your agent exists, it booted, and you can sit down and type to it** — as
-`workspace_interactive`:
+The default audit deploys a clean-slate box without configuring inference. It
+checks that the agent exists, boots, and opens an interactive workspace
+(`workspace_interactive`):
 
 ```
 instance row → running, observed via GET /api/instances/[id]
@@ -183,89 +235,48 @@ something the harness should hide.
 
 The stricter `agent_replied` outcome is implemented (a real message through
 `POST /api/instances/[id]/send-stream`, asserting a non-empty assistant stream).
-It is off by default; enable with `FIRST_RUN_AUDIT_REQUIRE_AGENT_REPLY=1` once a
-new user has a path to a box that boots with inference configured.
+It is off by default; enable with `FIRST_RUN_AUDIT_REQUIRE_AGENT_REPLY=1` to
+check the managed inference path with the standing account's Hivra credits.
 
 ## Run it
 
 ```bash
 # one audit (provisions + destroys one real canary VM)
-CLERK_SECRET_KEY=sk_test_… npm run audit:first-run
+HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp CANARY_QA_EMAIL=… npm run audit:first-run
 
-# reap anything a crashed run left behind — ALWAYS run this after a campaign
-CLERK_SECRET_KEY=sk_test_… npm run audit:first-run:cleanup
-CLERK_SECRET_KEY=sk_test_… npm run audit:first-run:cleanup -- --dry-run
+# Replace … with the stopped run's eight-hex ID and use its standing account.
+HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp CANARY_QA_EMAIL=… \
+  npm run audit:first-run:cleanup -- --run-id=… --dry-run
 
 # tally N verdict files against the 19/20 bar
 npm run audit:first-run:tally
 ```
 
-In CI: **`first-run-audit.yml`**, `workflow_dispatch` only, or by adding the
-`first-run-audit` label to a PR. Never on push, never on `schedule`, never on
-`pull_request_target`, never on a plain PR event. A fork PR carries no secrets,
-so the workflow's Clerk guard exits non-zero before anything is provisioned.
-(The label path still audits the **deployed canary**, not the PR's code — the
-suite targets a URL, not a build. That is what you want when the PR *is* the
-harness.)
+Run this on the approved isolated runner, not a public PR job. The spec checks
+the deployed Canary site, independently of which checkout runs the harness.
 
 ## Teardown is not optional
 
-A leaked audit VM is a paid VM and an orphan. Four nets, in order:
-
-1. the spec's `finally` — destroys via the app's own confirm-gated `DELETE /api/instances/[id]`
-2. the spec's `afterAll` — catches a Playwright **timeout**, which aborts the test body and skips its `finally`
-3. `scripts/first-run-audit-cleanup.ts` — reaps by `firstrun-audit-` email prefix
-4. the workflow's `if: always()` cleanup step, which exits non-zero on any survivor
-
-Proven on 2026-07-08 across four real canary provisions — including two that
-**failed** mid-run, which is the case that matters. After each: `qm list` back to
-baseline, no `vm-<id>` logical volumes, the box's Caddy vhost removed, its
-Cloudflare DNS record deleted, and the Clerk user returning `404`.
-
-If an instance cannot be destroyed, the Clerk user is deliberately **kept** — without
-them nothing can authenticate to finish teardown through the app's own destroy path.
+A leaked audit VM is a paid VM and an orphan. The spec cleans up resources
+named for its run through the app's own delete routes and records the result.
+If teardown isn't confirmed, don't certify that run. Never delete the standing
+account or unrelated resources. If recovery is authorized and the run has
+stopped, inspect the exact run ID with the command above before removing
+`--dry-run`.
 
 ## Env
 
 | Var | Required | Notes |
 | --- | --- | --- |
-| `CLERK_SECRET_KEY` | yes | **canary** (`sk_test_…`). An `sk_live_` key is hard-refused. |
+| `CANARY_QA_EMAIL` | yes | Standing QA account address from private notes. |
 | `FIRST_RUN_AUDIT_BASE_URL` | no | default `https://canary.hermesos.cloud`. Non-canary hosts are hard-refused. |
 | `FIRST_RUN_AUDIT_OUT_DIR` | no | default `e2e/.first-run-audit` (gitignored). |
 | `FIRST_RUN_AUDIT_POST_READY_SETTLE_MS` | no | default `45000`. Dwell after the workspace is proven so the box's deferred post-ready work (SOUL.md reconcile) finishes before teardown. `0` disables. |
 | `FIRST_RUN_AUDIT_CRON_SECRET` | no | enables `ops_events` collection into the verdict. |
-| `FIRST_RUN_AUDIT_PRECLEAR_RISK` | no | see below. Requires the two Supabase vars. |
-| `FIRST_RUN_AUDIT_SUPABASE_URL` / `…_SERVICE_ROLE_KEY` | no | canary only. |
-
-### The datacenter-IP problem
-
-`src/lib/abuse/risk-scorer.ts` scores `IS_DATACENTER` at **+30** → tier `medium`
-→ decision `require_card`. Every hosted CI runner egresses from a datacenter ASN,
-so an unaided CI audit would fail 20/20 at the abuse gate for a reason **no real
-user on a home connection ever hits** — it would be measuring the runner's network
-reputation, not Hivra.
-
-- From a laptop (residential IP): score 0 → `allow`. Nothing needed.
-- From CI: set `FIRST_RUN_AUDIT_PRECLEAR_RISK=1` + the canary Supabase vars. The
-  harness writes one `signup_risk_assessments` row (`decision=allow`) for the
-  throwaway user and deletes it in teardown. It does not disable the gate or touch
-  any real user.
-- Without it, a `card_required` response is recorded as a **`harness_environment`**
-  failure — excluded from the bar and reported loudly, never silently passed.
-  Detected off the deploy POST's own `402`, not off analytics (see rule 1 above);
-  the `activation_card_required` event never reaches us on canary.
-
-> **Today this is dormant, not wrong.** The canary Vercel project sets neither
-> `PROXYCHECK_API_KEY` nor `FINGERPRINT_SECRET_KEY`, and both providers degrade to
-> *neutral* when unconfigured — so on canary the scorer returns 0 for everyone and
-> the gate allows, datacenter runner or not. The preclear is the correct answer the
-> day either key is added to canary, and the four proving runs on 2026-07-08 needed
-> none of it. Corollary: **this audit does not exercise the real production abuse
-> gate.** It cannot, and it should not pretend to.
 
 ## The verdict
 
-Each run writes `e2e/.first-run-audit/run-<id>.json` (schema `hivra.first-run-audit.v1`):
+Each run writes `e2e/.first-run-audit/run-<id>.json` (schema `hivra.first-run-audit.v2`):
 pass/fail, `stage_reached`, `failure.{stage,category,reason}`, per-stage timings,
 `instance.inference_configured`, the captured PostHog funnel (incl. every
 `activation_failed` with its `stage`/`errorCategory`), any `ops_events`, and a full
@@ -282,51 +293,105 @@ Two rules keep the number honest:
 # LAUNCH SWEEP — every agent, launched like a customer
 
 `launch-sweep.spec.ts` + `launch-sweep/`. For **every tile on Launch** that runs on
-Hivra Cloud, in its own throwaway Canary account, it:
+Hivra Cloud, it:
 
-1. creates a Clerk test user and gives it the Pro plan (the one shortcut: the
-   subscription row is written instead of paying through Stripe);
-2. signs in, opens `/dashboard/launch`, clicks the tile, Review, picks **Hivra
-   credits** (the starter credit every new paid account gets) and presses Launch;
+1. signs into the standing account with its existing Pro plan and Hivra credit;
+2. opens `/dashboard/launch`, clicks the tile, clicks Review, picks **Hivra
+   credits** and presses Launch;
 3. waits on the after-launch screen until it says ready, then presses Open;
-4. asks "What is 389 + 448? Reply with only the number." in the box a customer
-   types into (Hivra's chat for Claude Code and Codex, the agent's own web UI
-   for the rest) and waits for `837` on screen. Computers pass when their page
-   shows the desktop or terminal;
+4. uses the proof that matches the tile: coding and chat agents answer
+   "What is 389 + 448?" with `837` in the customer-visible chat surface;
+   self-hosted catalog apps pass when their authenticated `/app/` web surface
+   renders real app content rather than a gateway error or loopback redirect;
+   computers pass when their page shows the desktop or terminal;
 5. closes the agent's tab and, for `LAUNCH_SWEEP_IDLE_MINUTES` (default 10, `0`
    skips), reads what it uses idle every 30 s from the owner's own usage view
    (Manage › Overview): RAM, CPU and disk. The summary adds an **Idle use** table,
    lightest first, next to the bare Linux computer. RAM includes the guest's file
    cache, so it is an upper bound. This is what decides whether an agent can be
    offered on Free or only on Pro;
-6. deletes everything through the app's own delete routes, then the account.
+6. deletes only the run's resources through the app's own delete routes and
+   leaves the account intact.
 
 A separate test reads the live Launch page and fails if it offers a tile that
 `launch-sweep/targets.ts` doesn't list, so a new agent can't ship untested.
 
 **Cost cap.** One small Canary VM per target for ~20 minutes (10 of them idle), one at a time
-(two launches at once on Canary's single host have failed at kickoff), and model use limited by the account's starter credit. Never retried.
+(two launches at once on Canary's single host have failed at kickoff), and model use limited by the account's Hivra credit. Never retried.
 
 **Where it runs.** Not from this repository's Actions: the public-tree rules keep
 workflows bound to live infrastructure out of the public tree, and public run logs
-would show Canary's internals. The schedule (weekly, and before every release into `main`) runs from a private
-operations runner that checks out this repository and runs the commands below with
-the Canary test credentials.
+would show Canary's internals. The reference continuous implementation is the
+operator-run catalog certification runner in
+`dashboard/scripts/catalog-certification/`; its operating contract is documented in
+`docs/release/CATALOG-CERTIFICATION-RUNNER.md`. It serially certifies catalog entries
+against the exact public Canary revision using a dedicated standing test account
+and verifies teardown without deleting the account.
+
+### Required isolated-runner setup
+
+Use a dedicated runner with no customer shell, no production secrets and no
+persistent browser profile. Node 22, `npm ci` and Playwright Chromium are the host
+setup. The runner checks out the exact public `canary` merge commit being certified;
+it does not deploy, promote, re-alias or otherwise mutate Vercel. The continuous
+macOS runner may use the operator's authenticated Vercel CLI read-only to resolve
+the served revision and fetch Canary test env values just-in-time.
+
+Set `CANARY_QA_EMAIL` for the ordinary sweep. The certification runner sets
+`CERTIFICATION_ACCOUNT_EMAIL` from its dedicated standing-account secret.
+Inject the Canary-only `LAUNCH_SWEEP_SUPABASE_URL` and
+`LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY` for teardown verification; no Clerk
+key is needed. Set `HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp` for either run.
+Model use stays bounded to the standing account's Hivra credits; do not
+install a standing operator model key.
+
+Before certifying a release, confirm through the managed-release verification
+path that `canary.hermesos.cloud` serves the same Git commit the runner checked
+out, then export that full lowercase SHA as `LAUNCH_SWEEP_CANARY_SHA` so every
+result JSON carries it. Record the start time and the operator/runner identity
+beside the sweep output. A sweep against a mismatched or unknown served revision
+is only a diagnostic run, never release evidence.
+
+First live smoke sequence, with idle measurement off until the auth path is proven:
 
 ```bash
-CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \
-  npm run test:launch-sweep                         # everything, one at a time
+# cheap docker-web catalog app (set LAUNCH_SWEEP_CANARY_SHA first for evidence)
+LAUNCH_SWEEP_ONLY=it-tools LAUNCH_SWEEP_IDLE_MINUTES=0 npm run test:launch-sweep
+# reference computer
+LAUNCH_SWEEP_ONLY=ubuntu-server LAUNCH_SWEEP_IDLE_MINUTES=0 npm run test:launch-sweep
+# runtime matrix pilot
+LAUNCH_SWEEP_ONLY=vaultwarden,umami,nanobot,openhands LAUNCH_SWEEP_IDLE_MINUTES=0 npm run test:launch-sweep
+```
+
+The sweep verifies teardown for each run. Do not certify while cleanup is
+unconfirmed. Inspect the failed verdict and recover only resources owned by
+that run, never the standing account or resources from a different run.
+
+For the Promote gate, run the customer path plus one reference agent on the
+exact served SHA, then a small rotating catalog sample. Full-catalog
+certification is a separate batch campaign, not the per-release gate: certify
+every entry once per meaningful manifest or provisioner-runtime change, and
+record pass/blocker status per manifest. Do not merge the Promote gate until
+that exact-revision customer-path sweep and reference-agent launch have passed
+and cleanup is clean.
+
+```bash
+export HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp CANARY_QA_EMAIL=…
+export LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=…
+npm run test:launch-sweep                           # everything, one at a time
 LAUNCH_SWEEP_ONLY=agent-zero,openclaw npm run test:launch-sweep   # a few
-LAUNCH_SWEEP_KEEP_FAILED=1 …                         # keep a failed computer to read its logs
-LAUNCH_SWEEP_KEEP_PASSED=claude-code,codex …         # keep these after a pass, to read inside them
 npm run test:launch-sweep:summary                    # Markdown table; exits 1 if a launch is broken
-npm run audit:first-run:cleanup                      # reaps any leftover sweep accounts too
 ```
 
 Results land in `e2e/.launch-sweep/` (one JSON per target, plus a screenshot).
-A failure says the stage (`choose`, `review`, `launch`, `ready`, `open`, `chat`)
-and what the screen or the agent record said. Targets marked `knownBroken` are
-reported but don't fail the run.
+Each catalog result carries the exact manifest hash, runtime image/package
+references, host port and health path from the checkout; after the customer-
+visible proof it also records the owner API's live software report, which for
+catalog Docker apps is normally the resolved image digest, plus the expected
+provisioner bundle version, the runner checkout SHA and `LAUNCH_SWEEP_CANARY_SHA`
+when supplied. A failure says the stage (`choose`, `review`, `launch`, `ready`,
+`open`, `chat`) and what the screen or the agent record said. Targets marked
+`knownBroken` are reported but don't fail the run.
 
 **Adding an agent to Launch** follows `.codex/skills/hivra-add-launch-agent/SKILL.md`:
 add it to `targets.ts`, launch it with the sweep, and record its idle use before
@@ -334,12 +399,11 @@ deciding Free or Pro.
 
 # Customer path (trial to Pro, then one agent)
 
-`e2e/trial-to-pro.spec.ts` is the one full customer path, run on every Canary
-release. Per-agent checks are separate and cheap, so its cost stays flat however
-many agents the catalog has. It runs in a real browser on Canary with Stripe in
-test mode:
+`e2e/trial-to-pro.spec.ts` checks billing from two pre-existing standing
+Canary accounts, not from sign-up. It uses Stripe test mode:
 
-1. A throwaway account opens **Pricing** and clicks **Start a 7-day free trial**.
+1. The first standing billing fixture signs in, opens **Pricing**, and clicks
+   **Start a 7-day free trial**.
 2. It pays at Stripe Checkout with the `4242…` test card and lands back on Billing.
 3. Its subscription is the trial: the entry plan with 1 agent, 1 vCPU and 2 GB,
    ending in 7 days, and Stripe shows it as `trialing` with `hivra_trial=card_7d`.
@@ -355,17 +419,24 @@ test mode:
    checkout with no trial: the card is charged at once and the account becomes
    full Pro.
 
-It launches one computer and tries to clean up its disposable accounts and
-their resources even if the test fails. Unconfirmed cleanup fails the journey
-and reports the affected account and step. It keeps the account if agent,
-Stripe, or database cleanup cannot be confirmed; do not run the active reaper
-while live audits are paused.
+The fixture addresses go in `TRIAL_JOURNEY_FIRST_EMAIL` and
+`TRIAL_JOURNEY_REPEAT_EMAIL`. These must be dedicated standing billing
+fixtures, distinct from each other and from the shared Pro account, with no
+subscription, trial history or computers. If eligible fixtures aren't
+available, leave the journey blocked. Don't create accounts, strip an
+existing account's plan, or repurpose a tenant-isolation or operator fixture.
+
+The journey launches at most one computer. It verifies ownership before
+cleaning up run-created resources and test billing state, never the accounts.
+Unconfirmed cleanup fails the journey; don't rerun it until the previous
+run's resources are accounted for.
 
 It needs the card trial on Canary (`HIVRA_CARD_TRIAL=on` and its migration) and
-is opt-in: it runs only with `TRIAL_JOURNEY=1`, refuses production and refuses
-live Clerk or Stripe keys. Never retried, because a retry would start a second checkout.
+is opt-in: it runs only with `TRIAL_JOURNEY=1` against Canary, with a Stripe
+test key. It's never retried, because a retry would start another checkout.
 
 ```bash
-CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \
+HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp TRIAL_JOURNEY_FIRST_EMAIL=… TRIAL_JOURNEY_REPEAT_EMAIL=… \
+  LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… \
   TRIAL_JOURNEY_STRIPE_SECRET_KEY=sk_test_… npm run test:trial-journey
 ```

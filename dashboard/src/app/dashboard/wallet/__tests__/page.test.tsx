@@ -847,6 +847,88 @@ describe("WalletPage custody migration", () => {
     }
   });
 
+  it.each([
+    ["unconverted grandfathered", "hermesos", "$HermesOS", "HIVRA", "$HIVRA"],
+    ["converted grandfathered", "hivra", "$HIVRA", "HERMESOS", "$HermesOS"],
+  ])("shows the %s account's new quote asset alongside its existing lock", async (_, paymentToken, unit, lockedSymbol, lockedUnit) => {
+    const defaultFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      switch (requestUrl(input)) {
+        case "/api/billing/bankr/wallet":
+          return json({
+            success: true,
+            data: {
+              ...selfCustodyWallet.data,
+              custodyMode: "legacy_custody",
+              tokenLockWallet: { address: "0x000000000000000000000000000000000000beef" },
+            },
+          });
+        case "/api/billing/wallet/eligibility":
+          return json({
+            success: true,
+            data: {
+              ...eligibility.data,
+              tokenAccess: { grandfathered: true, paymentToken, newTiersAvailable: true },
+            },
+          });
+        case "/api/billing/wallet/quote":
+          return json({
+            success: true,
+            data: {
+              pro: { ...proQuote, tokenSymbol: lockedSymbol, expiresAt: "2099-01-01T00:00:00Z" },
+              power: null,
+            },
+          });
+        default:
+          return defaultFetch(input, init);
+      }
+    });
+
+    render(<WalletPage />);
+    const quotes = await screen.findByRole("region", { name: "Deposit quotes" });
+    expect(await within(quotes).findByText(/quote locked/i)).toBeVisible();
+    expect(quotes).toHaveTextContent(`Hold $599.00 worth of ${unit} to qualify for Power`);
+    expect(quotes).toHaveTextContent(`Lock today's ${unit} price`);
+    expect(quotes).toHaveTextContent(`100 ${lockedUnit}`);
+    expect(quotes).toHaveTextContent("$99.00 worth at");
+    expect(screen.getByLabelText("Tier eligibility")).toHaveTextContent(`100 ${lockedUnit}`);
+  });
+
+  it("does not label a pre-conversion live target as the converted quote asset", async () => {
+    const defaultFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input) === "/api/billing/wallet/eligibility") {
+        return json({
+          success: true,
+          data: {
+            ...eligibility.data,
+            tokenAccess: { grandfathered: true, paymentToken: "hivra", newTiersAvailable: true },
+            tiers: {
+              pro: {
+                ...eligibility.data.tiers.pro,
+                tokenKey: "hermesos",
+                currentThresholdDisplay: "100",
+              },
+              power: {
+                ...eligibility.data.tiers.power,
+                tokenKey: "hermesos",
+                currentThresholdDisplay: "200",
+              },
+            },
+          },
+        });
+      }
+      return defaultFetch(input, init);
+    });
+
+    render(<WalletPage />);
+    const panel = await screen.findByLabelText("Tier eligibility");
+    expect(panel).not.toHaveTextContent("100 $HIVRA");
+    expect(panel).not.toHaveTextContent("200 $HIVRA");
+    expect(panel).toHaveTextContent("Lock a Pro quote to see the amount of $HIVRA required.");
+    expect(panel).toHaveTextContent("Lock a Power quote to see the amount of $HIVRA required.");
+  });
+
   function renderLegacyCustodyOnTouch(snapshotWalletAddress: string | null) {
     const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {

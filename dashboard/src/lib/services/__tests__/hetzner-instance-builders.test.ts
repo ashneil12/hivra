@@ -896,7 +896,7 @@ describe("hetzner-instance-builders", () => {
     expect(updaterContent).toContain("Repair dashboard-managed toolchain env keys");
     expect(updaterContent).toContain("managed_env_keys='PATH GH_CONFIG_DIR XDG_CONFIG_HOME");
     expect(updaterContent).toContain("cp /state/.env /seed/hermes.env");
-    expect(updaterContent).toContain('printf "\\n%s\\n" "$managed_env_line" >> "$managed_env_tmp"');
+    expect(updaterContent).toContain('env_file_surgical_upsert "$managed_env_tmp" "$managed_env_key" "$managed_env_line"');
     // Atomic publish: the gateway reloads /state/.env every turn, so the repair
     // builds a temp on the same volume and renames it over — never edits in place —
     // and skips the write entirely when nothing changed.

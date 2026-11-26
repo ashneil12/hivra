@@ -55,12 +55,14 @@ import {
   WEBUI_HERMES_AGENT_DIR,
   WEBUI_HERMES_WRITE_SAFE_ROOTS,
   WEBUI_BANKR_RUNTIME_ENV_KEYS,
+  BUSYBOX_ENV_FILE_SURGICAL_SH,
   WEBUI_CLEARABLE_RUNTIME_ENV_KEYS,
   WEBUI_MANAGED_RUNTIME_ENV_KEYS,
   WEBUI_PERSISTENT_INSTALL_ENV_KEYS,
   WEBUI_PERSISTENT_INSTALL_ENV_LINES,
 } from "@/lib/services/webui-runtime-env";
 import { PROVIDER_ID_MAP, resolveProviderBaseUrl } from "@/lib/services/provider-config";
+import { serializeEnvAssignmentLine } from "@/lib/services/env-file-lines";
 import { ONBOARDING_RITUAL } from "@/lib/onboarding-ritual";
 import {
   isOperatorosAgentImage,
@@ -197,13 +199,6 @@ const BROWSER_SIDECAR_CANARY_IMAGE = BROWSER_SIDECAR_IMAGE;
 function env(key: string, fallback: string): string {
   const v = process.env[key];
   return v && v.trim() ? v : fallback;
-}
-
-// SEC-04: a CR/LF/NUL in a dashboard-provided value (API key, base URL, model,
-// bot name) must never smuggle an extra KEY=value line into a generated .env /
-// hermes.env file.
-function sanitizeEnvValue(val: string): string {
-  return String(val).replace(/[\r\n\0]/g, "");
 }
 
 // YAML double-quoted scalar. Byte-identical to `"${val}"` for ordinary values,
@@ -1095,7 +1090,14 @@ ${WEBUI_PERSISTENT_INSTALL_ENV_LINES.map((line) => `      - ${line}`).join("\n")
                   key = key.strip()
                   if not key_pattern.match(key):
                       continue
-                  env[key] = decode_quoted_env_value(value.strip())
+                  value = decode_quoted_env_value(value.strip())
+                  # Legacy files may predate the writer-side single-line contract.
+                  # Quoted escapes can decode to every delimiter Python splitlines()
+                  # recognizes, not just CR/LF; strip those bytes here too before the
+                  # value enters os.environ. Ordinary values are unaffected.
+                  for delimiter in (0, 10, 11, 12, 13, 28, 29, 30, 133, 8232, 8233):
+                      value = value.replace(chr(delimiter), "")
+                  env[key] = value
 
           base_home = Path(os.environ["HERMES_HOME"])
           runtime_profile_name = os.environ.get("HERMES_PROFILE_NAME", "default").strip() or "default"
@@ -2605,7 +2607,7 @@ export function buildWebUIComposeEnv(p: WebUIDeployParams): string {
   if (p.daytonaApiKey) lines.push(`DAYTONA_API_KEY=${p.daytonaApiKey}`);
   // SEC-04: sanitize every emitted line — interpolated values (provider, model,
   // bot name, keys, base URL) must not be able to inject extra env lines.
-  return lines.map(sanitizeEnvValue).join("\n") + "\n";
+  return lines.map(serializeEnvAssignmentLine).join("\n") + "\n";
 }
 
 // ── hermes-agent .env (lives inside the volume, scoped to the agent run) ─
@@ -2697,7 +2699,7 @@ export function buildHermesEnvFile(p: WebUIDeployParams): string {
       ...(p.tavilyApiKey ? [`TAVILY_API_KEY=${p.tavilyApiKey}`] : []),
       ...(p.firecrawlApiKey ? [`FIRECRAWL_API_KEY=${p.firecrawlApiKey}`] : []),
       ...(p.daytonaApiKey ? [`DAYTONA_API_KEY=${p.daytonaApiKey}`] : []),
-    ].map(sanitizeEnvValue).join("\n") + "\n";
+    ].map(serializeEnvAssignmentLine).join("\n") + "\n";
   }
 
   if (p.inferenceProvider === "openai-codex" || p.inferenceProvider === "xai-oauth") {
@@ -2717,7 +2719,7 @@ export function buildHermesEnvFile(p: WebUIDeployParams): string {
       ...(p.tavilyApiKey ? [`TAVILY_API_KEY=${p.tavilyApiKey}`] : []),
       ...(p.firecrawlApiKey ? [`FIRECRAWL_API_KEY=${p.firecrawlApiKey}`] : []),
       ...(p.daytonaApiKey ? [`DAYTONA_API_KEY=${p.daytonaApiKey}`] : []),
-    ].map(sanitizeEnvValue).join("\n") + "\n";
+    ].map(serializeEnvAssignmentLine).join("\n") + "\n";
   }
 
   // Determine the right env-var name for the API key based on provider.
@@ -2747,7 +2749,7 @@ export function buildHermesEnvFile(p: WebUIDeployParams): string {
   // SEC-04: sanitize every emitted line — interpolated values (provider, key,
   // base URL, bankr fields, gateway token) must not be able to inject extra
   // env lines into /state/.env.
-  return lines.map(sanitizeEnvValue).join("\n") + "\n";
+  return lines.map(serializeEnvAssignmentLine).join("\n") + "\n";
 }
 
 function buildBankrEnvLines(bankr?: InstanceBankrAgentConfig | null): string[] {
@@ -4005,32 +4007,16 @@ else
   cp /seed/hermes.env "$webui_env_tmp"
 fi
 managed_env_keys='${managedEnvKeys}'
+${BUSYBOX_ENV_FILE_SURGICAL_SH}
 sanitize_runtime_env_file() {
-  env_file="$1"
-  env_label="$2"
-  [ -f "$env_file" ] || return 0
-  sanitized_env_tmp="\${env_file}.sanitized.$$"
-  if ! awk -v label="$env_label" '
-    /^[[:space:]]*($|#)/ { print; next }
-    /^[A-Za-z_][A-Za-z0-9_]*=/ { print; next }
-    {
-      printf "[webui-update] invalid env key at line %d dropped from %s\\n", NR, label > "/dev/stderr"
-    }
-  ' "$env_file" > "$sanitized_env_tmp"; then
-    rm -f "$sanitized_env_tmp"
-    return 1
-  fi
-  mv -f "$sanitized_env_tmp" "$env_file"
+  [ -f "$1" ] || return 0
+  env_file_surgical_sanitize "$1" "$2"
 }
 echo "[webui-update] Repair dashboard-managed toolchain env keys in persisted WebUI state"
 for managed_env_key in $managed_env_keys; do
   managed_env_line="$(grep -m1 "^\${managed_env_key}=" /tmp/hermes-generated.env || true)"
   [ -n "$managed_env_line" ] || continue
-  if grep -q "^\${managed_env_key}=" "$webui_env_tmp"; then
-    sed -i "s|^\${managed_env_key}=.*|\${managed_env_line}|" "$webui_env_tmp"
-  else
-    printf "\\n%s\\n" "$managed_env_line" >> "$webui_env_tmp"
-  fi
+  env_file_surgical_upsert "$webui_env_tmp" "$managed_env_key" "$managed_env_line"
 done
 
 # The CLEAR half of the same contract. The upsert loop above skips keys absent
@@ -4048,7 +4034,7 @@ for clearable_env_key in $clearable_env_keys; do
   fi
   if grep -q "^\${clearable_env_key}=" "$webui_env_tmp"; then
     echo "[webui-update]   drop \${clearable_env_key} (cleared in dashboard)"
-    sed -i "/^\${clearable_env_key}=/d" "$webui_env_tmp"
+    env_file_surgical_delete "$webui_env_tmp" "$clearable_env_key" ""
   fi
 done
 
@@ -4060,7 +4046,7 @@ retired_env_keys='${retiredEnvKeys}'
 echo "[webui-update] Remove retired WebUI password-auth env keys from persisted state"
 for retired_env_key in $retired_env_keys; do
   if grep -q "^\${retired_env_key}=" "$webui_env_tmp"; then
-    sed -i "/^\${retired_env_key}=/d" "$webui_env_tmp"
+    env_file_surgical_delete "$webui_env_tmp" "$retired_env_key" ""
   fi
 done
 
@@ -4072,7 +4058,7 @@ canary_probe_env_keys='${canaryProbeEnvKeys}'
 echo "[webui-update] Remove leaked canary messaging probe credentials from persisted state"
 for canary_probe_env_key in $canary_probe_env_keys; do
   if grep -q "^\${canary_probe_env_key}=.*CANARY_SHAPE_PROBE" "$webui_env_tmp"; then
-    sed -i "/^\${canary_probe_env_key}=.*CANARY_SHAPE_PROBE/d" "$webui_env_tmp"
+    env_file_surgical_delete "$webui_env_tmp" "$canary_probe_env_key" "CANARY_SHAPE_PROBE"
   fi
 done
 
@@ -4089,7 +4075,7 @@ stale_model_pin_env_keys='${staleModelPinEnvKeys}'
 echo "[webui-update] Remove stale model-pin env keys from persisted state (config.yaml owns the model)"
 for stale_model_pin_env_key in $stale_model_pin_env_keys; do
   if grep -q "^\${stale_model_pin_env_key}=" "$webui_env_tmp"; then
-    sed -i "/^\${stale_model_pin_env_key}=/d" "$webui_env_tmp"
+    env_file_surgical_delete "$webui_env_tmp" "$stale_model_pin_env_key" ""
   fi
 done
 sanitize_runtime_env_file "$webui_env_tmp" "persisted WebUI state"
@@ -4115,15 +4101,14 @@ cp /state/.env /seed/hermes.env
 #     registers nothing, so the sidecar's password-login bridge can't mint the
 #     gated cookie and the whole /desktop cookie lane dies (chat, which rides the
 #     SPA token, keeps working -- which is why this hid for so long).
-#   - HERMES_WEBUI_DEFAULT_MODEL / _BOT_NAME / _FRAME_POLICY and the generated
-#     header.
+#   - HERMES_WEBUI_DEFAULT_MODEL / _BOT_NAME / _FRAME_POLICY.
 # This previously re-seeded only HERMES_DASHBOARD_URL + API_SERVER_KEY (needed by
 # the \`ru\` status callback in buildInstanceUpdateReporterShell, which reads them
 # from this file to report the update outcome; without them it silently no-ops
 # fleet-wide). Both are in the generated compose env with identical values, so
 # overlaying the whole file subsumes that special case rather than replacing it.
 #
-# Precedence: delete-then-append makes the GENERATED compose env authoritative
+# Precedence: surgical upserts make the GENERATED compose env authoritative
 # for every key it emits, while runtime-only keys preserved from /state/.env
 # (the WEBUI_PERSISTENT_INSTALL_ENV_LINES toolchain block, BANKR_*, ...) stay put
 # -- the gateway supervisor re-pins PINNED_INFRA_ENV_KEYS from this container env,
@@ -4134,16 +4119,15 @@ cp /state/.env /seed/hermes.env
 if [ -f /tmp/hermes-compose-generated.env ]; then
   echo "[webui-update] Re-seed dashboard-managed compose env keys into .env"
   sanitize_runtime_env_file /tmp/hermes-compose-generated.env "generated compose env"
-  while IFS= read -r compose_env_line; do
+  while IFS= read -r compose_env_line || [ -n "$compose_env_line" ]; do
     case "$compose_env_line" in
       ''|\\#*) continue ;;
       *=*) ;;
       *) continue ;;
     esac
     compose_env_key="\${compose_env_line%%=*}"
-    sed -i "/^\${compose_env_key}=/d" /seed/.env
+    env_file_surgical_upsert /seed/.env "$compose_env_key" "$compose_env_line"
   done < /tmp/hermes-compose-generated.env
-  cat /tmp/hermes-compose-generated.env >> /seed/.env
 fi
 chmod 600 /state/.env /seed/.env /seed/hermes.env
 rm -f /tmp/hermes-generated.env /tmp/hermes-compose-generated.env /state/models_dev_cache.json /state/webui/models_cache.json

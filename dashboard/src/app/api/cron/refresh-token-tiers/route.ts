@@ -8,18 +8,10 @@
  *      Every account with Pro/Power, Venice boost or lock-wallet standing is
  *      read on every run, first; plain verified wallets get the capacity left,
  *      least recently read first.
- *   2. For each user, derives the new tier from the strongest entitlement,
- *      in resolveEffectiveSubscription's order:
- *        - active Stripe sub → skip (handleSubscriptionChange owns this)
- *        - Apple IAP sub in an access status (active/trialing/grace_period) → its plan
- *        - live yearly $HermesOS Power / Pro subscription → "fleet" / "operator"
- *        - currently_eligible token Power qualification → "fleet"
- *        - currently_eligible token Pro qualification   → "operator"
- *        - anything else                                → "credit_base"
- *      Holding a token below the Pro threshold gives no compute tier: the
- *      1-token Starter tier (token_base) was removed, hosted computers are
- *      paid only. A Pro/Power qualification keeps its tier through its
- *      breach grace (REQUALIFICATION_GRACE_HOURS), as the lapse check does.
+ *   2. For each funding cohort, derive its compute tier. Account-funded
+ *      seats use Stripe, Apple, then yearly access. Holder seats use the
+ *      lower of the admission and countable Pro/Power qualification (including
+ *      breach grace). Seats without their funding source fall to credit_base.
  *   3. Calls applyTierChange() to push the new tier through the same path
  *      Stripe webhooks use (DB write + live Proxmox resize).
  *
@@ -37,6 +29,7 @@
  */
 
 import { NextRequest } from "next/server";
+import { proxmoxPlacementPolicy } from "@/lib/proxmox/placement-policy";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { hasPlanAccessStatus } from "@/lib/billing/subscription-status";
@@ -46,6 +39,7 @@ import { refreshVerifiedHermesTokenHoldings } from "@/lib/billing/token-holdings
 import { resolveTokenAccessForUsers, tierRowTokenCounts } from "@/lib/billing/token-access";
 import type { PlatformTokenKey } from "@/lib/billing/token-registry";
 import { REQUALIFICATION_GRACE_HOURS } from "@/lib/billing/tier-thresholds";
+import { normalizeProxmoxTargetId, resolveProxmoxTargetConfiguration, resolveProxmoxVmDiskGb } from "@/lib/services/proxmox-instance-service";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 import {
   resolveTierSpec,
@@ -107,16 +101,25 @@ const USER_ID_CHUNK = 100;
 
 type ScanResult<T> = { rows: T[]; error: string | null };
 
+interface SweepInstance {
+  id: string;
+  user_id: string;
+  resource_tier: string | null;
+  cpu_limit: number | null;
+  ram_limit: number | null;
+  seat_funding: string | null;
+}
+
 /** Every live instance, keyset-paged by id (one row per instance). */
 async function listLiveInstanceOwners(
   db: NonNullable<typeof supabaseAdmin>,
-): Promise<ScanResult<{ user_id: string; resource_tier: string | null; cpu_limit: number | null; ram_limit: number | null }>> {
-  const rows: Array<{ id: string; user_id: string; resource_tier: string | null; cpu_limit: number | null; ram_limit: number | null }> = [];
+): Promise<ScanResult<SweepInstance>> {
+  const rows: SweepInstance[] = [];
   let cursor: string | null = null;
   for (;;) {
     let query = db
       .from("hermes_instances")
-      .select("id, user_id, resource_tier, cpu_limit, ram_limit")
+      .select("id, user_id, resource_tier, cpu_limit, ram_limit, seat_funding")
       .not("status", "in", '("deleted","scheduled_for_deletion")');
     if (cursor) {
       query = query.gt("id", cursor);
@@ -150,6 +153,31 @@ async function scanByUserIds<T>(
   return { rows, error: null };
 }
 
+/** The exact declared rotation placement uses; null means the registry is unrestricted. */
+function declaredProxmoxTargetIds(env: NodeJS.ProcessEnv = process.env): string[] | null {
+  const declared = env.HERMES_PROXMOX_TARGETS?.trim() || env.PROXMOX_TARGETS?.trim() || "";
+  const ids = [...new Set(
+    declared
+      .split(/[,\s]+/)
+      .map((id) => normalizeProxmoxTargetId(id))
+      .filter((id): id is string => Boolean(id)),
+  )];
+  return ids.length > 0 ? ids : null;
+}
+
+
+// Pass only capacity settings to SQL. Undeclared rotations still honor
+// per-host disk overrides for registry hosts, using placement's precedence.
+function placementDiskSizes(env: NodeJS.ProcessEnv): Record<string, number> {
+  const sizes: Record<string, number> = { defaultDiskGb: resolveProxmoxVmDiskGb(env) };
+  for (const key of Object.keys(env)) {
+    const match = /^(?:PROXMOX_HOST_(.+)|PROXMOX_(.+)|(.+)_PROXMOX)_VM_DISK_GB$/.exec(key);
+    const id = normalizeProxmoxTargetId(match?.[1] ?? match?.[2] ?? match?.[3]);
+    if (id) sizes[id] = resolveProxmoxVmDiskGb(resolveProxmoxTargetConfiguration(env, id).env);
+  }
+  return sizes;
+}
+
 async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   // 1. Refresh balances on this cron's lane (writes to token_holding_snapshots):
   //    every account with standing, then plain verified wallets with the
@@ -161,6 +189,44 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     fetchImpl: globalThis.fetch,
     timeBudgetMs: REFRESH_TIME_BUDGET_MS,
   });
+
+  // Advance holder admissions on this existing periodic qualification lane.
+  // The RPC is one serialized database transaction: it materializes newly
+  // qualified users as waitlisted, reads the qualifications persisted by the holdings evaluator, and admits only seats that fit both the global holder
+  // ceiling and a single placement-eligible host. A transient failure is
+  // reported and left for the next tick; it must not stop tier maintenance for
+  // users who already have seats.
+  let holderAdmission: unknown = null;
+  let holderAdmissionError: string | null = null;
+  try {
+    const advancement = await db.rpc("advance_holder_admissions", {
+      p_target_host_ids: declaredProxmoxTargetIds(),
+      p_cpu_overcommit_ratio: proxmoxPlacementPolicy(process.env).cpuOvercommitRatio,
+      p_skip_sleep: proxmoxPlacementPolicy(process.env).skipDeepSleep,
+      p_disk_sizes: placementDiskSizes(process.env),
+    });
+    if (advancement.error) {
+      holderAdmissionError = advancement.error.message;
+    } else {
+      holderAdmission = advancement.data;
+    }
+  } catch (error) {
+    holderAdmissionError = error instanceof Error ? error.message : String(error);
+  }
+  if (holderAdmissionError) {
+    await reportOpsEvent({
+      source: "cron.refresh-token-tiers",
+      severity: "warn",
+      title: "holder admission advancement failed",
+      message:
+        "The periodic holder admission advancement RPC failed. Qualified waiters remain waitlisted and existing admitted holders are unchanged; the next cron tick retries the same idempotent transaction.",
+      route: "/api/cron/refresh-token-tiers",
+      metadata: {
+        failureType: "holder_admission_advance_failed",
+        error: holderAdmissionError.slice(0, 500),
+      },
+    });
+  }
 
   // 2. For each user, decide the new tier from the strongest entitlement
   //    (see the header); with none, credit_base.
@@ -180,20 +246,15 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   const instScan = await listLiveInstanceOwners(db);
   if (instScan.error) return apiError(`User scan failed: ${instScan.error}`, 500);
 
-  // De-dup users; keep the first-seen resource_tier + caps per user (rows in
-  // hermes_instances usually agree since `applyTierChange` updates all of a
-  // user's instances together). The stored caps let us detect a boost-only
-  // change — base tier unchanged but +1 vCPU / +2 GB gained or lost — which
-  // the old `desiredTier === currentTier` skip would have silently dropped.
-  const userIds: string[] = [];
-  const tierByUser = new Map<string, string>();
-  const specByUser = new Map<string, { cpu: number | null; ram: number | null }>();
-  for (const r of instScan.rows) {
-    if (tierByUser.has(r.user_id)) continue;
-    tierByUser.set(r.user_id, r.resource_tier || "credit_base");
-    specByUser.set(r.user_id, { cpu: r.cpu_limit, ram: r.ram_limit });
-    userIds.push(r.user_id);
+  // A paid and a holder-funded seat can have different tiers for one owner.
+  const cohorts = new Map<string, SweepInstance[]>();
+  for (const row of instScan.rows) {
+    const key = JSON.stringify([row.user_id, row.seat_funding === "holder"]);
+    const rows = cohorts.get(key);
+    if (rows) rows.push(row);
+    else cohorts.set(key, [row]);
   }
+  const userIds = [...new Set(instScan.rows.map((row) => row.user_id))];
 
   // (b) Token access per user: before $HIVRA is active everyone is
   //     $HermesOS-only and this reads nothing. After, it decides which tokens'
@@ -210,16 +271,8 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     subByUser.set(s.user_id, { status: s.status, plan: s.plan });
   }
 
-  // (d) Pro/Power token-tier qualifications. A user holding enough $HERMES
-  //     to qualify for the Pro or Power token tier is entitled to operator
-  //     or fleet compute respectively — same as if they paid for it on
-  //     Stripe (see resolveEffectiveSubscription). Without this, the cron
-  //     below downgrades them to credit_base every run, silently capping
-  //     paid-equivalent users at 0.5 vCPU / 1 GB.
-  //     A row still inside its requalification grace counts too: the
-  //     evaluator sets currently_eligible = false at the breach, but the
-  //     breach email promises the tier until the grace ends, and the lapse
-  //     check (hasTokenTierInGrace) keeps the computer running that long.
+  // Count qualifications including breach grace. A qualification and a
+  // reservation are both required before a holder seat can gain compute.
   const qualByUser = new Map<string, "operator" | "fleet">();
   const graceStart = new Date(
     Date.now() - REQUALIFICATION_GRACE_HOURS * 60 * 60 * 1000
@@ -246,6 +299,28 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     // Power outranks Pro when both are present.
     if (existing === "fleet") continue;
     qualByUser.set(q.user_id, mapped);
+  }
+
+  // (d2) Durable holder admissions. Qualification only joins the FIFO queue;
+  // it never upgrades an existing seat by itself. Use the admission row's
+  // reconciled tier (not the live qualification maximum) so a Pro admission
+  // cannot become Power merely because a larger paid plan or qualification
+  // exists elsewhere in the account.
+  const admissionByUser = new Map<string, "pro" | "power">();
+  const admissionScan = await scanByUserIds<{
+    user_id: string;
+    state: string;
+    tier: "pro" | "power";
+  }>(userIds, (chunk) =>
+    db
+      .from("holder_admissions")
+      .select("user_id, state, tier")
+      .in("user_id", chunk)
+      .eq("state", "admitted"),
+  );
+  if (admissionScan.error) return apiError(`Holder admission scan failed: ${admissionScan.error}`, 500);
+  for (const row of admissionScan.rows) {
+    if (row.state === "admitted") admissionByUser.set(row.user_id, row.tier);
   }
 
   // (e) Apple IAP subscriptions. The App Store lane keeps its own table and
@@ -309,11 +384,17 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
   const tierChanges: Array<{ userId: string; from: string; to: string }> = [];
   const tierFailures: Array<{ userId: string; error: string }> = [];
 
-  for (const userId of userIds) {
+  for (const rows of cohorts.values()) {
+    const { user_id: userId, seat_funding: funding } = rows[0];
+    const holder = funding === "holder";
     const sub = subByUser.get(userId);
-    const currentTier = tierByUser.get(userId) ?? "credit_base";
-    const currentSpec = specByUser.get(userId);
     const qual = qualByUser.get(userId);
+    const admissionTier = admissionByUser.get(userId);
+    const admittedQual = qual && admissionTier
+      ? admissionTier === "power" && qual === "fleet"
+        ? "fleet"
+        : "operator"
+      : null;
     const applePlan = applePlanByUser.get(userId);
     const yearly = yearlyByUser.get(userId);
     const boost = boostByUser.has(userId);
@@ -335,35 +416,31 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
       sub.plan !== "free" &&
       hasPlanAccessStatus(sub.status);
 
-    // Pro/Power token qualification is the strongest token signal — it means
-    // the user holds enough $HERMES to be entitled to a paid-tier compute
-    // pool. qualByUser already includes a row inside its breach grace, so
-    // nothing here needs extra grace handling.
     let desiredTier: TierKey;
     let reason: string;
 
-    if (paidStripe) {
+    if (!holder && paidStripe) {
       desiredTier = tierFromPlanKey(sub!.plan);
       reason = `cron: stripe plan ${sub!.plan} (boost re-apply)`;
-    } else if (applePlan) {
+    } else if (!holder && applePlan) {
       desiredTier = tierFromPlanKey(applePlan);
       reason = `cron: apple iap plan ${applePlan}`;
-    } else if (yearly) {
+    } else if (!holder && yearly) {
       // Yearly sits after paid Stripe and Apple and before token holdings,
       // exactly as in resolveEffectiveSubscription. Its own 'grace' status
       // covers the days after expires_at, so no snapshot grace applies here.
       desiredTier = tierFromPlanKey(yearlyTierPlanKey(yearly.tier));
       reason = `cron: yearly $HermesOS ${yearly.tier} subscription`;
-    } else if (qual) {
-      desiredTier = qual;
-      reason = `cron: token-tier qualification ${qual === "fleet" ? "power" : "pro"}`;
+    } else if (holder && admittedQual) {
+      desiredTier = admittedQual;
+      reason = `cron: admitted token-tier qualification ${admittedQual === "fleet" ? "power" : "pro"}`;
     } else {
       desiredTier = "credit_base";
       reason = "cron: no paid plan or token-tier qualification";
     }
 
     // Boost only stacks on paid tiers.
-    const boostActive = boost && isPaidTier(desiredTier);
+    const boostActive = !holder && boost && isPaidTier(desiredTier);
 
     // Change detection. Re-apply when the base tier changed (original
     // behaviour) OR when the Venice boost specifically needs toggling.
@@ -375,24 +452,21 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     // lets users distribute capacity below tier max — we must not clobber it).
     const baseSpec = resolveTierSpec(desiredTier);
     const boostedSpec = applyComputeBoost(baseSpec, true);
-    const atBase =
-      currentSpec?.cpu === baseSpec.cpuLimit &&
-      currentSpec?.ram === baseSpec.ramLimitMb;
-    const atBoosted =
-      currentSpec?.cpu === boostedSpec.cpuLimit &&
-      currentSpec?.ram === boostedSpec.ramLimitMb;
-    // Need to ADD the boost (eligible + currently at base) or REMOVE it
-    // (ineligible + currently at boosted).
-    const boostNeedsToggle = boostActive ? atBase : atBoosted;
-    const tierChanged = desiredTier !== currentTier;
-
-    if (!tierChanged && !boostNeedsToggle) continue;
+    const changed = rows.find((row) => {
+      const atBase = row.cpu_limit === baseSpec.cpuLimit && row.ram_limit === baseSpec.ramLimitMb;
+      const atBoosted = row.cpu_limit === boostedSpec.cpuLimit && row.ram_limit === boostedSpec.ramLimitMb;
+      if (holder && ((row.cpu_limit ?? 0) > baseSpec.cpuLimit || (row.ram_limit ?? 0) > baseSpec.ramLimitMb)) return true;
+      return (row.resource_tier ?? "credit_base") !== desiredTier || (boostActive ? atBase : atBoosted);
+    });
+    if (!changed) continue;
+    const currentTier = changed.resource_tier ?? "credit_base";
 
     try {
       await applyTierChange({
         userId,
         newTier: desiredTier,
         source: "token_snapshot",
+        holderSeats: holder,
         veniceBoost: boostActive,
         reason,
       });
@@ -441,6 +515,8 @@ async function runRefreshTokenTiersCron(db: NonNullable<typeof supabaseAdmin>) {
     tier_changes: tierChanges.length,
     tier_change_details: tierChanges.slice(0, 50),
     tier_change_failures: tierFailures,
+    holder_admission: holderAdmission,
+    holder_admission_error: holderAdmissionError,
   });
 }
 

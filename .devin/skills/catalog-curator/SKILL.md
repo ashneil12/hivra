@@ -21,6 +21,7 @@ app pass. If the verifier is wrong, stop and write that down in the pass notes
 ## Hard limits
 
 Change only these paths:
+- `dashboard/catalog-curation/candidates.jsonl` (the curation ledger)
 - `dashboard/src/lib/hivra/catalog-manifests/manifests/*.ts` (category files; add entries, do not edit or remove someone else's entry except to remove one you added this pass)
 - `apps/shared/native-contract/route-grammar.v1.json` (the two value-set cases per app: `profile=<slug>&stage=choose` and `infrastructure?launch=<slug>`, next to the other catalog slugs)
 - `dashboard/catalog-curation/evidence/*.json` (written by the verifier only)
@@ -58,6 +59,15 @@ Slugs follow `^[a-z][a-z0-9-]{1,38}[a-z0-9]$`.
 
 ## 2. Triage fast, before writing anything
 
+Before choosing new work, reconsider ledger rows marked `compose-needed` from
+before `docker-stack` existed. If the recorded reason is now expressible within
+the schema (at most 6 long-running services, generated secrets where needed,
+no host integration or one-shot init container), change that row back to
+`pending` with reason `retry as docker-stack` and triage it in preference to
+brand-new candidates. Keep rows rejected when the reason also names a hard
+runtime limitation (docker.sock, privileged mode, host networking, forbidden
+mount, too many services, unsupported secret format or one-shot setup).
+
 Work through pending candidates until 5 are accepted, 25 have been triaged,
 or 90 minutes have passed, whichever comes first. Do not just go by stars:
 big platforms usually need a database. Try first the ones whose docs show a
@@ -69,9 +79,17 @@ status and a one-line reason:
   CLI, needs docker.sock, privileged mode, host networking or a GPU, or keeps
   its only state under a forbidden mount path (/etc, /usr, /var/run and the
   rest in schema.ts).
-- `compose-needed`: needs Postgres, MySQL, Redis, Mongo or a second container.
-- `needs-secret`: refuses to boot without a secret key we would have to invent.
-- `needs-public-url`: needs its public URL or hostname in env to work.
+- `rejected`: needs more than 6 services, a one-shot init container, raw
+  compose YAML, a host volume, or service ordering that the rendered
+  `docker-stack` runtime cannot express. Postgres, MySQL/MariaDB, Redis,
+  Mongo or a second container by itself is **not** a rejection: model it as
+  `docker-stack` when it fits the schema.
+- `needs-secret`: refuses to boot without a secret whose required format the
+  catalog's generated URL-safe secrets cannot satisfy. A normal random admin
+  password, database password, session key or shared secret is **not** a
+  rejection: declare it in `generatedSecrets` and reference it as `${NAME}`.
+- `needs-public-url`: needs its public URL or hostname in a form other than
+  `${HIVRA_PUBLIC_ORIGIN}` or `${HIVRA_PUBLIC_HOST}`.
 - `pending` with reason `rate-limited`: Docker Hub returned 429. Stop pulling
   for the rest of the pass.
 
@@ -97,6 +115,15 @@ Copy the shape of a similar existing entry in the right category file. Rules:
 - CLI agents (`cli-web`): verify every flag in `--help` output from a local
   install before using it. Use `modelEnv`, `managedVenice: true` and `llm` the
   way `zeroclaw` and `aider` do.
+- Multi-container apps (`docker-stack`): copy the shape of `miniflux`,
+  `docmost`, `umami` or `immich`. Render the database/cache as services in
+  dependency order, use a pinned non-latest tag for every non-web service,
+  connect them by service name on the internal network, put each service's
+  state on named volumes, and make only `runtime.web` the customer-facing
+  service. Use generated secrets for passwords and never paste upstream
+  example secrets. If upstream needs its public origin, use
+  `${HIVRA_PUBLIC_ORIGIN}` or `${HIVRA_PUBLIC_HOST}` exactly once in the right
+  env value. Do not copy upstream compose YAML; express it in the schema.
 - Copy: plain, factual, no em or en dashes, no claims you did not verify. Do
   not imply a web UI when the root is a JSON API. `metaDescription` ends with
   "From $9.99/mo." like the others.

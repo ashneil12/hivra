@@ -52,6 +52,13 @@ describe("universal catalog manifests", () => {
     }
   });
 
+  it("keeps the STATUS.md catalog count in sync with the registry", () => {
+    const status = readFileSync(resolve(__dirname, "../../../../../docs/STATUS.md"), "utf8");
+    const match = /catalog now holds (\d+) entries/.exec(status);
+    expect(match).not.toBeNull();
+    expect(Number(match![1])).toBe(UNIVERSAL_CATALOG_MANIFESTS.length);
+  });
+
   it("covers all four Wave 1 categories with OSI-approved open-source licenses only", () => {
     const categories = new Set(UNIVERSAL_CATALOG_MANIFESTS.map((m) => m.category));
     expect(categories).toEqual(new Set(["agent", "app"]));
@@ -183,6 +190,25 @@ describe("universal catalog manifests", () => {
     expect(zeroclaw.runtime.setup?.commands.join("\n")).toContain("agents create hivra");
     expect(zeroclaw.runtime.setup?.commands.join("\n")).toContain("agents.hivra.model_provider");
     expect(zeroclaw.runtime.setup?.commands.join("\n")).toContain("$OPENAI_API_KEY");
+  });
+
+  it("pins PicoClaw's launcher to the gateway port without opening a guest browser", () => {
+    const picoclaw = getCatalogAppManifest("picoclaw");
+    expect(picoclaw?.runtime.kind).toBe("cli-web");
+    if (picoclaw?.runtime.kind !== "cli-web" || !picoclaw.runtime.webService) return;
+    expect(picoclaw.runtime.webService.binName).toBe("picoclaw-launcher");
+    expect(picoclaw.runtime.webService.args).toEqual([
+      "-no-browser",
+      "-host",
+      "127.0.0.1",
+      "-port",
+      "3202",
+    ]);
+    expect(picoclaw.runtime.webService.hostPort).toBe(3202);
+    expect(picoclaw.runtime.setup?.commands).toEqual([
+      'if [ ! -f "$HOME/.picoclaw/config.json" ]; then picoclaw onboard; fi',
+      'if [ -n "$OPENAI_API_KEY" ] && [ -n "$OPENAI_BASE_URL" ] && [ -n "$OPENAI_MODEL" ]; then picoclaw model add --api-base "$OPENAI_BASE_URL" --api-key "$OPENAI_API_KEY" --model "$OPENAI_MODEL" --name hivra; fi',
+    ]);
   });
 
   it("pins Sun-Panel to its last open-source release and mounts all three persistence paths", () => {

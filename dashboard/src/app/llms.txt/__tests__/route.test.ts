@@ -6,16 +6,18 @@ import { SITE_DESCRIPTION } from "@/lib/brand-description";
 import { SITE_URL } from "@/lib/seo-urls";
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 
+const request = new Request("http://localhost/llms.txt");
+
 // Exercises the live /llms.txt route end-to-end against the shipped link map.
 describe("GET /llms.txt", () => {
   it("returns 200 with a text/plain content-type", async () => {
-    const res = await GET();
+    const res = await GET(request);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
   });
 
   it("is a well-formed llms.txt: H1 product line, blurb, and Markdown link sections", async () => {
-    const body = await (await GET()).text();
+    const body = await (await GET(request)).text();
 
     // H1 product line first.
     expect(body.startsWith("# Hivra\n")).toBe(true);
@@ -31,7 +33,7 @@ describe("GET /llms.txt", () => {
   });
 
   it("links every curated public page as an absolute SITE_URL-based URL — no auth/api/404 links", async () => {
-    const body = await (await GET()).text();
+    const body = await (await GET(request)).text();
 
     const expectedUrls = [
       SITE_URL, // home
@@ -78,7 +80,7 @@ describe("GET /llms.txt", () => {
     const dashboardRoot = path.join(__dirname, "..", "..", "..", "..");
     const appRoot = path.join(dashboardRoot, "src", "app");
     const exists = (file: string) => fs.existsSync(file);
-    const body = await (await GET()).text();
+    const body = await (await GET(request)).text();
     const sitePaths = [...body.matchAll(/\]\(([^)\s]+)\)/g)]
       .map(match => match[1])
       .filter(url => url === SITE_URL || url.startsWith(`${SITE_URL}/`))
@@ -100,6 +102,6 @@ describe("GET /llms.txt", () => {
 
   it("advertises a public, cacheable response while no country is listed", async () => {
     // jest.setup.tsx gives this suite the empty country list, so the body is the same for everyone.
-    expect((await GET()).headers.get("cache-control")).toContain("s-maxage=3600");
+    expect((await GET(request)).headers.get("cache-control")).toContain("s-maxage=3600");
   });
 });

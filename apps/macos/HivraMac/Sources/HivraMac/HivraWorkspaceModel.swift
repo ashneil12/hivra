@@ -39,13 +39,22 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
     private var lastConnectionURL: URL?
     private var hasExplicitSelection = false
     private let services: HivraBrowserServices
+    private let inventoryRefreshInterval: TimeInterval
+    private var inventoryRefreshTask: Task<Void, Never>?
+    private var lastInventoryRefreshAt = Date.distantPast
 
-    init(profile: HivraConnectionProfile, services: HivraBrowserServices = .live) {
+    init(profile: HivraConnectionProfile, services: HivraBrowserServices = .live, inventoryRefreshInterval: TimeInterval = 30) {
         self.profile = profile
         self.services = services
+        self.inventoryRefreshInterval = inventoryRefreshInterval
         id = profile.id
         connectionBrowser = HivraBrowserModel(initialURL: profile.url, role: .connection(profile), services: services)
         observeConnection()
+        startInventoryRefreshTimer()
+    }
+
+    deinit {
+        inventoryRefreshTask?.cancel()
     }
 
     var resources: [HivraWorkspaceResource] { snapshot?.resources ?? [] }
@@ -140,7 +149,31 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
 
     func closeCurrentTab() { if let activeTab { close(activeTab) } }
 
-    func refresh() { connectionBrowser.refreshWorkspace() }
+    func refresh() {
+        lastInventoryRefreshAt = Date()
+        connectionBrowser.refreshWorkspace()
+    }
+
+    /// The native shell is the inventory's reader, not the page currently visible
+    /// inside it. Keep that inventory moving while the app stays open so a change
+    /// made in another browser does not remain truth here indefinitely.
+    private func startInventoryRefreshTimer() {
+        guard inventoryRefreshInterval > 0 else { return }
+        let interval = inventoryRefreshInterval
+        inventoryRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(max(1, Int(interval * 1000))))
+                guard !Task.isCancelled else { return }
+                self?.refreshInventoryIfDue()
+            }
+        }
+    }
+
+    private func refreshInventoryIfDue() {
+        guard snapshot?.ownerKey != nil,
+              Date().timeIntervalSince(lastInventoryRefreshAt) >= 15 else { return }
+        refresh()
+    }
 
     func clearOwnedViews() {
         let windows = detachedWindows.values
@@ -302,6 +335,11 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
             let wasSelected = selectedTabID == tab.id
             close(tab)
             if wasSelected { showDashboard(path) }
+            // The resource may have left because its page observed a delete or
+            // another account change. Its web view has its own inventory copy,
+            // so force the connection copy to catch up rather than reuse the
+            // fresh-but-stale list that still names this resource.
+            connectionBrowser.refreshWorkspace()
         case .unchanged:
             if tab.pendingResourceUID != nil { objectWillChange.send(); tab.pendingResourceUID = nil }
         }

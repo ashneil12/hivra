@@ -727,7 +727,7 @@ export default function InstanceDetailPage() {
   const inactivityWakeFiredRef = useRef<string | null>(null);
   useEffect(() => {
     if (!instance) return;
-    if (instance.paused_reason !== "inactivity") return;
+    if (instance.paused_reason !== "inactivity" && instance.paused_reason !== "holder_idle") return;
     if (instance.status !== "stopped") return;
     if (inactivityWakeFiredRef.current === instance.id) return;
     if (actionLoading) return;

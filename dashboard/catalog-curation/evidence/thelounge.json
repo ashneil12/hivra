@@ -1,0 +1,113 @@
+{
+  "slug": "thelounge",
+  "checkedAt": "2026-11-25T13:15:39.754Z",
+  "gitSha": "9ec3ad75bbb32c61ce21eb4dee7b648b4c48072f",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "thelounge/thelounge is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "thelounge/thelounge",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/thelounge/thelounge:4 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/thelounge/thelounge:4",
+        "digest": "sha256:5c3776545c24c8e04ce9520d8aab7320209043aad246ac710dc3339bfda4c772",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 3.5s",
+      "evidence": {
+        "container": "hivra-verify-thelounge-votjjf",
+        "hostPort": 3304,
+        "image": "ghcr.io/thelounge/thelounge:4",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-thelounge-votjjf",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3304:9000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-thelounge-votjjf-data:/var/opt/thelounge",
+          "ghcr.io/thelounge/thelounge:4"
+        ],
+        "runStdout": "cb4cbaf04512e3caead8cfab2141cd994cc7ccd69353cd5e6b88c7a5529fc4d0",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 3.5,
+          "attempts": 2
+        },
+        "memUsage": "45.75MiB / 7.652GiB",
+        "memBytes": 47972352
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 52135,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n\t<head>\n\t\t<meta charset=\"utf-8\" />\n\t\t<meta\n\t\t\tname=\"viewport\"\n\t\t\tcontent=\"width=device-width, user-scalable=no, interactive-widget=resizes-content\"\n\t\t/>\n\t\t<link rel=\"preload\" as=\"script\" href=\"js/loading-error-handlers-56220324.js\" />\n\n\t\t<title>The Lounge</title>\n\n\t\t<!-- Browser tab icon -->\n\t\t<link\n\t\t\tid=\"favicon\"\n\t\t\trel=\"icon\"\n\t\t\tsizes=\"16x16 32x32 64x64\"\n\t\t\thref",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot POST /login</pre>\n</body>\n</html>\n"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 45.8MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 47972352,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

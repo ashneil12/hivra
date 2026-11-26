@@ -34,6 +34,7 @@ jest.mock("@/lib/hivra/sleep-aware", () => ({ wakeForUserAction: (...args: unkno
 import { deleteProxmoxHivraAgent, verifiedDestroyHivraVmScript } from "../delete-hivra-agent";
 
 const OPERATION = "11111111-1111-4111-8111-111111111111";
+const OTHER_OPERATION = "22222222-2222-4222-8222-222222222222";
 const BINDING = `hivra-bind-${"a".repeat(32)}`;
 const OP_TAG = `hivra-op-${OPERATION.replace(/-/g, "")}`;
 
@@ -51,23 +52,31 @@ case "$1" in
 esac
 `;
 
-function runDestroy(lock: string) {
+function runDestroy(lock: string, options: { matching?: boolean; remainingDisk?: boolean } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "delete-sleep-"));
   try {
     mkdirSync(path.join(root, "bin"));
     writeFileSync(path.join(root, "bin/qm"), stubQm);
     for (const name of ["flock", "sleep"]) writeFileSync(path.join(root, "bin", name), "#!/bin/sh\nexit 0\n");
-    writeFileSync(path.join(root, "bin/pvesm"), "#!/bin/sh\nexit 0\n");
-    for (const name of ["qm", "flock", "sleep", "pvesm"]) chmodSync(path.join(root, "bin", name), 0o755);
+    writeFileSync(path.join(root, "bin/pvesm"), options.remainingDisk ? "#!/bin/sh\necho vm-123-disk-0\n" : "#!/bin/sh\nexit 0\n");
+    writeFileSync(path.join(root, "bin/stat"), "#!/bin/sh\necho 600:0:0\n");
+    for (const name of ["qm", "flock", "sleep", "pvesm", "stat"]) chmodSync(path.join(root, "bin", name), 0o755);
     writeFileSync(path.join(root, "exists"), "");
     writeFileSync(path.join(root, "status"), lock ? "stopped" : "running");
     writeFileSync(path.join(root, "lock"), lock);
     writeFileSync(path.join(root, "calls"), "");
+    const intents = path.join(root, "operations");
+    mkdirSync(intents);
+    const intent = path.join(intents, `operation-${OPERATION}.selected`);
+    const otherIntent = path.join(intents, `operation-${OTHER_OPERATION}.selected`);
+    writeFileSync(intent, `operation_id=${OPERATION}\nvmid=${options.matching === false ? 124 : 123}\nip=10.251.20.50\nbinding_tag=${BINDING}\nbinding_enforced=1\n`);
+    writeFileSync(otherIntent, "unrelated reservation\n");
     const script = verifiedDestroyHivraVmScript({
       vmid: 123, storage: "local-lvm", expectedAllocationOperationId: OPERATION,
       expectedInfrastructureBindingTag: BINDING, allowManagedLegacyAuthority: false, cleanupPaths: [path.join(root, "log")],
     }).replaceAll("/run/lock", path.join(root, "lock-dir")).replaceAll("/run/hivra-provision", path.join(root, "prov"))
-      .replaceAll("/var/lib/hivra/provision-results", path.join(root, "results"));
+      .replaceAll("/var/lib/hivra/provision-results", path.join(root, "results"))
+      .replaceAll("/var/lib/hivra/provision-operations", intents);
     const result = spawnSync("bash", [], {
       input: script, encoding: "utf8",
       env: { ...process.env, ROOT: root, PATH: `${path.join(root, "bin")}:${process.env.PATH}` },
@@ -76,6 +85,8 @@ function runDestroy(lock: string) {
       code: result.status, stdout: result.stdout, stderr: result.stderr,
       calls: readFileSync(path.join(root, "calls"), "utf8").split("\n").filter(Boolean),
       stillThere: existsSync(path.join(root, "exists")),
+      intentPresent: existsSync(intent),
+      otherIntentPresent: existsSync(otherIntent),
     };
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
@@ -97,6 +108,15 @@ describe("destroy script and a hibernated computer", () => {
     expect(result.code).toBe(0);
     expect(result.stillThere).toBe(false);
     expect(result.calls.some((call) => call.includes("--skiplock"))).toBe(false);
+  });
+
+  it("clears the original allocation reservation after verified deletion without touching another reservation", () => {
+    expect(runDestroy("")).toMatchObject({ code: 0, stillThere: false, intentPresent: false, otherIntentPresent: true });
+  });
+
+  it("keeps the reservation if volumes remain or its identity does not match the deleted allocation", () => {
+    expect(runDestroy("", { remainingDisk: true })).toMatchObject({ code: 1, intentPresent: true, otherIntentPresent: true });
+    expect(runDestroy("", { matching: false })).toMatchObject({ code: 1, intentPresent: true, otherIntentPresent: true });
   });
 
   it("keeps the ownership check ahead of the skip: a changed tag still refuses", () => {

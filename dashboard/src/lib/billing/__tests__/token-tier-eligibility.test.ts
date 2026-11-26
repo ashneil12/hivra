@@ -2,12 +2,12 @@
  * Tests for the eight critical paths the deposit flow must handle. From
  * BUILD_PLAN.md (locked spec, 2026-04-29):
  *
- *   1. First-time deposit during launch promo records the LAUNCH-rate
- *      qualifying quantity AND the PRO_LAUNCH code.
- *   2. Existing launch holder is grandfathered when the threshold rises to
- *      the standard rate — they stay eligible at their original quantity.
- *   3. New entrant after the launch promo window pays the STANDARD-rate
- *      qualifying quantity (PRO_STANDARD code).
+ *   1. First-time qualification records the current standard-rate quantity
+ *      and PRO_STANDARD/POWER_STANDARD, even at dates inside the retired
+ *      launch window.
+ *   2. Existing launch holder is grandfathered at their original quantity —
+ *      they stay eligible at their locked amount.
+ *   3. New entrants use the current standard-rate quantity.
  *   4. Breach within 48h grace + recovery flips eligibility back ON
  *      without changing qualifying_quantity (no penalty for a brief dip).
  *   5. Breach beyond 48h grace transitions to SUSPENDED, sets cooldown_ends_at
@@ -175,22 +175,20 @@ function thresholdsModule() {
   // amounts above. Mock the live module to pass through resolveActiveThresholds.
   jest.doMock("../live-thresholds", () => ({
     getLiveActiveThresholds: async ({ now }: { now?: Date } = {}) => {
-      const inLaunch = (now ?? new Date()) < LAUNCH_PROMO_END;
-      const epoch = inLaunch ? "launch" : "standard";
+      const epoch = "standard";
       return {
         epoch,
-        promoEndsAt: LAUNCH_PROMO_END,
         pro: {
           tier: "pro",
           epoch,
-          code: inLaunch ? "PRO_LAUNCH" : "PRO_STANDARD",
-          amount: inLaunch ? PRO_LAUNCH : PRO_STANDARD,
+          code: "PRO_STANDARD",
+          amount: PRO_STANDARD,
         },
         power: {
           tier: "power",
           epoch,
-          code: inLaunch ? "POWER_LAUNCH" : "POWER_STANDARD",
-          amount: inLaunch ? POWER_LAUNCH : POWER_STANDARD,
+          code: "POWER_STANDARD",
+          amount: POWER_STANDARD,
         },
         source: "live",
         priceUsd: "0.00002609",
@@ -215,18 +213,17 @@ function loadModuleWithLiveThresholdAmounts(params: {
   jest.resetModules();
   jest.doMock("../live-thresholds", () => ({
     getLiveActiveThresholds: async ({ now }: { now?: Date } = {}) => ({
-      epoch: "launch",
-      promoEndsAt: LAUNCH_PROMO_END,
+      epoch: "standard",
       pro: {
         tier: "pro",
-        epoch: "launch",
-        code: "PRO_LAUNCH",
+        epoch: "standard",
+        code: "PRO_STANDARD",
         amount: params.pro,
       },
       power: {
         tier: "power",
-        epoch: "launch",
-        code: "POWER_LAUNCH",
+        epoch: "standard",
+        code: "POWER_STANDARD",
         amount: params.power,
       },
       source: "live",
@@ -279,13 +276,13 @@ type DbCast = Parameters<
 >[0]["db"];
 
 describe("evaluateAndRecordTokenTierEligibility", () => {
-  it("Case 1 — first-time deposit during launch promo records PRO_LAUNCH code at launch threshold", async () => {
+  it("Case 1 — first-time qualification uses the current standard threshold even inside the retired launch window", async () => {
     const mod = loadModule();
     const db = new FakeDb();
 
     const result = await mod.evaluateAndRecordTokenTierEligibility({
       userId: "user_a",
-      currentBalance: 250_000n, // above Pro launch (200k), below Power launch (500k)
+      currentBalance: 320_000n, // above the current Pro standard threshold (300k)
       db: db as unknown as DbCast,
       now: NOW_DURING_LAUNCH,
     });
@@ -293,17 +290,17 @@ describe("evaluateAndRecordTokenTierEligibility", () => {
     expect(result.configured).toBe(true);
     expect(result.pro?.transition).toBe("qualified");
     expect(result.pro?.currentlyEligible).toBe(true);
-    expect(result.pro?.qualifyingQuantity).toBe(PRO_LAUNCH);
-    expect(result.pro?.qualifyingThresholdTier).toBe("PRO_LAUNCH");
-    expect(result.pro?.thresholdCode).toBe("PRO_LAUNCH");
+    expect(result.pro?.qualifyingQuantity).toBe(PRO_STANDARD);
+    expect(result.pro?.qualifyingThresholdTier).toBe("PRO_STANDARD");
+    expect(result.pro?.thresholdCode).toBe("PRO_STANDARD");
     expect(result.power?.transition).toBe("unchanged");
     expect(result.power?.currentlyEligible).toBe(false);
     expect(result.power?.qualifyingQuantity).toBeNull();
 
     const proRow = db.rows.find((r) => r.tier === "pro");
     expect(proRow).toBeDefined();
-    expect(proRow?.qualifying_quantity).toBe(PRO_LAUNCH.toString());
-    expect(proRow?.qualifying_threshold_tier).toBe("PRO_LAUNCH");
+    expect(proRow?.qualifying_quantity).toBe(PRO_STANDARD.toString());
+    expect(proRow?.qualifying_threshold_tier).toBe("PRO_STANDARD");
     expect(proRow?.currently_eligible).toBe(true);
   });
 
@@ -328,7 +325,7 @@ describe("evaluateAndRecordTokenTierEligibility", () => {
     expect(result.power?.transition).toBe("qualified");
     expect(result.power?.currentlyEligible).toBe(true);
     expect(result.power?.qualifyingQuantity).toBe(powerThreshold);
-    expect(result.power?.qualifyingThresholdTier).toBe("POWER_LAUNCH");
+    expect(result.power?.qualifyingThresholdTier).toBe("POWER_STANDARD");
 
     const powerRow = db.rows.find((r) => r.tier === "power");
     expect(powerRow).toBeDefined();
@@ -499,7 +496,7 @@ describe("evaluateAndRecordTokenTierEligibility", () => {
 
     const result = await mod.evaluateAndRecordTokenTierEligibility({
       userId: "user_f",
-      currentBalance: 250_000n, // above active PRO_LAUNCH threshold (200k)
+      currentBalance: 320_000n, // above the active PRO_STANDARD threshold (300k)
       db: db as unknown as DbCast,
       now: NOW_DURING_LAUNCH,
     });
@@ -516,7 +513,7 @@ describe("evaluateAndRecordTokenTierEligibility", () => {
     expect(proRow.qualifying_quantity).toBe(PRO_LAUNCH.toString());
     expect(proRow.qualifying_threshold_tier).toBe("PRO_LAUNCH");
     // last_balance_seen was refreshed.
-    expect(proRow.last_balance_seen).toBe("250000");
+    expect(proRow.last_balance_seen).toBe("320000");
   });
 
   it("Case 7 — re-qualifying after the launch window LOSES the launch grandfather (now PRO_STANDARD)", async () => {
@@ -598,7 +595,7 @@ describe("evaluateAndRecordTokenTierEligibility", () => {
 
     const result = await mod.evaluateAndRecordTokenTierEligibility({
       userId: "user_h",
-      currentBalance: 250_000n, // above PRO_LAUNCH threshold
+      currentBalance: 320_000n, // above the active PRO_STANDARD threshold
       db: db as unknown as DbCast,
       now: NOW_DURING_LAUNCH,
     });
@@ -613,7 +610,7 @@ describe("evaluateAndRecordTokenTierEligibility", () => {
     expect(proRow.qualifying_threshold_tier).toBe("PRO_LAUNCH");
     expect(proRow.requalification_count).toBe(2); // unchanged
     expect(proRow.requalification_window_start).toBe(windowStart);
-    expect(proRow.last_balance_seen).toBe("250000"); // refreshed
+    expect(proRow.last_balance_seen).toBe("320000"); // refreshed
   });
 
   function loadModuleWithPriceOutage() {

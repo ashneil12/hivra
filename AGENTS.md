@@ -49,6 +49,13 @@ Everything in this repository is public: every branch, commit message, PR title 
 
 ## Risk-Based Verification
 
+Tests and test harnesses never create accounts, whether run by hand or in CI.
+Don't create Clerk users or invitations, and don't submit a sign-up form.
+For authenticated Canary checks, sign in as a standing test account configured
+in the environment; keep its address out of the repo and logs. The only
+account-creation exception is the operator-run `npm run qa:canary-account`
+repair script, for its configured standing address when that account is missing.
+
 Use enough verification for the risk of the change:
 
 - Scope discretionary tests to the behavior that changed and the callers,

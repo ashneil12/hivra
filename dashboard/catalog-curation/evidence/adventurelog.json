@@ -1,0 +1,140 @@
+{
+  "slug": "adventurelog",
+  "checkedAt": "2026-11-25T17:18:01.253Z",
+  "gitSha": "b6ae08d9e45a02c569c28ff96d32c5720ac51b59",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "seanmorley15/AdventureLog is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "seanmorley15/AdventureLog",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "3 service images have linux/amd64",
+      "evidence": {
+        "services": [
+          {
+            "name": "db",
+            "ref": "postgis/postgis:16-3.4",
+            "digest": "sha256:44126d872ac91993766c341e369c539e8196614321765d36a6f1bab0419a5fa5",
+            "platforms": [
+              "linux/amd64"
+            ]
+          },
+          {
+            "name": "server",
+            "ref": "ghcr.io/seanmorley15/adventurelog-backend:v0.14.0",
+            "digest": "sha256:741a11ab16f53de555149f9750178873dd75b5ff1cb189fc6d55b577f26fbdc6",
+            "platforms": [
+              "linux/amd64",
+              "linux/arm64",
+              "unknown/unknown",
+              "unknown/unknown"
+            ]
+          },
+          {
+            "name": "web",
+            "ref": "ghcr.io/seanmorley15/adventurelog-frontend:latest",
+            "digest": "sha256:f3f4642d8d09ebd04e23d54aa61f5892a5d6e20bd4285e34e1b761ee4935d23e",
+            "platforms": [
+              "linux/amd64",
+              "linux/arm64",
+              "unknown/unknown",
+              "unknown/unknown"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "stack up; health / -> 200 in 2.2s across 3 container(s)",
+      "evidence": {
+        "project": "hivra-verify-adventurelog-eeypjf",
+        "composeFile": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-adventurelog-LEtQpR/rendered/compose.yaml",
+        "renderedDir": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-adventurelog-LEtQpR/rendered",
+        "renderStdout": "{\"outDir\":\"/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-adventurelog-LEtQpR/rendered\"}",
+        "defaultPlatform": "linux/amd64",
+        "pullStdout": "",
+        "upStdout": "",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.2,
+          "attempts": 2
+        },
+        "containerCount": 3,
+        "perContainerMem": [
+          {
+            "id": "5f1c5712f202",
+            "memUsage": "76.2MiB / 7.652GiB",
+            "memBytes": 79901491
+          },
+          {
+            "id": "7ce7f66c05a2",
+            "memUsage": "9.801MiB / 7.652GiB",
+            "memBytes": 10277093
+          },
+          {
+            "id": "498ca2acd0a4",
+            "memUsage": "39.18MiB / 7.652GiB",
+            "memBytes": 41083208
+          }
+        ],
+        "memBytes": 131261792
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 50035,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\" data-theme=\"\">\n\t<head>\n\t\t<meta charset=\"utf-8\" />\n\t\t<link rel=\"icon\" href=\"./favicon.png\" />\n\t\t<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n\t\t<link rel=\"manifest\" crossorigin=\"use-credentials\" href=\"/manifest.json\" />\n\n\t\t<!-- iOS / Safari PWA support -->\n\t\t<meta name=\"apple-mobile-web-app-capable\" content=\"yes\" />\n\t\t<meta name=\"mobile-web-a",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 415,
+          "bodyHead": "<!doctype html>\n<html lang=\"en\" data-theme=\"\">\n\t<head>\n\t\t<meta charset=\"utf-8\" />\n\t\t<link rel=\"icon\" href=\"./favicon.png\" />\n\t\t<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n\t\t<link rel=\"manifest\" crossorigin=\"use-credentials\" href=\"/manifest.json\" />\n\n\t\t<!-- iOS / Safari PWA"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 125.2MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 131261792,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}
