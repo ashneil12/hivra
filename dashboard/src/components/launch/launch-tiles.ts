@@ -25,6 +25,8 @@ import {
 
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import {
+  getCatalogAppManifest,
+  isCatalogAppLaunchable,
   UNIVERSAL_CATALOG_MANIFESTS,
   type CatalogAppIconKey,
 } from "@/lib/hivra/catalog-manifests";
@@ -45,7 +47,7 @@ const CATALOG_ICON_MAP: Record<CatalogAppIconKey, LucideIcon> = {
 
 export type ChooseTile = { id: LaunchProfileId; name: string; description: string; icon: LucideIcon | null };
 
-export const AGENT_TILES: readonly ChooseTile[] = ([
+const AGENT_TILES: readonly ChooseTile[] = [
   { id: "claude-code", name: "Claude Code", description: "Anthropic's coding agent. Sign in with your Claude account, or run it on Hivra credits.", icon: Code2 },
   { id: "codex", name: "Codex", description: "OpenAI's coding agent. Sign in with ChatGPT after it opens.", icon: Boxes },
   { id: "hermes", name: "Hermes", description: "A general-purpose agent for research and automation.", icon: Bot },
@@ -63,7 +65,7 @@ export const AGENT_TILES: readonly ChooseTile[] = ([
     description: manifest.description,
     icon: CATALOG_ICON_MAP[manifest.icon],
   })),
-] satisfies ChooseTile[]).filter(tile => getAgent(PROFILE_DETAILS[tile.id].runtimeId)?.available === true);
+];
 
 export const COMPUTER_TILES: readonly ChooseTile[] = [
   { id: "ubuntu-server", name: "Linux computer", description: "A light Linux computer with a terminal and files. No desktop.", icon: Terminal },
@@ -76,11 +78,19 @@ export const COMPUTER_TILES: readonly ChooseTile[] = [
 /** The agent tiles Launch shows. Hermes has one tile, for the lane in use, and
  * a self-hosted installation has no Hivra Cloud, so an agent that runs only
  * there isn't offered. */
-export function offeredAgentTiles({ selfHosted, hermesProfile = HERMES_LAUNCH_PROFILE }: {
+export function offeredAgentTiles({ selfHosted, hermesProfile = HERMES_LAUNCH_PROFILE, catalogCertifier = false }: {
   selfHosted: boolean;
   hermesProfile?: LaunchProfileId;
+  catalogCertifier?: boolean;
 }): ChooseTile[] {
   return AGENT_TILES
+    .filter(tile => {
+      const runtimeId = PROFILE_DETAILS[tile.id].runtimeId;
+      const manifest = getCatalogAppManifest(runtimeId);
+      return manifest
+        ? isCatalogAppLaunchable(manifest, catalogCertifier && !selfHosted)
+        : getAgent(runtimeId)?.available === true;
+    })
     .filter(tile => (tile.id !== "hermes" && tile.id !== "hermes-computer") || tile.id === hermesProfile)
     .filter(tile => !selfHosted || PROFILE_DETAILS[tile.id].ownServer);
 }
