@@ -2763,7 +2763,7 @@ function proxyHttp(req, res, port, strip, preserveAuthority = false, setHeaders 
 // Agent Zero always gates its OWN web UI with a form login (username/password ->
 // session cookie; no basic-auth, no open-loopback mode). Since our token gate
 // already authenticates the box owner, that second login is pure friction — so we
-// log in transparently with the credential seeded at provision and inject the
+// log in transparently with the credential synced by the watchdog and inject the
 // session cookie, and the user only ever passes our gate.
 let _a0Cookie = null;
 let _a0SessionName = null, _a0SessionRevision = 0, _a0CsrfAttempt = 0, _a0Csrf = null;
@@ -2798,6 +2798,18 @@ function retainA0Cookies(setCookies) {
   _a0Cookie = [...cookies].map(([name, value]) => name + "=" + value).join("; ") || null;
 }
 function readA0Creds() {
+  let fd;
+  try {
+    fd = fs.openSync(path.join(HOME, ".hivra", "agent-zero-runtime-login.json"),
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const file = fs.fstatSync(fd);
+    if (file.isFile() && file.uid === process.getuid() && (file.mode & 0o077) === 0 && file.size <= 1024 * 1024) {
+      const synced = JSON.parse(fs.readFileSync(fd, "utf8"));
+      if (typeof synced?.login === "string" && synced.login && typeof synced.password === "string" && synced.password) return synced;
+    }
+  } catch {}
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+  // The provisioned credential still works before the first watchdog pass.
   try {
     const raw = fs.readFileSync(path.join(HOME, ".hivra", "agent-zero-login"), "utf8");
     const login = (raw.match(/^AUTH_LOGIN=(.*)$/m) || [])[1];
@@ -3551,9 +3563,19 @@ function nuphosProxy(req, res) {
 
 // ---- Universal catalog app at the box root (/app/ entry) -------------------
 const CATALOG_APP_ENTRY = "/app";
-const CATALOG_APP_GATEWAY_PATHS = OPENBOT_GATEWAY_PATHS.filter((p) => p !== OPENBOT_ENTRY).concat([CATALOG_APP_ENTRY]);
+// The entry owns exactly its two URLs (/app and /app/) — a landing that
+// health-checks the app and 303s to /. Everything deeper is the app's own
+// URL space: a Dufs share folder literally named "app", an Appsmith
+// /app/<slug> page, any app's /app/* asset. Intercepting the whole prefix
+// answered those with the entry's 303, and a PUT redirected that way was
+// followed as a GET — the write never reached the app while its UI read the
+// root page's 200 as an upload success.
+const CATALOG_APP_GATEWAY_PATHS = OPENBOT_GATEWAY_PATHS.filter((p) => p !== OPENBOT_ENTRY);
 function catalogAppGatewayPath(u) {
   return CATALOG_APP_GATEWAY_PATHS.some((prefix) => u === prefix || u.startsWith(prefix + "/"));
+}
+function catalogAppEntryPath(u) {
+  return u === CATALOG_APP_ENTRY || u === CATALOG_APP_ENTRY + "/";
 }
 function escapeHtmlSimple(text) {
   return String(text || "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]));
@@ -4980,7 +5002,8 @@ const server = http.createServer((req, res) => {
   // connect links still redeem through GET /connect/<pair> above. The paths a
   // catalog app never sees stay reserved: /healthz, /auth/bootstrap,
   // /connect/grant (mint/revoke), GET /connect/<pair>, the whole /api/*
-  // management surface and the /app entry — everything else proxies through.
+  // management surface and the /app entry's own two URLs — everything else,
+  // including every path deeper than /app/, proxies through.
   if (req.method === "GET" && u === "/login"
     && !(AGENT_KIND === "catalog-app" && CATALOG_APP && CATALOG_APP.hostPort && !ATTACHED)) return handleLoginPage(req, res, q);
   // Direct sign-in password: set/cleared/read with the management bearer only
@@ -5002,7 +5025,7 @@ const server = http.createServer((req, res) => {
     if (!nuphosGatewayPath(u)) return nuphosProxy(req, res);
   }
   if (AGENT_KIND === "catalog-app" && CATALOG_APP && CATALOG_APP.hostPort && !ATTACHED) {
-    if (u === CATALOG_APP_ENTRY || u.startsWith(CATALOG_APP_ENTRY + "/")) return catalogAppEntry(req, res);
+    if (catalogAppEntryPath(u)) return catalogAppEntry(req, res);
     if (!catalogAppGatewayPath(u)) return catalogAppProxy(req, res);
   }
   // Aeon dashboard client code issues root-absolute requests (fetch("/api/strategy"),

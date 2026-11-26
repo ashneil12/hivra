@@ -1,0 +1,115 @@
+{
+  "slug": "silverbullet",
+  "checkedAt": "2026-11-24T17:05:07.661Z",
+  "gitSha": "616a5513aa809204f63d5f4337a22dfb989db6cd",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "silverbulletmd/silverbullet is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "silverbulletmd/silverbullet",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/silverbulletmd/silverbullet:v2 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/silverbulletmd/silverbullet:v2",
+        "digest": "sha256:03d3caf1bd605a5d7cb6f2103deb8a46d15bbb57f9366dfaafa6efcf75d54459",
+        "platforms": [
+          "linux/arm64",
+          "linux/amd64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 0s",
+      "evidence": {
+        "container": "hivra-verify-silverbullet-drgtiy",
+        "hostPort": 3295,
+        "image": "ghcr.io/silverbulletmd/silverbullet:v2",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-silverbullet-drgtiy",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3295:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-silverbullet-drgtiy-space:/space",
+          "ghcr.io/silverbulletmd/silverbullet:v2"
+        ],
+        "runStdout": "ba1c4439a8ada10494d567af5f10aea6599280c2e764dd94c6f41ac97b57bcbe",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 0,
+          "attempts": 1
+        },
+        "memUsage": "1.852MiB / 7.652GiB",
+        "memBytes": 1941963
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 307 / -> 200 /.setup/",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 53635,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 307,
+            "location": "/.setup/"
+          },
+          {
+            "hop": 2,
+            "path": "/.setup/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/.setup/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta content=\"width=device-width, initial-scale=1\" name=\"viewport\" />\n    <base href=\"/.setup/\" />\n    <link rel=\"icon\" type=\"image/png\" href=\"assets/favicon-96x96.png\" sizes=\"96x96\" />\n    <link rel=\"stylesheet\" href=\"assets/app.css\" />\n    <title>SilverBullet Setup</title>\n  </head>\n  <body class=\"sb-standalone sb-page\">",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 307,
+          "bodyHead": ""
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 1.9MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 1941963,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

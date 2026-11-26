@@ -817,4 +817,10 @@ if [ "${KIND_BEFORE:-}" != claude ] && { systemctl list-unit-files 2>/dev/null |
   systemctl disable --now bux-browser-keeper.service >/dev/null 2>&1 || true
   rm -f /etc/systemd/system/bux-browser-keeper.service
 fi
+# A keeper that failed before its unit file was removed stays in
+# `systemctl --failed` as not-found/failed forever; the surface watchdog
+# would report it every cooldown. Clear the stale state even when the file
+# was already gone (the check above only fires while it exists).
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl reset-failed bux-browser-keeper.service >/dev/null 2>&1 || true
 printf 'HIVRA_GUEST_RUNTIME_UPDATED\n'

@@ -1442,3 +1442,20 @@ Release `2026.11.22.1` adds the Hermes Desktop connection endpoint behind a dedi
 per-computer session token. Browser sign-in opens Hermes or Agent Zero
 directly, and the gateway returns an error when Agent Zero rejects its
 managed runtime credentials. Existing sealed releases remain available.
+
+Release `2026.11.22.2` synchronizes changed Agent Zero runtime login credentials through
+the existing surface watchdog. The watchdog checks the pair against the running
+native login before replacing the gateway credential. The Hivra password and
+existing connect grants remain separate.
+
+Release `2026.11.22.3` stops the guest watchdog from reporting units that are no
+longer installed. A failed-unit record left behind after a unit file is removed
+no longer raises `unit_failing`; only units present on the box are watched. The
+provisioning scripts also clear the keeper's stale failed state when they
+remove it.
+
+Release `2026.11.23.1` narrows the catalog-app gateway entry to exactly `/app`
+and `/app/`. Every deeper path — including an app's own `/app/*` pages and a
+file share folder literally named `app` — proxies to the installed app instead
+of being answered by the entry's redirect, so writes like `PUT /app/<file>`
+reach the app unchanged. The gateway-reserved prefixes are untouched.

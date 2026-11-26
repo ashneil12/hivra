@@ -1,0 +1,111 @@
+{
+  "slug": "termix",
+  "checkedAt": "2026-11-22T18:50:06.703Z",
+  "gitSha": "abf27256285ca0be7d78d08fecef74cbbded5a16",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "Termix-SSH/Termix is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "Termix-SSH/Termix",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/termix-ssh/termix:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/termix-ssh/termix:latest",
+        "digest": "sha256:f5a208e3c570fa5d3ec65dc2ad462eacf96e0d9a7f4f84410e5694f5a388f5ba",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 6.3s",
+      "evidence": {
+        "container": "hivra-verify-termix-qpfbyi",
+        "hostPort": 3291,
+        "image": "ghcr.io/termix-ssh/termix:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-termix-qpfbyi",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3291:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-termix-qpfbyi-data:/app/data",
+          "ghcr.io/termix-ssh/termix:latest"
+        ],
+        "runStdout": "b32ce03fb269dd78d68e6283b20c53706e1e81d15d63e34628bd16b849ae65e7",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 6.3,
+          "attempts": 4
+        },
+        "memUsage": "306.3MiB / 7.652GiB",
+        "memBytes": 321178829
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 59523,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta http-equiv=\"Content-Security-Policy\" content=\"default-src &#39;self&#39; http://localhost:* http://127.0.0.1:*; script-src &#39;self&#39; &#39;wasm-unsafe-eval&#39; &#39;sha256-0FPou4vGHwupDie6Xais6VntpJ4yaK9E6TyhXLwZe8o=&#39; http://localhost:* http://127.0.0.1:*; style-src &#39;self&#39; &#39;unsafe-inline&#39; http://localhost:* http://127.0.0",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 405,
+          "bodyHead": "<html>\r\n<head><title>405 Not Allowed</title></head>\r\n<body>\r\n<center><h1>405 Not Allowed</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 306.3MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 321178829,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -1,8 +1,8 @@
 import { MANAGED_VENICE_TOKEN_DEPOSIT_REASONS } from "@/lib/billing/managed-venice-token-quotes";
+import { resetDiscoveredBaseLogRangeCap } from "@/lib/billing/base-rpc-logs";
 import {
   reconcileManagedVeniceTokenQuote,
   reconcilePendingManagedVeniceTokenQuotes,
-  RpcHttpError,
 } from "@/lib/billing/managed-venice-token-reconciliation";
 import {
   createBaseRpcFake,
@@ -428,15 +428,19 @@ describe("managed Venice reconciler: finality margin for irreversible decisions"
 
 describe("managed Venice reconciler: candidates, retirement and recovery", () => {
   it("bug 4: newest-first candidates reach a fresh paid quote behind 30 abandoned ones", async () => {
+    // Abandoned but INSIDE the 7-day post-expiry grace (tick is 2026-05-16):
+    // they still take scan slots and retire to 'cancelled'. Quotes past the
+    // grace are expired by the stale pass instead — covered in the
+    // reconciliation suite.
     const abandoned = Array.from({ length: 30 }, (_, index) =>
       managedVeniceQuoteRow({
         id: `old_${String(index).padStart(2, "0")}`,
         user_id: `user_old_${index}`,
         deposit_address: `0x${String(index + 1).padStart(40, "0")}`,
         status: "expired",
-        quoted_at: `2026-05-01T00:${String(index).padStart(2, "0")}:00.000Z`,
-        expires_at: `2026-05-01T00:${String(index + 20).padStart(2, "0")}:00.000Z`,
-        created_at: `2026-05-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+        quoted_at: `2026-05-15T00:${String(index).padStart(2, "0")}:00.000Z`,
+        expires_at: `2026-05-15T00:${String(index + 20).padStart(2, "0")}:00.000Z`,
+        created_at: `2026-05-15T00:${String(index).padStart(2, "0")}:00.000Z`,
       })
     );
     const memory = seed(...abandoned, managedVeniceQuoteRow({ id: "fresh", created_at: "2026-05-16T10:20:00.000Z" }));
@@ -561,22 +565,24 @@ describe("managed Venice reconciler: candidates, retirement and recovery", () =>
     ]);
   });
 
-  it("includes the JSON-RPC error message in RpcHttpError and does not retry a 413", async () => {
+  it("re-tiles a 413 range-cap refusal instead of failing the scan", async () => {
     const memory = seed();
-    const rpc = chain();
+    const rpc = chain([transfer("0xpaid", QUOTED, "2026-05-16T10:21:00.000Z")]);
     rpc.failNext({
       method: "eth_getLogs",
       status: 413,
       body: { jsonrpc: "2.0", id: 1, error: { code: -32614, message: "eth_getLogs is limited to a 2,000 range" } },
     });
 
-    const failure = await reconcileAt(memory, rpc, "2026-05-16T10:25:00.000Z").catch((error: unknown) => error);
+    try {
+      const result = await reconcileAt(memory, rpc, "2026-05-16T10:25:00.000Z");
 
-    expect(failure).toBeInstanceOf(RpcHttpError);
-    expect((failure as RpcHttpError).status).toBe(413);
-    expect((failure as Error).message).toBe(
-      "Base RPC request failed with status 413: eth_getLogs is limited to a 2,000 range"
-    );
-    expect(rpc.methodCount("eth_getLogs")).toBe(1);
+      // The refused chunk is re-tiled at the stated cap and the scan completes.
+      expect(result.status).toBe("settled");
+      expect(rpc.methodCount("eth_getLogs")).toBeGreaterThan(1);
+      expect(quote(memory)).toMatchObject({ status: "settled", transaction_hash: "0xpaid" });
+    } finally {
+      resetDiscoveredBaseLogRangeCap();
+    }
   });
 });

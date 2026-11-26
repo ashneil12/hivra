@@ -58,10 +58,16 @@ class FakeDb {
         return { error: null };
       },
       update: (payload: Record<string, unknown>) => ({
-        eq: async (_col: string, id: string) => {
-          Object.assign(this.rows.find((r) => r.id === id) ?? {}, payload);
-          return { error: null };
-        },
+        eq: (_col: string, id: string) => ({
+          eq: (_tokenColumn: string, token: string) => ({
+            select: async () => {
+              const row = this.rows.find(r => r.id === id);
+              if (!row || (("token_key" in row && row.token_key) || "hermesos") !== token) return {data: [], error: null};
+              Object.assign(row, payload);
+              return {data: [{id}], error: null};
+            },
+          }),
+        }),
       }),
     };
   }

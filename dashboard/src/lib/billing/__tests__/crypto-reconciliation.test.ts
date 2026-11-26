@@ -76,6 +76,95 @@ function transferAt(rpc: BaseRpcFake, overrides: Partial<Parameters<BaseRpcFake[
   });
 }
 
+/**
+ * Wraps the memory db so payment_transactions selects shaped like the
+ * stale-intent count (.select("id") combined with .lt("created_at", …)) fail,
+ * while every other query passes through untouched. The stale count only feeds
+ * the run summary; its failure must not reject the batch.
+ */
+function dbWithFailingStaleCount(memory: BillingMemoryDb) {
+  return {
+    ...memory.db,
+    from(table: string) {
+      const source = memory.db.from(table);
+      if (table !== "payment_transactions") return source;
+      return {
+        ...source,
+        select: (...args: unknown[]) => {
+          const query = source.select();
+          const state = { idSelect: args[0] === "id", staleLt: false };
+          const wrapNode = (node: unknown): unknown =>
+            new Proxy(node as Record<string, unknown>, {
+              get(target, prop) {
+                if (prop === "then") {
+                  return (resolve?: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+                    state.idSelect && state.staleLt
+                      ? Promise.resolve({
+                          data: null,
+                          error: { code: "XX000", message: "injected stale count failure" },
+                        }).then(resolve as (v: unknown) => unknown, reject as (e: unknown) => unknown)
+                      : (target.then as (a?: unknown, b?: unknown) => unknown)(resolve, reject);
+                }
+                const value = Reflect.get(target, prop);
+                if (typeof value !== "function") return value;
+                return (...methodArgs: unknown[]) => {
+                  if (prop === "lt" && methodArgs[0] === "created_at") state.staleLt = true;
+                  return wrapNode(Reflect.apply(value as (...a: unknown[]) => unknown, target, methodArgs));
+                };
+              },
+            });
+          return wrapNode(query);
+        },
+      };
+    },
+  };
+}
+
+/**
+ * Wraps the memory db so payment_transactions selects shaped like the daily
+ * stale-retry lane (a `.lte("created_at", …)` filter — unique to that lane;
+ * the queue lanes use `.gt` and the stale count uses `.lt` + an id-only
+ * select) fail, while every other query passes through untouched. The lane's
+ * load failure must surface in the run outcome, not read as a clean pass.
+ */
+function dbWithFailingStaleRetryLoad(memory: BillingMemoryDb) {
+  return {
+    ...memory.db,
+    from(table: string) {
+      const source = memory.db.from(table);
+      if (table !== "payment_transactions") return source;
+      return {
+        ...source,
+        select: () => {
+          const query = source.select();
+          const state = { staleLte: false };
+          const wrapNode = (node: unknown): unknown =>
+            new Proxy(node as Record<string, unknown>, {
+              get(target, prop) {
+                if (prop === "then") {
+                  return (resolve?: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+                    state.staleLte
+                      ? Promise.resolve({
+                          data: null,
+                          error: { code: "XX000", message: "injected stale retry load failure" },
+                        }).then(resolve as (v: unknown) => unknown, reject as (e: unknown) => unknown)
+                      : (target.then as (a?: unknown, b?: unknown) => unknown)(resolve, reject);
+                }
+                const value = Reflect.get(target, prop);
+                if (typeof value !== "function") return value;
+                return (...methodArgs: unknown[]) => {
+                  if (prop === "lte" && methodArgs[0] === "created_at") state.staleLte = true;
+                  return wrapNode(Reflect.apply(value as (...a: unknown[]) => unknown, target, methodArgs));
+                };
+              },
+            });
+          return wrapNode(query);
+        },
+      };
+    },
+  };
+}
+
 describe("crypto top-up reconciliation", () => {
   it("encodes ERC-20 transfer recipient topics for Base log scans", () => {
     expect(encodeErc20TransferToTopic(depositAddressOne)).toBe(
@@ -486,5 +575,442 @@ describe("crypto top-up reconcile queue", () => {
     memory.failNext({ table: "payment_transactions", op: "update", match: (patch) => "reconcile_queued_at" in patch });
 
     await expect(run(memory, rpc)).rejects.toThrow("Failed to advance the crypto top-up reconcile queue");
+  });
+});
+
+describe("stale crypto top-up exclusion", () => {
+  // `now` is 2026-04-24T12:00:00Z, so the 14-day cutoff is 2026-04-10T12:00:00Z.
+  const staleCreatedAt = "2026-04-01T00:00:00.000Z";
+  const recentCreatedAt = "2026-04-20T00:00:00.000Z";
+
+  function stalePayment(overrides: MemoryRow = {}): MemoryRow {
+    return makePayment({
+      id: "payment_stale",
+      provider_reference_id: "bankr_crypto_topup:stale",
+      created_at: staleCreatedAt,
+      updated_at: staleCreatedAt,
+      metadata: {
+        type: "crypto_topup_intent",
+        depositAddress: normalizedDepositAddressOne,
+        createdAt: staleCreatedAt,
+        sessionExpiresAt: "2026-04-01T00:20:00.000Z",
+      },
+      ...overrides,
+    });
+  }
+
+  it("does not scan an open intent older than 14 days and counts it in the summary", async () => {
+    const { memory, rpc } = setup([stalePayment()]);
+
+    const result = await run(memory, rpc);
+
+    expect(result.checked).toBe(0);
+    expect(result.staleExcluded).toBe(1);
+    expect(result.results).toEqual([]);
+    // No chain work at all: the intent never reached a scan.
+    expect(rpc.methodCount("eth_getLogs")).toBe(0);
+    // And it was not mutated: still open for an on-demand check.
+    expect(memory.tables.payment_transactions[0].status).toBe("pending");
+  });
+
+  it("still scans an intent inside the 14-day window", async () => {
+    const { memory, rpc } = setup([
+      stalePayment({
+        id: "payment_recent",
+        provider_reference_id: "bankr_crypto_topup:recent",
+        created_at: recentCreatedAt,
+        updated_at: recentCreatedAt,
+        metadata: {
+          type: "crypto_topup_intent",
+          depositAddress: normalizedDepositAddressOne,
+          createdAt: recentCreatedAt,
+          sessionExpiresAt: "2026-04-20T00:20:00.000Z",
+        },
+      }),
+    ]);
+
+    const result = await run(memory, rpc);
+
+    expect(result.checked).toBe(1);
+    expect(result.staleExcluded).toBe(0);
+  });
+
+  it("excludes and counts a stale failed session-expired intent the same way", async () => {
+    const { memory, rpc } = setup([
+      stalePayment({
+        status: "failed",
+        metadata: {
+          type: "crypto_topup_intent",
+          depositAddress: normalizedDepositAddressOne,
+          createdAt: staleCreatedAt,
+          sessionExpiresAt: "2026-04-01T00:20:00.000Z",
+          failureType: "crypto_payment_session_expired",
+        },
+      }),
+    ]);
+
+    const result = await run(memory, rpc);
+
+    expect(result.checked).toBe(0);
+    expect(result.staleExcluded).toBe(1);
+  });
+
+  it("counts only the stale rows when fresh and stale intents are open together", async () => {
+    const { memory, rpc } = setup([
+      stalePayment(),
+      makePayment({
+        id: "payment_fresh",
+        provider_reference_id: "bankr_crypto_topup:fresh",
+        created_at: recentCreatedAt,
+        updated_at: recentCreatedAt,
+        metadata: {
+          type: "crypto_topup_intent",
+          depositAddress: normalizedDepositAddressTwo,
+          createdAt: recentCreatedAt,
+          sessionExpiresAt: "2026-04-20T00:20:00.000Z",
+        },
+      }),
+    ]);
+
+    const result = await run(memory, rpc);
+
+    expect(result.checked).toBe(1);
+    expect(result.staleExcluded).toBe(1);
+  });
+
+  it("still settles intents and reports staleExcluded unavailable when the stale-count query fails", async () => {
+    const { memory, rpc } = setup([makePayment()]);
+    transferAt(rpc, { at: "2026-04-24T11:55:00.000Z" });
+
+    const result = await run(memory, rpc, { db: dbWithFailingStaleCount(memory) as never });
+
+    // The count is summary-only: its failure must not reject the batch —
+    // settlement still ran and the summary reports the count as unavailable.
+    expect(result).toEqual(
+      expect.objectContaining({ checked: 1, settled: 1, failed: 0, staleExcluded: null })
+    );
+  });
+
+  it("retries a stale intent on the first tick of a new UTC day, then not again that day", async () => {
+    // Just past the 14-day cutoff (2026-04-10T12:00Z) so its window still maps
+    // to real blocks on the fake chain.
+    const retryableStale = stalePayment({
+      created_at: "2026-04-09T11:00:00.000Z",
+      updated_at: "2026-04-09T11:00:00.000Z",
+      metadata: {
+        type: "crypto_topup_intent",
+        depositAddress: normalizedDepositAddressOne,
+        createdAt: "2026-04-09T11:00:00.000Z",
+        sessionExpiresAt: "2026-04-09T11:20:00.000Z",
+      },
+    });
+    const memory = createBillingMemoryDb({
+      payment_transactions: [retryableStale],
+      ops_cron_heartbeats: [
+        // Previous tick ended yesterday UTC: this run is the day's first.
+        { cron_name: "reconcile-crypto-topups", last_run_at: "2026-04-23T11:00:00.000Z" },
+      ],
+    });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+
+    const rollover = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    // The stale intent got its daily retry: it was checked (a real scan ran)
+    // even though the per-tick cutoff still excludes it from the main lanes.
+    expect(rollover.checked).toBe(1);
+    expect(rollover.staleRetried).toBe(1);
+    expect(rollover.staleExcluded).toBe(1);
+    expect(rpc.methodCount("eth_getLogs")).toBeGreaterThan(0);
+
+    // A later tick the same UTC day must not retry it again: the heartbeat's
+    // last_run_at is now today, so there is no new day to compare against.
+    memory.tables.ops_cron_heartbeats[0].last_run_at = "2026-04-24T06:00:00.000Z";
+    const logsAfterRollover = rpc.methodCount("eth_getLogs");
+    const sameDay = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    expect(sameDay.checked).toBe(0);
+    expect(sameDay.staleRetried).toBe(0);
+    // Whatever the rollover scan left open is still counted as stale backlog;
+    // what matters is it was not scanned again.
+    expect(rpc.methodCount("eth_getLogs")).toBe(logsAfterRollover);
+  });
+
+  it("does not retry stale intents on a tick with no new UTC day", async () => {
+    const memory = createBillingMemoryDb({
+      payment_transactions: [stalePayment()],
+      ops_cron_heartbeats: [
+        // Same UTC day as `now` (2026-04-24): an ordinary tick.
+        { cron_name: "reconcile-crypto-topups", last_run_at: "2026-04-24T06:00:00.000Z" },
+      ],
+    });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+
+    const result = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    expect(result.checked).toBe(0);
+    expect(result.staleRetried).toBe(0);
+    expect(result.staleExcluded).toBe(1);
+    expect(rpc.methodCount("eth_getLogs")).toBe(0);
+  });
+
+  it("bounds the daily stale retry to a fixed batch size", async () => {
+    const payments = Array.from({ length: 30 }, (_, index) =>
+      stalePayment({
+        id: `payment_stale_${index}`,
+        provider_reference_id: `bankr_crypto_topup:stale_${index}`,
+        user_id: `user_stale_${index}`,
+        created_at: "2026-04-09T11:00:00.000Z",
+        updated_at: "2026-04-09T11:00:00.000Z",
+        metadata: {
+          type: "crypto_topup_intent",
+          depositAddress: normalizedDepositAddressOne,
+          createdAt: "2026-04-09T11:00:00.000Z",
+          sessionExpiresAt: "2026-04-09T11:20:00.000Z",
+        },
+      })
+    );
+    const memory = createBillingMemoryDb({
+      payment_transactions: payments,
+      ops_cron_heartbeats: [
+        { cron_name: "reconcile-crypto-topups", last_run_at: "2026-04-23T11:00:00.000Z" },
+      ],
+    });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+
+    const result = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    // STALE_DAILY_RETRY_LIMIT is 25: the remaining 5 wait for the next day.
+    expect(result.staleRetried).toBe(25);
+    expect(result.checked).toBe(25);
+    expect(result.staleExcluded).toBe(30);
+  });
+
+  it("claims the day's stale pass on the heartbeat row, so an overlapping run skips it", async () => {
+    // Regression: the route heartbeats AFTER reconciliation resolves, so two
+    // overlapping authorized invocations could both read "previous tick was
+    // yesterday" and both run the daily stale batch — a double scan of every
+    // stale intent on the shared public RPC. The first run must claim the UTC
+    // day atomically, on the heartbeat row, before the batch loads.
+    const retryableStale = stalePayment({
+      created_at: "2026-04-09T11:00:00.000Z",
+      updated_at: "2026-04-09T11:00:00.000Z",
+      metadata: {
+        type: "crypto_topup_intent",
+        depositAddress: normalizedDepositAddressOne,
+        createdAt: "2026-04-09T11:00:00.000Z",
+        sessionExpiresAt: "2026-04-09T11:20:00.000Z",
+      },
+    });
+    const memory = createBillingMemoryDb({
+      payment_transactions: [retryableStale],
+      ops_cron_heartbeats: [
+        { cron_name: "reconcile-crypto-topups", last_run_at: "2026-04-23T11:00:00.000Z" },
+      ],
+    });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+
+    const first = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    expect(first.staleRetried).toBe(1);
+    // The claim moved last_run_at into TODAY inside the run — nothing else in
+    // reconcilePendingCryptoTopUps writes it, and the route's post-run
+    // heartbeat never fired here. Without the claim the row would still read
+    // yesterday, and a racing invocation would run the same batch again.
+    expect(memory.tables.ops_cron_heartbeats[0].last_run_at).toBe(now);
+
+    const logsAfterFirst = rpc.methodCount("eth_getLogs");
+    const second = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    // The second invocation sees the day already claimed: no stale lane, no
+    // chain reads for it.
+    expect(second.staleRetried).toBe(0);
+    expect(rpc.methodCount("eth_getLogs")).toBe(logsAfterFirst);
+  });
+
+  it("skips the daily stale pass when the utc-day claim cannot be written", async () => {
+    // A claim that fails to persist must not run the batch — ownership is
+    // unproven, so the safe answer is to defer the pass (it retries tomorrow),
+    // never to run it unclaimed. The rest of the run is unaffected.
+    const retryableStale = stalePayment({
+      created_at: "2026-04-09T11:00:00.000Z",
+      updated_at: "2026-04-09T11:00:00.000Z",
+      metadata: {
+        type: "crypto_topup_intent",
+        depositAddress: normalizedDepositAddressOne,
+        createdAt: "2026-04-09T11:00:00.000Z",
+        sessionExpiresAt: "2026-04-09T11:20:00.000Z",
+      },
+    });
+    const memory = createBillingMemoryDb({
+      payment_transactions: [retryableStale],
+      ops_cron_heartbeats: [
+        { cron_name: "reconcile-crypto-topups", last_run_at: "2026-04-23T11:00:00.000Z" },
+      ],
+    });
+    memory.failNext({ table: "ops_cron_heartbeats", op: "update" });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+
+    const result = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    expect(result.staleRetried).toBe(0);
+    // The claim failing is not a stale-lane load failure — the lane never ran —
+    // but it IS a claim failure: distinct from "another run holds the day" so
+    // the route reads the tick degraded instead of a clean skip.
+    expect(result.staleRetryLoadFailed).toBe(false);
+    expect(result.staleRetryClaimFailed).toBe(true);
+    // And the row was not claimed: a later same-day run may still win the day.
+    expect(memory.tables.ops_cron_heartbeats[0].last_run_at).toBe("2026-04-23T11:00:00.000Z");
+    expect(rpc.methodCount("eth_getLogs")).toBe(0);
+  });
+
+  it("still runs the daily stale pass when the heartbeat day-read would have failed", async () => {
+    // The first-tick gate used to SELECT ops_cron_heartbeats before the
+    // atomic claim: a failed read returned "not the first tick" — a silent
+    // skip where the day's one stale pass never ran and the summary still
+    // read clean. The day is now decided by the claim alone (its guarded
+    // update IS the day check), so a SELECT failure can no longer veto it;
+    // only a failed claim write degrades the tick (staleRetryClaimFailed).
+    const retryableStale = stalePayment({
+      created_at: "2026-04-09T11:00:00.000Z",
+      updated_at: "2026-04-09T11:00:00.000Z",
+      metadata: {
+        type: "crypto_topup_intent",
+        depositAddress: normalizedDepositAddressOne,
+        createdAt: "2026-04-09T11:00:00.000Z",
+        sessionExpiresAt: "2026-04-09T11:20:00.000Z",
+      },
+    });
+    const memory = createBillingMemoryDb({
+      payment_transactions: [retryableStale],
+      ops_cron_heartbeats: [
+        { cron_name: "reconcile-crypto-topups", last_run_at: "2026-04-23T11:00:00.000Z" },
+      ],
+    });
+    // The next SELECT on the heartbeat table fails — the old gate's read.
+    memory.failNext({ table: "ops_cron_heartbeats", op: "select" });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+
+    const result = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    // The claim decided the day on its own: the stale lane ran, the day is
+    // claimed on the row, and nothing reads as a failure.
+    expect(result.staleRetried).toBe(1);
+    expect(result.staleRetryLoadFailed).toBe(false);
+    expect(result.staleRetryClaimFailed).toBe(false);
+    expect(memory.tables.ops_cron_heartbeats[0].last_run_at).toBe(now);
+    expect(rpc.methodCount("eth_getLogs")).toBeGreaterThan(0);
+  });
+
+  it("does not flag a claim failure when another run already holds the day", async () => {
+    // The old boolean claim collapsed two very different answers into false:
+    // "the day is already claimed" (a clean skip) and "the claim write
+    // failed" (the pass silently never ran). A held day must read clean —
+    // only a failed write degrades the tick.
+    const retryableStale = stalePayment({
+      created_at: "2026-04-09T11:00:00.000Z",
+      updated_at: "2026-04-09T11:00:00.000Z",
+      metadata: {
+        type: "crypto_topup_intent",
+        depositAddress: normalizedDepositAddressOne,
+        createdAt: "2026-04-09T11:00:00.000Z",
+        sessionExpiresAt: "2026-04-09T11:20:00.000Z",
+      },
+    });
+    const memory = createBillingMemoryDb({
+      payment_transactions: [retryableStale],
+      ops_cron_heartbeats: [
+        // last_run_at already inside `now`'s UTC day: the day is held.
+        { cron_name: "reconcile-crypto-topups", last_run_at: now },
+      ],
+    });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+
+    const result = await reconcilePendingCryptoTopUps({
+      db: memory.db,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    expect(result.staleRetried).toBe(0);
+    expect(result.staleRetryLoadFailed).toBe(false);
+    expect(result.staleRetryClaimFailed).toBe(false);
+  });
+
+  it("surfaces a failed stale-retry load in the outcome instead of reading as a clean run", async () => {
+    // Regression: the daily retry lane's SELECT failure used to resolve to an
+    // empty batch — checked/staleRetried 0, failed 0 — so the cron's incident
+    // report and heartbeat read the day as clean while its one stale pass
+    // silently never ran. The outcome now carries the failure.
+    const memory = createBillingMemoryDb({
+      payment_transactions: [makePayment()],
+      ops_cron_heartbeats: [
+        { cron_name: "reconcile-crypto-topups", last_run_at: "2026-04-23T11:00:00.000Z" },
+      ],
+    });
+    const rpc = createBaseRpcFake({ latestBlock: 1_000_000, latestTimestamp: now });
+    transferAt(rpc, { at: "2026-04-24T11:55:00.000Z" });
+
+    const result = await reconcilePendingCryptoTopUps({
+      db: dbWithFailingStaleRetryLoad(memory) as never,
+      fetchImpl: rpc.fetchImpl,
+      now: new Date(now),
+      minConfirmations: 3,
+      rpcOptions: NO_SLEEP,
+    });
+
+    // The normal lanes still settled: only the stale-retry SELECT failed.
+    expect(result.settled).toBe(1);
+    expect(result.staleRetried).toBe(0);
+    expect(result.staleRetryLoadFailed).toBe(true);
   });
 });

@@ -27,7 +27,7 @@ export default function Hero({ agentsDeployed }: { agentsDeployed?: AgentsDeploy
       <div className={styles.heroGrid}>
         <div className={styles.heroCopy}>
           <h1 id="home-title" className={styles.heroTitle}>
-            {HERO.titleLead} <em className={styles.heroWord}>{HERO.titleWord}</em>{" "}
+            {`${HERO.titleLead} `}<em className={styles.heroWord}>{HERO.titleWord}</em>{" "}
             <span className={styles.heroTail}>{HERO.titleTail}</span>
           </h1>
           <p className={styles.heroSubhead}>{glossify(HERO.subhead)}</p>
