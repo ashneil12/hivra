@@ -38,15 +38,27 @@
     },
     "clickhouse": {
       "manifestSha256": "2fdfb8c69b3a6ac964b5fbceef9d7bb9f51d5500de9f353e37d91b13ad1e50e0",
-      "provisionerVersion": "2026.11.25.2",
-      "canarySha": "3a962d7594208dd257a8e3e2a5000ab565292487",
-      "certifiedAt": "2026-11-26T16:54:57.684Z"
+      "provisionerVersion": "2026.11.26.1",
+      "canarySha": "a6f6b832ccdd35f8f1f5a26f3a6371d611725a4e",
+      "certifiedAt": "2026-11-26T22:08:23.964Z"
     },
     "appsmith": {
       "manifestSha256": "4c288a9578a94b1f9fa6ed68f6976c7cecce9ae3bcc7f0cf008f12b5e06bde2a",
+      "provisionerVersion": "2026.11.26.1",
+      "canarySha": "a6f6b832ccdd35f8f1f5a26f3a6371d611725a4e",
+      "certifiedAt": "2026-11-26T22:14:06.679Z"
+    },
+    "dufs": {
+      "manifestSha256": "1a7b38fed56b94b6ebe546c88cfb3d956d8ab4a3d5481f1e226a455c23e7f266",
+      "provisionerVersion": "2026.11.26.1",
+      "canarySha": "a6f6b832ccdd35f8f1f5a26f3a6371d611725a4e",
+      "certifiedAt": "2026-11-26T22:19:12.362Z"
+    },
+    "gotenberg": {
+      "manifestSha256": "76debc7f5bfa3588a38fad2cbb459818d08cb25a73e18e028f492858a83f802b",
       "provisionerVersion": "2026.11.25.2",
-      "canarySha": "81008659a7eb44aa92abe04be4c3fb572a2777d5",
-      "certifiedAt": "2026-11-26T17:00:56.963Z"
+      "canarySha": "0e983a88b7b382bf4d22098367907baf027e78c4",
+      "certifiedAt": "2026-11-26T21:45:49.880Z"
     },
     "vaultwarden": {
       "manifestSha256": "73afb1ce06a699ddb98b926cd8cee47076d01f6c9722e0718fa567e16242bb4a",
