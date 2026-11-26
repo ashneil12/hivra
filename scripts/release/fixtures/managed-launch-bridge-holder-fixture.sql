@@ -27,3 +27,6 @@ begin
 end;
 $$;
 reset role;
+update public.hivra_agents
+set status='running', vmid=12000, operation_kind=null, operation_id=null, operation_started_at=null, operation_payload=null
+where id='00000000-0000-4000-8000-000000000102';

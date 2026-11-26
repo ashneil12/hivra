@@ -32,6 +32,7 @@ migrations=dashboard/supabase/migrations
 fixtures=scripts/release/fixtures
 bridge="$migrations/20261126192500_managed_launch_bridge.sql"
 classic_bridge="$migrations/20261126194500_classic_placement_bridge.sql"
+drain="$migrations/20261126202000_managed_writer_drain.sql"
 mkdir "$work/old" "$work/combined"
 git archive "$old" "$migrations" | tar -x -C "$work/old"
 git archive "$cutoff" "$migrations" | tar -x -C "$work/combined"
@@ -104,7 +105,7 @@ assert_install_rejected "create function public.insert_hivra_managed_agent(jsonb
 echo 'PASS bridge initialization refuses mixed schema, exposed ACL, modified search path and overload'
 {
   echo 'begin;'
-  cat "$bridge" "$classic_bridge"
+  cat "$bridge" "$classic_bridge" "$drain"
   printf '\n%s\n' 'commit;'
 } > "$work/bridge.sql"
 apply "$work/bridge.sql"
@@ -142,6 +143,13 @@ SQL
   fi
 }
 
+probe_closed() {
+  psql -qc "notify pgrst, 'reload schema'" </dev/null
+  docker run --pull never --rm --network "container:$container" --env PGRST_JWT_SECRET \
+    --volume "$root/$fixtures/managed-launch-bridge-http.mjs:/managed-launch-bridge-http.mjs:ro" \
+    "$node_image" node /managed-launch-bridge-http.mjs "$1" invalid_request invalid_request closed
+}
+
 read_epoch() {
   psql -Atc 'set role service_role; select public.managed_launch_bridge_epoch()' </dev/null | tail -1
 }
@@ -158,8 +166,16 @@ assert_transition_rejected() {
 probe legacy inserted reserved
 assert_transition_rejected "select managed_launch_bridge_private.finish_transition('legacy','funding');" \
   'managed launch bridge transition must be locked in this transaction'
+assert_transition_rejected "begin; select managed_launch_bridge_private.begin_transition('legacy','funding'); commit;" \
+  'managed launch bridge transition requires the closed, matching predecessor'
+assert_transition_rejected "begin; select managed_launch_bridge_private.set_writer_drain('legacy',true); select managed_launch_bridge_private.begin_transition('legacy','funding'); commit;" \
+  'managed launch bridge transition requires the closed, matching predecessor'
+assert_transition_rejected "begin isolation level repeatable read; select managed_launch_bridge_private.set_writer_drain('legacy',true); commit;" \
+  'writer drain requires the migration owner in READ COMMITTED'
+psql -qc "select managed_launch_bridge_private.set_writer_drain('legacy',true)" </dev/null
 assert_transition_rejected "begin; select managed_launch_bridge_private.begin_transition('legacy','funding'); select managed_launch_bridge_private.finish_transition('legacy','funding'); commit;" \
   'managed launch bridge transition successor does not match'
+psql -qc "select managed_launch_bridge_private.set_writer_drain('legacy',false)" </dev/null
 assert_transition_rejected "begin; alter function public.insert_hivra_managed_agent(jsonb,integer) set search_path=public; set local role service_role; select public.managed_launch_bridge_epoch(); commit;" \
   'managed launch bridge epoch does not match the reviewed schema'
 echo 'PASS rejects an unlocked transition, missing successor DDL and active schema drift'
@@ -174,6 +190,9 @@ while read -r path <&9; do
   esac
   if [[ -n $next ]]; then
     node "$fixtures/managed-launch-bridge-lock.mjs" "$container" "$predecessor" "$next"
+    psql -qc "select managed_launch_bridge_private.set_writer_drain('$predecessor',true)" </dev/null
+    node "$fixtures/managed-launch-bridge-lock.mjs" "$container" "$predecessor" "$next" cutover
+    probe_closed "$predecessor"
   fi
   {
     printf '%s\n' 'begin;' "set local lock_timeout = '5s';"
@@ -191,10 +210,16 @@ while read -r path <&9; do
     sed '$s/^commit;$/rollback;/' "$work/cutover.sql" > "$work/aborted-cutover.sql"
     apply "$work/aborted-cutover.sql"
     [[ $(read_epoch) == "$predecessor" ]]
+    [[ $(psql -Atc "select writer_closed_xact is not null from managed_launch_bridge_private.contract where singleton" </dev/null) == t ]]
     [[ $(psql -Atc "select count(*) from supabase_migrations.schema_migrations where version='$version'" </dev/null) == 0 ]]
-    echo "PASS rollback preserves $predecessor and leaves no ledger entry for $version"
+    probe_closed "$predecessor"
+    echo "PASS rollback preserves $predecessor with writers still closed and no ledger entry for $version"
   fi
   apply "$work/cutover.sql"
+  if [[ -n $next ]]; then
+    probe_closed "$next"
+    psql -qc "select managed_launch_bridge_private.set_writer_drain('$next',false)" </dev/null
+  fi
   case "${file##*/}" in
     20261124010000_*)
       probe legacy inserted reserved
@@ -210,6 +235,7 @@ echo 'PASS applied the 12 pinned delta files'
 assert_transition_rejected "begin; alter function public.insert_hermes_instance(jsonb,numeric,boolean) set search_path=public; select public.managed_launch_bridge_epoch(); commit;" \
   'managed launch bridge epoch does not match the reviewed schema'
 probe placement invalid_request invalid_request
+psql -q < "$fixtures/managed-launch-bridge-drain.sql"
 
 {
   cat <<'SQL'
@@ -224,7 +250,7 @@ drop schema managed_launch_bridge_private cascade;
 SQL
   cat "$work/combined/$migrations/20261123220000_optional_holder_switch.sql"
   echo
-  cat "$bridge" "$classic_bridge"
+  cat "$bridge" "$classic_bridge" "$drain"
   echo
   sed '1d;$d' "$fixtures/managed-launch-bridge-probe.sql"
   echo 'rollback;'

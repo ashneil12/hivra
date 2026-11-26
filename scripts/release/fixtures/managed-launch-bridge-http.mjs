@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac, randomUUID } from "node:crypto";
 
-const [epoch, oldInsert, oldReserve] = process.argv.slice(2);
+const [epoch, oldInsert, oldReserve, mode] = process.argv.slice(2);
 assert.ok(["legacy", "funding", "placement"].includes(epoch));
 const endpoint = "http://127.0.0.1:3000/rpc/";
 const secret = process.env.PGRST_JWT_SECRET;
@@ -79,6 +79,30 @@ const placement = { p_cpu_overcommit_ratio: 1, p_skip_sleep: false };
 const directBridge = "insert_hivra_managed_agent_bridge_v1";
 const receiptBridge = "reserve_hivra_launch_model_bridge_v1";
 
+if (mode === "closed") {
+  const role = "service_role";
+  const code = "P0059";
+  const fundedDirect = epoch === "legacy" ? direct : { ...direct, p_row: { ...direct.p_row, seat_funding: "paid" } };
+  const fundedReceipt = epoch === "legacy" ? receipt : { ...receipt, p_agent: { ...receipt.p_agent, seat_funding: "paid" } };
+  await rpc("insert_hivra_managed_agent", fundedDirect, role, "rollback", code);
+  await rpc("reserve_hivra_launch_model_request_v3", fundedReceipt, role, "rollback", code);
+  await rpc(directBridge, { ...fundedDirect, ...placement, p_epoch: epoch }, role, "rollback", code);
+  await rpc(receiptBridge, { ...fundedReceipt, ...placement, p_epoch: epoch }, role, "rollback", code);
+  await rpc("reserve_hivra_launch_operation", {
+    p_user_id: owner, p_request_id: randomUUID(), p_operation_id: randomUUID(),
+    p_request_digest: "a".repeat(64), p_intent_digest: "b".repeat(64), p_resource_kind: "agent", p_runtime_id: "codex",
+  }, role, "rollback", code);
+  const response = await fetch("http://127.0.0.1:3000/hermes_instances", {
+    method: "POST",
+    headers: { Authorization: bearer(role), "Content-Type": "application/json", Prefer: "tx=rollback" },
+    body: JSON.stringify({ user_id: owner, name: "Old Classic writer", status: "provisioning", lifecycle_state: "provisioning" }),
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.ok(response.status >= 400);
+  assert.equal((await response.json()).code, code);
+  console.log(`PASS PostgREST ${epoch} drain denies legacy Classic direct, raw managed, native journal and bridge writers`);
+  process.exitCode = 0;
+} else {
 assert.equal((await rpc("insert_hivra_managed_agent", direct)).status, oldInsert);
 assert.equal((await rpc("reserve_hivra_launch_model_request_v3", receipt)).status, oldReserve);
 const paidDirect = { ...direct, p_row: { ...direct.p_row, seat_funding: "paid" } };
@@ -144,3 +168,4 @@ if (epoch === "placement" && process.env.RUN_CLASSIC_START_RACE === "1") {
   console.log("PASS PostgREST Classic Start: concurrent claims dispatch once; unknown stays pending and confirmed start settles");
 }
 console.log(`PASS PostgREST ${epoch}: old, bridge, canonical and anonymous contracts`);
+}
