@@ -1,3 +1,4 @@
+import { readManagedLaunchBridgeEpoch } from "@/lib/hivra/managed-launch-bridge";
 import { POST } from "../route";
 
 const mockAuth = jest.fn();
@@ -6,6 +7,9 @@ const mockResizeProxmoxVm = jest.fn();
 const mockGetInfrastructure = jest.fn();
 const mockGetHostRouting = jest.fn();
 
+jest.mock("@/lib/hivra/managed-launch-bridge", () => ({
+  readManagedLaunchBridgeEpoch: jest.fn(async () => null),
+}));
 jest.mock("@clerk/nextjs/server", () => ({ auth: () => mockAuth() }));
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: { from: (...args: unknown[]) => mockFrom(...args) },
@@ -77,6 +81,14 @@ describe("POST /api/instances/[id]/resource-reallocation", () => {
     );
     expect(mockGetHostRouting).toHaveBeenCalledWith(infrastructure, { host_id: "host-fixturenode13" });
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ cpu_limit: 2, ram_limit: 4096 }));
+  });
+
+  it("refuses the old direct resize path after placement cutover", async () => {
+    jest.mocked(readManagedLaunchBridgeEpoch).mockResolvedValueOnce("placement");
+    const res = await POST(request({ cpuLimit: 2, ramLimit: 4096 }) as never, { params: Promise.resolve({ id: "pike" }) });
+    expect(res.status).toBe(409);
+    expect(mockResizeProxmoxVm).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   it("rejects growth because pool-aware growth belongs to the normal controls", async () => {

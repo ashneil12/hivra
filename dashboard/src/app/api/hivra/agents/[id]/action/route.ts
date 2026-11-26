@@ -65,6 +65,7 @@ import {
 import {
   beginHivraAgentSnapshot,
   beginHivraAgentSnapshotRestore,
+  HivraAgentOperationStoreError,
   claimHivraAgentOperation,
   completeHivraAgentSnapshot,
   completeHivraAgentSnapshotRestore,
@@ -697,6 +698,7 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         operationKind,
         desiredState,
         operationPayload,
+        ...(operationKind === "resize" && agent.deployment_mode === "hivra-managed" ? { useManagedPlacementPolicy: true } : {}),
       });
       if (!claimed) return null;
       // The row was read before this lease: the sleep sweep may have napped the
@@ -1386,6 +1388,13 @@ ${startKickoff(operationId)}`,
 
     return apiError("Unknown action", 400);
   } catch (err) {
+    if (err instanceof HivraAgentOperationStoreError) {
+      if (err.code === "placement_policy_unavailable") {
+        return apiError("Managed resize is temporarily unavailable. Try again later.", 503);
+      }
+      if (err.code === "placement_capacity") return apiError("This host cannot fit the requested resize.", 409);
+      if (err.code === "holder_capacity") return apiError("This action exceeds the available token-holder reservation.", 409);
+    }
     return handleApiError(err);
   }
 }

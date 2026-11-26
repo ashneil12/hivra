@@ -7,6 +7,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { MAX_CONTEXT_LEN } from "./agent-limits";
 import { ModelKeySelectionSchema } from "./model-key-selection";
 import { ModelKeyStoreError } from "./model-key-store";
+import { ManagedLaunchBridgeError, managedLaunchBridgeArgs, managedLaunchBridgeRow, type ManagedLaunchBridge } from "./managed-launch-bridge";
 
 const Id = z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
 const Digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -122,12 +123,16 @@ export type LaunchModelReservation = z.infer<typeof Reservation>;
 export function createLaunchModelStore(db = supabaseAdmin) {
   if (!db) throw new ModelKeyStoreError();
   const client = db, columns = Object.keys(LaunchModelRequestSchema.shape).join(",");
-  async function rpc(name: string, args: Record<string, unknown>) {
+  async function rpc(name: string, args: Record<string, unknown>, placement = false) {
     try {
       const { data, error } = await client.rpc(name, args);
+      if (placement && error?.code === "P0058") throw new ManagedLaunchBridgeError("placement_unavailable");
       if (error) throw new ModelKeyStoreError();
       return data;
-    } catch { throw new ModelKeyStoreError(); }
+    } catch (error) {
+      if (error instanceof ManagedLaunchBridgeError) throw error;
+      throw new ModelKeyStoreError();
+    }
   }
   async function find(userId: string, id: string, column: "request_id" | "agent_id") {
     let data: unknown;
@@ -150,11 +155,12 @@ export function createLaunchModelStore(db = supabaseAdmin) {
       return row;
     },
     async reserve(input: { userId: string; requestId: string; modelOperationId: string; fingerprints: LaunchModelFingerprint[];
-      agent: LaunchModelReservation; llm: unknown; agentLimit: number }, encrypt = encryptSecret) {
+      agent: LaunchModelReservation; llm: unknown; agentLimit: number; bridge?: ManagedLaunchBridge }, encrypt = encryptSecret) {
       const selected = ModelKeySelectionSchema.safeParse(input.llm), row = Reservation.safeParse(input.agent);
       if (!selected.success || !selected.data || !row.success || !Id.safeParse(input.requestId).success
         || !Id.safeParse(input.modelOperationId).success || !z.array(Fingerprint).min(1).max(2).safeParse(input.fingerprints).success
-        || !Number.isSafeInteger(input.agentLimit) || input.agentLimit < 0) {
+        || !Number.isSafeInteger(input.agentLimit) || input.agentLimit < 0
+        || (input.bridge && row.data.deployment_mode !== "hivra-managed")) {
         throw new LaunchModelRequestError("invalid_request");
       }
       const selection = selected.data;
@@ -166,12 +172,16 @@ export function createLaunchModelStore(db = supabaseAdmin) {
         // v3 counts the owner's plan slots under the slot lock before it
         // inserts, so a launch cannot race an attach or another launch past
         // the plan's agent limit (T35).
-        result = await rpc("reserve_hivra_launch_model_request_v3", { p_user_id: input.userId, p_request_id: input.requestId,
-          p_fingerprints: input.fingerprints, p_model_operation_id: input.modelOperationId, p_agent: row.data,
+        result = await rpc(input.bridge ? "reserve_hivra_launch_model_bridge_v1" : "reserve_hivra_launch_model_request_v3", {
+          p_user_id: input.userId, p_request_id: input.requestId,
+          p_fingerprints: input.fingerprints, p_model_operation_id: input.modelOperationId,
+          p_agent: input.bridge ? managedLaunchBridgeRow(row.data, input.bridge) : row.data,
           p_selection: { provider: selection.provider, mode: selection.mode, model: selection.model,
             ...(selection.mode === "managed" ? { walletType: selection.walletType } : {}) }, p_encrypted_key: encryptedKey,
-          p_agent_limit: input.agentLimit });
-      } catch {
+          p_agent_limit: input.agentLimit, ...(input.bridge ? managedLaunchBridgeArgs(input.bridge) : {}) },
+        input.bridge?.epoch === "placement");
+      } catch (error) {
+        if (error instanceof ManagedLaunchBridgeError) throw error;
         // Lost acknowledgement is not permission for another insert or guest
         // dispatch. Read the stable original request, or retain uncertainty.
         const saved = await find(input.userId, input.requestId, "request_id");
@@ -184,10 +194,20 @@ export function createLaunchModelStore(db = supabaseAdmin) {
         z.object({ status: z.literal("existing"), agentId: Id, phase: LaunchModelRequestSchema.shape.phase }).strict(),
         z.object({ status: z.literal("request_conflict") }).strict(),
         z.object({ status: z.literal("invalid_request") }).strict(),
+        z.object({ status: z.literal("bridge_phase_changed") }).strict(),
         z.object({ status: z.literal("plan_agent_limit"), activeCount: z.number().int().nonnegative(),
           limit: z.number().int().nonnegative() }).strict(),
       ]).safeParse(result);
       if (!parsed.success) throw new ModelKeyStoreError();
+      if (parsed.data.status === "bridge_phase_changed") {
+        if (!input.bridge) throw new ModelKeyStoreError();
+        const saved = await find(input.userId, input.requestId, "request_id");
+        if (saved) {
+          if (!matchesLaunchModelRequest(saved, input.fingerprints)) throw new LaunchModelRequestError("request_conflict");
+          return { created: false, agentId: saved.agent_id, phase: saved.phase };
+        }
+        throw new ManagedLaunchBridgeError("bridge_phase_changed");
+      }
       if (parsed.data.status === "plan_agent_limit") throw new LaunchPlanAgentLimitError(parsed.data.activeCount, parsed.data.limit);
       if (parsed.data.status === "invalid_request" || parsed.data.status === "request_conflict") throw new LaunchModelRequestError(parsed.data.status);
       if (parsed.data.status === "reserved") {

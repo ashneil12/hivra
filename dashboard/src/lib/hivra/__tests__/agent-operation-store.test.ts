@@ -5,7 +5,8 @@ jest.mock("server-only", () => ({}));
 const mockRpc = jest.fn();
 const mockRead = jest.fn();
 const mockCleanup = jest.fn();
-const mockQuery = { update: jest.fn().mockReturnThis(), is: jest.fn().mockReturnThis(), contains: jest.fn().mockReturnThis(), select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(), in: jest.fn().mockReturnThis(), maybeSingle: (...args: unknown[]) => mockRead(...args) };
+const mockLedger = jest.fn();
+const mockQuery = { update: jest.fn().mockReturnThis(), is: jest.fn().mockReturnThis(), contains: jest.fn().mockReturnThis(), select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(), in: jest.fn().mockReturnThis(), limit: (...args: unknown[]) => mockLedger(...args), maybeSingle: (...args: unknown[]) => mockRead(...args) };
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: { rpc: (...args: unknown[]) => mockRpc(...args), from: () => mockQuery },
 }));
@@ -41,6 +42,7 @@ describe("Hivra agent operation store", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRpc.mockReset();
+    mockLedger.mockReset().mockResolvedValue({ data: [], error: null });
     mockRead.mockReset().mockResolvedValue({ data: { cf_tunnel_id: "tunnel", cf_hostname: "host", llm_config: null }, error: null });
     mockCleanup.mockReset().mockResolvedValue(undefined);
   });
@@ -100,6 +102,73 @@ describe("Hivra agent operation store", () => {
       p_operation_kind: "resize",
       p_desired_state: "running",
       p_operation_payload: { cpu: 2.5, ram: 6 },
+    });
+  });
+
+  describe("managed resize during the bridge", () => {
+    const resize = {
+      ...input, operationKind: "resize", desiredState: "running", useManagedPlacementPolicy: true,
+      operationPayload: { cpu: 2.5, ram: 6 },
+    } as const;
+    let environment: ReturnType<typeof jest.replaceProperty>;
+
+    beforeEach(() => {
+      environment = jest.replaceProperty(process, "env", {
+        ...process.env, HIVRA_MANAGED_LAUNCH_BRIDGE: "1", HERMES_PROXMOX_CPU_OVERCOMMIT_RATIO: "5",
+        HIVRA_PLACEMENT_SKIP_DEEP_SLEEP: "0",
+      });
+    });
+
+    afterEach(() => environment.restore());
+
+    it.each(["legacy", "funding"])("uses the old signature with cutover-compatible defaults at %s", async epoch => {
+      mockRpc.mockResolvedValueOnce({ data: epoch, error: null }).mockResolvedValueOnce({ data: true, error: null });
+      await expect(claimHivraAgentOperation(resize)).resolves.toBe(true);
+      expect(mockRpc).toHaveBeenNthCalledWith(1, "managed_launch_bridge_epoch");
+      const args = mockRpc.mock.calls[1][1];
+      expect(args).not.toHaveProperty("p_cpu_overcommit_ratio");
+      expect(args).not.toHaveProperty("p_skip_sleep");
+      expect(args.p_operation_payload).toEqual(resize.operationPayload);
+    });
+
+    it.each([["legacy", "2", "0"], ["funding", "5", "1"], [null, "5", "0"]] as const)(
+      "does not send a stale managed resize claim if the SQL defaults could differ: %s/%s/%s", async (epoch, ratio, skip) => {
+        process.env.HERMES_PROXMOX_CPU_OVERCOMMIT_RATIO = ratio;
+        process.env.HIVRA_PLACEMENT_SKIP_DEEP_SLEEP = skip;
+        mockRpc.mockResolvedValueOnce({ data: epoch, error: null });
+        await expect(claimHivraAgentOperation(resize)).rejects.toMatchObject({ code: "placement_policy_unavailable" });
+        expect(mockRpc.mock.calls).toEqual([["managed_launch_bridge_epoch"]]);
+      },
+    );
+
+    it("uses and preserves the explicit placement policy when durable placement refuses the resize", async () => {
+      process.env.HERMES_PROXMOX_CPU_OVERCOMMIT_RATIO = "2.5";
+      process.env.HIVRA_PLACEMENT_SKIP_DEEP_SLEEP = "1";
+      mockRpc.mockResolvedValueOnce({ data: "placement", error: null })
+        .mockResolvedValueOnce({ data: null, error: { code: "P0058" } });
+      await expect(claimHivraAgentOperation(resize)).rejects.toMatchObject({ code: "placement_capacity" });
+      expect(mockRpc.mock.calls).toEqual([
+        ["managed_launch_bridge_epoch"],
+        ["claim_hivra_agent_operation", {
+          p_user_id: input.userId, p_agent_id: input.agentId, p_operation_id: input.operationId,
+          p_operation_kind: "resize", p_desired_state: "running", p_operation_payload: resize.operationPayload,
+          p_cpu_overcommit_ratio: 2.5, p_skip_sleep: true,
+        }],
+      ]);
+    });
+
+    it("refuses a funding resize while the slot-only schema has admitted holder reservations", async () => {
+      mockRpc.mockResolvedValueOnce({ data: "funding", error: null });
+      mockLedger.mockResolvedValueOnce({ data: [{ user_id: "fixture-holder" }], error: null });
+      await expect(claimHivraAgentOperation(resize)).rejects.toMatchObject({ code: "placement_policy_unavailable" });
+      expect(mockRpc.mock.calls).toEqual([["managed_launch_bridge_epoch"]]);
+    });
+
+    it("does not make existing wake/start or self-managed resize depend on epoch discovery", async () => {
+      mockRpc.mockResolvedValue({ data: true, error: null });
+      await expect(claimHivraAgentOperation({ ...resize, operationKind: "start", operationPayload: null })).resolves.toBe(true);
+      await expect(claimHivraAgentOperation({ ...resize, useManagedPlacementPolicy: false })).resolves.toBe(true);
+      expect(mockRpc.mock.calls.map(([name]) => name)).toEqual(["claim_hivra_agent_operation", "claim_hivra_agent_operation"]);
     });
   });
 

@@ -1,3 +1,5 @@
+import { classicHolderBridgeEnabled, readManagedLaunchBridgeEpoch } from "@/lib/hivra/managed-launch-bridge";
+import { transitionClassicHolder } from "@/lib/recovery/classic-holder-idle";
 import { NextRequest } from "next/server";
 
 import { GET } from "../route";
@@ -16,6 +18,12 @@ const mockReadinessEqUser = jest.fn(() => ({ neq: mockReadinessNeq }));
 const mockReadinessEqId = jest.fn(() => ({ eq: mockReadinessEqUser }));
 const mockReadinessSelect = jest.fn(() => ({ eq: mockReadinessEqId }));
 const mockReadinessFrom = jest.fn(() => ({ select: mockReadinessSelect }));
+
+jest.mock("@/lib/hivra/managed-launch-bridge", () => ({
+  classicHolderBridgeEnabled: jest.fn(() => true),
+  readManagedLaunchBridgeEpoch: jest.fn(async () => null),
+}));
+jest.mock("@/lib/recovery/classic-holder-idle", () => ({ transitionClassicHolder: jest.fn() }));
 
 jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(),
@@ -106,6 +114,7 @@ describe("GET /api/instances/[id]/webui-login-url", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(readManagedLaunchBridgeEpoch).mockResolvedValue(null);
     mockedFetchFirstReachableGatewayResponse.mockResolvedValue({
       url: "https://agent.example.com/",
       response: new Response("ok", { status: 200 }),
@@ -155,6 +164,41 @@ describe("GET /api/instances/[id]/webui-login-url", () => {
       { params: Promise.resolve({ id }) },
     );
   }
+
+  it("restores a holder on normal Web UI access before issuing its login URL", async () => {
+    jest.mocked(readManagedLaunchBridgeEpoch).mockResolvedValue("placement");
+    mockReadinessSingle.mockResolvedValue({ data: { status: "stopped", paused_reason: "holder_idle", seat_funding: "holder" }, error: null });
+    jest.mocked(transitionClassicHolder).mockResolvedValueOnce("deferred").mockResolvedValueOnce("awake");
+    expect((await callRoute()).status).toBe(202);
+    expect(mockedGetSecureUserInstance).not.toHaveBeenCalled();
+    expect((await callRoute()).status).toBe(200);
+    expect(transitionClassicHolder).toHaveBeenCalledWith({ id: "inst_123", userId: "user_123" });
+    expect(mockedGetSecureUserInstance).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds saved holder wake before Classic repair readiness without blocking running access", async () => {
+    jest.mocked(readManagedLaunchBridgeEpoch).mockResolvedValue("placement");
+    jest.mocked(classicHolderBridgeEnabled).mockReturnValueOnce(false).mockReturnValueOnce(false);
+    mockReadinessSingle
+      .mockResolvedValueOnce({ data: { status: "stopped", paused_reason: "holder_idle", seat_funding: "holder" }, error: null })
+      .mockResolvedValueOnce({ data: { status: "running", seat_funding: "holder" }, error: null });
+    expect((await callRoute()).status).toBe(503);
+    expect((await callRoute()).status).toBe(200);
+    expect(transitionClassicHolder).not.toHaveBeenCalled();
+  });
+
+  it.each(["reservation_released", "reservation_ineligible"] as const)(
+    "returns a permanent holder-reservation refusal instead of a pending restore: %s",
+    async (outcome) => {
+      jest.mocked(readManagedLaunchBridgeEpoch).mockResolvedValueOnce("placement");
+      mockReadinessSingle.mockResolvedValue({ data: { status: "stopped", paused_reason: "holder_idle", seat_funding: "holder" }, error: null });
+      jest.mocked(transitionClassicHolder).mockResolvedValueOnce(outcome);
+      const response = await callRoute();
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ kind: "error", reason: outcome });
+      expect(mockedGetSecureUserInstance).not.toHaveBeenCalled();
+    },
+  );
 
   it("returns a sidecar cookie handoff URL that redirects to the iframe hash-token URL", async () => {
     const response = await callRoute();

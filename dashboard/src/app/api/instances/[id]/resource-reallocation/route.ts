@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 
+import { BRIDGE_UNAVAILABLE_MESSAGE, readManagedLaunchBridgeEpoch } from "@/lib/hivra/managed-launch-bridge";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -30,11 +31,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const parsed = ResourceReallocationSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return apiError(parsed.error.issues[0]?.message || "Invalid resource allocation", 400);
   const { id } = await params;
+  const epoch = await readManagedLaunchBridgeEpoch().catch(() => "unverified" as const);
+  if (epoch === "unverified") return apiError(BRIDGE_UNAVAILABLE_MESSAGE, 503);
+  if (epoch === "placement") return apiError("This allocation can only be changed through the placement-aware resize workflow.", 409);
   const { data: instance, error } = await supabaseAdmin
     .from("hermes_instances")
-    .select("id,user_id,cpu_limit,ram_limit,resource_tier,config,host_id,status")
-    .eq("id", id).eq("user_id", userId).neq("status", "deleted").single();
+    .select(epoch === "funding"
+      ? "id,user_id,cpu_limit,ram_limit,resource_tier,config,host_id,status,seat_funding,lifecycle_substate"
+      : "id,user_id,cpu_limit,ram_limit,resource_tier,config,host_id,status")
+    .eq("id", id).eq("user_id", userId).neq("status", "deleted").single<{
+      id: string; cpu_limit: number | null; ram_limit: number | null; resource_tier: string | null;
+      config: unknown; host_id: string | null; seat_funding?: string | null; lifecycle_substate?: string | null;
+    }>();
   if (error || !instance) return apiError("Instance not found", 404);
+  if (epoch === "funding" && (instance.seat_funding === "holder" || instance.lifecycle_substate === "classic_start")) {
+    return apiError("This allocation can only be changed through the placement-aware resize workflow.", 409);
+  }
 
   const currentCpu = Number(instance.cpu_limit ?? 0);
   const currentRam = Number(instance.ram_limit ?? 0);

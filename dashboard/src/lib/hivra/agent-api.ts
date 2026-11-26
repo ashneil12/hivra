@@ -275,7 +275,8 @@ export async function createAgent(input: CreateAgentInput): Promise<HivraAgent> 
     }
     // Refused before anything was created (no host could take it right now):
     // back to Review with the reason, never "couldn't confirm".
-    if ((r.status >= 400 && r.status < 500) || j?.code === "placement_unavailable" || j?.code === "servers_full") {
+    if ((r.status >= 400 && r.status < 500) || j?.code === "placement_unavailable" || j?.code === "servers_full"
+      || j?.code === "bridge_unavailable" || j?.code === "bridge_holder_unavailable" || j?.code === "bridge_phase_changed") {
       throw new HivraLaunchCorrectableError(
         message,
         r.status,

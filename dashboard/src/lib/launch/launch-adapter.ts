@@ -412,6 +412,9 @@ async function submitHermes(draft: LaunchDraft, options: LaunchSubmitOptions): P
     );
   }
   const message = getApiErrorMessage(payload, `Launch failed (${response.status})`);
+  if (payload?.failureType === "bridge_unavailable") {
+    throw new LaunchCorrectableError(message, response.status, payload.failureType, null);
+  }
   if (response.status >= 400 && response.status < 500) {
     const existing = typeof payload?.existingInstanceId === "string" ? payload.existingInstanceId : null;
     throw new LaunchCorrectableError(

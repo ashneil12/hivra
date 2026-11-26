@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { NextRequest } from "next/server";
 import { withoutEncryptedColumns } from "@/lib/instance-record";
 import { auth } from "@clerk/nextjs/server";
@@ -24,6 +25,7 @@ import {
   getReleasedProxmoxInfrastructure,
   isProxmoxBackedInstanceRow,
   isProxmoxVmMissingResult,
+  normalizeProxmoxTargetId,
   resolveProxmoxGatewayUrlFromSubdomain,
   resolveProxmoxLifecycleTarget,
   startProxmoxInstance,
@@ -42,6 +44,9 @@ import {
   normalizeWakeRamMb,
   releaseHostWakeSlot,
 } from "@/lib/proxmox/wake-admission";
+import { BRIDGE_UNAVAILABLE_MESSAGE, classicHolderBridgeEnabled, readManagedLaunchBridgeEpoch } from "@/lib/hivra/managed-launch-bridge";
+import { proxmoxPlacementRpcPolicy } from "@/lib/proxmox/placement-policy";
+import { transitionClassicHolder } from "@/lib/recovery/classic-holder-idle";
 import { captureWakeEvent, type WakeTelemetrySource } from "@/lib/telemetry/wake-events";
 import { deriveDnsDomainFromGatewayUrl, removeInstanceDnsBestEffort } from "@/lib/services/cloudflare-dns";
 import { buildResolveAgentContainerScript } from "@/lib/services/agent-container";
@@ -345,6 +350,7 @@ export interface HermesInstanceRow {
   entitlement_suspended_at?: string | null;
   entitlement_last_resumed_at?: string | null;
   paused_reason?: string | null;
+  seat_funding?: string | null;
   resource_tier?: string | null;
   disk_size_gb?: number | null;
   archive_uri?: string | null;
@@ -1574,6 +1580,7 @@ export async function PATCH(
     const { instance, err } = await getInstanceOrError(id, userId);
     if (err) return err;
 
+    if (instance!.lifecycle_substate === "classic_start") return apiError("Another start is still being reconciled.", 409);
     const requestBody = await req.json();
     const parsed = UpdateInstanceSettingsSchema.safeParse(requestBody);
     if (!parsed.success) return apiError(parsed.error.issues[0].message, 400);
@@ -1616,6 +1623,14 @@ export async function PATCH(
       firstTask,
       context,
     } = parsed.data;
+
+    if (cpuLimit !== undefined || ramLimit !== undefined) {
+      const epoch = await readManagedLaunchBridgeEpoch().catch(() => "unverified" as const);
+      if (epoch === "unverified") return apiError(BRIDGE_UNAVAILABLE_MESSAGE, 503);
+      if (epoch === "placement" || (epoch === "funding" && instance!.seat_funding === "holder")) {
+        return apiError("This allocation can only be changed through the placement-aware resize workflow.", 409);
+      }
+    }
 
     // Hetzner native backups are a paid add-on. Turning them on only goes
     // through POST /api/billing/backup-addon, which checks the subscription
@@ -2257,6 +2272,7 @@ export async function DELETE(
     const { instance, err } = await getInstanceOrError(id, userId);
     if (err) return err;
 
+    if (instance!.lifecycle_substate === "classic_start") return apiError("Another start is still being reconciled.", 409);
     const deletePayload = await readDeleteInstanceConfirmation(req);
     // The reason is purely informational and must NEVER gate the delete — only
     // the typed-id confirmation can. Capture it for the ops event regardless of
@@ -2876,6 +2892,19 @@ export async function POST(
     const body = await req.json();
     const action = body.action as string;
     actionForOps = action;
+    if (action !== "start" && instance!.lifecycle_substate === "classic_start") {
+      return apiError("Another start is still being reconciled.", 409);
+    }
+    const epoch = action === "start" || instance!.seat_funding === "holder" || instance!.paused_reason === "holder_idle"
+      ? await readManagedLaunchBridgeEpoch().catch(() => "unverified" as const)
+      : null;
+    if (epoch === "unverified") return apiError(BRIDGE_UNAVAILABLE_MESSAGE, 503);
+    const placement = epoch === "placement";
+    const funded = placement || epoch === "funding";
+    if (funded && action === "stop" && instance!.seat_funding === "holder") {
+      return apiError("Holder-funded computers use managed sleep instead of manual Stop.", 409);
+    }
+
     const safeSshActionFailure = {
       failureType: "ssh_exec_failed",
       retryable: false,
@@ -2946,6 +2975,7 @@ export async function POST(
         !!instance!.archive_sha256 &&
         instance!.proxmox_vmid == null);
     if (action === "start" && isColdLifecycleRow) {
+      if (placement) return apiError("Cold restoration is unavailable during the placement transition. Your archive is preserved.", 503);
       const restoreEnabled =
         (process.env.COLD_STORAGE_RESTORE_ON_START_ENABLED ?? "").toLowerCase() === "true";
       void recordInstanceUserActivity({
@@ -3168,6 +3198,36 @@ export async function POST(
       }
     }
 
+    if (funded && ((instance!.paused_reason === "holder_idle" && instance!.lifecycle_state === "paused")
+      || (action === "start" && instance!.seat_funding === "holder"))) {
+      if (action !== "start") return apiError("Wake this computer before changing its power or runtime.", 409);
+      if (instance!.status === "running" && instance!.lifecycle_state === "active") return apiSuccess({ action });
+      if (!placement || !classicHolderBridgeEnabled()) return apiError(BRIDGE_UNAVAILABLE_MESSAGE, 503);
+      const result = await transitionClassicHolder({ id, userId }).catch(() => null);
+      if (result === null) return apiError(BRIDGE_UNAVAILABLE_MESSAGE, 503);
+      if (result === "awake") return apiSuccess({ action });
+      if (result === "reservation_released" || result === "reservation_ineligible") {
+        const released = result === "reservation_released";
+        return apiError(
+          released
+            ? "This computer's token-holder reservation was released, so its saved session cannot be restored."
+            : "This computer no longer fits its token-holder reservation, so its saved session cannot be restored.",
+          409,
+          undefined,
+          { retryable: false, reason: result },
+        );
+      }
+      // Another request may have completed between the read and the claim.
+      if (result === "unclaimed" || result === "superseded") {
+        const current = await getInstanceOrError(id, userId);
+        if (current.instance?.status === "running" && current.instance.lifecycle_state === "active") return apiSuccess({ action });
+      }
+      const response = apiError("The computer is waiting to restore its session. Retry shortly.", 429,
+        undefined, { retryable: true, retryAfterSeconds: 5 });
+      response.headers.set("Retry-After", "5");
+      return response;
+    }
+
     // Detect Proxmox-backed instances early so power/lifecycle actions can
     // route to the Proxmox host instead of the Hetzner API.
     const configProxmoxInfra = getProxmoxInfrastructure(instance!.config);
@@ -3204,6 +3264,7 @@ export async function POST(
       Boolean(releasedProxmoxInfra);
 
     if (action === "start" && !proxmoxInfra && hasProxmoxRecoverySignal) {
+      if (placement) return apiError("The runtime needs a placement repair before it can start.", 409);
       const recovery = await recoverProxmoxInstanceAcrossFleet(
         toProxmoxRecoveryCandidate(instance!),
         { allowStopped: true },
@@ -3258,6 +3319,7 @@ export async function POST(
     // destructive, so search all configured Proxmox hosts and repair routing
     // before returning an error.
     if (action === "start" && !proxmoxInfra && !serverId) {
+      if (placement) return apiError("No placed runtime is attached to this computer.", 409);
       const recovery = await recoverProxmoxInstanceAcrossFleet(
         toProxmoxRecoveryCandidate(instance!),
         { allowStopped: true },
@@ -3326,6 +3388,10 @@ export async function POST(
     switch (action) {
       case "start":
         if (proxmoxInfra) {
+          if (placement && (!instance!.proxmox_node || instance!.proxmox_vmid !== proxmoxInfra.vmid
+            || normalizeProxmoxTargetId(proxmoxInfra.hostSlug ?? proxmoxInfra.node) !== normalizeProxmoxTargetId(instance!.proxmox_node))) {
+            return apiError("The recorded runtime target changed. The computer was not started.", 409);
+          }
           // ── Gateway auto-wake Phase 1 ────────────────────────────────────
           // Every Hermes-lane start is a "wake" (the VM is off or parked), so
           // it goes through the host-side admission guard: a per-host
@@ -3355,8 +3421,10 @@ export async function POST(
               instance_status: instance!.status ?? null,
             },
           });
+          const operationId = placement ? randomUUID() : null;
+          const wakeSlotId = operationId ?? id;
           const admission = await acquireHostWakeSlot(proxmoxInfra, {
-            instanceId: id,
+            instanceId: wakeSlotId,
             neededRamMb: normalizeWakeRamMb(instance!.ram_limit),
             hostConfig: wakeHostConfig,
           });
@@ -3413,6 +3481,22 @@ export async function POST(
             );
             return deferResponse;
           }
+          if (operationId) {
+            const claim = await supabaseAdmin!.rpc("claim_hermes_instance_start_bridge_v1", {
+              p_epoch: epoch, p_instance_id: id, p_user_id: userId, p_operation_id: operationId,
+              p_host_id: instance!.proxmox_node, p_vmid: proxmoxInfra.vmid,
+              ...proxmoxPlacementRpcPolicy(process.env),
+            });
+            const status = typeof claim.data === "string" ? claim.data : claim.data?.status;
+            if (claim.error || status !== "claimed") {
+              void releaseHostWakeSlot(proxmoxInfra, { instanceId: wakeSlotId, hostConfig: wakeHostConfig });
+              if (!claim.error && status === "awake") return apiSuccess({ action });
+              if (claim.error?.code === "P0058" || status === "pending") {
+                return apiError("The host has no capacity to start this computer now, or a start is already in progress.", 409);
+              }
+              return apiError(BRIDGE_UNAVAILABLE_MESSAGE, 503);
+            }
+          }
           const result = await startProxmoxInstance(proxmoxInfra, {
             expectedInstanceId: instance!.id,
             hostConfig: wakeHostConfig,
@@ -3421,7 +3505,24 @@ export async function POST(
             // this, a VM paused (onboot cleared) then resumed would silently
             // fail to come back after a host reboot. Best-effort.
             setOnboot: 1,
+          }).catch((error: unknown) => {
+            if (!operationId) throw error;
+            return { ok: false, stdout: "", stderr: "", error: "Host start outcome unknown" };
           });
+          if (operationId) {
+            const outcome = result.ok ? "started" : isProxmoxVmMissingResult(result) ? "not_started" : "unknown";
+            const finish = await supabaseAdmin!.rpc("finish_hermes_instance_start_bridge_v1", {
+              p_instance_id: id, p_user_id: userId, p_operation_id: operationId, p_outcome: outcome,
+            });
+            if (result.ok && !finish.error && (finish.data === "awake" || finish.data?.status === "awake")) {
+              break;
+            }
+            if (outcome === "not_started" && !finish.error && finish.data?.status === "released") {
+              void releaseHostWakeSlot(proxmoxInfra, { instanceId: wakeSlotId, hostConfig: wakeHostConfig });
+              return apiError("The runtime was not found on its recorded host. The computer is still stopped.", 409);
+            }
+            return apiError("The start could not be confirmed. The allocation is preserved while it is reconciled.", 503);
+          }
           if (isProxmoxVmMissingResult(result)) {
             // VM was destroyed (e.g. by Phase 2 bootstrap cleanup after a
             // transient apt-lock failure) but the row was left at

@@ -36,6 +36,7 @@ import { resolveCodexDeploymentSecret } from "@/lib/codex-oauth";
 import { fetchFirstReachableGatewayResponse } from "@/lib/agent-gateway";
 import { createManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { SLOT_FREEING_LIFECYCLE_IN_LIST } from "@/lib/instance-lifecycle";
+import * as entitlement from "@/lib/billing/instance-entitlement";
 import { PAYMENT_GRACE_HOURS } from "@/lib/subscription/plans";
 
 jest.mock("@clerk/nextjs/server", () => ({
@@ -45,6 +46,7 @@ jest.mock("@clerk/nextjs/server", () => ({
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {
     from: jest.fn(),
+    rpc: jest.fn(),
     storage: { from: jest.fn() },
   },
 }));
@@ -878,6 +880,29 @@ describe("assertProxmoxTenantCapacityAvailable", () => {
     await expect(
       assertProxmoxTenantCapacityAvailable({ supabase: fakeSupabase })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("InstanceService.createInstance managed launch bridge", () => {
+  it.each([null, "unknown"])("refuses Classic create when the bridge epoch is %s", async data => {
+    const environment = jest.replaceProperty(process, "env", {
+      ...process.env, HIVRA_MANAGED_LAUNCH_BRIDGE: "1", HETZNER_API_TOKEN: "test-token",
+    });
+    const rpc = jest.mocked(supabaseAdmin!.rpc);
+    rpc.mockClear().mockResolvedValueOnce({ data, error: null } as never);
+    jest.mocked(supabaseAdmin!.from).mockClear();
+    jest.mocked(provisionProxmoxInstance).mockClear();
+    try {
+      const params = CreateInstanceSchema.parse({ name: "Classic fixture", provider: "openrouter", apiKey: "test-key" });
+      await expect(InstanceService.createInstance("fixture_owner", params)).resolves.toMatchObject({
+        success: false, status: 503, failureType: "bridge_unavailable",
+      });
+      expect(rpc).toHaveBeenCalledWith("managed_launch_bridge_epoch");
+      expect(supabaseAdmin!.from).not.toHaveBeenCalled();
+      expect(provisionProxmoxInstance).not.toHaveBeenCalled();
+    } finally {
+      environment.restore();
+    }
   });
 });
 
@@ -6941,7 +6966,7 @@ describe("InstanceService.createInstance box_created activation event", () => {
   // Mirrors the free-tier-guard block's success-path mocks so the create
   // reaches the box_created emit. Returns the insert mock so callers can assert
   // the create actually reached insert.
-  function wireSuccessfulCreate(instanceId: string) {
+  function wireSuccessfulCreate(instanceId: string, useBridge = false) {
     const subscriptionQuery = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
@@ -7009,7 +7034,7 @@ describe("InstanceService.createInstance box_created activation event", () => {
         hermesInstancesCall += 1;
         if (hermesInstancesCall === 1) return agentCountQuery;
         if (hermesInstancesCall === 2) return resourceUsageQuery;
-        if (hermesInstancesCall === 3) return insertQuery;
+        if (hermesInstancesCall === 3) return useBridge ? updateQuery : insertQuery;
         if (hermesInstancesCall === 4) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
@@ -7088,6 +7113,70 @@ describe("InstanceService.createInstance box_created activation event", () => {
       delete (process.env as Record<string, string | undefined>).NODE_ENV;
     } else {
       (process.env as Record<string, string | undefined>).NODE_ENV = originalNodeEnv;
+    }
+  });
+
+  it.each(["legacy", "funding", "placement"] as const)("creates through the fenced %s authority without a direct insert", async epoch => {
+    const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_MANAGED_LAUNCH_BRIDGE: "1" });
+    const { insertQuery } = wireSuccessfulCreate(`fixture-${epoch}`, true);
+    const rpc = jest.mocked(supabaseAdmin!.rpc);
+    rpc.mockResolvedValueOnce({ data: epoch, error: null } as never).mockResolvedValueOnce({
+      data: { status: "inserted", row: { id: `fixture-${epoch}`, name: "Bridge fixture", subdomain: "test-bridge" } },
+      error: null,
+    } as never);
+    try {
+      const result = await InstanceService.createInstance("user_funnel", CreateInstanceSchema.parse({
+        name: "Bridge fixture", provider: "openrouter", apiKey: "sk-or-test", cpuLimit: 2, ramLimit: 4096,
+      }));
+      expect(result).toMatchObject({ success: true });
+      const [, args] = rpc.mock.calls.find(([name]) => name === "insert_hermes_instance_bridge_v1")!;
+      const request = args as { p_epoch: string; p_row: Record<string, unknown> };
+      expect(request.p_epoch).toBe(epoch);
+      expect(request.p_row.seat_funding).toBe(epoch === "legacy" ? undefined : "paid");
+      expect(Boolean(request.p_row.proxmox_node)).toBe(epoch === "placement");
+      expect(insertQuery.insert).not.toHaveBeenCalled();
+      expect(provisionProxmoxInstance).toHaveBeenCalledTimes(1);
+    } finally {
+      env.restore();
+    }
+  });
+
+  it.each(["funding", "placement"] as const)("keeps Classic holder seats grandfathered in %s", async epoch => {
+    const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_MANAGED_LAUNCH_BRIDGE: "1" });
+    const subscription = jest.spyOn(entitlement, "resolveEffectiveSubscription").mockResolvedValueOnce({
+      plan: "operator", status: "active", source: "token_holding", tokenTier: "pro",
+      instance_limit: 1, total_cpu_budget: 2, total_ram_budget: 4096, canChangePlanInPlace: false,
+    });
+    const rpc = jest.mocked(supabaseAdmin!.rpc);
+    rpc.mockResolvedValueOnce({ data: epoch, error: null } as never);
+    try {
+      const result = await InstanceService.createInstance("user_funnel", CreateInstanceSchema.parse({
+        name: "Bridge fixture", provider: "openrouter", apiKey: "sk-or-test",
+      }));
+      expect(result).toMatchObject({ success: false, status: 403, failureType: "holder_sleep_unsupported" });
+      expect(rpc).toHaveBeenCalledTimes(1);
+      expect(provisionProxmoxInstance).not.toHaveBeenCalled();
+    } finally {
+      subscription.mockRestore();
+      env.restore();
+    }
+  });
+
+  it("does not insert directly or provision after the fenced insert rejects an epoch change", async () => {
+    const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_MANAGED_LAUNCH_BRIDGE: "1" });
+    const { insertQuery } = wireSuccessfulCreate("fixture-changed", true);
+    jest.mocked(supabaseAdmin!.rpc)
+      .mockResolvedValueOnce({ data: "funding", error: null } as never)
+      .mockResolvedValueOnce({ data: { status: "bridge_phase_changed" }, error: null } as never);
+    try {
+      const result = await InstanceService.createInstance("user_funnel", CreateInstanceSchema.parse({
+        name: "Bridge fixture", provider: "openrouter", apiKey: "sk-or-test", cpuLimit: 2, ramLimit: 4096,
+      }));
+      expect(result).toMatchObject({ success: false, status: 503, failureType: "bridge_phase_changed" });
+      expect(insertQuery.insert).not.toHaveBeenCalled();
+      expect(provisionProxmoxInstance).not.toHaveBeenCalled();
+    } finally {
+      env.restore();
     }
   });
 

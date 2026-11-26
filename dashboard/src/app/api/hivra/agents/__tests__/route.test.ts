@@ -112,6 +112,9 @@ let mockAgentInsertThrows: unknown;
 const mockHivraAgentEqCalls: Array<[string, unknown]> = [];
 const mockAgentUpdates: Array<Record<string, unknown>> = [];
 let mockSubscriptionRow: Record<string, unknown> | null;
+let mockSubscriptionReadError: { message: string } | null;
+let mockTokenQualifications: Array<{ tier: string; currently_eligible: boolean }>;
+let mockAdmittedReservations: Array<{ user_id: string }> | null;
 // The Free-account refusal (hosted compute is paid) has its own tests below and
 // in resource-gate.test.ts. Everything else in this file exercises pool, slot,
 // placement and idempotency behaviour through the small Free-sized fixture, so
@@ -293,6 +296,7 @@ jest.mock("@/lib/services/proxmox-instance-service", () => ({
 }));
 
 jest.mock("@/lib/services/instance-service", () => ({
+  ...jest.requireActual("@/lib/services/instance-service"),
   selectAvailableProxmoxProvisionTarget: (...args: unknown[]) => mockSelectAvailableProxmoxProvisionTarget(...args),
 }));
 
@@ -447,6 +451,9 @@ describe("POST /api/hivra/agents", () => {
     delete process.env.NEXT_PUBLIC_APP_URL;
     delete process.env.VERCEL_TARGET_ENV;
     mockEnforceFreeAccountRefusal = false;
+    mockSubscriptionReadError = null;
+    mockTokenQualifications = [];
+    mockAdmittedReservations = [];
     mockSubscriptionRow = {
       plan: "free",
       status: "active",
@@ -517,7 +524,7 @@ describe("POST /api/hivra/agents", () => {
         return {
           select: jest.fn().mockReturnThis(),
           eq: jest.fn().mockReturnThis(),
-          maybeSingle: jest.fn(async () => ({ data: mockSubscriptionRow, error: null })),
+          maybeSingle: jest.fn(async () => ({ data: mockSubscriptionRow, error: mockSubscriptionReadError })),
         };
       }
 
@@ -552,11 +559,18 @@ describe("POST /api/hivra/agents", () => {
         } = {
           select: jest.fn(),
           eq: jest.fn(),
-          then: (resolve) => resolve({ data: [], error: null }),
+          then: (resolve) => resolve({ data: mockTokenQualifications, error: null }),
         };
         chain.select.mockReturnValue(chain);
         chain.eq.mockReturnValue(chain);
         return chain;
+      }
+
+      if (table === "holder_admissions") {
+        return {
+          select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(),
+          limit: jest.fn(async () => ({ data: mockAdmittedReservations, error: null })),
+        };
       }
 
       if (table === "hermes_instances") {
@@ -2097,6 +2111,298 @@ describe("POST /api/hivra/agents", () => {
     expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_hivra_managed_agent", expect.objectContaining({
       p_agent_limit: 1, p_row: expect.objectContaining({ user_id: "user-free", deployment_mode: "hivra-managed", type: "codex" }),
     }));
+    expect(mockSupabaseRpc.mock.calls.some(([name]) => name === "managed_launch_bridge_epoch")).toBe(false);
+  });
+
+  describe("pre-cutover managed launch bridge", () => {
+    let environment: ReturnType<typeof jest.replaceProperty>;
+    let mockEpoch: unknown;
+    let mockBridgeReply: unknown;
+
+    beforeEach(() => {
+      environment = jest.replaceProperty(process, "env", {
+        ...process.env, HIVRA_MANAGED_LAUNCH_BRIDGE: "1", HERMES_PROXMOX_CPU_OVERCOMMIT_RATIO: "3.5",
+        HIVRA_PLACEMENT_SKIP_DEEP_SLEEP: "1", HIVRA_MANAGED_PLACEMENT_BRIDGE: "0",
+      });
+      mockEpoch = "funding";
+      mockBridgeReply = undefined;
+      mockSubscriptionRow = { plan: "operator", status: "active", instance_limit: 4, total_cpu_budget: 4, total_ram_budget: 8192 };
+      mockTokenQualifications = [{ tier: "power", currently_eligible: true }];
+      mockSupabaseRpc.mockImplementation((name: string, args: Record<string, unknown>) => {
+        if (name === "managed_launch_bridge_epoch") return Promise.resolve({ data: mockEpoch, error: null });
+        if (name === "insert_hivra_managed_agent_bridge_v1") {
+          if (mockBridgeReply) return Promise.resolve({ data: mockBridgeReply, error: null });
+          return mockDefaultRpc("insert_hivra_managed_agent", args);
+        }
+        return mockDefaultRpc(name, args);
+      });
+    });
+
+    afterEach(() => environment.restore());
+
+    it.each(["legacy", "funding", "placement"])("uses the selected adapter epoch and preserves the paid budget and operation identity: %s", async epoch => {
+      mockEpoch = epoch;
+      process.env.HIVRA_MANAGED_PLACEMENT_BRIDGE = "1";
+      const response = await POST(makeRequest({
+        type: "codex", cpu: 0.5, ram: 1, seat_funding: "holder", seatFunding: "holder",
+      }) as never);
+      expect(response.status).toBe(201);
+      const writers = mockSupabaseRpc.mock.calls.filter(([name]) => String(name).startsWith("insert_hivra_managed_agent"));
+      expect(writers).toEqual([["insert_hivra_managed_agent_bridge_v1", {
+        p_epoch: epoch, p_agent_limit: 4, p_cpu_overcommit_ratio: 3.5, p_skip_sleep: true,
+        p_row: expect.objectContaining({ user_id: "user-free", operation_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }),
+      }]]);
+      if (epoch === "legacy") expect(writers[0][1].p_row).not.toHaveProperty("seat_funding");
+      else expect(writers[0][1].p_row.seat_funding).toBe("paid");
+      const selector = mockSelectAvailableProxmoxProvisionTarget.mock.calls[0][0];
+      if (epoch === "placement") expect(selector).toMatchObject({ placementEpoch: true, rankManagedTarget: true, seatFunding: "paid" });
+      else expect(selector).not.toHaveProperty("placementEpoch");
+    });
+
+    it("runs a paid no-receipt launch through placement on the exact selected host", async () => {
+      mockEpoch = "placement";
+      process.env.HIVRA_MANAGED_PLACEMENT_BRIDGE = "1";
+      const response = await POST(makeRequest({ type: "claude-code", cpu: 0.5, ram: 1 }));
+      expect(response.status).toBe(201);
+      expect(mockOperationReserve).not.toHaveBeenCalled();
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_hivra_managed_agent_bridge_v1", expect.objectContaining({
+        p_epoch: "placement",
+        p_row: expect.objectContaining({ type: "claude-code", seat_funding: "paid", proxmox_host: "fixturenode7" }),
+      }));
+      expect(mockBeginHivraAgentVmAllocation).toHaveBeenCalledWith(expect.objectContaining({ expectedHost: "fixturenode7" }));
+      const kickoff = String(mockRunProxmoxHostScript.mock.calls[0][0]);
+      expect(kickoff).toMatch(/BUNDLE\.sha256[\s\S]+HIVRA_HOST_READY[\s\S]+HIVRA_PROVISION_RESULT/);
+    });
+
+    it("holds the accepted native receipt when its epoch changes before dispatch", async () => {
+      mockAgentInsert.mockImplementationOnce(() => { mockEpoch = "placement"; });
+      const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: "bridge_phase_changed" });
+      expect(mockOperationAccept).toHaveBeenCalledWith(expect.objectContaining({ requestId: LAUNCH_REQUEST_ID }), "agent-1", 202);
+      expect(mockBeginHivraAgentVmAllocation).not.toHaveBeenCalled();
+      expect(mockOperationFail).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("holds holder-only placement even with the placement and sleep switches enabled", async () => {
+      mockEpoch = "placement";
+      process.env.HIVRA_MANAGED_PLACEMENT_BRIDGE = "1";
+      process.env.HIVRA_SLEEP_MODE = "on";
+      mockTunnelConfigured = true;
+      mockSubscriptionRow = null;
+      const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: "bridge_holder_unavailable" });
+      expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+      expect(mockOperationReserve).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    });
+
+    it.each([["admitted", [{ user_id: "fixture-holder" }]], ["unverified", null]] as const)(
+      "holds paid funding when the reservation ledger cannot prove no admitted seats: %s", async (_state, data) => {
+        mockAdmittedReservations = data ? [...data] : null;
+        const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }));
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ code: "bridge_unavailable" });
+        expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+        expect(mockOperationReserve).not.toHaveBeenCalled();
+        expect(mockAgentInsert).not.toHaveBeenCalled();
+      },
+    );
+
+    it("rechecks the funding reservation ledger before either a row or a receipt is written", async () => {
+      mockGetOrCreatePoolId.mockImplementationOnce(async () => {
+        mockAdmittedReservations = [{ user_id: "fixture-holder" }];
+        return "pool-1";
+      });
+      const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }));
+      expect(response.status).toBe(503);
+      expect(mockOperationReserve).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    });
+
+    it.each(["selector", "headroom", "write"])("fails closed on %s refusal without dispatch", async step => {
+      mockEpoch = "placement";
+      process.env.HIVRA_MANAGED_PLACEMENT_BRIDGE = "1";
+      if (step === "selector") mockSelectAvailableProxmoxProvisionTarget.mockResolvedValueOnce({ ok: false, status: 503, message: "No vetted host" });
+      if (step === "headroom") mockCheckHostWakeCapacity.mockResolvedValueOnce({ ok: true, freeMb: null });
+      if (step === "write") mockAgentInsertError = { code: "P0058" };
+      const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: "placement_unavailable" });
+      if (step === "write") {
+        expect(mockOperationFail).toHaveBeenCalledWith(expect.objectContaining({ requestId: LAUNCH_REQUEST_ID }), 503, "placement_unavailable");
+      } else {
+        expect(mockOperationReserve).not.toHaveBeenCalled();
+        expect(mockAgentInsert).not.toHaveBeenCalled();
+      }
+      expect(mockOperationBindAgent).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("does not treat holder-only or ambiguous paid evidence as paid funding", async () => {
+      mockSubscriptionRow = null;
+      const holder = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
+      expect(holder.status).toBe(503);
+      expect(await holder.json()).toMatchObject({ code: "bridge_holder_unavailable" });
+      mockSubscriptionReadError = { message: "synthetic paid lookup outage" };
+      const unverifiable = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
+      expect(unverifiable.status).toBe(503);
+      expect(await unverifiable.json()).toMatchObject({ code: "bridge_unavailable" });
+      expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+      expect(mockOperationReserve).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    });
+
+    it("keeps existing holder-funded seats in the same shared budget and slot count", async () => {
+      mockExistingAgents = [{
+        id: "legacy-holder", type: "codex", status: "running", deployment_mode: "hivra-managed",
+        seat_funding: "holder", cpu: 4, ram: 8,
+      }];
+      const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }));
+      expect(response.status).toBe(403);
+      expect(mockOperationReserve).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])("refuses entitlement drift between selection and the write boundary, model=%s", async model => {
+      mockTunnelConfigured = true;
+      mockGetOrCreatePoolId.mockImplementationOnce(async () => {
+        if (model) mockSubscriptionRow = null;
+        else mockSubscriptionRow = { ...mockSubscriptionRow, instance_limit: 2 };
+        return "pool-1";
+      });
+      const response = await POST(makeRequest({
+        type: "codex", cpu: 0.5, ram: 1, ...(model ? { llm: MODEL_SELECTION } : {}),
+      }));
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ code: model ? "bridge_holder_unavailable" : "bridge_unavailable" });
+      expect(mockOperationReserve).not.toHaveBeenCalled();
+      expect(mockLaunchReserve).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    });
+
+    it.each(["placement", "unknown", null])("holds both managed writers before any reservation in epoch %s", async epoch => {
+      mockEpoch = epoch;
+      mockTunnelConfigured = true;
+      for (const llm of [undefined, MODEL_SELECTION]) {
+        const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1, ...(llm ? { llm } : {}) }) as never);
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ code: "bridge_unavailable" });
+      }
+      expect(mockGetOrCreatePoolId).not.toHaveBeenCalled();
+      expect(mockOperationReserve).not.toHaveBeenCalled();
+      expect(mockLaunchReserve).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("replays a stored model request even when fresh allocation is held", async () => {
+      mockEpoch = "placement";
+      const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+      mockLaunchExisting.mockResolvedValue({ agent_id: agentId });
+      mockLaunchByRequest.mockResolvedValue({ request_id: LAUNCH_REQUEST_ID, agent_id: agentId, phase: "waiting" });
+      mockLaunchAgent.mockResolvedValue({ id: agentId, user_id: "user-free", type: "codex", status: "provisioning" });
+      const response = await POST(makeRequest({ type: "codex", llm: MODEL_SELECTION, launchRequestId: LAUNCH_REQUEST_ID }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ data: { launchRequestId: LAUNCH_REQUEST_ID, agent: { id: agentId } } });
+      expect(mockSupabaseRpc).not.toHaveBeenCalled();
+      expect(mockLaunchReserve).not.toHaveBeenCalled();
+    });
+
+    it("does not probe the epoch or route self-managed provider launches through the bridge", async () => {
+      mockEpoch = null;
+      mockGetInfrastructureTarget.mockResolvedValue(providerVmTarget());
+      mockLaunchProviderAgent.mockResolvedValue({ agent: { id: "fixture-agent", status: "provisioning" } });
+      const response = await POST(makeRequest({ type: "codex", deployment: SELF_MANAGED_DEPLOYMENT }));
+      expect(response.status).toBe(202);
+      expect(mockLaunchProviderAgent).toHaveBeenCalledTimes(1);
+      expect(mockSupabaseRpc).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    });
+
+    it("passes the bridge context separately from the model intent and validated row", async () => {
+      mockEpoch = "placement";
+      process.env.HIVRA_MANAGED_PLACEMENT_BRIDGE = "1";
+      mockTunnelConfigured = true;
+      const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+      mockLaunchReserve.mockImplementationOnce(async input => {
+        mockLaunchByRequest.mockResolvedValue({ request_id: input.requestId, agent_id: agentId, phase: "waiting" });
+        mockLaunchAgent.mockResolvedValue({ id: agentId, user_id: input.userId, type: "codex", status: "provisioning" });
+        return { created: false, agentId, phase: "waiting" };
+      });
+      const response = await POST(makeRequest({ type: "codex", llm: MODEL_SELECTION, cpu: 0.5, ram: 1 }));
+      expect(response.status).toBe(200);
+      expect(mockLaunchReserve).toHaveBeenCalledWith(expect.objectContaining({
+        requestId: LAUNCH_REQUEST_ID, fingerprints: [{ version: 1, keyTag: "a".repeat(64), digest: "b".repeat(64) }],
+        agentLimit: 4, bridge: { epoch: "placement", seatFunding: "paid", cpuOvercommitRatio: 3.5, skipSleep: true },
+      }));
+      expect(mockLaunchReserve.mock.calls[0][0].agent).not.toHaveProperty("seat_funding");
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("creates and replays a paid placement model receipt without a second allocation", async () => {
+      mockEpoch = "placement";
+      process.env.HIVRA_MANAGED_PLACEMENT_BRIDGE = "1";
+      mockTunnelConfigured = true;
+      mockCreateBoxTunnel.mockResolvedValue({
+        token: "synthetic-tunnel", hostname: "fixture.example.test", url: "https://fixture.example.test", tunnelId: "fixture-tunnel",
+      });
+      mockLaunchReserve.mockImplementationOnce(async input => {
+        const agent = {
+          ...input.agent, user_id: input.userId, seat_funding: "paid", status: "provisioning",
+          desired_state: "running", allocation_operation_id: input.agent.operation_id, operation_kind: "provision",
+        };
+        mockLaunchByRequest.mockResolvedValue({ request_id: input.requestId, agent_id: agent.id, phase: "waiting" });
+        mockLaunchAgent.mockResolvedValue(agent);
+        mockLaunchExisting.mockResolvedValue({ agent_id: agent.id });
+        return { created: true, agentId: agent.id, phase: "waiting" };
+      });
+      const request = { type: "codex", llm: MODEL_SELECTION, cpu: 0.5, ram: 1 };
+      const created = await POST(makeRequest(request));
+      expect(created.status).toBe(201);
+      const hostCalls = mockRunProxmoxHostScript.mock.calls.length;
+      expect(hostCalls).toBeGreaterThan(0);
+      const replay = await POST(makeRequest(request));
+      expect(replay.status).toBe(200);
+      expect((await replay.json()).data.agent.id).toBe((await created.json()).data.agent.id);
+      expect(mockLaunchReserve).toHaveBeenCalledTimes(1);
+      expect(mockRunProxmoxHostScript).toHaveBeenCalledTimes(hostCalls);
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    });
+
+    it.each([["bridge_phase_changed", 503], ["plan_agent_limit", 403]])(
+      "preserves the native receipt on confirmed %s without rebinding or retrying the write", async (code, status) => {
+        mockEpoch = "placement";
+        process.env.HIVRA_MANAGED_PLACEMENT_BRIDGE = "1";
+        mockBridgeReply = code === "plan_agent_limit" ? { status: code, limit: 4, activeCount: 4 } : { status: code };
+        const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
+        expect(response.status).toBe(status);
+        expect(await response.json()).toMatchObject({ code });
+        expect(mockOperationFail).toHaveBeenCalledWith(expect.objectContaining({ requestId: LAUNCH_REQUEST_ID }), status, code);
+        expect(mockSupabaseRpc.mock.calls.filter(([name]) => String(name).startsWith("insert_hivra_managed_agent"))).toHaveLength(1);
+        expect(mockOperationMarkReconciling).not.toHaveBeenCalled();
+        expect(mockOperationBindAgent).not.toHaveBeenCalled();
+        expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      },
+    );
+
+    it("leaves a funding insert with an unconfirmed response on the original native receipt", async () => {
+      mockAgentInsertError = { code: "synthetic_transport_failure" };
+      const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }));
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({ data: {
+        launchRequestId: LAUNCH_REQUEST_ID, launch: { state: "reconciling" },
+      } });
+      expect(mockOperationMarkReconciling).toHaveBeenCalledTimes(1);
+      expect(mockOperationFail).not.toHaveBeenCalled();
+      expect(mockOperationBindAgent).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      expect(mockSupabaseRpc.mock.calls.filter(([name]) => String(name).startsWith("insert_hivra_managed_agent"))).toHaveLength(1);
+    });
   });
 
   it("refuses a launch the database counts past the plan limit, with the existing copy and no computer work (T35)", async () => {

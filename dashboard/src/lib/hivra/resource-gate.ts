@@ -7,7 +7,7 @@
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
-import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { resolveEffectiveSubscription, type EffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { getPlan } from "@/lib/subscription";
 import {
   HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE,
@@ -131,8 +131,9 @@ export function attachPlanAgentLimitMessage(planName: string, maxAgents: number,
  */
 export async function resolvePlanAgentSlots(
   userId: string,
+  subscription?: EffectiveSubscription,
 ): Promise<{ agentLimit: number; planName: string; freeAccount: boolean } | null> {
-  const sub = await resolveEffectiveSubscription(userId);
+  const sub = subscription ?? await resolveEffectiveSubscription(userId);
   if (!sub) return null;
   const plan = getPlan(sub.plan);
   const ladder = await loadLadderEntitlement(userId);
@@ -184,17 +185,17 @@ export type ValidateResourcesResult = { ok: true } | { ok: false; status: number
 // behavior is byte-for-byte identical when mode === "launch": plan access →
 // browser-on-free → slot count → floor → pool budget → per-agent cap.
 /** The resource gate, with a way out for a card trial that hits the trial's limits. */
-export async function validateAgentResources(params: ValidateResourcesInput): Promise<ValidateResourcesResult> {
-  const result = await validateAgentResourcesForPlan(params);
+export async function validateAgentResources(params: ValidateResourcesInput, subscription?: EffectiveSubscription): Promise<ValidateResourcesResult> {
+  const result = await validateAgentResourcesForPlan(params, subscription);
   if (!result.ok && "message" in result && typeof result.message === "string" && (await isInCardTrial(params.userId))) {
     return { ...result, message: `${result.message} ${CARD_TRIAL_UPGRADE_HINT}` };
   }
   return result;
 }
 
-async function validateAgentResourcesForPlan(params: ValidateResourcesInput): Promise<ValidateResourcesResult> {
+async function validateAgentResourcesForPlan(params: ValidateResourcesInput, subscription?: EffectiveSubscription): Promise<ValidateResourcesResult> {
   const agentLabel = params.agentLabel || "this agent";
-  const sub = await resolveEffectiveSubscription(params.userId);
+  const sub = subscription ?? await resolveEffectiveSubscription(params.userId);
   if (!sub) {
     return { ok: false, status: 403, message: `Plan access is required before launching ${agentLabel}.` };
   }

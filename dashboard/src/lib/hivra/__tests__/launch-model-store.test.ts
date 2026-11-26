@@ -84,6 +84,56 @@ describe("launch request identity", () => {
 });
 
 describe("private launch custody store", () => {
+  it.each([{ epoch: "legacy" }, { epoch: "funding", seatFunding: "paid" }, { epoch: "placement", seatFunding: "paid" }] as const)(
+    "passes the stable bridge signature with the same custody fingerprint and no client funding: %j", async phase => {
+      const { db, store, input } = fixture();
+      const bridge = { ...phase, cpuOvercommitRatio: 3.5, skipSleep: true };
+      await expect(store.reserve({ ...input, bridge })).resolves.toEqual({ created: true, agentId, phase: "waiting" });
+      expect(db.rpc.mock.calls).toEqual([["reserve_hivra_launch_model_bridge_v1", {
+        p_epoch: phase.epoch, p_user_id: "owner", p_request_id: requestId, p_fingerprints: fingerprint,
+        p_model_operation_id: modelId, p_agent: phase.epoch === "legacy" ? reservation : { ...reservation, seat_funding: "paid" },
+        p_selection: row.selection, p_encrypted_key: encryptSecret("fixture"), p_agent_limit: 3,
+        p_cpu_overcommit_ratio: 3.5, p_skip_sleep: true,
+      }]]);
+    },
+  );
+
+  it("treats the durable placement SQL refusal as confirmed, not as a lost acknowledgement", async () => {
+    const { db, query, store, input } = fixture();
+    db.rpc.mockResolvedValueOnce({ data: null, error: { code: "P0058" } });
+    const bridge = { epoch: "placement", seatFunding: "paid", cpuOvercommitRatio: 5, skipSleep: false } as const;
+    await expect(store.reserve({ ...input, bridge })).rejects.toMatchObject({ code: "placement_unavailable" });
+    expect(db.rpc).toHaveBeenCalledTimes(1);
+    expect(query.maybeSingle).not.toHaveBeenCalled();
+  });
+
+  it("checks the original custody receipt after refusal or an ambiguous acknowledgement", async () => {
+    const { db, query, store, input } = fixture();
+    const bridge = { epoch: "legacy", cpuOvercommitRatio: 5, skipSleep: false } as const;
+    db.rpc.mockResolvedValueOnce({ data: { status: "bridge_phase_changed" }, error: null });
+    query.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+    await expect(store.reserve({ ...input, bridge })).rejects.toMatchObject({ code: "bridge_phase_changed" });
+    expect(db.rpc).toHaveBeenCalledTimes(1);
+    db.rpc.mockResolvedValueOnce({ data: { status: "bridge_phase_changed" }, error: null });
+    await expect(store.reserve({ ...input, bridge })).resolves.toEqual({ created: false, agentId, phase: "waiting" });
+    db.rpc.mockRejectedValueOnce(new Error("lost bridge acknowledgement"));
+    await expect(store.reserve({ ...input, bridge })).resolves.toEqual({ created: false, agentId, phase: "waiting" });
+    expect(query.eq.mock.calls).toEqual(Array.from({ length: 3 }, () => [["user_id", "owner"], ["request_id", requestId]]).flat());
+    expect(db.rpc.mock.calls.map(([name]) => name)).toEqual([
+      "reserve_hivra_launch_model_bridge_v1", "reserve_hivra_launch_model_bridge_v1", "reserve_hivra_launch_model_bridge_v1",
+    ]);
+  });
+
+  it("does not apply bridge context to a self-managed reservation or accept funding in the row intent", async () => {
+    const { db, input, store } = fixture();
+    const bridge = { epoch: "funding", seatFunding: "paid", cpuOvercommitRatio: 5, skipSleep: false } as const;
+    await expect(store.reserve({ ...input, bridge, agent: { ...reservation, deployment_mode: "self-managed" } }))
+      .rejects.toMatchObject({ code: "invalid_request" });
+    await expect(store.reserve({ ...input, bridge, agent: { ...reservation, seat_funding: "holder" } } as never))
+      .rejects.toMatchObject({ code: "invalid_request" });
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
   it("reserves encrypted BYOK and public selection without active credentials or a guest bearer", async () => {
     const { db, store, input } = fixture();
     expect(await store.reserve(input)).toEqual({ created: true, agentId, phase: "waiting" });

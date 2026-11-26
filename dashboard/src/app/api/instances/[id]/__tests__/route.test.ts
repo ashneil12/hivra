@@ -10,6 +10,7 @@ import { applyLiveUpdate, resolveInstanceIpv4 } from "@/lib/services/instance-or
 import { USER_LIVE_UPDATE } from "@/lib/services/live-update-initiator";
 import { ensureManagedHostFingerprint, sshExec } from "@/lib/hetzner/ssh";
 import { apiError } from "@/lib/api-response";
+import { transitionClassicHolder } from "@/lib/recovery/classic-holder-idle";
 import { isHostedInstanceStartBlockedForLapse } from "@/lib/hivra/lapse-gate";
 import {
   buildAdvancedInstanceConfigPayload,
@@ -32,6 +33,7 @@ import {
   runProxmoxHostScript,
   shutdownProxmoxInstance,
   startProxmoxInstance,
+  PROXMOX_VM_MISSING_MARKER,
 } from "@/lib/services/proxmox-instance-service";
 import { fetchFirstReachableGatewayResponse } from "@/lib/agent-gateway";
 import { acquireHostWakeSlot, releaseHostWakeSlot } from "@/lib/proxmox/wake-admission";
@@ -58,6 +60,8 @@ jest.mock("@/lib/ops-events", () => ({
   reportOpsEvent: jest.fn(),
   sanitizeOpsMetadata: jest.requireActual("@/lib/ops-events").sanitizeOpsMetadata,
 }));
+
+jest.mock("@/lib/recovery/classic-holder-idle", () => ({ transitionClassicHolder: jest.fn() }));
 
 jest.mock("@/lib/instance-activity", () => ({
   recordInstanceUserActivity: jest.fn().mockResolvedValue({
@@ -2051,6 +2055,86 @@ describe("POST /api/instances/[id]", () => {
 
       return { updateMock, updateEq };
     }
+
+    it.each(["claimed", "unknown", "not_started", "pending", "bridge_phase_changed"])(
+      "dispatches placement Start only for an owner-fenced %s claim", async status => {
+        const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_MANAGED_LAUNCH_BRIDGE: "1" });
+        const { updateMock } = mockProxmoxInstance({
+          lifecycle_state: "paused", status: "stopped", proxmox_node: "fixture-node", proxmox_vmid: 201,
+          config: { infrastructure: { ...infrastructure, node: "fixture-node" } },
+        });
+        jest.mocked(supabaseAdmin!.rpc)
+          .mockResolvedValueOnce({ data: "placement", error: null } as never)
+          .mockResolvedValueOnce({ data: status === "unknown" || status === "not_started" ? "claimed" : status, error: null } as never);
+        if (status === "claimed") {
+          jest.mocked(supabaseAdmin!.rpc).mockResolvedValueOnce({ data: "awake", error: null } as never);
+          jest.mocked(startProxmoxInstance).mockResolvedValueOnce({ ok: true, stdout: "", stderr: "" });
+        }
+        if (status === "unknown") {
+          jest.mocked(supabaseAdmin!.rpc).mockResolvedValueOnce({ data: "pending", error: null } as never);
+          jest.mocked(startProxmoxInstance).mockResolvedValueOnce({ ok: false, stdout: "", stderr: "timeout" });
+        }
+        if (status === "not_started") {
+          jest.mocked(supabaseAdmin!.rpc).mockResolvedValueOnce({ data: { status: "released" }, error: null } as never);
+          jest.mocked(startProxmoxInstance).mockResolvedValueOnce({ ok: false, stdout: PROXMOX_VM_MISSING_MARKER, stderr: "" });
+        }
+        try {
+          const response = await POST(
+            makeJsonRequest("http://localhost/api/instances/inst-123", { action: "start" }, { method: "POST" }),
+            { params: Promise.resolve({ id: "inst-123" }) }
+          );
+          const rpc = jest.mocked(supabaseAdmin!.rpc);
+          expect(response.status).toBe(status === "claimed" ? 200 : status === "pending" || status === "not_started" ? 409 : 503);
+          expect(rpc).toHaveBeenNthCalledWith(2, "claim_hermes_instance_start_bridge_v1", expect.objectContaining({
+            p_epoch: "placement", p_instance_id: "inst-123", p_user_id: "user_123",
+            p_host_id: "fixture-node", p_vmid: 201,
+          }));
+          if (status === "claimed" || status === "unknown" || status === "not_started") {
+            const claim = rpc.mock.calls[1][1] as { p_operation_id: string };
+            expect(rpc).toHaveBeenNthCalledWith(3, "finish_hermes_instance_start_bridge_v1", {
+              p_instance_id: "inst-123", p_user_id: "user_123", p_operation_id: claim.p_operation_id, p_outcome: status === "claimed" ? "started" : status,
+            });
+          }
+          expect(startProxmoxInstance).toHaveBeenCalledTimes(status === "claimed" || status === "unknown" || status === "not_started" ? 1 : 0);
+          expect(updateMock).not.toHaveBeenCalled();
+        } finally {
+          env.restore();
+        }
+      }
+    );
+
+    it.each(["funding", "placement"])("preserves fenced holder wake in %s and never falls back if unavailable", async epoch => {
+      const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_MANAGED_LAUNCH_BRIDGE: "1", HIVRA_CLASSIC_HOLDER_BRIDGE: "1" });
+      mockProxmoxInstance({ lifecycle_state: "paused", status: "stopped", seat_funding: "holder", paused_reason: "holder_idle" });
+      jest.mocked(supabaseAdmin!.rpc).mockResolvedValueOnce({ data: epoch, error: null } as never);
+      jest.mocked(transitionClassicHolder).mockRejectedValueOnce(new Error("claim helper unavailable"));
+      try {
+        const response = await POST(
+          makeJsonRequest("http://localhost/api/instances/inst-123", { action: "start" }, { method: "POST" }),
+          { params: Promise.resolve({ id: "inst-123" }) }
+        );
+        expect(response.status).toBe(503);
+        if (epoch === "placement") expect(transitionClassicHolder).toHaveBeenCalledWith({ id: "inst-123", userId: "user_123" });
+        else expect(transitionClassicHolder).not.toHaveBeenCalled();
+        expect(acquireHostWakeSlot).not.toHaveBeenCalled();
+        expect(startProxmoxInstance).not.toHaveBeenCalled();
+      } finally {
+        env.restore();
+      }
+    });
+
+    it("does not issue host stop while a durable Start owns the instance", async () => {
+      const { updateMock } = mockProxmoxInstance({
+        status: "provisioning", lifecycle_state: "provisioning", lifecycle_substate: "classic_start",
+      });
+      const response = await POST(
+        makeJsonRequest("http://localhost/api/instances/inst-123", { action: "stop" }, { method: "POST" }),
+        { params: Promise.resolve({ id: "inst-123" }) },
+      );
+      expect(response.status).toBe(409);
+      expect(shutdownProxmoxInstance).not.toHaveBeenCalled();
+      expect(updateMock).not.toHaveBeenCalled();
+    });
 
     it("starts the Proxmox VM and skips Hetzner power calls when starting a Proxmox instance", async () => {
       (startProxmoxInstance as jest.Mock).mockResolvedValue({

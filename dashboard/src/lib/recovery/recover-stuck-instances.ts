@@ -88,6 +88,7 @@ type StuckInstanceRow = {
   ipv4_address: string | null;
   status: string | null;
   lifecycle_state: string | null;
+  lifecycle_substate: string | null;
   backend: string | null;
   api_server_key_encrypted: string | null;
   created_at: string;
@@ -474,7 +475,7 @@ export async function runRecoverStuckInstancesSweep(): Promise<RecoverStuckInsta
   const { data, error } = await db
     .from("hermes_instances")
     .select(
-      "id, user_id, host_id, proxmox_vmid, proxmox_node, gateway_url, ipv4_address, status, lifecycle_state, backend, api_server_key_encrypted, created_at, last_auto_restart_at, auto_restart_attempts",
+      "id, user_id, host_id, proxmox_vmid, proxmox_node, gateway_url, ipv4_address, status, lifecycle_state, lifecycle_substate, backend, api_server_key_encrypted, created_at, last_auto_restart_at, auto_restart_attempts",
     )
     .or("lifecycle_state.in.(failed,provisioning),status.eq.redeploying")
     .not("gateway_url", "is", null)
@@ -488,6 +489,7 @@ export async function runRecoverStuckInstancesSweep(): Promise<RecoverStuckInsta
 
   const candidates = (data ?? []).filter(
     (row): row is StuckInstanceRow => {
+      if (row.lifecycle_substate === "classic_start") return false;
       if (typeof row.gateway_url !== "string" || row.gateway_url.trim().length === 0) {
         return false;
       }

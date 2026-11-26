@@ -25,6 +25,12 @@ import {
 import { buildVmidReferenceLedgerScript, type VmidReferenceLedger } from "@/lib/proxmox/vmid-reference-ledger";
 import { resolveRamBurst } from "@/lib/services/ram-burst";
 import { selectAvailableProxmoxProvisionTarget } from "@/lib/services/instance-service";
+import { proxmoxPlacementPolicy } from "@/lib/proxmox/placement-policy";
+import type { EffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import {
+  ManagedLaunchBridgeError, managedLaunchBridgeArgs, managedLaunchBridgeRow, managedPlacementBridgeEnabled,
+  readManagedLaunchBridgeEpoch, requireUnreservedFundingEpoch, resolveManagedBridgePaidEntitlement, type ManagedLaunchBridge,
+} from "@/lib/hivra/managed-launch-bridge";
 import { BoxTunnelProvisionError, deleteBoxTunnel, isTunnelConfigured } from "@/lib/services/cloudflare-tunnel";
 import { provisionHivraAgentTunnel } from "@/lib/hivra/agent-tunnel-provisioning";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
@@ -93,7 +99,7 @@ import {
   resolveSelfManagedProxmoxExecutionContext,
   type PortableProxmoxRuntime,
 } from "@/lib/infrastructure/proxmox-execution-context";
-import { checkManagedHivraHostReadiness } from "@/lib/hivra/managed-provisioner-readiness";
+import { checkManagedHivraHostReadiness, managedHivraHostReadinessScript } from "@/lib/hivra/managed-provisioner-readiness";
 import {
   managedHivraProvisionerChannelConfiguration,
   managedHivraProvisionerChannelForServerEnvironment,
@@ -180,6 +186,8 @@ function launchOperationReplayResponse(replay: HivraLaunchOperationReplay) {
     const messages: Record<string, string> = {
       agent_insert_conflict: "The selected infrastructure authority changed before launch. Refresh and start a new request.",
       agent_insert_failed: "The computer could not be created. Start a new launch request.",
+      bridge_phase_changed: "Managed launch changed before the computer was created. Start a new launch request later.",
+      placement_unavailable: "The selected host could not fit the computer. Start a new launch request later.",
       provider_model: "This model connection is not ready for the selected computer.",
       provider_template: "Installing template skills on this cloud computer is not supported yet.",
       provider_capacity: "This computer does not have enough measured free resources for that agent.",
@@ -1202,6 +1210,22 @@ export async function launchHivraAgentForUser(
       }
     }
 
+    const bridgeEpoch = deployment.mode === "hivra-managed" ? await readManagedLaunchBridgeEpoch() : null;
+    if (bridgeEpoch === "placement" && !managedPlacementBridgeEnabled()) throw new ManagedLaunchBridgeError("bridge_unavailable");
+    let managedBridge: ManagedLaunchBridge | undefined;
+    let bridgeSubscription: EffectiveSubscription | undefined;
+    if (bridgeEpoch) {
+      const { cpuOvercommitRatio, skipDeepSleep: skipSleep } = proxmoxPlacementPolicy();
+      const policy = { cpuOvercommitRatio, skipSleep };
+      if (bridgeEpoch === "legacy") {
+        managedBridge = { epoch: "legacy", ...policy };
+      } else {
+        bridgeSubscription = await resolveManagedBridgePaidEntitlement(userId);
+        if (bridgeEpoch === "funding") await requireUnreservedFundingEpoch();
+        managedBridge = { epoch: bridgeEpoch, seatFunding: "paid", ...policy };
+      }
+    }
+
     if (deployment.mode === "self-managed" && (await accountNeedsPlanForFree(userId))) {
       return apiError(FREE_PLAN_CLOSED_MESSAGE, 403, undefined, { code: FREE_PLAN_CLOSED_CODE });
     }
@@ -1285,6 +1309,8 @@ export async function launchHivraAgentForUser(
     let capacityPolicy: ProxmoxHostCapacityPolicy = DEFAULT_PROXMOX_HOST_CAPACITY_POLICY;
     let stickyHost: string | null = null;
     let explicitClaudeHost: string | null = null;
+    const hostRuntimeId = anthropicCredits ? CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID : compatibilityRuntimeId;
+    const requireModelSettings = Boolean(launchAdmission || (def.managedVenice && (def.llm?.wire !== "anthropic" || anthropicCredits)));
 
     if (deployment.mode === "self-managed") {
       // Subscription checks do not apply to user-owned compute, but the agent
@@ -1361,11 +1387,14 @@ export async function launchHivraAgentForUser(
         throw error;
       }
     } else {
-      const resourceGate = await validateAgentResources({ userId, type, cpu, ram, maximumCpu, maximumRam, browser: wantBrowser, mode: "launch", poolExempt, floor, agentLabel: launchLabel, excludeInstanceIds });
+      const resourceGate = await validateAgentResources({ userId, type, cpu, ram, maximumCpu, maximumRam, browser: wantBrowser, mode: "launch", poolExempt, floor, agentLabel: launchLabel, excludeInstanceIds }, bridgeSubscription);
       if (!resourceGate.ok) return apiError(resourceGate.message, resourceGate.status);
 
       explicitClaudeHost = LAUNCHABLE_BOX_TYPES.has(type) ? resolveHivraClaudeCodeProxmoxHost(process.env) : null;
       stickyHost = explicitClaudeHost ? null : await resolveStickyHivraProxmoxHost(userId);
+      const placementPolicy = managedBridge?.epoch === "placement"
+        ? { placementEpoch: true, rankManagedTarget: true, seatFunding: managedBridge.seatFunding }
+        : {};
       // With HIVRA_HOST_CAPACITY_ALERTS on, a host whose latest capacity reading
       // is critical is tried only when no other host can take the launch.
       const placeOn = (forceTargetId: string | null) => selectAvoidingCriticalHosts(excludeTargetIds => selectAvailableProxmoxProvisionTarget({
@@ -1377,6 +1406,7 @@ export async function launchHivraAgentForUser(
         neededRamMb: ram * 1024,
         neededDiskGb: HIVRA_AGENT_VM_DISK_GB,
         forceTargetId,
+        ...placementPolicy,
         ...(excludeTargetIds ? { excludeTargetIds } : {}),
         skipTemplateAvailabilityCheck: true,
         // Managed-model agents (def.managedVenice) get HIVRA_MODEL_* at launch,
@@ -1385,13 +1415,11 @@ export async function launchHivraAgentForUser(
         readinessCheck: candidate => checkManagedHivraHostReadiness({
           ...candidate,
           channel: managedProvisionerChannel,
-          runtimeId: anthropicCredits ? CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID : compatibilityRuntimeId,
+          runtimeId: hostRuntimeId,
           runtimeLabel: launchLabel,
           // Claude Code takes model settings only on Hivra credits; its native
           // sign-in launch does not need them.
-          ...(launchAdmission || (def.managedVenice && (def.llm?.wire !== "anthropic" || anthropicCredits))
-            ? { requireModelSettings: true }
-            : {}),
+          ...(requireModelSettings ? { requireModelSettings } : {}),
         }),
       }), { forced: Boolean(forceTargetId) });
       let placement = await placeOn(explicitClaudeHost ?? stickyHost);
@@ -1435,6 +1463,9 @@ export async function launchHivraAgentForUser(
         });
       }
       env = placement.env;
+      if (managedBridge?.epoch === "placement" && !placement.targetId) {
+        throw new ManagedLaunchBridgeError("placement_unavailable");
+      }
       host = placement.targetId ?? env.PROXMOX_NODE ?? resolveHivraProxmoxHost();
       if (hasExplicitEnvelope) {
         const maximumEvidence = await runProxmoxHostScript(`set -euo pipefail
@@ -1470,6 +1501,9 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     // box (the recurring fixturenodea failure). Fail fast with the "at capacity" UX
     // instead. Fails open on a flaky probe, so it never blocks on noise.
     const provisionCapacity = await checkHostWakeCapacity(ram * 1024, env);
+    if (managedBridge?.epoch === "placement" && (provisionCapacity.freeMb === null || !provisionCapacity.ok)) {
+      throw new ManagedLaunchBridgeError("placement_unavailable");
+    }
     // Managed fleet admission has historically failed open so a transient
     // telemetry probe does not block every customer. A user-selected target is
     // different: before creating a DB row, tunnel, key, or VM, require live
@@ -1632,7 +1666,16 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     // The database counts the plan's agent slots again under the owner's slot
     // lock before it writes a Hivra-managed row (T35), so a launch racing an
     // attach or another launch cannot pass the limit the gate above checked.
-    const slotPlan = deployment.mode === "hivra-managed" ? await resolvePlanAgentSlots(userId) : null;
+    if (bridgeSubscription) {
+      try {
+        bridgeSubscription = await resolveManagedBridgePaidEntitlement(userId, bridgeSubscription);
+        if (managedBridge?.epoch === "funding") await requireUnreservedFundingEpoch();
+      } catch (error) {
+        await releaseLlmKeyOnFailure();
+        throw error;
+      }
+    }
+    const slotPlan = deployment.mode === "hivra-managed" ? await resolvePlanAgentSlots(userId, bridgeSubscription) : null;
     if (deployment.mode === "hivra-managed" && !slotPlan) {
       await releaseLlmKeyOnFailure();
       return apiError(`Plan access is required before launching ${def.name}.`, 403);
@@ -1660,9 +1703,10 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         proxmox_host: deployment.mode === "self-managed" ? SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL : host,
         infrastructure_binding_token_hash: infrastructureBindingTokenHash, pool_id: poolId,
         goal, context, personality, emoji, template_skills: templateSkillsColumn, ...deploymentBinding,
-      }, agentLimit) : null;
+      }, agentLimit, managedBridge) : null;
     } catch (error) {
       if (error instanceof LaunchPlanAgentLimitError) return await planLimitResponse(error);
+      if (error instanceof ManagedLaunchBridgeError) await releaseLlmKeyOnFailure();
       throw error;
     }
     if (reservedLaunch && !reservedLaunch.created) return apiSuccess({
@@ -1721,15 +1765,36 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       }
       // A Hivra-managed row is written only by the database, after it counts
       // the owner's plan slots under the slot lock (T35).
-      const { data, error } = await supabaseAdmin!.rpc("insert_hivra_managed_agent", { p_row: agentRow, p_agent_limit: agentLimit });
-      if (error) return { data: null, error };
+      const { data, error } = await supabaseAdmin!.rpc(
+        managedBridge ? "insert_hivra_managed_agent_bridge_v1" : "insert_hivra_managed_agent",
+        {
+          p_row: managedBridge ? managedLaunchBridgeRow(agentRow, managedBridge) : agentRow,
+          p_agent_limit: agentLimit,
+          ...(managedBridge ? managedLaunchBridgeArgs(managedBridge) : {}),
+        },
+      );
+      if (error) {
+        if (managedBridge?.epoch === "placement" && error.code === "P0058") {
+          throw new ManagedLaunchBridgeError("placement_unavailable");
+        }
+        if (managedBridge) throw new Error("Managed launch bridge insert acknowledgement was unconfirmed");
+        return { data: null, error };
+      }
       const result = data as { status?: unknown; row?: unknown; activeCount?: unknown; limit?: unknown } | null;
+      if (managedBridge && result?.status === "bridge_phase_changed") {
+        throw new ManagedLaunchBridgeError("bridge_phase_changed");
+      }
       if (result?.status === "plan_agent_limit") {
         throw new LaunchPlanAgentLimitError(Number(result.activeCount) || 0, Number(result.limit) || agentLimit);
       }
       if (result?.status === "invalid_request") return { data: null, error: { code: "22023", message: "invalid managed agent row" } };
       if (result?.status !== "inserted" || !result.row || typeof result.row !== "object") return { data: null, error: null };
-      return { data: result.row as Record<string, unknown>, error: null };
+      const row = result.row as Record<string, unknown>;
+      if (managedBridge && managedBridge.epoch !== "legacy" && (row.user_id !== userId || row.operation_id !== provisionOperationId
+        || row.type !== type || row.seat_funding !== managedBridge.seatFunding)) {
+        return { data: null, error: null };
+      }
+      return { data: row, error: null };
     };
     let insertResult: Awaited<ReturnType<typeof insertAgentRow>>;
     try {
@@ -1737,6 +1802,12 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     } catch (insertError) {
       if (insertError instanceof LaunchPlanAgentLimitError) return await planLimitResponse(insertError);
       await releaseLlmKeyOnFailure();
+      if (insertError instanceof ManagedLaunchBridgeError) {
+        if (launchOperations && launchOperationAdmission) {
+          return launchOperationReplayResponse(await launchOperations.fail(launchOperationAdmission, 503, insertError.code));
+        }
+        throw insertError;
+      }
       log.error("hivra agent row insert acknowledgement was lost", insertError, {
         source: "hivra/agents",
         failureType: "hivra_agent_insert_unconfirmed",
@@ -1846,7 +1917,9 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       let t;
       try {
         t = await provisionHivraAgentTunnel({ userId, agentId: String(agent.id), operationId: provisionOperationId });
-        if (launchAdmission && !t) throw new Error("Named model-settings access was not confirmed");
+        if (launchAdmission && (!t || (managedBridge?.epoch === "placement" && !t.hostname))) {
+          throw new Error("Named model-settings access was not confirmed");
+        }
       } catch (tunnelError) {
         let cleanupVerified = tunnelError instanceof BoxTunnelProvisionError && tunnelError.cleanupVerified;
         let message = cleanupVerified
@@ -1981,9 +2054,24 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     // something it cannot do.
     const provisionCores = Math.max(1, Math.ceil(maximumCpu));
     const ramEnvelope = resolveRamBurst(ram * 1024, process.env, maximumRam * 1024);
+    if (managedBridge) {
+      try {
+        if (await readManagedLaunchBridgeEpoch() !== managedBridge.epoch) {
+          throw new ManagedLaunchBridgeError("bridge_phase_changed");
+        }
+      } catch (error) {
+        await retainAmbiguousProvisionOperation("Launch epoch could not be reverified before allocation.");
+        throw error;
+      }
+    }
     const allocationStageAdvanced = await beginHivraAgentVmAllocation({
       userId, agentId: agent.id, operationId: provisionOperationId,
+      ...(managedBridge ? { expectedHost: host } : {}),
     });
+    if (managedBridge && !allocationStageAdvanced) {
+      await retainAmbiguousProvisionOperation("Launch host or pre-allocation authorization could not be reverified.");
+      throw new ManagedLaunchBridgeError("bridge_unavailable");
+    }
     const launchStillCurrent = allocationStageAdvanced && await checkpointHivraAgentOperation({
       userId,
       agentId: agent.id,
@@ -2018,7 +2106,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         controlOriginConfigured: activityControlOrigin() !== null,
       });
     }
-    const result = await runProxmoxHostScript(phase1Script({
+    const kickoffScript = phase1Script({
       cpu: provisionCores,
       cpuLimit: maximumCpu,
       memMb: ramEnvelope.ceilingMb,
@@ -2046,7 +2134,11 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       capacityPolicy,
       activityTelemetry,
       catalogAppSpec,
-    }), env, { earlyFinishMarker: "HIVRA_PROVISION_RESULT" });
+    });
+    const verifiedKickoffScript = managedBridge
+      ? `set -e\n(\n${managedHivraHostReadinessScript(managedProvisionerChannel, "provision", requireModelSettings, hostRuntimeId)}\n)\n${kickoffScript}`
+      : kickoffScript;
+    const result = await runProxmoxHostScript(verifiedKickoffScript, env, { earlyFinishMarker: "HIVRA_PROVISION_RESULT" });
     const activityCredentialStaged = activityTelemetry !== null
       && (result.stdout || "").split(/\r?\n/).some(line => line.trim() === ACTIVITY_CREDENTIAL_STAGED);
     if (activityTelemetry && !activityCredentialStaged) {
@@ -2398,6 +2490,9 @@ qm set ${vmid} --cpuunits ${cpuunits}`,
         launch: { state: "accepted", phase: "accepted" },
       } : {}) }, 201);
   } catch (err) {
+    if (err instanceof ManagedLaunchBridgeError) {
+      return apiError(err.message, 503, undefined, { code: err.code });
+    }
     if (err instanceof HivraLaunchOperationRequestError) {
       return apiError(err.message, err.code === "request_conflict" ? 409 : 400, undefined, { code: err.code });
     }

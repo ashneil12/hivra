@@ -1,12 +1,13 @@
 /** @jest-environment jsdom */
 
-import { launchResultHref, submitLaunchDraft } from "../launch-adapter";
+import { LaunchCorrectableError, launchResultHref, submitLaunchDraft } from "../launch-adapter";
 import { createAgent, findHivraLaunchReceipt } from "@/lib/hivra/agent-api";
 
 jest.mock("@/lib/hivra/agent-api", () => {
   const actual = jest.requireActual("@/lib/hivra/agent-api");
   return { ...actual, createAgent: jest.fn(), findHivraLaunchReceipt: jest.fn() };
 });
+jest.mock("@/lib/abuse/client-fingerprint", () => ({ getFingerprintRequestId: jest.fn(async () => undefined) }));
 
 const requestId = "11111111-1111-4111-8111-111111111111";
 const accepted = {
@@ -25,6 +26,24 @@ const draft = {
   launchRequestId: requestId,
   resources: { cpu: 2, ram: 8, maximumCpu: 2, maximumRam: 8 },
 };
+
+it("reports an explicit Classic bridge refusal without reconciling or retrying the old writer", async () => {
+  const fetchBefore = global.fetch;
+  global.fetch = jest.fn().mockResolvedValue({
+    ok: false, status: 503, json: async () => ({ success: false, error: "Launch held.", failureType: "bridge_unavailable" }),
+  });
+  try {
+    const launch = submitLaunchDraft({
+      ...draft, resourceKind: "agent", profileId: "hermes", name: "Classic",
+      modelAccess: { mode: "native" },
+    } as never, { mode: "hivra-managed" });
+    await expect(launch).rejects.toBeInstanceOf(LaunchCorrectableError);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith("/api/instances", expect.objectContaining({ method: "POST" }));
+  } finally {
+    global.fetch = fetchBefore;
+  }
+});
 
 describe("bounded launch receipt reconciliation", () => {
   beforeEach(() => {

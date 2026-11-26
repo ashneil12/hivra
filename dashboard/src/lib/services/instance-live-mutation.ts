@@ -10,6 +10,7 @@ export const LIVE_MUTATION_BLOCKED_LIFECYCLE_IN_LIST =
 export interface InstanceLiveMutationState {
   status?: string | null;
   lifecycle_state?: string | null;
+  lifecycle_substate?: string | null;
   archive_uri?: string | null;
   archive_sha256?: string | null;
   proxmox_vmid?: number | null;
@@ -24,8 +25,14 @@ export interface InstanceLiveMutationCoordinates {
   ipv4_address?: string | null;
 }
 
+export interface InstanceLiveMutationResizeClaim {
+  operationId: string;
+  cpu: number;
+  ramMb: number;
+}
+
 export const LIVE_MUTATION_STATE_SELECT =
-  "status,lifecycle_state,archive_uri,archive_sha256,proxmox_vmid,proxmox_node,host_id,hetzner_server_id,ipv4_address,config";
+  "status,lifecycle_state,lifecycle_substate,archive_uri,archive_sha256,proxmox_vmid,proxmox_node,host_id,hetzner_server_id,ipv4_address,config";
 
 // In addition to excluding the cold lifecycle states, bounded sweeps must
 // exclude damaged failed+archive rows before LIMIT, or they can fill every
@@ -35,6 +42,7 @@ export const LIVE_MUTATION_NOT_FAILED_ARCHIVE_FILTER =
 
 export function blocksInstanceLiveMutation(row: InstanceLiveMutationState): boolean {
   return LIVE_MUTATION_BLOCKED_LIFECYCLES.some((state) => state === row.lifecycle_state)
+    || row.lifecycle_substate === "classic_start"
     || row.status === "deleted"
     || row.status === "scheduled_for_deletion"
     // An earlier bad Start/update may have changed cold_archived to failed.
@@ -73,11 +81,33 @@ export async function readInstanceLiveMutationBlock(
   supabase: SupabaseClient,
   instanceId: string,
   expectedCoordinates?: InstanceLiveMutationCoordinates,
+  holderAllocation?: { cpu: number; ramMb: number },
+  resizeClaim?: InstanceLiveMutationResizeClaim,
+  expectedOwner?: string,
 ): Promise<string | null> {
   try {
-    const { data, error } = await supabase.from("hermes_instances")
-      .select(LIVE_MUTATION_STATE_SELECT).eq("id", instanceId).maybeSingle();
+    const resizeColumns = ",seat_funding,cpu_limit,ram_limit,resize_operation_id,resize_target_cpu,resize_target_ram_mb";
+    const columns = holderAllocation || resizeClaim ? LIVE_MUTATION_STATE_SELECT + resizeColumns : LIVE_MUTATION_STATE_SELECT;
+    const query = supabase.from("hermes_instances").select(columns).eq("id", instanceId);
+    const { data: result, error } = await (expectedOwner ? query.eq("user_id", expectedOwner) : query).maybeSingle();
+    const data = result as (InstanceLiveMutationState & InstanceLiveMutationCoordinates & {
+      seat_funding?: string; cpu_limit?: number; ram_limit?: number;
+      resize_operation_id?: string | null;
+      resize_target_cpu?: number | string | null;
+      resize_target_ram_mb?: number | string | null;
+    }) | null;
     if (error || !data) return "Could not confirm the computer's current lifecycle state. Refresh before updating.";
+    if (holderAllocation && (data.seat_funding !== "holder" || data.status !== "running" || data.lifecycle_state !== "active"
+      || (!resizeClaim && (data.cpu_limit !== holderAllocation.cpu || data.ram_limit !== holderAllocation.ramMb)))) {
+      return "The holder allocation or power state changed. Refresh before resizing.";
+    }
+    if (resizeClaim && (
+      data.resize_operation_id !== resizeClaim.operationId
+      || Number(data.resize_target_cpu) !== resizeClaim.cpu
+      || Number(data.resize_target_ram_mb) !== resizeClaim.ramMb
+    )) {
+      return "This resize operation was superseded. Refresh before resizing.";
+    }
     if (blocksInstanceLiveMutation(data)) {
       return "This computer must finish restoration or its current lifecycle operation before it can be updated.";
     }

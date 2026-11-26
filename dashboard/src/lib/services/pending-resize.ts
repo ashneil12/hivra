@@ -38,6 +38,7 @@ import type { LiveUpdateInitiator } from "@/lib/services/live-update-initiator";
 import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { isWebfreeBackend } from "@/lib/types/instance";
+import { readManagedLaunchBridgeEpoch } from "@/lib/hivra/managed-launch-bridge";
 import { blocksInstanceLiveMutation } from "./instance-live-mutation";
 
 const LOG_SOURCE = "pending-resize";
@@ -125,6 +126,7 @@ async function redeployOne(
   row: PendingResizeRow,
   getSettings: (userId: string) => Promise<Record<string, unknown>>,
   initiator: LiveUpdateInitiator,
+  epoch: Awaited<ReturnType<typeof readManagedLaunchBridgeEpoch>>,
 ): Promise<PendingResizeResult> {
   if (!supabaseAdmin) return { id: row.id, redeployed: false, error: "db_unavailable" };
 
@@ -148,6 +150,20 @@ async function redeployOne(
   }
 
   const settings = await getSettings(row.user_id);
+  if (epoch === "funding" || epoch === "placement") {
+    const placement = epoch === "placement";
+    const { data, error } = await supabaseAdmin.from("hermes_instances")
+      .select("seat_funding,status,lifecycle_state,lifecycle_substate,cpu_limit,ram_limit,tier_change_pending" + (placement ? ",resize_operation_id" : ""))
+      .eq("id", row.id).eq("user_id", row.user_id).maybeSingle<{
+        seat_funding: string | null; status: string; lifecycle_state: string; lifecycle_substate: string | null; cpu_limit: number | null;
+        ram_limit: number | null; tier_change_pending: boolean; resize_operation_id?: string | null;
+      }>();
+    if (error || !data || !data.tier_change_pending || data.cpu_limit !== row.cpu_limit || data.ram_limit !== row.ram_limit
+      || blocksInstanceLiveMutation(data) || (placement && data.resize_operation_id)
+      || (data.seat_funding === "holder" && (data.status !== "running" || data.lifecycle_state !== "active"))) {
+      return { id: row.id, redeployed: false, skipped: true, error: "allocation_changed_or_pending" };
+    }
+  }
   const update = await applyLiveUpdate(row, ipv4, settings, supabaseAdmin, { initiator });
   if (update.deferred) {
     // An agent turn is running, or the box could not confirm that none is
@@ -176,10 +192,17 @@ async function redeployOne(
 
   // Container now carries the new caps — clear the flag. Best-effort: if the
   // clear fails the next sweep simply redeploys again (idempotent).
-  const { error: clearErr } = await supabaseAdmin
+  let clear = supabaseAdmin
     .from("hermes_instances")
     .update({ tier_change_pending: false })
     .eq("id", row.id);
+  if (epoch === "funding" || epoch === "placement") {
+    clear = clear.eq("user_id", row.user_id);
+    clear = row.cpu_limit == null ? clear.is("cpu_limit", null) : clear.eq("cpu_limit", row.cpu_limit);
+    clear = row.ram_limit == null ? clear.is("ram_limit", null) : clear.eq("ram_limit", row.ram_limit);
+    if (epoch === "placement") clear = clear.is("resize_operation_id", null);
+  }
+  const { error: clearErr } = await clear;
   if (clearErr) {
     log.warn("pending resize flag clear failed", {
       source: LOG_SOURCE,
@@ -205,6 +228,7 @@ export async function redeployPendingResizes(
   rows: PendingResizeRow[],
   opts: { concurrency?: number; initiator: LiveUpdateInitiator },
 ): Promise<PendingResizeSummary> {
+  const epoch = await readManagedLaunchBridgeEpoch();
   const getSettings = createSettingsCache();
   const concurrency = Math.max(1, opts.concurrency ?? 5);
   const results: PendingResizeResult[] = [];
@@ -225,7 +249,7 @@ export async function redeployPendingResizes(
     // wave 1, re-poisoning every batch. Paid cap upgrades behind it never land.
     // Turn a rejection into a normal failed result and keep sweeping.
     const settled = await Promise.allSettled(
-      wave.map((row) => redeployOne(row, getSettings, opts.initiator)),
+      wave.map((row) => redeployOne(row, getSettings, opts.initiator, epoch)),
     );
     settled.forEach((outcome, index) => {
       if (outcome.status === "fulfilled") {

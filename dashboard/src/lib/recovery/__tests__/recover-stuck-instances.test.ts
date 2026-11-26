@@ -51,6 +51,7 @@ type RowOverrides = Partial<{
   ipv4_address: string | null;
   status: string | null;
   lifecycle_state: string | null;
+  lifecycle_substate: string | null;
   backend: string | null;
   api_server_key_encrypted: string | null;
   created_at: string;
@@ -115,6 +116,14 @@ beforeEach(() => {
 });
 
 describe("runRecoverStuckInstancesSweep", () => {
+  it("does not probe or start a VM already held by a Start receipt", async () => {
+    mockSupabaseSelect([buildRow({ lifecycle_state: "provisioning", lifecycle_substate: "classic_start" })]);
+    const result = await runRecoverStuckInstancesSweep();
+    expect(result.candidates).toBe(0);
+    expect(mockedProbe).not.toHaveBeenCalled();
+    expect(mockedStart).not.toHaveBeenCalled();
+  });
+
   it("probes gateway-backend rows over the bearer-authed chat lane, not /health", async () => {
     // '/health' answers from the official-dashboard shell before the gateway
     // that answers chat is up; this sweep's 90s grace + 2-min cadence would

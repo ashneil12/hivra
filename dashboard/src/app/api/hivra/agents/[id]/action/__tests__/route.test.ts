@@ -662,6 +662,25 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     );
   });
 
+  it("does not claim or dispatch a resize with a policy that could go stale during cutover", async () => {
+    const environment = jest.replaceProperty(process, "env", {
+      ...process.env, HIVRA_MANAGED_LAUNCH_BRIDGE: "1", HERMES_PROXMOX_CPU_OVERCOMMIT_RATIO: "2",
+    });
+    try {
+      mockSupabaseRpc.mockImplementation(async (name: string) => ({
+        data: name === "managed_launch_bridge_epoch" ? "funding" : true, error: null,
+      }));
+      const response = await POST(makeRequest({ action: "resize", cpu: 1, ram: 2 }) as never,
+        { params: Promise.resolve({ id: "agent-1" }) });
+      expect(response.status).toBe(503);
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("managed_launch_bridge_epoch");
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("claim_hivra_agent_operation", expect.anything());
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    } finally {
+      environment.restore();
+    }
+  });
+
   it("keeps the resize allocation lock in the host shell and out of both VM starts", async () => {
     const response = await POST(
       makeRequest({ action: "resize", cpu: 2, ram: 4 }) as never,

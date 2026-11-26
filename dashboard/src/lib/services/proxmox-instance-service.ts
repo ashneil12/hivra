@@ -2896,6 +2896,13 @@ echo "[resize] container cgroup reapply: $updated container(s) set to \${MEM_MB}
  * Used by the tier-change service to apply a Stripe upgrade or downgrade
  * to a running VM with no chat interruption.
  */
+export const PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER = "HIVRA_RESIZE_VM_CONFIG_APPLIED";
+const PROXMOX_RESIZE_NOT_DISPATCHED = "HIVRA_RESIZE_NOT_DISPATCHED";
+
+export function isProxmoxResizePreflightRefusal(result: HostScriptResult): boolean {
+  return !result.ok && result.stdout.split(/\r?\n/).some(line => line.trim() === PROXMOX_RESIZE_NOT_DISPATCHED);
+}
+
 export async function resizeProxmoxVm(
   params: {
     vmid: number;
@@ -2976,6 +2983,7 @@ GUEST_CGROUP_B64=${shQuote(guestCgroupScriptB64)}
 
 if ! qm status "$VMID" >/dev/null 2>&1; then
   echo "VM $VMID not found" >&2
+  echo '${PROXMOX_RESIZE_NOT_DISPATCHED}'
   exit 1
 fi
 ${buildProxmoxVmIdentityGuardScript(params.vmid, params.expectedInstanceId)}
@@ -3021,6 +3029,7 @@ CUR_CORES=$(qm config "$VMID" 2>/dev/null | sed -n 's/^cores: *//p' | head -1)
 # nproc matches the tier — REQUIRED so docker's deploy.resources.limits.cpus
 # (= cpuLimit) never exceeds available CPUs on the VM.
 qm set "$VMID" --cpulimit "$CPU_LIMIT" --cores "$CORES" --memory "$MEMORY_MB" --balloon "$BALLOON_FLOOR_MB"${cpuUnitsArg}
+echo '${PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER}'
 
 # Reapply the container ceiling BEFORE any reboot, while the guest is known-up.
 # docker update persists into hostconfig.json, so the new memory limit survives

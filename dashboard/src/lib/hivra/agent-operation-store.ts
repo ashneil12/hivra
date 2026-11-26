@@ -1,7 +1,9 @@
 import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase";
+import { DEFAULT_PROXMOX_CPU_OVERCOMMIT_RATIO, proxmoxPlacementRpcPolicy } from "@/lib/proxmox/placement-policy";
 import { cleanupHivraAgentAccess, HivraAgentDeleteCleanupError } from "./agent-delete-cleanup";
+import { readManagedLaunchBridgeEpoch, requireUnreservedFundingEpoch } from "./managed-launch-bridge";
 
 import type {
   HivraAgentDesiredState,
@@ -10,6 +12,9 @@ import type {
 
 type HivraAgentOperationStoreErrorCode =
   | "database_unavailable"
+  | "holder_capacity"
+  | "placement_capacity"
+  | "placement_policy_unavailable"
   | "database_error"
   | "conflict";
 
@@ -37,6 +42,8 @@ export function isHivraAgentAuthorityConflict(error: unknown): boolean {
 }
 
 function operationError(error: DatabaseError): HivraAgentOperationStoreError {
+  if (error?.code === "P0057") return new HivraAgentOperationStoreError("holder_capacity");
+  if (error?.code === "P0058") return new HivraAgentOperationStoreError("placement_capacity");
   return new HivraAgentOperationStoreError(
     isHivraAgentAuthorityConflict(error) ? "conflict" : "database_error",
   );
@@ -79,11 +86,29 @@ export async function claimHivraAgentOperation(input: {
   operationId: string;
   operationKind: Exclude<HivraAgentOperationKind, "provision" | "delete">;
   desiredState: Exclude<HivraAgentDesiredState, "deleted">;
+  useManagedPlacementPolicy?: boolean;
   operationPayload?:
     | { cpu: number; ram: number }
     | { snapshotId: string; providerSnapshotId: string }
     | null;
 }): Promise<boolean> {
+  let policy: ReturnType<typeof proxmoxPlacementRpcPolicy> | undefined;
+  if (input.operationKind === "resize" && input.useManagedPlacementPolicy) {
+    const epoch = await readManagedLaunchBridgeEpoch().catch(() => "unverified" as const);
+    if (epoch === "unverified") throw new HivraAgentOperationStoreError("placement_policy_unavailable");
+    if (epoch) {
+      const configured = proxmoxPlacementRpcPolicy();
+      if (epoch === "placement") policy = configured;
+      else if (configured.p_cpu_overcommit_ratio !== DEFAULT_PROXMOX_CPU_OVERCOMMIT_RATIO || configured.p_skip_sleep) {
+        throw new HivraAgentOperationStoreError("placement_policy_unavailable");
+      }
+      if (epoch === "funding") {
+        await requireUnreservedFundingEpoch().catch(() => {
+          throw new HivraAgentOperationStoreError("placement_policy_unavailable");
+        });
+      }
+    }
+  }
   return booleanRpc("claim_hivra_agent_operation", {
     p_user_id: input.userId,
     p_agent_id: input.agentId,
@@ -91,6 +116,7 @@ export async function claimHivraAgentOperation(input: {
     p_operation_kind: input.operationKind,
     p_desired_state: input.desiredState,
     p_operation_payload: input.operationPayload ?? null,
+    ...policy,
   });
 }
 
@@ -372,14 +398,16 @@ export async function beginHivraAgentVmAllocation(input: {
   userId: string;
   agentId: string;
   operationId: string;
+  expectedHost?: string;
 }): Promise<boolean> {
-  const { data, error } = await database().from("hivra_agents")
+  const query = database().from("hivra_agents")
     .update({ operation_payload: null })
     .eq("user_id", input.userId).eq("id", input.agentId)
     .eq("operation_id", input.operationId).eq("operation_kind", "provision")
     .eq("desired_state", "running").eq("status", "provisioning")
     .is("vmid", null)
-    .contains("operation_payload", { stage: "pre_allocation_access" })
+    .contains("operation_payload", { stage: "pre_allocation_access" });
+  const { data, error } = await (input.expectedHost ? query.eq("proxmox_host", input.expectedHost) : query)
     .select("id").maybeSingle();
   if (error) throw operationError(error);
   return Boolean(data);

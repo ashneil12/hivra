@@ -12,6 +12,7 @@ import { readInstanceLiveMutationBlock } from "../instance-live-mutation";
  * for which provider) rather than mocking out Supabase wholesale.
  */
 
+import { readManagedLaunchBridgeEpoch } from "@/lib/hivra/managed-launch-bridge";
 import { applyTierChange } from "../tier-change-service";
 
 // Mock dependencies BEFORE importing the service under test would normally
@@ -19,6 +20,9 @@ import { applyTierChange } from "../tier-change-service";
 // body (lazy/dynamic for circular-import avoidance), so jest.mock at the
 // top works.
 
+jest.mock("@/lib/hivra/managed-launch-bridge", () => ({
+  readManagedLaunchBridgeEpoch: jest.fn(async () => null),
+}));
 jest.mock("../instance-live-mutation", () => ({
   ...jest.requireActual("../instance-live-mutation"),
   readInstanceLiveMutationBlock: jest.fn(async () => null),
@@ -30,13 +34,15 @@ jest.mock("@/lib/supabase", () => {
   const updateInMock = jest.fn().mockResolvedValue({ error: null });
   const fromMock = jest.fn();
   return {
-    supabaseAdmin: { from: fromMock },
+    supabaseAdmin: { from: fromMock, rpc: jest.fn() },
     __mocks: { fromMock, updateEqMock, updateInMock },
   };
 });
 
 jest.mock("../proxmox-instance-service", () => ({
+  isProxmoxResizePreflightRefusal: jest.requireActual("../proxmox-instance-service").isProxmoxResizePreflightRefusal,
   getProxmoxHostRoutingConfigFromInfrastructure: jest.fn().mockReturnValue(null),
+  PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER: "HOST_CONFIG_APPLIED",
   resizeProxmoxVm: jest.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "" }),
 }));
 
@@ -656,6 +662,69 @@ describe("archived computer tier upgrades", () => {
     await applyTierChange({ userId: "user-archived", newTier: "operator", source: "stripe" });
     expect(updates[0].payload.resource_tier).toBe("operator");
     expect(updates.some(({ payload }) => payload.tier_change_pending === true)).toBe(true);
+    expect(resizeProxmoxVm).not.toHaveBeenCalled();
+  });
+});
+
+describe("placement tier allocation", () => {
+  const row = {
+    id: "fixture-paid", seat_funding: "paid", status: "running", lifecycle_state: "active",
+    proxmox_node: "fixture_host", cpu_limit: 1, ram_limit: 2048, resource_tier: "credit_base",
+    config: { infrastructure: { provider: "proxmox", vmid: 201 } },
+  };
+  const change = () => applyTierChange({ userId: "fixture-owner", newTier: "operator", source: "stripe", veniceBoost: false });
+  beforeEach(() => {
+    jest.mocked(readManagedLaunchBridgeEpoch).mockResolvedValueOnce("placement");
+    jest.mocked(supabaseAdmin!.rpc).mockReset().mockResolvedValue({ data: true, error: null } as never);
+    jest.mocked(resizeProxmoxVm).mockResolvedValue({ ok: true, stdout: "", stderr: "" });
+  });
+
+  it("uses one atomic allocation batch for the paid cohort, without writing to the holder seat", async () => {
+    const writes = mockInstanceListCapturingUpdates([row, { ...row, id: "fixture-holder", seat_funding: "holder" }]);
+    const rpc = jest.mocked(supabaseAdmin!.rpc);
+    rpc.mockResolvedValueOnce({ data: 1, error: null } as never);
+    await expect(change()).resolves.toMatchObject({ instancesUpdated: 1, resizesSucceeded: 1 });
+    expect(rpc).toHaveBeenNthCalledWith(1, "apply_hermes_tier_allocations", expect.objectContaining({
+      p_owner: "fixture-owner", p_holder: false, p_tier: "operator",
+      p_changes: [expect.objectContaining({
+        id: row.id, previous_cpu: 1, cpu_limit: 2, operation_id: expect.any(String),
+      })],
+    }));
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      "apply_hermes_tier_allocations",
+      "mark_hermes_instance_resize_host_config_applied",
+      "complete_hermes_instance_resize_allocation",
+    ]);
+    expect(writes).toEqual([]);
+  });
+
+  it("does not dispatch if the DB rejects the compare-and-swap", async () => {
+    const writes = mockInstanceListCapturingUpdates([row]);
+    jest.mocked(supabaseAdmin!.rpc).mockResolvedValueOnce({ data: 0, error: null } as never);
+    await expect(change()).rejects.toThrow("allocation changed");
+    expect(resizeProxmoxVm).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+  });
+
+  it("does not repeat an existing operation", async () => {
+    const writes = mockInstanceListCapturingUpdates([{
+      ...row, resize_operation_id: "fixture-resize", resize_target_cpu: 2, resize_target_ram_mb: 4096,
+    }]);
+    jest.mocked(supabaseAdmin!.rpc).mockResolvedValueOnce({ data: 1, error: null } as never);
+    await expect(change()).resolves.toMatchObject({ instancesUpdated: 1, resizesSucceeded: 0 });
+    expect(resizeProxmoxVm).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+  });
+
+  it("releases a new resize claim when host routing is missing before dispatch", async () => {
+    mockInstanceListCapturingUpdates([{ ...row, config: null }]);
+    const rpc = jest.mocked(supabaseAdmin!.rpc);
+    rpc.mockResolvedValueOnce({ data: 1, error: null } as never);
+    await expect(change()).resolves.toMatchObject({ resizesAttempted: 0, resizesFailed: [] });
+    const claimed = rpc.mock.calls[0][1] as { p_changes: Array<{ operation_id: string }> };
+    expect(rpc).toHaveBeenNthCalledWith(2, "rollback_hermes_instance_resize_allocation", {
+      p_instance_id: row.id, p_user_id: "fixture-owner", p_operation_id: claimed.p_changes[0].operation_id,
+    });
     expect(resizeProxmoxVm).not.toHaveBeenCalled();
   });
 });
