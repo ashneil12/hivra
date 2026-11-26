@@ -7,8 +7,10 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +22,9 @@ DOCKER_29_HELPER_INSPECT = Path(__file__).with_name("fixtures") / "helper-inspec
 SPEC = importlib.util.spec_from_file_location("hivra_gvisor_adapter", MODULE_PATH)
 adapter = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(adapter)
+PROBE_SPEC = importlib.util.spec_from_file_location("hivra_gvisor_storage_probe", MODULE_PATH.with_name("hivra-gvisor-storage-probe.py"))
+probe = importlib.util.module_from_spec(PROBE_SPEC)
+PROBE_SPEC.loader.exec_module(probe)
 
 
 def request(operation="status"):
@@ -109,6 +114,173 @@ class GuestExecSupervisorTests(unittest.TestCase):
             "timeout": 70,
             "capture_limit": adapter.EXEC_ENVELOPE_LIMIT,
         })
+
+
+class StorageAdmissionTests(unittest.TestCase):
+    def setUp(self):
+        self.budget = {"recovery": 7, "outstanding": 3, "workspace": 20, "setup": 5, "restart": 2}
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.sample = {"version": 1, "backing": "fixed", "pools": [], "filesystems": [
+            {"path": self.tmp.name, "bytes": self.budget.copy(), "inodes": self.budget.copy()},
+        ]}
+
+    def test_create_and_restart_use_distinct_exact_boundaries(self):
+        for operation, minimum in (("create", 35), ("start", 12)):
+            for dimension in ("bytes", "inodes"):
+                for delta in (-1, 0, 1):
+                    with self.subTest(operation=operation, dimension=dimension, delta=delta):
+                        reading = SimpleNamespace(f_bavail=minimum + delta if dimension == "bytes" else 100,
+                                                  f_frsize=1, f_favail=minimum + delta if dimension == "inodes" else 100)
+                        with mock.patch.object(adapter.os, "statvfs", return_value=reading):
+                            self.assertEqual(adapter.check_storage(self.sample, operation), delta >= 0)
+
+    def test_thin_data_and_metadata_are_independent_constraints(self):
+        self.sample["backing"] = "thin"
+        self.sample["pools"] = [{"identity": "pool", "writable": True,
+                                 "data": {"available": 35, "budget": self.budget},
+                                 "metadata": {"available": 34, "budget": self.budget}}]
+        with mock.patch.object(adapter.os, "statvfs", return_value=SimpleNamespace(f_bavail=100, f_frsize=1, f_favail=100)):
+            self.assertFalse(adapter.check_storage(self.sample, "create"))
+            self.sample["pools"][0]["metadata"]["available"] = 35
+            self.assertTrue(adapter.check_storage(self.sample, "create"))
+            self.sample["pools"][0]["data"]["available"] = 34
+            self.assertFalse(adapter.check_storage(self.sample, "create"))
+            self.assertTrue(adapter.check_storage(self.sample, "start"))
+
+    def test_unknown_thin_duplicate_filesystem_or_missing_quota_is_unverified(self):
+        with mock.patch.object(adapter.os, "statvfs", return_value=SimpleNamespace(f_bavail=100, f_frsize=1, f_favail=100)):
+            for case in ("unknown", "missing_pool", "duplicate", "no_quota"):
+                sample = copy.deepcopy(self.sample)
+                if case == "unknown":
+                    sample["backing"] = "unknown"
+                elif case == "missing_pool":
+                    sample["backing"] = "thin"
+                elif case == "duplicate":
+                    sample["filesystems"].append(sample["filesystems"][0])
+                else:
+                    sample["filesystems"][0]["bytes"]["workspace"] = 0
+                with self.subTest(case=case), self.assertRaises(ValueError):
+                    adapter.check_storage(sample, "create")
+
+    def test_missing_probe_emits_an_exact_denial(self):
+        req = request("start")
+        capture = io.StringIO()
+        with mock.patch.object(adapter, "STORAGE_ADMISSION_PROBE", Path(self.tmp.name) / "missing"), redirect_stdout(capture):
+            self.assertFalse(adapter.disk_admission(req))
+        prefix, payload = capture.getvalue().split(" ", 1)
+        self.assertEqual(prefix, "HIVRA_GVISOR_ADMISSION_V1")
+        self.assertEqual(json.loads(payload), {"version": 1, "code": "disk_unverified",
+                         "operation": "start", "computerId": req["computerId"], "sandboxId": req["sandboxId"]})
+
+    def test_refusal_happens_after_lock_and_before_any_recovery_or_write(self):
+        for operation in ("create", "start"):
+            req = request(operation) | {"requireDiskAdmission": True, "hostMemoryReserveMb": 1024}
+            if operation == "create":
+                req.update(cpu=2, memoryMb=2048)
+            inspected = None if operation == "create" else {"State": {"Running": False}}
+            order = []
+            with self.subTest(operation=operation), ExitStack() as stack:
+                stack.enter_context(mock.patch.object(adapter.os, "geteuid", return_value=0))
+                stack.enter_context(mock.patch.object(adapter.os, "uname", return_value=SimpleNamespace(sysname="Linux", machine="x86_64")))
+                stack.enter_context(mock.patch.object(adapter.sys, "stdin", io.StringIO(json.dumps(req))))
+                stack.enter_context(mock.patch.object(adapter.Path, "mkdir"))
+                stack.enter_context(mock.patch("builtins.open", mock.mock_open()))
+                stack.enter_context(mock.patch.object(adapter.fcntl, "flock", side_effect=lambda *_: order.append("lock")))
+                stack.enter_context(mock.patch.object(adapter, "inspect_container", side_effect=[inspected, None]))
+                stack.enter_context(mock.patch.object(adapter, "inspect_helper", return_value=None))
+                stack.enter_context(mock.patch.object(adapter, "inspect_resource", return_value=False))
+                stack.enter_context(mock.patch.object(adapter, "require_helper_absent"))
+                stack.enter_context(mock.patch.object(adapter, "prepare_image", return_value=("--pull=never",)))
+                stack.enter_context(mock.patch.object(adapter, "disk_admission", side_effect=lambda *_: order.append("probe") or False))
+                recover = stack.enter_context(mock.patch.object(adapter, "recover_update"))
+                docker = stack.enter_context(mock.patch.object(adapter, "docker"))
+                create = stack.enter_context(mock.patch.object(adapter, "create"))
+                adapter.main()
+                self.assertEqual(order, ["lock", "probe"])
+                recover.assert_not_called()
+                docker.assert_not_called()
+                create.assert_not_called()
+
+    def test_waiting_create_resamples_after_first_create_changes_headroom(self):
+        req = request("create") | {"requireDiskAdmission": True, "hostMemoryReserveMb": 1024, "cpu": 2, "memoryMb": 2048}
+        available = 35
+        samples = []
+        admission_entered = threading.Event()
+        second_lock_attempted = threading.Event()
+        release_first = threading.Event()
+        real_open, real_flock = open, adapter.fcntl.flock
+        def flock(fd, mode):
+            if admission_entered.is_set():
+                second_lock_attempted.set()
+            return real_flock(fd, mode)
+        def probe(_request):
+            samples.append(available)
+            return adapter.check_storage(self.sample, "create")
+        def create(_request, **_kwargs):
+            nonlocal available
+            admission_entered.set()
+            if not release_first.wait(4):
+                raise RuntimeError("test did not release first Create")
+            available -= 1
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(adapter.os, "geteuid", return_value=0))
+            stack.enter_context(mock.patch.object(adapter.os, "uname", return_value=SimpleNamespace(sysname="Linux", machine="x86_64")))
+            stack.enter_context(mock.patch.object(adapter.json, "load", return_value=req))
+            stack.enter_context(mock.patch.object(adapter.Path, "mkdir"))
+            stack.enter_context(mock.patch("builtins.open", side_effect=lambda *_args, **_kwargs: real_open(Path(self.tmp.name) / "lock", "a+")))
+            stack.enter_context(mock.patch.object(adapter.fcntl, "flock", side_effect=flock))
+            stack.enter_context(mock.patch.object(adapter, "inspect_container", return_value=None))
+            stack.enter_context(mock.patch.object(adapter, "inspect_helper", return_value=None))
+            stack.enter_context(mock.patch.object(adapter, "inspect_resource", return_value=False))
+            stack.enter_context(mock.patch.object(adapter, "prepare_image", return_value=("--pull=never",)))
+            stack.enter_context(mock.patch.object(adapter, "recover_update"))
+            stack.enter_context(mock.patch.object(adapter, "disk_admission", side_effect=probe))
+            stack.enter_context(mock.patch.object(adapter.os, "statvfs", side_effect=lambda _path:
+                SimpleNamespace(f_bavail=available, f_frsize=1, f_favail=100)))
+            create_call = stack.enter_context(mock.patch.object(adapter, "create", side_effect=create))
+            workers = stack.enter_context(ThreadPoolExecutor(max_workers=2))
+            first = workers.submit(adapter.main)
+            try:
+                self.assertTrue(admission_entered.wait(3))
+                second = workers.submit(adapter.main)
+                self.assertTrue(second_lock_attempted.wait(3))
+                self.assertEqual(samples, [35])
+            finally:
+                release_first.set()
+            first.result(timeout=3)
+            second.result(timeout=3)
+            self.assertEqual(samples, [35, 34])
+            self.assertEqual(create_call.call_count, 1)
+
+    def test_stock_probe_requires_exact_fixed_mount_and_containerd_root(self):
+        mount = Path(self.tmp.name).resolve()
+        docker_root = mount / "docker"
+        (docker_root / "volumes").mkdir(parents=True)
+        containerd_root = mount / "containerd"
+        containerd_root.mkdir()
+        policy = {"version": 1, "backing": "reserved-fixed", "mountSource": "/dev/vdb", "mountUuid": "fixture",
+                  "xfsWorkspace": {"docker_root": str(docker_root), "xfs_mount": str(mount),
+                                   "docker_socket": "/var/run/docker.sock", "hard_bytes": 20480, "hard_inodes": 20},
+                  "persistent": {"bytes": self.budget, "inodes": self.budget},
+                  "volatile": {"bytes": self.budget, "inodes": self.budget}}
+        real_is_dir = Path.is_dir
+        def mount_at(path):
+            if path.is_relative_to(Path("/run")):
+                return {"target": "/run", "fstype": "tmpfs"}
+            return {"target": str(mount), "source": "/dev/vdb", "fstype": "xfs", "uuid": "fixture", "options": "rw,prjquota"}
+        info = json.dumps({"DockerRootDir": str(docker_root), "Driver": "overlay2", "LoggingDriver": "local"})
+        with mock.patch.object(probe, "mount_at", side_effect=mount_at), mock.patch.object(probe, "read", return_value=info), \
+                mock.patch.object(Path, "is_dir", lambda p: p.is_relative_to(Path("/run")) or real_is_dir(p)):
+            with mock.patch.object(probe, "containerd_root", return_value=containerd_root):
+                sample = probe.evidence(policy)
+                self.assertEqual(sample["backing"], "fixed")
+                self.assertEqual(sample["filesystems"][0]["bytes"]["workspace"], 20480)
+                with self.assertRaises(ValueError):
+                    probe.evidence(policy | {"mountUuid": "changed"})
+            with mock.patch.object(probe, "containerd_root", return_value=Path("/other")):
+                with self.assertRaises(ValueError):
+                    probe.evidence(policy)
 
 
 class WorkspaceHelperLifecycleTests(unittest.TestCase):

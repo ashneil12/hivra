@@ -6,6 +6,8 @@ umask 077
 prepare_stage="host-eligibility"
 tmp_bundle=""
 tmp_adapter=""
+tmp_xfs_workspace=""
+tmp_storage_probe=""
 tmp_dir=""
 sidecar_stage=""
 cleanup() {
@@ -13,6 +15,8 @@ cleanup() {
   trap - EXIT
   if [ -n "$tmp_bundle" ]; then rm -f -- "$tmp_bundle"; fi
   if [ -n "$tmp_adapter" ]; then rm -f -- "$tmp_adapter"; fi
+  if [ -n "$tmp_xfs_workspace" ]; then rm -f -- "$tmp_xfs_workspace"; fi
+  if [ -n "$tmp_storage_probe" ]; then rm -f -- "$tmp_storage_probe"; fi
   if [ -n "$tmp_dir" ]; then rm -rf -- "$tmp_dir"; fi
   if [ -n "$sidecar_stage" ] && [ -d "$sidecar_stage" ]; then rm -rf -- "$sidecar_stage"; fi
   if [ "$status" -ne 0 ]; then
@@ -36,12 +40,16 @@ BUNDLE_URL="${HIVRA_GVISOR_BUNDLE_URL:?Pinned gVisor bundle URL is required}"
 BUNDLE_SHA256="${HIVRA_GVISOR_BUNDLE_SHA256:?Pinned gVisor bundle SHA-256 is required}"
 ADAPTER_SOURCE="${HIVRA_GVISOR_ADAPTER_SOURCE:?Adapter source is required}"
 ADAPTER_SHA256="${HIVRA_GVISOR_ADAPTER_SHA256:?Adapter SHA-256 is required}"
+XFS_WORKSPACE_SOURCE="${HIVRA_GVISOR_XFS_WORKSPACE_SOURCE:?XFS workspace source is required}"
+XFS_WORKSPACE_SHA256="${HIVRA_GVISOR_XFS_WORKSPACE_SHA256:?XFS workspace SHA-256 is required}"
+STORAGE_PROBE_SOURCE="${HIVRA_GVISOR_STORAGE_PROBE_SOURCE:?Storage probe source is required}"
+STORAGE_PROBE_SHA256="${HIVRA_GVISOR_STORAGE_PROBE_SHA256:?Storage probe SHA-256 is required}"
 # Hivra's own earlier adapter releases this one may replace (space-separated
 # SHA-256 digests); their sandboxes move to this adapter through Update.
 PREVIOUS_ADAPTER_SHA256S="${HIVRA_GVISOR_PREVIOUS_ADAPTER_SHA256S:-}"
 [ "$BUNDLE_URL" = 'https://github.com/google/gvisor/releases/download/release-20260907.0/gvisor-x86_64.tar.bz2' ]
 [ "$BUNDLE_SHA256" = '81416511897ab8abd4e723d66823c5b0461a2ee3311cfa70d152404ef9b860cf' ]
-[[ "$BUNDLE_SHA256:$ADAPTER_SHA256" =~ ^[0-9a-f]{64}:[0-9a-f]{64}$ ]]
+[[ "$BUNDLE_SHA256:$ADAPTER_SHA256:$XFS_WORKSPACE_SHA256:$STORAGE_PROBE_SHA256" =~ ^[0-9a-f]{64}(:[0-9a-f]{64}){3}$ ]]
 
 prepare_stage="prerequisites"
 if ! command -v docker >/dev/null 2>&1; then
@@ -56,6 +64,8 @@ systemctl enable --now docker
 
 tmp_bundle="$(mktemp /tmp/hivra-gvisor.XXXXXXXX.tar.bz2)"
 tmp_adapter="$(mktemp /tmp/hivra-gvisor-adapter.XXXXXXXX)"
+tmp_xfs_workspace="$(mktemp /tmp/hivra-gvisor-xfs-workspace.XXXXXXXX)"
+tmp_storage_probe="$(mktemp /tmp/hivra-gvisor-storage-probe.XXXXXXXX)"
 tmp_dir="$(mktemp -d /tmp/hivra-gvisor-bin.XXXXXXXX)"
 prepare_stage="bundle-download"
 curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location "$BUNDLE_URL" -o "$tmp_bundle"
@@ -128,7 +138,14 @@ if [ -d "$sidecar_previous" ]; then rm -rf -- "$sidecar_previous"; fi
 
 printf '%s' "$ADAPTER_SOURCE" | base64 --decode > "$tmp_adapter"
 printf '%s  %s\n' "$ADAPTER_SHA256" "$tmp_adapter" | sha256sum -c -
+printf '%s' "$XFS_WORKSPACE_SOURCE" | base64 --decode > "$tmp_xfs_workspace"
+printf '%s  %s\n' "$XFS_WORKSPACE_SHA256" "$tmp_xfs_workspace" | sha256sum -c -
+grep -Fxq "XFS_WORKSPACE_SHA256 = \"$XFS_WORKSPACE_SHA256\"" "$tmp_adapter"
+printf '%s' "$STORAGE_PROBE_SOURCE" | base64 --decode > "$tmp_storage_probe"
+printf '%s  %s\n' "$STORAGE_PROBE_SHA256" "$tmp_storage_probe" | sha256sum -c -
 install -d -o root -g root -m 0700 /opt/hivra/gvisor-adapter
+install -o root -g root -m 0600 "$tmp_xfs_workspace" /opt/hivra/gvisor-adapter/hivra-gvisor-xfs-workspace.py
+install -o root -g root -m 0700 "$tmp_storage_probe" /opt/hivra/gvisor-adapter/storage-admission-probe
 install -o root -g root -m 0700 "$tmp_adapter" /opt/hivra/gvisor-adapter/hivra-gvisor-adapter
 runsc_sha256="$(sha256sum /usr/local/bin/runsc | awk '{print $1}')"
 printf '%s\n' "$BUNDLE_SHA256" > /opt/hivra/gvisor-adapter/bundle.sha256
