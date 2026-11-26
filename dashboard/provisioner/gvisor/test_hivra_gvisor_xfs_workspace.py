@@ -62,8 +62,8 @@ class WorkspaceTests(unittest.TestCase):
         self.root = mount / "docker"
         self.policy = xfs.Policy("/run/docker.sock", str(self.root), str(mount), ("adapter",),
                                  2000, 3000, 16384, 10)
-        self.workspace = xfs.Workspace("c99eb001-0cb4-4e5e-8d01-c11d847b1df2",
-                                       "c99eb001-0cb4-4e5e-8d01-c11d847b1df3", "a" * 64)
+        self.workspace = xfs.Workspace("11111111-1111-4111-8111-111111111111",
+                                       "22222222-2222-4222-8222-222222222222", "a" * 64)
         self.directory, self.item = self.create_volume(self.workspace)
         self.project = self.workspace.project_id(self.policy)
         self.kernel = FakeKernel()
@@ -240,7 +240,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.kernel.writes, [])
 
     def test_commitments_use_live_usage_and_include_retained_volume(self):
-        stopped = replace(self.workspace, sandbox_id="c99eb001-0cb4-4e5e-8d01-c11d847b1df4")
+        stopped = replace(self.workspace, sandbox_id="44444444-4444-4444-8444-444444444444")
         _, self.volumes[stopped.name] = self.create_volume(stopped)
         self.volume_names.extend([stopped.name, "unrelated-docker-volume"])
         self.quotas.acquire(self.workspace)
@@ -266,6 +266,7 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaisesRegex(xfs.QuotaError, "workspace path still exists"):
             self.quotas.confirm_deleted(proof)
         self.directory.rmdir()
+        self.kernel.directories.pop(proof.inode)
         self.directory.parent.rmdir()
         with self.assertRaisesRegex(xfs.QuotaError, "still has usage"):
             self.quotas.confirm_deleted(proof)
