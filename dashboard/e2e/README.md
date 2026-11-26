@@ -117,7 +117,7 @@ ingestion. Live managed-hosting projects still need their explicit opt-in.
 - `venice-signup.acceptance.spec.ts` — the explicitly gated disposable-account continuation: `/venice` claim → invitation-based public signup → exact authenticated Launch handoff. It stops before the final launch action; the credit/first-reply leg remains separate.
 - `golden-deploy.authed.spec.ts` — the **login → dashboard → deploy** golden path. Skips if no QA session.
 - `first-run-audit.spec.ts` + `first-run-audit/` — the **19/20 gate**. Real provisioning. See below.
-- `global-setup.ts` — always rejects legacy ticket sign-in; without both QA credentials it writes empty storage state.
+- `global-setup.ts` — signs in as the standing Canary QA account when `CANARY_QA_EMAIL` is set; otherwise rejects legacy ticket sign-in and writes empty storage state.
 - `playwright.config.ts` (repo root of `dashboard/`) — projects: `public` (no auth), `authed` (storage state),
   `offline-browser` (local routed fixtures), and the explicitly gated live audit projects.
 
@@ -130,10 +130,54 @@ E2E_BASE_URL=https://<vercel-preview>.vercel.app npm run test:e2e   # gate a PR 
 
 ## Env (authed path only)
 
-The standing `QA_USER_ID` ticket-auth path is disabled. If both
-`CLERK_SECRET_KEY` and `QA_USER_ID` are present, setup fails closed rather than
-minting a Clerk sign-in ticket; without them it writes empty storage state and
-the golden-path specs skip. Do not re-enable that path with sign-in tickets.
+Authed specs sign in as the standing Canary QA account when `CANARY_QA_EMAIL`
+is set (see below); without it setup writes empty storage state and they skip.
+The old `QA_USER_ID` ticket-auth path stays disabled: if both
+`CLERK_SECRET_KEY` and `QA_USER_ID` are present and `CANARY_QA_EMAIL` is not,
+setup fails closed rather than minting a Clerk sign-in ticket. Do not re-enable
+sign-in tickets.
+
+## Standing Canary QA account
+
+One passwordless `+clerk_test` account on the Canary Clerk development
+instance, with the Pro plan and a small Hivra credit balance, is shared by every
+person and agent that needs a signed-in Canary session. Use it instead of
+inventing a new login flow. Its address is the only thing that guards it (the
+code is public and Clerk's test code is fixed), so it is never written in this
+repository, a PR or a comment. Ask the owner for it; it is kept in private
+notes.
+
+**Sign in by hand:** open `https://canary.hermesos.cloud/sign-in`, enter the
+address, press Continue and type `424242`. No mail is sent.
+
+**Sign in from Playwright:** set `CANARY_QA_EMAIL` and run any authed project.
+`global-setup.ts` signs in through the real sign-in page and writes
+`e2e/.auth/qa-user.json`, which the `authed`, `vrt` and `journey` projects
+already load. A spec that needs its own context can call
+`signInAsCanaryQa(page, { baseUrl })` or `saveCanaryQaStorageState` from
+`e2e/canary-qa/auth.ts`. Neither needs a Clerk secret.
+
+```bash
+CANARY_QA_EMAIL=… npx playwright test --project=authed
+```
+
+**Repair it:** `npm run qa:canary-account` creates the Clerk user if it is
+missing and resets its Canary rows: Pro plan and pool, a low-risk sign-up
+assessment, and Hivra credit set back to $2 (`CANARY_QA_CREDIT_USD`, at most
+$5). It is idempotent. It needs `CANARY_QA_EMAIL`, the Canary
+`CLERK_SECRET_KEY` (`sk_test_…`), and the Canary Supabase URL and
+service-role key (`CANARY_QA_SUPABASE_URL`, `CANARY_QA_SUPABASE_SERVICE_ROLE_KEY`).
+It refuses `sk_live_` keys, any Supabase project but Canary, and any address
+that is not a `+clerk_test` address on a reserved example domain. It prints the
+user id, plan and credit, never the address or a key.
+
+**Limits:** the account holds the Pro plan only, so it can run at most three
+agents within 2 vCPU and 4 GB in total, and model use stops when its credit runs
+out. Delete agents you launch with it when you are done, and run the repair
+script to put the credit back.
+
+The disposable first-run, launch-sweep and trial accounts below are separate:
+they test sign-up itself and still mint and delete their own users.
 
 ## VRT baselines
 Screenshots are OS-sensitive — **generate baselines on the Linux CI runner**, never commit
