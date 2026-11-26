@@ -156,6 +156,10 @@ Windows requires your own server and your licensed image. Neither is a preview.
 | Hermes Desktop remote connection | Requires connection service release 2026.11.22.1 and a compatible Hermes version. On the Hermes agent page, **Connect app** provides the Remote URL and session token for the installed Hermes Desktop app. On the same release, the bare browser address opens the native Hermes or Agent Zero sign-in. |
 | Canary only, not yet on hivra.cloud | Listed in the "Where things stand" paragraph of [the roadmap](../ROADMAP.md). Nothing reaches hivra.cloud until the owner approves a production promotion. |
 
+Chroma is a REST API, not a web dashboard. The catalog's Open destination is
+the upstream interactive REST API reference, through the existing authenticated
+gateway; live certification of that destination is pending.
+
 ## Owner decisions
 
 Newest first. Record a decision here when the owner makes it, with the date,

@@ -8,6 +8,7 @@ import type { Frame, Page } from '@playwright/test';
 
 import { sleep } from '../first-run-audit/instances';
 import { SweepFailure } from './result';
+import type { SweepTarget } from './targets';
 
 const GATEWAY_ERROR = /(bad gateway|gateway timeout|service unavailable|connection refused|box is private|couldn.t verify secure access|dashboard not reachable|ERR_CONNECTION|502 Bad Gateway|503 Service Unavailable)/i;
 const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?$/i;
@@ -25,7 +26,7 @@ function frameBodies(frame: Frame): Promise<string> {
 }
 
 /** Wait for the embedded app to render real content, rejecting gateway and loopback failures. */
-export async function proveAppOpen(page: Page, tile: string, timeoutMs: number): Promise<AppOpenProof> {
+export async function proveAppOpen(page: Page, { profileId, tile }: SweepTarget, timeoutMs: number): Promise<AppOpenProof> {
   const started = Date.now();
   const end = started + timeoutMs;
   let lastSeen = '';
@@ -36,8 +37,9 @@ export async function proveAppOpen(page: Page, tile: string, timeoutMs: number):
     const frame = handle ? await handle.contentFrame() : null;
     if (frame) {
       let host = '';
+      let pathname = '';
       try {
-        host = new URL(frame.url()).host;
+        ({ host, pathname } = new URL(frame.url()));
       } catch {
         host = frame.url();
       }
@@ -49,7 +51,10 @@ export async function proveAppOpen(page: Page, tile: string, timeoutMs: number):
       if (GATEWAY_ERROR.test(text)) {
         throw new SweepFailure('chat', 'product', `${tile} showed a gateway/runtime error: "${text.slice(0, 240)}"`);
       }
-      if (text.length >= 20) {
+      const visibleApp = profileId === 'chroma'
+        ? pathname === '/docs/' && text.includes('chroma-frontend') && text.includes('/api/v2/heartbeat')
+        : text.length >= 20 || (profileId === 'dufs' && text === 'Empty folder');
+      if (visibleApp) {
         return {
           surface: `${tile} web app`,
           openSeconds: Math.max(1, Math.round((Date.now() - started) / 1000)),

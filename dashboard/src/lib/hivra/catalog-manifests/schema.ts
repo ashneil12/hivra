@@ -391,6 +391,7 @@ export const CatalogAppManifestSchema = z
     keywords: z.array(z.string().min(2).max(40)).min(2).max(16),
     talk: z.string().min(8).max(200),
     firstTasks: z.array(StarterSchema).max(5),
+    dashboardPath: z.string().refine((path) => !path.startsWith("//") && isSafeHealthPath(path), "Invalid dashboard path").optional(),
     minPlan: z.enum(["free", "pro", "power"]),
     weight: z.number().int().min(1).max(4),
     floor: ResourcePairSchema,
