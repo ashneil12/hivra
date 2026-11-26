@@ -42,33 +42,37 @@ const read = (name) => fs.readFileSync(path.join(MIGRATIONS, name), "utf8");
 const tx = (n) => `0x${n.toString(16).padStart(64, "0")}`;
 const at = (base, ms) => new Date(Date.parse(base) + ms).toISOString();
 
+async function prepareTokenFixture(db) {
+  await db.exec(`
+    create role anon; create role authenticated; create role service_role bypassrls;
+    alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
+    create schema auth;
+    create function auth.jwt() returns jsonb language sql stable as $$ select '{}'::jsonb $$;
+    create function auth.uid() returns uuid language sql stable as $$ select null::uuid $$;
+    create function auth.role() returns text language sql stable as $$ select 'service_role'::text $$;
+    create function public.update_updated_at() returns trigger language plpgsql as $$
+      begin new.updated_at = now(); return new; end $$;
+    create table public.bankr_deposit_wallet_credentials (
+      id uuid primary key default gen_random_uuid(), purpose text);
+    create table public.hermes_subscriptions (
+      user_id text primary key, plan text not null, status text not null,
+      stripe_subscription_id text, instance_limit integer not null,
+      total_cpu_budget numeric not null, total_ram_budget integer not null,
+      current_period_start timestamptz, current_period_end timestamptz,
+      grace_period_ends_at timestamptz, updated_at timestamptz not null);
+    create table public.hermes_instances (
+      id uuid primary key default gen_random_uuid(), user_id text not null,
+      status text not null, resource_tier text, cpu_limit numeric, ram_limit integer,
+      tier_change_pending boolean not null default false,
+      updated_at timestamptz not null default now());
+  `);
+  for (const name of PREREQUISITES) await db.exec(read(name));
+}
+
 async function main() {
   const db = new PGlite();
   try {
-    await db.exec(`
-      create role anon; create role authenticated; create role service_role bypassrls;
-      alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
-      create schema auth;
-      create function auth.jwt() returns jsonb language sql stable as $$ select '{}'::jsonb $$;
-      create function auth.uid() returns uuid language sql stable as $$ select null::uuid $$;
-      create function auth.role() returns text language sql stable as $$ select 'service_role'::text $$;
-      create function public.update_updated_at() returns trigger language plpgsql as $$
-        begin new.updated_at = now(); return new; end $$;
-      create table public.bankr_deposit_wallet_credentials (
-        id uuid primary key default gen_random_uuid(), purpose text);
-      create table public.hermes_subscriptions (
-        user_id text primary key, plan text not null, status text not null,
-        stripe_subscription_id text, instance_limit integer not null,
-        total_cpu_budget numeric not null, total_ram_budget integer not null,
-        current_period_start timestamptz, current_period_end timestamptz,
-        grace_period_ends_at timestamptz, updated_at timestamptz not null);
-      create table public.hermes_instances (
-        id uuid primary key default gen_random_uuid(), user_id text not null,
-        status text not null, resource_tier text, cpu_limit numeric, ram_limit integer,
-        tier_change_pending boolean not null default false,
-        updated_at timestamptz not null default now());
-    `);
-    for (const name of PREREQUISITES) await db.exec(read(name));
+    await prepareTokenFixture(db);
     // What 20260923001301 does to the reservation guard (the rest of that file
     // needs unrelated credit tables): this migration replaces the function
     // and must keep it closed to the API roles.
@@ -403,7 +407,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+module.exports = { prepareTokenFixture };
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

@@ -6,16 +6,17 @@
  * the price the server charges. Tier keys follow the token lane's naming:
  * "pro" is the operator plan and "power" is the fleet plan.
  *
- * Hold-to-qualify amounts are deliberately NOT here. They depend on the
- * user's pricing epoch and founders status and are resolved on the server
- * (see tier-thresholds.ts), so the billing UI links to the wallet page for
- * them instead of printing a number.
+ * This one-time yearly subscription offer is separate from hold-to-qualify
+ * holder pricing and is intentionally preserved. Holder thresholds depend on
+ * live token prices and locked qualification rows and are resolved on the
+ * server (see tier-thresholds.ts), so they are not hardcoded here.
  */
 import {
   HERMESOS_TOKEN,
   HIVRA_DISPLAY_UNIT,
   HIVRA_SYMBOL,
   platformTokenByAddress,
+  type PlatformTokenKey,
 } from "./token-registry";
 
 export const YEARLY_TOKEN_USD = {
@@ -33,6 +34,10 @@ export const YEARLY_TOKEN_TIER_PLAN = {
 
 /** What people call the legacy Base token everywhere in the product. */
 export const HERMESOS_DISPLAY_UNIT = HERMESOS_TOKEN.displayUnit;
+
+export function tokenUnitForKey(key: PlatformTokenKey): string {
+  return key === "hivra" ? HIVRA_DISPLAY_UNIT : HERMESOS_DISPLAY_UNIT;
+}
 
 /**
  * Unit label to show next to a platform-token amount.

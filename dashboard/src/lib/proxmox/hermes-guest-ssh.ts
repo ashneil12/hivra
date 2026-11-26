@@ -229,6 +229,12 @@ esac`;
  * booting), after `buildHermesVmidBoundGuestSshPrelude`. A host key that does
  * not match the attested one is not a boot race: it refuses at once.
  */
+// The readiness wait's verdict line for a guest that never took a connection
+// (powered off, dropping packets). applyLiveUpdate's failure classifier greps
+// for it to tell "the launch never reached a live box" from "the update ran
+// and failed on one" — the redeploy sweep retries only the latter.
+export const GUEST_SSH_UNREACHABLE_MESSAGE = "is not reachable over SSH";
+
 export function buildPinnedGuestSshReadinessWait(params: { attempts: number; sleepSeconds: number }): string {
   const attempts = boundedInteger(params.attempts, 1, 30, "SSH readiness attempts");
   const sleepSeconds = boundedInteger(params.sleepSeconds, 1, 60, "SSH readiness sleep");
@@ -249,7 +255,7 @@ for _attempt in $(seq 1 "$SSH_READY_ATTEMPTS"); do
   if [ "$_attempt" -lt "$SSH_READY_ATTEMPTS" ]; then sleep ${sleepSeconds}; fi
 done
 if [ "$ssh_ready" != "1" ]; then
-  echo "VM $VMID is not reachable over SSH at $PRIVATE_IP" >&2
+  echo "VM $VMID ${GUEST_SSH_UNREACHABLE_MESSAGE} at $PRIVATE_IP" >&2
   exit 1
 fi
 `;

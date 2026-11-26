@@ -12,6 +12,7 @@ import {
   sleepHivraAgent,
   type SleepOutcome,
 } from "./agent-sleep";
+import { EFFECTIVE_SLEEP_CONTROL_FILTER, HOLDER_SEAT_HIBERNATE_AFTER_NAP_SECONDS, HOLDER_SEAT_NAP_AFTER_SECONDS } from "./seat-funding";
 import { ensureHivraAgentAwake, type AgentRow, type EnsureAwakeResult } from "./agent-wake";
 import { STALE_LEASE_MS, reconcileAgentSleep, sleepLeaseKind } from "./sleep-reconcile";
 import { markAgentAwake } from "./sleep-aware";
@@ -840,10 +841,36 @@ async function loadHosts(ctx: Context): Promise<Map<string, HostInfo> | null> {
   return hosts;
 }
 
-/** Policies a tier may run under. `on` mode has no policy prefilter: every eligible agent but always_on. */
-function policyFilter(mode: SleepMode, tier: "nap" | "hibernate"): string[] | null {
+/**
+ * Candidate windows are deliberately widened to include the fixed holder-seat
+ * boundary beside the tunable seat timings. The runner re-checks each row's own
+ * exact timings before any state change, so widening only costs cheap refusals;
+ * narrowing would strand holder seats.
+ */
+function candidateTimings(env: Record<string, string | undefined>) {
+  const timings = resolveSleepTimings(env);
+  return {
+    ...timings,
+    napAfterSeconds: Math.min(timings.napAfterSeconds, HOLDER_SEAT_NAP_AFTER_SECONDS),
+    hibernateAfterSeconds: Math.min(timings.hibernateAfterSeconds, HOLDER_SEAT_HIBERNATE_AFTER_NAP_SECONDS),
+  };
+}
+
+/** Rows that may sleep: ordinary seats need always_on false; holder seats override stale stored values. */
+function sleepControlFilter(): string {
+  return EFFECTIVE_SLEEP_CONTROL_FILTER;
+}
+
+/**
+ * Canary's ordinary stored-policy prefilter, widened only for the authoritative
+ * holder cohort. Holder rows can carry stale pre-admission values; their
+ * effective policy is full. Each `.or` call is a separate conjunct in the
+ * query, so this does not weaken the always-on or activity filters.
+ */
+function policyControlFilter(mode: SleepMode, tier: "nap" | "hibernate"): string | null {
   if (mode !== "canary") return null;
-  return tier === "nap" ? ["t1", "full"] : ["t3", "full"];
+  const policies = tier === "nap" ? "t1,full" : "t3,full";
+  return `sleep_policy.in.(${policies}),seat_funding.eq.holder`;
 }
 
 function toCandidates(rows: Array<{ id: string; proxmox_host: string | null }>, hosts: Map<string, HostInfo>) {
@@ -856,7 +883,7 @@ function toCandidates(rows: Array<{ id: string; proxmox_host: string | null }>, 
 }
 
 async function loadHibernateCandidates(ctx: Context, hosts: Map<string, HostInfo>): Promise<Candidate[]> {
-  const timings = resolveSleepTimings(ctx.env);
+  const timings = candidateTimings(ctx.env);
   const cutoff = new Date(ctx.now() - timings.hibernateAfterSeconds * 1000).toISOString();
   const horizonEnd = new Date(ctx.now() + timings.horizonSeconds * 1000).toISOString();
   let query = ctx.db
@@ -869,13 +896,13 @@ async function loadHibernateCandidates(ctx: Context, hosts: Map<string, HostInfo
     .eq("deployment_mode", "hivra-managed")
     .eq("computer_substrate", "proxmox-kvm")
     .is("deployment_target_id", null)
-    .eq("always_on", false)
+    .or(sleepControlFilter())
     .lte("sleep_tier_changed_at", cutoff)
     // A nap with a job inside the horizon would be woken again at once: sleepHivraAgent
     // refuses it (job_soon) before any host call, so it must not take a candidate slot.
     .or(`next_wake_at.is.null,next_wake_at.gt.${horizonEnd}`);
-  const policies = policyFilter(ctx.mode, "hibernate");
-  if (policies) query = query.in("sleep_policy", policies);
+  const policies = policyControlFilter(ctx.mode, "hibernate");
+  if (policies) query = query.or(policies);
   const { data, error } = await query
     .order("sleep_tier_changed_at", { ascending: true })
     .limit(CANDIDATE_SCAN_LIMIT);
@@ -932,7 +959,7 @@ async function recentlyActive(ctx: Context, ids: string[], sinceIso: string): Pr
 }
 
 async function loadNapCandidates(ctx: Context, hosts: Map<string, HostInfo>): Promise<Candidate[]> {
-  const timings = resolveSleepTimings(ctx.env);
+  const timings = candidateTimings(ctx.env);
   const nowMs = ctx.now();
   const windowStart = new Date(nowMs - timings.napAfterSeconds * 1000).toISOString();
   let query = ctx.db
@@ -945,15 +972,15 @@ async function loadNapCandidates(ctx: Context, hosts: Map<string, HostInfo>): Pr
     .eq("deployment_mode", "hivra-managed")
     .eq("computer_substrate", "proxmox-kvm")
     .is("deployment_target_id", null)
-    .eq("always_on", false)
+    .or(sleepControlFilter())
     .not("cf_hostname", "is", null)
     .not("vmid", "is", null)
     .not("bootstrapped_at", "is", null)
     .not("type", "in", "(aeon,linux-desktop)")
     // No wake, abort or other change inside the nap window.
     .or(`sleep_tier_changed_at.is.null,sleep_tier_changed_at.lte.${windowStart}`);
-  const policies = policyFilter(ctx.mode, "nap");
-  if (policies) query = query.in("sleep_policy", policies);
+  const policies = policyControlFilter(ctx.mode, "nap");
+  if (policies) query = query.or(policies);
   const { data, error } = await query
     .order("sleep_tier_changed_at", { ascending: true, nullsFirst: true })
     .limit(CANDIDATE_SCAN_LIMIT);

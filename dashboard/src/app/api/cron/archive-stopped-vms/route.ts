@@ -206,6 +206,7 @@ async function handle(req: NextRequest) {
     .from("hermes_instances")
     .select("id, user_id, proxmox_node, proxmox_vmid, resource_tier, last_lifecycle_transition_at")
     .eq("lifecycle_state", "paused")
+    .is("lifecycle_substate", null)
     .eq("status", "stopped")
     .is("deleted_at", null)
     .is("archive_uri", null)
@@ -329,6 +330,7 @@ async function handle(req: NextRequest) {
     try {
       result = await archiveInstance(supabaseAdmin!, candidate.id, undefined, {
         maxScriptTimeoutMs: scriptTimeoutMs,
+        pausedBefore: cutoff,
       });
     } catch (err) {
       results.failed += 1;

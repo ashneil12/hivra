@@ -20,7 +20,7 @@ export interface TierSpec {
 
 // ── Venice compute boost ───────────────────────────────────────────────
 // A user on a PAID tier (operator/fleet/command — reached via Stripe card OR
-// $HERMESOS token qualification) who also holds ≥ $199 of VVV (Venice's token,
+// paid token subscription) who also holds ≥ $199 of VVV (Venice's token,
 // valued via DEX) earns extra per-instance compute on top of their tier.
 
 /** Extra vCPU granted by an active Venice compute boost. */

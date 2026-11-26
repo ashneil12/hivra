@@ -65,6 +65,7 @@ import {
 import {
   beginHivraAgentSnapshot,
   beginHivraAgentSnapshotRestore,
+  HivraAgentOperationStoreError,
   claimHivraAgentOperation,
   completeHivraAgentSnapshot,
   completeHivraAgentSnapshotRestore,
@@ -327,12 +328,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (agent.computer_substrate === "gvisor") {
       if (!isSameOriginMutationRequest(req)) return apiError("Same-origin request required.", 403);
-      if (!isGvisorAction(action)) {
+      const sandboxAction = agent.deployment_mode === "hivra-managed"
+        ? (action === "wake" ? "start" : action === "sleep" ? "stop" : action)
+        : action;
+      if (!isGvisorAction(sandboxAction)) {
         return apiError("This Linux terminal sandbox does not support that lifecycle operation.", 400);
       }
       let cpu: number | undefined;
       let ramGb: number | undefined;
-      if (action === "resize") {
+      if (sandboxAction === "resize") {
         cpu = Number(body.cpu);
         ramGb = Number(body.ram);
         const maximumCpu = body.maximumCpu === undefined ? cpu : Number(body.maximumCpu);
@@ -345,13 +349,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       try {
         const updated = await mutateGvisorComputer(userId, String(agent.id), {
-          action: action === "update_runtime" ? "update" : action,
-          ...(action === "resize" ? { cpu, ramGb } : {}),
+          action: sandboxAction === "update_runtime" ? "update" : sandboxAction,
+          ...(sandboxAction === "resize" ? { cpu, ramGb } : {}),
         });
         return apiSuccess({ agent: sanitizeHivraAgentRow(updated) });
       } catch (error) {
         if (error instanceof GvisorComputerError) {
-          const status = error.code === "not_found" ? 404
+          const status = error.code === "plan_required" ? 402 : error.code === "not_found" ? 404
             : error.code === "conflict" || error.code === "not_ready" ? 409 : 503;
           return apiError(error.message, status);
         }
@@ -1250,7 +1254,10 @@ ${restorePrefix}${lifecycleVmAuthorityBody()}`
         policy: capacityPolicy,
         allowReduction: reductionOnly,
       });
-      const strictContainerCgroup = String(agent.type) !== "linux-desktop"
+      // Agent Zero runs in a dedicated VM without a separate Docker ceiling.
+      // The VM quota and memory envelope enforce the selected limits.
+      const usesVmEnvelopeOnly = agent.type === "linux-desktop" || agent.type === "agent-zero";
+      const strictContainerCgroup = !usesVmEnvelopeOnly
         ? Buffer.from(buildAgentContainerCgroupScript({
             memoryMb: ramEnvelope.ceilingMb,
             cpus: maximumCpu,
@@ -1318,7 +1325,7 @@ restore_previous_size_and_restart() {
   local restore_container="\${1:-0}"
   ${verifiedStopVmBody(vmid, 40)}
   restore_previous_size || return 1
-  qm start ${vmid} >/dev/null || return 1
+  qm start ${vmid} 8>&- >/dev/null || return 1
   ${strictContainerCgroup ? '[ "$restore_container" = 0 ] || apply_guest_cgroup "$PREVIOUS_CGROUP_SCRIPT_B64" || return 1' : ""}
 }
 if ! qm set ${vmid} --cores ${cores} --cpulimit ${maximumCpu} --memory ${ramEnvelope.ceilingMb} --balloon ${ramEnvelope.baselineMb} --cpuunits ${cpuunits}; then
@@ -1326,7 +1333,7 @@ if ! qm set ${vmid} --cores ${cores} --cpulimit ${maximumCpu} --memory ${ramEnve
   echo "HIVRA_RESIZE_ROLLED_BACK"
   exit 1
 fi
-if ! qm start ${vmid} >/dev/null; then
+if ! qm start ${vmid} 8>&- >/dev/null; then
   restore_previous_size_and_restart 0 || { echo "new size failed to start and prior config could not be restored" >&2; exit 1; }
   echo "HIVRA_RESIZE_ROLLED_BACK"
   exit 1
@@ -1383,6 +1390,9 @@ ${startKickoff(operationId)}`,
 
     return apiError("Unknown action", 400);
   } catch (err) {
+    if (err instanceof HivraAgentOperationStoreError && err.code === "holder_capacity") {
+      return apiError("This action exceeds the available token-holder reservation.", 409);
+    }
     return handleApiError(err);
   }
 }

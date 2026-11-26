@@ -135,6 +135,7 @@ describe("wallet price lock", () => {
     return render(
       <LocaleProvider initialLocale="en">
         <SelfCustodyVerificationPanel
+          quoteUnit="$HIVRA"
           connecting={false}
           locking={false}
           connectedAddress="0x000000000000000000000000000000000000dEaD"

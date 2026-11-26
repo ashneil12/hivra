@@ -1,0 +1,120 @@
+{
+  "slug": "convertx",
+  "checkedAt": "2026-11-22T15:32:10.926Z",
+  "gitSha": "ae8dbbd512dabfdf73fd6b119655f93f4aebd567",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "C4illin/ConvertX is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "C4illin/ConvertX",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/c4illin/convertx:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/c4illin/convertx:latest",
+        "digest": "sha256:6259e0c1e063120b1ddbc6937372a83be58182b2c9dc82264f58e100907b3e51",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 0.3s",
+      "evidence": {
+        "container": "hivra-verify-convertx-a7nw7k",
+        "hostPort": 3287,
+        "image": "ghcr.io/c4illin/convertx:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-convertx-a7nw7k",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3287:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-convertx-a7nw7k-data:/app/data",
+          "ghcr.io/c4illin/convertx:latest"
+        ],
+        "runStdout": "1213ba8bf2fb2b580533f22ccb3ee107d047f00cbc4b83c2f3f81bbe365e787c",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 0.3,
+          "attempts": 1
+        },
+        "memUsage": "386.1MiB / 7.652GiB",
+        "memBytes": 404855194
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /setup; form POST -> 422",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 61404,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/setup"
+          },
+          {
+            "hop": 2,
+            "path": "/setup",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/setup",
+        "bodyHead": "<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"/><meta name=\"webroot\" content=\"\"/><title>ConvertX | Setup</title><link rel=\"stylesheet\" href=\"/generated.css\"/><link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple-touch-icon.png\"/><link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/favicon-32x32.png\"/><link rel",
+        "formPost": {
+          "path": "/register",
+          "status": 422,
+          "location": null,
+          "bodyHead": "{\"type\":\"validation\",\"on\":\"body\"}"
+        },
+        "loginProbe": {
+          "status": 422,
+          "bodyHead": "{\"type\":\"validation\",\"on\":\"body\",\"found\":{\"password\":\"verify\"}}"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 386.1MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 404855194,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

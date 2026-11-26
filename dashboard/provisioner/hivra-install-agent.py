@@ -82,6 +82,16 @@ class InstallError(Exception):
     pass
 
 
+def load_catalog_app_module(source):
+    path = source / "hivra-catalog-app.py"
+    spec = importlib.util.spec_from_file_location("hivra_catalog_app", path)
+    if spec is None or spec.loader is None:
+        raise InstallError("catalog app installer module unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def unique_object(pairs):
     result = {}
     for key, value in pairs:
@@ -102,14 +112,22 @@ def parse_launch(raw, *, provider_desktop=False):
         if type(provider_desktop) is not bool or (provider_desktop and (version != 3 or value.get("computerSubstrate") != "provider-vm")):
             raise ValueError()
         expected_fields = (FIELDS if version == 1 else FIELDS | {"publicOrigin"} if version == 2
-                           else LINUX_DESKTOP_FIELDS if version == 3 else FIELDS | {"activityTelemetry"})
-        if type(version) is not int or version not in (1, 2, 3, 4) or set(value) != expected_fields:
+                           else LINUX_DESKTOP_FIELDS if version == 3
+                           else FIELDS | {"activityTelemetry"} if version == 4
+                           else FIELDS | {"catalogApp", "publicOrigin"})
+        if type(version) is not int or version not in (1, 2, 3, 4, 5) or set(value) != expected_fields:
             raise ValueError()
         if ((version == 1 and value["agentKind"] not in KINDS)
                 or (version == 2 and value["agentKind"] != "deepseek-harness")
                 or (version == 3 and value["agentKind"] not in LINUX_COMPUTER_KINDS)
-                or (version == 4 and value["agentKind"] not in ACTIVITY_TELEMETRY_KINDS)):
+                or (version == 4 and value["agentKind"] not in ACTIVITY_TELEMETRY_KINDS)
+                or (version == 5 and value["agentKind"] != "catalog-app")):
             raise ValueError()
+        if version == 5:
+            if not isinstance(value.get("catalogApp"), dict):
+                raise ValueError()
+            catalog_mod = load_catalog_app_module(Path(__file__).resolve().parent)
+            value["catalogApp"] = catalog_mod.validate_catalog_app_spec(value["catalogApp"])
         # Agent-run reporting is verified only on Proxmox computers.
         if version == 4 and (value["computerSubstrate"] != "proxmox-kvm"
                              or not valid_activity_telemetry(value["activityTelemetry"])):
@@ -138,11 +156,16 @@ def parse_launch(raw, *, provider_desktop=False):
             raise ValueError()
         if value["computerSubstrate"] != "provider-vm" and hostname is not None:
             raise ValueError()
-        if version in (2, 3):
+        if version in (2, 3, 5):
             # Native runtimes require one pre-journaled HTTPS authority. Provider
             # VMs may use named or direct access; Proxmox uses a named tunnel and
-            # must never fall back to an unbound quick-tunnel hostname.
-            if not canonical_origin(value["publicOrigin"]):
+            # must never fall back to an unbound quick-tunnel hostname. Catalog
+            # apps (v5) carry it too so manifests can template their public URL;
+            # it may be empty on a substrate without one, and the runner then
+            # fails only if the manifest actually uses a public-origin placeholder.
+            if version == 5 and not value["publicOrigin"]:
+                pass
+            elif not canonical_origin(value["publicOrigin"]):
                 raise ValueError()
             if value["computerSubstrate"] == "proxmox-kvm" and (token is None or hostname is not None):
                 raise ValueError()
@@ -154,7 +177,9 @@ def parse_launch(raw, *, provider_desktop=False):
             if version == 2:
                 if not valid_native_model(value["modelKey"], value["modelBaseUrl"], value["model"]):
                     raise ValueError()
-            elif any(value[key] for key in ("modelKey", "modelBaseUrl", "model")):
+            elif version == 3 and any(value[key] for key in ("modelKey", "modelBaseUrl", "model")):
+                # Linux computers take no model; catalog apps (v5) do — cli-web
+                # runtimes bind modelEnv to these launch fields.
                 raise ValueError()
         if version == 3:
             if value["computerSubstrate"] != ("provider-vm" if provider_desktop else "proxmox-kvm") or value["wantBrowser"] is not None:
@@ -508,6 +533,27 @@ def install_agent(launch, source, *, provider_desktop=None):
         except Exception:
             native.owner.stop_owned()
             raise
+    elif launch["agentKind"] == "catalog-app":
+        # Install the lightweight base box first (gateway, terminal, files, bux
+        # user), then run the validated declarative catalog app installer over
+        # stdin so secrets never appear in argv or environment logs.
+        bootstrap()
+        install_payload = json.dumps({
+            "spec": launch["catalogApp"],
+            "modelKey": launch["modelKey"],
+            "modelBaseUrl": launch["modelBaseUrl"],
+            "model": launch["model"],
+            "publicOrigin": launch.get("publicOrigin") or "",
+        }, separators=(",", ":")).encode("utf-8")
+        subprocess.run(
+            ["/usr/bin/python3", "-I", "-B", str(source / "hivra-catalog-app.py"), "install"],
+            input=install_payload, check=True, timeout=2400,
+            env={"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": "/root", "LANG": "C.UTF-8"},
+            stdout=subprocess.DEVNULL,
+        )
+        # Restart the gateway so it loads /etc/hivra/catalog-app.json.
+        service(("restart", "bux-hivra-chat.service"))
+        configure_access(launch, source)
     else:
         bootstrap()
         if launch.get("version") == 4:

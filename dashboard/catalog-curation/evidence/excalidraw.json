@@ -1,0 +1,113 @@
+{
+  "slug": "excalidraw",
+  "checkedAt": "2026-11-21T14:15:58.159Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "excalidraw/excalidraw is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "excalidraw/excalidraw",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "excalidraw/excalidraw:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "excalidraw/excalidraw:latest",
+        "digest": "sha256:f7ee194addd607bf831d2af0f0a34463dd4225e426cf35199ef0b12a803398e9",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-excalidraw-srz32a",
+        "hostPort": 3214,
+        "image": "excalidraw/excalidraw:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-excalidraw-srz32a",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3214:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-excalidraw-srz32a-tmp:/tmp",
+          "excalidraw/excalidraw:latest"
+        ],
+        "runStdout": "2ecc6044c199f987d6516834e14b5cfd7b68d615dd02c3daaafbf96b7d12b347",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "11.58MiB / 7.652GiB",
+        "memBytes": 12142510
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 63870,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/><title>Excalidraw Whiteboard</title><meta name=\"viewport\" content=\"width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,shrink-to-fit=no\"/><meta name=\"referrer\" content=\"origin\"/><meta name=\"mobile-web-app-capable\" content=\"yes\"/><meta name=\"theme-color\" content=\"#121212\"/><meta name=\"title\" content=\"Free",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<html>\r\n<head><title>404 Not Found</title></head>\r\n<body>\r\n<center><h1>404 Not Found</h1></center>\r\n<hr><center>nginx/1.27.5</center>\r\n</body>\r\n</html>\r\n"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 11.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 12142510,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

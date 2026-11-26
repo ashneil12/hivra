@@ -8,6 +8,10 @@
 // records: the job a thing does, the words people search by, how you talk to
 // it, where its maker publishes it, a picture, and a few good first tasks.
 
+import {
+  UNIVERSAL_CATALOG_MANIFESTS,
+  type UniversalCatalogAppId,
+} from "@/lib/hivra/catalog-manifests";
 import { LAUNCH_PROFILE_IDS, PROFILE_DETAILS, type LaunchProfileId } from "./contracts";
 
 /** Off by default: the catalog view of Launch is unreleased. Client-safe: the
@@ -27,7 +31,7 @@ export function isMakerClaimsEnabled(
   return isLaunchCatalogEnabled(catalog) && (flag === "1" || flag === "true");
 }
 
-export type CatalogJobId = "coding" | "research" | "messages" | "automation" | "assistant";
+export type CatalogJobId = "coding" | "research" | "messages" | "automation" | "assistant" | "self-hosted";
 
 /** The jobs people browse by, in the order they are shown. */
 export const CATALOG_JOBS: readonly { id: CatalogJobId; label: string; hint: string }[] = [
@@ -36,6 +40,7 @@ export const CATALOG_JOBS: readonly { id: CatalogJobId; label: string; hint: str
   { id: "messages", label: "Messages", hint: "Reach it from your messaging apps" },
   { id: "automation", label: "Automations", hint: "Work that runs on a schedule" },
   { id: "assistant", label: "Personal assistant", hint: "One agent for everyday work" },
+  { id: "self-hosted", label: "Self-hosted apps", hint: "Open-source tools on your own computer" },
 ];
 
 /** A first task: a title to pick it by, and the words to give the agent.
@@ -272,6 +277,19 @@ export const LAUNCH_CATALOG: Record<LaunchProfileId, CatalogEntry> = {
     firstTasks: [],
     cover: computerCover("windows", "A Windows desktop on a monitor"),
   },
+  ...(Object.fromEntries(
+    UNIVERSAL_CATALOG_MANIFESTS.map((manifest) => [
+      manifest.id,
+      {
+        jobs: manifest.jobs,
+        keywords: manifest.keywords,
+        talk: manifest.talk,
+        sourceUrl: manifest.sourceUrl,
+        firstTasks: manifest.firstTasks,
+        cover: null,
+      } satisfies CatalogEntry,
+    ]),
+  ) as unknown as Record<UniversalCatalogAppId, CatalogEntry>),
 };
 
 export function catalogJob(id: CatalogJobId) {

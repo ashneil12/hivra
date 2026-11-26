@@ -595,9 +595,10 @@ describe("steps 3 and 4: hibernate and nap", () => {
     mockSleep.mockResolvedValue(outcome({ state: "hibernated" }));
     const summary = await run();
     const query = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "napping"))!;
-    expect(hasOp(query, "lte", "sleep_tier_changed_at", iso(900_000))).toBe(true);
+    // Widened to include the fixed 12-minute holder window; the runner rechecks each seat exactly.
+    expect(hasOp(query, "lte", "sleep_tier_changed_at", iso(720_000))).toBe(true);
     expect(hasOp(query, "is", "operation_id", null)).toBe(true);
-    expect(hasOp(query, "eq", "always_on", false)).toBe(true);
+    expect(hasOp(query, "or", "always_on.eq.false,seat_funding.eq.holder")).toBe(true);
     expect(mockSleep).toHaveBeenCalledWith(id(1), expect.objectContaining({ tier: "hibernate", trigger: "sweep" }));
     expect(summary.hibernate).toMatchObject({ candidates: 1, attempted: 1, slept: 1 });
   });
@@ -651,13 +652,14 @@ describe("steps 3 and 4: hibernate and nap", () => {
     expect(opsOf(query, "lte")[0][0]).toBe("sleep_tier_changed_at");
   });
 
-  it("filters by policy in canary mode and not in on mode", async () => {
+  it("keeps holder seats in the canary policy prefilter despite stale stored values", async () => {
     setTables({ hosts: hosts() });
     await run({ HIVRA_SLEEP_MODE: "canary" });
     const canaryNap = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "awake"))!;
     const canaryHib = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "napping"))!;
-    expect(hasOp(canaryNap, "in", "sleep_policy", ["t1", "full"])).toBe(true);
-    expect(hasOp(canaryHib, "in", "sleep_policy", ["t3", "full"])).toBe(true);
+    expect(hasOp(canaryNap, "or", "sleep_policy.in.(t1,full),seat_funding.eq.holder")).toBe(true);
+    expect(hasOp(canaryHib, "or", "sleep_policy.in.(t3,full),seat_funding.eq.holder")).toBe(true);
+    expect(hasOp(canaryNap, "or", "always_on.eq.false,seat_funding.eq.holder")).toBe(true);
 
     mockCalls.length = 0;
     await run({ HIVRA_SLEEP_MODE: "on" });
@@ -665,8 +667,7 @@ describe("steps 3 and 4: hibernate and nap", () => {
     const onHib = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "napping"))!;
     expect(opsOf(onNap, "in").some((a) => a[0] === "sleep_policy")).toBe(false);
     expect(opsOf(onHib, "in").some((a) => a[0] === "sleep_policy")).toBe(false);
-    // Always-on agents are never candidates, in either mode.
-    expect(hasOp(onNap, "eq", "always_on", false)).toBe(true);
+    expect(hasOp(onNap, "or", "always_on.eq.false,seat_funding.eq.holder")).toBe(true);
   });
 
   it("builds the cheap nap prefilter from the database columns", async () => {
@@ -688,7 +689,7 @@ describe("steps 3 and 4: hibernate and nap", () => {
       expect(hasOp(query, op, ...args)).toBe(true);
     }
     // No wake or other change inside the nap window.
-    expect(hasOp(query, "or", `sleep_tier_changed_at.is.null,sleep_tier_changed_at.lte.${iso(300_000)}`)).toBe(true);
+    expect(hasOp(query, "or", `sleep_tier_changed_at.is.null,sleep_tier_changed_at.lte.${iso(240_000)}`)).toBe(true);
   });
 
   it("drops agents with an event or a reported use inside the nap window", async () => {
@@ -708,7 +709,7 @@ describe("steps 3 and 4: hibernate and nap", () => {
     expect(slept).toEqual([id(3), id(4)]);
     expect(summary.nap.candidates).toBe(2);
     const events = callsFor("hivra_agent_events")[0];
-    expect(hasOp(events, "gte", "created_at", iso(300_000))).toBe(true);
+    expect(hasOp(events, "gte", "created_at", iso(240_000))).toBe(true);
   });
 
   it("treats a failed events or activity read as busy, never as idle", async () => {

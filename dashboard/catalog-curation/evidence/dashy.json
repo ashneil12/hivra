@@ -1,0 +1,109 @@
+{
+  "slug": "dashy",
+  "checkedAt": "2026-11-21T14:20:35.577Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "lissy93/dashy is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "lissy93/dashy",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "lissy93/dashy:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "lissy93/dashy:latest",
+        "digest": "sha256:f623433bda0ac65777dbbf179225300e11a554d88c8be2ebf0f964b12d06b9d6",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 8.9s",
+      "evidence": {
+        "container": "hivra-verify-dashy-9bq9rj",
+        "hostPort": 3234,
+        "image": "lissy93/dashy:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-dashy-9bq9rj",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3234:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-dashy-9bq9rj-config:/app/public",
+          "lissy93/dashy:latest"
+        ],
+        "runStdout": "2726e67e08f22962785a7787e20fa37fb457a797dd14f31fa9d310e87cbb682b",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 8.9,
+          "attempts": 5
+        },
+        "memUsage": "41.73MiB / 7.652GiB",
+        "memBytes": 43757076
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65070,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\r\n<html lang=\"en\">\r\n<head>\r\n  <!-- Encoding and Viewport -->\r\n  <meta charset=\"utf-8\">\r\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\">\r\n  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">\r\n  <meta name=\"referrer\" content=\"no-referrer\">\r\n  <!-- Favicon, App Icon -->\r\n  <link rel=\"icon\" type=\"image/png\" sizes=\"64x64\" href=\"/web-icons/favicon-64x64.png\">\r\n ",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE html>\r\n<html lang=\"en\">\r\n<head>\r\n  <!-- Encoding and Viewport -->\r\n  <meta charset=\"utf-8\">\r\n  <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\">\r\n  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">\r\n  <meta name=\"referrer\" content=\"no-referrer\">\r\n  <!-- Favicon, App"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 41.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 43757076,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

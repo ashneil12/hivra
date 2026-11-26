@@ -80,7 +80,6 @@ import {
   REQUALIFICATION_COOLDOWN_DAYS,
   REQUALIFICATION_GRACE_HOURS,
   REQUALIFICATION_WINDOW_DAYS,
-  isFoundersRateUser,
   type ResolvedThreshold,
   type ThresholdTierCode,
   type TierKey,
@@ -95,6 +94,7 @@ import {
 import { platformTokenByKey, type PlatformTokenKey } from "./token-registry";
 import {
   conversionDue,
+  reReadUserTokenAccess,
   resolveUserTokenAccess,
   tierRowTokenCounts,
   type TokenAccessDb,
@@ -473,7 +473,12 @@ async function updateRow(
   payload: Record<string, unknown>,
   failure: string
 ) {
-  const { error } = await db.from("token_tier_qualifications").update(payload).eq("id", row.id);
+  const byId = db.from("token_tier_qualifications").update(payload).eq("id", row.id);
+  if (!byId.eq) throw new Error("Database client cannot compare-and-set a tier update");
+  const { data, error } = await byId.eq("token_key", rowTokenKey(row)).select("id");
+  if (!error && (!Array.isArray(data) || data.length === 0)) {
+    throw new Error("Holder tier changed during evaluation. Refresh the account before retrying.");
+  }
   if (error) throw new Error(`${failure} for ${row.user_id}/${row.tier}`);
 }
 
@@ -674,8 +679,17 @@ async function moveRowToHivra(
 }
 
 async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationResult> {
-  const { db, userId, tier, access, balances, now, warnings } = ctx;
+  const { db, userId, tier, balances, now, warnings } = ctx;
   let row = await loadRow(db, userId, tier);
+  // The caller's access snapshot can predate this row read; a conversion
+  // that committed between them would leave the move, carry and grace
+  // checks below reading a pre-switch snapshot for a post-switch row.
+  // Conversion state is append-only, so a snapshot already showing
+  // convertedAt cannot be stale on the fields this guard consults.
+  const access =
+    row && ctx.access.phase === "active" && !ctx.access.convertedAt
+      ? await reReadUserTokenAccess(userId, { db: db as unknown as TokenAccessDb, now })
+      : ctx.access;
   const activeQuote = await loadActiveQuote(ctx);
 
   if (!row) return evaluateFirstQualification(ctx, activeQuote);
@@ -685,10 +699,11 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
 
   // A $HermesOS row whose owner converted and whose grace is over, or that
   // no longer counts for this user, moves to $HIVRA at today's threshold.
+  const needsSuspendedMove = !!access.earnedHolderSwitch && !!row.last_suspend_at;
   if (
     tokenKey === "hermesos" &&
     access.phase === "active" &&
-    (conversionDue(access, now) || !tierRowTokenCounts(access, "hermesos"))
+    (needsSuspendedMove || conversionDue(access, now) || !tierRowTokenCounts(access, "hermesos"))
   ) {
     const hivraThreshold = await ctx.thresholdFor("hivra");
     if (hivraThreshold) {
@@ -702,10 +717,19 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
     }
   }
 
+  const carry = row.metadata?.holder_carryover as { qualifiedAt?: string; amount?: string } | undefined;
+  const carriedInGrace = tokenKey === "hivra" && access.earnedHolderSwitch && access.convertedAt &&
+    access.conversionGraceEndsAt && now < access.conversionGraceEndsAt && !row.last_suspend_at &&
+    carry?.amount === row.qualifying_quantity && Date.parse(carry.qualifiedAt ?? "") === Date.parse(row.qualified_at);
+  const legacyBalance = balances.hermesos;
   const rowBalance = balances[tokenKey];
-  if (rowBalance === undefined) {
-    // Never judge a row on a balance that was not read this tick.
-    warnings.push(`No ${tokenKey} balance for ${userId}/${tier}; row left unchanged.`);
+  const awaitingMove = tokenKey === "hermesos" && needsSuspendedMove;
+  const incompleteGraceRead = carriedInGrace && legacyBalance === undefined &&
+    rowBalance !== undefined && !meetsRequiredBalance(rowBalance, BigInt(row.qualifying_quantity));
+  if (rowBalance === undefined || incompleteGraceRead || awaitingMove) {
+    // Never open a breach on a missing balance or requalify in a retired token.
+    if (rowBalance === undefined) warnings.push(`No ${tokenKey} balance for ${userId}/${tier}; row left unchanged.`);
+    else if (incompleteGraceRead) warnings.push(`Missing legacy balance during conversion grace for ${userId}/${tier}.`);
     return {
       tier,
       tokenKey,
@@ -728,6 +752,7 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
     tokenKey === "hermesos" && access.phase === "active" && !!access.convertedAt && !!lockedHivra;
   const hivraBalance = balances.hivra;
   const meetsWithEither = (required: bigint) =>
+    (carriedInGrace && legacyBalance !== undefined && meetsRequiredBalance(legacyBalance, required)) ||
     meetsRequiredBalance(rowBalance, required) ||
     (eitherToken && hivraBalance !== undefined && meetsRequiredBalance(hivraBalance, lockedHivra!.amount));
 
@@ -808,8 +833,8 @@ async function evaluateTier(ctx: EvaluateTierContext): Promise<TierEvaluationRes
       return { ...suspendedResult, transition: "requalification_blocked_cap" };
     }
 
-    // Re-qualify at the *current* epoch's threshold and code (lose launch
-    // grandfathering if applicable).
+    // Re-qualify at the current standard holder price. Any earlier locked
+    // quantity or historical code remains only in the row being replaced.
     await updateRow(
       db,
       row,
@@ -1042,17 +1067,13 @@ export async function evaluateAndRecordTokenTierEligibility(
     params.access ??
     (await resolveUserTokenAccess(params.userId, { db: db as unknown as TokenAccessDb, now }));
 
-  // Allowlisted founders are pinned to the launch epoch past the global
-  // promo window, so they qualify against (and snapshot) the cheaper launch
-  // threshold, in whichever token. No-op for everyone else.
-  const forceLaunchEpoch = isFoundersRateUser(params.userId);
   const liveByToken = new Map<PlatformTokenKey, Promise<LiveTierThresholds | null>>();
   const liveThresholds = (key: PlatformTokenKey) => {
     let pending = liveByToken.get(key);
     if (!pending) {
       const token = platformTokenByKey(key);
       const live = (t: NonNullable<typeof token>) =>
-        getLiveActiveThresholds({ now, forceLaunchEpoch, token: t }).catch((error) => {
+        getLiveActiveThresholds({ now, token: t }).catch((error) => {
           const reason = error instanceof Error ? error.message : String(error);
           warnings.push(`Live ${t.displayUnit} price unavailable; new thresholds skipped: ${reason}`);
           return null;

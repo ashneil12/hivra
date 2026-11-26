@@ -9,6 +9,8 @@ import {
   FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST,
   isAwaitingTeardown,
   isPausedLifecycleState,
+  LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE,
+  LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE,
 } from "@/lib/instance-lifecycle";
 import { extractGlobalHermesSettings } from "@/lib/instance-settings";
 import { log } from "@/lib/logger";
@@ -20,6 +22,7 @@ import {
 } from "@/lib/services/inflight-update-gate";
 import {
   applyLiveUpdate,
+  LIVE_UPDATE_ATTEMPT_TAKEOVER_MS,
   resolveInstanceIpv4,
   type InstanceRowForOrchestration,
 } from "@/lib/services/instance-orchestrator";
@@ -135,7 +138,41 @@ function applyFleetSyncEligibility<T>(query: T): T {
   // result types (rows vs {count}) intact at both call sites.
   const filtered = (query as unknown as FleetSyncFilterable)
       .in("backend", WEBFREE_BACKENDS)
-      .or("lifecycle_state.in.(active,failed),status.eq.running")
+      // lifecycle_state='failed' is NOT eligible on its own: a
+      // failed-lifecycle row whose status is also failed/error has no VM the
+      // redeploy can reach (prod 2026-11: daily "launch failed" events for
+      // powered-off VMs, archived rows the mutation guard refuses, and boxes
+      // with no IP — every tick, forever). But the status='running' rescue
+      // arm is not enough either: applyLiveUpdate's failure write stamps BOTH
+      // status and lifecycle_state 'failed', so an update that died ON the
+      // box (image pull, update script, health wait) orphaned the row —
+      // recover-stuck can restart the VM but never re-applies the release.
+      // The third arm re-admits exactly that case: the failure write records
+      // in lifecycle_substate whether the launch got a command onto the
+      // guest (live_update_failed_vm_reached) or only may have — a
+      // post-connect timeout cannot prove either way
+      // (live_update_failed_vm_maybe_reached), and dropping it would orphan
+      // a box whose update is already running. Both stay in the retry queue
+      // while a launch refused before the guest (unreachable marker, or no
+      // marker at all — powered off, wrong VMID, dead agent channel) stays
+      // out and keeps belonging to recovery.
+      //
+      // The fourth arm is the same retry evidence one write earlier: when
+      // the box's own failed report lands but the failed-state write
+      // errors, the update-report route leaves the row 'redeploying' with
+      // ONLY the reached marker stamped (instance-orchestrator clears the
+      // marker on every claim, so an in-flight attempt never matches this
+      // arm — a 'redeploying' row carrying it is exactly a reported box-side
+      // failure whose lifecycle stamp never landed). The stamp-age bound
+      // keeps a freshly-marked row from burning a batch slot while its
+      // attempt could still settle; applyLiveUpdate refuses the takeover
+      // until the attempt is abandoned anyway, but not selecting it yet is
+      // what keeps the fairness cursor honest for the rest of the fleet.
+      .or(
+        `lifecycle_state.eq.active,status.eq.running,` +
+        `and(lifecycle_state.eq.failed,lifecycle_substate.in.("${LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE}","${LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE}")),` +
+        `and(status.eq.redeploying,lifecycle_substate.in.("${LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE}","${LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE}"),last_lifecycle_transition_at.lt."${new Date(Date.now() - LIVE_UPDATE_ATTEMPT_TAKEOVER_MS).toISOString()}")`
+      )
       .not("lifecycle_state", "in", FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST)
       // Never sweep a row armed for teardown. The orphan sweep (Mon 09:00)
       // powers the VM off and sets this status with a 72h grace; this sweep ran
@@ -254,7 +291,18 @@ async function releaseSweepVerdict(instanceId: string): Promise<string | null> {
     if (!state || !state.governed) return null;
     const { decision } = state;
     if (!decision.target) return "No release is offered to this box";
-    if (decision.direction === "none") return "Already on its target release";
+    if (decision.direction === "none") {
+      // A box on its target digest is only "current" while its update stack
+      // is healthy. A paused, failed or rolled-back update can leave the
+      // target image running (digest matches, direction 'none') with the
+      // roll itself still needing Try again — and this sweep is that retry:
+      // applyLiveUpdate reruns the same update, and a healthy dashboard
+      // update is what clears the box-side pause/failure marker. Skipping
+      // here would also stamp last_synced_at, reading a broken update as
+      // freshly synced.
+      if (state.updateHealth && state.updateHealth !== "ok") return null;
+      return "Already on its target release";
+    }
     if (!decision.autoMove) return "Release registry does not move this box automatically";
     return null;
   } catch (err) {
@@ -560,10 +608,13 @@ async function requeueDeferredRows(ids: string[]): Promise<void> {
  *
  * Selection criteria:
  *   - backend in WEBFREE_BACKENDS ('webui' | 'gateway')
- *   - lifecycle_state in ('active', 'running', 'provisioned') OR status =
- *     'running' — the OR is load-bearing: a lifecycle_state-only filter
- *     permanently starves a healthy box whose lifecycle_state has drifted
- *     (see the comment on the query below)
+ *   - lifecycle_state = 'active' OR status = 'running' — the OR is
+ *     load-bearing: a lifecycle_state-only filter permanently starves a
+ *     healthy box whose lifecycle_state has drifted (see the comment on the
+ *     query below). lifecycle_state='failed' alone is NOT eligible: with a
+ *     non-running status there is no reachable VM to redeploy, so sweeping it
+ *     only manufactures a guaranteed daily failure; a failed row whose VM is
+ *     actually up is still rescued by the status='running' arm.
  *   - minus rows armed for teardown (status='scheduled_for_deletion')
  *   - ordered by last_sync_attempt_at NULLS FIRST so the longest-unattempted
  *     VMs get picked up first; ties broken by id for determinism
@@ -810,9 +861,19 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Dead-man heartbeat: the sweep ran to completion (per-VM failures are in
-  // `results`, not a route-level failure). Best-effort.
-  await recordCronHeartbeat("redeploy-webui-instances");
+  // Dead-man heartbeat: the sweep ran to completion, but per-VM failures are
+  // real failures — record ok:false so the run does not look clean. Best-effort.
+  await recordCronHeartbeat(
+    "redeploy-webui-instances",
+    failed > 0
+      ? {
+          ok: false,
+          detail:
+            `failed=${failed} of ${rows.length} attempted ` +
+            `(launched=${launched} skipped=${skipped} deferred=${deferred})`,
+        }
+      : undefined,
+  );
 
   return apiSuccess({
     mode: "fleet-sync",

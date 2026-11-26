@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { useClerk } from "@clerk/nextjs";
+import { useAuth, useClerk } from "@clerk/nextjs";
 import styles from "../desktop.module.css";
 
 /**
@@ -12,11 +13,13 @@ import styles from "../desktop.module.css";
  */
 export default function FinishSignIn({ ticket }: { ticket: string }) {
   const clerk = useClerk();
+  const router = useRouter();
+  const { isLoaded } = useAuth();
   const started = useRef(false);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (!clerk.loaded || started.current) return;
+    if (!isLoaded || started.current) return;
     started.current = true;
     (async () => {
       try {
@@ -25,13 +28,22 @@ export default function FinishSignIn({ ticket }: { ticket: string }) {
         if (!signIn) throw new Error("sign-in unavailable");
         const attempt = await signIn.create({ strategy: "ticket", ticket });
         if (attempt.status !== "complete" || !attempt.createdSessionId) throw new Error(`status ${attempt.status}`);
-        await clerk.setActive({ session: attempt.createdSessionId });
-        window.location.replace("/dashboard");
+        await clerk.setActive({
+          session: attempt.createdSessionId,
+          navigate: ({ decorateUrl }) => {
+            const destination = decorateUrl("/dashboard");
+            if (/^https?:\/\//.test(destination)) {
+              window.location.assign(destination);
+            } else {
+              router.push(destination);
+            }
+          },
+        });
       } catch {
         setFailed(true);
       }
     })();
-  }, [clerk, ticket]);
+  }, [clerk, isLoaded, router, ticket]);
 
   return (
     <main className={styles.page}>

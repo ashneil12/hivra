@@ -117,7 +117,7 @@ describe("getHivraReadiness", () => {
 });
 
 describe("who readiness applies to", () => {
-  it("applies only to accounts outside the grandfather cohort after activation", () => {
+  it("preserves grandfathered accounts that keep their legacy arrangement", () => {
     expect(accessDependsOnHivraReadiness(newUser)).toBe(true);
     expect(accessDependsOnHivraReadiness(grandfathered)).toBe(false);
     expect(accessDependsOnHivraReadiness(beforeLaunch)).toBe(false);
@@ -129,11 +129,19 @@ describe("who readiness applies to", () => {
     await expect(attempt).rejects.toThrow("Token payments aren't available yet.");
   });
 
-  it("never gates $HermesOS or a grandfathered account", async () => {
+  it("never gates $HermesOS or a grandfathered account on its legacy arrangement", async () => {
     const fetchImpl = gateRefuses();
     await expect(assertHivraReadyFor(newUser, "hermesos", { now: ACTIVE_NOW, fetchImpl })).resolves.toBeUndefined();
     await expect(assertHivraReadyFor(grandfathered, "hivra", { now: ACTIVE_NOW, fetchImpl })).resolves.toBeUndefined();
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("refuses new payments and higher tiers for voluntary switches when the price gate fails", async () => {
+    const switched = { ...grandfathered, earnedHolderSwitch: true, paymentToken: "hivra" as const };
+    const options = { now: ACTIVE_NOW, fetchImpl: gateRefuses() };
+    await expect(assertHivraReadyFor(switched, "hivra", options)).rejects.toBeInstanceOf(HivraNotReadyError);
+    await expect(resolveTokenPaymentAvailability(switched, options)).resolves.toMatchObject({ available: false });
+    await expect(newHivraTiersAllowed(switched, options)).resolves.toBe(false);
   });
 
   it("tells Billing what it may offer, in the account's token", async () => {
@@ -157,7 +165,7 @@ describe("who readiness applies to", () => {
 });
 
 describe("new tiers versus tiers already held", () => {
-  it("allows new $HIVRA tiers only while usable, and never gates a grandfathered account", async () => {
+  it("allows new $HIVRA tiers only while usable, and preserves accounts on a legacy arrangement", async () => {
     expect(await newHivraTiersAllowed(newUser, { now: ACTIVE_NOW, fetchImpl: gateRefuses() })).toBe(false);
     _resetHivraReadinessForTests();
     expect(await newHivraTiersAllowed(newUser, { now: ACTIVE_NOW, fetchImpl: pass() })).toBe(true);

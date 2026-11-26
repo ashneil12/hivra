@@ -71,7 +71,7 @@ HIVRA_CHAT_PORT="${HIVRA_CHAT_PORT:-8080}"      # Hivra chat HTTP port
 DUMMY_BU_KEY="${DUMMY_BU_KEY:-local}"           # installer hard-requires a key; we self-host so it's a dummy
 AGENT_KIND="${HIVRA_AGENT_KIND:-claude}"        # catalog runtime or Linux computer profile
 case "$AGENT_KIND" in
-  claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|linux-desktop|linux-server) ;;
+  claude|codex|aeon|openclaw|agent-zero|hermes|openbot|nuphos|catalog-app|linux-desktop|linux-server) ;;
   deepseek-harness)
     [ "${HIVRA_NATIVE_PREPARE_ONLY:-}" = 1 ] || { printf '%s\n' 'DeepSeek requires the shared typed guest installer' >&2; exit 1; }
     ;;
@@ -125,6 +125,8 @@ else WANT_BROWSER=0; [ "$AGENT_KIND" = "claude" ] && WANT_BROWSER=1; fi
 [ "$AGENT_KIND" = "openbot" ] && WANT_BROWSER=0
 # Nuphos runs its agent inside its own runtime container, with no box browser.
 [ "$AGENT_KIND" = "nuphos" ] && WANT_BROWSER=0
+# Universal catalog apps bring their own runtime (container or CLI) with no box browser.
+[ "$AGENT_KIND" = "catalog-app" ] && WANT_BROWSER=0
 # Linux Desktop's remote-computer profile owns its desktop/browser stack.
 [ "$AGENT_KIND" = "linux-desktop" ] && WANT_BROWSER=0
 # The desktop-free Linux server has no browser stack either.
@@ -173,6 +175,9 @@ record_agent_app() {
   chmod 0644 /var/lib/hivra/agent-app.json.next
   mv -f -- /var/lib/hivra/agent-app.json.next /var/lib/hivra/agent-app.json
   install -o root -g root -m 0700 "$SRC_DIR/hivra-agent-app-update.sh" /usr/local/sbin/hivra-agent-app-update
+  # The catalog-app updater re-renders compose files through the same runner
+  # the installer used, so it must exist at a stable root-only path.
+  [ ! -f "$SRC_DIR/hivra-catalog-app.py" ] || install -o root -g root -m 0700 "$SRC_DIR/hivra-catalog-app.py" /usr/local/sbin/hivra-catalog-app.py
 }
 
 [ "$(id -u)" -eq 0 ] || die 'must run as root (use sudo)'
@@ -642,6 +647,12 @@ if systemctl list-unit-files 2>/dev/null | grep -q '^bux-browser-keeper\.service
 else
   ok "cloud keeper already absent"
 fi
+# The keeper can already sit in `systemctl --failed` (it exits non-zero at
+# boot before this runs); deleting the unit file alone leaves that state
+# loaded forever and the surface watchdog reports it every cooldown. Clear
+# it whether or not the file was still present this run.
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl reset-failed bux-browser-keeper.service >/dev/null 2>&1 || true
 
 if [ "$WANT_BROWSER" = 1 ]; then
 
@@ -1831,6 +1842,15 @@ else
 fi
 
 # Hermes's own web UI on loopback. The box gateway is the only public path.
+HERMES_DESKTOP_TOKEN="${AGENT_HOME}/.hivra/hermes-desktop-token"
+sudo -u "${AGENT_USER}" -H python3 -I -B - "${HERMES_DESKTOP_TOKEN}" <<'PY' || die "could not prepare the Hermes Desktop token"
+import os, secrets, sys
+try:
+    with os.fdopen(os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+        f.write(secrets.token_hex(32) + "\n")
+except FileExistsError:
+    pass
+PY
 cat > /etc/systemd/system/bux-hermes.service <<UNIT
 [Unit]
 Description=Hivra Hermes Agent dashboard (Hermes web UI on 127.0.0.1:${HERMES_PORT}, mounted at /hermes)
@@ -1842,6 +1862,7 @@ Group=${AGENT_USER}
 WorkingDirectory=${AGENT_HOME}
 Environment=HOME=${AGENT_HOME}
 Environment=HERMES_HOME=${HERMES_DIR}
+Environment=HERMES_DASHBOARD_SESSION_TOKEN=file:${HERMES_DESKTOP_TOKEN}
 Environment=PATH=${AGENT_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=${HERMES_BIN} dashboard --host 127.0.0.1 --port ${HERMES_PORT} --no-open
 Restart=on-failure
@@ -1887,7 +1908,7 @@ if [ "$AGENT_KIND" = "deepseek-harness" ]; then
   # Fresh base only (the typed caller rejects pre-existing bases). Do not
   # replace the upstream DeepSeek persona or uninstall other agent packages.
   ok "native DeepSeek profile owns its instructions; leaving base packages intact"
-elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && [ "$AGENT_KIND" != "hermes" ] && [ "$AGENT_KIND" != "openbot" ] && [ "$AGENT_KIND" != "nuphos" ] && ! is_linux_computer; then
+elif [ "$AGENT_KIND" != "aeon" ] && [ "$AGENT_KIND" != "openclaw" ] && [ "$AGENT_KIND" != "agent-zero" ] && [ "$AGENT_KIND" != "hermes" ] && [ "$AGENT_KIND" != "openbot" ] && [ "$AGENT_KIND" != "nuphos" ] && [ "$AGENT_KIND" != "catalog-app" ] && ! is_linux_computer; then
 say "6/7  Hivra system prompt (clean assistant persona)"
 # ===========================================================================
 # bux's installer wrote /home/bux/system-prompt.md (Telegram/agency persona) and
@@ -2328,6 +2349,9 @@ elif [ "$AGENT_KIND" = "openbot" ]; then
 elif [ "$AGENT_KIND" = "nuphos" ]; then
   LOGIN_HINT="open the agent page (/nuphos/), set the runtime console password, then press Connect to Nuphos and sign in to Claude from the Nuphos app"
   STATUS_HINT="systemctl status hivra-nuphos --no-pager; docker logs --tail 40 hivra-nuphos 2>&1 | tail -40; curl -fsS http://127.0.0.1:${NUPHOS_PORT:-3102}/ -o /dev/null -w '%{http_code}\n'"
+elif [ "$AGENT_KIND" = "catalog-app" ]; then
+  LOGIN_HINT="open the agent page (/app/) to reach the installed catalog app"
+  STATUS_HINT="cat /etc/hivra/catalog-app.json; systemctl status hivra-catalog-app bux-catalog-app --no-pager 2>/dev/null || true"
 elif [ "$AGENT_KIND" = "agent-zero" ]; then
   LOGIN_HINT="open the dashboard (/agent-zero) — a managed model is pre-seeded; change it in Agent Zero's Settings if you prefer your own"
   STATUS_HINT="systemctl status hivra-agent-zero --no-pager; docker logs --tail 40 hivra-agent-zero 2>&1 | tail -40; curl -fsS http://127.0.0.1:${AGENT_ZERO_PORT:-50080}/ -o /dev/null -w '%{http_code}\n'"

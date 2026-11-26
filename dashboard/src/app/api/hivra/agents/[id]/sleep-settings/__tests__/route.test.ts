@@ -3,6 +3,10 @@ import { NextRequest } from "next/server";
 const mockAuth = jest.fn();
 const mockRateLimit = jest.fn();
 const mockMaybeSingle = jest.fn();
+const queueAgentRow = (row: Record<string, unknown>) => {
+  mockMaybeSingle.mockResolvedValueOnce({ data: { id: ID, seat_funding: null }, error: null });
+  mockMaybeSingle.mockResolvedValueOnce({ data: row, error: null });
+};
 const mockUpdate = jest.fn();
 const mockEq = jest.fn();
 
@@ -59,7 +63,8 @@ describe("PATCH /api/hivra/agents/[id]/sleep-settings", () => {
     process.env.NEXT_PUBLIC_APP_URL = "https://canary.hermesos.cloud";
     mockAuth.mockResolvedValue({ userId: "user-1" });
     mockRateLimit.mockReturnValue({ success: true });
-    mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: true, sleep_policy: "full" }, error: null });
+    mockMaybeSingle.mockReset();
+    queueAgentRow({ id: ID, always_on: true, sleep_policy: "full", seat_funding: null });
     mockEnsure.mockResolvedValue({ state: "awake" });
     mockInCardTrial.mockResolvedValue(false);
   });
@@ -83,7 +88,7 @@ describe("PATCH /api/hivra/agents/[id]/sleep-settings", () => {
   it("saves Keep awake and Sleep when idle for the owner's agent only", async () => {
     const response = await PATCH(request({ always_on: true, sleep_policy: "full" }), params);
     expect(response.status).toBe(200);
-    expect((await response.json()).data).toEqual({ always_on: true, sleep_policy: "full" });
+    expect((await response.json()).data).toEqual({ always_on: true, sleep_policy: "full", seat_funding: null });
     expect(mockUpdate).toHaveBeenCalledWith({ always_on: true, sleep_policy: "full" });
     expect(mockEq).toHaveBeenCalledWith("id", ID);
     expect(mockEq).toHaveBeenCalledWith("user_id", "user-1");
@@ -104,6 +109,7 @@ describe("PATCH /api/hivra/agents/[id]/sleep-settings", () => {
   });
 
   it("answers 404 when the agent is not the caller's", async () => {
+    mockMaybeSingle.mockReset();
     mockMaybeSingle.mockResolvedValueOnce({ data: null, error: null });
     expect((await PATCH(request({ always_on: true }), params)).status).toBe(404);
   });
@@ -112,7 +118,7 @@ describe("PATCH /api/hivra/agents/[id]/sleep-settings", () => {
     await PATCH(request({ always_on: true }), params);
     expect(mockEnsure).toHaveBeenCalledWith(ID, expect.objectContaining({ trigger: "action", waitMs: 0 }));
     mockEnsure.mockClear();
-    mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: false, sleep_policy: "off" }, error: null });
+    queueAgentRow({ id: ID, always_on: false, sleep_policy: "off", seat_funding: null });
     await PATCH(request({ sleep_policy: "off" }), params);
     expect(mockEnsure).toHaveBeenCalledTimes(1);
     // Wake work that is still going is kept alive after the answer.
@@ -123,10 +129,12 @@ describe("PATCH /api/hivra/agents/[id]/sleep-settings", () => {
   });
 
   it("does not wake anything when the agent is left free to sleep, and still saves when the wake throws", async () => {
-    mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: false, sleep_policy: "full" }, error: null });
+    mockMaybeSingle.mockReset();
+    queueAgentRow({ id: ID, always_on: false, sleep_policy: "full", seat_funding: null });
     expect((await PATCH(request({ always_on: false }), params)).status).toBe(200);
     expect(mockEnsure).not.toHaveBeenCalled();
-    mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: true, sleep_policy: "full" }, error: null });
+    mockMaybeSingle.mockReset();
+    queueAgentRow({ id: ID, always_on: true, sleep_policy: "full", seat_funding: null });
     mockEnsure.mockRejectedValue(new Error("boom"));
     expect((await PATCH(request({ always_on: true }), params)).status).toBe(200);
   });
@@ -135,10 +143,11 @@ describe("PATCH /api/hivra/agents/[id]/sleep-settings", () => {
     const before = process.env.HIVRA_SLEEP_MODE;
     process.env.HIVRA_SLEEP_MODE = "on";
     try {
-      mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: false, sleep_policy: "off" }, error: null });
+      mockMaybeSingle.mockReset();
+      queueAgentRow({ id: ID, always_on: false, sleep_policy: "off", seat_funding: null });
       expect((await PATCH(request({ sleep_policy: "off" }), params)).status).toBe(200);
       expect(mockEnsure).not.toHaveBeenCalled();
-      mockMaybeSingle.mockResolvedValue({ data: { id: ID, always_on: true, sleep_policy: "off" }, error: null });
+      queueAgentRow({ id: ID, always_on: true, sleep_policy: "off", seat_funding: null });
       await PATCH(request({ always_on: true }), params);
       expect(mockEnsure).toHaveBeenCalledTimes(1);
     } finally {
@@ -146,4 +155,41 @@ describe("PATCH /api/hivra/agents/[id]/sleep-settings", () => {
       else process.env.HIVRA_SLEEP_MODE = before;
     }
   });
+
+  it.each([{ always_on: true }, { sleep_policy: "off" }, { always_on: true, sleep_policy: "off" }])(
+    "rejects holder seat override %j before billing checks, writes, or wake side effects",
+    async (body) => {
+      mockMaybeSingle.mockReset();
+      mockMaybeSingle.mockResolvedValueOnce({ data: { id: ID, seat_funding: "holder" }, error: null });
+      const res = await PATCH(request(body), params);
+      expect(res.status).toBe(403);
+      expect((await res.json()).error).toMatch(/funded by holding tokens/);
+      expect(mockInCardTrial).not.toHaveBeenCalled();
+      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(mockEnsure).not.toHaveBeenCalled();
+    },
+  );
+
+
+
+  it("keeps always-on control on an explicitly paid seat, with no user-level token inference", async () => {
+    mockMaybeSingle.mockReset();
+    mockMaybeSingle.mockResolvedValueOnce({ data: { id: ID, seat_funding: "paid" }, error: null });
+    mockMaybeSingle.mockResolvedValueOnce({ data: { id: ID, always_on: true, sleep_policy: "off", seat_funding: "paid" }, error: null });
+    const res = await PATCH(request({ always_on: true }), params);
+    expect(res.status).toBe(200);
+    expect((await res.json()).data).toEqual({ always_on: true, sleep_policy: "off", seat_funding: "paid" });
+    expect(mockUpdate).toHaveBeenCalledWith({ always_on: true });
+  });
+
+  it("normalizes and reports effective controls for a holder confirmation without changing paid behavior", async () => {
+    mockMaybeSingle.mockReset();
+    mockMaybeSingle.mockResolvedValueOnce({ data: { id: ID, seat_funding: "holder" }, error: null });
+    mockMaybeSingle.mockResolvedValueOnce({ data: { id: ID, always_on: false, sleep_policy: "full", seat_funding: "holder" }, error: null });
+    const res = await PATCH(request({ always_on: false }), params);
+    expect(res.status).toBe(200);
+    expect((await res.json()).data).toEqual({ always_on: false, sleep_policy: "full", seat_funding: "holder" });
+    expect(mockUpdate).toHaveBeenCalledWith({ always_on: false, sleep_policy: "full" });
+  });
+
 });

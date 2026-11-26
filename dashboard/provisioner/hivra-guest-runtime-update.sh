@@ -445,11 +445,20 @@ agent_cli_report || true
 AGENT_APP_HELPER=/usr/local/sbin/hivra-agent-app-update
 AGENT_APP_RECORD=/var/lib/hivra/agent-app.json
 agent_app_report() {
-  local name="$KIND_BEFORE" target version state
-  case "$name" in aeon|openclaw|agent-zero|hermes|openbot|nuphos) ;; *) return 0 ;; esac
+  local name="$KIND_BEFORE" report_name="$KIND_BEFORE" target version state
+  case "$name" in aeon|openclaw|agent-zero|hermes|openbot|nuphos|catalog-app) ;; *) return 0 ;; esac
   target=latest
   install -o root -g root -m 0700 "$WORK/hivra-agent-app-update.sh" "$AGENT_APP_HELPER"
   case "$name" in
+    catalog-app)
+      report_name="$(python3 -I -c 'import json, sys
+doc = json.load(open(sys.argv[1]))
+print(doc.get("appId") or "")' /etc/hivra/catalog-app.json 2>/dev/null || true)"
+      [ -n "$report_name" ] || return 0
+      version="$(python3 -I -c 'import json, sys
+doc = json.load(open(sys.argv[1]))
+print(doc.get("version") or "")' "$AGENT_APP_RECORD" 2>/dev/null || true)"
+      ;;
     openclaw)
       version="$(runuser -u bux -- env -i HOME=/home/bux PATH=/home/bux/.npm-global/bin:/usr/local/bin:/usr/bin:/bin \
         timeout -k 5 30 /home/bux/.npm-global/bin/openclaw --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)" || version=""
@@ -505,7 +514,7 @@ print(value)' "$AGENT_APP_RECORD" 2>/dev/null)" || version=""
       state=failed
     fi
   fi
-  printf 'HIVRA_AGENT_APP name=%s version=%s target=%s state=%s\n' "$name" "$version" "$target" "$state"
+  printf 'HIVRA_AGENT_APP name=%s version=%s target=%s state=%s\n' "$report_name" "$version" "$target" "$state"
 }
 agent_app_report || true
 
@@ -534,6 +543,48 @@ hermes_gateway_report() {
 }
 if ! hermes_gateway_report; then
   echo "WARNING: Hermes gateway could not be installed or started; scheduled tasks and chat channels will not run until: hermes gateway install" >&2
+fi
+
+hermes_desktop_report() {
+  [ "$KIND_BEFORE" = hermes ] || return 0
+  local token=/home/bux/.hivra/hermes-desktop-token
+  local dropin=/etc/systemd/system/bux-hermes.service.d/30-hivra-desktop-token.conf
+  local probe='import pathlib, sys, urllib.request
+token = pathlib.Path(sys.argv[1]).read_text().strip()
+req = urllib.request.Request("http://127.0.0.1:9119/api/auth/me", headers={"X-Hermes-Session-Token": token})
+with urllib.request.urlopen(req, timeout=2) as response:
+    if response.status != 200:
+        raise SystemExit(1)'
+  # A fresh provision already supplies the service setting. Leave a working
+  # dashboard alone, including its token and any current connections.
+  if runuser -u bux -- python3 -I -B -c "$probe" "$token" >/dev/null 2>&1; then return 0; fi
+  [ ! -e "$dropin" ] && [ ! -L "$dropin" ] || return 1
+  systemctl is-active --quiet bux-hermes.service || return 1
+  if ! runuser -u bux -- python3 -I -B - "$token" <<'PY'
+import os, secrets, sys
+try:
+    with os.fdopen(os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+        f.write(secrets.token_hex(32) + "\n")
+except FileExistsError:
+    pass
+PY
+  then return 1; fi
+  install -d -m 0755 "${dropin%/*}" || return 1
+  printf '[Service]\nEnvironment=HERMES_DASHBOARD_SESSION_TOKEN=file:%s\n' "$token" > "$WORK/hermes-desktop.conf" || return 1
+  install -m 0644 "$WORK/hermes-desktop.conf" "$dropin" || return 1
+  if systemctl daemon-reload && systemctl restart bux-hermes.service; then
+    for _ in $(seq 1 12); do
+      if runuser -u bux -- python3 -I -B -c "$probe" "$token" >/dev/null 2>&1; then return 0; fi
+      sleep 1
+    done
+  fi
+  rm -f -- "$dropin"
+  systemctl daemon-reload
+  systemctl restart bux-hermes.service
+  return 1
+}
+if ! hermes_desktop_report; then
+  echo "WARNING: Hermes Desktop remote sign-in was not enabled; the existing dashboard configuration is retained" >&2
 fi
 
 # Agent browser (computers with the browser stack). A computer provisioned before
@@ -766,4 +817,10 @@ if [ "${KIND_BEFORE:-}" != claude ] && { systemctl list-unit-files 2>/dev/null |
   systemctl disable --now bux-browser-keeper.service >/dev/null 2>&1 || true
   rm -f /etc/systemd/system/bux-browser-keeper.service
 fi
+# A keeper that failed before its unit file was removed stays in
+# `systemctl --failed` as not-found/failed forever; the surface watchdog
+# would report it every cooldown. Clear the stale state even when the file
+# was already gone (the check above only fires while it exists).
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl reset-failed bux-browser-keeper.service >/dev/null 2>&1 || true
 printf 'HIVRA_GUEST_RUNTIME_UPDATED\n'

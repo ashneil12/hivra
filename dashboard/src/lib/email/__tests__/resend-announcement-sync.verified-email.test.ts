@@ -102,6 +102,19 @@ describe("announcement sync — only Clerk-verified addresses", () => {
     expect(contactsUpdate).not.toHaveBeenCalled();
   });
 
+  it("does not enrol a verified Canary Clerk test fixture on a user event", async () => {
+    process.env.HERMES_DEPLOY_CHANNEL = "canary";
+    const user = verifiedUser("user_fixture", "fixture+clerk_test@example.com");
+
+    const sync = syncClerkUserToAnnouncementAudience(user);
+    await jest.runAllTimersAsync();
+
+    expect(await sync).toMatchObject({ skipped: true });
+    expect(contactsGet).not.toHaveBeenCalled();
+    expect(contactsCreate).not.toHaveBeenCalled();
+    expect(contactsUpdate).not.toHaveBeenCalled();
+  });
+
   it("enrols the verified secondary address when the primary is unverified", async () => {
     const user: ClerkAnnouncementUser = {
       id: "user_mixed",
@@ -171,5 +184,27 @@ describe("announcement sync — only Clerk-verified addresses", () => {
     expect(result.skipped).toBe(1);
     const syncedEmails = contactsGet.mock.calls.map(([arg]) => arg.email);
     expect(syncedEmails).toEqual(["real@gmail.com"]);
+  });
+
+  it("excludes the verified Canary fixture from the cron audience without touching other recipients", async () => {
+    process.env.HERMES_DEPLOY_CHANNEL = "canary";
+    const users = [
+      verifiedUser("user_fixture", "fixture+clerk_test@example.com"),
+      verifiedUser("user_real", "real@example.net"),
+    ];
+    const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => users,
+    } as Response);
+
+    try {
+      const sync = syncClerkUsersToAnnouncementAudience();
+      await jest.runAllTimersAsync();
+
+      expect(await sync).toMatchObject({ recipients: 1, skipped: 1 });
+      expect(contactsGet.mock.calls.map(([arg]) => arg.email)).toEqual(["real@example.net"]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

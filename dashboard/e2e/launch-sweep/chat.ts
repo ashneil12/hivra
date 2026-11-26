@@ -76,6 +76,22 @@ async function bodyText(frame: Frame): Promise<string> {
   return frame.evaluate(() => document.body?.innerText ?? '').catch(() => '');
 }
 
+/** OpenHands asks this once before showing its workspace. A customer chooses
+ * whether to send anonymous usage data, so the sweep must make the same
+ * first-run choice before looking for the composer. */
+export function isOpenHandsUsageConsent(text: string): boolean {
+  return /help improve openhands/i.test(text) && /anonymous usage data/i.test(text);
+}
+
+async function acknowledgeOpenHandsUsageConsent(frame: Frame): Promise<boolean> {
+  const text = await bodyText(frame);
+  if (!isOpenHandsUsageConsent(text)) return false;
+  const confirm = frame.getByRole('button', { name: /^\s*confirm\s*$/i }).first();
+  if (!(await confirm.isVisible().catch(() => false))) return false;
+  await confirm.click().catch(() => undefined);
+  return true;
+}
+
 function occurrences(text: string, needle: string): number {
   return text.split(needle).length - 1;
 }
@@ -214,6 +230,10 @@ async function findComposer(
       }
     } else {
       for (const frame of await agentFrames(page)) {
+        if (await acknowledgeOpenHandsUsageConsent(frame)) {
+          await sleep(2_000);
+          continue;
+        }
         if (noticeAttempts < 3 && await acknowledgeNotice(frame)) {
           noticeAttempts++;
           await sleep(2_000);

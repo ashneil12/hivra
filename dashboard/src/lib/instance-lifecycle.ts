@@ -87,6 +87,38 @@ export const FLEET_SYNC_SKIP_LIFECYCLE_IN_LIST = `("${FLEET_SYNC_SKIP_LIFECYCLE_
   '","'
 )}")`;
 
+// `lifecycle_substate` values stamped by applyLiveUpdate's launch-failure
+// write (instance-orchestrator). The failed lifecycle patch alone says
+// nothing about whether the update ever reached the box — and that is the
+// distinction the fleet-sync sweep needs:
+//
+//   - REACHED: the launch script got a command onto the guest and failed
+//     there (image pull, update script, health wait). The VM is alive, so
+//     the next sweep's redeploy is a real retry, not a guaranteed error.
+//   - MAYBE_REACHED: the transport died after the command was (or may have
+//     been) dispatched — an operation timeout with the session already past
+//     connect, or the channel hanging after dispatch. The launch may be
+//     running on the box right now, so the row stays retry-eligible; the
+//     sweep re-drives it like a reachable failure (a second launch on a box
+//     that already took one is no worse than the retry the sweep exists
+//     for), while claiming it "reached" would be a lie the stamp cannot
+//     support.
+//   - UNREACHABLE (and any row with no marker at all): the launch provably
+//     never got a command on a guest — powered off, wrong/missing VMID,
+//     dead agent channel, a connect-phase refusal, or the host itself
+//     unreachable. The recovery crons own that row (recover-stuck probes
+//     the gateway and restarts the VM); sweeping it would manufacture the
+//     same guaranteed daily failure the sweep's live-only filter exists
+//     to prevent.
+//
+// Every applyLiveUpdate launch failure re-stamps the value, so it always
+// describes the LAST failed update attempt: a box that dies after a
+// reachable failure is reclassified by its next attempt and drops back out
+// of the sweep.
+export const LIVE_UPDATE_FAILED_VM_REACHED_SUBSTATE = "live_update_failed_vm_reached";
+export const LIVE_UPDATE_FAILED_VM_MAYBE_REACHED_SUBSTATE = "live_update_failed_vm_maybe_reached";
+export const LIVE_UPDATE_FAILED_VM_UNREACHABLE_SUBSTATE = "live_update_failed_vm_unreachable";
+
 const LEGACY_STATUS_TO_LIFECYCLE: Record<string, InstanceLifecycleState> = {
   provisioning: "provisioning",
   redeploying: "provisioning",
@@ -107,9 +139,8 @@ export type StoredLifecycleState =
 
 /**
  * The one list of how a computer's lifecycle_state may move. The database
- * watches the same list (hermes_instance_lifecycle_allowed in
- * 20261112130000_explicit_state_transitions.sql) and records any other move on
- * the ops page, without blocking it yet. Keep the two in step; a test checks.
+ * watches the same list in hermes_instance_lifecycle_allowed. Archive protection
+ * also enforces the allowed exits from archive-only states at the write boundary.
  */
 export const ALLOWED_TRANSITIONS: Readonly<Record<StoredLifecycleState, readonly StoredLifecycleState[]>> = {
   pending: ["provisioning", "failed", "deleting", "deleted"],
@@ -117,12 +148,12 @@ export const ALLOWED_TRANSITIONS: Readonly<Record<StoredLifecycleState, readonly
   active: ["provisioning", "paused", "suspended", "failed", "deleting", "deleted"],
   paused: ["provisioning", "active", "suspended", "failed", "deleting", "deleted", "archiving"],
   suspended: ["provisioning", "active", "paused", "failed", "deleting", "deleted"],
-  failed: ["provisioning", "active", "paused", "deleting", "deleted"],
+  failed: ["provisioning", "active", "paused", "restoring", "deleting", "deleted"],
   deleting: ["deleted", "failed"],
   deleted: [],
   archiving: ["paused", "cold_archived", "failed"],
-  cold_archived: ["restoring", "pending_deletion", "deleted"],
-  pending_deletion: ["restoring", "deleted"],
+  cold_archived: ["restoring", "pending_deletion", "deleting", "deleted"],
+  pending_deletion: ["restoring", "deleting", "deleted"],
   restoring: ["active", "cold_archived", "pending_deletion", "failed"],
 };
 

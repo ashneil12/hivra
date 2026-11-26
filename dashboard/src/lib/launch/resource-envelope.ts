@@ -1,4 +1,8 @@
 import { BASE_FLOOR, resizeFloor, UBUNTU_SERVER_FLOOR } from "@/lib/hivra/agent-catalog";
+import {
+  UNIVERSAL_CATALOG_MANIFESTS,
+  type UniversalCatalogAppId,
+} from "@/lib/hivra/catalog-manifests";
 import type { LaunchProfileId } from "./contracts";
 
 export type ResourceEnvelope = {
@@ -118,6 +122,18 @@ export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, LaunchResourcePolic
     floor: { cpu: 4, ram: 8 },
     recommended: { cpu: 4, ram: 8, maximumCpu: 4, maximumRam: 8 },
   },
+  ...(Object.fromEntries(
+    UNIVERSAL_CATALOG_MANIFESTS.map((manifest) => [
+      manifest.id,
+      {
+        floor: { ...manifest.floor },
+        recommended: pinned(manifest.recommended.cpu, manifest.recommended.ram),
+        ...(manifest.candidates
+          ? { candidates: manifest.candidates.map((c) => pinned(c.cpu, c.ram)) }
+          : {}),
+      } satisfies LaunchResourcePolicy,
+    ]),
+  ) as unknown as Record<UniversalCatalogAppId, LaunchResourcePolicy>),
 };
 
 /** Without their browser, Codex and Claude Code keep the catalog base floor

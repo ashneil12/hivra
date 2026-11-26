@@ -1,8 +1,9 @@
 import { chromium } from '@playwright/test';
 import globalSetup from '../e2e/global-setup';
-import { createAuditUser, mintSignInTicket } from '../e2e/first-run-audit/clerk-admin';
+import { createAuditInvitation, mintSignInTicket } from '../e2e/first-run-audit/clerk-admin';
 import { reapAuditAccounts } from '../e2e/first-run-audit/reaper';
 import { establishAuditSession } from '../e2e/first-run-audit/session';
+import { auditEmail, LIVE_AUDIT_AUTH_ENV, LIVE_AUDIT_AUTH_CLERK_TEST_OTP } from '../e2e/first-run-audit/config';
 
 jest.mock('@playwright/test', () => ({
   defineConfig: (config: unknown) => config,
@@ -10,11 +11,11 @@ jest.mock('@playwright/test', () => ({
   chromium: { launch: jest.fn() },
 }));
 
-const liveFlags = ['FIRST_RUN_AUDIT', 'LAUNCH_SWEEP', 'REMOTE_DESKTOP_AUDIT', 'TRIAL_JOURNEY'];
+const liveFlags = ['FIRST_RUN_AUDIT', 'LAUNCH_SWEEP', 'REMOTE_DESKTOP_AUDIT', 'TRIAL_JOURNEY', 'VENICE_SIGNUP_ACCEPTANCE'];
 const blocked = /Live runs are paused/;
 const baseUrl = 'https://canary.example.test';
 const key = 'sk_test_fixture';
-const freshEmail = 'firstrun-audit-fresh@example.test';
+const freshEmail = 'firstrun-audit-fresh+clerk_test@example.test';
 const existingAuditUser = {
   id: 'user_audit_existing',
   email_addresses: [{ email_address: 'firstrun-audit-existing@example.test' }],
@@ -49,26 +50,107 @@ describe('managed-hosting audit mail pause', () => {
     expect(loadPlaywrightConfig).not.toThrow();
   });
 
+  it.each(liveFlags)('allows %s only with the explicit Clerk test-OTP opt-in', (flag) => {
+    process.env[flag] = '1';
+    process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
+    expect(loadPlaywrightConfig).not.toThrow();
+  });
+
+  it('rejects an unknown live-auth mode even when a live flag is set', () => {
+    process.env.LAUNCH_SWEEP = '1';
+    process.env[LIVE_AUDIT_AUTH_ENV] = 'tickets';
+    expect(loadPlaywrightConfig).toThrow(blocked);
+  });
+
   it('blocks ordinary Playwright setup from minting or redeeming a ticket for the standing QA user', async () => {
     process.env.CLERK_SECRET_KEY = key;
     process.env.QA_USER_ID = existingAuditUser.id;
     const fetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'));
 
-    await expect(globalSetup({ projects: [] } as never)).rejects.toThrow(blocked);
+    await expect(globalSetup({ projects: [] } as never)).rejects.toThrow(/sign-in tickets are disabled/);
 
     expect(fetch).not.toHaveBeenCalled();
     expect(chromium.launch).not.toHaveBeenCalled();
   });
 
-  it('blocks new audit users, tickets for existing users, and redemption of already-issued tickets', async () => {
+  it('blocks new audit invitations, tickets for existing users, and redemption of already-issued tickets', async () => {
     const fetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'));
     const browser = { newContext: jest.fn() };
 
-    await expect(createAuditUser(key, freshEmail)).rejects.toThrow(blocked);
-    await expect(mintSignInTicket(key, existingAuditUser.id)).rejects.toThrow(blocked);
-    await expect(establishAuditSession(browser as never, { baseUrl, ticket: 'fixture' })).rejects.toThrow(blocked);
+    await expect(createAuditInvitation(key, freshEmail, 'https://canary.hermesos.cloud/sign-up')).rejects.toThrow(blocked);
+    await expect(mintSignInTicket(key, existingAuditUser.id)).rejects.toThrow(/sign-in tickets are disabled/);
+    await expect(establishAuditSession(browser as never, { baseUrl, email: freshEmail })).rejects.toThrow(blocked);
 
     expect(fetch).not.toHaveBeenCalled();
+    expect(browser.newContext).not.toHaveBeenCalled();
+  });
+
+  it('makes every new audit email a Clerk test address on a reserved domain', () => {
+    expect(auditEmail('abc123xy', 'example.test')).toBe('firstrun-audit-abc123xy+clerk_test@example.test');
+    expect(() => auditEmail('abc123xy', 'hermesos.cloud')).toThrow(/reserved example domain/);
+  });
+
+  it('requires the exact Clerk test tag and a reserved domain after explicit opt-in', async () => {
+    process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
+    const fetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'));
+
+    await expect(createAuditInvitation(key, 'firstrun-audit-x+clerk_test.evil@example.test', 'https://canary.hermesos.cloud/sign-up')).rejects.toThrow(/not a Clerk test address/);
+    await expect(createAuditInvitation(key, 'firstrun-audit-x+clerk_test@hermesos.cloud', 'https://canary.hermesos.cloud/sign-up')).rejects.toThrow(/reserved example domain/);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('creates a unique no-mail invitation after explicit opt-in, never a precreated user or ticket', async () => {
+    process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
+    const fetch = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        id: 'inv_new_test',
+        email_address: freshEmail,
+        url: 'https://instance.clerk.accounts.dev/v1/tickets/accept?ticket=test-ticket',
+        created_at: 123,
+      })),
+    );
+
+    await expect(createAuditInvitation(key, freshEmail, 'https://canary.hermesos.cloud/sign-up')).resolves.toMatchObject({ id: 'inv_new_test', email: freshEmail });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/invitations');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({
+      email_address: freshEmail,
+      notify: false,
+      ignore_existing: false,
+      expires_in_days: 1,
+      redirect_url: 'https://canary.hermesos.cloud/sign-up',
+      public_metadata: { hivra_qa: 'clerk-invitation-signup' },
+    });
+    expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining('/users'), expect.anything());
+    expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining('/sign_in_tokens'), expect.anything());
+  });
+
+  it('still rejects a non-test email after explicit opt-in', async () => {
+    process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
+    const fetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'));
+
+    await expect(createAuditInvitation(key, 'firstrun-audit-real@example.test', 'https://canary.hermesos.cloud/sign-up')).rejects.toThrow(/not a Clerk test address/);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects live or unrecognized Clerk keys before any network call', async () => {
+    process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
+    const fetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'));
+
+    await expect(createAuditInvitation('sk_live_fixture', freshEmail, 'https://canary.hermesos.cloud/sign-up')).rejects.toThrow(/test key/);
+    await expect(createAuditInvitation('service-role-fixture', freshEmail, 'https://canary.hermesos.cloud/sign-up')).rejects.toThrow(/test key/);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a production target even with the explicit opt-in', async () => {
+    process.env[LIVE_AUDIT_AUTH_ENV] = LIVE_AUDIT_AUTH_CLERK_TEST_OTP;
+    const browser = { newContext: jest.fn() };
+
+    await expect(establishAuditSession(browser as never, { baseUrl: 'https://hivra.cloud', email: freshEmail })).rejects.toThrow(/refusing to target/);
+    await expect(establishAuditSession(browser as never, { baseUrl: 'https://canary.evil.example', email: freshEmail })).rejects.toThrow(/refusing to target/);
     expect(browser.newContext).not.toHaveBeenCalled();
   });
 

@@ -55,6 +55,37 @@ are now in `upstreams.json` as `inspiration`, so the weekly check watches them.
 | muster, Muxflow (MIT) | Watched | Phone alerts when an agent needs you and pasting screenshots into remote sessions. Hivra's Needs-you inbox covers the first; the second is a chat attachment idea. |
 | safeagents (Apache-2.0) | Watched | A tool-call checking proxy owners could install themselves. Not wired in. |
 
+## Check of 2026-11-25
+
+Covers 17 to 25 November. No licence changes: every repository checked still
+carries the licence recorded in `upstreams.json`. Nine inspiration entries that
+said "see repo" now name the licence their repository carries; one of them,
+plastic-labs/honcho, is AGPL-3.0, so it stays ideas only, like beta9.
+
+| Repository | Hivra uses | What moved | Decision |
+| --- | --- | --- | --- |
+| hardbeat920/monocode | ported chat UI | nothing | Upstream main is still at the commit merged on 12 November; nothing to merge into MonoCode Hub. |
+| anthropics/claude-code | 2.1.292 | 2.1.332 | Take with the next provisioner release (now 2.1.332). Adds MCP-server skills (beta) and a `PreSkillShellCommand` hook; the rest are freeze, compaction and sign-in fixes (`claude auth login` now exits 1 when a login could not be saved). No breaking changes. |
+| openai/codex | 0.149.1 | 0.172.0 | Still needs a live test first. `codex exec resume` now restores saved sandbox permissions and working folder; optional stdio MCP servers start on first tool call. |
+| openclaw/openclaw | 2026.6.10 | 2026.11.10 | Unchanged decision (live test first). Node 24.22.1+ (or 26.12.1+) is now recommended; plugin setting `allowPromptInjection` is renamed `allowPromptModification` (Doctor migrates it); `openclaw update migrate` shows progress and backs up first. Hivra sets neither setting. |
+| agent0ai/agent-zero | latest image | v2.16 | New launches already get it. Adds A0Cleaner (weekly cache clean-up), missed-schedule catch-up, Time Travel snapshot expiry on by default, and an idle browser that suspends after an hour. Covered by the weekly launch sweep; watch it after the v2.15 `.env` change. |
+| NousResearch/hermes-agent | latest (installer) | v0.23.4 | Nothing to do: owners get it with `hermes update`. Another roll-up (229 PRs); new `hermes gateway migrate --backends` moves old serve/dashboard backends onto the gateway. Re-test `hermes config set model.default` and the Desktop Webapp on an updated computer. |
+| CopilotKit/openbot | latest image | v1.1.3 | Keep `latest`. 1.1.x runs 14 additive migrations at start and drops `OPENBOT_MULTIPLE_ORGANIZATIONS`; Hivra runs single-user mode and never sets it. |
+| nuphos/nuphos | latest image | runtime 0.1.78 | Fine as is. Codex picks up edited instructions on its next turn; no configuration changes. |
+| aaronjmars/aeon | 8b8d719 | more commits | Leave (Ash no longer runs Aeon; customers still can). |
+| deepseek-ai/deepseek-harness | 0.1.2-alpha.2 | 0.2.2-rc.5, 0.2.3-alpha.2 | Leave. Still no stable 0.2. |
+| block/buzz, block/buzz-app | desktop 0.5.20 | ongoing work | Leave; the move to buzz-app is still open. |
+| hyprwm/aquamarine | 0.14.0 + Hivra patch | main moved | Keep the patch; rebase still waits on a cursor test. |
+| omacom/omarchy, omarchy-iso | latest | main moved | Nothing for Hivra computers. |
+| selkies-project/selkies | image digest | main moved | Leave the pinned digest. |
+| LizardByte/Sunshine | latest | pre-release v2026.1123.40502 | Leave until a stable release (the check script cannot tell pre-releases from tags). |
+| coreyhaines31/marketingskills | attribution only | v2.14.28 | Nothing to do; no longer shipped. |
+| BankrBot/skills | copied skill text | not flagged | Hold. Still no root licence. |
+| Inspiration projects | designs only | various (ACP schema 1.35.0, OpenTelemetry collector 0.166.0, Rakazo, Rowboat, gVisor, Firecracker busy) | Nothing to merge. |
+
+Nothing was taken into the product this week: the only bumps are agent pins
+under `dashboard/provisioner/`, which wait for the next provisioner release.
+
 ## Check of 2026-11-17
 
 Covers 12 to 17 November. No licence changes: every repository checked still

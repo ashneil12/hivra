@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
+import Image from "next/image";
+import { auth } from "@clerk/nextjs/server";
 import { ArrowRight, Bot, MessagesSquare, Sparkles } from "lucide-react";
+import { HivraMark } from "@/components/branding/HivraMark";
 import PublicSite from "@/components/public-site/PublicSite";
 import { Breadcrumbs } from "@/components/public-editorial/Editorial";
 import { ActionLinks } from "@/components/public-editorial/ActionLinks";
 import editorial from "@/components/public-editorial/secondary-site.module.css";
 import VeniceAttributionCapture from "@/components/venice/VeniceAttributionCapture";
+import VeniceLaunchFilm from "@/components/venice/VeniceLaunchFilm";
 import VenicePromo from "@/components/venice/VenicePromo";
 import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
 import { getAgent } from "@/lib/hivra/agent-catalog";
@@ -22,7 +26,7 @@ export const metadata: Metadata = {
   ...buildWebsiteMetadata({ path: "/venice", title: TITLE, description: DESCRIPTION }),
 };
 
-// The promo flag is read at request time (computed env key), not frozen at build.
+// The promo checks the deployment's environment at request time.
 export const dynamic = "force-dynamic";
 
 const TILES = [
@@ -37,7 +41,8 @@ const STEPS = [
   { title: "Chat", body: "Talk to it. It keeps working when you close the tab." },
 ] as const;
 
-export default function VenicePage() {
+export default async function VenicePage() {
+  const { userId } = await auth();
   const setupCall = veniceSetupCallLink();
   return (
     <PublicSite className={editorial.page} data-page="venice" tokenSurfaces={false}>
@@ -45,9 +50,18 @@ export default function VenicePage() {
       <main className={editorial.main} id="main-content">
         <Breadcrumbs items={[{ label: "Venice" }]} />
         <header className={`${editorial.masthead} ${styles.hero}`}>
+          <div className={styles.lockup}>
+            <HivraMark size={44} />
+            <span aria-hidden="true" />
+            <Image src="/images/venice/venice-wordmark.svg" alt="Venice" width={88} height={40} unoptimized />
+          </div>
           <h1>Run your Venice agent 24/7. No server setup.</h1>
           <p>Pick an agent. Hivra gives it a computer and runs it on Venice.</p>
-          <VenicePromo />
+          <VenicePromo signedIn={Boolean(userId)} />
+          <VeniceLaunchFilm
+            src="https://ejzonwoikxinlk0x.public.blob.vercel-storage.com/venice/hivra-venice-draft3b-16x9.mp4"
+            poster="https://ejzonwoikxinlk0x.public.blob.vercel-storage.com/venice/hivra-venice-poster.jpg"
+          />
         </header>
 
         <section aria-labelledby="venice-agents">

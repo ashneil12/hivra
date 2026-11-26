@@ -41,7 +41,7 @@ jest.mock("../lapse-gate", () => ({ isStartBlockedForLapse: (...a: unknown[]) =>
 jest.mock("@/lib/ssrf-safe-fetch", () => ({ ssrfSafeFetch: jest.fn() }));
 jest.mock("@/lib/proxmox/wake-admission", () => ({}));
 
-import { readSleepFacts, resolveSleepTimings, sleepEligibility, sleepHivraAgent, type SleepFacts } from "../agent-sleep";
+import { readSleepFacts, resolveSeatSleepTimings, resolveSleepTimings, sleepEligibility, sleepHivraAgent, type SleepFacts } from "../agent-sleep";
 import { probeLine } from "./sleep-stub-host.fixtures";
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
@@ -188,6 +188,25 @@ describe("sleepEligibility", () => {
     expect(sleepEligibility(eligibleRow({ sleep_policy: "t1" }), host, okFacts, { serverMode: "canary", tier: "nap" }).eligible).toBe(true);
     expect(sleepEligibility(eligibleRow({ sleep_policy: "t3" }), host, okFacts, { serverMode: "canary", tier: "nap" }).reasons).toContain("policy_tier_not_allowed");
   });
+
+  it("treats a holder-funded seat as full sleep policy even when stored controls are stale", () => {
+    const row = eligibleRow({ seat_funding: "holder", always_on: true, sleep_policy: "off" });
+    expect(sleepEligibility(row, host, okFacts, { serverMode: "canary", tier: "nap" })).toEqual({ eligible: true, reasons: [] });
+    expect(sleepEligibility(row, host, okFacts, { serverMode: "canary", tier: "hibernate" })).toEqual({ eligible: true, reasons: [] });
+    const paid = eligibleRow({ seat_funding: "paid", always_on: true, sleep_policy: "off" });
+    expect(sleepEligibility(paid, host, okFacts, { serverMode: "canary", tier: "nap" }).reasons).toEqual(
+      expect.arrayContaining(["always_on", "policy_off"]),
+    );
+  });
+
+  it("uses fixed holder timings without changing the configurable paid-seat timings", () => {
+    const env = { HIVRA_SLEEP_NAP_AFTER_SECONDS: "300", HIVRA_SLEEP_HIBERNATE_AFTER_SECONDS: "900" };
+    expect(resolveSleepTimings(env)).toMatchObject({ napAfterSeconds: 300, hibernateAfterSeconds: 900 });
+    expect(resolveSeatSleepTimings(eligibleRow({ seat_funding: "holder" }), env)).toMatchObject({ napAfterSeconds: 240, hibernateAfterSeconds: 720 });
+    expect(resolveSeatSleepTimings(eligibleRow({ seat_funding: "paid" }), env)).toMatchObject({ napAfterSeconds: 300, hibernateAfterSeconds: 900 });
+    expect(resolveSeatSleepTimings(eligibleRow(), env)).toMatchObject({ napAfterSeconds: 300, hibernateAfterSeconds: 900 });
+  });
+
 });
 
 describe("readSleepFacts", () => {
@@ -269,7 +288,7 @@ describe("sleepHivraAgent", () => {
   });
 
   it("skips when the agent is not in a state this tier starts from", async () => {
-    mockReadRow.mockResolvedValue({ data: eligibleRow({ sleep_state: "napping" }), error: null });
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ sleep_state: "napping", sleep_tier_changed_at: "2026-11-12T11:44:00Z" }), error: null });
     await expect(run({ tier: "nap", trigger: "sweep" })).resolves.toEqual({ outcome: "skipped", reason: "not_awake" });
     mockReadRow.mockResolvedValue({ data: eligibleRow({ sleep_state: "hibernated" }), error: null });
     await expect(run({ tier: "hibernate", trigger: "sweep" })).resolves.toEqual({ outcome: "skipped", reason: "not_awake_or_napping" });
@@ -429,7 +448,7 @@ describe("sleepHivraAgent", () => {
   });
 
   it("hibernates a napping agent with no probe, and leaves the next wake alone", async () => {
-    mockReadRow.mockResolvedValue({ data: eligibleRow({ sleep_state: "napping", sleep_generation: 7, next_wake_at: "2026-11-12T15:00:00Z" }), error: null });
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ sleep_state: "napping", sleep_generation: 7, sleep_tier_changed_at: "2026-11-12T11:44:00Z", next_wake_at: "2026-11-12T15:00:00Z" }), error: null });
     stubScripts({ sleep: sleepReceipt({ tier: "hibernate", from: "napping", to: "hibernated", reason: "hibernated", probe: null }) });
     const result = await run({ tier: "hibernate", trigger: "sweep" });
     expect(result).toEqual(expect.objectContaining({ outcome: "slept", state: "hibernated" }));
@@ -444,18 +463,55 @@ describe("sleepHivraAgent", () => {
   });
 
   it("does not hibernate a napping agent whose next job is inside the horizon", async () => {
-    mockReadRow.mockResolvedValue({ data: eligibleRow({ sleep_state: "napping", next_wake_at: "2026-11-12T12:05:00Z" }), error: null });
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ sleep_state: "napping", sleep_tier_changed_at: "2026-11-12T11:44:00Z", next_wake_at: "2026-11-12T12:05:00Z" }), error: null });
     const result = await run({ tier: "hibernate", trigger: "sweep" });
     expect(result).toEqual(expect.objectContaining({ outcome: "not_idle", reason: "job_soon" }));
     expect(mockClaim).not.toHaveBeenCalled();
   });
 
   it("keeps a napping agent as napping when the hibernate is refused for pool room", async () => {
-    mockReadRow.mockResolvedValue({ data: eligibleRow({ sleep_state: "napping" }), error: null });
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ sleep_state: "napping", sleep_tier_changed_at: "2026-11-12T11:44:00Z" }), error: null });
     stubScripts({ sleep: sleepReceipt({ ok: false, tier: "hibernate", from: "napping", to: "napping", reason: "pool_full", probe: null }) });
     const result = await run({ tier: "hibernate", trigger: "sweep" });
     expect(result).toEqual(expect.objectContaining({ outcome: "aborted", state: "napping", reason: "pool_full" }));
     expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "napping" }));
+  });
+
+
+
+  it("rechecks the exact paid-seat hibernate window widened by the sweep prefilter", async () => {
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ sleep_state: "napping", sleep_tier_changed_at: "2026-11-12T11:48:30Z" }), error: null });
+    const result = await run({ tier: "hibernate", trigger: "sweep" });
+    expect(result).toEqual(expect.objectContaining({ outcome: "not_idle", reason: "hibernate_window_open" }));
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockRunScript).not.toHaveBeenCalled();
+  });
+
+  it("enforces the fixed holder hibernate path and boundary end to end before host actions", async () => {
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ seat_funding: "holder", always_on: true, sleep_policy: "off", sleep_state: "awake" }), error: null });
+    const direct = await run({ tier: "hibernate", trigger: "sweep" });
+    expect(direct).toEqual(expect.objectContaining({ outcome: "not_idle", reason: "hibernate_before_nap" }));
+    expect(mockRunScript).not.toHaveBeenCalled();
+
+    jest.clearAllMocks();
+    mockResolveTarget.mockResolvedValue({ ok: true, target });
+    mockHostRow.mockResolvedValue({ data: host, error: null });
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ seat_funding: "holder", sleep_state: "napping", sleep_tier_changed_at: "2026-11-12T11:48:30Z" }), error: null });
+    const early = await run({ tier: "hibernate", trigger: "sweep" });
+    expect(early).toEqual(expect.objectContaining({ outcome: "not_idle", reason: "hibernate_window_open" }));
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockRunScript).not.toHaveBeenCalled();
+
+    jest.clearAllMocks();
+    mockResolveTarget.mockResolvedValue({ ok: true, target });
+    mockHostRow.mockResolvedValue({ data: host, error: null });
+    // At exactly 12 minutes in nap (16 minutes total idle after the fixed 4-minute nap),
+    // the holder seat hibernates despite the stale stored controls.
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ seat_funding: "holder", always_on: true, sleep_policy: "off", sleep_state: "napping", sleep_tier_changed_at: "2026-11-12T11:48:00Z" }), error: null });
+    stubScripts({ sleep: sleepReceipt({ tier: "hibernate", from: "napping", to: "hibernated", reason: "hibernated", probe: null }) });
+    const exact = await run({ tier: "hibernate", trigger: "sweep" });
+    expect(exact).toEqual(expect.objectContaining({ outcome: "slept", state: "hibernated" }));
+    expect(mockRunScript).toHaveBeenCalled();
   });
 
   it("never touches hivra_agents.status", async () => {

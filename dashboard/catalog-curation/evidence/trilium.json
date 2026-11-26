@@ -1,0 +1,121 @@
+{
+  "slug": "trilium",
+  "checkedAt": "2026-11-21T14:20:21.322Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "TriliumNext/Trilium is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "TriliumNext/Trilium",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/triliumnext/notes:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/triliumnext/notes:latest",
+        "digest": "sha256:611a430016585d35b170eb9a0fa300ce76318f04a8ec0067549c4c52561b0c36",
+        "platforms": [
+          "linux/arm64",
+          "unknown/unknown",
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "linux/arm/v8",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 34.3s",
+      "evidence": {
+        "container": "hivra-verify-trilium-s62t8e",
+        "hostPort": 3231,
+        "image": "ghcr.io/triliumnext/notes:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-trilium-s62t8e",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3231:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-trilium-s62t8e-data:/home/node/trilium-data",
+          "ghcr.io/triliumnext/notes:latest"
+        ],
+        "runStdout": "609d986e8ca6fb79c7b4ef492ed264d600e35e0a89276022bd9bcdff34c5e7cf",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 34.3,
+          "attempts": 14
+        },
+        "memUsage": "142.2MiB / 7.652GiB",
+        "memBytes": 149107507
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /setup",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65017,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "setup"
+          },
+          {
+            "hop": 2,
+            "path": "/setup",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/setup",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1\">\n    <meta id=\"syncInProgress\" content=\"0\" />\n    <title>Setup</title>\n\n    \n    <link rel=\"stylesheet\" href=\"assets/v0.95.0/src/bootstrap.css\">\n\n    <style>\n        .lds-ring {\n            display: inline-block;\n            position: relative;",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 500,
+          "bodyHead": "{\"message\":\"no such table: entity_changes\"}"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 142.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 149107507,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

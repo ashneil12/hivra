@@ -1,0 +1,106 @@
+{
+  "slug": "grist",
+  "checkedAt": "2026-11-21T04:10:20.121Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "gristlabs/grist-core is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "gristlabs/grist-core",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "gristlabs/grist:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "gristlabs/grist:latest",
+        "digest": "sha256:2623f3bc3b548493a7be1cbb1d111a23e3f35cc9591c2addce07a93056157a9a",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 4s",
+      "evidence": {
+        "container": "hivra-verify-grist-lopyzc",
+        "hostPort": 3267,
+        "image": "gristlabs/grist:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-grist-lopyzc",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3267:8484",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-grist-lopyzc-docs:/persist/docs",
+          "-v",
+          "hivra-verify-grist-lopyzc-db:/persist/sqlite",
+          "gristlabs/grist:latest"
+        ],
+        "runStdout": "0811ae750427b23ea60d87417a1d49e4ea46f8e14e66d322d153563ea7677905",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 4,
+          "attempts": 3
+        },
+        "memUsage": "434.5MiB / 7.652GiB",
+        "memBytes": 455606272
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "redirect to loopback 127.0.0.1:3267/boot",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64425,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "https://127.0.0.1:3267/boot"
+          }
+        ],
+        "finalStatus": null
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 434.5MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 455606272,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "gateway: redirect to loopback 127.0.0.1:3267/boot"
+  ]
+}

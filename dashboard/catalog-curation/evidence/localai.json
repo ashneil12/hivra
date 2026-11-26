@@ -1,0 +1,149 @@
+{
+  "slug": "localai",
+  "checkedAt": "2026-11-21T04:10:17.693Z",
+  "gitSha": "1c998f9056c365e28c6385f35965fab70d43f84c",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "mudler/LocalAI is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "mudler/LocalAI",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "localai/localai:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "localai/localai:latest",
+        "digest": "sha256:7240f75f2b7f00eeb4e77ff2921c25f77ab265b4e5888933e702e0c3b49d876d",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /readyz -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-localai-u5k4m0",
+        "hostPort": 3212,
+        "image": "localai/localai:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-localai-u5k4m0",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3212:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-localai-u5k4m0-models:/models",
+          "localai/localai:latest"
+        ],
+        "runStdout": "8d3d1d66d29aa0834ad93d32f015267d46a49c71c1a81ce5a400d15ab0a5455c",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "260.8MiB / 7.652GiB",
+        "memBytes": 273468621
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "fail",
+      "detail": "redirect chain exceeded 10 hops",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64383,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 301,
+            "location": "/app"
+          },
+          {
+            "hop": 2,
+            "path": "/app",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 3,
+            "path": "/",
+            "status": 301,
+            "location": "/app"
+          },
+          {
+            "hop": 4,
+            "path": "/app",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 5,
+            "path": "/",
+            "status": 301,
+            "location": "/app"
+          },
+          {
+            "hop": 6,
+            "path": "/app",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 7,
+            "path": "/",
+            "status": 301,
+            "location": "/app"
+          },
+          {
+            "hop": 8,
+            "path": "/app",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 9,
+            "path": "/",
+            "status": 301,
+            "location": "/app"
+          }
+        ]
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 260.8MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 273468621,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "gateway: redirect chain exceeded 10 hops"
+  ]
+}

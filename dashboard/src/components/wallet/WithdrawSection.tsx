@@ -607,11 +607,13 @@ export function ConfirmDialog({
 }
 export function UnlockPromptCard({
   mode,
+  quoteUnit,
   unlocking,
   onUnlock,
   onDismiss,
 }: {
   mode: 'holding' | 'venice';
+  quoteUnit: string | null;
   unlocking: boolean;
   onUnlock: () => void;
   onDismiss: () => void;
@@ -693,12 +695,12 @@ export function UnlockPromptCard({
             className="serif"
             style={{ fontSize: 'clamp(1.35rem, 3vw, 1.6rem)', fontWeight: 700, margin: '4px 0 8px', letterSpacing: '-0.01em' }}
           >
-            {venice ? 'Add +1 vCPU / +2 GB to every agent' : 'Unlock Pro / Power by holding $HERMESOS'}
+            {venice ? 'Add +1 vCPU / +2 GB to every agent' : `Qualify for Pro or Power by holding ${quoteUnit ?? 'tokens'}`}
           </h3>
           <p style={{ fontSize: 13.5, opacity: 0.82, marginBottom: 16, maxWidth: 560, lineHeight: 1.55 }}>
             {venice
               ? 'You’re on a paid tier — hold the VVV threshold in your verified wallet and every agent gets +1 vCPU / +2 GB. Press unlock and it applies right away, no waiting for the next sync.'
-              : 'Hold $HERMESOS in your verified wallet to qualify for a Pro or Power compute tier. Connect, verify, and unlock instantly — no waiting for the next sync.'}
+              : 'Verify your wallet and qualifying balance to join the holder access waitlist. Hosted compute starts after admission.'}
           </p>
           <button
             type="button"
@@ -718,7 +720,7 @@ export function UnlockPromptCard({
             }}
           >
             {unlocking ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <ShieldCheck size={13} />}
-            {venice ? 'Verify VVV & unlock boost now' : 'Connect & unlock now'}
+            {venice ? 'Verify VVV & unlock boost now' : 'Verify holdings'}
             {!unlocking && (
               <span
                 aria-hidden

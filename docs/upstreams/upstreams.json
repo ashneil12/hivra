@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "about": "Every outside repository Hivra installs, takes code from, or was inspired by. Checked weekly with scripts/upstreams/check-upstreams.mjs; see docs/upstreams/README.md.",
-  "lastFullCheck": "2026-11-17",
+  "lastFullCheck": "2026-11-25",
   "repos": [
     {
       "id": "monocode",
@@ -41,8 +41,8 @@
       "watch": "tags",
       "tagPattern": "^v0\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "081e8d9b75b2bedae297a89232b04ef9be7b26a0",
-        "latest": "v0.23.2"
+        "head": "33522e6deeb77d3bd8c5c4222d0681f53974cc30",
+        "latest": "v0.23.4"
       }
     },
     {
@@ -55,8 +55,8 @@
       "watch": "tags",
       "tagPattern": "^v\\d{4}\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "687dc6c99a32714473a646942382ebcd7f5e6552",
-        "latest": "v2026.11.4"
+        "head": "04cd806fead3c1a639e6a7c5b744378e8adb9c9e",
+        "latest": "v2026.11.10"
       }
     },
     {
@@ -69,8 +69,8 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+$",
       "checked": {
-        "head": "ba9b67df0f54ac78106ae85c552ef5d2458f7c9a",
-        "latest": "v2.15"
+        "head": "a6e41ca5330af21371f15fc62798f09f0393eedb",
+        "latest": "v2.16"
       }
     },
     {
@@ -83,8 +83,8 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "cd8ca4374469b19c8cd5ee494e839e26d022fbec",
-        "latest": "v2.1.326"
+        "head": "ba94716bf9f489af9ded1795330c0e6634f02450",
+        "latest": "v2.1.332"
       }
     },
     {
@@ -97,8 +97,8 @@
       "watch": "tags",
       "tagPattern": "^rust-v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "e3b721754e1e7e1e942db94431dff957c509e67e",
-        "latest": "rust-v0.169.0"
+        "head": "06f334aa4b053023c5b4199dde0ba9c004d64820",
+        "latest": "rust-v0.172.0"
       }
     },
     {
@@ -111,8 +111,8 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "9c2a1f14fb63149b7a0963ed54834bf08fdb4b38",
-        "latest": "v1.0.3"
+        "head": "25d50a1436ee3c145817dea3df7f0039bce9b328",
+        "latest": "v1.1.3"
       }
     },
     {
@@ -125,8 +125,8 @@
       "watch": "tags",
       "tagPattern": "^runtime-v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "46f8dc648924508a5acc40801c8f3eadc890f9c9",
-        "latest": "runtime-v0.1.62"
+        "head": "3ab934afe59d0f6fcff5fc8886a823b74db08c0c",
+        "latest": "runtime-v0.1.78"
       }
     },
     {
@@ -138,7 +138,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "3290794c11689e442812649984c2942b88ae7a99",
+        "head": "db0a5f79098a72826b7bcef98d58a092231531df",
         "latest": null
       }
     },
@@ -153,7 +153,7 @@
       "watch": "tags",
       "tagPattern": "^dsh-v",
       "checked": {
-        "head": "39163dd30f703a79079e2d2446545cff3c453738",
+        "head": "4b399c39a6d1479cd84ca591b4d7c88e24d38a96",
         "latest": "dsh-v0.2.2-rc.2"
       }
     },
@@ -167,7 +167,7 @@
       "pinFile": "docs/release/RUNTIME-DISTRIBUTION.md",
       "watch": "head",
       "checked": {
-        "head": "97d5a46cc6e024e1c07134b59758c826e0272ba2",
+        "head": "65b031bcc83448a8341359d4a67c34e2a86d4484",
         "latest": "desktop-v0.5.28"
       }
     },
@@ -180,7 +180,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "0cfdbd989ea82c2e93c6a3b0d7c4c54508af797e",
+        "head": "6147c9866afee77d41b1746002a131abe5c9ba7b",
         "latest": null
       }
     },
@@ -208,7 +208,7 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "3b36b9e19ea00a6c21492098308a7f44a8091564",
+        "head": "d4512a7559f7d96711fedeb1f4c4fd368b51de22",
         "latest": "v4.5.0"
       }
     },
@@ -221,7 +221,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "c6790ac8e6cd8b1e2f5396e7ce1489a8c96d96d8",
+        "head": "5c7fc7b8315773c83ef57ee21bb96745c497f4b5",
         "latest": null
       }
     },
@@ -235,7 +235,7 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "d2aca076f2b1938347bb42ed972b01e3e24ce5d3",
+        "head": "ca1a485aa90be48fad32a42160da7679d678ade3",
         "latest": "v0.16.0"
       }
     },
@@ -249,7 +249,7 @@
       "pinFile": "dashboard/provisioner/remote-desktop/install-omarchy-web.py",
       "watch": "head",
       "checked": {
-        "head": "de7c2963f2ed293fc6c8235eee408beb32f1db7a",
+        "head": "f956c26031d41e407363bf5cb8eb25ab5913e268",
         "latest": null
       }
     },
@@ -263,8 +263,8 @@
       "watch": "tags",
       "tagPattern": "^v\\d{4}\\.",
       "checked": {
-        "head": "7cf6fbdfbbd2bc561fbb299e15d532ef02b7512d",
-        "latest": "v2026.1116.150042"
+        "head": "b7a0b68613f9fce5fcb206a75e00f092a638b8b7",
+        "latest": "v2026.1123.40502"
       }
     },
     {
@@ -302,8 +302,8 @@
       "pin": null,
       "watch": "tags",
       "checked": {
-        "head": "1f837447b20bb6f0e72d87b80ece1c221c362c7d",
-        "latest": "v2.14.12"
+        "head": "8fd2fcade2fd6629026e9dfe6d133b55b36968b9",
+        "latest": "v2.14.28"
       }
     },
     {
@@ -316,8 +316,8 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "941c7130b140739781031dfd91b90f8edad371d3",
-        "latest": "v0.165.1"
+        "head": "02a268fc1e017c6cf2171cdc5291c991d01adfc9",
+        "latest": "v0.166.0"
       }
     },
     {
@@ -329,7 +329,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "01e7f5f746b15493d18fe06b24ae06ac08d5ae74",
+        "head": "c371c5b66fa4235eb77c38619ddd6bedde258f90",
         "latest": null
       }
     },
@@ -337,12 +337,12 @@
       "id": "honcho",
       "repo": "plastic-labs/honcho",
       "role": "inspiration",
-      "licence": "see repo",
+      "licence": "AGPL-3.0",
       "use": "Agent memory reference (blog, shared-brain spec).",
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "7d3a53fd86830e0f9a3df15839748c6496d56db6",
+        "head": "2addbf6231ea9cd318a5532b4156c095b6463217",
         "latest": null
       }
     },
@@ -350,12 +350,12 @@
       "id": "gbrain",
       "repo": "garrytan/gbrain",
       "role": "inspiration",
-      "licence": "see repo",
+      "licence": "MIT",
       "use": "Shared-brain spec reference.",
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "ad6da0b724799d6a70934911dbda1cfaafcf39b8",
+        "head": "a2a58dbdf8393e27a53196ed1b3960b8fc35026b",
         "latest": null
       }
     },
@@ -363,12 +363,12 @@
       "id": "herdr",
       "repo": "herdrdev/herdr",
       "role": "inspiration",
-      "licence": "see repo",
+      "licence": "Apache-2.0",
       "use": "Agent-network spec reference.",
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "ee5bfb5041bb3e4a49d591c72308aae3c81ecdde",
+        "head": "e8d7d9705a7a2c89cef4dd42079379f05685af87",
         "latest": null
       }
     },
@@ -376,12 +376,12 @@
       "id": "atlas",
       "repo": "pacifio/atlas",
       "role": "inspiration",
-      "licence": "see repo",
+      "licence": "Apache-2.0",
       "use": "Agent-network spec reference.",
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "840698fc899a5439631c191de6d1ceb4050ff003",
+        "head": "4612e370b6b82be31b0e395ddcc5de883ac503d1",
         "latest": null
       }
     },
@@ -389,12 +389,12 @@
       "id": "row-bot",
       "repo": "siddsachar/row-bot",
       "role": "inspiration",
-      "licence": "see repo",
+      "licence": "Apache-2.0",
       "use": "Agent-network spec reference.",
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "02902732e5ae4fe06ce55e5e70b5550c7fdf6d2e",
+        "head": "927b34a7cf0e37fd909a2932d243564b8d70d63a",
         "latest": null
       }
     },
@@ -407,20 +407,20 @@
       "pin": null,
       "watch": "tags",
       "checked": {
-        "head": "4aab69b4e6bcb53965ff5b1141d2f04a62a25c6c",
-        "latest": "schema-v1.32.0"
+        "head": "134241fd485887ecd9f3074e98bc8917562984f8",
+        "latest": "schema-v1.35.0"
       }
     },
     {
       "id": "spawnbox",
       "repo": "TulipFarm/spawnbox",
       "role": "inspiration",
-      "licence": "see repo",
+      "licence": "Apache-2.0",
       "use": "Sleep/wake research (docs/plans/mono-sleep-wake.md).",
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "2c7d6493952170ab71d9377c467fbc69d78a75d7",
+        "head": "00ca16ef1b25a3b03d5c08f8a19c601f053a3f77",
         "latest": null
       }
     },
@@ -428,12 +428,12 @@
       "id": "substrate",
       "repo": "agent-substrate/substrate",
       "role": "inspiration",
-      "licence": "see repo",
+      "licence": "Apache-2.0",
       "use": "Sleep/wake research.",
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "0d6a5fd27cbbba7d52903d65876a82bc3bcd7af7",
+        "head": "57e59ec6b58ae6517d4394baae00cd18a82a62ab",
         "latest": null
       }
     },
@@ -441,12 +441,12 @@
       "id": "e2b-runtime",
       "repo": "e2b-dev/runtime",
       "role": "inspiration",
-      "licence": "see repo",
+      "licence": "Apache-2.0",
       "use": "Sleep/wake research.",
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "391b22443460fb30432da889b44aa413478d5717",
+        "head": "30723eda26cb06e4a85c5c8c189101617de393f5",
         "latest": null
       }
     },
@@ -460,7 +460,7 @@
       "watch": "tags",
       "tagPattern": "^v\\d+\\.\\d+\\.\\d+$",
       "checked": {
-        "head": "cc88013eadcf432da1b37d47d445b7e8bcc3046e",
+        "head": "2a8d0138cdf97de97767717541dac66295f9a28d",
         "latest": "v1.18.0"
       }
     },
@@ -473,7 +473,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "89cacadae21eca4270a8f7c79281d0426d33ac5f",
+        "head": "985dc5ece5c8637721ad0d142598ac069501cc7d",
         "latest": null
       }
     },
@@ -486,7 +486,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "f671b15c3e92a8abb659e8d30ce14953532eef00",
+        "head": "1b3a8b826f6a771a3b17f1e3992397f15d236b04",
         "latest": null
       }
     },
@@ -499,7 +499,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "c67cd08246208ebd1c480e866d0cd7304d035ae1",
+        "head": "03a81c2e223660b4dce7ca9c96d49b998635ed66",
         "latest": null
       }
     },
@@ -512,7 +512,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "9460aa995bf5d76a140b762822c8306cdb7f79db",
+        "head": "8ca29f2eb227a583aa184281224c765c84eed8b1",
         "latest": null
       }
     },
@@ -525,7 +525,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "64fb1e5713b872910ffa156dca65a621028e1d78",
+        "head": "5c77beef0f8ee1a502d348fd8ad752a538603c0c",
         "latest": null
       }
     },
@@ -538,7 +538,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "ee69bad028247b8c42801e7219b282dd2d7b3282",
+        "head": "015dafee33d3ab4adec92e41af528fe89f8c92e7",
         "latest": null
       }
     },
@@ -551,7 +551,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "a8ee22d67adb2b5e23fe5e8692e2df8847241a00",
+        "head": "dcf38e0a911d6e6a53966d46ecf1d9d6b86e3c01",
         "latest": null
       }
     },
@@ -564,7 +564,7 @@
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "07908f93053fee452d649eb6d308952948b3fd53",
+        "head": "8c8dd8d4dad2001aea6da022cf7c3b403d3dccc3",
         "latest": null
       }
     },
@@ -572,12 +572,12 @@
       "id": "anthropic-cli",
       "repo": "anthropics/anthropic-cli",
       "role": "inspiration",
-      "licence": "see repo",
+      "licence": "Apache-2.0",
       "use": "The `ant` CLI; `ant beta:worker poll` is the self-hosted sandbox worker for Claude Managed Agents. Used in the same off-by-default guide.",
       "pin": null,
       "watch": "head",
       "checked": {
-        "head": "4d6a42e08fad9999602fdc9273b0960976c010d9",
+        "head": "1eaf6205da593830e51f6743f73833ecbe863c5f",
         "latest": null
       }
     }

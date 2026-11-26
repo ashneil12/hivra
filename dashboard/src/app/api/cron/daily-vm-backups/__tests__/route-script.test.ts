@@ -68,9 +68,43 @@ describe("daily VM backup host script", () => {
     );
 
     expect(processCandidate).toContain("buildInstallDailyBackupScript()");
+    expect(processCandidate).toContain("${HOST_BACKUP_DEADLINE}");
     expect(processCandidate.indexOf("buildInstallDailyBackupScript()")).toBeLessThan(
       processCandidate.indexOf('"/usr/local/sbin/backup-vm-daily.sh"')
     );
+  });
+
+  it("keeps a host-side deadline on detached backup writers, sized for a full dump+upload", () => {
+    const route = readRepoFile("src/app/api/cron/daily-vm-backups/route.ts");
+    // The bound only kills wedged runs now: the archive conflict is prevented
+    // by the per-VM storage-op lock below, not by a wall-clock short enough to
+    // terminate a legitimate ~46-minute backup mid-upload.
+    expect(route).toContain('DETACHED_BACKUP_DEADLINE = "timeout --kill-after=10s 6h"');
+    expect(route).toContain("nohup ${DETACHED_BACKUP_DEADLINE} /usr/local/sbin/backup-vm-daily.sh");
+  });
+
+  it("holds a per-VM storage-op lock across the whole write path", () => {
+    const sourceScript = readRepoFile("scripts/ops/backup-vm-daily.sh");
+    // The lock is what lets a long backup run past the pause→archive window:
+    // archive-vm-cold.sh refuses while it is held, so the destroy step can
+    // never land mid-dump or mid-upload. It must be taken before vzdump and
+    // after the preflight-only exit (diagnostics never contend for it), and
+    // the fd stays open through the manifest write.
+    const lock = sourceScript.indexOf('flock -n 9');
+    expect(sourceScript).toContain("/run/hermes-vm-${VMID}.storage-op.lock");
+    expect(sourceScript).toContain("REFUSING_BACKUP_STORAGE_OP_IN_FLIGHT");
+    expect(lock).toBeGreaterThan(sourceScript.indexOf("PREFLIGHT_OK"));
+    expect(lock).toBeLessThan(sourceScript.indexOf('vzdump "$VMID"'));
+  });
+
+  it("the cold archive refuses while a daily backup holds the VM's storage-op lock", () => {
+    const archiveScript = readRepoFile("scripts/ops/archive-vm-cold.sh");
+    // Same lock file, non-blocking: a backup in flight defers the archive to
+    // a later tick instead of racing it to `qm destroy --skiplock`.
+    const lock = archiveScript.indexOf('flock -n 9');
+    expect(archiveScript).toContain("/run/hermes-vm-${VMID}.storage-op.lock");
+    expect(archiveScript).toContain("REFUSING_ARCHIVE_STORAGE_OP_IN_FLIGHT");
+    expect(lock).toBeLessThan(archiveScript.indexOf('qm start "$VMID"'));
   });
 
   it("runs real memory preflight without starting vzdump for host-preflight", () => {

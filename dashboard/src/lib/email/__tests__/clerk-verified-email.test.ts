@@ -6,6 +6,47 @@
  */
 import { pickVerifiedEmail, pickVerifiedSdkEmail } from "@/lib/email/clerk-verified-email";
 
+describe("Clerk test email recipients", () => {
+  const originalEnv = process.env;
+  const testEmail = "  Fixture+CLERK_TEST@Example.com ";
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it("rejects a verified Canary fixture rather than falling back to a second address", () => {
+    process.env = { ...originalEnv, HERMES_DEPLOY_CHANNEL: "canary" };
+
+    expect(pickVerifiedEmail({
+      primary_email_address_id: "em_fixture",
+      email_addresses: [
+        { id: "em_fixture", email_address: testEmail, verification: { status: "verified" } },
+        { id: "em_other", email_address: "other@example.net", verification: { status: "verified" } },
+      ],
+    })).toBeNull();
+  });
+
+  it("rejects the same fixture when resolving an address from the Clerk SDK", () => {
+    process.env = { ...originalEnv, HERMES_DEPLOY_CHANNEL: "canary" };
+
+    expect(pickVerifiedSdkEmail({
+      emailAddresses: [{ id: "em_fixture", emailAddress: testEmail, verification: { status: "verified" } }],
+    })).toBeNull();
+  });
+
+  it.each([
+    ["production", "fixture+clerk_test@example.com"],
+    ["canary", "fixture+clerk_test@example.net"],
+    ["canary", "fixture+orders@example.com"],
+  ])("preserves recipient selection for %s at %s", (channel, email) => {
+    process.env = { ...originalEnv, HERMES_DEPLOY_CHANNEL: channel };
+
+    expect(pickVerifiedEmail({
+      email_addresses: [{ id: "em_1", email_address: email, verification: { status: "verified" } }],
+    })).toBe(email);
+  });
+});
+
 describe("pickVerifiedEmail (Clerk REST user)", () => {
   it("returns the primary address when Clerk reports it verified", () => {
     expect(

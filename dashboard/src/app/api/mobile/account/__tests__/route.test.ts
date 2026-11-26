@@ -150,6 +150,7 @@ describe("DELETE /api/mobile/account", () => {
 
     expect(response.status).toBe(502);
     expect(json.failureType).toBe("account_delete_instances_failed");
+    expect(json.error).toContain("Some agents were deleted.");
     expect(json.deletedInstances).toEqual(["inst-ok"]);
     expect(json.failedInstanceIds).toEqual(["inst-stuck"]);
     // The account survives so the user can retry — nothing orphaned.

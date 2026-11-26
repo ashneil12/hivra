@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { spawn } from "child_process";
 
 // SCRIPTURE_ANCHOR: proxmox-foundation | Luke 14:28 | Verse: Which of you, desiring to build a tower, doesn't first sit down and count the cost?
@@ -123,6 +123,18 @@ export {
   buildProxmoxTenantIsolationGuard,
   resolveProxmoxBalloonFloorMb,
 } from "./proxmox/script-builders";
+export function isProxmoxResizeOutcomeIndeterminateConservative(
+  result: Parameters<typeof isProxmoxResizeOutcomeIndeterminate>[0]
+): boolean {
+  const outcome = result as { error?: unknown; stderr?: unknown; stdout?: unknown };
+  const outcomeText = [outcome.error, outcome.stderr, outcome.stdout]
+    .filter((part) => part !== undefined && part !== null)
+    .map(String)
+    .join("\n");
+  return isProxmoxResizeOutcomeIndeterminate(result)
+    || /exited with code undefined/i.test(outcomeText);
+}
+
 export {
   parseProxmoxMetricsOutput,
   parseProxmoxProvisionOutput,
@@ -214,6 +226,18 @@ export interface HostScriptResult {
   /** Only when asked for with reportTimings: milliseconds from the start of
    * the SSH connect until the session was ready. */
   sshReadyMs?: number;
+  /**
+   * How far the SSH attempt got before it ended — the same contract
+   * hetzner/ssh's SshResult.stage carries, so a caller can tell "the script
+   * provably never ran on the host" from "the transport died and it may
+   * have". "connect": the handshake never completed; "ready": authenticated
+   * but the command channel never opened; "command": the channel opened and
+   * the script was dispatched — it may have run to any depth before the
+   * result died. Set on the ssh2 path; a failure returned before connect is
+   * attempted (config, env, fingerprint refusal) has no stage because the
+   * answer is already "never ran".
+   */
+  stage?: "connect" | "ready" | "command";
 }
 
 /** Default and absolute host-output limits protect the control plane from a
@@ -558,7 +582,7 @@ export type ProxmoxTargetConfiguration = {
   env: EnvLike;
 };
 
-function normalizeProxmoxTargetId(value: string | null | undefined): string | null {
+export function normalizeProxmoxTargetId(value: string | null | undefined): string | null {
   const normalized = value?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   return normalized || null;
 }
@@ -592,6 +616,24 @@ function resolveProxmoxTargetEnvPrefix(env: EnvLike, targetId: string | null | u
   return prefixes.find((prefix) =>
     Object.entries(env).some(([key, value]) => key.startsWith(prefix) && typeof value === "string" && value.trim())
   ) ?? null;
+}
+
+export function resizeOperationIdForAllocation(instanceId: string, cpu: number, ramMb: number): string {
+  const hex = createHash("sha256")
+    .update(`hermes-instance-resize:${instanceId}:${Number(cpu)}:${Number(ramMb)}`)
+    .digest("hex");
+  const variant = ((parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80)
+    .toString(16)
+    .padStart(2, "0");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(18, 20)}-${hex.slice(20, 32)}`;
+}
+
+export function isProxmoxResizeOutcomeIndeterminate(result: {
+  error?: unknown;
+  stderr?: unknown;
+}): boolean {
+  const detail = `${result.error == null ? "" : String(result.error)}\n${result.stderr == null ? "" : String(result.stderr)}`;
+  return /econnreset|epipe|etimedout|broken pipe|reset by peer|connection (?:reset|closed|aborted|lost)|socket (?:closed|hang up)|channel closed|timed? ?out|disconnect/i.test(detail);
 }
 
 export function resolveProxmoxTargetCandidateIds(env: EnvLike = process.env): string[] {
@@ -781,13 +823,31 @@ function sanitizeDnsLabel(value: string | null | undefined, fallback: string): s
   return label || fallback;
 }
 
-function sanitizeVmName(value: string): string {
-  const safe = value
+function hermesVmName(name: string, instanceId: string): string {
+  const suffix = `-${instanceId.slice(0, 8).toLowerCase().replace(/[^a-z0-9-]+/g, "-")}`;
+  // A 48-character legacy name may have been truncated through its ID suffix.
+  const stem = `hermes-${name}`.toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .slice(0, 47 - suffix.length)
+    .replace(/-+$/g, "");
+  return `${stem}${suffix}`;
+}
+
+/**
+ * The provisioner used before `hermesVmName` sanitized the WHOLE
+ * `hermes-<name>-<id8>` string and cut it at 48 chars, so a name at or past
+ * ~32 chars pushed part or all of the id8 suffix off the end (e.g. a 32-char
+ * name kept all 32 chars plus the full suffix; a 40-char name kept no suffix
+ * at all). Those VMs are still out there; discovery probes this spelling too,
+ * gated on the script's ownership check since a suffix-truncated name can
+ * collide across instances.
+ */
+function legacyHermesVmName(name: string, instanceId: string): string {
+  return `hermes-${name}-${instanceId.slice(0, 8)}`
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
-  return safe || `hermes-${randomBytes(4).toString("hex")}`;
 }
 
 function dashedIpv4(ipv4: string): string {
@@ -1016,13 +1076,20 @@ export async function discoverProxmoxInfrastructureForInstance(
     publicIp,
     dnsDomain: envValue(env, "PROXMOX_GATEWAY_DOMAIN"),
   });
-  const vmName = sanitizeVmName(
-    `hermes-${params.instanceName}-${params.instanceId.slice(0, 8)}`
-  );
+  const vmName = hermesVmName(params.instanceName, params.instanceId);
+  const legacyVmName = legacyHermesVmName(params.instanceName, params.instanceId);
   const runner = deps.runHostScript ?? ((hostScript: string) => runProxmoxHostScript(hostScript, env));
 
   try {
-    const result = await runner(buildProxmoxInfrastructureDiscoveryScript({ vmName }));
+    const result = await runner(buildProxmoxInfrastructureDiscoveryScript({
+      vmName,
+      // Only probe the legacy spelling when it differs — a short name produces
+      // the same VM name under both provisioners. The script itself gates a
+      // legacy hit on the instance-ownership check before reporting it.
+      ...(legacyVmName !== vmName
+        ? { legacyVmName, expectedInstanceId: params.instanceId }
+        : {}),
+    }));
     if (!result.ok) return null;
 
     const discovered = parseProxmoxInfrastructureDiscoveryOutput(result.stdout);
@@ -1702,6 +1769,10 @@ async function runProxmoxHostInvocation(
       let settled = false;
       // When the SSH session became ready, from the start of the connect.
       let sshReadyMs: number | null = null;
+      // How far the attempt got when it ended — the same contract as
+      // SshResult.stage, stamped onto every result so a bare timeout is
+      // honest about whether the script may have been dispatched.
+      let stage: NonNullable<HostScriptResult["stage"]> = "connect";
       // What the server presented, recorded before the verifier refuses it.
       let presentedFingerprint: string | null = null;
       const stdoutChunks: Buffer[] = [];
@@ -1717,6 +1788,7 @@ async function runProxmoxHostInvocation(
         ok: false,
         ...capturedOutput(),
         error: `Proxmox SSH operation timed out after ${timeoutMs}ms`,
+        stage,
       });
 
       const finish = (result: HostScriptResult) => {
@@ -1733,7 +1805,8 @@ async function runProxmoxHostInvocation(
         } catch {
           // ignore
         }
-        const bounded = result.ok && performance.now() >= dispatchDeadline ? timeoutResult() : result;
+        const staged = result.stage === undefined ? { ...result, stage } : result;
+        const bounded = staged.ok && performance.now() >= dispatchDeadline ? timeoutResult() : staged;
         const timed = reportTimings && sshReadyMs !== null ? { ...bounded, sshReadyMs } : bounded;
         resolve(sudoTransport ? withoutSudoSentinel(timed) : timed);
       };
@@ -1806,6 +1879,9 @@ async function runProxmoxHostInvocation(
       conn.on("ready", () => {
         if (!active()) return;
         sshReadyMs = Date.now() - t0;
+        // Authenticated: a dead result can no longer prove the script never
+        // reached the host.
+        stage = "ready";
         debugLog("ssh.ready");
         if (!active()) return;
         conn.exec(command, (err, stream) => {
@@ -1825,6 +1901,9 @@ async function runProxmoxHostInvocation(
             });
             return;
           }
+          // The channel opened: the script is dispatched next — it may have
+          // run even if nothing below ever reports back.
+          stage = "command";
           debugLog("ssh.exec.ready");
           stream.on("close", (code: number) => {
             if (!active()) return;
@@ -2383,7 +2462,7 @@ export async function provisionProxmoxInstance(params: {
     : { reservedVmids: [] as number[], vmidLedger: null };
   const script = buildProxmoxProvisionScript({
     instanceId: params.instanceId,
-    vmName: sanitizeVmName(`hermes-${params.name}-${params.instanceId.slice(0, 8)}`),
+    vmName: hermesVmName(params.name, params.instanceId),
     templateId,
     vmidStart,
     vmidEnd,
@@ -2847,6 +2926,8 @@ echo "[resize] container cgroup reapply: $updated container(s) set to \${MEM_MB}
  * Used by the tier-change service to apply a Stripe upgrade or downgrade
  * to a running VM with no chat interruption.
  */
+export const PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER = "HIVRA_RESIZE_VM_CONFIG_APPLIED";
+
 export async function resizeProxmoxVm(
   params: {
     vmid: number;
@@ -2972,6 +3053,7 @@ CUR_CORES=$(qm config "$VMID" 2>/dev/null | sed -n 's/^cores: *//p' | head -1)
 # nproc matches the tier — REQUIRED so docker's deploy.resources.limits.cpus
 # (= cpuLimit) never exceeds available CPUs on the VM.
 qm set "$VMID" --cpulimit "$CPU_LIMIT" --cores "$CORES" --memory "$MEMORY_MB" --balloon "$BALLOON_FLOOR_MB"${cpuUnitsArg}
+echo '${PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER}'
 
 # Reapply the container ceiling BEFORE any reboot, while the guest is known-up.
 # docker update persists into hostconfig.json, so the new memory limit survives

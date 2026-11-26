@@ -122,7 +122,7 @@ import {
   type AuditConfig,
 } from './first-run-audit/config';
 import { probeAgentChatOverWs } from './first-run-audit/agent-chat';
-import { createAuditUser, deleteAuditUser, mintSignInTicket } from './first-run-audit/clerk-admin';
+import { deleteAuditUser } from './first-run-audit/clerk-admin';
 import {
   destroyAllInstances,
   getInstance,
@@ -138,7 +138,7 @@ import { IframeLoadWatcher } from './first-run-audit/iframe-watch';
 import { PostHogCapture } from './first-run-audit/posthog-capture';
 import { collectOpsEvents, preclearAbuseGate, removeRiskPreclear } from './first-run-audit/probes';
 import { reapAuditAccounts } from './first-run-audit/reaper';
-import { establishAuditSession } from './first-run-audit/session';
+import { signUpAuditUser } from './first-run-audit/signup';
 import {
   AUDIT_STAGES,
   RunRecorder,
@@ -231,22 +231,11 @@ test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real out
     console.log(`[first-run-audit] run=${runId} target=${cfg.baseUrl} agent=${agentName}`);
 
     try {
-      // ── 1. Signup ────────────────────────────────────────────────────────
-      const user = await createAuditUser(cfg.clerkSecretKey, email);
-      clerkUserId = user.id;
-      recorder.pass('clerk_user_created', user.id);
-
-      if (cfg.preclearRisk && cfg.supabaseUrl && cfg.supabaseServiceRoleKey) {
-        await preclearAbuseGate(cfg.supabaseUrl, cfg.supabaseServiceRoleKey, user.id);
-        // eslint-disable-next-line no-console
-        console.log('[first-run-audit] abuse gate pre-cleared (datacenter-egress runner)');
-      }
-
-      // ── 2. Land authed, exactly as a real signup does ────────────────────
-      const ticket = await mintSignInTicket(cfg.clerkSecretKey, user.id);
-      context = await establishAuditSession(browser, {
+      // ── 1. Signup through the restricted-mode public form ────────────────
+      const signup = await signUpAuditUser(browser, {
         baseUrl: cfg.baseUrl,
-        ticket,
+        clerkSecretKey: cfg.clerkSecretKey,
+        email,
         onContext: (ctx) => {
           posthog.attach(ctx);
           iframes.attach(ctx);
@@ -259,6 +248,15 @@ test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real out
           });
         },
       });
+      context = signup.context;
+      clerkUserId = signup.userId;
+      recorder.pass('clerk_user_created', signup.userId);
+
+      if (cfg.preclearRisk && cfg.supabaseUrl && cfg.supabaseServiceRoleKey) {
+        await preclearAbuseGate(cfg.supabaseUrl, cfg.supabaseServiceRoleKey, signup.userId);
+        // eslint-disable-next-line no-console
+        console.log('[first-run-audit] abuse gate pre-cleared (datacenter-egress runner)');
+      }
       recorder.pass('session_established');
 
       const page = await context.newPage();

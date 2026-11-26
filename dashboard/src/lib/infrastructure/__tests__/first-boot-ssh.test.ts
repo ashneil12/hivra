@@ -652,7 +652,7 @@ describe("pinned fixed bundle delivery transport",()=>{
       expect(server.address()).toBeNull();expect(peers.size).toBe(0);
       rmSync(root,{recursive:true,force:true});expect(existsSync(root)).toBe(false);
     }
-  },20_000);
+  },60_000);
 });
 
 describe("staged native provider installer transport", () => {

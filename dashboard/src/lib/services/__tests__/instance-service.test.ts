@@ -13,6 +13,7 @@ import {
   resolveInstanceResourceTier,
   selectAvailableProxmoxProvisionTarget,
 } from "../instance-service";
+import * as entitlement from "@/lib/billing/instance-entitlement";
 import { clerkClient } from "@clerk/nextjs/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { posthogClient } from "@/lib/posthog";
@@ -42,12 +43,32 @@ jest.mock("@clerk/nextjs/server", () => ({
   clerkClient: jest.fn(),
 }));
 
-jest.mock("@/lib/supabase", () => ({
-  supabaseAdmin: {
-    from: jest.fn(),
-    storage: { from: jest.fn() },
-  },
-}));
+jest.mock("@/lib/supabase", () => {
+  let insertCounter = 0;
+  const supabaseAdmin: Record<string, unknown> = { from: jest.fn() };
+  // The production write is the durable RPC, but these older table fixtures
+  // encode their pre/post-provision reads by hermes_instances lookup ordinal.
+  // Drive the RPC payload through the fixture's insert builder so that ordinal
+  // sequence remains explicit while the assertions are migrated to RPC shape.
+  supabaseAdmin.rpc = jest.fn(async (name: string, args: Record<string, unknown>) => {
+    if (name === "insert_hermes_instance") {
+      insertCounter += 1;
+      const row = (args?.p_row ?? {}) as Record<string, unknown>;
+      const table = (supabaseAdmin.from as jest.Mock)("hermes_instances") as Record<string, jest.Mock> | undefined;
+      if (table?.insert) {
+        const inserted = table.insert(row);
+        const selected = inserted?.select ? inserted.select() : inserted;
+        const single = selected?.single ? await selected.single() : null;
+        if (single) return single;
+      }
+      return { data: { id: row.id ?? `inst_inserted_${insertCounter}`, ...row }, error: null };
+    }
+    if (name === "move_hermes_instance_placement") return { data: true, error: null };
+    return { data: null, error: null };
+  });
+  supabaseAdmin.storage = { from: jest.fn() };
+  return { supabaseAdmin };
+});
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
@@ -208,9 +229,13 @@ jest.mock("@/lib/venice/managed-endpoints", () => ({
   ),
 }));
 
-jest.mock("@/lib/instance-record", () => ({
-  buildInstanceInsertPayload: jest.fn((payload: Record<string, unknown>) => payload),
-}));
+jest.mock("@/lib/instance-record", () => {
+  const actual = jest.requireActual<typeof import("@/lib/instance-record")>("@/lib/instance-record");
+  return {
+    ...actual,
+    buildInstanceInsertPayload: jest.fn(actual.buildInstanceInsertPayload),
+  };
+});
 
 jest.mock("@/lib/instance-settings", () => ({
   buildStoredInstanceConfig: jest.fn(() => ({})),
@@ -364,6 +389,31 @@ function emptyHivraAgentsQuery() {
     Promise.resolve({ data: [], error: null }).then(resolve);
   return query;
 }
+
+function emptyHolderAdmissionsQuery() {
+  const query: Record<string, unknown> = {
+    select: jest.fn(() => query),
+    in: jest.fn(() => query),
+    eq: jest.fn(() => query),
+    maybeSingle: jest.fn(async () => ({ data: null, error: null })),
+    then: (resolve: (value: { data: unknown[]; error: null }) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve({ data: [], error: null }).then(resolve, reject),
+  };
+  return query;
+}
+
+function holderAdmissionsRowsQuery(rows: Array<Record<string, unknown>>, preferenceRow: Record<string, unknown> | null = rows[0] ?? null) {
+  const query: Record<string, unknown> = {
+    select: jest.fn(() => query),
+    in: jest.fn(() => query),
+    eq: jest.fn(() => query),
+    maybeSingle: jest.fn(async () => ({ data: preferenceRow, error: null })),
+    then: (resolve: (value: { data: unknown[]; error: null }) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve({ data: rows, error: null }).then(resolve, reject),
+  };
+  return query;
+}
+
 
 // hivra_agents allocation query that resolves to `rows` however the chain
 // filters it (the mock does not apply the filters; assert them instead).
@@ -1014,6 +1064,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         return freeGuardQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -1299,6 +1350,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 5) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -1399,6 +1451,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 3) return insertQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -1508,6 +1561,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -1641,6 +1695,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -1769,6 +1824,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -1875,6 +1931,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -1975,6 +2032,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -2103,6 +2161,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -2244,6 +2303,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -2395,6 +2455,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -2517,6 +2578,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return rollbackQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -2610,6 +2672,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return rollbackQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -2722,6 +2785,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return deleteQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -2864,6 +2928,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return deleteQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -2994,6 +3059,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return deleteQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -3116,6 +3182,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return deleteQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -3223,6 +3290,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
           if (hermesInstancesCall === 4) return deleteQuery;
         }
         if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+        if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       });
 
@@ -3328,6 +3396,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return deleteQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -3435,13 +3504,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
     // Allocation query: fixturenodea has zero allocated, fixturenodea already runs a
     // big agent (8 vCPU / 49 GB). Both hosts can still fit a 4 GB
     // request, but fixturenodea has more free RAM, so worst-fit picks fixturenodea.
-    let allocInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocInCalls += 1;
-      if (allocInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({
         data: [
           {
@@ -3509,6 +3576,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 5) return updateQuery;
       }
       if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -3605,13 +3673,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     };
 
-    let allocationInCalls = 0;
     const legacyAllocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    legacyAllocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return legacyAllocationQuery;
+    legacyAllocationQuery.in = jest.fn().mockReturnThis();
+    legacyAllocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -3630,6 +3696,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
         if (tableName === "hermes_instances") return legacyAllocationQuery;
         if (tableName === "hivra_agents") return hivraAllocationQuery;
+        if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;
@@ -3651,7 +3718,209 @@ describe("InstanceService.createInstance free-tier guard", () => {
         env: expect.objectContaining({ PROXMOX_NODE: "fixturenode2" }),
       })
     );
-    expect(hivraAllocationQuery.select).toHaveBeenCalledWith("proxmox_host, cpu, ram, status, vmid, sleep_state");
+    expect(hivraAllocationQuery.select).toHaveBeenCalledWith("proxmox_host, user_id, cpu, ram, status, vmid, sleep_state, seat_funding");
+  });
+
+  it("charges admitted holder reservation remainders against their reserved host", async () => {
+    delete process.env.HERMES_PROXMOX_TARGETS;
+    delete process.env.HERMES_PROXMOX_TARGET;
+    process.env.HERMES_PROXMOX_MAX_TENANT_INSTANCES = "0";
+
+    const host = (id: string) => ({
+      id,
+      status: "active",
+      env_prefix: null,
+      total_cpu: 12,
+      total_ram_mb: 65536,
+      reserved_cpu: 2,
+      reserved_ram_mb: 4096,
+      wake_headroom_ram_mb: 8192,
+      max_tenant_instances: null,
+      thinpool_size_gb: null,
+      thinpool_overcommit_ratio: null,
+    });
+    const proxmoxHostsQuery = {
+      select: jest.fn().mockResolvedValue({ data: [host("fixturenode1"), host("fixturenode2")], error: null }),
+    };
+    const legacyAllocationQuery = {
+      select: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
+      or: jest.fn().mockImplementationOnce(async () => ({ data: [], error: null })),
+    };
+    const hivraAllocationQuery = hivraAllocationRowsQuery([
+      { proxmox_host: "fixturenode1", user_id: "other", cpu: 1, ram: 10, status: "running", vmid: 1101 },
+      { proxmox_host: "fixturenode2", user_id: "other", cpu: 1, ram: 8, status: "running", vmid: 1102 },
+    ]);
+    // fixturenode2 has 2GB more free RAM before reservations, so it would win
+    // ordinarily. The admitted holder's unlaunched Pro remainder (2 vCPU / 4GB)
+    // is charged there and flips placement back to fixturenode1.
+    const admissionsQuery = holderAdmissionsRowsQuery([
+      { user_id: "holder", assigned_host_id: "fixturenode2", reserved_cpu: 2, reserved_ram_mb: 4096 },
+    ], null);
+    const fakeSupabase = {
+      from: jest.fn((tableName: string) => {
+        if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
+        if (tableName === "hermes_instances") return legacyAllocationQuery;
+        if (tableName === "hivra_agents") return hivraAllocationQuery;
+        if (tableName === "holder_admissions") return admissionsQuery;
+        throw new Error(`Unexpected table lookup: ${tableName}`);
+      }),
+    } as unknown as typeof supabaseAdmin;
+
+    const selection = await selectAvailableProxmoxProvisionTarget({
+      supabase: fakeSupabase,
+      env: process.env,
+      hostConfig: null,
+      userId: "nonholder",
+      neededCpu: 0.5,
+      neededRamMb: 1024,
+      neededDiskGb: 30,
+    });
+
+    expect(selection).toEqual(expect.objectContaining({ ok: true, targetId: "fixturenode1" }));
+  });
+
+  it.each([
+    ["hivra", "hibernated", "1", "fixturenode2"],
+    ["classic", "hibernated", "1", "fixturenode2"],
+    ["classic", "hibernated", "0", "fixturenode1"],
+    ["classic", "napping", "1", "fixturenode1"],
+    ["classic", "retry", "1", "fixturenode1"],
+  ])("ranks %s holder in %s with compute reuse %s on %s", async (lane, state, reuse, expected) => {
+    delete process.env.HERMES_PROXMOX_TARGETS;
+    delete process.env.HERMES_PROXMOX_TARGET;
+    process.env.HERMES_PROXMOX_MAX_TENANT_INSTANCES = "0";
+
+    const host = (id: string) => ({
+      id,
+      status: "active",
+      env_prefix: null,
+      total_cpu: 12,
+      total_ram_mb: 65536,
+      reserved_cpu: 2,
+      reserved_ram_mb: 4096,
+      wake_headroom_ram_mb: 8192,
+      max_tenant_instances: null,
+      thinpool_size_gb: null,
+      thinpool_overcommit_ratio: null,
+    });
+    const proxmoxHostsQuery = {
+      select: jest.fn().mockResolvedValue({ data: [host("fixturenode1"), host("fixturenode2")], error: null }),
+    };
+    const legacyAllocationQuery = {
+      select: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
+      or: jest.fn().mockResolvedValue({ data: lane === "classic" ? [{
+        proxmox_node: "fixturenode2", user_id: "holder", cpu_limit: 3, ram_limit: 6144, lifecycle_state: "paused",
+        seat_funding: "holder", paused_reason: "holder_idle", lifecycle_substate: "holder_" + state,
+      }] : [], error: null }),
+    };
+    const hivraAllocationQuery = hivraAllocationRowsQuery([
+      { proxmox_host: "fixturenode1", user_id: "other", cpu: 1, ram: 10, status: "running", vmid: 1101 },
+      { proxmox_host: "fixturenode2", user_id: "other", cpu: 1, ram: 7, status: "running", vmid: 1102 },
+      // Deep-sleep placement may reuse this seat's CPU/RAM because the VM is
+      // saved to disk. It is still a launched provisioning/running holder seat,
+      // so 3 vCPU / 6GB of the 4/8GB admission is already consumed.
+      ...(lane === "hivra" ? [{ proxmox_host: "fixturenode2", user_id: "holder", cpu: 3, ram: 6, status: "running", vmid: 1103, sleep_state: state, seat_funding: "holder" }] : []),
+    ]);
+    const admissionsQuery = holderAdmissionsRowsQuery([
+      { user_id: "holder", assigned_host_id: "fixturenode2", reserved_cpu: 4, reserved_ram_mb: 8192 },
+    ], null);
+    const fakeSupabase = {
+      from: jest.fn((tableName: string) => {
+        if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
+        if (tableName === "hermes_instances") return legacyAllocationQuery;
+        if (tableName === "hivra_agents") return hivraAllocationQuery;
+        if (tableName === "holder_admissions") return admissionsQuery;
+        throw new Error(`Unexpected table lookup: ${tableName}`);
+      }),
+    } as unknown as typeof supabaseAdmin;
+
+    const selection = await selectAvailableProxmoxProvisionTarget({
+      supabase: fakeSupabase,
+      env: { ...process.env, HIVRA_PLACEMENT_SKIP_DEEP_SLEEP: reuse },
+      hostConfig: null,
+      userId: "nonholder",
+      neededCpu: 0.5,
+      neededRamMb: 1024,
+      neededDiskGb: 30,
+    });
+
+    expect(selection).toEqual(expect.objectContaining({ ok: true, targetId: expected }));
+  });
+
+  it.each([
+    ["holder", "holder", null, "on", "fixturenode2"],
+    ["holder", "paid", null, "on", "fixturenode1"],
+    ["holder", "paid", "fixturenode2", "on", false],
+    ["holder", "holder", "fixturenode2", "off", false],
+    ["other", "holder", null, "canary", "fixturenode1"],
+  ] as const)("checks %s / %s with pin %s and sleep mode %s when only reserved capacity remains", async (userId, seatFunding, forceTargetId, sleepMode, expectedHost) => {
+    delete process.env.HERMES_PROXMOX_TARGETS;
+    delete process.env.HERMES_PROXMOX_TARGET;
+    process.env.HERMES_PROXMOX_MAX_TENANT_INSTANCES = "0";
+
+    const host = (id: string) => ({
+      id,
+      status: "active",
+      sleep_mode: sleepMode,
+      env_prefix: null,
+      total_cpu: 12,
+      total_ram_mb: id === "fixturenode2" ? 16384 : 65536,
+      reserved_cpu: 2,
+      reserved_ram_mb: 4096,
+      wake_headroom_ram_mb: 8192,
+      max_tenant_instances: null,
+      thinpool_size_gb: 80,
+      thinpool_overcommit_ratio: null,
+    });
+    const proxmoxHostsQuery = {
+      select: jest.fn().mockResolvedValue({ data: [host("fixturenode1"), host("fixturenode2")], error: null }),
+    };
+    const legacyAllocationQuery = {
+      select: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
+      or: jest.fn().mockImplementationOnce(async () => ({ data: [], error: null })),
+    };
+    // After host reserves there are exactly 4 GiB left on node2, all reserved.
+    // Only the matching holder launch can spend that capacity.
+    const admissionsQuery = holderAdmissionsRowsQuery([
+      { user_id: "holder", assigned_host_id: "fixturenode2", reserved_cpu: 2, reserved_ram_mb: 4096 },
+    ], userId === "holder" ? { assigned_host_id: "fixturenode2" } : null);
+    const diskAvailability = jest.fn(async (_name: string, args: { p_ignore_user_id: string | null }) => ({
+      data: [
+        { host_id: "fixturenode1", free_disk_gb: 80 },
+        { host_id: "fixturenode2", free_disk_gb: args.p_ignore_user_id === "holder" ? 40 : 0 },
+      ], error: null,
+    }));
+    const fakeSupabase = {
+      rpc: diskAvailability,
+      from: jest.fn((tableName: string) => {
+        if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
+        if (tableName === "hermes_instances") return legacyAllocationQuery;
+        if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
+        if (tableName === "holder_admissions") return admissionsQuery;
+        throw new Error(`Unexpected table lookup: ${tableName}`);
+      }),
+    } as unknown as typeof supabaseAdmin;
+
+    const selection = await selectAvailableProxmoxProvisionTarget({
+      supabase: fakeSupabase,
+      env: process.env,
+      hostConfig: null,
+      userId,
+      neededCpu: 2,
+      neededRamMb: 4096,
+      neededDiskGb: 30,
+      seatFunding,
+      forceTargetId,
+      rankManagedTarget: true,
+    });
+
+    expect(diskAvailability).toHaveBeenCalledWith("holder_admission_host_availability", expect.objectContaining({
+      p_ignore_user_id: seatFunding === "holder" ? userId : null,
+    }));
+    expect(selection.ok && selection.targetId).toBe(expectedHost);
   });
 
   it("counts stopped Hivra computers' disk but not their CPU/RAM when ranking hosts", async () => {
@@ -3702,13 +3971,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     };
 
-    let allocationInCalls = 0;
     const legacyAllocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    legacyAllocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return legacyAllocationQuery;
+    legacyAllocationQuery.in = jest.fn().mockReturnThis();
+    legacyAllocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -3733,6 +4000,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
         if (tableName === "hermes_instances") return legacyAllocationQuery;
         if (tableName === "hivra_agents") return hivraAllocationQuery;
+        if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;
@@ -3784,11 +4052,9 @@ describe("InstanceService.createInstance free-tier guard", () => {
         error: null,
       }),
     };
-    let allocationInCalls = 0;
     const legacyAllocationQuery: Record<string, unknown> = { select: jest.fn().mockReturnThis() };
-    legacyAllocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return legacyAllocationQuery;
+    legacyAllocationQuery.in = jest.fn().mockReturnThis();
+    legacyAllocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
     const hivraAllocationQuery = hivraAllocationRowsQuery(
@@ -3802,6 +4068,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
         if (tableName === "hermes_instances") return legacyAllocationQuery;
         if (tableName === "hivra_agents") return hivraAllocationQuery;
+        if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;
@@ -3857,13 +4124,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
         error: null,
       }),
     };
-    let allocationInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -3872,6 +4137,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
         if (tableName === "hermes_instances") return allocationQuery;
         if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
+        if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;
@@ -3942,13 +4208,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     };
 
-    let allocationInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -3956,6 +4220,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
       from: jest.fn((tableName: string) => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
         if (tableName === "hermes_instances") return allocationQuery;
+        if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;
@@ -4037,6 +4302,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
     const fakeSupabase = {
       from: jest.fn((tableName: string) => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
+        if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;
@@ -4099,10 +4365,8 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     };
     const allocationQuery: Record<string, unknown> = { select: jest.fn().mockReturnThis() };
-    let allocationInCalls = 0;
-    allocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls % 2 === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -4111,6 +4375,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
         if (tableName === "hermes_instances") return allocationQuery;
         if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
+        if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;
@@ -4156,10 +4421,8 @@ describe("InstanceService.createInstance free-tier guard", () => {
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    let allocationInCalls = 0;
-    allocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls % 2 === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
     (getProxmoxVmidAvailability as jest.Mock).mockResolvedValue({
@@ -4184,6 +4447,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (tableName === "proxmox_hosts") return proxmoxHostsQuery;
         if (tableName === "hermes_instances") return allocationQuery;
         if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
+        if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;
@@ -4441,6 +4705,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesCall === 3) return insertQuery;
         if (hermesCall === 4) return updateQuery;
       }
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -4553,6 +4818,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesCall === 1) return agentCountQuery;
         if (hermesCall === 2) return resourceUsageQuery;
       }
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -4685,6 +4951,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesCall === 1) return agentCountQuery;
         if (hermesCall === 2) return resourceUsageQuery;
       }
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -4742,6 +5009,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesCall === 1) return agentCountQuery;
         if (hermesCall === 2) return resourceUsageQuery;
       }
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -4859,6 +5127,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesCall === 3) return insertQuery;
         if (hermesCall === 4) return updateQuery;
       }
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -5002,6 +5271,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesCall === 3) return insertQuery;
         if (hermesCall === 4) return updateQuery;
       }
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -5064,11 +5334,9 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     });
 
-    let allocationInCalls = 0;
     const allocationQuery: Record<string, unknown> = { select: jest.fn().mockReturnThis() };
-    allocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -5095,6 +5363,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesCall === 2) return resourceUsageQuery;
         if (hermesCall === 3) return allocationQuery;
       }
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -5139,6 +5408,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesCall === 1) return agentCountQuery;
         if (hermesCall === 2) return resourceUsageQuery;
       }
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -5219,13 +5489,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     };
 
-    let allocationInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocationInCalls += 1;
-      if (allocationInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: [], error: null });
     });
 
@@ -5256,6 +5524,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
           if (hermesInstancesCall === 2) return capacityQuery;
         }
         if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
+        if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
         throw new Error(`Unexpected table lookup: ${tableName}`);
       }),
     } as unknown as typeof supabaseAdmin;
@@ -5368,13 +5637,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
     // Both hosts over-allocated: cpu_limit far exceeds total_cpu, so
     // rankProxmoxHostsForPlacement filters both out and the candidates
     // list is empty.
-    let allocInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocInCalls += 1;
-      if (allocInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({
         data: [
           {
@@ -5405,6 +5672,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 3) return allocationQuery;
       }
       if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -5489,13 +5757,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
     };
 
-    let allocInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocInCalls += 1;
-      if (allocInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({
         data: Array.from({ length: 49 }, (_, index) => ({
           proxmox_node: "fixturenode1",
@@ -5557,6 +5823,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 5) return updateQuery;
       }
       if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -5669,13 +5936,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }))
     );
 
-    let allocInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocInCalls += 1;
-      if (allocInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: allocationRows, error: null });
     });
 
@@ -5726,6 +5991,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 5) return updateQuery;
       }
       if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -5867,13 +6133,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       })),
     ];
 
-    let allocInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocInCalls += 1;
-      if (allocInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: allocationRows, error: null });
     });
 
@@ -5924,6 +6188,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 5) return updateQuery;
       }
       if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -6048,13 +6313,11 @@ describe("InstanceService.createInstance free-tier guard", () => {
       })),
     ];
 
-    let allocInCalls = 0;
     const allocationQuery: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
     };
-    allocationQuery.in = jest.fn(() => {
-      allocInCalls += 1;
-      if (allocInCalls === 1) return allocationQuery;
+    allocationQuery.in = jest.fn().mockReturnThis();
+    allocationQuery.or = jest.fn(() => {
       return Promise.resolve({ data: allocationRows, error: null });
     });
 
@@ -6105,6 +6368,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 5) return updateQuery;
       }
       if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -6210,6 +6474,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -6235,6 +6500,24 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }),
       expect.any(Object)
     );
+  });
+
+  it("refuses a new holder-funded Hermes seat before placement or insert", async () => {
+    const resolve = jest.spyOn(entitlement, "resolveEffectiveSubscription").mockResolvedValueOnce({
+      source: "token_holding", plan: "operator", status: "active", instance_limit: 2,
+      total_cpu_budget: 2, total_ram_budget: 4096, canChangePlanInPlace: false,
+    });
+    try {
+      const result = await InstanceService.createInstance("user_holder", CreateInstanceSchema.parse({
+        name: "Holder computer", provider: "openrouter",
+      }));
+      expect(result).toMatchObject({ success: false, status: 403, failureType: "holder_sleep_unsupported" });
+      expect(supabaseAdmin!.from).not.toHaveBeenCalled();
+      expect(buildInstanceInsertPayload).not.toHaveBeenCalled();
+      expect(provisionProxmoxInstance).not.toHaveBeenCalled();
+    } finally {
+      resolve.mockRestore();
+    }
   });
 
   it("refuses a Hivra-hosted computer for a Free account before any placement or record", async () => {
@@ -6364,6 +6647,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
         if (hermesInstancesCall === 4) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -6472,6 +6756,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }
       if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -6488,6 +6773,8 @@ describe("InstanceService.createInstance free-tier guard", () => {
 
     expect(result).toEqual(expect.objectContaining({ success: true }));
     expect(capacityEqCalls).toContainEqual({ column: "proxmox_node", value: "fixturelegacy" });
+    expect(buildInstanceInsertPayload).toHaveBeenCalledWith(expect.objectContaining({ seatFunding: "paid" }));
+    expect(insertQuery.insert).toHaveBeenCalledWith(expect.objectContaining({ seat_funding: "paid" }));
     expect(provisionProxmoxInstance).toHaveBeenCalled();
   });
 
@@ -6548,6 +6835,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }
       if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -6636,6 +6924,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }
       if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -6731,6 +7020,7 @@ describe("InstanceService.createInstance free-tier guard", () => {
       }
       if (tableName === "hivra_agents") return emptyHivraAgentsQuery();
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 
@@ -6884,6 +7174,7 @@ describe("InstanceService.createInstance host capacity", () => {
         return builder;
       }
       if (table === "proxmox_hosts") return createEmptyProxmoxHostsRegistry()();
+      if (table === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${table}`);
     });
 
@@ -7013,6 +7304,7 @@ describe("InstanceService.createInstance box_created activation event", () => {
         if (hermesInstancesCall === 4) return updateQuery;
       }
       if (tableName === "proxmox_hosts") return proxmoxHostsRegistry();
+      if (tableName === "holder_admissions") return emptyHolderAdmissionsQuery();
       throw new Error(`Unexpected table lookup: ${tableName}`);
     });
 

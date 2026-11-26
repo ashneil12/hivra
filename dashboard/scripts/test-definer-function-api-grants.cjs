@@ -22,7 +22,7 @@ const TRIGGER_FUNCTIONS = [
 ];
 // RPCs whose only callers use the service-role admin client.
 const SERVICE_ROLE_RPCS = [
-  "public.record_cron_heartbeat(text)",
+  "public.record_cron_heartbeat(text, boolean, text)",
   "public.refresh_credit_account_cached_balance(uuid)",
 ];
 const FUNCTION_NAMES = [...TRIGGER_FUNCTIONS, ...SERVICE_ROLE_RPCS].map((signature) =>
@@ -136,6 +136,37 @@ async function main() {
     assert.deepEqual(
       await one("select cron_name, run_count::int, ok_count::int from public.ops_cron_heartbeats"),
       { cron_name: "daily-vm-backups", run_count: 2, ok_count: 2 }
+    );
+    // The outcome-aware signature: a run that completed with per-item
+    // failures counts as a run but not an ok, and the next ok run resets it.
+    await asRole(
+      "service_role",
+      "select public.record_cron_heartbeat('daily-vm-backups', false, '2 intents failed')"
+    );
+    assert.deepEqual(
+      await one(
+        "select cron_name, run_count::int, ok_count::int, consecutive_failures::int, last_detail from public.ops_cron_heartbeats"
+      ),
+      {
+        cron_name: "daily-vm-backups",
+        run_count: 3,
+        ok_count: 2,
+        consecutive_failures: 1,
+        last_detail: "2 intents failed",
+      }
+    );
+    await asRole("service_role", "select public.record_cron_heartbeat('daily-vm-backups')");
+    assert.deepEqual(
+      await one(
+        "select cron_name, run_count::int, ok_count::int, consecutive_failures::int, last_detail from public.ops_cron_heartbeats"
+      ),
+      {
+        cron_name: "daily-vm-backups",
+        run_count: 4,
+        ok_count: 3,
+        consecutive_failures: 0,
+        last_detail: null,
+      }
     );
     const [refreshed] = await asRole(
       "service_role",

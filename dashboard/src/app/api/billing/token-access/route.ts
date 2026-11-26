@@ -1,6 +1,6 @@
 /**
  * GET  /api/billing/token-access               → the user's platform-token access
- * POST /api/billing/token-access  { action: "convert" }
+ * POST /api/billing/token-access  { action: "convert" } or { action: "carry_over_holder", tiers }
  *      → a grandfathered $HermesOS user switches to $HIVRA.
  *
  * Before $HIVRA is active every account is $HermesOS-only and convert is
@@ -22,6 +22,7 @@ import {
   TokenConversionError,
   convertGrandfatheredUserToHivra,
   resolveUserTokenAccess,
+  readHolderTierCarryover,
   type UserTokenAccess,
 } from "@/lib/billing/token-access";
 import { TOKEN_CONVERSION_GRACE_HOURS } from "@/lib/billing/token-registry";
@@ -54,7 +55,9 @@ export async function GET() {
     const { userId } = await auth();
     userIdForLog = userId ?? null;
     if (!userId) return apiError("Unauthorized", 401);
-    return apiSuccess(serializeAccess(await resolveUserTokenAccess(userId)));
+    const access = await resolveUserTokenAccess(userId);
+    const carryover = await readHolderTierCarryover(userId, access);
+    return apiSuccess({ ...serializeAccess(access), holderTierCarryover: carryover });
   } catch (error) {
     return apiError("Failed to load token access.", 500, { failureType: "token_access_load_failed" }, undefined, {
       ...LOG_CONTEXT,
@@ -74,14 +77,14 @@ export async function POST(req: NextRequest) {
     userIdForLog = userId ?? null;
     if (!userId) return apiError("Unauthorized", 401);
 
-    let body: { action?: unknown } = {};
+    let body: { action?: unknown; tiers?: unknown } = {};
     try {
-      body = (await req.json()) as { action?: unknown };
+      body = (await req.json()) ?? {};
     } catch {
       return apiError("Invalid JSON body.", 400);
     }
-    if (body.action !== "convert") {
-      return apiError("Unknown action — expected 'convert'.", 400, { failureType: "token_access_bad_action" });
+    if (body.action !== "convert" && body.action !== "carry_over_holder") {
+      return apiError("Unknown token conversion action.", 400, { failureType: "token_access_bad_action" });
     }
 
     const rateLimited = enforceAuthenticatedRouteRateLimit(req, {
@@ -102,12 +105,15 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const access = await convertGrandfatheredUserToHivra(userId);
+    const access = await convertGrandfatheredUserToHivra(userId, body.action === "carry_over_holder"
+      ? { holderConsent: { tiers: body.tiers } }
+      : {});
+
     return apiSuccess(serializeAccess(access));
   } catch (error) {
     if (error instanceof TokenConversionError) {
-      const status = error.code === "price_unavailable" ? 503 : 409;
-      return apiError(error.message, status, { failureType: `token_conversion_${error.code}` });
+      const status = (error.code === "price_unavailable" || error.code === "wallet_unavailable") ? 503 : 409;
+      return apiError(error.message, status, { failureType: `token_conversion_${error.code}` }, { code: error.code });
     }
     return apiError("Failed to switch to $HIVRA.", 500, { failureType: "token_conversion_failed" }, undefined, {
       ...LOG_CONTEXT,

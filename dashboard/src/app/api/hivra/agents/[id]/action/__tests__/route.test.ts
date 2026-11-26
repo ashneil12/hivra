@@ -299,6 +299,24 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
+  it.each([["sleep", "stop", "stopped"], ["wake", "start", "running"]])(
+    "routes managed gVisor %s through the owner's sandbox lifecycle", async (action, adapterAction, status) => {
+      mockAgent = { ...mockAgent, deployment_mode: "hivra-managed", computer_substrate: "gvisor",
+        type: "linux-terminal", computer_profile: "linux-terminal", vmid: null };
+      mockMutateGvisorComputer.mockResolvedValue({ ...mockAgent, status });
+      const request = new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1/action", {
+        method: "POST",
+        headers: { Host: "hivra.cloud", Origin: "https://hivra.cloud", "Sec-Fetch-Site": "same-origin", "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const response = await POST(request, { params: Promise.resolve({ id: "agent-1" }) });
+
+      expect(response.status).toBe(200);
+      expect(mockMutateGvisorComputer).toHaveBeenCalledWith("user-free", "agent-1", { action: adapterAction });
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects a gVisor resize whose maximum differs from its reservation", async () => {
     mockAgent = { ...mockAgent, computer_substrate: "gvisor", vmid: null, type: "linux-terminal", computer_profile: "linux-terminal" };
     const request = new NextRequest("https://hivra.cloud/api/hivra/agents/agent-1/action", {
@@ -662,6 +680,32 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     );
   });
 
+  it("keeps the resize allocation lock in the host shell and out of both VM starts", async () => {
+    const response = await POST(
+      makeRequest({ action: "resize", cpu: 2, ram: 4 }) as never,
+      { params: Promise.resolve({ id: "agent-1" }) },
+    );
+    expect(response.status).toBe(200);
+
+    const script: string = mockRunProxmoxHostScript.mock.calls[0][0];
+    const starts = [...script.matchAll(/\b(qm start 1090[^;|\n]*)/g)].map((match) => match[1]);
+    expect(starts).toHaveLength(2);
+    for (const start of starts) {
+      const result = spawnSync("bash", ["-ec", `
+exec 8>/dev/null
+qm() {
+  if ( : >&8 ) 2>/dev/null; then
+    echo 'VM start inherited the allocation lock descriptor' >&2
+    return 1
+  fi
+}
+${start}
+: >&8
+`], { encoding: "utf8" });
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+    }
+  });
+
   it("resizes an explicit envelope with the maximum as quota and guarantee as balloon floor", async () => {
     const response = await POST(
       makeRequest({ action: "resize", cpu: 0.5, ram: 1, maximumCpu: 2, maximumRam: 4 }) as never,
@@ -682,6 +726,18 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     expect(mockSupabaseRpc).toHaveBeenCalledWith("continue_hivra_agent_resize_operation", expect.objectContaining({
       p_cpu: 0.5, p_ram: 1, p_cpu_max: 2, p_ram_max: 4,
     }));
+  });
+
+  it("returns a holder reservation refusal before any host resize even when the paid plan gate passes", async () => {
+    mockAgent = { ...mockAgent, seat_funding: "holder" };
+    mockSupabaseRpc.mockImplementation(async (name: string) => name === "claim_hivra_agent_operation"
+      ? { data: null, error: { code: "P0057" } } : { data: true, error: null });
+    const response = await POST(makeRequest({ action: "resize", cpu: 4, ram: 8 }) as never, {
+      params: Promise.resolve({ id: "agent-1" }),
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: expect.stringMatching(/token-holder reservation/) });
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
   });
 
   it("rejects an explicit resize maximum below the reserved allocation before mutation", async () => {
@@ -755,15 +811,17 @@ describe("POST /api/hivra/agents/[id]/action", () => {
     expect(mockSupabaseRpc.mock.calls.some(([rpc]) => rpc === "continue_hivra_agent_resize_operation")).toBe(false);
   });
 
-  it("keeps Linux desktop resize free of agent-container cgroup commands", async () => {
-    mockAgent.type = "linux-desktop";
+  it.each(["linux-desktop", "agent-zero"])("resizes the %s VM using its VM resource envelope", async (type) => {
+    mockAgent.type = type;
     const response = await POST(
       makeRequest({ action: "resize", cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 }) as never,
       { params: Promise.resolve({ id: "agent-1" }) },
     );
 
     expect(response.status).toBe(200);
-    expect(mockRunProxmoxHostScript.mock.calls[0][0]).not.toContain("CGROUP_SCRIPT_B64");
+    const script = mockRunProxmoxHostScript.mock.calls[0][0] as string;
+    expect(script).toContain("qm set 1090 --cores 4 --cpulimit 4 --memory 8192 --balloon 4096");
+    expect(script).not.toContain("CGROUP_SCRIPT_B64");
   });
 
   it.each([

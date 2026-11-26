@@ -1,225 +1,35 @@
 /**
- * Token holding thresholds for Pro and Power tier eligibility.
+ * Holder-tier pricing and threshold types.
  *
- * Three rules from BUILD_PLAN.md (locked spec, 2026-04-29):
+ * Current new-entrant holder pricing is locked to USD value and converted to
+ * token units with a live market price at quote/evaluation time:
  *
- *   1. Thresholds are denominated in TOKEN UNITS (base units, not USD).
- *      A user's qualifying quantity is locked in at the moment they
- *      first cross the threshold; price moves never trigger downgrade
- *      for existing holders.
+ *   - Pro   (2 vCPU / 4 GB):  $299
+ *   - Power (4 vCPU / 8 GB):  $599
  *
- *   2. New entrants pay the CURRENT threshold at the time they deposit.
- *      Existing holders are grandfathered at their original quantity.
+ * There is one active price for new qualifications. The April/May launch
+ * window, per-user founders rate, test overrides and static token-quantity
+ * fallbacks are retired for new entrants: a static token amount is necessarily
+ * stale as soon as the market price moves, so production quote and threshold
+ * paths must use live-thresholds.ts instead.
  *
- *   3. There are TWO threshold tiers per Pro/Power: a launch promo
- *      rate (first 30 days from public launch) and a standard rate
- *      (after the launch window closes). New entrants in the launch
- *      window pay the launch rate; new entrants after the window
- *      pay the standard rate. Existing holders are grandfathered
- *      regardless of which window they qualified in.
- *
- * Calibration values below are computed from the locked USD targets
- * and a snapshot of the $HERMESOS market price at the moment of
- * calibration (see "Calibration notes" comment block below).
- *
- * Quarterly review:
- *   - Read current $HERMESOS price.
- *   - Recalculate token quantities for the same USD targets.
- *   - Update constants below.
- *   - Update calibration-notes comment block with the date + new price
- *     + reasoning.
- *   - 30 days notice via dashboard + email before threshold change
- *     (existing depositors grandfathered for at least 12 months).
+ * Existing qualification rows are not repriced. `qualifying_quantity`,
+ * `threshold_at_qualification`, the historical `PRO_LAUNCH` / `PRO_STANDARD` /
+ * `POWER_LAUNCH` / `POWER_STANDARD` codes, the token the row was earned in,
+ * and the entitlement it grants remain valid. If a holder later loses and
+ * re-qualifies for a tier, that new qualification uses the current price.
  */
 
+import { HOLDER_TIER_TERMS } from "./holder-tier-terms";
 import { HERMESOS_TOKEN } from "./token-registry";
 
-// The static calibration constants below are $HermesOS amounts. Live
-// thresholds (live-thresholds.ts) price every platform token from the same
-// USD targets, so the launch and founders discounts carry over to $HIVRA.
-const HERMESOS_TOKEN_DECIMALS = HERMESOS_TOKEN.decimals;
-
-// ────────────────────────────────────────────────────────────────────
-// Calibration notes
-// ────────────────────────────────────────────────────────────────────
-//
-//   Calibrated on:           2026-04-29
-//   $HERMESOS market price:  $0.00002609 / token
-//                            (source: GeckoTerminal, Hivra/USD pool
-//                             on Uniswap V4 Base, 2026-04-29 evening UK)
-//   Token decimals:          18
-//
-//   USD targets (locked spec, 2026-04-30 final pricing pass — Pro
-//   launch trimmed from $100 → $99, Power launch unchanged at $199):
-//     Pro launch:    $99   →  ~3,794,557 tokens  →  3794557 × 10^18
-//     Pro standard:  $149  →  ~5,710,999 tokens  →  5710999 × 10^18
-//     Power launch:  $199  →  ~7,627,443 tokens  →  7627443 × 10^18
-//     Power standard:$299  → ~11,460,330 tokens  → 11460330 × 10^18
-//
-//   Launch promo window:  2026-04-30 → 2026-05-30 (30 days)
-//
-//   Quarterly review log:
-//     [DATE] - [WHO] - [WHY THE NUMBERS CHANGED]
-//
-// ────────────────────────────────────────────────────────────────────
-// Test/preview overrides
-// ────────────────────────────────────────────────────────────────────
-//
-// In NON-PRODUCTION environments, the threshold values and the launch
-// promo end date can be overridden via env vars so a small test deposit
-// (e.g. $5 worth of $HERMESOS) qualifies a test user without needing
-// $100+ of real tokens. Production ignores all overrides — the locked
-// spec values always apply.
-//
-// Override env vars (whole tokens, not base units):
-//   HERMES_TIER_THRESHOLD_OVERRIDE_PRO_LAUNCH       (e.g. "200000")
-//   HERMES_TIER_THRESHOLD_OVERRIDE_PRO_STANDARD     (e.g. "300000")
-//   HERMES_TIER_THRESHOLD_OVERRIDE_POWER_LAUNCH     (e.g. "500000")
-//   HERMES_TIER_THRESHOLD_OVERRIDE_POWER_STANDARD   (e.g. "750000")
-//   HERMES_LAUNCH_PROMO_END_DATE_OVERRIDE           (ISO 8601 string)
-//
-// Gate (fails closed): overrides are honored only on Vercel preview or
-// development deployments, or on a local run where VERCEL_ENV is unset and
-// NODE_ENV is not "production". Vercel production, and any other production
-// build (for example a self-hosted `next start`), ignores them.
-
-function overridesAllowed(): boolean {
-  if (typeof process === "undefined") return false;
-  // Vercel sets VERCEL_ENV in every deployment ("production" | "preview" |
-  // "development"). Only the two non-production values unlock overrides.
-  const vercelEnv = process.env.VERCEL_ENV;
-  if (vercelEnv) return vercelEnv === "preview" || vercelEnv === "development";
-  // Not on Vercel: only a local development or test run may override.
-  return process.env.NODE_ENV !== "production";
-}
-
-function readWholeTokensOverride(envName: string): bigint | null {
-  if (!overridesAllowed()) return null;
-  const raw = process.env[envName];
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    if (typeof console !== "undefined" && trimmed !== "") {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[tier-thresholds] ignoring invalid ${envName}=${raw} (must be a positive integer of whole tokens)`
-      );
-    }
-    return null;
-  }
-  const tokens = BigInt(trimmed);
-  if (tokens <= 0n) return null;
-  return tokens * 10n ** BigInt(HERMESOS_TOKEN_DECIMALS);
-}
-
-function readDateOverride(envName: string): Date | null {
-  if (!overridesAllowed()) return null;
-  const raw = process.env[envName];
-  if (!raw) return null;
-  const parsed = new Date(raw.trim());
-  if (Number.isNaN(parsed.getTime())) {
-    if (typeof console !== "undefined") {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[tier-thresholds] ignoring invalid ${envName}=${raw} (must be ISO 8601, e.g. 2026-05-30T23:59:59Z)`
-      );
-    }
-    return null;
-  }
-  return parsed;
-}
-
-const PRO_LAUNCH_OVERRIDE = readWholeTokensOverride(
-  "HERMES_TIER_THRESHOLD_OVERRIDE_PRO_LAUNCH"
-);
-const PRO_STANDARD_OVERRIDE = readWholeTokensOverride(
-  "HERMES_TIER_THRESHOLD_OVERRIDE_PRO_STANDARD"
-);
-const POWER_LAUNCH_OVERRIDE = readWholeTokensOverride(
-  "HERMES_TIER_THRESHOLD_OVERRIDE_POWER_LAUNCH"
-);
-const POWER_STANDARD_OVERRIDE = readWholeTokensOverride(
-  "HERMES_TIER_THRESHOLD_OVERRIDE_POWER_STANDARD"
-);
-const LAUNCH_PROMO_END_OVERRIDE = readDateOverride(
-  "HERMES_LAUNCH_PROMO_END_DATE_OVERRIDE"
-);
-
-if (
-  typeof console !== "undefined" &&
-  (PRO_LAUNCH_OVERRIDE ||
-    PRO_STANDARD_OVERRIDE ||
-    POWER_LAUNCH_OVERRIDE ||
-    POWER_STANDARD_OVERRIDE ||
-    LAUNCH_PROMO_END_OVERRIDE)
-) {
-  // eslint-disable-next-line no-console
-  console.warn(
-    "[tier-thresholds] non-production overrides active — DO NOT enable in production. " +
-      `pro_launch=${PRO_LAUNCH_OVERRIDE ?? "default"} ` +
-      `pro_standard=${PRO_STANDARD_OVERRIDE ?? "default"} ` +
-      `power_launch=${POWER_LAUNCH_OVERRIDE ?? "default"} ` +
-      `power_standard=${POWER_STANDARD_OVERRIDE ?? "default"} ` +
-      `launch_promo_end=${LAUNCH_PROMO_END_OVERRIDE?.toISOString() ?? "default"}`
-  );
-}
-
-// ────────────────────────────────────────────────────────────────────
-// Founders-rate allowlist (per-user, production-honored)
-// ────────────────────────────────────────────────────────────────────
-//
-// After the global launch promo window closes, specific users can still
-// be granted the launch ("founders") rate by listing their Clerk user id
-// in HERMES_FOUNDERS_RATE_USER_IDS (comma- or whitespace-separated).
-//
-// Unlike the test/preview overrides above, this IS honored in production —
-// it's a deliberate per-user grant, not a test seam. Listing a user forces
-// the launch epoch for them in every threshold resolver, so the eligibility
-// cron snapshots them against the (cheaper) launch threshold and the
-// deposit-quote flow prices them at the launch USD target. Once a listed
-// user qualifies, their qualifying_quantity is snapshotted on
-// token_tier_qualifications and they stay grandfathered even if later
-// removed from the list.
-//
-// Example: HERMES_FOUNDERS_RATE_USER_IDS="user_2abc...,user_3def..."
-
-function parseFoundersRateUserIds(raw: string | undefined): ReadonlySet<string> {
-  if (!raw) return new Set();
-  return new Set(
-    raw
-      .split(/[\s,]+/)
-      .map((id) => id.trim())
-      .filter((id) => id.length > 0)
-  );
-}
-
-const FOUNDERS_RATE_USER_IDS = parseFoundersRateUserIds(
-  typeof process !== "undefined"
-    ? process.env.HERMES_FOUNDERS_RATE_USER_IDS
-    : undefined
-);
+export type TierKey = "pro" | "power";
+export type ThresholdEpoch = "launch" | "standard";
 
 /**
- * True when the given user has been granted the launch ("founders") rate
- * past the global promo window via HERMES_FOUNDERS_RATE_USER_IDS. Returns
- * false for null/undefined ids and when the allowlist is empty (the
- * default — so this is a no-op until an id is explicitly listed).
- */
-export function isFoundersRateUser(userId: string | null | undefined): boolean {
-  if (!userId) return false;
-  return FOUNDERS_RATE_USER_IDS.has(userId);
-}
-
-// ────────────────────────────────────────────────────────────────────
-// Constants
-// ────────────────────────────────────────────────────────────────────
-
-/**
- * Canonical USD targets per tier × epoch. Live-priced threshold
- * resolution divides these by the live $HERMESOS price to get the
- * token-quantity threshold at evaluation time. The static
- * PRO_THRESHOLD_LAUNCH_TOKEN_UNITS / etc. constants below remain as
- * a last-resort fallback when the price feed is unreachable.
+ * Every code the database may already carry. New rows use only the STANDARD
+ * codes; LAUNCH codes remain in the type so historical rows decode and keep
+ * their original locked quantities.
  */
 export type ThresholdTierCode =
   | "PRO_LAUNCH"
@@ -227,66 +37,44 @@ export type ThresholdTierCode =
   | "POWER_LAUNCH"
   | "POWER_STANDARD";
 
+/** USD value target for each tier code. The LAUNCH values are historical. */
 export const USD_TARGET_CENTS: Record<ThresholdTierCode, number> = {
   PRO_LAUNCH: 9900,
-  PRO_STANDARD: 14900,
+  PRO_STANDARD: HOLDER_TIER_TERMS.pro.usdCents,
   POWER_LAUNCH: 19900,
-  POWER_STANDARD: 29900,
+  POWER_STANDARD: HOLDER_TIER_TERMS.power.usdCents,
 };
 
-/** Pro launch threshold (first 30 days of public launch). */
-export const PRO_THRESHOLD_LAUNCH_TOKEN_UNITS: bigint =
-  PRO_LAUNCH_OVERRIDE ?? 3_794_557n * 10n ** BigInt(HERMESOS_TOKEN_DECIMALS);
+/** The current new-entrant USD target by tier. */
+export const ACTIVE_HOLDER_USD_TARGET_CENTS: Record<TierKey, number> = {
+  pro: HOLDER_TIER_TERMS.pro.usdCents,
+  power: HOLDER_TIER_TERMS.power.usdCents,
+};
 
-/** Pro standard threshold (after the launch promo window closes). */
-export const PRO_THRESHOLD_STANDARD_TOKEN_UNITS: bigint =
-  PRO_STANDARD_OVERRIDE ?? 5_710_999n * 10n ** BigInt(HERMESOS_TOKEN_DECIMALS);
+/** The threshold code written for a new qualification in a tier. */
+export function activeThresholdTierCode(tier: TierKey): Extract<ThresholdTierCode, "PRO_STANDARD" | "POWER_STANDARD"> {
+  return tier === "pro" ? "PRO_STANDARD" : "POWER_STANDARD";
+}
 
-/** Power launch threshold (first 30 days of public launch). */
-export const POWER_THRESHOLD_LAUNCH_TOKEN_UNITS: bigint =
-  POWER_LAUNCH_OVERRIDE ?? 7_627_443n * 10n ** BigInt(HERMESOS_TOKEN_DECIMALS);
-
-/** Power standard threshold (after the launch promo window closes). */
-export const POWER_THRESHOLD_STANDARD_TOKEN_UNITS: bigint =
-  POWER_STANDARD_OVERRIDE ?? 11_460_330n * 10n ** BigInt(HERMESOS_TOKEN_DECIMALS);
-
-/**
- * End of the launch promo window. After this timestamp new entrants
- * pay the standard threshold. Existing holders are unaffected.
- *
- * Stored as ISO string so it survives env / build boundaries cleanly.
- */
-export const LAUNCH_PROMO_END_DATE: Date =
-  LAUNCH_PROMO_END_OVERRIDE ?? new Date("2026-05-30T23:59:59Z");
+/** The current USD target a quote or live threshold must use for a tier. */
+export function activeHolderUsdTargetCents(tier: TierKey): number {
+  return ACTIVE_HOLDER_USD_TARGET_CENTS[tier];
+}
 
 /**
- * Re-qualification limits per BUILD_PLAN.md.
- *
- * Updated 2026-04-30: grace shortened from 48h → 24h to align with the
- * withdraw flow. Rationale: a holder who explicitly clicks Withdraw is
- * declaring intent to exit; 24h is plenty of time for them to re-deposit
- * if they change their mind. Longer grace was a holdover from the
- * pre-withdraw spec where the only way out was to send tokens elsewhere.
+ * Re-qualification limits. A breach starts a short grace; once suspended, a
+ * holder can re-qualify only after cooldown and within the rolling cap.
  */
 export const REQUALIFICATION_GRACE_HOURS = 24;
 export const REQUALIFICATION_COOLDOWN_DAYS = 7;
 export const REQUALIFICATION_CAP_PER_YEAR = 2;
 export const REQUALIFICATION_WINDOW_DAYS = 365;
 
-// ────────────────────────────────────────────────────────────────────
-// Types
-// ────────────────────────────────────────────────────────────────────
-
-export type TierKey = "pro" | "power";
-export type ThresholdEpoch = "launch" | "standard";
-
 /**
- * A fully-qualified threshold: which tier, which epoch (launch vs
- * standard), and the token-unit amount required at that epoch.
- *
- * The `code` field ("PRO_LAUNCH" / "PRO_STANDARD" / etc.) is what
- * gets persisted into `token_tier_qualifications.qualifying_threshold_tier`
- * so the system knows what each user qualified against.
+ * A fully-qualified live threshold: which tier, which pricing epoch the row
+ * is compatible with, the persisted code, and the token-unit amount computed
+ * from a live price. Historical rows may carry launch codes and amounts;
+ * current resolution always uses the standard epoch.
  */
 export interface ResolvedThreshold {
   tier: TierKey;
@@ -299,74 +87,6 @@ export interface TierThresholdsForEpoch {
   pro: ResolvedThreshold;
   power: ResolvedThreshold;
   epoch: ThresholdEpoch;
-  promoEndsAt: Date;
 }
 
-// ────────────────────────────────────────────────────────────────────
-// Resolvers
-// ────────────────────────────────────────────────────────────────────
-
-/** Options shared by the active-threshold resolvers. */
-export interface ThresholdResolveOptions {
-  /**
-   * Force the launch epoch regardless of the date. Used to grant the
-   * founders rate to allowlisted users (see {@link isFoundersRateUser})
-   * after the global launch promo window closes.
-   */
-  forceLaunchEpoch?: boolean;
-}
-
-/**
- * Returns the active threshold pair for a given moment.
- *
- *   now < LAUNCH_PROMO_END_DATE → epoch="launch"
- *   now ≥ LAUNCH_PROMO_END_DATE → epoch="standard"
- *
- * Pass `forceLaunchEpoch` to pin a specific user to the launch epoch past
- * the window (the founders-rate grant).
- *
- * The deposit flow uses this when a NEW user qualifies, to record
- * which threshold they qualified against. Existing holders are
- * unaffected — they keep their snapshotted qualifying quantity.
- */
-export function resolveActiveThresholds(
-  now: Date = new Date(),
-  options: ThresholdResolveOptions = {}
-): TierThresholdsForEpoch {
-  const inLaunchWindow = options.forceLaunchEpoch === true || now < LAUNCH_PROMO_END_DATE;
-  const epoch: ThresholdEpoch = inLaunchWindow ? "launch" : "standard";
-
-  return {
-    epoch,
-    promoEndsAt: LAUNCH_PROMO_END_DATE,
-    pro: {
-      tier: "pro",
-      epoch,
-      code: inLaunchWindow ? "PRO_LAUNCH" : "PRO_STANDARD",
-      amount: inLaunchWindow
-        ? PRO_THRESHOLD_LAUNCH_TOKEN_UNITS
-        : PRO_THRESHOLD_STANDARD_TOKEN_UNITS,
-    },
-    power: {
-      tier: "power",
-      epoch,
-      code: inLaunchWindow ? "POWER_LAUNCH" : "POWER_STANDARD",
-      amount: inLaunchWindow
-        ? POWER_THRESHOLD_LAUNCH_TOKEN_UNITS
-        : POWER_THRESHOLD_STANDARD_TOKEN_UNITS,
-    },
-  };
-}
-
-/** Resolve a single tier's active threshold (helper for the evaluator). */
-export function resolveActiveThresholdForTier(
-  tier: TierKey,
-  now: Date = new Date(),
-  options: ThresholdResolveOptions = {}
-): ResolvedThreshold {
-  const active = resolveActiveThresholds(now, options);
-  return tier === "pro" ? active.pro : active.power;
-}
-
-/** Re-export for convenience so consumers don't import token-holdings separately. */
-export { HERMESOS_TOKEN_DECIMALS };
+export const HERMESOS_TOKEN_DECIMALS = HERMESOS_TOKEN.decimals;

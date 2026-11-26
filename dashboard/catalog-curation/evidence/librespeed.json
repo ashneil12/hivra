@@ -1,0 +1,113 @@
+{
+  "slug": "librespeed",
+  "checkedAt": "2026-11-24T20:22:46.692Z",
+  "gitSha": "3ba0ab630835eeaf6392ac916394d88cc6bc79e3",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "librespeed/speedtest is LGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "librespeed/speedtest",
+        "spdx_id": "LGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/librespeed/speedtest:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/librespeed/speedtest:latest",
+        "digest": "sha256:a1bd2e1e95abb7a56b8671c0f174a359c5f0c57066562f3f45485205d32c54ea",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-librespeed-rw0l4a",
+        "hostPort": 3300,
+        "image": "ghcr.io/librespeed/speedtest:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-librespeed-rw0l4a",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3300:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-librespeed-rw0l4a-config:/config",
+          "ghcr.io/librespeed/speedtest:latest"
+        ],
+        "runStdout": "899319b5c0110172fc23cb85586a724c806da13311e82495accd18536f34f158",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "15.78MiB / 7.652GiB",
+        "memBytes": 16546529
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 58112,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html>\n\n<head>\n    <link rel=\"shortcut icon\" href=\"favicon.ico\">\n    <link rel=\"manifest\" href=\"manifest.webmanifest\">\n    <link rel=\"apple-touch-icon\" href=\"images/icon-192.png\">\n    <meta name=\"theme-color\" content=\"#000000\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, shrink-to-fit=no, user-scalable=no\" />\n    <meta charset=\"UTF-8\" />\n    <script type",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">\n<html><head>\n<title>404 Not Found</title>\n</head><body>\n<h1>Not Found</h1>\n<p>The requested URL was not found on this server.</p>\n<hr>\n<address>Apache/2.4.69 (Debian) Server at 127.0.0.1 Port 3300</address>\n</"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 15.8MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 16546529,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

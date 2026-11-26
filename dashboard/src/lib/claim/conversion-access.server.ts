@@ -2,7 +2,7 @@ import "server-only";
 
 import { isBillingV2ServerEnabled } from "@/lib/billing/billing-v2-availability";
 import { isCryptoBillingEnabled } from "@/lib/billing/crypto-availability";
-import { resolveUserTokenAccess } from "@/lib/billing/token-access";
+import { isHolderTierCarryoverEnabled, readHolderTierCarryover, resolveUserTokenAccess } from "@/lib/billing/token-access";
 import { getHivraTokenPhase } from "@/lib/billing/token-registry";
 import { log } from "@/lib/logger";
 
@@ -19,6 +19,7 @@ import type { ConversionAccessGate } from "./conversion-state";
 export async function readConversionAccessGate(
   userId: string | null,
   now: Date = new Date(),
+  options: { recordMembership?: boolean } = {},
 ): Promise<ConversionAccessGate> {
   if (!userId || getHivraTokenPhase(now) !== "active") return null;
   if (!isBillingV2ServerEnabled() || !isCryptoBillingEnabled()) return null;
@@ -26,8 +27,9 @@ export async function readConversionAccessGate(
     // Same call as GET /api/billing/token-access: it records a cohort member the
     // activation pass missed, so a grandfathered holder is never read as
     // "already on $HIVRA" and shown a swap that would drop their tier.
-    const access = await resolveUserTokenAccess(userId, { now });
+    const access = await resolveUserTokenAccess(userId, { now, ...options });
     return {
+      ...(isHolderTierCarryoverEnabled() ? { carryover: await readHolderTierCarryover(userId, access) } : {}),
       grandfathered: access.grandfathered,
       convertedAt: access.convertedAt?.toISOString() ?? null,
       conversionGraceEndsAt: access.conversionGraceEndsAt?.toISOString() ?? null,

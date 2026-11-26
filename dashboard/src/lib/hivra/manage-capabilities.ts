@@ -11,6 +11,7 @@
 // permissions, tools and CLI version) is still detected by the page.
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
+import { isCatalogAppId } from "@/lib/hivra/catalog-manifests";
 import { IMPORTABLE_TYPES } from "@/lib/hivra/agent-import";
 import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
 import { getComputerTemplate } from "@/lib/hivra/computer-catalog";
@@ -317,10 +318,11 @@ function agentCliFor(row: ManageCapabilitiesRow, variant: ManageVariant): Manage
 }
 
 function agentAppFor(row: ManageCapabilitiesRow, variant: ManageVariant): ManageCapabilities["agentApp"] {
-  if (!softwareUpdatesHere(row, variant, "dashboard-agent")) return null;
+  if (!softwareUpdatesHere(row, variant, "dashboard-agent") && !softwareUpdatesHere(row, variant, "chat-agent")) return null;
   // Hivra pins no app version: every update goes to upstream's newest release.
   if (row.type === "aeon" || row.type === "openclaw" || row.type === "agent-zero"
-    || row.type === "hermes" || row.type === "openbot" || row.type === "nuphos") {
+    || row.type === "hermes" || row.type === "openbot" || row.type === "nuphos"
+    || isCatalogAppId(row.type)) {
     return { name: row.type, vetted: null };
   }
   return null;
