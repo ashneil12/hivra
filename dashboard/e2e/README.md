@@ -2,12 +2,64 @@
 
 > **Live managed-hosting audits are blocked by default.** First-run, launch sweep,
 > remote-desktop and trial-to-Pro require the explicit isolated-runner opt-in
-> `HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp`. The approved path creates passwordless
-> `+clerk_test` users on reserved `example.com` addresses in the Canary Clerk
-> development instance and signs in through the normal email-code flow with Clerk's fixed test OTP. Clerk sign-in tickets are
-> hard-disabled because ticket redemption sent mail, including for a reused audit
-> account. Active cleanup follows the same opt-in; read-only inventory remains
-> available separately.
+> `HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp`. The approved path creates a unique
+> no-mail Clerk invitation for a disposable `+clerk_test` address on reserved
+> `example.test` in the Canary Clerk development instance, opens that acceptance
+> URL, and completes the public sign-up email-code form with Clerk's fixed test
+> OTP (`424242`). Direct user creation and Clerk sign-in tickets are hard-disabled
+> for signup because they do not prove the customer path; tickets also sent mail.
+> Active cleanup follows the same opt-in; read-only inventory remains available
+> separately.
+
+## Permanent Clerk QA signup path
+
+Canary Clerk uses restricted signup mode. Live QA has one permanent signup
+contract in `first-run-audit/signup.ts` and `first-run-audit/clerk-admin.ts`:
+
+1. Generate a unique disposable `+clerk_test@example.test` address per run.
+2. POST `/invitations` with `email_address` set to that exact address,
+   `notify:false`, `ignore_existing:false`, `expires_in_days:1`, a same-origin
+   `/sign-up?redirect_url=<product path>` redirect, and public metadata
+   `{ "hivra_qa": "clerk-invitation-signup" }`. `notify:false` is mandatory —
+   Clerk must not send mail. `ignore_existing:false` is mandatory — a collision
+   fails the run rather than reusing an identity.
+3. Validate that Clerk's returned acceptance URL is the development
+   `https://<instance>.clerk.accounts.dev/v1/tickets/accept?...` endpoint, open
+   it in a virgin browser context, and complete the real public sign-up form.
+4. Use only Clerk's fixed test email code `424242`. The driver fails closed if
+   completion never proves the OTP step. Temporary passwords, if a password
+   form is experimentally enabled, are generated per run, filled once, and
+   never stored.
+5. Return the authenticated context and real `user.id`; teardown deletes that
+   exact user. If signup fails, the helper deletes any partially created user
+   found by exact email, otherwise it revokes the unaccepted invitation.
+
+Direct Backend API user creation is intentionally absent for live QA: it would
+not prove signup. Clerk sign-in tickets remain prohibited for account creation.
+The live first-run, launch-sweep, remote-desktop, and trial harnesses all use
+this invitation path; their reapers use OTP sign-in only for users that already
+exist.
+
+`clerk-invite-signup-ui.offline.spec.ts` exercises the DOM driver against a
+locally routed Clerk-shaped fixture — no network, no Clerk, no account. Payload
+and guard behavior is covered by `../__tests__/managed-hosting-audit-pause.test.ts`.
+
+### Venice signup acceptance — no provisioning, no inference spend
+
+```bash
+cd dashboard
+VENICE_SIGNUP_ACCEPTANCE=1 HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp \
+E2E_BASE_URL=https://canary.hermesos.cloud CLERK_SECRET_KEY=sk_test_... \
+npm run test:venice-signup
+```
+
+The spec starts unsigned at `/venice`, follows `[data-cta="venice-promo-claim"]`,
+asserts its exact Launch `redirect_url`, signs up through one no-mail invitation,
+and verifies the authenticated `/dashboard/launch?agent=hermes&inference=venice&ref=venice&code=VENICE`
+handoff with Hivra credits selected. It deliberately stops before the final
+launch action: it does not launch a VM, click deploy, or send inference. The user is deleted in
+teardown. A later credit/first-reply leg should be separately gated and reuse
+`launch-sweep/plan.ts` (`grantSweepPlan`/`removeSweepPlan`).
 
 ## Weekly general check
 
@@ -61,12 +113,13 @@ ingestion. Live managed-hosting projects still need their explicit opt-in.
 
 ## Layout
 - `public.public.spec.ts` — logged-out routes render (HTTP < 400 + real content) + VRT.
-- `venice.public.spec.ts` — the unsigned Venice acquisition contract: promo claim target, attribution cookie and auth-boundary Launch deep-link preservation. It deliberately stops before account creation; the authed claim → Launch → first-reply leg still needs an owner-approved disposable sign-up path before it can be automated.
+- `venice.public.spec.ts` — the unsigned Venice acquisition contract: promo claim target, attribution cookie and auth-boundary Launch deep-link preservation. It deliberately stops before account creation.
+- `venice-signup.acceptance.spec.ts` — the explicitly gated disposable-account continuation: `/venice` claim → invitation-based public signup → exact authenticated Launch handoff. It stops before the final launch action; the credit/first-reply leg remains separate.
 - `golden-deploy.authed.spec.ts` — the **login → dashboard → deploy** golden path. Skips if no QA session.
 - `first-run-audit.spec.ts` + `first-run-audit/` — the **19/20 gate**. Real provisioning. See below.
 - `global-setup.ts` — always rejects legacy ticket sign-in; without both QA credentials it writes empty storage state.
 - `playwright.config.ts` (repo root of `dashboard/`) — projects: `public` (no auth), `authed` (storage state),
-  and `first-run-audit` (only exists when `FIRST_RUN_AUDIT=1`).
+  `offline-browser` (local routed fixtures), and the explicitly gated live audit projects.
 
 ## Run it
 ```bash
@@ -288,9 +341,9 @@ Two rules keep the number honest:
 `launch-sweep.spec.ts` + `launch-sweep/`. For **every tile on Launch** that runs on
 Hivra Cloud, in its own throwaway Canary account, it:
 
-1. creates a Clerk test user and gives it the Pro plan (the one shortcut: the
+1. signs up a Clerk test user through the invitation path and gives it the Pro plan (the one shortcut: the
    subscription row is written instead of paying through Stripe);
-2. signs in, opens `/dashboard/launch`, clicks the tile, Review, picks **Hivra
+2. opens `/dashboard/launch` in that authenticated signup session, clicks the tile, Review, picks **Hivra
    credits** (the starter credit every new paid account gets) and presses Launch;
 3. waits on the after-launch screen until it says ready, then presses Open;
 4. uses the proof that matches the tile: coding and chat agents answer

@@ -19,10 +19,7 @@ import {
   AUDIT_EMAIL_DOMAIN,
   newRunId,
 } from "./first-run-audit/config";
-import {
-  createAuditUser,
-  deleteAuditUser,
-} from "./first-run-audit/clerk-admin";
+import { deleteAuditUser } from "./first-run-audit/clerk-admin";
 import {
   destroyAllHivraAgents,
   sleep,
@@ -39,7 +36,7 @@ import {
   runGuestCommandProcess,
 } from "./first-run-audit/guest-command";
 import { reapAuditAccounts } from "./first-run-audit/reaper";
-import { establishAuditSession } from "./first-run-audit/session";
+import { signUpAuditUser } from "./first-run-audit/signup";
 
 const ENABLED = process.env.REMOTE_DESKTOP_AUDIT === "1";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -208,11 +205,11 @@ test.describe("REMOTE DESKTOP AUDIT: disposable Hivra VM over the public WAN pat
     };
 
     try {
-      const user = await createAuditUser(env.clerkSecretKey, email);
-      clerkUserId = user.id;
-      await grantRemoteDesktopAuditPlan(env.supabaseUrl, env.supabaseServiceRoleKey, user.id);
-      await preclearAbuseGate(env.supabaseUrl, env.supabaseServiceRoleKey, user.id);
-      context = await establishAuditSession(browser, { baseUrl: env.baseUrl, email });
+      const signup = await signUpAuditUser(browser, { baseUrl: env.baseUrl, clerkSecretKey: env.clerkSecretKey, email });
+      clerkUserId = signup.userId;
+      context = signup.context;
+      await grantRemoteDesktopAuditPlan(env.supabaseUrl, env.supabaseServiceRoleKey, clerkUserId);
+      await preclearAbuseGate(env.supabaseUrl, env.supabaseServiceRoleKey, clerkUserId);
       const page = await context.newPage();
       await page.goto(`${env.baseUrl}/dashboard/launch`, { waitUntil: "domcontentloaded" });
 

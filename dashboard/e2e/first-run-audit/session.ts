@@ -55,25 +55,28 @@ type ClerkWin = {
   };
 };
 
-export interface SessionOptions {
+export interface AuditContextOptions {
   baseUrl: string;
-  email: string;
   /** Attach network listeners etc. before the first navigation. */
   onContext?: (context: BrowserContext) => void | Promise<void>;
 }
 
+export interface SessionOptions extends AuditContextOptions {
+  email: string;
+}
+
 /**
- * Creates a fresh context (no storage state — a virgin browser for a virgin
- * user), grants analytics consent, completes Clerk's email-code sign-in, and
- * lands on /dashboard so the session cookie is fully established.
+ * Creates the virgin browser every live audit uses: no storage state, human
+ * browser signals, and analytics consent installed before any page script.
+ * Exported for the invitation signup path; do not use it to bypass the guards
+ * or to create shared standing auth state.
  */
-export async function establishAuditSession(
+export async function createAuditBrowserContext(
   browser: Browser,
-  { baseUrl, email, onContext }: SessionOptions,
+  { baseUrl, onContext }: AuditContextOptions,
 ): Promise<BrowserContext> {
   assertLiveManagedHostingAuditAllowed();
   assertNotProduction(baseUrl);
-  assertClerkTestAuditEmail(email);
   // NB: browser.newContext() does NOT inherit the project's `use` options, so
   // the UA here is the raw (headless) one unless we set it explicitly.
   const context = await browser.newContext({
@@ -100,7 +103,20 @@ export async function establishAuditSession(
   );
 
   if (onContext) await onContext(context);
+  return context;
+}
 
+/**
+ * Creates a fresh context (no storage state — a virgin browser for a virgin
+ * user), grants analytics consent, completes Clerk's email-code sign-in, and
+ * lands on /dashboard so the session cookie is fully established.
+ */
+export async function establishAuditSession(
+  browser: Browser,
+  { baseUrl, email, onContext }: SessionOptions,
+): Promise<BrowserContext> {
+  assertClerkTestAuditEmail(email);
+  const context = await createAuditBrowserContext(browser, { baseUrl, onContext });
   const page = await context.newPage();
   try {
     await page.goto('/sign-in', { waitUntil: 'domcontentloaded' });

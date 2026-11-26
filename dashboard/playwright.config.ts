@@ -41,7 +41,9 @@ const LAUNCH_SWEEP_ENABLED = process.env.LAUNCH_SWEEP === '1';
 // The trial-to-Pro journey (e2e/trial-to-pro.spec.ts): Stripe test mode on
 // Canary, opt-in only with TRIAL_JOURNEY=1.
 const TRIAL_JOURNEY_ENABLED = process.env.TRIAL_JOURNEY === '1';
-if (FIRST_RUN_AUDIT_ENABLED || REMOTE_DESKTOP_AUDIT_ENABLED || LAUNCH_SWEEP_ENABLED || TRIAL_JOURNEY_ENABLED) {
+// Venice signup acceptance creates one disposable Clerk user but no VM or inference.
+const VENICE_SIGNUP_ACCEPTANCE_ENABLED = process.env.VENICE_SIGNUP_ACCEPTANCE === '1';
+if (FIRST_RUN_AUDIT_ENABLED || REMOTE_DESKTOP_AUDIT_ENABLED || LAUNCH_SWEEP_ENABLED || TRIAL_JOURNEY_ENABLED || VENICE_SIGNUP_ACCEPTANCE_ENABLED) {
   assertLiveManagedHostingAuditAllowed();
 }
 // One run id shared by every worker (they inherit this process's env).
@@ -147,6 +149,32 @@ export default defineConfig({
             // Never retried: a retry would start a second checkout.
             retries: 0,
             use: { ...devices['Desktop Chrome'], storageState: undefined },
+          },
+        ]
+      : []),
+    {
+      // Browser-only deterministic coverage; this project routes every fixture
+      // response locally and performs no live navigation.
+      name: 'offline-browser',
+      testMatch: /\.offline\.spec\.ts/,
+      timeout: 30_000,
+      retries: 0,
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: undefined,
+      },
+    },
+    ...(VENICE_SIGNUP_ACCEPTANCE_ENABLED
+      ? [
+          {
+            name: 'venice-signup-acceptance',
+            testMatch: /venice-signup\.acceptance\.spec\.ts/,
+            timeout: 6 * 60_000,
+            retries: 0,
+            use: {
+              ...devices['Desktop Chrome'],
+              storageState: undefined,
+            },
           },
         ]
       : []),
