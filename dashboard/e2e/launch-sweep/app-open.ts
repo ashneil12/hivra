@@ -21,6 +21,36 @@ export interface AppOpenProof {
   textSample: string;
 }
 
+export async function proveRustpadCollaboration(page: Page, target: SweepTarget, timeoutMs: number): Promise<AppOpenProof> {
+  const opened = await proveAppOpen(page, target, timeoutMs);
+  const selector = 'iframe[title$="· dashboard"]';
+  const primary = page.frameLocator(selector).first();
+  const scratchpad = await primary.locator('body').evaluate(() => window.location.hash.slice(1));
+  if (!/^[A-Za-z0-9]{1,32}$/.test(scratchpad)) {
+    throw new SweepFailure('open', 'product', 'Rustpad did not open a usable disposable document.');
+  }
+  const peerPage = await page.context().newPage();
+  try {
+    await peerPage.goto(page.url(), { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    const peer = peerPage.frameLocator(selector).first();
+    await peer.getByText('You are connected!', { exact: true }).waitFor({ timeout: timeoutMs });
+    await peer.locator('body').evaluate((_body, id) => { window.location.hash = id; }, scratchpad);
+    await Promise.all([primary, peer].map(frame =>
+      frame.getByText('You are connected!', { exact: true }).waitFor({ timeout: timeoutMs })));
+    const marker = 'hivra-rustpad-pilot';
+    await page.bringToFront();
+    await primary.locator('.monaco-editor .view-lines').first().click({ timeout: timeoutMs });
+    await page.keyboard.type(marker, { delay: 20 });
+    await Promise.all([primary, peer].map(frame =>
+      frame.locator('.monaco-editor .view-lines').filter({ hasText: marker }).waitFor({ timeout: timeoutMs })));
+    return { ...opened, textSample: 'A typed marker appeared in the second tab without a refresh.' };
+  } catch {
+    throw new SweepFailure('chat', 'product', 'Rustpad did not synchronize a typed edit between two authenticated views.');
+  } finally {
+    await peerPage.close().catch(() => undefined);
+  }
+}
+
 function frameBodies(frame: Frame): Promise<string> {
   return frame.evaluate(() => document.body?.innerText ?? '').catch(() => '');
 }
