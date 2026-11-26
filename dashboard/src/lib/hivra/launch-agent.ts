@@ -9,10 +9,11 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { isOpenBotAgentEnabled } from "@/lib/hivra/openbot-flag";
-import { isUniversalCatalogEnabled } from "@/lib/hivra/universal-catalog-flag";
+import { canCertifyCatalog } from "@/lib/hivra/catalog-certifier-access";
 import {
   buildCatalogAppLaunchSpec,
   getCatalogAppManifest,
+  isCatalogAppLaunchable,
   UNIVERSAL_CATALOG_IDS,
   type CatalogAppLaunchSpec,
 } from "@/lib/hivra/catalog-manifests";
@@ -919,6 +920,11 @@ export async function launchHivraAgentForUser(
         undefined, { code: "invalid_request" });
     }
     const def = getAgent(type);
+    const catalogManifest = getCatalogAppManifest(type);
+    if (catalogManifest && !isCatalogAppLaunchable(catalogManifest,
+      deployment.mode === "hivra-managed" && canCertifyCatalog(userId))) {
+      return apiError("That app isn't certified for launch yet", 400);
+    }
     const name = String(pick(body.name, template?.name) || def?.name || "Agent").trim();
     if (type === "linux-terminal") {
       if (templateRef) {
@@ -1104,10 +1110,8 @@ export async function launchHivraAgentForUser(
     // or not-yet-available agent can't provision a box. Hermes launches here only
     // while the Hermes computer lane is on for this deployment (Canary first);
     // otherwise it stays on its own lane, /api/instances, as it always was.
-    const catalogManifest = getCatalogAppManifest(type);
-    if (!def || !def.available || !LAUNCHABLE_BOX_TYPES.has(type)
-      || (type === "openbot" && !isOpenBotAgentEnabled())
-      || (catalogManifest && !isUniversalCatalogEnabled())) {
+    if (!def || (!catalogManifest && !def.available) || !LAUNCHABLE_BOX_TYPES.has(type)
+      || (type === "openbot" && !isOpenBotAgentEnabled())) {
       return apiError("That agent isn't launchable yet", 400);
     }
     const requiresPinnedCatalogDigest = catalogManifest?.runtime.kind === "docker-web" && Boolean(catalogManifest.runtime.imageDigest);
