@@ -18,13 +18,19 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
-case "$#:${1:-}" in
-  0:) ;;
-  1:--pull-test-images)
-    for image in "$pg_image" "$rest_image" "$node_image"; do docker pull "$image"; done
-    ;;
-  *) echo "Usage: $0 [--pull-test-images]" >&2; exit 2 ;;
-esac
+classic_start=0
+for arg in "$@"; do
+  case "$arg" in
+    --pull-test-images)
+      for image in "$pg_image" "$rest_image" "$node_image"; do docker pull "$image"; done
+      ;;
+    --classic-start)
+      classic_start=1
+      baseline=80340ed03928d358e4f2ac4f9b22000359e7649f
+      ;;
+    *) echo "Usage: $0 [--pull-test-images] [--classic-start]" >&2; exit 2 ;;
+  esac
+done
 git archive "$baseline" "$migrations" | tar -x -C "$work"
 docker run --pull never --rm --detach --network none --name "$container" --cidfile "$work/pg-id" \
   -e POSTGRES_PASSWORD=synthetic-qa-fence-only "$pg_image" >/dev/null
@@ -62,6 +68,7 @@ SQL
   cat "$work/$migrations/20261123220000_optional_holder_switch.sql"
   printf '\n%s\n' 'begin;'
   cat "$migration"
+  if [[ $classic_start == 1 ]]; then cat "$migrations/20261126210000_canary_qa_classic_start.sql"; fi
   printf '\n%s\n' 'commit;'
 } > "$work/install.sql"
 if ! psql -q < "$work/install.sql" > "$work/install.log" 2>&1; then
@@ -109,6 +116,60 @@ must_refuse() {
   fi
   grep -Fq "$2" "$work/expected-refusal.log"
 }
+
+if [[ $classic_start == 1 ]]; then
+  psql -q <<'SQL'
+grant execute on function public.claim_canary_qa_classic_start(uuid,text,text,integer,text,uuid),
+  public.finish_canary_qa_classic_start(uuid,text) to hivra_canary_qa_a,hivra_canary_qa_b,hivra_canary_qa_fallback;
+revoke execute on function public.insert_hermes_instance(jsonb,numeric,boolean),public.synthetic_canary_qa_change_classic(uuid,integer)
+  from hivra_canary_qa_a,hivra_canary_qa_b,hivra_canary_qa_fallback;
+insert into public.hermes_instances(id,user_id,name,status,lifecycle_state,product_surface,infrastructure_provider,
+  proxmox_node,proxmox_vmid,cpu_limit,ram_limit,disk_size_gb,seat_funding)
+values('00000000-0000-4000-8000-000000000431','user_CanaryQaFixture','Synthetic owned Classic slot','stopped','paused',
+  'hermesos','proxmox','qa-fixture-host',13011,1,2048,30,'paid');
+notify pgrst,'reload schema';
+SQL
+  classic_probe() {
+    docker run --pull never --rm --network "container:$container" --env PGRST_JWT_SECRET \
+      --volume "$root/$fixtures/canary-qa-classic-start-http.mjs:/fixture/canary-qa-classic-start-http.mjs:ro" \
+      --volume "$root/dashboard/src/lib/hivra/canary-qa-dispatch.ts:/fixture/canary-qa-dispatch.ts:ro" \
+      "$node_image" node --disable-warning=ExperimentalWarning /fixture/canary-qa-classic-start-http.mjs "$1"
+  }
+  classic_probe off
+  scope "'hivra_canary_qa_a'" "now()+interval '15 minutes'"
+  classic_probe a
+  scope null null
+  classic_probe closed
+  must_refuse "select canary_qa_writer_private.set_scope('user_CanaryQaFixture','qa-fixture-host',13011,'hivra_canary_qa_b',now()+interval '15 minutes')" \
+    'close and reconcile the Canary QA writer before opening a generation'
+  psql -q <<'SQL'
+begin;
+select canary_qa_writer_private.settle_closed_classic_start('user_CanaryQaFixture','qa-fixture-host',13011,
+  '00000000-0000-4000-8000-000000000431','00000000-0000-4000-8000-000000000432','refused');
+rollback;
+do $$
+begin
+  if not exists(select 1 from canary_qa_writer_private.dispatches q
+    join managed_launch_bridge_private.classic_start c using (operation_id)
+    join public.hermes_instances h on h.id=c.instance_id
+    where q.operation_id='00000000-0000-4000-8000-000000000432'
+      and q.outcome is null and c.outcome is null and h.lifecycle_substate='classic_start')
+  then raise exception 'rollback changed the pending Classic and dispatch pair'; end if;
+  if not canary_qa_writer_private.settle_closed_classic_start('user_CanaryQaFixture','qa-fixture-host',13011,
+    '00000000-0000-4000-8000-000000000431','00000000-0000-4000-8000-000000000432','refused')
+  then raise exception 'exact operator settlement for both receipts failed'; end if;
+end;
+$$;
+SQL
+  scope "'hivra_canary_qa_b'" "now()+interval '15 minutes'"
+  classic_probe b
+  scope null null
+  scope "'hivra_canary_qa_fallback'" "now()+interval '15 minutes'"
+  classic_probe fallback
+  scope null null
+  echo 'PASS integrated Classic Start retains both receipts and replays on a fresh fallback generation'
+  exit 0
+fi
 
 probe off
 must_refuse "begin isolation level repeatable read; select canary_qa_writer_private.set_scope('user_CanaryQaFixture','qa-fixture-host',13011,'hivra_canary_qa_a',now()+interval '15 minutes'); commit;" \

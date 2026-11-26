@@ -9,6 +9,7 @@ on:
       - 'docker-compose.yml'
       - 'scripts/release/test-canary-qa-writer-fence.sh'
       - 'scripts/release/fixtures/canary-qa-writer-fence-*'
+      - 'scripts/release/fixtures/canary-qa-classic-start-*'
       # Workflow-only changes still report the same public verification check.
       - '.github/**'
   # Also verify the merged result. Two PRs that each pass can break canary
@@ -20,6 +21,7 @@ on:
       - 'docker-compose.yml'
       - 'scripts/release/test-canary-qa-writer-fence.sh'
       - 'scripts/release/fixtures/canary-qa-writer-fence-*'
+      - 'scripts/release/fixtures/canary-qa-classic-start-*'
       - '.github/**'
   # Lets "Verify Dashboard" gate a merge queue if the owner turns one on.
   merge_group:
@@ -110,11 +112,17 @@ jobs:
         run: |
           if git diff --quiet "$MIGRATION_BASE_SHA" "$MIGRATION_HEAD_SHA" -- \
             dashboard/supabase/migrations/20261126203500_canary_qa_writer_fence.sql \
+            dashboard/supabase/migrations/20261126210000_canary_qa_classic_start.sql \
             dashboard/src/lib/hivra/canary-qa-dispatch.ts \
-            scripts/release/test-canary-qa-writer-fence.sh scripts/release/fixtures/canary-qa-writer-fence-*; then
+            dashboard/src/lib/hivra/canary-qa-classic-start.ts \
+            dashboard/src/app/api/internal/canary-qa/classic-start \
+            scripts/release/test-canary-qa-writer-fence.sh \
+            'scripts/release/fixtures/canary-qa-writer-fence-*' \
+            'scripts/release/fixtures/canary-qa-classic-start-*'; then
             exit 0
           fi
           bash scripts/release/test-canary-qa-writer-fence.sh --pull-test-images
+          bash scripts/release/test-canary-qa-writer-fence.sh --classic-start
 
       - name: Enforce hot-surface regression coverage
         run: npm run guard:hot-surfaces -- --base "$MIGRATION_BASE_SHA" --head "$MIGRATION_HEAD_SHA"

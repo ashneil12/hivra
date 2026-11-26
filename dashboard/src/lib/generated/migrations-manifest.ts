@@ -525,4 +525,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261126194500", name: "classic_placement_bridge" },
   { version: "20261126202000", name: "managed_writer_drain" },
   { version: "20261126203500", name: "canary_qa_writer_fence" },
+  { version: "20261126210000", name: "canary_qa_classic_start" },
 ];
