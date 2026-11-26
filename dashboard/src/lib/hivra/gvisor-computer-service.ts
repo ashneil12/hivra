@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { ManagedGvisorAuthority } from "./managed-gvisor-authority";
+import { managedGvisorIdlePilotConfig } from "./managed-gvisor-launch-config";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
@@ -624,13 +625,60 @@ export async function executeGvisorComputerCommand(userId: string, agentId: stri
       || binding.runtimeSha !== agent.gvisor_runtime_sha256) {
       throw new GvisorComputerError("not_ready", "The managed sandbox terminal authority could not be confirmed.");
     }
+    const pilot = managedGvisorIdlePilotConfig();
+    let commandClaim: string | null = null;
+    if (pilot && pilot.ownerId === userId && matchesIdlePilotTarget(pilot, binding)) {
+      const { data, error } = await db().rpc("claim_hivra_managed_gvisor_pilot_command", {
+        p_customer: userId, p_computer: agent.id, p_expires_at: new Date(pilot.expiresAtMs).toISOString(),
+      });
+      if (error) throw new GvisorComputerError("database_failed", "The managed sandbox command claim could not be confirmed.");
+      if (typeof data !== "string" || !UUID.test(data)) {
+        throw new GvisorComputerError("conflict", "The sandbox is busy or stopped. Check its status before running another command.");
+      }
+      commandClaim = data;
+    }
     const result = await invokeOnTarget(binding.operatorId, binding.targetId, {
       operation: "exec", ownerHash: ownerHash(userId), computerId: agent.id, sandboxId: binding.sandboxId, argv,
     }, managedGvisorHostBinding(binding), true, "mutation");
+    if (commandClaim) {
+      const { data, error } = await db().rpc("complete_hivra_managed_gvisor_pilot_command", {
+        p_customer: userId, p_computer: agent.id, p_claim: commandClaim,
+      });
+      if (error || data !== true) throw new GvisorComputerError("conflict", "The sandbox command finished but its activity could not be confirmed. Do not replay it automatically.");
+    }
     return result.receipt;
   }
   requireSelfManagedGvisorDispatch(agent);
   return invoke(userId, agent.deployment_target_id, { operation: "exec", ownerHash: ownerHash(userId), computerId: agent.id, sandboxId: agent.gvisor_sandbox_id, argv }, agent);
+}
+
+type ManagedGvisorIdlePilot = NonNullable<ReturnType<typeof managedGvisorIdlePilotConfig>>;
+
+function matchesIdlePilotTarget(pilot: ManagedGvisorIdlePilot, binding: ManagedGvisorBinding): boolean {
+  return binding.operatorId === pilot.authorityUserId && binding.connectionId === pilot.connectionId
+    && binding.targetId === pilot.targetId && binding.revision === pilot.connectionRevision;
+}
+
+export async function runManagedGvisorIdlePilot(): Promise<"disabled" | "idle" | "stopped"> {
+  const pilot = managedGvisorIdlePilotConfig();
+  if (!pilot) return "disabled";
+  const { data, error } = await db().rpc("claim_hivra_managed_gvisor_pilot_idle_stop", {
+    p_customer: pilot.ownerId, p_operator: pilot.authorityUserId, p_connection: pilot.connectionId,
+    p_target: pilot.targetId, p_revision: pilot.connectionRevision, p_expires_at: new Date(pilot.expiresAtMs).toISOString(),
+  });
+  if (error) throw new GvisorComputerError("database_failed", "The managed sandbox idle stop claim could not be confirmed.");
+  if (data === null) return "idle";
+  const parsed = ManagedGvisorClaim.safeParse(data);
+  if (!parsed.success || parsed.data.status !== "claimed" || parsed.data.action !== "stop"
+    || parsed.data.customerId !== pilot.ownerId || !matchesIdlePilotTarget(pilot, parsed.data)) {
+    throw new GvisorComputerError("not_ready", "The managed sandbox idle stop authority could not be confirmed.");
+  }
+  const agent = await loadAgent(pilot.ownerId, parsed.data.computerId);
+  if (agent.operation_id !== parsed.data.operationId || agent.operation_kind !== "stop") {
+    throw new GvisorComputerError("conflict", "The managed sandbox idle stop claim changed before dispatch.");
+  }
+  await dispatchManagedGvisorLifecycle(agent, "stop", parsed.data);
+  return "stopped";
 }
 
 async function mutateReadyManagedGvisor(agent: GvisorAgent, action: "start" | "stop" | "delete") {
@@ -645,14 +693,23 @@ async function mutateReadyManagedGvisor(agent: GvisorAgent, action: "start" | "s
       throw new GvisorComputerError("plan_required", HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE);
     }
   }
-  const desired = action === "start" ? "running" : action === "stop" ? "stopped" : "deleted";
-  const matchesAgent = (row: Record<string, unknown> | undefined) => row?.id === agent.id
-    && row.user_id === agent.user_id && row.deployment_mode === "hivra-managed" && row.computer_substrate === "gvisor"
-    && row.status === desired && row.operation_id === null;
   const { data, error } = await db().rpc("claim_hivra_managed_gvisor_lifecycle", {
     p_customer: agent.user_id, p_computer: agent.id, p_action: action,
   });
   if (error) throw new GvisorComputerError("database_failed", "The managed lifecycle claim could not be confirmed.");
+  return dispatchManagedGvisorLifecycle(agent, action, data);
+}
+
+async function dispatchManagedGvisorLifecycle(
+  agent: GvisorAgent, action: "start" | "stop" | "delete", data: Record<string, unknown> | null,
+) {
+  const desired = action === "start" ? "running" : action === "stop" ? "stopped" : "deleted";
+  const matchesAgent = (row: unknown) => {
+    const candidate = row as Record<string, unknown> | undefined;
+    return candidate?.id === agent.id && candidate.user_id === agent.user_id
+      && candidate.deployment_mode === "hivra-managed" && candidate.computer_substrate === "gvisor"
+      && candidate.status === desired && candidate.operation_id === null;
+  };
   if (data?.status === "not_found") throw new GvisorComputerError("not_found", "gVisor computer not found.");
   if (data?.status === "settled" && matchesAgent(data.agent)) return data.agent;
   if (data?.status === "held") {
