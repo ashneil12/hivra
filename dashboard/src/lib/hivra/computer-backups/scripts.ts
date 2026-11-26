@@ -34,6 +34,23 @@ export const BACKUP_JOB_PREFIX = "HIVRA_BACKUP_JOB ";
 export const BACKUP_PURGE_PREFIX = "HIVRA_BACKUP_PURGE ";
 /** Every Hivra computer repository lives under this folder on the storage box. */
 export const BACKUP_REPO_FOLDER = "hivra-computers";
+const COMPUTER_BACKUP_VM_LOCK = "/run/lock/hivra-vm-$VMID.backup.lock";
+const LIST_COMPUTER_BACKUP_SNAPSHOTS = String.raw`qm listsnapshot "$VMID" </dev/null | awk '$1 ~ /->$/ && $2 ~ /^hivrabk_[0-9a-f]+$/ && length($2) == 40 {print $2}'`;
+
+/** Take both per-VM locks before taking the host allocation lock. The lifecycle
+ * lock also excludes older backup scripts while they create or remove a snapshot. */
+export const COMPUTER_BACKUP_DELETE_LOCKS = `exec 7>"${COMPUTER_BACKUP_VM_LOCK}"
+flock -n 7 || { echo "Backup is active for VMID $VMID; retry Delete after backup cleanup" >&2; exit 1; }
+exec 9>/run/lock/hivra-vm-$VMID.lock
+flock -n 9 || { echo "Lifecycle operation is active for VMID $VMID; retry Delete" >&2; exit 1; }`;
+
+/** A snapshot left by an old or interrupted job outlives the flock. */
+export const REFUSE_COMPUTER_BACKUP_SNAPSHOTS = `BACKUP_SNAPSHOTS="$(${LIST_COMPUTER_BACKUP_SNAPSHOTS})" \\
+  || { echo "Could not verify backup snapshots for VMID $VMID" >&2; exit 1; }
+if [ -n "$BACKUP_SNAPSHOTS" ]; then
+  echo "VMID $VMID still has a backup snapshot; retry Delete after backup cleanup" >&2
+  exit 1
+fi`;
 
 /**
  * `store` packs a long sleeper into the storage box and frees its disks on the
@@ -108,7 +125,10 @@ add_disk_json() {
 }
 cleanup() { :; }
 done_with() {
-  cleanup
+  cleanup || set -- failed snapshot_cleanup_failed
+  write_result "$@"
+}
+write_result() {
   local tmp="$RESULT.tmp.$$"
   printf '{"job":"%s","kind":"%s","status":"%s","reason":"%s","addedBytes":%s,"disks":[%s],"finishedAt":"%s"}\n' \
     "$JOB_ID" "$KIND" "$1" "$2" "$ADDED" "$DISKS_JSON" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
@@ -177,14 +197,16 @@ cleanup() {
   for lv in $ACTIVE_LVS; do lvchange -an "$lv" >/dev/null 2>&1 || true; done
   ACTIVE_LVS=""
   if [ "$SNAP_TAKEN" = 1 ]; then
-    exec 9>/run/lock/hivra-vm-$VMID.lock
-    if flock -x -w 60 9; then
+    if { exec 9>/run/lock/hivra-vm-$VMID.lock; } && flock -x -w 60 9; then
       qm delsnapshot "$VMID" "$SNAP" >/dev/null 2>&1 && SNAP_TAKEN=0
       flock -u 9
     fi
     exec 9>&-
   fi
+  return "$SNAP_TAKEN"
 }
+exec 7>"${COMPUTER_BACKUP_VM_LOCK}" || done_with failed backup_lock_unavailable
+flock -n 7 || done_with skipped vm_busy
 # The per-VM lock the sleep and wake scripts take: never snapshot beside them.
 exec 9>/run/lock/hivra-vm-$VMID.lock
 flock -x -w 30 9 || done_with skipped vm_busy
@@ -195,8 +217,9 @@ STATUS="$(qm status "$VMID" --verbose 2>/dev/null)" || done_with failed unreacha
 [ "$(printf '%s\n' "$STATUS" | awk '$1=="status:" {print $2; exit}')" = running ] || done_with skipped not_awake
 [ "$(printf '%s\n' "$STATUS" | awk '$1=="qmpstatus:" {print $2; exit}')" = running ] || done_with skipped not_awake
 # A snapshot a killed run left behind goes first.
-for old in $(printf '%s\n' "$CONFIG" | sed -n 's/^\[\(hivrabk_[0-9a-f]\{32\}\)\]$/\1/p'); do
-  qm delsnapshot "$VMID" "$old" >/dev/null 2>&1 || true
+OLD_SNAPSHOTS="$(${LIST_COMPUTER_BACKUP_SNAPSHOTS})" || done_with failed snapshot_list_failed
+for old in $OLD_SNAPSHOTS; do
+  qm delsnapshot "$VMID" "$old" >/dev/null 2>&1 || done_with failed snapshot_cleanup_failed
 done
 read_config || done_with failed unreachable
 while read -r key volid; do
@@ -246,11 +269,13 @@ while read -r key volid; do
   add_disk_json "$key" "$sum" "$bytes" "$snap_id"
 done <<< "$(disk_lines "$SNAP_CONFIG")"
 [ "$COUNT" -gt 0 ] || done_with failed no_disks
-cleanup
+cleanup || write_result failed snapshot_cleanup_failed
+flock -u 7
+exec 7>&-
 restic forget --host "hivra-$AGENT_ID" --group-by host,paths \
   --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --prune >/dev/null 2>>"$JOBDIR/restic.err" \
-  || done_with succeeded retention_warning
-done_with succeeded saved
+  || write_result succeeded retention_warning
+write_result succeeded saved
 `;
 
 const DRILL_BODY = String.raw`# A drill reads every disk of one backup back from the storage box and checks
