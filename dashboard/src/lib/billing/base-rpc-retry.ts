@@ -66,7 +66,7 @@ const MAX_RPC_ERROR_DETAIL_LENGTH = 200;
 
 export class RpcHttpError extends Error {
   readonly status: number;
-  constructor(status: number, detail?: string) {
+  constructor(status: number, detail?: string, readonly rpcMethod?: string) {
     const reason = detail?.replace(/\s+/g, " ").trim().slice(0, MAX_RPC_ERROR_DETAIL_LENGTH);
     super(`Base RPC request failed with status ${status}${reason ? `: ${reason}` : ""}`);
     this.name = "RpcHttpError";

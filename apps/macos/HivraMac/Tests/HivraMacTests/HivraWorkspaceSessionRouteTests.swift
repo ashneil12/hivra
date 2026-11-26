@@ -87,9 +87,6 @@ struct HivraWorkspaceSessionRouteTests {
             </script>
             """, baseURL: URL(string: "\(origin)/dashboard")!)
         try await eventually {
-            (try? await session.connectionBrowser.webView.evaluateJavaScript("window.refreshCount") as? Int) == 0
-        }
-        try await eventually {
             ((try? await session.connectionBrowser.webView.evaluateJavaScript("window.refreshCount") as? Int) ?? 0) > 0
         }
     }
@@ -115,6 +112,33 @@ struct HivraWorkspaceSessionRouteTests {
         try await eventually {
             ((try? await session.connectionBrowser.webView.evaluateJavaScript("window.refreshCount") as? Int) ?? 0) > 0
         }
+    }
+
+    @Test("a settled successful inventory closes only tabs whose resource disappeared")
+    func inventoryClosesMissingTabs() async throws {
+        let session = try await signedInSession()
+        defer { session.clearOwnedViews() }
+        let codex = try #require(session.resources.first { $0.uid == "x-codex" })
+        let hermes = try #require(session.resources.first { $0.uid == "h-hermes" })
+        session.open(hermes)
+        session.open(codex)
+        let codexTab = try #require(session.activeTab)
+        try await showLivePage(codexTab.browser, at: "\(origin)/dashboard/agent/codex")
+
+        func publish(loading: Bool, errors: [HivraWorkspaceResourceSource: String]) async throws {
+            let snapshot = HivraWorkspaceSnapshot(ownerKey: "route-qa", resources: [hermes], loading: loading, errors: errors)
+            session.connectionBrowser.receiveWorkspaceMessage(.workspace(snapshot))
+            try await eventually { session.snapshot == snapshot }
+        }
+
+        try await publish(loading: true, errors: [:])
+        #expect(session.activeTab === codexTab)
+        try await publish(loading: false, errors: [.hivra: "Unavailable"])
+        #expect(session.activeTab === codexTab)
+
+        try await publish(loading: false, errors: [.hermes: "Unavailable"])
+        #expect(session.tabs.map(\.resourceUID) == [hermes.uid])
+        #expect(session.activeTab?.resourceUID == hermes.uid)
     }
 
     @Test("choosing an open resource whose page carries an unrecognized query selects it without reloading")
