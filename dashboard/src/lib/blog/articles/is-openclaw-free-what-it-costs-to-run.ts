@@ -36,13 +36,13 @@ export const article: BlogArticle = {
   metaDescription:
     "OpenClaw is free MIT software. You pay for the machine it runs on and the model it calls. Routes, prices, and a spend cap you can set today.",
   publishedDate: "2026-10-14",
-  lastModified: "2026-11-22",
+  lastModified: "2026-11-26",
   readingTimeMin: 6,
   author: "Hivra team",
   tagline: "The software costs nothing. The machine and the model don't.",
   intro:
     "OpenClaw is free to download and free to run. The bill shows up next to it: a computer that stays on, and a model provider that charges per use.",
-  shortAnswer: `OpenClaw is free MIT-licensed software, as of ${AS_OF}. Running it costs $0, but the computer and model are separate bills. A provider hard limit can curb further API use, but it is not an exact bill ceiling: OpenAI says enforcement can lag and recorded spend may slightly exceed it.`,
+  shortAnswer: `OpenClaw is free MIT-licensed software, as of ${AS_OF}. Running it costs $0, but the computer and model are separate bills. A provider hard limit can curb further API use, but it is not an exact bill ceiling. As of 26 November 2026, OpenAI says enforcement can lag and recorded spend may slightly exceed the limit.`,
   sections: [
     {
       heading: "Is the OpenClaw software free?",
@@ -89,7 +89,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "Set the cap where the money leaves, which is the model account. Both major providers let you do this, and it applies wherever OpenClaw runs.",
         "Anthropic: Claude Console, Settings, Billing, Spend limits. You set your own monthly limit below your tier's cap. Hitting the limit you set stops further requests until you raise it or the month rolls over.",
-        "OpenAI: In Organization limits or Project settings, set a spend limit and turn on \"Enforce a hard limit\". Once that limit takes effect, affected API requests return a 429 error. Enforcement is not instantaneous, so the API Platform may process a small amount of extra usage and recorded spend can slightly exceed the configured limit. Alerts alone do not stop traffic.",
+        "OpenAI: As of 26 November 2026, in Organization limits or Project settings, set a spend limit and turn on \"Enforce a hard limit\". Once that limit takes effect, affected API requests return a 429 error. Enforcement is not instantaneous, so the API Platform may process a small amount of extra usage and recorded spend can slightly exceed the configured limit. Alerts alone do not stop traffic.",
         "Do this before the first overnight run, not after. A cap you set tomorrow doesn't unwind what ran last night.",
         "One thing a host cannot do: cap spending on a key you brought yourself. On Hivra your OpenClaw requests bill your own provider account, with no markup on that usage. The cap lives in your Anthropic or OpenAI settings, and Hivra never sees it.",
       ],
@@ -123,7 +123,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Can OpenClaw limit how much I spend on the model?",
-      a: "Not by itself. Set a spend limit in the model account: Anthropic under Settings, Billing, Spend limits, and OpenAI under Organization limits or Project settings with a hard limit enabled. OpenAI warns enforcement is not instantaneous, so recorded spend can slightly exceed the configured amount. A host that runs OpenClaw on your own key can't set that cap for you.",
+      a: "Not by itself. Set a spend limit in the model account: Anthropic under Settings, Billing, Spend limits, and OpenAI under Organization limits or Project settings with a hard limit enabled. As of 26 November 2026, OpenAI warns enforcement is not instantaneous, so recorded spend can slightly exceed the configured amount. A host that runs OpenClaw on your own key can't set that cap for you.",
     },
     {
       q: "Is running OpenClaw on a Raspberry Pi really free?",

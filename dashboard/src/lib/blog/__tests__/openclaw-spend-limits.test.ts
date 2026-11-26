@@ -6,6 +6,9 @@ const spendLimitFaq = article.faqs.find(({ q }) => q === "Can OpenClaw limit how
 
 describe("OpenClaw provider spend-limit copy", () => {
   it("qualifies OpenAI hard-limit enforcement in the summary, body and FAQ", () => {
+    for (const copy of [article.shortAnswer, openAiSpendLimit, spendLimitFaq?.a]) {
+      expect(copy).toContain("As of 26 November 2026");
+    }
     expect(article.shortAnswer).toContain("not an exact bill ceiling");
     expect(article.shortAnswer).toContain("slightly exceed");
     expect(openAiSpendLimit).toContain("Enforcement is not instantaneous");
