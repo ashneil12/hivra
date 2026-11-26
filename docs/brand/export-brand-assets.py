@@ -2,7 +2,7 @@
 """Export the $HIVRA token image and Hivra app icons from the approved logo.
 
 Every output is a plain resize of docs/brand/hivra-logo.jpg (4096x4096, square,
-opaque), saved as PNG, or as WebP where a page only needs a light copy. Nothing is cropped, padded, recoloured, redrawn or made transparent:
+opaque), saved as PNG or ICO, or as WebP where a page only needs a light copy. Nothing is cropped, padded, recoloured, redrawn or made transparent:
 the dark field is part of the approved mark, so the same full-bleed square is
 used for the token image, the listing-site logos, the favicon, the Apple touch
 icon and the PWA icons.
@@ -16,7 +16,8 @@ outputs are always derived from the exact bytes recorded in docs/brand/README.md
 
 It never overwrites a published export: the hivra-token-* and hivra-icon-*
 files in dashboard/public/brand, whose URLs a token launch, a listing site or the
-web app manifest may already point at. A missing output is written. A published
+web app manifest may already point at. Desktop-app icons are fixed file names,
+so they are rewritten when the approved mark changes. A missing output is written. A published
 output that already exists is compared with a fresh export: identical bytes are
 left alone, and different bytes stop the script before it writes anything. A
 changed mark therefore gets new published file names.
@@ -44,6 +45,8 @@ SOURCE_SHA256 = "9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f
 
 PUBLIC_BRAND = Path("dashboard/public/brand")
 APP = Path("dashboard/src/app")
+WINDOWS_ICONS = Path("apps/windows/HivraDesktop/src-tauri/icons")
+WINDOWS_UI = Path("apps/windows/HivraDesktop/ui")
 
 # (output path, edge length in pixels)
 PNG_OUTPUTS = [
@@ -64,6 +67,12 @@ PNG_OUTPUTS = [
     # Their names are fixed, so these are rewritten when the mark changes.
     (APP / "icon.png", 192),
     (APP / "apple-icon.png", 180),
+    # Windows app and installer icons, plus the mark on the app's own welcome
+    # page. These are fixed file names inside the app rather than published URLs.
+    (WINDOWS_ICONS / "32x32.png", 32),
+    (WINDOWS_ICONS / "128x128.png", 128),
+    (WINDOWS_ICONS / "icon.png", 256),
+    (WINDOWS_UI / "hivra-icon.png", 192),
 ]
 # (output path, edge length in pixels, WebP quality). Lighter copies for pages
 # that draw the mark as artwork rather than as an icon.
@@ -73,13 +82,15 @@ WEBP_OUTPUTS = [
 ]
 FAVICON = APP / "favicon.ico"
 FAVICON_SIZES = (16, 32, 48)
+WINDOWS_ICON = WINDOWS_ICONS / "icon.ico"
+WINDOWS_ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
 
 # Outputs with these name prefixes are published URLs and are never overwritten.
 PUBLISHED_PREFIXES = ("hivra-token-", "hivra-icon-")
 
 
 def is_published(path: Path) -> bool:
-    return path.name.startswith(PUBLISHED_PREFIXES)
+    return path.parent == PUBLIC_BRAND and path.name.startswith(PUBLISHED_PREFIXES)
 
 
 def load_source(root: Path) -> Image.Image:
@@ -102,9 +113,12 @@ def resized(source: Image.Image, edge: int) -> Image.Image:
     return source.resize((edge, edge), Image.Resampling.LANCZOS)
 
 
-def png_bytes(source: Image.Image, edge: int) -> bytes:
+def png_bytes(source: Image.Image, edge: int, rgba: bool = False) -> bytes:
     buffer = io.BytesIO()
-    resized(source, edge).save(buffer, format="PNG", optimize=True)
+    image = resized(source, edge)
+    if rgba:
+        image = image.convert("RGBA")
+    image.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
 
 
@@ -114,9 +128,21 @@ def webp_bytes(source: Image.Image, edge: int, quality: int) -> bytes:
     return buffer.getvalue()
 
 
+def windows_icon_bytes(source: Image.Image) -> bytes:
+    frames = [resized(source, edge).convert("RGBA") for edge in WINDOWS_ICON_SIZES]
+    buffer = io.BytesIO()
+    frames[-1].save(
+        buffer,
+        format="ICO",
+        sizes=[(edge, edge) for edge in WINDOWS_ICON_SIZES],
+        append_images=frames[:-1],
+    )
+    return buffer.getvalue()
+
+
 def output_paths() -> list[Path]:
     """Every file main() writes."""
-    return [path for path, _edge in PNG_OUTPUTS] + [path for path, _edge, _quality in WEBP_OUTPUTS] + [FAVICON]
+    return [path for path, _edge in PNG_OUTPUTS] + [path for path, _edge, _quality in WEBP_OUTPUTS] + [FAVICON, WINDOWS_ICON]
 
 
 def favicon_bytes(source: Image.Image) -> bytes:
@@ -168,9 +194,13 @@ def write_exports(root: Path, exports: list[tuple[Path, bytes]]) -> None:
 
 def main(root: Path = ROOT) -> None:
     source = load_source(root)
-    exports = [(path, png_bytes(source, edge)) for path, edge in PNG_OUTPUTS]
+    exports = [
+        (path, png_bytes(source, edge, rgba=path.parent in {WINDOWS_ICONS, WINDOWS_UI}))
+        for path, edge in PNG_OUTPUTS
+    ]
     exports += [(path, webp_bytes(source, edge, quality)) for path, edge, quality in WEBP_OUTPUTS]
     exports.append((FAVICON, favicon_bytes(source)))
+    exports.append((WINDOWS_ICON, windows_icon_bytes(source)))
     write_exports(root, exports)
 
 
