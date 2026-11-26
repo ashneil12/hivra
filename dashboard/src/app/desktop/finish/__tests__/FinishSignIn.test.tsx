@@ -1,10 +1,10 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import { render, screen, waitFor } from "@testing-library/react";
-import { useClerk } from "@clerk/nextjs";
+import { useAuth, useClerk } from "@clerk/nextjs";
 import FinishSignIn from "../FinishSignIn";
 
-jest.mock("@clerk/nextjs", () => ({ useClerk: jest.fn() }));
+jest.mock("@clerk/nextjs", () => ({ useAuth: jest.fn(), useClerk: jest.fn() }));
 
 const create = jest.fn();
 const signOut = jest.fn();
@@ -21,10 +21,23 @@ function clerkLoaded(session: unknown = null) {
 }
 
 beforeEach(() => {
+  jest.mocked(useAuth).mockReturnValue({ isLoaded: true } as never);
   create.mockResolvedValue({ status: "complete", createdSessionId: "sess_new" });
   signOut.mockResolvedValue(undefined);
   setActive.mockResolvedValue(undefined);
   clerkLoaded();
+});
+
+it("waits for Clerk's loaded auth state before activating the ticket", async () => {
+  jest.mocked(useAuth).mockReturnValue({ isLoaded: false } as never);
+  const { rerender } = render(<FinishSignIn ticket="ticket_123" />);
+
+  expect(create).not.toHaveBeenCalled();
+
+  jest.mocked(useAuth).mockReturnValue({ isLoaded: true } as never);
+  rerender(<FinishSignIn ticket="ticket_123" />);
+
+  await waitFor(() => expect(create).toHaveBeenCalledWith({ strategy: "ticket", ticket: "ticket_123" }));
 });
 
 it("activates the ticket session through Clerk's decorated navigation", async () => {
