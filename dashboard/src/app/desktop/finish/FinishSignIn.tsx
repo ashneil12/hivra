@@ -25,8 +25,12 @@ export default function FinishSignIn({ ticket }: { ticket: string }) {
         if (!signIn) throw new Error("sign-in unavailable");
         const attempt = await signIn.create({ strategy: "ticket", ticket });
         if (attempt.status !== "complete" || !attempt.createdSessionId) throw new Error(`status ${attempt.status}`);
-        await clerk.setActive({ session: attempt.createdSessionId });
-        window.location.replace("/dashboard");
+        await clerk.setActive({
+          session: attempt.createdSessionId,
+          navigate: ({ decorateUrl }) => {
+            window.location.assign(decorateUrl("/dashboard"));
+          },
+        });
       } catch {
         setFailed(true);
       }
