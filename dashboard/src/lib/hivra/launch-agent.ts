@@ -1196,7 +1196,11 @@ export async function launchHivraAgentForUser(
     const templateSkills = template && bankrSkillsDirForType(type) ? coerceSkillIds(template.skills) : [];
     const launchModels = type === "codex" && resolvedLlmInput ? createLaunchModelAdmissionService() : null;
     let launchAdmission: LaunchModelAdmission | null = null;
-    const launchOperations = (type === "codex" && !resolvedLlmInput) || type === "linux-desktop"
+    // Every VM-backed launch needs a durable intent before allocation. Catalog
+    // apps use the same Proxmox lifecycle as the legacy box agents, but were
+    // previously omitted here and therefore entered recovery with no durable
+    // operation to reconcile.
+    const launchOperations = (type === "codex" && !resolvedLlmInput) || type === "linux-desktop" || Boolean(catalogManifest)
       ? earlyLaunchOperations ?? createHivraLaunchOperationService()
       : null;
     let launchOperationAdmission: HivraLaunchOperationAdmission | null = null;
