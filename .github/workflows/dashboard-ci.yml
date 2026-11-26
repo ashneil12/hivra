@@ -130,6 +130,12 @@ jobs:
           node scripts/test-managed-gvisor-binding.cjs
           node scripts/test-managed-gvisor-reservation.cjs
 
+      - name: Verify the gVisor adapter and workspace quotas
+        working-directory: .
+        run: |
+          python3 dashboard/provisioner/gvisor/test_hivra_gvisor_adapter.py
+          python3 dashboard/provisioner/gvisor/test_hivra_gvisor_xfs_workspace.py
+
       - name: Catalog certification runner tests
         run: node --test scripts/__tests__/catalog-certification.test.mjs scripts/__tests__/catalog-intake.test.mjs
 
