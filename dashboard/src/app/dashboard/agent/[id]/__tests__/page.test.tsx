@@ -12,6 +12,7 @@ import { resetAgentSoftwareForTests } from "@/components/hivra/useAgentSoftware"
 
 
 const pushMock = jest.fn();
+const routerMock = { push: pushMock };
 const mockSearchGet = jest.fn();
 const mockGetAgent = jest.fn();
 const mockListAgents = jest.fn();
@@ -30,7 +31,7 @@ jest.mock("@/components/ui/ThinkingOrb", () => ({
 }));
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: mockAgentId }),
-  useRouter: () => ({ push: pushMock }),
+  useRouter: () => routerMock,
   useSearchParams: () => ({ get: mockSearchGet }),
 }));
 
@@ -2729,6 +2730,30 @@ describe("AgentPage", () => {
       expect(pushMock).toHaveBeenCalledWith("/dashboard");
       await waitFor(() => expect(heldNames()).toEqual([]));
       expect(listReads).toBe(2);
+    });
+
+    it("leaves a computer and reads the list again when its poll reports deletion", async () => {
+      jest.useFakeTimers();
+      try {
+        mockGetAgent.mockResolvedValueOnce(CONNECTED_UBUNTU)
+          .mockResolvedValue({ ...CONNECTED_UBUNTU, status: "deleted", chat_url: null, api_token: null });
+        render(<AgentPage />);
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(screen.getByTestId("remote-desktop")).toBeInTheDocument();
+        listed = [];
+        await act(async () => {
+          jest.advanceTimersByTime(SETTLED_AGENT_POLL_MS);
+          await Promise.resolve();
+        });
+        expect(pushMock).toHaveBeenCalledWith("/dashboard/computers");
+        await waitFor(() => expect(heldNames()).toEqual([]));
+        expect(listReads).toBe(2);
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it("reads the agents list again after a rename, stop or resize", async () => {

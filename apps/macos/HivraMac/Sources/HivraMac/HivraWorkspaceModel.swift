@@ -302,6 +302,11 @@ final class HivraWorkspaceSession: ObservableObject, Identifiable {
             let wasSelected = selectedTabID == tab.id
             close(tab)
             if wasSelected { showDashboard(path) }
+            // The resource may have left because its page observed a delete or
+            // another account change. Its web view has its own inventory copy,
+            // so force the connection copy to catch up rather than reuse the
+            // fresh-but-stale list that still names this resource.
+            connectionBrowser.refreshWorkspace()
         case .unchanged:
             if tab.pendingResourceUID != nil { objectWillChange.send(); tab.pendingResourceUID = nil }
         }

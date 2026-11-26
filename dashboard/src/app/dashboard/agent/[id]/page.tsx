@@ -232,6 +232,11 @@ function listChanged(): void {
   resourceInventory.invalidate("attached");
 }
 
+/** A terminal delete leaves the resource route for the inventory that owns it. */
+function deletedResourcePath(agent: HivraAgent): string {
+  return catalogAgent(agent.type)?.surface === "computer" ? "/dashboard/computers" : "/dashboard";
+}
+
 /**
  * The surface a page opens on: a ?tab= deep link (e.g. the dashboard
  * checklist's "connect Telegram" item), then a fresh launch's conversation,
@@ -1365,6 +1370,15 @@ export default function AgentPage() {
       if (a) {
         initialFailures = 0;
         const fresh = a;
+        if (fresh.status === "deleted") {
+          listChanged();
+          setAgent(null);
+          setStatusObservation(null);
+          setLoaded(true);
+          schedule(null);
+          router.push(deletedResourcePath(fresh));
+          return;
+        }
         // An unchanged settled read keeps the same object so effects keyed
         // on the agent don't re-run every poll.
         setAgent((previous) => previous && JSON.stringify(previous) === JSON.stringify(fresh) ? previous : fresh);
@@ -1404,7 +1418,7 @@ export default function AgentPage() {
       if (timerRef.current) window.clearTimeout(timerRef.current);
       timerRef.current = null;
     };
-  }, [id, reloadKey]);
+  }, [id, reloadKey, router]);
 
   const go = useCallback(
     (path: string) => router.push(path),
