@@ -9,6 +9,21 @@ import { launchHivraAgentForUser } from "../launch-agent";
 const mockFrom = jest.fn();
 jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: (...args: unknown[]) => mockFrom(...args) } }));
 jest.mock("@/lib/logger", () => jest.requireActual("@/test-utils").createLoggerMock());
+jest.mock("../catalog-manifests/certification-allowlist.json", () => {
+  const { createHash } = jest.requireActual<typeof import("node:crypto")>("node:crypto");
+  const { UNIVERSAL_CATALOG_MANIFESTS } = jest.requireActual<
+    typeof import("../catalog-manifests/manifests")
+  >("../catalog-manifests/manifests");
+  const manifest = UNIVERSAL_CATALOG_MANIFESTS.find((entry) => entry.id === "it-tools")!;
+  return {
+    apps: {
+      "it-tools": {
+        manifestSha256: createHash("sha256").update(JSON.stringify(manifest)).digest("hex"),
+        provisionerVersion: "2026.11.25.2",
+      },
+    },
+  };
+});
 
 const OWNER = "user_CertifierFixture";
 const CANARY = {
