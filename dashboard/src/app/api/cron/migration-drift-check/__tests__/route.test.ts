@@ -285,7 +285,7 @@ describe("GET /api/cron/migration-drift-check", () => {
         { version: "20260512180000", name: "managed_venice_wallets" },
         { version: "20260512181000", name: "managed_venice_token_quotes" },
       ],
-      unexpected: [],
+      unexpected: [{ version: "20260512000000", name: "out_of_band_change" }],
       versionMismatched: [],
     });
 
@@ -303,10 +303,24 @@ describe("GET /api/cron/migration-drift-check", () => {
     ]);
     for (const call of calls) {
       expect(call.severity).toBe("fatal");
-      expect(call.metadata.failureType).toBe(
-        "supabase_migration_missing_in_prod"
+      expect(call.title).toBe(
+        `Supabase migration missing from the configured database ledger: ${call.metadata.migrationName}`
       );
+      expect(call.message).toContain("Verify the target and actual schema");
+      expect(call.metadata.failureType).toBe(
+        "supabase_migration_missing_from_ledger"
+      );
+      expect(call.metadata.recoveryAction).toBe("verify_schema_and_ledger");
     }
+    expect(log.error).toHaveBeenCalledWith(
+      "migration drift detected — missing migrations in the configured database ledger",
+      expect.any(Error),
+      expect.objectContaining({ missingCount: 3 })
+    );
+    expect(log.warn).toHaveBeenCalledWith(
+      "migration drift detected — unexpected migrations in the configured database ledger",
+      expect.objectContaining({ unexpectedCount: 1 })
+    );
   });
 
   it("does not derail when ops-event emission throws", async () => {
