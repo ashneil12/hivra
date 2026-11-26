@@ -79,7 +79,7 @@ export function catalogAppHostPort(manifest: CatalogAppManifest): number | null 
   return manifest.runtime.webService?.hostPort ?? null;
 }
 
-/** Gateway entry path opened in the agent page's DashboardView iframe. */
+/** Default gateway entry path opened in the agent page's DashboardView iframe. */
 export const CATALOG_APP_GATEWAY_ENTRY = "/app/";
 
 /** Project a manifest into the canonical AgentDef shape used across Launch,
@@ -105,6 +105,7 @@ export function catalogAppToAgentDef(
     surface: webSurface ? "dashboard" : "chat",
     floor: { ...manifest.floor },
     ...(hostPort !== null ? { dashboardPort: hostPort } : {}),
+    ...(webSurface && manifest.dashboardPath ? { dashboardPath: manifest.dashboardPath } : {}),
     ...(manifest.managedVenice ? { managedVenice: true } : {}),
     ...(manifest.llm ? { llm: manifest.llm } : {}),
   };

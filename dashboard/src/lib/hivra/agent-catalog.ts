@@ -69,6 +69,7 @@ export interface AgentDef {
   floor?: { cpu: number; ram: number };
   /** For surface:"dashboard" — the loopback port the box hosts the dashboard on. */
   dashboardPort?: number;
+  dashboardPath?: string;
   /**
    * The agent can bill its LLM usage to the user's managed Venice wallet (a
    * Hivra-minted proxy key installed during the connect step). Gates BOTH the

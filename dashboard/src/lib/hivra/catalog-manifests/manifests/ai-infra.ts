@@ -57,13 +57,14 @@ export const AI_INFRA_MANIFESTS: readonly CatalogAppManifest[] = [
     sourceUrl: "https://github.com/chroma-core/chroma",
     tagline: "Open-source embedding database for AI applications with a simple API on your own VM.",
     description: "Embedding database with collections, metadata filtering and a built-in embedding function option.",
-    capabilityLine: "Chroma's REST API, persistent vector storage, terminal and files.",
+    capabilityLine: "Chroma's interactive REST API docs, persistent vector storage, terminal and files.",
     badge: "Vector DB",
     accent: "#7c3aed",
     icon: "layers",
     jobs: ["research", "automation", "self-hosted"],
     keywords: ["chroma", "vector", "embeddings", "semantic search", "database", "api", "self-hosted", "ai"],
     talk: "In Chroma's REST API on its own computer.",
+    dashboardPath: "/docs/",
     firstTasks: [
       {
         title: "Create a collection",
