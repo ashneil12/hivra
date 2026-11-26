@@ -144,6 +144,24 @@ struct HivraLocalInstallationTests {
         #expect(!HivraLocalInstallation.dashboardIsRunning(statusOutput: "dashboard: unhealthy (503)\ndashboard process: up\n"))
     }
 
+    @Test("recognizes the dashboard readiness line when the process pipe splits it")
+    func recognizesSplitDashboardReadySignal() {
+        let chunks = ["Starting local database services…\nOP", "EN   http://127.", "0.0.1:3000", "\n"]
+        var signal = HivraLocalDashboardReadySignal()
+        #expect(chunks.map { signal.consume(Data($0.utf8)) } == [false, false, false, true])
+        let repeated = signal.consume(Data("OPEN   http://127.0.0.1:3000\n".utf8))
+        #expect(!repeated)
+    }
+
+    @Test("ignores prose and lookalike dashboard readiness lines")
+    func rejectsPartialDashboardReadySignals() {
+        var signal = HivraLocalDashboardReadySignal()
+        let lines = ["Do not OPEN   http://127.0.0.1:3000\n",
+                     "OPEN   http://127.0.0.1:30000\n",
+                     "OPEN   http://127.0.0.1:3000\n"]
+        #expect(lines.map { signal.consume(Data($0.utf8)) } == [false, false, true])
+    }
+
     @Test("recognizes a checkout by its existing self-host launcher")
     func recognizesCheckout() throws {
         let root = FileManager.default.temporaryDirectory
