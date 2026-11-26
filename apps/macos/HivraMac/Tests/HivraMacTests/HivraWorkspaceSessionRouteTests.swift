@@ -18,10 +18,10 @@ struct HivraWorkspaceSessionRouteTests {
         #expect(await condition())
     }
 
-    private func signedInSession() async throws -> HivraWorkspaceSession {
+    private func signedInSession(inventoryRefreshInterval: TimeInterval = 30) async throws -> HivraWorkspaceSession {
         _ = NSApplication.shared
         let profile = HivraConnectionProfile(name: "Route QA", url: URL(string: "\(origin)/dashboard")!, kind: .custom)
-        let session = HivraWorkspaceSession(profile: profile)
+        let session = HivraWorkspaceSession(profile: profile, inventoryRefreshInterval: inventoryRefreshInterval)
         session.connectionBrowser.webView.stopLoading()
         // Supply the display projection after the separately tested origin-validation boundary.
         let resources = [
@@ -74,6 +74,24 @@ struct HivraWorkspaceSessionRouteTests {
         #expect(session.selectedTabID == tab.id)
         #expect(!tab.browser.webView.isLoading)
         #expect(await liveMarker(tab.browser) == "retained")
+    }
+
+    @Test("the connection inventory revalidates itself while the workspace stays open")
+    func inventoryRevalidatesWhileWorkspaceStaysOpen() async throws {
+        let session = try await signedInSession(inventoryRefreshInterval: 1)
+        defer { session.clearOwnedViews() }
+        session.connectionBrowser.webView.loadHTMLString("""
+            <script>
+            window.refreshCount = 0;
+            window.addEventListener('hivra:refresh', event => { event.preventDefault(); window.refreshCount += 1; });
+            </script>
+            """, baseURL: URL(string: "\(origin)/dashboard")!)
+        try await eventually {
+            (try? await session.connectionBrowser.webView.evaluateJavaScript("window.refreshCount") as? Int) == 0
+        }
+        try await eventually {
+            ((try? await session.connectionBrowser.webView.evaluateJavaScript("window.refreshCount") as? Int) ?? 0) > 0
+        }
     }
 
     @Test("leaving a resource refreshes the connection inventory that may have deleted it")
