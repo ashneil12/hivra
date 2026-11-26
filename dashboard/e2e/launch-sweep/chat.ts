@@ -83,13 +83,20 @@ export function isOpenHandsUsageConsent(text: string): boolean {
   return /help improve openhands/i.test(text) && /anonymous usage data/i.test(text);
 }
 
-async function acknowledgeOpenHandsUsageConsent(frame: Frame): Promise<boolean> {
+export async function acknowledgeOpenHandsUsageConsent(frame: Frame): Promise<boolean> {
   const text = await bodyText(frame);
   if (!isOpenHandsUsageConsent(text)) return false;
-  const confirm = frame.getByRole('button', { name: /^\s*confirm\s*$/i }).first();
+  const confirm = frame.getByRole('button', { name: /^confirm( preferences)?$/i });
   if (!(await confirm.isVisible().catch(() => false))) return false;
-  await confirm.click().catch(() => undefined);
-  return true;
+  const usageData = frame.getByRole('checkbox', { name: 'Send anonymous usage data', exact: true });
+  if (!(await usageData.isVisible().catch(() => false))) return false;
+  try {
+    await usageData.uncheck({ timeout: 5_000 });
+    await confirm.click({ timeout: 5_000 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function occurrences(text: string, needle: string): number {
@@ -238,7 +245,7 @@ async function findComposer(
       }
     } else {
       for (const frame of await agentFrames(page)) {
-        if (await acknowledgeOpenHandsUsageConsent(frame)) {
+        if (target.profileId === 'openhands' && await acknowledgeOpenHandsUsageConsent(frame)) {
           await sleep(2_000);
           continue;
         }
