@@ -170,7 +170,7 @@ export const claudeCodeMcp: BlogArticle = {
       heading: "A short setup you can copy",
       paragraphs: [
         "Putting it together, here is a reasonable first session. Add a remote server for your tracker, check it, sign in, then add a shared project server for the team:",
-        "```bash\nclaude mcp add --transport http notion https://mcp.notion.com/mcp\nclaude mcp list\nclaude\n# inside Claude Code: run /mcp, pick notion, finish the browser sign-in,\n# then type /exit to return to your shell\nclaude mcp add --transport http --scope project sentry https://mcp.sentry.dev/mcp\nclaude\n# if `claude mcp list` already showed a local server named sentry,\n# remove it first (claude mcp remove sentry --scope local): local scope wins\n# inside Claude Code: approve the project server, run /mcp, sign in to sentry,\n# check it shows as connected, then /exit\ngit add .mcp.json\n```",
+        "```bash\nclaude mcp add --transport http notion https://mcp.notion.com/mcp\nclaude mcp list\nclaude\n# inside Claude Code: run /mcp, pick notion, finish the browser sign-in,\n# then type /exit to return to your shell\nclaude mcp add --transport http --scope project sentry https://mcp.sentry.dev/mcp\n# if `claude mcp list` already showed a local server named sentry,\n# remove it before you start Claude Code again (local scope wins):\n# claude mcp remove sentry --scope local\nclaude\n# inside Claude Code: approve the project server, run /mcp, sign in to sentry,\n# check it shows as connected, then /exit\ngit add .mcp.json\n```",
         "The point is the order: add, list, sign in, and only then commit the shared file, so you know the server works before your teammates pull it.",
       ],
     },

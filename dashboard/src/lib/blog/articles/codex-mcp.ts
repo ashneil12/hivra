@@ -145,7 +145,7 @@ export const codexMcp: BlogArticle = {
         "```bash\ncodex mcp login <server-name> --oauth-client-registration cimd\n```",
         "CIMD and DCR are two ways a client can register with a server. If a provider gave you a client ID, set it and registration is skipped. For a confidential client, `--oauth-client-secret` reads the secret, ideally from an environment variable. The docs warn that Codex saves that secret in config.toml, so keep the file private and out of version control.",
         "`codex mcp logout <server-name>` signs out of an OAuth server, and inside Codex `/mcp login <server-name>` signs in.",
-        "Callbacks default to `http://127.0.0.1/callback`. If a provider needs a fixed address, `mcp_oauth_callback_url` and `mcp_oauth_callback_port` set it.",
+        "Callbacks default to `http://127.0.0.1/callback`. If a provider needs a fixed address, `mcp_oauth_callback_url` and `mcp_oauth_callback_port` set it. When you pre-register a client with a provider, register the exact callback URL that `codex mcp add` prints: OpenAI's docs say it can end in a server-specific ID, such as `/callback/XuuuHAzzHOni`, so registering only `/callback` may not match.",
       ],
     },
     {
