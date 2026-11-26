@@ -587,6 +587,13 @@ export function normalizeProxmoxTargetId(value: string | null | undefined): stri
   return normalized || null;
 }
 
+export function declaredProxmoxTargetIds(env: EnvLike = process.env): string[] | null {
+  const declared = env.HERMES_PROXMOX_TARGETS?.trim() || env.PROXMOX_TARGETS?.trim() || "";
+  const ids = [...new Set(declared.split(/[,\s]+/).map(normalizeProxmoxTargetId)
+    .filter((id): id is string => Boolean(id)))];
+  return ids.length > 0 ? ids : null;
+}
+
 function resolveRequestedProxmoxTargetId(env: EnvLike, requestedTargetId?: string | null): string | null {
   const explicit = normalizeProxmoxTargetId(requestedTargetId);
   if (explicit) return explicit;

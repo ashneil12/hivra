@@ -186,6 +186,7 @@ type PrivateHivraAgentColumn =
   | "provider_install_dispatched_at"
   | "provider_install_stopped_at"
   | "provider_install_outcome"
+  | "canary_qa_holder_expires_at"
   | "proxmox_host"
   | "ip";
 
@@ -210,6 +211,7 @@ export function sanitizeHivraAgentRow<T extends Record<string, unknown>>(row: T)
   delete rest.provider_install_dispatched_at;
   delete rest.provider_install_stopped_at;
   delete rest.provider_install_outcome;
+  delete rest.canary_qa_holder_expires_at;
   delete rest.proxmox_host;
   delete rest.ip;
   // A recovered agent can carry failure text from an earlier operation (a

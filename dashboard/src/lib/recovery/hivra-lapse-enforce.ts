@@ -4,6 +4,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { log } from "@/lib/logger";
 import { isHivraLapseEnforceLive } from "@/lib/hivra/lapse-flags";
 import { ownerHasNoPaidPlan } from "@/lib/hivra/lapse-gate";
+import { isCanaryQaHolderSeat, isCanaryQaHolderSeatActive, type CanaryQaHolderRow } from "@/lib/hivra/canary-qa-holder";
+import { isCanonicalGitCanaryDeployment } from "@/lib/hivra/canonical-git-canary";
 import { sendHivraComputerStoppedEmail } from "@/lib/email/hivra-computer-stopped";
 import { stopHivraManagedComputer } from "./stop-deleted-user-computers";
 import { rotatingContainmentBatch } from "./orphaned-instances";
@@ -28,7 +30,7 @@ const SOURCE = "hivra-lapse-enforce";
 const PAGE_SIZE = 500;
 const OWNER_CHECKS_AT_ONCE = 10;
 
-interface RunningComputer { id: string; user_id: string; name: string | null }
+interface RunningComputer extends CanaryQaHolderRow { id: string; user_id: string; name: string | null }
 
 export interface HivraLapseSweepResult {
   live: boolean;
@@ -42,10 +44,11 @@ async function listRunningCloudComputers(): Promise<RunningComputer[]> {
   if (!supabaseAdmin) throw new Error("Database not configured");
   const rows: RunningComputer[] = [];
   let cursor: string | null = null;
+  let select = "id,user_id,name,canary_qa_holder_expires_at";
   for (;;) {
     let query = supabaseAdmin
       .from("hivra_agents")
-      .select("id,user_id,name")
+      .select(select)
       .eq("status", "running")
       .eq("deployment_mode", "hivra-managed")
       .eq("computer_substrate", "proxmox-kvm")
@@ -55,10 +58,14 @@ async function listRunningCloudComputers(): Promise<RunningComputer[]> {
       .limit(PAGE_SIZE);
     if (cursor) query = query.gt("id", cursor);
     const { data, error } = await query;
+    if (error?.code === "42703" && select !== "id,user_id,name" && cursor === null) {
+      select = "id,user_id,name";
+      continue;
+    }
     if (error) throw new Error(`Computer inventory unavailable: ${error.message}`);
-    rows.push(...((data ?? []) as RunningComputer[]));
+    rows.push(...((data ?? []) as unknown as RunningComputer[]));
     if (!data || data.length < PAGE_SIZE) return rows;
-    cursor = data[data.length - 1].id;
+    cursor = (data[data.length - 1] as unknown as RunningComputer).id;
   }
 }
 
@@ -67,9 +74,16 @@ export async function runHivraLapseSweep(now = new Date()): Promise<HivraLapseSw
   const running = await listRunningCloudComputers();
 
   const byOwner = new Map<string, RunningComputer[]>();
-  for (const computer of running) byOwner.set(computer.user_id, [...(byOwner.get(computer.user_id) ?? []), computer]);
-  const owners = [...byOwner.keys()];
   const lapsed: RunningComputer[] = [];
+  const canonicalCanary = isCanonicalGitCanaryDeployment();
+  for (const computer of running) {
+    if (isCanaryQaHolderSeat(computer)) {
+      if (canonicalCanary && !isCanaryQaHolderSeatActive(computer, now.getTime())) lapsed.push(computer);
+      continue;
+    }
+    byOwner.set(computer.user_id, [...(byOwner.get(computer.user_id) ?? []), computer]);
+  }
+  const owners = [...byOwner.keys()];
   for (let i = 0; i < owners.length; i += OWNER_CHECKS_AT_ONCE) {
     const batch = owners.slice(i, i + OWNER_CHECKS_AT_ONCE);
     const verdicts = await Promise.all(batch.map((owner) => ownerHasNoPaidPlan(owner)));
@@ -91,7 +105,10 @@ export async function runHivraLapseSweep(now = new Date()): Promise<HivraLapseSw
   for (const computer of rotatingContainmentBatch(lapsed, HIVRA_LAPSE_MAX_STOPS_PER_RUN, now)) {
     // The verdicts above can be minutes old by the time an earlier stop finishes:
     // ask again so an owner who has just paid is not stopped.
-    if (!(await ownerHasNoPaidPlan(computer.user_id))) continue;
+    const qaSeat = isCanaryQaHolderSeat(computer);
+    if (qaSeat
+      ? isCanaryQaHolderSeatActive(computer)
+      : !(await ownerHasNoPaidPlan(computer.user_id))) continue;
     try {
       await stopHivraManagedComputer(computer.user_id, computer.id);
     } catch (error) {
@@ -102,6 +119,7 @@ export async function runHivraLapseSweep(now = new Date()): Promise<HivraLapseSw
       continue;
     }
     stopped += 1;
+    if (qaSeat) continue;
     // Best effort: the stop stands whether or not the email goes.
     try {
       const sent = await sendHivraComputerStoppedEmail({ userId: computer.user_id, agentId: computer.id, computerName: computer.name });

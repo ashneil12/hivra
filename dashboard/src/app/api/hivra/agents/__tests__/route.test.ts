@@ -366,7 +366,7 @@ function mockDefaultRpc(name: string, args: Record<string, unknown>) {
   if (name === "holder_admission_state") {
     return Promise.resolve({ data: { state: "admitted", tier: "pro" }, error: null });
   }
-  if (name === "insert_hivra_managed_agent") {
+  if (name === "insert_hivra_managed_agent" || name === "insert_canary_qa_holder_agent") {
     const row = args.p_row as Record<string, unknown>;
     mockAgentInsert(row);
     if (mockAgentInsertThrows) return Promise.reject(mockAgentInsertThrows);
@@ -419,6 +419,7 @@ jest.mock("@/lib/services/cloudflare-tunnel", () => ({
 
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   DEFAULT_PROXMOX_VM_DISK_GB: 30,
+  declaredProxmoxTargetIds: () => null,
   runProxmoxHostScriptWithStdin: (...args: unknown[]) => mockManagedTransport(...args),
   buildProxmoxVmidReferenceLedger: (...args: unknown[]) => mockBuildProxmoxVmidReferenceLedger(...args),
   resolveProxmoxTargetConfiguration: (...args: unknown[]) => mockResolveProxmoxTargetConfiguration(...args),
@@ -502,6 +503,9 @@ describe("POST /api/hivra/agents", () => {
     "HIVRA_MANAGED_GVISOR_QA_ENROLLMENT_ENABLED",
     "HIVRA_MANAGED_GVISOR_QA_OWNER_ID",
     "HIVRA_MANAGED_GVISOR_QA_EXPIRES_AT",
+    "HIVRA_CANARY_QA_HOLDER_ENABLED",
+    "HIVRA_CANARY_QA_HOLDER_USER_ID",
+    "HIVRA_CANARY_QA_HOLDER_EXPIRES_AT",
     "VERCEL",
     "VERCEL_ENV",
     "VERCEL_PROJECT_PRODUCTION_URL",
@@ -3625,6 +3629,82 @@ describe("POST /api/hivra/agents", () => {
     expect(await response.json()).toMatchObject({ error: expect.stringContaining("cannot nap") });
     expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
     expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
+  describe("the named Canary holder QA slot", () => {
+    const expiry = () => new Date(Date.now() + 60 * 60_000).toISOString();
+    const body = { type: "hermes", name: "Canary holder QA", cpu: 2, ram: 4 };
+    const originalMode = process.env.HIVRA_SLEEP_MODE;
+    beforeEach(() => {
+      enableManagedGvisorQaFixture();
+      Object.assign(process.env, {
+        HIVRA_CANARY_QA_HOLDER_ENABLED: "true",
+        HIVRA_CANARY_QA_HOLDER_USER_ID: "user_fixture1",
+        HIVRA_CANARY_QA_HOLDER_EXPIRES_AT: expiry(),
+        HIVRA_SLEEP_MODE: "canary",
+      });
+      mockAuth.mockResolvedValue({ userId: "user_fixture1" });
+      mockEnforceFreeAccountRefusal = true;
+      mockTunnelConfigured = true;
+      mockCreateBoxTunnel.mockResolvedValue({ token: "synthetic", url: "https://fixture.example.test", tunnelId: "fixture-tunnel", hostname: "fixture.example.test" });
+    });
+    afterEach(() => {
+      if (originalMode === undefined) delete process.env.HIVRA_SLEEP_MODE;
+      else process.env.HIVRA_SLEEP_MODE = originalMode;
+    });
+
+    it("uses holder placement and the dedicated slot without minting a key, pool or paid telemetry", async () => {
+      const response = await POST(makeRequest(body));
+      expect(response.status).toBe(201);
+      expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledWith(expect.objectContaining({ seatFunding: "holder" }));
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_canary_qa_holder_agent", expect.objectContaining({
+        p_expires_at: process.env.HIVRA_CANARY_QA_HOLDER_EXPIRES_AT,
+        p_row: expect.objectContaining({ seat_funding: "holder", cpu: 2, ram: 4, pool_id: null }),
+      }));
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("insert_hivra_managed_agent", expect.anything());
+      expect(mockGetOrCreatePoolId).not.toHaveBeenCalled();
+      expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
+      expect(mockPosthogCapture).not.toHaveBeenCalled();
+    });
+
+    it.each(["different name", "wrong owner", "production", "default off", "managed credits"])(
+      "leaves normal admission in place for %s", async (scenario) => {
+        const request = { ...body };
+        if (scenario === "different name") request.name = "My Hermes";
+        if (scenario === "wrong owner") mockAuth.mockResolvedValue({ userId: "user_fixture2" });
+        if (scenario === "production") process.env.VERCEL_PROJECT_PRODUCTION_URL = "hivra.cloud";
+        if (scenario === "default off") delete process.env.HIVRA_CANARY_QA_HOLDER_ENABLED;
+        const response = await POST(makeRequest(scenario === "managed credits" ? { ...request, managedVenice: true } : request));
+        expect(response.status).toBe(403);
+        expect(mockAgentInsert).not.toHaveBeenCalled();
+        expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
+      },
+    );
+
+    it("uses real paid funding even with the exact QA name and standing account", async () => {
+      mockSubscriptionRow = { plan: "operator", status: "active", instance_limit: 4, total_cpu_budget: 4, total_ram_budget: 8192 };
+      expect((await POST(makeRequest(body))).status).toBe(201);
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_hivra_managed_agent", expect.objectContaining({
+        p_row: expect.objectContaining({ seat_funding: "paid" }),
+      }));
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("insert_canary_qa_holder_agent", expect.anything());
+    });
+
+    it("uses real holder funding even with the exact QA name and standing account", async () => {
+      mockTokenQualificationRows = [{ tier: "pro", currently_eligible: true }];
+      expect((await POST(makeRequest(body))).status).toBe(201);
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_hivra_managed_agent", expect.objectContaining({
+        p_row: expect.objectContaining({ seat_funding: "holder" }),
+      }));
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("insert_canary_qa_holder_agent", expect.anything());
+    });
+
+    it("requires the ordinary holder wake connection before touching placement", async () => {
+      mockTunnelConfigured = false;
+      expect((await POST(makeRequest(body))).status).toBe(503);
+      expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    });
   });
 
   it("lets the holder admission host win over the sticky host on a normal holder launch", async () => {
