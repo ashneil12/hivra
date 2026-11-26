@@ -1670,6 +1670,36 @@
     },
     {
       "family": "value-set",
+      "input": "/dashboard/launch?profile=wekan&stage=choose",
+      "expect": "/dashboard/launch?profile=wekan&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=wekan",
+      "expect": "/dashboard/infrastructure?launch=wekan"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=airtrail&stage=choose",
+      "expect": "/dashboard/launch?profile=airtrail&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=airtrail",
+      "expect": "/dashboard/infrastructure?launch=airtrail"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=adventurelog&stage=choose",
+      "expect": "/dashboard/launch?profile=adventurelog&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=adventurelog",
+      "expect": "/dashboard/infrastructure?launch=adventurelog"
+    },
+    {
+      "family": "value-set",
       "input": "/dashboard/launch?profile=owncast&stage=choose",
       "expect": "/dashboard/launch?profile=owncast&stage=choose"
     },
