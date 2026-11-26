@@ -61,6 +61,7 @@ import { howToInstallCodexCli } from "./blog/articles/how-to-install-codex-cli";
 import { claudeCodeOnWindows } from "./blog/articles/claude-code-on-windows";
 import { claudeCodeOnLinux } from "./blog/articles/claude-code-on-linux";
 import { claudeCodeMcp } from "./blog/articles/claude-code-mcp";
+import { codexMcp } from "./blog/articles/codex-mcp";
 
 // SCRIPTURE_ANCHOR: blog-store | Psalm 78:4 | Verse: We will tell the generation to come the praises of Yahweh, his strength, and his wondrous works.
 export const BLOG_ARTICLES: Record<string, BlogArticle> = {
@@ -126,6 +127,7 @@ export const BLOG_ARTICLES: Record<string, BlogArticle> = {
   "claude-code-on-windows": claudeCodeOnWindows,
   "claude-code-on-linux": claudeCodeOnLinux,
   "claude-code-mcp": claudeCodeMcp,
+  "codex-mcp": codexMcp,
 };
 
 export const BLOG_ARTICLES_LIST: BlogArticle[] = Object.values(BLOG_ARTICLES).sort(

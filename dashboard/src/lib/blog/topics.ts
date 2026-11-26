@@ -34,6 +34,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "codex-mobile",
       "how-to-install-codex-cli",
       "claude-code-mcp",
+      "codex-mcp",
     ],
   },
   {
