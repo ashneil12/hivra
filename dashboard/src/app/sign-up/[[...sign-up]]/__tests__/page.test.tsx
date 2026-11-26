@@ -201,6 +201,26 @@ describe("SignUpPage", () => {
     }));
   });
 
+  it("returns a Venice claimant to Launch and preserves the return when switching to sign-in", async () => {
+    const returnPath = "/dashboard/launch?agent=hermes&inference=venice&ref=venice&code=VENICE";
+    render(await SignUpPage({ searchParams: Promise.resolve({ redirect_url: returnPath }) }));
+
+    expect(mockSignUp).toHaveBeenCalledWith(expect.objectContaining({
+      forceRedirectUrl: returnPath,
+      fallbackRedirectUrl: returnPath,
+      signInUrl: `/sign-in?redirect_url=${encodeURIComponent(returnPath)}`,
+    }));
+  });
+
+  it("ignores external return targets", async () => {
+    render(await SignUpPage({ searchParams: Promise.resolve({ redirect_url: "https://example.com/" }) }));
+
+    const props = mockSignUp.mock.calls[0][0];
+    expect(props.fallbackRedirectUrl).toBe("/dashboard/launch?kind=agent&start=1");
+    expect(props.forceRedirectUrl).toBeUndefined();
+    expect(props.signInUrl).toBeUndefined();
+  });
+
   it("themes the Clerk card from tokens, so it stays legible in dark mode", async () => {
     render(await SignUpPage({ searchParams: Promise.resolve({}) }));
     const { elements, variables } = mockSignUp.mock.calls[0][0].appearance;

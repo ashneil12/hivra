@@ -1,4 +1,9 @@
 import {
+  isCatalogAppId,
+  UNIVERSAL_CATALOG_IDS,
+  type UniversalCatalogAppId,
+} from "@/lib/hivra/catalog-manifests";
+import {
   PROFILE_DETAILS,
   type LaunchAgentProfileId,
   type LaunchProfileId,
@@ -13,6 +18,7 @@ const PORTABLE_AGENT_LAUNCH_IDS = [
   "agent-zero",
   "openbot",
   "nuphos",
+  ...UNIVERSAL_CATALOG_IDS,
 ] as const;
 
 export type PortableAgentLaunchId = typeof PORTABLE_AGENT_LAUNCH_IDS[number];
@@ -83,7 +89,9 @@ const AGENT_TYPE_PROFILES: Readonly<Record<string, LaunchAgentProfileId>> = {
 };
 
 export function launchProfileForAgentType(value: string | null | undefined): LaunchAgentProfileId | null {
-  return value && Object.hasOwn(AGENT_TYPE_PROFILES, value) ? AGENT_TYPE_PROFILES[value] : null;
+  if (!value) return null;
+  if (Object.hasOwn(AGENT_TYPE_PROFILES, value)) return AGENT_TYPE_PROFILES[value];
+  return isCatalogAppId(value) ? value : null;
 }
 
 /** A new launch of the agent a link named, or of anything when it named
@@ -93,6 +101,10 @@ export function buildAgentLaunchHref(agentType?: string | null): string {
   return profile ? buildLaunchHref({ start: true, profile }) : buildLaunchHref({ kind: "agent", start: true });
 }
 
+const UNIVERSAL_PORTABLE_PROFILES = Object.fromEntries(
+  UNIVERSAL_CATALOG_IDS.map((id) => [id, id]),
+) as unknown as Record<UniversalCatalogAppId, UniversalCatalogAppId>;
+
 const PORTABLE_LAUNCH_PROFILES: Readonly<Record<PortableLaunchResourceId, LaunchProfileId>> = {
   "claude-code": "claude-code",
   codex: "codex",
@@ -101,6 +113,7 @@ const PORTABLE_LAUNCH_PROFILES: Readonly<Record<PortableLaunchResourceId, Launch
   "agent-zero": "agent-zero",
   openbot: "openbot",
   nuphos: "nuphos",
+  ...UNIVERSAL_PORTABLE_PROFILES,
   "linux-desktop": "ubuntu-desktop",
   "linux-terminal": "linux-terminal",
   windows: "windows",

@@ -49,14 +49,20 @@ function createEmptyProxmoxHostsRegistry(): () => unknown {
   });
 }
 
-jest.mock("@/lib/supabase", () => ({
-  supabaseAdmin: {
-    from: jest.fn(),
-    storage: {
-      from: jest.fn(),
+jest.mock("@/lib/supabase", () => {
+  const from = jest.fn();
+  return {
+    supabaseAdmin: {
+      from,
+      rpc: jest.fn(async (name: string, args: { p_row: Record<string, unknown> }) => {
+        if (name !== "insert_hermes_instance") throw new Error(`Unexpected RPC: ${name}`);
+        // Preserve the table fixture's explicit read/insert/update sequence.
+        return from("hermes_instances").insert(args.p_row).select().single();
+      }),
+      storage: { from: jest.fn() },
     },
-  },
-}));
+  };
+});
 
 jest.mock("@/lib/crypto", () => ({
   encryptApiKey: jest.fn((value: string) => `enc:${value}`),

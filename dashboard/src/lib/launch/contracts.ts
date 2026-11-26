@@ -1,4 +1,9 @@
 import type { DigitalOceanSandboxSize } from "@/lib/infrastructure/contracts";
+import {
+  UNIVERSAL_CATALOG_IDS,
+  UNIVERSAL_CATALOG_MANIFESTS,
+  type UniversalCatalogAppId,
+} from "@/lib/hivra/catalog-manifests";
 import { recommendedResourceEnvelope } from "./resource-envelope";
 
 export const LAUNCH_DRAFT_SCHEMA_VERSION = 1 as const;
@@ -11,7 +16,7 @@ export type LaunchResourceKind = "agent" | "computer";
 /** "hermes" is the Hermes instance lane; "hermes-computer" is Hermes as a Hivra
  * computer (the official Hermes, its own web UI), offered where the Hermes
  * computer lane is on. Both are named Hermes to the owner. */
-export type LaunchAgentProfileId = "claude-code" | "codex" | "hermes" | "hermes-computer" | "openclaw" | "agent-zero" | "openbot" | "nuphos" | "aeon" | "deepseek-harness";
+export type LaunchAgentProfileId = "claude-code" | "codex" | "hermes" | "hermes-computer" | "openclaw" | "agent-zero" | "openbot" | "nuphos" | "aeon" | "deepseek-harness" | UniversalCatalogAppId;
 export type LaunchComputerProfileId = "ubuntu-desktop" | "ubuntu-server" | "linux-terminal" | "omarchy" | "windows";
 export type LaunchProfileId = LaunchAgentProfileId | LaunchComputerProfileId;
 export type LaunchState = "idle" | "submitting" | "uncertain" | "accepted" | "failed";
@@ -197,15 +202,15 @@ export const DEFAULT_MODEL_ACCESS: LaunchModelAccess = {
  * computer ("hermes-computer"), uses the Hivra agent launch. */
 export type LaunchLane = "hivra-agent" | "hermes-instance" | "prepared-computer" | "windows-installer";
 
-export const PROFILE_DETAILS: Record<LaunchProfileId, {
+export type ProfileDetailEntry = {
   resourceKind: LaunchResourceKind;
   name: string;
-  runtimeId: "codex" | "claude-code" | "hermes" | "openclaw" | "agent-zero" | "openbot" | "nuphos" | "aeon" | "deepseek-harness" | "linux-desktop" | "linux-terminal";
+  runtimeId: "codex" | "claude-code" | "hermes" | "openclaw" | "agent-zero" | "openbot" | "nuphos" | "aeon" | "deepseek-harness" | "linux-desktop" | "linux-terminal" | UniversalCatalogAppId;
   /** Compatibility evidence required from the exact selected launch target.
    * This is deliberately separate from the guest runtime sent at launch: a
    * generic Linux desktop adapter is not evidence of Windows capability. */
   placementRuntimeId: "codex" | "claude-code" | "hermes" | "openclaw" | "agent-zero" | "openbot" | "nuphos" | "aeon" | "deepseek-harness"
-    | "linux-desktop" | "linux-server" | "linux-terminal" | "windows-installer";
+    | "catalog-app" | "linux-desktop" | "linux-server" | "linux-terminal" | "windows-installer";
   managedCapacity: "plan" | "entitlement-required" | "self-managed-only";
   /** Whether a server the owner connected can run it. Hermes runs on Hivra
    * Cloud only. */
@@ -223,7 +228,35 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
   /** Selectable sizes; the journey hides those below the active floor. */
   cpuOptions: readonly number[];
   ramOptions: readonly number[];
-}> = {
+};
+
+const UNIVERSAL_PROFILE_DETAILS = Object.fromEntries(
+  UNIVERSAL_CATALOG_MANIFESTS.map((manifest) => [
+    manifest.id,
+    {
+      resourceKind: "agent" as const,
+      name: manifest.name,
+      runtimeId: manifest.id as UniversalCatalogAppId,
+      placementRuntimeId: "catalog-app" as const,
+      managedCapacity: "plan" as const,
+      ownServer: true,
+      lane: "hivra-agent" as const,
+      browser: "none" as const,
+      sizing: "pinned" as const,
+      recommended: {
+        cpu: manifest.recommended.cpu,
+        ram: manifest.recommended.ram,
+        maximumCpu: manifest.recommended.cpu,
+        maximumRam: manifest.recommended.ram,
+        source: "recommended" as const,
+      },
+      cpuOptions: manifest.cpuOptions,
+      ramOptions: manifest.ramOptions,
+    } satisfies ProfileDetailEntry,
+  ]),
+) as unknown as Record<UniversalCatalogAppId, ProfileDetailEntry>;
+
+export const PROFILE_DETAILS: Record<LaunchProfileId, ProfileDetailEntry> = {
   codex: {
     resourceKind: "agent",
     name: "Codex",
@@ -448,6 +481,7 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
     cpuOptions: [4],
     ramOptions: [8],
   },
+  ...UNIVERSAL_PROFILE_DETAILS,
 };
 
 /** The profiles a launch link, draft or tile may name. The native route
@@ -455,6 +489,7 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, {
 export const LAUNCH_PROFILE_IDS: readonly LaunchProfileId[] = [
   "claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "openbot", "nuphos", "aeon", "deepseek-harness",
   "ubuntu-desktop", "ubuntu-server", "linux-terminal", "omarchy", "windows",
+  ...UNIVERSAL_CATALOG_IDS,
 ];
 
 /** Profiles that run on Hivra Cloud only, whatever else was chosen. Hermes has

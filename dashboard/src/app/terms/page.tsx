@@ -16,7 +16,7 @@ export const metadata = {
   }),
 };
 
-const LAST_UPDATED = "May 2, 2026";
+const LAST_UPDATED = "November 25, 2026";
 
 export default function TermsPage() {
   return (<PublicSite className={styles.page} data-page="terms">
@@ -40,7 +40,7 @@ export default function TermsPage() {
           </ul>
 
           <h2 className="serif">4. Subscription and Billing</h2>
-          <p>Hivra offers a free account that any user may use without selecting a paid plan, subject to fair-use limits and anti-abuse checks. A free account does not include a computer run by Hivra; it works with computers you connect yourself. A computer run by Hivra requires a paid plan or a qualifying token-based access path. Free-tier computers created before this change remain available under the limits they were created with. Paid tiers (Pro, Power) are billed on a monthly subscription basis according to the tier you select. Payments and card verification are processed securely via Stripe.</p>
+          <p>Hivra offers a free account that any user may use without selecting a paid plan, subject to fair-use limits and anti-abuse checks. A free account does not include a computer run by Hivra; it works with computers you connect yourself. A computer run by Hivra requires a paid plan or a qualifying token-based access path. Free-tier computers created before this change remain available under the limits they were created with. Paid tiers (Pro, Power) are billed on a monthly subscription basis according to the tier you select. Payments and card verification are processed securely via Stripe. Separately, where token-holder access is enabled for an account, a new holder qualification is valued at $299 for Pro (2 vCPU and 4 GB) or $599 for Power (4 vCPU and 8 GB), converted to a token amount using the live market price when quoted. A qualification already recorded keeps the token amount, token and tier code recorded for it; those historical locks are not repriced. Token-holder access remains subject to the applicable holding, grace, suspension and requalification rules shown in Billing. Hosted holder compute is placement-backed. Holder use is admitted only up to 20% of scheduler placement capacity; this is an admission ceiling, and grandfathering can preserve usage above it. When capacity is unavailable, holders join a waitlist and hosted compute starts only after admission. For holder computers with automatic idle sleep enabled, sleep timing is conditional on host support and activity checks: after 4 minutes idle they nap, and after 12 further minutes in nap (16 minutes total idle) their memory is saved to disk and the computer stops.</p>
           <p><strong>Refund & Grace Period Policy:</strong> Because we provision dedicated computing infrastructure for each Hermes agent, we incur immediate, non-recoverable server costs. Therefore, we offer a 7-day money-back guarantee following your initial paid subscription charge. Additionally, in the event of a payment failure or cancellation, server instances are retained for a 48-hour grace period before secure deletion.</p>
           <p><strong>Upgrade-Only Plans:</strong> Due to the nature of our dedicated infrastructure provisioning, Hivra subscription tiers cannot be downgraded. You may upgrade your tier at any time. To move to a lower tier, you must cancel your current subscription and initiate a new one, which will result in the deletion of your current server environment and data.</p>
 

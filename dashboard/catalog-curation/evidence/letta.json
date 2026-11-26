@@ -1,0 +1,75 @@
+{
+  "slug": "letta",
+  "checkedAt": "2026-11-21T03:25:30.070Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "letta-ai/letta is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "letta-ai/letta",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "letta/letta:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "letta/letta:latest",
+        "digest": "sha256:9f9789eaccc30372cd8c735f53dfd7b7251119a3f04ee12fc0180c489c783f7d",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "fail",
+      "detail": "health /v1/health never returned <400 (last status none)",
+      "evidence": {
+        "container": "hivra-verify-letta-rop7zu",
+        "hostPort": 55125,
+        "image": "letta/letta:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-letta-rop7zu",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:55125:8283",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-letta-rop7zu-data:/root/.letta",
+          "letta/letta:latest"
+        ],
+        "runStdout": "b15fdfd7816280d50eebbb99cd7168a4e9fdb6756263578cca52b6773f8faa4a",
+        "health": {
+          "ok": false,
+          "status": null,
+          "seconds": 240.2,
+          "attempts": 120,
+          "error": "fetch failed"
+        },
+        "logsTail": "ll ... [--agent <id>]\n  letta server [--computer-name <name> | --listen [url]] [options]\n  letta connect <provider> [options]\n  letta install <thing> [--agent <id> | -n <name>]\n  letta skills list [--agent <id> | -n <name>]\n  letta skills delete <skill_name> --agent <id>\n  letta backend [cloud|local]\n  letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]\n\nBEHAVIOR\n  On startup, Letta Code checks for saved profiles:\n  - If profiles exist, you'll be prompted to select one or create a new agent\n  - Agents can be pinned for quick access with /pin\n  - Use /profile save <name> to bookmark your current agent\n\n  Agent pins are stored in ~/.letta/settings.json.\n\n  If no credentials are configured, you'll be prompted to authenticate via\n  Letta Cloud OAuth on first run.\n\nEXAMPLES\n  # when installed as an executable\n  letta                    # Show profile selector or create new\n  letta --new              # Create new conversation\n  letta --agent agent_123  # Open specific agent\n  letta install official/finance/stocks --agent agent-123\n  letta install npm:@letta-ai/mod-plan-mode\n\n  # inside the interactive session\n  /profile save MyAgent    # Save current agent as profile\n  /profiles                # Open profile selector\n  /pin                     # Pin current agent\n  /unpin                   # Unpin current agent\n  /logout                  # Clear saved credentials and exit\n\n  # headless with JSON output (includes stats)\n  letta -p \"hello\" --output-format json\n"
+      }
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "no floor.ram in spec or no memory reading"
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "boot: health /v1/health never returned <400 (last status none)"
+  ]
+}

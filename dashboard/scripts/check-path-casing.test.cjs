@@ -1,0 +1,249 @@
+const { strict: assert } = require('node:assert');
+const { execFileSync, spawnSync } = require('node:child_process');
+const { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const path = require('node:path');
+const { test } = require('node:test');
+
+function runGuard(t, fixtures, padding = []) {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'dashboard-casing-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q'], { cwd });
+  mkdirSync(path.join(cwd, 'scripts'));
+  const script = path.join(cwd, 'scripts/check-path-casing.cjs');
+  copyFileSync(path.join(__dirname, 'check-path-casing.cjs'), script);
+
+  const added = [];
+  const stagedOnly = [];
+  for (const fixture of fixtures) {
+    const entry = typeof fixture === 'string' ? { name: fixture } : fixture;
+    if (entry.stageOnly) {
+      stagedOnly.push(entry);
+      continue;
+    }
+    const target = path.join(cwd, entry.name);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, entry.contents ?? '');
+    added.push(entry.name);
+  }
+  if (added.length) execFileSync('git', ['add', '--', ...added], { cwd });
+
+  // Case-only duplicates cannot coexist in this Mac checkout, so stage them
+  // directly in the index: the guard's input is the index, not the worktree.
+  for (const entry of stagedOnly) {
+    const object = execFileSync('git', ['hash-object', '-w', '--stdin'], {
+      cwd,
+      input: entry.contents ?? '',
+      encoding: 'utf8',
+    }).trim();
+    execFileSync('git', ['update-index', '--add', '--cacheinfo', `100644,${object},${entry.name}`], { cwd });
+  }
+
+  if (padding.length) {
+    const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd, input: '', encoding: 'utf8' }).trim();
+    const input = padding.map(name => `100644 ${blob}\t${name}\0`).join('');
+    execFileSync('git', ['update-index', '-z', '--index-info'], { cwd, input });
+  }
+
+  return spawnSync(process.execPath, [script], { cwd, encoding: 'utf8' });
+}
+
+function assertConflict(result, spellings) {
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Conflicting dashboard paths:/);
+  for (const spelling of spellings) assert.ok(result.stderr.includes(spelling), `${result.stderr} includes ${spelling}`);
+}
+
+function packageFixture(name, manifest) {
+  return { name, contents: `${JSON.stringify(manifest, null, 2)}\n` };
+}
+
+test('accepts distinct modules and matching-case declaration companions', t => {
+  const result = runGuard(t, ['PromptOutline.tsx', 'promptOutlineModel.ts', 'PromptOutline.d.ts']);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+for (const companion of ['.ts', '.d.ts', '.TS', '.D.TS', '.json', '.wasm', '.node']) {
+  test(`rejects a differently cased module with extension ${companion}`, t => {
+    const result = runGuard(t, ['PromptOutline.tsx', `promptOutline${companion}`]);
+    assertConflict(result, ['PromptOutline', 'promptOutline']);
+  });
+}
+
+for (const [suffix, request] of [['.mts', '.mjs'], ['.d.mts', '.mjs'], ['.cts', '.cjs'], ['.d.cts', '.cjs']]) {
+  test(`accepts ${suffix} alongside an unrelated extensionless module`, t => {
+    const result = runGuard(t, ['foo.ts', `Foo${suffix}`]);
+    assert.equal(result.status, 0, result.stderr);
+  });
+
+  test(`detects ${suffix} colliding on the explicit ${request} request`, t => {
+    assertConflict(runGuard(t, [`foo${request}`, `Foo${suffix}`]), [`foo${request}`, `Foo${request}`]);
+  });
+}
+
+test('resolves a parent package target through the root index', t => {
+  assertConflict(runGuard(t, ['foo.ts', 'index.ts', packageFixture('Foo/package.json', { main: '..' })]), ['foo', 'Foo']);
+});
+
+test('resolves a nested parent target through a sibling file', t => {
+  assertConflict(runGuard(t, [
+    'foo.ts', 'Foo/a.ts', packageFixture('Foo/package.json', { main: './a/b' }),
+    packageFixture('Foo/a/b/package.json', { main: '..' }),
+  ]), ['foo', 'Foo']);
+});
+
+test('accepts matching-case module companions across supported extensions', t => {
+  const result = runGuard(t, ['payload.js', 'payload.json', 'payload.wasm', 'payload.d.ts']);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('rejects direct non-module casing collisions staged only in the index', t => {
+  const result = runGuard(t, [
+    { name: 'docs/README.md', stageOnly: true },
+    { name: 'docs/readme.md', stageOnly: true },
+  ]);
+  assertConflict(result, ['docs/README.md', 'docs/readme.md']);
+});
+
+test('accepts nested modules in a differently cased directory when it has no index module', t => {
+  const result = runGuard(t, ['src/nested/Feature.ts', 'src/nested/feature/helper.ts']);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+for (const indexFile of ['index.tsx', 'Index.tsx']) {
+  test(`accepts matching-case nested file, ${indexFile}, and declaration companions`, t => {
+    const stem = indexFile.replace(/\.tsx$/, '');
+    const result = runGuard(t, [
+      'src/nested/Feature.ts',
+      `src/nested/Feature/${indexFile}`,
+      `src/nested/Feature/${stem}.d.ts`,
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+  });
+}
+
+for (const indexFile of ['index.ts', 'index.d.ts', 'Index.tsx', 'index.node']) {
+  test(`rejects a nested file and differently cased directory index ${indexFile}`, t => {
+    const result = runGuard(t, ['src/nested/foo.ts', `src/nested/Foo/${indexFile}`]);
+    assertConflict(result, ['src/nested/foo', 'src/nested/Foo']);
+  });
+}
+
+for (const field of ['main', 'types', 'typings', 'module', 'browser']) {
+  test(`rejects a nested file and differently cased package directory with ${field}`, t => {
+    const declaration = field === 'types' || field === 'typings';
+    const entry = declaration ? 'entry.d.ts' : 'entry.ts';
+    const result = runGuard(t, [
+      'src/nested/foo.ts',
+      packageFixture('src/nested/Foo/package.json', { [field]: `./${entry}` }),
+      `src/nested/Foo/${entry}`,
+    ]);
+    assertConflict(result, ['src/nested/foo', 'src/nested/Foo']);
+  });
+}
+
+test('rejects a differently cased package directory with an extensionless entry', t => {
+  const result = runGuard(t, [
+    'src/nested/foo.ts',
+    packageFixture('src/nested/Foo/package.json', { main: './entry' }),
+    'src/nested/Foo/entry.ts',
+  ]);
+  assertConflict(result, ['src/nested/foo', 'src/nested/Foo']);
+});
+
+test('accepts package metadata without a resolvable directory entry', t => {
+  const result = runGuard(t, [
+    'src/nested/foo.ts',
+    packageFixture('src/nested/Foo/package.json', {
+      main: './missing.ts',
+      types: './missing.d.ts',
+    }),
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('accepts matching-case file and package entry directory companions', t => {
+  const result = runGuard(t, [
+    'src/nested/Foo.ts',
+    packageFixture('src/nested/Foo/package.json', { main: './entry.ts' }),
+    'src/nested/Foo/entry.ts',
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+for (const entry of ['Foo', 'Foo/index']) {
+  test(`rejects differently cased extensionless ${entry}`, t => {
+    assertConflict(runGuard(t, ['src/foo.ts', `src/${entry}`]), ['src/foo', 'src/Foo']);
+  });
+}
+
+for (const [description, manifest, entries] of [
+  ['dotted target', { main: './entry.min' }, ['entry.min.js']],
+  ['trailing slash', { main: './dist/' }, ['dist/index.js']],
+  ['nested package', { main: './dist' }, [packageFixture('dist/package.json', { main: './entry' }), 'dist/entry.js']],
+  ['edge-light', { 'edge-light': './entry' }, ['entry.js']],
+]) {
+  test(`rejects differently cased package with ${description}`, t => {
+    const contents = entries.map(entry => typeof entry === 'string' ? `Foo/${entry}` : { ...entry, name: `Foo/${entry.name}` });
+    assertConflict(runGuard(t, ['foo.ts', packageFixture('Foo/package.json', manifest), ...contents]), ['foo', 'Foo']);
+  });
+}
+
+test('accepts a package cycle without a resolvable entry', t => {
+  const result = runGuard(t, ['foo.ts', packageFixture('Foo/package.json', { main: './dist' }), packageFixture('Foo/dist/package.json', { main: '..' })]);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+for (const [manifest, target, tracked] of [
+  ['package.json', './Entry', 'entry.ts'],
+  ['package.json', './dist', 'dist/Index.ts'],
+  ['Package.json', './entry', 'entry.ts'],
+  ['package.json', './dist/', 'dist.js'],
+  ['package.json', './entry.js', 'entry.ts'],
+  ['package.json', './entry.jsx', 'entry.tsx'],
+  ['package.json', './entry.js', 'entry.d.ts'],
+]) {
+  test(`resolves ${manifest} main ${target} through ${tracked}`, t => {
+    assertConflict(runGuard(t, ['foo.ts', packageFixture(`Foo/${manifest}`, { main: target }), `Foo/${tracked}`]), ['foo', 'Foo']);
+  });
+}
+
+test('resolves a Jest main ending in ../ through a sibling file', t => {
+  assertConflict(runGuard(t, [
+    'foo.ts', 'Foo/a.js', packageFixture('Foo/package.json', { main: './a/b' }),
+    packageFixture('Foo/a/b/package.json', { main: '../' }),
+  ]), ['foo', 'Foo']);
+});
+
+for (const [field, tracked] of [['types', 'dist.js'], ['main', 'dist.d.ts']]) {
+  test(`keeps ${field} ending in / directory-only for ${tracked}`, t => {
+    const result = runGuard(t, ['foo.ts', packageFixture('Foo/package.json', { [field]: './dist/' }), `Foo/${tracked}`]);
+    assert.equal(result.status, 0, result.stderr);
+  });
+}
+
+for (const field of ['types', 'typings', 'module', 'browser', 'edge-light', 'main']) {
+  for (const nativeEntry of ['entry.node', 'entry/index.node']) {
+    test(`checks native target ${nativeEntry} through ${field}`, t => {
+      const result = runGuard(t, ['foo.ts', packageFixture('Foo/package.json', { [field]: './entry' }), `Foo/${nativeEntry}`]);
+      if (field === 'main') assertConflict(result, ['foo', 'Foo']);
+      else assert.equal(result.status, 0, result.stderr);
+    });
+  }
+}
+
+for (const [outer, inner] of [['main', 'main'], ['types', 'main'], ['main', 'types']]) {
+  test(`checks a nested native target through ${outer} then ${inner}`, t => {
+    const result = runGuard(t, [
+      'foo.ts', packageFixture('Foo/package.json', { [outer]: './dist' }),
+      packageFixture('Foo/dist/package.json', { [inner]: './entry' }), 'Foo/dist/entry.node',
+    ]);
+    if (outer === 'main' && inner === 'main') assertConflict(result, ['foo', 'Foo']);
+    else assert.equal(result.status, 0, result.stderr);
+  });
+}
+
+test('reads collisions beyond one MiB of staged paths', t => {
+  const padding = Array.from({ length: 6000 }, (_, index) => `padding/${'x'.repeat(132)}${index}`);
+  assertConflict(runGuard(t, ['z/Foo', 'z/foo.ts'], padding), ['z/Foo', 'z/foo']);
+});

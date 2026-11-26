@@ -1,5 +1,10 @@
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
-  loadKnownProxmoxHostSlugs,
+  loadKnownProxmoxFleet,
   locateProxmoxInstanceAcrossFleet,
   recoverProxmoxInstanceAcrossFleet,
   runRecoverOrphanProvisioningSweep,
@@ -78,7 +83,17 @@ function buildDiscoveryStdout(opts: {
   ].join("\n");
 }
 
-describe("loadKnownProxmoxHostSlugs", () => {
+function hostRegistry(hosts: Array<{ id: string; status?: string; decommissioned_at?: string | null }>) {
+  return {
+    select: jest.fn().mockResolvedValue({
+      data: hosts.map((host) => ({ status: "active", decommissioned_at: null, ...host })),
+      count: hosts.length,
+      error: null,
+    }),
+  };
+}
+
+describe("loadKnownProxmoxFleet", () => {
   const mockedFrom = (supabaseAdmin as unknown as { from: jest.Mock }).from;
   beforeEach(() => {
     process.env = {
@@ -88,39 +103,43 @@ describe("loadKnownProxmoxHostSlugs", () => {
   });
   afterEach(() => jest.clearAllMocks());
 
-  it("returns slugs from the proxmox_hosts registry", async () => {
-    mockedFrom.mockReturnValue({
-      select: jest.fn().mockResolvedValue({
-        data: [{ id: "fixturenode7" }, { id: "fixturenode8" }, { id: "fixturenode9" }],
-        error: null,
-      }),
+  it("includes drainage and maintenance but omits explicitly decommissioned hosts", async () => {
+    mockedFrom.mockReturnValue(hostRegistry([
+      { id: "fixturenode7" },
+      { id: "fixturenode8", status: "draining" },
+      { id: "fixturenode9", status: "maintenance" },
+      { id: "fixturenode10", status: "maintenance", decommissioned_at: "2026-10-24T16:00:00+00:00" },
+    ]));
+    await expect(loadKnownProxmoxFleet()).resolves.toEqual({
+      source: "registry",
+      slugs: ["fixturenode7", "fixturenode8", "fixturenode9"],
+      decommissionedSlugs: new Set(["fixturenode10"]),
     });
-    await expect(loadKnownProxmoxHostSlugs()).resolves.toEqual(["fixturenode7", "fixturenode8", "fixturenode9"]);
   });
 
   it("falls back only to explicitly configured hosts when the registry errors", async () => {
     mockedFrom.mockReturnValue({
       select: jest.fn().mockResolvedValue({ data: null, error: { message: "boom" } }),
     });
-    const slugs = await loadKnownProxmoxHostSlugs();
-    expect(slugs).toEqual(["fixturenode1", "fixturenode6", "fixturenode7", "fixturenode9", "fixturenode10", "fixturenode21"]);
+    await expect(loadKnownProxmoxFleet()).resolves.toEqual({
+      source: "configuration",
+      slugs: ["fixturenode1", "fixturenode6", "fixturenode7", "fixturenode9", "fixturenode10", "fixturenode21"],
+    });
   });
 
   it("falls back when the registry returns an empty list", async () => {
-    mockedFrom.mockReturnValue({
-      select: jest.fn().mockResolvedValue({ data: [], error: null }),
+    mockedFrom.mockReturnValue(hostRegistry([]));
+    await expect(loadKnownProxmoxFleet()).resolves.toEqual({
+      source: "configuration",
+      slugs: ["fixturenode1", "fixturenode6", "fixturenode7", "fixturenode9", "fixturenode10", "fixturenode21"],
     });
-    const slugs = await loadKnownProxmoxHostSlugs();
-    expect(slugs).toEqual(["fixturenode1", "fixturenode6", "fixturenode7", "fixturenode9", "fixturenode10", "fixturenode21"]);
   });
 
   it("discovers an explicitly configured per-host SSH identity without inventing fleet members", async () => {
     delete process.env.HERMES_PROXMOX_TARGETS;
     process.env.PROXMOX_HOST_EDGE_1_SSH_HOST = "192.0.2.18";
-    mockedFrom.mockReturnValue({
-      select: jest.fn().mockResolvedValue({ data: [], error: null }),
-    });
-    await expect(loadKnownProxmoxHostSlugs()).resolves.toEqual(["edge_1"]);
+    mockedFrom.mockReturnValue(hostRegistry([]));
+    await expect(loadKnownProxmoxFleet()).resolves.toEqual({ source: "configuration", slugs: ["edge_1"] });
   });
 });
 
@@ -134,7 +153,7 @@ describe("runRecoverOrphanProvisioningSweep", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env = { ...ORIGINAL_ENV, HERMES_PROXMOX_TARGETS: "fixturenode1,fixturenode2" };
+    process.env = { ...ORIGINAL_ENV };
     mockedResolveEnv.mockReturnValue({});
 
     updateCallback = jest.fn().mockReturnThis();
@@ -162,6 +181,7 @@ describe("runRecoverOrphanProvisioningSweep", () => {
 
     let call = 0;
     mockedFrom.mockImplementation((table: string) => {
+      if (table === "proxmox_hosts") return hostRegistry([{ id: "fixturenode1" }, { id: "fixturenode2" }]);
       if (table !== "hermes_instances") throw new Error(`Unexpected table: ${table}`);
       call += 1;
       // First call = candidate SELECT, second call = reconcile UPDATE.
@@ -279,6 +299,7 @@ describe("runRecoverOrphanProvisioningSweep", () => {
     mockedFrom.mockReset();
     let call = 0;
     mockedFrom.mockImplementation((table: string) => {
+      if (table === "proxmox_hosts") return hostRegistry([{ id: "fixturenode13" }]);
       if (table !== "hermes_instances") throw new Error(`Unexpected table: ${table}`);
       call += 1;
       return call === 1 ? candidateQuery : updateQuery;
@@ -326,9 +347,7 @@ describe("runRecoverOrphanProvisioningSweep", () => {
     mockedFrom.mockReset();
     mockedFrom.mockImplementation((table: string) => {
       if (table === "proxmox_hosts") {
-        return {
-          select: jest.fn().mockResolvedValue({ data: [{ id: "fixturenode13" }], error: null }),
-        };
+        return hostRegistry([{ id: "fixturenode13" }]);
       }
       if (table !== "hermes_instances") throw new Error(`Unexpected table: ${table}`);
       return updateQuery;
@@ -378,9 +397,7 @@ describe("runRecoverOrphanProvisioningSweep", () => {
     mockedFrom.mockReset();
     mockedFrom.mockImplementation((table: string) => {
       if (table !== "proxmox_hosts") throw new Error(`Unexpected table: ${table}`);
-      return {
-        select: jest.fn().mockResolvedValue({ data: [{ id: "fixturenode13" }], error: null }),
-      };
+      return hostRegistry([{ id: "fixturenode13" }]);
     });
     mockedRunScript.mockResolvedValue({
       ok: true,
@@ -424,6 +441,192 @@ describe("runRecoverOrphanProvisioningSweep", () => {
     expect(mockedRunScript).not.toHaveBeenCalled();
   });
 
+  it("does not probe a decommissioned host even when both routing hints still name it", async () => {
+    process.env.HERMES_PROXMOX_TARGETS = "fixturenode13,fixturenode12";
+    process.env.PROXMOX_FIXTURENODE12_SSH_HOST = "192.0.2.12";
+    mockedFrom.mockReturnValue(hostRegistry([
+      { id: "fixturenode13" },
+      { id: "fixturenode12", status: "maintenance", decommissioned_at: "2026-10-24T16:00:00Z" },
+    ]));
+    mockedRunScript.mockResolvedValue({ ok: true, stdout: "RESULT NOT_FOUND\n", stderr: "" });
+    const row = buildOrphanRow({
+      proxmox_node: "fixturenode12",
+      config: { infrastructure: { node: "fixturenode12", hostSlug: "fixturenode12" } },
+    });
+
+    await expect(locateProxmoxInstanceAcrossFleet(row)).resolves.toEqual({ status: "gone" });
+    await expect(recoverProxmoxInstanceAcrossFleet(row)).resolves.toEqual({ status: "gone" });
+    expect(mockedResolveEnv.mock.calls.map(([config]) => config?.hostSlug))
+      .toEqual(["fixturenode13", "fixturenode13"]);
+  });
+
+  it.each(["active", "draining", "maintenance", "unknown"])(
+    "cannot establish absence when a %s host is unreachable",
+    async (status) => {
+      mockedFrom.mockReturnValue(hostRegistry([
+        { id: "fixturenode13" },
+        { id: "fixturenode12", status },
+      ]));
+      mockedResolveEnv.mockImplementation((config) => {
+        if (config?.hostSlug === "fixturenode12") throw new Error("Host route unavailable");
+        return {};
+      });
+      mockedRunScript.mockResolvedValue({ ok: true, stdout: "RESULT NOT_FOUND\n", stderr: "" });
+
+      await expect(locateProxmoxInstanceAcrossFleet(buildOrphanRow()))
+        .resolves.toEqual({ status: "inconclusive" });
+      expect(mockedRunScript).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("keeps an unregistered row hint inconclusive without probing it", async () => {
+    mockedFrom.mockReturnValue(hostRegistry([{ id: "fixturenode13" }]));
+    mockedRunScript.mockResolvedValue({ ok: true, stdout: "RESULT NOT_FOUND\n", stderr: "" });
+
+    await expect(locateProxmoxInstanceAcrossFleet(buildOrphanRow({ proxmox_node: "fixturenode12" })))
+      .resolves.toEqual({ status: "inconclusive" });
+    expect(mockedResolveEnv.mock.calls.map(([config]) => config?.hostSlug)).toEqual(["fixturenode13"]);
+  });
+
+  it("keeps an unregistered infrastructure hostSlug inconclusive without probing it", async () => {
+    mockedFrom.mockReturnValue(hostRegistry([{ id: "fixturenode13" }]));
+    mockedRunScript.mockResolvedValue({ ok: true, stdout: "RESULT NOT_FOUND\n", stderr: "" });
+    const row = buildOrphanRow({ config: { infrastructure: { node: "fixturenode13", hostSlug: "fixturenode12" } } });
+
+    await expect(locateProxmoxInstanceAcrossFleet(row)).resolves.toEqual({ status: "inconclusive" });
+    expect(mockedResolveEnv.mock.calls.map(([config]) => config?.hostSlug)).toEqual(["fixturenode13"]);
+  });
+
+  it.each([
+    ["HERMES_PROXMOX_TARGETS", "fixturenode13,fixturenode12"],
+    ["PROXMOX_HOST_FIXTURENODE12_SSH_HOST", "192.0.2.12"],
+    ["PROXMOX_FIXTURENODE12_SSH_HOST", "192.0.2.12"],
+    ["FIXTURENODE12_PROXMOX_SSH_HOST", "192.0.2.12"],
+  ])("requires registry coverage for a host declared through %s", async (key, value) => {
+    process.env[key] = value;
+    mockedFrom.mockReturnValue(hostRegistry([{ id: "fixturenode13" }]));
+    mockedRunScript.mockResolvedValue({ ok: true, stdout: "RESULT NOT_FOUND\n", stderr: "" });
+
+    await expect(locateProxmoxInstanceAcrossFleet(buildOrphanRow())).resolves.toEqual({ status: "inconclusive" });
+    expect(mockedResolveEnv.mock.calls.map(([config]) => config?.hostSlug)).toEqual(["fixturenode13"]);
+  });
+
+  it("does not use a truncated registry response as evidence of absence", async () => {
+    const registry = hostRegistry([{ id: "fixturenode13" }]);
+    const partial = await registry.select();
+    registry.select.mockResolvedValue({ ...partial, count: 2 });
+    mockedFrom.mockReturnValue(registry);
+    mockedRunScript.mockResolvedValue({ ok: true, stdout: "RESULT NOT_FOUND\n", stderr: "" });
+
+    await expect(locateProxmoxInstanceAcrossFleet(buildOrphanRow()))
+      .resolves.toEqual({ status: "inconclusive" });
+    expect(mockedRunScript).not.toHaveBeenCalled();
+  });
+
+  it("recovers with a configured inventory without treating a miss as conclusive", async () => {
+    process.env.HERMES_PROXMOX_TARGETS = "fixturenode1,fixturenode2";
+    mockedFrom.mockReturnValue(hostRegistry([]));
+    mockedRunScript.mockResolvedValue({ ok: true, stdout: "RESULT NOT_FOUND\n", stderr: "" });
+
+    await expect(recoverProxmoxInstanceAcrossFleet(buildOrphanRow()))
+      .resolves.toEqual({ status: "inconclusive" });
+    expect(mockedRunScript).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an unrouteable stopped VM present for teardown purposes", async () => {
+    mockedFrom.mockReturnValue(hostRegistry([{ id: "fixturenode13" }]));
+    mockedRunScript.mockResolvedValue({
+      ok: true,
+      stdout: "RESULT NO_FQDN\nVMID=425\nVMSTATUS=stopped\nPRIVIP=10.250.20.75\n",
+      stderr: "",
+    });
+
+    await expect(locateProxmoxInstanceAcrossFleet(buildOrphanRow()))
+      .resolves.toEqual({ status: "inconclusive" });
+  });
+
+  it.each([
+    ["listing error with partial output", "printf 'VMID NAME STATUS\\n'; return 1", "inconclusive"],
+    ["missing list header", "return 0", "inconclusive"],
+    ["malformed VM row", "printf 'VMID NAME STATUS\\n425\\n'", "inconclusive"],
+    ["valid empty list", "printf 'VMID NAME STATUS\\n'", "gone"],
+  ])("verifies the generated probe handles %s", async (_description, qmBody, status) => {
+    mockedFrom.mockReturnValue(hostRegistry([{ id: "fixturenode13" }]));
+    mockedRunScript.mockImplementation(async (script) => {
+      const result = spawnSync("bash", ["-c", `qm() { ${qmBody}; }\n${script}`], {
+        encoding: "utf8",
+        timeout: 3000,
+      });
+      return { ok: result.status === 0, stdout: result.stdout, stderr: result.stderr };
+    });
+
+    await expect(locateProxmoxInstanceAcrossFleet(buildOrphanRow())).resolves.toEqual({ status });
+  });
+
+  it.each([
+    [`hermes-${ORPHAN_INSTANCE_ID}`, "RESULT NO_IP", "inconclusive"],
+    [`hermes-legacy-agent-${ORPHAN_PREFIX}`, "RESULT NO_IP", "inconclusive"],
+    [`hermes-${"a".repeat(41)}`, "RESULT IDENTITY_UNVERIFIED", "inconclusive"],
+  ])("keeps stopped VM %s from proving absence with the generated probe", async (vmName, marker, status) => {
+    mockedFrom.mockReturnValue(hostRegistry([{ id: "fixturenode13" }]));
+    let probeStdout = "";
+    mockedRunScript.mockImplementation(async (script) => {
+      const result = spawnSync("bash", ["-c", `qm() {
+        case "$1" in
+          list) printf '%s\\n' 'VMID NAME STATUS' '425 ${vmName} stopped' ;;
+          status) printf '%s\\n' 'status: stopped' ;;
+          config) printf '%s\\n' 'name: ${vmName}' ;;
+          *) return 1 ;;
+        esac
+      }\n${script}`], { encoding: "utf8", timeout: 3000 });
+      probeStdout = result.stdout;
+      return { ok: result.status === 0, stdout: result.stdout, stderr: result.stderr };
+    });
+
+    await expect(locateProxmoxInstanceAcrossFleet(buildOrphanRow())).resolves.toEqual({ status });
+    expect(probeStdout).toContain(marker);
+  });
+
+  it("can rule out a truncated VM with an agreeing full-ID claim and Caddy route for another instance", async () => {
+    const root = mkdtempSync(join(tmpdir(), "hermes-discovery-"));
+    try {
+      const tenant = "00000000-0000-4000-8000-000000001047";
+      for (const dir of ["claims", "qemu", "caddy"]) mkdirSync(join(root, dir));
+      writeFileSync(join(root, "claims", "425.claim"), tenant);
+      writeFileSync(join(root, "qemu", "425.conf"), "ipconfig0: ip=10.250.20.75/24,gw=10.250.20.1\n");
+      const site = join(root, "caddy", "agent.caddy");
+      writeFileSync(site, [
+        "agent.example {",
+        `  redir https://dashboard.example/wake/${tenant} 302`,
+        "  reverse_proxy 10.250.20.75:80 {",
+        "  }",
+        "}",
+      ].join("\n"));
+      mockedFrom.mockReturnValue(hostRegistry([{ id: "fixturenode13" }]));
+      mockedRunScript.mockImplementation(async (script) => {
+        const fixtureScript = script
+          .replaceAll("/run/hermes-vm-claims", join(root, "claims"))
+          .replaceAll("/etc/pve/qemu-server", join(root, "qemu"))
+          .replaceAll("/etc/caddy/hermes.d", join(root, "caddy"));
+        const result = spawnSync("bash", ["-c", `qm() {
+          printf '%s\\n' 'VMID NAME STATUS' '425 hermes-${"a".repeat(41)} stopped'
+        }\n${fixtureScript}`], { encoding: "utf8", timeout: 3000 });
+        return { ok: result.status === 0, stdout: result.stdout, stderr: result.stderr };
+      });
+      await expect(locateProxmoxInstanceAcrossFleet(buildOrphanRow())).resolves.toEqual({ status: "gone" });
+
+      await expect(locateProxmoxInstanceAcrossFleet(buildOrphanRow({ id: tenant })))
+        .resolves.toEqual({ status: "inconclusive" });
+
+      const beforeClone = new Date("2000-01-01T00:00:00Z");
+      utimesSync(site, beforeClone, beforeClone);
+      await expect(locateProxmoxInstanceAcrossFleet(buildOrphanRow()))
+        .resolves.toEqual({ status: "inconclusive" });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it.each([
     ["unknown", true],
     ["stopped", false],
@@ -431,9 +634,7 @@ describe("runRecoverOrphanProvisioningSweep", () => {
     mockedFrom.mockReset();
     mockedFrom.mockImplementation((table: string) => {
       if (table !== "proxmox_hosts") throw new Error(`Unexpected table: ${table}`);
-      return {
-        select: jest.fn().mockResolvedValue({ data: [{ id: "fixturenode13" }], error: null }),
-      };
+      return hostRegistry([{ id: "fixturenode13" }]);
     });
     mockedRunScript.mockResolvedValue({
       ok: true,
@@ -523,6 +724,7 @@ describe("runRecoverOrphanProvisioningSweep", () => {
     mockedFrom.mockReset();
     let call = 0;
     mockedFrom.mockImplementation((table: string) => {
+      if (table === "proxmox_hosts") return hostRegistry([{ id: "fixturenode5" }]);
       if (table !== "hermes_instances") throw new Error(`Unexpected table: ${table}`);
       call += 1;
       if (call === 1) return candidateQuery;
@@ -595,6 +797,7 @@ describe("runRecoverOrphanProvisioningSweep", () => {
       }),
     };
     mockedFrom.mockImplementation((table: string) => {
+      if (table === "proxmox_hosts") return hostRegistry([{ id: "fixturenode13" }]);
       if (table !== "hermes_instances") throw new Error(`Unexpected table: ${table}`);
       return candidateQuery;
     });

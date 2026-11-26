@@ -46,8 +46,8 @@ export async function GET(req: NextRequest) {
       result.paidAccessReset +
       result.canceledTerminalStripe +
       result.pendingActivatedFromStripe;
-    const manualReviewEntries = result.entries
-      .filter((entry) => entry.action === "manual_review")
+    const allManualReviewEntries = result.entries.filter((entry) => entry.action === "manual_review");
+    const manualReviewEntries = allManualReviewEntries
       .slice(0, MAX_REVIEW_ENTRIES)
       .map((entry) => ({
         userId: entry.userId,
@@ -57,13 +57,44 @@ export async function GET(req: NextRequest) {
         stripeCustomerId: entry.stripeCustomerId,
       }));
 
-    if (
-      changed > 0 ||
-      result.manualReview > 0 ||
-      result.skippedStaleRow > 0 ||
-      result.runtimeRowsChanged > 0 ||
-      result.errors > 0
-    ) {
+    // Every manual-review row gets its own fingerprinted ops event, whatever
+    // else the pass did: reportOpsEvent fingerprints on (source, title,
+    // message, route, userId, …), so a row that is NEW to the backlog mints a
+    // feed-visible event even on a pass where the summary below stays silent
+    // — a paid row needing review must reach a human, not just ride along in
+    // result.entries. A standing backlog row re-sighted takes the UPDATE
+    // branch of the same row instead (occurrence_count bumps; nothing new on
+    // the feed), which is the alert-once-per-new-item separation the route's
+    // own statelessness cannot provide (the orphaned-instances pattern).
+    for (const entry of allManualReviewEntries) {
+      await reportOpsEvent({
+        source: SUBSCRIPTION_STATE_RECONCILER_LOG_SOURCE,
+        severity: "warn",
+        title: "Paid subscription row needs manual review",
+        message:
+          `A '${entry.plan}' subscription row in status '${entry.status}' cannot be reconciled ` +
+          `against Stripe automatically and keeps its paid access until an operator reviews it` +
+          `${entry.detail ? `: ${entry.detail}` : "."}`,
+        route: ROUTE,
+        userId: entry.userId,
+        metadata: {
+          failureType: "subscription_state_manual_review",
+          plan: entry.plan,
+          status: entry.status,
+          stripeSubscriptionId: entry.stripeSubscriptionId,
+          stripeCustomerId: entry.stripeCustomerId,
+          detail: entry.detail,
+        },
+      });
+    }
+
+    // Warn only when the reconcile actually changed something or errored.
+    // manualReview/skippedStaleRow are standing observations (the same
+    // operator-grant backlog is re-reported every 15 min forever — prod
+    // 2026-11: one warn row with 11k+ occurrences and nothing new in it),
+    // not changes; they still ride along in metadata whenever a real
+    // change does fire the event.
+    if (changed > 0 || result.runtimeRowsChanged > 0 || result.errors > 0) {
       // Raise severity to 'error' when genuine reconcile failures occurred —
       // previously all outcomes (routine resets, manual review, errors) shared
       // 'warn', so an errored run looked like a normal one on the feed.

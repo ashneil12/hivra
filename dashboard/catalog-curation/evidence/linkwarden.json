@@ -1,0 +1,138 @@
+{
+  "slug": "linkwarden",
+  "checkedAt": "2026-11-21T14:45:35.473Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "linkwarden/linkwarden is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "linkwarden/linkwarden",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "2 service images have linux/amd64",
+      "evidence": {
+        "services": [
+          {
+            "name": "db",
+            "ref": "postgres:16-alpine",
+            "digest": "sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857",
+            "platforms": [
+              "linux/amd64",
+              "unknown/unknown",
+              "linux/arm/v6",
+              "unknown/unknown",
+              "linux/arm/v7",
+              "unknown/unknown",
+              "linux/arm64/v8",
+              "unknown/unknown",
+              "linux/386",
+              "unknown/unknown",
+              "linux/ppc64le",
+              "unknown/unknown",
+              "linux/riscv64",
+              "unknown/unknown",
+              "linux/s390x",
+              "unknown/unknown"
+            ]
+          },
+          {
+            "name": "app",
+            "ref": "ghcr.io/linkwarden/linkwarden:latest",
+            "digest": "sha256:7c11fde57d1a0c819b6de0079966eba3a33584d718464af7dacde22bd470ae46",
+            "platforms": [
+              "linux/arm64",
+              "unknown/unknown",
+              "linux/amd64",
+              "unknown/unknown"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "stack up; health / -> 200 in 34.6s across 2 container(s)",
+      "evidence": {
+        "project": "hivra-verify-linkwarden-vgx8kj",
+        "composeFile": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-linkwarden-tgbw3I/rendered/compose.yaml",
+        "renderedDir": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-linkwarden-tgbw3I/rendered",
+        "renderStdout": "{\"outDir\":\"/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-linkwarden-tgbw3I/rendered\"}",
+        "defaultPlatform": "host",
+        "upStdout": "",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 34.6,
+          "attempts": 10
+        },
+        "containerCount": 2,
+        "perContainerMem": [
+          {
+            "id": "ad1d20847dc4",
+            "memUsage": "487.9MiB / 7.652GiB",
+            "memBytes": 511600230
+          },
+          {
+            "id": "dfd044758c2a",
+            "memUsage": "29.02MiB / 7.652GiB",
+            "memBytes": 30429676
+          }
+        ],
+        "memBytes": 542029906
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 53510,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html><html lang=\"en\" data-theme=\"dark\"><head><meta charSet=\"utf-8\" data-next-head=\"\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" data-next-head=\"\"/><title data-next-head=\"\">Linkwarden</title><meta name=\"theme-color\" content=\"#ffffff\" data-next-head=\"\"/><link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/apple-touch-icon.png\" data-next-head=\"\"/><link rel=\"icon\" ty",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 200,
+          "bodyHead": "<!DOCTYPE html><html lang=\"en\" data-theme=\"dark\"><head><meta charSet=\"utf-8\" data-next-head=\"\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" data-next-head=\"\"/><title data-next-head=\"\">Linkwarden</title><meta name=\"theme-color\" content=\"#ffffff\" data-next-head=\"\"/><link rel=\"a"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 516.9MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 542029906,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

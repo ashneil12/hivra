@@ -38,6 +38,8 @@ export type PlanSource =
 export type PlanPaymentPath = "card" | "token";
 /** The $HermesOS option: pay one year, or hold enough to qualify. */
 export type TokenPlanMode = "yearly" | "hold";
+/** Billing's server-resolved holder-admission state, plus its request states. */
+export type HolderAdmissionViewState = "loading" | "error" | "none" | "waitlisted" | "admitted";
 
 export function isPlanKey(value: unknown): value is PlanKey {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(PLANS, value);
@@ -143,18 +145,18 @@ export function planPriceDisplay(
     if (!tier) return cardMonthly(key);
     if (options.tokenMode === "hold") {
       const held = options.holdAmounts?.[tier];
-      if (held) {
+      if (held?.amountDisplay) {
         return {
           amount: held.usdApprox !== null ? `≈$${held.usdApprox.toLocaleString("en-US")}` : "Hold",
           // The amounts are in the token the server priced them in.
-          unit: `held in ${options.holdAmounts?.tokenUnit ?? tokenUnit}`,
-          subline: `Hold ${held.amountDisplay} ${options.holdAmounts?.tokenUnit ?? tokenUnit} in a verified wallet · move it any time`,
+          unit: `held in ${held.tokenUnit}`,
+          subline: `Hold ${held.amountDisplay} ${held.tokenUnit} in a verified wallet · move it any time`,
         };
       }
       return {
         amount: "Hold",
-        unit: tokenUnit,
-        subline: `Keep enough ${tokenUnit} in a verified wallet · withdraw any time`,
+        unit: held?.tokenUnit ?? tokenUnit,
+        subline: `Keep enough ${held?.tokenUnit ?? tokenUnit} in a verified wallet · withdraw any time`,
       };
     }
     return {
@@ -358,6 +360,8 @@ export function planCardCta(params: {
   changePlanRequiresCheckout: boolean;
   /** The token the account pays in, e.g. "$HIVRA". Defaults to $HermesOS. */
   tokenUnit?: string;
+  /** Current-user holder admission from GET /api/billing/holder-admission. */
+  holderAdmission?: HolderAdmissionViewState;
 }): PlanCardCta {
   const { planKey } = params;
   const tokenUnit = params.tokenUnit ?? HERMESOS_DISPLAY_UNIT;
@@ -389,12 +393,22 @@ export function planCardCta(params: {
       return { kind: "note", note: "Your current plan already covers this" };
     }
     if (params.tokenMode === "hold") {
-      return {
-        kind: "hold_token",
-        label: "Verify a wallet to hold",
-        href: `/dashboard/wallet?from=billing&plan=${tier}`,
-        tier,
-      };
+      switch (params.holderAdmission ?? "admitted") {
+        case "loading":
+          return { kind: "note", note: "Checking holder access…" };
+        case "error":
+          return { kind: "note", note: "Holder access is unavailable right now" };
+        case "waitlisted":
+          return { kind: "note", note: "You're on the holder access waitlist" };
+        case "none":
+        case "admitted":
+          return {
+            kind: "hold_token",
+            label: "Verify a wallet to hold",
+            href: `/dashboard/wallet?from=billing&plan=${tier}`,
+            tier,
+          };
+      }
     }
     return {
       kind: "pay_yearly_token",

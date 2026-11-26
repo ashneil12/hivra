@@ -42,6 +42,7 @@ import {
   normalizeWakeRamMb,
   releaseHostWakeSlot,
 } from "@/lib/proxmox/wake-admission";
+import { transitionClassicHolder } from "@/lib/recovery/classic-holder-idle";
 import { captureWakeEvent, type WakeTelemetrySource } from "@/lib/telemetry/wake-events";
 import { deriveDnsDomainFromGatewayUrl, removeInstanceDnsBestEffort } from "@/lib/services/cloudflare-dns";
 import { buildResolveAgentContainerScript } from "@/lib/services/agent-container";
@@ -87,6 +88,8 @@ import {
 import { buildHostTimeSyncRepairScript } from "@/lib/services/hetzner-instance-builders";
 import { provisionedHetznerServerId } from "@/lib/hetzner/creation-receipt";
 import { orchestrateColdRestore } from "@/lib/services/cold-storage-restore-orchestrator";
+import { deleteArchivedInstance, isArchivedInstanceDelete } from "@/lib/services/delete-archived-instance";
+import { blocksInstanceLiveMutation } from "@/lib/services/instance-live-mutation";
 import { loadGlobalHermesSettingsForUser } from "@/lib/clerk-hermes-settings";
 import { recordInstanceUserActivity } from "@/lib/instance-activity";
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
@@ -343,6 +346,7 @@ export interface HermesInstanceRow {
   entitlement_suspended_at?: string | null;
   entitlement_last_resumed_at?: string | null;
   paused_reason?: string | null;
+  seat_funding?: string | null;
   resource_tier?: string | null;
   disk_size_gb?: number | null;
   archive_uri?: string | null;
@@ -2228,6 +2232,21 @@ export async function PATCH(
   }
 }
 
+async function removeDeletedInstanceDns(instance: HermesInstanceRow) {
+  const domain = deriveDnsDomainFromGatewayUrl(instance.gateway_url, instance.subdomain);
+  const context = {
+    source: "instances",
+    route: "/api/instances/[id]",
+    instanceId: instance.id,
+    userId: instance.user_id,
+  };
+  if (domain) {
+    await removeInstanceDnsBestEffort(instance.subdomain, context, { dnsDomain: domain });
+  } else {
+    await removeInstanceDnsBestEffort(instance.subdomain, context);
+  }
+}
+
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -2261,6 +2280,69 @@ export async function DELETE(
           failureType: "instance_delete_confirmation_required",
         }
       );
+    }
+
+    if (instance.lifecycle_state === "archiving" || instance.lifecycle_state === "restoring") {
+      return apiError(
+        "Wait for archiving or restoration to finish, then retry deletion.",
+        409,
+        { failureType: "instance_delete_cold_operation_in_progress", retryable: true },
+      );
+    }
+
+    if (isArchivedInstanceDelete(instance)) {
+      const result = await deleteArchivedInstance(supabaseAdmin!, instance);
+      if (result.kind !== "deleted") {
+        const failureType = `instance_delete_archived_${result.kind}`;
+        const responses = {
+          archive_invalid: { status: 409, message: "The archive identity could not be verified. Contact support to finish deletion." },
+          instance_changed: { status: 409, message: "The instance is busy or has changed. Refresh and retry deletion." },
+          runtime_present: { status: 409, message: "The instance still has a VM. Contact support to finish deletion." },
+          runtime_unverified: { status: 502, message: "The VM could not be verified as removed. Retry deletion to finish." },
+          storage_failed: { status: 502, message: "The archive and backups could not be verified as removed. Retry deletion to finish." },
+          claim_failed: { status: 500, message: "The deletion could not be started. Retry deletion to finish." },
+          record_failed: { status: 500, message: "The archive and backups were removed, but the record could not be updated. Retry deletion to finish." },
+        };
+        const { status, message } = responses[result.kind];
+        if ("error" in result) {
+          log.error("Archived instance deletion stopped", result.error, {
+            source: "instances",
+            route: "/api/instances/[id]",
+            method: "DELETE",
+            instanceId: id,
+            userId,
+            failureType,
+          });
+        }
+        return apiError(message, status, {
+          failureType,
+          retryable: result.kind !== "archive_invalid" && result.kind !== "runtime_present",
+        });
+      }
+
+      if (result.finalized) {
+        await removeDeletedInstanceDns(instance);
+        await reportOpsEvent({
+          source: "instances.delete",
+          severity: "warn",
+          title: "User instance delete",
+          message: `User ${userId} deleted archived instance ${id} and its stored backups`,
+          route: "/api/instances/[id]",
+          userId,
+          instanceId: id,
+          metadata: {
+            actor_user_id: userId,
+            instance_id: id,
+            previous_status: instance.status,
+            previous_lifecycle_state: instance.lifecycle_state,
+            infrastructure_provider: "proxmox",
+            cold_storage_removed: true,
+            delete_reason: deleteReason,
+            delete_reason_note: deleteReasonNote,
+          },
+        });
+      }
+      return apiSuccess({ deleted: true });
     }
 
     // Resolve from config first, then DB columns. This catches legacy rows
@@ -2656,25 +2738,7 @@ export async function DELETE(
       }
     }
 
-    const persistedDnsDomain = deriveDnsDomainFromGatewayUrl(
-      instance!.gateway_url,
-      instance!.subdomain,
-    );
-    const dnsCleanupContext = {
-      source: "instances",
-      route: "/api/instances/[id]",
-      instanceId: id,
-      userId,
-    };
-    if (persistedDnsDomain) {
-      await removeInstanceDnsBestEffort(
-        instance!.subdomain,
-        dnsCleanupContext,
-        { dnsDomain: persistedDnsDomain },
-      );
-    } else {
-      await removeInstanceDnsBestEffort(instance!.subdomain, dnsCleanupContext);
-    }
+    await removeDeletedInstanceDns(instance);
 
     // Mark the instance as deleted, AND release any proxmox_vmid claim
     // so the next provision can reuse the slot. The unique index
@@ -3015,6 +3079,20 @@ export async function POST(
       });
     }
 
+    if ((ENTITLEMENT_GATED_INSTANCE_ACTIONS.has(action) || action === "stop")
+      && blocksInstanceLiveMutation(instance!)) {
+      const failureType = isColdLifecycleRow
+        ? "instance_action_requires_cold_restore"
+        : "instance_action_lifecycle_busy";
+      return apiError(
+        isColdLifecycleRow
+          ? "This instance is in cold storage. Use Start to restore it before running other runtime actions."
+          : "This instance is busy with a lifecycle operation. Refresh before trying another runtime action.",
+        409,
+        { failureType },
+      );
+    }
+
     // Legacy "dormant_reclaimed" path — pre-cold-storage archive system.
     // Kept for any rows from the old dormant-reclaim flow that pre-date
     // Phase 1's lifecycle_state migration.
@@ -3090,6 +3168,34 @@ export async function POST(
           }
         );
       }
+    }
+
+    if ((instance!.paused_reason === "holder_idle" && instance!.lifecycle_state === "paused")
+      || (action === "start" && instance!.seat_funding === "holder" && instance!.status === "running"
+        && instance!.lifecycle_state === "active")) {
+      if (action !== "start") return apiError("Wake this computer before changing its power or runtime.", 409);
+      const result = await transitionClassicHolder({ id, userId });
+      if (result === "awake") return apiSuccess({ action });
+      if (result === "reservation_released" || result === "reservation_ineligible") {
+        const released = result === "reservation_released";
+        return apiError(
+          released
+            ? "This computer's token-holder reservation was released, so its saved session cannot be restored."
+            : "This computer no longer fits its token-holder reservation, so its saved session cannot be restored.",
+          409,
+          undefined,
+          { retryable: false, reason: result },
+        );
+      }
+      // Another request may have completed between the read and the claim.
+      if (result === "unclaimed" || result === "superseded") {
+        const current = await getInstanceOrError(id, userId);
+        if (current.instance?.status === "running" && current.instance.lifecycle_state === "active") return apiSuccess({ action });
+      }
+      const response = apiError("The computer is waiting to restore its session. Retry shortly.", 429,
+        undefined, { retryable: true, retryAfterSeconds: 5 });
+      response.headers.set("Retry-After", "5");
+      return response;
     }
 
     // Detect Proxmox-backed instances early so power/lifecycle actions can

@@ -1,0 +1,116 @@
+{
+  "slug": "grafana",
+  "checkedAt": "2026-11-21T14:49:48.324Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "grafana/grafana is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "grafana/grafana",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "grafana/grafana:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "grafana/grafana:latest",
+        "digest": "sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "linux/arm/v7"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health /api/health -> 200 in 53.3s",
+      "evidence": {
+        "container": "hivra-verify-grafana-1mpu2n",
+        "hostPort": 3242,
+        "image": "grafana/grafana:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-grafana-1mpu2n",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3242:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-grafana-1mpu2n-data:/var/lib/grafana",
+          "grafana/grafana:latest"
+        ],
+        "runStdout": "785bcf7a62a24a5908b98aca2be2c783db17fbb84b826a301a18a7bac6693150",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 53.3,
+          "attempts": 26
+        },
+        "memUsage": "305.1MiB / 7.652GiB",
+        "memBytes": 319920538
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /login",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 54367,
+        "proxyMode": "loopback-origin",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/login"
+          },
+          {
+            "hop": 2,
+            "path": "/login",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/login",
+        "bodyHead": "<!DOCTYPE html>\n<html lang=\"en-US\">\n  <head>\n    \n    <meta charset=\"utf-8\" />\n    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge,chrome=1\" />\n    <meta name=\"viewport\" content=\"width=device-width\" />\n    <meta name=\"theme-color\" content=\"#000\" />\n\n    <title>Grafana</title>\n\n    <base href=\"/\" />\n\n    <link rel=\"icon\" type=\"image/png\" href=\"public/build/img/fav32.png\" />\n    <link rel=\"apple",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 400,
+          "bodyHead": "{\"statusCode\":400,\"messageId\":\"form-auth.invalid\",\"message\":\"bad login data\"}"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 305.1MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 319920538,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -1,0 +1,123 @@
+{
+  "slug": "adguard-home",
+  "checkedAt": "2026-11-21T11:42:15.983Z",
+  "gitSha": "838d2bd14ad9dca344549c10b4dad208688c40d1",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "AdguardTeam/AdGuardHome is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "AdguardTeam/AdGuardHome",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "adguard/adguardhome:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "adguard/adguardhome:latest",
+        "digest": "sha256:f00a586f0d1caa74f149340bfb225014960310488ffa838406b89256900a96c2",
+        "platforms": [
+          "linux/386",
+          "linux/amd64",
+          "linux/arm/v6",
+          "linux/arm/v7",
+          "linux/arm64",
+          "linux/ppc64le",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-adguard-home-qc0klr",
+        "hostPort": 3264,
+        "image": "adguard/adguardhome:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-adguard-home-qc0klr",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3264:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-adguard-home-qc0klr-work:/opt/adguardhome/work",
+          "-v",
+          "hivra-verify-adguard-home-qc0klr-conf:/opt/adguardhome/conf",
+          "adguard/adguardhome:latest"
+        ],
+        "runStdout": "7297a88d3f2491174a1a230f898e9ef99c2171e94c106b646448e7fd812cd531",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "11.98MiB / 7.652GiB",
+        "memBytes": 12561940
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /install.html",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 52972,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "/install.html"
+          },
+          {
+            "hop": 2,
+            "path": "/install.html",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/install.html",
+        "bodyHead": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1,shrink-to-fit=no\"/><meta name=\"google\" content=\"notranslate\"/><meta name=\"mobile-web-app-capable\" content=\"yes\"/><meta name=\"apple-mobile-web-app-capable\" content=\"yes\"/><meta name=\"apple-mobile-web-app-status-bar-style\" content=\"default\"/><link rel=\"apple-touch-icon\" href=",
+        "formPost": {
+          "found": false
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 12.0MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 12561940,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -2158,6 +2158,104 @@ describe("resolveProxmoxGatewayUrlFromSubdomain (recovery gateway_url)", () => {
     });
   });
 
+  it("keeps the instance suffix in long VM names used for discovery", async () => {
+    const instanceName = "a".repeat(55);
+    const runHostScript = jest.fn().mockResolvedValue({
+      ok: true, stdout: "HERMES_PROXMOX_DISCOVERY missing", stderr: "",
+    });
+    await discoverProxmoxInfrastructureForInstance({
+      instanceId: "00000000-0000-4000-8000-000000001042",
+      instanceName,
+    }, {
+      env: {
+        PROXMOX_SSH_HOST: "203.0.113.10",
+        PROXMOX_SSH_KEY_PATH: "/fixture/proxmox-key",
+        PROXMOX_PUBLIC_IP: "203.0.113.10",
+      },
+      runHostScript,
+    });
+    expect(runHostScript).toHaveBeenCalledTimes(1);
+    expect(runHostScript.mock.calls[0][0]).toContain(`VM_NAME='hermes-${"a".repeat(31)}-00000000'`);
+  });
+
+  it("probes the legacy 48-char VM name for 32-char instance names, gated on ownership", async () => {
+    // Regression (cr709): the pre-hermesVmName provisioner sanitized the whole
+    // `hermes-<name>-<id8>` string and cut it at 48 chars, so a 32-char name
+    // kept ALL 32 chars plus the suffix. Discovery keyed only on the new
+    // 47-char name returned null for those VMs even though the row's VM was
+    // still on the host.
+    const instanceId = "00000000-0000-4000-8000-000000001042";
+    const runHostScript = jest.fn().mockResolvedValue({
+      ok: true, stdout: "HERMES_PROXMOX_DISCOVERY missing", stderr: "",
+    });
+    await discoverProxmoxInfrastructureForInstance({
+      instanceId,
+      instanceName: "a".repeat(32),
+    }, {
+      env: {
+        PROXMOX_SSH_HOST: "203.0.113.10",
+        PROXMOX_SSH_KEY_PATH: "/fixture/proxmox-key",
+        PROXMOX_PUBLIC_IP: "203.0.113.10",
+      },
+      runHostScript,
+    });
+    expect(runHostScript).toHaveBeenCalledTimes(1);
+    const script = runHostScript.mock.calls[0][0] as string;
+    expect(script).toContain(`VM_NAME='hermes-${"a".repeat(31)}-00000000'`);
+    expect(script).toContain(`LEGACY_VM_NAME='hermes-${"a".repeat(32)}-00000000'`);
+    // The legacy hit is adopted only after the VM's configured name re-proves
+    // the instance identity (-<id8> or the full UUID) — never on the `qm list`
+    // name match alone, because a suffix-truncated legacy name can collide
+    // across instances.
+    expect(script).toContain('qm config "$LEGACY_VMID"');
+    expect(script).toContain(`*-${instanceId.slice(0, 8)}|*${instanceId}*`);
+    expect(script).toContain("HERMES_PROXMOX_DISCOVERY unverified");
+  });
+
+  it("does not add a legacy probe when both provisioners produce the same VM name", async () => {
+    const runHostScript = jest.fn().mockResolvedValue({
+      ok: true, stdout: "HERMES_PROXMOX_DISCOVERY missing", stderr: "",
+    });
+    await discoverProxmoxInfrastructureForInstance({
+      instanceId: "00000000-0000-4000-8000-000000001042",
+      instanceName: "MY_FIRST_AGENT",
+    }, {
+      env: {
+        PROXMOX_SSH_HOST: "203.0.113.10",
+        PROXMOX_SSH_KEY_PATH: "/fixture/proxmox-key",
+        PROXMOX_PUBLIC_IP: "203.0.113.10",
+      },
+      runHostScript,
+    });
+    const script = runHostScript.mock.calls[0][0] as string;
+    expect(script).not.toContain("LEGACY_VM_NAME");
+    expect(script).not.toContain("LEGACY_VMID");
+  });
+
+  it("adopts a legacy-named VM only after the configured name proves ownership", () => {
+    const instanceId = "00000000-0000-4000-8000-000000001042";
+    const script = buildProxmoxInfrastructureDiscoveryScript({
+      vmName: `hermes-${"a".repeat(31)}-00000000`,
+      legacyVmName: `hermes-${"a".repeat(32)}-00000000`,
+      expectedInstanceId: instanceId,
+    });
+    // New-name probe runs first; the legacy probe only runs when it missed.
+    expect(script.indexOf('VM_NAME=')).toBeLessThan(script.indexOf("LEGACY_VM_NAME="));
+    expect(script.indexOf("LEGACY_VM_NAME=")).toBeLessThan(script.indexOf("LEGACY_VMID="));
+    // The ownership predicate is the same one buildProxmoxVmOwnedByInstanceCheck
+    // uses for lifecycle scripts.
+    expect(script).toContain(`*-${instanceId.slice(0, 8)}|*${instanceId}*`);
+  });
+
+  it("refuses a legacy probe when the instance id is not a UUID", () => {
+    const script = buildProxmoxInfrastructureDiscoveryScript({
+      vmName: "hermes-x",
+      legacyVmName: "hermes-xy",
+      expectedInstanceId: "not-a-uuid",
+    });
+    expect(script).not.toContain("LEGACY_VM_NAME");
+  });
+
   it("recovers infrastructure with the right node slug when PROXMOX_NODE is unset and only HERMES_PROXMOX_TARGET points at the host", async () => {
     // Fixture Customer A / Fixture Customer B incident regression (2026-05-07): production sets
     // HERMES_PROXMOX_TARGET="fixturenodea" but leaves PROXMOX_NODE unset. The

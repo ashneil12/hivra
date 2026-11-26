@@ -1,0 +1,75 @@
+{
+  "slug": "homarr",
+  "checkedAt": "2026-11-21T03:21:10.469Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "homarr-labs/homarr is Apache-2.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "homarr-labs/homarr",
+        "spdx_id": "Apache-2.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/homarr-labs/homarr:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/homarr-labs/homarr:latest",
+        "digest": "sha256:742940b00ed13e8649ddfd81532ad8f4140ad413ed0591f464ff6e4f7ff3c276",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "fail",
+      "detail": "health / never returned <400 (last status none)",
+      "evidence": {
+        "container": "hivra-verify-homarr-d01jza",
+        "hostPort": 53528,
+        "image": "ghcr.io/homarr-labs/homarr:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-homarr-d01jza",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:53528:7575",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-homarr-d01jza-data:/appdata",
+          "ghcr.io/homarr-labs/homarr:latest"
+        ],
+        "runStdout": "0c54aadb04d5bca63647c84622d5f9698d30db6526c87bfe0a24475942a718f1",
+        "health": {
+          "ok": false,
+          "status": null,
+          "seconds": 240.2,
+          "attempts": 120,
+          "error": "fetch failed"
+        },
+        "logsTail": "Starting with UID='0', GID='0'\nRunning DB migrations\nERROR: DB migrations failed, aborting startup\n"
+      }
+    },
+    {
+      "name": "floor",
+      "status": "skipped",
+      "detail": "no floor.ram in spec or no memory reading"
+    }
+  ],
+  "verdict": "fail",
+  "reasons": [
+    "boot: health / never returned <400 (last status none)"
+  ]
+}

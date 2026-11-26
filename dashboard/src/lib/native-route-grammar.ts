@@ -1,3 +1,4 @@
+import { UNIVERSAL_CATALOG_IDS } from "@/lib/hivra/catalog-manifests";
 import type { PortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
 import type { LaunchProfileId, LaunchStage } from "@/lib/launch/contracts";
 import type { PlanKey } from "@/lib/subscription/plans";
@@ -36,6 +37,11 @@ function everyMember<Union extends string>() {
 }
 
 const oneOf = (...values: readonly string[]): Canonical => (value) => (values.includes(value) ? value : null);
+/** A fixed set of legacy ids, or any catalog-shaped slug outside `excluding`.
+ * Catalog membership is manifest data a native shell cannot enumerate, so the
+ * grammar accepts the slug shape and the page re-validates the value. */
+const oneOfOrMatching = (values: readonly string[], pattern: RegExp, excluding: readonly string[] = []): Canonical =>
+  (value) => (values.includes(value) || (pattern.test(value) && !excluding.includes(value)) ? value : null);
 const matching = (pattern: RegExp, lowercase = false): Canonical => (value) =>
   pattern.test(value) ? (lowercase ? value.toLowerCase() : value) : null;
 /** Accepted spellings and the value each one canonicalizes to. */
@@ -43,6 +49,14 @@ const mapped = (values: Readonly<Record<string, string>>): Canonical => (value) 
   Object.hasOwn(values, value) ? values[value] : null;
 
 const SURFACE = matching(/^[a-z][a-z0-9_-]{0,63}$/);
+/** The catalog app slug shape (catalog-manifests/schema.ts CATALOG_APP_SLUG_RE). */
+const CATALOG_SLUG = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
+/** Slug-shaped values that name a real profile but not a portable launch
+ * resource: Hermes runs on Hivra Cloud only, and the computer profiles launch
+ * from their own flows. */
+const NON_PORTABLE_PROFILE_SLUGS = ["hermes", "hermes-computer", "deepseek-harness", "ubuntu-desktop", "ubuntu-server", "omarchy"] as const;
+/** Slug-shaped computer types that are not launch profiles at all. */
+const NON_PROFILE_SLUGS = ["linux-desktop"] as const;
 const ONE = oneOf("1");
 const UUID = matching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, true);
 /** A launch draft id (launch-plan.ts LAUNCH_DRAFT_ID). */
@@ -54,6 +68,7 @@ const RESOURCE_ID = /^[A-Za-z0-9_-]{1,256}$/;
 export const NATIVE_LAUNCH_PROFILES = everyMember<LaunchProfileId>()([
   "claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "openbot", "nuphos", "aeon", "deepseek-harness",
   "ubuntu-desktop", "ubuntu-server", "linux-terminal", "omarchy", "windows",
+  ...UNIVERSAL_CATALOG_IDS,
 ]);
 /** Launch history stages, and the names used before Choose merged its steps
  * (LaunchJourney parseHistoryStage). The launch step itself is never history. */
@@ -65,7 +80,9 @@ const LAUNCH_STAGE = mapped({
 /** The paid plans an upgrade can return with (PLAN_ORDER without free). */
 export const NATIVE_UPGRADE_PLANS = ["operator", "fleet", "command"] as const satisfies readonly PlanKey[];
 export const PORTABLE_LAUNCH_RESOURCES = everyMember<PortableLaunchResourceId>()([
-  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "linux-desktop", "linux-terminal", "windows",
+  "claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos",
+  ...UNIVERSAL_CATALOG_IDS,
+  "linux-desktop", "linux-terminal", "windows",
 ]);
 
 const TAB: Parameter = { name: "tab", value: SURFACE };
@@ -89,7 +106,8 @@ function ruleFor(route: readonly string[]): Rule {
     return {
       kept: [
         { name: "kind", value: oneOf("agent", "computer") }, { name: "start", value: ONE },
-        { name: "profile", value: oneOf(...NATIVE_LAUNCH_PROFILES) }, { name: "template", value: TEMPLATE_REFERENCE },
+        { name: "profile", value: oneOfOrMatching(NATIVE_LAUNCH_PROFILES, CATALOG_SLUG, NON_PROFILE_SLUGS) },
+        { name: "template", value: TEMPLATE_REFERENCE },
         { name: "templateToken", value: TEMPLATE_REFERENCE }, { name: "targetId", value: UUID },
         { name: "draft", value: LAUNCH_DRAFT }, { name: "upgraded", value: oneOf("1", ...NATIVE_UPGRADE_PLANS) },
         { name: "stage", value: LAUNCH_STAGE },
@@ -98,7 +116,7 @@ function ruleFor(route: readonly string[]): Rule {
   }
   if (route.length === 1 && section === "infrastructure") {
     return {
-      kept: [TAB, { name: "launch", value: oneOf(...PORTABLE_LAUNCH_RESOURCES) },
+      kept: [TAB, { name: "launch", value: oneOfOrMatching(PORTABLE_LAUNCH_RESOURCES, CATALOG_SLUG, NON_PORTABLE_PROFILE_SLUGS) },
         { name: "returnTo", value: oneOf("unified-launch") }, { name: "replaceToken", value: UUID }],
     };
   }

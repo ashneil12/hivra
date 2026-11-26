@@ -547,6 +547,42 @@ revision and every session revision are preserved. This source release does
 not deploy, install, or establish Canary acceptance.
 
 
+Release `2026.11.21.1` adds direct sign-in to the guest gateway: an
+unauthenticated browser navigation to a box now redirects to a gateway-served
+`/login` page instead of a bare 401, and the owner can set a sign-in password
+through the bearer-only `/api/signin-password` (a salted digest kept
+owner-only under `~/.hivra`, atomically replaced). `POST /login` redeems the
+owner password or an existing connect-grant pair into the same surface cookie,
+failed sign-ins delay the next answer exponentially, and `catalog-app` boxes
+keep their own `/login` and the plain 401. Non-browser clients and the
+credential endpoints are unchanged.
+
+Release `2026.11.20.5` adds the `docker-stack` catalog runtime and env
+placeholders: manifests may declare `generatedSecrets` whose values the guest
+generates once into a root-only store and never rotates, and env values may
+reference `${HIVRA_PUBLIC_ORIGIN}`, `${HIVRA_PUBLIC_HOST}` or a declared secret
+name. Multi-service apps render a hardened compose file on the guest (digest
+pins, one internal network, loopback-only web port, no bind mounts) with a
+systemd unit and updater rollback, and the launch document v5 carries the
+public origin so manifests can template absolute URLs.
+
+Release `2026.11.20.4` extends the `cli-web` catalog runtime with a bounded,
+idempotent `setup` contract: curated shell commands run once as the agent user
+after the CLI installs, with the merged static and model env loaded, for headless
+upstream configuration env vars alone cannot express (for example ZeroClaw's
+named agent alias and provider profile). Commands are printable-ASCII, at most
+16 entries and 2000 bytes each, validated inside the sealed spec, and re-run
+safely by the update path.
+
+Release `2026.11.20.2` adds the generic `catalog-app` runtime (`hivra-catalog-app.py`,
+launch document v5, gateway `/app/` proxy, and generic update/rollback support) so
+manifest-driven open-source agents and self-hosted apps can be installed, updated,
+and served behind Hivra's authenticated gateway without a per-app provisioner release.
+
+Release `2026.11.20.1` accepts both A0 CLI Socket.IO path forms and forwards
+the verified public origin to Engine.IO. The transport query, owner session
+requirements, and existing Origin checks are preserved.
+
 Release `2026.11.19.1` routes the built-in Agent Zero browser’s Xpra session
 through the authenticated native app gateway, not the full-computer desktop
 broker. Only the gateway, release labels and documentation change; this
@@ -1402,3 +1438,37 @@ this release into reporting. The runtime receipt does not list the reporter,
 because it is written before the reporter is installed. This is agent-reported
 evidence, not an operating-system audit, and this source release does not
 deploy, install, or establish Canary acceptance.
+Release `2026.11.22.1` adds the Hermes Desktop connection endpoint behind a dedicated
+per-computer session token. Browser sign-in opens Hermes or Agent Zero
+directly, and the gateway returns an error when Agent Zero rejects its
+managed runtime credentials. Existing sealed releases remain available.
+
+Release `2026.11.22.2` synchronizes changed Agent Zero runtime login credentials through
+the existing surface watchdog. The watchdog checks the pair against the running
+native login before replacing the gateway credential. The Hivra password and
+existing connect grants remain separate.
+
+Release `2026.11.22.3` stops the guest watchdog from reporting units that are no
+longer installed. A failed-unit record left behind after a unit file is removed
+no longer raises `unit_failing`; only units present on the box are watched. The
+provisioning scripts also clear the keeper's stale failed state when they
+remove it.
+
+Release `2026.11.23.1` narrows the catalog-app gateway entry to exactly `/app`
+and `/app/`. Every deeper path — including an app's own `/app/*` pages and a
+file share folder literally named `app` — proxies to the installed app instead
+of being answered by the entry's redirect, so writes like `PUT /app/<file>`
+reach the app unchanged. The gateway-reserved prefixes are untouched.
+
+Release `2026.11.25.1` builds on `2026.11.23.1` and seals the allocation-lock
+wake and portable disk accounting fixes. Pending reservations now carry a
+schema-versioned resource envelope; host capacity admission deduplicates them
+only by exact VMID, operation, binding and IP evidence, counts unproven
+reservations conservatively, and deducts disk already committed in QEMU
+inventory. The provision and start paths close the second inherited lock
+descriptor before `qm start`, so a long-lived KVM child cannot pin the
+allocation or lifecycle lock open. Guest desktop assets are unchanged.
+
+Release `2026.11.25.2` carries forward `2026.11.25.1` and reserves the configured
+startup memory for an existing stopped guest even when no launch reservation
+is pending. The allocation and lifecycle lock behavior stays unchanged.

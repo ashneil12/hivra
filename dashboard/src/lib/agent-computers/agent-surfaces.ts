@@ -171,9 +171,10 @@ export interface ComputerPlacementSubject {
 export function computerPlacementFor(subject: ComputerPlacementSubject): ComputerPlacement {
   if (subject.computer_substrate === "do-managed-session") return "digitalocean";
   if (subject.computer_substrate === "provider-vm") return "my-cloud";
-  // gVisor sandboxes run on a server the owner connected; Proxmox rows are
-  // Hivra Cloud unless the owner's own host holds them.
-  if (subject.computer_substrate === "gvisor") return "my-server";
+  // gVisor sandboxes run on a server the owner connected unless their stored
+  // launch binding is Hivra-managed; Proxmox rows are Hivra Cloud unless the
+  // owner's own host holds them.
+  if (subject.computer_substrate === "gvisor") return subject.deployment_mode === "hivra-managed" ? "hivra-cloud" : "my-server";
   return subject.deployment_mode === "self-managed" ? "my-server" : "hivra-cloud";
 }
 

@@ -97,7 +97,7 @@ export function HivraLogin({
 }: {
   boxUrl: string;
   onDone: () => void;
-  agentKind?: "claude" | "codex" | "operatoros";
+  agentKind?: "claude" | "codex" | "generic" | "operatoros";
   /** Catalog product name, for the "runs the official X" copy (e.g. "Claude Code"). */
   productName?: string;
   /** The agent's own identity name (e.g. "Atlas"). */

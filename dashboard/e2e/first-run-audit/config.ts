@@ -16,9 +16,63 @@ export const AUDIT_EMAIL_PREFIX = 'firstrun-audit-';
 /** Agent name prefix — becomes part of the Proxmox VM name, so keep it greppable. */
 export const AUDIT_AGENT_PREFIX = 'firstrun-audit-';
 
+/** The only live-auth mechanism the managed-hosting audits may use. */
+export const LIVE_AUDIT_AUTH_ENV = 'HIVRA_LIVE_AUDIT_AUTH';
+export const LIVE_AUDIT_AUTH_CLERK_TEST_OTP = 'clerk-test-otp';
+export const CLERK_TEST_OTP_CODE = '424242';
+export const CLERK_TEST_EMAIL_TAG = '+clerk_test';
+
+export function liveAuditAuthMode(): string | null {
+  return process.env[LIVE_AUDIT_AUTH_ENV]?.trim().toLowerCase() || null;
+}
+
 export function assertLiveManagedHostingAuditAllowed(): void {
-  // Clerk sent mail during synthetic ticket sign-in, even for an existing audit user.
-  throw new Error('[managed-hosting-audit] Live runs are paused. Use offline fixtures for fresh-state coverage.');
+  if (liveAuditAuthMode() === LIVE_AUDIT_AUTH_CLERK_TEST_OTP) return;
+  throw new Error(
+    '[managed-hosting-audit] Live runs are paused. ' +
+      `Set ${LIVE_AUDIT_AUTH_ENV}=${LIVE_AUDIT_AUTH_CLERK_TEST_OTP} only on an owner-approved isolated runner; ` +
+      'it uses Clerk test-mode +clerk_test accounts and no sign-in tickets.',
+  );
+}
+
+export function assertClerkTestAuditEmail(email: string | null | undefined): asserts email is string {
+  const normalized = email?.toLowerCase();
+  const at = normalized?.lastIndexOf('@') ?? -1;
+  const localPart = at > 0 ? normalized!.slice(0, at) : '';
+  const domain = at > 0 ? normalized!.slice(at + 1) : '';
+  if (!localPart.endsWith(CLERK_TEST_EMAIL_TAG)) {
+    throw new Error(
+      `[managed-hosting-audit] audit email ${email ?? '(missing)'} is not a Clerk test address. ` +
+        `Every live audit account must end its local part with ${CLERK_TEST_EMAIL_TAG} so Clerk suppresses test mail.`,
+    );
+  }
+  assertAuditEmailDomain(domain);
+}
+
+/** Sign-in tickets are not an approved audit auth path: Clerk sent mail after ticket redemption. */
+export function assertTicketSignInDisabled(): never {
+  throw new Error('[managed-hosting-audit] Clerk sign-in tickets are disabled for live audits because ticket sign-in sent mail.');
+}
+
+/** The audit creates and deletes real users; only a Clerk development/test key is acceptable. */
+export function assertCanaryClerkSecretKey(secretKey: string | null | undefined): void {
+  if (!secretKey?.startsWith('sk_test_')) {
+    throw new Error('[managed-hosting-audit] CLERK_SECRET_KEY must be a Canary Clerk test key (sk_test_…); live or unrecognized keys are refused.');
+  }
+}
+
+/**
+ * Audit accounts must not use a real customer or company domain. Reserved
+ * example domains cannot receive mail and cannot confer domain-based trust if
+ * an application ever uses email domains as a signal.
+ */
+export const AUDIT_EMAIL_DOMAIN = 'example.com';
+const AUDIT_EMAIL_DOMAINS = new Set(['example.com', 'example.net', 'example.org', 'example.test']);
+
+export function assertAuditEmailDomain(domain: string): void {
+  if (!AUDIT_EMAIL_DOMAINS.has(domain.toLowerCase())) {
+    throw new Error(`[managed-hosting-audit] audit email domain must be a reserved example domain, not "${domain}".`);
+  }
 }
 
 export interface AuditConfig {
@@ -26,7 +80,7 @@ export interface AuditConfig {
   baseUrl: string;
   /** Clerk **canary** Backend API key (sk_test_…). */
   clerkSecretKey: string;
-  /** Domain for the throwaway account, e.g. `hermesos.cloud`. */
+  /** Reserved non-deliverable domain for the throwaway account. */
   emailDomain: string;
   /** Where run-<id>.json verdicts are written. */
   outDir: string;
@@ -132,11 +186,13 @@ export function loadAuditConfig(): AuditConfig {
   }
 
   const requireAgentReply = envBool('FIRST_RUN_AUDIT_REQUIRE_AGENT_REPLY');
+  const emailDomain = process.env.FIRST_RUN_AUDIT_EMAIL_DOMAIN?.trim() || AUDIT_EMAIL_DOMAIN;
+  assertAuditEmailDomain(emailDomain);
 
   return {
     baseUrl,
     clerkSecretKey,
-    emailDomain: process.env.FIRST_RUN_AUDIT_EMAIL_DOMAIN?.trim() || 'hermesos.cloud',
+    emailDomain,
     outDir: process.env.FIRST_RUN_AUDIT_OUT_DIR?.trim() || 'e2e/.first-run-audit',
     readyTimeoutMs: envInt('FIRST_RUN_AUDIT_READY_TIMEOUT_MS', 15 * 60_000),
     workspaceTimeoutMs: envInt('FIRST_RUN_AUDIT_WORKSPACE_TIMEOUT_MS', 5 * 60_000),
@@ -166,14 +222,14 @@ export function assertNotProduction(baseUrl: string): void {
     throw new Error(`[first-run-audit] invalid base URL: ${baseUrl}`);
   }
 
-  // Allow the canary subdomain and localhost. Everything else — in particular
-  // the bare apex domains that serve production — is refused.
-  const allowed = host === 'localhost' || host === '127.0.0.1' || host.startsWith('canary.');
+  // Allow only the real canary host and localhost. A `canary.` prefix on an
+  // attacker-controlled domain is not a canary environment.
+  const allowed = host === 'localhost' || host === '127.0.0.1' || host === 'canary.hermesos.cloud';
   if (!allowed) {
     throw new Error(
       `[first-run-audit] refusing to target "${host}". ` +
         'This harness creates + destroys real users and real VMs. ' +
-        'It is canary-only (canary.*), or localhost.',
+        'It is canary-only (canary.hermesos.cloud), or localhost.',
     );
   }
 }
@@ -188,7 +244,8 @@ export function newRunId(): string {
 }
 
 export function auditEmail(runId: string, domain: string): string {
-  return `${AUDIT_EMAIL_PREFIX}${runId}@${domain}`;
+  assertAuditEmailDomain(domain);
+  return `${AUDIT_EMAIL_PREFIX}${runId}${CLERK_TEST_EMAIL_TAG}@${domain}`;
 }
 
 export function auditAgentName(runId: string): string {

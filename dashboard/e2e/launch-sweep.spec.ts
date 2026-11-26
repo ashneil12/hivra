@@ -8,8 +8,9 @@
  *   2. sign in, open /dashboard/launch, click the tile, Review, pick Hivra
  *      credits (the $2 starter credit every new paid account gets), Launch;
  *   3. wait on the after-launch screen until it says ready, press Open;
- *   4. ask the agent "What is 389 + 448?" in the box a customer types into
- *      and wait for 837 on screen (computers: their desktop or terminal opens);
+ *   4. prove the customer surface in the way that fits the tile: chat agents
+ *      answer "What is 389 + 448?" with 837, catalog apps render their real
+ *      authenticated web app, and computers open their desktop or terminal;
  *   4b. on an agent using Hivra credits, turn on "private models only" the way
  *      its owner does and ask a second question, which must still be answered
  *      (LAUNCH_SWEEP_PRIVATE_ONLY=0 skips; not offered where the switch is off);
@@ -22,20 +23,24 @@
  * the first-run audit: the project only exists with LAUNCH_SWEEP=1, and every
  * test skips without it. Canary only: production hosts are refused.
  *
- * Run:   LAUNCH_SWEEP=1 CLERK_SECRET_KEY=sk_test_… LAUNCH_SWEEP_SUPABASE_URL=… \
- *        LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… npm run test:launch-sweep
+ * Run:   LAUNCH_SWEEP=1 HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp CLERK_SECRET_KEY=sk_test_… \
+ *        LAUNCH_SWEEP_SUPABASE_URL=… LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY=… npm run test:launch-sweep
  * One:   LAUNCH_SWEEP_ONLY=agent-zero,openclaw npm run test:launch-sweep
  */
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
-import { assertNotProduction, auditEmail, newRunId } from './first-run-audit/config';
-import { createAuditUser, deleteAuditUser, mintSignInTicket } from './first-run-audit/clerk-admin';
+import { assertNotProduction, auditEmail, AUDIT_EMAIL_DOMAIN, newRunId } from './first-run-audit/config';
+import { deleteAuditUser } from './first-run-audit/clerk-admin';
 import { destroyAllHivraAgents, destroyAllInstances, listHivraAgents, listInstances } from './first-run-audit/instances';
-import { establishAuditSession } from './first-run-audit/session';
+import { signUpAuditUser } from './first-run-audit/signup';
+import { proveAppOpen } from './launch-sweep/app-open';
 import { proveChat, proveComputerOpen } from './launch-sweep/chat';
 import { measureIdle } from './launch-sweep/idle';
 import { checkPrivateOnly, privateOnlyCheckEnabled } from './launch-sweep/private-only';
+import { readSweepSoftware } from './launch-sweep/software';
+import { PORTABLE_HIVRA_PROVISIONER_VERSION } from '../src/lib/infrastructure/portable-provisioner-contract';
 import { launchFromTile, offeredTileNames, openFromLaunch, waitForReady } from './launch-sweep/journey';
 import { agentEvidence, agentsStillOnRecord, grantSweepPlan, removeSweepPlan } from './launch-sweep/plan';
 import { SweepFailure, SweepRecorder } from './launch-sweep/result';
@@ -61,6 +66,8 @@ interface SweepEnv {
   supabaseUrl: string;
   serviceRoleKey: string;
   outDir: string;
+  checkoutSha?: string;
+  expectedCanarySha?: string;
   runId: string;
   readyTimeoutMs: number;
   composerTimeoutMs: number;
@@ -69,6 +76,15 @@ interface SweepEnv {
   idleMinutes: number;
   /** Profile ids to keep running after a pass, to read inside them (reap later). */
   keepPassed: string[];
+}
+
+function checkoutSha(): string | undefined {
+  try {
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return /^[0-9a-f]{40}$/.test(sha) ? sha : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function sweepEnv(): SweepEnv {
@@ -83,12 +99,18 @@ function sweepEnv(): SweepEnv {
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error('[launch-sweep] LAUNCH_SWEEP_SUPABASE_URL and LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY (Canary) are required to give the test account its plan.');
   }
+  const expectedCanarySha = process.env.LAUNCH_SWEEP_CANARY_SHA?.trim() || undefined;
+  if (expectedCanarySha && !/^[0-9a-f]{40}$/.test(expectedCanarySha)) {
+    throw new Error('[launch-sweep] LAUNCH_SWEEP_CANARY_SHA must be the full lowercase merge-commit SHA verified as served by Canary.');
+  }
   return {
     baseUrl,
     clerkSecretKey,
     supabaseUrl,
     serviceRoleKey,
     outDir: process.env.LAUNCH_SWEEP_OUT_DIR?.trim() || 'e2e/.launch-sweep',
+    checkoutSha: checkoutSha(),
+    expectedCanarySha,
     // One id for the whole run, shared by every worker through the env.
     runId: process.env.LAUNCH_SWEEP_RUN_ID?.trim() || newRunId(),
     readyTimeoutMs: envInt('LAUNCH_SWEEP_READY_TIMEOUT_MS', 25 * 60_000),
@@ -114,11 +136,10 @@ async function screenshot(page: Page | null, recorder: SweepRecorder, outDir: st
   );
 }
 
-async function signedInContext(browser: Browser, env: SweepEnv, userId: string): Promise<BrowserContext> {
-  const ticket = await mintSignInTicket(env.clerkSecretKey, userId);
-  const context = await establishAuditSession(browser, { baseUrl: env.baseUrl, ticket });
-  context.setDefaultTimeout(30_000);
-  return context;
+async function signUpSweepAccount(browser: Browser, env: SweepEnv, email: string) {
+  const signup = await signUpAuditUser(browser, { baseUrl: env.baseUrl, clerkSecretKey: env.clerkSecretKey, email });
+  signup.context.setDefaultTimeout(30_000);
+  return signup;
 }
 
 /** Delete everything the account owns, then the account. Never throws. */
@@ -171,11 +192,14 @@ test.describe('launch sweep', () => {
 
   test('every tile Launch offers is covered by the sweep', async ({ browser }) => {
     const env = sweepEnv();
-    const user = await createAuditUser(env.clerkSecretKey, auditEmail(`sweep-tiles-${env.runId}`, 'hermesos.cloud'));
+    const email = auditEmail(`sweep-tiles-${env.runId}`, AUDIT_EMAIL_DOMAIN);
+    let userId: string | null = null;
     let context: BrowserContext | null = null;
     try {
-      await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, user.id);
-      context = await signedInContext(browser, env, user.id);
+      const signup = await signUpSweepAccount(browser, env, email);
+      userId = signup.userId;
+      context = signup.context;
+      await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, userId);
       const page = await context.newPage();
       const offered = await offeredTileNames(page);
       const known = new Set([...SWEEP_TARGETS.map((target) => target.tile), ...OWN_SERVER_ONLY_TILES]);
@@ -183,8 +207,10 @@ test.describe('launch sweep', () => {
       expect(uncovered, `Launch offers tiles the sweep doesn't test. Add them to e2e/launch-sweep/targets.ts`).toEqual([]);
     } finally {
       await context?.close().catch(() => undefined);
-      await removeSweepPlan(env.supabaseUrl, env.serviceRoleKey, user.id);
-      await deleteAuditUser(env.clerkSecretKey, user.id).catch(() => undefined);
+      if (userId) {
+        await removeSweepPlan(env.supabaseUrl, env.serviceRoleKey, userId);
+        await deleteAuditUser(env.clerkSecretKey, userId).catch(() => undefined);
+      }
     }
   });
 
@@ -205,6 +231,10 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
     tile: target.tile,
     kind: target.kind,
     knownBroken: target.knownBroken,
+    catalog: target.catalog,
+    checkoutSha: env.checkoutSha,
+    expectedCanarySha: env.expectedCanarySha,
+    expectedProvisionerVersion: PORTABLE_HIVRA_PROVISIONER_VERSION,
   });
   let userId: string | null = null;
   let context: BrowserContext | null = null;
@@ -212,10 +242,11 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
   let stage: SweepFailure['stage'] = 'account';
 
   try {
-    const user = await createAuditUser(env.clerkSecretKey, auditEmail(`sweep-${target.profileId}-${env.runId}`, 'hermesos.cloud'));
-    userId = user.id;
-    await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, user.id);
-    context = await signedInContext(browser, env, user.id);
+    const email = auditEmail(`sweep-${target.profileId}-${env.runId}`, AUDIT_EMAIL_DOMAIN);
+    const signup = await signUpSweepAccount(browser, env, email);
+    userId = signup.userId;
+    context = signup.context;
+    await grantSweepPlan(env.supabaseUrl, env.serviceRoleKey, userId);
     page = await context.newPage();
     recorder.done('account');
 
@@ -235,13 +266,18 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
     stage = 'chat';
     const proof = target.proof === 'computer-open'
       ? await proveComputerOpen(page, env.readyTimeoutMs)
-      : await proveChat(page, target, { composerTimeoutMs: env.composerTimeoutMs, replyTimeoutMs: env.replyTimeoutMs });
+      : target.proof === 'app-open'
+        ? await proveAppOpen(page, target.tile, env.composerTimeoutMs)
+        : await proveChat(page, target, { composerTimeoutMs: env.composerTimeoutMs, replyTimeoutMs: env.replyTimeoutMs });
     recorder.result.chat = proof;
+    if (recorder.result.agentId) {
+      recorder.result.software = await readSweepSoftware(context.request, env.baseUrl, recorder.result.agentId);
+    }
     recorder.done('chat');
     recorder.result.passed = true;
     await screenshot(page, recorder, env.outDir, 'pass');
 
-    if (target.proof !== 'computer-open' && privateOnlyCheckEnabled() && recorder.result.agentId) {
+    if (target.proof !== 'computer-open' && target.proof !== 'app-open' && privateOnlyCheckEnabled() && recorder.result.agentId) {
       stage = 'private';
       // Its own result: the launch above has already passed either way.
       recorder.result.privateOnly = await checkPrivateOnly(page, context.request, env.baseUrl, recorder.result.agentId, target, {

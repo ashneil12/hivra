@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/holder-inactivity-sweep",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/seo/gsc-pull",
       "schedule": "10 6 * * *"
     },
@@ -126,6 +130,10 @@
     },
     {
       "path": "/api/cron/hivra-surface-watchdog",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/customer-incidents",
       "schedule": "*/5 * * * *"
     },
     {

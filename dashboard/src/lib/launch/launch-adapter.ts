@@ -12,6 +12,7 @@ import type { AgentDeploymentDestination } from "@/lib/hivra/agent-placement";
 import { launchManagedSession, ManagedSessionApiError } from "@/lib/hivra/managed-session-client";
 import { DIGITALOCEAN_HARNESS_LABELS } from "@/lib/hivra/managed-session-contracts";
 import type { DeploymentTargetDto, DigitalOceanDeploymentTargetDto } from "@/lib/infrastructure/contracts";
+import { isCatalogAppId } from "@/lib/hivra/catalog-manifests";
 import { buildInfrastructureSetupHref } from "@/lib/hivra/launch-navigation";
 import { getAgent as getCatalogAgent } from "@/lib/hivra/agent-catalog";
 import { getFingerprintRequestId } from "@/lib/abuse/client-fingerprint";
@@ -56,9 +57,8 @@ type ReceiptBearingCreateInput = CreateAgentInput & { launchRequestId: string };
 /** What a launch returns: the new computer's id, name and status. */
 export type LaunchResult = { id: string; name: string; status: string };
 
-// The launch route has a 180-second execution budget. Keep observing the
-// owner-bound receipt through that whole admission window, plus a small final
-// propagation margin, without ever resubmitting the POST.
+// Bound how long the UI observes the receipt, independently of how long
+// provisioning can run. Reaching this limit does not resubmit the POST.
 const RECEIPT_RECONCILIATION_MS = 195_000;
 const RECEIPT_POLL_MS = 750;
 /** A computer counts as this launch's only when it was created after the
@@ -74,6 +74,8 @@ export type LaunchObservation =
   | { kind: "waiting-for-room"; since: number; at: number };
 
 export type LaunchSubmitOptions = {
+  /** A previous submission of this same request may already have been accepted. */
+  resumingUncertain?: boolean;
   /** A key typed into this page for this launch. Never stored. */
   apiKey?: string | null;
   /** Saved Vault keys (never the keys themselves), for Hermes' memory key. */
@@ -113,6 +115,7 @@ export function launchResumeModeFor(draft: Pick<LaunchDraft, "profileId" | "capa
 export function launchResumeMode(profileId: LaunchProfileId): "resend" | "observe" {
   return profileId === "claude-code" || profileId === "hermes" || profileId === "hermes-computer" || profileId === "openclaw"
     || profileId === "agent-zero" || profileId === "openbot" || profileId === "nuphos" || profileId === "aeon" || profileId === "deepseek-harness"
+    || isCatalogAppId(profileId)
     ? "observe"
     : "resend";
 }
@@ -152,76 +155,72 @@ export async function waitForRoom<T>(
 
 function submitWithReceipt(
   input: ReceiptBearingCreateInput,
-  onObserved?: LaunchSubmitOptions["onObserved"],
+  options: LaunchSubmitOptions,
 ): Promise<HivraAgent> {
-  return waitForRoom(() => submitWithReceiptOnce(input, onObserved), onObserved);
+  return waitForRoom(() => submitWithReceiptOnce(input, options), options.onObserved);
 }
 
 function submitObserved(input: CreateAgentInput, draft: LaunchDraft, options: LaunchSubmitOptions): Promise<LaunchResult> {
   return waitForRoom(() => submitObservedOnce(input, draft, options), options.onObserved);
 }
 
-type SubmissionOutcome =
-  | { state: "accepted"; agent: HivraAgent }
-  | { state: "failed"; error: unknown };
-
 function pause(milliseconds: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, milliseconds));
 }
 
-/** The provisioning POST can keep doing exact host-side confirmation after its
- * durable receipt already names the new computer. Reconcile that receipt in
- * parallel so the launch screen advances as soon as acceptance is known. */
+/** Either the POST or its durable owner-bound receipt can confirm acceptance
+ * first. The observation deadline stops receipt reads, not the provisioning
+ * POST; it never sends another create request. */
 async function submitWithReceiptOnce(
   input: ReceiptBearingCreateInput,
-  onObserved?: LaunchSubmitOptions["onObserved"],
+  { onObserved, resumingUncertain }: LaunchSubmitOptions,
 ): Promise<HivraAgent> {
-  const state: { settled: SubmissionOutcome | null } = { settled: null };
+  const observation = new AbortController();
+  const neverSettles = new Promise<never>(() => {});
+  let uncertain: { error: unknown } | null = null;
   onObserved?.({ kind: "sent", at: Date.now() });
-  const submission = createAgent(input).then<SubmissionOutcome, SubmissionOutcome>(
-    agent => ({ state: "accepted", agent }),
-    error => ({ state: "failed", error }),
-  );
-  void submission.then(outcome => { state.settled = outcome; });
-  const currentSubmission = (): SubmissionOutcome | null => state.settled;
-
-  const deadline = Date.now() + RECEIPT_RECONCILIATION_MS;
-  while (Date.now() < deadline) {
-    const current = currentSubmission();
-    if (current?.state === "accepted") return current.agent;
-    if (
-      current?.state === "failed"
-      && (current.error instanceof HivraLaunchRejectedError
-        || current.error instanceof HivraLaunchCorrectableError)
-    ) throw current.error;
-
-    try {
-      const receipt = await findHivraLaunchReceipt(input.launchRequestId);
-      if (receipt?.state === "accepted") return receipt.agent;
-      if (receipt?.state === "reconciling") onObserved?.({ kind: "receipt", phase: receipt.phase, at: Date.now() });
-    } catch (error) {
-      if (error instanceof HivraLaunchRejectedError) throw error;
-      // A temporarily unreadable/missing receipt is uncertainty, not proof
-      // that the original request failed. The original POST remains in flight.
+  const submission = createAgent(input).catch(error => {
+    // A replay can be rate-limited before the server looks up the original request.
+    if (resumingUncertain && error instanceof HivraLaunchCorrectableError && error.status === 429) {
+      uncertain = { error: new HivraLaunchInProgressError(input.launchRequestId) };
+      return neverSettles;
     }
-    const afterReceipt = currentSubmission();
-    if (afterReceipt?.state === "accepted") return afterReceipt.agent;
-    if (currentSubmission() === null) {
-      await Promise.race([submission, pause(RECEIPT_POLL_MS)]);
-    } else {
-      await pause(RECEIPT_POLL_MS);
-    }
-  }
+    if (error instanceof HivraLaunchRejectedError || error instanceof HivraLaunchCorrectableError) throw error;
+    uncertain = { error };
+    return neverSettles;
+  });
 
-  const outcome = currentSubmission();
-  if (!outcome) {
-    throw new HivraLaunchInProgressError(
-      input.launchRequestId,
-      "The launch is still being confirmed. Resume this same saved request instead of starting another computer.",
-    );
+  const observeReceipt = async (): Promise<HivraAgent> => {
+    while (!observation.signal.aborted) {
+      try {
+        const receipt = await findHivraLaunchReceipt(input.launchRequestId, observation.signal);
+        if (observation.signal.aborted) break;
+        if (receipt?.state === "accepted") return receipt.agent;
+        if (receipt?.state === "reconciling") onObserved?.({ kind: "receipt", phase: receipt.phase, at: Date.now() });
+      } catch (error) {
+        if (error instanceof HivraLaunchRejectedError) throw error;
+        // A missing or unreadable receipt doesn't prove the launch failed.
+      }
+      if (!observation.signal.aborted) await pause(RECEIPT_POLL_MS);
+    }
+    return neverSettles;
+  };
+
+  let timer: number | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => {
+      reject(uncertain ? uncertain.error : new HivraLaunchInProgressError(
+        input.launchRequestId,
+        "The launch is still being confirmed. Resume this same saved request instead of starting another computer.",
+      ));
+    }, RECEIPT_RECONCILIATION_MS);
+  });
+  try {
+    return await Promise.race([submission, observeReceipt(), deadline]);
+  } finally {
+    window.clearTimeout(timer);
+    observation.abort();
   }
-  if (outcome.state === "accepted") return outcome.agent;
-  throw outcome.error;
 }
 
 /** A Hivra agent launch started from a saved template names it; the server
@@ -446,13 +445,13 @@ async function submitCodex(draft: LaunchDraft, deployment: AgentDeploymentDestin
     launchRequestId: draft.launchRequestId,
   };
   if (access.mode === "native") {
-    return submitWithReceipt(withTemplate({ type: "codex", ...shared }, draft), options.onObserved);
+    return submitWithReceipt(withTemplate({ type: "codex", ...shared }, draft), options);
   }
   const model = effectiveModel("codex", access);
   const llm = access.mode === "credits"
     ? { mode: "managed" as const, model, walletType: creditsWallet(access, options.balance ?? { state: "unknown" }) }
     : { mode: "byok" as const, model, ...(await launchKey(draft, options)) };
-  return submitWithReceipt(withTemplate(codexModelRequest({ ...shared, llm }), draft), options.onObserved);
+  return submitWithReceipt(withTemplate(codexModelRequest({ ...shared, llm }), draft), options);
 }
 
 /** The key a DigitalOcean launch sends: the saved Vault key the owner
@@ -573,21 +572,20 @@ export async function submitLaunchDraft(
     return payload.data.agent;
   }
   if (profileId === "linux-terminal") {
-    if (deployment.mode !== "self-managed") {
-      throw new HivraLaunchCorrectableError("Linux Sandbox requires a compatible gVisor host you connected.", 409, "gvisor_self_managed_only");
-    }
-    const host = options.selfManagedTarget?.id === deployment.targetId ? options.selfManagedTarget : null;
-    if (gvisorNeedsRecheck(host, Date.now())) {
-      options.onObserved?.({ kind: "checking-host", at: Date.now() });
-      try {
-        await recheckGvisorForLaunch(host);
-      } catch (error) {
-        if (!(error instanceof GvisorRecheckError)) throw error;
-        throw new LaunchCorrectableError(error.message, error.status, "gvisor_recheck_failed", {
-          kind: "open",
-          label: "Check it in Capacity",
-          href: buildInfrastructureSetupHref("linux-terminal", { unified: true }),
-        });
+    if (deployment.mode === "self-managed") {
+      const host = options.selfManagedTarget?.id === deployment.targetId ? options.selfManagedTarget : null;
+      if (gvisorNeedsRecheck(host, Date.now())) {
+        options.onObserved?.({ kind: "checking-host", at: Date.now() });
+        try {
+          await recheckGvisorForLaunch(host);
+        } catch (error) {
+          if (!(error instanceof GvisorRecheckError)) throw error;
+          throw new LaunchCorrectableError(error.message, error.status, "gvisor_recheck_failed", {
+            kind: "open",
+            label: "Check it in Capacity",
+            href: buildInfrastructureSetupHref("linux-terminal", { unified: true }),
+          });
+        }
       }
     }
     return submitWithReceipt({
@@ -601,7 +599,7 @@ export async function submitLaunchDraft(
       browser: false,
       deployment,
       launchRequestId: draft.launchRequestId,
-    }, options.onObserved);
+    }, options);
   }
   if (profileId === "ubuntu-desktop" || profileId === "ubuntu-server") {
     // Both are stored as the linux-desktop type; the profile tells the route
@@ -617,7 +615,7 @@ export async function submitLaunchDraft(
       browser: false,
       deployment,
       launchRequestId: draft.launchRequestId,
-    }, options.onObserved);
+    }, options);
   }
   if (profileId === "codex") return submitCodex(draft, deployment, options);
   if (profileId === "hermes") {

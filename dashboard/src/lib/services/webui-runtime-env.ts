@@ -254,6 +254,144 @@ export const WEBUI_CLEARABLE_RUNTIME_ENV_KEYS = [
   "FIRECRAWL_API_KEY",
 ];
 
+/**
+ * BusyBox-only helpers for surgical KEY=value maintenance inside env files.
+ *
+ * The update scripts run in the busybox image, so no Python/Perl/node helper is
+ * available. awk is enough here because keys are matched as exact byte prefixes;
+ * values are passed through the environment rather than a sed replacement
+ * expression, making `&`, `|`, quotes and backslashes inert. The awk program
+ * also defers one record so unrelated lines keep their original LF/CRLF bytes,
+ * a standalone trailing CR byte stays intact, and a missing final newline stays
+ * missing. Upserts replace the first matching
+ * assignment and drop later duplicates of that same key; every other line is
+ * copied verbatim.
+ */
+export const BUSYBOX_ENV_FILE_SURGICAL_SH = `env_file_final_lf() {
+  [ -s "$1" ] || return 1
+  [ "$(tail -c 1 "$1" 2>/dev/null | wc -l | tr -d '[:space:]')" = "1" ]
+}
+
+env_file_surgical_rewrite() {
+  env_target="$1"
+  env_mode="$2"
+  env_key="$3"
+  env_line="$4"
+  env_needle="$5"
+  env_label="$6"
+  env_final_lf=0
+  if env_file_final_lf "$env_target"; then
+    env_final_lf=1
+  fi
+  env_tmp="\${env_target}.surgical.$$"
+  if ENV_FILE_MODE="$env_mode" ENV_FILE_KEY="$env_key" ENV_FILE_LINE="$env_line" ENV_FILE_NEEDLE="$env_needle" ENV_FILE_LABEL="$env_label" ENV_FILE_FINAL_LF="$env_final_lf" awk '
+function emit(line, ending) { printf "%s%s", line, ending }
+BEGIN {
+  CR = sprintf("%c", 13)
+  LF = sprintf("%c", 10)
+  mode = ENVIRON["ENV_FILE_MODE"]
+  key = ENVIRON["ENV_FILE_KEY"]
+  replacement = ENVIRON["ENV_FILE_LINE"]
+  needle = ENVIRON["ENV_FILE_NEEDLE"]
+  label = ENVIRON["ENV_FILE_LABEL"]
+  final_lf = ENVIRON["ENV_FILE_FINAL_LF"]
+  prefix = key "="
+  have_prev = 0
+  saw_key = 0
+  append_eol = LF
+}
+{
+  raw = $0
+  line_eol = LF
+  line = raw
+  if (substr(raw, length(raw), 1) == CR) {
+    line_eol = CR LF
+    line = substr(raw, 1, length(raw) - 1)
+  }
+  drop = 0
+  if (mode == "upsert") {
+    if (substr(line, 1, length(prefix)) == prefix) {
+      if (!saw_key) {
+        line = replacement
+      } else {
+        drop = 1
+      }
+      saw_key = 1
+    }
+  } else if (mode == "delete") {
+    if (substr(line, 1, length(prefix)) == prefix && (needle == "" || index(line, needle) > 0)) {
+      drop = 1
+    }
+  } else if (mode == "sanitize") {
+    if (line !~ /^[[:space:]]*($|#)/ && line !~ /^[A-Za-z_][A-Za-z0-9_]*=/) {
+      printf "[webui-update] invalid env key at line %d dropped from %s\\n", NR, label > "/dev/stderr"
+      drop = 1
+    }
+  }
+  if (have_prev) {
+    emit(prev, prev_eol)
+    append_eol = prev_eol
+  }
+  if (drop) {
+    have_prev = 0
+  } else {
+    prev = line
+    prev_eol = line_eol
+    have_prev = 1
+  }
+}
+END {
+  if (have_prev) {
+    if (mode == "upsert" && !saw_key) {
+      separator = prev_eol
+      if (final_lf != "1") {
+        separator = append_eol
+        if (prev_eol == (CR LF)) {
+          separator = CR LF
+        }
+      }
+      emit(prev, separator)
+      if (final_lf == "1") {
+        emit(replacement, separator)
+      } else {
+        emit(replacement, "")
+      }
+    } else {
+      ending = prev_eol
+      if (final_lf != "1") {
+        ending = ""
+        if (prev_eol == (CR LF)) {
+          ending = CR
+        }
+      }
+      emit(prev, ending)
+    }
+  } else if (mode == "upsert" && !saw_key) {
+    emit(replacement, LF)
+  }
+}
+' "$env_target" > "$env_tmp"; then
+    cat "$env_tmp" > "$env_target"
+    rm -f "$env_tmp"
+  else
+    rm -f "$env_tmp"
+    return 1
+  fi
+}
+
+env_file_surgical_upsert() {
+  env_file_surgical_rewrite "$1" upsert "$2" "$3" "" ""
+}
+
+env_file_surgical_delete() {
+  env_file_surgical_rewrite "$1" delete "$2" "" "$3" ""
+}
+
+env_file_surgical_sanitize() {
+  env_file_surgical_rewrite "$1" sanitize "" "" "" "\${2:-}"
+}
+`;
+
 // Bootstrap precondition: every WebUI bootstrap script runs `docker run busybox`
 // several times to fix volume ownership before `docker compose up`. The host-side
 // `hermes-disk-cleanup` (and the inline volume-safe cleanup) runs

@@ -220,6 +220,14 @@ describe('ProfileService.createProfile', () => {
     expect(patchCommand).not.toContain("| base64 -d | python3");
   });
 
+  it.each(["shell", "compose"] as const)("rejects extended line separators in %s env patch values", (reader) => {
+    for (const separator of ["\v", "\u2028"]) {
+      expect(() => ProfileService.buildEnvPatchCommand("/tmp/fixture.env", {
+        FIXTURE_VALUE: `left${separator}right`,
+      }, reader)).toThrow(/line breaks are not supported/);
+    }
+  });
+
   it("clears stale provider env vars when cloning with a different provider", async () => {
     jest.spyOn(ProfileService, 'getGuestSshForInstance').mockResolvedValue({ ip: '127.0.0.1', guestTarget: null });
     jest.spyOn(ProfileService, 'getHermesHomeForInstance').mockResolvedValue('/opt/data');

@@ -20,9 +20,8 @@
  */
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
-import { assertNotProduction, auditEmail, newRunId } from './first-run-audit/config';
-import { createAuditUser, mintSignInTicket } from './first-run-audit/clerk-admin';
-import { establishAuditSession } from './first-run-audit/session';
+import { assertNotProduction, auditEmail, AUDIT_EMAIL_DOMAIN, newRunId } from './first-run-audit/config';
+import { signUpAuditUser } from './first-run-audit/signup';
 import { proveChat } from './launch-sweep/chat';
 import { launchFromTile, openFromLaunch, waitForReady } from './launch-sweep/journey';
 import { SWEEP_TARGETS, type SweepTarget } from './launch-sweep/targets';
@@ -138,16 +137,15 @@ async function checkoutFromPricing(page: Page, name: string, customer: TrialCust
 }
 
 async function newCustomer(browser: Browser, env: JourneyEnv, label: string, customers: TrialCustomer[]) {
-  const user = await createAuditUser(env.clerkSecretKey, auditEmail(`trial-${label}-${env.runId}`, 'hermesos.cloud'));
-  const customer: TrialCustomer = { userId: user.id };
-  customers.push(customer);
-  const context = await establishAuditSession(browser, {
+  const email = auditEmail(`trial-${label}-${env.runId}`, AUDIT_EMAIL_DOMAIN);
+  const signup = await signUpAuditUser(browser, {
     baseUrl: env.baseUrl,
-    ticket: await mintSignInTicket(env.clerkSecretKey, user.id),
-    onContext: (created) => { customer.context = created; },
+    clerkSecretKey: env.clerkSecretKey,
+    email,
   });
-  customer.signedIn = true;
-  return { customer, context };
+  const customer: TrialCustomer = { userId: signup.userId, context: signup.context, signedIn: true };
+  customers.push(customer);
+  return { customer, context: signup.context };
 }
 
 test.describe('trial to Pro', () => {

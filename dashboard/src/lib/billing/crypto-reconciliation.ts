@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { log } from "@/lib/logger";
 import { metadataRecord, requireDb } from "@/lib/billing/db-utils";
 import { normalizeEvmAddress } from "@/lib/billing/token-holdings";
 import {
@@ -20,6 +21,7 @@ import {
   type CryptoTopUpSettlementResult,
   type CryptoTopUpTransfer,
 } from "@/lib/billing/crypto-topups";
+import { claimCronUtcDayOutcome } from "@/lib/cron-heartbeat";
 import {
   createBaseChainReader,
   paymentDustFloor,
@@ -41,6 +43,8 @@ type DbQuery = {
   in: (...args: unknown[]) => DbQuery;
   is: (...args: unknown[]) => DbQuery;
   gt: (...args: unknown[]) => DbQuery;
+  lt: (...args: unknown[]) => DbQuery;
+  lte: (...args: unknown[]) => DbQuery;
   order: (...args: unknown[]) => DbQuery;
   limit: (...args: unknown[]) => DbQuery;
   then: Promise<{ data?: unknown; error: QueryError }>["then"];
@@ -60,6 +64,19 @@ const DEFAULT_LIMIT = 50;
 // Batch slots always left for intents the old session helper failed without a
 // chain check, so that finite backlog drains even while many intents are open.
 const MIN_UNCHECKED_EXPIRED_SHARE = 5;
+// An open intent older than this is no longer scanned every run: its session
+// window + late-payment grace closed weeks ago, so each tick would only
+// re-scan a dead range on the shared public RPC. On-demand settlement
+// (reconcileCryptoTopUpByReference) still checks it if the user asks.
+const STALE_INTENT_MAX_AGE_MS = 14 * 24 * 60 * 60_000;
+// Bound on the stale-intent count query; the real backlog is single digits.
+const STALE_INTENT_COUNT_LIMIT = 500;
+// Open intents older than the cutoff are retried once per UTC day — on the
+// first tick whose start lands in a new day — in one bounded batch, so a paid
+// intent whose last in-window scan failed near the cutoff is not excluded
+// forever. Derived from the cron heartbeat's last_run_at; no new table.
+const STALE_DAILY_RETRY_LIMIT = 25;
+const CRYPTO_TOPUPS_CRON_NAME = "reconcile-crypto-topups";
 // The reconcile queue: `payment_transactions.reconcile_queued_at` is when an
 // intent joined the back of the queue (its insert, then every check). See
 // listOpenCryptoTopUps.
@@ -180,14 +197,15 @@ function takeFairly(
  * Intents the old session helper failed without a chain check keep a share of
  * every batch, in queue order, until they are closed.
  */
-async function listOpenCryptoTopUps(db: SupabaseLike, limit: number) {
+async function listOpenCryptoTopUps(db: SupabaseLike, limit: number, createdAfterIso: string) {
   const lookahead = Math.min(MAX_QUEUE_LOOKAHEAD, limit * QUEUE_LOOKAHEAD_FACTOR);
   const freshShare = Math.floor(limit / FRESH_LANE_DIVISOR);
   const intents = () =>
     table(db, "payment_transactions")
       .select(PAYMENT_COLUMNS)
       .eq("provider", "bankr")
-      .eq("asset", CRYPTO_TOPUP_ASSETS.usdc_base.key);
+      .eq("asset", CRYPTO_TOPUP_ASSETS.usdc_base.key)
+      .gt("created_at", createdAfterIso);
   const inQueueOrder = (query: DbQuery) =>
     query
       .order(QUEUE_COLUMN, { ascending: true, nullsFirst: true })
@@ -225,6 +243,85 @@ async function listOpenCryptoTopUps(db: SupabaseLike, limit: number) {
   const uncheckedShare = Math.max(MIN_UNCHECKED_EXPIRED_SHARE, limit - pendingRows.length);
   const uncheckedRows = takeFairly(rowsOf(uncheckedExpired), uncheckedShare, perUser);
   return [...pendingRows, ...uncheckedRows];
+}
+
+/**
+ * The once-a-day lane: open intents the age cutoff excludes get one bounded
+ * retry batch on the first tick of each UTC day, in the same queue order, so
+ * a payment whose last scan failed near the cutoff still gets another look.
+ * Same two lanes as listOpenCryptoTopUps, bounded by created_at instead of
+ * the other way around — the sets are exact complements, never overlapping.
+ */
+async function listStaleCryptoTopUpsForDailyRetry(
+  db: SupabaseLike,
+  createdBeforeIso: string,
+  limit: number
+) {
+  const lookahead = Math.min(MAX_QUEUE_LOOKAHEAD, limit * QUEUE_LOOKAHEAD_FACTOR);
+  const intents = () =>
+    table(db, "payment_transactions")
+      .select(PAYMENT_COLUMNS)
+      .eq("provider", "bankr")
+      .eq("asset", CRYPTO_TOPUP_ASSETS.usdc_base.key)
+      .lte("created_at", createdBeforeIso);
+  const inQueueOrder = (query: DbQuery) =>
+    query
+      .order(QUEUE_COLUMN, { ascending: true, nullsFirst: true })
+      .order("created_at", { ascending: true })
+      .limit(lookahead);
+  const [pending, uncheckedExpired] = await Promise.all([
+    inQueueOrder(intents().eq("status", "pending")),
+    inQueueOrder(
+      intents()
+        .eq("status", "failed")
+        .eq("metadata->>failureType", CRYPTO_TOPUP_SESSION_EXPIRED_FAILURE)
+        .is("metadata->>reconciliationClosedAt", null)
+    ),
+  ]);
+  for (const result of [pending, uncheckedExpired]) {
+    if (result.error) {
+      throw new Error(result.error.message || "Failed to load stale crypto top-ups");
+    }
+  }
+  const rowsOf = (result: { data?: unknown }) =>
+    (Array.isArray(result.data) ? result.data : []) as CryptoTopUpPaymentRow[];
+
+  const perUser = new Map<string, number>();
+  const pendingRows = takeFairly(rowsOf(pending), limit, perUser);
+  const uncheckedShare = Math.max(MIN_UNCHECKED_EXPIRED_SHARE, limit - pendingRows.length);
+  const uncheckedRows = takeFairly(rowsOf(uncheckedExpired), uncheckedShare, perUser);
+  return [...pendingRows, ...uncheckedRows];
+}
+
+// How many open intents the age cutoff just excluded this run, so the summary
+// shows the backlog is being skipped on purpose rather than silently absent.
+async function countStaleOpenCryptoTopUps(db: SupabaseLike, createdBeforeIso: string) {
+  const base = () =>
+    table(db, "payment_transactions")
+      .select("id")
+      .eq("provider", "bankr")
+      .eq("asset", CRYPTO_TOPUP_ASSETS.usdc_base.key)
+      .lt("created_at", createdBeforeIso);
+  const [pending, uncheckedExpired] = await Promise.all([
+    base().eq("status", "pending").limit(STALE_INTENT_COUNT_LIMIT),
+    base()
+      .eq("status", "failed")
+      .eq("metadata->>failureType", CRYPTO_TOPUP_SESSION_EXPIRED_FAILURE)
+      .is("metadata->>reconciliationClosedAt", null)
+      .limit(STALE_INTENT_COUNT_LIMIT),
+  ]);
+  for (const result of [pending, uncheckedExpired]) {
+    if (result.error) {
+      throw new Error(result.error.message || "Failed to count stale crypto top-ups");
+    }
+  }
+  const ids = new Set(
+    [pending.data, uncheckedExpired.data]
+      .flatMap((data) => (Array.isArray(data) ? data : []))
+      .map((row) => (row as { id?: unknown }).id)
+      .filter((id): id is string => typeof id === "string")
+  );
+  return ids.size;
 }
 
 /**
@@ -503,6 +600,7 @@ export async function reconcilePendingCryptoTopUps(params: {
   const minConfirmations = normalizeMinConfirmations(params.minConfirmations);
   const settle = params.settleIntent ?? settleCryptoTopUpIntent;
   const now = params.now ?? new Date();
+  const staleCutoffIso = new Date(now.getTime() - STALE_INTENT_MAX_AGE_MS).toISOString();
   // One reader per batch: the head and block timestamps are fetched once.
   const chain = createBaseChainReader({
     rpcUrl: params.rpcUrl,
@@ -531,9 +629,64 @@ export async function reconcilePendingCryptoTopUps(params: {
     });
   };
 
-  const intents = await listOpenCryptoTopUps(db, limit);
-  await markCheckedThisRun(db, intents, now);
-  for (const row of intents) {
+  // The first tick of a new UTC day also retries a bounded batch of the
+  // intents the age cutoff excludes — a paid intent whose last scan failed
+  // just before crossing it must not lose its only automatic retry. The day
+  // boundary IS the claim below: its guarded update only matches a
+  // last_run_at from before today, so "claimed" is exactly "first tick of a
+  // new UTC day with a recorded previous run" — no separate read can add to
+  // that, and no row at all means no baseline and a held claim.
+  //
+  // The claim is also the atomic decider between overlapping invocations:
+  // the route heartbeats AFTER reconciliation resolves, so two runs that
+  // both believe the day is free would otherwise both scan every stale
+  // intent on the shared public RPC. The first writer to move last_run_at
+  // into today owns the pass; a loser skips it. A winner that then crashes
+  // holds the day, deferring the pass to tomorrow — deferral, not loss,
+  // which is the right trade for a retry lane that already runs daily.
+  // A failed claim is distinct from an already-claimed day: the day stays
+  // unclaimed while the retry lane never ran, so the run's incident report
+  // and heartbeat must read degraded, not a clean skip.
+  const staleDayClaim = await claimCronUtcDayOutcome(db, CRYPTO_TOPUPS_CRON_NAME, now);
+  const retryStale = staleDayClaim === "claimed";
+  const staleRetryClaimFailed = staleDayClaim === "failed";
+  let staleRetryLoadFailed = false;
+  const [intents, staleExcluded, staleRetry] = await Promise.all([
+    listOpenCryptoTopUps(db, limit, staleCutoffIso),
+    // The stale count only feeds the run summary — a failure here must not
+    // reject the batch and skip settlement, claim recovery, or the caller's
+    // treasury sweeps. Report it as unavailable instead.
+    countStaleOpenCryptoTopUps(db, staleCutoffIso).catch((error: unknown) => {
+      log.warn("stale crypto top-up count failed; continuing without it", {
+        source: "crypto-reconciliation",
+        failureType: "stale_topup_count_failed",
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }),
+    // The daily retry lane is auxiliary like the count: a failed read must
+    // not reject the batch — the intents stay open and are retried tomorrow.
+    // But it must not be INVISIBLE either: the day's one stale pass silently
+    // missing would leave the run summary, the cron's incident report and its
+    // heartbeat all reading as success, so the outcome carries the failure.
+    retryStale
+      ? listStaleCryptoTopUpsForDailyRetry(db, staleCutoffIso, STALE_DAILY_RETRY_LIMIT).catch(
+          (error: unknown) => {
+            staleRetryLoadFailed = true;
+            log.warn("stale crypto top-up daily retry load failed; continuing without it", {
+              source: "crypto-reconciliation",
+              failureType: "stale_topup_retry_load_failed",
+              errorMessage: error instanceof Error ? error.message : String(error),
+            });
+            return [] as CryptoTopUpPaymentRow[];
+          }
+        )
+      : Promise.resolve([] as CryptoTopUpPaymentRow[]),
+  ]);
+  // The lanes are exact complements on created_at, so no id can appear twice.
+  const batch = [...intents, ...staleRetry];
+  await markCheckedThisRun(db, batch, now);
+  for (const row of batch) {
     try {
       const result = await reconcileOpenIntent({ row, db, chain, minConfirmations, settle, now });
       results.push(result);
@@ -568,7 +721,20 @@ export async function reconcilePendingCryptoTopUps(params: {
   }
 
   return {
-    checked: intents.length,
+    checked: batch.length,
+    // Open intents older than STALE_INTENT_MAX_AGE_MS — the standing stale
+    // backlog. On the first tick of a UTC day up to STALE_DAILY_RETRY_LIMIT
+    // of them are also retried (see staleRetried); the rest remain settleable
+    // on demand.
+    staleExcluded,
+    staleRetried: staleRetry.length,
+    // The day was claimed for the stale pass but its intent SELECT failed —
+    // the pass produced zero rows without running. Surfaced so the caller's
+    // incident report and heartbeat read the run as degraded instead of clean.
+    staleRetryLoadFailed,
+    // The stale pass's utc-day claim write itself failed — the lane never
+    // ran today, distinct from "another run holds the day" (a clean skip).
+    staleRetryClaimFailed,
     ...counts,
     results,
   };

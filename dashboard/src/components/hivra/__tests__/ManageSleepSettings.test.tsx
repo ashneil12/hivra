@@ -123,6 +123,17 @@ describe("ManageSleepSettings", () => {
     expect(mockWake).toHaveBeenCalledWith("agent-1");
   });
 
+
+  it("locks the controls on a holder-funded seat and explains the fixed terms", () => {
+    render(<ManageSleepSettings agent={agent({ seat_funding: "holder", sleep_policy: "off", always_on: true })} onChanged={jest.fn()} />);
+    expect(screen.getByRole("switch", { name: "Sleep when idle" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Sleep when idle" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("switch", { name: "Keep awake" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Keep awake" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByText(/naps after 4 minutes idle and saves to disk after 16 minutes total/)).toBeVisible();
+    expect(screen.getByText(/Always on is only available on a paid seat/)).toBeVisible();
+  });
+
   it("uses no dashes in its copy", () => {
     const { container } = render(<ManageSleepSettings agent={agent()} onChanged={jest.fn()} />);
     expect(container.textContent).not.toMatch(/[-–—]/);

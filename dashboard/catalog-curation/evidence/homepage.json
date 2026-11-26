@@ -1,0 +1,109 @@
+{
+  "slug": "homepage",
+  "checkedAt": "2026-11-21T14:21:34.319Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "gethomepage/homepage is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "gethomepage/homepage",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ghcr.io/gethomepage/homepage:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ghcr.io/gethomepage/homepage:latest",
+        "digest": "sha256:019d8f063a7299e7c1c51ee4a70b692291809af3244894fbec2c2ac7d1f71b18",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 76.2s",
+      "evidence": {
+        "container": "hivra-verify-homepage-fefzhn",
+        "hostPort": 3236,
+        "image": "ghcr.io/gethomepage/homepage:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-homepage-fefzhn",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3236:3000",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-homepage-fefzhn-config:/app/config",
+          "ghcr.io/gethomepage/homepage:latest"
+        ],
+        "runStdout": "f0dd12075a473f0169990298bb10e39e4cad7c6d8386758b757f7fc6f7117ecb",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 76.2,
+          "attempts": 12
+        },
+        "memUsage": "163.2MiB / 7.652GiB",
+        "memBytes": 171127603
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 65269,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html><html lang=\"en\"><head><meta charSet=\"utf-8\" data-next-head=\"\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no\" data-next-head=\"\"/><title data-next-head=\"\">Homepage</title><meta name=\"description\" content=\"A highly customizable homepage (or startpage / application dashboard) with Docker and service API inte",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<!DOCTYPE html><html lang=\"en\"><head><meta charSet=\"utf-8\" data-next-head=\"\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no\" data-next-head=\"\"/><title data-next-head=\"\">404: This page could not be found</title><meta name="
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 163.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 171127603,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

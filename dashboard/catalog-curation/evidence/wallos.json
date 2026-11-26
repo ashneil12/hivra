@@ -1,0 +1,128 @@
+{
+  "slug": "wallos",
+  "checkedAt": "2026-11-21T14:18:29.803Z",
+  "gitSha": "a7b47e98c6b6b8ede99c0b1596d3b3d3bb81917d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "ellite/Wallos is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "ellite/Wallos",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "bellamy/wallos:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "bellamy/wallos:latest",
+        "digest": "sha256:84c3b218e144a1292b2be6ad2f0b9d620277e860d307c3cfa5aff3ee629aae17",
+        "platforms": [
+          "linux/arm/v7",
+          "unknown/unknown",
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 139.1s",
+      "evidence": {
+        "container": "hivra-verify-wallos-ypwjwo",
+        "hostPort": 3224,
+        "image": "bellamy/wallos:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-wallos-ypwjwo",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3224:80",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-wallos-ypwjwo-data:/var/www/html/db",
+          "bellamy/wallos:latest"
+        ],
+        "runStdout": "0443dfac06b866fdb129f3084d446828d3a9d452943fb014349ef97db2b6b3de",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 139.1,
+          "attempts": 40
+        },
+        "memUsage": "17.22MiB / 7.652GiB",
+        "memBytes": 18056479
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 302 /login.php -> 200 /registration.php; form POST -> 200",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64528,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "login.php"
+          },
+          {
+            "hop": 2,
+            "path": "/login.php",
+            "status": 302,
+            "location": "registration.php"
+          },
+          {
+            "hop": 3,
+            "path": "/registration.php",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/registration.php",
+        "bodyHead": "<!DOCTYPE html>\r\n<html dir=\"ltr\">\r\n\r\n<head>\r\n    <meta charset=\"UTF-8\">\r\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">\r\n    <meta name=\"theme-color\" content=\"#FFFFFF\" id=\"theme-color\" />\r\n    <meta name=\"apple-mobile-web-app-title\" content=\"Wallos\">\r\n    <title>Wallos - Subscription Tracker</title>\r\n    <link rel=\"icon\" type=\"image/",
+        "formPost": {
+          "path": "/registration.php",
+          "status": 200,
+          "location": null,
+          "bodyHead": "<!DOCTYPE html>\r\n<html dir=\"ltr\">\r\n\r\n<head>\r\n    <meta charset=\"UTF-8\">\r\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no\">\r\n    <meta name=\"theme-color\" content=\"#FFFFFF\" id=\"theme-color\" />\r\n    <meta name=\"apple-mobile-web-app-title\" content=\"Wallos\">\r\n    <title>Wallos - Subscription Tracker</title>\r\n    <link rel=\"icon\" type=\"image/"
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "<html>\r\n<head><title>404 Not Found</title></head>\r\n<body>\r\n<center><h1>404 Not Found</h1></center>\r\n<hr><center>nginx/1.30.7</center>\r\n</body>\r\n</html>\r\n"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 17.2MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 18056479,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

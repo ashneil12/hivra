@@ -7,6 +7,7 @@
  */
 
 import { getAgent, resizeFloor, type AgentId, type PlanTier } from "@/lib/hivra/agent-catalog";
+import { getCatalogAppManifest } from "@/lib/hivra/catalog-manifests";
 import type { PlanInfo } from "@/lib/hivra/agent-api";
 import { targetSupportsCatalogRuntime } from "@/lib/hivra/agent-placement";
 import { providerComputerResourceFloor } from "@/lib/hivra/provider-computer-resource-floor";
@@ -64,7 +65,10 @@ function catalogSubject(id: AgentId, overrides: Partial<LaunchFitSubject> = {}):
   };
 }
 
-export function launchProfileFitSubject(profileId: LaunchProfileId): LaunchFitSubject {
+export function launchProfileFitSubject(
+  profileId: LaunchProfileId,
+  { managedLinuxSandboxEligible = false }: { managedLinuxSandboxEligible?: boolean } = {},
+): LaunchFitSubject {
   const profile = PROFILE_DETAILS[profileId];
   const floor = launchResourcePolicy(profileId, { browser: false }).floor;
   if (profileId === "ubuntu-desktop") return catalogSubject("linux-desktop", { floor });
@@ -74,7 +78,11 @@ export function launchProfileFitSubject(profileId: LaunchProfileId): LaunchFitSu
     return catalogSubject("linux-desktop", { floor, placementRuntimeId: "linux-server" });
   }
   if (profileId === "linux-terminal") {
-    return catalogSubject("linux-terminal", { hivraCloud: "unavailable", floor, targetKind: "gvisor" });
+    return catalogSubject("linux-terminal", {
+      hivraCloud: managedLinuxSandboxEligible ? "plan" : "unavailable",
+      floor,
+      targetKind: "gvisor",
+    });
   }
   if (profileId === "omarchy") {
     return { ...catalogSubject("linux-desktop", { floor }), hivraCloud: "prepared", ownServer: false };
@@ -334,6 +342,19 @@ export function sizePresets(profileId: LaunchProfileId, { browser = false }: { b
     // Small is Nuphos's minimum; Medium is the size Hivra recommends.
     return presets(pinned(1, 3), pinned(2, 4), pinned(4, 8));
   }
+  const catalogManifest = getCatalogAppManifest(profileId);
+  if (catalogManifest) {
+    const small = pinned(catalogManifest.floor.cpu, catalogManifest.floor.ram);
+    const medium = pinned(
+      Math.max(catalogManifest.recommended.cpu, small.cpu),
+      Math.max(catalogManifest.recommended.ram, small.ram),
+    );
+    const large = pinned(
+      Math.min(8, Math.max(4, medium.cpu * 2)),
+      Math.min(16, Math.max(8, medium.ram * 2)),
+    );
+    return presets(small, medium, large);
+  }
   if (profileId === "hermes") {
     return presets(pinned(0.5, 1), pinned(2, 4), pinned(4, 8));
   }
@@ -529,7 +550,7 @@ export function upgradeRequestSize(resources: LaunchResources): { reserved: Size
 // ── Plan and review rows ────────────────────────────────────────────────────
 
 /** Where a launch lands, as the rows describe it. */
-export type LaunchSubstrate = "hivra-cloud" | "proxmox" | "provider-vm" | "gvisor" | "unknown";
+export type LaunchSubstrate = "hivra-cloud" | "managed-gvisor" | "proxmox" | "provider-vm" | "gvisor" | "unknown";
 
 export function launchSubstrate(mode: "hivra-managed" | "self-managed", target: DeploymentTargetDto | null): LaunchSubstrate {
   if (mode === "hivra-managed") return "hivra-cloud";
@@ -559,6 +580,8 @@ export function capabilitySummary(profileId: LaunchProfileId, { browser }: { bro
   if (profileId === "agent-zero") return "Agent Zero's dashboard with its own browser, a terminal and files on its own computer.";
   if (profileId === "openbot") return "OpenBot's own workspace, with AI coworkers that have their own browser and files, on its own computer.";
   if (profileId === "nuphos") return "Nuphos's own console, with Claude Code you chat with from the Nuphos app, on its own computer.";
+  const catalogManifest = getCatalogAppManifest(profileId);
+  if (catalogManifest) return catalogManifest.capabilityLine;
   if (profileId === "aeon") return "Aeon's dashboard on its own computer. Its tasks run on your GitHub Actions after you connect GitHub.";
   if (profileId === "deepseek-harness") return "DeepSeek's own interface on its own computer.";
   if (profileId === "ubuntu-desktop") return "A desktop, terminal and files on this computer.";
@@ -588,25 +611,27 @@ export function costSummary({
 }): string {
   const withModel = (text: string) => modelNote ? `${text} ${modelNote}` : text;
   if (profileId === "omarchy") return "Nothing is bought. It uses a computer Hivra already set up.";
-  if (substrate === "hivra-cloud" && planOnHold) {
+  const hivraCloud = substrate === "hivra-cloud" || substrate === "managed-gvisor";
+  if (hivraCloud && planOnHold) {
     return withModel(`Uses your ${planOnHold} plan allowance once the plan is active again.`);
   }
-  if (substrate === "hivra-cloud" && cloudPlanAccess === "free") {
+  if (hivraCloud && cloudPlanAccess === "free") {
     return withModel("Requires a paid plan to launch on Hivra Cloud.");
   }
-  if (substrate === "hivra-cloud" && cloudPlanAccess === "unknown") {
+  if (hivraCloud && cloudPlanAccess === "unknown") {
     return withModel("Checking your Hivra Cloud plan before launch.");
   }
-  if (substrate === "hivra-cloud" && profileId === "aeon") {
+  if (hivraCloud && profileId === "aeon") {
     return withModel(`No extra charge. Uses one agent slot on your ${planName ?? "Hivra Cloud"} plan, not its CPU and memory.`);
   }
-  if (substrate === "hivra-cloud") return withModel(`No extra charge. Uses your ${planName ?? "Hivra Cloud"} plan allowance.`);
+  if (hivraCloud) return withModel(`No extra charge. Uses your ${planName ?? "Hivra Cloud"} plan allowance.`);
   if (substrate === "provider-vm") return withModel("Nothing new is bought. Your cloud provider keeps billing this server as usual.");
   return withModel("No charge from Hivra. It uses your server's own capacity.");
 }
 
 export function isolationDetail(substrate: LaunchSubstrate): string {
   if (substrate === "hivra-cloud") return "Private virtual machine on Hivra Cloud (Proxmox KVM)";
+  if (substrate === "managed-gvisor") return "gVisor application-kernel sandbox on Hivra Cloud";
   if (substrate === "proxmox") return "Private virtual machine on your Proxmox host (KVM)";
   if (substrate === "gvisor") return "gVisor application-kernel sandbox on your Linux host";
   if (substrate === "provider-vm") return "The whole cloud server, used by this launch only";

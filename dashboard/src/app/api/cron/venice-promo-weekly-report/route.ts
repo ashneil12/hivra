@@ -5,7 +5,7 @@ import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
-import { isVenicePromoEnabled } from "@/lib/venice/promo/core";
+import { isVenicePromoEnabled } from "@/lib/venice/promo-flag";
 import { loadPromoReport } from "@/lib/venice/promo/report";
 import { summarizePromoReport } from "@/lib/venice/promo/report-summary";
 

@@ -38,6 +38,7 @@ import {
   lockedQuantityForTier,
   lockedThresholdFor,
   lockWalletHivraToShow,
+  newQuoteUnit,
   nextSelfCustodyLockTier,
   readChallengeData,
   readWalletAccounts,
@@ -742,11 +743,11 @@ export default function WalletPage() {
       const body = res ? await res.json().catch(() => null) : null;
       if (res?.ok && body?.success) {
         if (body.data?.throttled) {
-          setUnlockMsg('Already up to date — compute reflects your latest holdings.');
+          setUnlockMsg('Your holdings were checked recently.');
         } else if (body.data?.veniceBoostActive) {
           setUnlockMsg('Unlocked — Venice boost (+1 vCPU / +2 GB per agent) is now applied.');
         } else {
-          setUnlockMsg('Holdings re-checked and compute applied.');
+          setUnlockMsg('Holdings checked. You can see your holder access status in Billing.');
         }
       } else if (res?.status === 404) {
         setUnlockMsg('Connect and verify a wallet first, then press unlock.');
@@ -835,6 +836,7 @@ export default function WalletPage() {
   const connectedSelfCustodyAddress = verifiedWalletAddress ?? snapshotWalletAddress;
   const eligibleTier = highestEligibleTier(eligibility);
   const lockedAmountDisplay = lockedQuantityForTier(eligibility, eligibleTier);
+  const quoteUnit = newQuoteUnit(eligibility);
   const selfCustodyLockTier = nextSelfCustodyLockTier(eligibility);
   const selfCustodyLockQuote = activeQuoteForTier(quotes, selfCustodyLockTier);
   // Unlock now must connect and verify a wallet first while none is verified.
@@ -980,9 +982,9 @@ export default function WalletPage() {
             letterSpacing: '-0.01em',
           }}
         >
-          {tokenPanels ? (
+          {tokenPanels && quoteUnit ? (
             <>
-              {walletCopy.titlePrefix}{walletCopy.titleSeparator}<em>{walletCopy.titleEmphasis}</em>{walletCopy.titleSuffix}
+              {walletCopy.titlePrefix}{walletCopy.titleSeparator}<em>{quoteUnit}</em>{walletCopy.titleSuffix}
             </>
           ) : (
             walletCopy.restricted.title
@@ -993,11 +995,11 @@ export default function WalletPage() {
             walletCopy.restricted.intro
           ) : isLegacyCustody ? (
             <>
-              <strong>{walletCopy.legacyIntroStrong}</strong> — {walletCopy.legacyIntroBody}
+              <strong>{walletCopy.legacyIntroStrong}</strong> {quoteUnit && walletCopy.legacyIntroBody.replace(/\$hermesos/gi, quoteUnit)}
             </>
           ) : (
             <>
-              <strong>{walletCopy.selfCustodyIntroStrong}</strong> — {walletCopy.selfCustodyIntroBody}
+              <strong>{walletCopy.selfCustodyIntroStrong}</strong> {quoteUnit && walletCopy.selfCustodyIntroBody.replace(/\$hermesos/gi, quoteUnit)}
             </>
           )}
         </p>
@@ -1019,7 +1021,7 @@ export default function WalletPage() {
           <CheckCircle2 size={14} style={{ color: 'var(--gold-leaf)', flexShrink: 0, marginTop: 2 }} />
           <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--ink-black)' }}>
             You don&apos;t need to connect an external wallet. Below, select <strong>Lock</strong> on
-            your chosen tier to mint a quote — that gives you the exact $HERMESOS amount and the
+            your chosen tier to mint a quote — that gives you the exact token amount and the
             deposit address to send it to.
           </p>
         </div>
@@ -1057,6 +1059,7 @@ export default function WalletPage() {
           lockTier={selfCustodyLockTier}
           lockQuote={selfCustodyLockQuote}
           lockedAmountDisplay={lockedAmountDisplay}
+          quoteUnit={quoteUnit}
           tokenSymbol={eligibility?.tokenSymbol ?? 'HERMESOS'}
           veniceBoostEligible={Boolean(eligibility?.veniceBoost?.currentlyEligible)}
           error={walletConnectError}
@@ -1070,11 +1073,11 @@ export default function WalletPage() {
           quote already locked stays visible. */}
       {tokenPanels && isReady && isLegacyCustody && (!hivraNotReady || quotes.pro || quotes.power) && (
         <QuotePanel
+          quoteUnit={quoteUnit}
           proQuote={quotes.pro}
           powerQuote={quotes.power}
           proEligible={Boolean(eligibility?.tiers.pro.currentlyEligible)}
           powerEligible={Boolean(eligibility?.tiers.power.currentlyEligible)}
-          launchEpoch={eligibility?.thresholds?.epoch === 'launch'}
           mintingTier={mintingTier}
           depositAddress={tokenLockAddress}
           onMint={handleMintQuote}
@@ -1134,6 +1137,7 @@ export default function WalletPage() {
       {tokenPanels && unlockPromptMode && (
         <UnlockPromptCard
           mode={unlockPromptMode}
+          quoteUnit={quoteUnit}
           unlocking={unlocking}
           onUnlock={() => void handleUnlockNow()}
           onDismiss={() => dismissPrompt(unlockPromptMode)}
@@ -1185,7 +1189,7 @@ export default function WalletPage() {
             <ActionRow
               icon={<ArrowDownToLine size={14} />}
               label="Deposit"
-              description="Mint a deposit quote for the tier you want above — that locks today's $HERMESOS price for 20 minutes and shows you the exact amount and address. Eligibility updates within minutes of confirmation."
+              description="Mint a deposit quote for the tier you want above — that locks the token price for 20 minutes and shows you the exact amount and address. Eligibility updates within minutes of confirmation."
             />
           )}
           {isLegacyCustody && (

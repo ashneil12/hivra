@@ -1,3 +1,4 @@
+import { resolveHivraProxmoxHost } from "@/lib/hivra/proxmox-target";
 import {
   buildOrphanLvReapScript,
   buildRestoreCloneStopScript,
@@ -9,7 +10,9 @@ import {
   isOrphanLvReapEnabled,
   isRestoreCloneReaperEnabled,
   isSafeVgLvPath,
+  loadDbVmidsForHost,
   loadInstanceRowsByIds,
+  loadLaneBindingTags,
   parseLiveVmsFromHostScript,
   parseOrphanLvReapOutput,
   parseOrphanLvsFromHostScript,
@@ -77,9 +80,26 @@ describe("parseLiveVmsFromHostScript", () => {
   it("parses BEGIN/END blocks into typed live VM records", () => {
     const live = parseLiveVmsFromHostScript(SAMPLE_STDOUT);
     expect(live).toEqual([
-      { vmid: 401, name: "hermes-power-1a2b3c4d", memoryMb: 8192, cores: 4 },
-      { vmid: 407, name: "canary-407", memoryMb: 4096, cores: 2 },
-      { vmid: 412, name: "hermes-free-aabbccdd", memoryMb: 1024, cores: 1 },
+      { vmid: 401, name: "hermes-power-1a2b3c4d", memoryMb: 8192, cores: 4, tags: [] },
+      { vmid: 407, name: "canary-407", memoryMb: 4096, cores: 2, tags: [] },
+      { vmid: 412, name: "hermes-free-aabbccdd", memoryMb: 1024, cores: 1, tags: [] },
+    ]);
+  });
+
+  it("captures the VM's qm tags so lane attribution can see them", () => {
+    const live = parseLiveVmsFromHostScript(`
+BEGIN 401
+name: hivra-cc-401
+memory: 4096
+cores: 2
+tags: hivra-bind-${"a".repeat(32)};hivra-op-${"b".repeat(32)}
+END 401
+`);
+    expect(live).toEqual([
+      expect.objectContaining({
+        vmid: 401,
+        tags: [`hivra-bind-${"a".repeat(32)}`, `hivra-op-${"b".repeat(32)}`],
+      }),
     ]);
   });
 
@@ -96,14 +116,14 @@ describe("parseLiveVmsFromHostScript", () => {
   it("tolerates missing optional fields (records null)", () => {
     const stdout = `BEGIN 500\nname: partial-only\nEND 500\n`;
     expect(parseLiveVmsFromHostScript(stdout)).toEqual([
-      { vmid: 500, name: "partial-only", memoryMb: null, cores: null },
+      { vmid: 500, name: "partial-only", memoryMb: null, cores: null, tags: [] },
     ]);
   });
 
   it("ignores unrecognised config keys inside a block", () => {
     const stdout = `BEGIN 501\ncpu: kvm64\nname: with-extras\nmemory: 2048\nboot: order=scsi0\ncores: 2\nEND 501\n`;
     expect(parseLiveVmsFromHostScript(stdout)).toEqual([
-      { vmid: 501, name: "with-extras", memoryMb: 2048, cores: 2 },
+      { vmid: 501, name: "with-extras", memoryMb: 2048, cores: 2, tags: [] },
     ]);
   });
 });
@@ -142,8 +162,41 @@ describe("computeOrphansForHost", () => {
         name: "canary-407",
         memoryMb: 4096,
         cores: 2,
+        tags: [],
       },
     ]);
+  });
+
+  it("never flags the other lane's computers on a shared host", () => {
+    // Prod 2026-11: canary-lane agent VMs sit on the same physical hosts as
+    // production ones. Their hivra-bind tag derives from a row in the OTHER
+    // deployment's database — unreachable here — so the old vmid-only claim
+    // reported every running canary box as an orphan forever.
+    const mine = `hivra-bind-${"a".repeat(32)}`;
+    const foreign = `hivra-bind-${"b".repeat(32)}`;
+    const live = [
+      { vmid: 401, name: "hivra-cc-401", memoryMb: 4096, cores: 2, tags: [foreign, "hivra-op-x"] },
+      { vmid: 402, name: "hivra-cc-402", memoryMb: 4096, cores: 2, tags: [mine, "hivra-op-y"] },
+      { vmid: 403, name: "hivra-cc-403", memoryMb: 4096, cores: 2, tags: [] },
+      { vmid: 404, name: "hivra-guacamole-canary", memoryMb: 2048, cores: 2, tags: [] },
+    ];
+    const orphans = computeOrphansForHost("fixturenode4", live, [], new Set([mine]));
+    // 401 is foreign-lane, 404 is a canary fixture — both are another lane's
+    // business. 402 is ours-but-unclaimed and 403 is unattributed: real orphans.
+    expect(orphans.map((vm) => vm.vmid)).toEqual([402, 403]);
+  });
+
+  it("still flags a VM tagged with our lane when no live row claims its vmid", () => {
+    const mine = `hivra-bind-${"c".repeat(32)}`;
+    const live = [{ vmid: 401, name: "hivra-cc-401", memoryMb: 4096, cores: 2, tags: [mine] }];
+    const orphans = computeOrphansForHost("fixturenode4", live, [], new Set([mine]));
+    expect(orphans.map((vm) => vm.vmid)).toEqual([401]);
+  });
+
+  it("keeps flagging bind-tagged VMs when the lane set is not provided", () => {
+    const live = [{ vmid: 401, name: "hivra-cc-401", memoryMb: 4096, cores: 2, tags: [`hivra-bind-${"d".repeat(32)}`] }];
+    const orphans = computeOrphansForHost("fixturenode4", live, []);
+    expect(orphans.map((vm) => vm.vmid)).toEqual([401]);
   });
 
   it("returns [] when every live VM has a corresponding DB row", () => {
@@ -197,7 +250,7 @@ ORPHAN_LV 1250 vg0/vm-1250-disk-0
     const stdout = `BEGIN 401\nname: x\nEND 401\nORPHAN_LV 1246 vg0/vm-1246-cloudinit\n`;
     // Live-VM parser ignores ORPHAN_LV lines; orphan-LV parser ignores blocks.
     expect(parseLiveVmsFromHostScript(stdout)).toEqual([
-      { vmid: 401, name: "x", memoryMb: null, cores: null },
+      { vmid: 401, name: "x", memoryMb: null, cores: null, tags: [] },
     ]);
     expect(parseOrphanLvsFromHostScript(stdout)).toEqual([
       { vmid: 1246, vgLv: "vg0/vm-1246-cloudinit" },
@@ -519,5 +572,244 @@ describe("isRestoreCloneReaperEnabled", () => {
     expect(isRestoreCloneReaperEnabled({ HERMES_RESTORE_CLONE_REAPER_ENABLED: "1" })).toBe(false);
     expect(isRestoreCloneReaperEnabled({ HERMES_RESTORE_CLONE_REAPER_ENABLED: "true" })).toBe(true);
     expect(isRestoreCloneReaperEnabled({ HERMES_RESTORE_CLONE_REAPER_ENABLED: " TRUE " })).toBe(true);
+  });
+});
+
+describe("loadDbVmidsForHost", () => {
+  // PostgREST caps every response at max_rows even when the query asks for
+  // more — the fake applies the same cap so a read that stops paginating
+  // silently loses rows exactly like production would.
+  const FAKE_POSTGREST_MAX_ROWS = 1000;
+  type Row = Record<string, unknown>;
+
+  const FILTER_METHODS = new Set(["eq", "neq", "is", "not", "gt", "gte", "lt", "lte", "in"]);
+
+  function columnValue(row: Row, column: string): unknown {
+    return row[column];
+  }
+
+  function valuesEqual(a: unknown, b: unknown): boolean {
+    if (a == null || b == null) return false;
+    return a === b || String(a) === String(b);
+  }
+
+  function compareValues(a: unknown, b: unknown): number {
+    const sa = String(a);
+    const sb = String(b);
+    const na = Number(a);
+    const nb = Number(b);
+    if (sa.trim() !== "" && sb.trim() !== "" && Number.isFinite(na) && Number.isFinite(nb)) {
+      return na - nb;
+    }
+    return sa < sb ? -1 : sa > sb ? 1 : 0;
+  }
+
+  function rowMatches(row: Row, call: unknown[]): boolean {
+    const [method, column, value] = call as [string, string, unknown];
+    switch (method) {
+      case "eq":
+        return valuesEqual(columnValue(row, column), value);
+      case "neq":
+        return !valuesEqual(columnValue(row, column), value);
+      case "is":
+        return value === null ? columnValue(row, column) == null : columnValue(row, column) === value;
+      case "gt":
+      case "gte":
+      case "lt":
+      case "lte": {
+        const current = columnValue(row, column);
+        if (current == null) return false;
+        const cmp = compareValues(current, value);
+        if (method === "gt") return cmp > 0;
+        if (method === "gte") return cmp >= 0;
+        if (method === "lt") return cmp < 0;
+        return cmp <= 0;
+      }
+      case "in":
+        return (
+          Array.isArray(value) &&
+          value.some((candidate) => valuesEqual(columnValue(row, column), candidate))
+        );
+      case "not":
+        return true;
+      default:
+        return true;
+    }
+  }
+
+  // PostgREST chain fake: applies the real filters, ordering, limit and the
+  // silent max_rows cap — the only way to prove the read pages past 1000.
+  function fakeSupabase(tables: Record<string, Row[]>) {
+    const calls: Array<{
+      table: string;
+      chain: unknown[][];
+      inColumn: string;
+      inValues: unknown[];
+      neq: Array<[string, unknown]>;
+    }> = [];
+    const from = jest.fn((table: string) => {
+      const call = {
+        table,
+        chain: [] as unknown[][],
+        inColumn: "",
+        inValues: [] as unknown[],
+        neq: [] as Array<[string, unknown]>,
+      };
+      calls.push(call);
+      const builder: Record<string, unknown> = {};
+      for (const method of ["select", "eq", "neq", "is", "not", "gt", "gte", "lt", "lte", "order", "limit", "range"]) {
+        builder[method] = (...args: unknown[]) => {
+          call.chain.push([method, ...args]);
+          return builder;
+        };
+      }
+      builder.in = (column: string, values: unknown[]) => {
+        call.chain.push(["in", column, values]);
+        call.inColumn = column;
+        call.inValues = values;
+        return builder;
+      };
+      builder.neq = (column: string, value: unknown) => {
+        call.chain.push(["neq", column, value]);
+        call.neq.push([column, value]);
+        return builder;
+      };
+      builder.then = (resolve: (value: { data: unknown; error: null }) => unknown) => {
+        let rows = (tables[table] ?? []).filter((row) =>
+          call.chain
+            .filter((c) => FILTER_METHODS.has(String(c[0])))
+            .every((c) => rowMatches(row, c)),
+        );
+        for (const orderCall of call.chain.filter((c) => c[0] === "order")) {
+          const column = String(orderCall[1]);
+          const ascending = (orderCall[2] as { ascending?: boolean } | undefined)?.ascending !== false;
+          rows = [...rows].sort((a, b) => {
+            const av = columnValue(a, column);
+            const bv = columnValue(b, column);
+            if (av == null && bv == null) return 0;
+            if (av == null) return ascending ? 1 : -1;
+            if (bv == null) return ascending ? -1 : 1;
+            const cmp = compareValues(av, bv);
+            return ascending ? cmp : -cmp;
+          });
+        }
+        const limitCall = call.chain.find((c) => c[0] === "limit");
+        const cap = Math.min(
+          limitCall ? Number(limitCall[1]) : FAKE_POSTGREST_MAX_ROWS,
+          FAKE_POSTGREST_MAX_ROWS,
+        );
+        rows = rows.slice(0, cap);
+        return Promise.resolve(resolve({ data: rows, error: null }));
+      };
+      return builder;
+    });
+    return { supabase: { from } as never, calls };
+  }
+
+  it("unions hermes_instances and hivra_agents VMIDs so agent computers are not orphans", async () => {
+    // Prod 2026-11: one host reported 9 "running VMs with no matching
+    // hermes_instances row" — every one was a live hivra_agents computer.
+    const { supabase, calls } = fakeSupabase({
+      hermes_instances: [
+        { id: "inst-1", proxmox_node: "fixturenode11", proxmox_vmid: 401, lifecycle_state: "active" },
+      ],
+      hivra_agents: [
+        { id: "agent-1", vmid: 407, proxmox_host: "fixturenode11", status: "running" },
+        { id: "agent-2", vmid: null, proxmox_host: "fixturenode11", status: "running" },
+        { id: "agent-3", vmid: "not-a-number", proxmox_host: "fixturenode11", status: "running" },
+      ],
+    });
+
+    const vmids = await loadDbVmidsForHost(supabase, "fixturenode11", [401, 407, 999]);
+
+    expect(vmids.sort()).toEqual([401, 407]);
+    expect(calls.map((call) => call.table).sort()).toEqual(["hermes_instances", "hivra_agents"]);
+    const agentCall = calls.find((call) => call.table === "hivra_agents");
+    expect(agentCall?.inColumn).toBe("vmid");
+    expect(agentCall?.inValues).toEqual([401, 407, 999]);
+    expect(agentCall?.neq).toContainEqual(["status", "deleted"]);
+  });
+
+  it("owns agent VMIDs by resolved host: an empty proxmox_host counts for the default host", async () => {
+    // resolveHivraProxmoxHost("") falls back to HIVRA_PROXMOX_HOST or "local" —
+    // a raw .eq("proxmox_host", hostId) misses exactly those rows, so an
+    // agent computer on the default host was reported as an orphan.
+    const defaultHost = resolveHivraProxmoxHost(null);
+    const { supabase } = fakeSupabase({
+      hermes_instances: [],
+      hivra_agents: [
+        { id: "agent-1", vmid: 501, proxmox_host: null, status: "running" },
+        { id: "agent-2", vmid: 502, proxmox_host: "", status: "running" },
+        { id: "agent-3", vmid: 503, proxmox_host: "other-host", status: "running" },
+      ],
+    });
+
+    const vmids = await loadDbVmidsForHost(supabase, defaultHost, [501, 502, 503]);
+
+    expect(vmids.sort()).toEqual([501, 502]);
+  });
+
+  it("derives this lane's hivra-bind tag set from every row on the vmid, including deleted ones", async () => {
+    // Rows of every status count for lane attribution: a deleted row's VM is
+    // still our lane's computer (the vmid claim then flags it); only a tag no
+    // row derives belongs to the other deployment lane.
+    const ownHash = "f".repeat(64);
+    const { supabase } = fakeSupabase({
+      hermes_instances: [],
+      hivra_agents: [
+        { id: "agent-live", vmid: 601, status: "running", infrastructure_binding_token_hash: ownHash },
+        { id: "agent-deleted", vmid: 602, status: "deleted", infrastructure_binding_token_hash: "e".repeat(64) },
+        { id: "agent-nohash", vmid: 603, status: "running", infrastructure_binding_token_hash: "not-a-hash" },
+        { id: "agent-unrelated", vmid: 999, status: "running", infrastructure_binding_token_hash: "d".repeat(64) },
+      ],
+    });
+
+    const tags = await loadLaneBindingTags(supabase, [601, 602, 603]);
+
+    expect(tags).toEqual(new Set([`hivra-bind-${ownHash.slice(0, 32)}`, `hivra-bind-${"e".repeat(32)}`]));
+  });
+
+  it("pages the fleet-wide agent claim read past the PostgREST row cap", async () => {
+    // vmids collide across hosts, so the .in(vmid, liveVmids) read matches
+    // agent rows from EVERY host while host filtering happens in code. With
+    // 1000 foreign rows filling the first page, an unpaged read silently
+    // drops this host's claim — and the reap guard then treats its LV as
+    // unclaimed and deletes a live disk. The read must keyset-page until a
+    // short page.
+    const fillers = Array.from({ length: FAKE_POSTGREST_MAX_ROWS }, (_, i) => ({
+      id: `agent-${String(i).padStart(4, "0")}`,
+      vmid: 2050,
+      proxmox_host: "other-host",
+      status: "running",
+    }));
+    const claimed = {
+      id: "agent-zz-claimed",
+      vmid: 2050,
+      proxmox_host: "fixturenode11",
+      status: "running",
+    };
+    const { supabase, calls } = fakeSupabase({
+      hermes_instances: [],
+      hivra_agents: [...fillers, claimed],
+    });
+
+    const vmids = await loadDbVmidsForHost(supabase, "fixturenode11", [2050]);
+
+    // Without pagination the 1000-row cap drops the claimed row and 2050 is
+    // reported unclaimed — the data-loss path this guards against.
+    expect(vmids).toEqual([2050]);
+    // The second page was actually requested: a .gt keyset cursor on id.
+    const agentChains = calls.filter((call) => call.table === "hivra_agents");
+    expect(
+      agentChains.some((call) =>
+        call.chain.some((c) => c[0] === "gt" && c[1] === "id"),
+      ),
+    ).toBe(true);
+  });
+
+  it("returns an empty list without querying when there are no live VMIDs", async () => {
+    const { supabase } = fakeSupabase({});
+    await expect(loadDbVmidsForHost(supabase, "fixturenode11", [])).resolves.toEqual([]);
+    expect((supabase as unknown as { from: jest.Mock }).from).not.toHaveBeenCalled();
   });
 });

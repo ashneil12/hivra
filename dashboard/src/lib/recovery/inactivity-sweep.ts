@@ -13,6 +13,8 @@ import {
 import { buildInstanceLifecyclePatch } from "@/lib/instance-lifecycle";
 import { reportOpsEvent } from "@/lib/ops-events";
 
+import { NOT_HOLDER_SEAT_FILTER } from "@/lib/hivra/seat-funding";
+
 const LOG_SOURCE = "inactivity-sweep";
 
 const FREE_TIER_VALUES = ["credit_base"] as const;
@@ -349,6 +351,7 @@ async function fetchSweepCandidates(
     )
     .eq("lifecycle_state", "active")
     .in("resource_tier", Array.from(tiers))
+    .or(NOT_HOLDER_SEAT_FILTER)
     .lt("last_activity_at", cutoffIso)
     .or(
       `last_agent_activity_at.is.null,last_agent_activity_at.lt.${cutoffIso}`
@@ -381,7 +384,7 @@ async function pauseInstance(
   const { data: current, error: recheckError } = await supabase
     .from("hermes_instances")
     .select(
-      "lifecycle_state, last_activity_at, last_agent_activity_at, last_agent_probe_at"
+      "lifecycle_state, last_activity_at, last_agent_activity_at, last_agent_probe_at, seat_funding"
     )
     .eq("id", candidate.id)
     .maybeSingle();
@@ -393,6 +396,7 @@ async function pauseInstance(
   if (
     !current ||
     current.lifecycle_state !== "active" ||
+    current.seat_funding === "holder" ||
     (current.last_activity_at &&
       new Date(current.last_activity_at).getTime() >= cutoffMs) ||
     // A Telegram/Discord message landing mid-batch is a resume too. The harvester

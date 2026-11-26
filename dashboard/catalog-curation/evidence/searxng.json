@@ -1,0 +1,76 @@
+{
+  "slug": "searxng",
+  "checkedAt": "2026-11-21T03:26:48.540Z",
+  "gitSha": "5ca0db1d36f88399cf10b8b1c1cacc6843ba811d",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "searxng/searxng is AGPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "searxng/searxng",
+        "spdx_id": "AGPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "searxng/searxng:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "searxng/searxng:latest",
+        "digest": "sha256:b513f1ad02c1b0a985d801190eafc3cbcacdf661de8b1fe7b54fa67bafe97a7e",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm/v7",
+          "linux/arm64"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2.1s",
+      "evidence": {
+        "container": "hivra-verify-searxng-c1prv9",
+        "hostPort": 56443,
+        "image": "searxng/searxng:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-searxng-c1prv9",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:56443:8080",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-searxng-c1prv9-config:/etc/searxng",
+          "searxng/searxng:latest"
+        ],
+        "runStdout": "fb9e96803ade1e3bb1aed9ddf74ecd35d3a88e92bd6af419b479bfe9d9364473",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.1,
+          "attempts": 2
+        },
+        "memUsage": "105.6MiB / 7.652GiB",
+        "memBytes": 110729626
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 105.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 110729626,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

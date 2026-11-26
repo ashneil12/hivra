@@ -1,0 +1,117 @@
+{
+  "slug": "artalk",
+  "checkedAt": "2026-11-24T07:27:00.910Z",
+  "gitSha": "2f6e618e50cbb3fdf3aafceb84880b2d3dc5186f",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "ArtalkJS/Artalk is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "ArtalkJS/Artalk",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "artalk/artalk-go:latest linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "artalk/artalk-go:latest",
+        "digest": "sha256:5616037f7b273b65cb583bedba1d7b5ec7c313828403daccf5849c36f70bf52c",
+        "platforms": [
+          "linux/amd64",
+          "unknown/unknown",
+          "linux/arm64",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 2s",
+      "evidence": {
+        "container": "hivra-verify-artalk-mvn8p3",
+        "hostPort": 3291,
+        "image": "artalk/artalk-go:latest",
+        "runArgs": [
+          "run",
+          "-d",
+          "--name",
+          "hivra-verify-artalk-mvn8p3",
+          "--security-opt",
+          "no-new-privileges",
+          "-p",
+          "127.0.0.1:3291:23366",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-artalk-mvn8p3-data:/data",
+          "artalk/artalk-go:latest"
+        ],
+        "runStdout": "3654e886471883b939380903af06d5881c94a35bfbcdf524faeae1dc3fac6365",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2,
+          "attempts": 2
+        },
+        "memUsage": "16.55MiB / 7.652GiB",
+        "memBytes": 17353933
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 302 / -> 200 /sidebar/",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 63540,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 302,
+            "location": "./sidebar/"
+          },
+          {
+            "hop": 2,
+            "path": "/sidebar/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/sidebar/",
+        "bodyHead": "<!doctype html>\n<html>\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <meta name=\"referrer\" content=\"strict-origin\" />\n    <meta name=\"robots\" content=\"noindex\" />\n    <link rel=\"icon\" type=\"image/svg+xml\" href=\"./favicon.png\" />\n    <title>Artalk</title>\n    <script type=\"module\" crossorigin src=\"./assets/index-8mH5gu6h.js\"><",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 404,
+          "bodyHead": "{\"msg\":\"Error: Cannot POST /login\"}"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 16.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 17353933,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}
