@@ -90,6 +90,41 @@ describe("while the switch is off", () => {
 });
 
 describe("while the switch is on", () => {
+  it("keeps an active QA seat only on Canary, and stops the expired QA seat without billing mail", async () => {
+    const expires = new Date(Date.now() + 60 * 60_000).toISOString();
+    const expired = new Date(Date.now() - 1).toISOString();
+    const fixture = {
+      VERCEL: "1", VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+      VERCEL_GIT_COMMIT_REF: "canary", VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
+      HIVRA_CANARY_QA_HOLDER_ENABLED: "true", HIVRA_CANARY_QA_HOLDER_USER_ID: "user_fixture1",
+      HIVRA_CANARY_QA_HOLDER_EXPIRES_AT: expires,
+    };
+    const env = jest.replaceProperty(process, "env", { ...process.env, ...fixture });
+    try {
+      table = [
+        computer("canary-seat", "user_fixture1", { canary_qa_holder_expires_at: expires }),
+        computer("ordinary-seat", "user_fixture1"),
+      ];
+      expect(await runHivraLapseSweep()).toMatchObject({ lapsed: 1, stopped: 1 });
+      expect(stop).toHaveBeenCalledWith("user_fixture1", "ordinary-seat");
+      expect(stop).not.toHaveBeenCalledWith("user_fixture1", "canary-seat");
+      stop.mockClear();
+      email.mockClear();
+      resolve.mockClear();
+      table = [computer("canary-seat", "user_fixture1", { canary_qa_holder_expires_at: expired })];
+      env.replaceValue({ ...process.env, VERCEL_PROJECT_PRODUCTION_URL: "hivra.cloud" });
+      expect(await runHivraLapseSweep()).toMatchObject({ lapsed: 0, stopped: 0 });
+      expect(stop).not.toHaveBeenCalled();
+      env.replaceValue({ ...process.env, ...fixture });
+      expect(await runHivraLapseSweep()).toMatchObject({ lapsed: 1, stopped: 1 });
+      expect(stop).toHaveBeenCalledWith("user_fixture1", "canary-seat");
+      expect(email).not.toHaveBeenCalled();
+      expect(resolve).not.toHaveBeenCalled();
+    } finally {
+      env.restore();
+    }
+  });
+
   it("stops a computer whose owner has no entitlement, then sends the one email", async () => {
     table = [computer("c-1", "user_lapsed")];
     const result = await runHivraLapseSweep();

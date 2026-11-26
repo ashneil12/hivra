@@ -26,6 +26,7 @@ import { agentSoftwareSummaryFor, type AgentSoftwareAgentRow } from "@/lib/hivra
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { launchHivraAgentForUser } from "@/lib/hivra/launch-agent";
+import { CANARY_QA_HOLDER_HEADER, canaryQaHolderDeadline } from "@/lib/hivra/canary-qa-holder";
 
 export async function POST(request: NextRequest) {
   const response = await launchAgent(request);
@@ -49,11 +50,17 @@ async function launchAgent(request: NextRequest) {
     if (!hasStrictJsonContentType(request)) return apiError("Send launch settings as JSON.", 415);
     const limited = enforceAuthenticatedRouteRateLimit(request, { routeKey: "hivra_agent_launch", userId, limit: 10, windowMs: 5 * 60_000 });
     if (limited) return limited;
+    const qaHeader = request.headers.get(CANARY_QA_HOLDER_HEADER);
+    if (qaHeader !== null && (qaHeader !== "1" || !canaryQaHolderDeadline(userId))) {
+      return apiError("Canary holder QA launch is not available.", 403);
+    }
     const parsedBody = await readBoundedJson(request, 32 * 1024, 5000);
     if (!parsedBody.ok) return apiError("Send complete launch settings of at most 32 KB.", parsedBody.reason === "too_large" ? 413 : 400);
     if (!parsedBody.body || typeof parsedBody.body !== "object" || Array.isArray(parsedBody.body)) return apiError("Launch settings must be a JSON object.", 400);
     const body = parsedBody.body as Record<string, unknown>;
-    return await launchHivraAgentForUser(userId, body);
+    return qaHeader === "1"
+      ? await launchHivraAgentForUser(userId, body, { canaryQaHolder: true })
+      : await launchHivraAgentForUser(userId, body);
   } catch (err) {
     return handleApiError(err);
   }
