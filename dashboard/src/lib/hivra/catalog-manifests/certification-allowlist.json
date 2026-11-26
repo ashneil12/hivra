@@ -16,6 +16,11 @@
       "canarySha": "043185e116d4de78373fa51d02a6c007ab023618",
       "certifiedAt": "2026-11-26T19:42:35.259Z"
     },
+    "kroki": {
+      "manifestSha256": "2bb8654736ffeb078daf890d8d8d80f4e9639d64913dc9c29fbf83552fa39b8f",
+      "canarySha": "1e4e18f71d3dc6ece776dd5b491ec5643a4c2a43",
+      "certifiedAt": "2026-11-26T21:33:44.240Z"
+    },
     "jenkins": {
       "manifestSha256": "d5e4153c3da18931e6bc75781e12504f2ca13ec51c2207ce1a4651faed49e9d6",
       "canarySha": "3a962d7594208dd257a8e3e2a5000ab565292487",
