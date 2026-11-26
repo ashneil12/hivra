@@ -14,15 +14,17 @@ only on the canonical Git Canary deployment of `hermesos-canary`:
 | `HIVRA_CANARY_QA_HOLDER_USER_ID` | The exact Clerk user ID of one authorised standing QA account |
 | `HIVRA_CANARY_QA_HOLDER_EXPIRES_AT` | An absolute UTC ISO timestamp with milliseconds, no more than 24 hours ahead |
 
-Use an existing standing account with no hosted entitlement or occupied agent
-slot. Don't change any standing account's real subscription or qualification to
-make the fixture selectable. An existing paid or admitted holder entitlement
-takes its normal launch path; the fixture doesn't override it.
+Use an existing standing account with no occupied agent slot or real holder
+qualification/admission. The account can have a paid plan; leave it unchanged.
+Ordinary launches, including ones with the fixture's exact name, use real
+entitlements as usual. Only the explicit QA operation selects this fixture.
 
 From an authorised same-origin session, submit a managed Hermes launch named
 exactly `Canary holder QA` with 2 vCPU, 4 GB RAM, no template or model override,
-and no Hivra credits. The standard authenticated `POST /api/hivra/agents` path
-handles this request. The database allows only one non-deleted fixture and
+and no Hivra credits. Send the exact header `x-hivra-canary-holder-qa: 1` to
+the authenticated `POST /api/hivra/agents` route. A present but invalid header
+or unauthorised QA request is refused, never retried as a paid launch. The
+database allows only one non-deleted fixture and
 requires a normal available account slot, the holder cohort's CPU/RAM
 ceiling, an eligible host with space, and no eligible holder waiting ahead.
 The ordinary automatic sleep, named wake, and managed provisioning prerequisites

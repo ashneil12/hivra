@@ -43,7 +43,7 @@ import { FREE_PLAN_CLOSED_CODE, FREE_PLAN_CLOSED_MESSAGE, accountNeedsPlanForFre
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { decideProvisionSeatFunding } from "@/lib/billing/provision-seat-funding";
-import { CANARY_QA_HOLDER_NAME, canaryQaHolderDeadline, canUseCanaryQaHolderAdmission } from "@/lib/hivra/canary-qa-holder";
+import { CANARY_QA_HOLDER_NAME, canaryQaHolderDeadline } from "@/lib/hivra/canary-qa-holder";
 import { parseSleepMode, supportsIdleNap } from "@/lib/hivra/agent-sleep-policy";
 import type { SeatFunding } from "@/lib/hivra/seat-funding";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
@@ -839,6 +839,7 @@ export interface LaunchAgentOptions {
    * CPU and memory are left out of the pool usage.
    */
   moveFromInstanceId?: string;
+  canaryQaHolder?: true;
 }
 
 export async function launchHivraAgentForUser(
@@ -848,6 +849,22 @@ export async function launchHivraAgentForUser(
 ): Promise<Response> {
   try {
     if (!supabaseAdmin) return apiError("Database not configured", 500);
+    const qaHolderDeadline = options?.canaryQaHolder ? canaryQaHolderDeadline(userId) : null;
+    if (options?.canaryQaHolder && !qaHolderDeadline) {
+      return apiError("Canary holder QA launch is not available.", 403);
+    }
+    if (qaHolderDeadline && (
+      options?.moveFromInstanceId
+      || body.type !== "hermes" || body.name !== CANARY_QA_HOLDER_NAME
+      || body.cpu !== 2 || body.ram !== 4
+      || (body.browser !== undefined && body.browser !== false)
+      || (body.managedVenice !== undefined && body.managedVenice !== false)
+      || body.llm !== undefined || body.templateId !== undefined || body.templateSlug !== undefined
+      || body.computerProfile !== undefined || body.maximumCpu !== undefined || body.maximumRam !== undefined
+      || body.launchRequestId !== undefined
+    )) {
+      return apiError("Canary holder QA requires the named managed Hermes computer with 2 vCPU and 4 GB RAM and no launch overrides.", 400);
+    }
     let excludeInstanceIds: string[] | undefined;
     if (options?.moveFromInstanceId) {
       if (body.type !== "hermes") return apiError("Only a Hermes computer can replace an existing Hermes agent.", 400);
@@ -868,7 +885,9 @@ export async function launchHivraAgentForUser(
     // the replaced instance frees once the move completes.
     const slotAllowance = excludeInstanceIds ? excludeInstanceIds.length : 0;
     const deployment = parseAgentDeploymentDestination(body.deployment);
-    if (!deployment) return apiError("Invalid deployment destination", 400);
+    if (!deployment || (qaHolderDeadline && deployment.mode !== "hivra-managed")) {
+      return apiError("Invalid deployment destination", 400);
+    }
 
     // Wave 5.2 "use template" / fork: a launch may reference a saved template by
     // id or slug. Resolve it through the registry-style loader (which enforces
@@ -1336,7 +1355,6 @@ export async function launchHivraAgentForUser(
     let stickyHost: string | null = null;
     let explicitClaudeHost: string | null = null;
     let seatFunding: SeatFunding | null = null;
-    let qaHolderDeadline: string | null = null;
 
     if (deployment.mode === "self-managed") {
       // Subscription checks do not apply to user-owned compute, but the agent
@@ -1413,21 +1431,10 @@ export async function launchHivraAgentForUser(
         throw error;
       }
     } else {
-      const qaCandidate = body.name === CANARY_QA_HOLDER_NAME && body.type === "hermes"
-        && !templateRef && !options?.moveFromInstanceId && !managedVenice && body.llm === undefined
-        ? canaryQaHolderDeadline(userId)
-        : null;
-      if (qaCandidate) {
-        const real = await resolveEffectiveSubscription(userId, { throwOnQueryError: true });
-        if (canUseCanaryQaHolderAdmission(real)) {
-          if (cpu !== 2 || ram !== 4 || body.browser === true || cpu < floor.cpu || ram < floor.ram) {
-            return apiError("The Canary holder QA computer requires 2 vCPU and 4 GB RAM, without browser automation.", 400);
-          }
-          qaHolderDeadline = qaCandidate;
-        }
-      }
-
       if (qaHolderDeadline) {
+        if (cpu < floor.cpu || ram < floor.ram) {
+          return apiError("The Canary holder QA allocation no longer meets the Hermes runtime minimum.", 409);
+        }
         seatFunding = "holder";
       } else {
         const resourceGate = await validateAgentResources({ userId, type, cpu, ram, maximumCpu, maximumRam, browser: wantBrowser, mode: "launch", poolExempt, floor, agentLabel: launchLabel, excludeInstanceIds });

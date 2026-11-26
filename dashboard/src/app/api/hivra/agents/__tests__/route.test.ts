@@ -452,7 +452,7 @@ jest.mock("@/lib/crypto", () => ({
   decryptApiKey: (s: string) => String(s).replace(/^enc:/, ""),
 }));
 
-function makeRequest(body: Record<string, unknown>) {
+function makeRequest(body: Record<string, unknown>, extraHeaders?: Record<string, string>) {
   const launchBody = { ...body };
   if (["codex", "linux-desktop"].includes(String(body.type))
     && !Object.prototype.hasOwnProperty.call(body, "launchRequestId")) {
@@ -460,7 +460,7 @@ function makeRequest(body: Record<string, unknown>) {
   }
   return new NextRequest("https://hivra.cloud/api/hivra/agents", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Host: "hivra.cloud", Origin: "https://hivra.cloud", "Sec-Fetch-Site": "same-origin" },
+    headers: { "Content-Type": "application/json", Host: "hivra.cloud", Origin: "https://hivra.cloud", "Sec-Fetch-Site": "same-origin", ...extraHeaders },
     body: JSON.stringify({ deployment: { mode: "hivra-managed" }, ...launchBody }),
   });
 }
@@ -3634,6 +3634,8 @@ describe("POST /api/hivra/agents", () => {
   describe("the named Canary holder QA slot", () => {
     const expiry = () => new Date(Date.now() + 60 * 60_000).toISOString();
     const body = { type: "hermes", name: "Canary holder QA", cpu: 2, ram: 4 };
+    const qaHeader = { "x-hivra-canary-holder-qa": "1" };
+    const paid = { plan: "operator", status: "active", instance_limit: 4, total_cpu_budget: 4, total_ram_budget: 8192 };
     const originalMode = process.env.HIVRA_SLEEP_MODE;
     beforeEach(() => {
       enableManagedGvisorQaFixture();
@@ -3653,8 +3655,9 @@ describe("POST /api/hivra/agents", () => {
       else process.env.HIVRA_SLEEP_MODE = originalMode;
     });
 
-    it("uses holder placement and the dedicated slot without minting a key, pool or paid telemetry", async () => {
-      const response = await POST(makeRequest(body));
+    it("explicitly admits the paid standing account without touching its billing, pool or paid telemetry", async () => {
+      mockSubscriptionRow = paid;
+      const response = await POST(makeRequest(body, qaHeader));
       expect(response.status).toBe(201);
       expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledWith(expect.objectContaining({ seatFunding: "holder" }));
       expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_canary_qa_holder_agent", expect.objectContaining({
@@ -3665,29 +3668,58 @@ describe("POST /api/hivra/agents", () => {
       expect(mockGetOrCreatePoolId).not.toHaveBeenCalled();
       expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
       expect(mockPosthogCapture).not.toHaveBeenCalled();
+      for (const table of ["hermes_subscriptions", "apple_iap_subscriptions", "yearly_token_subscriptions", "token_tier_qualifications"]) {
+        expect(mockSupabaseFrom).not.toHaveBeenCalledWith(table);
+      }
     });
 
-    it.each(["different name", "wrong owner", "production", "default off", "managed credits"])(
-      "leaves normal admission in place for %s", async (scenario) => {
-        const request = { ...body };
-        if (scenario === "different name") request.name = "My Hermes";
+    it.each(["wrong owner", "production", "default off", "preview", "wrong header"])(
+      "fails closed rather than launching a paid seat for %s", async (scenario) => {
+        mockSubscriptionRow = paid;
         if (scenario === "wrong owner") mockAuth.mockResolvedValue({ userId: "user_fixture2" });
         if (scenario === "production") process.env.VERCEL_PROJECT_PRODUCTION_URL = "hivra.cloud";
         if (scenario === "default off") delete process.env.HIVRA_CANARY_QA_HOLDER_ENABLED;
-        const response = await POST(makeRequest(scenario === "managed credits" ? { ...request, managedVenice: true } : request));
+        if (scenario === "preview") process.env.VERCEL_ENV = "preview";
+        const response = await POST(makeRequest(body, scenario === "wrong header" ? { "x-hivra-canary-holder-qa": "true" } : qaHeader));
         expect(response.status).toBe(403);
+        expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
         expect(mockAgentInsert).not.toHaveBeenCalled();
         expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
       },
     );
 
+    it.each([
+      { name: "My Hermes" }, { managedVenice: true }, { llm: {} }, { browser: true },
+      { cpu: 4 }, { ram: 8 }, { deployment: SELF_MANAGED_DEPLOYMENT },
+      { type: "codex" }, { launchRequestId: LAUNCH_REQUEST_ID }, { templateSlug: "unused" },
+    ])("rejects explicit QA shape overrides rather than using normal paid launch", async (override) => {
+      mockSubscriptionRow = paid;
+      expect((await POST(makeRequest({ ...body, ...override }, qaHeader))).status).toBe(400);
+      expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockCreateManagedVeniceProxyKey).not.toHaveBeenCalled();
+    });
+
     it("uses real paid funding even with the exact QA name and standing account", async () => {
-      mockSubscriptionRow = { plan: "operator", status: "active", instance_limit: 4, total_cpu_budget: 4, total_ram_budget: 8192 };
+      mockSubscriptionRow = paid;
       expect((await POST(makeRequest(body))).status).toBe(201);
       expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_hivra_managed_agent", expect.objectContaining({
         p_row: expect.objectContaining({ seat_funding: "paid" }),
       }));
       expect(mockSupabaseRpc).not.toHaveBeenCalledWith("insert_canary_qa_holder_agent", expect.anything());
+    });
+
+    it("does not enroll from the name or a client-supplied body field alone", async () => {
+      expect((await POST(makeRequest({ ...body, canaryQaHolder: true }))).status).toBe(403);
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    });
+
+    it("does not fall through to paid if the database refuses the explicit QA seat", async () => {
+      mockSubscriptionRow = paid;
+      mockAgentInsertError = { code: "P0057" };
+      expect((await POST(makeRequest(body, qaHeader))).status).toBe(409);
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_canary_qa_holder_agent", expect.anything());
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("insert_hivra_managed_agent", expect.anything());
     });
 
     it("uses real holder funding even with the exact QA name and standing account", async () => {
@@ -3701,7 +3733,7 @@ describe("POST /api/hivra/agents", () => {
 
     it("requires the ordinary holder wake connection before touching placement", async () => {
       mockTunnelConfigured = false;
-      expect((await POST(makeRequest(body))).status).toBe(503);
+      expect((await POST(makeRequest(body, qaHeader))).status).toBe(503);
       expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
       expect(mockAgentInsert).not.toHaveBeenCalled();
     });

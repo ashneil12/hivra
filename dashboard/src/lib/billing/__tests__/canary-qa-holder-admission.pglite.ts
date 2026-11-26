@@ -102,15 +102,29 @@ it("rejects unscoped marker writes and a second ordinary holder seat", async () 
   )).rejects.toMatchObject({ code: "P0057" });
 });
 
-it("keeps normal slot accounting, real paid priority, and holder FIFO intact", async () => {
+it("runs only in an empty normal slot and leaves the paid subscription untouched", async () => {
+  await db.query("insert into hermes_subscriptions values ($1,'operator','active',4,null)", [owner]);
+  const paidBefore = (await db.query("select * from hermes_subscriptions")).rows;
   await db.query("insert into hivra_agents(user_id,status) values ($1,'running')", [owner]);
   await expect(insert()).resolves.toMatchObject({ status: "plan_agent_limit" });
   expect((await db.query("select * from holder_admissions")).rows).toEqual([]);
   await db.exec("delete from hivra_agents");
-  await db.query("insert into hermes_subscriptions values ($1,'operator','active',1,null)", [owner]);
+  const result = await insert();
+  expect(result).toMatchObject({ status: "inserted", row: { user_id: owner, seat_funding: "holder" } });
+  await db.query("update hivra_agents set status='deleted',operation_kind=null where id=$1", [result.row!.id]);
+  expect((await db.query("select * from hermes_subscriptions")).rows).toEqual(paidBefore);
+  expect((await db.query("select * from holder_admissions")).rows).toEqual([]);
+  expect((await db.query("select * from token_tier_qualifications")).rows).toEqual([]);
+});
+
+it("rejects the named account's real holder eligibility and does not jump the real queue", async () => {
+  await db.query(
+    "insert into token_tier_qualifications(user_id,tier,token_key,currently_eligible) values($1,'pro','hermesos',true)",
+    [owner],
+  );
   await expect(insert()).rejects.toMatchObject({ code: "P0057" });
   await db.exec(`
-    delete from hermes_subscriptions;
+    delete from token_tier_qualifications;
     insert into token_tier_qualifications(user_id,tier,token_key,currently_eligible)
       values('real-user','pro','hermesos',true);
   `);

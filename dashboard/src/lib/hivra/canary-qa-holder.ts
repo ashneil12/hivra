@@ -1,9 +1,9 @@
 import "server-only";
 
-import type { EffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { isCanonicalGitCanaryDeployment } from "./canonical-git-canary";
 
 export const CANARY_QA_HOLDER_NAME = "Canary holder QA";
+export const CANARY_QA_HOLDER_HEADER = "x-hivra-canary-holder-qa";
 const MAX_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export interface CanaryQaHolderRow {
@@ -34,8 +34,4 @@ export function isCanaryQaHolderSeatActive(row: CanaryQaHolderRow, now = Date.no
   return typeof row.canary_qa_holder_expires_at === "string"
     && Date.parse(row.canary_qa_holder_expires_at) > now
     && canaryQaHolderDeadline(row.user_id, now) !== null;
-}
-
-export function canUseCanaryQaHolderAdmission(sub: EffectiveSubscription | null): boolean {
-  return sub === null || sub.source === "free";
 }

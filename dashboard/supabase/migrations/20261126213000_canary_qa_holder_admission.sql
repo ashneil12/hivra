@@ -199,8 +199,7 @@ begin
 
   perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
   perform public.lock_hivra_owner_agent_slots(v_owner);
-  if public.holder_admission_has_paid_access(v_owner)
-    or public.holder_admission_current_tier(v_owner) is not null
+  if public.holder_admission_current_tier(v_owner) is not null
     or exists(select 1 from public.holder_admissions where user_id=v_owner)
     or exists(select 1 from public.hivra_agents
               where canary_qa_holder_expires_at is not null and status <> 'deleted')
