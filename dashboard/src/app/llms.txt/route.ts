@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
 const SAME_FOR_EVERYONE = "public, max-age=0, s-maxage=3600, stale-while-revalidate=86400";
 const PER_VIEWER = "private, no-store";
 
-export async function GET(request?: Request) {
+export async function GET(request: Request) {
   const tokenSurfaces = newTokenSurfacesEnabled();
   // The country list is inert while the token surfaces are held back.
   const countryListed = tokenSurfaces && isTokenGeoPolicyActive();

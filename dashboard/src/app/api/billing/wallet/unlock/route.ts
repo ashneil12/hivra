@@ -18,7 +18,6 @@
  * the button can't hammer the RPC or SSH into Proxmox in a tight loop.
  */
 
-import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
@@ -65,7 +64,7 @@ const LOG_CONTEXT = {
 // short-circuits to the current state — bounds the RPC read + Proxmox resize.
 const UNLOCK_COOLDOWN_SECONDS = 20;
 
-export async function POST(req?: NextRequest) {
+export async function POST(req: Request) {
   let userIdForLog: string | null = null;
   try {
     if (!isBillingV2ServerEnabled()) {
