@@ -285,6 +285,49 @@ describe("AgentPage", () => {
     }
   });
 
+  it("surfaces a kickoff error while provisioning is reconciled, then shows confirmed failure", async () => {
+    jest.useFakeTimers();
+    try {
+      const pending = {
+        id: "agent_123", type: "hermes", name: "Hermes fixture", status: "provisioning",
+        activity: "provision", provisioned_at: null, cpu: 2, ram: 4,
+      };
+      const error = "Remote bash exited with code 1";
+      mockGetAgent.mockResolvedValueOnce(pending)
+        .mockResolvedValueOnce({ ...pending, error })
+        .mockResolvedValue({ ...pending, status: "error", activity: null, error });
+      render(<AgentPage />);
+
+      expect(await screen.findByText(/Setting up Hermes fixture/)).toBeVisible();
+      await act(async () => { jest.advanceTimersByTime(5000); });
+      expect(screen.getByText("Setup hit a problem")).toBeVisible();
+      expect(screen.getByText(/Don’t launch a replacement yet/)).toBeVisible();
+      expect(screen.getByRole("button", { name: "Open Manage" })).toBeVisible();
+      expect(screen.queryByText(/Setting up Hermes fixture/)).not.toBeInTheDocument();
+
+      await act(async () => { jest.advanceTimersByTime(5000); });
+      expect(screen.getByText("Provisioning failed")).toBeVisible();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each([null, "https://box.example.com"])("shows deleted Hermes detail without opening its old dashboard (%s)", async (chatUrl) => {
+    mockSearchGet.mockImplementation((key: string) => key === "tab" ? "aeon" : null);
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "hermes", name: "Hermes fixture", status: "deleted",
+      chat_url: chatUrl, api_token: chatUrl ? "box-token" : null, cpu: 2, ram: 4,
+    });
+    render(<AgentPage />);
+
+    expect(await screen.findByRole("heading", { name: "Agent deleted" })).toBeVisible();
+    expect(screen.queryByText(/The computer is up|Dashboard not reachable/)).not.toBeInTheDocument();
+    expect(document.querySelector("iframe")).not.toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Back to agents" }));
+    expect(pushMock).toHaveBeenCalledWith("/dashboard");
+  });
+
   it("shows the truthful customer-host Windows installation handoff without opening RDP", async () => {
     mockGetAgent.mockResolvedValue({
       id: "agent_123", type: "linux-desktop", computer_profile: "windows",
