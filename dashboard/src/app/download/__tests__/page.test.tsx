@@ -72,8 +72,11 @@ describe("/download", () => {
     expect(macos).toHaveTextContent(
       "If the desktop app is not available for this computer yet, you can still use Hivra in your browser.",
     );
+    const browser = screen.getByRole("region", {
+      name: "Use Hivra in your browser",
+    });
     expect(
-      within(macos).getByRole("link", { name: "Open Hivra" }),
+      within(browser).getByRole("link", { name: "Open Hivra" }),
     ).toHaveAttribute("href", "/dashboard");
   });
 
@@ -168,7 +171,7 @@ describe("/download", () => {
       absolute: "Download Hivra | Desktop Availability",
     });
     expect(metadata.description).toBe(
-      "The Hivra desktop app for macOS is coming soon. Open Hivra in your browser today.",
+      "Public Hivra desktop downloads are coming soon. Open Hivra in your browser today.",
     );
     expect(String(metadata.description)).not.toMatch(/Windows/);
   });

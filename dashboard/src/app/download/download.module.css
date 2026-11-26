@@ -1,5 +1,5 @@
 /* /download. The masthead is the shared editorial one (secondary-site.module.css .masthead);
-   this file lays out the two sections under it: a label on the left, the words on the right. */
+   this file lays out the sections under it: a label on the left, the words on the right. */
 
 .sections {
   margin: 0;
@@ -49,7 +49,7 @@
   color: var(--gold-leaf);
 }
 
-/* The one record the macOS state is read from: what exists, and the button for it. */
+/* The one record each platform state is read from: what exists, and the button for it. */
 .state {
   margin-bottom: 28px;
   padding: 24px;
