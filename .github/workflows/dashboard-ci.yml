@@ -116,7 +116,7 @@ jobs:
           node scripts/test-managed-gvisor-reservation.cjs
 
       - name: Catalog certification runner tests
-        run: node --test scripts/__tests__/catalog-certification.test.mjs
+        run: node --test scripts/__tests__/catalog-certification.test.mjs scripts/__tests__/catalog-intake.test.mjs
 
       - name: Lint
         run: npm run lint

@@ -50,10 +50,13 @@ The implementation lives in `dashboard/scripts/catalog-certification/`:
 - `install-macos-runner.sh` — copies the runner scripts into the operator
   state directory and installs the two LaunchAgents.
 
-The curation producer remains `dashboard/scripts/catalog-curator/run-loop.sh`.
-Codex is now its unattended default, also using `gpt-reserve` unless
-`CURATOR_MODEL` is set. Devin remains available only as an explicit
-`CURATOR_AGENT=devin` override.
+New upstreams enter through `dashboard/scripts/catalog-curator/run-loop.sh`.
+It requires an explicit `--dry-run` or `--reserve`; it no longer launches a
+coding agent, resets a worktree, reconciles PRs or merges. Start with the
+[launch integration skill](../../.codex/skills/hivra-add-launch-agent/SKILL.md).
+An intake reservation holds one expansion lane and carries no live authority.
+The certifier continues to select among already registered, served targets;
+it neither consumes the intake inbox nor provisions a candidate from a PR.
 
 ## Operator state
 
