@@ -189,6 +189,7 @@ describe("SignUpPage", () => {
     render(await SignUpPage({ searchParams: Promise.resolve({}) }));
 
     expect(mockSignUp).toHaveBeenCalledWith(expect.objectContaining({
+      routing: "hash",
       fallbackRedirectUrl: "/dashboard/launch?kind=agent&start=1",
     }));
   });

@@ -75,6 +75,7 @@ export default function HeardAboutSignUp({ fallbackRedirectUrl, forceRedirectUrl
         </div>
       ) : null}
       <SignUp
+        routing="hash"
         fallbackRedirectUrl={fallbackRedirectUrl}
         forceRedirectUrl={forceRedirectUrl}
         signInUrl={signInUrl}
