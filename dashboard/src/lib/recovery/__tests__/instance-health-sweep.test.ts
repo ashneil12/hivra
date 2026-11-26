@@ -124,6 +124,7 @@ describe("runInstanceHealthSweep", () => {
       infrastructure_provider?: string | null;
       ipv4_address?: string | null;
       proxmox_vmid?: number | null;
+      proxmox_node?: string | null;
       lifecycle_state?: string | null;
     }>,
     options: {
@@ -248,6 +249,52 @@ describe("runInstanceHealthSweep", () => {
     };
     return { archiveCalls, probeStateUpserts, probeStateDeletes, autoRestartResets };
   }
+
+  it("records only bounded, allowlisted Proxmox probe aggregates without fetching again", async () => {
+    const env = jest.replaceProperty(process, "env", {
+      ...process.env,
+      HERMES_PVE_PROBE_TIMING_HOSTS: "pve-test,pve-small,https://not-a-slug.invalid",
+    });
+    const hosts = ["pve-test", "pve-test", "pve-test", "pve-small", "pve-small",
+      "pve-test", "pve-other", "pve-other", "pve-other"];
+    const rows = hosts.map((host, index) => ({
+      id: `private-instance-${index}`,
+      user_id: "private-owner",
+      gateway_url: `https://private-${index}.example`,
+      infrastructure_provider: index === 5 ? "other" : "proxmox",
+      proxmox_node: host,
+    }));
+    let ticks = 0;
+    const clock = jest.spyOn(performance, "now").mockImplementation(() => {
+      const observation = ticks++ - rows.length;
+      return observation < 0 ? 0 : ([100, 251, 700][observation] ?? 10);
+    });
+    const fetchMock = jest.fn().mockImplementation(async (url: string) => ({
+      status: url.includes("private-2.") ? 503 : url.includes("private-1.") ? 401 : 200,
+    }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    mockRunningInstances(rows);
+
+    try {
+      const { hostTiming } = await runInstanceHealthSweep();
+      expect(hostTiming).toEqual({
+        version: 1,
+        startedAt: expect.any(String),
+        endedAt: expect.any(String),
+        upperBoundsMs: [100, 250, 500, 1_000, 2_000, 5_000, 12_000],
+        hosts: [{
+          host: "pve-test",
+          probes: 3,
+          failures: 1,
+          reachableBuckets: [1, 0, 1, 0, 0, 0, 0, 0],
+        }],
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(rows.length);
+    } finally {
+      clock.mockRestore();
+      env.restore();
+    }
+  });
 
   it("reports a config incident when a Hetzner row uses non-sslip custom DNS", async () => {
     mockSupabaseAdmin.value = {
