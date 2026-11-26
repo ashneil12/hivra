@@ -147,6 +147,24 @@ async function clickSignupSubmit(page: Page): Promise<boolean> {
   return false;
 }
 
+async function clickInvitationAcceptance(page: Page): Promise<boolean> {
+  // Clerk can show an invitation acknowledgement step before it mounts the
+  // sign-up state. Keep this narrowly scoped to invitation wording so normal
+  // social/provider buttons are never clicked by accident.
+  const buttons = page.locator('button, a[role="button"]');
+  const count = Math.min(await buttons.count().catch(() => 0), 12);
+  for (let index = 0; index < count; index += 1) {
+    const button = buttons.nth(index);
+    if (!(await button.isVisible().catch(() => false))) continue;
+    const text = ((await button.textContent().catch(() => '')) ?? '').trim();
+    if (/^(accept|accept invitation|continue with invitation)$/i.test(text)) {
+      await button.click();
+      return true;
+    }
+  }
+  return false;
+}
+
 async function clerkSignupState(page: Page): Promise<{
   userId: string | null;
   sessionId: string | null;
@@ -218,6 +236,10 @@ export async function completeClerkSignupUi(
     }
 
     if (onSignup) {
+      if (await clickInvitationAcceptance(page)) {
+        await page.waitForTimeout(500);
+        continue;
+      }
       // Invitation acceptance pre-fills and usually disables the invited
       // address. If a Clerk revision leaves it editable, enter exactly the same
       // disposable address — never a different identity.
