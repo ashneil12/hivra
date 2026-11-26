@@ -9,8 +9,9 @@ import {
   getServiceAccountFromEnv,
   inspectUrl,
 } from "@/lib/seo/gsc-client";
-import { SITE_URL, getSiteUrls } from "@/lib/seo-urls";
+import { getSiteUrls } from "@/lib/seo-urls";
 import { supabaseAdmin } from "@/lib/supabase";
+import { siteProperty } from "./site-property";
 
 const SOURCE = "cron/seo-index-coverage";
 const ROUTE = "/api/cron/seo/index-coverage";
@@ -63,14 +64,6 @@ interface CoverageRow {
   user_canonical: string | null;
   last_crawl_time: string | null;
   notes: string | null;
-}
-
-/**
- * The GSC property matching our own site. Derived rather than hardcoded so a
- * domain change cannot leave this route silently inspecting the wrong property.
- */
-export function siteProperty(): string {
-  return `sc-domain:${new URL(SITE_URL).hostname}`;
 }
 
 /** A URL counts as indexed only on an outright PASS verdict from Google. */

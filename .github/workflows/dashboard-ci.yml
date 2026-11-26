@@ -110,8 +110,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify managed gVisor database bindings and lifecycle
+        run: |
+          node scripts/test-managed-gvisor-binding.cjs
+          node scripts/test-managed-gvisor-reservation.cjs
+
       - name: Catalog certification runner tests
-        run: node --test scripts/__tests__/catalog-certification.test.mjs
+        run: node --test scripts/__tests__/catalog-certification.test.mjs scripts/__tests__/catalog-intake.test.mjs
 
       - name: Lint
         run: npm run lint
@@ -202,7 +207,7 @@ jobs:
       # (--runInBand): parallel jest workers on the 4-CPU runner made the
       # PostgreSQL, Python and shell-fixture suites time out or race.
       - name: Run jest shard
-        run: npm run test:ci -- --shard=${{ matrix.shard }}/8
+        run: NODE_OPTIONS=--experimental-vm-modules npm run test:ci -- --shard=${{ matrix.shard }}/8
 
   build:
     name: Production build

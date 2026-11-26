@@ -17,7 +17,7 @@ import { parseServedRevision } from "../catalog-certification/served-canary-revi
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98";
 const HOST = "canary.hermesos.cloud";
-const PROVISIONER = "2026.11.23.1";
+const PROVISIONER = "2026.11.25.2";
 const NOW = new Date("2026-11-25T12:00:00.000Z");
 
 function inspectFixture(overrides = {}) {
@@ -97,19 +97,18 @@ test("served revision parser refuses a CLI-sourced or cross-repo deployment", ()
   );
 });
 
-test("Canary env export selects production rows and never accepts a live Clerk key", () => {
+test("Canary env export selects production Supabase rows without exporting a Clerk key", () => {
   const rows = [
-    { key: "CLERK_SECRET_KEY", value: "sk_live_bad", target: [], updatedAt: 3 },
-    { key: "CLERK_SECRET_KEY", value: "sk_test_good", target: ["production"], updatedAt: 2 },
+    { key: "CLERK_SECRET_KEY", value: "sk_test_fixture", target: ["production"], updatedAt: 2 },
+    { key: "SUPABASE_URL", value: "https://preview.supabase.co", target: ["preview"], updatedAt: 3 },
     { key: "SUPABASE_URL", value: "https://example.supabase.co", target: ["production"], updatedAt: 2 },
     { key: "SUPABASE_SERVICE_ROLE_KEY", value: "service-role-value-long-enough", target: ["production"], updatedAt: 2 },
   ];
-  assert.equal(selectProductionEnvValue(rows, "CLERK_SECRET_KEY"), "sk_test_good");
+  assert.equal(selectProductionEnvValue(rows, "SUPABASE_URL"), "https://example.supabase.co");
   const exportsText = buildTestEnvExports(rows);
-  assert.match(exportsText, /export CLERK_SECRET_KEY='sk_test_good'/);
-  assert.doesNotMatch(exportsText, /sk_live_bad/);
-  rows[1].value = "sk_live_not_allowed";
-  assert.throws(() => buildTestEnvExports(rows), /not the Canary Clerk test key/);
+  assert.match(exportsText, /export LAUNCH_SWEEP_SUPABASE_URL='https:\/\/example\.supabase\.co'/);
+  assert.doesNotMatch(exportsText, /CLERK_SECRET_KEY|sk_test_fixture|preview\.supabase/);
+  assert.equal(buildTestEnvExports(rows.slice(1)), exportsText);
 });
 
 test("shellQuote preserves apostrophes without breaking shell syntax", () => {
@@ -187,7 +186,7 @@ test("planner recertifies when the manifest or provisioner changes", () => {
   assert.equal(changed.reason, "inputs-changed-since-pass");
   const provisionerChanged = chooseCertificationTarget({
     catalog,
-    ledgerRows: [ledgerRow({ provisionerVersion: "2026.11.22.3" })],
+    ledgerRows: [ledgerRow({ provisionerVersion: "2026.11.23.1" })],
     currentCanarySha: SHA,
     currentProvisionerVersion: PROVISIONER,
     now: NOW,
@@ -322,6 +321,20 @@ test("append row invalidates a pass when revision evidence or cleanup is wrong",
   });
   assert.equal(leaked.passed, false);
   assert.match(leaked.failure.reason, /left paid computers/);
+});
+
+test("a passing app requires a successful sweep and verified teardown without deleting the account", () => {
+  const args = { file: "/tmp/abcd1234-it-tools.json", target: "it-tools", canarySha: SHA,
+    provisionerVersion: PROVISIONER, runId: "abcd1234", now: () => NOW, sweepExitCode: 0 };
+  const teardown = { agentsLeft: 0, instancesLeft: 0, accountDeleted: false };
+  const result = sweepResult({ teardown });
+  assert.equal(certificationRowFromSweep({ ...args, result }).passed, true);
+  assert.equal(certificationRowFromSweep({ ...args, result, sweepExitCode: 1 }).passed, false);
+  for (const unverified of [undefined, {}, { ...teardown, error: "unverified" }]) {
+    const row = certificationRowFromSweep({ ...args, result: sweepResult({ teardown: unverified }) });
+    assert.equal(row.passed, false);
+    assert.equal(row.failure.stage, "teardown");
+  }
 });
 
 

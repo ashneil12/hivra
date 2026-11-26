@@ -397,11 +397,11 @@ export async function archiveInstance(
       retryable: false,
     };
   }
-  if (row.lifecycle_state !== "paused") {
+  if (row.lifecycle_state !== "paused" || row.paused_reason === "holder_idle") {
     return {
       ok: false,
       reason: "instance_not_archivable",
-      message: `Instance ${instanceId} is not paused (lifecycle_state=${row.lifecycle_state}).`,
+      message: `Instance ${instanceId} is ineligible for archive (lifecycle=${row.lifecycle_state}, pause=${row.paused_reason}).`,
       instanceId,
       retryable: false,
     };

@@ -7,6 +7,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getHetznerInstanceStatus, buildHermesEnvLines, buildHonchoConfig, buildProviderEnv, buildProviderEnvResetMap, type AgentSettings, type HonchoSettings } from "@/lib/services/hetzner-instance-service";
 import { getProxmoxInfrastructure } from "@/lib/services/proxmox-instance-service";
 import { PROVIDER_ID_MAP, resolveProviderBaseUrl } from "@/lib/services/provider-config";
+import { hasEnvValueLineBoundary } from "@/lib/services/env-file-lines";
 import { supportsHermesAuthProvider } from "@/lib/provider-auth";
 import type { A2ASettings } from "@/lib/instance-settings";
 import { resolveHermesHomeDirFromConfig } from "@/lib/hermes-home";
@@ -459,7 +460,7 @@ CONTAINEREOF
       }
     }
     for (const [key, value] of Object.entries(updates)) {
-      if (/[\r\n\0]/.test(String(value ?? ""))) {
+      if (hasEnvValueLineBoundary(String(value ?? ""))) {
         throw new Error(`Refusing to write ${key}: line breaks are not supported in env values`);
       }
     }

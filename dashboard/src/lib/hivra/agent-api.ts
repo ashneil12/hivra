@@ -105,8 +105,10 @@ export interface HivraAgent {
   sleep_generation?: number | string | null;
   /** "Sleep when idle": `full` lets it nap, `off` keeps it awake. */
   sleep_policy?: AgentSleepPolicy | null;
-  /** "Keep awake": this agent never sleeps. */
+  /** "Keep awake": this agent never sleeps. Holder-funded seats report the effective false. */
   always_on?: boolean | null;
+  /** Authoritative funding cohort for this one computer, once admission has assigned it. */
+  seat_funding?: "paid" | "holder" | null;
 }
 
 export interface HivraAgentSnapshot {
@@ -692,7 +694,7 @@ export async function sleepAgentNow(id: string, tier: "nap" | "hibernate"): Prom
 export async function saveAgentSleepSettings(
   id: string,
   patch: { sleep_policy?: "off" | "full"; always_on?: boolean },
-): Promise<{ sleep_policy: AgentSleepPolicy | null; always_on: boolean }> {
+): Promise<{ sleep_policy: AgentSleepPolicy | null; always_on: boolean; seat_funding?: "paid" | "holder" | null }> {
   const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/sleep-settings`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -704,6 +706,9 @@ export async function saveAgentSleepSettings(
   return {
     sleep_policy: ["off", "t1", "t3", "full"].includes(String(data.sleep_policy)) ? data.sleep_policy as AgentSleepPolicy : null,
     always_on: data.always_on === true,
+    ...(Object.hasOwn(data, "seat_funding") && {
+      seat_funding: data.seat_funding === "paid" || data.seat_funding === "holder" ? data.seat_funding : null,
+    }),
   };
 }
 

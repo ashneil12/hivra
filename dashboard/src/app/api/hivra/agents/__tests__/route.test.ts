@@ -27,6 +27,8 @@ jest.mock("@/lib/self-host/config", () => ({
   isLocalAuthMode: () => mockLocalAuthMode,
 }));
 const mockGetInfrastructureTarget = jest.fn();
+const mockLoadManagedHostSecret = jest.fn();
+const mockManagedTransport = jest.fn();
 const mockLaunchProviderAgent = jest.fn();
 const mockLaunchGvisorComputer = jest.fn();
 const mockLaunchRateLimit = jest.fn();
@@ -71,7 +73,16 @@ jest.mock("@/lib/authenticated-rate-limit", () => ({
 }));
 jest.mock("@/lib/infrastructure/connection-store", () => ({
   ...jest.requireActual("@/lib/infrastructure/connection-store"),
-  getInfrastructureDeploymentTarget: (...args: unknown[]) => mockGetInfrastructureTarget(...args),
+  loadInfrastructureConnectionSecret: (...args: unknown[]) => mockLoadManagedHostSecret(...args),
+  getInfrastructureDeploymentTarget: (userId: string, targetId: string) =>
+    userId === MANAGED_AUTHORITY_USER_ID
+      ? jest.requireActual("@/lib/infrastructure/connection-store").getInfrastructureDeploymentTarget(userId, targetId)
+      : mockGetInfrastructureTarget(userId, targetId),
+}));
+jest.mock("@/lib/infrastructure/connection-runtime", () => ({
+  ...jest.requireActual("@/lib/infrastructure/connection-runtime"),
+  resolveValidatedSshDestination: jest.fn(async () => ({ address: "192.0.2.1" })),
+  buildUserProxmoxEnvironment: jest.fn(() => ({})),
 }));
 jest.mock("@/lib/hivra/provider-agent-launch", () => ({
   ...jest.requireActual("@/lib/hivra/provider-agent-launch"),
@@ -112,6 +123,7 @@ let mockAgentInsertThrows: unknown;
 const mockHivraAgentEqCalls: Array<[string, unknown]> = [];
 const mockAgentUpdates: Array<Record<string, unknown>> = [];
 let mockSubscriptionRow: Record<string, unknown> | null;
+let mockTokenQualificationRows: Array<{ tier: "pro" | "power"; currently_eligible: boolean }>;
 // The Free-account refusal (hosted compute is paid) has its own tests below and
 // in resource-gate.test.ts. Everything else in this file exercises pool, slot,
 // placement and idempotency behaviour through the small Free-sized fixture, so
@@ -130,7 +142,124 @@ jest.mock("@/lib/billing/hosted-compute", () => {
 let mockExistingAgents: Array<Record<string, unknown>>;
 let mockVmIdentityUpdateError: unknown;
 let mockInsertedAgentId = "agent-1";
+let mockManagedAgentReceiptRow: Record<string, unknown> | null;
+let mockManagedConnectionRow: Record<string, unknown> | null;
+let mockManagedTargetRow: Record<string, unknown> | null;
+const mockManagedConnectionFilters: Array<[string, unknown]> = [];
+const mockManagedTargetFilters: Array<[string, unknown]> = [];
 const mockCollectorUpsert = jest.fn();
+
+function exactRowQuery(row: Record<string, unknown> | null, filters: Array<[string, unknown]>) {
+  const query: Record<string, unknown> = {};
+  query.select = jest.fn().mockReturnValue(query);
+  const conditions: Array<[string, unknown]> = [];
+  query.eq = jest.fn((column: string, value: unknown) => {
+    filters.push([column, value]);
+    conditions.push([column, value]);
+    return query;
+  });
+  query.maybeSingle = jest.fn(async () => ({
+    data: conditions.every(([column, value]) => row?.[column] === value) ? row : null,
+    error: null,
+  }));
+  return query;
+}
+
+const MANAGED_AUTHORITY_USER_ID = "hivra-managed-gvisor-authority";
+const MANAGED_QA_OWNER_ID = "user_qa_owner";
+const MANAGED_CONNECTION_ID = "66666666-6666-4666-8666-666666666666";
+const MANAGED_TARGET_ID = "77777777-7777-4777-8777-777777777777";
+
+function configureManagedGvisorAuthorityFixture(authorityUserId = MANAGED_AUTHORITY_USER_ID) {
+  process.env.HIVRA_MANAGED_GVISOR_AUTHORITY_USER_ID = authorityUserId;
+  process.env.HIVRA_MANAGED_GVISOR_CONNECTION_ID = MANAGED_CONNECTION_ID;
+  process.env.HIVRA_MANAGED_GVISOR_TARGET_ID = MANAGED_TARGET_ID;
+  process.env.HIVRA_MANAGED_GVISOR_CONNECTION_REVISION = "7";
+}
+
+function enableManagedGvisorFixture(authorityUserId = MANAGED_AUTHORITY_USER_ID) {
+  process.env.HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED = "true";
+  configureManagedGvisorAuthorityFixture(authorityUserId);
+}
+
+function enableManagedGvisorQaFixture(overrides: Record<string, string | undefined> = {}) {
+  delete process.env.HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED;
+  configureManagedGvisorAuthorityFixture();
+  Object.assign(process.env, {
+    HIVRA_MANAGED_GVISOR_QA_ENROLLMENT_ENABLED: "true",
+    HIVRA_MANAGED_GVISOR_QA_OWNER_ID: MANAGED_QA_OWNER_ID,
+    HIVRA_MANAGED_GVISOR_QA_EXPIRES_AT: "2099-01-01T00:00:00.000Z",
+    VERCEL: "1",
+    VERCEL_ENV: "production",
+    VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+    VERCEL_GIT_COMMIT_REF: "canary",
+    VERCEL_GIT_REPO_OWNER: "ashneil12",
+    VERCEL_GIT_REPO_SLUG: "hivra",
+  });
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
+
+function managedConnectionFixture() {
+  return {
+    id: MANAGED_CONNECTION_ID,
+    user_id: MANAGED_AUTHORITY_USER_ID,
+    provider: "host",
+    operating_mode: "self-managed",
+    status: "ready",
+    revision: 7,
+  };
+}
+
+function managedTargetFixture() {
+  return {
+    id: MANAGED_TARGET_ID,
+    user_id: MANAGED_AUTHORITY_USER_ID,
+    connection_id: MANAGED_CONNECTION_ID,
+    evidence_connection_revision: 7,
+    external_id: `gvisor-${"e".repeat(24)}`,
+    display_name: "Managed terminal host",
+    capacity: {
+      cpu: { totalCores: 8, utilizationRatio: null },
+      memoryBytes: { total: 16 * 1024 ** 3, available: 12 * 1024 ** 3 },
+      storageBytes: { total: 100 * 1024 ** 3, available: 80 * 1024 ** 3 },
+    },
+    last_error_code: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    status: "ready",
+    capabilities: {
+      kind: "gvisor",
+      launchReady: true,
+      hostIdentityDigest: "f".repeat(64),
+      adapter: { version: "2026.10.20.1", sha256: "a".repeat(64) },
+      runtime: { path: "/usr/local/bin/runsc", sha256: "b".repeat(64) },
+      runtimeCompatibility: { contractVersion: 1, supportedWorkloadKinds: ["linux-terminal"] },
+      resourcePolicy: { reservationEqualsMaximum: true, aggregateAdmission: "serialized-host-headroom-v1" },
+      access: { terminal: "owner-gated-command-v1", publicPorts: false },
+      desktop: false,
+      windows: false,
+    },
+    supported_isolation_drivers: ["gvisor-runsc"],
+    isolation_class: "application-kernel",
+    last_preflight_at: new Date().toISOString(),
+  };
+}
+
+function managedLinuxTerminalLaunchBody() {
+  return {
+    type: "linux-terminal",
+    computerProfile: "linux-terminal",
+    name: "Managed terminal",
+    cpu: 2,
+    ram: 4,
+    maximumCpu: 2,
+    maximumRam: 4,
+    launchRequestId: LAUNCH_REQUEST_ID,
+  };
+}
 
 function selfManagedExecutionContext(overrides: {
   totalCores?: number | null;
@@ -234,6 +363,9 @@ function mockDefaultRpc(name: string, args: Record<string, unknown>) {
       && ["provisioning", "running", "stopped"].includes(String(row.status))).length;
     return Promise.resolve({ data: mockSlotCountOverride ?? counted, error: null });
   }
+  if (name === "holder_admission_state") {
+    return Promise.resolve({ data: { state: "admitted", tier: "pro" }, error: null });
+  }
   if (name === "insert_hivra_managed_agent") {
     const row = args.p_row as Record<string, unknown>;
     mockAgentInsert(row);
@@ -287,6 +419,7 @@ jest.mock("@/lib/services/cloudflare-tunnel", () => ({
 
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   DEFAULT_PROXMOX_VM_DISK_GB: 30,
+  runProxmoxHostScriptWithStdin: (...args: unknown[]) => mockManagedTransport(...args),
   buildProxmoxVmidReferenceLedger: (...args: unknown[]) => mockBuildProxmoxVmidReferenceLedger(...args),
   resolveProxmoxTargetConfiguration: (...args: unknown[]) => mockResolveProxmoxTargetConfiguration(...args),
   runProxmoxHostScript: (...args: unknown[]) => mockRunProxmoxHostScript(...args),
@@ -360,6 +493,23 @@ describe("POST /api/hivra/agents", () => {
   const originalNextPublicAppUrl = process.env.NEXT_PUBLIC_APP_URL;
   const originalVercelTargetEnvironment = process.env.VERCEL_TARGET_ENV;
   const originalHermesDeployChannel = process.env.HERMES_DEPLOY_CHANNEL;
+  const managedGvisorEnvKeys = [
+    "HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED",
+    "HIVRA_MANAGED_GVISOR_AUTHORITY_USER_ID",
+    "HIVRA_MANAGED_GVISOR_CONNECTION_ID",
+    "HIVRA_MANAGED_GVISOR_TARGET_ID",
+    "HIVRA_MANAGED_GVISOR_CONNECTION_REVISION",
+    "HIVRA_MANAGED_GVISOR_QA_ENROLLMENT_ENABLED",
+    "HIVRA_MANAGED_GVISOR_QA_OWNER_ID",
+    "HIVRA_MANAGED_GVISOR_QA_EXPIRES_AT",
+    "VERCEL",
+    "VERCEL_ENV",
+    "VERCEL_PROJECT_PRODUCTION_URL",
+    "VERCEL_GIT_COMMIT_REF",
+    "VERCEL_GIT_REPO_OWNER",
+    "VERCEL_GIT_REPO_SLUG",
+  ] as const;
+  const originalManagedGvisorEnv = new Map(managedGvisorEnvKeys.map(key => [key, process.env[key]]));
 
   afterEach(() => {
     if (originalHermesDeployChannel === undefined) {
@@ -386,6 +536,11 @@ describe("POST /api/hivra/agents", () => {
       delete process.env.VERCEL_TARGET_ENV;
     } else {
       process.env.VERCEL_TARGET_ENV = originalVercelTargetEnvironment;
+    }
+    for (const key of managedGvisorEnvKeys) {
+      const value = originalManagedGvisorEnv.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
     }
   });
 
@@ -442,11 +597,20 @@ describe("POST /api/hivra/agents", () => {
     });
     mockAgentUpdates.length = 0;
     mockHivraAgentEqCalls.length = 0;
+    mockManagedConnectionFilters.length = 0;
+    mockManagedTargetFilters.length = 0;
+    mockManagedConnectionRow = null;
+    mockManagedAgentReceiptRow = null;
+    mockManagedTransport.mockReset();
+    mockLoadManagedHostSecret.mockReset();
+    mockManagedTargetRow = null;
     delete process.env.HIVRA_PROXMOX_HOST;
     delete process.env.HIVRA_CLAUDE_CODE_PROXMOX_HOST;
     delete process.env.NEXT_PUBLIC_APP_URL;
     delete process.env.VERCEL_TARGET_ENV;
+    for (const key of managedGvisorEnvKeys) delete process.env[key];
     mockEnforceFreeAccountRefusal = false;
+    mockTokenQualificationRows = [];
     mockSubscriptionRow = {
       plan: "free",
       status: "active",
@@ -552,11 +716,19 @@ describe("POST /api/hivra/agents", () => {
         } = {
           select: jest.fn(),
           eq: jest.fn(),
-          then: (resolve) => resolve({ data: [], error: null }),
+          then: (resolve) => resolve({ data: mockTokenQualificationRows, error: null }),
         };
         chain.select.mockReturnValue(chain);
         chain.eq.mockReturnValue(chain);
         return chain;
+      }
+
+      if (table === "infrastructure_connections") {
+        return exactRowQuery(mockManagedConnectionRow, mockManagedConnectionFilters);
+      }
+
+      if (table === "deployment_targets") {
+        return exactRowQuery(mockManagedTargetRow, mockManagedTargetFilters);
       }
 
       if (table === "hermes_instances") {
@@ -617,7 +789,9 @@ describe("POST /api/hivra/agents", () => {
           error: null,
         })),
         maybeSingle: jest.fn(async () => ({
-          data: state.insertPayload ? { id: mockInsertedAgentId, ...state.insertPayload } : null,
+          data: eqFilters.some(([column]) => column === "gvisor_launch_request_id")
+            ? (eqFilters.every(([column, value]) => mockManagedAgentReceiptRow?.[column] === value) ? mockManagedAgentReceiptRow : null)
+            : state.insertPayload ? { id: mockInsertedAgentId, ...state.insertPayload } : null,
           error: null,
         })),
         insert: jest.fn((payload: Record<string, unknown>) => {
@@ -1645,6 +1819,416 @@ describe("POST /api/hivra/agents", () => {
     expect(mockLaunchProviderAgent).not.toHaveBeenCalled();
   });
 
+  it("keeps managed Linux terminal closed when the server switch is off", async () => {
+    const response = await POST(makeRequest(managedLinuxTerminalLaunchBody()) as never);
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      code: "managed_gvisor_disabled",
+      launchRequestId: LAUNCH_REQUEST_ID,
+    });
+    expect(mockManagedConnectionFilters).toHaveLength(0);
+    expect(mockManagedTargetFilters).toHaveLength(0);
+    expect(mockLaunchGvisorComputer).not.toHaveBeenCalled();
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    expect(mockSupabaseRpc).not.toHaveBeenCalledWith("reserve_hivra_managed_gvisor", expect.anything());
+    expect(mockManagedTransport).not.toHaveBeenCalled();
+  });
+
+  it("refuses managed Linux terminal before authority configuration when the owner is not paid", async () => {
+    mockEnforceFreeAccountRefusal = true;
+    enableManagedGvisorFixture();
+
+    const response = await POST(makeRequest(managedLinuxTerminalLaunchBody()) as never);
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      code: "hosted_compute_requires_plan",
+      launchRequestId: LAUNCH_REQUEST_ID,
+    });
+    expect(mockManagedConnectionFilters).toHaveLength(0);
+    expect(mockManagedTargetFilters).toHaveLength(0);
+    expect(mockLaunchGvisorComputer).not.toHaveBeenCalled();
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before managed gVisor authority reads when billing is unavailable", async () => {
+    enableManagedGvisorFixture();
+    const readTable = mockSupabaseFrom.getMockImplementation();
+    mockSupabaseFrom.mockImplementation((table: string) => table === "hermes_subscriptions" ? {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({ data: null, error: { message: "fixture read failure" } }),
+    } : readTable?.(table));
+
+    const response = await POST(makeRequest(managedLinuxTerminalLaunchBody()) as never);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ code: "managed_gvisor_billing_unavailable" });
+    expect(mockManagedConnectionFilters).toHaveLength(0);
+    expect(mockManagedTargetFilters).toHaveLength(0);
+    expect(mockLaunchGvisorComputer).not.toHaveBeenCalled();
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
+  it("keeps the paid-plan refusal ahead of malformed general authority configuration", async () => {
+    mockEnforceFreeAccountRefusal = true;
+    enableManagedGvisorFixture();
+    process.env.HIVRA_MANAGED_GVISOR_TARGET_ID = "not-a-target";
+
+    const response = await POST(makeRequest(managedLinuxTerminalLaunchBody()) as never);
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ code: "hosted_compute_requires_plan" });
+    expect(mockManagedConnectionFilters).toHaveLength(0);
+    expect(mockManagedTargetFilters).toHaveLength(0);
+  });
+
+  it("preserves the paid-then-not-configured order for malformed general authority configuration", async () => {
+    mockEnforceFreeAccountRefusal = true;
+    mockSubscriptionRow = { plan: "operator", status: "active", instance_limit: 4,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null };
+    enableManagedGvisorFixture();
+    process.env.HIVRA_MANAGED_GVISOR_TARGET_ID = "not-a-target";
+
+    const response = await POST(makeRequest(managedLinuxTerminalLaunchBody()) as never);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ code: "managed_gvisor_not_configured" });
+    expect(mockSupabaseFrom).toHaveBeenCalledWith("hermes_subscriptions");
+    expect(mockManagedConnectionFilters).toHaveLength(0);
+    expect(mockManagedTargetFilters).toHaveLength(0);
+  });
+
+  describe("QA-enrolled managed Linux terminal admissions through POST", () => {
+    const computerId = "88888888-8888-4888-8888-888888888888";
+    const operationId = "99999999-9999-4999-8999-999999999999";
+    const sandboxId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const claimId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const claim = { status: "claimed", customerId: MANAGED_QA_OWNER_ID, computerId, operationId, claimId,
+      operatorId: MANAGED_AUTHORITY_USER_ID, connectionId: MANAGED_CONNECTION_ID, targetId: MANAGED_TARGET_ID,
+      revision: 7, adapterSha: "a".repeat(64), runtimeSha: "b".repeat(64), sandboxId, cpu: 2, ram: 4 };
+    const receipt = {
+      version: 1, computerId, sandboxId, state: "running", adapterVersion: "2026.10.20.1",
+      isolationDriver: "gvisor-runsc", isolationClass: "application-kernel", outerHostBoundary: "operator-owned-host",
+      runtime: "runsc", cpu: 2, memoryMb: 4096,
+      image: "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285",
+      workspace: `hivra-gvisor-workspace-${sandboxId}`, network: `hivra-gvisor-net-${sandboxId}`,
+      publicPorts: [], reservationEqualsMaximum: true,
+    };
+    function adapterReply(script: string, body: Record<string, unknown>) {
+      const marker = script.match(/HIVRA_GVISOR_LIFECYCLE_ACK [0-9a-f-]+/)?.[0];
+      expect(marker).toBeDefined();
+      return { ok: true, stdout: `HIVRA_GVISOR_V1 ${JSON.stringify(body)}\n${marker}\n`, stderr: "" };
+    }
+    function reserveThen(dispatch: Record<string, unknown> = claim) {
+      mockSupabaseRpc.mockResolvedValueOnce({ data: { status: "reserved", computerId, operationId }, error: null })
+        .mockResolvedValueOnce({ data: dispatch, error: null });
+    }
+    const submit = () => POST(makeRequest(managedLinuxTerminalLaunchBody()) as never);
+    async function expectPrebillingQaDenial(response: Response) {
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({
+        success: false,
+        code: "managed_gvisor_disabled",
+        launchRequestId: LAUNCH_REQUEST_ID,
+      });
+      expect(mockSupabaseFrom).not.toHaveBeenCalledWith("hermes_subscriptions");
+      expect(mockManagedConnectionFilters).toHaveLength(0);
+      expect(mockManagedTargetFilters).toHaveLength(0);
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("reserve_hivra_managed_gvisor", expect.anything());
+      expect(mockManagedTransport).not.toHaveBeenCalled();
+    }
+
+    beforeEach(() => {
+      mockEnforceFreeAccountRefusal = true;
+      mockSubscriptionRow = { plan: "operator", status: "active", instance_limit: 4,
+        total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null };
+      mockAuth.mockResolvedValue({ userId: MANAGED_QA_OWNER_ID });
+      enableManagedGvisorQaFixture();
+      mockManagedConnectionRow = managedConnectionFixture();
+      mockManagedTargetRow = managedTargetFixture();
+      mockLoadManagedHostSecret.mockResolvedValue({
+        id: MANAGED_CONNECTION_ID, revision: 7, provider: "host", status: "ready",
+        pendingBindingRebindFromRevision: null, setupMode: "advanced", configuration: {},
+        endpoint: { sshHost: "operator.invalid", sshPort: 22, sshUser: "root", sshHostFingerprintSha256: "c".repeat(64) },
+        credentials: { sshPrivateKey: "fixture" },
+      });
+    });
+
+    it("admits the exact paid QA owner and reserves the exact operator tuple", async () => {
+      reserveThen();
+      mockManagedTransport.mockImplementationOnce(async script => adapterReply(script, receipt));
+      mockSupabaseRpc.mockImplementationOnce(async () => {
+        mockManagedAgentReceiptRow = { id: computerId, status: "running", name: "Managed terminal", user_id: MANAGED_QA_OWNER_ID,
+          deployment_mode: "hivra-managed", computer_substrate: "gvisor", type: "linux-terminal", computer_profile: "linux-terminal",
+          gvisor_launch_request_id: LAUNCH_REQUEST_ID, infrastructure_binding_token_hash: "private-fixture" };
+        return { data: true, error: null };
+      });
+
+      const response = await submit();
+
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({ success: true, data: {
+        launchRequestId: LAUNCH_REQUEST_ID,
+        computerId,
+        agent: { id: computerId, status: "running", name: "Managed terminal" },
+        launch: { state: "accepted", phase: "accepted" },
+      } });
+      expect(mockSupabaseRpc).toHaveBeenNthCalledWith(1, "reserve_hivra_managed_gvisor", {
+        p_customer: MANAGED_QA_OWNER_ID, p_request: LAUNCH_REQUEST_ID, p_name: "Managed terminal", p_cpu: 2, p_ram: 4,
+        p_agent_limit: 4, p_operator: MANAGED_AUTHORITY_USER_ID, p_connection: MANAGED_CONNECTION_ID,
+        p_target: MANAGED_TARGET_ID, p_revision: 7, p_adapter_sha: "a".repeat(64), p_runtime_sha: "b".repeat(64),
+        p_cpu_budget: 4, p_ram_budget_mb: 8192, p_max_cpu: 2, p_max_ram_mb: 4096,
+      });
+      expect(mockSupabaseRpc).toHaveBeenNthCalledWith(3, "complete_hivra_managed_gvisor_ready", {
+        p_customer: MANAGED_QA_OWNER_ID, p_computer: computerId, p_operation: operationId, p_claim: claimId, p_receipt: receipt,
+      });
+    });
+
+    it("denies another paid owner before billing, database authority or connector work", async () => {
+      mockAuth.mockResolvedValue({ userId: "user_other_paid" });
+      await expectPrebillingQaDenial(await submit());
+    });
+
+    it("still requires the exact QA owner to be verified paid", async () => {
+      mockSubscriptionRow = { plan: "free", status: "active", instance_limit: 1,
+        total_cpu_budget: 0.5, total_ram_budget: 1024, current_period_end: null };
+
+      const response = await submit();
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({ code: "hosted_compute_requires_plan" });
+      expect(mockSupabaseFrom).toHaveBeenCalledWith("hermes_subscriptions");
+      expect(mockManagedConnectionFilters).toHaveLength(0);
+      expect(mockManagedTargetFilters).toHaveLength(0);
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("reserve_hivra_managed_gvisor", expect.anything());
+    });
+
+    it.each([
+      ["expired enrollment", { HIVRA_MANAGED_GVISOR_QA_EXPIRES_AT: "2020-01-01T00:00:00.000Z" }],
+      ["missing canonical metadata", { VERCEL: undefined }],
+      ["wrong deployment", { VERCEL_GIT_COMMIT_REF: "main" }],
+      ["malformed authority tuple", { HIVRA_MANAGED_GVISOR_TARGET_ID: "not-a-target" }],
+      ["operator matching the owner", { HIVRA_MANAGED_GVISOR_AUTHORITY_USER_ID: MANAGED_QA_OWNER_ID }],
+      ["conflicting general mode", { HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED: "true" }],
+    ])("denies %s before billing, database authority or connector work", async (_label, overrides) => {
+      enableManagedGvisorQaFixture(overrides);
+      await expectPrebillingQaDenial(await submit());
+    });
+
+    it("retains the exact target revision refusal after QA admission", async () => {
+      mockManagedTargetRow = { ...managedTargetFixture(), evidence_connection_revision: 8 };
+
+      const response = await submit();
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ code: "managed_gvisor_target_mismatch" });
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("reserve_hivra_managed_gvisor", expect.anything());
+      expect(mockManagedTransport).not.toHaveBeenCalled();
+    });
+
+    it("retains the exact connection revision refusal after QA admission", async () => {
+      mockManagedConnectionRow = { ...managedConnectionFixture(), revision: 8 };
+
+      const response = await submit();
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ code: "managed_gvisor_authority_unavailable" });
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("reserve_hivra_managed_gvisor", expect.anything());
+      expect(mockManagedTransport).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("paid managed sandbox launch through POST", () => {
+    const computerId = "88888888-8888-4888-8888-888888888888";
+    const operationId = "99999999-9999-4999-8999-999999999999";
+    const sandboxId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const claimId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const claim = { status: "claimed", customerId: "user-free", computerId, operationId, claimId,
+      operatorId: MANAGED_AUTHORITY_USER_ID, connectionId: MANAGED_CONNECTION_ID, targetId: MANAGED_TARGET_ID,
+      revision: 7, adapterSha: "a".repeat(64), runtimeSha: "b".repeat(64), sandboxId, cpu: 2, ram: 4 };
+    const receipt = {
+      version: 1, computerId, sandboxId, state: "running", adapterVersion: "2026.10.20.1",
+      isolationDriver: "gvisor-runsc", isolationClass: "application-kernel", outerHostBoundary: "operator-owned-host",
+      runtime: "runsc", cpu: 2, memoryMb: 4096,
+      image: "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285",
+      workspace: `hivra-gvisor-workspace-${sandboxId}`, network: `hivra-gvisor-net-${sandboxId}`,
+      publicPorts: [], reservationEqualsMaximum: true,
+    };
+    function adapterReply(script: string, body: Record<string, unknown>, stale = false) {
+      const marker = script.match(/HIVRA_GVISOR_LIFECYCLE_ACK [0-9a-f-]+/)?.[0];
+      expect(marker).toBeDefined();
+      return { ok: true, stdout: `HIVRA_GVISOR_V1 ${JSON.stringify(body)}\n${stale ? "HIVRA_GVISOR_LIFECYCLE_ACK stale" : marker}\n`, stderr: "" };
+    }
+    function reserveThen(dispatch: Record<string, unknown> = claim) {
+      mockSupabaseRpc.mockResolvedValueOnce({ data: { status: "reserved", computerId, operationId }, error: null })
+        .mockResolvedValueOnce({ data: dispatch, error: null });
+    }
+    const submit = () => POST(makeRequest(managedLinuxTerminalLaunchBody()) as never);
+
+    beforeEach(() => {
+      mockEnforceFreeAccountRefusal = true;
+      mockSubscriptionRow = { plan: "operator", status: "active", instance_limit: 4,
+        total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null };
+      enableManagedGvisorFixture();
+      mockManagedConnectionRow = managedConnectionFixture();
+      mockManagedTargetRow = managedTargetFixture();
+      mockLoadManagedHostSecret.mockResolvedValue({
+        id: MANAGED_CONNECTION_ID, revision: 7, provider: "host", status: "ready",
+        pendingBindingRebindFromRevision: null, setupMode: "advanced", configuration: {},
+        endpoint: { sshHost: "operator.invalid", sshPort: 22, sshUser: "root", sshHostFingerprintSha256: "c".repeat(64) },
+        credentials: { sshPrivateKey: "fixture" },
+      });
+    });
+
+    afterEach(() => {
+      expect(mockLaunchGvisorComputer).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    });
+
+    it("returns the sanitized durable agent only after the real reservation, claim and exact ready completion", async () => {
+      reserveThen();
+      mockManagedTransport.mockImplementationOnce(async script => adapterReply(script, receipt));
+      mockSupabaseRpc.mockImplementationOnce(async () => {
+        mockManagedAgentReceiptRow = { id: computerId, status: "running", name: "Managed terminal", user_id: "user-free",
+          deployment_mode: "hivra-managed", computer_substrate: "gvisor", type: "linux-terminal", computer_profile: "linux-terminal",
+          gvisor_launch_request_id: LAUNCH_REQUEST_ID, infrastructure_binding_token_hash: "private-fixture" };
+        return { data: true, error: null };
+      });
+      const response = await submit();
+      expect(response.status).toBe(201);
+      const body = await response.json();
+      expect(body).toMatchObject({ success: true, data: { launchRequestId: LAUNCH_REQUEST_ID, computerId,
+        agent: { id: computerId, status: "running", name: "Managed terminal" },
+        launch: { state: "accepted", phase: "accepted" },
+      } });
+      expect(JSON.stringify(body)).not.toContain("private-fixture");
+      expect(mockManagedConnectionFilters).toEqual([["id", MANAGED_CONNECTION_ID], ["user_id", MANAGED_AUTHORITY_USER_ID]]);
+      expect(mockLoadManagedHostSecret).toHaveBeenCalledWith(MANAGED_AUTHORITY_USER_ID, MANAGED_CONNECTION_ID);
+      expect(mockSupabaseRpc).toHaveBeenNthCalledWith(1, "reserve_hivra_managed_gvisor", {
+        p_customer: "user-free", p_request: LAUNCH_REQUEST_ID, p_name: "Managed terminal", p_cpu: 2, p_ram: 4,
+        p_agent_limit: 4, p_operator: MANAGED_AUTHORITY_USER_ID, p_connection: MANAGED_CONNECTION_ID,
+        p_target: MANAGED_TARGET_ID, p_revision: 7, p_adapter_sha: "a".repeat(64), p_runtime_sha: "b".repeat(64),
+        p_cpu_budget: 4, p_ram_budget_mb: 8192, p_max_cpu: 2, p_max_ram_mb: 4096,
+      });
+      expect(mockSupabaseRpc).toHaveBeenNthCalledWith(3, "complete_hivra_managed_gvisor_ready", {
+        p_customer: "user-free", p_computer: computerId, p_operation: operationId, p_claim: claimId, p_receipt: receipt,
+      });
+    });
+
+    it("replays a ready request without another claim or adapter call", async () => {
+      mockSupabaseRpc.mockResolvedValueOnce({ data: { status: "ready", computerId, operationId: null }, error: null });
+      mockManagedAgentReceiptRow = { id: computerId, status: "running", name: "Managed terminal", user_id: "user-free",
+        deployment_mode: "hivra-managed", computer_substrate: "gvisor", type: "linux-terminal",
+        computer_profile: "linux-terminal", gvisor_launch_request_id: LAUNCH_REQUEST_ID };
+      const response = await submit();
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({ data: { agent: { id: computerId } } });
+      expect(mockSupabaseRpc).toHaveBeenCalledTimes(1);
+      expect(mockLoadManagedHostSecret).not.toHaveBeenCalled();
+      expect(mockManagedTransport).not.toHaveBeenCalled();
+    });
+
+    it("refuses a plan capacity denial before adapter claim", async () => {
+      mockSupabaseRpc.mockResolvedValueOnce({ data: { status: "plan_compute_limit" }, error: null });
+      expect((await submit()).status).toBe(403);
+      expect(mockSupabaseRpc).toHaveBeenCalledTimes(1);
+      expect(mockManagedTransport).not.toHaveBeenCalled();
+    });
+
+    it("holds a mismatched operator claim without reading host credentials", async () => {
+      reserveThen({ ...claim, operatorId: "foreign-operator" });
+      expect((await submit()).status).toBe(202);
+      expect(mockLoadManagedHostSecret).not.toHaveBeenCalled();
+      expect(mockManagedTransport).not.toHaveBeenCalled();
+    });
+
+    it.each(["adapter", "receipt", "stale", "completion"])("holds a launch on %s failure", async failure => {
+      reserveThen();
+      mockManagedTransport.mockImplementationOnce(async script => failure === "adapter"
+        ? { ok: false, stdout: "", stderr: "fixture connection lost" }
+        : adapterReply(script, failure === "receipt" ? { ...receipt, sandboxId: computerId } : receipt, failure === "stale"));
+      if (failure === "completion") mockSupabaseRpc.mockResolvedValueOnce({ data: null, error: { message: "fixture rollback" } });
+      const response = await submit();
+      expect(response.status).toBe(202);
+      await expect(response.json()).resolves.toMatchObject({ success: true, data: { launch: { state: "reconciling" } } });
+      expect(mockManagedTransport).toHaveBeenCalledTimes(1);
+      expect(mockSupabaseRpc).toHaveBeenCalledTimes(failure === "completion" ? 3 : 2);
+    });
+
+    it("releases a failed start only after exact acknowledged adapter absence", async () => {
+      reserveThen();
+      mockSupabaseRpc.mockResolvedValueOnce({ data: true, error: null }).mockResolvedValueOnce({ data: true, error: null });
+      const gone = { version: 1, computerId, sandboxId, state: "absent" };
+      mockManagedTransport.mockImplementationOnce(async script => adapterReply(script, { ...receipt, state: "stopped" }))
+        .mockImplementationOnce(async script => adapterReply(script, { ...receipt, state: "stopped" }))
+        .mockImplementationOnce(async script => adapterReply(script, gone));
+      const response = await submit();
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ code: "managed_gvisor_cleaned", computerId });
+      expect(mockManagedTransport.mock.calls.map(([, body]) => JSON.parse(body).operation)).toEqual(["create", "start", "delete"]);
+      expect(mockSupabaseRpc).toHaveBeenNthCalledWith(4, "release_hivra_managed_gvisor_absent", {
+        p_customer: "user-free", p_computer: computerId, p_operation: operationId, p_claim: claimId, p_receipt: gone,
+      });
+    });
+  });
+
+  it.each([
+    ["target revision", { evidence_connection_revision: 8 }, "managed_gvisor_target_mismatch"],
+    ["connection ID", { connection_id: SELF_MANAGED_DEPLOYMENT.connectionId }, "managed_gvisor_target_mismatch"],
+    ["stale preflight", { last_preflight_at: "2020-01-01T00:00:00.000Z" }, "managed_gvisor_target_mismatch"],
+    ["wrong owner", { user_id: "user-free" }, "managed_gvisor_authority_unavailable"],
+    ["incomplete DTO", { capacity: null }, "managed_gvisor_authority_unavailable"],
+  ])("fails closed on managed gVisor %s", async (_case, targetPatch, code) => {
+    mockEnforceFreeAccountRefusal = true;
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 4,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+    enableManagedGvisorFixture();
+    mockManagedConnectionRow = managedConnectionFixture();
+    mockManagedTargetRow = { ...managedTargetFixture(), ...targetPatch };
+
+    const response = await POST(makeRequest(managedLinuxTerminalLaunchBody()) as never);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      code,
+      launchRequestId: LAUNCH_REQUEST_ID,
+    });
+    expect(mockLaunchGvisorComputer).not.toHaveBeenCalled();
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+    expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+  });
+
+  it("refuses managed authority configured under the requesting owner before reading target rows", async () => {
+    mockEnforceFreeAccountRefusal = true;
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 4,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+    enableManagedGvisorFixture("user-free");
+
+    const response = await POST(makeRequest(managedLinuxTerminalLaunchBody()) as never);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      code: "managed_gvisor_owner_fence",
+      launchRequestId: LAUNCH_REQUEST_ID,
+    });
+    expect(mockManagedConnectionFilters).toHaveLength(0);
+    expect(mockManagedTargetFilters).toHaveLength(0);
+    expect(mockLaunchGvisorComputer).not.toHaveBeenCalled();
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
   it("rejects gVisor CPU or memory maxima that differ from the reservation", async () => {
     const response = await POST(makeRequest({
       type: "linux-terminal", computerProfile: "linux-terminal", name: "Terminal workspace",
@@ -2095,7 +2679,10 @@ describe("POST /api/hivra/agents", () => {
     const response = await POST(makeRequest({ type: "codex", cpu: 0.5, ram: 1 }) as never);
     expect(response.status).toBe(201);
     expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_hivra_managed_agent", expect.objectContaining({
-      p_agent_limit: 1, p_row: expect.objectContaining({ user_id: "user-free", deployment_mode: "hivra-managed", type: "codex" }),
+      p_agent_limit: 1,
+      p_row: expect.objectContaining({
+        user_id: "user-free", deployment_mode: "hivra-managed", type: "codex", seat_funding: "paid",
+      }),
     }));
   });
 
@@ -3031,7 +3618,61 @@ describe("POST /api/hivra/agents", () => {
     expect(mockResolveProxmoxTargetConfiguration).not.toHaveBeenCalledWith(expect.anything(), "fixturenode10");
   });
 
-  it("keeps Claude Code on the user's sticky host when no dedicated host override is configured", async () => {
+  it("refuses a new Aeon holder seat before placement while keeping the owner's admission", async () => {
+    mockTokenQualificationRows = [{ tier: "pro", currently_eligible: true }];
+    const response = await POST(makeRequest({ type: "aeon", name: "HOLDER_AEON" }) as never);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining("cannot nap") });
+    expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
+  it("lets the holder admission host win over the sticky host on a normal holder launch", async () => {
+    const priorMode = process.env.HIVRA_SLEEP_MODE;
+    process.env.HIVRA_SLEEP_MODE = "canary";
+    mockTunnelConfigured = true;
+    mockCreateBoxTunnel.mockResolvedValue({ token: "synthetic", url: "https://fixture.example.test", tunnelId: "fixture-tunnel", hostname: "fixture.example.test" });
+    mockTokenQualificationRows = [{ tier: "pro", currently_eligible: true }];
+    mockExistingAgents = [
+      {
+        id: "agent-existing",
+        type: "claude-code",
+        status: "running",
+        proxmox_host: "fixturenode5",
+        cpu: 0.5,
+        ram: 1,
+        created_at: "2026-06-08T10:00:00.000Z",
+      },
+    ];
+
+    const response = await POST(makeRequest({
+      type: "claude-code",
+      name: "HOLDER_AGENT",
+      cpu: 0.5,
+      ram: 1,
+    }) as never).finally(() => {
+      if (priorMode === undefined) delete process.env.HIVRA_SLEEP_MODE;
+      else process.env.HIVRA_SLEEP_MODE = priorMode;
+    });
+
+    expect(response.status).toBe(201);
+    expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledTimes(1);
+    expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledWith(expect.objectContaining({
+      forceTargetId: null,
+      neededCpu: 0.5, neededRamMb: 1024,
+      seatFunding: "holder",
+      skipTemplateAvailabilityCheck: true,
+    }));
+    expect(mockSupabaseFrom).not.toHaveBeenCalledWith("venice_compute_boost_qualifications");
+    expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({
+      type: "claude-code",
+      seat_funding: "holder", cpu: 0.5, ram: 1,
+      proxmox_host: "fixturenode7",
+    }));
+  });
+
+  it("keeps a paid seat on the sticky host when its owner also qualifies for holder funding", async () => {
+    mockTokenQualificationRows = [{ tier: "pro", currently_eligible: true }];
     mockSubscriptionRow = {
       plan: "operator",
       status: "active",
@@ -3082,11 +3723,13 @@ describe("POST /api/hivra/agents", () => {
     expect(response.status).toBe(201);
     expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledWith(expect.objectContaining({
       forceTargetId: "fixturenode5",
+      seatFunding: "paid",
       skipTemplateAvailabilityCheck: true,
     }));
     expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({
       type: "claude-code",
       proxmox_host: "fixturenode5",
+      seat_funding: "paid",
     }));
     expect(mockGetReservedProxmoxVmidsForNode).toHaveBeenCalledWith({
       proxmoxNode: "fixturenode5",

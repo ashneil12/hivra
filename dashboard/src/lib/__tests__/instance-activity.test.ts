@@ -6,6 +6,10 @@ jest.mock("@/lib/supabase", () => ({ supabaseAdmin: require("@/test-utils/supaba
 
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
+const writeResult = (error: unknown = null, funding: string | null = null) => ({
+  select: () => ({ maybeSingle: async () => ({ data: { seat_funding: funding }, error }) }),
+});
+
 describe("recordInstanceUserActivity", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -14,7 +18,7 @@ describe("recordInstanceUserActivity", () => {
   it("records deliberate user activity with a source and timestamp", async () => {
     const update = jest.fn().mockReturnValue({
       eq: jest.fn().mockReturnValue({
-        eq: jest.fn().mockResolvedValue({ error: null }),
+        eq: jest.fn().mockReturnValue(writeResult()),
       }),
     });
     (supabaseAdmin!.from as jest.Mock).mockReturnValue({ update });
@@ -36,7 +40,7 @@ describe("recordInstanceUserActivity", () => {
   it("does not throw when the best-effort activity write fails", async () => {
     const update = jest.fn().mockReturnValue({
       eq: jest.fn().mockReturnValue({
-        eq: jest.fn().mockResolvedValue({ error: { message: "db unavailable" } }),
+        eq: jest.fn().mockReturnValue(writeResult({ message: "db unavailable" })),
       }),
     });
     (supabaseAdmin!.from as jest.Mock).mockReturnValue({ update });
@@ -61,8 +65,19 @@ describe("recordInstanceUserActivity", () => {
     );
   });
 
+  it("persists each input on four-minute Classic holder seats", async () => {
+    const eq = jest.fn().mockReturnValue(writeResult(null, "holder"));
+    const update = jest.fn().mockReturnValue({ eq: () => ({ eq }) });
+    (supabaseAdmin!.from as jest.Mock).mockReturnValue({ update });
+    for (const second of [0, 20]) {
+      await recordInstanceUserActivity({ instanceId: "holder", userId: "owner", source: "terminal_input",
+        now: new Date(Date.UTC(2026, 10, 25, 12, 0, second)) });
+    }
+    expect(update).toHaveBeenCalledTimes(2);
+  });
+
   it("writes repeat activity on the same instance at most once a minute", async () => {
-    const eq = jest.fn().mockResolvedValue({ error: null });
+    const eq = jest.fn().mockReturnValue(writeResult());
     const update = jest.fn().mockReturnValue({ eq: jest.fn().mockReturnValue({ eq }) });
     (supabaseAdmin!.from as jest.Mock).mockReturnValue({ update });
     const start = Date.parse("2026-05-14T21:00:00.000Z");

@@ -4,14 +4,8 @@
 // decide who qualifies, size a bonus, and mirror the expiry math for display
 // and tests.
 
-export const VENICE_PROMO_FLAG = "HIVRA_VENICE_PROMO_ENABLED";
 export const RETURNING_SUBSCRIBER_MIN_GAP_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Master switch. Anything but the exact string "true" is off. */
-export function isVenicePromoEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return env[VENICE_PROMO_FLAG] === "true";
-}
 
 export type PromoKind = "launch_credit" | "topup_bonus";
 

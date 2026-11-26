@@ -82,6 +82,7 @@ import {
   shellQuote,
 } from "@/lib/hivra/proxmox-target";
 import { log } from "@/lib/logger";
+import { releaseExactProvisionIntentScript } from "@/lib/hivra/provision-intent-cleanup";
 import {
   abandonDesktopPrepare,
   cancelUndispatchedDesktopPrepare,
@@ -218,7 +219,6 @@ function buildCancelledProvisionCleanupScript(
     hivraAgentProvisionSecretPath(context, vmid),
     `/run/hivra-provision/${vmid}.env`,
     `/run/hivra-provision/${vmid}.allocated`,
-    `/var/lib/hivra/provision-operations/operation-${operationId}.selected`,
   ].filter((path): path is string => Boolean(path)).map((path) => shellQuote(path)).join(" ");
   return `set -euo pipefail
 VMID=${vmid}
@@ -265,6 +265,7 @@ VOLUMES="$(pvesm list "$STORAGE" 2>/dev/null)" \
   || { echo "could not verify storage after cancellation" >&2; exit 1; }
 printf '%s\\n' "$VOLUMES" | grep -Eq "vm-${vmid}-" \
   && { echo "VM volumes remain after cancellation" >&2; exit 1; }
+${releaseExactProvisionIntentScript(operationId, vmid, context.infrastructureBindingTag)}
 rm -f -- "$PIDFILE" ${cleanupPaths}
 printf 'HIVRA_CANCELLED_PROVISION_CLEANED %s\\n' "$VMID"`;
 }
@@ -287,9 +288,6 @@ function buildRecoveredDeleteCleanupScript(
     `/run/hivra-provision/${vmid}.env`,
     `/run/hivra-provision/${vmid}.allocated`,
     `/var/lib/hivra/provision-results/${vmid}.secret`,
-    row.operation_id
-      ? `/var/lib/hivra/provision-operations/operation-${row.operation_id}.selected`
-      : null,
   ].filter((path): path is string => Boolean(path)).map(shellQuote).join(" ");
   return `set -euo pipefail
 VMID=${vmid}
@@ -339,6 +337,7 @@ VOLUMES="$(pvesm list "$STORAGE" 2>/dev/null)" \
   || { echo "could not verify storage after delete reconciliation" >&2; exit 1; }
 printf '%s\\n' "$VOLUMES" | grep -Eq "vm-${vmid}-" \
   && { echo "VM volumes remain after delete reconciliation" >&2; exit 1; }
+${releaseExactProvisionIntentScript(row.allocation_operation_id, vmid, context.infrastructureBindingTagEnforced ? context.infrastructureBindingTag : null)}
 rm -f -- ${cleanupPaths}
 printf 'HIVRA_RECOVERED_DELETE_OK %s\\n' "$VMID"`;
 }

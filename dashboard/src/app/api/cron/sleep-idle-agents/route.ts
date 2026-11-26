@@ -5,6 +5,7 @@ import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { log } from "@/lib/logger";
 import { runSleepIdleSweep } from "@/lib/hivra/sleep-idle-sweep";
+import { runManagedGvisorIdlePilot } from "@/lib/hivra/gvisor-computer-service";
 
 /**
  * Cron-triggered agent sleep sweep. Wakes agents ahead of their scheduled jobs,
@@ -41,10 +42,19 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const summary = await runSleepIdleSweep();
+    const [summary, gvisorPilot] = await Promise.all([
+      runSleepIdleSweep(),
+      runManagedGvisorIdlePilot().catch((error: unknown) => {
+        log.error("Managed gVisor idle pilot sweep failed", error instanceof Error ? error : new Error(String(error)), {
+          source: "sleep-idle-agents",
+          failureType: "managed_gvisor_idle_pilot_failed",
+        });
+        return "error" as const;
+      }),
+    ]);
     // Stamp only a real run without errors; a skipped run touches nothing.
     if (!summary.skipped && summary.errors === 0) await recordCronHeartbeat("sleep-idle-agents");
-    return apiSuccess(summary);
+    return apiSuccess(gvisorPilot === "disabled" ? summary : { ...summary, gvisorPilot });
   } catch (error) {
     log.error("sleep-idle-agents sweep failed", error instanceof Error ? error : new Error(String(error)), {
       source: "sleep-idle-agents",

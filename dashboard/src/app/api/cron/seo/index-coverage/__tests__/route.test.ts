@@ -25,7 +25,8 @@ jest.mock("@/lib/seo-urls", () => ({
   ],
 }));
 
-import { GET, siteProperty } from "../route";
+import { GET } from "../route";
+import { siteProperty } from "../site-property";
 
 // A real (throwaway) RSA key so the route's JWT signing path runs for real;
 // only the network is mocked.

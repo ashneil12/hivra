@@ -90,17 +90,17 @@ export async function GET(req: NextRequest) {
       await reportOpsEvent({
         source: MIGRATION_DRIFT_LOG_SOURCE,
         severity: "fatal",
-        title: `Supabase migration missing in prod: ${entry.name}`,
+        title: `Supabase migration missing from the configured database ledger: ${entry.name}`,
         message:
-          `Local repo has ${entry.version}_${entry.name}.sql but the ` +
-          `migration has not been applied to prod. Apply via supabase CLI ` +
-          `or MCP before more code depends on this schema.`,
+          `This deployment includes ${entry.version}_${entry.name}.sql but found no ` +
+          `matching migration name in its Supabase ledger. Verify the target and actual schema ` +
+          `before applying SQL or reconciling the ledger.`,
         route: "/api/cron/migration-drift-check",
         metadata: {
-          failureType: "supabase_migration_missing_in_prod",
+          failureType: "supabase_migration_missing_from_ledger",
           migrationVersion: entry.version,
           migrationName: entry.name,
-          recoveryAction: "apply_migration",
+          recoveryAction: "verify_schema_and_ledger",
         },
       });
     } catch (err) {
@@ -115,9 +115,9 @@ export async function GET(req: NextRequest) {
 
   if (result.missing.length > 0) {
     log.error(
-      "migration drift detected — missing migrations in prod",
+      "migration drift detected — missing migrations in the configured database ledger",
       new Error(
-        `${result.missing.length} migration(s) missing in prod: ${result.missing.map((m) => m.name).join(", ")}`
+        `${result.missing.length} migration(s) absent from the ledger: ${result.missing.map((m) => m.name).join(", ")}`
       ),
       {
         source: MIGRATION_DRIFT_LOG_SOURCE,
@@ -133,10 +133,10 @@ export async function GET(req: NextRequest) {
     // are real but not actively breaking anything. We just want them
     // visible so they eventually get back-ported into the repo.
     log.warn(
-      "migration drift detected — unexpected migrations in prod",
+      "migration drift detected — unexpected migrations in the configured database ledger",
       {
         source: MIGRATION_DRIFT_LOG_SOURCE,
-        failureType: "supabase_migration_unexpected_in_prod",
+        failureType: "supabase_migration_unexpected_in_ledger",
         unexpectedCount: result.unexpected.length,
         unexpectedNames: result.unexpected.map((m) => m.name),
       }

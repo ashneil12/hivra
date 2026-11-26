@@ -9,6 +9,7 @@ import {
   type SleepSignals,
   type SleepVerdict,
 } from "@/lib/hivra/agent-sleep-policy";
+import { isHolderFundedSeat } from "./seat-funding";
 
 /**
  * Observe-only sleep log (Step 1 of the agent sleep/wake design).
@@ -118,6 +119,7 @@ interface AgentRow {
   always_on: boolean | null;
   sleep_policy: string | null;
   sleep_state?: string | null;
+  seat_funding?: string | null;
 }
 
 export interface ObserveAgentSleepSummary {
@@ -185,7 +187,7 @@ export async function runObserveAgentSleepSweep(
   while (summary.scanned < OBSERVE_MAX_AGENTS) {
     let query = db
       .from("hivra_agents")
-      .select("id, type, operation_id, created_at, always_on, sleep_policy, sleep_state")
+      .select("id, type, operation_id, created_at, always_on, sleep_policy, sleep_state, seat_funding")
       .eq("status", "running")
       .eq("deployment_mode", "hivra-managed")
       .is("deployment_target_id", null)
@@ -345,7 +347,11 @@ export async function runObserveAgentSleepSweep(
       const stored = isAgentSleepPolicy(agent.sleep_policy) ? agent.sleep_policy : "off";
       const decision = decideSleep(
         signals,
-        { sleepPolicy: stored === "off" ? "full" : stored, alwaysOn: agent.always_on === true },
+        {
+          sleepPolicy: stored === "off" ? "full" : stored,
+          alwaysOn: agent.always_on === true,
+          holderFunded: isHolderFundedSeat(agent),
+        },
         nowMs,
       );
       summary.verdicts[decision.verdict] += 1;

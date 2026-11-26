@@ -63,12 +63,18 @@ describe("shapePromoReport", () => {
   });
 });
 
-describe("flag off", () => {
-  it("never touches the database", async () => {
-    delete process.env.HIVRA_VENICE_PROMO_ENABLED;
+describe("promo blocked", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each([
+    { VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud", HIVRA_VENICE_PROMO_ENABLED: "false" },
+    { VERCEL_PROJECT_PRODUCTION_URL: "hivra.cloud", HIVRA_VENICE_PROMO_ENABLED: "true" },
+  ])("does not claim or grant credit in %j", async (env) => {
+    jest.replaceProperty(process, "env", { ...process.env, ...env });
     const db = { from: jest.fn(), rpc: jest.fn() };
-    await service.tryGrantLaunchCredit({ userId: "u" }, db);
-    await service.tryGrantTopupBonus({ userId: "u", sessionId: "s", amountMicroUsd: 1 }, db);
+    await expect(service.redeemVeniceCode({ userId: "u", code: "VENICE" }, db)).resolves.toEqual({ status: "disabled" });
+    await expect(service.tryGrantLaunchCredit({ userId: "u" }, db)).resolves.toEqual({ attempted: false, skipped: "flag_off" });
+    await expect(service.tryGrantTopupBonus({ userId: "u", sessionId: "s", amountMicroUsd: 1 }, db)).resolves.toEqual({ attempted: false, skipped: "flag_off" });
     expect(db.from).not.toHaveBeenCalled();
     expect(db.rpc).not.toHaveBeenCalled();
   });

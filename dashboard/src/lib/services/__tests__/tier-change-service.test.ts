@@ -30,12 +30,13 @@ jest.mock("@/lib/supabase", () => {
   const updateInMock = jest.fn().mockResolvedValue({ error: null });
   const fromMock = jest.fn();
   return {
-    supabaseAdmin: { from: fromMock },
+    supabaseAdmin: { from: fromMock, rpc: jest.fn() },
     __mocks: { fromMock, updateEqMock, updateInMock },
   };
 });
 
 jest.mock("../proxmox-instance-service", () => ({
+  ...jest.requireActual("../proxmox-instance-service"),
   getProxmoxHostRoutingConfigFromInfrastructure: jest.fn().mockReturnValue(null),
   resizeProxmoxVm: jest.fn().mockResolvedValue({ ok: true, stdout: "", stderr: "" }),
 }));
@@ -45,47 +46,32 @@ import { resizeProxmoxVm } from "../proxmox-instance-service";
 
 const fromMock = (supabaseAdmin!.from as jest.Mock);
 
-function mockInstanceList(rows: unknown[]) {
-  // Supabase chain: .from().select().eq().not()
-  // returns { data, error }
-  const updateChain = {
-    eq: jest.fn().mockReturnValue({
-      in: jest.fn().mockResolvedValue({ error: null }),
-    }),
-  };
-  fromMock.mockReturnValue({
-    select: jest.fn().mockReturnValue({
-      eq: jest.fn().mockReturnValue({
-        not: jest.fn().mockResolvedValue({ data: rows, error: null }),
-      }),
-    }),
-    update: jest.fn().mockReturnValue(updateChain),
-  });
-}
+type PlannedAllocation = {
+  id: string;
+  cpu_limit: number;
+  ram_limit: number;
+  previous_cpu: number;
+  previous_ram: number;
+  previous_tier: string | null;
+  resource_tier: string;
+};
 
-/**
- * Same as mockInstanceList but captures every update() payload so tests
- * can assert on what was written to hermes_instances. Used by the
- * tier_change_pending regression suite below.
- */
-function mockInstanceListCapturingUpdates(rows: unknown[]) {
-  const updates: Array<{ payload: Record<string, unknown>; rowIds: unknown }> = [];
+function mockInstanceList(rows: unknown[]) {
+  const allocations: PlannedAllocation[] = [];
   fromMock.mockReturnValue({
-    select: jest.fn().mockReturnValue({
-      eq: jest.fn().mockReturnValue({
-        not: jest.fn().mockResolvedValue({ data: rows, error: null }),
-      }),
-    }),
-    update: jest.fn().mockImplementation((payload: Record<string, unknown>) => ({
-      eq: jest.fn().mockReturnValue({
-        in: jest.fn().mockImplementation((_col: string, ids: unknown) => {
-          updates.push({ payload, rowIds: ids });
-          return Promise.resolve({ error: null });
-        }),
-      }),
-    })),
+    select: jest.fn().mockReturnThis(),
+    eq: jest.fn().mockReturnThis(),
+    not: jest.fn().mockResolvedValue({ data: rows, error: null }),
   });
-  return updates;
+  (supabaseAdmin!.rpc as jest.Mock).mockImplementation(async (name, args) => {
+    if (name === "complete_hermes_instance_resize_allocation" || name === "rollback_hermes_instance_resize_allocation") {
+      return { data: true, error: null };
+    }
+    if (name !== "apply_hermes_tier_allocations") throw new Error("unexpected allocation RPC");
+    for (const change of args.p_changes) allocations.push({ ...change, resource_tier: args.p_tier });
+    return { data: args.p_changes.length, error: null };
+  });
+  return allocations;
 }
 
 beforeEach(() => {
@@ -93,6 +79,35 @@ beforeEach(() => {
 });
 
 describe("applyTierChange", () => {
+  it("applies a paid plan to its own seat even when a holder seat belongs to the same user", async () => {
+    const base = { cpu_limit: 1, ram_limit: 2048, resource_tier: "operator", status: "running" };
+    const updates = mockInstanceList([
+      { ...base, id: "holder", seat_funding: "holder", config: { infrastructure: { provider: "proxmox", vmid: 100 } } },
+      { ...base, id: "paid", seat_funding: "paid", config: { infrastructure: { provider: "proxmox", vmid: 101 } } },
+    ]);
+    const outcome = await applyTierChange({ userId: "mixed", newTier: "fleet", source: "stripe", veniceBoost: true });
+    expect(outcome).toMatchObject({ instancesUpdated: 1, resizesSucceeded: 1 });
+    for (const write of updates) expect(write.id).toBe("paid");
+    expect(resizeProxmoxVm).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedInstanceId: "paid", cpuLimit: 5, memoryMb: 10240 }), expect.anything(),
+    );
+  });
+
+  it("preserves a holder split with another lane and never applies a paid boost or touches the paid seat", async () => {
+    const base = { cpu_limit: 1, ram_limit: 2048, status: "running", config: null };
+    const updates = mockInstanceList([
+      { ...base, id: "holder", seat_funding: "holder" }, { ...base, id: "paid", seat_funding: "paid" },
+    ]);
+    (supabaseAdmin!.rpc as jest.Mock).mockResolvedValueOnce({ data: [{ cpu: 1, ram_mb: 2048 }], error: null });
+    await applyTierChange({ userId: "mixed", newTier: "fleet", source: "token_snapshot", holderSeats: true, veniceBoost: true });
+    expect(supabaseAdmin!.rpc).toHaveBeenCalledWith("holder_admission_existing_usage", {
+      p_user_id: "mixed", p_exclude_hermes_instance_id: "holder",
+    });
+    expect(updates).toEqual([expect.objectContaining({ id: "holder",
+      resource_tier: "fleet", cpu_limit: 1, ram_limit: 2048,
+    })]);
+  });
+
   it("no-ops when the user has no active instances", async () => {
     mockInstanceList([]);
     const outcome = await applyTierChange({
@@ -276,21 +291,11 @@ describe("applyTierChange", () => {
   //  old caps until the next redeploy. The dashboard surfaces a
   //  "Apply your new tier" banner driven by tier_change_pending.
   //
-  //  Service contract:
-  //    - Base write:    single atomic UPDATE setting resource_tier +
-  //                     cpu_limit + ram_limit + updated_at on ALL rows.
-  //                     Throws on failure → Stripe webhook retries.
-  //    - Flag follow-up: separate best-effort UPDATE that sets
-  //                     tier_change_pending=true ONLY on Hetzner rows.
-  //                     Failures are logged, not thrown. Proxmox rows
-  //                     keep the column at its default false.
-  // ──────────────────────────────────────────────────────────────────────
-
   it("writes resource_tier to every row, and folds a uniform size into that same atomic update", async () => {
     // Both rows sit at the same size, so the target is uniform and collapses
     // back into the single base write. resource_tier is the ENTITLEMENT LABEL
     // and is always uniform regardless of per-row sizing.
-    const updates = mockInstanceListCapturingUpdates([
+    const updates = mockInstanceList([
       {
         id: "inst-prox-mixed",
         config: { infrastructure: { provider: "proxmox", vmid: 700 } },
@@ -317,19 +322,9 @@ describe("applyTierChange", () => {
       source: "stripe",
     });
 
-    const baseUpdate = updates.find(
-      (u) =>
-        u.payload.resource_tier === "fleet" &&
-        u.payload.tier_change_pending === undefined
-    );
-    expect(baseUpdate).toBeDefined();
-    // Held at their existing 2 / 4096 rather than flattened up to the fleet
-    // per-agent cap (4 / 8192) — two agents can't both take the whole pool.
-    expect(baseUpdate!.payload.cpu_limit).toBe(2);
-    expect(baseUpdate!.payload.ram_limit).toBe(4096);
-    expect(Array.isArray(baseUpdate!.rowIds) ? baseUpdate!.rowIds : []).toEqual(
-      expect.arrayContaining(["inst-prox-mixed", "inst-htz-mixed"])
-    );
+    expect(supabaseAdmin!.rpc).toHaveBeenCalledTimes(1);
+    expect(updates.map(row => row.id)).toEqual(["inst-prox-mixed", "inst-htz-mixed"]);
+    for (const row of updates) expect(row).toMatchObject({ resource_tier: "fleet", cpu_limit: 2, ram_limit: 4096 });
   });
 
   it("raises tier_change_pending on every instance whose caps changed (both backends)", async () => {
@@ -337,7 +332,7 @@ describe("applyTierChange", () => {
     // both clamp down and both need the container redeploy. (An UPGRADE would
     // not move a multi-instance user's sizes at all — see the clamp-down rule
     // in resolveTargetSize — so it can't exercise this path.)
-    const updates = mockInstanceListCapturingUpdates([
+    const updates = mockInstanceList([
       {
         id: "inst-prox-only",
         config: { infrastructure: { provider: "proxmox", vmid: 700 } },
@@ -364,21 +359,12 @@ describe("applyTierChange", () => {
       source: "stripe",
     });
 
-    const flagUpdate = updates.find(
-      (u) => u.payload.tier_change_pending === true
-    );
-    expect(flagUpdate).toBeDefined();
-    // BOTH containers need a redeploy to pick up the new compose caps — the
-    // Proxmox qm-set only raises the VM ceiling, not the container cgroup, so
-    // the boost/tier wouldn't reach the agent without recreating the container.
-    const flagRowIds = Array.isArray(flagUpdate!.rowIds) ? flagUpdate!.rowIds : [];
-    expect(flagRowIds).toEqual(
-      expect.arrayContaining(["inst-prox-only", "inst-htz-only"])
-    );
+    expect(updates).toHaveLength(2);
+    for (const row of updates) expect(row).toMatchObject({ previous_cpu: 4, cpu_limit: 2, previous_ram: 8192, ram_limit: 4096 });
   });
 
   it("does not flag rows whose caps are unchanged (no needless container restart)", async () => {
-    const updates = mockInstanceListCapturingUpdates([
+    const updates = mockInstanceList([
       {
         // Already at operator caps (2 / 4096) — re-applying operator changes
         // nothing, so no redeploy should be queued.
@@ -398,10 +384,7 @@ describe("applyTierChange", () => {
       source: "stripe",
     });
 
-    const flagWrites = updates.filter(
-      (u) => u.payload.tier_change_pending !== undefined
-    );
-    expect(flagWrites).toHaveLength(0);
+    expect(updates.every(row => row.cpu_limit === row.previous_cpu && row.ram_limit === row.previous_ram)).toBe(true);
   });
 
   it("carries the upgrade all the way down to the container cgroup, not just the VM", async () => {
@@ -466,7 +449,7 @@ describe("applyTierChange", () => {
   it("snaps a SINGLE instance up to the full tier spec on upgrade", async () => {
     // The unambiguous case: one agent, one way to fill the pool. An upgrade
     // must still deliver the compute the user just paid for.
-    const updates = mockInstanceListCapturingUpdates([
+    const updates = mockInstanceList([
       {
         id: "inst-solo",
         config: { infrastructure: { provider: "proxmox", vmid: 900 } },
@@ -484,9 +467,9 @@ describe("applyTierChange", () => {
       source: "stripe",
     });
 
-    const baseUpdate = updates.find((u) => u.payload.resource_tier === "fleet");
-    expect(baseUpdate!.payload.cpu_limit).toBe(4);
-    expect(baseUpdate!.payload.ram_limit).toBe(8192);
+    const baseUpdate = updates.find((u) => u.resource_tier === "fleet");
+    expect(baseUpdate!.cpu_limit).toBe(4);
+    expect(baseUpdate!.ram_limit).toBe(8192);
     expect(resizeProxmoxVm).toHaveBeenCalledWith(
       expect.objectContaining({ vmid: 900, cpuLimit: 4, memoryMb: 8192 }),
       expect.anything()
@@ -507,7 +490,7 @@ describe("applyTierChange", () => {
       resource_tier: "operator",
       gateway_url: null,
     }));
-    const updates = mockInstanceListCapturingUpdates(rows);
+    const updates = mockInstanceList(rows);
 
     await applyTierChange({
       userId: "user-split",
@@ -515,18 +498,8 @@ describe("applyTierChange", () => {
       source: "stripe",
     });
 
-    const sizeWrites = updates.filter(
-      (u) => u.payload.cpu_limit !== undefined || u.payload.ram_limit !== undefined
-    );
-    for (const write of sizeWrites) {
-      expect(write.payload.cpu_limit).toBe(1);
-      expect(write.payload.ram_limit).toBe(2048);
-    }
-    // The entitlement label still moves to the new tier on every row.
-    const tierWrite = updates.find((u) => u.payload.resource_tier === "fleet");
-    expect(Array.isArray(tierWrite!.rowIds) ? tierWrite!.rowIds : []).toEqual(
-      expect.arrayContaining(["inst-split-1", "inst-split-2", "inst-split-3"])
-    );
+    expect(updates.map(row => row.id)).toEqual(["inst-split-1", "inst-split-2", "inst-split-3"]);
+    for (const row of updates) expect(row).toMatchObject({ resource_tier: "fleet", cpu_limit: 1, ram_limit: 2048 });
     // …and no VM is grown past what the user chose.
     for (const call of (resizeProxmoxVm as jest.Mock).mock.calls) {
       expect(call[0]).toMatchObject({ cpuLimit: 1, memoryMb: 2048 });
@@ -536,7 +509,7 @@ describe("applyTierChange", () => {
   it("still clamps a multi-instance user DOWN on downgrade", async () => {
     // Downgrades must keep biting: anything above the new per-agent cap is
     // shrunk, per-row, even though upgrades leave sizes alone.
-    const updates = mockInstanceListCapturingUpdates([
+    const updates = mockInstanceList([
       {
         id: "inst-big",
         config: { infrastructure: { provider: "proxmox", vmid: 910 } },
@@ -572,17 +545,16 @@ describe("applyTierChange", () => {
     expect(resizeCalls).toContainEqual(
       expect.objectContaining({ vmid: 911, cpuLimit: 0.5, memoryMb: 1024 })
     );
-    // Mixed targets ⇒ the sizes go out as separate per-size writes, and the
-    // tier label write must NOT carry a size (that would re-flatten them).
-    const tierWrite = updates.find((u) => u.payload.resource_tier === "operator");
-    expect(tierWrite!.payload.cpu_limit).toBeUndefined();
-    expect(tierWrite!.payload.ram_limit).toBeUndefined();
+    expect(updates).toEqual([
+      expect.objectContaining({ id: "inst-big", cpu_limit: 2, ram_limit: 4096 }),
+      expect.objectContaining({ id: "inst-small", cpu_limit: 0.5, ram_limit: 1024 }),
+    ]);
   });
 
   it("is idempotent for a multi-instance user (re-applying the same tier is a no-op)", async () => {
     // Guards against a ratchet: repeated tier events (Stripe retries, the
     // token-snapshot cron) must not walk sizes upward.
-    const updates = mockInstanceListCapturingUpdates([
+    const updates = mockInstanceList([
       {
         id: "inst-a",
         config: { infrastructure: { provider: "proxmox", vmid: 920 } },
@@ -610,10 +582,7 @@ describe("applyTierChange", () => {
     });
 
     // Nothing changed ⇒ no container redeploy queued.
-    const flagWrites = updates.filter(
-      (u) => u.payload.tier_change_pending !== undefined
-    );
-    expect(flagWrites).toHaveLength(0);
+    expect(updates.every(row => row.cpu_limit === row.previous_cpu && row.ram_limit === row.previous_ram)).toBe(true);
     const resizeCalls = (resizeProxmoxVm as jest.Mock).mock.calls.map((c) => c[0]);
     expect(resizeCalls).toContainEqual(
       expect.objectContaining({ vmid: 920, cpuLimit: 1, memoryMb: 2048 })
@@ -622,6 +591,164 @@ describe("applyTierChange", () => {
       expect.objectContaining({ vmid: 921, cpuLimit: 3, memoryMb: 6144 })
     );
   });
+
+  it("completes a fenced tier allocation with the same operation after host confirmation", async () => {
+    mockInstanceList([
+      {
+        id: "inst-fenced",
+        config: { infrastructure: { provider: "proxmox", vmid: 950 } },
+        hetzner_server_id: null,
+        proxmox_node: "h1",
+        resize_operation_id: null,
+        cpu_limit: 1,
+        ram_limit: 2048,
+        resource_tier: "operator",
+        gateway_url: null,
+        status: "running",
+        lifecycle_state: "active",
+      },
+    ]);
+
+    await applyTierChange({ userId: "user-fenced", newTier: "fleet", source: "stripe" });
+
+    const applyCall = (supabaseAdmin!.rpc as jest.Mock).mock.calls.find(([name]) => name === "apply_hermes_tier_allocations");
+    const operationId = applyCall?.[1].p_changes[0].operation_id;
+    expect(operationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(supabaseAdmin!.rpc).toHaveBeenCalledWith("complete_hermes_instance_resize_allocation", {
+      p_instance_id: "inst-fenced",
+      p_user_id: "user-fenced",
+      p_operation_id: operationId,
+    });
+  });
+
+  it("rolls back a fenced tier allocation only for a determinate host failure", async () => {
+    (resizeProxmoxVm as jest.Mock).mockResolvedValueOnce({ ok: false, stdout: "", stderr: "qm set failed" });
+    mockInstanceList([
+      {
+        id: "inst-determinate-failure",
+        config: { infrastructure: { provider: "proxmox", vmid: 951 } },
+        hetzner_server_id: null,
+        proxmox_node: "h1",
+        resize_operation_id: null,
+        cpu_limit: 4,
+        ram_limit: 8192,
+        resource_tier: "fleet",
+        gateway_url: null,
+        status: "running",
+        lifecycle_state: "active",
+      },
+    ]);
+
+    const outcome = await applyTierChange({ userId: "user-determinate", newTier: "operator", source: "stripe" });
+
+    expect(outcome.resizesFailed).toHaveLength(1);
+    const applyCall = (supabaseAdmin!.rpc as jest.Mock).mock.calls.find(([name]) => name === "apply_hermes_tier_allocations");
+    expect(supabaseAdmin!.rpc).toHaveBeenCalledWith("rollback_hermes_instance_resize_allocation", {
+      p_instance_id: "inst-determinate-failure",
+      p_user_id: "user-determinate",
+      p_operation_id: applyCall?.[1].p_changes[0].operation_id,
+    });
+  });
+
+  it("keeps a fenced tier allocation reserved after an indeterminate SSH failure", async () => {
+    (resizeProxmoxVm as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      stdout: "",
+      stderr: "",
+      error: "SSH connection reset before remote output was lost",
+    });
+    mockInstanceList([
+      {
+        id: "inst-indeterminate-failure",
+        config: { infrastructure: { provider: "proxmox", vmid: 952 } },
+        hetzner_server_id: null,
+        proxmox_node: "h1",
+        resize_operation_id: null,
+        cpu_limit: 4,
+        ram_limit: 8192,
+        resource_tier: "fleet",
+        gateway_url: null,
+        status: "running",
+        lifecycle_state: "active",
+      },
+    ]);
+
+    const outcome = await applyTierChange({ userId: "user-indeterminate", newTier: "operator", source: "stripe" });
+
+    expect(outcome.resizesFailed).toHaveLength(1);
+    const rpcNames = (supabaseAdmin!.rpc as jest.Mock).mock.calls.map(([name]) => name);
+    expect(rpcNames).not.toContain("complete_hermes_instance_resize_allocation");
+    expect(rpcNames).not.toContain("rollback_hermes_instance_resize_allocation");
+  });
+
+  it("dispatches a fenced holder downgrade against its stored target instead of the charged caps", async () => {
+    const existingOperationId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    mockInstanceList([
+      {
+        id: "inst-holder-downgrade",
+        config: { infrastructure: { provider: "proxmox", vmid: 954 } },
+        hetzner_server_id: null,
+        proxmox_node: "h1",
+        resize_operation_id: existingOperationId,
+        resize_target_cpu: 2,
+        resize_target_ram_mb: 4096,
+        cpu_limit: 4,
+        ram_limit: 8192,
+        resource_tier: "operator",
+        seat_funding: "holder",
+        gateway_url: null,
+        status: "running",
+        lifecycle_state: "active",
+      },
+    ]);
+
+    await applyTierChange({ userId: "user-holder-downgrade", newTier: "operator", source: "token_snapshot", holderSeats: true });
+
+    const applyCall = (supabaseAdmin!.rpc as jest.Mock).mock.calls.find(([name]) => name === "apply_hermes_tier_allocations");
+    expect(applyCall?.[1].p_changes[0].operation_id).toBe(existingOperationId);
+    expect(readInstanceLiveMutationBlock).toHaveBeenCalledWith(
+      supabaseAdmin,
+      "inst-holder-downgrade",
+      expect.objectContaining({ id: "inst-holder-downgrade" }),
+      { cpu: 2, ramMb: 4096 },
+      { operationId: existingOperationId, cpu: 2, ramMb: 4096 }
+    );
+    expect(resizeProxmoxVm).toHaveBeenCalledWith(
+      expect.objectContaining({ vmid: 954, cpuLimit: 2, memoryMb: 4096 }),
+      expect.anything()
+    );
+  });
+
+  it("keeps a fenced tier allocation reserved when the remote exit status is missing", async () => {
+    (resizeProxmoxVm as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      stdout: "",
+      stderr: "Remote bash exited with code undefined",
+      error: "Remote bash exited with code undefined",
+    });
+    mockInstanceList([
+      {
+        id: "inst-undefined-exit",
+        config: { infrastructure: { provider: "proxmox", vmid: 955 } },
+        hetzner_server_id: null,
+        proxmox_node: "h1",
+        resize_operation_id: null,
+        cpu_limit: 4,
+        ram_limit: 8192,
+        resource_tier: "fleet",
+        gateway_url: null,
+        status: "running",
+        lifecycle_state: "active",
+      },
+    ]);
+
+    const outcome = await applyTierChange({ userId: "user-undefined-exit", newTier: "operator", source: "stripe" });
+
+    expect(outcome.resizesFailed).toHaveLength(1);
+    const rpcNames = (supabaseAdmin!.rpc as jest.Mock).mock.calls.map(([name]) => name);
+    expect(rpcNames).not.toContain("complete_hermes_instance_resize_allocation");
+    expect(rpcNames).not.toContain("rollback_hermes_instance_resize_allocation");
+  });
 });
 
 
@@ -629,7 +756,7 @@ describe("archived computer tier upgrades", () => {
   it.each(["cold_archived", "pending_deletion", "archiving", "restoring", "deleting", "deleted", "failed"])(
     "records paid caps and a deferred container obligation without live operations for %s",
     async (lifecycle_state) => {
-      const updates = mockInstanceListCapturingUpdates([{
+      const updates = mockInstanceList([{
         id: "archived-computer", status: "stopped", lifecycle_state,
         archive_uri: "free/archived-computer/data.tar.zst", archive_sha256: "a".repeat(64),
         proxmox_vmid: null,
@@ -638,24 +765,21 @@ describe("archived computer tier upgrades", () => {
       }]);
       const outcome = await applyTierChange({ userId: "user-archived", newTier: "operator", source: "stripe" });
       expect(outcome).toMatchObject({ instancesUpdated: 1, resizesAttempted: 0, resizesFailed: [] });
-      expect(updates[0].payload).toMatchObject({ resource_tier: "operator", cpu_limit: 2, ram_limit: 4096 });
-      expect(updates.some(({ payload }) => payload.tier_change_pending === true))
-        .toBe(!["deleting", "deleted"].includes(lifecycle_state));
-      expect(updates.some(({ payload }) => "status" in payload || "lifecycle_state" in payload || "archive_uri" in payload)).toBe(false);
+      expect(updates[0]).toMatchObject({ resource_tier: "operator", cpu_limit: 2, ram_limit: 4096 });
+      expect(updates[0]).not.toHaveProperty("lifecycle_state");
       expect(resizeProxmoxVm).not.toHaveBeenCalled();
     },
   );
 
   it("defers the container obligation and does not resize a computer archived during the tier write", async () => {
     (readInstanceLiveMutationBlock as jest.Mock).mockResolvedValueOnce("Computer archived");
-    const updates = mockInstanceListCapturingUpdates([{
+    const updates = mockInstanceList([{
       id: "archived-mid-upgrade", lifecycle_state: "active", status: "running", proxmox_vmid: 201,
       config: { infrastructure: { provider: "proxmox", vmid: 201 } },
       cpu_limit: 0.5, ram_limit: 512, resource_tier: "free",
     }]);
     await applyTierChange({ userId: "user-archived", newTier: "operator", source: "stripe" });
-    expect(updates[0].payload.resource_tier).toBe("operator");
-    expect(updates.some(({ payload }) => payload.tier_change_pending === true)).toBe(true);
+    expect(updates[0]).toMatchObject({ resource_tier: "operator", previous_cpu: 0.5, cpu_limit: 2 });
     expect(resizeProxmoxVm).not.toHaveBeenCalled();
   });
 });

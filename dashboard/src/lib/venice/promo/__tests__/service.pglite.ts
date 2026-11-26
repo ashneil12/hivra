@@ -47,7 +47,11 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  process.env.HIVRA_VENICE_PROMO_ENABLED = "true";
+  jest.replaceProperty(process, "env", {
+    ...process.env,
+    VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+    HIVRA_VENICE_PROMO_ENABLED: "true",
+  });
   await pg.exec(`
     delete from public.hermes_subscriptions;
     delete from public.venice_promo_redemptions;
@@ -63,9 +67,7 @@ beforeEach(async () => {
                  update public.venice_promo_campaigns set budget_micro_usd = 200000000, max_grants = 20 where slug='venice-topup-2026';`);
 });
 
-afterEach(() => {
-  delete process.env.HIVRA_VENICE_PROMO_ENABLED;
-});
+afterEach(() => jest.restoreAllMocks());
 
 const balance = async (user: string) =>
   Number(((await pg.query("select coalesce(sum(amount_micro_usd),0)::bigint s from public.managed_venice_card_ledger_entries where user_id=$1", [user])).rows[0] as { s: string }).s);

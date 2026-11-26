@@ -38,7 +38,7 @@ import { requireDb } from "@/lib/billing/db-utils";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
-import { normalizeRpcRetryConfig, sleep, type RpcCallOptions, type RpcRetryConfig } from "@/lib/billing/base-rpc-retry";
+import { RpcHttpError, normalizeRpcRetryConfig, sleep, type RpcCallOptions, type RpcRetryConfig } from "@/lib/billing/base-rpc-retry";
 import {
   createBaseChainReader,
   paymentDustFloor,
@@ -913,6 +913,7 @@ export async function reconcilePendingYearlyTokenQuotes(
         userId: quote.userId,
         quoteId: quote.id,
         failureType: "yearly_token_reconcile_failed",
+        ...(error instanceof RpcHttpError ? { rpcHttpStatus: error.status, rpcMethod: error.rpcMethod } : {}),
       });
       summary.results.push({
         quoteId: quote.id,

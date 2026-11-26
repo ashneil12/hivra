@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Durable pending-resource contract v1: while the serialized allocation lock is
+# held, operation-*.selected files are strict reservations. A reservation is
+# deduplicated only by exact VMID + operation tag + binding tag + IP evidence in
+# QEMU inventory; otherwise it is counted conservatively or fails closed.
+PENDING_RESOURCE_CONTRACT_V1=1
+
 # Run while /run/lock/hivra-allocation.lock is held. The caller supplies the
 # candidate active envelope; this script derives every other active guest from
 # the host itself and fails closed when that evidence cannot be read.
@@ -56,6 +62,22 @@ integer "$CPU_DENSITY_MILLI" && [ "$CPU_DENSITY_MILLI" -ge 1000 ] && [ "$CPU_DEN
 integer "$MEMORY_DENSITY_MILLI" && [ "$MEMORY_DENSITY_MILLI" -ge 1000 ] && [ "$MEMORY_DENSITY_MILLI" -le 4000 ] || { echo "invalid memory density" >&2; exit 1; }
 case "$TARGET_VMID" in -) ;; *[!0-9]*|'') echo "invalid target VMID" >&2; exit 1 ;; esac
 
+LAUNCH_STORAGE="${10:-}"
+LAUNCH_DISK_GB="${11:-}"
+LAUNCH_STORAGE_HEADROOM_GB="${12:-}"
+LAUNCH_DISK_ACCOUNTING=0
+if [ -n "$LAUNCH_STORAGE" ] || [ -n "$LAUNCH_DISK_GB" ] || [ -n "$LAUNCH_STORAGE_HEADROOM_GB" ]; then
+  [ -n "$LAUNCH_STORAGE" ] && [ -n "$LAUNCH_DISK_GB" ] && [ -n "$LAUNCH_STORAGE_HEADROOM_GB" ] \
+    || { echo "incomplete launch storage accounting inputs" >&2; exit 1; }
+  [[ "$LAUNCH_STORAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
+    || { echo "invalid launch storage identity" >&2; exit 1; }
+  integer "$LAUNCH_DISK_GB" && [ "$LAUNCH_DISK_GB" -gt 0 ] \
+    || { echo "invalid launch disk reservation" >&2; exit 1; }
+  integer "$LAUNCH_STORAGE_HEADROOM_GB" \
+    || { echo "invalid launch storage headroom" >&2; exit 1; }
+  LAUNCH_DISK_ACCOUNTING=1
+fi
+
 MEMINFO_PATH="${HIVRA_CAPACITY_MEMINFO_PATH:-/proc/meminfo}"
 HOST_TOTAL_MB="$(awk '$1=="MemTotal:" {print int($2/1024)}' "$MEMINFO_PATH")"
 HOST_CPU="$(nproc)"
@@ -64,10 +86,20 @@ integer "${HOST_CPU:-}" && [ "$HOST_CPU" -gt 0 ] || { echo "could not measure ho
 [ "$REQUEST_MAX_MB" -le "$HOST_TOTAL_MB" ] || { echo "requested memory maximum exceeds physical host memory" >&2; exit 1; }
 REQUEST_CPU_MILLI="$(cpu_milli "$REQUEST_MAX_CPU")"
 [ "$REQUEST_CPU_MILLI" -le $((HOST_CPU * 1000)) ] || { echo "requested CPU maximum exceeds physical host CPU" >&2; exit 1; }
+REQUEST_PHYSICAL_MB="$REQUEST_FLOOR_MB"
 
 ACTIVE_FLOOR_MB=0
 ACTIVE_MAX_MB=0
 ACTIVE_MAX_CPU_MILLI=0
+EXACT_INTENT_KEYS=""
+EXACT_STOPPED_INTENT_KEYS=""
+ACTIVE_COUNTED_INTENT_KEYS=""
+VM_DISK_STORAGE_KEYS=""
+PENDING_FLOOR_MB=0
+PENDING_MAX_MB=0
+PENDING_CPU_MILLI=0
+PENDING_DISK_GB=0
+PENDING_LAUNCH_STORAGE_DISK_GB=0
 OLD_ACTIVE_FLOOR_MB=0
 OLD_ACTIVE_MAX_MB=0
 OLD_ACTIVE_MAX_CPU_MILLI=0
@@ -89,6 +121,52 @@ while IFS= read -r candidate; do
   # as active. A status that cannot be read at all still fails closed.
   status="$(printf '%s\n' "$status_output" | awk 'NF==2 && $1=="status:" && $2 ~ /^[a-z-]+$/ {print $2; exit}')"
   [ -n "$status" ] || { echo "invalid QEMU status" >&2; exit 1; }
+  tags="$(printf '%s\n' "$config" | awk '$1=="tags:" {sub(/^tags:[[:space:]]*/, ""); print; exit}')"
+  ipconfig="$(printf '%s\n' "$config" | awk '$1=="ipconfig0:" {sub(/^ipconfig0:[[:space:]]*/, ""); print; exit}')"
+  scsi0="$(printf '%s\n' "$config" | awk '$1=="scsi0:" {sub(/^scsi0:[[:space:]]*/, ""); print; exit}')"
+  scsi_volume="${scsi0%%,*}"
+  scsi_storage=""
+  scsi_size_gb=0
+  case "$scsi_volume" in
+    *:*)
+      scsi_storage="${scsi_volume%%:*}"
+      # Storage evidence is combined below with the exact operation identity.
+      ;;
+  esac
+  scsi_size_spec="$(printf '%s\n' "$scsi0" | tr ',' '\n' | awk -F= '$1=="size" {print $2; exit}')"
+  case "$scsi_size_spec" in
+    *G) scsi_size_value="${scsi_size_spec%G}"; scsi_size_multiplier=1 ;;
+    *T) scsi_size_value="${scsi_size_spec%T}"; scsi_size_multiplier=1024 ;;
+    *M) scsi_size_value="${scsi_size_spec%M}"; scsi_size_multiplier=0 ;;
+    *) scsi_size_value="" scsi_size_multiplier=0 ;;
+  esac
+  if integer "${scsi_size_value:-}" && [ "$scsi_size_value" -gt 0 ]; then
+    if [ "$scsi_size_multiplier" -gt 0 ]; then
+      scsi_size_gb=$((scsi_size_value * scsi_size_multiplier))
+    else
+      scsi_size_gb=$((scsi_size_value / 1024))
+    fi
+  fi
+  while IFS= read -r op_tag; do
+    [[ "$op_tag" =~ ^hivra-op-[0-9a-f]{32}$ ]] || continue
+    op_hex="${op_tag#hivra-op-}"
+    while IFS= read -r binding_tag; do
+      [[ "$binding_tag" =~ ^hivra-bind-[0-9a-f]{32}$ ]] || continue
+      while IFS= read -r exact_ip; do
+        [ -n "$exact_ip" ] || continue
+        exact_key="${candidate}|${op_hex}|${binding_tag}|${exact_ip}"
+        EXACT_INTENT_KEYS="${EXACT_INTENT_KEYS}${exact_key}"$'\n'
+        if [[ "${scsi_storage:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+          VM_DISK_STORAGE_KEYS="${VM_DISK_STORAGE_KEYS}${exact_key}|${scsi_storage}|${scsi_size_gb}"$'\n'
+        fi
+        if [ "$status" = "stopped" ]; then
+          EXACT_STOPPED_INTENT_KEYS="${EXACT_STOPPED_INTENT_KEYS}${exact_key}"$'\n'
+        elif [ "$candidate" != "$TARGET_VMID" ]; then
+          ACTIVE_COUNTED_INTENT_KEYS="${ACTIVE_COUNTED_INTENT_KEYS}${exact_key}"$'\n'
+        fi
+      done < <(printf '%s\n' "$ipconfig" | tr ',' '\n' | awk -F= '$1=="ip" {split($2, parts, "/"); print parts[1]}')
+    done < <(printf '%s\n' "$tags" | tr ';' '\n')
+  done < <(printf '%s\n' "$tags" | tr ';' '\n')
   [ "$status" != "stopped" ] || continue
   floor="$(qemu_floor_mb "$config")" || { echo "invalid QEMU memory floor" >&2; exit 1; }
   maximum="$(qemu_max_mb "$config")" || { echo "invalid QEMU memory maximum" >&2; exit 1; }
@@ -132,7 +210,159 @@ $PCT_CANDIDATES
 EOF
 fi
 
-NEXT_FLOOR_MB=$((ACTIVE_FLOOR_MB + REQUEST_FLOOR_MB + HOST_RESERVE_MB))
+INTENT_DIR="${HIVRA_PROVISION_OPERATIONS_DIR:-/var/lib/hivra/provision-operations}"
+intent_field() {
+  local file="$1" key="$2" count
+  count="$(awk -F= -v key="$key" '$1==key {n++} END {print n+0}' "$file" 2>/dev/null)" || return 1
+  [ "$count" = "1" ] || return 1
+  awk -F= -v key="$key" '$1==key {print substr($0, index($0, "=") + 1)}' "$file"
+}
+valid_ipv4() {
+  awk -v v="$1" 'BEGIN {
+    if (v !~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) exit 1
+    split(v, p, ".")
+    exit !(p[1] < 256 && p[2] < 256 && p[3] < 256 && p[4] < 256)
+  }'
+}
+valid_intent_keys() {
+  awk -F= '
+    BEGIN {
+      valid["schema_version"]=1; valid["operation_id"]=1; valid["vmid"]=1; valid["ip"]=1
+      valid["binding_tag"]=1; valid["binding_enforced"]=1; valid["floor_memory_mb"]=1
+      valid["maximum_memory_mb"]=1; valid["maximum_cpu_milli"]=1; valid["disk_gb"]=1; valid["storage"]=1
+    }
+    NF != 2 || length($1) == 0 || length($2) == 0 { bad=1 }
+    seen[$1]++ { bad=1 }
+    !($1 in valid) { bad=1 }
+    END {
+      legacy = seen["operation_id"] && seen["vmid"] && seen["ip"] && seen["binding_tag"] && seen["binding_enforced"] \
+        && !seen["schema_version"] && !seen["floor_memory_mb"] && !seen["maximum_memory_mb"] && !seen["maximum_cpu_milli"] && !seen["disk_gb"]
+      v1 = seen["schema_version"] && seen["operation_id"] && seen["vmid"] && seen["ip"] && seen["binding_tag"] && seen["binding_enforced"] \
+        && seen["floor_memory_mb"] && seen["maximum_memory_mb"] && seen["maximum_cpu_milli"] && seen["disk_gb"]
+      exit !(bad == 0 && (legacy || v1))
+    }
+  ' "$1"
+}
+INTENT_VMIDS_SEEN=""
+INTENT_IPS_SEEN=""
+for intent in "$INTENT_DIR"/operation-*.selected; do
+  [ -e "$intent" ] || continue
+  if [ -L "$intent" ] || [ ! -f "$intent" ]; then
+    echo "invalid pending allocation intent file type" >&2
+    exit 1
+  fi
+  valid_intent_keys "$intent" || { echo "invalid pending allocation intent schema" >&2; exit 1; }
+  operation_id="$(intent_field "$intent" operation_id)" \
+    && [[ "$operation_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
+    || { echo "invalid pending allocation intent operation identity" >&2; exit 1; }
+  intent_vmid="$(intent_field "$intent" vmid)" \
+    && integer "$intent_vmid" && [ "$intent_vmid" -gt 0 ] \
+    || { echo "invalid pending allocation intent VMID" >&2; exit 1; }
+  intent_ip="$(intent_field "$intent" ip)" && valid_ipv4 "$intent_ip" \
+    || { echo "invalid pending allocation intent IP" >&2; exit 1; }
+  binding_tag="$(intent_field "$intent" binding_tag)" \
+    && [[ "$binding_tag" =~ ^hivra-bind-[0-9a-f]{32}$ ]] \
+    || { echo "invalid pending allocation intent binding tag" >&2; exit 1; }
+  [ "$(intent_field "$intent" binding_enforced)" = "1" ] \
+    || { echo "invalid pending allocation intent binding policy" >&2; exit 1; }
+  if printf '%s\n' "$INTENT_VMIDS_SEEN" | grep -Fxq "$intent_vmid" \
+    || printf '%s\n' "$INTENT_IPS_SEEN" | grep -Fxq "$intent_ip"; then
+    echo "duplicate pending allocation intent VMID or IP" >&2
+    exit 1
+  fi
+  INTENT_VMIDS_SEEN="${INTENT_VMIDS_SEEN}${intent_vmid}"$'\n'
+  INTENT_IPS_SEEN="${INTENT_IPS_SEEN}${intent_ip}"$'\n'
+  op_hex="$(printf '%s' "$operation_id" | tr -d '-')"
+  exact_key="${intent_vmid}|${op_hex}|${binding_tag}|${intent_ip}"
+  if printf '%s\n' "$ACTIVE_COUNTED_INTENT_KEYS" | grep -Fxq "$exact_key"; then
+    continue
+  fi
+  schema_count="$(awk -F= '$1=="schema_version" {n++} END {print n+0}' "$intent" 2>/dev/null)"
+  schema_version="$(intent_field "$intent" schema_version 2>/dev/null || true)"
+  if [ "$schema_count" != "1" ] || [ "$schema_version" != "1" ]; then
+    echo "legacy pending allocation intent has no safe resource envelope" >&2
+    exit 1
+  fi
+  floor="$(intent_field "$intent" floor_memory_mb)" \
+    && integer "$floor" && [ "$floor" -gt 0 ] \
+    || { echo "invalid pending allocation memory floor" >&2; exit 1; }
+  maximum="$(intent_field "$intent" maximum_memory_mb)" \
+    && integer "$maximum" && [ "$maximum" -ge "$floor" ] \
+    || { echo "invalid pending allocation memory maximum" >&2; exit 1; }
+  cpu="$(intent_field "$intent" maximum_cpu_milli)" \
+    && integer "$cpu" && [ "$cpu" -gt 0 ] \
+    || { echo "invalid pending allocation CPU maximum" >&2; exit 1; }
+  disk_gb="$(intent_field "$intent" disk_gb)" \
+    && integer "$disk_gb" && [ "$disk_gb" -gt 0 ] \
+    || { echo "invalid pending allocation disk reservation" >&2; exit 1; }
+  intent_storage="$(intent_field "$intent" storage 2>/dev/null || true)"
+  if [ -n "$intent_storage" ]; then
+    [[ "$intent_storage" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
+      || { echo "invalid pending allocation storage identity" >&2; exit 1; }
+  fi
+  if [ "$TARGET_VMID" != "-" ] && [ "$intent_vmid" = "$TARGET_VMID" ] \
+    && printf '%s\n' "$EXACT_INTENT_KEYS" | grep -Fxq "$exact_key" \
+    && [ "$REQUEST_FLOOR_MB" -ge "$floor" ] \
+    && [ "$REQUEST_MAX_MB" -ge "$maximum" ] \
+    && [ "$REQUEST_CPU_MILLI" -ge "$cpu" ]; then
+    if printf '%s\n' "$EXACT_STOPPED_INTENT_KEYS" | grep -Fxq "$exact_key" \
+      && [ "$maximum" -gt "$REQUEST_PHYSICAL_MB" ]; then
+      REQUEST_PHYSICAL_MB="$maximum"
+    fi
+    continue
+  fi
+  PENDING_FLOOR_MB=$((PENDING_FLOOR_MB + floor))
+  PENDING_MAX_MB=$((PENDING_MAX_MB + maximum))
+  PENDING_CPU_MILLI=$((PENDING_CPU_MILLI + cpu))
+  committed_disk_gb=0
+  if [ -n "$intent_storage" ]; then
+    disk_evidence="$(printf '%s\n' "$VM_DISK_STORAGE_KEYS" | awk -v key="${exact_key}|${intent_storage}|" 'index($0, key) == 1 {print; exit}')"
+    if [ -n "$disk_evidence" ]; then
+      evidence_size_gb="${disk_evidence##*|}"
+      if integer "$evidence_size_gb" && [ "$evidence_size_gb" -gt 0 ]; then
+        committed_disk_gb="$evidence_size_gb"
+      fi
+    fi
+  fi
+  disk_remaining_gb=$((disk_gb - committed_disk_gb))
+  [ "$disk_remaining_gb" -gt 0 ] || disk_remaining_gb=0
+  if [ "$disk_remaining_gb" -gt 0 ]; then
+    PENDING_DISK_GB=$((PENDING_DISK_GB + disk_remaining_gb))
+    if [ "$LAUNCH_DISK_ACCOUNTING" = 1 ]; then
+      [ -n "$intent_storage" ] \
+        || { echo "pending allocation intent storage identity unavailable" >&2; exit 1; }
+      if [ "$intent_storage" = "$LAUNCH_STORAGE" ]; then
+        PENDING_LAUNCH_STORAGE_DISK_GB=$((PENDING_LAUNCH_STORAGE_DISK_GB + disk_remaining_gb))
+      fi
+    fi
+  fi
+  # Until exact active inventory can prove the guest's configured envelope, its
+  # startup reservation is the initial maximum memory, not the later balloon floor.
+  ACTIVE_FLOOR_MB=$((ACTIVE_FLOOR_MB + maximum))
+  ACTIVE_MAX_MB=$((ACTIVE_MAX_MB + maximum))
+  ACTIVE_MAX_CPU_MILLI=$((ACTIVE_MAX_CPU_MILLI + cpu))
+done
+
+if [ "$LAUNCH_DISK_ACCOUNTING" = 1 ]; then
+  STORAGE_INVENTORY="$(pvesm status --content images 2>/dev/null)" \
+    || { echo "could not read storage inventory" >&2; exit 1; }
+  STORAGE_MATCH_COUNT="$(printf '%s\n' "$STORAGE_INVENTORY" | awk -v target="$LAUNCH_STORAGE" 'NF > 0 && $1 == target {n++} END {print n+0}')"
+  [ "$STORAGE_MATCH_COUNT" = "1" ] \
+    || { echo "could not measure exact configured storage capacity" >&2; exit 1; }
+  STORAGE_LINE="$(printf '%s\n' "$STORAGE_INVENTORY" | awk -v target="$LAUNCH_STORAGE" 'NF > 0 && $1 == target {print; exit}')"
+  STORAGE_STATUS="$(printf '%s\n' "$STORAGE_LINE" | awk '{print $3}')"
+  [ "$STORAGE_STATUS" = "active" ] \
+    || { echo "configured storage is not active for VM images" >&2; exit 1; }
+  STORAGE_AVAILABLE_KB="$(printf '%s\n' "$STORAGE_LINE" | awk 'NF >= 6 {print $6}')"
+  integer "${STORAGE_AVAILABLE_KB:-}" \
+    || { echo "invalid storage capacity observation" >&2; exit 1; }
+  STORAGE_REQUIRED_KB=$(((LAUNCH_DISK_GB + LAUNCH_STORAGE_HEADROOM_GB) * 1024 * 1024))
+  EFFECTIVE_STORAGE_AVAILABLE_KB=$((STORAGE_AVAILABLE_KB - PENDING_LAUNCH_STORAGE_DISK_GB * 1024 * 1024))
+  [ "$EFFECTIVE_STORAGE_AVAILABLE_KB" -ge "$STORAGE_REQUIRED_KB" ] \
+    || { echo "insufficient live storage headroom for this launch" >&2; exit 1; }
+fi
+
+NEXT_FLOOR_MB=$((ACTIVE_FLOOR_MB + REQUEST_PHYSICAL_MB + HOST_RESERVE_MB))
 if [ "$NEXT_FLOOR_MB" -gt "$HOST_TOTAL_MB" ]; then
   [ "$ALLOW_REDUCTION" = "1" ] && [ "$OLD_ACTIVE_FLOOR_MB" -gt "$REQUEST_FLOOR_MB" ] \
     || { echo "active memory floors plus host reserve exceed physical memory" >&2; exit 1; }
@@ -151,5 +381,6 @@ if [ "$ENFORCE_CEILINGS" = "1" ]; then
   fi
 fi
 
-printf 'HIVRA_CAPACITY_ADMITTED floor_headroom_mb=%s active_floor_mb=%s active_max_mb=%s active_max_cpu_milli=%s\n' \
-  "$((HOST_TOTAL_MB - NEXT_FLOOR_MB))" "$ACTIVE_FLOOR_MB" "$ACTIVE_MAX_MB" "$ACTIVE_MAX_CPU_MILLI"
+printf 'HIVRA_CAPACITY_ADMITTED floor_headroom_mb=%s active_floor_mb=%s active_max_mb=%s active_max_cpu_milli=%s pending_floor_mb=%s pending_max_mb=%s pending_cpu_milli=%s pending_disk_gb=%s\n' \
+  "$((HOST_TOTAL_MB - NEXT_FLOOR_MB))" "$ACTIVE_FLOOR_MB" "$ACTIVE_MAX_MB" "$ACTIVE_MAX_CPU_MILLI" \
+  "$PENDING_FLOOR_MB" "$PENDING_MAX_MB" "$PENDING_CPU_MILLI" "$PENDING_DISK_GB"

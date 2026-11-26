@@ -5,12 +5,11 @@
 #                                               developer connections shown, no updater)
 #   HIVRA_MAC_CHANNEL=release ./scripts/build-app.sh
 #                                               public build: Apple silicon + Intel, Hivra only,
-#                                               Developer ID signed; notarised and packed as a DMG
-#                                               when HIVRA_MAC_NOTARY_PROFILE is set
+#                                               Developer ID signed, notarised and packed as a DMG
 #
 # Settings (environment):
 #   HIVRA_MAC_CODESIGN_IDENTITY   signing identity (default "-", ad-hoc). Required for release.
-#   HIVRA_MAC_NOTARY_PROFILE      a `xcrun notarytool store-credentials` profile name.
+#   HIVRA_MAC_NOTARY_PROFILE      a `xcrun notarytool store-credentials` profile name. Required for release.
 #   HIVRA_SPARKLE_PUBLIC_KEY      Sparkle EdDSA public key; turns the updater on. Required for release.
 set -euo pipefail
 # Globs that match nothing (no earlier zip or DMG) expand to nothing instead of failing.
@@ -30,6 +29,10 @@ version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${app
 if [[ "${channel}" == "release" ]]; then
   if [[ "${codesign_identity}" == "-" ]]; then
     print -u2 "A release build needs HIVRA_MAC_CODESIGN_IDENTITY (a Developer ID Application identity)."
+    exit 1
+  fi
+  if [[ -z "${notary_profile}" ]]; then
+    print -u2 "A release build needs HIVRA_MAC_NOTARY_PROFILE to notarize and staple the app and installer."
     exit 1
   fi
   if [[ -z "${sparkle_key}" ]]; then
@@ -108,11 +111,9 @@ if [[ "${channel}" == "release" ]]; then
   ln -s /Applications "${staging}/Applications"
   hdiutil create -volname "Hivra" -srcfolder "${staging}" -ov -format ULFO "${dmg}" >/dev/null
   codesign --force --sign "${codesign_identity}" --timestamp "${dmg}"
-  if [[ -n "${notary_profile}" ]]; then
-    xcrun notarytool submit "${dmg}" --keychain-profile "${notary_profile}" --wait
-    xcrun stapler staple "${dmg}"
-    spctl --assess --type open --context context:primary-signature -v "${dmg}"
-  fi
+  xcrun notarytool submit "${dmg}" --keychain-profile "${notary_profile}" --wait
+  xcrun stapler staple "${dmg}"
+  spctl --assess --type open --context context:primary-signature -v "${dmg}"
 fi
 
 print "Built ${app_bundle} (${channel}, ${version})"

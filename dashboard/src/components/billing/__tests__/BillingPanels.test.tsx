@@ -5,6 +5,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { CryptoTopUpPanel, TokenHoldingPanel } from "../BillingPanels";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import type { TokenHoldingData } from "@/lib/billing/format";
+import { HIVRA_TOKEN_LAUNCH } from "@/lib/billing/hivra-token-launch";
 
 const HERMESOS_CONTRACT = "0x95ccfd2b81a9667b0cc979992632f98fc853eba3";
 const USDC_CONTRACT = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
@@ -145,6 +146,23 @@ describe("TokenHoldingPanel", () => {
       fireEvent.click(screen.getByRole("button", { name: "Copy address" }));
     });
     expect(copyMock).toHaveBeenLastCalledWith("0x000000000000000000000000000000000000dEaD");
+  });
+
+  it("resolves a converted balance's unit from the token contract before a legacy symbol spelling", () => {
+    const tokenAddress = HIVRA_TOKEN_LAUNCH.contractAddress;
+    if (!tokenAddress) throw new Error("The configured Hivra token address is required");
+
+    renderPanel({
+      ...holding,
+      token: {
+        ...holding.token,
+        tokenAddress,
+        tokenSymbol: "Hivra",
+      },
+    });
+
+    expect(screen.getByText("0.75 $HIVRA")).toBeInTheDocument();
+    expect(screen.queryByText("0.75 $HermesOS")).not.toBeInTheDocument();
   });
 
   it("never presents the 1-token base-tier minimum or its verdict (they are not plan requirements)", () => {

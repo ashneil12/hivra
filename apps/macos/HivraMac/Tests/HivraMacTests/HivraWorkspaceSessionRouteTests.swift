@@ -10,18 +10,18 @@ import HivraMacCore
 struct HivraWorkspaceSessionRouteTests {
     private let origin = "http://127.0.0.1:1"
 
-    private func eventually(_ condition: () -> Bool) async throws {
+    private func eventually(_ condition: () async -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(10)
-        while !condition() && ContinuousClock.now < deadline {
+        while await !condition() && ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(25))
         }
-        #expect(condition())
+        #expect(await condition())
     }
 
-    private func signedInSession() async throws -> HivraWorkspaceSession {
+    private func signedInSession(inventoryRefreshInterval: TimeInterval = 30) async throws -> HivraWorkspaceSession {
         _ = NSApplication.shared
         let profile = HivraConnectionProfile(name: "Route QA", url: URL(string: "\(origin)/dashboard")!, kind: .custom)
-        let session = HivraWorkspaceSession(profile: profile)
+        let session = HivraWorkspaceSession(profile: profile, inventoryRefreshInterval: inventoryRefreshInterval)
         session.connectionBrowser.webView.stopLoading()
         // Supply the display projection after the separately tested origin-validation boundary.
         let resources = [
@@ -74,6 +74,71 @@ struct HivraWorkspaceSessionRouteTests {
         #expect(session.selectedTabID == tab.id)
         #expect(!tab.browser.webView.isLoading)
         #expect(await liveMarker(tab.browser) == "retained")
+    }
+
+    @Test("the connection inventory revalidates itself while the workspace stays open")
+    func inventoryRevalidatesWhileWorkspaceStaysOpen() async throws {
+        let session = try await signedInSession(inventoryRefreshInterval: 1)
+        defer { session.clearOwnedViews() }
+        session.connectionBrowser.webView.loadHTMLString("""
+            <script>
+            window.refreshCount = 0;
+            window.addEventListener('hivra:refresh', event => { event.preventDefault(); window.refreshCount += 1; });
+            </script>
+            """, baseURL: URL(string: "\(origin)/dashboard")!)
+        try await eventually {
+            ((try? await session.connectionBrowser.webView.evaluateJavaScript("window.refreshCount") as? Int) ?? 0) > 0
+        }
+    }
+
+    @Test("leaving a resource refreshes the connection inventory that may have deleted it")
+    func leavingResourceRefreshesInventory() async throws {
+        let session = try await signedInSession()
+        defer { session.clearOwnedViews() }
+        session.connectionBrowser.webView.loadHTMLString("""
+            <script>
+            window.refreshCount = 0;
+            window.addEventListener('hivra:navigate', event => event.preventDefault());
+            window.addEventListener('hivra:refresh', event => { event.preventDefault(); window.refreshCount += 1; });
+            </script>
+            """, baseURL: URL(string: "\(origin)/dashboard")!)
+        try await eventually {
+            (try? await session.connectionBrowser.webView.evaluateJavaScript("window.refreshCount") as? Int) == 0
+        }
+        session.open(try #require(session.resources.first { $0.uid == "x-codex" }))
+        let tab = try #require(session.activeTab)
+        try await showLivePage(tab.browser, at: "\(origin)/dashboard")
+        try await eventually { session.tabs.isEmpty }
+        try await eventually {
+            ((try? await session.connectionBrowser.webView.evaluateJavaScript("window.refreshCount") as? Int) ?? 0) > 0
+        }
+    }
+
+    @Test("a settled successful inventory closes only tabs whose resource disappeared")
+    func inventoryClosesMissingTabs() async throws {
+        let session = try await signedInSession()
+        defer { session.clearOwnedViews() }
+        let codex = try #require(session.resources.first { $0.uid == "x-codex" })
+        let hermes = try #require(session.resources.first { $0.uid == "h-hermes" })
+        session.open(hermes)
+        session.open(codex)
+        let codexTab = try #require(session.activeTab)
+        try await showLivePage(codexTab.browser, at: "\(origin)/dashboard/agent/codex")
+
+        func publish(loading: Bool, errors: [HivraWorkspaceResourceSource: String]) async throws {
+            let snapshot = HivraWorkspaceSnapshot(ownerKey: "route-qa", resources: [hermes], loading: loading, errors: errors)
+            session.connectionBrowser.receiveWorkspaceMessage(.workspace(snapshot))
+            try await eventually { session.snapshot == snapshot }
+        }
+
+        try await publish(loading: true, errors: [:])
+        #expect(session.activeTab === codexTab)
+        try await publish(loading: false, errors: [.hivra: "Unavailable"])
+        #expect(session.activeTab === codexTab)
+
+        try await publish(loading: false, errors: [.hermes: "Unavailable"])
+        #expect(session.tabs.map(\.resourceUID) == [hermes.uid])
+        #expect(session.activeTab?.resourceUID == hermes.uid)
     }
 
     @Test("choosing an open resource whose page carries an unrecognized query selects it without reloading")

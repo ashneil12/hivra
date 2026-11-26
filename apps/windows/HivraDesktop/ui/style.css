@@ -70,19 +70,18 @@ body {
 .mark {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   font-weight: 600;
   font-size: 15px;
   letter-spacing: -0.01em;
   margin-bottom: 28px;
 }
 
-.mark::before {
-  content: "";
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: var(--hg-brand);
+.mark img {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: block;
 }
 
 h1 {

@@ -17,7 +17,7 @@ The repository README uses this image.
 ## Exports
 
 [`export-brand-assets.py`](export-brand-assets.py) resizes this logo into every
-deployed brand image, as PNG or, for the lighter homepage copy, WebP. It only
+deployed brand image, as PNG or ICO or, for the lighter homepage copy, WebP. It only
 resizes: no crop, padding, colour change, redraw or transparency.
 
 | Output | Size | Used for |
@@ -29,6 +29,8 @@ resizes: no crop, padding, colour change, redraw or transparency.
 | `dashboard/src/app/favicon.ico` | 16, 32, 48 px | Browser favicon |
 | `dashboard/src/app/icon.png` | 192 px | `<link rel="icon">` |
 | `dashboard/src/app/apple-icon.png` | 180 px | Apple touch icon |
+| `apps/windows/HivraDesktop/src-tauri/icons/{32x32,128x128,icon}.png` and `icon.ico` | 32–256 px | Windows app, window, taskbar and installer icons |
+| `apps/windows/HivraDesktop/ui/hivra-icon.png` | 192 px | Windows app welcome-page mark |
 
 The red H sits within 35% of the width from the centre, inside the 40% maskable
 safe zone, so the full-bleed square works as a maskable icon without padding.
@@ -36,8 +38,11 @@ safe zone, so the full-bleed square works as a maskable icon without padding.
 The script never overwrites a published export (`hivra-token-*`, `hivra-icon-*`).
 It writes missing files, leaves identical ones alone and stops, writing nothing,
 if an existing published file would change: a changed mark gets new file names.
-The Next.js icon files (`favicon.ico`, `icon.png`, `apple-icon.png`) have names
-fixed by the framework, so the script rewrites them when the mark changes.
+The Next.js icon files (`favicon.ico`, `icon.png`, `apple-icon.png`) and the
+fixed-location desktop-app icons have names fixed by their platforms, so the
+script rewrites them when the mark changes. `apps/macos/HivraMac/Resources/Hivra.icns`
+is derived from the same approved logo; regenerate it with `iconutil` when the
+mark changes because the ICNS container is macOS-specific.
 [`test_export_brand_assets.py`](test_export_brand_assets.py) checks both rules.
 
 ## Launch banner drafts

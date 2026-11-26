@@ -796,6 +796,9 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
       expect.any(Object),
       expect.any(Object),
     );
+    const cleanup = mockedRunScript.mock.calls[0][0];
+    expect(cleanup).toContain("operation-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.selected");
+    expect(cleanup).not.toContain("operation-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.selected");
     expect(mockedCompleteDelete).toHaveBeenCalledWith(expect.objectContaining({
       operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     }));

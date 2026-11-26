@@ -18,7 +18,6 @@
  * the button can't hammer the RPC or SSH into Proxmox in a tight loop.
  */
 
-import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import { apiError, apiSuccess } from "@/lib/api-response";
@@ -65,7 +64,7 @@ const LOG_CONTEXT = {
 // short-circuits to the current state — bounds the RPC read + Proxmox resize.
 const UNLOCK_COOLDOWN_SECONDS = 20;
 
-export async function POST(req?: NextRequest) {
+export async function POST(req: Request) {
   let userIdForLog: string | null = null;
   try {
     if (!isBillingV2ServerEnabled()) {
@@ -159,7 +158,8 @@ export async function POST(req?: NextRequest) {
     // The effective per-instance caps the user now has (tier + boost). This is
     // the single source of truth applyTierChange writes, so we surface it for
     // instant UI feedback.
-    const effectiveSpec = resolveEffectiveTierSpec(desiredTier, boostEligible);
+    const holderSeats = sub?.source === "token_holding";
+    const effectiveSpec = resolveEffectiveTierSpec(desiredTier, !holderSeats && boostEligible);
     let instancesUpdated = 0;
     let resizeFailures = 0;
     try {
@@ -167,7 +167,8 @@ export async function POST(req?: NextRequest) {
         userId,
         newTier: desiredTier,
         source: "manual",
-        veniceBoost: boostEligible,
+        holderSeats,
+        veniceBoost: !holderSeats && boostEligible,
         reason: "manual wallet unlock",
       });
       instancesUpdated = outcome.instancesUpdated;
@@ -216,7 +217,7 @@ export async function POST(req?: NextRequest) {
       hermesEvaluated,
       boostEvaluated,
       tier: desiredTier,
-      veniceBoostActive: boostEligible && isPaidTier(desiredTier),
+      veniceBoostActive: !holderSeats && boostEligible && isPaidTier(desiredTier),
       applied: {
         cpuLimit: effectiveSpec.cpuLimit,
         ramLimit: effectiveSpec.ramLimitMb,

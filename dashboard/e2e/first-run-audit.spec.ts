@@ -1,36 +1,7 @@
 /**
- * ────────────────────────────────────────────────────────────────────────────
- *  FIRST-RUN AUDIT — the 19/20 gate
- * ────────────────────────────────────────────────────────────────────────────
- *
- * Ash's bar, verbatim:
- *   "new signup → first agent deployed → first real outcome,
- *    working clean 19 out of 20 times, zero manual intervention."
- *
- * This spec is the only test in the repo that PROVISIONS REAL PAID INFRASTRUCTURE.
- * It is double-gated (FIRST_RUN_AUDIT=1 *and* a playwright project that only
- * exists when that env var is set) so it can never fire on an ordinary CI push.
- * See .github/workflows/first-run-audit.yml — workflow_dispatch / label only.
- *
- * ── WHAT "FIRST REAL OUTCOME" MEANS HERE, AND WHY ──────────────────────────
- *
- * A new free user launching Hermes has two model access choices in Launch:
- *
- *   1. Hivra credits: the launch mints a Venice proxy key and seeds
- *      providerId+model, so the box boots able to answer.
- *   2. "Set up inside Hermes": launches a CLEAN box — no provider, no model,
- *      no key. Hermes asks for a provider before the first chat.
- *
- * WHEN THIS FILE WAS WRITTEN, lane 1 was closed to a virgin free account: an
- * unfunded user was early-returned into a wallet-funding screen, and the starter
- * credit that was supposed to cover them was capped — by a ledger unique index
- * carrying no user_id — at exactly ONE user for the entire system. So there was
- * no path where a brand-new free signup ended with an agent that could answer,
- * and `workspace_interactive` was the honest ceiling.
- *
- * Canary #490 (per-user starter credit), #491 (the minted key binds to the wallet
- * that actually holds the money, and the grant settles BEFORE wallet resolution)
- * and the always-rendered Deploy CTA opened lane 1.
+ * Canary launch-to-first-outcome audit using the existing QA account.
+ * This does not measure signup, starter-credit grants, or plan activation.
+ * It provisions real infrastructure, so the live opt-in remains mandatory.
  *
  * `agent_replied` is now REACHABLE. Its old transport (`/api/instances/[id]/send-stream`,
  * a proxy to an endpoint no agent image serves) was retired — there is no HTTP chat
@@ -105,26 +76,23 @@
  *    assert on what the agent SAID, and it must run over a transport that exists.
  *
  * ── TEARDOWN IS NOT OPTIONAL ───────────────────────────────────────────────
- * A leaked audit VM is a paid VM and an orphan. Teardown runs in `finally`, then
- * again in afterAll, then again in scripts/first-run-audit-cleanup.ts. If the
- * instance cannot be destroyed, the Clerk user is deliberately KEPT so the reaper
- * can still authenticate as them — deleting the user first would strand the VM
- * outside the app's own destroy path.
+ * Teardown deletes only the exact run-owned resource. If the runner crashes,
+ * recover that resource by its run ID with scripts/first-run-audit-cleanup.ts.
  */
 import { expect, test } from '@playwright/test';
 import type { BrowserContext } from '@playwright/test';
 
 import {
   auditAgentName,
-  auditEmail,
   loadAuditConfig,
   newRunId,
   type AuditConfig,
 } from './first-run-audit/config';
 import { probeAgentChatOverWs } from './first-run-audit/agent-chat';
-import { createAuditUser, deleteAuditUser } from './first-run-audit/clerk-admin';
+import { readCanaryQaEmail } from './canary-qa/config';
 import {
-  destroyAllInstances,
+  assertUnusedRunId,
+  destroyRunResources,
   getInstance,
   isInferenceConfigured,
   listInstances,
@@ -136,9 +104,8 @@ import {
 } from './first-run-audit/instances';
 import { IframeLoadWatcher } from './first-run-audit/iframe-watch';
 import { PostHogCapture } from './first-run-audit/posthog-capture';
-import { collectOpsEvents, preclearAbuseGate, removeRiskPreclear } from './first-run-audit/probes';
-import { reapAuditAccounts } from './first-run-audit/reaper';
-import { establishAuditSession } from './first-run-audit/session';
+import { collectOpsEvents } from './first-run-audit/probes';
+import { establishAuditSession, verifyAuditSession } from './first-run-audit/session';
 import {
   AUDIT_STAGES,
   RunRecorder,
@@ -153,57 +120,19 @@ import {
 
 const ENABLED = process.env.FIRST_RUN_AUDIT === '1';
 
-/**
- * Set as soon as the run has an identity, so the afterAll net knows what to reap
- * even if the test body was aborted mid-flight.
- */
-let activeRunId: string | null = null;
-let teardownCompleted = false;
-
 test.describe.configure({ mode: 'serial' });
 
-test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real outcome', () => {
+test.describe('FIRST-RUN AUDIT: existing account → deployed agent → first real outcome', () => {
   test.skip(!ENABLED, 'Set FIRST_RUN_AUDIT=1 — this test provisions real paid infrastructure.');
 
-  /**
-   * Last line of in-process defence.
-   *
-   * A Playwright TIMEOUT aborts the test body — its `finally` is not guaranteed
-   * to run, so the primary teardown can be skipped entirely. afterAll gets its
-   * own timeout budget, so it still executes. If the normal teardown already
-   * completed this is a no-op scan.
-   */
-  test.afterAll(async () => {
-    if (!ENABLED || teardownCompleted || !activeRunId) return;
-
-    const cfg = loadAuditConfig();
-    // eslint-disable-next-line no-console
-    console.error(
-      `[first-run-audit] primary teardown did not complete — reaping run ${activeRunId}`,
-    );
-    const report = await reapAuditAccounts({
-      clerkSecretKey: cfg.clerkSecretKey,
-      baseUrl: cfg.baseUrl,
-      minAgeMs: 0,
-      onlyRunId: activeRunId,
-    });
-    if (report.leaked) {
-      throw new Error(
-        `[first-run-audit] afterAll reaper could not clean run ${activeRunId}: ` +
-          `${JSON.stringify(report.reaped)}. Run scripts/first-run-audit-cleanup.ts.`,
-      );
-    }
-  });
-
-  test('a virgin account reaches its working agent with zero manual intervention', async ({
+  test('the standing QA account reaches its working agent with zero manual intervention', async ({
     browser,
   }, testInfo) => {
     const cfg = loadAuditConfig();
     test.setTimeout(cfg.testTimeoutMs);
 
     const runId = newRunId();
-    activeRunId = runId;
-    const email = auditEmail(runId, cfg.emailDomain);
+    const email = readCanaryQaEmail();
     const agentName = auditAgentName(runId);
     const startedAt = new Date().toISOString();
     const recorder = new RunRecorder(runId);
@@ -220,7 +149,8 @@ test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real out
     };
 
     let context: BrowserContext | null = null;
-    let clerkUserId: string | null = null;
+    let session: Awaited<ReturnType<typeof establishAuditSession>> | undefined;
+    let launchAttempted = false;
     let instanceId: string | null = null;
     let instanceRow: Record<string, unknown> | null = null;
     let failure: AuditFailure | null = null;
@@ -231,19 +161,7 @@ test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real out
     console.log(`[first-run-audit] run=${runId} target=${cfg.baseUrl} agent=${agentName}`);
 
     try {
-      // ── 1. Signup ────────────────────────────────────────────────────────
-      const user = await createAuditUser(cfg.clerkSecretKey, email);
-      clerkUserId = user.id;
-      recorder.pass('clerk_user_created', user.id);
-
-      if (cfg.preclearRisk && cfg.supabaseUrl && cfg.supabaseServiceRoleKey) {
-        await preclearAbuseGate(cfg.supabaseUrl, cfg.supabaseServiceRoleKey, user.id);
-        // eslint-disable-next-line no-console
-        console.log('[first-run-audit] abuse gate pre-cleared (datacenter-egress runner)');
-      }
-
-      // ── 2. Land authed, exactly as a real signup does ────────────────────
-      context = await establishAuditSession(browser, {
+      session = await establishAuditSession(browser, {
         baseUrl: cfg.baseUrl,
         email,
         onContext: (ctx) => {
@@ -258,16 +176,11 @@ test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real out
           });
         },
       });
+      const { page } = session;
+      context = session.context;
+      await assertUnusedRunId(context.request, cfg.baseUrl, runId);
       recorder.pass('session_established');
 
-      const page = await context.newPage();
-
-      // ── 3. Launch ────────────────────────────────────────────────────────
-      // Enter through the front door a new account lands on after sign-up.
-      // Keep this audit on Hermes because the later assertions exercise the
-      // mature managed-instance API, workspace connection, reply, and teardown
-      // path rather than a catalog-only preview. (Stage names are the tally's
-      // histogram keys, so they keep their original names.)
       await page.goto('/dashboard/launch?kind=agent&start=1&profile=hermes', { waitUntil: 'domcontentloaded' });
 
       const planHeading = page.getByRole('heading', { name: /^Hermes — here's the plan$/ });
@@ -277,33 +190,13 @@ test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real out
       recorder.pass('welcome_loaded', 'Launch opened the Hermes plan');
       recorder.pass('agent_type_selected', 'hermes, named by the launch link');
 
-      // ── 4. Free plan ─────────────────────────────────────────────────────
-      // A new account has no plan. Launch offers `Turn on Free` as its own
-      // button, which POSTs /api/billing/subscribe {plan:'free'}; the plan is
-      // read back before anything counts it as active.
-      const turnOnFree = page.getByRole('button', { name: 'Turn on Free' });
       const reviewLaunch = page.getByRole('button', { name: 'Review launch' });
-
-      await expect
-        .poll(
-          async () =>
-            (await turnOnFree.isVisible().catch(() => false)) ||
-            (await reviewLaunch.isEnabled().catch(() => false)),
-          { timeout: 60_000, message: 'expected Turn on Free, or a plan ready to review' },
-        )
-        .toBe(true);
-
-      if (await turnOnFree.isVisible().catch(() => false)) {
-        await turnOnFree.click();
-        await expect(page.getByText('Free is active.'), 'the Free plan should read back as active').toBeVisible({
-          timeout: 60_000,
-        });
-        recorder.pass('plan_activated', 'free plan turned on in Launch');
-      } else {
-        recorder.pass('plan_activated', 'already on a plan');
+      if (await page.getByRole('button', { name: 'Turn on Free' }).isVisible()) {
+        throw new StageError('plan_verified', 'standing_plan_missing',
+          'The standing QA account requires a preconfigured plan.', 'harness_environment');
       }
+      recorder.pass('plan_verified');
 
-      // ── 5. The real launch click ─────────────────────────────────────────
       await page.getByRole('textbox', { name: 'Agent name' }).fill(agentName);
 
       // ── THE LANE ─────────────────────────────────────────────────────────
@@ -347,6 +240,7 @@ test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real out
 
       const launchButton = page.getByRole('button', { name: 'Launch Hermes' });
       await expect(launchButton).toBeEnabled();
+      launchAttempted = true;
       await launchButton.click();
       recorder.pass('deploy_clicked');
 
@@ -405,19 +299,23 @@ test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real out
         await sleep(cfg.postReadySettleMs);
       }
 
-      const teardown = await runTeardown({
-        cfg,
-        context,
-        clerkUserId,
-        runId,
-      });
-      // Tell afterAll it has nothing to do — but only if teardown truly finished.
-      teardownCompleted = teardown.instances_survived.length === 0 && teardown.errors.length === 0;
+      const teardown: TeardownRecord = { attempted: launchAttempted, instances_destroyed: [], instances_survived: [], errors: [] };
+      if (session && launchAttempted) {
+        try {
+          await verifyAuditSession(session.page, cfg.baseUrl, session.userId);
+          const result = await destroyRunResources(session.context.request, cfg.baseUrl, runId);
+          teardown.instances_destroyed = result.destroyed;
+          teardown.instances_survived = result.survived;
+        } catch {
+          teardown.errors.push('Could not verify run-owned resource cleanup.');
+        }
+      }
+      await context?.close().catch(() => undefined);
 
       const verdict: AuditVerdict = {
         schema: VERDICT_SCHEMA,
         run_id: runId,
-        verdict: failure ? 'fail' : 'pass',
+        verdict: failure || teardown.errors.length || teardown.instances_survived.length ? 'fail' : 'pass',
         outcome_level: cfg.requireAgentReply ? 'agent_replied' : 'workspace_interactive',
         stage_reached: recorder.reached,
         failure,
@@ -426,8 +324,6 @@ test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real out
         started_at: startedAt,
         finished_at: new Date().toISOString(),
         duration_ms: Date.now() - recorder.startedAtMs,
-        clerk_user_id: clerkUserId,
-        email,
         agent_name: agentName,
         instance: {
           id: instanceId,
@@ -457,17 +353,8 @@ test.describe('FIRST-RUN AUDIT: new signup → deployed agent → first real out
         contentType: 'application/json',
       });
 
-      await context?.close().catch(() => undefined);
-
-      // Surface a leak as a loud, separate failure — it must never hide behind a
-      // green run.
-      if (teardown.instances_survived.length > 0) {
-        throw new Error(
-          `[first-run-audit] LEAKED INFRASTRUCTURE: ${teardown.instances_survived
-            .map((s) => `${s.id} (HTTP ${s.httpStatus})`)
-            .join(', ')} — run scripts/first-run-audit-cleanup.ts NOW. ` +
-            `Clerk user ${clerkUserId} was retained so the reaper can authenticate.`,
-        );
+      if (teardown.instances_survived.length || teardown.errors.length) {
+        throw new Error(`[first-run-audit] Cleanup failed. Run npm run audit:first-run:cleanup -- --run-id=${runId}.`);
       }
       if (failure) {
         throw new Error(`[first-run-audit] ${failure.stage}/${failure.reason}: ${failure.message}`);
@@ -747,69 +634,6 @@ async function probeAgentReply(
 // Teardown — runs on every path, success or failure
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function runTeardown(args: {
-  cfg: AuditConfig;
-  context: BrowserContext | null;
-  clerkUserId: string | null;
-  runId: string;
-}): Promise<TeardownRecord> {
-  const { cfg, context, clerkUserId, runId } = args;
-  const record: TeardownRecord = {
-    attempted: true,
-    instances_destroyed: [],
-    instances_survived: [],
-    clerk_user_deleted: false,
-    clerk_user_retained_for_reaper: false,
-    errors: [],
-  };
-
-  // 1. Destroy every instance the audit user owns, through the app's own route.
-  if (context) {
-    try {
-      const result = await destroyAllInstances(
-        context.request,
-        cfg.baseUrl,
-        `first-run audit ${runId}`,
-      );
-      record.instances_destroyed = result.destroyed;
-      record.instances_survived = result.survived.map((s) => ({
-        id: s.id,
-        httpStatus: s.httpStatus,
-        error: s.error,
-      }));
-    } catch (err) {
-      record.errors.push(`destroy: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  } else if (clerkUserId) {
-    record.errors.push('no browser context — could not authenticate to destroy instances');
-  }
-
-  // 2. Delete the Clerk user — but ONLY if nothing survived. An orphaned VM whose
-  //    owner no longer exists cannot be reaped through the app's own destroy flow.
-  if (clerkUserId) {
-    if (record.instances_survived.length > 0 || record.errors.length > 0) {
-      record.clerk_user_retained_for_reaper = true;
-      // eslint-disable-next-line no-console
-      console.error(
-        `[first-run-audit] retaining Clerk user ${clerkUserId} — instances survived teardown`,
-      );
-    } else {
-      try {
-        record.clerk_user_deleted = await deleteAuditUser(cfg.clerkSecretKey, clerkUserId);
-      } catch (err) {
-        record.errors.push(`clerk delete: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-  }
-
-  // 3. Remove the synthetic risk row, if we planted one.
-  if (cfg.preclearRisk && cfg.supabaseUrl && cfg.supabaseServiceRoleKey && clerkUserId) {
-    await removeRiskPreclear(cfg.supabaseUrl, cfg.supabaseServiceRoleKey, clerkUserId);
-  }
-
-  return record;
-}
-
 function toFailure(err: unknown, recorder: RunRecorder): AuditFailure {
   if (err instanceof StageError) {
     recorder.fail(err.stage, err.message);
@@ -829,8 +653,8 @@ function toFailure(err: unknown, recorder: RunRecorder): AuditFailure {
   recorder.fail(stage, message);
   return {
     stage,
-    category: 'product',
-    reason: 'assertion_failed',
+    category: stage === 'session_established' ? 'harness_environment' : 'product',
+    reason: stage === 'session_established' ? 'standing_account_unavailable' : 'assertion_failed',
     message: message.slice(0, 1500),
   };
 }

@@ -360,9 +360,12 @@ describe("archiveInstance", () => {
     expect(result).toMatchObject({ ok: false, reason: "instance_missing", retryable: false });
   });
 
-  it("returns instance_not_archivable when not paused", async () => {
+  it.each([
+    { lifecycle_state: "active" },
+    { lifecycle_state: "paused", paused_reason: "holder_idle" },
+  ])("refuses to archive a live session %j", async (state) => {
     const supabase = makeSupabase([
-      { table: "hermes_instances", op: "select", result: { data: { ...baseRow, lifecycle_state: "active" }, error: null } },
+      { table: "hermes_instances", op: "select", result: { data: { ...baseRow, ...state }, error: null } },
     ]);
     const { deps } = makeDeps([]);
 

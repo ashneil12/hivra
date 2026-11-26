@@ -1,7 +1,9 @@
-import {
-  destroyAllHivraAgents,
-  listHivraAgents,
-} from "../e2e/first-run-audit/instances";
+import { assertUnusedRunId, destroyRunResources, listHivraAgents } from "../e2e/first-run-audit/instances";
+
+const origin = "https://canary.example.test";
+const runId = "4bc8ea25";
+const own = { id: "owned", name: `firstrun-audit-${runId}`, status: "running" };
+const unrelated = { id: "unrelated", name: `${own.name}-different`, status: "running" };
 
 function response(status: number, body: unknown) {
   return {
@@ -12,76 +14,58 @@ function response(status: number, body: unknown) {
   };
 }
 
-describe("first-run audit Hivra cleanup", () => {
-  it("reads the nested Hivra agent list envelope", async () => {
-    const request = {
-      get: jest.fn().mockResolvedValue(response(200, {
-        success: true,
-        data: { agents: [{ id: "agent-1", name: "audit", status: "running" }] },
-      })),
-    };
+function requestWithAgents(inventories: Array<typeof own[]>) {
+  const agents = jest.fn();
+  for (const inventory of inventories) {
+    agents.mockResolvedValueOnce(response(200, { success: true, data: { agents: inventory } }));
+  }
+  return {
+    get: jest.fn((url: string) => url.endsWith("/agents")
+      ? agents()
+      : Promise.resolve(response(200, { success: true, data: [unrelated] }))),
+    delete: jest.fn(),
+  };
+}
 
-    await expect(listHivraAgents(request as never, "https://canary.example.test"))
-      .resolves.toEqual([{ id: "agent-1", name: "audit", status: "running" }]);
+describe("first-run audit named resource cleanup", () => {
+  it("reads the nested Hivra agent list envelope", async () => {
+    await expect(listHivraAgents(requestWithAgents([[own]]) as never, origin)).resolves.toEqual([own]);
   });
 
-  it("retries a provider-operation conflict, sends the exact Origin, and proves disappearance", async () => {
-    const request = {
-      get: jest.fn()
-        .mockResolvedValueOnce(response(200, {
-          success: true,
-          data: { agents: [{ id: "agent-1", name: "audit", status: "provisioning" }] },
-        }))
-        .mockResolvedValueOnce(response(200, {
-          success: true,
-          data: { agents: [{ id: "agent-1", name: "audit", status: "running" }] },
-        }))
-        .mockResolvedValueOnce(response(200, { success: true, data: { agents: [] } })),
-      delete: jest.fn()
-        .mockResolvedValueOnce(response(409, { error: "operation finishing" }))
-        .mockResolvedValueOnce(response(200, { success: true })),
-    };
+  it("retries conflicts and verifies disappearance of the exact run, leaving existing resources alone", async () => {
+    const request = requestWithAgents([[own, unrelated], [unrelated, own], [unrelated]]);
+    request.delete.mockResolvedValueOnce(response(409, {})).mockResolvedValueOnce(response(200, {}));
 
-    const result = await destroyAllHivraAgents(
-      request as never,
-      "https://canary.example.test",
-      3,
-      0,
-    );
-
-    expect(result).toEqual({ destroyed: ["agent-1"], survived: [] });
-    expect(request.delete).toHaveBeenNthCalledWith(
-      1,
-      "https://canary.example.test/api/hivra/agents/agent-1",
-      expect.objectContaining({
-        headers: { Origin: "https://canary.example.test" },
-      }),
-    );
+    await expect(destroyRunResources(request as never, origin, runId, 3, 0))
+      .resolves.toEqual({ destroyed: [own.id], survived: [] });
+    expect(request.delete.mock.calls).toEqual(Array(2).fill([
+      `${origin}/api/hivra/agents/${own.id}`, expect.objectContaining({ headers: { Origin: origin } }),
+    ]));
   });
 
   it.each([
-    [503, {}, "HTTP 503"],
-    [200, { success: true, data: {} }, "response was not verified"],
-  ])("rejects an unreadable inventory in strict cleanup (HTTP %s)", async (status, body, error) => {
-    const request = {
-      get: jest.fn().mockResolvedValue(response(status, body)),
-      delete: jest.fn(),
-    };
-
-    await expect(destroyAllHivraAgents(request as never, "https://canary.example.test", 1, 0, { verifyDisappearance: true }))
-      .rejects.toThrow(error);
+    [503, {}, /HTTP 503/],
+    [200, { success: true, data: {} }, /response was not verified/],
+  ])("rejects an unreadable inventory without deleting (HTTP %s)", async (status, body, error) => {
+    const request = { get: jest.fn().mockResolvedValue(response(status, body)), delete: jest.fn() };
+    await expect(destroyRunResources(request as never, origin, runId, 1, 0)).rejects.toThrow(error);
     expect(request.delete).not.toHaveBeenCalled();
   });
 
-  it("does not treat an acknowledged delete as disappearance in strict cleanup", async () => {
-    const request = {
-      get: jest.fn().mockResolvedValue(response(200, {
-        success: true, data: { agents: [{ id: "agent-1", status: "running" }] },
-      })),
-      delete: jest.fn().mockResolvedValue(response(200, { success: true })),
-    };
+  it("does not treat an acknowledged delete as disappearance", async () => {
+    const request = requestWithAgents([[own], [own]]);
+    request.delete.mockResolvedValue(response(200, {}));
 
-    await expect(destroyAllHivraAgents(request as never, "https://canary.example.test", 1, 0, { verifyDisappearance: true }))
-      .resolves.toMatchObject({ survived: [{ id: "agent-1", deleted: false }] });
+    await expect(destroyRunResources(request as never, origin, runId, 1, 0))
+      .resolves.toMatchObject({ survived: [{ id: own.id, deleted: false }] });
+  });
+
+  it("rejects invalid run IDs, collisions before launch and ambiguous matches during cleanup", async () => {
+    const request = requestWithAgents([[own], [own, { ...own, id: "another" }]]);
+    await expect(destroyRunResources(request as never, origin, "", 1, 0)).rejects.toThrow(/exact eight-hex/);
+    expect(request.get).not.toHaveBeenCalled();
+    await expect(assertUnusedRunId(request as never, origin, runId)).rejects.toThrow(/already has a resource/);
+    await expect(destroyRunResources(request as never, origin, runId, 1, 0)).rejects.toThrow(/ambiguous cleanup/);
+    expect(request.delete).not.toHaveBeenCalled();
   });
 });
