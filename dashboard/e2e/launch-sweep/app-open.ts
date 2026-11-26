@@ -21,8 +21,8 @@ export interface AppOpenProof {
   textSample: string;
 }
 
-export async function proveRustpadCollaboration(page: Page, timeoutMs: number): Promise<AppOpenProof> {
-  const opened = await proveAppOpen(page, 'Rustpad', timeoutMs);
+export async function proveRustpadCollaboration(page: Page, target: SweepTarget, timeoutMs: number): Promise<AppOpenProof> {
+  const opened = await proveAppOpen(page, target, timeoutMs);
   const selector = 'iframe[title$="· dashboard"]';
   const primary = page.frameLocator(selector).first();
   const scratchpad = await primary.locator('body').evaluate(() => window.location.hash.slice(1));
