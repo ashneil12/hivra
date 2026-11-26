@@ -1371,12 +1371,14 @@ export default function AgentPage() {
         initialFailures = 0;
         const fresh = a;
         if (fresh.status === "deleted") {
-          listChanged();
-          setAgent(null);
+          const previous = agentRef.current;
+          const wasOpen = previous?.id === fresh.id && previous.status !== "deleted";
+          if (previous?.id !== fresh.id || wasOpen) listChanged();
+          setAgent(wasOpen ? null : fresh);
           setStatusObservation(null);
           setLoaded(true);
           schedule(null);
-          router.push(deletedResourcePath(fresh));
+          if (wasOpen) router.push(deletedResourcePath(fresh));
           return;
         }
         // An unchanged settled read keeps the same object so effects keyed
@@ -1393,7 +1395,7 @@ export default function AgentPage() {
           ? { ...previous, unavailable: true }
           : null);
         // Transient blip: keep the stale agent rendered and keep reading.
-        schedule(nextAgentStatusPollMs(last, visible()));
+        schedule(last.status === "deleted" ? null : nextAgentStatusPollMs(last, visible()));
         return;
       }
       initialFailures += 1;
@@ -1540,7 +1542,7 @@ export default function AgentPage() {
         <h3>{isComputer ? "Computer deleted" : "Agent deleted"}</h3>
         <p>{agent.name} has been deleted and can no longer be opened.</p>
         <div className={styles.statusActions}>
-          <button type="button" className={styles.statusPrimary} onClick={() => go(isComputer ? "/dashboard/computers" : "/dashboard")}>
+          <button type="button" className={styles.statusPrimary} onClick={() => go(deletedResourcePath(agent))}>
             {isComputer ? "Back to computers" : "Back to agents"}
           </button>
         </div>

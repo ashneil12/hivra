@@ -319,14 +319,28 @@ describe("AgentPage", () => {
       id: "agent_123", type: "hermes", name: "Hermes fixture", status: "deleted",
       chat_url: chatUrl, api_token: chatUrl ? "box-token" : null, cpu: 2, ram: 4,
     });
-    render(<AgentPage />);
+    const invalidate = jest.spyOn(resourceInventory, "invalidate");
+    try {
+      render(<AgentPage />);
 
-    expect(await screen.findByRole("heading", { name: "Agent deleted" })).toBeVisible();
-    expect(screen.queryByText(/The computer is up|Dashboard not reachable/)).not.toBeInTheDocument();
-    expect(document.querySelector("iframe")).not.toBeInTheDocument();
-    expect(global.fetch).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Back to agents" }));
-    expect(pushMock).toHaveBeenCalledWith("/dashboard");
+      expect(await screen.findByRole("heading", { name: "Agent deleted" })).toBeVisible();
+      expect(pushMock).not.toHaveBeenCalled();
+      expect(invalidate.mock.calls).toEqual([["hivra"], ["attached"]]);
+
+      await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+      expect(mockGetAgent).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("heading", { name: "Agent deleted" })).toBeVisible();
+      expect(pushMock).not.toHaveBeenCalled();
+      expect(invalidate).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText(/The computer is up|Dashboard not reachable/)).not.toBeInTheDocument();
+      expect(document.querySelector("iframe")).not.toBeInTheDocument();
+      expect(global.fetch).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Back to agents" }));
+      expect(pushMock).toHaveBeenCalledTimes(1);
+      expect(pushMock).toHaveBeenCalledWith("/dashboard");
+    } finally {
+      invalidate.mockRestore();
+    }
   });
 
   it("shows the truthful customer-host Windows installation handoff without opening RDP", async () => {
