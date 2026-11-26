@@ -85,6 +85,7 @@ describe("SignUpPage", () => {
 
     expect(redirect).not.toHaveBeenCalled();
     expect(mockSignUp).toHaveBeenCalledWith(expect.objectContaining({
+      routing: "hash",
       fallbackRedirectUrl: "/dashboard/launch?kind=agent&start=1",
     }));
   });
