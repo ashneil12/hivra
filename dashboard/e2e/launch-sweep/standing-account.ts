@@ -9,7 +9,7 @@ import type { SweepTarget } from './targets';
 
 type AccountEnv = { baseUrl: string; clerkSecretKey: string; supabaseUrl: string; serviceRoleKey: string };
 
-export function certificationEmail(env: NodeJS.ProcessEnv, targets: SweepTarget[], baseUrl: string): string | undefined {
+export function certificationEmail(env: Record<string, string | undefined>, targets: SweepTarget[], baseUrl: string): string | undefined {
   if (env.LAUNCH_SWEEP_CERTIFICATION !== '1') return undefined;
   if (baseUrl !== 'https://canary.hermesos.cloud' || targets.length !== 1 || !targets[0].catalog) {
     throw new Error('[launch-sweep] certification requires exactly one catalog target on public Canary');
