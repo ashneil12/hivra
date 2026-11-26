@@ -355,6 +355,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         return apiSuccess({ agent: sanitizeHivraAgentRow(updated) });
       } catch (error) {
         if (error instanceof GvisorComputerError) {
+          if (error.code === "capacity_limit") {
+            return apiError(error.message, 409, undefined, { code: error.code });
+          }
           const status = error.code === "plan_required" ? 402 : error.code === "not_found" ? 404
             : error.code === "conflict" || error.code === "not_ready" ? 409 : 503;
           return apiError(error.message, status);

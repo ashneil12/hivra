@@ -3,6 +3,7 @@
 
 import base64
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -13,10 +14,14 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import ModuleType
 
 VERSION = "2026.10.20.1"
 IMAGE = "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285"
 OFFLINE_IMAGE_CONFIG = Path("/opt/hivra/gvisor-adapter/offline-image")
+STORAGE_ADMISSION_PROBE = Path("/opt/hivra/gvisor-adapter/storage-admission-probe")
+XFS_WORKSPACE_HELPER = Path("/opt/hivra/gvisor-adapter/hivra-gvisor-xfs-workspace.py")
+XFS_WORKSPACE_SHA256 = "9fce9c40dd57656fabf01d08b0fc7278b8d5ff89f818904e2e752b4e337cba6e"
 # Sandboxes this adapter manages, by the adapter release that created each
 # resource (a volume or network keeps the label it was created with) and the
 # image its container runs. Update moves a container to this release's IMAGE.
@@ -140,17 +145,19 @@ def docker(*args, check=True, timeout=120, capture_limit=None):
     return result
 
 
-def prepare_image():
+def prepare_image(*, local_only=False):
     try:
         fd = os.open(OFFLINE_IMAGE_CONFIG, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
-        docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
-        return ()
-    with os.fdopen(fd, "rb") as config:
-        info = os.fstat(config.fileno())
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022
-                or config.read(len(IMAGE) + 2) not in (IMAGE.encode(), (IMAGE + "\n").encode())):
-            fail("The gVisor offline image setting must be root-owned and name the exact pinned image")
+        if not local_only:
+            docker("pull", "--platform", "linux/amd64", IMAGE, timeout=300)
+            return ()
+    else:
+        with os.fdopen(fd, "rb") as config:
+            info = os.fstat(config.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022
+                    or config.read(len(IMAGE) + 2) not in (IMAGE.encode(), (IMAGE + "\n").encode())):
+                fail("The gVisor offline image setting must be root-owned and name the exact pinned image")
 
     result = docker("image", "inspect", IMAGE, check=False)
     if result.returncode != 0:
@@ -172,12 +179,16 @@ def prepare_image():
 
 def valid_input(document):
     if not isinstance(document, dict) or set(document) - {
-        "operation", "ownerHash", "computerId", "sandboxId", "cpu", "memoryMb", "hostMemoryReserveMb", "argv"
+        "operation", "ownerHash", "computerId", "sandboxId", "cpu", "memoryMb", "hostMemoryReserveMb", "argv",
+        "requireDiskAdmission",
     }:
         fail("Invalid gVisor computer request")
     operation = document.get("operation")
     if operation not in {"create", "status", "start", "stop", "resize", "exec", "delete", "update"}:
         fail("Invalid gVisor computer operation")
+    if "requireDiskAdmission" in document and (document["requireDiskAdmission"] is not True
+                                               or operation not in {"create", "start"}):
+        fail("Invalid gVisor disk admission scope")
     for key in ("computerId", "sandboxId"):
         if not isinstance(document.get(key), str) or not UUID.fullmatch(document[key]):
             fail("Invalid gVisor computer identity")
@@ -413,6 +424,125 @@ def admit(name, cpu, memory, host_memory_reserve):
         fail("The connected host does not have enough uncommitted capacity")
 
 
+def storage_budget(values, available, operation):
+    if (set(values) != {"recovery", "outstanding", "workspace", "setup", "restart"}
+            or any(type(amount) is not int or amount < 0 for amount in values.values())
+            or values["recovery"] <= 0 or type(available) is not int or available < 0):
+        raise ValueError("Invalid storage budget")
+    increment = values["workspace"] + values["setup"] if operation == "create" else values["restart"]
+    return available >= values["recovery"] + values["outstanding"] + increment
+
+
+def check_storage(sample, operation, observations=None):
+    if (type(sample["version"]) is not int or sample["version"] != 1
+            or sample["backing"] not in {"fixed", "thin"}
+            or not isinstance(sample["filesystems"], list) or not sample["filesystems"]
+            or not isinstance(sample["pools"], list)
+            or bool(sample["pools"]) != (sample["backing"] == "thin")):
+        raise ValueError("Invalid storage topology")
+    devices, pools, checks = set(), set(), []
+    for filesystem in sample["filesystems"]:
+        path = Path(filesystem["path"])
+        if not path.is_absolute() or not path.is_dir():
+            raise ValueError("Invalid storage root")
+        device = path.stat().st_dev
+        if device in devices:
+            raise ValueError("Duplicate storage filesystem")
+        devices.add(device)
+        reading = os.statvfs(path)
+        capacity = (reading.f_bavail * reading.f_frsize, reading.f_favail)
+        if observations is not None:
+            prior_device, before = observations.setdefault(str(path), (device, capacity))
+            if prior_device != device:
+                raise ValueError("Storage mount changed while checking admission")
+            capacity = tuple(min(prior, fresh) for prior, fresh in zip(before, capacity))
+        checks.append(storage_budget(filesystem["bytes"], capacity[0], operation))
+        checks.append(storage_budget(filesystem["inodes"], capacity[1], operation))
+    if operation == "create" and any(sum(fs[dimension]["workspace"] for fs in sample["filesystems"]) <= 0
+                                     for dimension in ("bytes", "inodes")):
+        raise ValueError("Missing enforced workspace budget")
+    for pool in sample["pools"]:
+        identity = pool["identity"]
+        if (not isinstance(identity, str) or not identity or identity in pools or pool["writable"] is not True):
+            raise ValueError("Invalid thin pool")
+        pools.add(identity)
+        for dimension in ("data", "metadata"):
+            checks.append(storage_budget(pool[dimension]["budget"], pool[dimension]["available"], operation))
+    return all(checks)
+
+
+def workspace_quota(sample, request):
+    fd = os.open(XFS_WORKSPACE_HELPER, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        info = os.fstat(source.fileno())
+        code = source.read(65537)
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022
+            or len(code) > 65536 or hashlib.sha256(code).hexdigest() != XFS_WORKSPACE_SHA256):
+        raise ValueError("XFS workspace helper identity did not match")
+    module = ModuleType("hivra_pinned_xfs_workspace")
+    sys.modules[module.__name__] = module
+    exec(compile(code, str(XFS_WORKSPACE_HELPER), "exec"), module.__dict__)
+    policy = module.Policy(**sample["xfsWorkspace"], adapter_versions=ADMITTED_VERSIONS)
+    endpoint = json.loads(docker("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}").stdout)
+    if endpoint != "unix://" + policy.docker_socket or os.environ.get("DOCKER_HOST", endpoint) != endpoint:
+        raise ValueError("Docker CLI and XFS proof must use the same local daemon")
+    quota = module.XFSWorkspaceQuotas(policy)
+    workspace = module.Workspace(request["sandboxId"], request["computerId"], request["ownerHash"])
+    if request["operation"] == "create":
+        quota.probe_create(workspace)
+    else:
+        quota.verify(workspace)
+    listed = docker("volume", "ls", "--format", "{{.Name}}").stdout.splitlines()
+    volumes = [name for name in listed if name.startswith(PREFIX + "workspace-")]
+    retained = []
+    for name in volumes:
+        [item] = json.loads(docker("volume", "inspect", name).stdout)
+        labels = item["Labels"]
+        saved = module.Workspace(labels[f"{LABEL}.sandbox"], labels[f"{LABEL}.computer"], labels[f"{LABEL}.owner"])
+        if saved.name != name:
+            raise ValueError("Managed workspace inventory identity did not match")
+        retained.append(saved)
+    commitments = quota.commitments(retained)
+    device = Path(policy.xfs_mount).stat().st_dev
+    [domain] = [row for row in sample["filesystems"] if Path(row["path"]).stat().st_dev == device]
+    expected = {"bytes": (policy.hard_bytes, sum(p.outstanding_bytes for p in commitments)),
+                "inodes": (policy.hard_inodes, sum(p.outstanding_inodes for p in commitments))}
+    for name, (limit, committed) in expected.items():
+        if domain[name]["workspace"] != limit:
+            raise ValueError("Quota envelope did not match live enforced commitments")
+        domain[name]["outstanding"] += committed
+    return quota, workspace
+
+
+def disk_admission(request):
+    try:
+        for path, kind in ((STORAGE_ADMISSION_PROBE.parent, stat.S_ISDIR), (STORAGE_ADMISSION_PROBE, stat.S_ISREG)):
+            info = path.lstat()
+            if not kind(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                raise ValueError("Unsafe storage probe")
+        result = run_bounded([str(STORAGE_ADMISSION_PROBE), request["operation"], *names(request)],
+                             timeout=8, limit=32768)
+        if result.returncode != 0:
+            raise ValueError("Storage probe failed")
+        sample = json.loads(result.stdout)
+        observations = {}
+        check_storage(sample, request["operation"], observations)
+        quota = workspace_quota(sample, request)
+        if check_storage(sample, request["operation"], observations):
+            return quota
+        code = "disk_capacity"
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, IndexError, AttributeError, RuntimeError):
+        code = "disk_unverified"
+    disk_denial(request, code)
+    return False
+
+
+def disk_denial(request, code):
+    denial = {key: request[key] for key in ("operation", "computerId", "sandboxId")}
+    print("HIVRA_GVISOR_ADMISSION_V1 " + json.dumps({**denial, "version": 1, "code": code},
+                                                     separators=(",", ":")), flush=True)
+
+
 def initialize_workspace(request, volume, pull_options=()):
     helper = helper_name(request)
     helper_labels = expected_helper_labels(request)
@@ -497,7 +627,7 @@ def update(request):
     return status(request)
 
 
-def create(request):
+def create(request, *, pull_options=None, workspace_policy=None):
     name, volume, network = names(request)
     if inspect_container(name, request, required=False):
         return status(request)
@@ -512,10 +642,14 @@ def create(request):
     created_volume = False
     created_network = False
     try:
-        pull_options = prepare_image()
+        if pull_options is None:
+            pull_options = prepare_image()
         if not inspect_resource("volume", volume, request):
             docker("volume", "create", *label_args, volume)
             created_volume = True
+        if workspace_policy is not None:
+            quota, workspace = workspace_policy
+            quota.acquire(workspace)
         if not inspect_resource("network", network, request):
             docker("network", "create", "--driver", "bridge", *label_args, network)
             created_network = True
@@ -642,10 +776,35 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX)
         name, volume, network = names(request)
         operation = request["operation"]
+        pull_options = None
+        workspace_policy = None
+        if request.get("requireDiskAdmission"):
+            current = inspect_container(name, request, required=operation == "start")
+            if current is not None and (operation == "create" or current["State"].get("Running")):
+                status(request)
+                return
+            if inspect_container(previous_name(request), request, required=False) is not None:
+                fail("Finish the pending gVisor update before attempting managed storage admission")
+            if operation == "create":
+                if (inspect_helper(request, required=False) is not None
+                        or inspect_resource("volume", volume, request) or inspect_resource("network", network, request)):
+                    fail("Reconcile the existing gVisor resources before attempting managed storage admission")
+                try:
+                    pull_options = prepare_image(local_only=True)
+                except (SystemExit, OSError, subprocess.SubprocessError):
+                    disk_denial(request, "disk_unverified")
+                    return
+            else:
+                inspect_resource("volume", volume, request, required=True)
+                inspect_resource("network", network, request, required=True)
+                require_helper_absent(request)
+            workspace_policy = disk_admission(request)
+            if not workspace_policy:
+                return
         if operation != "delete":
             recover_update(request)
         if operation == "create":
-            create(request)
+            create(request, pull_options=pull_options, workspace_policy=workspace_policy)
         elif operation == "status":
             status(request)
         elif operation == "start":
@@ -675,5 +834,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, subprocess.SubprocessError, ValueError, KeyError):
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, RuntimeError):
         fail()
