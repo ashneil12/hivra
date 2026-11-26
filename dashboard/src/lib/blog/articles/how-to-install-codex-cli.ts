@@ -138,7 +138,7 @@ export const howToInstallCodexCli: BlogArticle = {
       paragraphs: [
         "OpenAI's CLI page gives a three-step first run. Open a project directory, run `codex`, and describe a task. The page's own example prompt is `Tell me about this project`, and it suggests making a focused change or debugging an issue next.",
         "Its one piece of advice is worth taking: create Git checkpoints before and after a task, so you can revert anything you don't like. Start in a repository with a clean working tree, commit before you ask for a big change, and review the diff afterward.",
-        "Once you are using it, the commands you will want first are `codex resume` (continue a previous session) and `codex update`. Our guide to [resuming a Codex session](/blog/codex-resume-session) covers the first in detail.",
+        "Once you are using it, the commands you will want first are `codex resume` (continue a previous session) and `codex update`. Our guide to [resuming a Codex session](/blog/codex-resume-session) covers the first in detail. To connect tools such as a docs server or your issue tracker, see [Codex MCP: how to add MCP servers to the Codex CLI](/blog/codex-mcp).",
       ],
     },
     {
