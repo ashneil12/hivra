@@ -1119,6 +1119,10 @@ export async function launchHivraAgentForUser(
       || (catalogManifest && !isUniversalCatalogEnabled())) {
       return apiError("That agent isn't launchable yet", 400);
     }
+    if (catalogManifest?.runtime.kind === "docker-web" && catalogManifest.runtime.imageDigest
+      && (deployment.mode !== "hivra-managed" || managedProvisionerChannel !== "canary")) {
+      return apiError("Digest-pinned catalog apps require the managed Canary provisioner.", 409);
+    }
     // DeepSeek Harness has acceptance only on Hivra's managed Proxmox hosts, with
     // the named HTTPS access its host script requires. A connected server or a
     // computer in the owner's own cloud has none (its typed provider adapter
