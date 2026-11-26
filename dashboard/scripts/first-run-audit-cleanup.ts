@@ -7,7 +7,7 @@ import { readCanaryQaEmail } from '../e2e/canary-qa/config';
 import { assertLiveManagedHostingAuditAllowed, auditAgentName, loadAuditConfig } from '../e2e/first-run-audit/config';
 import { destroyRunResources, runInventory } from '../e2e/first-run-audit/instances';
 import { establishAuditSession } from '../e2e/first-run-audit/session';
-import { browserLaunchOptions } from './lib/playwright-launch.cjs';
+import { launchOptions } from './lib/playwright-launch.cjs';
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -20,8 +20,7 @@ async function main(): Promise<void> {
   assertLiveManagedHostingAuditAllowed();
   const { baseUrl } = loadAuditConfig();
   const email = readCanaryQaEmail();
-  const launch = browserLaunchOptions();
-  const browser = await chromium.launch(launch);
+  const browser = await chromium.launch(launchOptions());
   try {
     const { context } = await establishAuditSession(browser, { baseUrl, email });
     if (args.includes('--dry-run')) {
