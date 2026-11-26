@@ -64,6 +64,17 @@ describe("legacy SEO redirects", () => {
     expect(response.headers.get("location")).toBe("https://hivra.cloud/roadmap");
   });
 
+  it.each(["/litepaper", "/docs/litepaper"])("redirects %s to the existing litepaper document", async (path) => {
+    const nextConfig = await loadHostedConfig();
+    const response = await unstable_getResponseFromNextConfig({
+      url: `https://hivra.cloud${path}?ref=share`,
+      nextConfig,
+    });
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("https://hivra.cloud/docs/litepaper/index.html?ref=share");
+  });
+
   // /about used to 308 to the founder essay. It is now the entity home page, so
   // no redirect may shadow it: a redirect here would hide the page from
   // crawlers and from everyone who follows the footer link.
