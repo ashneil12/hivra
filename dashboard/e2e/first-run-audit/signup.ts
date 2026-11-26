@@ -93,7 +93,7 @@ export function assertClerkInvitationAcceptUrl(rawUrl: string): void {
 function assertClerkFrontendApiHost(host: string): void {
   const normalized = host.toLowerCase();
   if (!(normalized.endsWith('.clerk.accounts.dev') || normalized.endsWith('.accounts.dev'))) {
-    throw new Error(`[clerk-signup] refusing unexpected Clerk frontend API host: ${host}`);
+    throw new Error(`[clerk-signup] refusing unexpected invitation acceptance URL host: ${host}`);
   }
 }
 

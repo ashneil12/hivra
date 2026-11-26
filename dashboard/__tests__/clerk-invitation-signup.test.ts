@@ -60,14 +60,15 @@ describe('Failed Clerk signup cleanup', () => {
   const invitation = { id: 'fixture-invitation', url: 'https://hivra-canary.clerk.accounts.dev/v1/tickets/accept?ticket=fixture' };
   const user = { id: 'fixture-user', email_addresses: [{ email_address: EMAIL }] };
   const signup = () => acceptAuditInvitation(
-    { goto: jest.fn().mockRejectedValue(new Error('fixture browser failed')) } as unknown as Page,
+    { goto: jest.fn().mockRejectedValue(new Error('fixture browser failed')), context: jest.fn().mockReturnValue({ route: jest.fn().mockResolvedValue(undefined) }) } as unknown as Page,
     { baseUrl: 'https://canary.hermesos.cloud', clerkSecretKey, email: EMAIL },
   );
 
   beforeEach(() => {
     jest.spyOn(auditConfig, 'assertLiveManagedHostingAuditAllowed').mockImplementation(() => {});
     jest.spyOn(global, 'fetch').mockRejectedValue(new Error('unexpected fixture request'))
-      .mockResolvedValueOnce(Response.json(invitation));
+      .mockResolvedValueOnce(Response.json(invitation))
+      .mockResolvedValueOnce(Response.json({ token: 'fixture-testing-token', expires_at: Math.floor(Date.now() / 1000) + 600 }));
   });
   afterEach(() => jest.restoreAllMocks());
 
@@ -78,7 +79,7 @@ describe('Failed Clerk signup cleanup', () => {
   ])('stops after an inconclusive lookup', async (response) => {
     jest.mocked(fetch).mockResolvedValueOnce(response());
     await expect(signup()).rejects.toThrow(/invitation signup cleanup: cleanup failed/);
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 
   it.each([
@@ -96,7 +97,7 @@ describe('Failed Clerk signup cleanup', () => {
   ])('does not revoke or delete when the user lookup returns %s', async (_scenario, rows) => {
     jest.mocked(fetch).mockResolvedValueOnce(Response.json(rows)).mockResolvedValueOnce(Response.json({}));
     await expect(signup()).rejects.toThrow('cleanup failed: [clerk] exact email lookup returned an unresolved user identity');
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 
   it.each([404, 503])('reports revocation failure (HTTP %i)', async (status) => {
@@ -118,6 +119,6 @@ describe('Failed Clerk signup cleanup', () => {
     jest.mocked(fetch).mockResolvedValueOnce(Response.json([user])).mockResolvedValueOnce(Response.json(receipt));
     await expect(signup()).rejects.toThrow(expected);
     expect(fetch).toHaveBeenLastCalledWith(expect.stringContaining('/users/fixture-user'), expect.objectContaining({ method: 'DELETE' }));
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(4);
   });
 });
