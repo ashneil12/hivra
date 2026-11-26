@@ -10,6 +10,7 @@ import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { isOpenBotAgentEnabled } from "@/lib/hivra/openbot-flag";
 import { canCertifyCatalog } from "@/lib/hivra/catalog-certifier-access";
+import { catalogAppRequiresPinnedDigest } from "@/lib/hivra/catalog-manifests/launch-seals";
 import {
   buildCatalogAppLaunchSpec,
   getCatalogAppManifest,
@@ -1135,7 +1136,7 @@ export async function launchHivraAgentForUser(
       || (type === "openbot" && !isOpenBotAgentEnabled())) {
       return apiError("That agent isn't launchable yet", 400);
     }
-    const requiresPinnedCatalogDigest = catalogManifest?.runtime.kind === "docker-web" && Boolean(catalogManifest.runtime.imageDigest);
+    const requiresPinnedCatalogDigest = catalogManifest !== undefined && catalogAppRequiresPinnedDigest(catalogManifest);
     if (requiresPinnedCatalogDigest
       && (deployment.mode !== "hivra-managed" || managedProvisionerChannel !== "canary")) {
       return apiError("Digest-pinned catalog apps require the managed Canary provisioner.", 409);

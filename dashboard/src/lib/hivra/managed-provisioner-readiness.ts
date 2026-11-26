@@ -19,6 +19,7 @@ import {
 } from "./managed-provisioner-channel";
 import { shellQuote } from "./proxmox-target";
 import { HOST_READINESS_TIMEOUT_MS } from "./lifecycle-timeouts";
+import { canaryLaunchSealAllowed } from "./catalog-manifests/launch-seals";
 
 export { MANAGED_HIVRA_RUNTIME_PATHS } from "./managed-provisioner-channel";
 
@@ -73,7 +74,7 @@ export function managedHivraHostReadinessScript(
   const versions = purpose === "runtime-update"
     ? [PORTABLE_HIVRA_PROVISIONER_VERSION]
     : canaryProvision
-      ? compatibleVersions.filter(v => canaryLaunchSeals.has(v) && (!requirePinnedCatalogDigest || v === digestPinRelease.version))
+      ? compatibleVersions.filter(v => canaryLaunchSealAllowed(v, requirePinnedCatalogDigest))
       : compatibleVersions;
   const modelCapabilities = requireModelSettings ? `need_file "$PROVISIONER_DIR/hivra-chat/llm-application.js"
 need_file "$PROVISIONER_DIR/hivra-chat/server.js"` : "";
