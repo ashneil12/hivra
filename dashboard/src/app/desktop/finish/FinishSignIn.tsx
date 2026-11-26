@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { useClerk } from "@clerk/nextjs";
+import { useAuth, useClerk } from "@clerk/nextjs";
 import styles from "../desktop.module.css";
 
 /**
@@ -12,11 +12,12 @@ import styles from "../desktop.module.css";
  */
 export default function FinishSignIn({ ticket }: { ticket: string }) {
   const clerk = useClerk();
+  const { isLoaded } = useAuth();
   const started = useRef(false);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (!clerk.loaded || started.current) return;
+    if (!isLoaded || started.current) return;
     started.current = true;
     (async () => {
       try {
@@ -35,7 +36,7 @@ export default function FinishSignIn({ ticket }: { ticket: string }) {
         setFailed(true);
       }
     })();
-  }, [clerk, ticket]);
+  }, [clerk, isLoaded, ticket]);
 
   return (
     <main className={styles.page}>
