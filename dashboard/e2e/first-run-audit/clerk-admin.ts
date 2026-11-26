@@ -141,19 +141,24 @@ export async function findAuditUserByEmail(secretKey: string, email: string): Pr
   const res = await clerkFetch(secretKey, `/users?${params.toString()}`, { method: 'GET' });
   if (!res.ok) throw new Error(`[clerk] find user by email failed: HTTP ${res.status}`);
   const rows = (await res.json()) as ClerkUserPayload[];
-  if (!Array.isArray(rows) || rows.some((row) =>
-    typeof row?.id !== 'string' || !row.id || !Array.isArray(row.email_addresses) ||
-    row.email_addresses.some((address) => typeof address?.email_address !== 'string'),
-  )) {
+  if (!Array.isArray(rows)) {
     throw new Error('[clerk] exact email lookup returned an invalid user list');
   }
-  const matches = rows.filter((row) => primaryEmail(row)?.toLowerCase() === email.toLowerCase());
-  if (matches.length > 1) throw new Error(`[clerk] exact audit email ${email} matched ${matches.length} users`);
-  const row = matches[0];
-  if (!row?.id) return null;
+  if (rows.length === 0) return null;
+
+  // A disposable signup starts with a single address. A returned row that
+  // cannot be tied to that exact identity is not proof of an empty lookup.
+  const [row] = rows;
+  const addresses = row?.email_addresses;
+  const address = Array.isArray(addresses) && addresses.length === 1
+    ? addresses[0]?.email_address : undefined;
+  if (rows.length !== 1 || typeof row?.id !== 'string' || !row.id.trim() ||
+      typeof address !== 'string' || address.toLowerCase() !== email.toLowerCase()) {
+    throw new Error('[clerk] exact email lookup returned an unresolved user identity');
+  }
   return {
     id: row.id,
-    email: primaryEmail(row) ?? email,
+    email: address,
     createdAtMs: typeof row.created_at === 'number' ? row.created_at : Date.now(),
   };
 }

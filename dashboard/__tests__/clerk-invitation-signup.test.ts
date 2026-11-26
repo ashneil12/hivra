@@ -81,6 +81,24 @@ describe('Failed Clerk signup cleanup', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ['missing addresses', [{ id: user.id }]],
+    ['no addresses', [{ id: user.id, email_addresses: [] }]],
+    ['a blank address', [{ id: user.id, email_addresses: [{ email_address: '' }] }]],
+    ['the exact address only in the second slot', [{ id: user.id, email_addresses: [
+      { email_address: 'other@example.test' }, { email_address: EMAIL },
+    ] }]],
+    ['an exact address plus an extra address', [{ id: user.id, email_addresses: [
+      { email_address: EMAIL }, { email_address: 'other@example.test' },
+    ] }]],
+    ['only a different address', [{ id: user.id, email_addresses: [{ email_address: 'other@example.test' }] }]],
+    ['multiple returned users', [user, { ...user, id: 'other-user' }]],
+  ])('does not revoke or delete when the user lookup returns %s', async (_scenario, rows) => {
+    jest.mocked(fetch).mockResolvedValueOnce(Response.json(rows)).mockResolvedValueOnce(Response.json({}));
+    await expect(signup()).rejects.toThrow('cleanup failed: [clerk] exact email lookup returned an unresolved user identity');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it.each([404, 503])('reports revocation failure (HTTP %i)', async (status) => {
     jest.mocked(fetch).mockResolvedValueOnce(Response.json([])).mockResolvedValueOnce(new Response(null, { status }));
     await expect(signup()).rejects.toThrow(/invitation signup cleanup: cleanup failed/);
