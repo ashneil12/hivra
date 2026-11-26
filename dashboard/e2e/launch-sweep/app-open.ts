@@ -25,28 +25,44 @@ export async function proveRustpadCollaboration(page: Page, target: SweepTarget,
   const opened = await proveAppOpen(page, target, timeoutMs);
   const selector = 'iframe[title$="· dashboard"]';
   const primary = page.frameLocator(selector).first();
+  await primary.getByText('You are connected!', { exact: true }).waitFor({ timeout: timeoutMs });
   const scratchpad = await primary.locator('body').evaluate(() => window.location.hash.slice(1));
   if (!/^[A-Za-z0-9]{1,32}$/.test(scratchpad)) {
     throw new SweepFailure('open', 'product', 'Rustpad did not open a usable disposable document.');
   }
   const peerPage = await page.context().newPage();
+  const scrim = page.getByTestId('agent-pill-scrim');
+  const closeControls = page.getByRole('button', { name: 'Close controls', exact: true });
+  let step = 'open the second authenticated editor';
   try {
     await peerPage.goto(page.url(), { waitUntil: 'domcontentloaded', timeout: timeoutMs });
     const peer = peerPage.frameLocator(selector).first();
     await peer.getByText('You are connected!', { exact: true }).waitFor({ timeout: timeoutMs });
-    await peer.locator('body').evaluate((_body, id) => { window.location.hash = id; }, scratchpad);
-    await Promise.all([primary, peer].map(frame =>
-      frame.getByText('You are connected!', { exact: true }).waitFor({ timeout: timeoutMs })));
+    step = 'join the same disposable document in the second tab';
+    const peerFrame = await (await peerPage.locator(selector).first().elementHandle({ timeout: timeoutMs }))?.contentFrame();
+    if (!peerFrame) throw new Error('Missing peer frame');
+    await peerFrame.evaluate(id => { window.location.hash = id; }, scratchpad);
+    await peerFrame.waitForURL(url => url.hash === `#${scratchpad}`, { timeout: timeoutMs });
+    await peer.getByText('You are connected!', { exact: true }).waitFor({ timeout: timeoutMs });
+
+    step = 'type a marker in the primary editor';
     const marker = 'hivra-rustpad-pilot';
     await page.bringToFront();
+    await page.addLocatorHandler(scrim, async () => {
+      step = 'dismiss the workspace controls covering the editor';
+      await closeControls.click({ timeout: timeoutMs });
+      step = 'type a marker in the primary editor';
+    });
     await primary.locator('.monaco-editor .view-lines').first().click({ timeout: timeoutMs });
     await page.keyboard.type(marker, { delay: 20 });
-    await Promise.all([primary, peer].map(frame =>
-      frame.locator('.monaco-editor .view-lines').filter({ hasText: marker }).waitFor({ timeout: timeoutMs })));
+    await primary.locator('.monaco-editor .view-lines').filter({ hasText: marker }).waitFor({ timeout: timeoutMs });
+    step = 'observe the typed marker in the second tab without refreshing';
+    await peer.locator('.monaco-editor .view-lines').filter({ hasText: marker }).waitFor({ timeout: timeoutMs });
     return { ...opened, textSample: 'A typed marker appeared in the second tab without a refresh.' };
   } catch {
-    throw new SweepFailure('chat', 'product', 'Rustpad did not synchronize a typed edit between two authenticated views.');
+    throw new SweepFailure('chat', 'product', `Rustpad proof could not ${step}.`);
   } finally {
+    await page.removeLocatorHandler(scrim).catch(() => undefined);
     await peerPage.close().catch(() => undefined);
   }
 }
