@@ -1,8 +1,11 @@
+import { auth } from "@clerk/nextjs/server";
+
 import { LaunchJourney } from "@/components/launch/LaunchJourney";
-import { managedGvisorLaunchConfigured } from "@/lib/hivra/managed-gvisor-launch-config";
+import { managedGvisorLaunchAdmittedForUser } from "@/lib/hivra/managed-gvisor-launch-config";
 
 export const dynamic = "force-dynamic";
 
-export default function LaunchPage() {
-  return <LaunchJourney managedLinuxSandboxEligible={managedGvisorLaunchConfigured()} />;
+export default async function LaunchPage() {
+  const { userId } = await auth();
+  return <LaunchJourney managedLinuxSandboxEligible={managedGvisorLaunchAdmittedForUser(userId)} />;
 }
