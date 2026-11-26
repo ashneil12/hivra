@@ -3,13 +3,15 @@ import copy
 import importlib.util
 import io
 import json
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -232,6 +234,106 @@ class WorkspaceHelperLifecycleTests(unittest.TestCase):
 
         docker.assert_not_called()
         inspect_resource.assert_not_called()
+
+
+class OfflineImageTests(unittest.TestCase):
+    def setUp(self):
+        contexts = ExitStack()
+        self.addCleanup(contexts.close)
+        directory = contexts.enter_context(tempfile.TemporaryDirectory())
+        self.setting = Path(directory, "offline-image")
+        contexts.enter_context(mock.patch.object(adapter, "OFFLINE_IMAGE_CONFIG", self.setting))
+        self.info = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0)
+        contexts.enter_context(mock.patch.object(adapter.os, "fstat", return_value=self.info))
+
+    def seed(self, **overrides):
+        self.setting.write_text(adapter.IMAGE + "\n")
+        _, digest = adapter.IMAGE.split("@")
+        return subprocess.CompletedProcess([], 0, json.dumps([{
+            "Os": "linux", "Architecture": "amd64",
+            "RepoDigests": [f"docker.io/library/python@{digest}"],
+            **overrides,
+        }]), "")
+
+    def test_no_setting_keeps_existing_pull(self):
+        with mock.patch.object(adapter, "docker") as docker:
+            self.assertEqual(adapter.prepare_image(), ())
+        docker.assert_called_once_with("pull", "--platform", "linux/amd64", adapter.IMAGE, timeout=300)
+
+    def test_create_checks_exact_image_and_disables_pulls_for_both_containers(self):
+        req = request("create") | {"cpu": 1, "memoryMb": 512, "hostMemoryReserveMb": 512}
+        verified = self.seed()
+        with mock.patch.object(adapter, "inspect_container", return_value=None), \
+                mock.patch.object(adapter, "inspect_helper", return_value=None), \
+                mock.patch.object(adapter, "require_helper_absent"), \
+                mock.patch.object(adapter, "admit"), \
+                mock.patch.object(adapter, "inspect_resource", return_value=False), \
+                mock.patch.object(adapter, "status", return_value={"state": "running"}), \
+                mock.patch.object(adapter, "docker", return_value=verified) as docker:
+            self.assertEqual(adapter.create(req), {"state": "running"})
+
+        calls = [call.args for call in docker.call_args_list]
+        self.assertEqual(calls[0], ("image", "inspect", adapter.IMAGE))
+        self.assertNotIn("pull", [call[0] for call in calls])
+        runs = [call for call in calls if call[0] in ("run", "create") and "--runtime=runsc" in call]
+        self.assertEqual([call[0] for call in runs], ["run", "create"])
+        for call in runs:
+            self.assertEqual(call[1:4], ("--pull=never", "--platform", "linux/amd64"))
+            self.assertIn(adapter.IMAGE, call)
+
+    def test_wrong_digest_or_platform_never_pulls(self):
+        for fields in (
+            {"RepoDigests": ["python@sha256:" + "0" * 64], "RepoTags": ["python:3.13-slim"]},
+            {"RepoDigests": None},
+            {"Architecture": "arm64"},
+            {"Os": "windows"},
+        ):
+            with self.subTest(fields=fields):
+                inspected = self.seed(**fields)
+                with mock.patch.object(adapter, "docker", return_value=inspected) as docker, \
+                        redirect_stderr(io.StringIO()) as stderr, self.assertRaises(SystemExit):
+                    adapter.prepare_image()
+                docker.assert_called_once_with("image", "inspect", adapter.IMAGE, check=False)
+                self.assertIn("does not match the pinned digest", stderr.getvalue())
+
+    def test_missing_image_fails_before_any_workspace_mutation(self):
+        req = request("create") | {"cpu": 1, "memoryMb": 512, "hostMemoryReserveMb": 512}
+        self.seed()
+        missing = subprocess.CompletedProcess([], 1, "", "No such image")
+        with mock.patch.object(adapter, "inspect_container", return_value=None), \
+                mock.patch.object(adapter, "inspect_helper", return_value=None), \
+                mock.patch.object(adapter, "admit"), \
+                mock.patch.object(adapter, "inspect_resource") as resource, \
+                mock.patch.object(adapter, "docker", return_value=missing) as docker, \
+                redirect_stderr(io.StringIO()) as stderr, self.assertRaises(SystemExit):
+            adapter.create(req)
+        docker.assert_called_once_with("image", "inspect", adapter.IMAGE, check=False)
+        resource.assert_not_called()
+        self.assertIn("not available locally", stderr.getvalue())
+
+    def test_invalid_opt_in_is_not_treated_as_online(self):
+        self.setting.write_text(adapter.IMAGE.split("@")[0])
+        with mock.patch.object(adapter, "docker") as docker, \
+                redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            adapter.prepare_image()
+        docker.assert_not_called()
+
+    def test_update_uses_the_offline_policy_for_its_replacement(self):
+        req = request("update") | {"hostMemoryReserveMb": 512}
+        verified = self.seed()
+        with mock.patch.object(adapter, "require_helper_absent"), \
+                mock.patch.object(adapter, "inspect_container", return_value={
+                    "State": {"Running": False}, "HostConfig": {"NanoCpus": 10**9, "Memory": 1024**3},
+                }), mock.patch.object(adapter, "inspect_resource"), \
+                mock.patch.object(adapter, "status", return_value={"state": "stopped"}), \
+                mock.patch.object(adapter, "docker", return_value=verified) as docker:
+            self.assertEqual(adapter.update(req), {"state": "stopped"})
+        calls = [call.args for call in docker.call_args_list]
+        self.assertEqual(calls[0], ("image", "inspect", adapter.IMAGE))
+        self.assertNotIn("pull", [call[0] for call in calls])
+        create = next(call for call in calls if call[0] == "create")
+        self.assertEqual(create[1:4], ("--pull=never", "--platform", "linux/amd64"))
+        self.assertIn(adapter.IMAGE, create)
 
 
 class FakeDocker:
