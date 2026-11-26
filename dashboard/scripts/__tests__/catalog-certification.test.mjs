@@ -201,19 +201,36 @@ test("planner closes a changed-input remediation loop before new uncertified ent
   const failure = ledgerRow({
     profileId: failedFixed.id,
     passed: false,
-    canarySha: SHA,
-    finishedAt: "2026-11-25T11:00:00.000Z",
-    failure: { stage: "open", category: "product", reason: "broken" },
+    manifestSha256: failedFixed.manifestSha256,
   });
-  const chosen = chooseCertificationTarget({
-    catalog: [neverCertified, failedFixed],
-    ledgerRows: [failure],
-    currentCanarySha: OTHER_SHA,
-    currentProvisionerVersion: PROVISIONER,
-    now: NOW,
-  });
-  assert.equal(chosen.id, failedFixed.id);
-  assert.equal(chosen.reason, "inputs-changed-since-failure");
+  for (const previousInputs of [{ manifestSha256: "old" }, { provisionerVersion: "2026.11.23.1" }]) {
+    const chosen = chooseCertificationTarget({
+      catalog: [neverCertified, failedFixed],
+      ledgerRows: [{ ...failure, ...previousInputs }],
+      currentCanarySha: SHA,
+      currentProvisionerVersion: PROVISIONER,
+      now: NOW,
+    });
+    assert.equal(chosen.id, failedFixed.id);
+    assert.equal(chosen.reason, "inputs-changed-since-failure");
+  }
+});
+
+test("planner advances first attempts across unrelated Canary revisions", () => {
+  const catalog = catalogEntries();
+  const ledgerRows = [ledgerRow({ passed: false })];
+  for (const [currentCanarySha, expected] of [[OTHER_SHA, catalog[2]], ["a".repeat(40), catalog[0]]]) {
+    const chosen = chooseCertificationTarget({
+      catalog,
+      ledgerRows,
+      currentCanarySha,
+      currentProvisionerVersion: PROVISIONER,
+      now: NOW,
+    });
+    assert.equal(chosen.id, expected.id);
+    assert.equal(chosen.reason, "never-certified");
+    ledgerRows.push(ledgerRow({ profileId: expected.id, canarySha: currentCanarySha, manifestSha256: expected.manifestSha256 }));
+  }
 });
 
 test("planner backs off same-revision product failures but retries after Canary moves", () => {
