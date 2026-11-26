@@ -11,7 +11,7 @@ import { assertCanaryQaSupabaseUrl, readCanaryQaEmail } from './canary-qa/config
 import { auditAgentName, newRunId } from './first-run-audit/config';
 import { assertUnusedRunId, destroyRunResources, listHivraAgents, listInstances, runInventory } from './first-run-audit/instances';
 import { establishAuditSession, verifyAuditSession } from './first-run-audit/session';
-import { proveAppOpen } from './launch-sweep/app-open';
+import { proveAppOpen, proveRustpadCollaboration } from './launch-sweep/app-open';
 import { proveChat, proveComputerOpen } from './launch-sweep/chat';
 import { measureIdle } from './launch-sweep/idle';
 import { checkPrivateOnly, privateOnlyCheckEnabled } from './launch-sweep/private-only';
@@ -184,11 +184,18 @@ async function runTarget(browser: Browser, env: SweepEnv, target: SweepTarget): 
     const proof = target.proof === 'computer-open'
       ? await proveComputerOpen(page, env.readyTimeoutMs)
       : target.proof === 'app-open'
-        ? await proveAppOpen(page, target.tile, env.composerTimeoutMs)
+        ? target.profileId === 'rustpad'
+          ? await proveRustpadCollaboration(page, env.composerTimeoutMs)
+          : await proveAppOpen(page, target.tile, env.composerTimeoutMs)
         : await proveChat(page, target, { composerTimeoutMs: env.composerTimeoutMs, replyTimeoutMs: env.replyTimeoutMs });
     recorder.result.chat = proof;
     if (recorder.result.agentId) {
       recorder.result.software = await readSweepSoftware(context.request, env.baseUrl, recorder.result.agentId);
+    }
+    const pinnedDigest = target.catalog?.runtimeRefs
+      .map(ref => /@(sha256:[a-f0-9]{64})$/.exec(ref)?.[1]).find(Boolean);
+    if (pinnedDigest && recorder.result.software?.installed !== pinnedDigest) {
+      throw new SweepFailure('chat', 'product', 'The installed image digest did not match the reviewed catalog pin.');
     }
     recorder.done('chat');
     recorder.result.passed = true;

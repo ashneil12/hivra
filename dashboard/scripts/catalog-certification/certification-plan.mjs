@@ -44,7 +44,7 @@ function runtimeEvidence(manifest) {
       ? runtime.web?.healthPath ?? null
       : runtime.webService?.healthPath ?? null;
   const runtimeRefs = runtime.kind === "docker-web"
-    ? [`${runtime.imageRepo}:${runtime.imageTag}`]
+    ? [runtime.imageDigest ? `${runtime.imageRepo}@${runtime.imageDigest}` : `${runtime.imageRepo}:${runtime.imageTag}`]
     : runtime.kind === "docker-stack"
       ? (runtime.services ?? []).map((service) => `${service.imageRepo}:${service.imageTag}`)
       : runtime.installer?.method === "npm-global" || runtime.installer?.method === "uv-tool"

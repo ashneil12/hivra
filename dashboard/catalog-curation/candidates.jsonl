@@ -205,3 +205,4 @@
 {"slug":"thelounge","name":"The Lounge","sourceUrl":"https://github.com/thelounge/thelounge","status":"accepted","reason":"evidence catalog-curation/evidence/thelounge.json","checkedAt":"2026-11-25"}
 {"slug":"wekan","name":"WeKan","sourceUrl":"https://github.com/wekan/wekan","status":"accepted","reason":"evidence catalog-curation/evidence/wekan.json","checkedAt":"2026-11-25"}
 {"slug":"forgejo","name":"Forgejo","sourceUrl":"https://codeberg.org/forgejo/forgejo","status":"rejected","reason":"sourceUrl on codeberg.org not accepted by schema","checkedAt":"2026-11-25"}
+{"slug":"rustpad","name":"Rustpad","sourceUrl":"https://github.com/ekzhang/rustpad","status":"accepted","reason":"Local verifier evidence catalog-curation/evidence/rustpad.json; reviewed source 54e4a9383c84d7317af42a7ddb177ce8bcba058d; Canary proof pending","checkedAt":"2026-11-26"}
