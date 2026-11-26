@@ -1,6 +1,8 @@
 import "server-only";
 
 import { z } from "zod";
+import { getCatalogAppManifest } from "./catalog-manifests/index";
+import { UNIVERSAL_CATALOG_IDS } from "./catalog-manifests/index";
 import { supabaseAdmin } from "@/lib/supabase";
 import { loadFirstBootRecipeVersion } from "@/lib/infrastructure/first-boot-store";
 import { parseFirstBootOperationScope } from "@/lib/infrastructure/first-boot-operations";
@@ -14,7 +16,7 @@ const Row = z.object({
   id: Uuid, user_id: z.string(), operation_id: Uuid, operation_kind: z.literal("provision"),
   allocation_operation_id: Uuid, status: z.literal("provisioning"), desired_state: z.enum(["running", "deleted"]),
   computer_substrate: z.literal("provider-vm"), deployment_mode: z.literal("self-managed"), vmid: z.null(),
-  type: z.enum(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes", "deepseek-harness", "linux-desktop"]),
+  type: z.enum(["claude-code", "codex", "aeon", "openclaw", "agent-zero", "openbot", "nuphos", "hermes", "deepseek-harness", "linux-desktop", ...UNIVERSAL_CATALOG_IDS] as [string, ...string[]]),
   computer_profile: z.unknown().optional(),
   infrastructure_connection_id: Uuid, infrastructure_connection_revision: z.number().int().positive().safe(),
   deployment_target_id: Uuid, provider_capacity_order_id: Uuid, provider_enrollment_attempt_id: Uuid,
@@ -65,7 +67,7 @@ async function loadInstallOperation(input: ProviderAgentInstallOperation, contra
     const scope = parseFirstBootOperationScope({ binding: { ...attempt,
       recipeVersion: await loadFirstBootRecipeVersion(attempt) }, providerServerId: row.provider_server_id });
     // Preserve the public catalog ID; only the shared installer uses "claude".
-    const runtime = row.type === "claude-code" ? "claude" as const : row.type;
+    const runtime = getCatalogAppManifest(row.type as string) ? "catalog-app" : row.type === "claude-code" ? "claude" as const : row.type;
     const direct = readAgentProviderDirectAccess(row);
     const access = direct ?? (row.cf_tunnel_id && row.cf_hostname
       ? { mode: "cloudflare-named" as const, hostname: row.cf_hostname, tunnelId: row.cf_tunnel_id }
