@@ -20,6 +20,12 @@ All of these must allow it before an agent sleeps:
 Optional timing: `HIVRA_SLEEP_NAP_AFTER_SECONDS` (default 300) and
 `HIVRA_SLEEP_HIBERNATE_AFTER_SECONDS`.
 
+Managed holder-funded computers always use the full sleep policy: the
+per-agent sleep setting and Keep awake do not override it. Their timings are
+fixed at four idle minutes before nap and twelve more minutes before saving
+memory. Server and host gates, activity checks and wake readiness still apply.
+See [token-holder access](../STATUS.md#token-holder-access) for launch requirements.
+
 `NEXT_PUBLIC_` values are built in, so they take effect on the next Git build
 of the branch, not when they are saved.
 

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { ensureCanaryQaAccount } from '../e2e/canary-qa/account';
+import { ensureCanaryQaAccount } from '../scripts/lib/repair-canary-qa-account';
 import {
   assertCanaryQaBaseUrl,
   assertCanaryQaClerkKey,
@@ -39,7 +39,11 @@ describe('standing Canary QA account guards', () => {
   it('refuses production and look-alike app hosts', () => {
     expect(() => assertCanaryQaBaseUrl('https://hivra.cloud')).toThrow(/refusing to target/);
     expect(() => assertCanaryQaBaseUrl('https://canary.hermesos.cloud.evil.test')).toThrow(/refusing to target/);
+    expect(() => assertCanaryQaBaseUrl('http://canary.hermesos.cloud')).toThrow(/HTTPS Canary origin/);
+    expect(() => assertCanaryQaBaseUrl('https://canary.hermesos.cloud:8443')).toThrow(/HTTPS Canary origin/);
+    expect(() => assertCanaryQaBaseUrl('https://canary.hermesos.cloud/sign-up')).toThrow(/HTTPS Canary origin/);
     expect(assertCanaryQaBaseUrl('https://canary.hermesos.cloud/')).toBe('https://canary.hermesos.cloud');
+    expect(assertCanaryQaBaseUrl('http://127.0.0.1:3000')).toBe('http://127.0.0.1:3000');
   });
 
   it('caps the credit reset', () => {

@@ -21,6 +21,7 @@ import {
   requestHivraAgentDelete,
 } from "@/lib/hivra/agent-operation-store";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
+import { releaseExactProvisionIntentScript } from "@/lib/hivra/provision-intent-cleanup";
 import {
   hivraPrivateAccessAuthority,
   prepareHivraTailscaleForDelete,
@@ -130,6 +131,7 @@ if printf '%s\\n' "$VOLUMES" | grep -E "vm-${input.vmid}-"; then
   echo "VMID $VMID still has volumes on $STORAGE after destroy" >&2
   exit 1
 fi
+${releaseExactProvisionIntentScript(input.expectedAllocationOperationId, input.vmid, input.expectedInfrastructureBindingTag)}
 rm -f -- ${cleanupPaths} \
   "/run/hivra-provision/$VMID.env" \
   "/run/hivra-provision/$VMID.secret" \

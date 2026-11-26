@@ -8,7 +8,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const VERDICT_SCHEMA = 'hivra.first-run-audit.v1';
+export const VERDICT_SCHEMA = 'hivra.first-run-audit.v2';
 
 /**
  * The stages of a first run, in order. `stage_reached` is the last one that
@@ -16,11 +16,10 @@ export const VERDICT_SCHEMA = 'hivra.first-run-audit.v1';
  * exactly these strings, so renaming one is a breaking change.
  */
 export const AUDIT_STAGES = [
-  'clerk_user_created',
   'session_established',
   'welcome_loaded',
   'agent_type_selected',
-  'plan_activated',
+  'plan_verified',
   'deploy_card_reached',
   'deploy_clicked',
   'instance_created',
@@ -61,13 +60,6 @@ export interface TeardownRecord {
   attempted: boolean;
   instances_destroyed: string[];
   instances_survived: Array<{ id: string; httpStatus: number; error?: string }>;
-  clerk_user_deleted: boolean;
-  /**
-   * When the instance could not be destroyed we deliberately KEEP the Clerk user
-   * so the reaper can still authenticate as them and finish the job. Deleting the
-   * user first would strand the VM outside the app's own destroy path.
-   */
-  clerk_user_retained_for_reaper: boolean;
   errors: string[];
 }
 
@@ -86,8 +78,6 @@ export interface AuditVerdict {
   finished_at: string;
   duration_ms: number;
 
-  clerk_user_id: string | null;
-  email: string | null;
   agent_name: string;
 
   instance: {
@@ -96,10 +86,8 @@ export interface AuditVerdict {
     provider: string | null;
     host_id: string | null;
     /**
-     * Did the box boot with a provider+model configured? For a virgin free
-     * account this is FALSE — the only available path (clean-slate BYOK) deploys
-     * a box with nothing configured. This field is the honest answer to "could
-     * this agent have answered a question?"
+     * Did the box boot with a provider and model? A clean-slate BYOK launch
+     * has neither. Workspace readiness alone doesn't establish inference.
      */
     inference_configured: boolean;
   };

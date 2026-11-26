@@ -425,14 +425,16 @@ Then on the served site:
 
 1. `/token` lists $HIVRA first (LIVE, with your contract and a BaseScan link)
    and $HermesOS as LEGACY.
-2. As a **new** disposable fixture account, `GET /api/billing/token-access`
-   returns `paymentToken: "hivra"` and `allowedTokens: ["hivra"]`. A yearly
+2. As a standing test account outside the grandfathered cohort,
+   `GET /api/billing/token-access` returns `paymentToken: "hivra"` and
+   `allowedTokens: ["hivra"]`. A yearly
    quote request without a token returns a $HIVRA quote whose "Send exactly"
    step shows the $HIVRA contract. The same request with
    `{"tier":"pro","token":"hermesos"}` returns 403 `token_not_allowed`.
-3. As a grandfathered account (read-only check), the token-access response
+3. As a grandfathered standing test account (read-only check), the token-access response
    shows `grandfathered: true` and `paymentToken: "hermesos"`.
-4. Clean up the fixtures (live-environment-verification ledger).
+4. Clean up test-created resources, not accounts. If a standing fixture for the
+   target or cohort is unavailable, report that check as blocked; don't sign up.
 
 ## 7. Rolling back
 

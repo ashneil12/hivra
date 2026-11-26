@@ -21,32 +21,21 @@ must match it.
 
 ## Agents
 
-All seven launch from Launch. Every computer Hivra Cloud runs needs a paid plan;
-a free account works with a server the person connects.
+All seven launch from Launch. Hivra Cloud requires a paid plan or, for
+supported managed computers, [token-holder admission](#token-holder-access).
+A free account alone works with a server the person connects.
 
 | Agent | Status | Where it runs |
 | --- | --- | --- |
 | Claude Code | Available | Hivra Cloud or a Proxmox server you connected |
 | Codex | Available | Hivra Cloud or a Proxmox server you connected |
-| Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`) on a paid plan. Live on Canary; it reaches hivra.cloud with the next owner-approved production promotion |
+| Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`). The paid launch path is live on Canary; it reaches hivra.cloud with the next owner-approved production promotion |
 | OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |
 | Agent Zero | Available | Hivra Cloud or a Proxmox server you connected |
 | Aeon | Available | Hivra Cloud or a Proxmox server you connected |
 | DeepSeek Harness | Available (alpha) | Hivra Cloud only, on a paid plan. It needs a host on provisioner release 2026.11.10.5 or later |
 | OpenBot (CopilotKit) | Preview, off by default | Hivra Cloud only, on a paid plan, when `NEXT_PUBLIC_HIVRA_OPENBOT_AGENT` is `1` on the deployment. It needs provisioner release 2026.11.12.4 or later |
 | Nuphos | Preview, off by default | Hivra Cloud only, on a paid plan, when `NEXT_PUBLIC_HIVRA_NUPHOS_AGENT` is `1` on the deployment. It needs provisioner release 2026.11.12.5 or later |
-
-Local #57 implementation, pending release verification: an existing Classic
-Hermes computer evidenced as holder-funded keeps its admission and allocation.
-Classic holder sleep is off by default. When enabled with
-`HERMES_CLASSIC_HOLDER_SLEEP_ENABLED=true` on an eligible Proxmox host,
-the minute sweep pauses an idle VM after four minutes and saves guest memory
-after twelve more minutes in nap. Owner access resumes the session. The
-sweep needs a verifiable Classic VM, an idle Docker gateway and dashboard,
-and the browser wake route. Uncovered channels and scheduled jobs keep it awake. New Classic holder launches are unavailable. On eligible
-managed Hivra computers the holder policy requires four idle minutes before
-nap and twelve minutes in nap before memory save. Host controls, activity
-checks and wake readiness still apply.
 
 Claude Code can sign in with the person's own Claude account, or run on Hivra
 credits: Hivra translates its requests for Venice's Claude models and bills the
@@ -61,9 +50,9 @@ creates the computer, runs Hermes's own installer, points it at Venice inference
 Hermes's own web UI behind the Hivra sign-in at `/hermes/`. There is no
 Hivra-built image, fork or patch. Owners update it with `hermes update` in
 Terminal or the Update Hermes button on the agent's Manage tab. It needs
-provisioner release 2026.11.12.1 or later and at least 1 CPU and 2 GB, on a paid
-plan like every Hivra-run computer (there is no free compute). There is no
-deployment switch for it: what Canary runs is what a production promotion ships.
+provisioner release 2026.11.12.1 or later and at least 1 CPU and 2 GB. The
+runtime itself has no deployment switch: what Canary runs is what a production
+promotion ships.
 
 DeepSeek Harness runs DeepSeek's own coding agent in its own interface, reached
 through Hivra's authenticated gateway. It launches with no browser and gets its
@@ -73,6 +62,34 @@ person's own Venice API key. It is labelled alpha because the upstream version i
 at an alpha release. It has no public agent page yet, and a connected server or
 a computer in the owner's own cloud cannot run it. Its Launch tile is not on
 the first-run card, which stays at three choices.
+
+### Token-holder access
+
+**Gated; not live-verified.** An admitted token holder can launch a supported
+managed Hivra computer without a paid subscription. Where holder access is
+enabled for the account, a new qualification requires holding $299 worth of
+tokens for Pro (2 vCPU and 4 GB RAM) or $599 for Power (4 vCPU and 8 GB RAM).
+The token amount is calculated from the live market price at qualification.
+The recorded amount, token and tier stay locked rather than being repriced.
+
+Qualification is not admission. New holder admissions are capped at 20% of
+scheduler placement capacity, measured separately for vCPU and RAM, and the
+requested allocation must fit on an eligible host. Qualified holders wait
+when capacity is unavailable. Grandfathered usage can remain above the ceiling.
+
+Managed holder launches require a runtime that can nap and save memory,
+`HIVRA_SLEEP_MODE` set to `canary` or `on`, and a configured wake connection.
+On eligible computers, the policy naps after four idle minutes and saves
+memory after twelve more minutes in nap. Host controls, activity checks and
+wake readiness still apply.
+
+New Classic Hermes holder launches are unavailable. Existing Classic computers
+with verified holder funding keep their admission and allocation. Classic
+holder sleep is off by default. With
+`HERMES_CLASSIC_HOLDER_SLEEP_ENABLED=true` on an eligible Proxmox host, it uses
+the same four- and twelve-minute timings and resumes on owner access. It
+requires a verifiable Classic VM, an idle Docker gateway and dashboard, and the
+browser wake route. Uncovered channels and scheduled jobs keep it awake.
 
 OpenBot on a Hivra computer is CopilotKit's official OpenBot image (MIT),
 unmodified: Hivra pulls the latest release, runs it on the computer's loopback
@@ -146,8 +163,9 @@ and update every document it contradicts.
 
 | Date | Decision |
 | --- | --- |
+| 2026-11-26 | Supported managed Hivra computers can launch through gated token-holder admission without a paid subscription. See [token-holder access](#token-holder-access) for the requirements and verification status. |
 | 2026-11-19 | Hivra offers a free trial instead of a free version: 7 days of the entry plan with a card required, on a smaller computer that sleeps when idle. It ships behind `HIVRA_CARD_TRIAL`, off by default. |
-| 2026-10-21 | Hivra runs no free computer. Every Hivra Cloud computer is paid; a free account works with a computer the person connects. |
+| 2026-10-21 | Hivra runs no free computer; a free account works with a computer the person connects. The paid-plan-only requirement was updated by the token-holder decision above. |
 | 2026-09-30 | Windows and Omarchy are offered, not in private preview. Each keeps its condition (see Computers). |
 | 2026-09-30 | Copy may call Hivra open source and self-hostable and link the repository. The licence file is authoritative; copy never names the licence and never says "public domain". |
 

@@ -72,7 +72,14 @@ export function assertCanaryQaSupabaseUrl(
 
 export function assertCanaryQaBaseUrl(baseUrl: string): string {
   assertNotProduction(baseUrl);
-  return baseUrl.replace(/\/$/, '');
+  const parsed = new URL(baseUrl);
+  const local = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+  if ((parsed.protocol !== 'https:' && !(local && parsed.protocol === 'http:')) ||
+      (!local && parsed.port) || parsed.username || parsed.password ||
+      parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new Error('[canary-qa] use the HTTPS Canary origin or a local fixture origin.');
+  }
+  return parsed.origin;
 }
 
 /** Target credit in micro-USD: default $2, never above $5. */

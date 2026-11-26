@@ -8,7 +8,7 @@
  * Refuses sk_live_ keys and any Supabase project other than Canary. Never
  * prints the address or a key.
  */
-import { ensureCanaryQaAccount } from '../e2e/canary-qa/account';
+import { ensureCanaryQaAccount } from './lib/repair-canary-qa-account';
 import { canaryQaCreditMicroUsd, readCanaryQaEmail } from '../e2e/canary-qa/config';
 
 async function main() {

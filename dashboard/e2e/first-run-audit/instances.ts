@@ -9,6 +9,7 @@
  * harness exists to avoid producing.
  */
 import type { APIRequestContext } from '@playwright/test';
+import { auditAgentName } from './config';
 
 export interface InstanceSummary {
   id: string;
@@ -65,7 +66,8 @@ export async function listInstances(
     return [];
   }
   const body = (await res.json().catch(() => null)) as ApiEnvelope<InstanceSummary[]> | null;
-  if (requireVerifiedList && (body?.success !== true || !Array.isArray(body.data))) {
+  if (requireVerifiedList && (body?.success !== true || !Array.isArray(body.data) ||
+    body.data.some((row) => typeof row?.id !== 'string' || !row.id || typeof row.name !== 'string'))) {
     throw new Error('Instance inventory response was not verified');
   }
   return Array.isArray(body?.data) ? body.data : [];
@@ -91,7 +93,7 @@ export async function listHivraAgents(
   const agents = body?.data?.agents;
   if (requireVerifiedList && (
     body?.success !== true || !Array.isArray(agents) ||
-    agents.some((agent) => typeof agent?.id !== 'string' || !agent.id)
+    agents.some((agent) => typeof agent?.id !== 'string' || !agent.id || typeof agent.name !== 'string')
   )) throw new Error('Agent inventory response was not verified');
   return Array.isArray(agents) ? agents : [];
 }
@@ -235,105 +237,59 @@ async function safeText(res: { text(): Promise<string> }): Promise<string> {
   }
 }
 
-/**
- * Destroy every instance this user owns, with retries.
- *
- * Used both by the spec's guaranteed teardown and by the standalone reaper. A
- * leaked audit VM is a paid VM; retry hard before giving up, and report exactly
- * what survived so a human (or the reaper's next pass) can finish the job.
- */
-export async function destroyAllInstances(
-  request: APIRequestContext,
-  baseUrl: string,
-  note: string,
-  attempts = 3,
-): Promise<{ destroyed: string[]; survived: DestroyResult[] }> {
-  const destroyed: string[] = [];
-  let survived: DestroyResult[] = [];
-
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    const remaining = await listInstances(request, baseUrl);
-    if (remaining.length === 0) return { destroyed, survived: [] };
-
-    survived = [];
-    for (const inst of remaining) {
-      const result = await destroyInstance(request, baseUrl, inst.id, note);
-      if (result.deleted) destroyed.push(inst.id);
-      else survived.push(result);
-    }
-
-    if (survived.length === 0) return { destroyed, survived: [] };
-
-    // A provisioning row can refuse deletion until Phase 1 settles. Back off.
-    if (attempt < attempts) await sleep(20_000);
+export async function runInventory(request: APIRequestContext, baseUrl: string, runId: string) {
+  const name = auditAgentName(runId);
+  const [agents, instances] = await Promise.all([
+    listHivraAgents(request, baseUrl, true),
+    listInstances(request, baseUrl, true),
+  ]);
+  const owned = { agents: agents.filter((row) => row.name === name), instances: instances.filter((row) => row.name === name) };
+  if (owned.agents.length + owned.instances.length > 1) {
+    throw new Error('More than one resource matched the audit run ID; refusing ambiguous cleanup.');
   }
-
-  return { destroyed, survived };
+  return owned;
 }
 
+export async function assertUnusedRunId(request: APIRequestContext, baseUrl: string, runId: string): Promise<void> {
+  const { agents, instances } = await runInventory(request, baseUrl, runId);
+  if (agents.length || instances.length) throw new Error('The audit run ID already has a resource; refusing to launch.');
+}
 
-/**
- * Destroy every Hivra computer owned by the authenticated audit account.
- *
- * Hivra deletion is intentionally convergent: a request made while provision,
- * restart or resize still owns the provider can answer 409 and retain a durable
- * delete intent. Keep polling the product's own list and retry the exact owner
- * route until the row disappears. Explicit Origin is required by the route's
- * same-origin mutation fence.
- */
-export async function destroyAllHivraAgents(
+export async function destroyRunResources(
   request: APIRequestContext,
   baseUrl: string,
-  attempts = 40,
+  runId: string,
+  attempts = 30,
   retryDelayMs = 15_000,
-  { verifyDisappearance = false } = {},
 ): Promise<{ destroyed: string[]; survived: DestroyResult[] }> {
   const destroyed = new Set<string>();
-  let survived: DestroyResult[] = [];
+  let last: DestroyResult | undefined;
+  let ownedId: string | undefined;
 
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    const remaining = await listHivraAgents(request, baseUrl, verifyDisappearance);
-    if (remaining.length === 0) return { destroyed: [...destroyed], survived: [] };
-
-    survived = [];
-    for (const agent of remaining) {
-      try {
-        const res = await request.delete(
-          `${baseUrl}/api/hivra/agents/${encodeURIComponent(agent.id)}`,
-          {
-            headers: { Origin: baseUrl },
-            timeout: 2 * 60_000,
-          },
-        );
-        if (res.ok()) destroyed.add(agent.id);
-        else {
-          survived.push({
-            id: agent.id,
-            deleted: false,
-            httpStatus: res.status(),
-            error: await safeText(res),
-          });
-        }
-      } catch (err) {
-        survived.push({
-          id: agent.id,
-          deleted: false,
-          httpStatus: 0,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+  for (let attempt = 0; attempt <= attempts; attempt++) {
+    const { agents: [agent], instances: [instance] } = await runInventory(request, baseUrl, runId);
+    const id = agent?.id ?? instance?.id;
+    if (!id) return { destroyed: [...destroyed], survived: [] };
+    if (ownedId && ownedId !== id) throw new Error('Audit resource identity changed during cleanup.');
+    ownedId = id;
+    if (attempt === attempts) {
+      return { destroyed: [...destroyed], survived: [{
+        id, deleted: false, httpStatus: last?.httpStatus ?? 0, error: 'Still listed after cleanup',
+      }] };
     }
 
-    if (attempt < attempts && retryDelayMs > 0) await sleep(retryDelayMs);
+    if (agent) {
+      const res = await request.delete(`${baseUrl}/api/hivra/agents/${encodeURIComponent(id)}`, {
+        headers: { Origin: baseUrl }, timeout: 2 * 60_000,
+      });
+      last = { id, deleted: res.ok(), httpStatus: res.status() };
+    } else {
+      last = await destroyInstance(request, baseUrl, id, `audit run ${runId}`);
+    }
+    if (last.deleted) destroyed.add(id);
+    if (retryDelayMs > 0) await sleep(retryDelayMs);
   }
-
-  if (verifyDisappearance) {
-    const remaining = await listHivraAgents(request, baseUrl, true);
-    survived = remaining.map(({ id }) => ({
-      id, deleted: false, httpStatus: 0, error: 'Still listed after cleanup',
-    }));
-  }
-  return { destroyed: [...destroyed], survived };
+  throw new Error('Audit cleanup budget exhausted.');
 }
 
 export function sleep(ms: number): Promise<void> {

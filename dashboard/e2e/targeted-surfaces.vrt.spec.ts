@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { CANARY_QA_STORAGE_STATE } from './canary-qa/auth';
 
 /**
  * Tier-2 TARGETED VISUAL REGRESSION TESTING (VRT):
@@ -13,7 +14,7 @@ import { readFileSync } from 'node:fs';
 
 function isAuthed(): boolean {
   try {
-    const s = JSON.parse(readFileSync('e2e/.auth/qa-user.json', 'utf8'));
+    const s = JSON.parse(readFileSync(CANARY_QA_STORAGE_STATE, 'utf8'));
     return (s.cookies?.length ?? 0) > 0;
   } catch {
     return false;
@@ -21,7 +22,7 @@ function isAuthed(): boolean {
 }
 
 test.describe('Tier 2 Targeted VRT Surfaces', () => {
-  test.skip(!isAuthed(), 'No authenticated QA session (CLERK_SECRET_KEY/QA_USER_ID not set).');
+  test.skip(!isAuthed(), 'No authenticated QA session (CANARY_QA_EMAIL not set).');
 
   test('VRT Surface 1: Launch (/dashboard/launch)', async ({ page }) => {
     const resp = await page.goto('/dashboard/launch?start=1', { waitUntil: 'domcontentloaded' });

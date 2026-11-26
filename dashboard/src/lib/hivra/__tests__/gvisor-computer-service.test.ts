@@ -681,6 +681,17 @@ describe("Update (recreate on the pinned image, keeping /workspace)", () => {
     expect(mockRunWithStdin).not.toHaveBeenCalled();
   });
 
+  it("recognizes the previous exact digest at the same adapter protocol version", async () => {
+    const priorDigest = "3168f185b90abfcf7b17fa603ffa31b9e780b69b0856a5b079595be8b7f63cff";
+    Object.assign(agent, { gvisor_adapter_version: "2026.10.20.1", gvisor_adapter_sha256: priorDigest });
+    mockRunWithStdin.mockResolvedValueOnce(result("stopped"));
+    await expect(mutateGvisorComputer(userId, computerId, { action: "stop" }))
+      .resolves.toMatchObject({ status: "stopped", gvisor_adapter_sha256: priorDigest });
+    mockRunWithStdin.mockResolvedValueOnce(result("stopped"));
+    await expect(mutateGvisorComputer(userId, computerId, { action: "update" }))
+      .resolves.toMatchObject({ gvisor_adapter_version: "2026.10.20.1", gvisor_adapter_sha256: adapterSha });
+  });
+
   it("asks for the host to be set up again before an Update on Hivra's earlier adapter, without stopping its sandboxes", async () => {
     target.capabilities.adapter = { version: "2026.09.15.1", sha256: previousSha };
     Object.assign(agent, { gvisor_adapter_version: "2026.09.15.1", gvisor_adapter_sha256: previousSha });
