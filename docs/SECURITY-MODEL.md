@@ -1,8 +1,10 @@
 # Hivra Security Model
 
-**Status:** Target security contract and public-release gate
+**Status:** Target security contract and public-release gate, with a repository threat model
 
-**Important:** This document defines required behavior. It does not claim that every control is implemented in the current repository.
+The threat model summarizes architecture and selected controls visible in the
+repository. The requirements in the rest of this document define target
+behavior. See [current product status](STATUS.md) for feature availability.
 
 ## Security objective
 
@@ -25,6 +27,79 @@ Treat these as separate zones:
 9. Hivra or self-hosted operator access.
 
 Compromise of one agent computer must not grant control-plane, provider, backup-key, neighboring-computer, or unrelated credential access.
+
+## Threat model
+
+The Next.js control plane provisions agent computers and brokers access to chat,
+terminals, browsers, desktops, and files. Managed deployments connect the
+control plane to infrastructure providers and external integrations. Self-hosted
+deployments can use local authentication and rely on the operator for network
+and key management. The repository includes infrastructure code and configuration
+for hosts, database migrations, and workers. Hosted project settings require
+separate verification.
+
+### Components
+
+| Component | Responsibility and code |
+| --- | --- |
+| Dashboard API | Account and agent lifecycle, tenant authorization, and persistence. [API routes](../dashboard/src/app/api), [database client](../dashboard/src/lib/supabase.ts), [database migrations](../supabase), [dashboard migrations](../dashboard/supabase). |
+| Auth | Clerk sessions, bearer authentication, operator authorization, and local self-host authentication. [Middleware](../dashboard/src/proxy.ts), [operator access](../dashboard/src/lib/ops-access.ts), [self-host authentication](../dashboard/src/lib/self-host). |
+| Machine endpoints | Enrollment, agent links and bridges, activity ingestion, provider webhooks, and scheduled or internal calls. [Route matcher](../dashboard/src/proxy.ts), [API routes](../dashboard/src/app/api). |
+| Billing & wallets | Billing, usage credits, managed model spend, and wallet services. [Billing](../dashboard/src/lib/billing), [managed model services](../dashboard/src/lib/venice), [agent wallets](../dashboard/src/lib/agent-wallets), [model worker](../services/venice-proxy-worker). |
+| Provisioner & hosts | Infrastructure provider operations, host scripts, and connectors. [Provisioner](../dashboard/provisioner), [operations](../ops), [host scripts](../dashboard/scripts), [host connector](../services/host-connector), [host relay](../services/host-relay-worker). |
+| Agent computer | Guest-side services, runtime adapters, and access surfaces. [Agent overlay](../agent-overlay), [runtime adapters](../dashboard/runtime-adapters), [browser sidecar](../services/browser-sidecar). |
+| Edge workers | Independently deployed workers for memory, lite agents, and telemetry. Assign host relay and model-worker issues to their service components above. [Worker services](../services). |
+| Clients | Dashboard UI, native clients, and user-facing on-chain surfaces. [UI components](../dashboard/src/components), [native apps](../apps), [contracts](../contracts). |
+
+### Entry points and attackers
+
+- Anonymous internet users can reach public pages and send requests to exposed
+  machine endpoints. Machine routes have their own authorization boundary, such
+  as enrollment codes, capability tokens, or provider signatures.
+- Signed-in customers can reach account and instance routes. A customer may
+  attempt to access another tenant's resources or spend credits they do not own.
+  Tenant authorization belongs at the resource boundary after authentication.
+- An agent computer can run customer- and model-controlled code. Model-driven
+  actions, third-party tools, and compromised runtimes can attempt to cross the
+  guest boundary. A browser page served by an agent computer is also an untrusted
+  origin when it shares a site with the dashboard.
+- Operators and service identities can reach privileged paths such as host
+  management and restore. A compromised host is a containment scenario, with the
+  host's workloads and resident credentials treated as potentially exposed.
+  See the [host compromise runbook](security/HOST-COMPROMISE-RUNBOOK.md).
+
+### Sensitive assets
+
+- Provider and host credentials, infrastructure signing keys, and the database
+  service role can affect multiple computers or tenants.
+- Customer model keys, OAuth tokens, vault entries, and agent access grants
+  require scoping to the customer, computer, or service that needs them.
+- Wallet credentials and signing authority can move funds. Billing entitlements
+  and managed model credits authorize spending. See the
+  [key custody inventory](security/KEY-CUSTODY-INVENTORY.md).
+- Conversations, files, and artifacts are private customer data. Backups,
+  archives, and their encryption keys are separate recovery assets.
+
+### Controls visible in the repository
+
+- [Clerk middleware](../dashboard/src/proxy.ts) protects selected dashboard and
+  API routes. Its exclusions include machine routes with independent credentials.
+- A [cross-origin mutation guard](../dashboard/src/lib/cross-origin-mutation-guard.ts)
+  checks browser origin on state-changing API requests within its scope.
+- The dashboard's [Supabase client](../dashboard/src/lib/supabase.ts) uses the
+  service role on the server. [Ops authorization](../dashboard/src/lib/ops-access.ts)
+  checks configured identities and uses a verified primary email for email-based checks.
+- [Host anti-spoof rules](../dashboard/scripts/proxmox-host-vm-antispoof.sh)
+  support guest isolation on Proxmox. The host compromise runbook describes
+  deployment limits and containment procedures.
+
+### Scope and open questions
+
+Review managed and self-hosted code, including bundled infrastructure, clients,
+and contracts. The containment scenario and the architectural risks below stay
+in scope. Deployment-specific questions include how managed accounts are issued,
+which controls are enabled for each provider, and which assets or attack paths
+maintainers consider especially important for triage.
 
 ## Identity and command channel
 
