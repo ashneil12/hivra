@@ -3,8 +3,10 @@ import { NextRequest } from "next/server";
 import { GET } from "../route";
 import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { runSleepIdleSweep } from "@/lib/hivra/sleep-idle-sweep";
+import { runManagedGvisorIdlePilot } from "@/lib/hivra/gvisor-computer-service";
 
 jest.mock("@/lib/hivra/sleep-idle-sweep", () => ({ runSleepIdleSweep: jest.fn() }));
+jest.mock("@/lib/hivra/gvisor-computer-service", () => ({ runManagedGvisorIdlePilot: jest.fn() }));
 jest.mock("@/lib/cron-heartbeat", () => ({ recordCronHeartbeat: jest.fn().mockResolvedValue(undefined) }));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
@@ -30,6 +32,7 @@ describe("GET /api/cron/sleep-idle-agents", () => {
     jest.clearAllMocks();
     process.env = { ...originalEnv, CRON_SECRET: "cron-secret" };
     (runSleepIdleSweep as jest.Mock).mockResolvedValue(summary());
+    (runManagedGvisorIdlePilot as jest.Mock).mockResolvedValue("disabled");
   });
   afterEach(() => {
     process.env = originalEnv;
@@ -40,12 +43,14 @@ describe("GET /api/cron/sleep-idle-agents", () => {
     const response = await GET(req("Bearer anything"));
     expect(response.status).toBe(500);
     expect(runSleepIdleSweep).not.toHaveBeenCalled();
+    expect(runManagedGvisorIdlePilot).not.toHaveBeenCalled();
   });
 
   it.each([undefined, "Bearer wrong", "cron-secret", "Basic cron-secret"])("rejects authorization %p", async (header) => {
     const response = await GET(req(header));
     expect(response.status).toBe(401);
     expect(runSleepIdleSweep).not.toHaveBeenCalled();
+    expect(runManagedGvisorIdlePilot).not.toHaveBeenCalled();
     expect(recordCronHeartbeat).not.toHaveBeenCalled();
   });
 
@@ -73,5 +78,12 @@ describe("GET /api/cron/sleep-idle-agents", () => {
     (runSleepIdleSweep as jest.Mock).mockRejectedValue(new Error("boom"));
     const response = await GET(req("Bearer cron-secret"));
     expect(response.status).toBe(500);
+  });
+
+  it("reports an opt-in gVisor result without changing the Proxmox sweep", async () => {
+    (runManagedGvisorIdlePilot as jest.Mock).mockResolvedValueOnce("stopped");
+    const response = await GET(req("Bearer cron-secret"));
+    expect((await response.json()).data).toMatchObject({ gvisorPilot: "stopped", nap: { slept: 1 } });
+    expect(recordCronHeartbeat).toHaveBeenCalledWith("sleep-idle-agents");
   });
 });

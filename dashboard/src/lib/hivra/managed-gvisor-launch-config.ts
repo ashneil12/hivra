@@ -62,6 +62,14 @@ export function managedGvisorQaEnrollmentEnabled(env: NodeJS.ProcessEnv): boolea
   return switchEnabled(env.HIVRA_MANAGED_GVISOR_QA_ENROLLMENT_ENABLED);
 }
 
+export function managedGvisorIdlePilotConfig(env: NodeJS.ProcessEnv = process.env, now = Date.now()) {
+  if (!switchEnabled(env.HIVRA_MANAGED_GVISOR_IDLE_PILOT_ENABLED) || !managedGvisorQaEnrollmentEnabled(env)) return null;
+  const enrollment = managedGvisorQaEnrollmentConfig(env, now);
+  const authority = managedGvisorAuthorityConfig(env);
+  return enrollment && authority && managedGvisorLaunchAdmittedForUser(enrollment.ownerId, env, now)
+    ? { ...enrollment, ...authority } : null;
+}
+
 export function managedGvisorLaunchConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
   return managedGvisorGeneralLaunchEnabled(env) && managedGvisorAuthorityConfig(env) !== null;
 }
