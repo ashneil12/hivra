@@ -285,6 +285,49 @@ describe("managed provision dispatch", () => {
     expect(mockRunWithStdin).toHaveBeenCalledTimes(1);
   });
 
+  it("releases a before-create capacity refusal after exact acknowledged absence", async () => {
+    reserveThen(claim);
+    mockRunWithStdin
+      .mockResolvedValueOnce({ ok: false, stdout: "", stderr: "The connected host does not have enough uncommitted capacity" })
+      .mockImplementationOnce(async script => acknowledgeManaged(script, absence()));
+    mockRpc.mockResolvedValueOnce({ data: true, error: null })
+      .mockResolvedValueOnce({ data: true, error: null });
+
+    await expect(reserveAndDispatchManagedGvisor(provision)).resolves.toEqual({ state: "cleaned", computerId });
+    expect(mockRunWithStdin.mock.calls.map(([, input]) => JSON.parse(input).operation)).toEqual(["create", "status"]);
+    expect(mockRpc).toHaveBeenNthCalledWith(3, "begin_hivra_managed_gvisor_cleanup", {
+      p_customer: userId, p_computer: computerId, p_operation: op, p_claim: claimId,
+    });
+    expect(mockRpc).toHaveBeenNthCalledWith(4, "release_hivra_managed_gvisor_absent", {
+      p_customer: userId, p_computer: computerId, p_operation: op, p_claim: claimId, p_receipt: absent,
+    });
+  });
+
+  it("keeps a before-create capacity refusal reconciling when absence cannot be confirmed", async () => {
+    reserveThen(claim);
+    mockRunWithStdin
+      .mockResolvedValueOnce({ ok: false, stdout: "", stderr: "The connected host does not have enough uncommitted capacity" })
+      .mockResolvedValueOnce({ ok: false, stdout: "", stderr: "status transport failed" });
+
+    await expect(reserveAndDispatchManagedGvisor(provision)).resolves.toEqual(pending);
+    expect(mockRunWithStdin.mock.calls.map(([, input]) => JSON.parse(input).operation)).toEqual(["create", "status"]);
+    expect(mockRpc).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["a mismatched identity", absence({ ...absent, sandboxId: launchRequestId })],
+    ["a present computer", result("running")],
+  ])("keeps a before-create capacity refusal reconciling on %s", async (_case, observation) => {
+    reserveThen(claim);
+    mockRunWithStdin
+      .mockResolvedValueOnce({ ok: false, stdout: "", stderr: "The connected host does not have enough uncommitted capacity" })
+      .mockImplementationOnce(async script => acknowledgeManaged(script, observation));
+
+    await expect(reserveAndDispatchManagedGvisor(provision)).resolves.toEqual(pending);
+    expect(mockRunWithStdin.mock.calls.map(([, input]) => JSON.parse(input).operation)).toEqual(["create", "status"]);
+    expect(mockRpc).toHaveBeenCalledTimes(2);
+  });
+
   it("holds the original claim after losing the delete response", async () => {
     reserveThen(claim);
     mockRpc.mockResolvedValueOnce({ data: true, error: null });
