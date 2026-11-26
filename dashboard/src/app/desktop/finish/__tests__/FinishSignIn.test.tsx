@@ -6,6 +6,9 @@ import FinishSignIn from "../FinishSignIn";
 
 jest.mock("@clerk/nextjs", () => ({ useAuth: jest.fn(), useClerk: jest.fn() }));
 
+const mockPush = jest.fn();
+jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
+
 const create = jest.fn();
 const signOut = jest.fn();
 const setActive = jest.fn();
@@ -21,6 +24,7 @@ function clerkLoaded(session: unknown = null) {
 }
 
 beforeEach(() => {
+  mockPush.mockClear();
   jest.mocked(useAuth).mockReturnValue({ isLoaded: true } as never);
   create.mockResolvedValue({ status: "complete", createdSessionId: "sess_new" });
   signOut.mockResolvedValue(undefined);
@@ -61,6 +65,18 @@ it("activates the ticket session through Clerk's decorated navigation", async ()
   }
   expect(decorateUrl).toHaveBeenCalledWith("/dashboard");
   expect(screen.queryByText("That sign-in link has expired")).not.toBeInTheDocument();
+});
+
+it("keeps Clerk's undecorated dashboard navigation inside the active ticket session", async () => {
+  render(<FinishSignIn ticket="ticket_123" />);
+
+  await waitFor(() => expect(setActive).toHaveBeenCalledTimes(1));
+  const params = setActive.mock.calls[0][0] as {
+    navigate?: (input: { session: unknown; decorateUrl: (url: string) => string }) => void;
+  };
+  params.navigate?.({ session: {}, decorateUrl: (url) => url });
+
+  expect(mockPush).toHaveBeenCalledWith("/dashboard");
 });
 
 it("signs out an existing web-view session before using the ticket", async () => {

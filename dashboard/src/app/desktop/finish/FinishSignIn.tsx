@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useAuth, useClerk } from "@clerk/nextjs";
 import styles from "../desktop.module.css";
@@ -12,6 +13,7 @@ import styles from "../desktop.module.css";
  */
 export default function FinishSignIn({ ticket }: { ticket: string }) {
   const clerk = useClerk();
+  const router = useRouter();
   const { isLoaded } = useAuth();
   const started = useRef(false);
   const [failed, setFailed] = useState(false);
@@ -29,14 +31,19 @@ export default function FinishSignIn({ ticket }: { ticket: string }) {
         await clerk.setActive({
           session: attempt.createdSessionId,
           navigate: ({ decorateUrl }) => {
-            window.location.assign(decorateUrl("/dashboard"));
+            const destination = decorateUrl("/dashboard");
+            if (/^https?:\/\//.test(destination)) {
+              window.location.assign(destination);
+            } else {
+              router.push(destination);
+            }
           },
         });
       } catch {
         setFailed(true);
       }
     })();
-  }, [clerk, isLoaded, ticket]);
+  }, [clerk, isLoaded, router, ticket]);
 
   return (
     <main className={styles.page}>
