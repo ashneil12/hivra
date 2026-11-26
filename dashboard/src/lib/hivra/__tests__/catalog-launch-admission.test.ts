@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import { offeredAgentTiles } from "@/components/launch/launch-tiles";
+import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "@/lib/infrastructure/portable-provisioner-contract";
 import { canCertifyCatalog } from "../catalog-certifier-access";
 import { getCatalogAppManifest, UNIVERSAL_CATALOG_IDS } from "../catalog-manifests";
-import { hasCurrentCatalogCertification } from "../catalog-manifests/certification";
+import { hasCurrentCatalogCertification, matchesCatalogCertificate } from "../catalog-manifests/certification";
 import { launchHivraAgentForUser } from "../launch-agent";
 
 const mockFrom = jest.fn();
@@ -26,6 +28,26 @@ it("matches the exact manifest hash and never grants another revision or app", (
   expect(hasCurrentCatalogCertification(certified)).toBe(true);
   expect(hasCurrentCatalogCertification({ ...certified, description: "Changed revision" })).toBe(false);
   expect(hasCurrentCatalogCertification(getCatalogAppManifest("dufs")!)).toBe(false);
+});
+
+it("keeps an unpinned predecessor pass when the current provisioner bumps, but pins require their exact admitted seal", () => {
+  const base = getCatalogAppManifest("it-tools")!;
+  if (base.runtime.kind !== "docker-web") throw new Error("Expected a Docker web fixture");
+  const pinned = { ...base, runtime: { ...base.runtime, imageDigest: "sha256:" + "a".repeat(64) } };
+  const digest = (manifest: typeof base) => createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+  expect(PORTABLE_HIVRA_PROVISIONER_VERSION).not.toBe("2026.11.25.2");
+  expect(matchesCatalogCertificate(base, {
+    manifestSha256: digest(base), provisionerVersion: "2026.11.25.2",
+  })).toBe(true);
+  expect(matchesCatalogCertificate(pinned, {
+    manifestSha256: digest(pinned), provisionerVersion: "2026.11.25.2",
+  })).toBe(false);
+  expect(matchesCatalogCertificate(pinned, {
+    manifestSha256: digest(pinned), provisionerVersion: "2026.11.26.1",
+  })).toBe(true);
+  expect(matchesCatalogCertificate(base, {
+    manifestSha256: digest(base), provisionerVersion: "2026.11.25.1",
+  })).toBe(false);
 });
 
 it("offers certified apps only to customers and preserves the serial certifier's chooser", () => {

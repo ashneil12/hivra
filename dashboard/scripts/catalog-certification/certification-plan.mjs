@@ -63,6 +63,7 @@ export function summarizeCatalog(manifests) {
       category: manifest.category ?? "app",
       order: index,
       manifestSha256: sha256Json(manifest),
+      requiresPinnedCatalogDigest: manifest.runtime?.kind === "docker-web" && Boolean(manifest.runtime.imageDigest),
       ...runtimeEvidence(manifest),
     };
   });

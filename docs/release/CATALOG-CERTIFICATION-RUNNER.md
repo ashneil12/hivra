@@ -84,8 +84,11 @@ emails or secret-shaped strings into public git or GitHub output.
 The public chooser and launch endpoint use the reviewed snapshot in
 `dashboard/src/lib/hivra/catalog-manifests/certification-allowlist.json`.
 The global `NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG=1` switch enables only entries
-whose manifest hash and provisioner release still match that snapshot. It
-does not grant new launch access to the rest of the registry.
+whose current manifest hash matches a pass on a seal still admitted by the
+Canary launch policy. Unpinned entries may retain a pass on the admitted
+predecessor; digest-pinned entries require the exact pin-capable seal. Each
+certificate retains its original provisioner version. The switch does not
+grant new launch access to the rest of the registry.
 
 Configure `HIVRA_CATALOG_CERTIFIER_OWNER_ID` server-side in the Canary project
 with the Clerk user ID of the existing dedicated standing account before
