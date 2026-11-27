@@ -1387,6 +1387,7 @@ export async function launchHivraAgentForUser(
     let capacityPolicy: ProxmoxHostCapacityPolicy = DEFAULT_PROXMOX_HOST_CAPACITY_POLICY;
     let stickyHost: string | null = null;
     let explicitClaudeHost: string | null = null;
+    let preferSleepPlacement = false;
     let seatFunding: SeatFunding | null = null;
 
     if (deployment.mode === "self-managed") {
@@ -1478,12 +1479,13 @@ export async function launchHivraAgentForUser(
         }
       }
 
+      const sleepMode = parseSleepMode(process.env.HIVRA_SLEEP_MODE);
+      const sleepActs = sleepMode === "on" || sleepMode === "canary";
       if (seatFunding === "holder") {
         if (!supportsIdleNap(type)) {
           return apiError("This runtime cannot nap and save its memory on holder terms. Choose a sleep-capable computer.", 409);
         }
-        const mode = parseSleepMode(process.env.HIVRA_SLEEP_MODE);
-        if ((mode !== "on" && mode !== "canary") || !isTunnelConfigured()) {
+        if (!sleepActs || !isTunnelConfigured()) {
           return apiError("Holder launches need automatic sleep and a configured wake connection.", 503);
         }
       }
@@ -1493,6 +1495,20 @@ export async function launchHivraAgentForUser(
       if (!explicitClaudeHost && seatFunding !== "holder") {
         stickyHost = await resolveStickyHivraProxmoxHost(userId);
       }
+      preferSleepPlacement = seatFunding === "paid" && !options?.moveFromInstanceId
+        && !explicitClaudeHost && supportsIdleNap(type) && sleepActs;
+      const hostFitsMaximum = async (hostEnv: typeof env) => {
+        if (!hasExplicitEnvelope) return true;
+        const maximumEvidence = await runProxmoxHostScript(`set -euo pipefail
+HOST_CPU="$(nproc)"
+HOST_RAM_MB="$(awk '$1=="MemTotal:" {print int($2/1024)}' /proc/meminfo)"
+[[ "$HOST_CPU" =~ ^[0-9]+$ && "$HOST_RAM_MB" =~ ^[0-9]+$ ]] \\
+  || { echo "could not measure selected host totals" >&2; exit 1; }
+[ "$HOST_CPU" -ge ${Math.ceil(maximumCpu)} ] && [ "$HOST_RAM_MB" -ge ${maximumRam * 1024} ] \\
+  || { echo "resource maximum exceeds selected host totals" >&2; exit 1; }
+printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostEnv);
+        return maximumEvidence.ok && maximumEvidence.stdout.includes("HIVRA_RESOURCE_MAXIMUM_FITS ");
+      };
       // With HIVRA_HOST_CAPACITY_ALERTS on, a host whose latest capacity reading
       // is critical is tried only when no other host can take the launch.
       const placeOn = (forceTargetId: string | null) => selectAvoidingCriticalHosts(excludeTargetIds => selectAvailableProxmoxProvisionTarget({
@@ -1506,27 +1522,36 @@ export async function launchHivraAgentForUser(
         forceTargetId,
         rankManagedTarget: true,
         seatFunding,
+        ...(preferSleepPlacement ? { paidSleepPlacement: { stickyHost } } : {}),
         ...(excludeTargetIds ? { excludeTargetIds } : {}),
         skipTemplateAvailabilityCheck: true,
         // Managed-model agents (def.managedVenice) get HIVRA_MODEL_* at launch,
         // so their host must carry model-settings support as well as the
         // runtime's own minimum release.
-        readinessCheck: candidate => checkManagedHivraHostReadiness({
-          ...candidate,
-          channel: managedProvisionerChannel,
-          requirePinnedCatalogDigest: requiresPinnedCatalogDigest,
-          runtimeId: anthropicCredits ? CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID : compatibilityRuntimeId,
-          runtimeLabel: launchLabel,
-          // Claude Code takes model settings only on Hivra credits; its native
-          // sign-in launch does not need them.
-          ...(launchAdmission || (def.managedVenice && (def.llm?.wire !== "anthropic" || anthropicCredits))
-            ? { requireModelSettings: true }
-            : {}),
-        }),
+        readinessCheck: async candidate => {
+          const readiness = await checkManagedHivraHostReadiness({
+            ...candidate,
+            channel: managedProvisionerChannel,
+            requirePinnedCatalogDigest: requiresPinnedCatalogDigest,
+            runtimeId: anthropicCredits ? CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID : compatibilityRuntimeId,
+            runtimeLabel: launchLabel,
+            // Claude Code takes model settings only on Hivra credits; its native
+            // sign-in launch does not need them.
+            ...(launchAdmission || (def.managedVenice && (def.llm?.wire !== "anthropic" || anthropicCredits))
+              ? { requireModelSettings: true }
+              : {}),
+          });
+          if (!readiness.ok || !preferSleepPlacement) return readiness;
+          if (!await hostFitsMaximum(candidate.env)) {
+            return { ok: false, status: 409, message: "No managed host can enforce that CPU and memory maximum." };
+          }
+          const admission = await checkHostWakeCapacity(ram * 1024, candidate.env);
+          return admission.ok ? readiness : { ok: false, status: 503, message: "Host is at capacity — try again shortly" };
+        },
       }), { forced: Boolean(forceTargetId) });
-      let placement = await placeOn(explicitClaudeHost ?? stickyHost);
+      let placement = await placeOn(explicitClaudeHost ?? (preferSleepPlacement ? null : stickyHost));
       // A paid user's usual host may be full or unavailable. Try the rotation.
-      if (!placement.ok && stickyHost) {
+      if (!placement.ok && stickyHost && !preferSleepPlacement) {
         log.warn("hivra sticky host could not take the launch; trying the other servers", {
           source: "hivra/agents",
           failureType: "hivra_agent_sticky_host_spillover",
@@ -1586,18 +1611,8 @@ export async function launchHivraAgentForUser(
           }
         }
       }
-      if (hasExplicitEnvelope) {
-        const maximumEvidence = await runProxmoxHostScript(`set -euo pipefail
-HOST_CPU="$(nproc)"
-HOST_RAM_MB="$(awk '$1=="MemTotal:" {print int($2/1024)}' /proc/meminfo)"
-[[ "$HOST_CPU" =~ ^[0-9]+$ && "$HOST_RAM_MB" =~ ^[0-9]+$ ]] \\
-  || { echo "could not measure selected host totals" >&2; exit 1; }
-[ "$HOST_CPU" -ge ${Math.ceil(maximumCpu)} ] && [ "$HOST_RAM_MB" -ge ${maximumRam * 1024} ] \\
-  || { echo "resource maximum exceeds selected host totals" >&2; exit 1; }
-printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
-        if (!maximumEvidence.ok || !maximumEvidence.stdout.includes("HIVRA_RESOURCE_MAXIMUM_FITS ")) {
-          return apiError("No managed host can enforce that CPU and memory maximum.", 409);
-        }
+      if (!preferSleepPlacement && !await hostFitsMaximum(env)) {
+        return apiError("No managed host can enforce that CPU and memory maximum.", 409);
       }
     }
 
@@ -1619,28 +1634,30 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     // guest into swap, miss the provisioner's ssh window, and strand a half-dead
     // box (the recurring fixturenodea failure). Fail fast with the "at capacity" UX
     // instead. Fails open on a flaky probe, so it never blocks on noise.
-    const provisionCapacity = await checkHostWakeCapacity(ram * 1024, env);
-    // Managed fleet admission has historically failed open so a transient
-    // telemetry probe does not block every customer. A user-selected target is
-    // different: before creating a DB row, tunnel, key, or VM, require live
-    // memory evidence from that exact credential and target.
-    if (deployment.mode === "self-managed" && provisionCapacity.freeMb === null) {
-      return apiError(
-        "Hivra could not verify live memory headroom on this computer. Check the connection and try again.",
-        503,
-      );
-    }
-    if (!provisionCapacity.ok) {
-      log.warn("hivra provision blocked: host at capacity", {
-        source: "hivra/agents",
-        failureType: "hivra_agent_provision_host_at_capacity",
-        userId,
-        agentType: type,
-        proxmoxHost: host,
-        requestedRamMb: ram * 1024,
-        freeMb: provisionCapacity.freeMb,
-      });
-      return apiError("Host is at capacity — try again shortly", 503);
+    if (!preferSleepPlacement) {
+      const provisionCapacity = await checkHostWakeCapacity(ram * 1024, env);
+      // Managed fleet admission has historically failed open so a transient
+      // telemetry probe does not block every customer. A user-selected target is
+      // different: before creating a DB row, tunnel, key, or VM, require live
+      // memory evidence from that exact credential and target.
+      if (deployment.mode === "self-managed" && provisionCapacity.freeMb === null) {
+        return apiError(
+          "Hivra could not verify live memory headroom on this computer. Check the connection and try again.",
+          503,
+        );
+      }
+      if (!provisionCapacity.ok) {
+        log.warn("hivra provision blocked: host at capacity", {
+          source: "hivra/agents",
+          failureType: "hivra_agent_provision_host_at_capacity",
+          userId,
+          agentType: type,
+          proxmoxHost: host,
+          requestedRamMb: ram * 1024,
+          freeMb: provisionCapacity.freeMb,
+        });
+        return apiError("Host is at capacity — try again shortly", 503);
+      }
     }
 
     log.info("hivra launch selected Proxmox placement target", {
