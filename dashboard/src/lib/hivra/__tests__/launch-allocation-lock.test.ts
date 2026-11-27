@@ -73,16 +73,25 @@ function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: str
 }
 
 describe("host allocation lock lifecycle", () => {
-  it("enables batched capacity reads only for managed Hermes on the reviewed Canary release", () => {
-    const script = renderedPhase1(false, "2026.11.27.3", "hermes");
-    const admission = script.indexOf("HIVRA_CAPACITY_BATCH_QEMU=1 bash ");
-    expect(admission).toBeGreaterThan(script.indexOf("flock -w"));
-    expect(admission).toBeGreaterThan(script.indexOf("OBSERVED_MANIFEST_SHA="));
-    expect(admission).toBeLessThan(script.indexOf("claimed_octets="));
-    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
-    expect(renderedPhase1(false, "2026.11.27.2", "hermes")).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
-    expect(renderedPhase1(false, "2026.11.27.3", "codex")).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
-    expect(renderedPhase1(true, undefined, "hermes")).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+  it.each(["hermes", "claude", "codex", "openclaw", "deepseek-harness", "agent-zero"])(
+    "batches capacity and IP reads under the allocation lock for managed %s on the reviewed Canary release", (kind) => {
+      const script = renderedPhase1(false, "2026.11.27.3", kind);
+      const admission = script.indexOf("HIVRA_CAPACITY_BATCH_QEMU=1 bash ");
+      expect(admission).toBeGreaterThan(script.indexOf("flock -w"));
+      expect(admission).toBeGreaterThan(script.indexOf("OBSERVED_MANIFEST_SHA="));
+      expect(admission).toBeLessThan(script.indexOf("claimed_octets="));
+      expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+      expect(script).toContain('configs=(/etc/pve/qemu-server/*.conf)');
+      expect(script).not.toContain("qm list");
+      expect(renderedPhase1(false, "2026.11.27.2", kind)).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+      expect(renderedPhase1(true, undefined, kind)).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+    },
+  );
+
+  it("keeps the original inventory path for unmeasured profiles", () => {
+    const script = renderedPhase1(false, "2026.11.27.3", "linux-desktop");
+    expect(script).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+    expect(script).toContain("qm list");
   });
 
   it("reads managed Hermes IP claims in one pmxcfs scan under the allocation lock", () => {
