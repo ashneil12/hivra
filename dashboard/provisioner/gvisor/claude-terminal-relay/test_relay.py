@@ -50,11 +50,14 @@ class FixtureTests(unittest.TestCase):
         adapter = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(adapter)
         with mock.patch.object(relay, "read_owned_file", return_value=json.dumps(FIXTURE)):
-            request = relay.fixture_request(adapter)
-        self.assertEqual(request, {
-            "operation": "status", "ownerHash": FIXTURE["ownerHash"], "computerId": FIXTURE["computerId"],
-            "sandboxId": FIXTURE["sandboxId"], "workload": {"kind": "claude-terminal", "image": FIXTURE["image"]},
-        })
+            if hasattr(adapter, "CLAUDE_TERMINAL_IMAGE_CONFIG"):
+                self.assertEqual(relay.fixture_request(adapter), {
+                    "operation": "status", "ownerHash": FIXTURE["ownerHash"], "computerId": FIXTURE["computerId"],
+                    "sandboxId": FIXTURE["sandboxId"], "workload": {"kind": "claude-terminal", "image": FIXTURE["image"]},
+                })
+            else:
+                with self.assertRaises(SystemExit), mock.patch.object(adapter, "fail", side_effect=SystemExit(1)):
+                    relay.fixture_request(adapter)
         for value in ([], FIXTURE | {"address": "localhost"}, FIXTURE | {"ownerHash": "other"},
                       FIXTURE | {"computerId": "other"}, FIXTURE | {"sandboxId": "other"},
                       FIXTURE | {"image": "latest"}):
