@@ -250,24 +250,27 @@ function submittedLaunchRequestIntent(
 // Phase 1 (synchronous over SSH): pick a free VMID in range, kick the host
 // orchestrator in the background (it does VM create + provisioner + tunnel,
 // ~10 min), and print a marker so this call returns in seconds.
-function deepSeekPreparedImagePath(digest: string): string {
-  return `/var/lib/vz/template/iso/hivra-deepseek-harness-${digest}.qcow2`;
+type PreparedKvmImage = { kind: "deepseek-harness" | "ubuntu-qga"; digest: string };
+const STOCK_QGA_AGENT_KINDS = ["claude", "codex", "openclaw", "deepseek-harness", "agent-zero"];
+
+function preparedKvmImagePath(image: PreparedKvmImage): string {
+  return `/var/lib/vz/template/iso/hivra-${image.kind}-${image.digest}.qcow2`;
 }
 
-function deepSeekPreparedImageGate(digest: string): string {
-  return `PREPARED_IMAGE=${shellQuote(deepSeekPreparedImagePath(digest))}
+function preparedKvmImageGate(image: PreparedKvmImage): string {
+  return `PREPARED_IMAGE=${shellQuote(preparedKvmImagePath(image))}
 [ -f "$PREPARED_IMAGE" ] && [ ! -L "$PREPARED_IMAGE" ] \\
   && [ "$(stat -c '%u:%g:%a:%h' -- "$PREPARED_IMAGE")" = '0:0:444:1' ] \\
-  || { echo 'prepared DeepSeek image is missing or not a read-only root-owned file' >&2; exit 1; }
-printf '%s  %s\\n' ${shellQuote(digest)} "$PREPARED_IMAGE" | sha256sum --check --status \\
-  || { echo 'prepared DeepSeek image digest mismatch' >&2; exit 1; }
+  || { echo 'prepared KVM image is missing or not a read-only root-owned file' >&2; exit 1; }
+printf '%s  %s\\n' ${shellQuote(image.digest)} "$PREPARED_IMAGE" | sha256sum --check --status \\
+  || { echo 'prepared KVM image digest mismatch' >&2; exit 1; }
 qemu-img info --output=json "$PREPARED_IMAGE" | python3 -I -B -c '
 import json, sys
 d = json.load(sys.stdin)
 sys.exit(0 if d.get("format") == "qcow2" and d.get("virtual-size") == 8 * 1024**3
          and not any(k in d for k in ("backing-filename", "full-backing-filename"))
          and not d.get("format-specific", {}).get("data", {}).get("data-file") else 1)
-' || { echo 'prepared DeepSeek image is not standalone 8 GiB qcow2' >&2; exit 1; }`;
+' || { echo 'prepared KVM image is not standalone 8 GiB qcow2' >&2; exit 1; }`;
 }
 
 export function phase1Script(params: {
@@ -296,7 +299,7 @@ export function phase1Script(params: {
   portableRuntime?: PortableProxmoxRuntime | null;
   canaryProvisionerVersion?: string;
   hermesImageSha256?: string;
-  deepSeekImageSha256?: string;
+  preparedImage?: PreparedKvmImage;
   computerId?: string;
   controlOrigin?: string;
   capacityPolicy: ProxmoxHostCapacityPolicy;
@@ -310,9 +313,12 @@ export function phase1Script(params: {
   const logDirectory = runtimePaths.logDirectory;
   const logName = runtime ? `provision-$VMID.log` : `hivra-prov-$VMID.log`;
   const provisionerDirectory = runtimePaths.provisionerDirectory;
-  const deepSeekDigest = !runtime && params.agentKind === "deepseek-harness" && params.canaryProvisionerVersion === "2026.11.27.4"
-    && /^[a-f0-9]{64}$/.test(params.deepSeekImageSha256 ?? "")
-    ? params.deepSeekImageSha256
+  const candidate = params.preparedImage;
+  const preparedImage = !runtime && candidate && params.canaryProvisionerVersion === "2026.11.27.4"
+    && /^[a-f0-9]{64}$/.test(candidate.digest)
+    && ((candidate.kind === "deepseek-harness" && params.agentKind === "deepseek-harness")
+      || (candidate.kind === "ubuntu-qga" && STOCK_QGA_AGENT_KINDS.includes(params.agentKind)))
+    ? candidate
     : undefined;
   const operationTag = `hivra-op-${params.operationId.replace(/-/g, "")}`;
   // The desktop profile has its own contained desktop and explicitly rejects
@@ -357,7 +363,7 @@ fi`
     `HIVRA_STORAGE=${shellQuote(runtimePaths.storage)}`,
     `HIVRA_DISK_GB=${HIVRA_AGENT_VM_DISK_GB}`,
     `HIVRA_BRIDGE=${shellQuote(runtimePaths.bridge)}`,
-    `HIVRA_UBUNTU_IMG=${shellQuote(deepSeekDigest ? deepSeekPreparedImagePath(deepSeekDigest) : runtimePaths.ubuntuImage)}`,
+    `HIVRA_UBUNTU_IMG=${shellQuote(preparedImage ? preparedKvmImagePath(preparedImage) : runtimePaths.ubuntuImage)}`,
     `HIVRA_VM_SSH_KEY_PATH=${shellQuote(runtimePaths.vmSshKeyPath)}`,
     `HIVRA_LOG_DIR=${shellQuote(runtimePaths.logDirectory)}`,
     `HIVRA_COMPUTER_ID=${shellQuote(params.computerId ?? "")}`,
@@ -547,7 +553,7 @@ ${params.canaryProvisionerVersion
     ? `PROVISIONER_DIR=${shellQuote(provisionerDirectory)}
 ${managedCanaryLaunchSealScript([params.canaryProvisionerVersion])}`
     : ""}
-${deepSeekDigest ? deepSeekPreparedImageGate(deepSeekDigest) : ""}
+${preparedImage ? preparedKvmImageGate(preparedImage) : ""}
 # Inventory is intentionally captured only after FD 8 is held. A launcher that
 # waited behind another provision must observe the predecessor's committed VM
 # configuration and private IP, rather than allocate from its pre-wait snapshot.
@@ -1414,7 +1420,7 @@ export async function launchHivraAgentForUser(
     let portableRuntime: PortableProxmoxRuntime | null = null;
     let canaryProvisionerVersion: string | undefined;
     let hermesImageSha256: string | undefined;
-    let deepSeekImageSha256: string | undefined;
+    let preparedImage: PreparedKvmImage | undefined;
     let capacityPolicy: ProxmoxHostCapacityPolicy = DEFAULT_PROXMOX_HOST_CAPACITY_POLICY;
     let stickyHost: string | null = null;
     let explicitClaudeHost: string | null = null;
@@ -1642,27 +1648,33 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostE
           }
         }
       }
-      if (managedGitCanary && type === "deepseek-harness" && !wantBrowser && !options?.moveFromInstanceId && !qaHolderDeadline) {
-        const bakeHost = process.env.HIVRA_CANARY_DEEPSEEK_IMAGE_HOST;
-        const bakeSha = process.env.HIVRA_CANARY_DEEPSEEK_IMAGE_SHA256;
-        const bakeUser = process.env.HIVRA_CANARY_DEEPSEEK_IMAGE_USER_ID;
-        if (bakeHost || bakeSha || bakeUser) {
+      if (managedGitCanary && STOCK_QGA_AGENT_KINDS.includes(agentKind) && !wantBrowser && !options?.moveFromInstanceId && !qaHolderDeadline) {
+        const trials = [
+          ...(type === "deepseek-harness" ? [["deepseek-harness", "HIVRA_CANARY_DEEPSEEK_IMAGE"]] as const : []),
+          ["ubuntu-qga", "HIVRA_CANARY_UBUNTU_QGA_IMAGE"],
+        ] as const;
+        for (const [kind, prefix] of trials) {
+          const bakeHost = process.env[`${prefix}_HOST`];
+          const bakeSha = process.env[`${prefix}_SHA256`];
+          const bakeUser = process.env[`${prefix}_USER_ID`];
+          if (!bakeHost && !bakeSha && !bakeUser) continue;
           if (!bakeHost || !/^[a-z0-9][a-z0-9-]*$/.test(bakeHost) || !bakeSha || !/^[a-f0-9]{64}$/.test(bakeSha)
             || !bakeUser || !/^user_[A-Za-z0-9]+$/.test(bakeUser)) {
-            return apiError("The Canary DeepSeek image selection is not configured safely.", 503);
+            return apiError("The Canary prepared image selection is not configured safely.", 503);
           }
-          if (bakeHost === host && bakeUser === userId) {
-            if (canaryProvisionerVersion !== "2026.11.27.4") {
-              return apiError("The selected Canary host does not support the pinned DeepSeek image.", 503);
-            }
-            const imageCheck = await runProxmoxHostScript(`set -euo pipefail
-${deepSeekPreparedImageGate(bakeSha)}
-printf 'HIVRA_DEEPSEEK_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
-            if (!imageCheck.ok || !imageCheck.stdout.split("\n").includes("HIVRA_DEEPSEEK_IMAGE_VERIFIED")) {
-              return apiError("The selected Canary DeepSeek image could not be verified.", 503);
-            }
-            deepSeekImageSha256 = bakeSha;
+          if (bakeHost !== host || bakeUser !== userId) continue;
+          if (canaryProvisionerVersion !== "2026.11.27.4") {
+            return apiError("The selected Canary host does not support the prepared image.", 503);
           }
+          const candidate = { kind, digest: bakeSha };
+          const imageCheck = await runProxmoxHostScript(`set -euo pipefail
+${preparedKvmImageGate(candidate)}
+printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
+          if (!imageCheck.ok || !imageCheck.stdout.split("\n").includes("HIVRA_PREPARED_IMAGE_VERIFIED")) {
+            return apiError("The selected Canary image could not be verified.", 503);
+          }
+          preparedImage = candidate;
+          break;
         }
       }
       if (!preferSleepPlacement && !await hostFitsMaximum(env)) {
@@ -2281,7 +2293,7 @@ printf 'HIVRA_DEEPSEEK_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
       portableRuntime,
       canaryProvisionerVersion,
       hermesImageSha256,
-      deepSeekImageSha256,
+      preparedImage,
       computerId: type === "linux-desktop" ? String(agent.id) : undefined,
       controlOrigin: desktopControlOrigin ?? undefined,
       capacityPolicy,
@@ -2641,8 +2653,8 @@ qm set ${vmid} --cpuunits ${cpuunits}`,
         agentType: type,
         operationId: provisionOperationId,
         vmid,
-        baked: hermesImageSha256 !== undefined || deepSeekImageSha256 !== undefined,
-        ...(deepSeekImageSha256 ? { imageSha256: deepSeekImageSha256 } : {}),
+        baked: hermesImageSha256 !== undefined || preparedImage !== undefined,
+        ...(preparedImage ? { imageKind: preparedImage.kind, imageSha256: preparedImage.digest } : {}),
         ...launchCheckpoints,
       });
     }

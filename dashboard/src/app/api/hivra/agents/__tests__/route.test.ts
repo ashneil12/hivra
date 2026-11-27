@@ -512,6 +512,9 @@ describe("POST /api/hivra/agents", () => {
     "HIVRA_CANARY_DEEPSEEK_IMAGE_HOST",
     "HIVRA_CANARY_DEEPSEEK_IMAGE_SHA256",
     "HIVRA_CANARY_DEEPSEEK_IMAGE_USER_ID",
+    "HIVRA_CANARY_UBUNTU_QGA_IMAGE_HOST",
+    "HIVRA_CANARY_UBUNTU_QGA_IMAGE_SHA256",
+    "HIVRA_CANARY_UBUNTU_QGA_IMAGE_USER_ID",
     "VERCEL",
     "VERCEL_ENV",
     "VERCEL_PROJECT_PRODUCTION_URL",
@@ -3089,25 +3092,33 @@ describe("POST /api/hivra/agents", () => {
     };
 
     it.each([
-      ["scope matches", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", true, true, 201],
-      ["different host", "canary", "fixturenode8", "user_fixture1", "2026.11.27.4", true, false, 201],
-      ["different owner", "canary", "fixturenode7", "user_other", "2026.11.27.4", true, false, 201],
-      ["not a Git Canary deploy", "main", "fixturenode7", "user_fixture1", "2026.11.27.4", true, false, 201],
-      ["owner omitted", "canary", "fixturenode7", undefined, "2026.11.27.4", true, false, 503],
-      ["bundle too old", "canary", "fixturenode7", "user_fixture1", "2026.11.27.3", true, false, 503],
-      ["image missing", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", false, false, 503],
-    ] as const)("limits the preinstalled DeepSeek disk to its owner and host (%s)", async (
-      _case, branch, bakeHost, bakeUser, version, verified, baked, status,
+      ["scope matches", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", true, true, 201, "deepseek-harness"],
+      ["different host", "canary", "fixturenode8", "user_fixture1", "2026.11.27.4", true, false, 201, "deepseek-harness"],
+      ["different owner", "canary", "fixturenode7", "user_other", "2026.11.27.4", true, false, 201, "deepseek-harness"],
+      ["not a Git Canary deploy", "main", "fixturenode7", "user_fixture1", "2026.11.27.4", true, false, 201, "deepseek-harness"],
+      ["owner omitted", "canary", "fixturenode7", undefined, "2026.11.27.4", true, false, 503, "deepseek-harness"],
+      ["bundle too old", "canary", "fixturenode7", "user_fixture1", "2026.11.27.3", true, false, 503, "deepseek-harness"],
+      ["image missing", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", false, false, 503, "deepseek-harness"],
+      ["Ubuntu QGA trial when no DeepSeek image is configured", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", true, true, 201, "ubuntu-qga"],
+      ["Ubuntu QGA trial for another owner stays stock", "canary", "fixturenode7", "user_other", "2026.11.27.4", true, false, 201, "ubuntu-qga"],
+    ] as const)("limits each prepared disk to its owner and host (%s)", async (
+      _case, branch, bakeHost, bakeUser, version, verified, baked, status, kind,
     ) => {
       paidPlan();
       const digest = "a".repeat(64);
+      const prefix = kind === "deepseek-harness" ? "HIVRA_CANARY_DEEPSEEK_IMAGE" : "HIVRA_CANARY_UBUNTU_QGA_IMAGE";
       mockCreateManagedVeniceProxyKey.mockResolvedValue({ id: "key-ds", keyPrefix: "hven_live_TEST", plaintextKey: "hven_live_TESTKEY123" });
       enableManagedGvisorQaFixture({
         VERCEL_TARGET_ENV: "canary",
         VERCEL_GIT_COMMIT_REF: branch,
-        HIVRA_CANARY_DEEPSEEK_IMAGE_HOST: bakeHost,
-        HIVRA_CANARY_DEEPSEEK_IMAGE_SHA256: digest,
-        HIVRA_CANARY_DEEPSEEK_IMAGE_USER_ID: bakeUser,
+        [`${prefix}_HOST`]: bakeHost,
+        [`${prefix}_SHA256`]: digest,
+        [`${prefix}_USER_ID`]: bakeUser,
+        ...(kind === "deepseek-harness" && baked ? {
+          HIVRA_CANARY_UBUNTU_QGA_IMAGE_HOST: bakeHost,
+          HIVRA_CANARY_UBUNTU_QGA_IMAGE_SHA256: "c".repeat(64),
+          HIVRA_CANARY_UBUNTU_QGA_IMAGE_USER_ID: bakeUser,
+        } : {}),
       });
       mockAuth.mockResolvedValue({ userId: "user_fixture1" });
       mockSelectAvailableProxmoxProvisionTarget.mockResolvedValueOnce({
@@ -3119,7 +3130,7 @@ describe("POST /api/hivra/agents", () => {
       });
       if (baked || !verified) {
         mockRunProxmoxHostScript.mockReset()
-          .mockResolvedValueOnce({ ok: verified, stdout: verified ? "HIVRA_DEEPSEEK_IMAGE_VERIFIED\n" : "", stderr: "" })
+          .mockResolvedValueOnce({ ok: verified, stdout: verified ? "HIVRA_PREPARED_IMAGE_VERIFIED\n" : "", stderr: "" })
           .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n' })
           .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
           .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
@@ -3130,14 +3141,14 @@ describe("POST /api/hivra/agents", () => {
       }) as never);
       expect(response.status).toBe(status);
       const scripts = mockRunProxmoxHostScript.mock.calls.map(([script]) => String(script));
-      expect(scripts.some(script => script.includes("HIVRA_DEEPSEEK_IMAGE_VERIFIED"))).toBe(baked || !verified);
+      expect(scripts.some(script => script.includes("HIVRA_PREPARED_IMAGE_VERIFIED"))).toBe(baked || !verified);
       const kickoff = scripts.find(script => script.includes("HIVRA_PROVISION_RESULT"));
       if (status === 503) {
         expect(kickoff).toBeUndefined();
         expect(mockAgentInsert).not.toHaveBeenCalled();
       } else {
         expect(kickoff).toBeDefined();
-        expect(kickoff?.includes(`HIVRA_UBUNTU_IMG='/var/lib/vz/template/iso/hivra-deepseek-harness-${digest}.qcow2'`)).toBe(baked);
+        expect(kickoff?.includes(`HIVRA_UBUNTU_IMG='/var/lib/vz/template/iso/hivra-${kind}-${digest}.qcow2'`)).toBe(baked);
         expect(kickoff).not.toContain("b".repeat(64));
       }
     });

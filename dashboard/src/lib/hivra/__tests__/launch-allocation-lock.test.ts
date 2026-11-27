@@ -31,7 +31,10 @@ it("revalidates the selected Canary seal while holding the allocation lock, befo
   expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
 });
 
-function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: string, agentKind = "codex", deepSeekImageSha256?: string) {
+function renderedPhase1(
+  portableRuntime: boolean, canaryProvisionerVersion?: string, agentKind = "codex",
+  preparedImage?: Parameters<typeof phase1Script>[0]["preparedImage"],
+) {
   return phase1Script({
     cpu: 2,
     cpuLimit: 2,
@@ -51,7 +54,7 @@ function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: str
     infrastructureBindingTag: BINDING_TAG,
     managedRuntimePaths: MANAGED_PATHS,
     canaryProvisionerVersion,
-    deepSeekImageSha256,
+    preparedImage,
     portableRuntime: portableRuntime
       ? {
           node: "pve-synthetic",
@@ -81,7 +84,7 @@ it("checks the selected digest, immutable file and standalone qcow2 before any a
     const digest = createHash("sha256").update(content).digest("hex");
     const file = path.join(fixture, `hivra-deepseek-harness-${digest}.qcow2`);
     writeFileSync(file, content);
-    const script = renderedPhase1(false, "2026.11.27.4", "deepseek-harness", digest);
+    const script = renderedPhase1(false, "2026.11.27.4", "deepseek-harness", { kind: "deepseek-harness", digest });
     const begin = script.indexOf("PREPARED_IMAGE=");
     const end = script.indexOf("# Inventory is intentionally", begin);
     expect(begin).toBeGreaterThan(script.indexOf("OBSERVED_MANIFEST_SHA="));
@@ -111,6 +114,18 @@ ${gate}`,
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
+});
+
+it("keeps the prepared Ubuntu disk within the five stock-agent profiles and the managed .4 bundle", () => {
+  const image = { kind: "ubuntu-qga", digest: "a".repeat(64) } as const;
+  for (const kind of ["claude", "codex", "openclaw", "deepseek-harness", "agent-zero"]) {
+    const script = renderedPhase1(false, "2026.11.27.4", kind, image);
+    expect(script).toContain(`HIVRA_UBUNTU_IMG='/var/lib/vz/template/iso/hivra-ubuntu-qga-${image.digest}.qcow2'`);
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+    expect(renderedPhase1(true, "2026.11.27.4", kind, image)).not.toContain("PREPARED_IMAGE=");
+    expect(renderedPhase1(false, "2026.11.27.3", kind, image)).not.toContain("PREPARED_IMAGE=");
+  }
+  expect(renderedPhase1(false, "2026.11.27.4", "hermes", image)).not.toContain("PREPARED_IMAGE=");
 });
 
 describe("host allocation lock lifecycle", () => {
