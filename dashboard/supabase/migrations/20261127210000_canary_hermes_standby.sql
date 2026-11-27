@@ -1,5 +1,3 @@
-begin;
-
 -- This ledger is for the single Canary standby experiment. It doesn't update
 -- production's database or represent its workloads. On the shared host, the
 -- host-local memory admission must count this guest through the same actual
@@ -272,5 +270,3 @@ grant execute on function public.reserve_hivra_hermes_standby(text,text,uuid,int
   public.advance_hivra_hermes_standby(uuid,text), public.read_hivra_hermes_standby(text,text,text),
   public.claim_hivra_hermes_standby(text,uuid,uuid,text,uuid,integer,inet,text),
   public.assign_hivra_hermes_standby(text,uuid,uuid,uuid) to service_role;
-
-commit;
