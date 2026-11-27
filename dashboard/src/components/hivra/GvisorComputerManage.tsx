@@ -14,6 +14,7 @@ import { ManageDangerZone } from "./manage/ManageDangerZone";
 import { ManageDetails, ManageHistory, ManageNotAvailable } from "./manage/ManageAdvancedParts";
 
 type Observation = { state: "running" | "stopped" | "absent"; cpu?: number; memoryMb?: number; adapterVersion?: string;
+  tierState?: "eligible" | "checkpointing" | "sleeping" | "moved" | "retiring";
   isolationClass?: "application-kernel"; isolationDriver?: "gvisor-runsc"; outerHostBoundary?: "operator-owned-host";
   reservationEqualsMaximum?: true; publicPorts?: never[] };
 
@@ -36,12 +37,13 @@ type Slot = "header" | "computer" | "terminal" | "resources" | "danger" | "updat
 const SLOT_SECTION: Record<Slot, ManageSectionId | null> = { header: null, computer: "overview", terminal: "command", resources: "resources", danger: "advanced", updates: "updates" };
 const ACTION_SLOT: Record<"start" | "stop" | "resize" | "delete" | "rename" | "update_runtime", Slot> = { start: "computer", stop: "computer", resize: "resources", delete: "danger", rename: "header", update_runtime: "updates" };
 const FALLBACK_SECTIONS: ManageSectionId[] = ["overview", "resources", "command", "advanced"];
-type Busy = "start" | "stop" | "resize" | "delete" | "rename" | "exec" | "update_runtime";
+type Busy = "start" | "stop" | "resize" | "delete" | "rename" | "exec" | "update_runtime" | "tier-sleep";
 // What an action is doing, shown in the section that started it and, while
 // another section is open, as a banner that opens it. A rename shows in the header.
 const PROGRESS: Record<Exclude<Busy, "rename">, { section: ManageSectionId; message: string }> = {
   start: { section: "overview", message: "Starting this sandbox…" },
   stop: { section: "overview", message: "Stopping this sandbox…" },
+  "tier-sleep": { section: "overview", message: "Verifying this workspace in shared storage…" },
   resize: { section: "resources", message: "Applying the new limits…" },
   exec: { section: "command", message: "Running the command…" },
   delete: { section: "advanced", message: "Deleting this sandbox…" },
@@ -125,8 +127,22 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
       const argv = ["/bin/sh", "-lc", command.trim()];
       const data = await jsonRequest(`/api/hivra/agents/${encodeURIComponent(agent.id)}/gvisor/exec`, { method: "POST", body: JSON.stringify({ argv }) });
       setCommandResult(data.result as typeof commandResult);
+      if (observation?.tierState === "sleeping") await refresh();
     } catch (cause) { setError({ slot: "terminal", message: cause instanceof Error ? cause.message : "Command failed." }); }
     finally { setBusy(null); }
+  };
+
+  const tierSleep = async () => {
+    setBusy("tier-sleep"); setError(null);
+    try {
+      await jsonRequest(`/api/hivra/agents/${encodeURIComponent(agent.id)}/gvisor`, {
+        method: "POST", body: JSON.stringify({ action: "sleep" }),
+      });
+      await refresh();
+    } catch (cause) {
+      await refresh();
+      setError({ slot: "computer", message: cause instanceof Error ? cause.message : "Workspace checkpoint failed." });
+    } finally { setBusy(null); }
   };
 
   const errorSection = error ? SLOT_SECTION[error.slot] : null;
@@ -136,6 +152,12 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
     ? <ManageNotice kind="status" message={progress.message} section={progress.section} onOpen={openAndFocus} /> : null;
   const dirty = cpu !== agent.cpu || ram !== agent.ram;
   const state = observation?.state ?? agent.status;
+  const tierEnrolled = observation?.tierState !== undefined && observation.tierState !== "eligible";
+  const canSleep = observation?.tierState === "eligible" || observation?.tierState === "checkpointing";
+  const sleeping = observation?.tierState === "sleeping";
+  const statusLabel = sleeping ? "Sleeping in shared storage"
+    : observation?.tierState === "checkpointing" ? "Checkpointing workspace"
+      : observation?.tierState === "retiring" ? "Removing pilot sandbox" : state;
 
   return (
     <ManageLayout
@@ -149,7 +171,7 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
           eyebrow="Computer settings"
           name={agent.name}
           status={state === "absent" ? "error" : state}
-          statusLabel={state}
+          statusLabel={statusLabel}
           subtitle={`Linux Sandbox · ${placement}`}
           renaming={busy === "rename"}
           disabled={Boolean(busy)}
@@ -161,10 +183,13 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
       <ManagePanel id="overview" selected={selected}>
         <div style={label}>Computer</div>
         <section style={box}>
-          <span>{state} · {agent.cpu} CPU · {agent.ram} GB</span>
+          <span>{statusLabel} · {agent.cpu} CPU · {agent.ram} GB</span>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {observation?.state === "stopped" ? <button style={button} disabled={Boolean(busy)} onClick={() => void mutate("start")}><Play size={14} />Start</button>
-              : <button style={button} disabled={Boolean(busy) || observation?.state !== "running"} onClick={() => void mutate("stop")}><Square size={14} />Stop</button>}
+            {canSleep && <button style={button} disabled={Boolean(busy)} onClick={() => void tierSleep()}>
+              {observation?.tierState === "checkpointing" ? "Verify checkpoint again" : "Sleep to shared storage"}
+            </button>}
+            {!tierEnrolled && (observation?.state === "stopped" ? <button style={button} disabled={Boolean(busy)} onClick={() => void mutate("start")}><Play size={14} />Start</button>
+              : <button style={button} disabled={Boolean(busy) || observation?.state !== "running"} onClick={() => void mutate("stop")}><Square size={14} />Stop</button>)}
             <button style={button} disabled={Boolean(busy)} onClick={() => void refresh()}>Refresh</button>
             {progressIn("overview")}
           </div>
@@ -188,7 +213,7 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
             {[0.5, 1, 2, 4, 8].map(value => <option key={value} value={value}>{value} CPU</option>)}</select></label>
           <label style={field}>Memory limit<select aria-label="Memory limit" value={ram} onChange={event => setRam(Number(event.target.value))} style={{ ...control, minHeight: 44 }}>
             {[1, 2, 4, 8, 16].map(value => <option key={value} value={value}>{value} GB</option>)}</select></label>
-          <button style={button} disabled={Boolean(busy) || !dirty} onClick={() => void mutate("resize")}>Apply limits</button>
+          <button style={button} disabled={Boolean(busy) || tierEnrolled || !dirty} onClick={() => void mutate("resize")}>Apply limits</button>
           {progressIn("resources")}
           {errorFor("resources")}
         </section>
@@ -226,8 +251,8 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
             autoCapitalize="none" autoCorrect="off" spellCheck={false}
             rows={5} maxLength={4096} style={{ ...control, fontFamily: "var(--font-mono)" }} /></label>
           <small>Python 3.13 and a POSIX shell are available. Commands run as a non-root user in the private persistent /workspace directory, with a 60-second limit and bounded output.</small>
-          <button style={button} disabled={Boolean(busy) || observation?.state !== "running" || !command.trim()} onClick={() => void execute()}>
-            <TerminalSquare size={14} />Run in /workspace</button>
+          <button style={button} disabled={Boolean(busy) || (!sleeping && observation?.state !== "running") || !command.trim()} onClick={() => void execute()}>
+            <TerminalSquare size={14} />{sleeping ? "Wake and run in /workspace" : "Run in /workspace"}</button>
           {progressIn("command")}
           {errorFor("terminal")}
           {commandResult ? <div><div>Exit {commandResult.exitCode}</div><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 260, overflow: "auto" }}>{commandResult.stdout}{commandResult.stderr}</pre></div> : null}

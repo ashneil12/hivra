@@ -22,6 +22,7 @@ OFFLINE_IMAGE_CONFIG = Path("/opt/hivra/gvisor-adapter/offline-image")
 STORAGE_ADMISSION_PROBE = Path("/opt/hivra/gvisor-adapter/storage-admission-probe")
 XFS_WORKSPACE_HELPER = Path("/opt/hivra/gvisor-adapter/hivra-gvisor-xfs-workspace.py")
 XFS_WORKSPACE_SHA256 = "9fce9c40dd57656fabf01d08b0fc7278b8d5ff89f818904e2e752b4e337cba6e"
+TIER_ROOT = Path("/opt/hivra/gvisor-adapter/tier")
 # Sandboxes this adapter manages, by the adapter release that created each
 # resource (a volume or network keeps the label it was created with) and the
 # image its container runs. Update moves a container to this release's IMAGE.
@@ -180,11 +181,12 @@ def prepare_image(*, local_only=False):
 def valid_input(document):
     if not isinstance(document, dict) or set(document) - {
         "operation", "ownerHash", "computerId", "sandboxId", "cpu", "memoryMb", "hostMemoryReserveMb", "argv",
-        "requireDiskAdmission",
+        "requireDiskAdmission", "tier",
     }:
         fail("Invalid gVisor computer request")
     operation = document.get("operation")
-    if operation not in {"create", "status", "start", "stop", "resize", "exec", "delete", "update"}:
+    if operation not in {"create", "status", "start", "stop", "resize", "exec", "delete", "update",
+                         "tier-checkpoint", "tier-restore", "tier-retire"}:
         fail("Invalid gVisor computer operation")
     if "requireDiskAdmission" in document and (document["requireDiskAdmission"] is not True
                                                or operation not in {"create", "start"}):
@@ -194,14 +196,14 @@ def valid_input(document):
             fail("Invalid gVisor computer identity")
     if not isinstance(document.get("ownerHash"), str) or not DIGEST.fullmatch(document["ownerHash"]):
         fail("Invalid gVisor owner identity")
-    if operation in {"create", "resize"}:
+    if operation in {"create", "resize", "tier-restore"}:
         cpu = document.get("cpu")
         memory = document.get("memoryMb")
         if not isinstance(cpu, (int, float)) or isinstance(cpu, bool) or cpu < 0.5 or cpu > 32:
             fail("Invalid gVisor CPU limit")
         if not isinstance(memory, int) or isinstance(memory, bool) or memory < 512 or memory > 131072:
             fail("Invalid gVisor memory limit")
-    if operation in {"create", "start", "resize", "update"}:
+    if operation in {"create", "start", "resize", "update", "tier-restore"}:
         reserve = document.get("hostMemoryReserveMb")
         if not isinstance(reserve, int) or isinstance(reserve, bool) or reserve < 512 or reserve > 1048576:
             fail("Invalid gVisor host memory reserve")
@@ -211,6 +213,24 @@ def valid_input(document):
                 or any(not isinstance(arg, str) or not arg or len(arg.encode()) > 4096 or "\x00" in arg for arg in argv)
                 or sum(len(arg.encode()) for arg in argv) > 16384):
             fail("Invalid gVisor command")
+    if operation in {"tier-checkpoint", "tier-restore", "tier-retire"}:
+        tier = document.get("tier")
+        fields = {"generation", "logicalSandboxId", "runtime", "helperSha"}
+        digests = ("runtime", "helperSha")
+        if operation != "tier-retire":
+            fields.update(("key", "codecSha"))
+            digests += ("key", "codecSha")
+        if operation == "tier-restore":
+            fields.add("receipt")
+        if (not isinstance(tier, dict) or tier.keys() != fields
+                or any(not isinstance(tier[k], str) or not UUID.fullmatch(tier[k])
+                       for k in ("generation", "logicalSandboxId"))
+                or any(not isinstance(tier[k], str) or not DIGEST.fullmatch(tier[k]) for k in digests)
+                or (operation == "tier-restore" and
+                    (not isinstance(tier["receipt"], dict) or tier["logicalSandboxId"] == document["sandboxId"]))):
+            fail("Invalid gVisor tier request")
+    elif "tier" in document:
+        fail("Invalid gVisor tier scope")
     return document
 
 
@@ -502,7 +522,7 @@ def workspace_quota(sample, request):
         if saved.name != name:
             raise ValueError("Managed workspace inventory identity did not match")
         retained.append(saved)
-    commitments = quota.commitments(retained)
+    commitments = [proof for proof in quota.commitments(retained) if not tier_cold_workspace(proof.workspace)]
     device = Path(policy.xfs_mount).stat().st_dev
     [domain] = [row for row in sample["filesystems"] if Path(row["path"]).stat().st_dev == device]
     expected = {"bytes": (policy.hard_bytes, sum(p.outstanding_bytes for p in commitments)),
@@ -512,6 +532,22 @@ def workspace_quota(sample, request):
             raise ValueError("Quota envelope did not match live enforced commitments")
         domain[name]["outstanding"] += committed
     return quota, workspace
+
+
+def tier_cold_workspace(workspace):
+    fence = TIER_ROOT / ("fenced-" + workspace.sandbox_id)
+    if not os.path.lexists(fence):
+        return False
+    saved = json.loads(tier_file(fence))
+    request = {"sandboxId": workspace.sandbox_id, "ownerHash": workspace.owner_hash, "computerId": workspace.computer_id}
+    if any(saved.get(field) != value for field, value in request.items()):
+        raise ValueError("Cold workspace fence identity changed")
+    name, volume, _ = names(request)
+    current = inspect_container(name, request, required=False)
+    if current is None or current["State"]["Status"] != "exited" or current["State"]["Running"]:
+        return False
+    return (current["HostConfig"]["RestartPolicy"]["Name"] in {"no", ""}
+            and docker("ps", "-q", "--filter", f"volume={volume}").stdout == "")
 
 
 def disk_admission(request):
@@ -557,6 +593,51 @@ def initialize_workspace(request, volume, pull_options=()):
     inspect_helper(request, required=True)
     docker("rm", helper)
     require_helper_absent(request)
+
+
+def tier_file(path, expected=None):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        info = os.fstat(source.fileno())
+        payload = source.read(262145)
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077
+            or len(payload) > 262144 or (expected and hashlib.sha256(payload).hexdigest() != expected)):
+        raise ValueError("Invalid tier file")
+    return payload
+
+
+def dispatch_tier(request):
+    for path in (TIER_ROOT.parent, TIER_ROOT):
+        info = path.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+            fail("Invalid gVisor tier host configuration")
+    modules = {}
+    fields = [("handoff", "helperSha")]
+    if request["operation"] != "tier-retire":
+        fields.append(("generation", "codecSha"))
+    for name, digest in fields:
+        path = TIER_ROOT / (name + ".py")
+        module = ModuleType("hivra_tier_" + name)
+        sys.modules[module.__name__] = module
+        exec(compile(tier_file(path, request["tier"][digest]), str(path), "exec"), module.__dict__)
+        modules[name] = module
+    modules["handoff"].dispatch(sys.modules[__name__], modules.get("generation"), request)
+
+
+def dispatch_tier_guard(request):
+    operation = request["operation"]
+    retired = os.path.lexists(TIER_ROOT / ("retired-" + request["sandboxId"]))
+    if operation in {"tier-checkpoint", "tier-restore", "tier-retire"}:
+        if retired and operation != "tier-retire":
+            fail("This local sandbox generation is retired")
+        dispatch_tier(request)
+        return True
+    if retired or os.path.lexists(TIER_ROOT / ("fenced-" + request["sandboxId"])):
+        if operation == "status":
+            status(request)
+            return True
+        fail("This local sandbox generation is fenced")
+    return False
 
 
 def create_container(request, cpu, memory, name=None, *, pull_options=()):
@@ -627,10 +708,10 @@ def update(request):
     return status(request)
 
 
-def create(request, *, pull_options=None, workspace_policy=None):
+def create(request, *, pull_options=None, workspace_policy=None, prepare_workspace=None, before_start=None, emit=True):
     name, volume, network = names(request)
     if inspect_container(name, request, required=False):
-        return status(request)
+        return status(request, emit=emit)
     stale_helper = inspect_helper(request, required=False)
     if stale_helper is not None:
         docker("rm", "-f", helper_name(request))
@@ -654,10 +735,16 @@ def create(request, *, pull_options=None, workspace_policy=None):
             docker("network", "create", "--driver", "bridge", *label_args, network)
             created_network = True
         initialize_workspace(request, volume, pull_options)
+        if prepare_workspace:
+            prepare_workspace()
         create_container(request, cpu, memory, pull_options=pull_options)
+        if before_start:
+            before_start()
         docker("start", name)
-        return status(request)
+        return status(request, emit=emit)
     except BaseException:
+        if before_start and os.path.lexists(TIER_ROOT / ("ready-" + request["sandboxId"])):
+            raise
         owned_helper = inspect_helper(request, required=False)
         if owned_helper is not None:
             docker("rm", "-f", helper_name(request), check=False)
@@ -671,7 +758,7 @@ def create(request, *, pull_options=None, workspace_policy=None):
         raise
 
 
-def status(request):
+def status(request, *, emit=True):
     name, volume, network = names(request)
     require_helper_absent(request)
     item = inspect_container(name, request, required=False)
@@ -681,7 +768,8 @@ def status(request):
             fail("The gVisor computer has orphaned owned resources")
         result = {"version": 1, "computerId": request["computerId"],
                   "sandboxId": request["sandboxId"], "state": "absent"}
-        print("HIVRA_GVISOR_V1 " + json.dumps(result, sort_keys=True, separators=(",", ":")), flush=True)
+        if emit:
+            print("HIVRA_GVISOR_V1 " + json.dumps(result, sort_keys=True, separators=(",", ":")), flush=True)
         return result
     inspect_resource("volume", volume, request, required=True)
     inspect_resource("network", network, request, required=True)
@@ -697,7 +785,8 @@ def status(request):
         "image": item["Config"]["Image"], "workspace": volume, "network": network,
         "publicPorts": [], "reservationEqualsMaximum": True,
     }
-    print("HIVRA_GVISOR_V1 " + json.dumps(result, sort_keys=True, separators=(",", ":")), flush=True)
+    if emit:
+        print("HIVRA_GVISOR_V1 " + json.dumps(result, sort_keys=True, separators=(",", ":")), flush=True)
     return result
 
 
@@ -737,7 +826,7 @@ def execute(request):
     return receipt
 
 
-def delete(request):
+def delete(request, *, emit=True):
     name, volume, network = names(request)
     if inspect_container(previous_name(request), request, required=False) is not None:
         docker("rm", "-f", previous_name(request))
@@ -760,7 +849,8 @@ def delete(request):
         fail("gVisor computer deletion is unconfirmed")
     result = {"version": 1, "computerId": request["computerId"],
               "sandboxId": request["sandboxId"], "state": "absent"}
-    print("HIVRA_GVISOR_V1 " + json.dumps(result, separators=(",", ":")), flush=True)
+    if emit:
+        print("HIVRA_GVISOR_V1 " + json.dumps(result, separators=(",", ":")), flush=True)
     return result
 
 
@@ -774,6 +864,8 @@ def main():
     Path("/run/lock").mkdir(parents=True, exist_ok=True)
     with open("/run/lock/hivra-gvisor-adapter.lock", "a+", encoding="ascii") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        if dispatch_tier_guard(request):
+            return
         name, volume, network = names(request)
         operation = request["operation"]
         pull_options = None

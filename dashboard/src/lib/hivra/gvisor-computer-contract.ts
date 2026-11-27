@@ -11,6 +11,7 @@ export const HIVRA_GVISOR_PREVIOUS_ADAPTERS = [
   { version: "2026.09.15.1", sha256: "2bb8ce761b72a5fc5054b8dbf9f7c79684da478b74c5f1127a212c489539695d" },
   { version: "2026.10.20.1", sha256: "3168f185b90abfcf7b17fa603ffa31b9e780b69b0856a5b079595be8b7f63cff" },
   { version: "2026.10.20.1", sha256: "c9be8bc4eca92ac35788ad6c387cd5d96e9cbb7e28b7cf9d4f2ae7acc01d0dfa" },
+  { version: "2026.10.20.1", sha256: "505bd99032c37999015c6838a4ece1cf449cc30ae5ecd3ed98fbeb60af464a8a" },
 ] as const;
 export const HIVRA_GVISOR_IMAGE = "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285" as const;
 export const HIVRA_GVISOR_DRIVER = "gvisor-runsc" as const;
