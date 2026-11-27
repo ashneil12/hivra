@@ -1,6 +1,6 @@
 # Prepared Claude Code and Codex dependencies
 
-`bux-dependencies` is a shared, dependency-only disk for fresh Claude Code and Codex guests. It does not preinstall either CLI, create a tenant account, copy the bux checkout, install Chrome, or set up credentials, services for the tenant, or a tunnel. It is not a managed launch selection.
+`bux-dependencies` is a shared, dependency-only disk for fresh Claude Code and Codex guests. It does not preinstall either CLI, create a tenant account, copy the bux checkout, install Chrome, or set up credentials, services for the tenant, or a tunnel. Stock remains the default; a scoped managed Canary validator can select the disk on a compatible sealed provisioner. See [prepared-runtime Canary verification](../../docs/release/PREPARED-RUNTIME-CANARY.md).
 
 On a disposable Linux amd64 builder without operator credentials, follow the [shared builder requirements](bake-official-hermes.md#build):
 

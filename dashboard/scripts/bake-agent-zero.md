@@ -1,6 +1,8 @@
 # Prepared Agent Zero disk candidate
 
-This is an offline build profile, not a launch option. It adds only Ubuntu's
+This offline build profile is not a public launch option. See
+[prepared-runtime Canary verification](../../docs/release/PREPARED-RUNTIME-CANARY.md)
+for the scoped validator. The image adds only Ubuntu's
 signed Docker packages and one reviewed Agent Zero linux/amd64 image to the
 shared QGA substrate; it does not create a container, start Agent Zero, or
 write owner credentials, application data, access services or a launch intent.
@@ -95,9 +97,14 @@ Do not stage or select a disk before all checks pass on its sealed bytes.
    # Run the following once for n=1 and once for n=2, shutting down cleanly each time.
    n=1
    qemu-img create -f qcow2 -F qcow2 -b "$IMAGE" "$WORK/boot-$n.qcow2"
+   printf '#cloud-config\nssh_pwauth: false\n' > "$WORK/user-data"
+   printf 'instance-id: agent-zero-proof-%s\nlocal-hostname: agent-zero-proof-%s\n' "$n" "$n" > "$WORK/meta-data"
+   printf 'version: 2\nethernets: {}\n' > "$WORK/network-config"
+   cloud-localds --network-config "$WORK/network-config" "$WORK/seed-$n.iso" "$WORK/user-data" "$WORK/meta-data"
    qemu-system-x86_64 -machine pc,accel=kvm:tcg -m 4096 -smp 4 -nic none \
      -display none -monitor none -serial "file:$WORK/serial-$n.log" -no-reboot \
      -drive "file=$WORK/boot-$n.qcow2,format=qcow2,if=virtio" \
+     -drive "file=$WORK/seed-$n.iso,format=raw,media=cdrom,readonly=on" \
      -device virtio-serial-pci \
      -chardev "socket,path=$WORK/qga-$n.sock,server=on,wait=off,id=qga" \
      -device virtserialport,chardev=qga,name=org.qemu.guest_agent.0
@@ -115,7 +122,10 @@ Do not stage or select a disk before all checks pass on its sealed bytes.
    ```sh
    set -eu
    timeout 300 cloud-init status --wait
-   test -z "$(ip -br link show | awk '$1 != "lo" { print }')"
+   for link in /sys/class/net/*; do test ! -e "$link/device"; done
+   test -z "$(ip -4 route list default)"
+   test -z "$(ip -6 route list default)"
+   cat /var/lib/cloud/data/instance-id
    cat /etc/machine-id
    ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
    systemctl start docker.service
@@ -139,7 +149,7 @@ Do not stage or select a disk before all checks pass on its sealed bytes.
    ```
 
 4. Power off each child with QGA `guest-shutdown` (`mode:"powerdown"`).
-   Require distinct nonempty machine IDs, SSH host key fingerprints and
+   Require the two seeded instance IDs and distinct nonempty machine IDs, SSH host key fingerprints and
    Docker engine IDs, and inspect the seal hash again after both boots.
    Remove only the owned child disks, sockets and processes; keep a
    redacted receipt with timestamps, commands and IDs/fingerprints.
