@@ -73,6 +73,14 @@ beforeEach(() => {
 });
 
 describe('DashboardSidebar', () => {
+  it('only offers the Mac installer when the server passes a download link', () => {
+    const view = render(<DashboardSidebar {...props} />);
+    expect(screen.queryByRole('link', { name: 'Download for Mac' })).not.toBeInTheDocument();
+    const href = 'https://github.com/ashneil12/hivra/releases/download/mac-v0.3.0/Hivra.dmg';
+    view.rerender(<DashboardSidebar {...props} macDownloadHref={href} />);
+    expect(screen.getByRole('link', { name: 'Download for Mac' })).toHaveAttribute('href', href);
+  });
+
   it('starts expanded for a new preference and keeps work above secondary destinations', () => {
     render(<DashboardSidebar {...props} />);
     expect(screen.getByTitle('Collapse Sidebar')).toHaveAttribute('aria-expanded', 'true');

@@ -44,7 +44,7 @@ import { readFileSync } from "node:fs";
 import { HIVRA_GVISOR_PREPARE_STAGES } from "../gvisor-computer-contract";
 import {
   executeGvisorComputerCommand, findGvisorComputerByLaunchRequest, launchGvisorComputer,
-  mutateGvisorComputer, observeGvisorComputer, prepareGvisorHost, reserveAndDispatchManagedGvisor,
+  mutateGvisorComputer, observeGvisorComputer, prepareGvisorHost, reserveAndDispatchManagedGvisor, runManagedGvisorIdlePilot,
 } from "../gvisor-computer-service";
 
 const userId = "user_test";
@@ -368,6 +368,86 @@ describe("ready managed sandbox lifecycle", () => {
     mockResolveEntitlement.mockReset().mockResolvedValue({ plan: "operator", source: "stripe", status: "active" });
   });
 
+  describe("owner-only idle stop pilot", () => {
+    const savedEnv = process.env;
+    const command = { ok: true, stdout: 'HIVRA_GVISOR_EXEC_V1 {"exitCode":0,"stdout":"ok","stderr":""}\n', stderr: "" };
+    beforeEach(() => {
+      process.env = {
+        ...savedEnv,
+        VERCEL: "1", VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+        VERCEL_GIT_COMMIT_REF: "canary", VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
+        HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED: "false",
+        HIVRA_MANAGED_GVISOR_IDLE_PILOT_ENABLED: "true", HIVRA_MANAGED_GVISOR_QA_ENROLLMENT_ENABLED: "true",
+        HIVRA_MANAGED_GVISOR_QA_OWNER_ID: userId, HIVRA_MANAGED_GVISOR_QA_EXPIRES_AT: new Date(Date.now() + 60_000).toISOString(),
+        HIVRA_MANAGED_GVISOR_AUTHORITY_USER_ID: operatorId, HIVRA_MANAGED_GVISOR_CONNECTION_ID: connectionId,
+        HIVRA_MANAGED_GVISOR_TARGET_ID: targetId, HIVRA_MANAGED_GVISOR_CONNECTION_REVISION: "7",
+      };
+    });
+    afterEach(() => { process.env = savedEnv; });
+
+    it("performs no database or host work by default", async () => {
+      delete process.env.HIVRA_MANAGED_GVISOR_IDLE_PILOT_ENABLED;
+      await expect(runManagedGvisorIdlePilot()).resolves.toBe("disabled");
+      expect(mockRpc).not.toHaveBeenCalled();
+      expect(mockRunWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("does not dispatch an idle stop against a binding outside the scoped target", async () => {
+      mockRpc.mockResolvedValueOnce({ data: { ...claim, targetId: launchRequestId, action: "stop" }, error: null });
+      await expect(runManagedGvisorIdlePilot()).rejects.toMatchObject({ code: "not_ready" });
+      expect(mockRunWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("dispatches a claimed idle Stop using the existing exact receipt path", async () => {
+      Object.assign(agent, { operation_id: operationId, operation_kind: "stop", desired_state: "stopped" });
+      mockRpc.mockResolvedValueOnce({ data: { ...claim, action: "stop" }, error: null })
+        .mockResolvedValueOnce({ data: { ...agent, operation_id: null, status: "stopped" }, error: null });
+      mockRunWithStdin.mockImplementationOnce(async script => acknowledgeManaged(script, result("stopped")));
+      await expect(runManagedGvisorIdlePilot()).resolves.toBe("stopped");
+      expect(mockRpc).toHaveBeenNthCalledWith(1, "claim_hivra_managed_gvisor_pilot_idle_stop", expect.objectContaining({
+        p_customer: userId, p_operator: operatorId, p_target: targetId, p_revision: 7,
+      }));
+      expect(mockRpc).toHaveBeenNthCalledWith(2, "complete_hivra_managed_gvisor_lifecycle", expect.objectContaining({
+        p_action: "stop", p_operation: operationId,
+      }));
+      expect(expectCommand()).toEqual(["stop"]);
+    });
+
+    it("holds the owner command claim until the confirmed result, without implicit wake", async () => {
+      mockRpc.mockResolvedValueOnce({ data: { ...claim, status: "observe" }, error: null })
+        .mockResolvedValueOnce({ data: operationId, error: null })
+        .mockResolvedValueOnce({ data: true, error: null });
+      mockRunWithStdin.mockImplementationOnce(async script => {
+        expect(mockRpc).toHaveBeenCalledTimes(2);
+        return acknowledgeManaged(script, command);
+      });
+      await expect(executeGvisorComputerCommand(userId, computerId, ["true"])).resolves.toMatchObject({ exitCode: 0 });
+      expect(mockRpc).toHaveBeenNthCalledWith(3, "complete_hivra_managed_gvisor_pilot_command", {
+        p_customer: userId, p_computer: computerId, p_claim: operationId,
+      });
+      agent.status = "stopped";
+      await expect(executeGvisorComputerCommand(userId, computerId, ["true"])).rejects.toMatchObject({ code: "not_ready" });
+      expect(expectCommand()).toEqual(["exec"]);
+    });
+
+    it("does not clear a command claim after an uncertain host outcome", async () => {
+      mockRpc.mockResolvedValueOnce({ data: { ...claim, status: "observe" }, error: null })
+        .mockResolvedValueOnce({ data: operationId, error: null });
+      mockRunWithStdin.mockResolvedValueOnce({ ok: false, stdout: "", stderr: "" });
+      await expect(executeGvisorComputerCommand(userId, computerId, ["true"])).rejects.toMatchObject({ code: "remote_failed" });
+      expect(mockRpc).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not dispatch commands without the pilot claim, or wake a foreign owner", async () => {
+      await expect(mutateGvisorComputer("foreign-owner", computerId, { action: "start" })).rejects.toMatchObject({ code: "not_found" });
+      expect(mockRpc).not.toHaveBeenCalled();
+      mockRpc.mockResolvedValueOnce({ data: { ...claim, status: "observe" }, error: null })
+        .mockResolvedValueOnce({ data: null, error: null });
+      await expect(executeGvisorComputerCommand(userId, computerId, ["true"])).rejects.toMatchObject({ code: "conflict" });
+      expect(mockRunWithStdin).not.toHaveBeenCalled();
+    });
+  });
+
   it("rejects a foreign owner before touching the lifecycle ledger or adapter", async () => {
     await expect(mutateGvisorComputer("wrong-owner", computerId, { action: "delete" }))
       .rejects.toMatchObject({ code: "not_found" });
@@ -447,6 +527,38 @@ describe("ready managed sandbox lifecycle", () => {
     await expect(first).resolves.toMatchObject({ status: "running" });
     expect(expectCommand()).toEqual(["start"]);
   });
+
+  it.each(["settled", "missing_ack", "foreign_receipt", "not_stopped", "ledger_refusal"] as const)(
+    "only releases a refused wake after exact stopped evidence and ledger confirmation (%s)", async (mode) => {
+      const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_MANAGED_GVISOR_DISK_ADMISSION_ENABLED: "true" });
+      try {
+        agent.status = "stopped";
+        mockRpc.mockResolvedValueOnce({ data: { ...claim, action: "start" }, error: null })
+          .mockResolvedValueOnce({ data: mode === "settled", error: null });
+        mockRunWithStdin.mockImplementationOnce(async script => {
+          const payload = { version: 1, code: "disk_capacity", operation: "start", computerId,
+            sandboxId: mode === "foreign_receipt" ? launchRequestId : sandboxId };
+          const denied = { ok: true, stdout: `HIVRA_GVISOR_ADMISSION_V1 ${JSON.stringify(payload)}\n`, stderr: "" };
+          return mode === "missing_ack" ? denied : acknowledgeManaged(script, denied);
+        }).mockImplementationOnce(async script => acknowledgeManaged(script, result(mode === "not_stopped" ? "running" : "stopped")));
+
+        await expect(mutateGvisorComputer(userId, computerId, { action: "start" }))
+          .rejects.toMatchObject({ code: mode === "settled" ? "capacity_limit" : "conflict" });
+        const verifiedDenial = mode !== "missing_ack" && mode !== "foreign_receipt";
+        expect(expectCommand()).toEqual(verifiedDenial ? ["start", "status"] : ["start"]);
+        expect(JSON.parse(mockRunWithStdin.mock.calls[0][1]).requireDiskAdmission).toBe(true);
+        if (verifiedDenial) expect(JSON.parse(mockRunWithStdin.mock.calls[1][1]).requireDiskAdmission).toBeUndefined();
+        if (mode === "settled" || mode === "ledger_refusal") {
+          expect(mockRpc).toHaveBeenNthCalledWith(2, "reject_hivra_managed_gvisor_start", {
+            p_customer: userId, p_computer: computerId, p_operation: operationId,
+            p_receipt: expect.objectContaining({ computerId, sandboxId, state: "stopped" }),
+          });
+        } else expect(mockRpc).toHaveBeenCalledTimes(1);
+      } finally {
+        env.restore();
+      }
+    },
+  );
 
   it("holds a lost delete until read-only recovery verifies fresh exact absence", async () => {
     mockRpc.mockResolvedValueOnce({ data: { ...claim, action: "delete" }, error: null });

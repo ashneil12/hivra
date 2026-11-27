@@ -59,6 +59,7 @@ import {
 } from "@/lib/hivra/agent-api";
 import { requestManagedVeniceSummary } from "@/lib/billing/managed-venice-client";
 import { buildInfrastructureSetupHref, isPortableAgentLaunchId, parsePortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
+import { getCatalogAppManifest, isCatalogAppLaunchable } from "@/lib/hivra/catalog-manifests";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import {
   HERMES_NAME_MAX_LENGTH,
@@ -733,7 +734,7 @@ function ownServerNeeds(profileId: LaunchProfileId | null): string {
 }
 
 export function LaunchJourney(
-  { preparedProfiles = [], legacyHermesLane = false, managedLinuxSandboxEligible = false }: {
+  { preparedProfiles = [], legacyHermesLane = false, managedLinuxSandboxEligible = false, catalogCertifier = false }: {
     preparedProfiles?: readonly ("omarchy" | "windows")[];
     /**
      * Tests only: launch Hermes on the old instances lane. Every real launch
@@ -742,6 +743,7 @@ export function LaunchJourney(
      */
     legacyHermesLane?: boolean;
     managedLinuxSandboxEligible?: boolean;
+    catalogCertifier?: boolean;
   },
 ) {
   const router = useRouter();
@@ -1049,7 +1051,9 @@ export function LaunchJourney(
     // Read directly: this effect only ever runs on the client.
     const linkedProfile = linkedTemplate?.profileId
       ?? (requestedProfileId === "omarchy" && !preparedCanaryAvailable ? null : requestedProfileId);
-    const requestedProfile = linkedProfile === "hermes" || linkedProfile === "hermes-computer" ? hermesProfile : linkedProfile;
+    const linkedManifest = getCatalogAppManifest(linkedProfile);
+    const requestedProfile = linkedManifest && !isCatalogAppLaunchable(linkedManifest, catalogCertifier && !selfHosted)
+      ? null : linkedProfile === "hermes" || linkedProfile === "hermes-computer" ? hermesProfile : linkedProfile;
     const freshFromIntent = (): LaunchDraft => {
       const next = createLaunchDraft();
       if (!requestedProfile) return next;
@@ -1104,7 +1108,7 @@ export function LaunchJourney(
     // an unpatched replaceState would drop the router's own entry state.
     const timer = window.setTimeout(() => writeStageHistory(initial.stage, "replace"), 0);
     return () => window.clearTimeout(timer);
-  }, [legacyHermesLane, linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, inferenceParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
+  }, [catalogCertifier, legacyHermesLane, linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, inferenceParam, returningDraftId, selfHosted, startParam, targetValuesKey, templateParam, templateResult]);
 
   // Following a plain Launch link while already inside the journey drops the
   // stage from the URL; that is a new start, so Choose opens with nothing picked.
@@ -2218,7 +2222,7 @@ export function LaunchJourney(
       </div>
     );
   };
-  const offeredAgents = offeredAgentTiles({ selfHosted, hermesProfile: legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE });
+  const offeredAgents = offeredAgentTiles({ selfHosted, hermesProfile: legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE, catalogCertifier });
   const orderedByUse = catalogOn && useOrder.length > 0;
   const agentTiles = orderedByUse ? orderCatalogByUse(offeredAgents, useOrder) : offeredAgents;
   const catalogFiltered = catalogOn && isCatalogFiltered(catalogFilter);

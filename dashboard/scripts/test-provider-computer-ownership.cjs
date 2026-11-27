@@ -958,6 +958,17 @@ async function main() {
     });
     await db.exec(settledWake);
     assert.deepEqual(await admissionDefinitions(), admittedSettledWake, "re-applying the settled wake admission changes nothing");
+    const catalogDigest = migration("20261126180500_provider_release_admission_2026_11_26_1.sql");
+    await db.exec(catalogDigest);
+    const admittedCatalogDigest = await admissionDefinitions();
+    admittedCatalogDigest.forEach((definition, index) => {
+      for (const version of ["2026.11.25.2", "2026.11.26.1"]) assert.equal(occurrences(definition, "'"+version+"'"), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["666c410c373d21a1f36cf96c2776cb8e31495703cb96f8e1bd5446bc4d566587", "85070186634722fcf9e346a1ae6630cc30b6fb8809fe3458a47f51055c282a17"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(catalogDigest);
+    assert.deepEqual(await admissionDefinitions(), admittedCatalogDigest, "re-applying the catalog digest admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

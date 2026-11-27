@@ -8,6 +8,7 @@ import { PostHogIdentify } from "@/app/providers/PostHogProvider";
 import { AuthClerkProvider } from "@/components/auth/AuthClerkProvider";
 import { LOCALE_COOKIE_NAME, resolveRequestLocale } from "@/lib/i18n";
 import { isOpsAdminUser, verifiedPrimaryEmailOf } from "@/lib/ops-access";
+import { getDesktopDownloads } from "@/lib/public-project-links";
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -42,6 +43,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           userEmail={userEmail}
           resourceOwnerKey={userId || user?.id || undefined}
           showOpsLink={showOpsLink}
+          macDownloadHref={getDesktopDownloads().macos.href}
         >
           {children}
         </ClientLayoutWrapper>

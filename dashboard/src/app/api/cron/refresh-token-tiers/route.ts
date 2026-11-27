@@ -39,7 +39,7 @@ import { refreshVerifiedHermesTokenHoldings } from "@/lib/billing/token-holdings
 import { resolveTokenAccessForUsers, tierRowTokenCounts } from "@/lib/billing/token-access";
 import type { PlatformTokenKey } from "@/lib/billing/token-registry";
 import { REQUALIFICATION_GRACE_HOURS } from "@/lib/billing/tier-thresholds";
-import { normalizeProxmoxTargetId, resolveProxmoxTargetConfiguration, resolveProxmoxVmDiskGb } from "@/lib/services/proxmox-instance-service";
+import { declaredProxmoxTargetIds, normalizeProxmoxTargetId, resolveProxmoxTargetConfiguration, resolveProxmoxVmDiskGb } from "@/lib/services/proxmox-instance-service";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 import {
   resolveTierSpec,
@@ -152,19 +152,6 @@ async function scanByUserIds<T>(
   }
   return { rows, error: null };
 }
-
-/** The exact declared rotation placement uses; null means the registry is unrestricted. */
-function declaredProxmoxTargetIds(env: NodeJS.ProcessEnv = process.env): string[] | null {
-  const declared = env.HERMES_PROXMOX_TARGETS?.trim() || env.PROXMOX_TARGETS?.trim() || "";
-  const ids = [...new Set(
-    declared
-      .split(/[,\s]+/)
-      .map((id) => normalizeProxmoxTargetId(id))
-      .filter((id): id is string => Boolean(id)),
-  )];
-  return ids.length > 0 ? ids : null;
-}
-
 
 // Pass only capacity settings to SQL. Undeclared rotations still honor
 // per-host disk overrides for registry hosts, using placement's precedence.

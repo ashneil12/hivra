@@ -15,6 +15,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, ExternalLink, ArrowLeft, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
+import { CATALOG_APP_GATEWAY_ENTRY } from "@/lib/hivra/catalog-manifests";
 import {
   AGENT_SURFACE_IDS,
   agentComputerPair,
@@ -1536,6 +1537,12 @@ export default function AgentPage() {
   }
   const def = catalogAgent(agent.type);
   const isComputer = def?.surface === "computer";
+  const dashboardPath = def?.dashboardPath ?? (
+    def?.id === "deepseek-harness" ? "/" :
+    def?.id === "openclaw" || def?.id === "agent-zero" || def?.id === "openbot" ||
+    def?.id === "nuphos" || def?.id === "hermes" || def?.id === "aeon" ? `/${def.id}/` :
+    CATALOG_APP_GATEWAY_ENTRY
+  );
   if (agent.status === "deleted") {
     return (
       <div className={styles.statusPanel}>
@@ -1848,9 +1855,7 @@ export default function AgentPage() {
             // on the user's GitHub) → go straight to the embedded dashboard; the box's
             // own gate + auto-login handle access. ONLY Aeon (connect:"github") ever
             // sees HivraGitHubConnect, whose "your Aeon fork" copy is Aeon-specific.
-            <DashboardView url={def?.id === "deepseek-harness"
-              ? `${agent.chat_url.replace(/\/$/, "")}/`
-              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "openbot" ? "openbot" : def?.id === "nuphos" ? "nuphos" : def?.id === "hermes" ? "hermes" : def?.id === "aeon" ? "aeon" : "app"}/`}
+            <DashboardView url={`${agent.chat_url.replace(/\/$/, "")}${dashboardPath}`}
               token={tok} label={`${def?.name || "Agent"} · dashboard`} surfaceId="aeon" active={effectiveTab === "aeon"} onManage={() => selectTab("manage")} connectName={def?.name} />
           ) : (
             <HivraGitHubConnect boxUrl={agent.chat_url} boxId={agent.id} onDone={() => setReloadKey(k => k + 1)} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} defaultManagedCredits={Boolean(agent.managed_venice)} />

@@ -20,6 +20,7 @@ import {
   releaseHivraAgentOperation,
   requestHivraAgentDelete,
 } from "@/lib/hivra/agent-operation-store";
+import { COMPUTER_BACKUP_DELETE_LOCKS, REFUSE_COMPUTER_BACKUP_SNAPSHOTS } from "@/lib/hivra/computer-backups/scripts";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
 import { releaseExactProvisionIntentScript } from "@/lib/hivra/provision-intent-cleanup";
 import {
@@ -60,6 +61,7 @@ ${expectedTag ? `EXPECTED_TAG=${shellQuote(expectedTag)}` : "EXPECTED_TAG='' # p
 ${input.expectedInfrastructureBindingTag ? `EXPECTED_BINDING_TAG=${shellQuote(input.expectedInfrastructureBindingTag)}` : "EXPECTED_BINDING_TAG='' # legacy managed VM pending guarded adoption"}
 ALLOW_MANAGED_LEGACY=${input.allowManagedLegacyAuthority ? "1" : "0"}
 install -d -m 0755 /run/lock
+${COMPUTER_BACKUP_DELETE_LOCKS}
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for Hivra deletion lock" >&2; exit 1; }
 PIDFILE="/run/hivra-provision/$VMID.pid"
@@ -108,6 +110,7 @@ if qm status "$VMID" >/dev/null 2>&1; then
         && printf '%s' "$TAGS" | tr ';' '\\n' | grep -Fxq "$EXPECTED_BINDING_TAG" \
         || { echo "VMID $VMID ownership changed before deletion" >&2; exit 1; }
     fi
+    ${REFUSE_COMPUTER_BACKUP_SNAPSHOTS}
     # A hibernated VM holds the config lock "suspended", which refuses stop and
     # destroy. Ownership was just verified above, so skip the lock for both.
     LOCK_STATE="$(qm config "$VMID" 2>/dev/null | awk '$1=="lock:"{print $2;exit}' || true)"

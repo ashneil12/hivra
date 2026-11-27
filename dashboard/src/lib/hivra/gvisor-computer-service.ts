@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { ManagedGvisorAuthority } from "./managed-gvisor-authority";
+import { managedGvisorDiskAdmissionEnabled, managedGvisorIdlePilotConfig } from "./managed-gvisor-launch-config";
 
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
@@ -30,8 +31,16 @@ import {
 const ADAPTER = "/opt/hivra/gvisor-adapter/hivra-gvisor-adapter";
 const RESULT = "HIVRA_GVISOR_V1 ";
 const EXEC_RESULT = "HIVRA_GVISOR_EXEC_V1 ";
+const ADMISSION_RESULT = "HIVRA_GVISOR_ADMISSION_V1 ";
 const PREPARE_FAILURE = "HIVRA_GVISOR_PREPARE_FAILED_V1 ";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const DiskAdmissionResult = z.object({
+  version: z.literal(1),
+  code: z.enum(["disk_capacity", "disk_unverified"]),
+  operation: z.enum(["create", "start"]),
+  computerId: z.string().uuid(),
+  sandboxId: z.string().uuid(),
+}).strict();
 
 export class GvisorComputerError extends Error {
   constructor(readonly code: "not_found" | "not_ready" | "conflict" | "remote_failed" | "database_failed" | "plan_required" | "capacity_limit", message: string,
@@ -197,9 +206,12 @@ type LifecycleProof = "mutation" | "delete-observation";
 async function invokeOnTarget(userId: string, targetId: string, request: GvisorComputerRequest, binding?: GvisorBinding,
   exactManaged = false, proof?: LifecycleProof) {
   const authority = await executionAuthority(userId, targetId, binding, request.operation, exactManaged);
+  const requireDiskAdmission = exactManaged && managedGvisorDiskAdmissionEnabled()
+    && (request.operation === "create" || request.operation === "start");
   const parsed = GvisorComputerRequestSchema.parse((request.operation === "create" || request.operation === "start"
     || request.operation === "resize" || request.operation === "update")
-    ? { ...request, hostMemoryReserveMb: resolveProxmoxHostCapacityPolicy(authority.connection.configuration?.capacityPolicy).hostMemoryReserveMb }
+    ? { ...request, hostMemoryReserveMb: resolveProxmoxHostCapacityPolicy(authority.connection.configuration?.capacityPolicy).hostMemoryReserveMb,
+      ...(requireDiskAdmission ? { requireDiskAdmission: true } : {}) }
     : request);
   const expectedAdapterSha = String((authority.target.capabilities.adapter as { sha256: string }).sha256);
   const expectedRuntimeSha = String((authority.target.capabilities.runtime as { sha256: string }).sha256);
@@ -236,10 +248,24 @@ ${runAdapter}`;
   }
   if (acknowledgement) {
     const lines = result.stdout.split("\n");
-    const receipts = lines.map((line, index) => line.startsWith(parsed.operation === "exec" ? EXEC_RESULT : RESULT) ? index : -1).filter(index => index !== -1);
+    const receipts = lines.map((line, index) => line.startsWith(parsed.operation === "exec" ? EXEC_RESULT : RESULT)
+      || line.startsWith(ADMISSION_RESULT) ? index : -1).filter(index => index !== -1);
     if (receipts.length !== 1 || lines.indexOf(acknowledgement) <= receipts[0]
       || lines.lastIndexOf(acknowledgement) !== lines.indexOf(acknowledgement)) {
       throw new GvisorComputerError("remote_failed", "The managed adapter did not acknowledge this operation.");
+    }
+    const line = lines[receipts[0]];
+    if (line.startsWith(ADMISSION_RESULT)) {
+      let payload: unknown;
+      try { payload = JSON.parse(line.slice(ADMISSION_RESULT.length)); } catch { payload = undefined; }
+      const denial = DiskAdmissionResult.safeParse(payload);
+      if (!requireDiskAdmission || proof !== "mutation" || !denial.success || denial.data.operation !== parsed.operation
+        || denial.data.computerId !== parsed.computerId || denial.data.sandboxId !== parsed.sandboxId) {
+        throw new GvisorComputerError("remote_failed", "The host returned invalid gVisor admission evidence.");
+      }
+      throw new GvisorComputerError("capacity_limit", denial.data.code === "disk_capacity"
+        ? "The host does not have enough available storage. Free storage before trying again."
+        : "The host could not verify safe storage capacity. Try again after the host storage check passes.", null, true);
     }
   }
   const adapter = authority.target.capabilities.adapter as { version: string; sha256: string };
@@ -326,8 +352,13 @@ export async function prepareGvisorHost(userId: string, connectionId: string) {
     sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey,
     sshPrivilege: connection.endpoint.sshPrivilege, sshHostKeyType: connection.endpoint.sshHostKeyType }, destination);
   const root = path.join(process.cwd(), "provisioner", "gvisor");
-  const [prepare, adapter] = await Promise.all([readFile(path.join(root, "prepare-gvisor-host.sh")), readFile(path.join(root, "hivra-gvisor-adapter.py"))]);
+  const [prepare, adapter, xfsWorkspace, storageProbe] = await Promise.all(
+    ["prepare-gvisor-host.sh", "hivra-gvisor-adapter.py", "hivra-gvisor-xfs-workspace.py", "hivra-gvisor-storage-probe.py"]
+      .map(file => readFile(path.join(root, file))),
+  );
   const adapterSha = createHash("sha256").update(adapter).digest("hex");
+  const xfsWorkspaceSha = createHash("sha256").update(xfsWorkspace).digest("hex");
+  const storageProbeSha = createHash("sha256").update(storageProbe).digest("hex");
   const script = prepare.toString("utf8");
   const runId = randomUUID();
   const startedAt = new Date().toISOString();
@@ -336,7 +367,7 @@ export async function prepareGvisorHost(userId: string, connectionId: string) {
   }
   try {
     const previous = HIVRA_GVISOR_PREVIOUS_ADAPTERS.map(entry => entry.sha256).join(" ");
-    const remote = await runProxmoxHostScript(`export HIVRA_GVISOR_BUNDLE_URL='${HIVRA_GVISOR_BUNDLE_URL}'\nexport HIVRA_GVISOR_BUNDLE_SHA256='${HIVRA_GVISOR_BUNDLE_SHA256}'\nexport HIVRA_GVISOR_ADAPTER_SHA256='${adapterSha}'\nexport HIVRA_GVISOR_PREVIOUS_ADAPTER_SHA256S='${previous}'\nexport HIVRA_GVISOR_ADAPTER_SOURCE='${adapter.toString("base64")}'\n${script}`, env, {
+    const remote = await runProxmoxHostScript(`export HIVRA_GVISOR_BUNDLE_URL='${HIVRA_GVISOR_BUNDLE_URL}'\nexport HIVRA_GVISOR_BUNDLE_SHA256='${HIVRA_GVISOR_BUNDLE_SHA256}'\nexport HIVRA_GVISOR_ADAPTER_SHA256='${adapterSha}'\nexport HIVRA_GVISOR_PREVIOUS_ADAPTER_SHA256S='${previous}'\nexport HIVRA_GVISOR_ADAPTER_SOURCE='${adapter.toString("base64")}'\nexport HIVRA_GVISOR_XFS_WORKSPACE_SHA256='${xfsWorkspaceSha}'\nexport HIVRA_GVISOR_XFS_WORKSPACE_SOURCE='${xfsWorkspace.toString("base64")}'\nexport HIVRA_GVISOR_STORAGE_PROBE_SHA256='${storageProbeSha}'\nexport HIVRA_GVISOR_STORAGE_PROBE_SOURCE='${storageProbe.toString("base64")}'\n${script}`, env, {
       // Prepare installs packages: under sudo it runs without the remote
       // TERM/KILL limit, so apt and dpkg are never killed mid-install.
       timeoutMs: 360_000, maxOutputBytes: 64 * 1024, remoteLimit: "none",
@@ -527,6 +558,9 @@ export async function reserveAndDispatchManagedGvisor(input: {
   userId: string; launchRequestId: string; name: string; cpu: number; ramGb: number; authority: ManagedGvisorAuthority;
 }): Promise<{ state: "reconciling" | "cleaned" | "ready"; computerId: string }> {
   const { userId, authority, launchRequestId, name, cpu, ramGb } = input;
+  if (managedGvisorDiskAdmissionEnabled() && previousAdapter(HIVRA_GVISOR_ADAPTER_VERSION, authority.adapterSha)) {
+    throw new GvisorComputerError("not_ready", "This host needs the managed storage admission adapter before launching.");
+  }
   const { data: reserved, error } = await db().rpc("reserve_hivra_managed_gvisor", {
     p_customer: userId, p_request: launchRequestId, p_name: name, p_cpu: cpu, p_ram: ramGb,
     p_agent_limit: authority.agentLimit, p_operator: authority.authorityUserId, p_connection: authority.connectionId,
@@ -624,17 +658,68 @@ export async function executeGvisorComputerCommand(userId: string, agentId: stri
       || binding.runtimeSha !== agent.gvisor_runtime_sha256) {
       throw new GvisorComputerError("not_ready", "The managed sandbox terminal authority could not be confirmed.");
     }
+    const pilot = managedGvisorIdlePilotConfig();
+    let commandClaim: string | null = null;
+    if (pilot && pilot.ownerId === userId && matchesIdlePilotTarget(pilot, binding)) {
+      const { data, error } = await db().rpc("claim_hivra_managed_gvisor_pilot_command", {
+        p_customer: userId, p_computer: agent.id, p_expires_at: new Date(pilot.expiresAtMs).toISOString(),
+      });
+      if (error) throw new GvisorComputerError("database_failed", "The managed sandbox command claim could not be confirmed.");
+      if (typeof data !== "string" || !UUID.test(data)) {
+        throw new GvisorComputerError("conflict", "The sandbox is busy or stopped. Check its status before running another command.");
+      }
+      commandClaim = data;
+    }
     const result = await invokeOnTarget(binding.operatorId, binding.targetId, {
       operation: "exec", ownerHash: ownerHash(userId), computerId: agent.id, sandboxId: binding.sandboxId, argv,
     }, managedGvisorHostBinding(binding), true, "mutation");
+    if (commandClaim) {
+      const { data, error } = await db().rpc("complete_hivra_managed_gvisor_pilot_command", {
+        p_customer: userId, p_computer: agent.id, p_claim: commandClaim,
+      });
+      if (error || data !== true) throw new GvisorComputerError("conflict", "The sandbox command finished but its activity could not be confirmed. Do not replay it automatically.");
+    }
     return result.receipt;
   }
   requireSelfManagedGvisorDispatch(agent);
   return invoke(userId, agent.deployment_target_id, { operation: "exec", ownerHash: ownerHash(userId), computerId: agent.id, sandboxId: agent.gvisor_sandbox_id, argv }, agent);
 }
 
+type ManagedGvisorIdlePilot = NonNullable<ReturnType<typeof managedGvisorIdlePilotConfig>>;
+
+function matchesIdlePilotTarget(pilot: ManagedGvisorIdlePilot, binding: ManagedGvisorBinding): boolean {
+  return binding.operatorId === pilot.authorityUserId && binding.connectionId === pilot.connectionId
+    && binding.targetId === pilot.targetId && binding.revision === pilot.connectionRevision;
+}
+
+export async function runManagedGvisorIdlePilot(): Promise<"disabled" | "idle" | "stopped"> {
+  const pilot = managedGvisorIdlePilotConfig();
+  if (!pilot) return "disabled";
+  const { data, error } = await db().rpc("claim_hivra_managed_gvisor_pilot_idle_stop", {
+    p_customer: pilot.ownerId, p_operator: pilot.authorityUserId, p_connection: pilot.connectionId,
+    p_target: pilot.targetId, p_revision: pilot.connectionRevision, p_expires_at: new Date(pilot.expiresAtMs).toISOString(),
+  });
+  if (error) throw new GvisorComputerError("database_failed", "The managed sandbox idle stop claim could not be confirmed.");
+  if (data === null) return "idle";
+  const parsed = ManagedGvisorClaim.safeParse(data);
+  if (!parsed.success || parsed.data.status !== "claimed" || parsed.data.action !== "stop"
+    || parsed.data.customerId !== pilot.ownerId || !matchesIdlePilotTarget(pilot, parsed.data)) {
+    throw new GvisorComputerError("not_ready", "The managed sandbox idle stop authority could not be confirmed.");
+  }
+  const agent = await loadAgent(pilot.ownerId, parsed.data.computerId);
+  if (agent.operation_id !== parsed.data.operationId || agent.operation_kind !== "stop") {
+    throw new GvisorComputerError("conflict", "The managed sandbox idle stop claim changed before dispatch.");
+  }
+  await dispatchManagedGvisorLifecycle(agent, "stop", parsed.data);
+  return "stopped";
+}
+
 async function mutateReadyManagedGvisor(agent: GvisorAgent, action: "start" | "stop" | "delete") {
   if (action === "start") {
+    if (agent.status === "stopped" && managedGvisorDiskAdmissionEnabled()
+      && previousAdapter(agent.gvisor_adapter_version, agent.gvisor_adapter_sha256)) {
+      throw new GvisorComputerError("not_ready", "This host needs the managed storage admission adapter before starting.");
+    }
     let entitlement;
     try {
       entitlement = await resolveEffectiveSubscription(agent.user_id, { throwOnQueryError: true });
@@ -645,14 +730,23 @@ async function mutateReadyManagedGvisor(agent: GvisorAgent, action: "start" | "s
       throw new GvisorComputerError("plan_required", HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE);
     }
   }
-  const desired = action === "start" ? "running" : action === "stop" ? "stopped" : "deleted";
-  const matchesAgent = (row: Record<string, unknown> | undefined) => row?.id === agent.id
-    && row.user_id === agent.user_id && row.deployment_mode === "hivra-managed" && row.computer_substrate === "gvisor"
-    && row.status === desired && row.operation_id === null;
   const { data, error } = await db().rpc("claim_hivra_managed_gvisor_lifecycle", {
     p_customer: agent.user_id, p_computer: agent.id, p_action: action,
   });
   if (error) throw new GvisorComputerError("database_failed", "The managed lifecycle claim could not be confirmed.");
+  return dispatchManagedGvisorLifecycle(agent, action, data);
+}
+
+async function dispatchManagedGvisorLifecycle(
+  agent: GvisorAgent, action: "start" | "stop" | "delete", data: Record<string, unknown> | null,
+) {
+  const desired = action === "start" ? "running" : action === "stop" ? "stopped" : "deleted";
+  const matchesAgent = (row: unknown) => {
+    const candidate = row as Record<string, unknown> | undefined;
+    return candidate?.id === agent.id && candidate.user_id === agent.user_id
+      && candidate.deployment_mode === "hivra-managed" && candidate.computer_substrate === "gvisor"
+      && candidate.status === desired && candidate.operation_id === null;
+  };
   if (data?.status === "not_found") throw new GvisorComputerError("not_found", "gVisor computer not found.");
   if (data?.status === "settled" && matchesAgent(data.agent)) return data.agent;
   if (data?.status === "held") {
@@ -671,7 +765,17 @@ async function mutateReadyManagedGvisor(agent: GvisorAgent, action: "start" | "s
   let receipt;
   try {
     receipt = await invokeManagedGvisor(claim, observing ? "status" : action, observing ? "delete-observation" : "mutation");
-  } catch {
+  } catch (error) {
+    if (action === "start" && !observing && error instanceof GvisorComputerError
+      && error.code === "capacity_limit" && error.definiteAdmissionRejection) {
+      const stopped = await invokeManagedGvisor(claim, "status", "mutation").catch(() => null);
+      if (stopped?.state === "stopped") {
+        const { data: rejected, error: rejectionError } = await db().rpc("reject_hivra_managed_gvisor_start", {
+          p_customer: agent.user_id, p_computer: agent.id, p_operation: claim.operationId, p_receipt: stopped,
+        });
+        if (rejected === true && !rejectionError) throw error;
+      }
+    }
     throw new GvisorComputerError("conflict", "The managed sandbox outcome is unconfirmed. Its reservation is still held.");
   }
   if (receipt.state !== (action === "delete" ? "absent" : desired)) {

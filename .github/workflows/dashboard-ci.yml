@@ -7,6 +7,8 @@ on:
       # The dashboard suite checks the shared native-shell contract fixtures.
       - 'apps/shared/**'
       - 'docker-compose.yml'
+      - 'scripts/release/test-canary-qa-writer-fence.sh'
+      - 'scripts/release/fixtures/canary-qa-writer-fence-*'
       # Workflow-only changes still report the same public verification check.
       - '.github/**'
   # Also verify the merged result. Two PRs that each pass can break canary
@@ -16,6 +18,8 @@ on:
     paths:
       - 'dashboard/**'
       - 'docker-compose.yml'
+      - 'scripts/release/test-canary-qa-writer-fence.sh'
+      - 'scripts/release/fixtures/canary-qa-writer-fence-*'
       - '.github/**'
   # Lets "Verify Dashboard" gate a merge queue if the owner turns one on.
   merge_group:
@@ -101,6 +105,17 @@ jobs:
       - name: Enforce append-only Supabase migrations
         run: node scripts/check-supabase-migration-hygiene.cjs --base "$MIGRATION_BASE_SHA" --head "$MIGRATION_HEAD_SHA"
 
+      - name: Verify Canary QA writer and dispatch isolation
+        working-directory: .
+        run: |
+          if git diff --quiet "$MIGRATION_BASE_SHA" "$MIGRATION_HEAD_SHA" -- \
+            dashboard/supabase/migrations/20261126203500_canary_qa_writer_fence.sql \
+            dashboard/src/lib/hivra/canary-qa-dispatch.ts \
+            scripts/release/test-canary-qa-writer-fence.sh scripts/release/fixtures/canary-qa-writer-fence-*; then
+            exit 0
+          fi
+          bash scripts/release/test-canary-qa-writer-fence.sh --pull-test-images
+
       - name: Enforce hot-surface regression coverage
         run: npm run guard:hot-surfaces -- --base "$MIGRATION_BASE_SHA" --head "$MIGRATION_HEAD_SHA"
 
@@ -114,6 +129,12 @@ jobs:
         run: |
           node scripts/test-managed-gvisor-binding.cjs
           node scripts/test-managed-gvisor-reservation.cjs
+
+      - name: Verify the gVisor adapter and workspace quotas
+        working-directory: .
+        run: |
+          python3 dashboard/provisioner/gvisor/test_hivra_gvisor_adapter.py
+          python3 dashboard/provisioner/gvisor/test_hivra_gvisor_xfs_workspace.py
 
       - name: Catalog certification runner tests
         run: node --test scripts/__tests__/catalog-certification.test.mjs scripts/__tests__/catalog-intake.test.mjs

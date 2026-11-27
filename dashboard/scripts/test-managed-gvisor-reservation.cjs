@@ -305,9 +305,13 @@ async function main() {
     const finish = async (owner, operation, action, observed) => (await one(
       "select public.complete_hivra_managed_gvisor_lifecycle($1,$2,$3,$4,$5::jsonb) as result",
       [owner, ready.computerId, operation, action, JSON.stringify(observed)])).result;
+    const rejectWake = async (owner, operation, observed) => (await one(
+      "select public.reject_hivra_managed_gvisor_start($1,$2,$3,$4::jsonb) as result",
+      [owner, ready.computerId, operation, JSON.stringify(observed)])).result;
     await db.exec("set role authenticated");
     await assert.rejects(lifecycle(readyOwner, "stop"), { code: "42501" });
     await assert.rejects(finish(readyOwner, ready.operationId, "stop", receipt), { code: "42501" });
+    await assert.rejects(rejectWake(readyOwner, ready.operationId, receipt), { code: "42501" });
     await db.exec("set role service_role");
     assert.deepEqual(await lifecycle(customer, "stop"), { status: "not_found" });
 
@@ -317,9 +321,45 @@ async function main() {
     await db.query("update public.deployment_targets set evidence_connection_revision=7 where id=$1", [foreignTarget]);
     await db.exec("set role service_role");
 
-    const sleep = await lifecycle(readyOwner, "stop");
+    const expires = new Date(Date.now() + 60_000).toISOString();
+    const expired = "2000-01-01T00:00:00.000Z";
+    const pilotCommand = async (owner = readyOwner, computer = ready.computerId, until = expires) => (await one(
+      "select public.claim_hivra_managed_gvisor_pilot_command($1,$2,$3) as result", [owner, computer, until])).result;
+    const finishCommand = async (owner, token) => (await one(
+      "select public.complete_hivra_managed_gvisor_pilot_command($1,$2,$3) as result", [owner, ready.computerId, token])).result;
+    const pilotStop = async (target = foreignTarget, until = expires) => (await one(
+      "select public.claim_hivra_managed_gvisor_pilot_idle_stop($1,$2,$3,$4,7,$5) as result",
+      [readyOwner, foreignOperator, foreignConnection, target, until])).result;
+    const ageActivity = async () => {
+      await db.exec("reset role");
+      await db.query("update public.hivra_managed_gvisor_command_activity set last_activity_at=clock_timestamp()-interval '11 minutes' where computer_id=$1", [ready.computerId]);
+      await db.exec("set role service_role");
+    };
+    await db.exec("set role authenticated");
+    await assert.rejects(pilotCommand(), { code: "42501" });
+    await assert.rejects(pilotStop(), { code: "42501" });
+    await db.exec("set role service_role");
+    assert.equal(await pilotStop(), null, "unenrolled sandbox remains undisturbed");
+    assert.equal(await pilotCommand(customer), null, "foreign terminal cannot claim");
+    assert.equal(await pilotCommand(foreignOperator, self.id), null, "self-managed sandbox is excluded");
+    assert.equal(await pilotCommand(readyOwner, ready.computerId, expired), null);
+    const command = await pilotCommand();
+    assert.match(command, /^[0-9a-f-]{36}$/);
+    await ageActivity();
+    assert.equal(await pilotStop(), null, "an unconfirmed command never ages into idle eligibility");
+    assert.equal(await pilotCommand(), null, "a second command cannot take the held lease");
+    assert.equal(await finishCommand(customer, command), false);
+    assert.equal(await finishCommand(readyOwner, id(100)), false);
+    assert.equal(await finishCommand(readyOwner, command), true);
+    assert.equal(await pilotStop(), null, "the idle clock starts when confirmed work finishes");
+    await ageActivity();
+    assert.equal(await pilotStop(target), null, "wrong target does not authorize sleep");
+    assert.equal(await pilotStop(foreignTarget, expired), null, "expired cohort does not authorize sleep");
+    const sleep = await pilotStop();
     assert.equal(sleep.status, "claimed");
     assert.equal(sleep.operatorId, foreignOperator);
+    assert.equal(await pilotStop(), null, "a sweep cannot replay a claimed stop");
+    assert.equal(await pilotCommand(), null, "an owner command cannot cross a claimed stop");
     const stoppedReceipt = { ...receipt, state: "stopped" };
     assert.equal(await finish(customer, sleep.operationId, "stop", stoppedReceipt), null);
     assert.equal(await finish(readyOwner, sleep.operationId, "stop", receipt), null);
@@ -330,15 +370,29 @@ async function main() {
     assert.equal(await observe(readyOwner, true), null, "a stopped sandbox cannot open a terminal");
     assert.equal(await count(readyOwner), 1);
 
+    assert.equal((await lifecycle(customer, "start")).status, "not_found");
+    const deniedWake = await lifecycle(readyOwner, "start");
+    assert.equal(deniedWake.status, "claimed");
+    assert.equal(await rejectWake(customer, deniedWake.operationId, stoppedReceipt), false);
+    assert.equal(await rejectWake(readyOwner, sleep.operationId, stoppedReceipt), false);
+    assert.equal(await rejectWake(readyOwner, deniedWake.operationId, receipt), false);
+    assert.equal(await rejectWake(readyOwner, deniedWake.operationId, { ...stoppedReceipt, workspace: "foreign" }), false);
+    assert.equal((await lifecycle(readyOwner, "delete")).status, "held");
+    assert.equal(await rejectWake(readyOwner, deniedWake.operationId, stoppedReceipt), true);
+    assert.equal(await rejectWake(readyOwner, deniedWake.operationId, stoppedReceipt), true);
+    assert.equal((await lifecycle(readyOwner, "stop")).agent.desired_state, "stopped");
+    assert.equal(await count(readyOwner), 1);
     const [wakeA, wakeB] = await Promise.all([lifecycle(readyOwner, "start"), lifecycle(readyOwner, "start")]);
     assert.deepEqual([wakeA.status, wakeB.status].sort(), ["claimed", "held"]);
     const wake = wakeA.status === "claimed" ? wakeA : wakeB;
+    assert.equal(await rejectWake(readyOwner, deniedWake.operationId, stoppedReceipt), false);
     assert.equal(await observe(readyOwner, true), null, "a provisioned sandbox with a held power operation cannot open a terminal");
     assert.equal(await finish(readyOwner, sleep.operationId, "stop", stoppedReceipt), null);
     assert.equal((await lifecycle(readyOwner, "delete")).status, "held");
     assert.equal(await finish(readyOwner, wake.operationId, "start", { ...receipt, sandboxId: id(100) }), null);
     assert.equal((await finish(readyOwner, wake.operationId, "start", receipt)).status, "running");
     assert.equal((await lifecycle(readyOwner, "start")).status, "settled");
+    assert.equal(await pilotStop(), null, "an explicit Start resets the idle horizon without a command");
 
     const events = async () => (await db.query(`select event,detail->>'operationId' as operation
       from public.hivra_agent_events where agent_id=$1 and user_id=$2 order by created_at`,
@@ -386,7 +440,7 @@ async function main() {
       reserve({ ...budgetInput, request: id(102) })]);
     assert.deepEqual(budgetResults.map(value => value.status).sort(), ["plan_compute_limit", "reserved"]);
     assert.equal(await count(budgetInput.customer), 1);
-    console.log("Managed gVisor migration proof passed: atomic reservation and rollback, exact authority, replay, slot and compute accounting, dispatch/cancellation exclusion, durable ready, one-shot lifecycle, atomic audit, owner terminal authority, and exact absence release.");
+    console.log("Managed gVisor migration proof passed: atomic reservation and rollback, exact authority, replay, slot and compute accounting, dispatch/cancellation exclusion, durable ready, one-shot lifecycle, atomic audit, owner terminal authority, idle stop fencing and owner wake, and exact absence release.");
   } finally {
     await db.close();
   }
