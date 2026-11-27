@@ -969,6 +969,23 @@ async function main() {
     });
     await db.exec(catalogDigest);
     assert.deepEqual(await admissionDefinitions(), admittedCatalogDigest, "re-applying the catalog digest admission changes nothing");
+    const hermesGuest503 = migration("20261127171000_provider_release_admission_2026_11_27_1.sql");
+    const hermesRelease = require("../provisioner-releases/2026.11.27.1.json");
+    const releaseRows = hermesRelease.files.map(({ path, sha256, bytes }) => [path, sha256, bytes,
+      path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(path) ? 0o700 : 0o600])
+      .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+    const releaseDigest = createHash("sha256").update(JSON.stringify(releaseRows)).digest("hex");
+    await db.exec(hermesGuest503);
+    const admittedHermesGuest503 = await admissionDefinitions();
+    admittedHermesGuest503.forEach((definition, index) => {
+      for (const version of ["2026.11.26.1", hermesRelease.version]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, "85070186634722fcf9e346a1ae6630cc30b6fb8809fe3458a47f51055c282a17"), 1);
+        assert.equal(occurrences(definition, `'bundleSha256'='${releaseDigest}' and p_identity->'bundle'->>'provisionerVersion'='${hermesRelease.version}'`), 1);
+      }
+    });
+    await db.exec(hermesGuest503);
+    assert.deepEqual(await admissionDefinitions(), admittedHermesGuest503, "re-applying the Hermes guest 503 admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

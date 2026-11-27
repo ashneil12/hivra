@@ -130,11 +130,15 @@ describe("gateway Hermes mount", () => {
       : once(created, "listening").then(() => (created.address() as AddressInfo).port);
   }
 
-  async function upstream(page = { type: "text/plain", body: "hermes" }): Promise<{ port: number; http: Seen[]; ws: Seen[] }> {
+  async function upstream(page = { type: "text/plain", body: "hermes" }, resetTicket = false): Promise<{ port: number; http: Seen[]; ws: Seen[] }> {
     const seen = { http: [] as Seen[], ws: [] as Seen[] };
     const sockets = new Set<net.Socket>();
     const app = http.createServer((req, res) => {
       seen.http.push({ url: req.url ?? "", headers: req.headers });
+      if (resetTicket && req.url?.startsWith("/api/webapp/socket-ticket")) {
+        req.socket.destroy();
+        return;
+      }
       res.writeHead(200, { "Content-Type": page.type, "X-Frame-Options": "DENY",
         "Content-Security-Policy": "default-src 'none'; script-src 'self'; frame-ancestors 'none'" });
       res.end(page.body);
@@ -343,6 +347,34 @@ describe("gateway Hermes mount", () => {
     expect(desk.ws[0].headers.origin).toBe(`http://127.0.0.1:${desk.port}`);
   });
 
+  it.each(["loopback_connection_refused", "loopback_connection_reset"])(
+    "diagnoses %s without recording ticket query parameters or the owner bearer",
+    async (reason) => {
+      const reset = reason === "loopback_connection_reset";
+      const desk = reset ? await upstream({ type: "text/html", body: "Hermes" }, true) : null;
+      const port = await boot("hermes", { HERMES_WEBAPP_PORT: String(desk?.port ?? await closedPort()),
+        HERMES_DASHBOARD_PORT: String(await closedPort()) });
+      if (desk) await settle(port, desk);
+      const route = "/hermes/api/webapp/socket-ticket?opaque=private-fixture-value";
+      const reply = await request(port, route, {}, { method: "POST" });
+      expect(reply.status).toBe(503);
+      expect(reply.headers["x-hivra-hermes-unavailable"]).toBe(reason);
+      expect(reply.text).toContain(reason);
+      expect(reply.text).not.toContain("being updated");
+      await request(port, route, {}, { method: "POST" });
+      const report = await request(port, "/api/surface-watchdog");
+      expect(report.status).toBe(200);
+      const failures = report.json.proxyEvents as Array<{ operation: string }>;
+      expect(failures.filter(event => event.operation === "socket_ticket")).toEqual([expect.objectContaining({
+        type: "hermes_proxy_unavailable", operation: "socket_ticket", reason,
+        unit: reset ? "hermes-gateway.service" : "bux-hermes.service",
+      })]);
+      expect(report.text).not.toContain("private-fixture-value");
+      expect(report.text).not.toContain(TOKEN);
+      expect((await request(port, "/api/surface-watchdog", {}, { auth: false })).status).toBe(401);
+    },
+  );
+
   it("signs the owner in to the Webapp through Hermes's own one-use link, carried only in the fragment", async () => {
     const desk = await webapp();
     const port = await boot("hermes", { HERMES_DASHBOARD_PORT: String(await closedPort()), HERMES_WEBAPP_PORT: String(desk.port) });
@@ -525,6 +557,13 @@ describe("gateway Hermes mount", () => {
     const page = await request(port, "/hermes/", { Accept: "text/html" });
     expect(page.status).toBe(503);
     expect(page.text).toContain("Hermes is being updated");
-    expect(await upgrade(port, "/hermes/api/ws", { Authorization: `Bearer ${TOKEN}` })).toMatch(/^HTTP\/1\.1 503/);
+    expect(page.headers["x-hivra-hermes-unavailable"]).toBe("update_lock");
+    const refused = await upgrade(port, "/hermes/api/ws", { Authorization: `Bearer ${TOKEN}` });
+    expect(refused).toMatch(/^HTTP\/1\.1 503/);
+    expect(refused).toContain("X-Hivra-Hermes-Unavailable: update_lock");
+    expect((await request(port, "/api/surface-watchdog")).json.proxyEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reason: "update_lock", operation: "http" }),
+      expect.objectContaining({ reason: "update_lock", operation: "websocket" }),
+    ]));
   });
 });
