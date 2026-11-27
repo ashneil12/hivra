@@ -257,10 +257,10 @@ const PREPARED_RUNTIME_BUNDLE_VERSION = "2026.11.27.6";
 
 function supportsPreparedKvmImage(kind: PreparedKvmImage["kind"], version: string | undefined, agentKind: string) {
   if (kind === "agent-zero" || kind === "bux-dependencies") {
-    return version === PREPARED_RUNTIME_BUNDLE_VERSION
+    return (version === PREPARED_RUNTIME_BUNDLE_VERSION || version === HERMES_STANDBY_PROVISIONER_VERSION)
       && (kind === "agent-zero" ? agentKind === kind : agentKind === "claude" || agentKind === "codex");
   }
-  return ["2026.11.27.4", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(candidate => candidate === version)
+  return ["2026.11.27.4", "2026.11.27.5", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(candidate => candidate === version)
     && (kind === "ubuntu-qga" ? STOCK_QGA_AGENT_KINDS.includes(agentKind) : agentKind === kind);
 }
 
@@ -329,7 +329,7 @@ export function phase1Script(params: {
   const candidate = params.preparedImage;
   const standby = params.hermesStandby;
   if (standby && (runtime || params.agentKind !== "hermes" || !params.hermesImageSha256
-      || ![HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(version => version === params.canaryProvisionerVersion))) {
+      || params.canaryProvisionerVersion !== HERMES_STANDBY_PROVISIONER_VERSION)) {
     throw new Error("Hermes standby requires a sealed managed baked-image host");
   }
   const preparedImage = !runtime && candidate && !params.wantBrowser
@@ -396,7 +396,7 @@ fi`
       ? [`HIVRA_PREPARED_RUNTIME=${shellQuote(preparedImage.kind)}`] : []),
   ].join(" ") + " ";
   const batchQemuAdmission = !runtime
-    && ["2026.11.27.3", "2026.11.27.4", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].includes(params.canaryProvisionerVersion ?? "")
+    && ["2026.11.27.3", "2026.11.27.4", "2026.11.27.5", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].includes(params.canaryProvisionerVersion ?? "")
     && ["hermes", "claude", "codex", "openclaw", "deepseek-harness", "agent-zero"].includes(params.agentKind);
   const hostCapacityAdmission = (batchQemuAdmission ? "HIVRA_CAPACITY_BATCH_QEMU=1 " : "") + buildHostCapacityAdmissionCommand({
     provisionerDirectory: runtimePaths.provisionerDirectory,
@@ -1689,7 +1689,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostE
             return apiError("The Canary Hermes image selection is not configured safely.", 503);
           }
           if (bakeHost === host && (!bakeUser || bakeUser === userId)) {
-            if (!["2026.11.27.2", "2026.11.27.3", "2026.11.27.4", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(version => version === canaryProvisionerVersion)) {
+            if (!["2026.11.27.2", "2026.11.27.3", "2026.11.27.4", "2026.11.27.5", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(version => version === canaryProvisionerVersion)) {
               return apiError("The selected Canary host does not support the pinned Hermes image.", 503);
             }
             hermesImageSha256 = bakeSha;
@@ -1746,7 +1746,7 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
     const ipLastOctetStart = resolveHivraIpLastOctetStart(env);
     if (hermesImageSha256 && process.env.HIVRA_CANARY_HERMES_STANDBY_ENABLED === "1"
         && process.env.HIVRA_CANARY_HERMES_IMAGE_USER_ID === userId && seatFunding === "paid") {
-      if (![HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(version => version === canaryProvisionerVersion)
+      if (canaryProvisionerVersion !== HERMES_STANDBY_PROVISIONER_VERSION
           || !Number.isInteger(cpu) || cpu !== maximumCpu || ram !== maximumRam) {
         return apiError("The Canary Hermes standby does not match this launch.", 409);
       }

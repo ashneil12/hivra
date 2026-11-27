@@ -1554,7 +1554,7 @@ describe("POST /api/hivra/agents", () => {
       total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
     };
     mockSelectAvailableProxmoxProvisionTarget.mockResolvedValueOnce({
-      ok: true, targetId: "fixturenode7", provisionerVersion: "2026.11.27.5",
+      ok: true, targetId: "fixturenode7", provisionerVersion: "2026.11.27.7",
       env: {
         PROXMOX_NODE: "fixturenode7", PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
         PROXMOX_PRIVATE_GATEWAY: "10.250.21.1", PROXMOX_VMID_START: "200",
@@ -3178,6 +3178,7 @@ describe("POST /api/hivra/agents", () => {
       ["Ubuntu QGA trial when no DeepSeek image is configured", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", true, true, 201, "ubuntu-qga"],
       ["Ubuntu QGA trial for another owner stays stock", "canary", "fixturenode7", "user_other", "2026.11.27.4", true, false, 201, "ubuntu-qga"],
       ["Agent Zero trial", "canary", "fixturenode7", "user_fixture1", "2026.11.27.6", true, true, 201, "agent-zero"],
+      ["Agent Zero trial on standby description release", "canary", "fixturenode7", "user_fixture1", "2026.11.27.7", true, true, 201, "agent-zero"],
       ["Agent Zero trial rejects the old consumer", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", true, false, 503, "agent-zero"],
       ["Agent Zero trial stays stock for another owner", "canary", "fixturenode7", "user_other", "2026.11.27.6", true, false, 201, "agent-zero"],
       ["Claude Code dependency trial", "canary", "fixturenode7", "user_fixture1", "2026.11.27.6", true, true, 201, "bux-dependencies", "claude-code"],

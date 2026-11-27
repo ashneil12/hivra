@@ -76,3 +76,7 @@ inferring them from a live host.
   - observed amd64 runtime identity: `Config.User=1000`, named user/group
     `ubuntu=1000:1000`, entrypoint `/etc/container-entrypoint.sh`, no command,
     working directory `/home/ubuntu`
+
+Release `2026.11.27.7` accepts the exact Proxmox-escaped Hermes standby
+ownership description. It preserves the previous release and does not change
+Hermes upstream code, the guest image pins or native update behavior.

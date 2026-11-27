@@ -51,8 +51,9 @@ the managed subnet. Use one generation UUID per attempt and never reuse a
 2. On the approved host, verify the sealed Canary bundle and the boot-proven
    image. Check the bundle manifest and file hashes against the served Git
    revision, not just the host's version label. Run the managed host
-   provisioner in standby `stage` mode with only
-   the neutral VM settings; do not send a tenant key, route, token or binding.
+   provisioner with `HIVRA_PROV_DIR=/root/hivra-provisioner-canary` in standby
+   `stage` mode. Pass only the neutral VM settings; do not send a tenant key,
+   route, token or binding.
    Require enforced local memory and CPU ceilings, with the host's registered
    CPU policy capped at the provisioner's supported maximum, plus storage
    headroom. Make the generation available only after the exact host receipt
