@@ -264,6 +264,24 @@ test("actual restore wiring retains identity after partial startup and failed te
   assert.match(await readFile(path.join(allocatedState, "database-runtime.json"), "utf8"), /hivra-0123456789/);
 });
 
+test("failed operator setup does not start the local database", async () => {
+  const source = await readFile(new URL("./hivra-self-host.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function initialize(");
+  const end = source.indexOf("async function start(", start);
+  const missingIdentity = new Error("Operator email required");
+  const initialize = vm.runInNewContext(`(${source.slice(start, end)})`, {
+    path,
+    ensureDoctor() {},
+    resolveStateDirectory: () => "/tmp/hivra-test-state",
+    existsSync: () => false,
+    line() {},
+    collectOperatorIdentity: async () => { throw missingIdentity; },
+    startSupabase: async () => assert.fail("must not start Docker services before validating operator identity"),
+  });
+
+  await assert.rejects(initialize({}), error => error === missingIdentity);
+});
+
 test("failed setup build does not commit a partial installation", async () => {
   const source = await readFile(new URL("./hivra-self-host.mjs", import.meta.url), "utf8");
   const start = source.indexOf("async function initialize(");
