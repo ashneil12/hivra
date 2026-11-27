@@ -104,15 +104,15 @@ describe("/download", () => {
     expect(String(metadata.description)).not.toMatch(/Windows/);
   });
 
-  it("renders inside the public frame", () => {
-    render(<DownloadRoute />);
+  it("renders inside the public frame", async () => {
+    render(await DownloadRoute());
     expect(screen.getByTestId("public-site")).toContainElement(screen.getByRole("main"));
   });
 
-  it("advertises the signed DMG on a deployment that supports desktop sign-in", () => {
+  it("advertises the signed DMG on a deployment that supports desktop sign-in", async () => {
     const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_DESKTOP_BROWSER_SIGNIN: "1", HIVRA_AUTH_MODE: "hosted" });
     try {
-      render(<DownloadRoute />);
+      render(await DownloadRoute());
       expect(screen.getByRole("link", { name: "Download for Mac" })).toHaveAttribute(
         "href", "https://github.com/ashneil12/hivra/releases/download/mac-v0.3.0/Hivra.dmg",
       );

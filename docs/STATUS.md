@@ -173,9 +173,10 @@ production capacity or public availability. See the
 
 ### Paid KVM sleep and wake
 
-The production rollout enables paid KVM sleep with `HIVRA_SLEEP_MODE=on` and
-`NEXT_PUBLIC_HIVRA_AGENT_SLEEP=1`. Where sleep is enabled and the paid KVM computer, host and connection
-are eligible, the owner can opt in to sleep when idle. A nap pauses the VM in
+Paid KVM sleep requires both production sleep flags and an active KVM host
+with sleep enabled. Public pages do not advertise paid sleep when no such
+host is registered. When the paid KVM computer, host and connection are
+eligible, the owner can opt in to sleep when idle. A nap pauses the VM in
 memory. Hibernate saves its memory to disk; supported owner access wakes it.
 Active work, schedules or channels without a supported wake path can keep it
 awake. This is not the Linux Sandbox idle-stop pilot. A paid Codex KVM
