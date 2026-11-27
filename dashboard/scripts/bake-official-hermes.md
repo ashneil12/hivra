@@ -87,3 +87,19 @@ the owned launch trace, without `disk_imported` on that launch. Compare guest
 machine IDs, SSH host keys and Hivra access identities across the three claims.
 Use digests in the verification receipt rather than copying keys, tokens or
 private guest identifiers into a report.
+
+### 27 November 2026 Canary result
+
+The `2026.11.27.7` pilot proved a neutral boot and one exact paid ownership
+transfer. The launch API accepted the request 31.3 seconds after the click,
+but the computer stayed in provisioning throughout the nine-minute browser
+readiness window. The native composer and a reply were not reached. This is
+one failed attempt and zero comparable warm timing samples; it doesn't
+validate the 60-second goal or native Update.
+
+The owned fixture was deleted through the normal lifecycle, then its host slot
+and volumes were verified absent. The pilot settings and staged image were
+removed. Keep standby off and do not replenish the slot on this result. Before
+another pilot, capture the exact continued provisioner's stage log while the
+failed fixture still exists: normal deletion removes that file. An allocation
+receipt proves custody, not that the detached runtime installer made progress.
