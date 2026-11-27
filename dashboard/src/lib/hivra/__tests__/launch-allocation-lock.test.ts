@@ -131,7 +131,7 @@ it("keeps the prepared Ubuntu disk within the five stock-agent profiles and the 
 describe("host allocation lock lifecycle", () => {
   it.each(["hermes", "claude", "codex", "openclaw", "deepseek-harness", "agent-zero"])(
     "batches capacity and IP reads under the allocation lock for managed %s on the reviewed Canary release", (kind) => {
-      for (const version of ["2026.11.27.3", "2026.11.27.4", "2026.11.27.5", "2026.11.27.6"]) {
+      for (const version of ["2026.11.27.3", "2026.11.27.4", "2026.11.27.5", "2026.11.27.6", "2026.11.27.7"]) {
         const script = renderedPhase1(false, version, kind);
         const admission = script.indexOf("HIVRA_CAPACITY_BATCH_QEMU=1 bash ");
         expect(admission).toBeGreaterThan(script.indexOf("flock -w"));
