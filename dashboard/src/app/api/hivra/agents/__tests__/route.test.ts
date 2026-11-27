@@ -3942,6 +3942,50 @@ describe("POST /api/hivra/agents", () => {
     }));
   });
 
+  it.each(["on", "canary", "observe", "off"] as const)("requests paid sleep placement only in acting mode %s", async mode => {
+    const originalMode = process.env.HIVRA_SLEEP_MODE;
+    process.env.HIVRA_SLEEP_MODE = mode;
+    mockSubscriptionRow = {
+      plan: "operator",
+      status: "active",
+      instance_limit: 4,
+      total_cpu_budget: 4,
+      total_ram_budget: 8192,
+      current_period_end: null,
+    };
+    mockExistingAgents = [{ id: "agent-existing", type: "claude-code", status: "running",
+      proxmox_host: "fixturenode5", cpu: 0.5, ram: 1, created_at: "2026-06-08T10:00:00.000Z" }];
+    const defaultPlacement = mockSelectAvailableProxmoxProvisionTarget.getMockImplementation()!;
+    const admissionResults: ManagedReadinessResult[] = [];
+    mockRunProxmoxHostScript.mockReset().mockResolvedValue({ ok: true, stdout: "HIVRA_HOST_READY 2026.11.27.2\n" });
+    mockCheckHostWakeCapacity.mockResolvedValue({ ok: false, freeMb: 200 });
+    mockSelectAvailableProxmoxProvisionTarget.mockReset().mockImplementation(async (args: ManagedPlacementOptions) => {
+      if (mode === "on" || mode === "canary") {
+        const env = { NODE_ENV: "test", PROXMOX_NODE: "fixturenode7" } as const;
+        admissionResults.push(await args.readinessCheck!({ targetId: "fixturenode7", env }));
+      }
+      return { ok: false, status: 503, message: "Not admitted" };
+    });
+    try {
+      const result = await POST(makeRequest({ type: "claude-code", name: "PAID_SLEEP_PLACEMENT", cpu: 0.5, ram: 1 }) as never);
+      expect(result.status).toBe(503);
+      const options = mockSelectAvailableProxmoxProvisionTarget.mock.calls[0][0];
+      if (mode === "on" || mode === "canary") {
+        expect(options).toMatchObject({ forceTargetId: null, paidSleepPlacement: { stickyHost: "fixturenode5" } });
+        expect(admissionResults).toEqual([expect.objectContaining({ ok: false, status: 503, message: expect.stringMatching(/at capacity/) })]);
+        expect(mockCheckHostWakeCapacity).toHaveBeenCalledTimes(1);
+      } else {
+        expect(options).toMatchObject({ forceTargetId: "fixturenode5" });
+        expect(options).not.toHaveProperty("paidSleepPlacement");
+        expect(mockCheckHostWakeCapacity).not.toHaveBeenCalled();
+      }
+    } finally {
+      mockSelectAvailableProxmoxProvisionTarget.mockReset().mockImplementation(defaultPlacement);
+      if (originalMode === undefined) delete process.env.HIVRA_SLEEP_MODE;
+      else process.env.HIVRA_SLEEP_MODE = originalMode;
+    }
+  });
+
   it("honors an explicit Claude Code Proxmox host override", async () => {
     process.env.HIVRA_CLAUDE_CODE_PROXMOX_HOST = "fixturenode10";
     mockSelectAvailableProxmoxProvisionTarget.mockResolvedValueOnce({

@@ -73,6 +73,18 @@ function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: str
 }
 
 describe("host allocation lock lifecycle", () => {
+  it("enables batched capacity reads only for managed Hermes on the reviewed Canary release", () => {
+    const script = renderedPhase1(false, "2026.11.27.3", "hermes");
+    const admission = script.indexOf("HIVRA_CAPACITY_BATCH_QEMU=1 bash ");
+    expect(admission).toBeGreaterThan(script.indexOf("flock -w"));
+    expect(admission).toBeGreaterThan(script.indexOf("OBSERVED_MANIFEST_SHA="));
+    expect(admission).toBeLessThan(script.indexOf("claimed_octets="));
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+    expect(renderedPhase1(false, "2026.11.27.2", "hermes")).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+    expect(renderedPhase1(false, "2026.11.27.3", "codex")).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+    expect(renderedPhase1(true, undefined, "hermes")).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+  });
+
   it("reads managed Hermes IP claims in one pmxcfs scan under the allocation lock", () => {
     const script = renderedPhase1(false, undefined, "hermes");
     const start = script.indexOf('claimed_octets="$(');

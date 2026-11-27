@@ -8,6 +8,8 @@ if [ "$#" -ne 1 ] || [ ! -d "$1" ]; then
   exit 64
 fi
 OUT="$(cd "$1" && pwd)"
+MEMORY_MB="${HIVRA_HERMES_BAKE_MEMORY_MB:-4096}"
+case "$MEMORY_MB" in 4096|6144|8192) ;; *) printf 'unsupported bake memory size\n' >&2; exit 64 ;; esac
 WORK="$(mktemp -d "$OUT/.hermes-bake.XXXXXX")"
 trap 'rm -rf -- "$WORK"' EXIT
 source "$ROOT/hermes-bake-pins.env"
@@ -26,21 +28,22 @@ chmod 0644 "$WORK/hermes-install.sh"
 export LIBGUESTFS_BACKEND=direct
 qemu-img create -f qcow2 "$WORK/build.qcow2" 8G
 virt-resize --format qcow2 --output-format qcow2 --expand /dev/sda1 "$WORK/base.qcow2" "$WORK/build.qcow2"
-virt-customize --format qcow2 -a "$WORK/build.qcow2" --network --no-logfile --memsize 4096 --smp 4 \
+virt-customize --format qcow2 -a "$WORK/build.qcow2" --network --no-logfile --memsize "$MEMORY_MB" --smp 4 \
   --mkdir /root/hermes-bake \
   --copy-in "$WORK/hermes-bake-pins.env:/root/hermes-bake" \
   --copy-in "$WORK/hermes-install.sh:/root/hermes-bake" \
   --copy-in "$WORK/bake-official-hermes-guest.sh:/root/hermes-bake" \
   --run-command 'env -i HOME=/root LANG=C.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin /bin/bash /root/hermes-bake/bake-official-hermes-guest.sh' \
   --delete /root/hermes-bake
+virt-cat --format=qcow2 -a "$WORK/build.qcow2" /etc/hivra/hermes-bake.json > "$WORK/marker.json"
+jq -e '.schema == 1 and .kind == "official-hermes"' "$WORK/marker.json" >/dev/null
 virt-sparsify --format qcow2 --convert qcow2 --compress "$WORK/build.qcow2" "$WORK/sealed.qcow2"
 qemu-img check -f qcow2 "$WORK/sealed.qcow2"
 qemu-img info --output=json "$WORK/sealed.qcow2" | jq -e '.format == "qcow2" and (has("backing-filename") | not)' >/dev/null
 
 read -r IMAGE_SHA _ < <(sha256sum "$WORK/sealed.qcow2")
 NAME="hivra-hermes-$IMAGE_SHA"
-virt-cat --format qcow2 -a "$WORK/sealed.qcow2" /etc/hivra/hermes-bake.json \
-  | jq -e --arg imageSha256 "$IMAGE_SHA" '. + {format: "qcow2", imageSha256: $imageSha256}' > "$WORK/manifest.json"
+jq -e --arg imageSha256 "$IMAGE_SHA" '. + {format: "qcow2", imageSha256: $imageSha256}' "$WORK/marker.json" > "$WORK/manifest.json"
 ln -- "$WORK/sealed.qcow2" "$OUT/$NAME.qcow2"
 ln -- "$WORK/manifest.json" "$OUT/$NAME.json"
 printf 'Baked %s.qcow2 and %s.json\n' "$OUT/$NAME" "$OUT/$NAME"

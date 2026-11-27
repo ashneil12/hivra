@@ -154,6 +154,12 @@ jobs:
         working-directory: .
         run: python3 -B dashboard/scripts/ops/test_workspace_measurements.py
 
+      - name: Verify the portable KVM disk checkpoint contracts
+        working-directory: .
+        run: |
+          sudo apt-get install -y qemu-utils restic
+          python3 -B dashboard/scripts/ops/test_kvm_portable_disk.py
+
       - name: Lint
         run: npm run lint
 
