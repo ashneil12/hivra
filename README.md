@@ -4,6 +4,12 @@
 
 Hivra is building an open, self-hostable cloud-computing layer for AI agents: one secure computer per agent, accessible from anywhere, with managed operation available for people who do not want to run infrastructure themselves.
 
+## Choose how to run Hivra
+
+- **Run your own control plane (preview):** Start with the [self-host quickstart](docs/self-host/QUICKSTART.md). The install runs the dashboard and database on your machine without a Hivra or Clerk account. Launching an agent also requires supported compute; installing the dashboard doesn't provision it.
+- **Keep compute on your own server:** Use the hosted dashboard with a [connected Proxmox VE server](docs/STATUS.md#agents) for supported agents. The one-command Ubuntu connection provides a Linux Sandbox, not an agent launch host.
+- **Let Hivra run the compute:** Use [Hivra Cloud](https://hivra.cloud) for [supported managed agents and computers](docs/STATUS.md). Check the status guide for availability and plan requirements.
+
 ## Repository status
 
 This is the public source repository for Hivra. Hivra-owned source is licensed under Apache-2.0. The initial source release passed an independent export review, secret scanning, and an exact exported-source installation and recovery rehearsal. Separately distributed runtime images and desktop installers require their own release checks.
@@ -44,9 +50,10 @@ See the [documentation index](docs/README.md) for setup, architecture, contribut
 The first independent single-operator setup path is now implemented for review.
 It uses a local Docker-compatible runtime, a local Supabase stack and
 installation-owned credentials; it does not require a Hivra or Clerk account and
-does not expose hosted billing routes. From `dashboard/`:
+does not expose hosted billing routes. From the repository root:
 
 ```bash
+cd dashboard
 npm ci
 npm run self-host:doctor
 npm run self-host:init
@@ -55,15 +62,10 @@ npm run self-host:start
 
 Open `http://127.0.0.1:3000` and sign in with the operator credentials created
 during setup. The installer writes secrets outside the repository and never
-prints them. See the [self-host quickstart](docs/self-host/QUICKSTART.md) for
-requirements, lifecycle commands, provider onboarding and the exact acceptance
-boundary. A live acceptance run from this source checkout created a fresh
-Hetzner computer with the operator's token, prepared it, launched Codex through
-the original agent flow, opened its native interfaces, captured installed-state
-evidence, and removed every provider resource. The initial exported-source
-control-plane installation and recovery rehearsal
-also passed. That does not establish every provider/runtime combination or
-final V1 approval; see the [verification status](docs/release/VERIFICATION-STATUS.md).
+prints them. Read the quickstart's [prerequisites](docs/self-host/QUICKSTART.md#requirements)
+before installing and [compute setup](docs/self-host/QUICKSTART.md#connect-compute)
+before attempting your first agent. The root `docker-compose.yml` is development
+wiring for a standalone Hermes agent and sidecar, not a Hivra installer.
 
 ## First reference path
 
