@@ -17,6 +17,7 @@ import { WorkspaceOwnerContext } from '@/components/workspace/useWorkspaceAgents
 import { useDesktopShell } from './useDesktopShell';
 import { AppShellContext } from './AppShellContext';
 import { PendingBridgeCard } from '@/components/hivra/PendingBridgeCard';
+import { CookieConsentDock } from '@/components/consent/CookieConsentDock';
 
 interface ClientLayoutWrapperProps {
   children: React.ReactNode;
@@ -84,11 +85,12 @@ export function ClientLayoutWrapper({
   const openSwitcher = useCallback(() => setSwitcherOpen(true), []);
   const appShell = useMemo(() => ({ openSwitcher, userName }), [openSwitcher, userName]);
   const isInstancePage = pathname?.startsWith('/dashboard/instances/');
-  const isWorkspacePage = pathname === '/dashboard/workspace' || /^\/dashboard\/agent\/[^/]+$/.test(pathname ?? '');
+  const isAgentView = AGENT_VIEW_ROUTE_PATTERN.test(pathname ?? '');
+  const isWorkspacePage = pathname === '/dashboard/workspace' || isAgentView;
   // The agent view draws its own sidebar beside the global rail, so the rail
   // stays as icons there: Home, computers and settings are always one click
   // away. A native client's page keeps the global chrome it has today.
-  const compactRail = AGENT_VIEW_ROUTE_PATTERN.test(pathname ?? '') && !nativeWorkspace;
+  const compactRail = isAgentView && !nativeWorkspace;
   // Runtime pages carry identity and back in their own resource bar.
   const showMobileHeader = !desktopShell && !workspaceModalOpen && !pathname?.includes('/chat') && !pathname?.includes('/console') && !isInstancePage && !isWorkspacePage;
   const showPwaBottomNavigation = !desktopShell && shouldShowPwaBottomNavigation(pathname) && !workspaceModalOpen && !keyboardOpen;
@@ -178,6 +180,7 @@ export function ClientLayoutWrapper({
           {desktopShell && pathname === '/dashboard/settings' && <NativeAccountHeader userName={userName} />}
           {BRIDGE_CARD_ROUTE_PATTERN.test(pathname ?? '') && <PendingBridgeCard />}
           {children}
+          {isAgentView && <CookieConsentDock />}
         </main>
 
         {showPwaBottomNavigation && (
