@@ -57,9 +57,12 @@ the managed subnet. Use one generation UUID per attempt and never reuse a
    Require enforced local memory and CPU ceilings, with the host's registered
    CPU policy capped at the provisioner's supported maximum, plus storage
    headroom. Make the generation available only after the exact host receipt
-   proves fresh SSH identity and completed cloud-init.
-3. Enable the standby flag only on the dedicated Git Canary build for the
-   scoped QA owner. Launch through the normal paid browser flow; the ordinary
+   proves fresh SSH identity and completed cloud-init. A started VM isn't a
+   receipt. If exact ownership fails, leave the selector off, quarantine the
+   generation and verify physical absence before releasing its charge.
+3. After the first neutral receipt, enable the four scoped settings for the
+   dedicated Git Canary build and verify a Git deployment created after the
+   settings were saved. Launch through the normal paid browser flow; the ordinary
    placement decision must select the staged host. Measure click, claim,
    composer and visible reply. A failed or uncertain claim must not silently
    cold-launch another VM.
@@ -80,3 +83,9 @@ terminal still work. Keep one redacted real-browser recording from Launch
 through the first visible reply. If the pilot stops early, verify stock
 selection on the newer Git build after removing the settings; a removed project
 setting alone doesn't change the deployment that's already serving.
+
+A warm sample must show `standby_guest_attested` and `public_tunnel_ready` in
+the owned launch trace, without `disk_imported` on that launch. Compare guest
+machine IDs, SSH host keys and Hivra access identities across the three claims.
+Use digests in the verification receipt rather than copying keys, tokens or
+private guest identifiers into a report.
