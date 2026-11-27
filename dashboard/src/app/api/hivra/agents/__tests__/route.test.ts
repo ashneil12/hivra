@@ -516,6 +516,12 @@ describe("POST /api/hivra/agents", () => {
     "HIVRA_CANARY_UBUNTU_QGA_IMAGE_HOST",
     "HIVRA_CANARY_UBUNTU_QGA_IMAGE_SHA256",
     "HIVRA_CANARY_UBUNTU_QGA_IMAGE_USER_ID",
+    "HIVRA_CANARY_AGENT_ZERO_IMAGE_HOST",
+    "HIVRA_CANARY_AGENT_ZERO_IMAGE_SHA256",
+    "HIVRA_CANARY_AGENT_ZERO_IMAGE_USER_ID",
+    "HIVRA_CANARY_BUX_DEPENDENCIES_IMAGE_HOST",
+    "HIVRA_CANARY_BUX_DEPENDENCIES_IMAGE_SHA256",
+    "HIVRA_CANARY_BUX_DEPENDENCIES_IMAGE_USER_ID",
     "VERCEL",
     "VERCEL_ENV",
     "VERCEL_PROJECT_PRODUCTION_URL",
@@ -3171,12 +3177,22 @@ describe("POST /api/hivra/agents", () => {
       ["image missing", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", false, false, 503, "deepseek-harness"],
       ["Ubuntu QGA trial when no DeepSeek image is configured", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", true, true, 201, "ubuntu-qga"],
       ["Ubuntu QGA trial for another owner stays stock", "canary", "fixturenode7", "user_other", "2026.11.27.4", true, false, 201, "ubuntu-qga"],
+      ["Agent Zero trial", "canary", "fixturenode7", "user_fixture1", "2026.11.27.6", true, true, 201, "agent-zero"],
+      ["Agent Zero trial rejects the old consumer", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", true, false, 503, "agent-zero"],
+      ["Agent Zero trial stays stock for another owner", "canary", "fixturenode7", "user_other", "2026.11.27.6", true, false, 201, "agent-zero"],
+      ["Claude Code dependency trial", "canary", "fixturenode7", "user_fixture1", "2026.11.27.6", true, true, 201, "bux-dependencies", "claude-code"],
+      ["Codex dependency trial", "canary", "fixturenode7", "user_fixture1", "2026.11.27.6", true, true, 201, "bux-dependencies", "codex"],
+      ["Claude browser-on stays stock", "canary", "fixturenode7", "user_fixture1", "2026.11.27.6", true, false, 201, "bux-dependencies", "claude-code", true],
     ] as const)("limits each prepared disk to its owner and host (%s)", async (
       _case, branch, bakeHost, bakeUser, version, verified, baked, status, kind,
+      profile: string = kind === "agent-zero" ? "agent-zero" : "deepseek-harness", browser: boolean = false,
     ) => {
       paidPlan();
       const digest = "a".repeat(64);
-      const prefix = kind === "deepseek-harness" ? "HIVRA_CANARY_DEEPSEEK_IMAGE" : "HIVRA_CANARY_UBUNTU_QGA_IMAGE";
+      const prefix = `HIVRA_CANARY_${{
+        "deepseek-harness": "DEEPSEEK", "ubuntu-qga": "UBUNTU_QGA",
+        "agent-zero": "AGENT_ZERO", "bux-dependencies": "BUX_DEPENDENCIES",
+      }[kind]}_IMAGE`;
       mockCreateManagedVeniceProxyKey.mockResolvedValue({ id: "key-ds", keyPrefix: "hven_live_TEST", plaintextKey: "hven_live_TESTKEY123" });
       enableManagedGvisorQaFixture({
         VERCEL_TARGET_ENV: "canary",
@@ -3206,7 +3222,7 @@ describe("POST /api/hivra/agents", () => {
           .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
       }
       const response = await POST(makeRequest({
-        type: "deepseek-harness", name: "DEEPSEEK_BAKE_FIXTURE", cpu: 2, ram: 4, managedVenice: true,
+        type: profile, name: "PREPARED_IMAGE_FIXTURE", cpu: 2, ram: 4, managedVenice: true, browser,
         deepSeekImageSha256: "b".repeat(64),
       }) as never);
       expect(response.status).toBe(status);
@@ -3219,6 +3235,7 @@ describe("POST /api/hivra/agents", () => {
       } else {
         expect(kickoff).toBeDefined();
         expect(kickoff?.includes(`HIVRA_UBUNTU_IMG='/var/lib/vz/template/iso/hivra-${kind}-${digest}.qcow2'`)).toBe(baked);
+        expect(kickoff?.includes("HIVRA_PREPARED_RUNTIME=")).toBe(baked && (kind === "agent-zero" || kind === "bux-dependencies"));
         expect(kickoff).not.toContain("b".repeat(64));
       }
     });

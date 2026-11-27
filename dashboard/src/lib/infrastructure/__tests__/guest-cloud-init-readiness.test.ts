@@ -48,6 +48,24 @@ ${qgaCloudInit}
     expect(result.stdout.trim().split("\n")).toEqual(calls);
   });
 
+  it("omits only metadata that the stock QGA installation does not use", () => {
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-s"], {
+      input: `
+FIXTURE_BINARY=/does-not-exist
+dpkg-query() { return 1; }
+apt-get() { printf '%s\\n' "$*"; }
+systemctl() { :; }
+${qgaCloudInit}
+`,
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "-o Acquire::Retries=3 -o Acquire::Languages=none -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false update",
+      "-o Acquire::Retries=3 install -y --no-install-recommends qemu-guest-agent",
+    ]);
+  });
+
   it.each([["ready", 0, 2], ["late", 1, 601], ["foreign", 1, 0], ["wrong-ip", 1, 0]])(
     "accepts only a correctly owned, timely attestation (%s)", (outcome, exitCode, elapsed) => {
       const fixture = mkdtempSync(join(tmpdir(), "hivra-qga-"));

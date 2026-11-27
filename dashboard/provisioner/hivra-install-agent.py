@@ -120,6 +120,14 @@ def parse_launch(raw, *, provider_desktop=False):
                     or value.get("computerSubstrate") != "proxmox-kvm" or value.get("wantBrowser") is True):
                 raise ValueError()
             expected_fields = expected_fields | {"hermesBaked"}
+        if "preparedRuntime" in value:
+            runtime = value["preparedRuntime"]
+            kind = value.get("agentKind")
+            if (version not in (1, 4) or (kind, runtime) not in (
+                    ("agent-zero", "agent-zero"), ("claude", "bux-dependencies"), ("codex", "bux-dependencies"))
+                    or value.get("computerSubstrate") != "proxmox-kvm" or value.get("wantBrowser") is not False):
+                raise ValueError()
+            expected_fields = expected_fields | {"preparedRuntime"}
         if type(version) is not int or version not in (1, 2, 3, 4, 5) or set(value) != expected_fields:
             raise ValueError()
         if ((version == 1 and value["agentKind"] not in KINDS)
@@ -478,6 +486,10 @@ def install_agent(launch, source, *, provider_desktop=None):
                    "HIVRA_PUBLIC_ORIGIN": launch.get("publicOrigin", "")}
     if launch.get("hermesBaked") is True:
         environment["HIVRA_HERMES_BAKED"] = "1"
+    if launch.get("preparedRuntime") == "agent-zero":
+        environment["HIVRA_AGENT_ZERO_BAKED"] = "1"
+    if launch.get("preparedRuntime") == "bux-dependencies":
+        environment["HIVRA_BUX_DEPENDENCIES_BAKED"] = "1"
     if launch["tunnelToken"] is not None:
         check_named_tunnel(launch["tunnelToken"], 0)
         check_effective_tunnel(allow_missing=True)

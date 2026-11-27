@@ -540,4 +540,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261127194000", name: "provider_release_admission_2026_11_27_4" },
   { version: "20261127210000", name: "canary_hermes_standby" },
   { version: "20261127211500", name: "provider_release_admission_2026_11_27_5" },
+  { version: "20261127220800", name: "provider_release_admission_2026_11_27_6" },
 ];

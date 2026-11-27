@@ -50,6 +50,7 @@ STANDBY_ACTION="${HIVRA_HERMES_STANDBY_ACTION:-}"
 STANDBY_GENERATION="${HIVRA_HERMES_STANDBY_CLAIM_GENERATION:-}"
 if [ -z "$STANDBY_ACTION" ] && [ -n "$STANDBY_GENERATION" ]; then STANDBY_ACTION=continue; fi
 case "$STANDBY_ACTION" in ''|stage|claim|continue|retire) ;; *) echo "invalid standby action" >&2; exit 1 ;; esac
+PREPARED_RUNTIME="${HIVRA_PREPARED_RUNTIME:-}"
 PROV_DIR="${HIVRA_PROV_DIR:-/opt/hivra/provisioner}"
 STORAGE="${HIVRA_STORAGE:-local-lvm}"
 DISK_GB="${HIVRA_DISK_GB:-40}"
@@ -133,6 +134,12 @@ if [ -n "$STANDBY_ACTION" ]; then
   standby_lock
 fi
 
+if [ -n "$PREPARED_RUNTIME" ]; then
+  case "$PROVISION_MODE:$AGENT_KIND:$PREPARED_RUNTIME:${HIVRA_WANT_BROWSER:-0}:$HERMES_IMAGE_SHA256" in
+    install:agent-zero:agent-zero:0:|install:claude:bux-dependencies:0:|install:codex:bux-dependencies:0:) ;;
+    *) fail "invalid prepared runtime selection" ;;
+  esac
+fi
 if [ -n "$HERMES_IMAGE_SHA256" ] && [[ "${STANDBY_ACTION:-}" != @(claim|continue|retire) ]]; then
   [ "$PROVISION_MODE" = install ] && [ "$AGENT_KIND" = hermes ] \
     && [ "$PROV_DIR" = /root/hivra-provisioner-canary ] \
@@ -376,7 +383,9 @@ runcmd:
     set -eu
     if [ ! -x /usr/sbin/qemu-ga ] || [ "$(dpkg-query -W -f='${db:Status-Status}' qemu-guest-agent 2>/dev/null)" != installed ]; then
       export DEBIAN_FRONTEND=noninteractive
-      apt-get -o Acquire::Retries=3 update
+      apt-get -o Acquire::Retries=3 -o Acquire::Languages=none \
+        -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false \
+        -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false update
       apt-get -o Acquire::Retries=3 install -y --no-install-recommends qemu-guest-agent
     fi
     systemctl enable --now qemu-guest-agent.service
@@ -628,12 +637,10 @@ copy_prepared_desktop_image
 
 log "copying provisioner + running it (kind=${AGENT_KIND}, this takes several minutes)"
 GUEST_PROVISIONER=/tmp/hivra-provisioner
-if [ "$AGENT_KIND" = "deepseek-harness" ]; then
-  # Native modules are imported under root authority and deliberately reject
-  # an agent-writable /tmp handoff. Stream only this reviewed root-owned bundle
-  # into a fresh non-listable root directory; no guest user may replace it
-  # between validation and import.
-  command -v tar >/dev/null 2>&1 || fail "tar is required for the native provisioner handoff"
+if [ "$AGENT_KIND" = "deepseek-harness" ] || [ -n "$PREPARED_RUNTIME" ]; then
+  # Native and prepared runtimes verify or import assets as root. Stream the
+  # reviewed bundle into a root-only directory instead of an ubuntu-owned path.
+  command -v tar >/dev/null 2>&1 || fail "tar is required for the root-owned provisioner handoff"
   [ -z "$(find "$PROV_DIR" -xdev ! -user root -print -quit)" ] \
     || fail "native provisioner source is not root-owned"
   [ -z "$(find "$PROV_DIR" -xdev \( -type l -o \( ! -type f ! -type d \) \) -print -quit)" ] \
@@ -664,7 +671,7 @@ fi
 guest_launch_document() {
   printf '%s\0' "$AGENT_KIND" "${HIVRA_WANT_BROWSER:-}" "$HIVRA_MODEL_KEY" \
     "$HIVRA_MODEL_BASE_URL" "$HIVRA_HERMES_MODEL" "${HIVRA_TUNNEL_TOKEN:-}" "${HIVRA_TUNNEL_URL:-}" \
-    "$HIVRA_COMPUTER_ID" "$HIVRA_CONTROL_ORIGIN" "${HIVRA_ACTIVITY_TELEMETRY:-}" "${HIVRA_CATALOG_APP:-}" "${HERMES_IMAGE_SHA256:-}" \
+    "$HIVRA_COMPUTER_ID" "$HIVRA_CONTROL_ORIGIN" "${HIVRA_ACTIVITY_TELEMETRY:-}" "${HIVRA_CATALOG_APP:-}" "${HERMES_IMAGE_SHA256:-}" "${PREPARED_RUNTIME:-}" \
     | python3 -I -B -c '
 import datetime, json, re, sys
 def unique_object(pairs):
@@ -700,7 +707,7 @@ try:
     if len(raw) > 32768:
         raise ValueError()
     values = raw.decode("utf-8").split("\0")
-    if len(values) != 13 or values[-1] != "" or values[1] not in ("", "0", "1"):
+    if len(values) != 14 or values[-1] != "" or values[1] not in ("", "0", "1"):
         raise ValueError()
     native = values[0] == "deepseek-harness"
     desktop = values[0] in ("linux-desktop", "linux-server")
@@ -730,6 +737,11 @@ try:
         if values[0] != "hermes" or not re.fullmatch(r"[0-9a-f]{64}", values[11]):
             raise ValueError()
         document["hermesBaked"] = True
+    if values[12]:
+        if values[1] != "0" or (values[0], values[12]) not in (
+            ("agent-zero", "agent-zero"), ("claude", "bux-dependencies"), ("codex", "bux-dependencies")):
+            raise ValueError()
+        document["preparedRuntime"] = values[12]
     if values[9]:
         # Only Claude Code and Codex write the transcripts the reporter reads.
         if values[0] not in ("claude", "codex"):
