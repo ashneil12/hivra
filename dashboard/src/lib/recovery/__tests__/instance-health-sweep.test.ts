@@ -15,10 +15,11 @@
 
 import { probeInstanceGateway, runInstanceHealthSweep } from "../instance-health-sweep";
 
+const mockRecordObservations = jest.fn().mockResolvedValue({ error: null });
 const mockSupabaseAdmin = { value: null as unknown };
 jest.mock("@/lib/supabase", () => ({
   get supabaseAdmin() {
-    return mockSupabaseAdmin.value;
+    return mockSupabaseAdmin.value && { ...mockSupabaseAdmin.value as object, rpc: mockRecordObservations };
   },
 }));
 jest.mock("@/lib/ops-events", () => ({ reportOpsEvent: jest.fn() }));
@@ -124,6 +125,7 @@ describe("runInstanceHealthSweep", () => {
       infrastructure_provider?: string | null;
       ipv4_address?: string | null;
       proxmox_vmid?: number | null;
+      proxmox_node?: string | null;
       lifecycle_state?: string | null;
     }>,
     options: {
@@ -216,9 +218,13 @@ describe("runInstanceHealthSweep", () => {
             // The initial running-fleet SELECT.
             select: jest.fn().mockReturnValue({
               eq: jest.fn().mockReturnValue({
-                not: jest.fn().mockResolvedValue({
-                  data: rows.map((r) => ({ status: "running", backend: r.backend ?? "webui", ...r })),
-                  error: null,
+                not: jest.fn().mockReturnValue({
+                  order: jest.fn().mockReturnValue({
+                    limit: jest.fn().mockResolvedValue({
+                      data: rows.map((r) => ({ status: "running", backend: r.backend ?? "webui", ...r })),
+                      error: null,
+                    }),
+                  }),
                 }),
               }),
             }),
@@ -237,9 +243,13 @@ describe("runInstanceHealthSweep", () => {
         return {
           select: jest.fn().mockReturnValue({
             eq: jest.fn().mockReturnValue({
-              not: jest.fn().mockResolvedValue({
-                data: rows.map((r) => ({ status: "running", backend: r.backend ?? "webui", ...r })),
-                error: null,
+              not: jest.fn().mockReturnValue({
+                order: jest.fn().mockReturnValue({
+                  limit: jest.fn().mockResolvedValue({
+                    data: rows.map((r) => ({ status: "running", backend: r.backend ?? "webui", ...r })),
+                    error: null,
+                  }),
+                }),
               }),
             }),
           }),
@@ -249,25 +259,75 @@ describe("runInstanceHealthSweep", () => {
     return { archiveCalls, probeStateUpserts, probeStateDeletes, autoRestartResets };
   }
 
+  it("records only bounded, allowlisted Proxmox probe aggregates without fetching again", async () => {
+    const env = jest.replaceProperty(process, "env", {
+      ...process.env,
+      HERMES_PVE_PROBE_TIMING_HOSTS: "pve-test,pve-small,https://not-a-slug.invalid",
+    });
+    const hosts = ["pve-test", "pve-test", "pve-test", "pve-small", "pve-small",
+      "pve-test", "pve-other", "pve-other", "pve-other"];
+    const rows = hosts.map((host, index) => ({
+      id: `private-instance-${index}`,
+      user_id: "private-owner",
+      gateway_url: `https://private-${index}.example`,
+      infrastructure_provider: index === 5 ? "other" : "proxmox",
+      proxmox_node: host,
+    }));
+    let ticks = 0;
+    const clock = jest.spyOn(performance, "now").mockImplementation(() => {
+      const observation = ticks++ - rows.length;
+      return observation < 0 ? 0 : ([100, 251, 700][observation] ?? 10);
+    });
+    const fetchMock = jest.fn().mockImplementation(async (url: string) => ({
+      status: url.includes("private-2.") ? 503 : url.includes("private-1.") ? 401 : 200,
+    }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    mockRunningInstances(rows);
+
+    try {
+      const { hostTiming } = await runInstanceHealthSweep();
+      expect(hostTiming).toEqual({
+        version: 1,
+        startedAt: expect.any(String),
+        endedAt: expect.any(String),
+        upperBoundsMs: [100, 250, 500, 1_000, 2_000, 5_000, 12_000],
+        hosts: [{
+          host: "pve-test",
+          probes: 3,
+          failures: 1,
+          reachableBuckets: [1, 0, 1, 0, 0, 0, 0, 0],
+        }],
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(rows.length);
+    } finally {
+      clock.mockRestore();
+      env.restore();
+    }
+  });
+
   it("reports a config incident when a Hetzner row uses non-sslip custom DNS", async () => {
     mockSupabaseAdmin.value = {
       from: jest.fn().mockReturnValue({
         select: jest.fn().mockReturnValue({
           eq: jest.fn().mockReturnValue({
-            not: jest.fn().mockResolvedValue({
-              data: [
-                {
-                  id: "hetzner-bad-dns",
-                  user_id: "u1",
-                  gateway_url: "https://agent.hermesos.cloud",
-                  status: "running",
-                  backend: "webui",
-                  infrastructure_provider: "hetzner",
-                  hetzner_server_id: 123,
-                  ipv4_address: "192.0.2.91",
-                },
-              ],
-              error: null,
+            not: jest.fn().mockReturnValue({
+              order: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue({
+                  data: [
+                    {
+                      id: "hetzner-bad-dns",
+                      user_id: "u1",
+                      gateway_url: "https://agent.hermesos.cloud",
+                      status: "running",
+                      backend: "webui",
+                      infrastructure_provider: "hetzner",
+                      hetzner_server_id: 123,
+                      ipv4_address: "192.0.2.91",
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
             }),
           }),
         }),
@@ -299,19 +359,23 @@ describe("runInstanceHealthSweep", () => {
       from: jest.fn().mockReturnValue({
         select: jest.fn().mockReturnValue({
           eq: jest.fn().mockReturnValue({
-            not: jest.fn().mockResolvedValue({
-              data: [
-                {
-                  id: "proxmox-missing-route",
-                  user_id: "u1",
-                  gateway_url: "https://missing.agents.hermesos.cloud",
-                  status: "running",
-                  backend: "webui",
-                  infrastructure_provider: "proxmox",
-                  proxmox_vmid: 206,
-                },
-              ],
-              error: null,
+            not: jest.fn().mockReturnValue({
+              order: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue({
+                  data: [
+                    {
+                      id: "proxmox-missing-route",
+                      user_id: "u1",
+                      gateway_url: "https://missing.agents.hermesos.cloud",
+                      status: "running",
+                      backend: "webui",
+                      infrastructure_provider: "proxmox",
+                      proxmox_vmid: 206,
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
             }),
           }),
         }),
@@ -595,6 +659,10 @@ describe("runInstanceHealthSweep", () => {
       expect.objectContaining({ baseUrl: "https://box.hermesos.cloud", pathname: "/health", instanceIpv4: "10.240.0.9" }),
     );
     expect(summary.recoveredViaFallback).toBe(1);
+    expect(mockRecordObservations).toHaveBeenCalledWith("record_computer_health_observations", {
+      p_observed_at: expect.any(String),
+      p_observations: [expect.objectContaining({ healthy: true })],
+    });
     expect(summary.failed).toBe(0);
     expect(reportOpsEvent).not.toHaveBeenCalled();
     expect(summary.archivedHealthy).toBe(1);
@@ -765,9 +833,13 @@ describe("Caddy h2-wedged detection", () => {
       from: jest.fn().mockReturnValue({
         select: jest.fn().mockReturnValue({
           eq: jest.fn().mockReturnValue({
-            not: jest.fn().mockResolvedValue({
-              data: [{ id: "i-wedged", user_id: "u1", gateway_url: "https://wedged.example", status: "running", backend: "webui" }],
-              error: null,
+            not: jest.fn().mockReturnValue({
+              order: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue({
+                  data: [{ id: "i-wedged", user_id: "u1", gateway_url: "https://wedged.example", status: "running", backend: "webui" }],
+                  error: null,
+                }),
+              }),
             }),
           }),
         }),
@@ -863,16 +935,20 @@ describe("Proxmox host-wedge cluster detection", () => {
         return {
           select: jest.fn().mockReturnValue({
             eq: jest.fn().mockReturnValue({
-              not: jest.fn().mockResolvedValue({
-                data: rows.map((r) => ({
-                  user_id: "u1",
-                  status: "running",
-                  backend: "webui",
-                  infrastructure_provider: "proxmox",
-                  proxmox_vmid: r.proxmox_vmid ?? 200,
-                  ...r,
-                })),
-                error: null,
+              not: jest.fn().mockReturnValue({
+                order: jest.fn().mockReturnValue({
+                  limit: jest.fn().mockResolvedValue({
+                    data: rows.map((r) => ({
+                      user_id: "u1",
+                      status: "running",
+                      backend: "webui",
+                      infrastructure_provider: "proxmox",
+                      proxmox_vmid: r.proxmox_vmid ?? 200,
+                      ...r,
+                    })),
+                    error: null,
+                  }),
+                }),
               }),
             }),
           }),

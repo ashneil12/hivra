@@ -10,7 +10,7 @@ export const HUB_CONTENT: HubContent = {
   h1: "Pick your agent. We'll give it a computer.",
   lead: [
     "Some agents write code. Others work through your messages, run scheduled jobs or tackle open-ended tasks. What they have in common is that they need somewhere reliable to work.",
-    "Hivra gives each deployment a computer in the cloud, with the tools and interfaces it needs to do its job. You choose the agent and connect the accounts or model provider you want to use. Every Hivra Cloud computer needs a paid plan, and a paid computer stays available after you close your laptop.",
+    "Hivra gives each deployment a computer in the cloud, with the tools and interfaces it needs to do its job. You choose the agent and connect the accounts or model provider you want to use.",
   ],
   heroLinks: [
     { label: "Explore agents", target: "directory" },
@@ -26,9 +26,9 @@ export const HUB_CONTENT: HubContent = {
     ],
     topics: [
       {
-        heading: "A computer that doesn't sleep with your laptop",
+        heading: "A workspace that outlasts your session",
         paragraphs: [
-          "A paid Hivra computer isn't paused for inactivity. Your files and configuration stay there between visits. Long terminal-based coding jobs can continue in `tmux`, while agent frameworks with their own schedulers can keep doing recurring work. The exact behaviour depends on the agent: closing a browser tab does **not** make an ordinary interactive command persistent by itself.",
+          "Your files and configuration stay there between visits. On a computer configured to stay awake, long terminal-based coding jobs can continue in `tmux`, and agent frameworks with their own schedulers can run recurring work. Closing a browser tab does **not** make an ordinary interactive command persistent by itself.",
         ],
       },
       {
@@ -41,7 +41,7 @@ export const HUB_CONTENT: HubContent = {
         heading: "Start with the resources you need",
         paragraphs: [
           fill(
-            "Every computer that Hivra Cloud runs for you needs a paid plan, from **{entry}**. A free account works with a computer or server you connect yourself. The **{largerPrice} a month** option gives you {largerCompute}. Model usage, GitHub Actions consumption or third-party services can be billed separately by their providers. {refund}",
+            "Paid agent hosting starts at **{entry}**. The **{largerPrice} a month** option gives you {largerCompute}. A free account works with a computer or server you connect yourself. Model usage, GitHub Actions consumption or third-party services can be billed separately by their providers. {refund}",
           ),
         ],
       },
@@ -70,9 +70,9 @@ export const HUB_CONTENT: HubContent = {
         slug: "hermes",
         name: "Hermes",
         tagline: "For a personal, general-purpose agent you can build routines around.",
-        body: "Hermes, from Nous Research, brings memory, skills and scheduled tasks together. Give it its own workspace, connect a supported model provider and let it pick up work where it left off.",
+        body: "Hermes, from Nous Research, brings memory, skills and scheduled tasks together. It runs on Hivra Cloud.",
         goodFit: "recurring research, personal workflows, tool use and a more persistent working relationship with an agent.",
-        linkLabel: "Run Hermes",
+        linkLabel: "Explore Hermes",
       },
       {
         slug: "aeon",
@@ -119,8 +119,8 @@ export const HUB_CONTENT: HubContent = {
         text: "Provider charges and usage limits still apply. You can also pay with Hivra credits where the agent supports it.",
       },
       {
-        term: "Paid computers stay available.",
-        text: "Some jobs need to be started in a persistent session or configured with the agent's scheduler.",
+        term: "Sleep rules depend on the computer and how you access it.",
+        text: "If you need a Linux workspace instead of a preinstalled agent, [compare sandboxes and virtual machines](/sandboxes).",
       },
       {
         term: `You can inspect [Hivra's source](${REPOSITORY_URL}).`,

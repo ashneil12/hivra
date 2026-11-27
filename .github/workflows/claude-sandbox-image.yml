@@ -1,0 +1,44 @@
+name: Claude sandbox image
+
+on:
+  pull_request:
+    paths:
+      - 'dashboard/provisioner/gvisor/claude-terminal/**'
+      - '.github/workflows/claude-sandbox-image.yml'
+  push:
+    branches: [canary]
+    paths:
+      - 'dashboard/provisioner/gvisor/claude-terminal/**'
+      - '.github/workflows/claude-sandbox-image.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  runsc-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the same verified runsc release as Hivra
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/gvisor.tar.bz2"
+          curl -fsSL https://github.com/google/gvisor/releases/download/release-20260907.0/gvisor-x86_64.tar.bz2 -o "$bundle"
+          printf '%s  %s\n' 81416511897ab8abd4e723d66823c5b0461a2ee3311cfa70d152404ef9b860cf "$bundle" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/gvisor"
+          tar -xjf "$bundle" -C "$RUNNER_TEMP/gvisor"
+          sudo install -m 0755 "$RUNNER_TEMP/gvisor/runsc" /usr/local/bin/runsc
+          sudo cp -a "$RUNNER_TEMP/gvisor/gvisor-bin" /usr/local/bin/gvisor-bin
+          sudo /usr/local/bin/runsc install
+          sudo systemctl reload docker
+          docker info --format '{{(index .Runtimes "runsc").Path}}' | grep -Fx /usr/local/bin/runsc
+      - name: Build locally and test without sending an image to a registry
+        run: |
+          set -euo pipefail
+          source_dir=dashboard/provisioner/gvisor/claude-terminal
+          docker build --progress=plain --platform linux/amd64 -t hivra-claude-terminal:ci "$source_dir"
+          image="$(docker image inspect --format '{{.Id}}' hivra-claude-terminal:ci)"
+          bash "$source_dir/smoke.sh" "$image"

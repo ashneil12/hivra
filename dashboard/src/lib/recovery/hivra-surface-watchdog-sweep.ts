@@ -52,6 +52,7 @@ const EVENT_SEVERITY: Record<string, OpsEventInput["severity"]> = {
   recovery_exhausted: "error",
   unit_failing: "warn",
   watchdog_error: "warn",
+  hermes_proxy_unavailable: "warn",
 };
 
 const READ_CONCURRENCY = 8;
@@ -109,7 +110,8 @@ function emptySummary(): SurfaceWatchdogSweepSummary {
 export function opsEventForWatchdogEvent(row: { id: string; user_id: string; type: string | null }, event: SurfaceWatchdogEvent): OpsEventInput {
   const unit = event.unit ?? event.kind ?? "surface";
   const source = `box.surface_watchdog.${event.type}`;
-  const severity = EVENT_SEVERITY[event.type] ?? "warn";
+  const severity = event.type === "hermes_proxy_unavailable" && event.reason === "update_lock"
+    ? "info" : EVENT_SEVERITY[event.type] ?? "warn";
   const detail = [
     event.type === "unit_restart" ? `restarted ${unit} (attempt ${event.attempt ?? "?"})` : null,
     event.type === "recovered" ? `${unit} serving again` : null,
@@ -118,8 +120,9 @@ export function opsEventForWatchdogEvent(row: { id: string; user_id: string; typ
     event.type === "gateway_down" ? "the box gateway is unreachable from inside the box" : null,
     event.type === "gateway_recovered" ? "the box gateway answers again" : null,
     event.type === "watchdog_error" ? `watchdog cycle error: ${event.reason ?? "unknown"}` : null,
+    event.type === "hermes_proxy_unavailable" ? `Hermes proxy returned 503 for ${event.operation}: ${event.reason}` : null,
     event.downForS != null ? `down ${event.downForS}s` : null,
-    event.reason != null && event.type !== "watchdog_error" && event.type !== "unit_failing" ? `last probe: ${event.reason}` : null,
+    event.reason != null && event.type !== "watchdog_error" && event.type !== "unit_failing" && event.type !== "hermes_proxy_unavailable" ? `last probe: ${event.reason}` : null,
     event.ok === false ? "restart command failed" : null,
   ].filter(Boolean).join("; ");
   return {
@@ -138,6 +141,7 @@ export function opsEventForWatchdogEvent(row: { id: string; user_id: string; typ
       unit: event.unit,
       kind: event.kind,
       reason: event.reason,
+      operation: event.operation,
       ok: event.ok,
       down_for_s: event.downForS,
       n_restarts: event.nRestarts,

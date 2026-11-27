@@ -35,6 +35,7 @@ export interface CronHeartbeatDefinition {
 // grace is the same 3x a rough start gets).
 export const CRON_REGISTRY: readonly CronHeartbeatDefinition[] = [
   { name: "probe-instance-health", periodMinutes: 5 },
+  { name: "computer-stalls", periodMinutes: 5 },
   { name: "recover-unhealthy-active-instances", periodMinutes: 15 },
   { name: "autoheal-llm-transport-failures", periodMinutes: 15 },
   { name: "purge-expired", periodMinutes: 1440 },
@@ -42,6 +43,7 @@ export const CRON_REGISTRY: readonly CronHeartbeatDefinition[] = [
   // cron pages within ~8h (2x) instead of ~2 days. See archive-stopped-vms route.
   { name: "archive-stopped-vms", periodMinutes: 240 },
   { name: "holder-inactivity-sweep", periodMinutes: 1 },
+  { name: "refresh-managed-gvisor-target", periodMinutes: 5 },
   { name: "inactivity-sweep", periodMinutes: 60 },
   { name: "redeploy-webui-instances", periodMinutes: 1440 },
   { name: "migration-drift-check", periodMinutes: 10 },

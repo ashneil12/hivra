@@ -586,7 +586,7 @@ export function capabilitySummary(profileId: LaunchProfileId, { browser }: { bro
   if (profileId === "deepseek-harness") return "DeepSeek's own interface on its own computer.";
   if (profileId === "ubuntu-desktop") return "A desktop, terminal and files on this computer.";
   if (profileId === "ubuntu-server") return "A terminal and files on this computer. No desktop.";
-  if (profileId === "linux-terminal") return "A terminal and files, without administrator access. No desktop, public ports or host folders.";
+  if (profileId === "linux-terminal") return "One-shot shell commands in /workspace, without administrator access. Files saved there persist through Stop and Start. No desktop, public ports or host folders.";
   if (profileId === "omarchy") return "A ready-made Omarchy desktop you open in your browser, with a setup console.";
   return "The Windows installer in your server's console. A desktop connection comes after setup finishes.";
 }
@@ -624,7 +624,7 @@ export function costSummary({
   if (hivraCloud && profileId === "aeon") {
     return withModel(`No extra charge. Uses one agent slot on your ${planName ?? "Hivra Cloud"} plan, not its CPU and memory.`);
   }
-  if (hivraCloud) return withModel(`No extra charge. Uses your ${planName ?? "Hivra Cloud"} plan allowance.`);
+  if (hivraCloud) return withModel(`This computer uses your ${planName ?? "Hivra Cloud"} plan allowance. No extra hosting charge.`);
   if (substrate === "provider-vm") return withModel("Nothing new is bought. Your cloud provider keeps billing this server as usual.");
   return withModel("No charge from Hivra. It uses your server's own capacity.");
 }

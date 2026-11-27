@@ -96,6 +96,7 @@ export const UNIVERSAL_CATALOG_IDS = [
   "wekan",
   "airtrail",
   "adventurelog",
+  "rustpad",
   "dashy",
   "homepage",
   "flame",

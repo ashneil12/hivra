@@ -3,7 +3,7 @@ import "@testing-library/jest-dom";
 import React from "react";
 import { render, screen, within } from "@testing-library/react";
 
-import { PUBLIC_PROJECT_LINKS, type DesktopDownloads } from "@/lib/public-project-links";
+import { getDesktopDownloads, type DesktopDownloads } from "@/lib/public-project-links";
 import { findBannedClaims } from "@/lib/tools/copy-rules";
 import DownloadRoute, { metadata } from "../page";
 import DownloadPage from "../DownloadPage";
@@ -29,23 +29,14 @@ const PUBLISHED: DesktopDownloads = {
 };
 
 describe("/download", () => {
-  it("states honestly that no installer exists while the macOS record is pending", () => {
-    expect(PUBLIC_PROJECT_LINKS.desktop.macos.status).toBe("pending");
+  it("offers browser access without a download promise when desktop sign-in is disabled", () => {
+    expect(getDesktopDownloads({}).macos.status).toBe("pending");
     render(<DownloadPage />);
 
     const macos = screen.getByRole("region", { name: "macOS" });
-    expect(within(macos).getByText("Public download coming soon.")).toBeInTheDocument();
-    const button = within(macos).getByRole("button", { name: "Download for macOS" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAccessibleDescription("Public download coming soon.");
-    // The state is said once, in the line above the button, not again inside it.
-    expect(macos.textContent?.match(/coming soon/gi)).toHaveLength(1);
-    expect(within(macos).queryByRole("link", { name: /download for macos/i })).not.toBeInTheDocument();
-    // The install caution is about a release, and none exists.
-    expect(macos).not.toHaveTextContent("Before installing");
-    expect(macos).toHaveTextContent(
-      "If the desktop app is not available for your Mac yet, you can still use Hivra in your browser.",
-    );
+    expect(within(macos).queryByRole("link", { name: "Download for Mac" })).not.toBeInTheDocument();
+    expect(macos).not.toHaveTextContent(/coming soon/i);
+    expect(macos).toHaveTextContent("You can also use Hivra in your browser.");
     expect(within(macos).getByRole("link", { name: "Open Hivra" })).toHaveAttribute("href", "/dashboard");
   });
 
@@ -53,7 +44,7 @@ describe("/download", () => {
     render(<DownloadPage downloads={PUBLISHED} />);
 
     const macos = screen.getByRole("region", { name: "macOS" });
-    const link = within(macos).getByRole("link", { name: "Download for macOS" });
+    const link = within(macos).getByRole("link", { name: "Download for Mac" });
     expect(link).toHaveAttribute("href", "https://releases.example.test/Hivra-macOS.dmg");
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
@@ -61,7 +52,7 @@ describe("/download", () => {
     expect(within(macos).queryByRole("button")).not.toBeInTheDocument();
     expect(macos).not.toHaveTextContent("Public download coming soon.");
     expect(macos).toHaveTextContent(
-      "Before installing, check that your Mac meets the supported system requirements and that the release comes from an official Hivra distribution channel.",
+      "Hivra for Mac is a desktop client for your remote computers. It does not launch a hosted macOS computer.",
     );
   });
 
@@ -72,16 +63,15 @@ describe("/download", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Hivra on your computer." })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Some work is easier when you can reach your agents without keeping another browser tab open. This page is where you’ll find supported desktop downloads and installation guidance.",
+        "Some work is easier when you can reach your agents without keeping another browser tab open. Use Hivra in your browser or install the Mac app where available.",
       ),
     ).toBeInTheDocument();
 
     const where = screen.getByRole("region", { name: "Keep the work where it belongs" });
     expect(where).toHaveTextContent("Your Hivra-hosted computers run remotely.");
-    // The shared wording for a computer that stays on, not an unqualified "always on".
-    expect(where).toHaveTextContent("A paid Hivra Cloud computer stays on and is not paused for inactivity.");
+    expect(where).not.toHaveTextContent(/idle sleep/i);
     expect(where).toHaveTextContent(
-      "although individual agent workflows can still stop, fail or reach their own usage limits.",
+      "Individual agent workflows can still stop, fail or reach their own usage limits.",
     );
     expect(where).not.toHaveTextContent(/always-on|always on/i);
     expect(within(where).getByRole("link", { name: "info@hivra.cloud" })).toHaveAttribute("href", "mailto:info@hivra.cloud");
@@ -96,12 +86,10 @@ describe("/download", () => {
     expect(container.querySelector("a[download]")).toBeNull();
   });
 
-  it("names a desktop app only to say it is not out, the one banned phrase this page needs", () => {
+  it("avoids unsupported availability claims", () => {
     const { container } = render(<DownloadPage />);
     const hits = findBannedClaims(container.textContent ?? "");
-    // copy-rules bans "desktop app" because desktop apps are not available. This page says exactly that
-    // (and what to do instead), so that single rule is exempted here and nothing else is.
-    expect(hits.map((hit) => hit.match.toLowerCase())).toEqual(["desktop app"]);
+    expect(hits).toEqual([]);
     expect(container.textContent).not.toMatch(/\b(?:is|are) (?:now )?(?:available|live|out)\b(?! for)/i);
   });
 
@@ -112,12 +100,24 @@ describe("/download", () => {
 
   it("publishes the finished title from the copy as an absolute title, with the pinned description", () => {
     expect(metadata.title).toEqual({ absolute: "Download Hivra | Desktop Availability" });
-    expect(metadata.description).toBe("The Hivra desktop app for macOS is coming soon. Open Hivra in your browser today.");
+    expect(metadata.description).toBe("Find the Hivra Mac download, system requirements, and browser access.");
     expect(String(metadata.description)).not.toMatch(/Windows/);
   });
 
   it("renders inside the public frame", () => {
     render(<DownloadRoute />);
     expect(screen.getByTestId("public-site")).toContainElement(screen.getByRole("main"));
+  });
+
+  it("advertises the signed DMG on a deployment that supports desktop sign-in", () => {
+    const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_DESKTOP_BROWSER_SIGNIN: "1", HIVRA_AUTH_MODE: "hosted" });
+    try {
+      render(<DownloadRoute />);
+      expect(screen.getByRole("link", { name: "Download for Mac" })).toHaveAttribute(
+        "href", "https://github.com/ashneil12/hivra/releases/download/mac-v0.3.0/Hivra.dmg",
+      );
+    } finally {
+      env.restore();
+    }
   });
 });

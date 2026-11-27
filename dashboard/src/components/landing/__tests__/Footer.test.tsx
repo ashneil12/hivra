@@ -6,7 +6,7 @@ import React from "react";
 import { render, screen, within } from "@testing-library/react";
 
 import { LocaleProvider } from "@/components/i18n/LocaleProvider";
-import Footer, { downloadLinkLabel } from "../Footer";
+import Footer from "../Footer";
 
 jest.mock("next/link", () => {
   const MockLink = ({
@@ -76,13 +76,10 @@ describe("Footer", () => {
     expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute("href", "https://github.com/ashneil12/hivra");
   });
 
-  // /download says "Public download coming soon" while there is no installer, so the footer link must not promise one.
-  it("does not promise a download while the macOS installer is unpublished", () => {
+  it("hides the Mac link when desktop sign-in is disabled", () => {
     render(<Footer tokenSurfaces />);
-    expect(screen.getByRole("link", { name: "Mac app (coming soon)" })).toHaveAttribute("href", "/download");
-    expect(screen.queryByRole("link", { name: "Download the app" })).not.toBeInTheDocument();
-    expect(downloadLinkLabel("pending")).toBe("Mac app (coming soon)");
-    expect(downloadLinkLabel("published")).toBe("Download the app");
+    expect(screen.queryByRole("link", { name: "Download for Mac" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
   });
 
   it("links the official X account in a new tab", () => {
@@ -91,6 +88,18 @@ describe("Footer", () => {
     expect(x).toHaveAttribute("href", "https://x.com/HivraOS");
     expect(x).toHaveAttribute("target", "_blank");
     expect(x).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("links directly to the Mac installer when desktop sign-in is enabled", () => {
+    const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_DESKTOP_BROWSER_SIGNIN: "1", HIVRA_AUTH_MODE: "hosted" });
+    try {
+      render(<Footer />);
+      expect(screen.getByRole("link", { name: "Download for Mac" })).toHaveAttribute(
+        "href", "https://github.com/ashneil12/hivra/releases/download/mac-v0.3.0/Hivra.dmg",
+      );
+    } finally {
+      env.restore();
+    }
   });
 
   it("links the changelog next to the roadmap entry", () => {

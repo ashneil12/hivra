@@ -1,0 +1,117 @@
+{
+  "slug": "rustpad",
+  "checkedAt": "2026-11-26T21:09:12.949Z",
+  "gitSha": "68e2026a782243f5b40b7029558185c61e48a1f6",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "ekzhang/rustpad is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "ekzhang/rustpad",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "ekzhang/rustpad@sha256:536b63883b2661f31de580df438427f2b799f9284bf9f908708ea3b5d231b585 linux/amd64 + linux/arm64",
+      "evidence": {
+        "ref": "ekzhang/rustpad@sha256:536b63883b2661f31de580df438427f2b799f9284bf9f908708ea3b5d231b585",
+        "digest": "sha256:536b63883b2661f31de580df438427f2b799f9284bf9f908708ea3b5d231b585",
+        "platforms": [
+          "linux/amd64",
+          "linux/arm64",
+          "unknown/unknown",
+          "unknown/unknown"
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "health / -> 200 in 85.5s",
+      "evidence": {
+        "container": "hivra-verify-rustpad-i58jw7",
+        "hostPort": 3308,
+        "image": "ekzhang/rustpad@sha256:536b63883b2661f31de580df438427f2b799f9284bf9f908708ea3b5d231b585",
+        "runArgs": [
+          "run",
+          "-d",
+          "--pull=never",
+          "--name",
+          "hivra-verify-rustpad-i58jw7",
+          "--security-opt",
+          "no-new-privileges",
+          "--cap-drop",
+          "ALL",
+          "--platform",
+          "linux/amd64",
+          "-p",
+          "127.0.0.1:3308:3030",
+          "--env-file",
+          "<env-file>",
+          "-v",
+          "hivra-verify-rustpad-i58jw7-tmp:/tmp",
+          "ekzhang/rustpad@sha256:536b63883b2661f31de580df438427f2b799f9284bf9f908708ea3b5d231b585"
+        ],
+        "pullStdout": "lling fs layer\na75ef4ba94d7: Pulling fs layer\nb1a339705221: Download complete\nb1a339705221: Pull complete\na75ef4ba94d7: Verifying Checksum\na75ef4ba94d7: Download complete\na75ef4ba94d7: Pull complete\nDigest: sha256:536b63883b2661f31de580df438427f2b799f9284bf9f908708ea3b5d231b585\nStatus: Downloaded newer image for ekzhang/rustpad@sha256:536b63883b2661f31de580df438427f2b799f9284bf9f908708ea3b5d231b585\ndocker.io/ekzhang/rustpad@sha256:536b63883b2661f31de580df438427f2b799f9284bf9f908708ea3b5d231b585\n",
+        "runStdout": "83e803a8892a3d0cc5750008ace14789b9dbd52431e19136bc4c8f70c37e4863",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 85.5,
+          "attempts": 42
+        },
+        "memUsage": "3.66MiB / 768MiB",
+        "memBytes": 3837788
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 55227,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <link rel=\"icon\" type=\"image/svg+xml\" href=\"./favicon.svg\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>Rustpad</title>\n    <meta\n      name=\"description\"\n      content=\"An efficient and minimal open-source collaborative text editor based on the operational transformation algori",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 405,
+          "bodyHead": "HTTP method not allowed"
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 3.7MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 3837788,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { BLOG_ARTICLES } from "@/lib/blog-data";
+import { getPublicBlogArticle } from "@/lib/blog-data";
 import { buildArticleMetadata } from "@/lib/metadata";
 import { OG_CONTENT_TYPE, OG_SIZE } from "@/lib/og-meta";
 
@@ -10,7 +10,7 @@ export function blogArticleOgImagePath(slug: string): string {
 }
 
 export function buildBlogArticleMetadata(slug: string): Metadata {
-  const article = BLOG_ARTICLES[slug];
+  const article = getPublicBlogArticle(slug);
   if (!article) {
     return {};
   }

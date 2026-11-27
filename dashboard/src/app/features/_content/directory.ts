@@ -1,24 +1,25 @@
 import type { ActionLink } from "@/components/public-editorial/ActionLinks";
 import type { FeatureFaqItem } from "./types";
 import { FREE_ACCOUNT_SENTENCE } from "@/lib/blog/plan-facts";
-import { AI_USAGE_NOT_INCLUDED, ENTRY_SIZE_PROSE, GUARANTEE_SENTENCE, LARGER_SIZE_PROSE, OWN_ACCOUNT_TERMS, STAYS_ON } from "./shared";
+import { AI_USAGE_NOT_INCLUDED, ENTRY_SIZE_PROSE, GUARANTEE_SENTENCE, LARGER_SIZE_PROSE, OWN_ACCOUNT_TERMS } from "./shared";
 
 // /features. The copy is 01-features-directory.md (20 October 2026); deviations are in the lane ledger.
 
 export const DIRECTORY_EYEBROW = "Features";
-export const DIRECTORY_H1 = "Give your agent a computer that stays on.";
+export const DIRECTORY_H1 = "Give your agent a computer of its own.";
 export const DIRECTORY_BREADCRUMB_LABEL = "Features";
 
 export const DIRECTORY_LEAD = {
   heading: "Less time setting things up. More time getting things done.",
   paragraphs: [
     "An AI agent becomes much more useful when it has somewhere to work. Not just a chat window, but a computer that can keep files, run tools, use a browser and come back to unfinished work tomorrow.",
-    `That's what Hivra provides. Launch Hermes, OpenClaw, Claude Code, Codex and other supported agents on cloud computers managed from one dashboard. Hivra handles the infrastructure; you choose the model access and decide what your agent is allowed to do. ${STAYS_ON}`,
-    "The features below are not identical across every agent. Some are built into Hermes, some belong to the underlying framework, and some depend on your plan. We'll make those differences clear rather than pretending every agent works the same way.",
+    "That's what Hivra provides. Run supported agents such as OpenClaw, Claude Code and Codex on cloud computers managed from one dashboard. Hivra handles the infrastructure; you choose the model access and decide what your agent is allowed to do. Your files can outlast your session, even if the computer pauses when idle.",
+    "For a Linux workspace on its own, [compare sandboxes and virtual machines](/sandboxes). Features vary by the agent and computer you choose.",
   ],
   actions: [
     { label: "Explore pricing", href: "/pricing", kind: "secondary" },
     { label: "See supported agents", href: "/agents", kind: "primary" },
+    { label: "Explore sandboxes", href: "/sandboxes", kind: "secondary" },
   ] satisfies ActionLink[],
 };
 
@@ -80,7 +81,7 @@ export const DIRECTORY_ITEMS: readonly DirectoryItem[] = [
     number: "06.",
     title: "Keep OpenClaw or try Hermes",
     paragraphs: [
-      "Already use OpenClaw? You don't have to abandon it to use Hivra. Host OpenClaw on a paid Hivra computer, or choose Hermes, also on a paid Hivra computer, if its approach to memory, skills and workflows suits you better. Migration isn't a one-click promise: configurations and integrations need checking.",
+      "Already use OpenClaw? You don't have to abandon it to use Hivra. Compare OpenClaw with Hermes if its approach to memory, skills and workflows suits you better. Check your configurations and integrations before switching.",
     ],
     link: { label: "Explore the OpenClaw option", href: "/features/openclaw-alternative" },
   },
@@ -89,7 +90,8 @@ export const DIRECTORY_ITEMS: readonly DirectoryItem[] = [
 export const DIRECTORY_PRICE = {
   heading: "What is included in the hosting price?",
   paragraphs: [
-    `Every computer that Hivra Cloud runs for you needs a paid plan, from **${ENTRY_SIZE_PROSE}**. ${FREE_ACCOUNT_SENTENCE} A larger option is **${LARGER_SIZE_PROSE}**. Either size covers the managed computer resources. ${AI_USAGE_NOT_INCLUDED} ${OWN_ACCOUNT_TERMS}`,
+    `Paid agent hosting starts at **${ENTRY_SIZE_PROSE}**. A larger option is **${LARGER_SIZE_PROSE}**. Either size covers the managed computer resources. ${AI_USAGE_NOT_INCLUDED} ${OWN_ACCOUNT_TERMS}`,
+    FREE_ACCOUNT_SENTENCE,
     `Available agent counts, capacity and framework restrictions depend on the plan. See the live [pricing page](/pricing) before choosing. ${GUARANTEE_SENTENCE}`,
   ],
   actions: [
@@ -109,8 +111,8 @@ export const DIRECTORY_FAQS: readonly FeatureFaqItem[] = [
     a: "Not as part of the plan. Hivra provides the computer, and model charges and usage rules are separate.",
   },
   {
-    q: "Is an always-on computer the same as guaranteed uninterrupted work?",
-    a: "No. Persistent hosting avoids depending on your laptop, but external websites, model providers, software updates and infrastructure failures can still interrupt a task.",
+    q: "Does persistent hosting guarantee uninterrupted work?",
+    a: "No. Your files can persist between sessions, but idle settings, external websites, model providers, software updates and infrastructure failures can affect whether a task keeps running.",
   },
   {
     q: "Is everything shown here available for every agent?",

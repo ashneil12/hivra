@@ -1,0 +1,82 @@
+{
+  "apps": {
+    "zeroclaw": {
+      "manifestSha256": "42853fc03455014879696bedf8c174e01c0b7483328ae69bb8a41b9a29e487b2",
+      "provisionerVersion": "2026.11.25.2",
+      "canarySha": "4bfe13577cd2dd7baa8917b970b5a3a6fa133cab",
+      "certifiedAt": "2026-11-26T18:13:34.127Z"
+    },
+    "anythingllm": {
+      "manifestSha256": "e4d4dbf9d5179da8b6175fc33d32e2351ffbd730c423f5c8c26e564369f974f6",
+      "provisionerVersion": "2026.11.25.2",
+      "canarySha": "043185e116d4de78373fa51d02a6c007ab023618",
+      "certifiedAt": "2026-11-26T19:37:21.272Z"
+    },
+    "qdrant": {
+      "manifestSha256": "8815dfa2e7f49fd3d169be6df1a13d1149344adfacdadf2d3e4623198f265895",
+      "provisionerVersion": "2026.11.25.2",
+      "canarySha": "043185e116d4de78373fa51d02a6c007ab023618",
+      "certifiedAt": "2026-11-26T19:42:35.259Z"
+    },
+    "kroki": {
+      "manifestSha256": "2bb8654736ffeb078daf890d8d8d80f4e9639d64913dc9c29fbf83552fa39b8f",
+      "provisionerVersion": "2026.11.25.2",
+      "canarySha": "1e4e18f71d3dc6ece776dd5b491ec5643a4c2a43",
+      "certifiedAt": "2026-11-26T21:33:44.240Z"
+    },
+    "syncthing": {
+      "manifestSha256": "86e279106d7204c204eedfb4720b21b693aac3b2666b823e17b833fdee7a2599",
+      "provisionerVersion": "2026.11.25.2",
+      "canarySha": "1e4e18f71d3dc6ece776dd5b491ec5643a4c2a43",
+      "certifiedAt": "2026-11-26T21:39:10.154Z"
+    },
+    "jenkins": {
+      "manifestSha256": "d5e4153c3da18931e6bc75781e12504f2ca13ec51c2207ce1a4651faed49e9d6",
+      "provisionerVersion": "2026.11.25.2",
+      "canarySha": "3a962d7594208dd257a8e3e2a5000ab565292487",
+      "certifiedAt": "2026-11-26T16:48:59.014Z"
+    },
+    "clickhouse": {
+      "manifestSha256": "2fdfb8c69b3a6ac964b5fbceef9d7bb9f51d5500de9f353e37d91b13ad1e50e0",
+      "provisionerVersion": "2026.11.26.1",
+      "canarySha": "a6f6b832ccdd35f8f1f5a26f3a6371d611725a4e",
+      "certifiedAt": "2026-11-26T22:08:23.964Z"
+    },
+    "appsmith": {
+      "manifestSha256": "4c288a9578a94b1f9fa6ed68f6976c7cecce9ae3bcc7f0cf008f12b5e06bde2a",
+      "provisionerVersion": "2026.11.26.1",
+      "canarySha": "a6f6b832ccdd35f8f1f5a26f3a6371d611725a4e",
+      "certifiedAt": "2026-11-26T22:14:06.679Z"
+    },
+    "dufs": {
+      "manifestSha256": "1a7b38fed56b94b6ebe546c88cfb3d956d8ab4a3d5481f1e226a455c23e7f266",
+      "provisionerVersion": "2026.11.26.1",
+      "canarySha": "a6f6b832ccdd35f8f1f5a26f3a6371d611725a4e",
+      "certifiedAt": "2026-11-26T22:19:12.362Z"
+    },
+    "gotenberg": {
+      "manifestSha256": "76debc7f5bfa3588a38fad2cbb459818d08cb25a73e18e028f492858a83f802b",
+      "provisionerVersion": "2026.11.25.2",
+      "canarySha": "0e983a88b7b382bf4d22098367907baf027e78c4",
+      "certifiedAt": "2026-11-26T21:45:49.880Z"
+    },
+    "vaultwarden": {
+      "manifestSha256": "73afb1ce06a699ddb98b926cd8cee47076d01f6c9722e0718fa567e16242bb4a",
+      "provisionerVersion": "2026.11.25.2",
+      "canarySha": "b8cd42a3581dd330f3f9d62f18ca2c8f390c2923",
+      "certifiedAt": "2026-11-26T18:00:46.539Z"
+    },
+    "it-tools": {
+      "manifestSha256": "96f4a05266ce0ef8e01b0e2503ae64df14bcd718e23bb6e6e1b2a182329fb31f",
+      "provisionerVersion": "2026.11.25.2",
+      "canarySha": "b8cd42a3581dd330f3f9d62f18ca2c8f390c2923",
+      "certifiedAt": "2026-11-26T17:55:37.899Z"
+    },
+    "umami": {
+      "manifestSha256": "4aed2ec40090b0acd2e665a4d25a1c173b15dd81fd51cd5f4e0d2d4b20e29fb5",
+      "provisionerVersion": "2026.11.25.2",
+      "canarySha": "b8cd42a3581dd330f3f9d62f18ca2c8f390c2923",
+      "certifiedAt": "2026-11-26T18:07:14.998Z"
+    }
+  }
+}

@@ -3,22 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { AGENTS, type AgentId } from "@/lib/hivra/agent-catalog";
+import { AGENTS } from "@/lib/hivra/agent-catalog";
 import { fetchPlanStrict, isFreePlanInfo, type PlanInfo } from "@/lib/hivra/agent-api";
+import { FIRST_RUN_AGENTS } from "@/lib/hivra/first-run-agents";
 import styles from "./HomeWorkspace.module.css";
-
-/** The three agents a new person is offered. The rest are one link away. */
-const FIRST_RUN_AGENTS: readonly AgentId[] = ["hermes", "claude-code", "codex"];
-
-/**
- * What each first-run choice does, in Ash's words (12 Nov 2026), used word for
- * word: the job first, the agent's name under it.
- */
-const FIRST_RUN_JOBS: Partial<Record<AgentId, { job: string; agent: string; line: string; badge?: string }>> = {
-  hermes: { job: "Research and automation", agent: "Hermes Agent", badge: "Recommended", line: "Research, browse, write, use tools and automate recurring work." },
-  "claude-code": { job: "Build and code with Claude", agent: "Claude Code", line: "Build software, fix bugs, run tests and work on coding projects." },
-  codex: { job: "Build and code with Codex", agent: "OpenAI Codex", line: "Write, review and test code in a dedicated computer environment." },
-};
 
 /** What Home shows before there is anything to show: one question, three taps.
  * Each choice opens Launch with that agent already picked (`?profile=`). */
@@ -34,7 +22,6 @@ export function FirstRunCard() {
     };
   }, []);
 
-  const choices = FIRST_RUN_AGENTS.flatMap((id) => AGENTS.find((agent) => agent.id === id) ?? []);
   // Only a known Free plan is asked where its agent runs, and never an account whose paid plan is on hold.
   const showPlanLine = isFreePlanInfo(plan) && !plan?.onHold;
 
@@ -43,19 +30,19 @@ export function FirstRunCard() {
       <h1 id="first-run-title" className={styles.firstRunTitle}>What would you like to work on?</h1>
       <p className={styles.firstRunLead}>Choose an agent and we&apos;ll help you get it running on a computer of its own.</p>
       <ul className={styles.firstRunChoices}>
-        {choices.map((agent) => {
-          const job = FIRST_RUN_JOBS[agent.id];
+        {FIRST_RUN_AGENTS.map((starter) => {
+          const agent = AGENTS.find(({ id }) => id === starter.id);
+          if (!agent) return null;
           return (
             <li key={agent.id}>
-              <Link href={`/dashboard/launch?profile=${agent.id}`} className={styles.firstRunChoice} aria-label={`Launch ${agent.name}`}>
-                <span className={styles.firstRunName}>{job?.job ?? agent.name}</span>
-                {job ? (
-                  <span className={styles.firstRunAgent}>
-                    {job.agent}
-                    {job.badge ? <span className={styles.firstRunBadge}>{job.badge}</span> : null}
-                  </span>
-                ) : null}
-                <span className={styles.firstRunTagline}>{job?.line ?? agent.tagline}</span>
+              <Link href={`/dashboard/launch?profile=${agent.id}`} className={styles.firstRunChoice} aria-label={`Launch ${agent.name}`} aria-describedby={starter.hosting ? `first-run-${agent.id}-hosting` : undefined}>
+                <span className={styles.firstRunName}>{starter.job}</span>
+                <span className={styles.firstRunAgent}>
+                  {starter.name}
+                  {agent.id === "hermes" ? <span className={styles.firstRunBadge}>Recommended</span> : null}
+                </span>
+                <span className={styles.firstRunTagline}>{starter.description}</span>
+                {starter.hosting ? <span id={`first-run-${agent.id}-hosting`} className={styles.firstRunTagline}>{starter.hosting}</span> : null}
               </Link>
             </li>
           );

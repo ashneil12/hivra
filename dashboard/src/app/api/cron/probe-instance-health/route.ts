@@ -46,11 +46,16 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const summary = await runInstanceHealthSweep();
+    const { hostTiming, ...summary } = await runInstanceHealthSweep();
     // Dead-man heartbeat: stamp success so the watchdog (in migration-drift-check)
     // can page if this prober ever goes silent. Best-effort — recordCronHeartbeat
     // swallows its own errors and never throws.
-    await recordCronHeartbeat("probe-instance-health");
+    await recordCronHeartbeat(
+      "probe-instance-health",
+      summary.healthObservationFailures
+        ? { ok: false, detail: `health_observation_failures=${summary.healthObservationFailures}` }
+        : hostTiming ? { detail: JSON.stringify(hostTiming) } : undefined,
+    );
     return apiSuccess(summary);
   } catch (err) {
     log.error("instance health sweep failed", err, {

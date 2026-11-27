@@ -106,6 +106,7 @@
     "@mux/mux-player-react": "^3.11.7",
     "@next/env": "16.3.8",
     "@next/third-parties": "16.3.8",
+    "@noble/hashes": "1.8.0",
     "@novnc/novnc": "^1.7.0",
     "@stripe/react-stripe-js": "^6.3.0",
     "@stripe/stripe-js": "^9.4.0",

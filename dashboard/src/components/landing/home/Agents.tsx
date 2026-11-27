@@ -4,7 +4,7 @@ import AgentGrid from "./AgentGrid";
 import { AGENTS_SECTION, COMPUTERS, HOME_AGENTS } from "./content";
 import styles from "./home.module.css";
 
-/** The agents, one click each into Launch, then a single line for people who only want a computer. Anchors #launch, #agents and #computers stay. */
+/** Agent choices and links for people who only want a computer. */
 export default function Agents() {
   return (
     <section id="launch" className={styles.agents} aria-labelledby="agents-heading">
@@ -29,6 +29,10 @@ export default function Agents() {
           {COMPUTERS.label}
           <ArrowRight size={15} aria-hidden="true" />
         </a>
+        <Link href="/sandboxes" className={styles.inlineLink} data-cta="computer-sandbox">
+          Compare Linux sandboxes and VMs
+          <ArrowRight size={15} aria-hidden="true" />
+        </Link>
       </p>
       <p className={styles.srOnly}>{AGENTS_SECTION.screensNote}</p>
     </section>

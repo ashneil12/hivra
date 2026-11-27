@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 
+export { desktopBrowserSignInEnabled } from "./browser-sign-in-enabled";
+
 /**
  * Browser sign-in for the desktop app.
  *
@@ -33,13 +35,6 @@ export const TICKET_TTL_SECONDS = 120;
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 const KEY_INFO = "hivra-desktop-browser-sign-in-v1";
-
-export function desktopBrowserSignInEnabled(
-  env: Record<string, string | undefined> = process.env,
-): boolean {
-  const raw = env.HIVRA_DESKTOP_BROWSER_SIGNIN?.trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "on";
-}
 
 /** A base64url SHA-256 digest: exactly 43 characters. */
 export function isValidChallenge(value: unknown): value is string {

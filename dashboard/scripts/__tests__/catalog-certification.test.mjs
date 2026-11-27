@@ -5,6 +5,7 @@ import test from "node:test";
 
 import { buildTestEnvExports, selectProductionEnvValue, shellQuote } from "../catalog-certification/canary-test-env.mjs";
 import { certificationRowFromSweep } from "../catalog-certification/append-certification-result.mjs";
+import { buildCertificationAllowlist } from "../catalog-certification/export-allowlist.mjs";
 import { chooseRemediation, remediationFingerprint, remediationRow, REMEDIATION_LEDGER_SCHEMA } from "../catalog-certification/catalog-remediation.mjs";
 import {
   CERTIFICATION_LEDGER_SCHEMA,
@@ -19,6 +20,47 @@ const OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98";
 const HOST = "canary.hermesos.cloud";
 const PROVISIONER = "2026.11.25.2";
 const NOW = new Date("2026-11-25T12:00:00.000Z");
+
+test("allowlist emits only clean, exact-revision passes and drops a subsequent product failure", () => {
+  const entry = { id: "example", manifestSha256: "a".repeat(64) };
+  const pass = {
+    profileId: entry.id,
+    manifestSha256: entry.manifestSha256,
+    canarySha: SHA,
+    checkoutSha: SHA,
+    expectedCanarySha: SHA,
+    provisionerVersion: PROVISIONER,
+    expectedProvisionerVersion: PROVISIONER,
+    passed: true,
+    sweepPassed: true,
+    sweepExitCode: 0,
+    reached: "teardown",
+    finishedAt: NOW.toISOString(),
+    teardown: { agentsLeft: 0, instancesLeft: 0, accountDeleted: false },
+  };
+  const launchSeals = { unpinned: [PROVISIONER, "2026.11.26.1"], pinned: "2026.11.26.1" };
+  const apps = (...rows) => buildCertificationAllowlist([entry], rows, launchSeals).apps;
+  assert.deepEqual(apps(pass), { example: {
+    manifestSha256: entry.manifestSha256,
+    provisionerVersion: PROVISIONER,
+    canarySha: SHA,
+    certifiedAt: NOW.toISOString(),
+  } });
+  for (const invalid of [
+    { canarySha: OTHER_SHA },
+    { manifestSha256: "b".repeat(64) },
+    { expectedProvisionerVersion: "2026.11.20.5" },
+    { sweepExitCode: 1 },
+    { teardown: { agentsLeft: 1, instancesLeft: 0, accountDeleted: false } },
+  ]) assert.deepEqual(apps({ ...pass, ...invalid }), {});
+  const denied = { ...pass, passed: false, failure: { category: "product" } };
+  assert.deepEqual(apps(pass, denied), {});
+  assert.deepEqual(apps(pass, { ...denied, failure: { category: "harness_environment" } }), apps(pass));
+  const pinned = { ...entry, requiresPinnedCatalogDigest: true };
+  assert.deepEqual(buildCertificationAllowlist([pinned], [pass], launchSeals).apps, {});
+  const pinnedPass = { ...pass, provisionerVersion: launchSeals.pinned, expectedProvisionerVersion: launchSeals.pinned };
+  assert.equal(buildCertificationAllowlist([pinned], [pinnedPass], launchSeals).apps.example.provisionerVersion, launchSeals.pinned);
+});
 
 function inspectFixture(overrides = {}) {
   return JSON.stringify({
@@ -201,19 +243,36 @@ test("planner closes a changed-input remediation loop before new uncertified ent
   const failure = ledgerRow({
     profileId: failedFixed.id,
     passed: false,
-    canarySha: SHA,
-    finishedAt: "2026-11-25T11:00:00.000Z",
-    failure: { stage: "open", category: "product", reason: "broken" },
+    manifestSha256: failedFixed.manifestSha256,
   });
-  const chosen = chooseCertificationTarget({
-    catalog: [neverCertified, failedFixed],
-    ledgerRows: [failure],
-    currentCanarySha: OTHER_SHA,
-    currentProvisionerVersion: PROVISIONER,
-    now: NOW,
-  });
-  assert.equal(chosen.id, failedFixed.id);
-  assert.equal(chosen.reason, "inputs-changed-since-failure");
+  for (const previousInputs of [{ manifestSha256: "old" }, { provisionerVersion: "2026.11.23.1" }]) {
+    const chosen = chooseCertificationTarget({
+      catalog: [neverCertified, failedFixed],
+      ledgerRows: [{ ...failure, ...previousInputs }],
+      currentCanarySha: SHA,
+      currentProvisionerVersion: PROVISIONER,
+      now: NOW,
+    });
+    assert.equal(chosen.id, failedFixed.id);
+    assert.equal(chosen.reason, "inputs-changed-since-failure");
+  }
+});
+
+test("planner advances first attempts across unrelated Canary revisions", () => {
+  const catalog = catalogEntries();
+  const ledgerRows = [ledgerRow({ passed: false })];
+  for (const [currentCanarySha, expected] of [[OTHER_SHA, catalog[2]], ["a".repeat(40), catalog[0]]]) {
+    const chosen = chooseCertificationTarget({
+      catalog,
+      ledgerRows,
+      currentCanarySha,
+      currentProvisionerVersion: PROVISIONER,
+      now: NOW,
+    });
+    assert.equal(chosen.id, expected.id);
+    assert.equal(chosen.reason, "never-certified");
+    ledgerRows.push(ledgerRow({ profileId: expected.id, canarySha: currentCanarySha, manifestSha256: expected.manifestSha256 }));
+  }
 });
 
 test("planner backs off same-revision product failures but retries after Canary moves", () => {

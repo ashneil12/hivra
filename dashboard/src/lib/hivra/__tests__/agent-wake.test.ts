@@ -132,6 +132,19 @@ describe("ensureHivraAgentAwake", () => {
     expect(mockClaim).not.toHaveBeenCalled();
   });
 
+  it("checks the marked QA seat before reporting it awake or claiming a wake", async () => {
+    for (const sleep_state of ["awake", "hibernated"]) {
+      const marked = row({ sleep_state, canary_qa_holder_expires_at: "2026-01-01T10:00:00.000Z" });
+      mockReadRow.mockResolvedValue({ data: marked, error: null });
+      mockLapsed.mockResolvedValue(true);
+      await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open" }))
+        .resolves.toEqual({ state: "failed", reason: "lapsed" });
+      expect(mockLapsed).toHaveBeenCalledWith(marked, "start");
+      expect(mockClaim).not.toHaveBeenCalled();
+      expect(mockRunScript).not.toHaveBeenCalled();
+    }
+  });
+
   it("treats a row without the sleep column as awake", async () => {
     mockReadRow.mockResolvedValue({ data: { id: AGENT_ID, user_id: "user-1" }, error: null });
     await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open" })).resolves.toEqual({ state: "awake" });

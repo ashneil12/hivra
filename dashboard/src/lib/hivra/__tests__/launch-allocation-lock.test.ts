@@ -19,13 +19,24 @@ const MANAGED_PATHS = {
   logDirectory: "/var/log/hivra",
 };
 
-function renderedPhase1(portableRuntime: boolean) {
+it("revalidates the selected Canary seal while holding the allocation lock, before VM selection and handoff", () => {
+  const script = renderedPhase1(false, "2026.11.25.2");
+  const seal = script.indexOf("OBSERVED_MANIFEST_SHA=");
+  expect(seal).toBeGreaterThan(script.indexOf("flock -w"));
+  expect(seal).toBeLessThan(script.indexOf("local_vmids="));
+  expect(seal).toBeLessThan(script.indexOf("SECRET_ENV_FILE="));
+  expect(script).toContain("'2026.11.25.2') EXPECTED_MANIFEST_SHA=");
+  expect(script).not.toContain("'2026.11.26.1') EXPECTED_MANIFEST_SHA=");
+  expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+});
+
+function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: string, agentKind = "codex") {
   return phase1Script({
     cpu: 2,
     cpuLimit: 2,
     memMb: 4096,
     guaranteedMemMb: 4096,
-    agentKind: "codex",
+    agentKind,
     tunnelToken: "",
     tunnelUrl: "",
     wantBrowser: false,
@@ -38,6 +49,7 @@ function renderedPhase1(portableRuntime: boolean) {
     operationId: OPERATION_ID,
     infrastructureBindingTag: BINDING_TAG,
     managedRuntimePaths: MANAGED_PATHS,
+    canaryProvisionerVersion,
     portableRuntime: portableRuntime
       ? {
           node: "pve-synthetic",
@@ -61,6 +73,42 @@ function renderedPhase1(portableRuntime: boolean) {
 }
 
 describe("host allocation lock lifecycle", () => {
+  it("reads managed Hermes IP claims in one pmxcfs scan under the allocation lock", () => {
+    const script = renderedPhase1(false, undefined, "hermes");
+    const start = script.indexOf('claimed_octets="$(');
+    const end = script.indexOf('claimed_octets="$(printf', start);
+    expect(start).toBeGreaterThan(script.indexOf("flock -w"));
+    expect(end).toBeGreaterThan(start);
+    expect(script).not.toContain("qm list");
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+    const root = mkdtempSync(path.join(tmpdir(), "hivra-ip-claims-"));
+    try {
+      const fragment = script.slice(start, end)
+        .replaceAll("/etc/pve/qemu-server", root)
+        .replaceAll("/var/lib/hivra/provision-operations", root);
+      const run = () => spawnSync("bash", ["-c", `set -euo pipefail
+${fragment}
+printf '%s' "$claimed_octets"`], { encoding: "utf8" });
+      expect(run()).toMatchObject({ status: 0, stdout: "" });
+      writeFileSync(path.join(root, "200.conf"), [
+        "description: ip=10.251.20.99/24",
+        "ipconfig0: ip=10.251.20.50/24,gw=10.251.20.1",
+        "ipconfig1: ip6=auto,ip=10.251.20.51/24",
+        "[backup]",
+        "ipconfig0: ip=10.251.20.98/24",
+        "[PENDING]",
+        "ipconfig0: gw=10.251.20.1,ip=10.251.20.52/24",
+      ].join("\n"));
+      writeFileSync(path.join(root, "201.conf"), "ipconfig0: ip=dhcp\n");
+      writeFileSync(path.join(root, "operation-one.selected"), "ip=10.251.20.53\n");
+      expect(run()).toMatchObject({ status: 0, stdout: "50\n51\n52\n53" });
+      rmSync(root, { recursive: true });
+      expect(run()).toMatchObject({ status: 1, stdout: "", stderr: expect.stringContaining("inventory is unavailable") });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("matches the managed guardian's exact child argv with the selected VMID expanded at runtime", () => {
     const script = renderedPhase1(false);
     const line = script.split("\n").find(entry => entry.includes('grep -Fq') && entry.includes("hivra-provision-on-host.sh"));

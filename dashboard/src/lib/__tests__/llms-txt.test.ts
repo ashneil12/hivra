@@ -1,5 +1,5 @@
 import { COMPUTER_ROADMAP } from "@/app/ecosystem/ecosystem-content";
-import { CONNECTED_SERVER_ELIGIBILITY, HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
+import { CONNECTED_SERVER_ELIGIBILITY, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
 import { ECOSYSTEM_STAGES } from "@/lib/ecosystem-map";
 import { NON_AFFILIATION_LINE, SITE_DESCRIPTION } from "../brand-description";
 import { buildLlmsTxt, llmsTxtSections, PUBLIC_REPOSITORY_URL } from "../llms-txt";
@@ -100,9 +100,9 @@ describe("buildLlmsTxt", () => {
   it("describes hosted plans and connected-server eligibility without advertising Free", () => {
     const txt = buildLlmsTxt({ siteUrl: SITE });
     const rule =
-      "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM.";
+      "Paid Hivra Cloud plans start at $9.99 a month for 2 vCPU and 4 GB of RAM.";
     expect(txt).toContain(rule);
-    expect(HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE).toBe(rule);
+    expect(txt).toContain(`[Linux sandboxes](${SITE}/sandboxes)`);
     // It sits in the "Available now on Hivra Cloud" paragraph, before the Hermes limit.
     expect(txt).toContain(`${rule} Hermes runs on Hivra Cloud only.`);
     expect(txt.split(rule)).toHaveLength(2);

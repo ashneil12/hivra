@@ -9,8 +9,9 @@ import { ArrowUpRight } from "lucide-react";
 import StructuredData from "@/components/StructuredData";
 import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
-import { AGENT_SEO_ENTRIES } from "@/lib/hivra/agent-seo-catalog";
 import { getAgent } from "@/lib/hivra/agent-catalog";
+import { AGENT_DIRECTORY_SUMMARY, getPublicAgentProfiles } from "@/lib/hivra/public-agent-profiles";
+import { isCatalogAppLaunchable, UNIVERSAL_CATALOG_MANIFESTS } from "@/lib/hivra/catalog-manifests";
 import { HeadingLines, Inline } from "./AgentProse";
 import { TermRows } from "./AgentBlocks";
 import { HUB_CONTENT } from "./content";
@@ -20,8 +21,7 @@ import { slugifyHeading } from "./content/markup";
 // Ash's finished browser title, brand included: published as an absolute title so the root layout's
 // " | Hivra" template does not add the brand a second time.
 const PAGE_TITLE = "Deploy AI Agents: Claude Code, Codex, Hermes and More | Hivra";
-const PAGE_DESCRIPTION =
-  "Give Claude Code, Codex, Hermes, Aeon, OpenClaw or Agent Zero a cloud computer. Keep your own accounts and choose managed hosting from $9.99/mo.";
+const PAGE_DESCRIPTION = `${AGENT_DIRECTORY_SUMMARY} Find the right agent for your work.`;
 
 export const metadata: Metadata = {
   title: absoluteTitle(PAGE_TITLE),
@@ -37,11 +37,17 @@ export const metadata: Metadata = {
 
 export default function AgentsIndexPage() {
   const content = HUB_CONTENT;
-  const agents = content.directory.cards.flatMap((card) => {
-    const entry = AGENT_SEO_ENTRIES.find((candidate) => candidate.slug === card.slug);
-    const def = getAgent(card.slug);
-    return entry && def ? [{ card, entry, def }] : [];
-  });
+  const agents = content.directory.cards.filter(({ slug }) => getAgent(slug)?.available);
+  const certifiedApps = UNIVERSAL_CATALOG_MANIFESTS.filter((manifest) => isCatalogAppLaunchable(manifest));
+  const profiles = getPublicAgentProfiles();
+  const directory = [...agents, ...profiles.map((profile) => ({
+    slug: profile.slug,
+    name: profile.tag ? `${profile.name} (${profile.tag.toLowerCase()})` : profile.name,
+    tagline: profile.description,
+    body: "",
+    goodFit: profile.goodFit,
+    linkLabel: `Explore ${profile.name}`,
+  }))];
 
   const schema = {
     "@context": "https://schema.org",
@@ -49,11 +55,11 @@ export default function AgentsIndexPage() {
       {
         "@type": "ItemList",
         name: "Agents you can deploy on Hivra",
-        itemListElement: agents.map(({ entry, def }, index) => ({
+        itemListElement: directory.map(({ slug, name }, index) => ({
           "@type": "ListItem",
           position: index + 1,
-          name: def.name,
-          url: `${SITE_URL}/agents/${entry.slug}`,
+          name,
+          url: `${SITE_URL}/agents/${slug}`,
         })),
       },
       {
@@ -113,7 +119,7 @@ export default function AgentsIndexPage() {
         <section id={slugifyHeading(content.directory.heading)} className={agentStyles.directorySection}>
           <h2 className={agentStyles.hubHeading}>{content.directory.heading}</h2>
           <ol className={agentStyles.agentList}>
-            {agents.map(({ card }, index) => (
+            {directory.map((card, index) => (
               <li className={agentStyles.agentRow} key={card.slug}>
                 <span className={agentStyles.agentNumber} aria-hidden="true">
                   {String(index + 1).padStart(2, "0")}
@@ -121,9 +127,9 @@ export default function AgentsIndexPage() {
                 <h3>{card.name}</h3>
                 <div className={`${agentStyles.agentBody} ${agentStyles.hubProse}`}>
                   <p className={agentStyles.tagline}>{card.tagline}</p>
-                  <p>
+                  {card.body && <p>
                     <Inline text={card.body} />
-                  </p>
+                  </p>}
                   <p>
                     <strong>Good fit:</strong> {card.goodFit}
                   </p>
@@ -135,6 +141,18 @@ export default function AgentsIndexPage() {
             ))}
           </ol>
         </section>
+
+        {certifiedApps.length > 0 && (
+          <section id="verified-catalog" className={`${agentStyles.choose} ${agentStyles.hubProse}`}>
+            <h2 className={agentStyles.hubHeading}>Verified apps</h2>
+            <p>Every app here passed an end-to-end launch check. Find them in Launch.</p>
+            <ul className={agentStyles.catalogEntries} aria-label="Verified catalog entries">
+              {certifiedApps.map(({ id, name }) => (
+                <li key={id}>{profiles.some(({ slug }) => id === slug) ? <Link href={`/agents/${id}`}>{name}</Link> : name}</li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         <section className={`${agentStyles.choose} ${agentStyles.hubProse}`}>
           <h2 className={agentStyles.hubHeading}>{content.choose.heading}</h2>

@@ -10,6 +10,7 @@ import { acquireHostWakeSlot, normalizeWakeRamMb, releaseHostWakeSlot } from "@/
 import { resolveHivraLifecycleTarget, type HivraLifecycleTarget } from "./agent-lifecycle-host";
 import { sleepMemoryDropAfterDays, STALE_SLEEP_LEASE_MS } from "./agent-sleep-policy";
 import { isStartBlockedForLapse } from "./lapse-gate";
+import { isCanaryQaHolderSeat, type CanaryQaHolderRow } from "./canary-qa-holder";
 import {
   claimAgentWake,
   finishAgentWake,
@@ -641,12 +642,14 @@ export async function ensureHivraAgentAwake(
     return { state: "failed", reason: "agent_unreadable" };
   }
   if (!row) return { state: "failed", reason: "not_found" };
-  if (isAgentAwake(row)) return { state: "awake" };
+  const qaSeat = isCanaryQaHolderSeat(row as CanaryQaHolderRow);
+  if (!qaSeat && isAgentAwake(row)) return { state: "awake" };
 
   // A lapsed owner is never woken: the lapse sweep owns that computer now.
   if (await isStartBlockedForLapse(row as { user_id?: unknown }, "start")) {
     return { state: "failed", reason: "lapsed" };
   }
+  if (qaSeat && isAgentAwake(row)) return { state: "awake" };
 
   // Packed into the storage box: its disks come back first, which takes minutes.
   // The request is noted and the sleep sweep does the rest, then wakes it.

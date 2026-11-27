@@ -20,7 +20,6 @@ if (typeof window.PointerEvent === "undefined") {
 
 jest.mock("@/components/ui/ThinkingOrb", () => ({ ThinkingOrb: () => <i data-testid="orb" /> }));
 
-const INTRO_KEY = "hivra:agent-pill-intro-seen";
 const OFFSET_KEY = "hivra:agent-pill-offset";
 
 function setup(overrides: Partial<AgentPillProps> = {}) {
@@ -45,7 +44,6 @@ const dialog = () => screen.queryByRole("dialog", { name: "Hermes 1 controls" })
 
 beforeEach(() => {
   window.localStorage.clear();
-  window.localStorage.setItem(INTRO_KEY, "1"); // the gentle intro has its own tests
 });
 afterEach(() => { jest.restoreAllMocks(); jest.useRealTimers(); });
 
@@ -328,25 +326,22 @@ describe("AgentPill status", () => {
 });
 
 describe("AgentPill first open", () => {
-  it("opens by itself once after a moment, and never again", () => {
+  it("leaves the workspace unobstructed until controls are requested", () => {
     jest.useFakeTimers();
-    window.localStorage.removeItem(INTRO_KEY);
-    const first = setup();
-    expect(dialog()).not.toBeInTheDocument();
-    act(() => { jest.advanceTimersByTime(800); });
-    expect(dialog()).toBeInTheDocument();
-    expect(window.localStorage.getItem(INTRO_KEY)).toBe("1");
-    first.unmount();
-
     setup();
     act(() => { jest.advanceTimersByTime(2000); });
     expect(dialog()).not.toBeInTheDocument();
+    expect(screen.queryByTestId("agent-pill-scrim")).not.toBeInTheDocument();
+    fireEvent.click(handle());
+    expect(dialog()).toBeInTheDocument();
   });
 
-  it("does not open by itself while the agent is not running", () => {
+  it("does not interrupt the workspace when the agent finishes provisioning", () => {
     jest.useFakeTimers();
-    window.localStorage.removeItem(INTRO_KEY);
-    setup({ status: "provisioning" });
+    const { rerenderWith } = setup({ status: "provisioning" });
+    act(() => { jest.advanceTimersByTime(2000); });
+    expect(dialog()).not.toBeInTheDocument();
+    rerenderWith({ status: "running" });
     act(() => { jest.advanceTimersByTime(2000); });
     expect(dialog()).not.toBeInTheDocument();
   });

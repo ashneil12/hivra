@@ -369,8 +369,11 @@ test('every third-party GitHub Action is pinned to an immutable commit', () => {
   assert.deepEqual(workflowActionReferences(read('.github/workflows/managed-launch-bridge.yml'), 'managed-launch-bridge.yml'), [
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
   ], 'the bridge rehearsal only uses the reviewed checkout action');
-  // 29: the read-only launch sweep gate adds checkout and setup-node to the bridge inventory.
-  assert.equal(actionCount, 29, 'review the complete workflow action inventory when it changes');
+  assert.deepEqual(workflowActionReferences(read('.github/workflows/claude-sandbox-image.yml'), 'claude-sandbox-image.yml'), [
+    'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+  ], 'the source-only sandbox smoke only uses the reviewed checkout action');
+  // 30: the read-only launch sweep gate adds checkout and setup-node.
+  assert.equal(actionCount, 30, 'review the complete workflow action inventory when it changes');
 });
 
 test('workflow action inventory fails closed on alternate uses-key forms', () => {

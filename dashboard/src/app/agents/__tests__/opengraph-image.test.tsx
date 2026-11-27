@@ -11,6 +11,7 @@ import AgentOg, {
 import { metadata as hubMetadata } from "../page";
 import { generateMetadata } from "../[slug]/page";
 import { AGENT_SEO_ENTRIES } from "@/lib/hivra/agent-seo-catalog";
+import { getPublicAgentProfiles } from "@/lib/hivra/public-agent-profiles";
 
 describe("/agents OG cards", () => {
   it("use the standard 1200x630 PNG card with alt text", () => {
@@ -28,7 +29,7 @@ describe("/agents OG cards", () => {
     const hub = await HubOg();
     expect(hub.status).toBe(200);
     expect(hub.headers.get("content-type")).toBe("image/png");
-    expect(generateOgParams()).toEqual(AGENT_SEO_ENTRIES.map((entry) => ({ slug: entry.slug })));
+    expect(generateOgParams()).toEqual([...AGENT_SEO_ENTRIES, ...getPublicAgentProfiles()].map(({ slug }) => ({ slug })));
     for (const entry of AGENT_SEO_ENTRIES) {
       const res = await AgentOg({ params: Promise.resolve({ slug: entry.slug }) });
       expect(res.status).toBe(200);
@@ -39,7 +40,7 @@ describe("/agents OG cards", () => {
   it("return a real 404 for an unknown slug rather than a generic card", async () => {
     // The page's dynamicParams=false does not reach the image route, so the
     // route itself has to refuse slugs outside the catalog.
-    for (const slug of ["not-an-agent", "deepseek-harness"]) {
+    for (const slug of ["not-an-agent", "nanobot"]) {
       const res = await AgentOg({ params: Promise.resolve({ slug }) });
       expect(res.status).toBe(404);
       expect(res.headers.get("content-type")).not.toBe("image/png");

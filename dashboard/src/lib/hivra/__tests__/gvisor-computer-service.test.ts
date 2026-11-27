@@ -528,6 +528,38 @@ describe("ready managed sandbox lifecycle", () => {
     expect(expectCommand()).toEqual(["start"]);
   });
 
+  it.each(["settled", "missing_ack", "foreign_receipt", "not_stopped", "ledger_refusal"] as const)(
+    "only releases a refused wake after exact stopped evidence and ledger confirmation (%s)", async (mode) => {
+      const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_MANAGED_GVISOR_DISK_ADMISSION_ENABLED: "true" });
+      try {
+        agent.status = "stopped";
+        mockRpc.mockResolvedValueOnce({ data: { ...claim, action: "start" }, error: null })
+          .mockResolvedValueOnce({ data: mode === "settled", error: null });
+        mockRunWithStdin.mockImplementationOnce(async script => {
+          const payload = { version: 1, code: "disk_capacity", operation: "start", computerId,
+            sandboxId: mode === "foreign_receipt" ? launchRequestId : sandboxId };
+          const denied = { ok: true, stdout: `HIVRA_GVISOR_ADMISSION_V1 ${JSON.stringify(payload)}\n`, stderr: "" };
+          return mode === "missing_ack" ? denied : acknowledgeManaged(script, denied);
+        }).mockImplementationOnce(async script => acknowledgeManaged(script, result(mode === "not_stopped" ? "running" : "stopped")));
+
+        await expect(mutateGvisorComputer(userId, computerId, { action: "start" }))
+          .rejects.toMatchObject({ code: mode === "settled" ? "capacity_limit" : "conflict" });
+        const verifiedDenial = mode !== "missing_ack" && mode !== "foreign_receipt";
+        expect(expectCommand()).toEqual(verifiedDenial ? ["start", "status"] : ["start"]);
+        expect(JSON.parse(mockRunWithStdin.mock.calls[0][1]).requireDiskAdmission).toBe(true);
+        if (verifiedDenial) expect(JSON.parse(mockRunWithStdin.mock.calls[1][1]).requireDiskAdmission).toBeUndefined();
+        if (mode === "settled" || mode === "ledger_refusal") {
+          expect(mockRpc).toHaveBeenNthCalledWith(2, "reject_hivra_managed_gvisor_start", {
+            p_customer: userId, p_computer: computerId, p_operation: operationId,
+            p_receipt: expect.objectContaining({ computerId, sandboxId, state: "stopped" }),
+          });
+        } else expect(mockRpc).toHaveBeenCalledTimes(1);
+      } finally {
+        env.restore();
+      }
+    },
+  );
+
   it("holds a lost delete until read-only recovery verifies fresh exact absence", async () => {
     mockRpc.mockResolvedValueOnce({ data: { ...claim, action: "delete" }, error: null });
     mockRunWithStdin.mockRejectedValueOnce(new Error("delete response lost"));

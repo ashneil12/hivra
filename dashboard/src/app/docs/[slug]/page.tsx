@@ -10,7 +10,7 @@ import { articleMarkdownComponents } from "@/components/public-editorial/article
 import styles from "../../../components/public-editorial/secondary-site.module.css";
 import docStyles from "../docs.module.css";
 import StructuredData from "@/components/StructuredData";
-import { BLOG_ARTICLES } from "@/lib/blog-data";
+import { getPublicBlogArticle } from "@/lib/blog-data";
 import { DOCS, DOCS_IN_ORDER, DOC_STATUS_LABEL, getDoc, sectionForDoc } from "@/lib/docs/registry";
 import { buildArticleMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
@@ -89,7 +89,7 @@ export default async function DocPage({ params }: DocPageParams) {
 
   const related = [
     ...(doc.next ?? []).map((other) => DOCS[other]).filter(Boolean).map((other) => ({ label: other.title, href: `/docs/${other.slug}` })),
-    ...(doc.articles ?? []).map((other) => BLOG_ARTICLES[other]).filter(Boolean).map((article) => ({ label: `Guide: ${article.title}`, href: `/blog/${article.slug}` })),
+    ...(doc.articles ?? []).map(getPublicBlogArticle).filter((article) => article !== undefined).map((article) => ({ label: `Guide: ${article.title}`, href: `/blog/${article.slug}` })),
   ];
 
   return (

@@ -36,6 +36,26 @@ const reportBody = (events: unknown[], extra: Record<string, unknown> = {}) => (
 });
 
 describe("readSurfaceWatchdogFromBox", () => {
+  it("relays only allow-listed Hermes proxy receipts and preserves existing watchdog receipts", async () => {
+    const proxy = event("e1-2", "hermes_proxy_unavailable", {
+      at: "2026-11-15T17:30:01.000Z",
+      unit: "hermes-gateway.service", reason: "loopback_connection_reset", operation: "socket_ticket",
+      requestUrl: "/hermes/api/webapp/socket-ticket?opaque=private-fixture-value",
+    });
+    const fetcher = jest.fn(async (url: string) => url.endsWith("/api/meta") ? json({ ...CURRENT_META, agentKind: "hermes" })
+      : json(reportBody([event("e1-1", "recovered")], { agentKind: "hermes",
+        proxyEvents: [proxy, { ...proxy, id: "e1-3", reason: "arbitrary guest error" }] })));
+    const reading = await readSurfaceWatchdogFromBox(watchdogTarget, fetcher);
+    expect(reading.observation).toBe("reported");
+    if (reading.observation !== "reported") throw new Error("No watchdog report");
+    expect(reading.report.events.map(receipt => receipt.id)).toEqual(["e1-1", "e1-2"]);
+    const ops = opsEventForWatchdogEvent({ id: "agent-1", user_id: "owner-1", type: "hermes" }, reading.report.events[1]);
+    expect(ops).toMatchObject({ source: "box.surface_watchdog.hermes_proxy_unavailable", severity: "warn",
+      metadata: { reason: "loopback_connection_reset", operation: "socket_ticket", unit: "hermes-gateway.service" } });
+    expect(ops.message).toContain("Hermes proxy returned 503 for socket_ticket: loopback_connection_reset");
+    expect(JSON.stringify(ops)).not.toContain("private-fixture-value");
+  });
+
   it("reads the watchdog report with the bearer after the public meta proves a current connection service", async () => {
     const fetcher = jest.fn(async (url: string, init?: RequestInit) => {
       const authorized = new Headers(init?.headers).get("authorization") === `Bearer ${TOKEN}`;

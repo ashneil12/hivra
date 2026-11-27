@@ -305,9 +305,13 @@ async function main() {
     const finish = async (owner, operation, action, observed) => (await one(
       "select public.complete_hivra_managed_gvisor_lifecycle($1,$2,$3,$4,$5::jsonb) as result",
       [owner, ready.computerId, operation, action, JSON.stringify(observed)])).result;
+    const rejectWake = async (owner, operation, observed) => (await one(
+      "select public.reject_hivra_managed_gvisor_start($1,$2,$3,$4::jsonb) as result",
+      [owner, ready.computerId, operation, JSON.stringify(observed)])).result;
     await db.exec("set role authenticated");
     await assert.rejects(lifecycle(readyOwner, "stop"), { code: "42501" });
     await assert.rejects(finish(readyOwner, ready.operationId, "stop", receipt), { code: "42501" });
+    await assert.rejects(rejectWake(readyOwner, ready.operationId, receipt), { code: "42501" });
     await db.exec("set role service_role");
     assert.deepEqual(await lifecycle(customer, "stop"), { status: "not_found" });
 
@@ -367,9 +371,21 @@ async function main() {
     assert.equal(await count(readyOwner), 1);
 
     assert.equal((await lifecycle(customer, "start")).status, "not_found");
+    const deniedWake = await lifecycle(readyOwner, "start");
+    assert.equal(deniedWake.status, "claimed");
+    assert.equal(await rejectWake(customer, deniedWake.operationId, stoppedReceipt), false);
+    assert.equal(await rejectWake(readyOwner, sleep.operationId, stoppedReceipt), false);
+    assert.equal(await rejectWake(readyOwner, deniedWake.operationId, receipt), false);
+    assert.equal(await rejectWake(readyOwner, deniedWake.operationId, { ...stoppedReceipt, workspace: "foreign" }), false);
+    assert.equal((await lifecycle(readyOwner, "delete")).status, "held");
+    assert.equal(await rejectWake(readyOwner, deniedWake.operationId, stoppedReceipt), true);
+    assert.equal(await rejectWake(readyOwner, deniedWake.operationId, stoppedReceipt), true);
+    assert.equal((await lifecycle(readyOwner, "stop")).agent.desired_state, "stopped");
+    assert.equal(await count(readyOwner), 1);
     const [wakeA, wakeB] = await Promise.all([lifecycle(readyOwner, "start"), lifecycle(readyOwner, "start")]);
     assert.deepEqual([wakeA.status, wakeB.status].sort(), ["claimed", "held"]);
     const wake = wakeA.status === "claimed" ? wakeA : wakeB;
+    assert.equal(await rejectWake(readyOwner, deniedWake.operationId, stoppedReceipt), false);
     assert.equal(await observe(readyOwner, true), null, "a provisioned sandbox with a held power operation cannot open a terminal");
     assert.equal(await finish(readyOwner, sleep.operationId, "stop", stoppedReceipt), null);
     assert.equal((await lifecycle(readyOwner, "delete")).status, "held");

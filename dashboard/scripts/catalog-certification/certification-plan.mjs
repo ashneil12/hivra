@@ -44,7 +44,7 @@ function runtimeEvidence(manifest) {
       ? runtime.web?.healthPath ?? null
       : runtime.webService?.healthPath ?? null;
   const runtimeRefs = runtime.kind === "docker-web"
-    ? [`${runtime.imageRepo}:${runtime.imageTag}`]
+    ? [runtime.imageDigest ? `${runtime.imageRepo}@${runtime.imageDigest}` : `${runtime.imageRepo}:${runtime.imageTag}`]
     : runtime.kind === "docker-stack"
       ? (runtime.services ?? []).map((service) => `${service.imageRepo}:${service.imageTag}`)
       : runtime.installer?.method === "npm-global" || runtime.installer?.method === "uv-tool"
@@ -63,6 +63,7 @@ export function summarizeCatalog(manifests) {
       category: manifest.category ?? "app",
       order: index,
       manifestSha256: sha256Json(manifest),
+      requiresPinnedCatalogDigest: manifest.runtime?.kind === "docker-web" && Boolean(manifest.runtime.imageDigest),
       ...runtimeEvidence(manifest),
     };
   });
@@ -166,8 +167,9 @@ function dueRowState({ entry, row, nowMs, currentCanarySha, currentProvisionerVe
 
   if (!row.passed) {
     const harness = row.failure?.category === "harness_bug" || row.failure?.category === "harness_environment";
-    if (inputsChanged(row, entry, currentProvisionerVersion) || row.canarySha !== currentCanarySha) {
-      return { due: true, reason: "inputs-changed-since-failure", group: 1, dueAtMs: finishedMs };
+    const exactInputsChanged = inputsChanged(row, entry, currentProvisionerVersion);
+    if (exactInputsChanged || row.canarySha !== currentCanarySha) {
+      return { due: true, reason: "inputs-changed-since-failure", group: exactInputsChanged ? 1 : 2, dueAtMs: finishedMs };
     }
     const retryHours = harness ? harnessRetryHours : failureRetryHours;
     const dueAtMs = finishedMs + retryHours * 60 * 60_000;
@@ -197,8 +199,9 @@ function compareEntries(a, b) {
 
 /**
  * Return the next due entry, or null. The ordering is intentional: prove the
- * runtime matrix first, then fixes whose inputs changed, then new agents
- * before new apps, then backed-off failures, then periodic revalidation.
+ * runtime matrix first, then changed manifests or provisioners, then new
+ * agents before new apps, then SHA-only retries and backed-off failures,
+ * then periodic revalidation.
  * Changed-input failures must not starve behind a continuously growing
  * uncertified catalog, or the remediation loop would never close.
  */

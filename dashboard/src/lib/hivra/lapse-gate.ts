@@ -1,6 +1,7 @@
 import { hasTokenTierInGrace, resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { paysForHostedCompute } from "@/lib/billing/hosted-compute";
 import { isHivraLapseEnforceLive } from "@/lib/hivra/lapse-flags";
+import { isCanaryQaHolderSeat, isCanaryQaHolderSeatActive, type CanaryQaHolderRow } from "@/lib/hivra/canary-qa-holder";
 import { log } from "@/lib/logger";
 
 /**
@@ -53,12 +54,15 @@ export async function ownerHasNoPaidPlan(userId: string): Promise<boolean> {
 
 /** True when this action would start a Hivra Cloud computer whose owner has no paid plan, and enforcement is on. */
 export async function isStartBlockedForLapse(
-  agent: ComputerRow & { user_id?: unknown },
+  agent: ComputerRow & CanaryQaHolderRow,
   action: string,
 ): Promise<boolean> {
-  if (!isHivraLapseEnforceLive()) return false;
   if (!POWER_ON_ACTIONS.includes(action)) return false;
+  if (isCanaryQaHolderSeat(agent)) {
+    return action === "resize" || !isHivraCloudComputer(agent) || !isCanaryQaHolderSeatActive(agent);
+  }
   if (!isHivraCloudComputer(agent) || typeof agent.user_id !== "string") return false;
+  if (!isHivraLapseEnforceLive()) return false;
   return ownerHasNoPaidPlan(agent.user_id);
 }
 

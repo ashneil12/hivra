@@ -59,6 +59,8 @@ import {
 } from "@/lib/hivra/agent-api";
 import { requestManagedVeniceSummary } from "@/lib/billing/managed-venice-client";
 import { buildInfrastructureSetupHref, isPortableAgentLaunchId, parsePortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
+import { FIRST_RUN_AGENTS, type FirstRunAgent } from "@/lib/hivra/first-run-agents";
+import { getCatalogAppManifest, isCatalogAppLaunchable } from "@/lib/hivra/catalog-manifests";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import {
   HERMES_NAME_MAX_LENGTH,
@@ -532,7 +534,7 @@ const SERVER_ONLY_TILES: ReadonlySet<LaunchProfileId> = new Set(["linux-terminal
 
 function tileDescription(tile: ChooseTile, managedLinuxSandboxEligible: boolean): string {
   return tile.id === "linux-terminal" && managedLinuxSandboxEligible
-    ? "A locked-down Linux terminal and files."
+    ? "One-shot shell commands and a persistent workspace. Managed access is limited and requires a paid plan."
     : tile.description;
 }
 
@@ -687,10 +689,10 @@ function LaunchedScreen({ name, href, readiness, readyLabel, extraLink, onLeave,
       ) : (
         <>
           {checking ? (
-            <p className={styles.observed} role="status"><span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0, verticalAlign: "middle" }}><ThinkingOrb state="connecting" size={20} /></span> Waiting for it to answer</p>
+            <p className={styles.observed} role="status"><span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0, verticalAlign: "middle" }}><ThinkingOrb state="connecting" size={20} /></span> Checking whether you can open your agent</p>
           ) : (
             <p className={styles.observed} role="status">
-              It hasn&apos;t answered yet, and Hivra has stopped checking.{" "}
+              Hivra couldn&apos;t confirm that your agent was ready to open and has stopped checking.{" "}
               <button type="button" className={styles.outcomeLink} onClick={recheck}>Check again</button>
             </p>
           )}
@@ -733,7 +735,7 @@ function ownServerNeeds(profileId: LaunchProfileId | null): string {
 }
 
 export function LaunchJourney(
-  { preparedProfiles = [], legacyHermesLane = false, managedLinuxSandboxEligible = false }: {
+  { preparedProfiles = [], legacyHermesLane = false, managedLinuxSandboxEligible = false, catalogCertifier = false }: {
     preparedProfiles?: readonly ("omarchy" | "windows")[];
     /**
      * Tests only: launch Hermes on the old instances lane. Every real launch
@@ -742,6 +744,7 @@ export function LaunchJourney(
      */
     legacyHermesLane?: boolean;
     managedLinuxSandboxEligible?: boolean;
+    catalogCertifier?: boolean;
   },
 ) {
   const router = useRouter();
@@ -1049,7 +1052,9 @@ export function LaunchJourney(
     // Read directly: this effect only ever runs on the client.
     const linkedProfile = linkedTemplate?.profileId
       ?? (requestedProfileId === "omarchy" && !preparedCanaryAvailable ? null : requestedProfileId);
-    const requestedProfile = linkedProfile === "hermes" || linkedProfile === "hermes-computer" ? hermesProfile : linkedProfile;
+    const linkedManifest = getCatalogAppManifest(linkedProfile);
+    const requestedProfile = linkedManifest && !isCatalogAppLaunchable(linkedManifest, catalogCertifier && !selfHosted)
+      ? null : linkedProfile === "hermes" || linkedProfile === "hermes-computer" ? hermesProfile : linkedProfile;
     const freshFromIntent = (): LaunchDraft => {
       const next = createLaunchDraft();
       if (!requestedProfile) return next;
@@ -1104,7 +1109,7 @@ export function LaunchJourney(
     // an unpatched replaceState would drop the router's own entry state.
     const timer = window.setTimeout(() => writeStageHistory(initial.stage, "replace"), 0);
     return () => window.clearTimeout(timer);
-  }, [legacyHermesLane, linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, inferenceParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
+  }, [catalogCertifier, legacyHermesLane, linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, inferenceParam, returningDraftId, selfHosted, startParam, targetValuesKey, templateParam, templateResult]);
 
   // Following a plain Launch link while already inside the journey drops the
   // stage from the URL; that is a new start, so Choose opens with nothing picked.
@@ -2184,9 +2189,10 @@ export function LaunchJourney(
     targetsError: Boolean(destination.error),
     selfHosted,
   };
-  const renderTile = (tile: ChooseTile) => {
+  const renderTile = (tile: ChooseTile & { starter?: FirstRunAgent }) => {
     const subject = launchProfileFitSubject(tile.id, { managedLinuxSandboxEligible });
     const fit = launchFit(subject, fitEvidence);
+    const starter = tile.starter;
     const Icon = tile.icon;
     const needsServer = SERVER_ONLY_TILES.has(tile.id)
       && subject.hivraCloud !== "plan"
@@ -2198,12 +2204,19 @@ export function LaunchJourney(
         type="button"
         className={styles.tile}
         data-selected={draft.profileId === tile.id}
-        onClick={() => (catalogOn ? openAbout(tile.id) : chooseProfile(tile.id))}
+        onClick={() => (catalogOn && !starter ? openAbout(tile.id) : chooseProfile(tile.id))}
       >
         {Icon ? <Icon size={22} aria-hidden /> : <span className={styles.letterIcon} aria-hidden>O.</span>}
         <span className={styles.tileText}>
           <strong>{tile.name}</strong>
-          <small>{tileDescription(tile, managedLinuxSandboxEligible)}</small>
+          {starter ? (
+            <>
+              <small className={styles.tileHint}>{starter.job}</small>
+              <small>{starter.description}</small>
+              {starter.hosting ? <small>{starter.hosting}</small> : null}
+              {starter.id === "hermes" && fit?.tone === "fits" ? <small className={styles.tileHint}>Recommended for general work</small> : null}
+            </>
+          ) : <small>{tileDescription(tile, managedLinuxSandboxEligible)}</small>}
         </span>
         {needsServer ? null : <FitBadge fit={fit} />}
       </button>
@@ -2218,18 +2231,33 @@ export function LaunchJourney(
       </div>
     );
   };
-  const offeredAgents = offeredAgentTiles({ selfHosted, hermesProfile: legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE });
+  const offeredAgents = offeredAgentTiles({ selfHosted, hermesProfile: legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE, catalogCertifier });
   const orderedByUse = catalogOn && useOrder.length > 0;
   const agentTiles = orderedByUse ? orderCatalogByUse(offeredAgents, useOrder) : offeredAgents;
   const catalogFiltered = catalogOn && isCatalogFiltered(catalogFilter);
   const shownAgentTiles = catalogFiltered ? filterCatalog(agentTiles, catalogFilter) : agentTiles;
+  const starterTiles = !selfHosted && !catalogCertifier && !catalogFiltered && requestedKindParam === "agent"
+    && startParam === "1" && !requestedProfileParam && !templateParam
+    ? FIRST_RUN_AGENTS.flatMap(starter => {
+      const tile = shownAgentTiles.find(item => PROFILE_DETAILS[item.id].runtimeId === starter.id);
+      return tile ? [{ ...tile, starter }] : [];
+    })
+    : [];
+  const otherAgentTiles = shownAgentTiles.filter(tile => !starterTiles.some(starter => starter.id === tile.id));
   const agentSection = shownAgentTiles.length === 0 ? null : (
     <section key="agents" className={styles.chooseSection} aria-labelledby="launch-agents-heading">
       <div className={styles.chooseHeading}>
         <h2 id="launch-agents-heading">An agent</h2>
-        <p>An AI that works on its own computer.{orderedByUse ? " The ones more people use come first." : ""}</p>
+        <p>An AI that works on its own computer.{orderedByUse && !starterTiles.length ? " The ones more people use come first." : ""}</p>
       </div>
-      <div className={styles.tileGrid}>{shownAgentTiles.map(renderTile)}</div>
+      {starterTiles.length > 0 ? (
+        <>
+          <h3 className={styles.chooseSubheading}>Start with one of these agents</h3>
+          <div className={`${styles.tileGrid} ${styles.starterGrid}`}>{starterTiles.map(renderTile)}</div>
+          {otherAgentTiles.length > 0 ? <h3 className={styles.chooseSubheading}>More agents</h3> : null}
+        </>
+      ) : null}
+      {otherAgentTiles.length > 0 ? <div className={styles.tileGrid}>{otherAgentTiles.map(renderTile)}</div> : null}
       {selfHosted || catalogFiltered ? null : <AttachEntryLink className={styles.attachEntry} />}
     </section>
   );
@@ -2906,7 +2934,7 @@ export function LaunchJourney(
           <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="working" size={32} /></span>
           <span className={styles.eyebrow}>Launch in progress</span>
           <h1 id="launch-progress-heading">Confirming your launch…</h1>
-          <p>Hivra is checking the request for {draft.name.trim()}. We’ll open it as soon as the launch is confirmed.</p>
+          <p>Hivra is checking the request for {draft.name.trim()}. When the launch is confirmed, you can open it here.</p>
           <p className={styles.observed}>
             {observedLaunchText(observation, resumeMode === "resend")}
             {draft.submittedAt ? <> · Sent <SentAgo since={Date.parse(draft.submittedAt)} /> ago</> : null}

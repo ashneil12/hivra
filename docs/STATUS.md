@@ -15,7 +15,7 @@ must match it.
 | What decides it | File |
 | --- | --- |
 | Agents that can be launched | `dashboard/src/lib/hivra/agent-catalog.ts` (`available`) |
-| Computers that can be launched | `dashboard/src/lib/hivra/computer-catalog.ts` (`status`, `launchMode`) and the Launch tiles in `dashboard/src/components/launch/LaunchJourney.tsx` |
+| Computers that can be launched | `dashboard/src/lib/hivra/computer-catalog.ts` (`status`, `launchMode`), the Launch tiles in `dashboard/src/components/launch/LaunchJourney.tsx`, and `dashboard/src/lib/hivra/managed-gvisor-launch-config.ts` (managed Linux Sandbox admission) |
 | Previews that are shown but not launchable (Buzz only) | `dashboard/src/lib/hivra/preview-catalog.ts` |
 | Public wording for crawlers and the homepage | `dashboard/src/lib/llms-txt.ts` and `dashboard/src/components/landing/home/content.ts` |
 
@@ -25,11 +25,22 @@ All seven launch from Launch. Hivra Cloud requires a paid plan or, for
 supported managed computers, [token-holder admission](#token-holder-access).
 A free account alone works with a server the person connects.
 
+The generic sign-up Launch chooser groups three starting agents first: Hermes
+for research and automation, then Claude Code and Codex for coding. Hermes is
+recommended there only when it fits the account's Hivra Cloud plan. Other
+available agents and computers remain in Launch.
+
+The [public agent directory](https://hivra.cloud/agents) gives each offered
+agent a detail page. OpenBot and Nuphos appear only with their own deployment
+switches on. An agent from the universal catalog appears only when the
+catalog is enabled and the current manifest is certified; general-purpose
+apps are listed separately.
+
 | Agent | Status | Where it runs |
 | --- | --- | --- |
 | Claude Code | Available | Hivra Cloud or a Proxmox server you connected |
 | Codex | Available | Hivra Cloud or a Proxmox server you connected |
-| Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`). The paid launch path is live on Canary; it reaches hivra.cloud with the next owner-approved production promotion |
+| Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches on Canary go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`). The paid path on that computer was verified on Canary; availability on hivra.cloud requires owner-approved promotion and separate production verification |
 | OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |
 | Agent Zero | Available | Hivra Cloud or a Proxmox server you connected |
 | Aeon | Available | Hivra Cloud or a Proxmox server you connected |
@@ -59,13 +70,13 @@ through Hivra's authenticated gateway. It launches with no browser and gets its
 model at launch, because DeepSeek's own settings refuse a key from a remote
 browser: it runs DeepSeek V4.1 Flash on Hivra credits by default, or on the
 person's own Venice API key. It is labelled alpha because the upstream version it runs is pinned
-at an alpha release. It has no public agent page yet, and a connected server or
-a computer in the owner's own cloud cannot run it. Its Launch tile is not on
+at an alpha release. It has a [public agent page](https://hivra.cloud/agents/deepseek-harness).
+A connected server or a computer in the owner's own cloud cannot run it. Its Launch tile is not on
 the first-run card, which stays at three choices.
 
 ### Token-holder access
 
-**Gated; not live-verified.** An admitted token holder can launch a supported
+**Gated and capacity-limited.** An admitted token holder can launch a supported
 managed Hivra computer without a paid subscription. Where holder access is
 enabled for the account, a new qualification requires holding $299 worth of
 tokens for Pro (2 vCPU and 4 GB RAM) or $599 for Power (4 vCPU and 8 GB RAM).
@@ -82,6 +93,12 @@ Managed holder launches require a runtime that can nap and save memory,
 On eligible computers, the policy naps after four idle minutes and saves
 memory after twelve more minutes in nap. Host controls, activity checks and
 wake readiness still apply.
+
+Canary evidence is limited to a separately gated, expiring standing-account QA
+seat: managed Hermes launched, napped, saved memory, woke on signed-in Files
+access with the workspace intact, and was deleted on Git build `bea43a89`.
+That does not demonstrate normal token qualification or admission, customer
+availability on hivra.cloud, or fleet capacity.
 
 New Classic Hermes holder launches are unavailable. Existing Classic computers
 with verified holder funding keep their admission and allocation. Classic
@@ -117,13 +134,17 @@ in the Launch list unless the deployment sets `NEXT_PUBLIC_HIVRA_NUPHOS_AGENT=1`
 
 The one-command Ubuntu connect gives Linux Sandbox only. The agents above, and Ubuntu Desktop, need a Proxmox VE server connected with SSH details to run on your own server.
 
+## Desktop client
+
+Hivra for Mac 0.3.0 is available as a signed, notarized [Mac installer](https://github.com/ashneil12/hivra/releases/download/mac-v0.3.0/Hivra.dmg) for Apple silicon and Intel on macOS 14 or later. The website and dashboard advertise it where desktop browser sign-in is enabled. Browser sign-in and return are verified on Canary; production acceptance is separate. This is a client for Hivra, not a hosted macOS computer. No Windows or Linux desktop installer is publicly offered.
+
 ## Computers
 
 | Computer | Status | Condition |
 | --- | --- | --- |
 | Ubuntu Desktop | Available | Hivra Cloud or a Proxmox server you connected |
 | Linux computer | Available | Hivra Cloud on a paid plan. A headless Ubuntu computer with a terminal and files, no desktop (provisioner release 2026.11.10.4). Attaching an agent to it is not supported yet. |
-| Linux Sandbox | Available | A gVisor-ready server you connected |
+| Linux Sandbox | Available on a connected server or on Hivra Cloud where managed launch is enabled | An isolated gVisor shell for one-shot commands with a persistent workspace, not a full VM. Managed launch requires a paid plan and available storage. |
 | Omarchy | Available, with a condition | Existing claims only; new claims are paused. A retained guest cannot be assigned again until its clean reset or rebuild can be verified. |
 | Windows | Available, with a condition | On a Proxmox server you connected, from your own licensed Windows ISO. Hivra-managed Windows is not offered. |
 | macOS | Not offered | Planned only. |
@@ -135,6 +156,38 @@ See [the rollout and recovery notes](release/OMARCHY-PREPARED-REFRESH.md).
 
 Public copy says Omarchy (prepared computer) is paused for new claims.
 Windows requires your own server and your licensed image. Neither is a preview.
+
+### Managed Linux Sandbox
+
+The production rollout enables managed Linux Sandbox (Light) on a paid plan
+with `HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED` and
+`HIVRA_MANAGED_GVISOR_DISK_ADMISSION_ENABLED`. A deployment also needs a
+valid host authority, connection, target and revision. Each managed sandbox
+has an enforced storage limit, and Create or Start can be refused when storage
+is unavailable. Files saved in the workspace survive Stop and owner Start;
+running processes do not. The separate standing-account QA enrollment is
+not part of the production rollout.
+
+Automatic idle stop is a separate, default-off pilot on that same cohort, not
+KVM sleep or checkpoint resume. Exact Git Canary build `be8cf08d` verified
+three automatic-stop and explicit owner Start cycles with the workspace intact
+and controlled low-disk admission refusals. The cohort expired and the gate
+was verified off. That evidence does not show physical host RAM savings,
+production capacity or public availability. See the
+[idle-stop pilot runbook](release/MANAGED-GVISOR-IDLE-PILOT.md).
+
+### Paid KVM sleep and wake
+
+The production rollout enables paid KVM sleep with `HIVRA_SLEEP_MODE=on` and
+`NEXT_PUBLIC_HIVRA_AGENT_SLEEP=1`. Where sleep is enabled and the paid KVM computer, host and connection
+are eligible, the owner can opt in to sleep when idle. A nap pauses the VM in
+memory. Hibernate saves its memory to disk; supported owner access wakes it.
+Active work, schedules or channels without a supported wake path can keep it
+awake. This is not the Linux Sandbox idle-stop pilot. A paid Codex KVM
+verified automatic nap, hibernate and signed-in Files wake with its data intact
+on Git Canary build `be8cf08d`. That wake took about 16 seconds end to end;
+this is one measurement, not a fleet-wide or production timing claim.
+See the [sleep rollout runbook](release/AGENT-SLEEP-ROLLOUT.md).
 
 ## Other surfaces
 
@@ -149,12 +202,16 @@ Windows requires your own server and your licensed image. Neither is a preview.
 | Hivra Memory | Preview, off by default. While `NEXT_PUBLIC_HIVRA_MEMORY` is `1`, the public page `/memory` describes a free cloud memory that any agent can share over MCP or HTTPS, and `/dashboard/memory` lets a signed-in account create and revoke memory keys, copy the setup for Claude Code, Codex, other MCP apps and plain HTTPS, see how much is stored and delete everything. Memories live in the memory Worker (`services/memory-worker`), one store per account; agents reach it directly with a key. The dashboard needs `HIVRA_MEMORY_URL` and `HIVRA_MEMORY_SECRET` set on the deployment. Not built yet: an installer, plugins for Hermes and OpenClaw, importing past chats. |
 | Setup from a coding agent | Docs live with this merge: `/setup` (the prompt to paste) and `/setup.md` (instructions a coding agent follows to send its person to Launch with an agent preselected). The link-and-code handshake (`POST /api/agent-setup`, the poll and `/dashboard/agent-setup/<code>`) is a preview, off by default: it answers 404 unless the server variable `HIVRA_AGENT_SETUP_HANDSHAKE` is `1` and needs migration `20261119140000`. It grants nothing; the person still signs in and presses Launch. |
 | Catalog view of Launch | Preview, off by default. While `NEXT_PUBLIC_HIVRA_LAUNCH_CATALOG` is `1`, Launch's Choose step gains a search, an agents and computers filter and "Browse by job", and each tile opens a page (what it is, who makes it, how you talk to it, good first tasks, a picture) before Review, and Home suggests up to two agents the owner does not run yet under "Try next". It lists exactly what Launch already offers and changes nothing about what can launch. Once use is known, agents more people use are listed first. |
-| Universal catalog agents and open-source apps | Canary preview; the flag is on for Canary and off for hivra.cloud. While `NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG` is `1`, Hivra exposes declarative, OSI-approved open-source agents and self-hosted apps. The catalog now holds 83 entries: personal agents (Nanobot, ZeroClaw, PicoClaw), coding agents and CLIs (OpenCode, Goose, OpenHands, Aider, Qwen Code), an AI workspace (AnythingLLM), AI infrastructure (Qdrant, Chroma, Ollama, New API), developer tools (Gogs, draw.io, Excalidraw, Mermaid Live Editor, CyberChef, Swagger UI, Node-RED, Kanboard, Kroki, Syncthing, Jenkins, ClickHouse, Appsmith, Dufs, Gotenberg, ConvertX, Termix, Dagu, Apache Solr), productivity (Memos, Wallos, Shiori, Actual Budget, Mealie, Vaultwarden, IT-Tools, TriliumNext Notes, FreshRSS, Nextcloud, Miniflux, Docmost, Wiki.js, Linkwarden, HedgeDoc, RSSHub, ezBookkeeping, PairDrop, Artalk, Apache Answer, SilverBullet, Wakapi, Stump, The Lounge, WeKan, AirTrail, AdventureLog), dashboards (Dashy, Homepage, Flame, Homer, Sun-Panel), monitoring and operations (Uptime Kuma, Grafana, Beszel, OpenSpeedTest, Netdata, Traccar, Umami, OpenObserve, AdGuard Home, Zoraxy, LibreSpeed) and media (Audiobookshelf, Kavita, Calibre-Web, Suwayomi, Komga, Immich, Profilarr, Owncast). Ten entries use the `docker-stack` runtime (an app plus supporting services, with generated shared secrets where configured), including Umami, WeKan, AirTrail and AdventureLog. Candidates that failed the gateway check (apps that build absolute redirects or links from the loopback Host, collide with the reserved `/app/` path, or require admin credentials) were removed from the registry; several are recorded as `needs-secret` or `needs-public-url` in `dashboard/catalog-curation/candidates.jsonl` pending a credential model; the public-origin placeholder (`${HIVRA_PUBLIC_ORIGIN}`, `${HIVRA_PUBLIC_HOST}`) and generated per-app secrets now exist in the manifest schema and guest runner, and a `docker-stack` runtime renders multi-container apps as a hardened Compose project. Provisioner release 2026.11.20.5 carries the runner, the `/login` gateway fix for catalog apps and the matching admission migration `20261121100000_provider_release_admission_2026_11_20_5.sql`. Every expansion entry passed the deterministic local verifier (`dashboard/scripts/catalog-curator/verify-candidate.mjs`: GitHub SPDX licence check, image platform check, boot with guest-runner-equivalent flags, `/app/` gateway proxy emulation including redirect and login-form checks, idle-memory floor) with committed evidence under `dashboard/catalog-curation/evidence/`; this proves local boot and gateway checks, not a live Canary launch or app sign-in. The licence gate accepts all OSI-approved open-source SPDX ids including copyleft (GPL, AGPL, LGPL, MPL); source-available and unclassified licences are still rejected. Manifests are split per category under `dashboard/src/lib/hivra/catalog-manifests/manifests/` and all derived surfaces (launch contracts, resource policies, wake profiles, SQL canonical surfaces/actions, native route grammar, launch sweep, migration metadata) come from the catalog. Backed by the shared `catalog-app` guest runner (`hivra-catalog-app.py`, launch document v5, `/app/` gateway proxy, and generic in-place updates). Needs provisioner release `2026.11.20.4` or later and migrations `20261120160000_universal_catalog_apps`, `20261120161000_provider_release_admission_2026_11_20_2`, `20261120162000_provider_release_admission_2026_11_20_3`, `20261120163000_provider_release_admission_2026_11_20_4` and `20261121090000_catalog_app_slug_surfaces`. Initial live Canary proof has started; see the next row before treating any further entry as certified. |
-| Live catalog certification | Canary-only operator evidence, not production approval. On exact served Canary merge `1e5789cec7186852fa80d15ad7d9713255df2a72` with provisioner `2026.11.23.1`, the first bounded matrix proved IT-Tools, Vaultwarden and Umami end-to-end through launch, authenticated app open and clean teardown; ZeroClaw also passed end-to-end in Hivra chat with private-models-only enabled and clean teardown; Nanobot and OpenHands failed their customer-visible proof and are remediation work, not certified entries. The rest of the universal catalog remains uncertified until the serial continuous certifier records a pass for its current manifest and provisioner. The certifier and cheap remediation worker are automation in this repository; they do not change the catalog flag and never promote to production. |
+| Universal catalog agents and open-source apps | Available on deployments that enable the certified catalog. The production rollout enables it; deployments without the flag do not offer the apps. The registry holds declarative, OSI-approved open-source agents and self-hosted apps. For the certified catalog rollout, `NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG=1` enables only entries with a checked-in passing Canary certification for the exact manifest hash on a provisioner seal the Canary launch policy still admits. A changed manifest is hidden and rejected for new launches until recertified; existing computers remain manageable. The catalog now holds 84 entries: personal agents (Nanobot, ZeroClaw, PicoClaw), coding agents and CLIs (OpenCode, Goose, OpenHands, Aider, Qwen Code), an AI workspace (AnythingLLM), AI infrastructure (Qdrant, Chroma, Ollama, New API), developer tools (Gogs, draw.io, Excalidraw, Mermaid Live Editor, CyberChef, Swagger UI, Node-RED, Kanboard, Kroki, Syncthing, Jenkins, ClickHouse, Appsmith, Dufs, Gotenberg, ConvertX, Termix, Dagu, Apache Solr), productivity (Memos, Wallos, Shiori, Actual Budget, Mealie, Vaultwarden, IT-Tools, TriliumNext Notes, FreshRSS, Nextcloud, Miniflux, Docmost, Wiki.js, Linkwarden, HedgeDoc, RSSHub, ezBookkeeping, PairDrop, Artalk, Apache Answer, SilverBullet, Wakapi, Stump, The Lounge, WeKan, AirTrail, AdventureLog), dashboards (Dashy, Homepage, Flame, Homer, Sun-Panel), monitoring and operations (Uptime Kuma, Grafana, Beszel, OpenSpeedTest, Netdata, Traccar, Umami, OpenObserve, AdGuard Home, Zoraxy, LibreSpeed) and media (Audiobookshelf, Kavita, Calibre-Web, Suwayomi, Komga, Immich, Profilarr, Owncast). Ten entries use the `docker-stack` runtime (an app plus supporting services, with generated shared secrets where configured), including Umami, WeKan, AirTrail and AdventureLog. Candidates that failed the gateway check (apps that build absolute redirects or links from the loopback Host, collide with the reserved `/app/` path, or require admin credentials) were removed from the registry; several are recorded as `needs-secret` or `needs-public-url` in `dashboard/catalog-curation/candidates.jsonl` pending a credential model; the public-origin placeholder (`${HIVRA_PUBLIC_ORIGIN}`, `${HIVRA_PUBLIC_HOST}`) and generated per-app secrets now exist in the manifest schema and guest runner, and a `docker-stack` runtime renders multi-container apps as a hardened Compose project. Provisioner release 2026.11.20.5 carries the runner, the `/login` gateway fix for catalog apps and the matching admission migration `20261121100000_provider_release_admission_2026_11_20_5.sql`. Every expansion entry passed the deterministic local verifier (`dashboard/scripts/catalog-curator/verify-candidate.mjs`: GitHub SPDX licence check, image platform check, boot with guest-runner-equivalent flags, `/app/` gateway proxy emulation including redirect and login-form checks, idle-memory floor) with committed evidence under `dashboard/catalog-curation/evidence/`; this proves local boot and gateway checks, not a live Canary launch or app sign-in. The licence gate accepts all OSI-approved open-source SPDX ids including copyleft (GPL, AGPL, LGPL, MPL); source-available and unclassified licences are still rejected. Manifests are split per category under `dashboard/src/lib/hivra/catalog-manifests/manifests/` and all derived surfaces (launch contracts, resource policies, wake profiles, SQL canonical surfaces/actions, native route grammar, launch sweep, migration metadata) come from the catalog. Backed by the shared `catalog-app` guest runner (`hivra-catalog-app.py`, launch document v5, `/app/` gateway proxy, and generic in-place updates). Needs provisioner release `2026.11.20.4` or later and migrations `20261120160000_universal_catalog_apps`, `20261120161000_provider_release_admission_2026_11_20_2`, `20261120162000_provider_release_admission_2026_11_20_3`, `20261120163000_provider_release_admission_2026_11_20_4` and `20261121090000_catalog_app_slug_surfaces`. See the next row for the verified launch set. Rustpad is a standing-certifier-only managed Canary pilot on provisioner `2026.11.26.1`, pinned to its reviewed OCI digest. Its editor loads a versioned Monaco runtime from jsDelivr, and its pads are temporary. Rustpad is not live-verified or in the public allowlist. |
+| Live catalog certification | The certified launch set contains 13 entries. The allowlist records clean end-to-end passes for AnythingLLM, Appsmith, ClickHouse, Dufs, Gotenberg, IT-Tools, Jenkins, Kroki, Qdrant, Syncthing, Umami, Vaultwarden and ZeroClaw on their current manifests. Each pass records its original admitted seal: `2026.11.25.2` or `2026.11.26.1`. Digest-pinned manifests require proof on the exact pin-capable seal. These entries are offered when the catalog is enabled and their certifications are current. The dedicated standing account can certify other apps on canonical Git Canary only. The [runner guide](release/CATALOG-CERTIFICATION-RUNNER.md) explains how to refresh the allowlist after a new pass or regression. |
 | Maker claims on catalog pages | Preview, off by default, with a switch of its own: `NEXT_PUBLIC_HIVRA_MAKER_CLAIMS` is `1` and the catalog view of Launch is on. A maker proves they run an agent's project by adding a file with a line Hivra gives them to the project's repository. A proven claim marks the page as claimed and shows the maker how the agent is used on Hivra (people, launches, hours, the share still running after two weeks) and a launch button for their README. Maker earnings are shown as not turned on: nothing is paid. Editing a page and proof by DNS record are not built. |
 | Direct sign-in to a computer | Usable once a computer runs provisioner release 2026.11.21.1. Opening the computer's address in a browser leads to a sign-in page rather than the bare "box is private" page; the owner can set or clear their own computer password from the agent page (Direct sign-in), or keep using the dashboard sign-in and Connect app links. The computer stores only the password digest, and API clients still get a plain 401. |
 | Hermes Desktop remote connection | Requires connection service release 2026.11.22.1 and a compatible Hermes version. On the Hermes agent page, **Connect app** provides the Remote URL and session token for the installed Hermes Desktop app. On the same release, the bare browser address opens the native Hermes or Agent Zero sign-in. |
 | Canary only, not yet on hivra.cloud | Listed in the "Where things stand" paragraph of [the roadmap](../ROADMAP.md). Nothing reaches hivra.cloud until the owner approves a production promotion. |
+
+Chroma is a REST API, not a web dashboard. The catalog's Open destination is
+the upstream interactive REST API reference, through the existing authenticated
+gateway; live certification of that destination is pending.
 
 ## Owner decisions
 
