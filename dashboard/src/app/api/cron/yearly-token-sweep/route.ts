@@ -33,12 +33,9 @@ import {
   flagYearlyPaymentsInManagedVeniceReviews,
   reconcilePendingYearlyTokenQuotes,
 } from "@/lib/billing/yearly-token-settlement";
+import { createYearlyFinalizedTransferReader } from "@/lib/billing/yearly-finalized-transfer-reader";
 import { sweepPendingYearlyTokenSubscriptions } from "@/lib/billing/yearly-sweep";
 
-// Each open quote costs a handful of Base RPC calls (block search, one
-// eth_getLogs per 2,000 blocks); each RPC call times out after 10 s and is
-// retried. Stop starting new quotes well before the platform limit so the
-// sweep pass always runs; leftovers are picked up next tick.
 export const maxDuration = 300;
 const RECONCILE_BUDGET_MS = 120_000;
 
@@ -68,6 +65,7 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url);
   const now = new Date();
+  const deadlineMs = now.getTime() + RECONCILE_BUDGET_MS;
 
   // ─── Pass 1: bind payments to quotes ────────────────────────────────
   let reconciliation;
@@ -76,7 +74,8 @@ export async function GET(req: NextRequest) {
       db: supabaseAdmin,
       limit: parseLimit(url, 25, 100),
       now,
-      deadlineMs: now.getTime() + RECONCILE_BUDGET_MS,
+      deadlineMs,
+      finalizedReader: createYearlyFinalizedTransferReader({ deadlineMs }),
     });
   } catch (error) {
     log.error("yearly-token-sweep failed to load reconcilable quotes", error, {
@@ -155,7 +154,12 @@ export async function GET(req: NextRequest) {
             `treasury_not_configured=${sweep.treasuryNotConfigured ?? 0} ` +
             `venice_cross_check=${"error" in veniceReviewConflicts ? "error" : "ok"}`,
         }
-      : undefined,
+      : reconciliation.deferred > 0 || (reconciliation.checkpointedBlocks ?? 0) > 0
+        ? {
+            ok: true,
+            detail: `recon_deferred=${reconciliation.deferred} rpc_deferred=${reconciliation.rpcDeferred ?? 0} checkpointed_blocks=${reconciliation.checkpointedBlocks ?? 0}`,
+          }
+        : undefined,
   );
 
   return apiSuccess({
