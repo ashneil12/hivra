@@ -15,7 +15,6 @@ import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connection
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { ensureHivraAgentAwake } from "@/lib/hivra/agent-wake";
-import { parseSleepMode } from "@/lib/hivra/agent-sleep-policy";
 import {
   alwaysOnLimitMessage,
   countAlwaysOnAgents,
@@ -116,12 +115,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return apiError("Could not save this setting.", 503);
     }
     if (!data) return apiError("Agent not found", 404);
-    // In `on` mode the policy column does not decide who sleeps (every agent that is not kept
-    // awake does), so turning "Sleep when idle" off there would only wake an agent the next
-    // sweep puts back to sleep. Keep awake always counts.
     const effective = { always_on: effectiveAlwaysOn(data), sleep_policy: effectiveSleepPolicy(data) };
-    const policyOptsOut = effective.sleep_policy === "off" && parseSleepMode(process.env.HIVRA_SLEEP_MODE) !== "on";
-    if (effective.always_on === true || policyOptsOut) {
+    if (effective.always_on === true || effective.sleep_policy === "off") {
       // A no-op for an awake agent (one read). The wake itself carries on after the answer.
       try {
         await ensureHivraAgentAwake(String(data.id), {

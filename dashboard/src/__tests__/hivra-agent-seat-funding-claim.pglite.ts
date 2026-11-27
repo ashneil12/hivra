@@ -5,7 +5,7 @@
 import { PGlite } from "@electric-sql/pglite";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- the migration-chain helper is CommonJS.
-const { openMigratedDatabase } = require("../../scripts/lib/pglite-all-migrations.cjs");
+const { openMigratedDatabase, readMigration } = require("../../scripts/lib/pglite-all-migrations.cjs");
 
 let pg: PGlite;
 jest.setTimeout(120_000);
@@ -17,6 +17,7 @@ const OP = "99999999-9999-4999-8999-999999999999";
 
 beforeAll(async () => {
   pg = await openMigratedDatabase({ through: "20261124010000_hivra_agent_seat_funding.sql" });
+  await pg.exec(readMigration("20261127172200_hivra_idle_sleep_owner_policy.sql"));
 });
 
 afterAll(async () => {
@@ -83,5 +84,43 @@ describe("claim_hivra_agent_sleep seat funding", () => {
         [C],
       ),
     ).rejects.toThrow(/hivra_agents_seat_funding_check/);
+  });
+});
+
+
+async function claimIdle(id: string, tier: "nap" | "hibernate" = "nap") {
+  const { rows } = await pg.query<{ claim: number | null }>(
+    "select public.claim_hivra_agent_idle_sleep($1, $2, $3, 0) as claim",
+    [id, OP, tier],
+  );
+  return rows[0].claim;
+}
+
+describe("claim_hivra_agent_idle_sleep consent", () => {
+  it.each(["paid", null, "holder"] as const)("refuses a %s seat with policy off without taking a lease", async (funding) => {
+    await insertAgent(A, funding, false);
+    expect(await claimIdle(A)).toBeNull();
+    const { rows } = await pg.query("select sleep_state, sleep_generation, operation_id from public.hivra_agents where id = $1", [A]);
+    expect(rows[0]).toMatchObject({ sleep_state: "awake", sleep_generation: 0, operation_id: null });
+  });
+
+  it("rechecks the persisted policy and tier before the lease, keeping the manual path separate", async () => {
+    await insertAgent(A, "paid", false);
+    await pg.query("update public.hivra_agents set sleep_policy = 't1' where id = $1", [A]);
+    expect(await claimIdle(A, "hibernate")).toBeNull();
+    await pg.query("update public.hivra_agents set sleep_policy = 'off' where id = $1", [A]);
+    expect(await claimIdle(A)).toBeNull();
+    expect(await claim(A)).toBe(1);
+    await insertAgent(B, "holder", true);
+    await pg.query("update public.hivra_agents set sleep_policy = 'full' where id = $1", [B]);
+    expect(await claimIdle(B)).toBeNull();
+    await pg.query("update public.hivra_agents set always_on = false where id = $1", [B]);
+    expect(await claimIdle(B)).toBe(1);
+  });
+
+  it("exposes the new claim only to the service role", async () => {
+    const { rows } = await pg.query(`select role, has_function_privilege(role, 'public.claim_hivra_agent_idle_sleep(uuid,uuid,text,bigint)', 'execute') as allowed
+      from (values ('anon'), ('authenticated'), ('service_role')) as roles(role)`);
+    expect(rows).toEqual([{ role: "anon", allowed: false }, { role: "authenticated", allowed: false }, { role: "service_role", allowed: true }]);
   });
 });
