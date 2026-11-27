@@ -18,7 +18,7 @@ const fenceSchema = scopeSchema.extend({
 export type PortableKvmSourceScope = z.infer<typeof scopeSchema>;
 export type PortableKvmSourceFence = z.infer<typeof fenceSchema>;
 
-export function buildPortableKvmSourceFenceScript(input: PortableKvmSourceScope) {
+export function buildPortableKvmSourceFenceScript(input: PortableKvmSourceScope, mode: "acquire" | "verify" = "acquire") {
   const scope = scopeSchema.parse(input);
   const evidence = JSON.stringify({ ...scope, state: "fenced" }).slice(0, -1);
   return `set -euo pipefail
@@ -29,8 +29,9 @@ HOST=${shellQuote(scope.hostId)}
 [ "$(hostname -s)" = "$HOST" ]
 ROOT=/var/lib/hivra-sleep
 DIR="$ROOT/portable-kvm-fences"
-[ -d "$ROOT" ] && [ ! -L "$ROOT" ] && [ "$(stat -c '%u:%a' "$ROOT")" = 0:700 ] || exit 1
-mkdir -m 0700 "$DIR" 2>/dev/null || :
+[ -d "$ROOT" ] && [ ! -L "$ROOT" ] || exit 1
+case "$(stat -c '%u:%a' "$ROOT")" in 0:700|0:755) ;; *) exit 1 ;; esac
+${mode === "acquire" ? 'mkdir -m 0700 "$DIR" 2>/dev/null || :' : ':'}
 [ -d "$DIR" ] && [ ! -L "$DIR" ] && [ "$(stat -c '%u:%a' "$DIR")" = 0:700 ] || exit 1
 MARK="$DIR/$VMID"
 RECEIPT=${shellQuote(JSON.stringify(scope))}
@@ -43,7 +44,8 @@ check_stopped() {
   [ -r "/etc/pve/qemu-server/$VMID.conf" ]
   if grep -Eq '^\\[' "/etc/pve/qemu-server/$VMID.conf" ||
     grep -Eq '^vmstate:|^template:[[:space:]]+1$|^onboot:[[:space:]]+1$' <<<"$CONFIG"; then return 1; fi
-  sed -n 's/^tags:[[:space:]]*//p' <<<"$CONFIG" | tr ';' '\\n' | grep -Fxq -- "$TAG"
+  TAGS="$(sed -n 's/^tags:[[:space:]]*//p' <<<"$CONFIG" | tr ';' '\\n' | grep '^hivra-bind-' || true)"
+  [ "$TAGS" = "$TAG" ] || return 1
   [ ! -L "$ROOT/cold-$VMID" ] && [ "$(cat "$ROOT/cold-$VMID")" = "$TAG" ] || return 1
   [ ! -e "$ROOT/stored-$VMID" ] && [ ! -L "$ROOT/stored-$VMID" ] || return 1
 }
@@ -52,8 +54,9 @@ LOCK="$(sed -n 's/^lock:[[:space:]]*//p' <<<"$CONFIG")"
 if [ -e "$MARK" ] || [ -L "$MARK" ]; then
   [ -f "$MARK" ] && [ ! -L "$MARK" ] && [ "$(stat -c '%u:%a:%h' "$MARK")" = 0:600:1 ] || exit 1
   [ "$(cat "$MARK")" = "$RECEIPT" ]
-  [ -z "$LOCK" ] || [ "$LOCK" = backup ]
+  ${mode === "acquire" ? '[ -z "$LOCK" ] || [ "$LOCK" = backup ]' : '[ "$LOCK" = backup ]'}
 else
+  ${mode === "verify" ? "exit 1" : ""}
   [ -z "$LOCK" ]
   TMP="$(mktemp "$DIR/.new-$VMID.XXXXXXXX")"
   trap 'rm -f -- "$TMP"' EXIT
@@ -63,7 +66,7 @@ else
   sync -f "$DIR"
   trap - EXIT
 fi
-if [ -z "$LOCK" ]; then timeout 12 qm set "$VMID" --lock backup </dev/null >/dev/null; fi
+${mode === "acquire" ? 'if [ -z "$LOCK" ]; then timeout 12 qm set "$VMID" --lock backup </dev/null >/dev/null; fi' : ':'}
 check_stopped
 [ "$(sed -n 's/^lock:[[:space:]]*//p' <<<"$CONFIG")" = backup ]
 SHA="$(printf '%s\\n' "$CONFIG" | sha256sum | cut -d' ' -f1)"

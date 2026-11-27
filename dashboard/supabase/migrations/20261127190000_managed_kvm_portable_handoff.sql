@@ -4,10 +4,9 @@ create schema hivra_kvm_portable_private;
 revoke all on schema hivra_kvm_portable_private from public, anon, authenticated, service_role;
 
 create table hivra_kvm_portable_private.handoff (
-  singleton boolean primary key default true check (singleton),
-  agent_id uuid not null references public.hivra_agents(id) on delete restrict,
+  agent_id uuid not null,
   owner_id text not null,
-  operation_id uuid not null,
+  operation_id uuid primary key,
   generation bigint not null,
   source jsonb not null,
   destination jsonb not null,
@@ -16,16 +15,28 @@ create table hivra_kvm_portable_private.handoff (
   expires_at timestamptz not null,
   phase text not null default 'checkpointing' check (phase in (
     'checkpointing','storage_verified','restore_claimed','destination_verified',
-    'committing','placement_committed','finishing','finished'
+    'committing','placement_committed','connector_verified','finishing','finished','aborting','aborted'
   )),
   checkpoint_sha256 text,
   storage_evidence jsonb,
   destination_evidence jsonb,
   commit_evidence jsonb,
+  connector_evidence jsonb,
   wake_evidence jsonb,
+  retirement_evidence jsonb,
+  abort_evidence jsonb,
+  retired_at timestamptz,
+  active_agent_id uuid generated always as (case when retired_at is null then agent_id end) stored
+    references public.hivra_agents(id) on delete restrict,
   created_at timestamptz not null default clock_timestamp(),
-  updated_at timestamptz not null default clock_timestamp()
+  updated_at timestamptz not null default clock_timestamp(),
+  unique (agent_id,generation),
+  check ((retired_at is null)=(retirement_evidence is null and abort_evidence is null)),
+  check (retirement_evidence is null or phase='finished'),
+  check ((phase='aborted')=(abort_evidence is not null))
 );
+create unique index hivra_kvm_portable_one_unretired on hivra_kvm_portable_private.handoff ((true))
+  where retired_at is null;
 alter table hivra_kvm_portable_private.handoff enable row level security;
 revoke all on table hivra_kvm_portable_private.handoff from public, anon, authenticated, service_role;
 
@@ -59,7 +70,8 @@ declare
   lease_fields text[] := array['operation_id','operation_kind','operation_started_at','operation_payload',
     'sleep_state','sleep_generation','sleep_tier_changed_at','next_wake_at'];
 begin
-  select * into h from hivra_kvm_portable_private.handoff where agent_id=old.id and phase<>'finished';
+  select * into h from hivra_kvm_portable_private.handoff
+    where retired_at is null and agent_id=old.id and phase<>'finished';
   if not found then
     if tg_op='DELETE' then return old; end if;
     return new;
@@ -74,6 +86,16 @@ begin
       and new.operation_id is null and new.operation_kind is null
       and new.sleep_state='awake' and new.sleep_generation=h.generation+1
       and to_jsonb(old)-lease_fields=to_jsonb(new)-lease_fields
+    then return new; end if;
+    if h.phase='aborting'
+      and hivra_kvm_portable_private.agent_target(old)=h.source
+      and old.operation_id=h.operation_id and old.operation_kind='wake'
+      and old.sleep_state='waking' and old.sleep_generation=h.generation
+      and new.operation_id is null and new.operation_kind is null
+      and new.sleep_state='hibernated' and new.sleep_generation=h.generation+1
+      and new.sleep_memory_dropped_at=new.sleep_tier_changed_at and new.next_wake_at is null
+      and to_jsonb(old)-(lease_fields||array['sleep_memory_dropped_at'])
+        =to_jsonb(new)-(lease_fields||array['sleep_memory_dropped_at'])
     then return new; end if;
   end if;
   raise exception 'legacy mutation refused during a portable KVM handoff' using errcode='55000';
@@ -109,7 +131,7 @@ begin
   if tg_table_name='hivra_agents' or target_vmid between 9300 and 9399 then
     perform pg_advisory_xact_lock(hashtextextended('hivra-kvm-portable-target:'||host_id,0));
   end if;
-  select * into h from hivra_kvm_portable_private.handoff;
+  select * into h from hivra_kvm_portable_private.handoff where retired_at is null;
   if not found then return new; end if;
   for target in select h.source union all select h.destination where h.phase<>'finished'
   loop
@@ -133,7 +155,8 @@ create function hivra_kvm_portable_private.guard_auxiliary()
 returns trigger language plpgsql security definer set search_path=pg_catalog,pg_temp as $$
 begin
   perform 1 from public.hivra_agents where id=new.agent_id for key share;
-  if exists (select 1 from hivra_kvm_portable_private.handoff where agent_id=new.agent_id and phase<>'finished') then
+  if exists (select 1 from hivra_kvm_portable_private.handoff
+    where retired_at is null and agent_id=new.agent_id and phase<>'finished') then
     raise exception 'access mutation refused during a portable KVM handoff' using errcode='55000';
   end if;
   return new;
@@ -176,10 +199,10 @@ as $$
   ), portable as (
     select h.destination->>'hostId' host_id, h.cpu, h.ram_mb, 40 disk, 40 pending_disk
     from hivra_kvm_portable_private.handoff h
-    where h.phase in ('checkpointing','storage_verified','restore_claimed','destination_verified')
+    where h.retired_at is null and h.phase in ('checkpointing','storage_verified','restore_claimed','destination_verified')
     union all
     select h.source->>'hostId', 0, 0, 40, 0 from hivra_kvm_portable_private.handoff h
-    where h.phase in ('placement_committed','finishing','finished')
+    where h.retired_at is null and h.phase in ('placement_committed','connector_verified','finishing','finished')
   )
   select c.host_id, c.cpu-coalesce(o.cpu,0)-coalesce(r.cpu,0)-coalesce(k.cpu,0),
          c.ram_mb-coalesce(o.ram,0)-coalesce(r.ram,0)-coalesce(k.ram_mb,0),
@@ -198,8 +221,8 @@ $$;
 
 create function public.read_hivra_kvm_portable_handoff(p_owner_id text,p_agent_id uuid)
 returns jsonb language sql stable security definer set search_path=pg_catalog,pg_temp as $$
-  select to_jsonb(h)-array['singleton','cpu','ram_mb'] from hivra_kvm_portable_private.handoff h
-  where h.owner_id=p_owner_id and h.agent_id=p_agent_id
+  select to_jsonb(h)-array['active_agent_id','cpu','ram_mb'] from hivra_kvm_portable_private.handoff h
+  where h.owner_id=p_owner_id and h.agent_id=p_agent_id and h.retired_at is null
 $$;
 
 create function public.begin_hivra_kvm_portable_handoff(
@@ -230,7 +253,9 @@ begin
   perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
   perform public.lock_hivra_owner_agent_slots(p_owner_id);
   if p_expires_at<=clock_timestamp() or p_expires_at>clock_timestamp()+interval '24 hours'
-    or exists (select 1 from hivra_kvm_portable_private.handoff)
+    or exists (select 1 from hivra_kvm_portable_private.handoff
+      where retired_at is null or operation_id=p_operation_id
+        or (agent_id=p_agent_id and generation>=p_expected_generation+1))
   then return null; end if;
 
   select * into a from public.hivra_agents where id=p_agent_id and user_id=p_owner_id
@@ -238,7 +263,7 @@ begin
     and deployment_target_id is null and computer_profile is distinct from 'windows'
     and type<>'windows' and seat_funding='paid' and canary_qa_holder_expires_at is null
     and status='running' and desired_state='running' and operation_id is null
-    and always_on is false and sleep_state='hibernated' and sleep_generation=p_expected_generation
+    and sleep_policy='full' and always_on is false and sleep_state='hibernated' and sleep_generation=p_expected_generation
     and sleep_memory_dropped_at>=sleep_tier_changed_at
     and sleep_stored_at is null and sleep_store_job_id is null
     and sleep_unstore_requested_at is null and sleep_unstore_job_id is null
@@ -294,9 +319,16 @@ declare
   h hivra_kvm_portable_private.handoff%rowtype;
   checkpoint text;
   source_proof jsonb;
+  configuration jsonb := p_evidence->'configuration';
+  disk jsonb := p_evidence->'disk';
+  disk_bytes numeric;
+  boot_id text := p_evidence->>'bootId';
+  reservation_sha256 text := p_evidence->>'reservationSha256';
+  connector_id text := p_evidence->>'connectorId';
 begin
   if not exists (select 1 from hivra_kvm_portable_private.handoff
-    where (owner_id,agent_id,operation_id,generation)=(p_owner_id,p_agent_id,p_operation_id,p_generation))
+    where retired_at is null
+      and (owner_id,agent_id,operation_id,generation)=(p_owner_id,p_agent_id,p_operation_id,p_generation))
   then return null; end if;
 
   if p_action='commit_placement' then perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0)); end if;
@@ -304,12 +336,13 @@ begin
   select * into a from public.hivra_agents where id=p_agent_id and user_id=p_owner_id for update;
   if not found then return null; end if;
   select * into h from hivra_kvm_portable_private.handoff
-    where (owner_id,agent_id,operation_id,generation)=(p_owner_id,p_agent_id,p_operation_id,p_generation) for update;
+    where retired_at is null
+      and (owner_id,agent_id,operation_id,generation)=(p_owner_id,p_agent_id,p_operation_id,p_generation) for update;
   if not found or h.expires_at<=clock_timestamp() or h.phase='finished'
     or (a.operation_kind,a.operation_id,a.sleep_state,a.sleep_generation,a.status,a.desired_state)
       is distinct from ('wake',p_operation_id,'waking',p_generation,'running','running')
     or hivra_kvm_portable_private.agent_target(a) is distinct from
-      (case when h.phase='placement_committed' then h.destination else h.source end)
+      (case when h.phase in ('placement_committed','connector_verified') then h.destination else h.source end)
     or exists (select 1 from canary_qa_writer_private.scope where owner_id=p_owner_id)
   then return null; end if;
 
@@ -317,20 +350,36 @@ begin
 
   if p_action='verify_storage' and h.phase='checkpointing' then
     checkpoint := p_evidence->>'checkpointSha256';
-    if (checkpoint ~ '^[0-9a-f]{64}$') is not true or p_evidence is distinct from
-      (source_proof||jsonb_build_object('checkpointSha256',checkpoint,'storageReadbackVerified',true))
+    if (checkpoint ~ '^[0-9a-f]{64}$') is not true
+      or (configuration->>'snapshotId' ~ '^[0-9a-f]{64}$') is not true
+      or (configuration->>'sha256' ~ '^[0-9a-f]{64}$') is not true
+      or (disk->>'snapshotId' ~ '^[0-9a-f]{64}$') is not true
+      or (disk->>'sha256' ~ '^[0-9a-f]{64}$') is not true
+      or configuration->>'snapshotId'=disk->>'snapshotId'
+      or jsonb_typeof(disk->'bytes') is distinct from 'number'
+    then return null; end if;
+    disk_bytes := (disk->>'bytes')::numeric;
+    if disk_bytes not between 512 and 42949672960 or mod(disk_bytes,512)<>0
+      or p_evidence is distinct from (source_proof||jsonb_build_object(
+        'checkpointSha256',checkpoint,'storageReadbackVerified',true,
+        'configuration',jsonb_build_object('snapshotId',configuration->>'snapshotId','sha256',configuration->>'sha256'),
+        'disk',jsonb_build_object('key','scsi0','snapshotId',disk->>'snapshotId','sha256',disk->>'sha256','bytes',disk_bytes)))
     then return null; end if;
     update hivra_kvm_portable_private.handoff set phase='storage_verified',checkpoint_sha256=checkpoint,
-      storage_evidence=p_evidence,updated_at=clock_timestamp();
+      storage_evidence=p_evidence,updated_at=clock_timestamp() where operation_id=h.operation_id;
 
   elsif p_action='claim_restore' and h.phase='storage_verified' and p_evidence is null then
-    update hivra_kvm_portable_private.handoff set phase='restore_claimed',updated_at=clock_timestamp();
+    update hivra_kvm_portable_private.handoff set phase='restore_claimed',updated_at=clock_timestamp()
+      where operation_id=h.operation_id;
 
   elsif p_action='verify_destination' and h.phase='restore_claimed' then
-    if p_evidence is distinct from jsonb_build_object('destination',h.destination,'checkpointSha256',h.checkpoint_sha256,
-      'coldBootVerified',true,'destinationConnectorBlocked',true) then return null; end if;
+    if (boot_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') is not true
+      or (reservation_sha256 ~ '^[0-9a-f]{64}$') is not true
+      or p_evidence is distinct from jsonb_build_object('destination',h.destination,'checkpointSha256',h.checkpoint_sha256,
+        'coldBootVerified',true,'destinationConnectorBlocked',true,'bootId',boot_id,'reservationSha256',reservation_sha256)
+    then return null; end if;
     update hivra_kvm_portable_private.handoff set phase='destination_verified',
-      destination_evidence=p_evidence,updated_at=clock_timestamp();
+      destination_evidence=p_evidence,updated_at=clock_timestamp() where operation_id=h.operation_id;
 
   elsif p_action='commit_placement' and h.phase='destination_verified' then
     perform 1 from public.proxmox_hosts where id in (h.source->>'hostId',h.destination->>'hostId')
@@ -341,7 +390,7 @@ begin
           and status='active' and decommissioned_at is null)<>2
     then return null; end if;
 
-    update hivra_kvm_portable_private.handoff set phase='committing';
+    update hivra_kvm_portable_private.handoff set phase='committing' where operation_id=h.operation_id;
     perform public.assert_proxmox_placement_capacity(h.destination->>'hostId',p_owner_id,'paid',h.cpu,h.ram_mb,40,a.id);
     update public.hivra_agents set proxmox_host=h.destination->>'hostId',vmid=(h.destination->>'vmid')::int,
       ip=h.destination->>'ip'
@@ -349,16 +398,27 @@ begin
       and hivra_kvm_portable_private.agent_target(hivra_agents)=h.source;
     if not found then raise exception 'portable KVM source changed during placement commit' using errcode='55000'; end if;
     update hivra_kvm_portable_private.handoff set phase='placement_committed',
-      commit_evidence=p_evidence,updated_at=clock_timestamp();
+      commit_evidence=p_evidence,updated_at=clock_timestamp() where operation_id=h.operation_id;
 
-  elsif p_action='finish_wake' and h.phase='placement_committed' then
-    if p_evidence is distinct from jsonb_build_object('destination',h.destination,'sourceFenced',true,
-      'sourceConnectorOff',true,'destinationConnectorReady',true) then return null; end if;
-    update hivra_kvm_portable_private.handoff set phase='finishing';
+  elsif p_action='confirm_connector' and h.phase='placement_committed' then
+    if boot_id is distinct from h.destination_evidence->>'bootId' or boot_id is null
+      or (connector_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') is not true
+      or p_evidence is distinct from jsonb_build_object('destination',h.destination,'sourceFenced',true,
+        'sourceConnectorOff',true,'destinationConnectorReady',true,'bootId',boot_id,'connectorId',connector_id)
+    then return null; end if;
+    update hivra_kvm_portable_private.handoff set phase='connector_verified',connector_evidence=p_evidence,
+      updated_at=clock_timestamp() where operation_id=h.operation_id;
+
+  elsif p_action='finish_wake' and h.phase='connector_verified' then
+    if h.connector_evidence is null or p_evidence is distinct from
+      (h.connector_evidence||jsonb_build_object('destinationLockReleased',true))
+    then return null; end if;
+    update hivra_kvm_portable_private.handoff set phase='finishing' where operation_id=h.operation_id;
     if not public.finish_hivra_agent_wake(a.id,p_operation_id,'awake') then
       raise exception 'portable KVM wake lease could not be released' using errcode='55000';
     end if;
-    update hivra_kvm_portable_private.handoff set phase='finished',wake_evidence=p_evidence,updated_at=clock_timestamp();
+    update hivra_kvm_portable_private.handoff set phase='finished',wake_evidence=p_evidence,updated_at=clock_timestamp()
+      where operation_id=h.operation_id;
 
   else
     return null;
@@ -366,12 +426,101 @@ begin
   return public.read_hivra_kvm_portable_handoff(p_owner_id,p_agent_id);
 end $$;
 
+create function public.finish_hivra_kvm_portable_retirement(
+  p_owner_id text,p_agent_id uuid,p_operation_id uuid,p_generation bigint,p_evidence jsonb
+)
+returns jsonb language plpgsql security definer set search_path=pg_catalog,pg_temp as $$
+declare
+  a public.hivra_agents%rowtype;
+  h hivra_kvm_portable_private.handoff%rowtype;
+begin
+  if not exists (select 1 from hivra_kvm_portable_private.handoff where retired_at is null and phase='finished'
+    and (owner_id,agent_id,operation_id,generation)=(p_owner_id,p_agent_id,p_operation_id,p_generation))
+  then return null; end if;
+
+  perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
+  perform public.lock_hivra_owner_agent_slots(p_owner_id);
+  select * into a from public.hivra_agents where id=p_agent_id and user_id=p_owner_id for update;
+  if not found then return null; end if;
+  select * into h from hivra_kvm_portable_private.handoff where retired_at is null and phase='finished'
+    and (owner_id,agent_id,operation_id,generation)=(p_owner_id,p_agent_id,p_operation_id,p_generation) for update;
+  if not found
+    or p_evidence is distinct from jsonb_build_object('source',h.source,'destination',h.destination,
+      'sourceVmAbsent',true,'sourceConnectorAbsent',true,'destinationHealthy',true)
+    or hivra_kvm_portable_private.agent_target(a) is distinct from h.destination
+    or (a.operation_kind,a.operation_id,a.sleep_state,a.sleep_generation,a.status,a.desired_state)
+      is distinct from (null::text,null::uuid,'awake',h.generation+1,'running','running')
+    or a.deployment_mode is distinct from 'hivra-managed' or a.computer_substrate is distinct from 'proxmox-kvm'
+    or a.deployment_target_id is not null or a.infrastructure_binding_token_enforced is not true
+    or nullif(a.cf_hostname,'') is null or nullif(a.cf_tunnel_id,'') is null or nullif(a.chat_url,'') is null
+    or exists (select 1 from canary_qa_writer_private.scope where owner_id=p_owner_id)
+  then return null; end if;
+  perform 1 from public.proxmox_hosts where id=h.destination->>'hostId'
+    and status='active' and decommissioned_at is null for share;
+  if not found then return null; end if;
+
+  update hivra_kvm_portable_private.handoff set retired_at=clock_timestamp(),
+    retirement_evidence=p_evidence,updated_at=clock_timestamp() where operation_id=h.operation_id
+    returning * into h;
+  return to_jsonb(h)-array['active_agent_id','cpu','ram_mb'];
+end $$;
+
+create function public.abort_hivra_kvm_portable_handoff(
+  p_owner_id text,p_agent_id uuid,p_operation_id uuid,p_generation bigint,p_evidence jsonb
+)
+returns jsonb language plpgsql security definer set search_path=pg_catalog,pg_temp as $$
+declare
+  a public.hivra_agents%rowtype;
+  h hivra_kvm_portable_private.handoff%rowtype;
+  pre_cas constant text[] := array['checkpointing','storage_verified','restore_claimed','destination_verified'];
+  cold_at timestamptz;
+begin
+  if not exists (select 1 from hivra_kvm_portable_private.handoff where retired_at is null and phase=any(pre_cas)
+    and (owner_id,agent_id,operation_id,generation)=(p_owner_id,p_agent_id,p_operation_id,p_generation))
+  then return null; end if;
+
+  perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
+  perform public.lock_hivra_owner_agent_slots(p_owner_id);
+  select * into a from public.hivra_agents where id=p_agent_id and user_id=p_owner_id for update;
+  if not found then return null; end if;
+  select * into h from hivra_kvm_portable_private.handoff where retired_at is null and phase=any(pre_cas)
+    and (owner_id,agent_id,operation_id,generation)=(p_owner_id,p_agent_id,p_operation_id,p_generation) for update;
+  if not found
+    or p_evidence is distinct from jsonb_build_object('source',h.source,'destination',h.destination,
+      'portableWorkQuiesced',true,'destinationVmAbsent',true,'destinationStorageAbsent',true,
+      'sourceDiskUnchanged',true,'sourceStopped',true,'sourceConnectorOff',true,'sourceLegacyColdMarkerRestored',true)
+    or hivra_kvm_portable_private.agent_target(a) is distinct from h.source
+    or (a.operation_kind,a.operation_id,a.sleep_state,a.sleep_generation,a.status,a.desired_state)
+      is distinct from ('wake',h.operation_id,'waking',h.generation,'running','running')
+    or a.operation_payload is distinct from '{"portable_kvm":true}'::jsonb
+    or a.deployment_mode is distinct from 'hivra-managed' or a.computer_substrate is distinct from 'proxmox-kvm'
+    or a.deployment_target_id is not null or a.infrastructure_binding_token_enforced is not true
+    or exists (select 1 from canary_qa_writer_private.scope where owner_id=p_owner_id)
+  then return null; end if;
+
+  cold_at := clock_timestamp();
+  update hivra_kvm_portable_private.handoff set phase='aborting' where operation_id=h.operation_id;
+  update public.hivra_agents set operation_id=null,operation_kind=null,operation_started_at=null,operation_payload=null,
+    sleep_state='hibernated',sleep_generation=h.generation+1,sleep_tier_changed_at=cold_at,
+    sleep_memory_dropped_at=cold_at,next_wake_at=null
+    where id=a.id and user_id=p_owner_id and operation_id=h.operation_id and sleep_generation=h.generation;
+  if not found then raise exception 'portable KVM source lease changed during abort' using errcode='55000'; end if;
+  update hivra_kvm_portable_private.handoff set phase='aborted',abort_evidence=p_evidence,
+    retired_at=cold_at,updated_at=cold_at where operation_id=h.operation_id
+    returning * into h;
+  return to_jsonb(h)-array['active_agent_id','cpu','ram_mb'];
+end $$;
+
 revoke all on all functions in schema hivra_kvm_portable_private from public, anon, authenticated, service_role;
 revoke all on function public.read_hivra_kvm_portable_handoff(text,uuid),
   public.begin_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,jsonb,jsonb,timestamptz),
-  public.advance_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,text,jsonb)
+  public.advance_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,text,jsonb),
+  public.finish_hivra_kvm_portable_retirement(text,uuid,uuid,bigint,jsonb),
+  public.abort_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,jsonb)
   from public, anon, authenticated;
 grant execute on function public.read_hivra_kvm_portable_handoff(text,uuid),
   public.begin_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,jsonb,jsonb,timestamptz),
-  public.advance_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,text,jsonb)
+  public.advance_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,text,jsonb),
+  public.finish_hivra_kvm_portable_retirement(text,uuid,uuid,bigint,jsonb),
+  public.abort_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,jsonb)
   to service_role;

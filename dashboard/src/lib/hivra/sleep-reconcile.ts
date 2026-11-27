@@ -16,6 +16,7 @@ import {
 import { INTERRUPTED_SAVE_SHELL, type ObservedSleepState } from "./agent-sleep-scripts";
 import { STALE_SLEEP_LEASE_MS } from "./agent-sleep-policy";
 import { ensureHivraAgentAwake, pollPublicHealthz, resolveSleepTarget, type AgentRow } from "./agent-wake";
+import { isPortableKvmWakeClaimed } from "./portable-kvm/pilot";
 
 /**
  * Reconcile: bring an agent's sleep record back in line with what its host
@@ -344,6 +345,7 @@ export function leaselessReconcileTarget(
  * read just now. Never throws.
  */
 export async function reconcileAgentSleep(row: AgentRow, options: ReconcileOptions = {}): Promise<ReconcileOutcome> {
+  if (isPortableKvmWakeClaimed(row)) return { outcome: "left", reason: "portable_kvm_handoff" };
   const now = options.now ?? Date.now;
   const agentId = String(row.id);
   const dbState = String(row.sleep_state ?? "awake");

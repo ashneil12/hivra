@@ -20,7 +20,8 @@ const agentId = "11111111-1111-4111-8111-111111111111";
 const operationId = "22222222-2222-4222-8222-222222222222";
 const source = { hostId: "qa-source", vmid: 9343, ip: "192.0.2.4", bindingTag: `hivra-bind-${"a".repeat(32)}` };
 const destination = { ...source, hostId: "qa-destination", vmid: 9393, ip: "192.0.2.5" };
-const agent = { id: agentId, user_id: owner, vmid: source.vmid, ip: source.ip, proxmox_host: source.hostId };
+const agent = { id: agentId, user_id: owner, vmid: source.vmid, ip: source.ip, proxmox_host: source.hostId,
+  infrastructure_binding_token_hash: "a".repeat(64), infrastructure_binding_token_enforced: true };
 const configurationSha256 = "b".repeat(64);
 const fence = { agentId, operationId, generation: 2, hostId: source.hostId, vmid: source.vmid,
   bindingTag: source.bindingTag, configurationSha256, state: "fenced" };
@@ -31,7 +32,9 @@ beforeEach(() => {
   process.env = { ...saved, VERCEL: "1", VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
     VERCEL_GIT_COMMIT_REF: "canary", VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
     HIVRA_KVM_PORTABLE_QA_ENABLED: "true", HIVRA_KVM_PORTABLE_QA_OWNER_ID: owner, HIVRA_KVM_PORTABLE_QA_AGENT_ID: agentId,
-    HIVRA_KVM_PORTABLE_QA_SOURCE_HOST: source.hostId, HIVRA_KVM_PORTABLE_QA_DESTINATION_HOST: destination.hostId,
+    HIVRA_KVM_PORTABLE_QA_PLACEMENTS: JSON.stringify([source, destination].map(target => ({
+      hostId: target.hostId, vmid: target.vmid, ip: target.ip,
+    }))),
   };
   rpc.mockResolvedValue({ data: { agent_id: agentId, owner_id: owner, operation_id: operationId, generation: 2,
     phase: "checkpointing", expires_at: new Date(Date.now() + 60_000).toISOString(), source, destination }, error: null });
@@ -51,7 +54,7 @@ it("does not look up or mutate a checkpoint for a different owner or deployment"
 
 it("fails closed before SSH when the leased physical placement differs", async () => {
   await expect(advancePortableKvmSourceCheckpoint(owner, { ...agent, ip: "192.0.2.9" }))
-    .rejects.toThrow("targets do not match");
+    .rejects.toThrow("not on an exact configured placement");
   expect(run).not.toHaveBeenCalled();
 });
 

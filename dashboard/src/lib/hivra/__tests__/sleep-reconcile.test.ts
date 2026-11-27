@@ -92,6 +92,14 @@ beforeEach(() => {
   mockEnsure.mockResolvedValue({ state: "awake", wakeMs: 900 });
 });
 
+it("leaves a portable KVM claim alone without touching the host or clearing its lease", async () => {
+  await expect(reconcile(lease("wake", "waking", { operation_payload: { portable_kvm: true } })))
+    .resolves.toEqual({ outcome: "left", reason: "portable_kvm_handoff" });
+  expect(mockTarget).not.toHaveBeenCalled();
+  expect(mockRunScript).not.toHaveBeenCalled();
+  expect(mockFinishWake).not.toHaveBeenCalled();
+});
+
 describe("sleepLeaseKind and sleepLeaseAgeMs", () => {
   it("name a sleep or wake lease and how old it is, and nothing else", () => {
     expect(sleepLeaseKind(lease("sleep", "draining") as never)).toBe("sleep");

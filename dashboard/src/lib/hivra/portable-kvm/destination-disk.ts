@@ -66,13 +66,13 @@ def require(condition, reason):
 def output(*args):
     return subprocess.check_output(args, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
 
-def private_dir(path):
+def private_dir(path, modes=(0o700,)):
     info = path.lstat()
-    require(stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and stat.S_IMODE(info.st_mode) == 0o700,
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and stat.S_IMODE(info.st_mode) in modes,
             "unsafe_private_directory")
 
 def check_reservation():
-    private_dir(root)
+    private_dir(root, (0o700, 0o755))
     private_dir(registry)
     with os.fdopen(os.open(marker, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as file:
         info = os.fstat(file.fileno())
@@ -239,8 +239,8 @@ except (OSError, UnicodeError, ValueError, subprocess.SubprocessError):
 /**
  * Run as root with the operation-scoped checkpoint password on stdin and a preinstalled
  * cold alias. The preparer writes the serialized reservation as root:0600 at
- * /var/lib/hivra-sleep/portable-kvm-destinations/<vmid>; both directories must be
- * root:0700. Hash the exact raw .conf and the current `qm config <vmid> --current 1`
+ * /var/lib/hivra-sleep/portable-kvm-destinations/<vmid>; the registry must be root:0700.
+ * Hash the exact raw .conf and the current `qm config <vmid> --current 1`
  * output (with exactly one trailing LF). Prepare and activate only the reserved LV.
  * Provide a root:0700 /var/lib/hivra/portable-kvm-restore-staging filesystem with
  * space for the full image. Keep the reservation, VM and LV exclusively assigned

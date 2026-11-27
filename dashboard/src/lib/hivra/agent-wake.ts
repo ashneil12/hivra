@@ -96,6 +96,7 @@ export interface EnsureAwakeResult {
 
 export interface EnsureAwakeOptions {
   trigger: AgentSleepEventTrigger;
+  portableOwnerId?: string;
   /** How long this call may wait for a wake, its own or another's. Default 45 s. */
   waitMs?: number;
   /** How often the row is re-read while waiting. Default 1 s. */
@@ -650,6 +651,33 @@ export async function ensureHivraAgentAwake(
     return { state: "failed", reason: "lapsed" };
   }
   if (qaSeat && isAgentAwake(row)) return { state: "awake" };
+
+  if ((options.portableOwnerId && options.portableOwnerId === row.user_id) || row.operation_kind === "wake") {
+    const { isPortableKvmWakeClaimed } = await import("./portable-kvm/pilot");
+    if (isPortableKvmWakeClaimed(row) && options.portableOwnerId !== row.user_id) {
+      return { state: "waking", reason: "portable_kvm_owner_wake_required" };
+    }
+    if (options.portableOwnerId && options.portableOwnerId === row.user_id
+      && (isPortableKvmWakeClaimed(row) || process.env.HIVRA_KVM_PORTABLE_QA_ENABLED === "true")) {
+      const { advanceManagedPortableKvmOwnerWake } = await import("./portable-kvm/managed-wake");
+      const work = advanceManagedPortableKvmOwnerWake(options.portableOwnerId, row).catch((): EnsureAwakeResult => {
+        log.error("portable KVM wake step refused", new Error("Portable KVM wake step failed"), {
+          source: LOG_SOURCE, failureType: "portable_kvm_wake_step_failed", agentId,
+        });
+        return { state: "failed", reason: "portable_kvm_step_failed" };
+      });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([work, new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), Math.max(0, deadline - Date.now()));
+      })]);
+      if (timer) clearTimeout(timer);
+      if (result === "timeout") {
+        options.onBackground?.(work);
+        return { state: "waking", reason: "portable_kvm_in_progress" };
+      }
+      if (result) return result;
+    }
+  }
 
   // Packed into the storage box: its disks come back first, which takes minutes.
   // The request is noted and the sleep sweep does the rest, then wakes it.

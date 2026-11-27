@@ -26,8 +26,8 @@ function fakeHost(additional = "") {
     set) printf "%s\\n" "lock: backup" >> "$TEST_CONFIG" ;;
     *) exit 99 ;;
   esac`);
-  put("stat", 'case "$2" in "%u:%a:%h") echo 0:600:1 ;; *) echo 0:700 ;; esac');
-  const run = (input = scope) => spawnSync("bash", ["-c", buildPortableKvmSourceFenceScript(input)
+  put("stat", 'case "$2:$3" in "%u:%a:%h:"*) echo 0:600:1 ;; *"/state") echo 0:755 ;; *) echo 0:700 ;; esac');
+  const run = (input = scope, mode: "acquire" | "verify" = "acquire") => spawnSync("bash", ["-c", buildPortableKvmSourceFenceScript(input, mode)
     .replaceAll("/var/lib/hivra-sleep", join(root, "state"))
     .replaceAll("/etc/pve/qemu-server", join(root, "pve"))
     .replaceAll("/run/qemu-server", join(root, "run"))
@@ -40,12 +40,24 @@ function fakeHost(additional = "") {
 it("fences the exact stopped cold source once and only accepts its exact retry", () => {
   const host = fakeHost();
   try {
+    expect(host.run(scope, "verify").status).not.toBe(0);
     const first = host.run();
     expect(first.status).toBe(0);
     expect(parsePortableKvmSourceFence(first.stdout, scope)).toMatchObject({ ...scope, state: "fenced" });
     expect(host.run().stdout).toBe(first.stdout);
+    expect(host.run(scope, "verify").stdout).toBe(first.stdout);
     expect(host.run({ ...scope, generation: 8 }).status).not.toBe(0);
     expect(readFileSync(host.config, "utf8").match(/lock: backup/g)).toHaveLength(1);
+  } finally { host.cleanup(); }
+});
+
+it("does not reacquire a lost source lock during read-only verification", () => {
+  const host = fakeHost();
+  try {
+    expect(host.run().status).toBe(0);
+    writeFileSync(host.config, readFileSync(host.config, "utf8").replace("lock: backup\n", ""));
+    expect(host.run(scope, "verify").status).not.toBe(0);
+    expect(readFileSync(host.config, "utf8")).not.toContain("lock: backup");
   } finally { host.cleanup(); }
 });
 

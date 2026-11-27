@@ -1,34 +1,31 @@
 import "server-only";
 
 import { createHash, createHmac } from "node:crypto";
-import { isIPv4 } from "node:net";
 import { z } from "zod";
 import { buildColdStorageInstallScriptOrExit } from "@/lib/cold-storage-ssh";
 import { runProxmoxHostScript, runProxmoxHostScriptWithStdin } from "@/lib/services/proxmox-instance-service";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveHivraLifecycleTarget, type HivraLifecycleAgentRow } from "../agent-lifecycle-host";
-import { isCanonicalGitCanaryDeployment } from "../canonical-git-canary";
 import { buildBackupPollScript, buildBackupStartScript, parseBackupPoll, parseBackupStartReceipt } from "../computer-backups/scripts";
 import { computerBackupPassword } from "../computer-backups/sweep";
 import { buildPortableKvmSourceFenceScript, parsePortableKvmSourceFence } from "./source-fence";
+import { portableKvmPlacement, resolvePortableKvmPilotPlacement } from "./pilot";
 
 const uuid = z.string().uuid();
-const targetSchema = z.object({
-  hostId: z.string().regex(/^[a-z][a-z0-9-]{0,62}$/),
-  vmid: z.number().int().min(9300).max(9399).refine(value => value !== 9302),
-  ip: z.string().refine(isIPv4),
-  bindingTag: z.string().regex(/^hivra-bind-[a-f0-9]{32}$/),
-}).strict();
 const leaseSchema = z.object({
   agent_id: uuid, owner_id: z.string().min(1), operation_id: uuid, generation: z.number().int().positive().safe(),
   phase: z.literal("checkpointing"), expires_at: z.string(),
-  source: targetSchema, destination: targetSchema,
+  source: portableKvmPlacement, destination: portableKvmPlacement,
 });
 
+export function portableKvmCheckpointPassword(agentId: string, operationId: string) {
+  const backupKey = computerBackupPassword(agentId);
+  return backupKey ? createHmac("sha256", backupKey).update(`hivra-kvm-portable-v1:${operationId}`).digest("hex") : null;
+}
+
 export async function advancePortableKvmSourceCheckpoint(ownerId: string, agent: HivraLifecycleAgentRow) {
-  if (!isCanonicalGitCanaryDeployment() || process.env.HIVRA_KVM_PORTABLE_QA_ENABLED !== "true"
-    || process.env.HIVRA_KVM_PORTABLE_QA_OWNER_ID !== ownerId
-    || process.env.HIVRA_KVM_PORTABLE_QA_AGENT_ID !== agent.id || agent.user_id !== ownerId) return null;
+  const placement = resolvePortableKvmPilotPlacement(ownerId, agent);
+  if (!placement) return null;
   if (!supabaseAdmin) throw new Error("Portable KVM checkpoint store unavailable");
   const { data, error } = await supabaseAdmin.rpc("read_hivra_kvm_portable_handoff", {
     p_owner_id: ownerId, p_agent_id: agent.id,
@@ -40,10 +37,10 @@ export async function advancePortableKvmSourceCheckpoint(ownerId: string, agent:
   }
   const lease = row.data;
   const source = lease.source;
-  if (source.vmid !== agent.vmid || source.hostId !== agent.proxmox_host || source.ip !== agent.ip
-    || source.hostId === lease.destination.hostId
-    || source.hostId !== process.env.HIVRA_KVM_PORTABLE_QA_SOURCE_HOST
-    || lease.destination.hostId !== process.env.HIVRA_KVM_PORTABLE_QA_DESTINATION_HOST) {
+  if (source.vmid !== placement.current.vmid || source.hostId !== placement.current.hostId || source.ip !== placement.current.ip
+    || source.bindingTag !== placement.current.bindingTag || lease.destination.vmid !== placement.alternate.vmid
+    || lease.destination.hostId !== placement.alternate.hostId || lease.destination.ip !== placement.alternate.ip
+    || lease.destination.bindingTag !== placement.alternate.bindingTag) {
     throw new Error("Portable KVM checkpoint targets do not match the pilot");
   }
   const resolved = await resolveHivraLifecycleTarget({ userId: ownerId, agent, action: "portable_checkpoint" });
@@ -52,8 +49,8 @@ export async function advancePortableKvmSourceCheckpoint(ownerId: string, agent:
     || resolved.target.bindingTag !== source.bindingTag) {
     throw new Error("Portable KVM checkpoint host authority could not be verified");
   }
-  const backupKey = computerBackupPassword(lease.agent_id);
-  if (!backupKey) throw new Error("Portable KVM checkpoint key is unavailable");
+  const scopedKey = portableKvmCheckpointPassword(lease.agent_id, lease.operation_id);
+  if (!scopedKey) throw new Error("Portable KVM checkpoint key is unavailable");
   const coldStorageInstall = buildColdStorageInstallScriptOrExit(process.env);
   const { env } = resolved.target;
   const fenceScope = { agentId: lease.agent_id, generation: lease.generation, operationId: lease.operation_id,
@@ -76,7 +73,6 @@ export async function advancePortableKvmSourceCheckpoint(ownerId: string, agent:
     return { state: "checkpoint_verified" as const, checkpointSha256, ...proof };
   }
   if (job.state === "running") return { state: "checkpointing" as const };
-  const scopedKey = createHmac("sha256", backupKey).update(`hivra-kvm-portable-v1:${jobId}`).digest("hex");
   const start = await runProxmoxHostScriptWithStdin(buildBackupStartScript({
     kind: "portable_checkpoint", jobId, agentId: lease.agent_id, vmid: source.vmid, bindingTag: source.bindingTag,
     keepDaily: 1, keepWeekly: 0, uploadLimitKiB: 8192, maxHours: 1,
