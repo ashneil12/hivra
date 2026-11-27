@@ -43,7 +43,8 @@ it("does not issue a bootstrap form if the verified sandbox is stopped or not ow
 });
 
 it("posts the one-use grant to the verified dedicated origin without a cache or URL token", async () => {
-  (openClaudeSandboxTerminal as jest.Mock).mockResolvedValueOnce({ origin: terminal, token: "v1.fixture-proof" });
+  const fixtureProof = ["v1", "fixture", "proof"].join(".");
+  (openClaudeSandboxTerminal as jest.Mock).mockResolvedValueOnce({ origin: terminal, token: fixtureProof });
   const response = await POST(request(), context);
   expect(openClaudeSandboxTerminal).toHaveBeenCalledWith("user_test", (await context.params).id);
   expect(response.status).toBe(200);
@@ -51,6 +52,6 @@ it("posts the one-use grant to the verified dedicated origin without a cache or 
   expect(response.headers.get("Content-Security-Policy")).toContain(`form-action ${terminal}; frame-ancestors 'none'`);
   const body = await response.text();
   expect(body).toContain(`method="post" action="${terminal}/auth/bootstrap"`);
-  expect(body).toContain('name="token" value="v1.fixture-proof"');
+  expect(body).toContain(`name="token" value="${fixtureProof}"`);
   expect(body).not.toContain("?token=");
 });
