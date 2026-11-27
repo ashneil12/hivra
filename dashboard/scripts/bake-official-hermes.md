@@ -30,14 +30,14 @@ Hermes's installer uses a detached HEAD for both a commit pin and a stock stable
 
 After release review and authority for the exact Canary host, check that the host has the sealed provisioner shipped by the served Git revision and that the revision supports this image selection. Stage the verified image at `/var/lib/vz/template/iso/hivra-hermes-<imageSha256>.qcow2` as a root-owned regular file with mode `0444` and exactly one link. Verify the final bytes at that path before changing any settings.
 
-Set the three server-only variables on the dedicated Git Canary project: `HIVRA_CANARY_HERMES_IMAGE_HOST` to the selected Proxmox target ID, `HIVRA_CANARY_HERMES_IMAGE_SHA256` to the digest of the qcow2 recorded in the manifest, and `HIVRA_CANARY_HERMES_IMAGE_USER_ID` to the existing standing QA owner. The host setting does not pin placement; if normal placement picks another host, that run uses stock installation and is not a baked sample. Settings apply on the next Git build, not to the current deployment. Confirm the Canary domain serves a Git build created after all three settings were saved. Do not change the stock Ubuntu image or production configuration.
+On a Git Canary revision that reads runtime pilot settings, use the Canary database operator to insert one `hermes` row in `public.hivra_canary_launch_pilots`. Set `host_id` to the selected Proxmox target, `image_sha256` to the manifest digest, and `owner_id` to the existing standing QA owner. Leave `standby_enabled` false for the baked cold path. Read back the exact row before launch. The host setting does not pin placement; if normal placement picks another host, that run uses stock installation and is not a baked sample. Fresh launches read the row without a new Git build. Older deployments retain their original environment snapshots and do not read this row; do not roll back to a snapshot that still selects the disk. Do not change the stock Ubuntu image or production configuration.
 
-Use that standing QA account to launch owned fixtures. Verify the Git revision, target and baked launch marks in accepted launch evidence, then fresh SSH host keys and machine IDs across guests, distinct Hivra access tokens, public Hermes Webapp and dashboard, both terminals, and a real managed model reply. The launch log reports cumulative API milliseconds from request handling; `HIVRA_HERMES_STAGE` in the host log reports centiseconds from the preceding marker. Record click, native composer and first reply separately. Exercise Hermes's own Update entry point on an owned fixture and check model settings and gateway/terminal access survive; the pin defines the initial filesystem, not the customer update policy. Clean up only the owned fixtures. Unset all three Canary image variables on the next Git build to return new launches to the stock installation; existing computers remain untouched.
+Use that standing QA account to launch owned fixtures. Verify the Git revision, target and baked launch marks in accepted launch evidence, then fresh SSH host keys and machine IDs across guests, distinct Hivra access tokens, public Hermes Webapp and dashboard, both terminals, and a real managed model reply. The launch log reports cumulative API milliseconds from request handling; `HIVRA_HERMES_STAGE` in the host log reports centiseconds from the preceding marker. Record click, native composer and first reply separately. Exercise Hermes's own Update entry point on an owned fixture and check model settings and gateway/terminal access survive; the pin defines the initial filesystem, not the customer update policy. Clean up only the owned fixtures. Delete only your exact pilot row and read back its absence to return new launches to stock; existing computers remain untouched. Before removing the staged disk, verify that launches already in flight with the old row have drained.
 
 ## One-guest standby experiment
 
 This is a manual, owner-scoped Canary experiment, not a pool. Leave
-`HIVRA_CANARY_HERMES_STANDBY_ENABLED` unset outside the experiment. Use one exact
+`standby_enabled` false outside the experiment. Use one exact
 host, standing paid QA owner, boot-proven Hermes digest and sealed provisioner.
 The owner and target must already match the three baked-image settings above.
 The standby uses a QA VMID 9300–9399 other than 9302 and a free private IP on
@@ -60,9 +60,8 @@ the managed subnet. Use one generation UUID per attempt and never reuse a
    proves fresh SSH identity and completed cloud-init. A started VM isn't a
    receipt. If exact ownership fails, leave the selector off, quarantine the
    generation and verify physical absence before releasing its charge.
-3. After the first neutral receipt, enable the four scoped settings for the
-   dedicated Git Canary build and verify a Git deployment created after the
-   settings were saved. Launch through the normal paid browser flow; the ordinary
+3. After the first neutral receipt, save and read back the scoped Hermes row with
+   `standby_enabled = true` on Canary. Launch through the normal paid browser flow; the ordinary
    placement decision must select the staged host. Measure click, claim,
    composer and visible reply. A failed or uncertain claim must not silently
    cold-launch another VM.
@@ -70,8 +69,8 @@ the managed subnet. Use one generation UUID per attempt and never reuse a
    clean database state, host and storage absence, and use the standby
    provisioner's exact `retire` action to clear its host-side slot. An
    unassigned or uncertain slot stays charged until independently reconciled.
-   Restage a new generation only after this proof. Remove the experiment flag
-   and the three scoped settings from the next Git build when finished.
+   Restage a new generation only after this proof. Delete and read back the
+   removal of your exact scoped row when finished.
 
 Make three serial paid launches on the standing QA account. Record the Git
 revision at both ends of each sample, the exact claimed generation and host,
@@ -80,9 +79,8 @@ if the revision changed or it took the cold path. Accept the experiment only
 when all three valid launches show a native reply in under 60 seconds. Run
 Hermes's native Update on an owned fixture and verify the model, chat and
 terminal still work. Keep one redacted real-browser recording from Launch
-through the first visible reply. If the pilot stops early, verify stock
-selection on the newer Git build after removing the settings; a removed project
-setting alone doesn't change the deployment that's already serving.
+through the first visible reply. If the pilot stops early, remove the row and
+verify stock selection on a fresh request to the same Git revision.
 
 A warm sample must show `standby_guest_attested` and `public_tunnel_ready` in
 the owned launch trace, without `disk_imported` on that launch. Compare guest

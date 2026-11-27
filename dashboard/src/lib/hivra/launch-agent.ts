@@ -1467,6 +1467,7 @@ export async function launchHivraAgentForUser(
     let portableRuntime: PortableProxmoxRuntime | null = null;
     let canaryProvisionerVersion: string | undefined;
     let hermesImageSha256: string | undefined;
+    let useHermesStandby = false;
     let hermesStandby: HermesStandby | undefined;
     let preparedImage: PreparedKvmImage | undefined;
     let capacityPolicy: ProxmoxHostCapacityPolicy = DEFAULT_PROXMOX_HOST_CAPACITY_POLICY;
@@ -1679,40 +1680,54 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostE
       }
       host = placement.targetId ?? env.PROXMOX_NODE ?? resolveHivraProxmoxHost();
       checkpointLaunchTiming("hostSelectedMs");
-      if (hermesCanary && !wantBrowser && !options?.moveFromInstanceId && !qaHolderDeadline) {
-        const bakeHost = process.env.HIVRA_CANARY_HERMES_IMAGE_HOST;
-        const bakeSha = process.env.HIVRA_CANARY_HERMES_IMAGE_SHA256;
-        const bakeUser = process.env.HIVRA_CANARY_HERMES_IMAGE_USER_ID;
-        if (bakeHost || bakeSha || bakeUser) {
-          if (!bakeHost || !/^[a-z0-9][a-z0-9-]*$/.test(bakeHost) || !bakeSha || !/^[0-9a-f]{64}$/.test(bakeSha)
-              || (bakeUser && !/^user_[A-Za-z0-9]+$/.test(bakeUser))) {
-            return apiError("The Canary Hermes image selection is not configured safely.", 503);
-          }
-          if (bakeHost === host && (!bakeUser || bakeUser === userId)) {
-            if (!["2026.11.27.2", "2026.11.27.3", "2026.11.27.4", "2026.11.27.5", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(version => version === canaryProvisionerVersion)) {
-              return apiError("The selected Canary host does not support the pinned Hermes image.", 503);
-            }
-            hermesImageSha256 = bakeSha;
-          }
+      const pilotKind = managedGitCanary && !wantBrowser && !options?.moveFromInstanceId && !qaHolderDeadline
+        ? hermesCanary ? "hermes" : agentKind === "claude" || agentKind === "codex" ? "bux-dependencies" : null
+        : null;
+      let pilot: { image_sha256: string; owner_id: string | null; standby_enabled: boolean } | null = null;
+      if (pilotKind) {
+        const { data, error } = await supabaseAdmin
+          .from("hivra_canary_launch_pilots")
+          .select("image_sha256,owner_id,standby_enabled")
+          .eq("pilot", pilotKind)
+          .eq("host_id", host)
+          .maybeSingle();
+        if (error) {
+          log.error("Could not read Canary launch pilot settings", new Error(error.code), {
+            source: "hivra/agents", pilotKind,
+          });
+          return apiError("Could not verify the Canary launch pilot settings.", 503);
         }
+        if (data && (data.owner_id === userId || (pilotKind === "hermes" && data.owner_id === null))) {
+          pilot = data;
+        }
+      }
+      if (pilotKind === "hermes" && pilot) {
+        if (!["2026.11.27.2", "2026.11.27.3", "2026.11.27.4", "2026.11.27.5", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(version => version === canaryProvisionerVersion)) {
+          return apiError("The selected Canary host does not support the pinned Hermes image.", 503);
+        }
+        hermesImageSha256 = pilot.image_sha256;
+        useHermesStandby = pilot.standby_enabled && pilot.owner_id === userId;
       }
       if (managedGitCanary && STOCK_QGA_AGENT_KINDS.includes(agentKind) && !wantBrowser && !options?.moveFromInstanceId && !qaHolderDeadline) {
         const trials = [
           ...(type === "deepseek-harness" ? [["deepseek-harness", "HIVRA_CANARY_DEEPSEEK_IMAGE"]] as const : []),
           ...(type === "agent-zero" ? [["agent-zero", "HIVRA_CANARY_AGENT_ZERO_IMAGE"]] as const : []),
-          ...(agentKind === "claude" || agentKind === "codex" ? [["bux-dependencies", "HIVRA_CANARY_BUX_DEPENDENCIES_IMAGE"]] as const : []),
+          ...(pilotKind === "bux-dependencies" && pilot ? [["bux-dependencies", null]] as const : []),
           ["ubuntu-qga", "HIVRA_CANARY_UBUNTU_QGA_IMAGE"],
         ] as const;
         for (const [kind, prefix] of trials) {
-          const bakeHost = process.env[`${prefix}_HOST`];
-          const bakeSha = process.env[`${prefix}_SHA256`];
-          const bakeUser = process.env[`${prefix}_USER_ID`];
-          if (!bakeHost && !bakeSha && !bakeUser) continue;
-          if (!bakeHost || !/^[a-z0-9][a-z0-9-]*$/.test(bakeHost) || !bakeSha || !/^[a-f0-9]{64}$/.test(bakeSha)
-            || !bakeUser || !/^user_[A-Za-z0-9]+$/.test(bakeUser)) {
-            return apiError("The Canary prepared image selection is not configured safely.", 503);
+          const bakeSha = prefix === null ? pilot?.image_sha256 : process.env[`${prefix}_SHA256`];
+          if (prefix !== null) {
+            const bakeHost = process.env[`${prefix}_HOST`];
+            const bakeUser = process.env[`${prefix}_USER_ID`];
+            if (!bakeHost && !bakeSha && !bakeUser) continue;
+            if (!bakeHost || !/^[a-z0-9][a-z0-9-]*$/.test(bakeHost) || !bakeSha || !/^[a-f0-9]{64}$/.test(bakeSha)
+              || !bakeUser || !/^user_[A-Za-z0-9]+$/.test(bakeUser)) {
+              return apiError("The Canary prepared image selection is not configured safely.", 503);
+            }
+            if (bakeHost !== host || bakeUser !== userId) continue;
           }
-          if (bakeHost !== host || bakeUser !== userId) continue;
+          if (!bakeSha) continue;
           if (!supportsPreparedKvmImage(kind, canaryProvisionerVersion, agentKind)) {
             return apiError("The selected Canary host does not support the prepared image.", 503);
           }
@@ -1744,8 +1759,7 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
     const vmidStart = resolveHivraVmidStart(env);
     const vmidEnd = resolveHivraVmidEnd(env, vmidStart);
     const ipLastOctetStart = resolveHivraIpLastOctetStart(env);
-    if (hermesImageSha256 && process.env.HIVRA_CANARY_HERMES_STANDBY_ENABLED === "1"
-        && process.env.HIVRA_CANARY_HERMES_IMAGE_USER_ID === userId && seatFunding === "paid") {
+    if (hermesImageSha256 && useHermesStandby && seatFunding === "paid") {
       if (canaryProvisionerVersion !== HERMES_STANDBY_PROVISIONER_VERSION
           || !Number.isInteger(cpu) || cpu !== maximumCpu || ram !== maximumRam) {
         return apiError("The Canary Hermes standby does not match this launch.", 409);
