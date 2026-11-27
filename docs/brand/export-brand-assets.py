@@ -45,8 +45,8 @@ SOURCE_SHA256 = "9ddfe937f7ab5e0025c903db1316bb2d960c15190ac49fdc6ab156d9e759a6f
 
 PUBLIC_BRAND = Path("dashboard/public/brand")
 APP = Path("dashboard/src/app")
-WINDOWS_ICONS = Path("apps/windows/HivraDesktop/src-tauri/icons")
-WINDOWS_UI = Path("apps/windows/HivraDesktop/ui")
+DESKTOP_ICONS = Path("apps/desktop/HivraDesktop/src-tauri/icons")
+DESKTOP_UI = Path("apps/desktop/HivraDesktop/ui")
 
 # (output path, edge length in pixels)
 PNG_OUTPUTS = [
@@ -69,10 +69,10 @@ PNG_OUTPUTS = [
     (APP / "apple-icon.png", 180),
     # Windows app and installer icons, plus the mark on the app's own welcome
     # page. These are fixed file names inside the app rather than published URLs.
-    (WINDOWS_ICONS / "32x32.png", 32),
-    (WINDOWS_ICONS / "128x128.png", 128),
-    (WINDOWS_ICONS / "icon.png", 256),
-    (WINDOWS_UI / "hivra-icon.png", 192),
+    (DESKTOP_ICONS / "32x32.png", 32),
+    (DESKTOP_ICONS / "128x128.png", 128),
+    (DESKTOP_ICONS / "icon.png", 256),
+    (DESKTOP_UI / "hivra-icon.png", 192),
 ]
 # (output path, edge length in pixels, WebP quality). Lighter copies for pages
 # that draw the mark as artwork rather than as an icon.
@@ -82,8 +82,8 @@ WEBP_OUTPUTS = [
 ]
 FAVICON = APP / "favicon.ico"
 FAVICON_SIZES = (16, 32, 48)
-WINDOWS_ICON = WINDOWS_ICONS / "icon.ico"
-WINDOWS_ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
+DESKTOP_ICON = DESKTOP_ICONS / "icon.ico"
+DESKTOP_ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
 
 # Outputs with these name prefixes are published URLs and are never overwritten.
 PUBLISHED_PREFIXES = ("hivra-token-", "hivra-icon-")
@@ -129,12 +129,12 @@ def webp_bytes(source: Image.Image, edge: int, quality: int) -> bytes:
 
 
 def windows_icon_bytes(source: Image.Image) -> bytes:
-    frames = [resized(source, edge).convert("RGBA") for edge in WINDOWS_ICON_SIZES]
+    frames = [resized(source, edge).convert("RGBA") for edge in DESKTOP_ICON_SIZES]
     buffer = io.BytesIO()
     frames[-1].save(
         buffer,
         format="ICO",
-        sizes=[(edge, edge) for edge in WINDOWS_ICON_SIZES],
+        sizes=[(edge, edge) for edge in DESKTOP_ICON_SIZES],
         append_images=frames[:-1],
     )
     return buffer.getvalue()
@@ -142,7 +142,7 @@ def windows_icon_bytes(source: Image.Image) -> bytes:
 
 def output_paths() -> list[Path]:
     """Every file main() writes."""
-    return [path for path, _edge in PNG_OUTPUTS] + [path for path, _edge, _quality in WEBP_OUTPUTS] + [FAVICON, WINDOWS_ICON]
+    return [path for path, _edge in PNG_OUTPUTS] + [path for path, _edge, _quality in WEBP_OUTPUTS] + [FAVICON, DESKTOP_ICON]
 
 
 def favicon_bytes(source: Image.Image) -> bytes:
@@ -195,12 +195,12 @@ def write_exports(root: Path, exports: list[tuple[Path, bytes]]) -> None:
 def main(root: Path = ROOT) -> None:
     source = load_source(root)
     exports = [
-        (path, png_bytes(source, edge, rgba=path.parent in {WINDOWS_ICONS, WINDOWS_UI}))
+        (path, png_bytes(source, edge, rgba=path.parent in {DESKTOP_ICONS, DESKTOP_UI}))
         for path, edge in PNG_OUTPUTS
     ]
     exports += [(path, webp_bytes(source, edge, quality)) for path, edge, quality in WEBP_OUTPUTS]
     exports.append((FAVICON, favicon_bytes(source)))
-    exports.append((WINDOWS_ICON, windows_icon_bytes(source)))
+    exports.append((DESKTOP_ICON, windows_icon_bytes(source)))
     write_exports(root, exports)
 
 

@@ -1,7 +1,7 @@
 [package]
 name = "hivra-desktop"
 version = "0.1.0"
-description = "Hivra for Windows"
+description = "Hivra for Windows and Linux"
 edition = "2021"
 publish = false
 license = "MIT"
