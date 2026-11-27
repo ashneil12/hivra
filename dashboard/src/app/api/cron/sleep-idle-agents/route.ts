@@ -6,6 +6,7 @@ import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import { log } from "@/lib/logger";
 import { runSleepIdleSweep } from "@/lib/hivra/sleep-idle-sweep";
 import { runManagedGvisorIdlePilot } from "@/lib/hivra/gvisor-computer-service";
+import { isCanonicalGitCanaryDeployment } from "@/lib/hivra/canonical-git-canary";
 
 /**
  * Cron-triggered agent sleep sweep. Wakes agents ahead of their scheduled jobs,
@@ -42,7 +43,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const [summary, gvisorPilot] = await Promise.all([
+    const [summary, gvisorPilot, portableWakeFailed] = await Promise.all([
       runSleepIdleSweep(),
       runManagedGvisorIdlePilot().catch((error: unknown) => {
         log.error("Managed gVisor idle pilot sweep failed", error instanceof Error ? error : new Error(String(error)), {
@@ -51,9 +52,22 @@ export async function GET(req: NextRequest) {
         });
         return "error" as const;
       }),
+      (async () => {
+        if (process.env.HIVRA_KVM_PORTABLE_QA_ENABLED !== "true" || !isCanonicalGitCanaryDeployment()) return false;
+        try {
+          const { resumeManagedPortableKvmOwnerWake } = await import("@/lib/hivra/portable-kvm/managed-wake");
+          await resumeManagedPortableKvmOwnerWake();
+          return false;
+        } catch {
+          log.error("Portable KVM owner wake sweep failed", new Error("Portable KVM wake step failed"), {
+            source: "sleep-idle-agents", failureType: "portable_kvm_wake_sweep_failed",
+          });
+          return true;
+        }
+      })(),
     ]);
     // Stamp only a real run without errors; a skipped run touches nothing.
-    if (!summary.skipped && summary.errors === 0) await recordCronHeartbeat("sleep-idle-agents");
+    if (!summary.skipped && summary.errors === 0 && !portableWakeFailed) await recordCronHeartbeat("sleep-idle-agents");
     return apiSuccess(gvisorPilot === "disabled" ? summary : { ...summary, gvisorPilot });
   } catch (error) {
     log.error("sleep-idle-agents sweep failed", error instanceof Error ? error : new Error(String(error)), {

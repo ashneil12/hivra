@@ -1,6 +1,7 @@
 import "server-only";
 
 import { shellQuote } from "@/lib/hivra/proxmox-target";
+import type { PortableKvmSourceFence } from "@/lib/hivra/portable-kvm/source-fence";
 
 // Host scripts for off-host backups of Hivra computers.
 //
@@ -57,7 +58,7 @@ fi`;
  * host; `unstore` writes them back. Both belong to the sleep ladder
  * (src/lib/hivra/sleep-storage.ts), not to the backup cron.
  */
-export type BackupJobKind = "backup" | "drill" | "restore" | "store" | "unstore";
+export type BackupJobKind = "backup" | "drill" | "restore" | "store" | "unstore" | "portable_checkpoint";
 
 export interface BackupDisk {
   key: string;
@@ -117,6 +118,7 @@ JOBDIR="$(cd "$(dirname "$0")" && pwd)"
 . "$JOBDIR/params"
 RESULT="$JOBDIR/result.json"
 DISKS_JSON=""
+CONFIG_JSON=""
 ADDED=0
 qm() { command timeout -k 5 120 qm "$@" </dev/null; }
 add_disk_json() {
@@ -130,8 +132,8 @@ done_with() {
 }
 write_result() {
   local tmp="$RESULT.tmp.$$"
-  printf '{"job":"%s","kind":"%s","status":"%s","reason":"%s","addedBytes":%s,"disks":[%s],"finishedAt":"%s"}\n' \
-    "$JOB_ID" "$KIND" "$1" "$2" "$ADDED" "$DISKS_JSON" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+  printf '{"job":"%s","kind":"%s","status":"%s","reason":"%s","addedBytes":%s,"disks":[%s],"finishedAt":"%s"%s}\n' \
+    "$JOB_ID" "$KIND" "$1" "$2" "$ADDED" "$DISKS_JSON" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CONFIG_JSON" > "$tmp"
   mv -f "$tmp" "$RESULT"
   rm -f "$JOBDIR/secret"
   exit 0
@@ -353,9 +355,33 @@ cleanup() {
   ACTIVE_LVS=""
 }
 check_storable() {
-  read_config || done_with failed unreachable
+  if [ "$KIND" = portable_checkpoint ]; then
+    CONFIG="$(qm config "$VMID" --current 1 2>/dev/null)" || done_with failed unreachable
+  else
+    read_config || done_with failed unreachable
+  fi
   has_binding || done_with failed binding_mismatch
-  [ -z "$(field lock)" ] || done_with skipped locked
+  if [ "$KIND" = portable_checkpoint ]; then
+    FENCE="$MARK_DIR/portable-kvm-fences/$VMID"
+    [ "$(field lock)" = backup ] && [ -f "$FENCE" ] && [ ! -L "$FENCE" ] &&
+      [ "$(stat -c '%u:%a:%h' "$FENCE")" = 0:600:1 ] &&
+      [ "$(cat "$FENCE")" = "$PORTABLE_FENCE" ] || done_with skipped fence_changed
+    [ ! -e "/run/qemu-server/$VMID.pid" ] && [ ! -e "$STORED_MARK" ] &&
+      ! grep -Eq '^\[|^vmstate:|^onboot:[[:space:]]+1$|^bios:.*ovmf|^(efidisk|tpmstate|unused|args:|hostpci|virtiofs|usb|parallel|ivshmem|audio|rng)' <<<"$CONFIG" ||
+      done_with skipped unsupported_portable_profile
+    non_data="$(grep -E '^serial[0-9]+:|^vga:|^(scsi|virtio|sata|ide)[0-9]+:.*(media=cdrom|cloudinit)' <<<"$CONFIG" || true)"
+    if [ -n "$non_data" ]; then
+      rejected="$(printf '%s\n' "$non_data" | grep -Ev "^serial0: socket$|^vga: serial0$|^ide2: [A-Za-z0-9._-]+:(vm-$VMID-cloudinit|$VMID/vm-$VMID-cloudinit\.qcow2),media=cdrom(,size=[0-9]+[KMGT]?)?$" || true)"
+      [ -z "$rejected" ] || done_with skipped unsupported_portable_profile
+    fi
+    [ "$(printf '%s\n' "$CONFIG" | sha256sum | cut -d' ' -f1)" = "$PORTABLE_CONFIG_SHA" ] ||
+      done_with skipped configuration_changed
+    awk '$1=="full" && $2 ~ /^avg10=[0-9]+(\.[0-9]+)?$/ {
+      split($2,a,"="); safe=a[2]<=1; events++
+    } END { exit !(events==1 && safe) }' /proc/pressure/io || done_with skipped io_pressure
+  else
+    [ -z "$(field lock)" ] || done_with skipped locked
+  fi
   is_off || done_with skipped not_stopped
   mark_is "$COLD_MARK" || done_with skipped not_dropped
   has_snapshots && done_with skipped has_snapshots
@@ -365,22 +391,35 @@ exec 9>/run/lock/hivra-vm-$VMID.lock
 flock -x -w 30 9 || done_with skipped vm_busy
 check_storable
 DISK_LINES="$(disk_lines "$CONFIG")"
+if [ "$KIND" = portable_checkpoint ] && [[ ! "$DISK_LINES" =~ ^scsi0[[:space:]][a-zA-Z0-9._:-]+$ ]]; then
+  done_with skipped unsupported_portable_disks
+fi
 while read -r key volid; do
   [ -n "$key" ] || continue
   [ "$(storage_type "$#{volid%%:*}")" = lvmthin ] || done_with skipped unsupported_storage
 done <<< "$DISK_LINES"
 printf '%s\n' "$CONFIG" > "$JOBDIR/vm.conf"
-flock -u 9
-exec 9>&-
+if [ "$KIND" != portable_checkpoint ]; then
+  flock -u 9
+  exec 9>&-
+fi
 if ! restic cat config >/dev/null 2>&1; then
   ssh -o BatchMode=yes cold mkdir -p "$REPO_FOLDER" >/dev/null 2>&1 || true
   restic init >/dev/null 2>&1 || done_with failed repo_init
 fi
-restic unlock >/dev/null 2>&1 || true
+if [ "$KIND" != portable_checkpoint ]; then restic unlock >/dev/null 2>&1 || true; fi
 BACKUP_ARGS=(--host "hivra-$AGENT_ID" --tag hivra-computer --tag hivra-stored --tag "job-$JOB_ID" --json --quiet)
 [ "$UPLOAD_LIMIT_KIB" -gt 0 ] && BACKUP_ARGS+=(--limit-upload "$UPLOAD_LIMIT_KIB")
 restic backup "$#{BACKUP_ARGS[@]}" --stdin-from-command --stdin-filename vm.conf -- cat "$JOBDIR/vm.conf" \
   > "$JOBDIR/conf.json" 2>"$JOBDIR/restic.err" || done_with failed upload_failed
+if [ "$KIND" = portable_checkpoint ]; then
+  config_snapshot="$(restic_json_field snapshot_id < "$JOBDIR/conf.json")"
+  [[ "$config_snapshot" =~ ^[0-9a-f]{64}$ ]] || done_with failed snapshot_id_missing
+  config_readback="$(restic dump --quiet "$config_snapshot" /vm.conf 2>>"$JOBDIR/restic.err" | sha256sum | cut -d' ' -f1)" ||
+    done_with failed download_failed
+  [ "$config_readback" = "$PORTABLE_CONFIG_SHA" ] || done_with failed hash_mismatch
+  CONFIG_JSON=",\"configuration\":{\"sha256\":\"$PORTABLE_CONFIG_SHA\",\"snapshotId\":\"$config_snapshot\"}"
+fi
 COUNT=0
 : > "$JOBDIR/stored-disks"
 while read -r key volid; do
@@ -391,6 +430,10 @@ while read -r key volid; do
   lvchange -ay "$lv" >/dev/null 2>&1 || true
   ACTIVE_LVS="$ACTIVE_LVS $lv"
   bytes="$(blockdev --getsize64 "$dev" 2>/dev/null)" || done_with failed disk_size
+  if [ "$KIND" = portable_checkpoint ]; then
+    [[ "$bytes" =~ ^[0-9]{1,12}$ ]] && (( bytes > 0 && bytes <= 40 * 1024**3 )) ||
+      done_with skipped unsupported_portable_size
+  fi
   ionice -c3 nice -n 10 restic backup "$#{BACKUP_ARGS[@]}" --stdin-from-command --stdin-filename "$key.raw" \
     -- /bin/bash "$JOBDIR/read-disk.sh" "$dev" "$JOBDIR/$key.sha256" \
     > "$JOBDIR/$key.json" 2>>"$JOBDIR/restic.err" || done_with failed upload_failed
@@ -412,6 +455,11 @@ while read -r key sum snap_id dev; do
     || done_with failed download_failed
   [ "$got" = "$sum" ] || done_with failed hash_mismatch
 done < "$JOBDIR/stored-disks"
+if [ "$KIND" = portable_checkpoint ]; then
+  check_storable
+  [ "$(disk_lines "$CONFIG")" = "$DISK_LINES" ] || done_with skipped changed_meanwhile
+  done_with succeeded portable_checkpointed
+fi
 # From here the computer is held: a wake waits, then finds it stored.
 exec 9>/run/lock/hivra-vm-$VMID.lock
 flock -x -w 60 9 || done_with skipped vm_busy_late
@@ -461,6 +509,7 @@ export interface BackupStartInput {
   disks?: BackupDisk[];
   /** Shell that installs the `cold` alias (from cold-storage-ssh). */
   coldStorageInstall: string;
+  portableFence?: PortableKvmSourceFence;
 }
 
 function body(kind: BackupJobKind): string {
@@ -469,6 +518,7 @@ function body(kind: BackupJobKind): string {
     case "drill": return DRILL_BODY;
     case "restore": return RESTORE_BODY;
     case "store": return STORE_BODY;
+    case "portable_checkpoint": return STORE_BODY;
     case "unstore": return UNSTORE_BODY;
   }
 }
@@ -489,7 +539,7 @@ export function backupJobFiles(kind: BackupJobKind): { run: string; readDisk: st
  */
 export function buildBackupStartScript(input: BackupStartInput): string {
   const kind = input.kind;
-  if (kind !== "backup" && kind !== "drill" && kind !== "restore" && kind !== "store" && kind !== "unstore") {
+  if (kind !== "backup" && kind !== "drill" && kind !== "restore" && kind !== "store" && kind !== "unstore" && kind !== "portable_checkpoint") {
     throw new Error("Invalid backup job kind");
   }
   const jobId = checkedUuid(input.jobId, "job id");
@@ -500,13 +550,25 @@ export function buildBackupStartScript(input: BackupStartInput): string {
   const keepWeekly = checkedInt(input.keepWeekly, 0, 52, "weekly retention");
   const limit = checkedInt(input.uploadLimitKiB, 0, 10_000_000, "upload limit");
   const maxHours = checkedInt(input.maxHours, 1, 24, "job time limit");
-  const disks = kind === "backup" || kind === "store" ? [] : checkedDisks(input.disks ?? []);
+  const portable = input.portableFence;
+  if (kind === "portable_checkpoint") {
+    if (!portable || portable.agentId !== agentId || portable.vmid !== vmid || portable.bindingTag !== tag
+      || portable.state !== "fenced" || !SHA256_RE.test(portable.configurationSha256)
+      || !UUID_RE.test(portable.operationId) || !Number.isSafeInteger(portable.generation) || portable.generation < 1
+      || vmid < 100 || vmid > 999_999_999 || vmid === 9302 || !/^[a-z][a-z0-9-]{0,62}$/.test(portable.hostId)) {
+      throw new Error("Portable checkpoint requires the exact fenced QA source");
+    }
+  } else if (portable) {
+    throw new Error("Portable proof is invalid for a legacy backup job");
+  }
+  const disks = kind === "backup" || kind === "store" || kind === "portable_checkpoint" ? [] : checkedDisks(input.disks ?? []);
   if (kind === "unstore" && disks.length === 0) throw new Error("A stored computer needs its disk list to come back");
   if (typeof input.coldStorageInstall !== "string" || input.coldStorageInstall.length < 1) {
     throw new Error("Cold storage install script missing");
   }
   const unit = backupUnitName(jobId);
   const jobDir = `${BACKUP_JOB_ROOT}/${jobId}`;
+  const portableFolder = portable && `hivra-portable-computers/${agentId}-${portable.operationId}`;
   const params = [
     `JOB_ID=${shellQuote(jobId)}`,
     `KIND=${shellQuote(kind)}`,
@@ -516,7 +578,12 @@ export function buildBackupStartScript(input: BackupStartInput): string {
     `KEEP_DAILY=${keepDaily}`,
     `KEEP_WEEKLY=${keepWeekly}`,
     `UPLOAD_LIMIT_KIB=${limit}`,
-    `REPO_FOLDER=${shellQuote(BACKUP_REPO_FOLDER)}`,
+    `REPO_FOLDER=${shellQuote(portableFolder ?? BACKUP_REPO_FOLDER)}`,
+    ...(portable ? [
+      `PORTABLE_CONFIG_SHA=${shellQuote(portable.configurationSha256)}`,
+      `PORTABLE_FENCE=${shellQuote(JSON.stringify({ agentId, operationId: portable.operationId,
+        generation: portable.generation, hostId: portable.hostId, vmid, bindingTag: tag }))}`,
+    ] : []),
   ].join("\n");
   const diskList = disks.map((d) => `${d.key} ${d.sha256} ${d.bytes} ${d.snapshotId}`).join("\n");
   return `set -euo pipefail
@@ -524,10 +591,11 @@ umask 077
 finish() { printf '%s{"ok":%s,"reason":"%s","job":"%s"}\\n' ${shellQuote(BACKUP_START_PREFIX)} "$1" "$2" ${shellQuote(jobId)}; exit 0; }
 IFS= read -r RESTIC_PW || true
 [ "\${#RESTIC_PW}" -ge 32 ] || finish false no_password
+${portable ? '[[ "$RESTIC_PW" =~ ^[A-Za-z0-9_-]{32,128}$ ]] || finish false invalid_portable_password' : ""}
 install -d -m 0700 /etc/hivra/keys
 ${input.coldStorageInstall}
 if ! command -v restic >/dev/null 2>&1; then
-  DEBIAN_FRONTEND=noninteractive apt-get install -y restic >/dev/null 2>&1 || finish false restic_missing
+  ${portable ? "finish false restic_missing" : "DEBIAN_FRONTEND=noninteractive apt-get install -y restic >/dev/null 2>&1 || finish false restic_missing"}
 fi
 RV="$(restic version 2>/dev/null | awk '{print $2}')"
 case "$RV" in 0.1[7-9].*|0.[2-9][0-9].*|[1-9]*) ;; *) finish false restic_too_old ;; esac
@@ -547,7 +615,7 @@ HIVRA_BACKUP_PARAMS
 cat > "$JOBDIR/disks" <<'HIVRA_BACKUP_DISKS'
 ${diskList}
 HIVRA_BACKUP_DISKS
-printf 'RESTIC_REPOSITORY=%s\\nRESTIC_PASSWORD=%s\\n' ${shellQuote(backupRepository(agentId))} "$RESTIC_PW" > "$JOBDIR/secret"
+printf 'RESTIC_REPOSITORY=%s\\nRESTIC_PASSWORD=%s\\n' ${shellQuote(portableFolder ? `sftp:cold:${portableFolder}` : backupRepository(agentId))} "$RESTIC_PW" > "$JOBDIR/secret"
 unset RESTIC_PW
 cat > "$JOBDIR/read-disk.sh" <<'HIVRA_BACKUP_READ'
 ${shellText(READ_DISK)}HIVRA_BACKUP_READ
@@ -612,6 +680,7 @@ export type PolledJob =
     addedBytes: number;
     disks: BackupDisk[];
     finishedAt: string | null;
+    configuration?: { sha256: string; snapshotId: string };
   };
 
 export function parseBackupPoll(stdout: string): PolledJob[] {
@@ -638,6 +707,10 @@ export function parseBackupPoll(stdout: string): PolledJob[] {
         try { checkedDisks([candidate]); disks.push(candidate); } catch { /* a malformed disk is dropped */ }
       }
       const added = Number(row.addedBytes);
+      const configuration = row.configuration as { sha256?: unknown; snapshotId?: unknown } | null;
+      const configurationProof = configuration && typeof configuration.sha256 === "string" && SHA256_RE.test(configuration.sha256)
+        && typeof configuration.snapshotId === "string" && SNAPSHOT_ID_RE.test(configuration.snapshotId)
+        ? { sha256: configuration.sha256, snapshotId: configuration.snapshotId } : undefined;
       out.push({
         jobId,
         state: "finished",
@@ -645,6 +718,7 @@ export function parseBackupPoll(stdout: string): PolledJob[] {
         reason,
         addedBytes: Number.isSafeInteger(added) && added >= 0 ? added : 0,
         disks,
+        ...(configurationProof ? { configuration: configurationProof } : {}),
         finishedAt: typeof row.finishedAt === "string" && !Number.isNaN(Date.parse(row.finishedAt)) ? row.finishedAt : null,
       });
     } catch {

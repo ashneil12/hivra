@@ -78,7 +78,7 @@ describe("POST /api/hivra/agents/[id]/wake", () => {
     const response = await POST(request(), params);
     expect(response.status).toBe(200);
     expect((await response.json()).data).toEqual({ state: "awake", wakeMs: 1400 });
-    expect(mockEnsure).toHaveBeenCalledWith(ID, expect.objectContaining({ trigger: "open", waitMs: 45_000 }));
+    expect(mockEnsure).toHaveBeenCalledWith(ID, expect.objectContaining({ trigger: "open", waitMs: 45_000, portableOwnerId: "user-1" }));
   });
 
   it("hands unfinished wake work to after()", async () => {

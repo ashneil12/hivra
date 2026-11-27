@@ -131,6 +131,9 @@ jobs:
           node scripts/test-managed-gvisor-reservation.cjs
           node scripts/test-managed-gvisor-tier-handoff.cjs
 
+      - name: Verify managed KVM portable placement claims
+        run: node scripts/test-managed-kvm-portable-handoff.cjs
+
       - name: Verify the gVisor adapter and workspace quotas
         working-directory: .
         run: |

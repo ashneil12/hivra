@@ -49,6 +49,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const result = await ensureHivraAgentAwake(String(agent.id), {
       trigger: "open",
+      portableOwnerId: userId,
       waitMs: WAKE_WAIT_MS,
       workDeadlineMs,
       onBackground: (work) => after(() => work),

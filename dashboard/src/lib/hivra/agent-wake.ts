@@ -96,6 +96,7 @@ export interface EnsureAwakeResult {
 
 export interface EnsureAwakeOptions {
   trigger: AgentSleepEventTrigger;
+  portableOwnerId?: string;
   /** How long this call may wait for a wake, its own or another's. Default 45 s. */
   waitMs?: number;
   /** How often the row is re-read while waiting. Default 1 s. */
@@ -698,6 +699,25 @@ export async function ensureHivraAgentAwake(
   for (;;) {
     if (!row) return { state: "failed", reason: "agent_unreadable" };
     if (isAgentAwake(row)) return { state: "awake" };
+    if (row.operation_kind === "wake" && (await import("./portable-kvm/pilot")).isPortableKvmWakeClaimed(row)) {
+      if (!options.portableOwnerId || options.portableOwnerId !== row.user_id) {
+        return { state: "waking", reason: "portable_kvm_owner_wake_required" };
+      }
+      try {
+        const { requestManagedPortableKvmOwnerWake, resumeManagedPortableKvmOwnerWake } = await import("./portable-kvm/managed-wake");
+        const result = await requestManagedPortableKvmOwnerWake(options.portableOwnerId, row);
+        if (result?.state === "waking" && options.onBackground) {
+          options.onBackground(resumeManagedPortableKvmOwnerWake({ ownerId: options.portableOwnerId, deadline: workDeadlineMs })
+            .catch(() => undefined));
+        }
+        return result ?? { state: "failed", reason: "portable_kvm_lease_refused" };
+      } catch {
+        log.error("portable KVM wake request refused", new Error("Portable KVM wake request failed"), {
+          source: LOG_SOURCE, failureType: "portable_kvm_wake_request_failed", agentId,
+        });
+        return { state: "failed", reason: "portable_kvm_step_failed" };
+      }
+    }
 
     if (TRANSIENT_STATES.includes(String(row.sleep_state))) {
       if (!settledStuck && isStuckTransient(row, Date.now())) {
