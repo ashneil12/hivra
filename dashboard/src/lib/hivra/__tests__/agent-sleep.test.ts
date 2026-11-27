@@ -123,7 +123,7 @@ const run = (options: Parameters<typeof sleepHivraAgent>[1]) => sleepHivraAgent(
 
 describe("sleepEligibility", () => {
   it("accepts a plain eligible agent on a canary host", () => {
-    expect(sleepEligibility(eligibleRow(), host, okFacts, { serverMode: "canary", tier: "nap" })).toEqual({ eligible: true, reasons: [] });
+    expect(sleepEligibility(eligibleRow(), host, okFacts, { tier: "nap" })).toEqual({ eligible: true, reasons: [] });
   });
 
   it.each([
@@ -144,59 +144,54 @@ describe("sleepEligibility", () => {
     ["bankr seed missing", { bankr_skills_seeded_at: null }, "bankr_seed_pending"],
     ["template seed missing", { template_skills_seeded_at: null, template_skills: ["a-skill"] }, "template_seed_pending"],
   ])("refuses %s", (_name, overrides, reason) => {
-    const result = sleepEligibility(eligibleRow(overrides as Record<string, unknown>), host, okFacts, { serverMode: "canary" });
+    const result = sleepEligibility(eligibleRow(overrides as Record<string, unknown>), host, okFacts);
     expect(result.eligible).toBe(false);
     expect(result.reasons).toContain(reason);
   });
 
   it("does not need a template seed when the agent has no template skills", () => {
     const row = eligibleRow({ template_skills_seeded_at: null, template_skills: [] });
-    expect(sleepEligibility(row, host, okFacts, { serverMode: "canary" }).eligible).toBe(true);
+    expect(sleepEligibility(row, host, okFacts).eligible).toBe(true);
   });
 
   it("treats unknown facts as not eligible", () => {
-    const result = sleepEligibility(eligibleRow(), host, { activeMove: null, openAttachment: null, ownerLapsed: null }, { serverMode: "canary" });
+    const result = sleepEligibility(eligibleRow(), host, { activeMove: null, openAttachment: null, ownerLapsed: null });
     expect(result.reasons).toEqual(expect.arrayContaining(["move_unknown", "attachment_unknown", "lapse_unknown"]));
-    const known = sleepEligibility(eligibleRow(), host, { activeMove: true, openAttachment: true, ownerLapsed: true }, { serverMode: "canary" });
+    const known = sleepEligibility(eligibleRow(), host, { activeMove: true, openAttachment: true, ownerLapsed: true });
     expect(known.reasons).toEqual(expect.arrayContaining(["move_active", "attachment_open", "owner_lapsed"]));
   });
 
   it("refuses an unknown host, a host in maintenance, and a host whose sleep switch is not canary or on", () => {
-    expect(sleepEligibility(eligibleRow(), null, okFacts, { serverMode: "canary" }).reasons).toContain("host_unknown");
-    expect(sleepEligibility(eligibleRow(), { status: "maintenance", sleep_mode: "on" }, okFacts, { serverMode: "on" }).reasons).toContain("host_maintenance");
-    expect(sleepEligibility(eligibleRow(), { status: "active", sleep_mode: "off" }, okFacts, { serverMode: "on" }).reasons).toContain("host_sleep_mode_off");
-    expect(sleepEligibility(eligibleRow(), { status: "active", sleep_mode: "observe" }, okFacts, { serverMode: "on" }).reasons).toContain("host_sleep_mode_off");
-    expect(sleepEligibility(eligibleRow(), { status: "active", sleep_mode: "on" }, okFacts, { serverMode: "on" }).eligible).toBe(true);
+    expect(sleepEligibility(eligibleRow(), null, okFacts).reasons).toContain("host_unknown");
+    expect(sleepEligibility(eligibleRow(), { status: "maintenance", sleep_mode: "on" }, okFacts).reasons).toContain("host_maintenance");
+    expect(sleepEligibility(eligibleRow(), { status: "active", sleep_mode: "off" }, okFacts).reasons).toContain("host_sleep_mode_off");
+    expect(sleepEligibility(eligibleRow(), { status: "active", sleep_mode: "observe" }, okFacts).reasons).toContain("host_sleep_mode_off");
+    expect(sleepEligibility(eligibleRow(), { status: "active", sleep_mode: "on" }, okFacts).eligible).toBe(true);
   });
 
   it("never lets a manual sleep skip the host switch, on any server mode", () => {
     const off = { status: "active", sleep_mode: "off" };
-    expect(sleepEligibility(eligibleRow(), off, okFacts, { manual: true, serverMode: "canary" }).reasons).toContain("host_sleep_mode_off");
-    expect(sleepEligibility(eligibleRow(), off, okFacts, { manual: true, serverMode: "on" }).reasons).toContain("host_sleep_mode_off");
-    expect(sleepEligibility(eligibleRow(), { status: "active", sleep_mode: "canary" }, okFacts, { manual: true, serverMode: "canary" }).eligible).toBe(true);
-    expect(sleepEligibility(eligibleRow(), { status: "maintenance", sleep_mode: "off" }, okFacts, { manual: true, serverMode: "canary" }).reasons).toContain("host_maintenance");
-    expect(sleepEligibility(eligibleRow({ always_on: true }), off, okFacts, { manual: true, serverMode: "canary" }).reasons).toContain("always_on");
+    expect(sleepEligibility(eligibleRow(), off, okFacts, { manual: true }).reasons).toContain("host_sleep_mode_off");
+    expect(sleepEligibility(eligibleRow(), off, okFacts, { manual: true }).reasons).toContain("host_sleep_mode_off");
+    expect(sleepEligibility(eligibleRow(), { status: "active", sleep_mode: "canary" }, okFacts, { manual: true }).eligible).toBe(true);
+    expect(sleepEligibility(eligibleRow(), { status: "maintenance", sleep_mode: "off" }, okFacts, { manual: true }).reasons).toContain("host_maintenance");
+    expect(sleepEligibility(eligibleRow({ always_on: true }), off, okFacts, { manual: true }).reasons).toContain("always_on");
   });
 
 
-  it("asks for the agent's policy on canary and honours t1 and t3, but not in on mode or for a manual sleep", () => {
+  it("requires an opted-in tier for automatic sleep, but not for a manual owner action", () => {
     const off = eligibleRow({ sleep_policy: "off" });
-    expect(sleepEligibility(off, host, okFacts, { serverMode: "canary", tier: "nap" }).reasons).toContain("policy_off");
-    expect(sleepEligibility(off, host, okFacts, { serverMode: "on", tier: "nap" }).eligible).toBe(true);
-    expect(sleepEligibility(off, host, okFacts, { serverMode: "canary", manual: true }).eligible).toBe(true);
-    expect(sleepEligibility(eligibleRow({ sleep_policy: "t1" }), host, okFacts, { serverMode: "canary", tier: "hibernate" }).reasons).toContain("policy_tier_not_allowed");
-    expect(sleepEligibility(eligibleRow({ sleep_policy: "t1" }), host, okFacts, { serverMode: "canary", tier: "nap" }).eligible).toBe(true);
-    expect(sleepEligibility(eligibleRow({ sleep_policy: "t3" }), host, okFacts, { serverMode: "canary", tier: "nap" }).reasons).toContain("policy_tier_not_allowed");
+    expect(sleepEligibility(off, host, okFacts, { tier: "nap" }).reasons).toContain("policy_off");
+    expect(sleepEligibility(off, host, okFacts, { manual: true }).eligible).toBe(true);
+    expect(sleepEligibility(eligibleRow({ sleep_policy: "t1" }), host, okFacts, { tier: "hibernate" }).reasons).toContain("policy_tier_not_allowed");
+    expect(sleepEligibility(eligibleRow({ sleep_policy: "t1" }), host, okFacts, { tier: "nap" }).eligible).toBe(true);
+    expect(sleepEligibility(eligibleRow({ sleep_policy: "t3" }), host, okFacts, { tier: "nap" }).reasons).toContain("policy_tier_not_allowed");
   });
 
-  it("treats a holder-funded seat as full sleep policy even when stored controls are stale", () => {
+  it("does not treat holder funding as consent to override stored sleep controls", () => {
     const row = eligibleRow({ seat_funding: "holder", always_on: true, sleep_policy: "off" });
-    expect(sleepEligibility(row, host, okFacts, { serverMode: "canary", tier: "nap" })).toEqual({ eligible: true, reasons: [] });
-    expect(sleepEligibility(row, host, okFacts, { serverMode: "canary", tier: "hibernate" })).toEqual({ eligible: true, reasons: [] });
-    const paid = eligibleRow({ seat_funding: "paid", always_on: true, sleep_policy: "off" });
-    expect(sleepEligibility(paid, host, okFacts, { serverMode: "canary", tier: "nap" }).reasons).toEqual(
-      expect.arrayContaining(["always_on", "policy_off"]),
-    );
+    expect(sleepEligibility(row, host, okFacts, { tier: "nap" }).reasons).toEqual(["always_on", "policy_off"]);
+    expect(sleepEligibility(eligibleRow({ seat_funding: "holder" }), host, okFacts, { tier: "nap" }).eligible).toBe(true);
   });
 
   it("uses fixed holder timings without changing the configurable paid-seat timings", () => {
@@ -262,6 +257,16 @@ describe("sleepHivraAgent", () => {
     expect(mockRunScript).not.toHaveBeenCalled();
   });
 
+  it.each(["paid", null] as const)("does not nap an otherwise eligible %s seat with Keep awake off but policy off in global on mode", async (seatFunding) => {
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ seat_funding: seatFunding, always_on: false, sleep_policy: "off" }), error: null });
+    await expect(run({ tier: "nap", trigger: "sweep", env: { HIVRA_SLEEP_MODE: "on" } })).resolves.toEqual({
+      outcome: "ineligible", reason: "policy_off", reasons: ["policy_off"],
+    });
+    expect(mockResolveTarget).not.toHaveBeenCalled();
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockRunScript).not.toHaveBeenCalled();
+  });
+
   it("returns ineligible with every reason, and touches no host", async () => {
     mockReadRow.mockResolvedValue({ data: eligibleRow({ always_on: true }), error: null });
     mockListRows.mockImplementation((table: string) => ({ data: table === "hermes_computer_moves" ? [{ id: "m" }] : [], error: null }));
@@ -324,7 +329,7 @@ describe("sleepHivraAgent", () => {
     });
     const result = await run({ tier: "nap", trigger: "sweep" });
     expect(result).toEqual(expect.objectContaining({ outcome: "slept", state: "napping", nextJobAt: "2026-11-12T13:00:00.000Z" }));
-    expect(mockClaim).toHaveBeenCalledWith({ agentId: AGENT_ID, operationId: expect.any(String), tier: "nap", expectedGeneration: 3 });
+    expect(mockClaim).toHaveBeenCalledWith({ agentId: AGENT_ID, operationId: expect.any(String), tier: "nap", expectedGeneration: 3, manual: false });
     const op = mockClaim.mock.calls[0][0].operationId;
     expect(mockFinish).toHaveBeenCalledWith({ agentId: AGENT_ID, operationId: op, result: "napping" });
     expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({
@@ -488,7 +493,7 @@ describe("sleepHivraAgent", () => {
   });
 
   it("enforces the fixed holder hibernate path and boundary end to end before host actions", async () => {
-    mockReadRow.mockResolvedValue({ data: eligibleRow({ seat_funding: "holder", always_on: true, sleep_policy: "off", sleep_state: "awake" }), error: null });
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ seat_funding: "holder", sleep_state: "awake" }), error: null });
     const direct = await run({ tier: "hibernate", trigger: "sweep" });
     expect(direct).toEqual(expect.objectContaining({ outcome: "not_idle", reason: "hibernate_before_nap" }));
     expect(mockRunScript).not.toHaveBeenCalled();
@@ -506,8 +511,8 @@ describe("sleepHivraAgent", () => {
     mockResolveTarget.mockResolvedValue({ ok: true, target });
     mockHostRow.mockResolvedValue({ data: host, error: null });
     // At exactly 12 minutes in nap (16 minutes total idle after the fixed 4-minute nap),
-    // the holder seat hibernates despite the stale stored controls.
-    mockReadRow.mockResolvedValue({ data: eligibleRow({ seat_funding: "holder", always_on: true, sleep_policy: "off", sleep_state: "napping", sleep_tier_changed_at: "2026-11-12T11:48:00Z" }), error: null });
+    // the opted-in holder seat hibernates.
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ seat_funding: "holder", sleep_state: "napping", sleep_tier_changed_at: "2026-11-12T11:48:00Z" }), error: null });
     stubScripts({ sleep: sleepReceipt({ tier: "hibernate", from: "napping", to: "hibernated", reason: "hibernated", probe: null }) });
     const exact = await run({ tier: "hibernate", trigger: "sweep" });
     expect(exact).toEqual(expect.objectContaining({ outcome: "slept", state: "hibernated" }));
