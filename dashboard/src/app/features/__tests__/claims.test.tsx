@@ -285,10 +285,11 @@ describe("feature page claims", () => {
     expect(container.querySelector('a[href="/terms"]')?.textContent).toBe("current terms");
   });
 
-  it("says a paid computer stays on only in the approved words, and never offers a free hosted plan or trial", () => {
+  it("distinguishes persistence from uptime and never offers a free hosted plan or trial", () => {
     const { container } = render(<FeaturesPage />);
     const text = visibleText(container);
-    expect(text).toContain("A paid Hivra Cloud computer stays on and is not paused for inactivity.");
+    expect(text).toContain("Your files can outlast your session, even if the computer pauses when idle.");
+    expect(text).not.toMatch(/stays on|not paused for inactivity/i);
     expect(text).not.toContain("Hivra keeps the computer available when you're offline");
     expect(text).not.toMatch(/free trial|no card|card required|free plan|free tier/i);
   });

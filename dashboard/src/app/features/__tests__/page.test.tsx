@@ -1,10 +1,13 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import React from "react";
+import { TextEncoder } from "node:util";
 import { render, screen, within } from "@testing-library/react";
 
 import FeaturesPage from "../page";
 import { plainText, renderInline, staysOnOneLine } from "../_components/Inline";
+
+globalThis.TextEncoder ??= TextEncoder;
 
 jest.mock("@/components/public-site/PublicSite", () => ({
   __esModule: true,
@@ -29,14 +32,14 @@ jest.mock("next/link", () => {
 });
 
 describe("/features page", () => {
-  it("opens with the headline, the lead and two clear next steps", () => {
+  it("opens with the headline, the lead and clear next steps", () => {
     render(<FeaturesPage />);
 
-    // The headline is about the computer, not the agent: only a paid computer stays on, and the lead says so.
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Give your agent a computer that stays on.");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Give your agent a computer of its own.");
     expect(screen.getByRole("heading", { level: 2, name: "Less time setting things up. More time getting things done." })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /See supported agents/ })).toHaveAttribute("href", "/agents");
     expect(screen.getByRole("link", { name: /Explore pricing/ })).toHaveAttribute("href", "/pricing");
+    expect(screen.getByRole("link", { name: /Explore sandboxes/ })).toHaveAttribute("href", "/sandboxes");
     // The old quick-summary grid and shared price strip are gone.
     expect(screen.queryByText("What you get on day one")).not.toBeInTheDocument();
     expect(screen.queryByText(/Start Deploying|Deploy My Agent/)).not.toBeInTheDocument();
@@ -74,11 +77,21 @@ describe("/features page", () => {
     expect(screen.getByText(/Memory isn't perfect or automatic understanding\./)).toBeInTheDocument();
     expect(screen.getByText(/A hosted browser doesn't make those restrictions disappear\./)).toBeInTheDocument();
     expect(screen.getByText(/They are independent agents, not an automatically coordinated team\. Built-in orchestration belongs to Hivra's future plans\./)).toBeInTheDocument();
-    expect(screen.getByText(/Migration isn't a one-click promise: configurations and integrations need checking\./)).toBeInTheDocument();
-    expect(screen.getByText(/A paid Hivra Cloud computer stays on and is not paused for inactivity\./)).toBeInTheDocument();
-    // The sentence sits in the lead under the headline, once, not again in the schedule item.
-    expect(screen.getByText(/A paid Hivra Cloud computer stays on and is not paused for inactivity\./).textContent).toMatch(/^That's what Hivra provides\./);
-    expect(screen.getByText(/Host OpenClaw on a paid Hivra computer, or choose Hermes, also on a paid Hivra computer/)).toBeInTheDocument();
+    expect(screen.getByText(/Check your configurations and integrations before switching\./)).toBeInTheDocument();
+    expect(screen.getByText(/Your files can outlast your session, even if the computer pauses when idle\./)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "compare sandboxes and virtual machines" })).toHaveAttribute("href", "/sandboxes");
+  });
+
+  it.each(["0", "1"])("shows the verified apps link only when the catalog is enabled (%s)", (flag) => {
+    const env = jest.replaceProperty(process, "env", { ...process.env, NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG: flag });
+    try {
+      render(<FeaturesPage />);
+      const link = screen.queryByRole("link", { name: "verified apps" });
+      if (flag === "1") expect(link).toHaveAttribute("href", "/agents#verified-catalog");
+      else expect(link).not.toBeInTheDocument();
+    } finally {
+      env.restore();
+    }
   });
 
   it("states the hosting price from the plan facts and ends with the questions", () => {
@@ -89,10 +102,9 @@ describe("/features page", () => {
     const bold = (text: string) => (_content: string, element: Element | null) => element?.tagName === "STRONG" && element.textContent === text;
     expect(within(price).getByText(bold("$9.99 a month for 2 vCPU and 4 GB of RAM"))).toBeInTheDocument();
     expect(within(price).getByText(bold("$19.99 a month for 4 vCPU and 8 GB of RAM"))).toBeInTheDocument();
-    // The canonical rule (owner decision 2026-10-21): every Hivra Cloud computer is paid, a free account connects its own.
-    expect(price.textContent).toContain("Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.");
-    // No "supported paid" wording anywhere on the hub: it would imply a free or unsupported Hivra Cloud computer.
-    expect(document.body.textContent).not.toMatch(/supported paid/i);
+    expect(price.textContent).toContain("Paid agent hosting starts at $9.99 a month for 2 vCPU and 4 GB of RAM.");
+    expect(price.textContent).toContain("A free account works with a computer or server you connect yourself.");
+    expect(price.textContent).not.toContain("Every computer that Hivra Cloud runs for you needs a paid plan");
     expect(within(price).getByRole("link", { name: /Launch an agent/ })).toHaveAttribute("href", "/agents");
     expect(within(price).getByRole("link", { name: /See pricing/ })).toHaveAttribute("href", "/pricing");
 

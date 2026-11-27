@@ -2,8 +2,9 @@
 import "@testing-library/jest-dom";
 import fs from "fs";
 import path from "path";
+import { TextEncoder } from "node:util";
 import React from "react";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import type { Metadata } from "next";
 
 import AgentsIndexPage, { metadata as hubMetadata } from "../page";
@@ -18,6 +19,8 @@ import {
   unqualifiedKeepRunningClaims,
 } from "@/lib/hivra/agent-seo-catalog";
 import { getAgent } from "@/lib/hivra/agent-catalog";
+import { UNIVERSAL_CATALOG_MANIFESTS } from "@/lib/hivra/catalog-manifests";
+import { hasCurrentCatalogCertification } from "@/lib/hivra/catalog-manifests/certification";
 import { findBannedClaims } from "@/lib/tools/copy-rules";
 import { MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
 import { HUB_CONTENT, getAgentPageContent } from "../content";
@@ -64,9 +67,20 @@ beforeAll(() => {
       dispatchEvent: () => false,
     }),
   });
+  Object.defineProperty(globalThis, "TextEncoder", {
+    configurable: true,
+    value: class extends TextEncoder {
+      override encode(input?: string) {
+        return Uint8Array.from(super.encode(input));
+      }
+    },
+  });
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  jest.restoreAllMocks();
+});
 
 const APP_DIR = path.resolve(__dirname, "..", "..");
 
@@ -185,11 +199,30 @@ describe("/agents hub", () => {
     expect(hrefs).toContain("/sign-up");
     expect(hrefs).toContain("/pricing");
     expect(hrefs).toContain("/features");
+    expect(hrefs).toContain("/sandboxes");
     expect(hrefs).toContain("#choose-an-agent");
     expect(main.querySelector("#choose-an-agent h2")).toHaveTextContent("Choose an agent");
     expect(hrefs.some((href) => href?.startsWith("/dashboard"))).toBe(false);
     expect(hrefs.some((href) => href?.startsWith("/launch"))).toBe(false);
     expectInternalLinksResolve(main);
+  });
+
+  it("hides verified apps when the public catalog is disabled", () => {
+    jest.replaceProperty(process, "env", { ...process.env, NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG: "0" });
+    const { container } = render(<AgentsIndexPage />);
+    expect(container.querySelector("#verified-catalog")).not.toBeInTheDocument();
+  });
+
+  it("shows exactly the currently certified manifest entries when the public catalog is enabled", () => {
+    jest.replaceProperty(process, "env", { ...process.env, NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG: "1" });
+    render(<AgentsIndexPage />);
+    const preview = screen.getByRole("list", { name: "Verified catalog entries" });
+    expect(screen.getByRole("heading", { name: "Verified apps" })).toBeInTheDocument();
+    expect(screen.getByText("Every app here passed an end-to-end launch check. Find them in Launch.")).toBeInTheDocument();
+    const certified = UNIVERSAL_CATALOG_MANIFESTS.filter(hasCurrentCatalogCertification);
+    expect(certified.length).toBeGreaterThan(0);
+    expect(UNIVERSAL_CATALOG_MANIFESTS.length).toBeGreaterThan(certified.length);
+    expect(within(preview).getAllByRole("listitem").map((item) => item.textContent)).toEqual(certified.map(({ name }) => name));
   });
 
   it("links the repository for the source and self-hosting, and names no licence", () => {
@@ -225,15 +258,15 @@ describe("/agents hub", () => {
     const text = blockText(container.querySelector("main")!);
     expect(unqualifiedKeepRunningClaims(text, /Claude Code|Codex/)).toEqual([]);
     expect(text).not.toMatch(/close the laptop and the work keeps going/i);
-    expect(text).toMatch(/Long terminal-based coding jobs can continue in tmux/);
-    expect(text).toMatch(/closing a browser tab does not make an ordinary interactive command persistent by itself/);
-    expect(text).toContain("A paid Hivra computer isn't paused for inactivity.");
+    expect(text).toMatch(/long terminal-based coding jobs can continue in tmux/i);
+    expect(text).toMatch(/closing a browser tab does not make an ordinary interactive command persistent by itself/i);
+    expect(text).toContain("On a computer configured to stay awake");
     // Aeon's work runs on the owner's GitHub Actions, not on the computer.
     expect(text).toMatch(/the scheduled tasks execute through your GitHub Actions/);
     expect(text).toContain("The dashboard computer counts as one of your agents but uses none of your plan's shared CPU and RAM.");
-    // The hub states the paid rule once in its opening and once with the price.
-    expect(text).toContain("Every Hivra Cloud computer needs a paid plan, and a paid computer stays available after you close your laptop.");
-    expect(text).toContain("Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.");
+    expect(text).toContain("Paid agent hosting starts at $9.99 a month for 2 vCPU and 4 GB of RAM.");
+    expect(text).toContain("compare sandboxes and virtual machines");
+    expect(text).not.toMatch(/Canary|idle-stop pilot/);
     expect(text).not.toMatch(/\bthe box\b|Box Terminal/i);
   });
 

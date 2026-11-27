@@ -11,6 +11,7 @@ import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import { AGENT_SEO_ENTRIES } from "@/lib/hivra/agent-seo-catalog";
 import { getAgent } from "@/lib/hivra/agent-catalog";
+import { isCatalogAppLaunchable, UNIVERSAL_CATALOG_MANIFESTS } from "@/lib/hivra/catalog-manifests";
 import { HeadingLines, Inline } from "./AgentProse";
 import { TermRows } from "./AgentBlocks";
 import { HUB_CONTENT } from "./content";
@@ -42,6 +43,7 @@ export default function AgentsIndexPage() {
     const def = getAgent(card.slug);
     return entry && def ? [{ card, entry, def }] : [];
   });
+  const certifiedApps = UNIVERSAL_CATALOG_MANIFESTS.filter((manifest) => isCatalogAppLaunchable(manifest));
 
   const schema = {
     "@context": "https://schema.org",
@@ -135,6 +137,16 @@ export default function AgentsIndexPage() {
             ))}
           </ol>
         </section>
+
+        {certifiedApps.length > 0 && (
+          <section id="verified-catalog" className={`${agentStyles.choose} ${agentStyles.hubProse}`}>
+            <h2 className={agentStyles.hubHeading}>Verified apps</h2>
+            <p>Every app here passed an end-to-end launch check. Find them in Launch.</p>
+            <ul className={agentStyles.catalogEntries} aria-label="Verified catalog entries">
+              {certifiedApps.map(({ id, name }) => <li key={id}>{name}</li>)}
+            </ul>
+          </section>
+        )}
 
         <section className={`${agentStyles.choose} ${agentStyles.hubProse}`}>
           <h2 className={agentStyles.hubHeading}>{content.choose.heading}</h2>

@@ -35,7 +35,7 @@ export const doc: DocPage = {
         "| Requirement | Detail |",
         "| --- | --- |",
         "| A deployment with Nuphos enabled | Off by default. Without it there is no Nuphos tile in Launch. |",
-        `| A paid Hivra Cloud plan | Every Hivra Cloud computer needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. |`,
+        `| A paid Hivra Cloud plan | Nuphos needs a paid Hivra Cloud plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. |`,
         "| Enough room | 1 vCPU and 3 GB of RAM is the smallest size accepted. The Launch review proposes 2 vCPU and 4 GB. |",
         "| A Nuphos account | Used by the Nuphos apps to reach your agent. Its price and terms are between you and Nuphos. |",
         "| A Claude sign-in | The agent signs in to your own Claude account inside Nuphos. Claude usage follows your own Claude subscription and its limits. |",
@@ -151,7 +151,7 @@ export const doc: DocPage = {
     },
     {
       q: "Does it need a paid plan, and how big must it be?",
-      a: "Yes. Every Hivra Cloud computer needs a paid plan. Nuphos needs at least 1 vCPU and 3 GB of RAM, and the Launch review proposes 2 vCPU and 4 GB. Launch it on Hivra Cloud.",
+      a: "Yes. Nuphos needs a paid Hivra Cloud plan and at least 1 vCPU and 3 GB of RAM. Launch suggests 2 vCPU and 4 GB.",
     },
     {
       q: "How do I update it?",

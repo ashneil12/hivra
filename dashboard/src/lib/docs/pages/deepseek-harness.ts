@@ -1,5 +1,4 @@
 import type { DocPage } from "../types";
-import { HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE } from "@/lib/blog/plan-facts";
 
 export const doc: DocPage = {
   slug: "deepseek-harness",
@@ -31,7 +30,7 @@ export const doc: DocPage = {
     {
       heading: "Before you start",
       paragraphs: [
-        "- **A Hivra account.** DeepSeek Harness runs on Hivra Cloud only, and every Hivra Cloud computer needs a paid plan. It cannot run on a server you connected or on a computer in your own cloud account. If you try, Launch refuses with \"DeepSeek Harness runs on Hivra Cloud only.\"\n- **A paid plan.** " + HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE + " On the Review step, Where it runs shows if your current plan does not cover Hivra Cloud. See [plans and billing](/docs/plans-and-billing) for what the plan covers.\n- **Enough size.** DeepSeek Harness needs at least 2 CPU and 3 GB of RAM. Launch recommends 2 CPU and 4 GB, and it keeps whatever size you pick fixed. It always keeps that CPU and memory and never uses more.\n- **A way to pay for the model.** Either Hivra credits, or your own Venice API key. There is no third route for this agent, and the reason is covered in the next section.\n- **A current host with named HTTPS access.** The Hivra installation must have named HTTPS access configured, or Launch refuses with \"requires this Hivra installation's named HTTPS access\". The Hivra Cloud computer also needs a connection service new enough to run it. That is Hivra's side to keep current, and you notice an old one through the \"Connection update needed\" state described under troubleshooting.",
+        "- **A Hivra account.** DeepSeek Harness runs on Hivra Cloud only. It cannot run on a server you connected or on a computer in your own cloud account. If you try, Launch refuses with \"DeepSeek Harness runs on Hivra Cloud only.\"\n- **A paid plan.** DeepSeek Harness requires a paid plan. On the Review step, Where it runs shows if your current plan does not cover Hivra Cloud. See [plans and billing](/docs/plans-and-billing) for what the plan covers.\n- **Enough size.** DeepSeek Harness needs at least 2 CPU and 3 GB of RAM. Launch recommends 2 CPU and 4 GB, and it keeps whatever size you pick fixed. It always keeps that CPU and memory and never uses more.\n- **A way to pay for the model.** Either Hivra credits, or your own Venice API key. There is no third route for this agent, and the reason is covered in the next section.\n- **A current host with named HTTPS access.** The Hivra installation must have named HTTPS access configured, or Launch refuses with \"requires this Hivra installation's named HTTPS access\". The Hivra Cloud computer also needs a connection service new enough to run it. That is Hivra's side to keep current, and you notice an old one through the \"Connection update needed\" state described under troubleshooting.",
         "The plan pays for the computer. It never pays for model usage. [Choose how your agent gets its model](/docs/models-and-credits) compares every option across the supported agents.",
       ],
     },
@@ -104,7 +103,7 @@ export const doc: DocPage = {
   faqs: [
     {
       q: "Is DeepSeek Harness free on Hivra?",
-      a: "DeepSeek Harness runs on a Hivra Cloud computer, and every Hivra Cloud computer needs a paid plan. Model usage is separate: it comes from your Hivra credits or from your own Venice key.",
+      a: "DeepSeek Harness runs on a paid Hivra Cloud plan. Model usage is separate: it comes from your Hivra credits or from your own Venice key.",
     },
     {
       q: "Can I run it on my own server?",

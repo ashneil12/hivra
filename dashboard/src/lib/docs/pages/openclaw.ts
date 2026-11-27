@@ -1,5 +1,5 @@
 import type { DocPage } from "../types";
-import { HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
+import { ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
 import { SERVER_SIDE_AGENTS_KEEP_WORKING } from "@/lib/blog/runtime-facts";
 
 export const doc: DocPage = {
@@ -25,7 +25,7 @@ export const doc: DocPage = {
       heading: "Before you start",
       paragraphs: [
         "- **A Hivra account.** OpenClaw can run on Hivra Cloud or on a Proxmox server you connected yourself.",
-        `- **A paid plan, if you use Hivra Cloud.** ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} See [plans and billing](/docs/plans-and-billing).`,
+        "- **A paid plan for the standard Hivra Cloud launch.** See [plans and billing](/docs/plans-and-billing) for other eligibility rules.",
         "- **A Proxmox server, if you want your own hardware.** Connect it first on the Servers page. Only the SSH route to Proxmox VE can run OpenClaw. The one-command route is for Linux Sandbox only. [Run agents on your own server](/docs/connect-your-own-server) has the steps and the limits.",
         "- **Enough size.** OpenClaw runs its agent loop on the computer, so it is not a light add-on. It needs at least 1 vCPU and 2 GB of RAM. With the optional browser on, the least Launch offers is 2 vCPU and 4 GB. The browser switch is on by default on Review. On Hivra Cloud it needs a paid plan, and you can turn it off to launch the smaller 1 vCPU, 2 GB size. The size you launch with is the most the computer can grow to.",
         "- **No separate OpenClaw sign-in.** OpenClaw's own gateway authentication is none on these computers. Your Hivra sign-in is what protects the Control UI.",

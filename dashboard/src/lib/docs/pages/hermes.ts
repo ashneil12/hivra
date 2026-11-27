@@ -1,5 +1,5 @@
 import type { DocPage } from "../types";
-import { HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
 import { SERVER_SIDE_AGENTS_KEEP_WORKING } from "@/lib/blog/runtime-facts";
 
 export const doc: DocPage = {
@@ -18,15 +18,15 @@ export const doc: DocPage = {
         "Hermes Agent is an open-source agent from Nous Research. It is built for work that continues over time: it can keep memory between sessions, build up skills for jobs you repeat, use tools, and run scheduled jobs. This page is for developers and AI power users who want that agent running on a computer that stays on, without renting and configuring a server first.",
         "On Hivra you get the official Hermes Agent. Hivra creates a computer for it, runs Hermes's own installer on that computer, points it at a model, and opens Hermes's own web UI through Hivra's authenticated gateway. Hivra does not modify Hermes, fork it or patch it, and does not pin a version of it.",
         "Hivra is an independent hosting service and is not affiliated with or endorsed by Nous Research. Hermes is their project. The computer, the sign-in in front of it, and the Settings views around it are Hivra's. The public [Hermes page](/agents/hermes) describes what people use it for.",
-        "This is the new Hermes computer. It is live on Hivra's Canary environment and reaches hivra.cloud with the next owner-approved production promotion, so on production you may not yet see every step, label and button described here. Existing Hermes agents keep running on their current setup until they are moved, as described below.",
+        "This guide describes launching Hermes on a Hivra computer. Existing Hermes agents keep running on their current setup.",
         "![The Hermes page on the Hivra site with the Deploy Hermes button and a See pricing link](/images/docs/public-agent-hermes.webp \"The public Hermes page. Deploy Hermes links into sign-up and then Launch with Hermes named, not straight to the Launch screen.\")",
       ],
     },
     {
       heading: "Before you start",
       paragraphs: [
-        "- **A Hivra account.** Hermes runs on Hivra Cloud only, and every computer Hivra Cloud runs needs a paid plan. Hermes does not run on a server you connect.",
-        `- **A paid plan.** ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} See [plans and billing](/docs/plans-and-billing) for what the plan covers and what it does not.`,
+        "- **A Hivra account.** Hermes runs on Hivra Cloud only, not on a server you connect.",
+        "- **A paid plan for the launch described here.** See [pricing](/pricing) for managed hosting options.",
         "- **Enough size.** Hermes needs at least 1 vCPU and 2 GB of RAM. The official installer builds Hermes's web UI on the computer, and that step is what needs the memory. Launch only offers sizes Hermes can run on: up to 8 CPU and 16 GB, limited by your plan.",
         "- **A way to pay for the model.** Either Hivra credits (if you have both card credits and token credits, Review asks which to use), a Venice API key of your own, or a provider you choose inside Hermes after it opens. The plan pays for the computer. It does not pay for model usage. [Choose how your agent gets its model](/docs/models-and-credits) compares the options.",
         "- **Hivra's runtime release.** Hermes needs a host on a recent enough Hivra runtime. New Hivra Cloud launches use one. On an existing computer, open **Settings** > **Updates** and use **Update connection service**. (Settings is called Manage in some Hivra internal copy; this page says Settings, which is the label on the agent page.)",
@@ -100,7 +100,7 @@ export const doc: DocPage = {
     {
       heading: "Limits",
       paragraphs: [
-        `| Topic | What to know |\n| --- | --- |\n| Where it runs | Hivra Cloud only. It does not run on a server you connect, or on a computer in your own cloud. |\n| Plan | Every Hivra Cloud computer needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. |\n| Minimum size | 1 vCPU and 2 GB of RAM. |\n| Browser | Hermes has no Browser tab on Hivra. |\n| Model | Default deepseek-v4-1-flash. Credits reach models through Venice. |\n| Updates | You choose when. Hermes's own updater, in Terminal or in Settings. |\n| Version | Hivra does not pin one. |\n| Hivra Skills and Tasks tabs | Not shown for Hermes. Use Hermes's own. |`,
+        `| Topic | What to know |\n| --- | --- |\n| Where it runs | Hivra Cloud only. It does not run on a server you connect, or on a computer in your own cloud. |\n| Plan | This guide covers paid plans, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. |\n| Minimum size | 1 vCPU and 2 GB of RAM. |\n| Browser | Hermes has no Browser tab on Hivra. |\n| Model | Default deepseek-v4-1-flash. Credits reach models through Venice. |\n| Updates | You choose when. Hermes's own updater, in Terminal or in Settings. |\n| Version | Hivra does not pin one. |\n| Hivra Skills and Tasks tabs | Not shown for Hermes. Use Hermes's own. |`,
         "Hermes's behaviour beyond this, including what its memory keeps and which tools it has, comes from Nous Research and changes between versions. Read their documentation for those details.",
       ],
     },
