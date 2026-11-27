@@ -45,7 +45,7 @@ import { LaunchCapacitySheet } from "./LaunchCapacitySheet";
 import { AttachEntryLink } from "./AttachEntryLink";
 import { fetchCatalogOrder } from "./catalog-claims-client";
 import { LaunchCatalogPage, LaunchCatalogToolbar } from "./LaunchCatalog";
-import { COMPUTER_TILES, offeredAgentTiles, type ChooseTile } from "./launch-tiles";
+import { CLAUDE_SANDBOX_TILE, COMPUTER_TILES, offeredAgentTiles, type ChooseTile } from "./launch-tiles";
 import catalogStyles from "./LaunchCatalog.module.css";
 import { agentLaunchWatchRow } from "@/lib/agent-computers/agent-surfaces";
 import { targetSupportsLaunchModelSettings } from "@/lib/hivra/agent-placement";
@@ -729,13 +729,13 @@ function AgentLaunched({ name, agentId, href, readyLabel, onLeave, onStartNew }:
 
 /** What a connected server needs before it can run this profile. */
 function ownServerNeeds(profileId: LaunchProfileId | null): string {
-  return profileId === "linux-terminal"
+  return profileId === "linux-terminal" || profileId === "claude-code-sandbox"
     ? "Linux Sandbox needs an Ubuntu server connected with the one-command setup."
     : "This needs a Proxmox VE server connected with SSH details. An Ubuntu server connected with the one-command setup only runs Linux Sandbox.";
 }
 
 export function LaunchJourney(
-  { preparedProfiles = [], legacyHermesLane = false, managedLinuxSandboxEligible = false, catalogCertifier = false }: {
+  { preparedProfiles = [], legacyHermesLane = false, managedLinuxSandboxEligible = false, catalogCertifier = false, claudeSandboxTargetId }: {
     preparedProfiles?: readonly ("omarchy" | "windows")[];
     /**
      * Tests only: launch Hermes on the old instances lane. Every real launch
@@ -745,6 +745,7 @@ export function LaunchJourney(
     legacyHermesLane?: boolean;
     managedLinuxSandboxEligible?: boolean;
     catalogCertifier?: boolean;
+    claudeSandboxTargetId?: string;
   },
 ) {
   const router = useRouter();
@@ -894,13 +895,14 @@ export function LaunchJourney(
     // before a compatible host exists. Linux Sandbox is the exception only
     // when the server says this deployment's managed sandbox lane is configured.
     managedAvailable: profile?.managedCapacity !== "self-managed-only"
-      || (profile?.placementRuntimeId === "linux-terminal" && managedLinuxSandboxEligible),
+      || (draft?.profileId === "linux-terminal" && managedLinuxSandboxEligible),
     // Hermes and DeepSeek Harness run on Hivra Cloud only, whatever was chosen for another agent.
     selfManagedAvailable: !runsOnHivraCloudOnly(draft?.profileId ?? null),
     // Hivra Cloud needs a paid plan, so a Free account opens on a ready host
     // it connected instead of on a plan blocker.
     preferSelfManaged: planChecked && Boolean(plan?.usage) && !isPaidPlan(plan),
     targetKind: profile?.placementRuntimeId === "linux-terminal" ? "gvisor" : "any",
+    lockedTargetId: draft?.profileId === "claude-code-sandbox" ? claudeSandboxTargetId : undefined,
   });
 
   // DigitalOcean Managed Agents teams the owner connected. They run a
@@ -1459,8 +1461,8 @@ export function LaunchJourney(
   const currentProfile = draft.profileId ? PROFILE_DETAILS[draft.profileId] : null;
   const preparedCanaryProfile = draft.profileId === "omarchy";
   const managedEntitlementRequired = currentProfile?.managedCapacity === "entitlement-required";
-  const gvisorComputer = draft.profileId === "linux-terminal";
-  const managedGvisorAvailable = gvisorComputer && managedLinuxSandboxEligible;
+  const gvisorComputer = draft.profileId === "linux-terminal" || draft.profileId === "claude-code-sandbox";
+  const managedGvisorAvailable = draft.profileId === "linux-terminal" && managedLinuxSandboxEligible;
   const selfManagedOnly = currentProfile?.managedCapacity === "self-managed-only" && !managedGvisorAvailable;
   // The profile always keeps its size and never uses more (its launch sends
   // no maxima): gVisor sandboxes, and the agents whose setup never did.
@@ -1571,6 +1573,7 @@ export function LaunchJourney(
           : digitalOceanBalanceProblem(digitalOceanBalance.balance);
   }
   else if (destination.loading) capacityBlocker = "Checking compatible capacity…";
+  else if (draft.profileId === "claude-code-sandbox" && (!claudeSandboxTargetId || !destination.deployment)) capacityBlocker = "The Claude Code sandbox pilot host is unavailable.";
   else if (gvisorComputer && !managedGvisorAvailable && (destination.mode !== "self-managed" || !destination.deployment)) capacityBlocker = "Linux Sandbox needs a server you've connected, and none is ready for it yet.";
   else if (preparedCanaryProfile && destination.mode !== "hivra-managed") capacityBlocker = "Omarchy runs on Hivra Cloud only.";
   else if (destination.mode === "self-managed" && !destination.deployment) {
@@ -2232,6 +2235,7 @@ export function LaunchJourney(
     );
   };
   const offeredAgents = offeredAgentTiles({ selfHosted, hermesProfile: legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE, catalogCertifier });
+  if (claudeSandboxTargetId && !selfHosted) offeredAgents.splice(1, 0, CLAUDE_SANDBOX_TILE);
   const orderedByUse = catalogOn && useOrder.length > 0;
   const agentTiles = orderedByUse ? orderCatalogByUse(offeredAgents, useOrder) : offeredAgents;
   const catalogFiltered = catalogOn && isCatalogFiltered(catalogFilter);

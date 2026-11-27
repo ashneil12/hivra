@@ -1115,6 +1115,11 @@
     },
     {
       "family": "value-set",
+      "input": "/dashboard/launch?profile=claude-code-sandbox&stage=choose",
+      "expect": "/dashboard/launch?profile=claude-code-sandbox&stage=choose"
+    },
+    {
+      "family": "value-set",
       "input": "/dashboard/launch?profile=omarchy&stage=choose",
       "expect": "/dashboard/launch?profile=omarchy&stage=choose"
     },

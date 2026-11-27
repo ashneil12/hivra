@@ -952,6 +952,10 @@ export async function launchHivraAgentForUser(
       bodyVal !== undefined && bodyVal !== null && bodyVal !== "" ? bodyVal : tplVal ?? undefined;
 
     const type = String(pick(body.type, template?.type) || "claude-code");
+    const claudeTerminal = body.gvisorWorkload === "claude-terminal";
+    if (body.gvisorWorkload !== undefined && (!claudeTerminal || type !== "linux-terminal" || deployment.mode !== "self-managed")) {
+      return apiError("This launch cannot use the requested sandbox workload.", 400);
+    }
     if (body.launchRequestId === undefined && (type === "codex" || type === "linux-desktop" || type === "linux-terminal")) {
       return apiError("Include a valid stable launch request ID and complete launch settings.", 400,
         undefined, { code: "invalid_request" });
@@ -962,7 +966,7 @@ export async function launchHivraAgentForUser(
       deployment.mode === "hivra-managed" && canCertifyCatalog(userId))) {
       return apiError("That app isn't certified for launch yet", 400);
     }
-    const name = String(pick(body.name, template?.name) || def?.name || "Agent").trim();
+    const name = String(pick(body.name, template?.name) || (claudeTerminal ? "Claude Code (sandbox)" : def?.name) || "Agent").trim();
     if (type === "linux-terminal") {
       if (templateRef) {
         return apiError("Linux terminal sandboxes require an exact connected gVisor host target.", 400);
@@ -1041,6 +1045,7 @@ export async function launchHivraAgentForUser(
           name,
           cpu,
           ramGb: ram,
+          ...(claudeTerminal ? { claudeTerminal: true } : {}),
         });
         return apiSuccess({
           agent: sanitizeHivraAgentRow(row),

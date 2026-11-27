@@ -86,6 +86,19 @@ it("doesn't check a host checked a minute ago", async () => {
   expect(createAgent).toHaveBeenCalledTimes(1);
 });
 
+it("sends the distinct Claude terminal workload without host or model credentials", async () => {
+  const draft = { ...sandboxDraft(), profileId: "claude-code-sandbox" as const };
+  await submitLaunchDraft(draft, DEPLOYMENT, { selfManagedTarget: host(1) });
+  expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({
+    type: "linux-terminal",
+    computerProfile: "linux-terminal",
+    gvisorWorkload: "claude-terminal",
+    deployment: DEPLOYMENT,
+    launchRequestId: draft.launchRequestId,
+  }));
+  expect((createAgent as jest.Mock).mock.calls[0][0]).not.toHaveProperty("llm");
+});
+
 it("returns to Review with the reason and a way to Capacity when the host fails its check, sending nothing", async () => {
   (checkGvisorConnection as jest.Mock).mockRejectedValue(new InfrastructureApiError("x", 502, "remote_failed"));
 

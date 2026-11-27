@@ -17,7 +17,7 @@ export type LaunchResourceKind = "agent" | "computer";
  * computer (the official Hermes, its own web UI), offered where the Hermes
  * computer lane is on. Both are named Hermes to the owner. */
 export type LaunchAgentProfileId = "claude-code" | "codex" | "hermes" | "hermes-computer" | "openclaw" | "agent-zero" | "openbot" | "nuphos" | "aeon" | "deepseek-harness" | UniversalCatalogAppId;
-export type LaunchComputerProfileId = "ubuntu-desktop" | "ubuntu-server" | "linux-terminal" | "omarchy" | "windows";
+export type LaunchComputerProfileId = "ubuntu-desktop" | "ubuntu-server" | "linux-terminal" | "claude-code-sandbox" | "omarchy" | "windows";
 export type LaunchProfileId = LaunchAgentProfileId | LaunchComputerProfileId;
 export type LaunchState = "idle" | "submitting" | "uncertain" | "accepted" | "failed";
 
@@ -451,6 +451,20 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, ProfileDetailEntry> = {
     cpuOptions: [0.5, 1, 2, 4],
     ramOptions: [1, 2, 4, 8],
   },
+  "claude-code-sandbox": {
+    resourceKind: "computer",
+    name: "Claude Code (sandbox)",
+    runtimeId: "linux-terminal",
+    placementRuntimeId: "linux-terminal",
+    managedCapacity: "self-managed-only",
+    ownServer: true,
+    lane: "hivra-agent",
+    browser: "none",
+    sizing: "pinned",
+    recommended: { ...recommendedResourceEnvelope("linux-terminal"), source: "recommended" },
+    cpuOptions: [0.5, 1, 2, 4],
+    ramOptions: [1, 2, 4, 8],
+  },
   omarchy: {
     resourceKind: "computer",
     name: "Omarchy",
@@ -488,7 +502,7 @@ export const PROFILE_DETAILS: Record<LaunchProfileId, ProfileDetailEntry> = {
  * grammar mirrors this list. */
 export const LAUNCH_PROFILE_IDS: readonly LaunchProfileId[] = [
   "claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "openbot", "nuphos", "aeon", "deepseek-harness",
-  "ubuntu-desktop", "ubuntu-server", "linux-terminal", "omarchy", "windows",
+  "ubuntu-desktop", "ubuntu-server", "linux-terminal", "claude-code-sandbox", "omarchy", "windows",
   ...UNIVERSAL_CATALOG_IDS,
 ];
 

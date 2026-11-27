@@ -11,6 +11,7 @@ export const HIVRA_GVISOR_PREVIOUS_ADAPTERS = [
   { version: "2026.09.15.1", sha256: "2bb8ce761b72a5fc5054b8dbf9f7c79684da478b74c5f1127a212c489539695d" },
   { version: "2026.10.20.1", sha256: "3168f185b90abfcf7b17fa603ffa31b9e780b69b0856a5b079595be8b7f63cff" },
   { version: "2026.10.20.1", sha256: "c9be8bc4eca92ac35788ad6c387cd5d96e9cbb7e28b7cf9d4f2ae7acc01d0dfa" },
+  { version: "2026.10.20.1", sha256: "505bd99032c37999015c6838a4ece1cf449cc30ae5ecd3ed98fbeb60af464a8a" },
 ] as const;
 export const HIVRA_GVISOR_IMAGE = "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285" as const;
 export const HIVRA_GVISOR_DRIVER = "gvisor-runsc" as const;
@@ -66,6 +67,8 @@ export function isGvisorPendingBoundObservation(input: {
 
 const UuidSchema = z.string().uuid();
 const DigestSchema = z.string().regex(/^[0-9a-f]{64}$/);
+export const GvisorLocalImageSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const GvisorWorkloadSchema = z.object({ kind: z.literal("claude-terminal"), image: GvisorLocalImageSchema }).strict();
 
 export const GvisorComputerRequestSchema = z.object({
   operation: z.enum(["create", "status", "start", "stop", "resize", "exec", "delete", "update"]),
@@ -76,6 +79,7 @@ export const GvisorComputerRequestSchema = z.object({
   memoryMb: z.number().int().min(512).max(131072).optional(),
   hostMemoryReserveMb: z.number().int().min(512).max(1048576).optional(),
   requireDiskAdmission: z.literal(true).optional(),
+  workload: GvisorWorkloadSchema.optional(),
   argv: z.array(z.string().min(1).max(4096)).min(1).max(32).optional(),
 }).strict().superRefine((value, context) => {
   if (value.requireDiskAdmission && value.operation !== "create" && value.operation !== "start") {
@@ -92,6 +96,9 @@ export const GvisorComputerRequestSchema = z.object({
   if (value.operation === "exec" && value.argv === undefined) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Command arguments are required" });
   }
+  if (value.workload && value.operation === "update") {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Claude terminal image updates are not supported" });
+  }
 });
 
 export const GvisorComputerReceiptSchema = z.object({
@@ -106,7 +113,9 @@ export const GvisorComputerReceiptSchema = z.object({
   runtime: z.literal("runsc").optional(),
   cpu: z.number().min(0.5).max(32).optional(),
   memoryMb: z.number().int().min(512).max(131072).optional(),
-  image: z.literal(HIVRA_GVISOR_IMAGE).optional(),
+  image: z.union([z.literal(HIVRA_GVISOR_IMAGE), GvisorLocalImageSchema]).optional(),
+  workload: GvisorWorkloadSchema.optional(),
+  workloadReady: z.boolean().optional(),
   workspace: z.string().min(1).max(160).optional(),
   network: z.string().min(1).max(160).optional(),
   publicPorts: z.array(z.never()).optional(),
@@ -117,6 +126,12 @@ export const GvisorComputerReceiptSchema = z.object({
     receipt.memoryMb, receipt.image, receipt.workspace, receipt.network,
     receipt.publicPorts, receipt.reservationEqualsMaximum].some(value => value === undefined)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Running computer evidence is incomplete" });
+  }
+  if (receipt.workload
+    ? receipt.state === "absent" || receipt.image !== receipt.workload.image
+      || typeof receipt.workloadReady !== "boolean" || (receipt.workloadReady && receipt.state !== "running")
+    : receipt.workloadReady !== undefined || (receipt.image !== undefined && receipt.image !== HIVRA_GVISOR_IMAGE)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Sandbox workload evidence does not match its image and state" });
   }
 });
 

@@ -529,7 +529,7 @@ class FakeDocker:
     def container(self, name, labels, cpu, memory, running):
         self.serial += 1
         _, volume, network = adapter.names(self.req)
-        return {
+        item = {
             "Id": f"id-{self.serial}", "Name": "/" + name,
             "State": {"Running": running},
             "Config": {"Labels": dict(labels), "User": "65534:65534", "Image": adapter.IMAGE},
@@ -545,6 +545,10 @@ class FakeDocker:
             "Mounts": [{"Type": "volume", "Name": volume, "Destination": "/workspace", "RW": True}],
             "NetworkSettings": {"Ports": {}},
         }
+        if image := labels.get("cloud.hivra.workload-image"):
+            item["Image"] = image
+            item["Config"].update(claude_terminal_config() | {"Image": image})
+        return item
 
     def __call__(self, *args, check=True, timeout=120, capture_limit=None):
         self.calls.append(args)
@@ -568,6 +572,9 @@ class FakeDocker:
             if args[1] == "ls":
                 wanted = args[args.index("--filter") + 1].split("^")[1].rstrip("$")
                 return ok(wanted + "\n" if wanted in store else "")
+            if args[1] == "rm":
+                store.pop(args[2])
+                return ok()
         if args[0] == "pull":
             return ok()
         if args[0] == "stop":
@@ -597,6 +604,165 @@ class FakeDocker:
             self.containers.pop(args[-1], None)
             return ok()
         raise AssertionError(f"unexpected docker {args}")
+
+
+def claude_terminal_config():
+    return {
+        "Entrypoint": ["/usr/local/bin/start-claude-terminal"],
+        "Healthcheck": {"Test": ["CMD", "python3", "-I", "/usr/local/lib/hivra-claude-readiness.py"]},
+    }
+
+
+class ClaudeTerminalWorkloadTests(unittest.TestCase):
+    image = "sha256:" + "b" * 64
+
+    def req(self, operation="status"):
+        return request(operation) | {"workload": {"kind": "claude-terminal", "image": self.image}}
+
+    def run_main(self, req, docker):
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(adapter.os, "geteuid", return_value=0))
+            stack.enter_context(mock.patch.object(adapter.os, "uname", return_value=SimpleNamespace(sysname="Linux", machine="x86_64")))
+            stack.enter_context(mock.patch.object(adapter.sys, "stdin", io.StringIO(json.dumps(req))))
+            stack.enter_context(mock.patch.object(adapter.Path, "mkdir"))
+            stack.enter_context(mock.patch("builtins.open", mock.mock_open()))
+            stack.enter_context(mock.patch.object(adapter.fcntl, "flock"))
+            stack.enter_context(mock.patch.object(adapter, "docker", docker))
+            stack.enter_context(mock.patch.object(adapter, "admit"))
+            stdout = stack.enter_context(redirect_stdout(io.StringIO()))
+            stack.enter_context(redirect_stderr(io.StringIO()))
+            adapter.main()
+        return json.loads(stdout.getvalue().split(" ", 1)[1])
+
+    def test_workload_is_strict_and_update_fails_before_docker(self):
+        self.assertEqual(adapter.valid_input(self.req()), self.req())
+        for value in (None, {}, {"kind": "other", "image": self.image},
+                      {"kind": "claude-terminal", "image": "latest"},
+                      self.req()["workload"] | {"argv": ["sh"]}):
+            with self.subTest(value=value), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                adapter.valid_input(request() | {"workload": value})
+        docker = mock.Mock()
+        with self.assertRaises(SystemExit):
+            self.run_main(self.req("update") | {"hostMemoryReserveMb": 512}, docker)
+        docker.assert_not_called()
+
+    def test_admission_requires_exact_root_owned_regular_file_without_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            setting = Path(directory, "allowlist")
+            with mock.patch.object(adapter, "CLAUDE_TERMINAL_IMAGE_CONFIG", setting), \
+                    mock.patch.object(adapter, "docker") as docker, redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    adapter.verify_claude_terminal_image(self.image)
+                target = Path(directory, "target")
+                target.write_text(self.image)
+                target.chmod(0o600)
+                setting.symlink_to(target)
+                with self.assertRaises(SystemExit):
+                    adapter.verify_claude_terminal_image(self.image)
+                setting.unlink()
+                setting.write_text(self.image + "\n")
+                for info in (SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=65534),
+                             SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=0)):
+                    with mock.patch.object(adapter.os, "fstat", return_value=info), self.assertRaises(SystemExit):
+                        adapter.verify_claude_terminal_image(self.image)
+                info = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0)
+                with mock.patch.object(adapter.os, "fstat", return_value=info), self.assertRaises(SystemExit):
+                    adapter.verify_claude_terminal_image("sha256:" + "c" * 64)
+                docker.assert_not_called()
+
+    def test_image_inspect_pins_local_id_platform_and_image_contract(self):
+        config = claude_terminal_config()
+        image = {"Id": self.image, "Os": "linux", "Architecture": "amd64", "Config": config}
+        with tempfile.TemporaryDirectory() as directory:
+            setting = Path(directory, "allowlist")
+            setting.write_text(self.image + "\n")
+            with mock.patch.object(adapter, "CLAUDE_TERMINAL_IMAGE_CONFIG", setting), \
+                    mock.patch.object(adapter.os, "fstat", return_value=SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=0)), \
+                    mock.patch.object(adapter, "docker") as docker, redirect_stderr(io.StringIO()):
+                docker.return_value = subprocess.CompletedProcess([], 0, json.dumps([image]), "")
+                adapter.verify_claude_terminal_image(self.image)
+                for changes in ({"Id": "sha256:" + "c" * 64}, {"Os": "windows"}, {"Architecture": "arm64"},
+                                {"Config": config | {"Entrypoint": ["/bin/sh"]}},
+                                {"Config": config | {"Cmd": ["other"]}},
+                                {"Config": config | {"Healthcheck": {"Test": ["NONE"]}}},
+                                {"Config": config | {"Volumes": {"/extra": {}}}},
+                                {"Config": config | {"ExposedPorts": {"8000/tcp": {}}}}):
+                    docker.return_value = subprocess.CompletedProcess([], 0, json.dumps([image | changes]), "")
+                    with self.subTest(changes=changes), self.assertRaises(SystemExit):
+                        adapter.verify_claude_terminal_image(self.image)
+                docker.return_value = subprocess.CompletedProcess([], 1, "", "missing")
+                with self.assertRaises(SystemExit):
+                    adapter.verify_claude_terminal_image(self.image)
+                self.assertTrue(all(call == mock.call("image", "inspect", self.image, check=False)
+                                    for call in docker.call_args_list))
+
+    def test_create_preserves_helper_image_and_uses_native_workload_entrypoint(self):
+        req = self.req("create") | {"cpu": 1, "memoryMb": 1024, "hostMemoryReserveMb": 512}
+        local = ("--pull=never", "--platform", "linux/amd64")
+        with mock.patch.object(adapter, "verify_claude_terminal_image") as verify, \
+                mock.patch.object(adapter, "prepare_image", return_value=local) as prepare, \
+                mock.patch.object(adapter, "inspect_container", return_value=None) as inspect, \
+                mock.patch.object(adapter, "inspect_helper", return_value=None), \
+                mock.patch.object(adapter, "inspect_resource", return_value=False), \
+                mock.patch.object(adapter, "require_helper_absent"), \
+                mock.patch.object(adapter, "status", side_effect=lambda _: print('HIVRA_GVISOR_V1 {"state":"running"}')):
+            docker = mock.Mock()
+            self.assertEqual(self.run_main(req, docker), {"state": "running"})
+        verify.assert_called_once_with(self.image)
+        prepare.assert_called_once_with(local_only=True)
+        inspect.assert_called_with(adapter.names(req)[0], req)
+        helper, container = (call.args for call in docker.call_args_list if call.args[0] in ("run", "create"))
+        self.assertEqual(helper[1:4], local)
+        self.assertEqual(helper[-4:], (adapter.IMAGE, "/bin/chown", "65534:65534", "/workspace"))
+        self.assertEqual(container[1:4], local)
+        self.assertEqual(container[-1], self.image)
+        self.assertEqual(container.count("--mount"), 1)
+        for flag in ("--entrypoint", "--publish", "--privileged"):
+            self.assertNotIn(flag, container)
+
+    def test_binding_checks_config_and_actual_image_and_never_mutates_foreign_workload(self):
+        fake = FakeDocker(self.req())
+        name = adapter.names(self.req())[0]
+        for operation in ("stop", "delete"):
+            for req in (request(operation), self.req(operation) | {
+                            "workload": {"kind": "claude-terminal", "image": "sha256:" + "c" * 64}}):
+                with self.subTest(req=req), self.assertRaises(SystemExit):
+                    self.run_main(req, fake)
+        for target, field in ((fake.containers[name], "Image"), (fake.containers[name]["Config"], "Image"),
+                              (fake.containers[name]["Config"], "Entrypoint")):
+            original = target[field]
+            target[field] = "wrong"
+            with self.assertRaises(SystemExit):
+                self.run_main(self.req(), fake)
+            target[field] = original
+        self.assertFalse(any(call[0] in ("stop", "rm") or call[1:2] == ("rm",) for call in fake.calls))
+
+    def test_running_and_ready_are_distinct(self):
+        req = self.req()
+        fake = FakeDocker(req)
+        receipt = self.run_main(req, fake)
+        self.assertEqual(receipt["workload"], req["workload"])
+        self.assertEqual(receipt["image"], self.image)
+        self.assertEqual(receipt["state"], "running")
+        self.assertIs(receipt["workloadReady"], False)
+        fake.containers[adapter.names(req)[0]]["State"]["Health"] = {"Status": "healthy"}
+        self.assertIs(self.run_main(req, fake)["workloadReady"], True)
+
+    def test_start_rechecks_staging_but_stop_and_delete_do_not(self):
+        req = self.req("start") | {"hostMemoryReserveMb": 512}
+        fake = FakeDocker(req, running=False)
+        with mock.patch.object(adapter, "verify_claude_terminal_image", side_effect=SystemExit(1)) as verify:
+            with self.assertRaises(SystemExit):
+                self.run_main(req, fake)
+            self.assertFalse(fake.calls)
+            verify.assert_called_once_with(self.image)
+        with mock.patch.object(adapter, "verify_claude_terminal_image") as verify:
+            self.assertEqual(self.run_main(req, fake)["state"], "running")
+            verify.assert_called_once_with(self.image)
+        with mock.patch.object(adapter, "verify_claude_terminal_image", side_effect=SystemExit(1)) as verify:
+            self.assertEqual(self.run_main(self.req("stop"), fake)["state"], "stopped")
+            self.assertEqual(self.run_main(self.req("delete"), fake)["state"], "absent")
+            verify.assert_not_called()
 
 
 class SandboxUpdateTests(unittest.TestCase):
