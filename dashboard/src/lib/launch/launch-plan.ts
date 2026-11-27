@@ -77,9 +77,9 @@ export function launchProfileFitSubject(
     // linux-server release to take it.
     return catalogSubject("linux-desktop", { floor, placementRuntimeId: "linux-server" });
   }
-  if (profileId === "linux-terminal") {
+  if (profileId === "linux-terminal" || profileId === "claude-code-sandbox") {
     return catalogSubject("linux-terminal", {
-      hivraCloud: managedLinuxSandboxEligible ? "plan" : "unavailable",
+      hivraCloud: profileId === "linux-terminal" && managedLinuxSandboxEligible ? "plan" : "unavailable",
       floor,
       targetKind: "gvisor",
     });
@@ -380,7 +380,7 @@ export function sizePresets(profileId: LaunchProfileId, { browser = false }: { b
       { cpu: 2, ram: 4, maximumCpu: 4, maximumRam: 8 },
     );
   }
-  if (profileId === "linux-terminal") {
+  if (profileId === "linux-terminal" || profileId === "claude-code-sandbox") {
     // gVisor enforces its reservation as the hard limit.
     return presets(pinned(1, 1), pinned(2, 2), pinned(4, 4));
   }
@@ -587,6 +587,7 @@ export function capabilitySummary(profileId: LaunchProfileId, { browser }: { bro
   if (profileId === "ubuntu-desktop") return "A desktop, terminal and files on this computer.";
   if (profileId === "ubuntu-server") return "A terminal and files on this computer. No desktop.";
   if (profileId === "linux-terminal") return "One-shot shell commands in /workspace, without administrator access. Files saved there persist through Stop and Start. No desktop, public ports or host folders.";
+  if (profileId === "claude-code-sandbox") return "The native Claude Code interface opens in your browser. Sign in directly with Claude Code. Project files and agent state persist through Stop and Start.";
   if (profileId === "omarchy") return "A ready-made Omarchy desktop you open in your browser, with a setup console.";
   return "The Windows installer in your server's console. A desktop connection comes after setup finishes.";
 }

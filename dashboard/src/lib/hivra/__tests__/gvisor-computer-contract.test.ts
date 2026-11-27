@@ -30,6 +30,25 @@ describe("gVisor Computer contract", () => {
     expect(GvisorComputerReceiptSchema.safeParse({ version: 1, computerId, sandboxId, state: "absent" }).success).toBe(true);
   });
 
+  it("requires the same pinned image and a distinct readiness signal for a Claude terminal", () => {
+    const image = `sha256:${"b".repeat(64)}`;
+    const workload = { kind: "claude-terminal", image };
+    const ready = { version: 1, adapterVersion: "2026.10.20.1", computerId, sandboxId, state: "running",
+      isolationDriver: "gvisor-runsc", isolationClass: "application-kernel", outerHostBoundary: "operator-owned-host",
+      runtime: "runsc", cpu: 1, memoryMb: 1024, workspace: "workspace", network: "network", publicPorts: [],
+      reservationEqualsMaximum: true, image, workload, workloadReady: true };
+    expect(GvisorComputerReceiptSchema.safeParse(ready).success).toBe(true);
+    expect(GvisorComputerReceiptSchema.safeParse({ ...ready, workloadReady: false }).success).toBe(true);
+    expect(GvisorComputerReceiptSchema.safeParse({ ...ready, state: "stopped" }).success).toBe(false);
+    expect(GvisorComputerReceiptSchema.safeParse({ ...ready, image: HIVRA_GVISOR_IMAGE }).success).toBe(false);
+    expect(GvisorComputerReceiptSchema.safeParse({ ...ready, workload: undefined }).success).toBe(false);
+    expect(GvisorComputerRequestSchema.safeParse({ operation: "status", ownerHash, computerId, sandboxId, workload }).success).toBe(true);
+    expect(GvisorComputerRequestSchema.safeParse({ operation: "status", ownerHash, computerId, sandboxId,
+      workload: { ...workload, image: "claude:latest" } }).success).toBe(false);
+    expect(GvisorComputerRequestSchema.safeParse({ operation: "update", ownerHash, computerId, sandboxId,
+      hostMemoryReserveMb: 2048, workload }).success).toBe(false);
+  });
+
   it("uses freshness only for new admission evidence", () => {
     const now = Date.parse("2026-09-15T12:30:00.000Z");
     expect(isGvisorPreflightFresh("2026-09-15T12:20:00.000Z", now)).toBe(true);

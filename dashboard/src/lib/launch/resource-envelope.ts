@@ -114,6 +114,10 @@ export const LAUNCH_RESOURCE_POLICY: Record<LaunchProfileId, LaunchResourcePolic
     floor: { cpu: 0.5, ram: 1 },
     recommended: { cpu: 1, ram: 1, maximumCpu: 1, maximumRam: 1 },
   },
+  "claude-code-sandbox": {
+    floor: { cpu: 0.5, ram: 1 },
+    recommended: pinned(1, 1),
+  },
   omarchy: {
     floor: { cpu: 4, ram: 8 },
     recommended: { cpu: 4, ram: 8, maximumCpu: 4, maximumRam: 8 },

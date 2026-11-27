@@ -39,6 +39,7 @@ apps are listed separately.
 | Agent | Status | Where it runs |
 | --- | --- | --- |
 | Claude Code | Available | Hivra Cloud or a Proxmox server you connected |
+| Claude Code (sandbox) | Canary pilot only when configured; not generally available | One enrolled owner on an exact connected gVisor target. The pilot opens the official Claude Code terminal in a browser and stores project files and agent state in the sandbox workspace. This does not extend the VM's Hivra credits support to sandboxes. |
 | Codex | Available | Hivra Cloud or a Proxmox server you connected |
 | Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches on Canary go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`). The paid path on that computer was verified on Canary; availability on hivra.cloud requires owner-approved promotion and separate production verification |
 | OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |

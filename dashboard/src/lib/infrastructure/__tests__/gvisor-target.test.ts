@@ -230,10 +230,10 @@ describe("managed evidence renewal", () => {
   };
   const runtimeSha = "e".repeat(64);
   const sha = createHash("sha256").update(readFileSync("provisioner/gvisor/hivra-gvisor-adapter.py")).digest("hex");
-  const output = (runscSha256: string) => ({
+  const output = (runscSha256: string, adapterSha256 = sha) => ({
     ok: true,
     stdout: "HIVRA_GVISOR_PREFLIGHT_V1 " + JSON.stringify({
-      adapterVersion: HIVRA_GVISOR_ADAPTER_VERSION, adapterSha256: sha, bundleSha256: HIVRA_GVISOR_BUNDLE_SHA256,
+      adapterVersion: HIVRA_GVISOR_ADAPTER_VERSION, adapterSha256, bundleSha256: HIVRA_GVISOR_BUNDLE_SHA256,
       runscSha256, cpu: 2, memoryMb: 4096, memoryAvailableMb: 3072,
       storageTotalBytes: 1_000_000, storageAvailableBytes: 999_999,
       runscVersionBase64: Buffer.from("runsc version example").toString("base64"), image: HIVRA_GVISOR_IMAGE,
@@ -293,5 +293,23 @@ describe("managed evidence renewal", () => {
     mockGetAuthority.mockResolvedValueOnce({ ...connectionAs("root", undefined, 6), status: "ready" });
     await expect(refreshManagedGvisorTarget(config)).rejects.toMatchObject({ code: "not_found" });
     expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it("renews the prior admitted adapter in place without changing its bound digest", async () => {
+    const target = readyFixture();
+    const boundSha = "505bd99032c37999015c6838a4ece1cf449cc30ae5ecd3ed98fbeb60af464a8a";
+    target.capabilities.adapter.sha256 = boundSha;
+    mockRunScript.mockResolvedValueOnce(output(runtimeSha, boundSha));
+    const query = {
+      update: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn().mockResolvedValue({ data: { id: targetId }, error: null }),
+    };
+    mockFrom.mockReturnValue(query);
+    await refreshManagedGvisorTarget(config);
+    expect(mockRunScript.mock.calls[0][0]).toContain(boundSha);
+    expect(query.eq).toHaveBeenCalledWith("capabilities->adapter->>sha256", boundSha);
+    expect(query.update).toHaveBeenCalledWith({ last_preflight_at: expect.any(String) });
   });
 });

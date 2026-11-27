@@ -47,6 +47,11 @@ const CATALOG_ICON_MAP: Record<CatalogAppIconKey, LucideIcon> = {
 
 export type ChooseTile = { id: LaunchProfileId; name: string; description: string; icon: LucideIcon | null };
 
+export const CLAUDE_SANDBOX_TILE: ChooseTile = {
+  id: "claude-code-sandbox", name: "Claude Code (sandbox)", icon: Code2,
+  description: "Claude Code's native interface in your browser, in a lightweight sandbox with persistent files.",
+};
+
 const AGENT_TILES: readonly ChooseTile[] = [
   { id: "claude-code", name: "Claude Code", description: "Anthropic's coding agent. Sign in with your Claude account, or run it on Hivra credits.", icon: Code2 },
   { id: "codex", name: "Codex", description: "OpenAI's coding agent. Sign in with ChatGPT after it opens.", icon: Boxes },

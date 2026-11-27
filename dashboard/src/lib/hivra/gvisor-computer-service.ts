@@ -1,10 +1,11 @@
 import "server-only";
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { ManagedGvisorAuthority } from "./managed-gvisor-authority";
+import { claudeSandboxPilot } from "./claude-sandbox-pilot";
 import { managedGvisorDiskAdmissionEnabled, managedGvisorIdlePilotConfig } from "./managed-gvisor-launch-config";
 import { isCanonicalGitCanaryDeployment } from "./canonical-git-canary";
 import { GvisorTierArchive, GvisorTierHandoff, gvisorTierIdleHours, gvisorTierKey, gvisorTierPilot } from "./gvisor-tier-handoff";
@@ -58,6 +59,7 @@ type GvisorAgent = {
   operation_id: string | null; operation_kind: string | null; operation_payload: Record<string, unknown> | null;
   computer_substrate: string; deployment_mode: string; gvisor_sandbox_id: string;
   gvisor_adapter_version: string; gvisor_adapter_sha256: string; gvisor_runtime_sha256: string;
+  gvisor_claude_terminal_image: string | null;
   gvisor_observation: Record<string, unknown> | null;
   infrastructure_connection_id: string; deployment_target_id: string;
   infrastructure_connection_revision: number; cpu: number; ram: number;
@@ -116,8 +118,11 @@ function preparationFailureMessage(stage: HivraGvisorPrepareStage | null): strin
 }
 
 type GvisorBinding = Pick<GvisorAgent, "infrastructure_connection_id" | "infrastructure_connection_revision"
-  | "deployment_target_id" | "gvisor_adapter_sha256" | "gvisor_runtime_sha256">
-  & { gvisor_adapter_version?: string; hostIdentityDigest?: string };
+  | "deployment_target_id" | "gvisor_adapter_sha256" | "gvisor_runtime_sha256"> & {
+    gvisor_adapter_version?: string;
+    gvisor_claude_terminal_image?: string | null;
+    hostIdentityDigest?: string;
+  };
 
 /** One of Hivra's own earlier adapter releases, by its exact identity. */
 function previousAdapter(version: unknown, sha256: unknown): boolean {
@@ -163,7 +168,7 @@ async function executionAuthority(userId: string, targetId: string, binding?: Gv
   }
   // A sandbox pinned to an earlier Hivra adapter runs on the host's current
   // one (it manages the same resources); its owner's Update re-pins it.
-  const adapterMoved = binding !== undefined && binding.gvisor_adapter_sha256 !== adapter.sha256
+  const adapterMoved = binding !== undefined && !binding.gvisor_claude_terminal_image && binding.gvisor_adapter_sha256 !== adapter.sha256
     && currentAdapter && previousAdapter(binding.gvisor_adapter_version, binding.gvisor_adapter_sha256);
   if (binding && ((binding.gvisor_adapter_sha256 !== adapter.sha256 && !adapterMoved) || binding.gvisor_runtime_sha256 !== runtime.sha256)) {
     throw new GvisorComputerError("not_ready", "This Computer's pinned gVisor adapter identity no longer matches the ready target.");
@@ -224,6 +229,9 @@ ${runAdapter}`;
 async function invokeOnTarget(userId: string, targetId: string, request: GvisorComputerRequest, binding?: GvisorBinding,
   exactManaged = false, proof?: LifecycleProof) {
   const authority = await executionAuthority(userId, targetId, binding, request.operation, exactManaged);
+  if (binding?.gvisor_claude_terminal_image) {
+    request = { ...request, workload: { kind: "claude-terminal", image: binding.gvisor_claude_terminal_image } };
+  }
   const requireDiskAdmission = exactManaged && managedGvisorDiskAdmissionEnabled()
     && (request.operation === "create" || request.operation === "start");
   const parsed = GvisorComputerRequestSchema.parse((request.operation === "create" || request.operation === "start"
@@ -279,13 +287,18 @@ async function invokeOnTarget(userId: string, targetId: string, request: GvisorC
     }
   }
   const adapter = authority.target.capabilities.adapter as { version: string; sha256: string };
-  return { receipt: parseReceipt(result.stdout, parsed.operation === "exec" ? EXEC_RESULT : RESULT),
-    adapter: { version: adapter.version, sha256: adapter.sha256 } };
+  const receipt = parseReceipt(result.stdout, parsed.operation === "exec" ? EXEC_RESULT : RESULT);
+  if ("state" in receipt
+    && (receipt.computerId !== parsed.computerId || receipt.sandboxId !== parsed.sandboxId
+      || (receipt.state !== "absent" && receipt.workload?.image !== parsed.workload?.image))) {
+    throw new GvisorComputerError("remote_failed", "The host returned evidence for a different sandbox.");
+  }
+  return { receipt, adapter: { version: adapter.version, sha256: adapter.sha256 } };
 }
 
 async function loadAgent(userId: string, agentId: string): Promise<GvisorAgent> {
   if (!UUID.test(agentId)) throw new GvisorComputerError("not_found", "Computer not found.");
-  const { data, error } = await db().from("hivra_agents").select("id,user_id,name,status,desired_state,operation_id,operation_kind,operation_payload,computer_substrate,deployment_mode,gvisor_sandbox_id,gvisor_adapter_version,gvisor_adapter_sha256,gvisor_runtime_sha256,gvisor_observation,infrastructure_connection_id,deployment_target_id,infrastructure_connection_revision,cpu,ram")
+  const { data, error } = await db().from("hivra_agents").select("id,user_id,name,status,desired_state,operation_id,operation_kind,operation_payload,computer_substrate,deployment_mode,gvisor_sandbox_id,gvisor_adapter_version,gvisor_adapter_sha256,gvisor_runtime_sha256,gvisor_claude_terminal_image,gvisor_observation,infrastructure_connection_id,deployment_target_id,infrastructure_connection_revision,cpu,ram")
     .eq("id", agentId).eq("user_id", userId).maybeSingle();
   if (error) throw new GvisorComputerError("database_failed", "The computer could not be read.");
   if (!data || data.id !== agentId || data.user_id !== userId
@@ -417,13 +430,19 @@ export async function findGvisorComputerByLaunchRequest(userId: string, launchRe
   return data as Record<string, unknown>;
 }
 
-export async function launchGvisorComputer(input: { userId: string; targetId: string; launchRequestId: string; name: string; cpu: number; ramGb: number }) {
+export async function launchGvisorComputer(input: { userId: string; targetId: string; launchRequestId: string; name: string; cpu: number; ramGb: number; claudeTerminal?: boolean }) {
+  const pilot = input.claudeTerminal ? claudeSandboxPilot(input.userId) : null;
+  if (input.claudeTerminal && (!pilot || pilot.target !== input.targetId)) {
+    throw new GvisorComputerError("not_found", "Claude Code sandboxes are not available on this target.");
+  }
+  const image = pilot?.image ?? null;
   const { data: replay, error: replayError } = await db().from("hivra_agents").select("*")
     .eq("user_id", input.userId).eq("gvisor_launch_request_id", input.launchRequestId).maybeSingle();
   if (replayError) throw new GvisorComputerError("database_failed", "The launch request could not be reconciled.");
   if (replay) {
     if (replay.user_id !== input.userId || replay.deployment_mode !== "self-managed"
-      || replay.computer_substrate !== "gvisor" || replay.deployment_target_id !== input.targetId) {
+      || replay.computer_substrate !== "gvisor" || replay.deployment_target_id !== input.targetId
+      || (replay.gvisor_claude_terminal_image ?? null) !== image) {
       throw new GvisorComputerError("conflict", "This launch request ID is already bound to different Computer settings.");
     }
     const settingsMatch = replay.name === input.name && Number(replay.cpu) === input.cpu && Number(replay.ram) === input.ramGb;
@@ -467,6 +486,9 @@ export async function launchGvisorComputer(input: { userId: string; targetId: st
   const authority = await executionAuthority(input.userId, input.targetId);
   const adapterSha256 = String((authority.target.capabilities.adapter as { sha256: string }).sha256);
   const runtimeSha256 = String((authority.target.capabilities.runtime as { sha256: string }).sha256);
+  if (pilot && adapterSha256 !== pilot.adapter) {
+    throw new GvisorComputerError("not_ready", "The Claude Code sandbox host must be qualified again.");
+  }
   const computerId = randomUUID(), sandboxId = randomUUID(), operationId = randomUUID();
   const { data, error } = await db().from("hivra_agents").insert({ id: computerId, user_id: input.userId, type: "linux-terminal",
     computer_profile: "linux-terminal", name: input.name, status: "provisioning", desired_state: "running", deployment_mode: "self-managed",
@@ -475,6 +497,7 @@ export async function launchGvisorComputer(input: { userId: string; targetId: st
     infrastructure_connection_revision: authority.connection.revision, infrastructure_binding_token_hash: ownerHash(input.userId),
     infrastructure_binding_token_enforced: true, gvisor_sandbox_id: sandboxId, gvisor_adapter_version: HIVRA_GVISOR_ADAPTER_VERSION,
     gvisor_adapter_sha256: adapterSha256, gvisor_runtime_sha256: runtimeSha256,
+    ...(image ? { gvisor_claude_terminal_image: image } : {}),
     gvisor_launch_request_id: input.launchRequestId, operation_id: operationId, operation_kind: "provision", operation_started_at: new Date().toISOString(),
     operation_payload: { sandboxId, cpu: input.cpu, ram: input.ramGb } }).select("*").single();
   if (error || !data) throw new GvisorComputerError("database_failed", "The gVisor computer reservation failed.");
@@ -848,6 +871,29 @@ export async function observeGvisorComputer(userId: string, agentId: string) {
   return invoke(userId, agent.deployment_target_id, { operation: "status", ownerHash: ownerHash(userId), computerId: agent.id, sandboxId: agent.gvisor_sandbox_id }, agent);
 }
 
+export async function openClaudeSandboxTerminal(userId: string, agentId: string) {
+  const pilot = claudeSandboxPilot(userId);
+  if (!pilot) throw new GvisorComputerError("not_found", "Claude Code sandbox not found.");
+  const agent = await loadAgent(userId, agentId);
+  if (agent.deployment_mode !== "self-managed" || agent.deployment_target_id !== pilot.target
+    || agent.gvisor_claude_terminal_image !== pilot.image || agent.gvisor_adapter_sha256 !== pilot.adapter) {
+    throw new GvisorComputerError("not_found", "Claude Code sandbox not found.");
+  }
+  if (agent.status !== "running" || agent.operation_id) {
+    throw new GvisorComputerError("not_ready", "Start this sandbox before opening Claude Code.");
+  }
+  const receipt = await invoke(userId, pilot.target, { operation: "status", ownerHash: ownerHash(userId),
+    computerId: agent.id, sandboxId: agent.gvisor_sandbox_id }, agent);
+  if (!("state" in receipt) || receipt.state !== "running" || receipt.workloadReady !== true) {
+    throw new GvisorComputerError("not_ready", "Claude Code is not ready yet. Try again from the sandbox.");
+  }
+  const expires = Math.floor(Date.now() / 1000) + 45;
+  const nonce = randomBytes(16).toString("hex");
+  const mac = createHmac("sha256", Buffer.from(pilot.grantKey, "hex"))
+    .update(`v1\n${pilot.origin}\n${ownerHash(userId)}\n${agent.gvisor_sandbox_id}\n${expires}\n${nonce}`).digest("hex");
+  return { origin: pilot.origin, token: `v1.${expires}.${nonce}.${mac}` };
+}
+
 export async function executeGvisorComputerCommand(userId: string, agentId: string, argv: string[]) {
   const requested = performance.now();
   const agent = await loadAgent(userId, agentId);
@@ -1036,6 +1082,9 @@ export async function mutateGvisorComputer(userId: string, agentId: string, inpu
     }
   }
   requireSelfManagedGvisorDispatch(agent);
+  if (input.action === "update" && agent.gvisor_claude_terminal_image) {
+    throw new GvisorComputerError("not_ready", "Claude Code sandbox image updates are not available.");
+  }
   const priorObservation = GvisorComputerReceiptSchema.safeParse(agent.gvisor_observation);
   if (input.action === "delete" && agent.status === "error" && !agent.operation_id
     && priorObservation.success && priorObservation.data.state === "absent"

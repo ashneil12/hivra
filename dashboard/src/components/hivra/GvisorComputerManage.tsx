@@ -172,7 +172,7 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
           name={agent.name}
           status={state === "absent" ? "error" : state}
           statusLabel={statusLabel}
-          subtitle={`Linux Sandbox · ${placement}`}
+          subtitle={`${agent.gvisor_claude_terminal_image ? "Claude Code (sandbox)" : "Linux Sandbox"} · ${placement}`}
           renaming={busy === "rename"}
           disabled={Boolean(busy)}
           onRename={(name) => void rename(name)}
@@ -196,7 +196,17 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
           {errorFor("computer")}
         </section>
 
-        <ComputerAgentSlot />
+        {agent.gvisor_claude_terminal_image ? (
+          <section style={box}>
+            <strong>Claude Code</strong>
+            <span>Open the agent in a new tab. Claude Code handles Claude sign-in inside this sandbox.</span>
+            <form method="post" action={`/api/hivra/agents/${encodeURIComponent(agent.id)}/gvisor/terminal`} target="_blank" rel="noopener">
+              <button type="submit" style={button} disabled={state !== "running" || Boolean(busy)}>
+                <TerminalSquare size={14} /> Open Claude Code
+              </button>
+            </form>
+          </section>
+        ) : <ComputerAgentSlot />}
 
         <div style={label}>Isolation</div>
         <section style={box}>
@@ -219,7 +229,7 @@ export function GvisorComputerManage({ agent, onChanged, onDestroyed }: { agent:
         </section>
       </ManagePanel>
 
-      {manage?.selfUpdate || manage?.connectionServiceUpdate ? (
+      {!agent.gvisor_claude_terminal_image && (manage?.selfUpdate || manage?.connectionServiceUpdate) ? (
         <ManagePanel id="updates" selected={selected}>
           <section style={box} data-testid="manage-self-update">
             {manage.selfUpdate?.lines.map(line => <span key={line}>{line}</span>)}
