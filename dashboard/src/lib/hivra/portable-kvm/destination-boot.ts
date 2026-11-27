@@ -10,6 +10,7 @@ import {
   type PortableKvmDestinationDiskReceipt,
   type PortableKvmDestinationReservation,
 } from "./destination-disk";
+import { portableKvmHostCpuValidationPython, portableKvmManagedDestinationProfileSchema } from "./destination-prepare";
 import { isPortableKvmWakeClaimed, portableKvmPlacement, resolvePortableKvmPilotPlacement } from "./pilot";
 
 const prefix = "HIVRA_KVM_PORTABLE_BOOT_V1 ";
@@ -17,6 +18,8 @@ const timeoutMs = 125_000;
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const machineId = z.string().regex(/^[a-f0-9]{32}$/).refine(value => !/^0+$/.test(value));
 const bootId = z.string().uuid().refine(value => value !== "00000000-0000-0000-0000-000000000000");
+const privateIpv4 = z.string().refine(value => isIPv4(value)
+  && /^(?:10\.|172\.(?:1[6-9]|2[0-9]|3[01])\.|192\.168\.)/.test(value));
 const leaseSchema = z.object({
   agent_id: z.string().uuid(),
   owner_id: z.string(),
@@ -60,6 +63,7 @@ export type PortableKvmDestinationBootProfile = {
   reservation: PortableKvmDestinationReservation;
   ip: string;
   machineId: string;
+  managed?: z.input<typeof portableKvmManagedDestinationProfileSchema>;
 };
 
 /**
@@ -69,10 +73,17 @@ export type PortableKvmDestinationBootProfile = {
  * This cannot be derived from the destination's own unverified QGA response.
  */
 export function serializePortableKvmDestinationBootProfile(profile: PortableKvmDestinationBootProfile): string {
+  const managed = portableKvmManagedDestinationProfileSchema.optional().parse(profile.managed);
+  const ip = (managed ? privateIpv4 : z.string().refine(isIPv4)).parse(profile.ip);
+  if (managed && (![ip, managed.cloudInit.gateway].every(value => !/\.(?:0|255)$/.test(value)) || ip === managed.cloudInit.gateway
+    || ip.split(".").slice(0, 3).join(".") !== managed.cloudInit.gateway.split(".").slice(0, 3).join("."))) {
+    throw new Error("Portable KVM managed seed gateway does not match the leased subnet");
+  }
   return JSON.stringify({
     reservation: JSON.parse(serializePortableKvmDestinationReservation(profile.reservation)),
-    ip: z.string().refine(isIPv4).parse(profile.ip),
+    ip,
     machineId: machineId.parse(profile.machineId),
+    managed,
   }) + "\n";
 }
 
@@ -97,7 +108,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-mac, want_carrier, ip = sys.argv[1:]
+mac, want_carrier, ip, instance_id, gateway = sys.argv[1:]
 interfaces = [p for p in Path("/sys/class/net").iterdir()
               if p.name != "lo" and (p / "address").read_text().strip() == mac]
 if len(interfaces) != 1 or (interfaces[0] / "carrier").read_text().strip() != ("0" if want_carrier == "0" else "1"):
@@ -111,12 +122,21 @@ if set(run("systemctl", "show", "--property=FragmentPath,DropInPaths,LoadState",
     sys.exit(1)
 proof = {"machineId": Path("/etc/machine-id").read_text().strip(),
          "bootId": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}
+if instance_id:
+    actual = json.loads(Path("/run/cloud-init/instance-data.json").read_text())["v1"]["instance_id"]
+    if actual != instance_id:
+        sys.exit(1)
+    proof["instanceId"] = actual
 if want_carrier == "1":
     addresses = json.loads(run("ip", "-j", "-4", "address", "show", "dev", interfaces[0].name))
     if not any(a.get("local") == ip and a.get("scope") == "global"
                and not any(k in a.get("flags", []) for k in ("tentative", "dadfailed"))
                for interface in addresses for a in interface.get("addr_info", [])):
         sys.exit(1)
+    if gateway:
+        routes = json.loads(run("ip", "-j", "-4", "route", "show", "default", "dev", interfaces[0].name))
+        if not any(route.get("gateway") == gateway and route.get("dev") == interfaces[0].name for route in routes):
+            sys.exit(1)
     def invocation():
         keys = ("ActiveState", "InvocationID", "MainPID")
         values = dict(line.split("=", 1) for line in run("systemctl", "show", "--property=" + ",".join(keys), unit)
@@ -162,6 +182,8 @@ from pathlib import Path
 profile_raw, reservation_raw, mode, expected_boot, expected_connector, expires, guest = sys.argv[1:]
 p = json.loads(profile_raw)
 r = p["reservation"]
+managed = p.get("managed")
+seed = managed["cloudInit"] if managed else {}
 vmid = str(r["vmid"])
 root = Path("/var/lib/hivra-sleep")
 registry = root / "portable-kvm-destinations"
@@ -180,6 +202,8 @@ attempt_wire = (profile_hash + "\n").encode("ascii")
 def require(ok, reason):
     if not ok:
         raise RuntimeError(reason)
+
+${portableKvmHostCpuValidationPython}
 
 def output(*args, timeout=12):
     return subprocess.check_output(args, timeout=timeout, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -226,14 +250,66 @@ def check_reservation():
     require(isinstance(ha, list) and all(item["sid"] not in {"vm:" + vmid, "ct:" + vmid, "lxc:" + vmid} for item in ha)
             and not os.path.lexists(Path("/etc/pve/lxc", vmid + ".conf")), "destination_vmid_conflict")
 
+def check_managed_seed(fields):
+    snippet = "hivra-portable-meta-" + r["operationId"] + ".yaml"
+    metadata = "local:snippets/" + snippet
+    cdrom = r["storageId"] + ":vm-" + vmid + "-cloudinit,media=cdrom"
+    require(fields.get("cpu") == "host" and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", fields.get("cpulimit", ""))
+            and re.fullmatch(r"[1-8]", fields.get("cores", ""))
+            and float(fields["cpulimit"]) == managed["cpuLimit"] <= int(fields["cores"]), "unsupported_managed_cpu")
+    require(fields.get("serial0") == "socket" and fields.get("vga") == "serial0"
+            and fields.get("ide2") in {cdrom, cdrom + ",size=4M"}
+            and fields.get("ciuser") == "ubuntu" and fields.get("citype") == "nocloud"
+            and fields.get("ciupgrade") == "0" and fields.get("cicustom") == "meta=" + metadata
+            and fields.get("ipconfig0") == "ip=" + p["ip"] + "/24,gw=" + seed["gateway"]
+            and fields.get("nameserver") == " ".join(seed["nameservers"]), "unsupported_managed_seed")
+    dirpath = Path("/var/lib/vz/snippets")
+    info = dirpath.lstat()
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022
+            and dirpath.resolve() == dirpath, "unsafe_seed_directory")
+    path = output("pvesm", "path", metadata).decode("ascii").rstrip("\n")
+    require(path == str(dirpath / snippet)
+            and private_bytes(dirpath / snippet) == ("instance-id: " + seed["instanceId"] + "\n").encode("ascii"),
+            "managed_seed_metadata_mismatch")
+
+def tracked_link(nic):
+    return ("\n[special:cloudinit]\nnet0: " + nic + ",link_down=1\n").encode("ascii")
+
+def clear_managed_link_cache(nic):
+    raw = config.read_bytes()
+    tracked = tracked_link(nic)
+    if not managed or not raw.endswith(tracked):
+        return False
+    clear = """
+use strict;
+use warnings;
+my ($vmid, $sha, $old_nic) = @ARGV;
+PVE::QemuConfig->lock_config($vmid, sub {
+    my $path = PVE::QemuConfig->config_file($vmid);
+    die "configuration changed" if Digest::SHA::sha256_hex(PVE::Tools::file_get_contents($path)) ne $sha;
+    my $conf = PVE::QemuConfig->load_config($vmid);
+    die "guest no longer running and locked" if ($conf->{lock} // '') ne 'backup' || !PVE::QemuServer::check_running($vmid);
+    my $cache = $conf->{'special-sections'}->{cloudinit};
+    die "unexpected cloud-init cache" if !$cache || scalar(keys %$cache) != 1 || ($cache->{net0} // '') ne $old_nic;
+    delete $conf->{'special-sections'}->{cloudinit};
+    PVE::QemuConfig->write_config($vmid, $conf);
+});
+"""
+    output("/usr/bin/perl", "-MPVE::QemuServer", "-MPVE::QemuConfig", "-MPVE::Tools", "-MDigest::SHA",
+           "-e", clear, vmid, hashlib.sha256(raw).hexdigest(), nic + ",link_down=1")
+    require(config.read_bytes() == raw[:-len(tracked)], "managed_link_cache_not_cleared")
+    return True
+
 def check_config():
     check_reservation()
     raw = config.read_bytes()
     current = output("qm", "config", vmid, "--current", "1").rstrip(b"\n") + b"\n"
-    require(not re.search(rb"^\s*\[", raw, re.M), "configuration_sections_present")
     allowed = {"agent", "arch", "bios", "boot", "cores", "cpu", "description", "lock", "machine",
                "memory", "meta", "name", "net0", "numa", "onboot", "ostype", "scsi0", "scsihw",
                "smbios1", "sockets", "tags", "vcpus", "vmgenid"}
+    if managed:
+        allowed.update({"cicustom", "citype", "ciupgrade", "ciuser", "cpulimit", "ide2", "ipconfig0", "nameserver",
+                        "serial0", "vga"})
     fields = {}
     for line in current.decode("utf-8").splitlines():
         key, sep, value = line.partition(": ")
@@ -251,6 +327,8 @@ def check_config():
             and fields.get("boot") == "order=scsi0"
             and re.fullmatch(r"pc-i440fx-[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\+pve[0-9]+)?", fields.get("machine", "")),
             "unsupported_boot_configuration")
+    if managed:
+        check_managed_seed(fields)
     tags = fields.get("tags", "").split(";")
     require([tag for tag in tags if tag.startswith("hivra-bind-")] == [r["bindingTag"]], "binding_mismatch")
     disk, *options = fields.get("scsi0", "").split(",")
@@ -258,12 +336,17 @@ def check_config():
             and all(re.fullmatch(r"(?:discard=(?:on|ignore)|(?:ssd|iothread|backup|replicate)=[01]|size=[0-9]+[KMGT]?)",
                                  option) for option in options), "unsupported_disk")
     nic = fields.get("net0", "")
-    match = re.fullmatch(r"virtio=([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}),bridge=(vmbr[0-9]{1,4})"
+    match = re.fullmatch(r"virtio=([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}),bridge=(vmbr[0-9]{1,4}|hivra0)"
                          r",firewall=1(,link_down=1)?", nic)
     require(match, "unsupported_network")
     require(Path("/sys/class/net", match.group(2), "bridge").is_dir(), "destination_not_linux_bridge")
     fenced = match.group(3) is not None
     active_nic = nic.removesuffix(",link_down=1")
+    if managed and post_commit and not fenced:
+        tracked = tracked_link(active_nic)
+        if raw.endswith(tracked):
+            raw = raw[:-len(tracked)]
+    require(not re.search(rb"^\s*\[", raw, re.M), "configuration_sections_present")
     unlocked = {"profileSha256": profile_hash, "bootId": expected_boot}
     for data, key in ((current, "configurationSha256"), (raw, "rawConfigurationSha256")):
         if lock_state == "backup":
@@ -364,11 +447,13 @@ def probe(mac, carrier, seconds):
         check_expiry()
         try:
             result = json.loads(output("qm", "guest", "exec", vmid, "--timeout", "10", "--",
-                                       "/usr/bin/python3", "-I", "-c", guest, mac, str(carrier), p["ip"], timeout=13))
+                                       "/usr/bin/python3", "-I", "-c", guest, mac, str(carrier), p["ip"],
+                                       seed.get("instanceId", ""), seed.get("gateway", ""), timeout=13))
             if type(result.get("exited")) in (bool, int) and result["exited"] == 1 \
                     and type(result.get("exitcode")) is int and result["exitcode"] == 0:
                 proof = json.loads(result["out-data"])
                 require(proof.get("machineId") == p["machineId"], "guest_machine_identity_mismatch")
+                require(proof.get("instanceId") == seed.get("instanceId"), "guest_cloudinit_identity_mismatch")
                 observed = proof.get("bootId")
                 require(isinstance(observed, str) and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", observed)
                         and observed != "00000000-0000-0000-0000-000000000000"
@@ -409,6 +494,8 @@ def run():
                         and not any(os.path.lexists(Path("/sys/class/net", name)) for name in (tap, firewall_port)),
                         "destination_not_stopped_and_fenced")
                 check_headroom()
+                if managed:
+                    require_host_cpu(managed["cpu"])
                 if not bridge_fence():
                     install_bridge_fence()
                 check_expiry()
@@ -453,11 +540,17 @@ def run():
                 require(check_config() == (False, nic, mac, True, unlocked) and running_pid() == pid
                         and not bridge_fence(), "destination_changed_before_unlock")
                 check_disk()
+                check_expiry()
+                if clear_managed_link_cache(nic):
+                    require(running_pid() == pid and check_config() == (False, nic, mac, True, unlocked),
+                            "destination_changed_after_cloudinit_cache_clear")
+                    observed_boot, connector = probe(mac, 1, 8)
                 if not os.path.lexists(release_marker):
                     write_private_marker(release_marker, (json.dumps(unlocked, separators=(",", ":")) + "\n").encode("ascii"))
                 check_expiry()
                 output("qm", "unlock", vmid)
-            require(not check_config()[3], "destination_lock_still_held")
+            require(not check_config()[3] and (not managed or not config.read_bytes().endswith(tracked_link(nic))),
+                    "destination_lock_or_cloudinit_cache_still_held")
         require(check_config()[:3] == (not post_commit, nic, mac)
                 and running_pid() == pid, "runtime_changed")
         check_disk()

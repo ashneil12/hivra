@@ -367,8 +367,13 @@ check_storable() {
       [ "$(stat -c '%u:%a:%h' "$FENCE")" = 0:600:1 ] &&
       [ "$(cat "$FENCE")" = "$PORTABLE_FENCE" ] || done_with skipped fence_changed
     [ ! -e "/run/qemu-server/$VMID.pid" ] && [ ! -e "$STORED_MARK" ] &&
-      ! grep -Eq '^\[|^vmstate:|^onboot:[[:space:]]+1$|^bios:.*ovmf|^(efidisk|tpmstate|unused|args:|hostpci|virtiofs|usb|serial|parallel|ivshmem|audio|rng)' <<<"$CONFIG" ||
+      ! grep -Eq '^\[|^vmstate:|^onboot:[[:space:]]+1$|^bios:.*ovmf|^(efidisk|tpmstate|unused|args:|hostpci|virtiofs|usb|parallel|ivshmem|audio|rng)' <<<"$CONFIG" ||
       done_with skipped unsupported_portable_profile
+    non_data="$(grep -E '^serial[0-9]+:|^vga:|^(scsi|virtio|sata|ide)[0-9]+:.*(media=cdrom|cloudinit)' <<<"$CONFIG" || true)"
+    if [ -n "$non_data" ]; then
+      rejected="$(printf '%s\n' "$non_data" | grep -Ev "^serial0: socket$|^vga: serial0$|^ide2: [A-Za-z0-9._-]+:(vm-$VMID-cloudinit|$VMID/vm-$VMID-cloudinit\.qcow2),media=cdrom(,size=[0-9]+[KMGT]?)?$" || true)"
+      [ -z "$rejected" ] || done_with skipped unsupported_portable_profile
+    fi
     [ "$(printf '%s\n' "$CONFIG" | sha256sum | cut -d' ' -f1)" = "$PORTABLE_CONFIG_SHA" ] ||
       done_with skipped configuration_changed
     awk '$1=="full" && $2 ~ /^avg10=[0-9]+(\.[0-9]+)?$/ {
@@ -550,7 +555,7 @@ export function buildBackupStartScript(input: BackupStartInput): string {
     if (!portable || portable.agentId !== agentId || portable.vmid !== vmid || portable.bindingTag !== tag
       || portable.state !== "fenced" || !SHA256_RE.test(portable.configurationSha256)
       || !UUID_RE.test(portable.operationId) || !Number.isSafeInteger(portable.generation) || portable.generation < 1
-      || vmid < 9300 || vmid > 9399 || vmid === 9302 || !/^[a-z][a-z0-9-]{0,62}$/.test(portable.hostId)) {
+      || vmid < 100 || vmid > 999_999_999 || vmid === 9302 || !/^[a-z][a-z0-9-]{0,62}$/.test(portable.hostId)) {
       throw new Error("Portable checkpoint requires the exact fenced QA source");
     }
   } else if (portable) {

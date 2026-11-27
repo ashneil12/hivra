@@ -7,7 +7,7 @@ const scopeSchema = z.object({
   operationId: z.string().uuid(),
   generation: z.number().int().positive().safe(),
   hostId: z.string().regex(/^[a-z][a-z0-9-]{0,62}$/),
-  vmid: z.number().int().min(9300).max(9399).refine(value => value !== 9302),
+  vmid: z.number().int().min(100).max(999_999_999).refine(value => value !== 9302),
   bindingTag: z.string().regex(/^hivra-bind-[a-f0-9]{32}$/),
 }).strict();
 const fenceSchema = scopeSchema.extend({

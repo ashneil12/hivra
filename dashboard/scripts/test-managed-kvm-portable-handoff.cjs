@@ -6,11 +6,15 @@ const [agent, fencedAgent, otherAgent, operation, otherOperation] = [1, 2, 3, 4,
 const owner = "user_PortableFixture";
 const fencedOwner = "user_FencedFixture";
 const otherOwner = "user_UnrelatedFixture";
+const ordinaryOwner = "ordinary-portable-fixture-owner";
+const ordinaryAgent = id(80);
 const hash = "a".repeat(64);
 const checkpointSha256 = "b".repeat(64);
 const bindingTag = `hivra-bind-${hash.slice(0, 32)}`;
 const source = { hostId: "fixture-source", vmid: 9354, ip: "192.0.2.42", bindingTag };
 const destination = { hostId: "fixture-destination", vmid: 9357, ip: "192.0.2.73", bindingTag };
+const ordinaryA = { ...source, vmid: 1110, ip: "192.0.2.110" };
+const ordinaryB = { ...destination, vmid: 1111, ip: ordinaryA.ip };
 const sourceProof = { source, sourceStopped: true, sourceFenced: true, sourceConnectorOff: true };
 const storage = {
   ...sourceProof, checkpointSha256, storageReadbackVerified: true,
@@ -52,6 +56,10 @@ async function main() {
       return rpc("begin_hivra_kvm_portable_handoff", p.owner, p.agent, p.operation, p.generation, p.source, p.destination, p.expiry);
     };
     const read = (customer = owner, machine = agent) => rpc("read_hivra_kvm_portable_handoff", customer, machine);
+    const requestWake = (overrides = {}) => {
+      const p = { owner, agent, operation, generation: 9, ...overrides };
+      return rpc("request_hivra_kvm_portable_wake", p.owner, p.agent, p.operation, p.generation);
+    };
     const advance = (action, evidence = null, overrides = {}) => {
       const p = { owner, agent, operation, generation: 9, ...overrides };
       return rpc("advance_hivra_kvm_portable_handoff", p.owner, p.agent, p.operation, p.generation, action, evidence);
@@ -63,6 +71,13 @@ async function main() {
     const abort = (evidence = abortProof, overrides = {}) => {
       const p = { owner, agent, operation, generation: 9, ...overrides };
       return rpc("abort_hivra_kvm_portable_handoff", p.owner, p.agent, p.operation, p.generation, evidence);
+    };
+    const enroll = (overrides = {}) => {
+      const p = { owner: ordinaryOwner, agent: ordinaryAgent, a: ordinaryA, b: ordinaryB, ...overrides };
+      const evidence = { placementA: p.a, placementB: p.b, placementAReservedForBinding: true, placementBReservedForBinding: true,
+        ...p.evidence };
+      return row("select hivra_kvm_portable_private.enroll_pilot($1,$2,$3,$4,$5) as enrolled",
+        [p.owner, p.agent, p.a, p.b, evidence]).then(result => result.enrolled);
     };
     const addAgent = (machine, customer, target) => db.query(`insert into public.hivra_agents
       (id,user_id,type,name,status,desired_state,deployment_mode,computer_substrate,seat_funding,cpu,ram,
@@ -84,15 +99,21 @@ async function main() {
 
     await db.exec("set role anon");
     await assert.rejects(read(), { code: "42501" });
+    await assert.rejects(requestWake(), { code: "42501" });
     await assert.rejects(retire(), { code: "42501" });
     await assert.rejects(abort(), { code: "42501" });
+    await assert.rejects(enroll(), { code: "42501" });
     await db.exec("set role authenticated");
     await assert.rejects(begin(), { code: "42501" });
     await assert.rejects(advance("claim_restore"), { code: "42501" });
+    await assert.rejects(requestWake(), { code: "42501" });
     await assert.rejects(retire(), { code: "42501" });
     await assert.rejects(abort(), { code: "42501" });
+    await assert.rejects(enroll(), { code: "42501" });
     await db.exec("set role service_role");
     await assert.rejects(db.query("select * from hivra_kvm_portable_private.handoff"), { code: "42501" });
+    await assert.rejects(enroll(), { code: "42501" });
+    await assert.rejects(db.query("select * from hivra_kvm_portable_private.pilot_enrollment"), { code: "42501" });
     const epoch = await rpc("managed_launch_bridge_epoch");
     const beforeDestination = await available(destination.hostId);
     const beforeSource = await available(source.hostId);
@@ -132,6 +153,7 @@ async function main() {
     await assert.rejects(begin(), { code: "P0058" });
     await db.query("update public.proxmox_hosts set total_ram_mb=65536 where id=$1", [destination.hostId]);
     const before = await agentState();
+    assert.equal(await requestWake(), null);
     const opened = await begin();
     assert.equal(opened.phase, "checkpointing");
     assert.equal(opened.generation, 9);
@@ -153,13 +175,18 @@ async function main() {
     assert.equal(await read(owner, otherAgent), null);
     assert.deepEqual(await read(), opened);
     assert.equal((await agentState()).operation_id, operation);
-    assert.equal((await agentState()).sleep_state, "waking");
+    assert.equal(opened.wake_requested_at, null);
+    assert.equal((await agentState()).sleep_state, "hibernated");
     assert.equal(await rpc("claim_hivra_agent_wake", agent, otherOperation), "busy");
     assert.equal(await rpc("claim_hivra_agent_sleep", agent, otherOperation, "hibernate", 9), null);
     assert.equal(await rpc("claim_hivra_agent_idle_sleep", agent, otherOperation, "hibernate", 9), null);
     await assert.rejects(rpc("finish_hivra_agent_wake", agent, operation, "awake"), { code: "55000" });
     await assert.rejects(db.query("update public.hivra_agents set operation_id=null,operation_kind=null,operation_started_at=null where id=$1",
       [agent]), { code: "55000" });
+    for (const mutation of [
+      "sleep_state='waking',sleep_tier_changed_at=clock_timestamp()", "sleep_generation=10",
+      "status='stopped'", "desired_state='stopped'", "sleep_policy='t3'", "always_on=true", "next_wake_at=now()",
+    ]) await assert.rejects(db.query(`update public.hivra_agents set ${mutation} where id=$1`, [agent]), { code: "55000" });
     await assert.rejects(db.query("delete from public.hivra_agents where id=$1", [agent]), { code: "55000" });
     await assert.rejects(db.query("update public.hivra_agents set proxmox_host=$1,ip=$2 where id=$3",
       [destination.hostId, destination.ip, otherAgent]), { code: "P0058" });
@@ -179,6 +206,7 @@ async function main() {
 
     await db.exec("reset role; update hivra_kvm_portable_private.handoff set expires_at=clock_timestamp()-interval '1 second'; set role service_role");
     assert.equal(await advance("verify_storage", storage), null);
+    assert.equal(await requestWake(), null);
     assert.equal(await rpc("claim_hivra_agent_wake", agent, otherOperation), "busy");
     assert.equal((await read()).phase, "checkpointing");
     await db.exec("reset role");
@@ -207,9 +235,34 @@ async function main() {
     assert.deepEqual(await read(), opened);
     const verified = await advance("verify_storage", storage);
     assert.equal(verified.phase, "storage_verified");
+    assert.equal(verified.wake_requested_at, null);
     assert.deepEqual(verified.storage_evidence, storage);
     assert.equal(await advance("verify_storage", { ...storage, disk: { ...storage.disk, bytes: 512 } }), null);
     assert.deepEqual(await read(), verified);
+    assert.equal((await agentState()).sleep_state, "hibernated");
+    assert.equal(await advance("claim_restore"), null);
+    assert.equal(await rpc("claim_hivra_agent_wake", agent, otherOperation), "busy");
+    for (const overrides of [{ owner: otherOwner }, { agent: otherAgent }, { operation: otherOperation }, { generation: 8 }]) {
+      assert.equal(await requestWake(overrides), null);
+    }
+    assert.deepEqual(await read(), verified);
+
+    await db.exec("reset role; update hivra_kvm_portable_private.handoff set expires_at=clock_timestamp()-interval '1 second'; set role service_role");
+    assert.equal(await requestWake(), null);
+    assert.equal(await advance("claim_restore"), null);
+    assert.equal(await rpc("claim_hivra_agent_wake", agent, otherOperation), "busy");
+    assert.equal((await read()).wake_requested_at, null);
+    await db.exec("reset role");
+    await db.query("update hivra_kvm_portable_private.handoff set expires_at=$1", [expiry]);
+    await db.exec("set role service_role");
+
+    const requested = await requestWake();
+    assert.equal(requested.phase, "storage_verified");
+    assert.ok(requested.wake_requested_at);
+    assert.equal(requested.generation, opened.generation);
+    assert.equal(requested.expires_at, opened.expires_at);
+    assert.equal((await agentState()).sleep_state, "waking");
+    assert.deepEqual(await requestWake(), requested);
     assert.equal(await advance("claim_restore", {}), null);
     assert.equal((await advance("claim_restore")).phase, "restore_claimed");
     assert.equal(await advance("claim_restore"), null);
@@ -350,7 +403,13 @@ async function main() {
       const cycleStorage = { ...storage, source: from, disk: { ...storage.disk, bytes: 512 * cycle } };
       assert.equal(await advance("verify_storage", cycleStorage), null);
       assert.equal(await retire(), null);
+      const pending = await requestWake(lease);
+      assert.equal(pending.phase, "checkpointing");
+      assert.ok(pending.wake_requested_at);
+      assert.equal((await agentState()).sleep_state, "waking");
+      assert.equal(await advance("claim_restore", null, lease), null);
       assert.deepEqual((await advance("verify_storage", cycleStorage, lease)).storage_evidence, cycleStorage);
+      assert.equal((await read()).wake_requested_at, pending.wake_requested_at);
       assert.equal((await advance("claim_restore", null, lease)).phase, "restore_claimed");
       assert.equal((await advance("verify_destination", { ...restored, destination: to }, lease)).phase, "destination_verified");
       assert.equal((await advance("commit_placement", { ...commit, source: from, destination: to }, lease)).phase, "placement_committed");
@@ -381,7 +440,10 @@ async function main() {
       assert.equal(await abort(abortEvidence, { ...lease, operation: id(50 + step) }), null);
       assert.equal(await retire(retirement, lease), null);
       if (step >= 1) await advance("verify_storage", { ...storage, source: destination }, lease);
-      if (step >= 2) await advance("claim_restore", null, lease);
+      if (step >= 2) {
+        assert.ok((await requestWake(lease)).wake_requested_at);
+        await advance("claim_restore", null, lease);
+      }
       if (step >= 3) await advance("verify_destination", { ...restored, destination: source }, lease);
       assert.equal((await read()).phase, phase);
       assert.equal((await available(source.hostId)).free_disk_gb, unreserved.free_disk_gb - 40);
@@ -413,6 +475,74 @@ async function main() {
     assert.deepEqual(history[0].destination_evidence, restored);
     assert.deepEqual(history[0].connector_evidence, connector);
     assert.ok(history.every(entry => entry.retired_at));
+
+    assert.equal(await enroll(), false);
+    await addAgent(ordinaryAgent, ordinaryOwner, ordinaryA);
+    const ordinaryForward = { owner: ordinaryOwner, agent: ordinaryAgent, source: ordinaryA, destination: ordinaryB,
+      operation: id(81) };
+    await db.exec("set role service_role");
+    assert.equal(await begin(ordinaryForward), null);
+    await db.exec("reset role");
+    for (const invalid of [
+      { owner: otherOwner }, { agent: otherAgent },
+      { a: { ...ordinaryA, ip: "192.0.2.111" } },
+      { a: { ...ordinaryA, vmid: 9302 } }, { b: { ...ordinaryB, vmid: 9302 } },
+      { b: { ...ordinaryB, hostId: ordinaryA.hostId } },
+      { b: { ...ordinaryB, bindingTag: "hivra-bind-" + "9".repeat(32) } },
+      { evidence: { placementAReservedForBinding: false } }, { evidence: { placementBReservedForBinding: undefined } },
+      { evidence: { guestToken: "unexpected" } },
+    ]) assert.equal(await enroll(invalid), false);
+    const qaOwnerOtherPlacement = { ...ordinaryB, bindingTag: fencedSource.bindingTag };
+    assert.equal(await enroll({ owner: fencedOwner, agent: fencedAgent, a: fencedSource, b: qaOwnerOtherPlacement }), false);
+    assert.equal(await enroll(), true);
+    assert.equal(await enroll({ b: { ...ordinaryB, vmid: ordinaryB.vmid + 1 } }), false);
+
+    await db.exec("set role service_role");
+    assert.equal(await begin({ ...ordinaryForward, destination: { ...ordinaryB, ip: "192.0.2.112" } }), null);
+    assert.equal(await begin({ ...ordinaryForward, destination: { ...ordinaryB, vmid: 9302 } }), null);
+    await db.query("update public.hivra_agents set infrastructure_binding_token_hash=$1 where id=$2",
+      [hash.slice(0, 32) + "b".repeat(32), ordinaryAgent]);
+    assert.equal(await begin(ordinaryForward), null);
+    await db.query("update public.hivra_agents set infrastructure_binding_token_hash=$1 where id=$2", [hash, ordinaryAgent]);
+    const occupyHermes = target => row(`insert into public.hermes_instances
+      (user_id,name,status,lifecycle_state,infrastructure_provider,proxmox_node,proxmox_vmid)
+      values ($1,'Fixture','running','active','proxmox',$2,$3) returning id`,
+    [otherOwner, target.hostId, target.vmid]);
+    for (const occupied of [ordinaryA, ordinaryB]) {
+      const { id: occupying } = await occupyHermes(occupied);
+      assert.equal(await begin(ordinaryForward), null);
+      await db.query("delete from public.hermes_instances where id=$1", [occupying]);
+    }
+    assert.equal((await begin(ordinaryForward)).phase, "checkpointing");
+    for (const placement of [ordinaryA, ordinaryB]) await assert.rejects(occupyHermes(placement), { code: "P0058" });
+    const ordinaryLease = { owner: ordinaryOwner, agent: ordinaryAgent, operation: ordinaryForward.operation, generation: 9 };
+    assert.ok((await requestWake(ordinaryLease)).wake_requested_at);
+    assert.equal((await advance("verify_storage", { ...storage, source: ordinaryA }, ordinaryLease)).phase, "storage_verified");
+    assert.equal((await advance("claim_restore", null, ordinaryLease)).phase, "restore_claimed");
+    assert.equal((await advance("verify_destination", { ...restored, destination: ordinaryB }, ordinaryLease)).phase, "destination_verified");
+    assert.equal((await advance("commit_placement", { ...commit, source: ordinaryA, destination: ordinaryB }, ordinaryLease)).phase, "placement_committed");
+    assert.equal((await advance("confirm_connector", { ...connector, destination: ordinaryB }, ordinaryLease)).phase, "connector_verified");
+    assert.equal((await advance("finish_wake", { ...ready, destination: ordinaryB }, ordinaryLease)).phase, "finished");
+    assert.ok((await retire({ ...retirement, source: ordinaryA, destination: ordinaryB }, ordinaryLease)).retired_at);
+
+    const unrelated = id(82);
+    await addAgent(unrelated, otherOwner, ordinaryA);
+    assert.equal(await begin({ ...ordinaryForward, agent: unrelated, owner: otherOwner, operation: id(83) }), null);
+    await db.query("delete from public.hivra_agents where id=$1", [unrelated]);
+
+    assert.equal(await rpc("claim_hivra_agent_sleep", ordinaryAgent, id(84), "hibernate", 10), 11);
+    assert.equal(await rpc("finish_hivra_agent_sleep", ordinaryAgent, id(84), "hibernated"), true);
+    await db.query("update public.hivra_agents set sleep_memory_dropped_at=clock_timestamp() where id=$1", [ordinaryAgent]);
+    const ordinaryReverse = { ...ordinaryForward, source: ordinaryB, destination: ordinaryA, generation: 12, operation: id(85) };
+    assert.equal((await begin(ordinaryReverse)).phase, "checkpointing");
+    assert.equal((await abort({ ...abortProof, source: ordinaryB, destination: ordinaryA },
+      { ...ordinaryReverse, generation: 13 })).phase, "aborted");
+    assert.equal(await rpc("managed_launch_bridge_epoch"), epoch);
+    await assert.rejects(db.query("update public.hivra_agents set proxmox_host=$1 where id=$2",
+      [destination.hostId, fencedAgent]), { code: "P0060" });
+    assert.deepEqual(await row("delete from public.hivra_agents where id=$1 returning id", [ordinaryAgent]), { id: ordinaryAgent });
+    await db.exec("reset role");
+    assert.equal((await row("select count(*)::int as count from hivra_kvm_portable_private.pilot_enrollment")).count, 0);
     console.log("Managed KVM portable handoff SQL passed");
   } finally {
     await db.close();

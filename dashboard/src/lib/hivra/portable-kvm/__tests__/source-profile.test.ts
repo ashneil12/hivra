@@ -17,7 +17,7 @@ const approved = [
   "scsi0: local-lvm:vm-9343-disk-0,discard=on,ssd=1", "tags: qa;" + placement.bindingTag,
 ].join("\n") + "\n";
 
-function eligible(config: string, status = "stopped") {
+function eligible(config: string, status = "stopped", launchProfile: Parameters<typeof buildPortableKvmSourceProfileCheck>[1] = profile) {
   const root = mkdtempSync(join(tmpdir(), "hivra-kvm-profile-"));
   try {
     const bin = join(root, "bin");
@@ -27,7 +27,7 @@ function eligible(config: string, status = "stopped") {
     writeFileSync(join(bin, "hostname"), "#!/bin/sh\nprintf '%s\\n' qa-source\n", { mode: 0o700 });
     writeFileSync(join(bin, "qm"), "#!/bin/sh\ncase \"$1\" in status) echo \"status: $TEST_STATUS\";; config) cat \"$TEST_CONFIG\";; *) exit 65;; esac\n",
       { mode: 0o700 });
-    const command = buildPortableKvmSourceProfileCheck(placement, profile)
+    const command = buildPortableKvmSourceProfileCheck(placement, launchProfile)
       .replaceAll("/etc/pve/qemu-server", root).replaceAll("/var/lib/hivra-sleep", root)
       .replaceAll("/run/qemu-server", root).replace("marker.stat().st_uid != 0", `marker.stat().st_uid != ${process.getuid?.() ?? 0}`);
     const result = spawnSync("bash", ["-c", command], {
@@ -57,4 +57,19 @@ it.each([
 it("refuses the ordinary launch CPU profile and unverified NIC settings", () => {
   expect(eligible(approved.replace("cpu: x86-64-v2-AES", "cpu: host"))).toBe(false);
   expect(eligible(approved.replace("bridge=vmbr27", "bridge=vmbr28"))).toBe(false);
+});
+
+it("accepts the ordinary serial console and generated seed only with their qualified settings", () => {
+  const ordinary = approved.replace("cpu: x86-64-v2-AES", "cpu: host").replace(",firewall=1", "") +
+    "cpulimit: 2\nserial0: socket\nvga: serial0\n" +
+    "ide2: local-lvm:vm-9343-cloudinit,media=cdrom\nciuser: ubuntu\nciupgrade: 0\n" +
+    "ipconfig0: ip=192.0.2.43/24,gw=192.0.2.1\nnameserver: 192.0.2.53\n";
+  const measured: Parameters<typeof buildPortableKvmSourceProfileCheck>[1] = { ...profile, managed: {
+    cpu: { vendor: "GenuineIntel", requiredFlags: ["aes", "cx16", "pni", "popcnt", "sse4_1", "sse4_2", "ssse3"] },
+    cpuLimit: 2, cloudInit: { instanceId: "1".repeat(40), gateway: "192.0.2.1", nameservers: ["192.0.2.53"] },
+  } };
+  expect(eligible(ordinary, "stopped", measured)).toBe(true);
+  expect(eligible(ordinary + "cicustom: user=local:snippets/arbitrary.yaml\n", "stopped", measured)).toBe(false);
+  expect(eligible(ordinary.replace("serial0: socket", "serial0: /dev/ttyS0"), "stopped", measured)).toBe(false);
+  expect(eligible(ordinary.replace("ip=192.0.2.43", "ip=192.0.2.44"), "stopped", measured)).toBe(false);
 });

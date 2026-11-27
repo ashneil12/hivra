@@ -5,7 +5,7 @@ import { hivraInfrastructureBindingTag, isHivraInfrastructureBindingTokenHash } 
 
 const endpoint = z.object({
   hostId: z.string().regex(/^[a-z][a-z0-9-]{0,62}$/),
-  vmid: z.number().int().min(9300).max(9399).refine(vmid => vmid !== 9302),
+  vmid: z.number().int().min(100).max(999_999_999).refine(vmid => vmid !== 9302),
   ip: z.string().refine(isIPv4),
 }).strict();
 

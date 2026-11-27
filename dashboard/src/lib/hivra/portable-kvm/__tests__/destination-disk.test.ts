@@ -136,6 +136,24 @@ it("writes the complete verified image, including zero extents, then reads it se
   expect(parsePortableKvmDestinationDiskReceipt(result.stdout, { ...host.reservation, generation: 3 })).toBeNull();
 });
 
+it("writes only scsi0 with a qualified ordinary generated NoCloud seed and serial console present", () => {
+  const candidate = config +
+    "cpu: host\ncpulimit: 2\nserial0: socket\nvga: serial0\n" +
+    "ide2: local-lvm:vm-9344-cloudinit,media=cdrom,size=4M\nciuser: ubuntu\ncitype: nocloud\nciupgrade: 0\n" +
+    "ipconfig0: ip=192.0.2.44/24,gw=192.0.2.1\nnameserver: 192.0.2.53\n" +
+    "net0: virtio=02:11:22:33:44:55,bridge=vmbr27,firewall=1,link_down=1\n" +
+    `cicustom: meta=local:snippets/hivra-portable-meta-${baseReservation.operationId}.yaml\n`;
+  const host = fakeHost(candidate);
+  const observed = host.run();
+  expect(observed.stderr).toBe("");
+  expect(parsePortableKvmDestinationDiskReceipt(observed.stdout, host.reservation)).toMatchObject({
+    state: "disk_restored_verified",
+  });
+  expect(readFileSync(host.path)).toEqual(image);
+  const bad = fakeHost(candidate.replace("meta=", "vendor="));
+  refused(bad, bad.run());
+});
+
 it.each(["wrong host", "wrong generation", "wrong checkpoint", "symlink reservation", "public reservation", "running", "pid",
   "wrong dm uuid", "different storage", "different path", "different capacity", "bad key", "raw drift"])(
   "refuses %s before downloading or changing disk bytes", what => {

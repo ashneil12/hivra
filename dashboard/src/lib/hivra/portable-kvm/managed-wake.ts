@@ -17,22 +17,24 @@ import {
 import { serializePortableKvmDestinationReservation } from "./destination-disk";
 import { dispatchPortableKvmDestinationJob, pollPortableKvmDestinationJob } from "./destination-job";
 import {
-  buildPortableKvmDestinationPrepareScript, parsePortableKvmDestinationPrepareReceipt, type PortableKvmDestinationPrepareInput,
+  buildPortableKvmDestinationPrepareScript, buildPortableKvmHostCpuCompatibilityProbeScript, parsePortableKvmDestinationPrepareReceipt,
+  portableKvmManagedDestinationProfileSchema, type PortableKvmDestinationPrepareInput,
 } from "./destination-prepare";
-import { advancePortableKvmOwnerWake, type PortableKvmCheckpointReceipt, type PortableKvmHandoff } from "./handoff";
-import { isPortableKvmWakeClaimed, type PortableKvmPlacement } from "./pilot";
+import { advancePortableKvmIdleHandoff, requestPortableKvmOwnerWake, type PortableKvmCheckpointReceipt, type PortableKvmHandoff } from "./handoff";
+import { isPortableKvmReadyToCheckpoint, isPortableKvmWakeClaimed, type PortableKvmPlacement } from "./pilot";
 import { buildPortableKvmSourceFenceScript, parsePortableKvmSourceFence } from "./source-fence";
 import { buildPortableKvmSourceProfileCheck, isPortableKvmSourceProfileEligible } from "./source-profile";
 
 const hostProfile = z.object({
   storageId: z.string().min(1), volumeGroup: z.string().min(1), thinPool: z.string().min(1),
-  bridge: z.string().regex(/^vmbr[0-9]{1,4}$/),
+  bridge: z.string().regex(/^(?:hivra0|vmbr[0-9]{1,4})$/),
 }).strict();
 const profileSchema = z.object({
   machine: z.string().regex(/^pc-i440fx-[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\+pve[0-9]+)?$/),
   machineId: z.string().regex(/^[a-f0-9]{32}$/).refine(id => !/^0+$/.test(id)),
   macAddress: z.string().regex(/^[0-9A-F][26AE](?::[0-9A-F]{2}){5}$/),
   attachment: z.object({ discard: z.boolean(), ssd: z.boolean(), ioThread: z.boolean() }).strict(),
+  managed: portableKvmManagedDestinationProfileSchema,
   hosts: z.record(z.string(), hostProfile),
 }).strict();
 
@@ -45,7 +47,7 @@ function pilotProfile(agent: Record<string, unknown>, placement: PortableKvmPlac
   const { bridge, ...storage } = host;
   return { storage, machineId: config.machineId, profile: {
     machine: config.machine, cores, memoryMb,
-    attachment: config.attachment, network: { bridge, macAddress: config.macAddress },
+    attachment: config.attachment, network: { bridge, macAddress: config.macAddress }, managed: config.managed,
   } };
 }
 
@@ -88,26 +90,36 @@ cat -- "$FILE"
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
-export async function resumeManagedPortableKvmOwnerWake() {
+async function rpc(name: string, params: Record<string, unknown>) {
+  if (!supabaseAdmin) throw new Error("Portable KVM journal unavailable");
+  const { data, error } = await supabaseAdmin.rpc(name, params);
+  if (error) throw new Error("Portable KVM journal operation failed");
+  return data as unknown;
+}
+
+export function requestManagedPortableKvmOwnerWake(ownerId: string, agent: Record<string, unknown>) {
+  return requestPortableKvmOwnerWake(ownerId, agent, rpc);
+}
+
+export async function resumeManagedPortableKvmOwnerWake(options: { ownerId?: string; deadline?: number } = {}) {
   if (!isCanonicalGitCanaryDeployment() || process.env.HIVRA_KVM_PORTABLE_QA_ENABLED !== "true") return;
   const owner = process.env.HIVRA_KVM_PORTABLE_QA_OWNER_ID;
   const id = z.string().uuid().safeParse(process.env.HIVRA_KVM_PORTABLE_QA_AGENT_ID);
   if (!supabaseAdmin || !owner || !id.success) throw new Error("Portable KVM pilot is not configured");
-  const { data, error } = await supabaseAdmin.from("hivra_agents").select("*").eq("id", id.data).eq("user_id", owner).maybeSingle();
-  if (error) throw new Error("Portable KVM owner wake lookup failed");
-  if (!data || !isPortableKvmWakeClaimed(data) || await isStartBlockedForLapse(data, "start")) return;
-  const result = await advanceManagedPortableKvmOwnerWake(owner, data);
-  if (result?.state === "failed") throw new Error("Portable KVM wake lease needs operator reconciliation");
+  if (options.ownerId && options.ownerId !== owner) return;
+  const deadline = options.deadline ?? Date.now() + 275_000;
+  for (let step = 0; step < 8 && Date.now() + 10_000 < deadline; step++) {
+    const { data, error } = await supabaseAdmin.from("hivra_agents").select("*").eq("id", id.data).eq("user_id", owner).maybeSingle();
+    if (error) throw new Error("Portable KVM owner wake lookup failed");
+    if (!data || !(isPortableKvmWakeClaimed(data) || (!options.ownerId && isPortableKvmReadyToCheckpoint(data)))
+      || await isStartBlockedForLapse(data, "start")) return;
+    const result = await advanceManagedPortableKvmHandoff(owner, data, { restoreOnly: !!options.ownerId, deadline });
+    if (result?.state === "failed") throw new Error("Portable KVM wake lease needs operator reconciliation");
+    if (!result?.progressed) return;
+  }
 }
 
-export function advanceManagedPortableKvmOwnerWake(ownerId: string, agent: Record<string, unknown>) {
-  async function rpc(name: string, params: Record<string, unknown>) {
-    if (!supabaseAdmin) throw new Error("Portable KVM journal unavailable");
-    const { data, error } = await supabaseAdmin.rpc(name, params);
-    if (error) throw new Error("Portable KVM journal operation failed");
-    return data as unknown;
-  }
-
+function advanceManagedPortableKvmHandoff(ownerId: string, agent: Record<string, unknown>, options: { restoreOnly: boolean; deadline: number }) {
   async function connectors() {
     const id = z.string().uuid().parse(agent.cf_tunnel_id);
     return (await listTunnelConnections(id)).filter(connector => connector.connections > 0);
@@ -125,7 +137,9 @@ export function advanceManagedPortableKvmOwnerWake(ownerId: string, agent: Recor
       newlyPrepared = reservation !== null;
     }
     if (!reservation) throw new Error("Portable KVM destination reservation not confirmed");
-    const profile = { reservation, ip: lease.destination.ip, machineId: pilotProfile(agent, lease.destination).machineId };
+    const approved = pilotProfile(agent, lease.destination);
+    const profile = { reservation, ip: lease.destination.ip, machineId: approved.machineId,
+      managed: approved.profile.managed };
     const adapter: PortableKvmDestinationBootAdapter = {
       async readAuthority({ ownerId: owner, agentId }) {
         if (!supabaseAdmin || owner !== ownerId || agentId !== lease.agent_id) return null;
@@ -150,17 +164,27 @@ export function advanceManagedPortableKvmOwnerWake(ownerId: string, agent: Recor
       profileSha256: sha(serializePortableKvmDestinationBootProfile(target.profile)) };
   }
 
-  return advancePortableKvmOwnerWake(ownerId, agent, {
+  return advancePortableKvmIdleHandoff(ownerId, agent, {
     rpc,
     async preflight(row, placement) {
       if (placement.current.ip !== placement.alternate.ip || !getTunnelConfig()) return false;
       pilotProfile(row, placement.alternate);
-      const [source] = await Promise.all([
+      const [source, target] = await Promise.all([
         pinnedTarget(ownerId, row, placement.current, true), pinnedTarget(ownerId, row, placement.alternate, true),
       ]);
       const { profile } = pilotProfile(row, placement.current);
-      const result = await runProxmoxHostScript(buildPortableKvmSourceProfileCheck(placement.current, profile), source.env, 40_000);
-      return result.ok && isPortableKvmSourceProfileEligible(result.stdout);
+      const [sourceProfile, sourceCpu, targetCpu] = await Promise.all([
+        runProxmoxHostScript(buildPortableKvmSourceProfileCheck(placement.current, profile), source.env, 40_000),
+        runProxmoxHostScript(buildPortableKvmHostCpuCompatibilityProbeScript(placement.current.hostId), source.env, 20_000),
+        runProxmoxHostScript(buildPortableKvmHostCpuCompatibilityProbeScript(placement.alternate.hostId), target.env, 20_000),
+      ]);
+      if (!sourceProfile.ok || !isPortableKvmSourceProfileEligible(sourceProfile.stdout)) return false;
+      return [sourceCpu, targetCpu].every(result => {
+        if (!result.ok) return false;
+        const observed = portableKvmManagedDestinationProfileSchema.shape.cpu.safeParse(JSON.parse(result.stdout));
+        return observed.success && observed.data.vendor === profile.managed.cpu.vendor
+          && profile.managed.cpu.requiredFlags.every(flag => observed.data.requiredFlags.includes(flag));
+      });
     },
     async checkpoint(row) {
       const result = await advancePortableKvmSourceCheckpoint(ownerId, row);
@@ -223,5 +247,5 @@ export function advanceManagedPortableKvmOwnerWake(ownerId: string, agent: Recor
       });
       return true;
     },
-  });
+  }, options);
 }

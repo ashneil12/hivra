@@ -12,7 +12,7 @@ const reservationSchema = z.object({
   generation: z.number().int().positive().safe(),
   checkpointSha256: sha256,
   hostId: z.string().regex(/^[a-z][a-z0-9-]{0,62}$/),
-  vmid: z.number().int().min(9300).max(9399).refine(value => value !== 9302),
+  vmid: z.number().int().min(100).max(999_999_999).refine(value => value !== 9302),
   bindingTag: z.string().regex(/^hivra-bind-[a-f0-9]{32}$/),
   configurationSha256: sha256,
   rawConfigurationSha256: sha256,
@@ -98,9 +98,11 @@ def check_vm():
     current = output("qm", "config", vmid, "--current", "1").rstrip(b"\n") + b"\n"
     require(hashlib.sha256(current).hexdigest() == r["configurationSha256"], "configuration_mismatch")
     fields = {}
+    seed_keys = {"cicustom", "citype", "ciupgrade", "ciuser", "cpulimit", "ide2", "ipconfig0",
+                 "nameserver", "serial0", "vga"}
     allowed = {"agent", "arch", "bios", "boot", "cores", "cpu", "description", "lock", "machine",
                "memory", "meta", "name", "net0", "numa", "onboot", "ostype", "scsi0", "scsihw",
-               "smbios1", "sockets", "tags", "vcpus", "vmgenid"}
+               "smbios1", "sockets", "tags", "vcpus", "vmgenid"} | seed_keys
     for line in current.decode("utf-8").splitlines():
         key, sep, value = line.partition(": ")
         require(sep and key in allowed and key not in fields, "unsupported_destination_configuration")
@@ -114,6 +116,14 @@ def check_vm():
             and fields.get("boot") == "order=scsi0"
             and re.fullmatch(r"pc-i440fx-[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\+pve[0-9]+)?", fields.get("machine", "")),
             "unsupported_destination_boot")
+    if seed_keys.intersection(fields):
+        seed = r["storageId"] + ":vm-" + vmid + "-cloudinit"
+        require(seed_keys <= fields.keys() and fields["ide2"] in {seed + ",media=cdrom", seed + ",media=cdrom,size=4M"}
+                and fields["cicustom"] == "meta=local:snippets/hivra-portable-meta-" + r["operationId"] + ".yaml"
+                and tuple(fields[key] for key in ("serial0", "vga", "cpu", "ciuser", "ciupgrade", "citype"))
+                    == ("socket", "serial0", "host", "ubuntu", "0", "nocloud")
+                and re.fullmatch(r"virtio=[0-9A-Fa-f:]{17},bridge=(?:hivra0|vmbr[0-9]{1,4}),firewall=1,link_down=1", fields.get("net0", "")),
+                "unsupported_destination_generated_seed")
     disk, *options = fields.get("scsi0", "").split(",")
     keys = [option.partition("=")[0] for option in options]
     require(disk == volume and len(set(keys)) == len(keys) and all(

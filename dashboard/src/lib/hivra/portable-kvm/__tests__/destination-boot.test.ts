@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   bootPortableKvmDestination, enablePortableKvmDestinationNetwork,
   releasePortableKvmDestinationLock, serializePortableKvmDestinationBootProfile, verifyPortableKvmQuarantinedDestination,
+  type PortableKvmDestinationBootProfile,
 } from "../destination-boot";
 import { serializePortableKvmDestinationReservation } from "../destination-disk";
 
@@ -20,13 +21,24 @@ const tunnelId = "55555555-5555-4555-8555-555555555555";
 const machineId = "a".repeat(32);
 const tokenHash = "b".repeat(64);
 const bindingTag = "hivra-bind-" + tokenHash.slice(0, 32);
-const source = { hostId: "qa-source", vmid: 9343, ip: "192.0.2.3", bindingTag };
-const destination = { hostId: "qa-destination", vmid: 9344, ip: "192.0.2.4", bindingTag };
+const source = { hostId: "qa-source", vmid: 9343, ip: "192.168.1.3", bindingTag };
+const destination = { hostId: "qa-destination", vmid: 9344, ip: "192.168.1.4", bindingTag };
 const nic = "virtio=02:23:45:AB:CD:EF,bridge=vmbr1,firewall=1";
 const config = [
   "agent: 1", "arch: x86_64", "bios: seabios", "machine: pc-i440fx-9.2", "ostype: l26", "boot: order=scsi0",
-  "scsihw: virtio-scsi-single", "lock: backup", "memory: 2048", "onboot: 0", "scsi0: local-lvm:vm-9344-disk-0,replicate=0",
+  "scsihw: virtio-scsi-single", "lock: backup", "memory: 2048", "cores: 2", "onboot: 0", "scsi0: local-lvm:vm-9344-disk-0,replicate=0",
   "tags: " + bindingTag, "net0: " + nic + ",link_down=1", "",
+].join("\n");
+const managedProfile = { cpu: { vendor: "GenuineIntel" as const, requiredFlags: ["aes", "cx16", "pni", "popcnt", "sse4_1",
+  "sse4_2", "ssse3"] }, cpuLimit: 2, cloudInit: {
+  instanceId: "d".repeat(40), gateway: "192.168.1.1", nameservers: ["192.0.2.53", "198.51.100.53"],
+} } satisfies NonNullable<PortableKvmDestinationBootProfile["managed"]>;
+const seedSnippet = `hivra-portable-meta-${operationId}.yaml`;
+const managedConfig = config.replace("vmbr1", "hivra0") + [
+  "cpu: host", "cpulimit: 2", "serial0: socket", "vga: serial0", "ciuser: ubuntu", "citype: nocloud", "ciupgrade: 0",
+  "ide2: local-lvm:vm-9344-cloudinit,media=cdrom,size=4M", `cicustom: meta=local:snippets/${seedSnippet}`,
+  `ipconfig0: ip=${destination.ip}/24,gw=${managedProfile.cloudInit.gateway}`,
+  `nameserver: ${managedProfile.cloudInit.nameservers.join(" ")}`, "",
 ].join("\n");
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const saved = process.env;
@@ -47,7 +59,7 @@ afterEach(() => {
 });
 
 const fake = String.raw`#!/usr/bin/python3
-import json, os, re, subprocess, sys
+import hashlib, json, os, re, subprocess, sys
 from pathlib import Path
 r = Path(os.environ["TEST_ROOT"])
 cmd, a = Path(sys.argv[0]).name, sys.argv[1:]
@@ -63,8 +75,10 @@ elif cmd == "pvesm" and a == ["status", "--storage", "local-lvm"]:
     print("Header\nlocal-lvm lvmthin active")
 elif cmd == "pvesm" and a == ["path", "local-lvm:vm-9344-disk-0"]:
     print(r / "dev/pve/vm-9344-disk-0")
+elif cmd == "pvesm" and a == ["path", "local:snippets/hivra-portable-meta-22222222-2222-4222-8222-222222222222.yaml"]:
+    print(r / "snippets/hivra-portable-meta-22222222-2222-4222-8222-222222222222.yaml")
 elif cmd == "qm" and a == ["config", "9344", "--current", "1"]:
-    print(cfg.read_text(), end="")
+    print(cfg.read_text().split("\n[", 1)[0], end="")
 elif cmd == "qm" and a == ["status", "9344"]:
     print("status: " + ("running" if pid.exists() else "stopped"))
 elif cmd == "qm" and a == ["start", "9344", "--skiplock", "1"]:
@@ -72,46 +86,64 @@ elif cmd == "qm" and a == ["start", "9344", "--skiplock", "1"]:
     event("start")
     pid.write_text("141592\n")
     (r / "net/tap9344i0/master/bridge").mkdir(parents=True)
-elif cmd == "qm" and a == ["set", "9344", "--skiplock", "1", "--net0", "virtio=02:23:45:AB:CD:EF,bridge=vmbr1,firewall=1"]:
+elif cmd == "qm" and a[:5] == ["set", "9344", "--skiplock", "1", "--net0"]:
     assert fw.exists() and pid.exists()
+    old = cfg.read_text()
+    old_nic = next(line for line in old.splitlines() if line.startswith("net0: "))
+    assert a[5:] == [old_nic.removeprefix("net0: ").removesuffix(",link_down=1")]
     event("link_up")
-    cfg.write_text(cfg.read_text().replace(",link_down=1", ""))
+    tracked = "\n[special:cloudinit]\n" + old_nic + "\n" if os.getenv("TEST_TRACKED") else ""
+    cfg.write_text(old.replace(",link_down=1", "") + tracked)
 elif cmd == "qm" and a == ["unlock", "9344"]:
     assert not fw.exists() and (r / "sleep/portable-kvm-destinations/9344.released").exists()
-    assert pid.exists() and "lock: backup\n" in cfg.read_text() and "link_down=1" not in cfg.read_text()
+    assert pid.exists() and "lock: backup\n" in cfg.read_text() and "link_down=1" not in cfg.read_text().split("\n[", 1)[0]
     event("unlock")
     cfg.write_text(cfg.read_text().replace("lock: backup\n", ""))
+elif cmd == "perl":
+    assert a[:5] == ["-MPVE::QemuServer", "-MPVE::QemuConfig", "-MPVE::Tools", "-MDigest::SHA", "-e"]
+    assert "PVE::QemuConfig->lock_config" in a[5] and "delete $conf->{'special-sections'}->{cloudinit};" in a[5]
+    assert "vmconfig_update_cloudinit_drive" not in a[5]
+    assert a[6] == "9344" and a[7] == hashlib.sha256(cfg.read_bytes()).hexdigest()
+    raw = cfg.read_text()
+    tracked = "\n[special:cloudinit]\nnet0: " + a[8] + "\n"
+    assert raw.endswith(tracked) and pid.exists() and "lock: backup\n" in raw
+    event("clear_link_cache")
+    cfg.write_text(raw[:-len(tracked)])
 elif cmd == "qm" and a[:3] == ["guest", "exec", "9344"]:
-    assert pid.exists() and a[-3] == "02:23:45:ab:cd:ef" and a[-1] == "192.0.2.4"
-    assert "hivra-cf-tunnel.service" in a[-4] and "Generated Connector ID" in a[-4]
-    compile(a[-4], "guest_probe", "exec")
-    carrier = a[-2]
-    assert (carrier == "0") == ("link_down=1" in cfg.read_text())
+    assert pid.exists() and a[-5] == "02:23:45:ab:cd:ef" and a[-3] == "192.168.1.4"
+    assert "hivra-cf-tunnel.service" in a[-6] and "Generated Connector ID" in a[-6]
+    compile(a[-6], "guest_probe", "exec")
+    carrier = a[-4]
+    assert (carrier == "0") == ("link_down=1" in cfg.read_text().split("\n[", 1)[0])
     assert (carrier != "1") == fw.exists()
     event("qga_" + carrier)
     proof = {"machineId": os.getenv("TEST_MACHINE", "a" * 32),
              "bootId": os.getenv("TEST_BOOT", "33333333-3333-4333-8333-333333333333")}
     if carrier == "1":
         proof["connectorId"] = os.getenv("TEST_CONNECTOR", "44444444-4444-4444-8444-444444444444")
+    if a[-2]:
+        proof["instanceId"] = os.getenv("TEST_INSTANCE_ID", "d" * 40)
     if os.getenv("TEST_RUN_GUEST"):
         dev = r / "net/ens18"
         dev.mkdir(exist_ok=True)
-        (dev / "address").write_text(a[-3])
+        (dev / "address").write_text(a[-5])
         (dev / "carrier").write_text("0" if carrier == "0" else "1")
         (r / "machine-id").write_text(proof["machineId"])
         (r / "boot-id").write_text(proof["bootId"])
+        (r / "instance-data.json").write_text(json.dumps({"v1": {"instance_id": proof.get("instanceId")}}))
         (r / "proc/456").mkdir(parents=True, exist_ok=True)
         exe = r / "proc/456/exe"
         if not exe.is_symlink():
             exe.symlink_to("/usr/local/bin/cloudflared")
-        guest = a[-4].replace(str(r / "net"), str(r / "guest-net")).replace(
+        guest = a[-6].replace(str(r / "net"), str(r / "guest-net")).replace(
             'Path("/proc",', 'Path("' + str(r / "proc") + '",').replace(
             "/etc/machine-id", str(r / "machine-id")).replace(
-            "/proc/sys/kernel/random/boot_id", str(r / "boot-id"))
+            "/proc/sys/kernel/random/boot_id", str(r / "boot-id")).replace(
+            "/run/cloud-init/instance-data.json", str(r / "instance-data.json"))
         if not (r / "guest-net").is_dir():
             (r / "guest-net").mkdir()
             (r / "guest-net/ens18").symlink_to(dev)
-        result = subprocess.run(["/usr/bin/python3", "-I", "-c", guest, *a[-3:]], capture_output=True, text=True)
+        result = subprocess.run(["/usr/bin/python3", "-I", "-c", guest, *a[-5:]], capture_output=True, text=True)
         print(json.dumps({"exited": 1, "exitcode": result.returncode, "out-data": result.stdout}))
     else:
         print(json.dumps({"exited": 1, "exitcode": 0, "out-data": json.dumps(proof)}))
@@ -120,7 +152,9 @@ elif cmd == "systemctl" and a == ["show", "--property=FragmentPath,DropInPaths,L
 elif cmd == "systemctl" and a == ["show", "--property=ActiveState,InvocationID,MainPID", "hivra-cf-tunnel.service"]:
     print("ActiveState=active\nInvocationID=" + "1" * 32 + "\nMainPID=456")
 elif cmd == "ip" and a == ["-j", "-4", "address", "show", "dev", "ens18"]:
-    print(json.dumps([{"addr_info": [{"local": "192.0.2.4", "scope": "global"}]}]))
+    print(json.dumps([{"addr_info": [{"local": "192.168.1.4", "scope": "global"}]}]))
+elif cmd == "ip" and a == ["-j", "-4", "route", "show", "default", "dev", "ens18"]:
+    print(json.dumps([{"gateway": "192.168.1.1", "dev": "ens18"}]))
 elif cmd == "journalctl":
     assert a == ["--boot=0", "--unit=hivra-cf-tunnel.service", "--no-pager", "--output=json", "--lines=10",
                  "--grep=Generated Connector ID:", "_SYSTEMD_INVOCATION_ID=" + "1" * 32, "_PID=456",
@@ -151,37 +185,39 @@ elif cmd == "nft" and a[:4] == ["-j", "list", "table", "bridge"]:
         rows.pop()
     print(json.dumps({"nftables": rows}))
 elif cmd == "nft" and a[:3] == ["delete", "table", "bridge"]:
-    assert a[3:] == [fw.read_text()] and "link_down=1" not in cfg.read_text()
+    assert a[3:] == [fw.read_text()] and "link_down=1" not in cfg.read_text().split("\n[", 1)[0]
     event("delete_fence")
     fw.unlink()
 else:
     raise RuntimeError("unexpected fixture command")
 `;
 
-function host(current = config) {
+function host(current = config, managed = false) {
   const root = mkdtempSync(join(tmpdir(), "portable-boot-"));
   roots.add(root);
   for (const dir of ["bin", "sleep/portable-kvm-destinations", "pve", "lxc", "run", "lock", "net/vmbr1/bridge",
-    "dev/pve", "sys/0:0/dm"]) mkdirSync(join(root, dir), { mode: 0o700, recursive: true });
+    "net/hivra0/bridge", "snippets", "dev/pve", "sys/0:0/dm"]) mkdirSync(join(root, dir), { mode: 0o700, recursive: true });
   const disk = { key: "scsi0" as const, bytes: 512, sha256: "6".repeat(64), snapshotId: "7".repeat(64) };
   const reservation = { agentId, operationId, generation: 2, hostId: destination.hostId, vmid: destination.vmid,
     bindingTag, checkpointSha256: "8".repeat(64), configurationSha256: digest(current), rawConfigurationSha256: digest(current),
     storageId: "local-lvm", volumeName: "vm-9344-disk-0", volumeGroup: "pve", deviceMapperUuid: "LVM-" + "A".repeat(64), disk,
   };
-  const profile = { reservation, machineId, ip: destination.ip };
+  const profile = { reservation, machineId, ip: destination.ip, ...(managed ? { managed: managedProfile } : {}) };
   const diskReceipt = { state: "disk_restored_verified" as const, reservation, readback: { sha256: disk.sha256, bytes: disk.bytes } };
   const registry = join(root, "sleep/portable-kvm-destinations");
   const bootMarker = join(registry, "9344.boot");
   writeFileSync(join(registry, "9344"), serializePortableKvmDestinationReservation(reservation), { mode: 0o600 });
   writeFileSync(bootMarker, serializePortableKvmDestinationBootProfile(profile), { mode: 0o600 });
   writeFileSync(join(root, "pve/9344.conf"), current);
+  writeFileSync(join(root, "snippets", seedSnippet), `instance-id: ${managedProfile.cloudInit.instanceId}\n`, { mode: 0o600 });
   writeFileSync(join(root, "events"), "");
   writeFileSync(join(root, "meminfo"), "MemAvailable: 80000000 kB\n");
   writeFileSync(join(root, "pressure"), "full avg10=0.10 avg60=0.10 avg300=0.10 total=1\n");
+  writeFileSync(join(root, "cpuinfo"), "processor: 0\nvendor_id: GenuineIntel\nflags: " + managedProfile.cpu.requiredFlags.join(" ") + "\n");
   writeFileSync(join(root, "dev/dm-0"), Buffer.alloc(disk.bytes));
   writeFileSync(join(root, "sys/0:0/dm/uuid"), reservation.deviceMapperUuid);
   symlinkSync(join(root, "dev/dm-0"), join(root, "dev/pve/vm-9344-disk-0"));
-  for (const name of ["hostname", "qm", "pvesh", "pvesm", "nft", "systemctl", "ip", "journalctl"]) {
+  for (const name of ["hostname", "qm", "pvesh", "pvesm", "nft", "systemctl", "ip", "journalctl", "perl"]) {
     writeFileSync(join(root, "bin", name), fake, { mode: 0o700 });
   }
   const lease = {
@@ -196,7 +232,7 @@ function host(current = config) {
     status: "running", desired_state: "running", sleep_state: "waking", operation_id: operationId, sleep_generation: 2,
     proxmox_host: source.hostId, vmid: source.vmid, ip: source.ip,
   };
-  const env: Record<string, string> = {};
+  const env: Record<string, string> = managed ? { TEST_TRACKED: "true" } : {};
   const runHostScript = jest.fn(async (request: { hostId: string; script: string; timeoutMs: number }) => {
     expect(request.hostId).toBe(destination.hostId);
     const uid = process.getuid?.() ?? 0;
@@ -207,7 +243,10 @@ function host(current = config) {
       .replaceAll("/run/qemu-server", join(root, "run"))
       .replaceAll("/run/lock", join(root, "lock"))
       .replaceAll("/proc/meminfo", join(root, "meminfo"))
+      .replaceAll("/proc/cpuinfo", join(root, "cpuinfo"))
       .replaceAll("/proc/pressure/io", join(root, "pressure"))
+      .replaceAll("/var/lib/vz/snippets", join(root, "snippets"))
+      .replaceAll("/usr/bin/perl", "perl")
       .replaceAll('"/dev/', '"' + root + "/dev/")
       .replaceAll("/sys/dev/block", join(root, "sys"))
       .replaceAll("/sys/class/net", join(root, "net"))
@@ -264,6 +303,64 @@ it("recovers a lost pre-CAS response without issuing a second start or booting a
   rmSync(join(h.root, "run/9344.pid"));
   await expect(h.boot()).rejects.toThrow("observation failed");
   expect(h.events()).toBe("install_fence\nstart\nqga_0\nqga_0\n");
+});
+
+it("preserves the ordinary managed console, seed identity and leased route across cold boot and cutover", async () => {
+  const h = host(managedConfig, true);
+  h.env.TEST_RUN_GUEST = "true";
+  const bootReceipt = await h.boot();
+  const input = { ownerId, profile: h.profile, bootReceipt };
+  h.lease.phase = "destination_verified";
+  await expect(verifyPortableKvmQuarantinedDestination(input, h.adapter)).resolves.toEqual(bootReceipt);
+  h.commit();
+  const networkReceipt = await enablePortableKvmDestinationNetwork(input, h.adapter);
+  expect(networkReceipt).toMatchObject({ bootId, connectorId });
+  expect(h.events()).toBe("install_fence\nstart\nqga_0\nqga_0\nqga_0\nlink_up\nqga_2\ndelete_fence\nqga_1\n");
+  const raw = readFileSync(join(h.root, "pve/9344.conf"), "utf8");
+  expect(raw).toContain("\n[special:cloudinit]\nnet0: " + nic.replace("vmbr1", "hivra0") + ",link_down=1\n");
+  h.lease.phase = "connector_verified";
+  const adapter = { ...h.adapter, verifyConnector: async () => true };
+  const release = () => releasePortableKvmDestinationLock({ ownerId, profile: h.profile, networkReceipt }, adapter);
+  writeFileSync(join(h.root, "pve/9344.conf"), raw + "nameserver: 203.0.113.53\n");
+  await expect(release()).rejects.toThrow("observation failed");
+  expect(h.events()).not.toMatch(/clear_link_cache|unlock/);
+  writeFileSync(join(h.root, "pve/9344.conf"), raw);
+  await expect(release()).resolves.toMatchObject({ state: "destination_lock_released" });
+  expect(h.events()).toMatch(/qga_1\nclear_link_cache\nqga_1\nunlock\n$/);
+  expect(readFileSync(join(h.root, "pve/9344.conf"), "utf8")).not.toContain("[");
+});
+
+it.each([
+  ["wrong gateway", managedConfig.replace("gw=192.168.1.1", "gw=192.168.1.2")],
+  ["arbitrary VGA", managedConfig.replace("vga: serial0", "vga: qxl")],
+  ["arbitrary disk", managedConfig.replace("vm-9344-cloudinit", "vm-9342-cloudinit")],
+  ["source SSH keys", managedConfig + "sshkeys: untrusted\n"],
+  ["source vendor-data", managedConfig.replace(seedSnippet, seedSnippet + ",vendor=local:snippets/untrusted.yaml")],
+  ["guest RAM state", managedConfig + "vmstate: local-lvm:vm-9344-state\n"],
+  ["pending cloud-init state", managedConfig + "\n[special:cloudinit]\nnameserver: 203.0.113.53\n"],
+])("refuses a measured managed configuration carrying %s", async (_reason, current) => {
+  const h = host(current, true);
+  await expect(h.boot()).rejects.toThrow("observation failed");
+  expect(h.events()).toBe("");
+});
+
+it("rejects a changed private metadata snippet and fails closed if guest NoCloud identity changed", async () => {
+  const h = host(managedConfig, true);
+  const path = join(h.root, "snippets", seedSnippet);
+  writeFileSync(path, "instance-id: changed\n");
+  await expect(h.boot()).rejects.toThrow("observation failed");
+  expect(h.events()).toBe("");
+  writeFileSync(path, `instance-id: ${managedProfile.cloudInit.instanceId}\n`);
+  h.env.TEST_INSTANCE_ID = "e".repeat(40);
+  await expect(h.boot()).rejects.toThrow("observation failed");
+  expect(h.events()).toBe("install_fence\nstart\nqga_0\n");
+});
+
+it("rechecks the enrolled host CPU requirements before starting the ordinary guest", async () => {
+  const h = host(managedConfig, true);
+  writeFileSync(join(h.root, "cpuinfo"), "processor: 0\nvendor_id: AuthenticAMD\nflags: aes cx16 pni popcnt sse4_1 sse4_2 ssse3\n");
+  await expect(h.boot()).rejects.toThrow("observation failed");
+  expect(h.events()).toBe("");
 });
 
 it.each(["wrong host", "wrong machine", "HA", "wrong reservation", "extra NIC", "link not down", "cloud-init", "nft drift", "pressure"])(

@@ -13,6 +13,7 @@ create table hivra_kvm_portable_private.handoff (
   cpu numeric not null,
   ram_mb numeric not null,
   expires_at timestamptz not null,
+  wake_requested_at timestamptz,
   phase text not null default 'checkpointing' check (phase in (
     'checkpointing','storage_verified','restore_claimed','destination_verified',
     'committing','placement_committed','connector_verified','finishing','finished','aborting','aborted'
@@ -33,12 +34,29 @@ create table hivra_kvm_portable_private.handoff (
   unique (agent_id,generation),
   check ((retired_at is null)=(retirement_evidence is null and abort_evidence is null)),
   check (retirement_evidence is null or phase='finished'),
-  check ((phase='aborted')=(abort_evidence is not null))
+  check ((phase='aborted')=(abort_evidence is not null)),
+  check (wake_requested_at is not null or phase in ('checkpointing','storage_verified','aborting','aborted'))
 );
 create unique index hivra_kvm_portable_one_unretired on hivra_kvm_portable_private.handoff ((true))
   where retired_at is null;
+comment on column hivra_kvm_portable_private.handoff.expires_at is
+  'Fixed pilot deadline, at most 24 hours from idle begin. Expiry blocks checkpoint/restore and new wake requests; it does not release the lease or placement. An expired pre-CAS lease requires manual attested abort.';
+comment on column hivra_kvm_portable_private.handoff.wake_requested_at is
+  'Set only by the exact owner wake request. A null value keeps the source hibernated and makes destination restore ineligible even after storage verification.';
 alter table hivra_kvm_portable_private.handoff enable row level security;
 revoke all on table hivra_kvm_portable_private.handoff from public, anon, authenticated, service_role;
+
+create table hivra_kvm_portable_private.pilot_enrollment (
+  singleton boolean primary key default true check (singleton),
+  owner_id text not null,
+  agent_id uuid not null references public.hivra_agents(id) on delete cascade,
+  placement_a jsonb not null,
+  placement_b jsonb not null,
+  binding_token_hash text not null,
+  enrolled_at timestamptz not null default clock_timestamp()
+);
+alter table hivra_kvm_portable_private.pilot_enrollment enable row level security;
+revoke all on table hivra_kvm_portable_private.pilot_enrollment from public, anon, authenticated, service_role;
 
 create function hivra_kvm_portable_private.valid_target(p_target jsonb)
 returns boolean language plpgsql immutable set search_path=pg_catalog,pg_temp as $$
@@ -63,6 +81,49 @@ returns jsonb language sql immutable set search_path=pg_catalog,pg_temp as $$
     'bindingTag','hivra-bind-'||left(a.infrastructure_binding_token_hash,32))
 $$;
 
+create function hivra_kvm_portable_private.enroll_pilot(
+  p_owner_id text,p_agent_id uuid,p_placement_a jsonb,p_placement_b jsonb,p_evidence jsonb
+)
+returns boolean language plpgsql set search_path=pg_catalog,pg_temp as $$
+declare
+  a public.hivra_agents%rowtype;
+begin
+  if p_owner_id is null or btrim(p_owner_id)='' or p_agent_id is null
+    or not hivra_kvm_portable_private.valid_target(p_placement_a)
+    or not hivra_kvm_portable_private.valid_target(p_placement_b)
+    or public.holder_admission_normalize_host_id(p_placement_a->>'hostId')=
+       public.holder_admission_normalize_host_id(p_placement_b->>'hostId')
+    or p_placement_a->>'vmid'='9302' or p_placement_b->>'vmid'='9302'
+    or p_placement_a->>'bindingTag'<>p_placement_b->>'bindingTag'
+    or p_evidence is distinct from jsonb_build_object('placementA',p_placement_a,'placementB',p_placement_b,
+      'placementAReservedForBinding',true,'placementBReservedForBinding',true)
+  then return false; end if;
+
+  perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
+  perform public.lock_hivra_owner_agent_slots(p_owner_id);
+  select * into a from public.hivra_agents where id=p_agent_id and user_id=p_owner_id
+    and deployment_mode='hivra-managed' and computer_substrate='proxmox-kvm' and deployment_target_id is null
+    and computer_profile is distinct from 'windows' and type<>'windows' and seat_funding='paid'
+    and canary_qa_holder_expires_at is null and status='running' and desired_state='running' and operation_id is null
+    and infrastructure_binding_token_enforced and infrastructure_binding_token_hash ~ '^[0-9a-f]{64}$'
+    for update;
+  if not found or hivra_kvm_portable_private.agent_target(a) not in (p_placement_a,p_placement_b)
+    or exists (select 1 from canary_qa_writer_private.scope where owner_id=p_owner_id)
+    or exists (select 1 from hivra_kvm_portable_private.handoff where retired_at is null and agent_id=p_agent_id)
+  then return false; end if;
+  perform 1 from public.proxmox_hosts where id in (p_placement_a->>'hostId',p_placement_b->>'hostId')
+    and status='active' and decommissioned_at is null order by id for share;
+  if (select count(*) from public.proxmox_hosts where id in (p_placement_a->>'hostId',p_placement_b->>'hostId')
+    and status='active' and decommissioned_at is null)<>2 then return false; end if;
+
+  insert into hivra_kvm_portable_private.pilot_enrollment(owner_id,agent_id,placement_a,placement_b,binding_token_hash)
+    values (p_owner_id,p_agent_id,p_placement_a,p_placement_b,a.infrastructure_binding_token_hash)
+    on conflict (singleton) do nothing;
+  return found;
+end $$;
+comment on function hivra_kvm_portable_private.enroll_pilot(text,uuid,jsonb,jsonb,jsonb) is
+  'The operator attests that each exact slot is reserved and qualified for the existing binding, not that both contain a guest. One slot must match the current bound agent; the alternate may be vacant.';
+
 create function hivra_kvm_portable_private.guard_agent()
 returns trigger language plpgsql security definer set search_path=pg_catalog,pg_temp as $$
 declare
@@ -77,6 +138,14 @@ begin
     return new;
   end if;
   if tg_op='UPDATE' then
+    if h.phase in ('checkpointing','storage_verified')
+      and hivra_kvm_portable_private.agent_target(old)=h.source
+      and old.operation_id=h.operation_id and old.operation_kind='wake'
+      and old.sleep_state='hibernated' and old.sleep_generation=h.generation
+      and new.sleep_state='waking' and new.sleep_tier_changed_at=h.wake_requested_at
+      and to_jsonb(old)-array['sleep_state','sleep_tier_changed_at']
+        =to_jsonb(new)-array['sleep_state','sleep_tier_changed_at']
+    then return new; end if;
     if h.phase='committing'
       and hivra_kvm_portable_private.agent_target(old)=h.source
       and hivra_kvm_portable_private.agent_target(new)=h.destination
@@ -90,7 +159,8 @@ begin
     if h.phase='aborting'
       and hivra_kvm_portable_private.agent_target(old)=h.source
       and old.operation_id=h.operation_id and old.operation_kind='wake'
-      and old.sleep_state='waking' and old.sleep_generation=h.generation
+      and old.sleep_state=(case when h.wake_requested_at is null then 'hibernated' else 'waking' end)
+      and old.sleep_generation=h.generation
       and new.operation_id is null and new.operation_kind is null
       and new.sleep_state='hibernated' and new.sleep_generation=h.generation+1
       and new.sleep_memory_dropped_at=new.sleep_tier_changed_at and new.next_wake_at is null
@@ -130,6 +200,8 @@ begin
   if host_id is null or target_vmid is null then return new; end if;
   if tg_table_name='hivra_agents' or target_vmid between 9300 and 9399 then
     perform pg_advisory_xact_lock(hashtextextended('hivra-kvm-portable-target:'||host_id,0));
+  else
+    perform pg_advisory_xact_lock(hashtextextended('hivra-kvm-portable-vmid:'||host_id||':'||target_vmid,0));
   end if;
   select * into h from hivra_kvm_portable_private.handoff where retired_at is null;
   if not found then return new; end if;
@@ -233,7 +305,10 @@ returns jsonb language plpgsql security definer set search_path=pg_catalog,pg_te
 declare
   a public.hivra_agents%rowtype;
   target_host text := p_destination->>'hostId';
+  source_host text := p_source->>'hostId';
   target_vmid int;
+  source_vmid int;
+  lock_target record;
   capacity record;
 begin
   if p_owner_id is null or btrim(p_owner_id)=''
@@ -246,9 +321,8 @@ begin
     or p_source->>'bindingTag'<>p_destination->>'bindingTag'
   then return null; end if;
   target_vmid := (p_destination->>'vmid')::int;
-  if target_vmid not between 9300 and 9399 or target_vmid=9302
-    or (p_source->>'vmid')::int not between 9300 and 9399 or (p_source->>'vmid')::int=9302
-  then return null; end if;
+  source_vmid := (p_source->>'vmid')::int;
+  if target_vmid=9302 or source_vmid=9302 then return null; end if;
 
   perform pg_advisory_xact_lock(hashtextextended('holder-admissions-v1',0));
   perform public.lock_hivra_owner_agent_slots(p_owner_id);
@@ -272,6 +346,14 @@ begin
     for update;
   if not found or hivra_kvm_portable_private.agent_target(a) is distinct from p_source then return null; end if;
 
+  if target_vmid not between 9300 and 9399 or source_vmid not between 9300 and 9399 then
+    perform 1 from hivra_kvm_portable_private.pilot_enrollment e
+      where e.owner_id=p_owner_id and e.agent_id=p_agent_id and e.binding_token_hash=a.infrastructure_binding_token_hash
+      and ((e.placement_a,e.placement_b)=(p_source,p_destination) or (e.placement_b,e.placement_a)=(p_source,p_destination))
+      for share;
+    if not found then return null; end if;
+  end if;
+
   if exists (select 1 from canary_qa_writer_private.scope where owner_id=p_owner_id)
     or exists (select 1 from public.hivra_agent_ingress where agent_id=a.id)
     or exists (select 1 from public.hivra_agent_channel_wake where agent_id=a.id and (enabled or state<>'idle'))
@@ -280,7 +362,15 @@ begin
     or exists (select 1 from public.hivra_agent_attachments where computer_id=a.id and phase='claimed')
   then return null; end if;
 
-  perform pg_advisory_xact_lock(hashtextextended('hivra-kvm-portable-target:'||target_host,0));
+  for lock_target in select host_id,vmid from (values (source_host,source_vmid),(target_host,target_vmid)) t(host_id,vmid)
+    order by host_id
+  loop
+    perform pg_advisory_xact_lock(hashtextextended('hivra-kvm-portable-target:'||lock_target.host_id,0));
+    if lock_target.vmid not between 9300 and 9399 then
+      perform pg_advisory_xact_lock(hashtextextended(
+        'hivra-kvm-portable-vmid:'||lock_target.host_id||':'||lock_target.vmid,0));
+    end if;
+  end loop;
   perform 1 from public.proxmox_hosts where id in (a.proxmox_host,target_host)
     and status='active' and decommissioned_at is null order by id for share;
   if not found or (select count(*) from public.proxmox_hosts where id in (a.proxmox_host,target_host)
@@ -290,6 +380,8 @@ begin
       and (other.vmid=target_vmid or other.ip=p_destination->>'ip'))
     or exists (select 1 from public.hermes_instances other where other.proxmox_node=target_host
       and other.infrastructure_provider='proxmox' and other.deleted_at is null and other.proxmox_vmid=target_vmid)
+    or exists (select 1 from public.hermes_instances other where other.proxmox_node=source_host
+      and other.infrastructure_provider='proxmox' and other.deleted_at is null and other.proxmox_vmid=source_vmid)
   then return null; end if;
 
   perform public.assert_proxmox_placement_capacity(target_host,p_owner_id,'paid',a.cpu,a.ram::numeric*1024,40,a.id);
@@ -300,13 +392,59 @@ begin
 
   update public.hivra_agents set operation_id=p_operation_id,operation_kind='wake',
     operation_started_at=clock_timestamp(),operation_payload='{"portable_kvm":true}',
-    sleep_state='waking',sleep_generation=p_expected_generation+1,sleep_tier_changed_at=clock_timestamp()
+    sleep_generation=p_expected_generation+1
   where id=a.id;
 
   insert into hivra_kvm_portable_private.handoff
     (agent_id,owner_id,operation_id,generation,source,destination,cpu,ram_mb,expires_at)
   values (a.id,p_owner_id,p_operation_id,p_expected_generation+1,p_source,p_destination,
     a.cpu,a.ram::numeric*1024,p_expires_at);
+  return public.read_hivra_kvm_portable_handoff(p_owner_id,p_agent_id);
+end $$;
+
+create function public.request_hivra_kvm_portable_wake(
+  p_owner_id text,p_agent_id uuid,p_operation_id uuid,p_generation bigint
+)
+returns jsonb language plpgsql security definer set search_path=pg_catalog,pg_temp as $$
+declare
+  a public.hivra_agents%rowtype;
+  h hivra_kvm_portable_private.handoff%rowtype;
+  requested_at timestamptz;
+begin
+  if not exists (select 1 from hivra_kvm_portable_private.handoff where retired_at is null and phase<>'finished'
+    and (owner_id,agent_id,operation_id,generation)=(p_owner_id,p_agent_id,p_operation_id,p_generation))
+  then return null; end if;
+
+  perform public.lock_hivra_owner_agent_slots(p_owner_id);
+  select * into a from public.hivra_agents where id=p_agent_id and user_id=p_owner_id for update;
+  if not found then return null; end if;
+  select * into h from hivra_kvm_portable_private.handoff where retired_at is null and phase<>'finished'
+    and (owner_id,agent_id,operation_id,generation)=(p_owner_id,p_agent_id,p_operation_id,p_generation) for update;
+  if not found then return null; end if;
+  requested_at := clock_timestamp();
+  if h.expires_at<=requested_at
+    or (a.operation_kind,a.operation_id,a.sleep_state,a.sleep_generation,a.status,a.desired_state)
+      is distinct from ('wake',h.operation_id,
+        case when h.wake_requested_at is null then 'hibernated' else 'waking' end,
+        h.generation,'running','running')
+    or a.operation_payload is distinct from '{"portable_kvm":true}'::jsonb
+    or a.sleep_policy is distinct from 'full' or a.always_on is not false or a.next_wake_at is not null
+    or hivra_kvm_portable_private.agent_target(a) is distinct from
+      (case when h.phase in ('placement_committed','connector_verified') then h.destination else h.source end)
+    or exists (select 1 from canary_qa_writer_private.scope where owner_id=p_owner_id)
+  then return null; end if;
+  if h.wake_requested_at is not null then
+    return public.read_hivra_kvm_portable_handoff(p_owner_id,p_agent_id);
+  end if;
+  if h.phase not in ('checkpointing','storage_verified')
+    or (a.sleep_memory_dropped_at>=a.sleep_tier_changed_at) is not true
+  then return null; end if;
+
+  update hivra_kvm_portable_private.handoff set wake_requested_at=requested_at,updated_at=requested_at
+    where operation_id=h.operation_id;
+  update public.hivra_agents set sleep_state='waking',sleep_tier_changed_at=requested_at
+    where id=a.id and user_id=p_owner_id and operation_id=h.operation_id and sleep_generation=h.generation;
+  if not found then raise exception 'portable KVM source lease changed during wake request' using errcode='55000'; end if;
   return public.read_hivra_kvm_portable_handoff(p_owner_id,p_agent_id);
 end $$;
 
@@ -340,7 +478,10 @@ begin
       and (owner_id,agent_id,operation_id,generation)=(p_owner_id,p_agent_id,p_operation_id,p_generation) for update;
   if not found or h.expires_at<=clock_timestamp() or h.phase='finished'
     or (a.operation_kind,a.operation_id,a.sleep_state,a.sleep_generation,a.status,a.desired_state)
-      is distinct from ('wake',p_operation_id,'waking',p_generation,'running','running')
+      is distinct from ('wake',p_operation_id,
+        case when h.wake_requested_at is null then 'hibernated' else 'waking' end,
+        p_generation,'running','running')
+    or a.operation_payload is distinct from '{"portable_kvm":true}'::jsonb
     or hivra_kvm_portable_private.agent_target(a) is distinct from
       (case when h.phase in ('placement_committed','connector_verified') then h.destination else h.source end)
     or exists (select 1 from canary_qa_writer_private.scope where owner_id=p_owner_id)
@@ -368,7 +509,7 @@ begin
     update hivra_kvm_portable_private.handoff set phase='storage_verified',checkpoint_sha256=checkpoint,
       storage_evidence=p_evidence,updated_at=clock_timestamp() where operation_id=h.operation_id;
 
-  elsif p_action='claim_restore' and h.phase='storage_verified' and p_evidence is null then
+  elsif p_action='claim_restore' and h.phase='storage_verified' and h.wake_requested_at is not null and p_evidence is null then
     update hivra_kvm_portable_private.handoff set phase='restore_claimed',updated_at=clock_timestamp()
       where operation_id=h.operation_id;
 
@@ -491,7 +632,9 @@ begin
       'sourceDiskUnchanged',true,'sourceStopped',true,'sourceConnectorOff',true,'sourceLegacyColdMarkerRestored',true)
     or hivra_kvm_portable_private.agent_target(a) is distinct from h.source
     or (a.operation_kind,a.operation_id,a.sleep_state,a.sleep_generation,a.status,a.desired_state)
-      is distinct from ('wake',h.operation_id,'waking',h.generation,'running','running')
+      is distinct from ('wake',h.operation_id,
+        case when h.wake_requested_at is null then 'hibernated' else 'waking' end,
+        h.generation,'running','running')
     or a.operation_payload is distinct from '{"portable_kvm":true}'::jsonb
     or a.deployment_mode is distinct from 'hivra-managed' or a.computer_substrate is distinct from 'proxmox-kvm'
     or a.deployment_target_id is not null or a.infrastructure_binding_token_enforced is not true
@@ -514,12 +657,14 @@ end $$;
 revoke all on all functions in schema hivra_kvm_portable_private from public, anon, authenticated, service_role;
 revoke all on function public.read_hivra_kvm_portable_handoff(text,uuid),
   public.begin_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,jsonb,jsonb,timestamptz),
+  public.request_hivra_kvm_portable_wake(text,uuid,uuid,bigint),
   public.advance_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,text,jsonb),
   public.finish_hivra_kvm_portable_retirement(text,uuid,uuid,bigint,jsonb),
   public.abort_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,jsonb)
   from public, anon, authenticated;
 grant execute on function public.read_hivra_kvm_portable_handoff(text,uuid),
   public.begin_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,jsonb,jsonb,timestamptz),
+  public.request_hivra_kvm_portable_wake(text,uuid,uuid,bigint),
   public.advance_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,text,jsonb),
   public.finish_hivra_kvm_portable_retirement(text,uuid,uuid,bigint,jsonb),
   public.abort_hivra_kvm_portable_handoff(text,uuid,uuid,bigint,jsonb)
