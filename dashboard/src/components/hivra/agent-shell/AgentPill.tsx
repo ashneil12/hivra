@@ -12,8 +12,6 @@ import { SurfaceActions } from "@/components/hivra/SurfaceActions";
 import styles from "./AgentPill.module.css";
 
 const OFFSET_KEY = "hivra:agent-pill-offset";
-const INTRO_KEY = "hivra:agent-pill-intro-seen";
-const INTRO_DELAY_MS = 700;
 const READY_MS = 4000;
 /** How long a new status must hold before the pill shows it. */
 const SETTLE_MS = 1200;
@@ -253,32 +251,6 @@ export function AgentPill({
     if (sub) drop.querySelector<HTMLElement>("[data-pill-back]")?.focus();
     else if (previous) Array.from(drop.querySelectorAll<HTMLElement>("[data-setting]")).find((row) => row.dataset.setting === previous)?.focus();
   }, [sub]);
-
-  // First time this browser shows the pill for a running agent, open it once by itself.
-  const introTried = useRef(false);
-  const running = tone === "ok";
-  useEffect(() => {
-    if (!running || introTried.current) return;
-    let seen: boolean;
-    try {
-      seen = window.localStorage.getItem(INTRO_KEY) === "1";
-    } catch {
-      introTried.current = true;
-      return; // Without storage it could repeat on every visit, so it does not open at all.
-    }
-    if (seen) { introTried.current = true; return; }
-    const timer = window.setTimeout(() => {
-      introTried.current = true;
-      try {
-        window.localStorage.setItem(INTRO_KEY, "1");
-        if (window.localStorage.getItem(INTRO_KEY) !== "1") return;
-      } catch {
-        return;
-      }
-      openMenu();
-    }, INTRO_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [running, openMenu]);
 
   // Escape (a pop-up goes back to the menu first) and a press outside close it.
   // Nothing closes it by itself: an embedded agent page taking focus, or the
