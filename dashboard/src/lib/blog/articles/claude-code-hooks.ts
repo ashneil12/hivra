@@ -156,7 +156,7 @@ export const claudeCodeHooks: BlogArticle = {
       {
         "matcher": "Edit|Write",
         "hooks": [
-          { "type": "command", "command": "jq -r '.tool_input.file_path' | xargs npx prettier --write" }
+          { "type": "command", "command": "f=$(jq -r '.tool_input.file_path') && npx prettier --write --ignore-unknown \"$f\"" }
         ]
       }
     ]
@@ -215,7 +215,7 @@ export const claudeCodeHooks: BlogArticle = {
     {
       heading: "Six hooks you can copy",
       paragraphs: [
-        "These follow the examples in Anthropic's [hooks guide](https://code.claude.com/docs/en/hooks-guide). Add each block to the settings file named in its heading, and merge it into any existing `hooks` object as a sibling event key rather than replacing the whole object.",
+        "These follow the examples in Anthropic's [hooks guide](https://code.claude.com/docs/en/hooks-guide). Add each block to the settings file named in its heading, and merge it into any existing `hooks` object rather than replacing the whole object. If that object already has an array for the same event, such as `PostToolUse`, append the new matcher group to that array instead of adding a second key, because a duplicate key can silently replace the first one.",
         "**1. A desktop notification when Claude needs you.** Add to `~/.claude/settings.json`. This is the docs' first-hook walkthrough. On Linux it uses `notify-send`; on macOS the docs use `osascript`, and for Windows a PowerShell dialog.\n\n" +
           code(
             "json",
@@ -247,7 +247,7 @@ export const claudeCodeHooks: BlogArticle = {
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path' | xargs npx prettier --write"
+            "command": "f=$(jq -r '.tool_input.file_path') && npx prettier --write --ignore-unknown \"$f\""
           }
         ]
       }
@@ -296,12 +296,23 @@ exit 0`,
 }`,
           ) +
           "\n\nThis is the exit-2 pattern: the edit is cancelled before it happens, and the `Blocked:` message goes to Claude as feedback so it can try something else.",
-        "**4. Log every Bash command.** Add to `~/.claude/settings.json` or a project file. `PostToolUse` fires after the command completes, and `jq -r '.tool_input.command'` pulls out just the command string.\n\n" +
+        "**4. Log every Bash command.** Add to `~/.claude/settings.json` or a project file. `PostToolUse` fires after a command succeeds and `PostToolUseFailure` after one fails, so registering the logger on both catches every command, and `jq -r '.tool_input.command'` pulls out just the command string.\n\n" +
           code(
             "json",
             String.raw`{
   "hooks": {
     "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' >> ~/.claude/command-log.txt"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
       {
         "matcher": "Bash",
         "hooks": [
@@ -373,7 +384,7 @@ exit 0`,
       heading: "Security: hooks are commands that run on your machine",
       paragraphs: [
         "A hook is a shell command that runs automatically in the current directory with Claude Code's environment. Treat a hook file like any other script you would run, and read one before you accept it from someone else.",
-        "- **Read project hooks before you trust a folder.** A `.claude/settings.json` that arrives with a repository can define hooks, and in an interactive session they run once you accept the trust dialog. A `-p` run treats the folder as trusted, so they run straight away.\n- **Do not lean on matchers or `if` for hard rules.** The docs call the `if` filter best-effort. Use permission rules for allow and deny lists.\n- **Fail closed when it matters.** On most events a hook that crashes, times out or prints invalid output is a non-blocking error and the action goes ahead (there are exceptions, such as `WorktreeCreate`, where any failure stops it). Setting `\"onFailure\": \"block\"` on a hook makes a failure block the action instead.\n- **Write `additionalContext` as facts.** Text you inject reaches Claude as a system reminder. The docs advise factual statements rather than commands, and warn that instruction-style text can trip prompt-injection defenses.\n- **Know the org controls.** Managed settings can set `allowManagedHooksOnly`, which blocks user, project, local and most plugin hooks.",
+        "- **Read project hooks before you trust a folder.** A `.claude/settings.json` that arrives with a repository can define hooks, and in an interactive session they run once you accept the trust dialog. A `-p` run treats the folder as trusted, so they run straight away.\n- **Do not lean on matchers or `if` for hard rules.** The docs call the `if` filter best-effort. Use permission rules for allow and deny lists.\n- **Fail closed when it matters.** On most events a hook that crashes, times out or prints invalid output is a non-blocking error and the action goes ahead (there are exceptions, such as `WorktreeCreate`, where any failure stops it). Setting `\"onFailure\": \"block\"` (on `command`, `http` or `mcp_tool` hooks, Claude Code v2.1.295 or later) on a hook makes a failure block the action instead.\n- **Write `additionalContext` as facts.** Text you inject reaches Claude as a system reminder. The docs advise factual statements rather than commands, and warn that instruction-style text can trip prompt-injection defenses.\n- **Know the org controls.** Managed settings can set `allowManagedHooksOnly`, which blocks user, project, local and most plugin hooks.",
       ],
     },
     {
