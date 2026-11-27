@@ -45,6 +45,15 @@ branch rebuild. On the scoped QA computer, sign in as its owner and enable
 **Sleep when idle** under Manage with **Keep awake** off. Do not set an owner
 policy directly in the database. The `sleep-idle-agents` cron runs every minute.
 
+## Paid KVM placement
+
+New paid KVMs that support idle sleep prefer a sleep-enabled host in the
+existing managed rotation. A host must pass the normal placement and live
+admission checks. If none can take the request, normal placement can still
+choose a host with sleep off. An explicit operator host pin overrides the
+preference. Confirm the effective pin and rotation before testing a release;
+this preference neither expands the rotation nor opts a computer into sleep.
+
 ## Checking it
 
 Every sleep and wake writes a row with its timings:
