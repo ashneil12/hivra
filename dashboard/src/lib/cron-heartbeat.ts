@@ -35,6 +35,7 @@ export interface CronHeartbeatDefinition {
 // grace is the same 3x a rough start gets).
 export const CRON_REGISTRY: readonly CronHeartbeatDefinition[] = [
   { name: "probe-instance-health", periodMinutes: 5 },
+  { name: "computer-stalls", periodMinutes: 5 },
   { name: "recover-unhealthy-active-instances", periodMinutes: 15 },
   { name: "autoheal-llm-transport-failures", periodMinutes: 15 },
   { name: "purge-expired", periodMinutes: 1440 },

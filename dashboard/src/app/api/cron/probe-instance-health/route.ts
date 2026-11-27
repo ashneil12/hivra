@@ -52,7 +52,9 @@ export async function GET(req: NextRequest) {
     // swallows its own errors and never throws.
     await recordCronHeartbeat(
       "probe-instance-health",
-      hostTiming ? { detail: JSON.stringify(hostTiming) } : undefined,
+      summary.healthObservationFailures
+        ? { ok: false, detail: `health_observation_failures=${summary.healthObservationFailures}` }
+        : hostTiming ? { detail: JSON.stringify(hostTiming) } : undefined,
     );
     return apiSuccess(summary);
   } catch (err) {
