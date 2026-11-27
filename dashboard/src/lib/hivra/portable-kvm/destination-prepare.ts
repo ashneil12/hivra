@@ -1,4 +1,5 @@
 import { shellQuote } from "@/lib/hivra/proxmox-target";
+import { portableKvmSlotPython } from "./slot-claim";
 import { isIPv4 } from "node:net";
 import { z } from "zod";
 import {
@@ -272,6 +273,8 @@ def fields(data):
         result[key] = value
     return result
 
+${portableKvmSlotPython}
+
 def properties(value):
     result = {}
     for pair in value.split(","):
@@ -446,9 +449,14 @@ def run():
             require(private_read(marker) == wire, "destination_reservation_drift")
         else:
             require(not os.path.lexists(attempt), "destination_incomplete_attempt_requires_reconciliation")
-            require(not os.path.lexists(cfg) and not os.path.lexists(volume_path)
-                    and output("pvesh", "get", "/cluster/nextid", "--vmid", vmid).strip() == vmid.encode("ascii"),
-                    "destination_not_free")
+            digest = None
+            if managed:
+                digest = slot_digest(cfg, vmid, plan["ip"], plan["bindingTag"])
+            else:
+                require(not os.path.lexists(cfg)
+                        and output("pvesh", "get", "/cluster/nextid", "--vmid", vmid).strip() == vmid.encode("ascii"),
+                        "destination_not_free")
+            require(not os.path.lexists(volume_path), "destination_disk_not_free")
             require(not check_storage(), "destination_has_existing_volumes")
             if managed:
                 check_snippet(True)
@@ -457,7 +465,10 @@ def run():
             if managed:
                 publish(metadata, meta_wire)
             args = [item for key, value in requested.items() for item in ("--" + key, value)]
-            output("qm", "create", vmid, "--start", "0", *args)
+            if digest:
+                output("qm", "set", vmid, "--skiplock", "1", "--digest", digest, *args)
+            else:
+                output("qm", "create", vmid, "--start", "0", *args)
             check_permit()
             check_headroom()
             check_unowned()

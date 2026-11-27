@@ -16,7 +16,17 @@ qualified fixture. Configure `HIVRA_KVM_PORTABLE_QA_OWNER_ID`,
 array of two exact `{hostId, vmid, ip}` records). No browser-supplied placement is
 used. Both private placements must preserve the same guest IP and MAC and have
 compatible routing and isolation. Independently exclude the reserved address
-and both VMIDs from other allocators. Outside the QA pool, the database must
+and both VMIDs from other allocators. The live source configuration already
+claims its VMID and IP. Reserve a vacant placement before enrollment with
+`npm run --silent ops:proxmox:portable-slot -- reserve <host> <vmid> <ip> <binding-tag>`
+from the dashboard directory, using its generated script only on the exact
+pinned host as root. A vacancy check on its own does not reserve anything.
+The reservation is a stopped, locked Proxmox configuration with the private
+IP, no NIC, and no disks. Both usual allocators see the VMID and IP in their
+existing inventory. Never start the reservation. The operation-specific
+prepare permit authorizes converting that exact diskless configuration in place.
+The script's `release` action accepts only the unchanged diskless reservation;
+it cannot remove the restored guest. Outside the QA pool, the database must
 also have an operator-enrolled pair for that exact owner, agent, placements,
 and existing binding. VMID 9302 is excluded.
 
@@ -56,6 +66,8 @@ agent reply and verify a stable disk witness. Keep the old source intact and
 fenced until that acceptance. The service-only retirement RPC records exact
 source VM and connector absence and unchanged healthy destination after
 manual retirement; it does not delete a VM or release an unfinished operation.
+Requalify and reserve the now-vacant exact slot before repeating; stop on
+an allocation conflict or a stale reference rather than taking over a VMID.
 Repeat only after verified retirement. Record failed runs, and separate source
 checkpoint time from cold read, restore, boot, and first useful signed-in
 result. Do **not** report user wake latency from an operator SSH witness.

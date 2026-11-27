@@ -22,6 +22,7 @@ import {
 } from "./destination-prepare";
 import { advancePortableKvmIdleHandoff, requestPortableKvmOwnerWake, type PortableKvmCheckpointReceipt, type PortableKvmHandoff } from "./handoff";
 import { isPortableKvmReadyToCheckpoint, isPortableKvmWakeClaimed, type PortableKvmPlacement } from "./pilot";
+import { buildPortableKvmSlotClaimScript } from "./slot-claim";
 import { buildPortableKvmSourceFenceScript, parsePortableKvmSourceFence } from "./source-fence";
 import { buildPortableKvmSourceProfileCheck, isPortableKvmSourceProfileEligible } from "./source-profile";
 
@@ -173,12 +174,14 @@ function advanceManagedPortableKvmHandoff(ownerId: string, agent: Record<string,
         pinnedTarget(ownerId, row, placement.current, true), pinnedTarget(ownerId, row, placement.alternate, true),
       ]);
       const { profile } = pilotProfile(row, placement.current);
-      const [sourceProfile, sourceCpu, targetCpu] = await Promise.all([
+      const [sourceProfile, sourceCpu, targetCpu, targetSlot] = await Promise.all([
         runProxmoxHostScript(buildPortableKvmSourceProfileCheck(placement.current, profile), source.env, 40_000),
         runProxmoxHostScript(buildPortableKvmHostCpuCompatibilityProbeScript(placement.current.hostId), source.env, 20_000),
         runProxmoxHostScript(buildPortableKvmHostCpuCompatibilityProbeScript(placement.alternate.hostId), target.env, 20_000),
+        runProxmoxHostScript(buildPortableKvmSlotClaimScript("verify", placement.alternate), target.env, 40_000),
       ]);
       if (!sourceProfile.ok || !isPortableKvmSourceProfileEligible(sourceProfile.stdout)) return false;
+      if (!targetSlot.ok || targetSlot.stdout.trim() !== "HIVRA_PORTABLE_SLOT_V1 verify") return false;
       return [sourceCpu, targetCpu].every(result => {
         if (!result.ok) return false;
         const observed = portableKvmManagedDestinationProfileSchema.shape.cpu.safeParse(JSON.parse(result.stdout));
