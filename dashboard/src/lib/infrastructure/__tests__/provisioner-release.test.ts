@@ -23,6 +23,7 @@ import hermesGuest503Release from "../../../../provisioner-releases/2026.11.27.1
 import hermesBakeRelease from "../../../../provisioner-releases/2026.11.27.2.json";
 import admissionReaderRelease from "../../../../provisioner-releases/2026.11.27.3.json";
 import guestBootRelease from "../../../../provisioner-releases/2026.11.27.4.json";
+import hermesStandbyRelease from "../../../../provisioner-releases/2026.11.27.5.json";
 import preparedRuntimeRelease from "../../../../provisioner-releases/2026.11.27.6.json";
 import catalogStackRuntimeRelease from "../../../../provisioner-releases/2026.11.20.5.json";
 import universalCatalogHardenedRelease from "../../../../provisioner-releases/2026.11.20.3.json";
@@ -1514,7 +1515,7 @@ it("keeps the current bundle inside the file count the provider worker accepts i
   const worker = readFileSync(path.join(process.cwd(), "provisioner/hivra-provider-worker.py"), "utf8");
   const cap = Number(/not 1 <= len\(manifest\) <= ([0-9]+):/.exec(worker)?.[1]);
   expect(cap).toBeGreaterThan(0);
-  expect(cliSetupContractRelease.files.length).toBeLessThanOrEqual(cap);
+  expect(hermesStandbyRelease.files.length).toBeLessThanOrEqual(cap);
   expect(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES.length).toBe(preparedRuntimeRelease.files.length);
   expect(preparedRuntimeRelease.files.length).toBeLessThanOrEqual(cap);
   expect(preparedRuntimeRelease.files.reduce((sum, file) => sum + file.bytes, 0)).toBeLessThanOrEqual(2 * 1024 * 1024);

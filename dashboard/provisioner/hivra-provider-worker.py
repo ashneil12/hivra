@@ -205,7 +205,7 @@ def lock(path):
 
 
 def manifest_rows(expected, manifest):
-    if not isinstance(manifest, list) or not 1 <= len(manifest) <= 76:
+    if not isinstance(manifest, list) or not 1 <= len(manifest) <= 77:
         reject()
     rows, paths = [], []
     for file in manifest:
