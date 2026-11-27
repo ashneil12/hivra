@@ -10,6 +10,10 @@ const timingStart = source.indexOf("launch_stage() {");
 const timingEnd = source.indexOf('\n}\n', timingStart) + 2;
 if (timingStart < 0 || timingEnd <= timingStart) throw new Error("Hermes stage logger not found");
 const stageLogger = source.slice(timingStart, timingEnd);
+const sshIdentityStart = source.indexOf("set_guest_ssh_identity() {");
+const sshIdentityEnd = source.indexOf('\n}\n', sshIdentityStart) + 2;
+if (sshIdentityStart < 0 || sshIdentityEnd <= sshIdentityStart) throw new Error("Guest SSH identity writer not found");
+const sshIdentity = source.slice(sshIdentityStart, sshIdentityEnd);
 const start = source.indexOf("wait_for_guest_cloud_init() {");
 const end = source.indexOf("# The package and generated SSH host key now live on the guest disk.", start);
 if (start < 0 || end < 0) throw new Error("Guest boot gate not found");
@@ -54,6 +58,8 @@ ${qgaCloudInit}
           input: `set -euo pipefail
 VMID=1100
 IP=192.0.2.1
+STANDBY_ACTION=
+GUEST_SSH_IDENTITY_DIR=
 vm_owned_by_operation() { [ "$CASE" != foreign ]; }
 fail() { echo "$*" >&2; exit 1; }
 guest_boot_uptime() { cat "$FIXTURE_DIR/clock"; }
@@ -73,6 +79,7 @@ qm() {
   esac
 }
 ${pause}
+${sshIdentity}
 ${attest}
 prepare_guest_ssh_identity
 cat "$GUEST_SSH_KNOWN_HOSTS"
@@ -152,6 +159,7 @@ VM_KEY=/unused-fixture-key
 IP=192.0.2.1
 VMID=1100
 AGENT_KIND="$FIXTURE_KIND"
+STANDBY_ACTION=
 OPERATION_ID=11111111-1111-4111-8111-111111111111
 LAUNCH_STAGE_CLOCK=0
 CLOUD_INIT_KEEP_DIR="$FIXTURE_DIR"

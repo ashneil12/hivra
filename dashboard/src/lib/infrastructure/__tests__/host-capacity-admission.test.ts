@@ -216,6 +216,16 @@ sub load_current_config {
       expect(result.stdout).toContain("active_floor_mb=2048 active_max_mb=4096 active_max_cpu_milli=2500");
     });
 
+    it("admits against a running Hermes standby exactly like any other running guest", () => {
+      const state = { 101: { vmid: 101, qmpstatus: "running" } };
+      const resources = { memory: 1024, balloon: 0, cores: 2, cpulimit: 2 };
+      const standby = batch([101], state, { 101: { ...resources, tags: "hivra-standby-" + "1".repeat(32) } });
+      const customer = batch([101], state, { 101: { ...resources, tags: "hivra-op-" + "2".repeat(32) + ";hivra-bind-" + "3".repeat(32) } });
+      expect(standby.status).toBe(0);
+      expect(standby.stdout).toContain("active_floor_mb=1024 active_max_mb=1024 active_max_cpu_milli=2000");
+      expect(standby.stdout).toBe(customer.stdout);
+    });
+
     it("fails closed for missing, extra, malformed, or unreadable host evidence", () => {
       const good = { 101: { vmid: 101, qmpstatus: "running" } };
       const valid = { 101: { memory: 1024, cores: 2 } };

@@ -71,6 +71,9 @@ jobs:
       - name: Guard offline systemd fixtures and image producer boundaries
         run: python3 -I -B dashboard/scripts/test-deepseek-systemd-vm-contract.py && python3 -I -B dashboard/scripts/test-runtime-image-bake.py
 
+      - name: Guard exact Hermes standby host staging and claim boundaries
+        run: sudo python3 -I -B dashboard/provisioner/test_hivra_hermes_standby.py
+
       # The reporter ships in the portable bundle. Run its stdlib tests in UTC
       # and in a zone behind UTC so a local-time parsing regression cannot hide
       # behind a UTC runner.

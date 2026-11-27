@@ -30,13 +30,23 @@ describe("provider guest bundle delivery", () => {
     expect(buildProviderGuestBundlePlan({ ...scope, providerServerId: "43" }, assets()).receipt.scopeSha256).not.toBe(value.receipt.scopeSha256);
     expect(buildProviderGuestBundlePlan(scope, assets().reverse()).receipt).toEqual(value.receipt);
   });
-  it.each(["missing", "extra", "duplicate", "version", "large", "traversal"])("rejects %s assets before transport", change => {
+  it("delivers the reviewed bundle through the portable source loader", async () => {
+    const { loadPortableProvisionerBundle } = await import("../connection-preparation");
+    const bundle = await loadPortableProvisionerBundle();
+    const value = buildProviderGuestBundlePlan(scope, bundle);
+    expect(value.receipt.provisionerVersion).toBe(PORTABLE_HIVRA_PROVISIONER_VERSION);
+  });
+  it.each(["missing", "extra", "duplicate", "version", "large-file", "large-bundle", "traversal"])("rejects %s assets before transport", change => {
     const value = assets();
     if (change === "missing") value.pop();
     if (change === "extra") value.push({ relativePath: "unexpected" as never, content: Buffer.from("x") });
     if (change === "duplicate") value[1] = value[0];
     if (change === "version") value.find(v => v.relativePath === "VERSION")!.content = Buffer.from("unsupported");
-    if (change === "large") value[0].content = Buffer.alloc(2 * 1024 * 1024);
+    if (change === "large-file") value[0].content = Buffer.alloc(2 * 1024 * 1024 + 1);
+    if (change === "large-bundle") {
+      value[0].content = Buffer.alloc(2 * 1024 * 1024);
+      value[1].content = Buffer.alloc(64 * 1024);
+    }
     if (change === "traversal") value[0].relativePath = "../outside" as never;
     expect(() => buildProviderGuestBundlePlan(scope, value)).toThrow("Invalid provider guest bundle");
   });

@@ -44,6 +44,7 @@ describe("managed provisioner bundle sync", () => {
     const script = buildManagedProvisionerBundleSyncScript("default", bundle(), "fixturenode12");
 
     expect(script).toContain("sha256sum -c --status BUNDLE.sha256");
+    expect(script).toContain('chmod 0700 "$UPLOAD_DIR/hivra-hermes-standby.sh"');
     expect(script).toContain('move_exclusive "$TARGET" "$BACKUP_DIR"');
     expect(script).toContain("trap rollback EXIT");
     expect(script).toContain("rm -rf -- \"$TARGET\"");

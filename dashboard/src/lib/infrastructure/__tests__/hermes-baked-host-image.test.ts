@@ -15,7 +15,7 @@ it("accepts only a matching root-owned standalone image within the disk envelope
   try {
     const image = join(work, `hivra-hermes-${digest}.qcow2`);
     writeFileSync(image, content);
-    const begin = script.indexOf('if [ -n "$HERMES_IMAGE_SHA256" ]; then');
+    const begin = script.indexOf('if [ -n "$HERMES_IMAGE_SHA256" ] &&');
     const end = script.indexOf("launch_stage image_verified", begin);
     expect(begin).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(begin);

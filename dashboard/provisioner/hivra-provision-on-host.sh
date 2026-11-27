@@ -46,6 +46,10 @@ GW="${HIVRA_GW:-${SUBNET_PREFIX}.1}"
 BRIDGE="${HIVRA_BRIDGE:-hivra0}"
 IMG="${HIVRA_UBUNTU_IMG:-/var/lib/vz/template/iso/hivra-ubuntu-jammy.img}"
 HERMES_IMAGE_SHA256="${HIVRA_HERMES_IMAGE_SHA256:-}"
+STANDBY_ACTION="${HIVRA_HERMES_STANDBY_ACTION:-}"
+STANDBY_GENERATION="${HIVRA_HERMES_STANDBY_CLAIM_GENERATION:-}"
+if [ -z "$STANDBY_ACTION" ] && [ -n "$STANDBY_GENERATION" ]; then STANDBY_ACTION=continue; fi
+case "$STANDBY_ACTION" in ''|stage|claim|continue|retire) ;; *) echo "invalid standby action" >&2; exit 1 ;; esac
 PROV_DIR="${HIVRA_PROV_DIR:-/opt/hivra/provisioner}"
 STORAGE="${HIVRA_STORAGE:-local-lvm}"
 DISK_GB="${HIVRA_DISK_GB:-40}"
@@ -62,6 +66,7 @@ SECRET_TMP=""
 SECRET_ENV_FILE="${HIVRA_SECRET_ENV_FILE:-}"
 ALLOCATION_RECEIPT_FILE="/run/hivra-provision/${VMID}.allocated"
 GUEST_SSH_IDENTITY_DIR=""
+STANDBY_INPUT_OWNED=0
 CLOUD_INIT_SNIPPET=""
 CLOUD_INIT_SNIPPET_STORAGE="${HIVRA_CLOUD_INIT_SNIPPET_STORAGE:-local}"
 CLOUD_INIT_SNIPPET_DIR="${HIVRA_CLOUD_INIT_SNIPPET_DIR:-/var/lib/vz/snippets}"
@@ -89,15 +94,21 @@ launch_stage() {
 [[ "$CPU_LIMIT" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail "invalid CPU limit"
 [[ "$MEM_MB" =~ ^[0-9]+$ ]] && [ "$MEM_MB" -ge 512 ] || fail "invalid memory size"
 [[ "$DISK_GB" =~ ^[0-9]+$ ]] && [ "$DISK_GB" -ge 8 ] || fail "invalid disk size"
-[[ "$OPERATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
-  || fail "HIVRA_OPERATION_ID must be a lowercase UUID"
-OPERATION_TAG="hivra-op-${OPERATION_ID//-/}"
-[[ "$BINDING_TAG" =~ ^hivra-bind-[0-9a-f]{32}$ ]] \
-  || fail "HIVRA_BINDING_TAG must be an exact Hivra binding tag"
+UUID_PATTERN='^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+case "$STANDBY_ACTION" in
+  stage|retire)
+    [ -z "$OPERATION_ID$BINDING_TAG" ] || fail "standby maintenance does not accept a tenant binding" ;;
+  *)
+    [[ "$OPERATION_ID" =~ $UUID_PATTERN ]] || fail "HIVRA_OPERATION_ID must be a lowercase UUID"
+    OPERATION_TAG="hivra-op-${OPERATION_ID//-/}"
+    [[ "$BINDING_TAG" =~ ^hivra-bind-[0-9a-f]{32}$ ]] || fail "HIVRA_BINDING_TAG must be an exact Hivra binding tag" ;;
+esac
 [[ "$SECRET_RESULT_FILE" =~ ^/var/lib/hivra/provision-results/${VMID}\.secret$ ]] \
   || fail "invalid secret result path"
-[ ! -e "/etc/pve/qemu-server/${VMID}.conf" ] || fail "refusing to overwrite existing VMID $VMID"
-qm status "$VMID" >/dev/null 2>&1 && fail "refusing to overwrite existing VMID $VMID"
+if [ -z "$STANDBY_ACTION" ]; then
+  [ ! -e "/etc/pve/qemu-server/${VMID}.conf" ] || fail "refusing to overwrite existing VMID $VMID"
+  qm status "$VMID" >/dev/null 2>&1 && fail "refusing to overwrite existing VMID $VMID"
+fi
 
 [ -d "$PROV_DIR" ] || { echo "provisioner dir $PROV_DIR missing" >&2; exit 1; }
 [ -f "$PROV_DIR/hivra-install-agent.py" ] || fail "shared guest launch entrypoint is missing"
@@ -109,7 +120,20 @@ command -v python3 >/dev/null 2>&1 || fail "python3 is required for the guest la
 [ -r /proc/uptime ] || fail "Linux monotonic uptime is required for guest boot checks"
 launch_stage validation_start
 
-if [ -n "$HERMES_IMAGE_SHA256" ]; then
+if [ -n "$STANDBY_ACTION" ]; then
+  case "$STANDBY_ACTION" in
+    stage|claim|retire)
+      [ -z "$SECRET_ENV_FILE${HIVRA_MODEL_KEY:-}${HIVRA_TUNNEL_TOKEN:-}${HIVRA_TUNNEL_URL:-}${HIVRA_ACTIVITY_TELEMETRY:-}${HIVRA_COMPUTER_ID:-}" ] \
+        || fail "standby maintenance and claim do not accept tenant launch credentials" ;;
+    continue)
+      [ -n "$SECRET_ENV_FILE" ] || fail "standby continuation requires the standard secret file" ;;
+  esac
+  source "$PROV_DIR/hivra-hermes-standby.sh"
+  standby_init
+  standby_lock
+fi
+
+if [ -n "$HERMES_IMAGE_SHA256" ] && [[ "${STANDBY_ACTION:-}" != @(claim|continue|retire) ]]; then
   [ "$PROVISION_MODE" = install ] && [ "$AGENT_KIND" = hermes ] \
     && [ "$PROV_DIR" = /root/hivra-provisioner-canary ] \
     && [[ "$HERMES_IMAGE_SHA256" =~ ^[0-9a-f]{64}$ ]] \
@@ -129,7 +153,9 @@ sys.exit(0 if data.get("format") == "qcow2"
          and 0 < data.get("virtual-size", 0) <= int(sys.argv[1]) * 1024**3 else 1)
 ' "$DISK_GB" || fail "baked Hermes image is not a standalone qcow2 within the disk envelope"
 fi
-[ -f "$IMG" ] || { echo "ubuntu image $IMG missing" >&2; exit 1; }
+if [[ "${STANDBY_ACTION:-}" != @(claim|continue|retire) ]]; then
+  [ -f "$IMG" ] || { echo "ubuntu image $IMG missing" >&2; exit 1; }
+fi
 launch_stage image_verified
 
 # Cloud-init authorized keys: the VM-orchestrator pub (host->guest) plus any
@@ -144,6 +170,23 @@ release_allocation_lock() {
     ALLOCATION_LOCK_FD=""
   fi
 }
+set_guest_ssh_identity() {
+  local host_key="$1"
+  if [ -z "$GUEST_SSH_IDENTITY_DIR" ]; then
+    GUEST_SSH_IDENTITY_DIR="$(mktemp -d "/run/hivra-guest-ssh-identity.${VMID}.XXXXXXXX")"
+  fi
+  GUEST_SSH_KNOWN_HOSTS="$GUEST_SSH_IDENTITY_DIR/known_hosts"
+  GUEST_SSH_HOST_ALIAS="hivra-vmid-$VMID"
+  printf '%s %s\n' "$GUEST_SSH_HOST_ALIAS" "$host_key" > "$GUEST_SSH_KNOWN_HOSTS"
+  chmod 0600 "$GUEST_SSH_KNOWN_HOSTS"
+}
+write_allocation_receipt() {
+  local receipt_tmp
+  install -d -m 0755 /run/hivra-provision
+  receipt_tmp="$(mktemp "${ALLOCATION_RECEIPT_FILE}.XXXXXXXX")"
+  printf 'operation_id=%s\nbinding_tag=%s\nvmid=%s\n' "$OPERATION_ID" "$BINDING_TAG" "$VMID" > "$receipt_tmp"
+  mv -fT -- "$receipt_tmp" "$ALLOCATION_RECEIPT_FILE"
+}
 vm_owned_by_operation() {
   local tags
   tags="$(qm config "$VMID" 2>/dev/null | sed -n 's/^tags:[[:space:]]*//p')" || return 1
@@ -154,7 +197,9 @@ cleanup() {
   local status=$? cleanup_failed=0 volume_list=""
   rm -f -- "$CIKEYS"
   [ -z "$SECRET_TMP" ] || rm -f -- "$SECRET_TMP"
-  [ -z "$SECRET_ENV_FILE" ] || rm -f -- "$SECRET_ENV_FILE"
+  if [ -n "$SECRET_ENV_FILE" ] && { [ "$STANDBY_ACTION" != continue ] || [ "$STANDBY_INPUT_OWNED" = 1 ]; }; then
+    rm -f -- "$SECRET_ENV_FILE"
+  fi
   case "${GUEST_SSH_IDENTITY_DIR:-}" in
     /run/hivra-guest-ssh-identity."${VMID}".*) rm -rf -- "$GUEST_SSH_IDENTITY_DIR" ;;
     "") ;;
@@ -201,8 +246,12 @@ cleanup() {
   # Keep FD8 through ownership checks, destroy retries, and absence/storage
   # verification. Releasing it earlier would let a concurrent allocator reuse
   # this VMID while cleanup was still deciding what it owned.
-  release_allocation_lock
+  [ "$STANDBY_ACTION" = claim ] || release_allocation_lock
   if [ "$status" -ne 0 ]; then
+    if [ -n "$STANDBY_ACTION" ]; then
+      log "standby $STANDBY_ACTION failed; no replacement attempted; inspect the exact slot and claim"
+      return
+    fi
     rm -f -- "$ALLOCATION_RECEIPT_FILE"
     rm -f -- "$SECRET_RESULT_FILE"
     if [ "$cleanup_failed" = "1" ]; then
@@ -215,10 +264,17 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+case "$STANDBY_ACTION" in
+  retire) standby_retire; exit 0 ;;
+  claim) standby_claim; exit 0 ;;
+  stage) standby_stage_reserve ;;
+  continue) standby_continue; STANDBY_INPUT_OWNED=1; launch_stage standby_guest_attested ;;
+esac
+if [[ "$STANDBY_ACTION" != stage ]]; then
 if [ -n "$SECRET_ENV_FILE" ]; then
   [[ "$SECRET_ENV_FILE" =~ ^/run/hivra-provision/${VMID}\.env$ ]] \
     || fail "invalid secret input path"
-  [ -f "$SECRET_ENV_FILE" ] || fail "secret input file is missing"
+  [ -f "$SECRET_ENV_FILE" ] && [ ! -L "$SECRET_ENV_FILE" ] || fail "secret input file is missing or not regular"
   [ "$(stat -c '%a:%U:%G' "$SECRET_ENV_FILE" 2>/dev/null)" = "600:root:root" ] \
     || fail "secret input file has unsafe ownership or mode"
   read_secret_b64() {
@@ -296,8 +352,14 @@ validate_linux_desktop_input
 if [ "$PROVISION_MODE" != empty ] && [ "$AGENT_KIND" = "deepseek-harness" ] && { [ -z "${HIVRA_TUNNEL_TOKEN:-}" ] || [ -z "${HIVRA_TUNNEL_URL:-}" ]; }; then
   fail "DeepSeek Harness requires pre-journaled named HTTPS access"
 fi
+if [ "$STANDBY_ACTION" = continue ]; then
+  [ -n "$HIVRA_TUNNEL_TOKEN" ] && [ -n "$HIVRA_TUNNEL_URL" ] || fail "standby continuation requires a named tunnel"
+fi
+fi
+
+if [ "$STANDBY_ACTION" != continue ]; then
 install -m 0600 "${VM_KEY}.pub" "$CIKEYS"
-if [ -n "${HIVRA_OPERATOR_PUBLIC_KEY_PATH:-}" ] && [ -f "${HIVRA_OPERATOR_PUBLIC_KEY_PATH}" ]; then
+if [ "$STANDBY_ACTION" != stage ] && [ -n "${HIVRA_OPERATOR_PUBLIC_KEY_PATH:-}" ] && [ -f "${HIVRA_OPERATOR_PUBLIC_KEY_PATH}" ]; then
   cat "${HIVRA_OPERATOR_PUBLIC_KEY_PATH}" >> "$CIKEYS"
 fi
 
@@ -324,21 +386,24 @@ chmod 0600 "$CLOUD_INIT_SNIPPET"
 fi
 
 log "creating VM $VMID (${CORES} vCPU / ${MEM_MB} MB) at $IP"
+TAGS="${BINDING_TAG};${OPERATION_TAG}"
+CREATE_OPTIONS=()
+if [ "$STANDBY_ACTION" = stage ]; then
+  TAGS="$STANDBY_TAG"
+  CREATE_OPTIONS=(--description "$STANDBY_DESCRIPTION" --ipconfig0 "ip=${IP}/24,gw=${GW}" --onboot 0 --balloon 0)
+fi
 qm create "$VMID" --name "hivra-cc-${VMID}" --memory "$MEM_MB" --cores "$CORES" --cpu host \
   --cpulimit "$CPU_LIMIT" \
-  --tags "${BINDING_TAG};${OPERATION_TAG}" \
+  --tags "$TAGS" "${CREATE_OPTIONS[@]}" \
   --net0 "virtio,bridge=${BRIDGE}" --scsihw virtio-scsi-single --serial0 socket --vga serial0 \
   --ostype l26 --agent enabled=1 >/dev/null
-CREATED=1
 # This receipt is emitted only after atomic VM creation stamped both ownership
 # tags. The dashboard never persists or rolls back a VMID merely observed in a
 # stale inventory snapshot; it waits for this exact operation/binding proof.
-install -d -m 0755 /run/hivra-provision
-ALLOCATION_RECEIPT_TMP="${ALLOCATION_RECEIPT_FILE}.tmp.$$"
-install -m 0600 /dev/null "$ALLOCATION_RECEIPT_TMP"
-printf 'operation_id=%s\nbinding_tag=%s\nvmid=%s\n' \
-  "$OPERATION_ID" "$BINDING_TAG" "$VMID" > "$ALLOCATION_RECEIPT_TMP"
-mv "$ALLOCATION_RECEIPT_TMP" "$ALLOCATION_RECEIPT_FILE"
+if [ "$STANDBY_ACTION" != stage ]; then
+  CREATED=1
+  write_allocation_receipt
+fi
 if [ "$PROVISION_MODE" = empty ]; then
   # A blank disk of the asked size; the storage box fills it. The guest already
   # carries its agent and guest agent, so no vendor data is attached.
@@ -383,6 +448,7 @@ launch_stage vm_started
 # Keep capacity, VMID, and IP allocation serialized until the new guest is an
 # active member of the inventory. Guest setup continues concurrently afterward.
 release_allocation_lock
+fi
 
 guest_boot_uptime() {
   local uptime
@@ -401,7 +467,11 @@ guest_probe_pause() {
 
 prepare_guest_ssh_identity() {
   local started now deadline remaining probe_budget qga_document host_key=""
-  vm_owned_by_operation || fail "VM ownership changed before guest SSH identity binding"
+  if [ "$STANDBY_ACTION" = stage ]; then
+    standby_verify_config standby
+  else
+    vm_owned_by_operation || fail "VM ownership changed before guest SSH identity binding"
+  fi
   qm config "$VMID" 2>/dev/null | sed -n 's/^ipconfig0:[[:space:]]*//p' | tr ',' '\n' | grep -Fx "ip=${IP}/24" >/dev/null \
     || fail "VM private IP changed before guest SSH identity binding"
   started="$(guest_boot_uptime)" || fail "guest boot clock is unavailable"
@@ -436,22 +506,19 @@ print("ssh-ed25519 " + fields[1])
     guest_probe_pause "$now" "$deadline" "$started" 5 60
   done
   [ -n "$host_key" ] || fail "guest SSH host identity could not be attested through QEMU Guest Agent"
-  GUEST_SSH_IDENTITY_DIR="$(mktemp -d "/run/hivra-guest-ssh-identity.${VMID}.XXXXXXXX")"
-  chmod 0700 "$GUEST_SSH_IDENTITY_DIR"
-  GUEST_SSH_KNOWN_HOSTS="$GUEST_SSH_IDENTITY_DIR/known_hosts"
-  GUEST_SSH_HOST_ALIAS="hivra-vmid-$VMID"
-  printf '%s %s\n' "$GUEST_SSH_HOST_ALIAS" "$host_key" > "$GUEST_SSH_KNOWN_HOSTS"
-  chmod 0600 "$GUEST_SSH_KNOWN_HOSTS"
+  set_guest_ssh_identity "$host_key"
 }
 
 log "attesting guest SSH host identity through VMID $VMID"
-prepare_guest_ssh_identity
+[ "$STANDBY_ACTION" = continue ] || prepare_guest_ssh_identity
 launch_stage ssh_attested
-GSSH=(ssh -i "$VM_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
+STANDBY_SSH_OPTIONS=()
+if [ -n "$STANDBY_ACTION" ]; then STANDBY_SSH_OPTIONS=(-F /dev/null); fi
+GSSH=(ssh "${STANDBY_SSH_OPTIONS[@]}" -i "$VM_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
   -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o UpdateHostKeys=no \
   -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile="$GUEST_SSH_KNOWN_HOSTS" \
   -o HostKeyAlias="$GUEST_SSH_HOST_ALIAS" -o ConnectTimeout=10)
-GSCP=(scp -i "$VM_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
+GSCP=(scp "${STANDBY_SSH_OPTIONS[@]}" -i "$VM_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
   -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o UpdateHostKeys=no \
   -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile="$GUEST_SSH_KNOWN_HOSTS" \
   -o HostKeyAlias="$GUEST_SSH_HOST_ALIAS" -o ConnectTimeout=10)
@@ -510,8 +577,18 @@ log_guest_cloud_init_failure() {
 }
 
 log "waiting for guest ssh + cloud-init"
-wait_for_guest_cloud_init
+[ "$STANDBY_ACTION" = continue ] || wait_for_guest_cloud_init
 launch_stage cloud_init_ready
+if [ "$STANDBY_ACTION" = stage ]; then
+  standby_guest_proof
+  standby_verify_config standby
+  standby_check_expiry
+  STANDBY_STATE=ready
+  standby_write
+  printf '{"generation":"%s","vmid":%s,"ip":"%s","imageSha256":"%s","expiresAtEpoch":%s}\n' \
+    "$STANDBY_GENERATION" "$VMID" "$IP" "$HERMES_IMAGE_SHA256" "$STANDBY_EXPIRY"
+  exit 0
+fi
 
 # The package and generated SSH host key now live on the guest disk. Remove the
 # operation-scoped vendor-data reference and host file so no bootstrap material
@@ -574,6 +651,13 @@ else
     || fail "copying the provisioner into the guest failed or timed out"
 fi
 launch_stage guest_bundle_transferred
+if [ "$STANDBY_ACTION" = continue ]; then
+  standby_check_expiry
+  standby_verify_config claimed
+  standby_guest_proof
+  STANDBY_STATE=consumed
+  standby_write
+fi
 # Model and tunnel credentials travel only through stdin. The shared guest
 # entrypoint owns runtime selection, strict decoding and named-tunnel setup;
 # the host retains VM allocation, public reachability and result convergence.

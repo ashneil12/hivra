@@ -1038,6 +1038,24 @@ async function main() {
     });
     await db.exec(guestBoot);
     assert.deepEqual(await admissionDefinitions(), admittedGuestBoot, "re-applying the guest boot admission changes nothing");
+    const hermesStandby = migration("20261127211500_provider_release_admission_2026_11_27_5.sql");
+    const hermesStandbyRelease = require("../provisioner-releases/2026.11.27.5.json");
+    const hermesStandbyRows = hermesStandbyRelease.files.map(({ path, sha256, bytes }) => [path, sha256, bytes,
+      path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(path) ? 0o700 : 0o600])
+      .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+    const hermesStandbyDigest = createHash("sha256").update(JSON.stringify(hermesStandbyRows)).digest("hex");
+    await db.exec(hermesStandby);
+    const admittedHermesStandby = await admissionDefinitions();
+    admittedHermesStandby.forEach((definition, index) => {
+      for (const [version, digest] of [[guestBootRelease.version, guestBootDigest], [hermesStandbyRelease.version, hermesStandbyDigest]]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1);
+        if (admissionFunctions[index].includes("identity_valid")) {
+          assert.equal(occurrences(definition, `'bundleSha256'='${digest}' and p_identity->'bundle'->>'provisionerVersion'='${version}'`), 1);
+        }
+      }
+    });
+    await db.exec(hermesStandby);
+    assert.deepEqual(await admissionDefinitions(), admittedHermesStandby, "re-applying the Hermes standby admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

@@ -63,6 +63,33 @@ ${probe}
     });
   });
 
+  it("checks the sealed standby launch source and its executable helper", () => {
+    const fs = jest.requireActual<typeof import("node:fs")>("node:fs");
+    const os = jest.requireActual<typeof import("node:os")>("node:os");
+    const path = jest.requireActual<typeof import("node:path")>("node:path");
+    const script = managedHivraHostReadinessScript("canary", "provision");
+    const probe = script.slice(script.indexOf("grep -Fq 'BINDING_TAG="), script.indexOf("ip link show"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hivra-standby-readiness-"));
+    const helper = path.join(dir, "hivra-hermes-standby.sh");
+    const source = path.join(process.cwd(), "provisioner");
+    const run = (version: string) => spawnSync("bash", ["-s"], {
+      input: probe,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, NODE_ENV: "test", OBSERVED_VERSION: version, PROVISIONER_DIR: dir,
+        PROVISION_SCRIPT: path.join(source, "hivra-provision-on-host.sh") },
+    });
+    try {
+      fs.copyFileSync(path.join(source, "hivra-hermes-standby.sh"), helper);
+      fs.chmodSync(helper, 0o700);
+      expect(run("2026.11.27.5").status).toBe(0);
+      expect(run("2026.11.27.4")).toMatchObject({ status: 1, stderr: expect.stringContaining("atomic ownership tagging") });
+      fs.chmodSync(helper, 0o600);
+      expect(run("2026.11.27.5")).toMatchObject({ status: 1, stderr: expect.stringContaining("executable Hermes standby helper") });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("admits lifecycle on the exact current start contract without provisioning-only host requirements", () => {
     const script = managedHivraHostReadinessScript("default", "lifecycle");
 
@@ -101,6 +128,8 @@ ${probe}
     expect(pinned).toContain("  '2026.11.26.1') EXPECTED_MANIFEST_SHA=");
     expect(pinned).toContain("  '2026.11.27.1') EXPECTED_MANIFEST_SHA=");
     expect(pinned).toContain("  '2026.11.27.2') EXPECTED_MANIFEST_SHA=");
+    expect(pinned).toContain("  '2026.11.27.4') EXPECTED_MANIFEST_SHA=");
+    expect(provision).toContain("  '2026.11.27.4') EXPECTED_MANIFEST_SHA=");
     expect(pinned).toContain(`'${PORTABLE_HIVRA_PROVISIONER_VERSION}') EXPECTED_MANIFEST_SHA=`);
     expect(update).toContain(`'${PORTABLE_HIVRA_PROVISIONER_VERSION}'`);
     expect(update).not.toContain("'2026.11.25.2'");
@@ -121,7 +150,7 @@ ${probe}
       .resolves.toMatchObject({ ok: false });
     await expect(checkManagedHivraHostReadiness({ ...candidate, requirePinnedCatalogDigest: true }, runner("HIVRA_HOST_READY 2026.11.25.2\n")))
       .resolves.toMatchObject({ ok: false });
-    for (const version of ["2026.11.26.1", "2026.11.27.1", "2026.11.27.2", "2026.11.27.3", PORTABLE_HIVRA_PROVISIONER_VERSION]) {
+    for (const version of ["2026.11.26.1", "2026.11.27.1", "2026.11.27.2", "2026.11.27.3", "2026.11.27.4", PORTABLE_HIVRA_PROVISIONER_VERSION]) {
       await expect(checkManagedHivraHostReadiness({ ...candidate, requirePinnedCatalogDigest: true },
         runner(`HIVRA_HOST_READY ${version}\n`)))
         .resolves.toEqual({ ok: true, provisionerVersion: version });
@@ -271,13 +300,13 @@ describe("managed readiness per runtime", () => {
   it("lets only hosts on the release that ships linux-server take it, and keeps Linux Desktop on older hosts", () => {
     for (const purpose of ["provision", "runtime-update"] as const) {
       expect(versionsIn(managedHivraHostReadinessScript("default", purpose, false, "linux-server"))).toEqual(
-        purpose === "provision" ? ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", "2026.11.23.1", "2026.11.25.1", "2026.11.25.2", "2026.11.26.1", "2026.11.27.1", "2026.11.27.2", "2026.11.27.3", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
+        purpose === "provision" ? ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", "2026.11.23.1", "2026.11.25.1", "2026.11.25.2", "2026.11.26.1", "2026.11.27.1", "2026.11.27.2", "2026.11.27.3", "2026.11.27.4", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
       // DeepSeek Harness needs the release that seeds its launch-time model.
       expect(versionsIn(managedHivraHostReadinessScript("default", purpose, false, "deepseek-harness"))).toEqual(
-        purpose === "provision" ? ["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", "2026.11.23.1", "2026.11.25.1", "2026.11.25.2", "2026.11.26.1", "2026.11.27.1", "2026.11.27.2", "2026.11.27.3", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
+        purpose === "provision" ? ["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", "2026.11.23.1", "2026.11.25.1", "2026.11.25.2", "2026.11.26.1", "2026.11.27.1", "2026.11.27.2", "2026.11.27.3", "2026.11.27.4", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
     }
     // Hermes is placed only from the release that lets Hivra set its own model (2026.11.12.1) on.
-    expect(versionsIn(managedHivraHostReadinessScript("default", "provision", false, "hermes"))).toEqual(["2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", "2026.11.23.1", "2026.11.25.1", "2026.11.25.2", "2026.11.26.1", "2026.11.27.1", "2026.11.27.2", "2026.11.27.3", PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    expect(versionsIn(managedHivraHostReadinessScript("default", "provision", false, "hermes"))).toEqual(["2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", "2026.11.23.1", "2026.11.25.1", "2026.11.25.2", "2026.11.26.1", "2026.11.27.1", "2026.11.27.2", "2026.11.27.3", "2026.11.27.4", PORTABLE_HIVRA_PROVISIONER_VERSION]);
     const desktop = versionsIn(managedHivraHostReadinessScript("default", "provision", false, "linux-desktop"));
     expect(desktop).toContain("2026.11.10.3");
     expect(desktop).toContain(PORTABLE_HIVRA_PROVISIONER_VERSION);

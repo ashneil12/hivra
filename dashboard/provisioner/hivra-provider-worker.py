@@ -31,14 +31,16 @@ ROOT = Path("/var/lib/hivra/provider-install")
 UNIT = "hivra-provider-install.service"
 CGROUP = Path("/sys/fs/cgroup/system.slice") / UNIT
 INSTALL_LOCK = Path("/run/hivra-agent-install.lock")
-NATIVE_VERSION = "2026.11.27.4"
+NATIVE_VERSION = "2026.11.27.5"
 NATIVE_PROFILE = "deepseek-owned-service-v1"
 NATIVE_FILES = ("deepseek-harness/bux-hivra-chat.service", "deepseek-harness/install-native.py", "deepseek-harness/service-owner.py")
 DESKTOP_PROFILE = "desktop-owned-services-v1"
 DESKTOP_FILES = ("remote-desktop/provider-service-owner.py",)
-DESKTOP_VERSION = "2026.11.27.4"
+DESKTOP_VERSION = "2026.11.27.5"
 ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"}
 MAX_INPUT = 128 * 1024
+MAX_BUNDLE_FILE_BYTES = 2 * 1024 * 1024
+MAX_BUNDLE_BYTES = MAX_BUNDLE_FILE_BYTES + 64 * 1024
 MAX_RUN_MS = 480000
 # A cold desktop downloads and derives a multi-gigabyte image. Keep its whole
 # install bounded, but do not kill it before a single allowed 15-minute command.
@@ -212,11 +214,11 @@ def manifest_rows(expected, manifest):
         name = file["path"]
         if not isinstance(name, str) or not re.fullmatch(r"[.A-Za-z0-9_-]+(?:/[.A-Za-z0-9_-]+)*", name) or any(part in (".", "..") for part in name.split("/")):
             reject()
-        if not isinstance(file["sha256"], str) or not DIGEST.fullmatch(file["sha256"]) or type(file["size"]) is not int or not 0 <= file["size"] <= 2 * 1024 * 1024 or type(file["mode"]) is not int or file["mode"] not in (0o600, 0o700):
+        if not isinstance(file["sha256"], str) or not DIGEST.fullmatch(file["sha256"]) or type(file["size"]) is not int or not 0 <= file["size"] <= MAX_BUNDLE_FILE_BYTES or type(file["mode"]) is not int or file["mode"] not in (0o600, 0o700):
             reject()
         paths.append(name)
         rows.append([name, file["sha256"], file["size"], file["mode"]])
-    if paths != sorted(set(paths)) or sum(row[2] for row in rows) > 2 * 1024 * 1024:
+    if paths != sorted(set(paths)) or sum(row[2] for row in rows) > MAX_BUNDLE_BYTES:
         reject()
     if hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode("ascii")).hexdigest() != expected["bundleSha256"]:
         reject()

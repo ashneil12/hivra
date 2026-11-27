@@ -37,6 +37,7 @@ const EXECUTABLE_ASSETS = new Set([
   "hivra-browser-apply",
   "hivra-network-preflight",
   "hivra-runtime-receipt.py",
+  "hivra-hermes-standby.sh",
   "hivra-provision-on-host.sh",
   "hivra-start-on-host.sh",
   "hivra-tg-apply",

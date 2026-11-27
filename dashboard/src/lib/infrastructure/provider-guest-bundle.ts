@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { PortableProvisionerBundleAsset } from "./connection-preparation";
 import { FIRST_BOOT_RECIPE_VERSIONS } from "./first-boot-enrollment";
 import type { FirstBootOperationScope } from "./first-boot-operations";
-import { PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS, PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES, PORTABLE_HIVRA_PROVISIONER_VERSION } from "./portable-provisioner-contract";
+import { PORTABLE_HIVRA_COMPATIBLE_PROVIDER_VM_VERSIONS, PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES, PORTABLE_HIVRA_PROVISIONER_MAX_BUNDLE_BYTES, PORTABLE_HIVRA_PROVISIONER_MAX_FILE_BYTES, PORTABLE_HIVRA_PROVISIONER_VERSION } from "./portable-provisioner-contract";
 
 const UUID = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 const DIGEST = z.string().regex(/^[0-9a-f]{64}$/);
@@ -57,8 +57,9 @@ function bundlePayload(input: FirstBootOperationScope, assets: PortableProvision
   try {
     const scope = ScopeSchema.parse(input);
     const expected = new Set<string>(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES);
-    if (assets.length !== expected.size || assets.some(asset => !expected.delete(asset.relativePath) || !Buffer.isBuffer(asset.content))
-      || expected.size || assets.reduce((size, asset) => size + asset.content.length, 0) > 2 * 1024 * 1024
+    if (assets.length !== expected.size || assets.some(asset => !expected.delete(asset.relativePath) || !Buffer.isBuffer(asset.content)
+      || asset.content.length > PORTABLE_HIVRA_PROVISIONER_MAX_FILE_BYTES)
+      || expected.size || assets.reduce((size, asset) => size + asset.content.length, 0) > PORTABLE_HIVRA_PROVISIONER_MAX_BUNDLE_BYTES
       || assets.find(asset => asset.relativePath === "VERSION")?.content.toString().trim() !== PORTABLE_HIVRA_PROVISIONER_VERSION) throw new Error();
     const files = assets.map(asset => ({ path: asset.relativePath, sha256: hash(asset.content), size: asset.content.length,
       mode: asset.relativePath.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(asset.relativePath) ? 0o700 : 0o600,
