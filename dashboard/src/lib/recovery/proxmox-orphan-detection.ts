@@ -142,6 +142,7 @@ interface ProxmoxOrphanHostSummary {
   liveCount: number;
   dbCount: number;
   orphanCount: number;
+  operatorVmids: number[];
   /** Count of config-less `vm-<vmid>-*` LV groups detected on this host. */
   orphanLvCount: number;
   /** Count of orphan LVs actually lvremove'd (0 unless reaping is enabled). */
@@ -287,6 +288,27 @@ export function computeOrphansForHost(
     out.push({ ...vm, hostId });
   }
   return out;
+}
+
+export function partitionOrphanVmAlerts(candidates: readonly ProxmoxOrphanVm[]): {
+  orphans: ProxmoxOrphanVm[];
+  operatorVmids: number[];
+} {
+  const orphans: ProxmoxOrphanVm[] = [];
+  const operatorVmids: number[] = [];
+  for (const vm of candidates) {
+    if (
+      vm.name &&
+      !instanceIdFromVmName(vm.name) &&
+      vm.tags?.includes(`hivra-operator-${vm.hostId}+${vm.vmid}+${vm.name}`) &&
+      !vm.tags.some((tag) => tag.startsWith("hivra-bind-") || tag.startsWith("hivra-op-"))
+    ) {
+      operatorVmids.push(vm.vmid);
+    } else {
+      orphans.push(vm);
+    }
+  }
+  return { orphans, operatorVmids };
 }
 
 export const PROXMOX_ORPHAN_DISCOVERY_SCRIPT = `set -uo pipefail
@@ -839,6 +861,7 @@ export async function runProxmoxOrphanSweep(): Promise<ProxmoxOrphanSweepSummary
         liveCount: 0,
         dbCount: 0,
         orphanCount: 0,
+        operatorVmids: [],
         orphanLvCount: 0,
         orphanLvReaped: 0,
         restoreClonesDetected: 0,
@@ -875,6 +898,7 @@ export async function runProxmoxOrphanSweep(): Promise<ProxmoxOrphanSweepSummary
         liveCount: liveVms.length,
         dbCount: 0,
         orphanCount: 0,
+        operatorVmids: [],
         orphanLvCount: 0,
         orphanLvReaped: 0,
         restoreClonesDetected: 0,
@@ -891,7 +915,8 @@ export async function runProxmoxOrphanSweep(): Promise<ProxmoxOrphanSweepSummary
       continue;
     }
 
-    const orphans = computeOrphansForHost(host.id, liveVms, dbVmids, laneBindingTags);
+    const candidates = computeOrphansForHost(host.id, liveVms, dbVmids, laneBindingTags);
+    const { orphans, operatorVmids } = partitionOrphanVmAlerts(candidates);
     const orphanLvs = filterUnownedOrphanLvs(discovery.orphanLvs, dbVmids);
     summary.hostsScanned += 1;
     summary.orphansDetected += orphans.length;
@@ -917,7 +942,7 @@ export async function runProxmoxOrphanSweep(): Promise<ProxmoxOrphanSweepSummary
     let leakedClones: LeakedRestoreClone[] = [];
     const namedIds = [
       ...new Set(
-        orphans
+        candidates
           .map((o) => instanceIdFromVmName(o.name))
           .filter((id): id is string => id !== null),
       ),
@@ -925,7 +950,7 @@ export async function runProxmoxOrphanSweep(): Promise<ProxmoxOrphanSweepSummary
     if (namedIds.length > 0) {
       try {
         const rowsById = await loadInstanceRowsByIds(supabaseAdmin, namedIds);
-        leakedClones = classifyLeakedRestoreClones(host.id, orphans, rowsById);
+        leakedClones = classifyLeakedRestoreClones(host.id, candidates, rowsById);
       } catch (err) {
         // Classification is best-effort on top of detection; a failed lookup
         // just means these orphans stay in the generic-orphan bucket.
@@ -1057,6 +1082,7 @@ export async function runProxmoxOrphanSweep(): Promise<ProxmoxOrphanSweepSummary
       liveCount: liveVms.length,
       dbCount: dbVmids.length,
       orphanCount: orphans.length,
+      operatorVmids,
       orphanLvCount: orphanLvs.length,
       orphanLvReaped,
       restoreClonesDetected: leakedClones.length,
