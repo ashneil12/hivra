@@ -17,6 +17,9 @@ import {
   getAgentSeoEntry,
 } from "@/lib/hivra/agent-seo-catalog";
 import { getAgent } from "@/lib/hivra/agent-catalog";
+import { AGENT_ARTICLE_SLUGS, getPublicAgentProfiles } from "@/lib/hivra/public-agent-profiles";
+import { getPublicBlogArticle } from "@/lib/blog-data";
+import { PUBLIC_START_HREF } from "@/lib/public-start";
 import { HeadingLines, Inline } from "../AgentProse";
 import { AgentSectionView } from "../AgentBlocks";
 import { getAgentPageContent } from "../content";
@@ -31,12 +34,21 @@ interface AgentPageParams {
 export const dynamicParams = false;
 
 export function generateStaticParams() {
-  return AGENT_SEO_ENTRIES.map((entry) => ({ slug: entry.slug }));
+  return [...AGENT_SEO_ENTRIES, ...getPublicAgentProfiles()].map(({ slug }) => ({ slug }));
 }
 
 export async function generateMetadata({ params }: AgentPageParams): Promise<Metadata> {
   const { slug } = await params;
   const entry = getAgentSeoEntry(slug);
+  if (!entry) {
+    const profile = getPublicAgentProfiles().find((candidate) => candidate.slug === slug);
+    return profile ? buildAbsoluteTitleMetadata({
+      path: `/agents/${slug}`,
+      title: profile.title,
+      description: profile.description,
+      images: [{ url: `/agents/${slug}/opengraph-image`, width: 1200, height: 630, alt: `${profile.name} on Hivra`, type: "image/png" }],
+    }) : {};
+  }
   const agent = entry ? getAgent(entry.slug) : undefined;
   if (!entry || !agent) return {};
 
@@ -61,7 +73,45 @@ export async function generateMetadata({ params }: AgentPageParams): Promise<Met
 
 export default async function AgentPage({ params }: AgentPageParams) {
   const { slug } = await params;
+  const articleSlug = AGENT_ARTICLE_SLUGS[slug];
+  const article = articleSlug ? getPublicBlogArticle(articleSlug) : undefined;
+  const articleLinks = article ? [{ label: "Read the article", href: `/blog/${article.slug}` }] : [];
   const entry = getAgentSeoEntry(slug);
+  if (!entry) {
+    const profile = getPublicAgentProfiles().find((candidate) => candidate.slug === slug);
+    if (!profile) notFound();
+    const related = [
+      ...(profile.guide ? [{ label: `${profile.name} setup guide`, href: profile.guide }] : []),
+      ...articleLinks,
+    ];
+    return (
+      <PublicSite className={styles.page} data-page="agent-detail">
+        <main className={styles.main} id="main-content">
+          <Breadcrumbs items={[{ label: "Agents", href: "/agents" }, { label: profile.name }]} />
+          <header className={styles.masthead}>
+            <span className={styles.eyebrow}>{profile.tag ?? "Agents"}</span>
+            <h1>{profile.name} on Hivra</h1>
+            <p>{profile.description}</p>
+            <ActionLinks items={[
+              { label: `Launch ${profile.name}`, href: `${PUBLIC_START_HREF}?agentType=${encodeURIComponent(slug)}`, kind: "primary" },
+              { label: "Compare agents", href: "/agents", kind: "secondary" },
+            ]} />
+          </header>
+          <div className={styles.articleBody}>
+            <section>
+              <h2>When to choose {profile.name}</h2>
+              <p>{profile.goodFit}</p>
+            </section>
+            <section>
+              <h2>How to get started</h2>
+              <ol>{profile.setup.map((step) => <li key={step}>{step}</li>)}</ol>
+            </section>
+          </div>
+          <EditorialRelated title="Read next" links={related} />
+        </main>
+      </PublicSite>
+    );
+  }
   const agent = entry ? getAgent(entry.slug) : undefined;
   const content = entry ? getAgentPageContent(entry.slug) : undefined;
   if (!entry || !agent || !content) notFound();
@@ -176,6 +226,7 @@ export default async function AgentPage({ params }: AgentPageParams) {
         <p className={agentStyles.note}>{content.affiliation}</p>
         <div className={agentStyles.related}>
           <EditorialRelated title={content.related.heading} links={relatedLinks} />
+          <EditorialRelated title={`A guide to ${agent.name}`} links={articleLinks} />
         </div>
       </main>
     </PublicSite>

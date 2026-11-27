@@ -1,11 +1,12 @@
 import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
 import { PRODUCT_FACTS_CHECKED } from "@/lib/compare/products/checked";
-import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
+import { getPublicBlogArticles } from "@/lib/blog-data";
 import { AGENT_PAGES_LAST_MODIFIED, AGENT_SEO_SLUGS } from "@/lib/hivra/agent-seo-catalog";
 import { PRICES_AS_OF } from "@/app/pricing/pricing-content";
 import { dayToDate, PAGE_LAST_MODIFIED, TOOL_PAGE_LAST_MODIFIED, type PageLastModifiedKey } from "../seo-lastmod";
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 import { CUTOVER_LAST_MODIFIED, getSiteUrls, SITE_URL } from "../seo-urls";
+import { buildPageTitleIndex } from "../seo/page-title-index";
 
 const day = (value: Date | string | number | undefined) => new Date(value as Date).toISOString().slice(0, 10);
 
@@ -34,6 +35,27 @@ async function sitemapWithRegistry(overrides: Partial<Record<PageLastModifiedKey
 const OVERHAUL_DAY = "2026-10-20";
 
 describe("seo urls", () => {
+  it.each([
+    ["openbot-ai-coworkers", "NEXT_PUBLIC_HIVRA_OPENBOT_AGENT"],
+    ["nuphos-claude-code-team-chat", "NEXT_PUBLIC_HIVRA_NUPHOS_AGENT"],
+    ["what-is-zeroclaw", "NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG"],
+  ])("includes %s in discovery only while its catalog gate is enabled", (slug, flag) => {
+    const saved = process.env[flag];
+    const path = `/blog/${slug}`;
+    try {
+      process.env[flag] = "0";
+      expect(getSiteUrls()).not.toContainEqual(expect.objectContaining({ url: `${SITE_URL}${path}` }));
+      expect(buildPageTitleIndex()).not.toContainEqual(expect.objectContaining({ path }));
+
+      process.env[flag] = "1";
+      expect(getSiteUrls()).toContainEqual(expect.objectContaining({ url: `${SITE_URL}${path}` }));
+      expect(buildPageTitleIndex()).toContainEqual(expect.objectContaining({ path }));
+    } finally {
+      if (saved === undefined) delete process.env[flag];
+      else process.env[flag] = saved;
+    }
+  });
+
   it("includes the token verification page in the sitemap", () => {
     const urls = getSiteUrls();
 
@@ -305,14 +327,15 @@ describe("seo urls", () => {
 
     it("follows each blog article's own lastModified, and the blog index follows the newest of them", () => {
       const byPath = urls();
-      for (const article of BLOG_ARTICLES_LIST) {
+      const articles = getPublicBlogArticles();
+      for (const article of articles) {
         const entry = byPath.get(`/blog/${article.slug}`);
         expect([article.slug, day(entry?.lastModified)]).toEqual([
           article.slug,
           day(article.lastModified || article.publishedDate),
         ]);
       }
-      const newest = BLOG_ARTICLES_LIST.map((article) => day(article.lastModified || article.publishedDate)).sort().at(-1)!;
+      const newest = articles.map((article) => day(article.lastModified || article.publishedDate)).sort().at(-1)!;
       expect(day(byPath.get("/blog")?.lastModified)).toBe(newest > day(CUTOVER_LAST_MODIFIED) ? newest : day(CUTOVER_LAST_MODIFIED));
     });
 

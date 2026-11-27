@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
-import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
+import { getPublicBlogArticles, type BlogArticle } from "@/lib/blog-data";
 import { AGENT_PAGES_LAST_MODIFIED, AGENT_SEO_SLUGS } from "@/lib/hivra/agent-seo-catalog";
+import { getPublicAgentProfiles, PUBLIC_AGENT_PROFILES_LAST_MODIFIED } from "@/lib/hivra/public-agent-profiles";
 import { dayToDate, PAGE_LAST_MODIFIED, TOOL_PAGE_LAST_MODIFIED } from "@/lib/seo-lastmod";
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 import { HOST_COMPARISON_SLUGS } from "@/lib/compare/host-comparisons";
@@ -31,14 +32,15 @@ function cutoverPage(day: string | Date): Date {
 }
 
 /** The newest real date among the blog articles: what changed on the index. */
-function newestArticleDate(): Date {
-  return BLOG_ARTICLES_LIST.reduce((newest, article) => {
+function newestArticleDate(articles: BlogArticle[]): Date {
+  return articles.reduce((newest, article) => {
     const date = new Date(article.lastModified || article.publishedDate);
     return date.getTime() > newest.getTime() ? date : newest;
   }, new Date(0));
 }
 
 export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean } = {}): MetadataRoute.Sitemap {
+  const articles = getPublicBlogArticles();
   // Core public pages. The changelog RSS feed is deliberately not listed: a
   // feed is not a page, and it is discovered from /changelog.
   const corePages: MetadataRoute.Sitemap = [
@@ -51,7 +53,7 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
     {
       // The index changes when an article does.
       url: `${SITE_URL}/blog`,
-      lastModified: cutoverPage(newestArticleDate()),
+      lastModified: cutoverPage(newestArticleDate(articles)),
       changeFrequency: "weekly",
       priority: 0.9,
     },
@@ -233,7 +235,7 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
 
   // Blog articles: pulled live from the article registry. Each carries its own
   // real lastModified (or its publish date), so none is tied to a release.
-  const blogPages: MetadataRoute.Sitemap = BLOG_ARTICLES_LIST.map((article) => ({
+  const blogPages: MetadataRoute.Sitemap = articles.map((article) => ({
     url: `${SITE_URL}/blog/${article.slug}`,
     lastModified: new Date(article.lastModified || article.publishedDate),
     changeFrequency: "monthly" as const,
@@ -265,6 +267,12 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
       url: `${SITE_URL}/tools/${entry.slug}`,
       lastModified: cutoverPage(TOOL_PAGE_LAST_MODIFIED[entry.slug] ?? PAGE_LAST_MODIFIED.tools),
       changeFrequency: "monthly" as const,
+      priority: 0.8,
+    })),
+    ...getPublicAgentProfiles().map(({ slug }) => ({
+      url: `${SITE_URL}/agents/${slug}`,
+      lastModified: dayToDate(PUBLIC_AGENT_PROFILES_LAST_MODIFIED),
+      changeFrequency: "weekly" as const,
       priority: 0.8,
     })),
   ];
