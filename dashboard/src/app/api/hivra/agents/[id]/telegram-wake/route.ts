@@ -7,7 +7,7 @@
 
 export const runtime = "nodejs";
 // Reading the token goes through the agent's computer, and a wake after opting out runs after the answer.
-export const maxDuration = 180;
+export const maxDuration = 350;
 
 import { after, type NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
@@ -15,7 +15,7 @@ import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-lim
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
-import { ensureHivraAgentAwake } from "@/lib/hivra/agent-wake";
+import { ensureHivraAgentAwake, MANAGED_WAKE_WORK_BUDGET_MS } from "@/lib/hivra/agent-wake";
 import { disableTelegramWake, enableTelegramWake, readTelegramWakeView } from "@/lib/hivra/telegram-wake/owner";
 
 type Params = { params: Promise<{ id: string }> };
@@ -53,6 +53,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
+  const workDeadlineMs = Date.now() + MANAGED_WAKE_WORK_BUDGET_MS;
   try {
     const { id } = await params;
     const { userId } = await auth();
@@ -81,7 +82,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     if (change.wake) {
       // Asleep and waiting for a message that can no longer wake it: wake it now. A no-op when awake.
       try {
-        await ensureHivraAgentAwake(id, { trigger: "action", waitMs: 0, onBackground: (work) => after(() => work) });
+        await ensureHivraAgentAwake(id, { trigger: "action", waitMs: 0, workDeadlineMs, onBackground: (work) => after(() => work) });
       } catch {
         // The setting is saved; the agent wakes on its next use.
       }

@@ -1,3 +1,5 @@
+/** @jest-environment node */
+
 /**
  * Wake-admission guard (gateway auto-wake Phase 1).
  *
@@ -8,6 +10,11 @@
  *   - FAIL-OPEN everywhere: probe errors, garbled output, or missing markers
  *     must ADMIT — the guard may never block a legitimate start.
  */
+
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   runProxmoxHostScript: jest.fn(),
@@ -100,6 +107,94 @@ describe("buildWakeAdmissionScript", () => {
   });
 });
 
+describe("host-side bounded wake admission", () => {
+  let root: string;
+  let slots: string;
+  let bin: string;
+  let ram: string;
+  let slept: string;
+  let active: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "wake-admission-"));
+    slots = join(root, "slots");
+    bin = join(root, "bin");
+    ram = join(root, "ram");
+    slept = join(root, "slept");
+    active = join(slots, "active.slot");
+    mkdirSync(slots);
+    mkdirSync(bin);
+    writeFileSync(ram, "9000");
+    writeFileSync(join(bin, "free"), '#!/bin/bash\necho "Mem: 0 0 0 0 0 $(cat "$RAM_FILE")"\n', { mode: 0o755 });
+  });
+
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  function check(wait: number, onWait = "") {
+    writeFileSync(join(bin, "sleep"), `#!/bin/bash\ntouch "$SLEPT"\n${onWait}\nexec /bin/sleep "$@"\n`, { mode: 0o755 });
+    const script = buildWakeAdmissionScript({ instanceId: "hibernated", neededRamMb: 1024, cap: 1, waitForConcurrencySeconds: wait })
+      .replace("/run/hermes-wake-slots", slots);
+    const result = spawnSync("bash", ["-s"], {
+      input: script,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RAM_FILE: ram, SLEPT: slept, ACTIVE_SLOT: active },
+      timeout: 6_000,
+    });
+    expect(result.status).toBe(0);
+    return result.stdout;
+  }
+
+  it("admits without sleeping when a slot is available", () => {
+    expect(parseWakeAdmissionOutput(check(5))).toMatchObject({ verdict: "admit" });
+    expect(existsSync(slept)).toBe(false);
+  });
+
+  it("waits without holding the mutex, then counts and claims the freed slot", () => {
+    writeFileSync(active, "");
+    const stdout = check(5, 'test ! -d "${ACTIVE_SLOT%/*}/.lock.d" || exit 42\nrm "$ACTIVE_SLOT"');
+    expect(stdout).toContain("DEFER reason=concurrency");
+    expect(parseWakeAdmissionOutput(stdout)).toMatchObject({ verdict: "admit", activeWakes: 0 });
+    expect(existsSync(join(slots, "hibernated.slot"))).toBe(true);
+  });
+
+  it("rechecks hard RAM admission after a slot frees, without claiming", () => {
+    writeFileSync(active, "");
+    const stdout = check(5, 'rm "$ACTIVE_SLOT"\necho 1535 > "$RAM_FILE"');
+    expect(stdout).toContain("DEFER reason=concurrency");
+    expect(parseWakeAdmissionOutput(stdout)).toMatchObject({ verdict: "defer", reason: "host_ram", freeMb: 1535 });
+    expect(existsSync(join(slots, "hibernated.slot"))).toBe(false);
+  });
+
+  it("does not queue a measured RAM refusal, including on a busy host", () => {
+    writeFileSync(active, "");
+    writeFileSync(ram, "1535");
+    expect(parseWakeAdmissionOutput(check(5))).toMatchObject({ verdict: "defer", reason: "host_ram" });
+    expect(existsSync(slept)).toBe(false);
+    expect(parseWakeAdmissionOutput(check(0))).toMatchObject({ verdict: "defer", reason: "concurrency" });
+  });
+
+  it("ends a persistent concurrency deferral without claiming", () => {
+    writeFileSync(active, "");
+    expect(parseWakeAdmissionOutput(check(3))).toMatchObject({ verdict: "defer", reason: "concurrency" });
+    expect(existsSync(slept)).toBe(true);
+    expect(existsSync(join(slots, "hibernated.slot"))).toBe(false);
+  });
+
+  it("does not claim without the slot mutex, leaving immediate legacy admission unchanged", () => {
+    mkdirSync(join(slots, ".lock.d"));
+    const skipMutexSleep = '[ "$1" != 0.1 ] || exit 0';
+    expect(parseWakeAdmissionOutput(check(5, skipMutexSleep))).toMatchObject({ verdict: "defer", reason: "unavailable" });
+    expect(existsSync(join(slots, "hibernated.slot"))).toBe(false);
+    expect(parseWakeAdmissionOutput(check(0, skipMutexSleep))).toMatchObject({ verdict: "admit" });
+  });
+
+  it.each(["free", "find", "touch"])("fails closed when the %s capacity probe or slot write fails", (command) => {
+    writeFileSync(join(bin, command), "#!/bin/bash\nexit 1\n", { mode: 0o755 });
+    expect(parseWakeAdmissionOutput(check(5))).toMatchObject({ verdict: "defer", reason: "unavailable" });
+    expect(existsSync(join(slots, "hibernated.slot"))).toBe(false);
+  });
+});
+
 describe("parseWakeAdmissionOutput", () => {
   it("parses ADMIT lines (with surrounding noise)", () => {
     const parsed = parseWakeAdmissionOutput(
@@ -126,6 +221,12 @@ describe("parseWakeAdmissionOutput", () => {
       "HERMES_WAKE_ADMISSION DEFER reason=host_ram active=0 cap=2 free_mb=700 need_mb=1024",
     );
     expect(parsed).toMatchObject({ verdict: "defer", reason: "host_ram", freeMb: 700 });
+  });
+
+  it("keeps the last valid decision when a following receipt is truncated", () => {
+    expect(parseWakeAdmissionOutput(
+      "HERMES_WAKE_ADMISSION DEFER reason=concurrency active=2 cap=2 free_mb=9000\nHERMES_WAKE_ADMISSION DE",
+    )).toMatchObject({ verdict: "defer", reason: "concurrency" });
   });
 
   it("returns null on garbage / missing marker / unknown reason", () => {
@@ -177,6 +278,26 @@ describe("acquireHostWakeSlot", () => {
     const decision = await acquireHostWakeSlot(infra, { ...baseParams, runHostScript });
     expect(decision).toMatchObject({ admitted: false, reason: "host_ram", freeMb: 600 });
   });
+
+  it("preserves a reported concurrency deferral if the waiting connection drops", async () => {
+    const runHostScript = jest.fn(async () => ({
+      ok: false,
+      stdout: "HERMES_WAKE_ADMISSION DEFER reason=concurrency active=4 cap=4 free_mb=8000\n",
+      stderr: "",
+      error: "SSH connection failed",
+    }));
+    const decision = await acquireHostWakeSlot(infra, { ...baseParams, waitForConcurrencySeconds: 75, runHostScript });
+    expect(decision).toMatchObject({ admitted: false, reason: "concurrency" });
+  });
+
+  it.each(["", "HERMES_WAKE_ADMISSION ADMIT active=0 cap=4 free_mb=na"])(
+    "fails closed on an incomplete admission receipt from a queued host",
+    async (stdout) => {
+      const runHostScript = async () => ({ ok: false, stdout, stderr: "" });
+      const decision = await acquireHostWakeSlot(infra, { ...baseParams, waitForConcurrencySeconds: 75, runHostScript });
+      expect(decision).toMatchObject({ admitted: false, reason: "unavailable" });
+    },
+  );
 
   it("fails open when the host script throws", async () => {
     const runHostScript = jest.fn(async () => {
