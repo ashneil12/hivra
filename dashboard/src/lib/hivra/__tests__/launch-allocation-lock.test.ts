@@ -1,7 +1,8 @@
 /** @jest-environment node */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -30,7 +31,7 @@ it("revalidates the selected Canary seal while holding the allocation lock, befo
   expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
 });
 
-function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: string, agentKind = "codex") {
+function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: string, agentKind = "codex", deepSeekImageSha256?: string) {
   return phase1Script({
     cpu: 2,
     cpuLimit: 2,
@@ -50,6 +51,7 @@ function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: str
     infrastructureBindingTag: BINDING_TAG,
     managedRuntimePaths: MANAGED_PATHS,
     canaryProvisionerVersion,
+    deepSeekImageSha256,
     portableRuntime: portableRuntime
       ? {
           node: "pve-synthetic",
@@ -71,6 +73,45 @@ function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: str
     catalogAppSpec: null,
   });
 }
+
+it("checks the selected digest, immutable file and standalone qcow2 before any allocation", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "hivra-deepseek-image-"));
+  try {
+    const content = "fixture image";
+    const digest = createHash("sha256").update(content).digest("hex");
+    const file = path.join(fixture, `hivra-deepseek-harness-${digest}.qcow2`);
+    writeFileSync(file, content);
+    const script = renderedPhase1(false, "2026.11.27.4", "deepseek-harness", digest);
+    const begin = script.indexOf("PREPARED_IMAGE=");
+    const end = script.indexOf("# Inventory is intentionally", begin);
+    expect(begin).toBeGreaterThan(script.indexOf("OBSERVED_MANIFEST_SHA="));
+    expect(end).toBeGreaterThan(begin);
+    const gate = script.slice(begin, end).replace("/var/lib/vz/template/iso", fixture);
+    const run = (info: object, mode = "0:0:444:1") => spawnSync("bash", ["-s"], {
+      input: `set -euo pipefail
+stat() { echo "$MODE"; }
+qemu-img() { printf '%s' "$IMAGE_INFO"; }
+${gate}`,
+      env: { ...process.env, MODE: mode, IMAGE_INFO: JSON.stringify(info) },
+      encoding: "utf8",
+    });
+    const good = { format: "qcow2", "virtual-size": 8 * 1024 ** 3 };
+    expect(run(good).status).toBe(0);
+    expect(run(good, "0:0:644:1").status).toBe(1);
+    expect(run({ ...good, "backing-filename": "other.img" }).status).toBe(1);
+    expect(run({ ...good, "format-specific": { data: { "data-file": "other.img" } } }).status).toBe(1);
+    expect(run({ ...good, "virtual-size": 1 }).status).toBe(1);
+    writeFileSync(file, "different");
+    expect(run(good).status).toBe(1);
+    rmSync(file);
+    writeFileSync(path.join(fixture, "elsewhere"), content);
+    symlinkSync("elsewhere", file);
+    expect(run(good).status).toBe(1);
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 describe("host allocation lock lifecycle", () => {
   it.each(["hermes", "claude", "codex", "openclaw", "deepseek-harness", "agent-zero"])(

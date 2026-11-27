@@ -1,0 +1,16 @@
+# Prepared DeepSeek Harness disk candidate
+
+This is an offline image build, not a launch option. It does not change launch selection, stage anything to a host, or modify existing computers. Build in a disposable, credential-free Linux amd64 builder with space for the Ubuntu source and intermediate disks. See the [Hermes builder requirements](bake-official-hermes.md#build) for the shared libguestfs tools and build-time network requirements.
+
+```sh
+mkdir -m 0700 deepseek-bake-output
+bash dashboard/scripts/bake-runtime-image.sh deepseek-harness deepseek-bake-output
+```
+
+The default appliance has 4 GiB. `HIVRA_BAKE_MEMORY_MB` also accepts `6144` and `8192` on a builder with spare RAM. The image uses the same pinned Ubuntu base, QEMU Guest Agent, generalization and QCOW2 sealing as the Hermes producer. It uses the provisioner's existing DeepSeek package installer, including the byte-pinned npm recipe, disabled lifecycle scripts, and verified native helper. The build exercises the packaged PTY as an unprivileged user. Its Node installation is temporary: the initial DeepSeek owner bind still installs its usual shared base and Node. On a matching bundle, the stock DeepSeek installer verifies and reuses the preinstalled native package instead of running npm for it. It rejects a different or modified package tree rather than silently replacing it.
+
+The output is `hivra-deepseek-harness-<sha256>.qcow2` and a matching JSON manifest. The manifest copies the embedded `/etc/hivra/deepseek-harness-bake.json` from the sealed disk and adds the disk format and SHA-256. Its native receipt includes the official package version, recipe digests, installed tree digest and native helper receipt. The output SHA selects exact bytes; mirror state and build timestamps make separate builds non-identical.
+
+Before any proposed trial, independently check the filename and SHA-256, `qemu-img check`, the 8 GiB virtual size, and the absence of any backing or external data file. Read the QCOW2 without modifying it and compare both the embedded marker and the installed package receipt with the manifest. The image must have an empty `/etc/machine-id` so systemd can initialize it before the root mounts read-write. Check that no build files, host SSH keys, cloud-init seed or instance state, agent account or home, launch intent, service, access tokens, or model settings were left in the image. Boot two disposable network-isolated clones; confirm distinct generated machine IDs and SSH host keys and working QEMU Guest Agent. A managed trial also requires separate authorization, a host- and owner-scoped selector, authenticated native chat/Files/terminal and real model acceptance, and timing against the same stock path. The producer does not implement that trial.
+
+DeepSeek is first because the package closure already has a supported, fail-closed reuse boundary distinct from tenant setup. Claude Code and Codex share the live bux bootstrap and version discovery; OpenClaw adds a separate large npm package and gateway setup; Agent Zero retains container engine and image-pull state. Those paths need their own reproducible package boundaries and owner-state checks before they're candidates. This build removes the DeepSeek package install only; it does not claim to remove all first-boot downloads or improve launch time by a measured amount.

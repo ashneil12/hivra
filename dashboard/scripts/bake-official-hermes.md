@@ -4,7 +4,7 @@ This is an opt-in candidate for new managed Canary Hermes launches. It is not a 
 
 ## Build
 
-On a disposable Linux amd64 builder with a runner kernel usable by libguestfs, install the distro packages providing `qemu-img`, `virt-resize`, `virt-customize`, `virt-sparsify`, `virt-cat`, `curl`, and `jq`. The libguestfs appliance also needs its DHCP client (on Ubuntu 24.04, install `isc-dhcp-client` alongside `libguestfs-tools`) and outbound HTTPS and Ubuntu mirror access. Use a clean checkout of the candidate revision, with a private output directory and no deployment, account or provider credentials on the builder.
+On a disposable Linux amd64 builder with a runner kernel usable by libguestfs, install the distro packages providing `qemu-img`, `guestfish`, `virt-customize`, `virt-sparsify`, `virt-cat`, `curl`, and `jq`. The libguestfs appliance also needs its DHCP client (on Ubuntu 24.04, install `isc-dhcp-client` alongside `libguestfs-tools`) and outbound HTTPS and Ubuntu mirror access. Use a clean checkout of the candidate revision, with a private output directory and no deployment, account or provider credentials on the builder.
 
 ```sh
 mkdir -m 0700 hermes-bake-output
@@ -13,6 +13,10 @@ bash dashboard/scripts/bake-official-hermes.sh hermes-bake-output
 
 The appliance defaults to 4 GiB. On an isolated builder with spare RAM, set
 `HIVRA_HERMES_BAKE_MEMORY_MB` to `6144` or `8192`.
+
+This entry point uses the shared runtime image builder while preserving the Hermes image filename and marker contract. The [DeepSeek candidate](bake-deepseek-harness.md) uses the same sealing pipeline but is not a launch option.
+
+The builder expands the Ubuntu root partition in place, preserving the partition number used by GRUB. Do not use an older candidate built with `virt-resize` for a pilot: a local clone of the same Ubuntu base resized by that recipe reached GRUB rescue instead of Linux.
 
 The recipe starts from a fresh Ubuntu cloud disk, verifies the dated Ubuntu bytes and the upstream installer by SHA-256, and invokes the unmodified installer as `bux` at the recorded official Git commit. The installer builds Hermes's Dashboard (9119), then Hermes builds its Desktop Webapp (9120). After removing temporary profile state, the bake checks the entry pages and runs Hermes's own build receipt validator on both surfaces. A missing or stale build prevents sealing. The disk has QEMU Guest Agent and the launch tools preloaded. The builder clears image identities before sealing a standalone qcow2. It never provisions a tenant, starts a Hivra tunnel, or creates a live VM. Apt mirror state can change; the **output image SHA**, rather than the recipe or an upstream tag, selects one reviewed set of resulting bytes.
 
