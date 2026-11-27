@@ -331,7 +331,7 @@ describe("FleetControlPane", () => {
     expect(screen.getByText("Choose an agent and we'll help you get it running on a computer of its own.")).toBeInTheDocument();
     expect(screen.getByText("Research and automation")).toBeInTheDocument();
     expect(screen.getByText("Recommended")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Hermes/ })).toHaveTextContent("Runs on Hivra Cloud only.");
+    expect(screen.getByRole("link", { name: /Hermes/ })).toHaveAccessibleDescription("Runs on Hivra Cloud only.");
     expect(screen.getByRole("link", { name: /Hermes/ })).toHaveAttribute("href", "/dashboard/launch?profile=hermes");
     expect(screen.getByRole("link", { name: /Claude Code/ })).toHaveAttribute("href", "/dashboard/launch?profile=claude-code");
     expect(screen.getByRole("link", { name: /Codex/ })).toHaveAttribute("href", "/dashboard/launch?profile=codex");
