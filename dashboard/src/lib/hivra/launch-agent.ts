@@ -341,8 +341,9 @@ fi`
       ? [`HIVRA_HERMES_IMAGE_SHA256=${shellQuote(params.hermesImageSha256)}`]
       : []),
   ].join(" ") + " ";
-  const batchQemuAdmission = !runtime && params.agentKind === "hermes"
-    && ["2026.11.27.3", "2026.11.27.4"].some(version => version === params.canaryProvisionerVersion);
+  const batchQemuAdmission = !runtime
+    && ["2026.11.27.3", "2026.11.27.4"].includes(params.canaryProvisionerVersion ?? "")
+    && ["hermes", "claude", "codex", "openclaw", "deepseek-harness", "agent-zero"].includes(params.agentKind);
   const hostCapacityAdmission = (batchQemuAdmission ? "HIVRA_CAPACITY_BATCH_QEMU=1 " : "") + buildHostCapacityAdmissionCommand({
     provisionerDirectory: runtimePaths.provisionerDirectory,
     floorMemoryMb: params.guaranteedMemMb,
@@ -497,7 +498,7 @@ disown
 ) >/dev/null 2>&1 &
 LOCK_GUARDIAN_PID=$!
 disown`;
-  const managedHermesIpInventory = !runtime && params.agentKind === "hermes";
+  const batchIpInventory = batchQemuAdmission || (!runtime && params.agentKind === "hermes");
   return `#!/usr/bin/env bash
 set -euo pipefail
 umask 077
@@ -524,7 +525,7 @@ ${managedCanaryLaunchSealScript([params.canaryProvisionerVersion])}`
 # Inventory is intentionally captured only after FD 8 is held. A launcher that
 # waited behind another provision must observe the predecessor's committed VM
 # configuration and private IP, rather than allocate from its pre-wait snapshot.
-${managedHermesIpInventory ? "" : `local_vmids="$(qm list | awk 'NR>1{print $1}')"`}
+${batchIpInventory ? "" : `local_vmids="$(qm list | awk 'NR>1{print $1}')"`}
 cluster_resources="$(pvesh get /cluster/resources --type vm --output-format json 2>/dev/null)" \
   || { echo "could not read cluster-wide VMID inventory" >&2; exit 1; }
 cluster_vmids="$(printf '%s' "$cluster_resources" | grep -oE '"vmid":[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | sort -un || true)"
@@ -557,7 +558,7 @@ hivra_vmid_reference_record "$VMID"` : ""}
 # guest unreachable (host->guest ARP races) and lets later lifecycle/maintenance
 # ssh hit the wrong tenant's box.
 claimed_octets="$(
-${managedHermesIpInventory ? `  [ -d /etc/pve/qemu-server ] || { echo "local Proxmox inventory is unavailable" >&2; exit 1; }
+${batchIpInventory ? `  [ -d /etc/pve/qemu-server ] || { echo "local Proxmox inventory is unavailable" >&2; exit 1; }
   shopt -s nullglob
   configs=(/etc/pve/qemu-server/*.conf)
   if [ "\${#configs[@]}" -gt 0 ]; then
@@ -964,11 +965,14 @@ export async function launchHivraAgentForUser(
     if (body.gvisorWorkload !== undefined && (!claudeTerminal || type !== "linux-terminal" || deployment.mode !== "self-managed")) {
       return apiError("This launch cannot use the requested sandbox workload.", 400);
     }
-    const hermesCanary = type === "hermes" && deployment.mode === "hivra-managed"
+    const managedGitCanary = deployment.mode === "hivra-managed"
       && managedProvisionerChannel === "canary" && isCanonicalGitCanaryDeployment();
+    const hermesCanary = managedGitCanary && type === "hermes";
+    const measuredCanary = managedGitCanary
+      && ["hermes", "claude-code", "codex", "openclaw", "deepseek-harness", "agent-zero"].includes(type);
     const launchCheckpoints: Record<string, number> = {};
     const checkpointLaunchTiming = (stage: string) => {
-      if (hermesCanary) launchCheckpoints[stage] = Math.round(performance.now() - requestStartedAt);
+      if (measuredCanary) launchCheckpoints[stage] = Math.round(performance.now() - requestStartedAt);
     };
     if (body.launchRequestId === undefined && (type === "codex" || type === "linux-desktop" || type === "linux-terminal")) {
       return apiError("Include a valid stable launch request ID and complete launch settings.", 400,
@@ -2578,11 +2582,13 @@ qm set ${vmid} --cpuunits ${cpuunits}`,
     if (launchOperations && launchOperationAdmission) {
       await launchOperations.accept(launchOperationAdmission, String(agent.id), 201);
     }
-    if (hermesCanary) {
+    if (measuredCanary) {
       checkpointLaunchTiming("acceptedMs");
-      log.info("managed Hermes launch timings", {
+      log.info(type === "hermes" ? "managed Hermes launch timings" : "managed agent launch timings", {
         source: "hivra/agents",
         agentId: agent.id,
+        agentType: type,
+        operationId: provisionOperationId,
         vmid,
         baked: hermesImageSha256 !== undefined,
         ...launchCheckpoints,
