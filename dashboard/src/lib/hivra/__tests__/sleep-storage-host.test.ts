@@ -43,7 +43,17 @@ case "$1" in
     ;;
   dump)
     # The owner's computer changes while its copy is being checked.
-    if [ -n "\${STUB_TOUCH_DISK_ON_DUMP:-}" ]; then printf 'y' | /usr/bin/dd of="$STUB_DIR/vg0/vm-1234-disk-0" bs=1 seek=7 conv=notrunc status=none; fi
+    if [ -n "\${STUB_TOUCH_DISK_ON_DUMP:-}" ]; then
+      python3 - "$STUB_DIR/vg0/vm-1234-disk-0" <<'PY'
+import sys
+
+with open(sys.argv[1], "r+b") as disk:
+    disk.seek(7)
+    byte = disk.read(1)[0]
+    disk.seek(7)
+    disk.write(bytes([byte ^ 0xff]))
+PY
+    fi
     cat "$REPO/$3$4"
     ;;
   *) exit 2 ;;
@@ -175,12 +185,16 @@ host("store and unstore jobs against a fake host", () => {
     expect(existsSync(coldMark())).toBe(true);
   });
 
-  it("frees nothing when the disk changed after it was uploaded", () => {
+  it.each([0x79, 0x00])("frees nothing when byte 7 (initially %i) changes after upload", (byte) => {
     markCold();
+    const expected = Buffer.from(original);
+    expected[7] = byte;
+    writeFileSync(disk, expected);
     const run = runJob("store", COLD, { env: { STUB_TOUCH_DISK_ON_DUMP: "1" } });
     expect(run.result).toMatchObject({ status: "skipped", reason: "changed_meanwhile" });
     expect(run.calls.some((c) => c.startsWith("blkdiscard"))).toBe(false);
-    expect(isZeros(disk)).toBe(false);
+    expected[7] ^= 0xff;
+    expect(readFileSync(disk).equals(expected)).toBe(true);
     expect(existsSync(storedMark())).toBe(false);
     expect(existsSync(coldMark())).toBe(true);
   });
