@@ -90,8 +90,9 @@ when capacity is unavailable. Grandfathered usage can remain above the ceiling.
 
 Managed holder launches require a runtime that can nap and save memory,
 `HIVRA_SLEEP_MODE` set to `canary` or `on`, and a configured wake connection.
-On eligible computers, the policy naps after four idle minutes and saves
-memory after twelve more minutes in nap. Host controls, activity checks and
+On eligible computers with sleep enabled in their stored settings, the policy
+naps after four idle minutes and saves memory after twelve more minutes in nap.
+Funding alone does not opt a computer in. Host controls, activity checks and
 wake readiness still apply.
 
 Canary evidence is limited to a separately gated, expiring standing-account QA

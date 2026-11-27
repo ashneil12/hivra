@@ -598,7 +598,7 @@ describe("steps 3 and 4: hibernate and nap", () => {
     // Widened to include the fixed 12-minute holder window; the runner rechecks each seat exactly.
     expect(hasOp(query, "lte", "sleep_tier_changed_at", iso(720_000))).toBe(true);
     expect(hasOp(query, "is", "operation_id", null)).toBe(true);
-    expect(hasOp(query, "or", "always_on.eq.false,seat_funding.eq.holder")).toBe(true);
+    expect(hasOp(query, "eq", "always_on", false)).toBe(true);
     expect(mockSleep).toHaveBeenCalledWith(id(1), expect.objectContaining({ tier: "hibernate", trigger: "sweep" }));
     expect(summary.hibernate).toMatchObject({ candidates: 1, attempted: 1, slept: 1 });
   });
@@ -652,22 +652,15 @@ describe("steps 3 and 4: hibernate and nap", () => {
     expect(opsOf(query, "lte")[0][0]).toBe("sleep_tier_changed_at");
   });
 
-  it("keeps holder seats in the canary policy prefilter despite stale stored values", async () => {
+  it.each(["canary", "on"])("requires stored opt-in for both sweep tiers in %s mode", async (mode) => {
     setTables({ hosts: hosts() });
-    await run({ HIVRA_SLEEP_MODE: "canary" });
-    const canaryNap = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "awake"))!;
-    const canaryHib = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "napping"))!;
-    expect(hasOp(canaryNap, "or", "sleep_policy.in.(t1,full),seat_funding.eq.holder")).toBe(true);
-    expect(hasOp(canaryHib, "or", "sleep_policy.in.(t3,full),seat_funding.eq.holder")).toBe(true);
-    expect(hasOp(canaryNap, "or", "always_on.eq.false,seat_funding.eq.holder")).toBe(true);
-
-    mockCalls.length = 0;
-    await run({ HIVRA_SLEEP_MODE: "on" });
-    const onNap = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "awake"))!;
-    const onHib = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "napping"))!;
-    expect(opsOf(onNap, "in").some((a) => a[0] === "sleep_policy")).toBe(false);
-    expect(opsOf(onHib, "in").some((a) => a[0] === "sleep_policy")).toBe(false);
-    expect(hasOp(onNap, "or", "always_on.eq.false,seat_funding.eq.holder")).toBe(true);
+    await run({ HIVRA_SLEEP_MODE: mode });
+    const nap = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "awake"))!;
+    const hibernate = callsFor("hivra_agents").find((c) => isCandidateQuery(c, "napping"))!;
+    expect(opsOf(nap, "in")).toContainEqual(["sleep_policy", ["t1", "full"]]);
+    expect(opsOf(hibernate, "in")).toContainEqual(["sleep_policy", ["t3", "full"]]);
+    expect(hasOp(nap, "eq", "always_on", false)).toBe(true);
+    expect(hasOp(hibernate, "eq", "always_on", false)).toBe(true);
   });
 
   it("builds the cheap nap prefilter from the database columns", async () => {
