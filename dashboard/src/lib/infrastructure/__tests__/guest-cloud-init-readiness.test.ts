@@ -152,7 +152,7 @@ VM_KEY=/unused-fixture-key
 IP=192.0.2.1
 VMID=1100
 AGENT_KIND="$FIXTURE_KIND"
-OPERATION_ID=12345678-1234-4234-8234-123456789abc
+OPERATION_ID=11111111-1111-4111-8111-111111111111
 LAUNCH_STAGE_CLOCK=0
 CLOUD_INIT_KEEP_DIR="$FIXTURE_DIR"
 GSSH=(ssh)
@@ -195,7 +195,7 @@ describe("guest boot gate", () => {
   it("emits boot stage timings for non-Hermes launches without guest output", () => {
     const result = boot(["done"], "codex");
     expect(result.status).toBe(0);
-    expect(result.stderr).toMatch(/^HIVRA_LAUNCH_STAGE 12345678-1234-4234-8234-123456789abc cloud_init_ready \d+$/m);
+    expect(result.stderr).toMatch(/^HIVRA_LAUNCH_STAGE 11111111-1111-4111-8111-111111111111 cloud_init_ready \d+$/m);
     expect(result.stderr).not.toContain("HIVRA_HERMES_STAGE");
   });
 
