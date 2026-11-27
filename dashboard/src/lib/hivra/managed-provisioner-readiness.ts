@@ -7,6 +7,7 @@ import hermesDiagnosticsRelease from "../../../provisioner-releases/2026.11.27.1
 import hermesBakeRelease from "../../../provisioner-releases/2026.11.27.2.json";
 import admissionReaderRelease from "../../../provisioner-releases/2026.11.27.3.json";
 import guestBootRelease from "../../../provisioner-releases/2026.11.27.4.json";
+import hermesStandbyRelease from "../../../provisioner-releases/2026.11.27.5.json";
 import {
   PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS,
   PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS,
@@ -39,7 +40,7 @@ export type ManagedHivraHostReadinessResult =
 export type ManagedHivraHostReadinessPurpose = "provision" | "lifecycle" | "resize" | "runtime-update";
 type ManagedHivraHostEnvironment = Record<string, string | undefined>;
 
-const canaryLaunchSeals = new Map([previousCanaryRelease, digestPinRelease, hermesDiagnosticsRelease, hermesBakeRelease, admissionReaderRelease, guestBootRelease].map(release => [
+const canaryLaunchSeals = new Map([previousCanaryRelease, digestPinRelease, hermesDiagnosticsRelease, hermesBakeRelease, admissionReaderRelease, guestBootRelease, hermesStandbyRelease].map(release => [
   release.version,
   createHash("sha256").update([...release.files]
     .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
@@ -49,7 +50,7 @@ const canaryLaunchSeals = new Map([previousCanaryRelease, digestPinRelease, herm
 function managedCanaryProvisionerAllowsLaunch(version: string, requirePinnedCatalogDigest: boolean): boolean {
   return canaryLaunchSeals.has(version)
     && (canaryLaunchSealAllowed(version, requirePinnedCatalogDigest)
-      || (requirePinnedCatalogDigest && [hermesDiagnosticsRelease.version, hermesBakeRelease.version, admissionReaderRelease.version, guestBootRelease.version].includes(version)));
+      || (requirePinnedCatalogDigest && [hermesDiagnosticsRelease.version, hermesBakeRelease.version, admissionReaderRelease.version, guestBootRelease.version, hermesStandbyRelease.version].includes(version)));
 }
 
 export function managedCanaryLaunchSealScript(versions: readonly string[]): string {
@@ -108,12 +109,22 @@ need_readable ${shellQuote(`${runtimePaths.vmSshKeyPath}.pub`)}`
 # .allocated receipt before it will persist provider identity.
 grep -Fq 'BINDING_TAG="\${HIVRA_BINDING_TAG:-}"' "$PROVISION_SCRIPT" \\
   || { echo "Hivra provisioner lacks binding-tag enforcement" >&2; exit 1; }
-grep -Fq -- '--tags "\${BINDING_TAG};\${OPERATION_TAG}"' "$PROVISION_SCRIPT" \\
-  || { echo "Hivra provisioner lacks atomic ownership tagging" >&2; exit 1; }
 grep -Fq 'ALLOCATION_RECEIPT_FILE="/run/hivra-provision/\${VMID}.allocated"' "$PROVISION_SCRIPT" \\
   || { echo "Hivra provisioner lacks allocation receipts" >&2; exit 1; }
-grep -Fq 'mv "$ALLOCATION_RECEIPT_TMP" "$ALLOCATION_RECEIPT_FILE"' "$PROVISION_SCRIPT" \\
-  || { echo "Hivra provisioner lacks atomic allocation receipt publication" >&2; exit 1; }
+if [ "$OBSERVED_VERSION" = ${shellQuote(hermesStandbyRelease.version)} ]; then
+  grep -Fq 'TAGS="\${BINDING_TAG};\${OPERATION_TAG}"' "$PROVISION_SCRIPT" \\
+    && grep -Fq -- '--tags "$TAGS"' "$PROVISION_SCRIPT" \\
+    || { echo "Hivra provisioner lacks atomic ownership tagging" >&2; exit 1; }
+  grep -Fq 'mv -fT -- "$receipt_tmp" "$ALLOCATION_RECEIPT_FILE"' "$PROVISION_SCRIPT" \\
+    || { echo "Hivra provisioner lacks atomic allocation receipt publication" >&2; exit 1; }
+  [ -x "$PROVISIONER_DIR/hivra-hermes-standby.sh" ] && bash -n "$PROVISIONER_DIR/hivra-hermes-standby.sh" \\
+    || { echo "Hivra provisioner lacks the executable Hermes standby helper" >&2; exit 1; }
+else
+  grep -Fq -- '--tags "\${BINDING_TAG};\${OPERATION_TAG}"' "$PROVISION_SCRIPT" \\
+    || { echo "Hivra provisioner lacks atomic ownership tagging" >&2; exit 1; }
+  grep -Fq 'mv "$ALLOCATION_RECEIPT_TMP" "$ALLOCATION_RECEIPT_FILE"' "$PROVISION_SCRIPT" \\
+    || { echo "Hivra provisioner lacks atomic allocation receipt publication" >&2; exit 1; }
+fi
 ip link show ${shellQuote(runtimePaths.bridge)} >/dev/null 2>&1 \\
   || { echo "${runtimePaths.bridge} bridge is missing" >&2; exit 1; }
 pvesm status | awk '$1=="${runtimePaths.storage}"{found=1} END{exit found?0:1}' \\

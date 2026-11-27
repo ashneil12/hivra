@@ -28,6 +28,8 @@ import { PROXMOX_NEEDS_ROOT_COPY, PROXMOX_SUDO_TRANSPORT_READY } from "./sudo-tr
 import {
   PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES,
   PORTABLE_HIVRA_PROVISIONER_DIRECTORY,
+  PORTABLE_HIVRA_PROVISIONER_MAX_BUNDLE_BYTES,
+  PORTABLE_HIVRA_PROVISIONER_MAX_FILE_BYTES,
   PORTABLE_HIVRA_PROVISIONER_PREPARE_SCRIPT,
   PORTABLE_HIVRA_PROVISIONER_RESULT_MARKER,
   PORTABLE_HIVRA_PROVISIONER_VERSION,
@@ -36,7 +38,6 @@ import {
 } from "./portable-provisioner-contract";
 import { blockedAddressRemediation, internalFailureRemediation } from "./remediation-copy";
 
-const MAX_PROVISIONER_BUNDLE_BYTES = 2 * 1024 * 1024;
 const BUNDLE_READ_CONCURRENCY = 8;
 // Leave enough of the route's 300-second budget for the mandatory read-only
 // preflight (up to 60 seconds) and response serialization.
@@ -296,7 +297,8 @@ export async function loadPortableProvisionerBundle(
     },
   );
   const totalBytes = assets.reduce((sum, asset) => sum + asset.content.byteLength, 0);
-  if (totalBytes > MAX_PROVISIONER_BUNDLE_BYTES) {
+  if (totalBytes > PORTABLE_HIVRA_PROVISIONER_MAX_BUNDLE_BYTES
+    || assets.some(asset => asset.content.length > PORTABLE_HIVRA_PROVISIONER_MAX_FILE_BYTES)) {
     throw new Error("Portable provisioner bundle is too large.");
   }
 

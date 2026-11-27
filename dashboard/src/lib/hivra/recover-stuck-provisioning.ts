@@ -49,6 +49,7 @@ import {
   validateHivraChatOrigin,
   validateHivraHostRunningResult,
 } from "@/lib/hivra/agent-host-result";
+import { isHermesStandbyGeneration, isHermesStandbyVmid } from "@/lib/hivra/hermes-standby";
 import {
   checkpointHivraAgentOperation,
   completeHivraAgentDelete,
@@ -471,16 +472,33 @@ async function recoverPersistedProvisionIntent(
   context: HivraAgentExecutionContext,
 ): Promise<{ vmid: number; ip: string } | null> {
   if (!row.operation_id || row.operation_kind !== "provision") return null;
-  const intentPath = `/var/lib/hivra/provision-operations/operation-${row.operation_id}.selected`;
+  const generation = row.operation_payload?.hermes_standby_generation;
+  const warm = generation !== undefined;
+  if (warm && (!isHermesStandbyGeneration(generation) || row.type !== "hermes"
+      || row.deployment_mode !== "hivra-managed" || row.managed_provisioner_channel !== "canary"
+      || !context.infrastructureBindingTagEnforced)) return null;
+  const intentPath = `/var/lib/hivra/provision-operations/operation-${row.operation_id}.${warm ? "warm-claimed" : "selected"}`;
   const result = await runProxmoxHostScript(
     `set -euo pipefail
 INTENT=${shellQuote(intentPath)}
+[ -f "$INTENT" ] && [ ! -L "$INTENT" ] || exit 1
 [ "$(stat -c '%a:%U:%G' "$INTENT" 2>/dev/null)" = "600:root:root" ] \
   || { echo "persistent operation intent is missing or has unsafe ownership" >&2; exit 1; }
 grep -Fxq ${shellQuote(`operation_id=${row.operation_id}`)} "$INTENT"
 VMID="$(awk -F= '$1=="vmid" {print $2; exit}' "$INTENT")"
 IP="$(awk -F= '$1=="ip" {print $2; exit}' "$INTENT")"
 [[ "$VMID" =~ ^[0-9]+$ ]] || exit 1
+${warm ? `exec 8>/run/lock/hivra-allocation.lock
+flock -w 5 8
+exec 9>"/run/lock/hivra-vmids/$VMID.lock"
+flock -w 5 9
+grep -Fxq ${shellQuote(`generation=${generation}`)} "$INTENT"
+grep -Fxq ${shellQuote(`binding_tag=${context.infrastructureBindingTag}`)} "$INTENT"
+CONFIG="$(qm config "$VMID")"
+TAGS="$(printf '%s\\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p' | tr ';' '\\n')"
+printf '%s\\n' "$TAGS" | grep -Fxq ${shellQuote(context.infrastructureBindingTag)}
+printf '%s\\n' "$TAGS" | grep -Fxq ${shellQuote(`hivra-op-${row.operation_id.replace(/-/g, "")}`)}
+printf '%s\\n' "$CONFIG" | sed -n 's/^ipconfig0:[[:space:]]*//p' | tr ',' '\\n' | grep -Fxq "ip=$IP/24"` : ""}
 printf 'HIVRA_RECOVERY_INTENT %s %s\\n' "$VMID" "$IP"`,
     context.env,
     { timeoutMs: SSH_TIMEOUT_MS },
@@ -495,7 +513,7 @@ printf 'HIVRA_RECOVERY_INTENT %s %s\\n' "$VMID" "$IP"`,
   const prefix = resolveHivraSubnetPrefix(context.env);
   const octet = Number(ip.slice(`${prefix}.`.length));
   if (
-    !Number.isSafeInteger(vmid) || vmid < vmidStart || vmid > vmidEnd ||
+    !(warm ? isHermesStandbyVmid(vmid) : Number.isSafeInteger(vmid) && vmid >= vmidStart && vmid <= vmidEnd) ||
     !Number.isInteger(octet) || octet < 2 || octet > 254 ||
     ip !== `${prefix}.${octet}`
   ) return null;
@@ -1095,6 +1113,8 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
         row.vmid = recoveredIntent.vmid;
         row.ip = recoveredIntent.ip;
         if (row.infrastructure_binding_token_enforced) row.allocation_operation_id = row.operation_id;
+      } else if (row.operation_payload?.hermes_standby_generation !== undefined) {
+        return { ...base, action: "skipped", reason: "Hermes standby lacks confirmed warm ownership; keep it reserved" };
       } else if (nMinusOneCompatibility) {
         return { ...base, action: "skipped", reason: "legacy launch has no provider coordinate; manual reconciliation required" };
       } else {
@@ -1331,6 +1351,8 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
       if (row.infrastructure_binding_token_enforced) {
         row.allocation_operation_id = row.operation_id;
       }
+    } else if (row.operation_payload?.hermes_standby_generation !== undefined) {
+      return { ...base, action: "skipped", reason: "Hermes standby lacks confirmed warm ownership; keep it reserved" };
     } else {
       const nMinusOneCompatibility =
         row.deployment_mode === "hivra-managed" &&

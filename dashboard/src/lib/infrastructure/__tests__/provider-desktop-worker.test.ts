@@ -57,6 +57,7 @@ describe("staged private desktop provider controller", () => {
     expect(() => buildProviderDesktopWorkerPlan({ ...request, identity: prior }, { ...clock, boottimeMs: Number.MAX_SAFE_INTEGER - 480_000 })).toThrow();
   });
   it.each([
+    ["2026.11.27.4", "56def4d17b574b992598d498b46a586e2c23dd5594281f23c7bb661ec3fa21a0", "61cf525c221420fa01bf087c18cb95f7bfcc3006bbb8b08893acbac564b1f695"],
     ["2026.11.15.2", "49a8f66e3fca1577e7932a2338de16e9c04d77bc9eb130ae81ccb7ac3a692cef", "3554ebbcc4a6e92eac4b5850937ba1179c590db300e4071156922d52aa6a6fbb"],
     ["2026.11.15.1", "4729a8faca0ab45d854ad48423ee6d87bfb94e818ce27599817998fdf2ababd8", "48b7c4637d228f9bff6e909dfa996f0822172e560194e78bf79be21d9f6fd635"],
     ["2026.11.14.1", "03f424cd434b5142c8f482c67ad5b2a61787a5404a2cb8ec6a2ecd4fec72fd04", "1187804561d2293138eda8162f23f4ce4f35e5fa86c9171c1b35a6f3254d789a"],
@@ -111,7 +112,7 @@ describe("staged private desktop provider controller", () => {
   });
   it("keeps .05.7 recovery pinned while admitting the bounded cold-start release", () => {
     const request = recovery();
-    expect(request.identity.bundle.provisionerVersion).toBe("2026.11.27.4");
+    expect(request.identity.bundle.provisionerVersion).toBe("2026.11.27.5");
     const prior = parseProviderDesktopWorkerIdentity({ ...request.identity, bundle: { ...request.identity.bundle,
       provisionerVersion: "2026.09.05.7", bundleSha256: "d3631ea66b7d74084e1f29e7795f2459e6e215c4f97a6e231ccf480f3cb9ba9b" } });
     const oldClock = { ...clock, boottimeMs: Number.MAX_SAFE_INTEGER - 480_000 };
@@ -136,6 +137,7 @@ describe("staged private desktop provider controller", () => {
       .map(row => [row.path, row.sha256, row.size, row.mode]);
     expect(plan.identity.desktopCleanup).toEqual({profile: "desktop-owned-services-v1",
       closureSha256: createHash("sha256").update(JSON.stringify(rows) + "\n").digest("hex")});
+    expect(manifest).toContainEqual(expect.objectContaining({ path: "hivra-hermes-standby.sh", mode: 0o700 }));
     expect(encodedRequest(plan.script)).toEqual({action: "start", identity: plan.identity, clock, manifest, launch: input.launch});
     expect(JSON.stringify(plan.identity)).not.toContain("fixture-private-tunnel");
     expect(plan.script).not.toContain("fixture-private-tunnel"); // Still private stdin, NEVER log scripts.

@@ -538,4 +538,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261127181800", name: "provider_release_admission_2026_11_27_3" },
   { version: "20261127190000", name: "managed_kvm_portable_handoff" },
   { version: "20261127194000", name: "provider_release_admission_2026_11_27_4" },
+  { version: "20261127211500", name: "provider_release_admission_2026_11_27_5" },
 ];

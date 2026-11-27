@@ -775,6 +775,28 @@ describe("runRecoverStuckHivraProvisioningSweep", () => {
     expect(mockedReleaseOperation).not.toHaveBeenCalled();
   });
 
+  it("does not persist or delete a warm launch without the exact post-retag receipt", async () => {
+    const generation = "11111111-1111-4111-8111-111111111111";
+    installSupabase([buildStuckRow({
+      type: "hermes", managed_provisioner_channel: "canary", vmid: null, ip: null,
+      allocation_operation_id: null, desired_state: "deleted",
+      operation_payload: { stage: "hermes_standby_allocation", hermes_standby_generation: generation },
+    })]);
+    mockedRunScript.mockResolvedValue({ ok: false, stdout: "", stderr: "warm receipt missing" });
+
+    const summary = await runRecoverStuckHivraProvisioningSweep();
+
+    expect(summary).toMatchObject({ scanned: 1, skipped: 1 });
+    const probe = mockedRunScript.mock.calls[0][0];
+    expect(probe).toContain(".warm-claimed");
+    expect(probe).toContain(`generation=${generation}`);
+    expect(probe).toContain(`hivra-bind-${"b".repeat(32)}`);
+    expect(probe).not.toContain(".selected");
+    expect(spawnSync("bash", ["-n"], { input: probe }).status).toBe(0);
+    expect(mockedPersistIdentity).not.toHaveBeenCalled();
+    expect(mockedCompleteDelete).not.toHaveBeenCalled();
+  });
+
   it("retries and completes a stale delete only after provider and storage absence are verified", async () => {
     installSupabase([buildStuckRow({
       status: "stopped",

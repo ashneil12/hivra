@@ -33,3 +33,36 @@ After release review and authority for the exact Canary host, check that the hos
 Set the three server-only variables on the dedicated Git Canary project: `HIVRA_CANARY_HERMES_IMAGE_HOST` to the selected Proxmox target ID, `HIVRA_CANARY_HERMES_IMAGE_SHA256` to the digest of the qcow2 recorded in the manifest, and `HIVRA_CANARY_HERMES_IMAGE_USER_ID` to the existing standing QA owner. The host setting does not pin placement; if normal placement picks another host, that run uses stock installation and is not a baked sample. Settings apply on the next Git build, not to the current deployment. Confirm the Canary domain serves a Git build created after all three settings were saved. Do not change the stock Ubuntu image or production configuration.
 
 Use that standing QA account to launch owned fixtures. Verify the Git revision, target and baked launch marks in accepted launch evidence, then fresh SSH host keys and machine IDs across guests, distinct Hivra access tokens, public Hermes Webapp and dashboard, both terminals, and a real managed model reply. The launch log reports cumulative API milliseconds from request handling; `HIVRA_HERMES_STAGE` in the host log reports centiseconds from the preceding marker. Record click, native composer and first reply separately. Exercise Hermes's own Update entry point on an owned fixture and check model settings and gateway/terminal access survive; the pin defines the initial filesystem, not the customer update policy. Clean up only the owned fixtures. Unset all three Canary image variables on the next Git build to return new launches to the stock installation; existing computers remain untouched.
+
+## One-guest standby experiment
+
+This is a manual, owner-scoped Canary experiment, not a pool. Leave
+`HIVRA_CANARY_HERMES_STANDBY_ENABLED` unset outside the experiment. Use one exact
+host, standing paid QA owner, boot-proven Hermes digest and sealed provisioner.
+The owner and target must already match the three baked-image settings above.
+The standby uses a QA VMID 9300–9399 other than 9302 and a free private IP on
+the managed subnet. Use one generation UUID per attempt and never reuse a
+claimed guest.
+
+1. Reserve the exact generation, owner, host, VMID, IP, image and resource
+   envelope with the service-only standby reservation before starting a VM.
+   That charge stays in admission until it transfers to a verified paid row or
+   the operator proves the exact VM and disk are absent.
+2. On the approved host, verify the sealed Canary bundle and the boot-proven
+   image. Run the managed host provisioner in standby `stage` mode with only
+   the neutral VM settings; do not send a tenant key, route, token or binding.
+   Require enforced local memory and CPU ceilings, with the host's registered
+   CPU policy capped at the provisioner's supported maximum, plus storage
+   headroom. Make the generation available only after the exact host receipt
+   proves fresh SSH identity and completed cloud-init.
+3. Enable the standby flag only on the dedicated Git Canary build for the
+   scoped QA owner. Launch through the normal paid browser flow; the ordinary
+   placement decision must select the staged host. Measure click, claim,
+   composer and visible reply. A failed or uncertain claim must not silently
+   cold-launch another VM.
+4. Delete the assigned fixture through the normal launch lifecycle. Verify
+   clean database state, host and storage absence, and use the standby
+   provisioner's exact `retire` action to clear its host-side slot. An
+   unassigned or uncertain slot stays charged until independently reconciled.
+   Restage a new generation only after this proof. Remove the experiment flag
+   and the three scoped settings from the next Git build when finished.

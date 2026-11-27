@@ -509,6 +509,7 @@ describe("POST /api/hivra/agents", () => {
     "HIVRA_CANARY_HERMES_IMAGE_HOST",
     "HIVRA_CANARY_HERMES_IMAGE_SHA256",
     "HIVRA_CANARY_HERMES_IMAGE_USER_ID",
+    "HIVRA_CANARY_HERMES_STANDBY_ENABLED",
     "HIVRA_CANARY_DEEPSEEK_IMAGE_HOST",
     "HIVRA_CANARY_DEEPSEEK_IMAGE_SHA256",
     "HIVRA_CANARY_DEEPSEEK_IMAGE_USER_ID",
@@ -1523,6 +1524,75 @@ describe("POST /api/hivra/agents", () => {
       expect(kickoff).toBeDefined();
       expect(kickoff?.includes(`HIVRA_HERMES_IMAGE_SHA256='${digest}'`)).toBe(baked);
       expect(kickoff).not.toContain("b".repeat(64));
+    }
+  });
+
+  it.each([
+    ["claimed", 201],
+    ["no_match", 409],
+    ["claim_in_doubt", 502],
+  ] as const)("does not cold-allocate around the exact paid Hermes standby claim (%s)", async (claimStatus, status) => {
+    const generation = "11111111-1111-4111-8111-111111111111";
+    const privateIp = "10.250.21.50";
+    const vmid = 9354;
+    enableManagedGvisorQaFixture({
+      VERCEL_TARGET_ENV: "canary",
+      HIVRA_CANARY_HERMES_IMAGE_HOST: "fixturenode7",
+      HIVRA_CANARY_HERMES_IMAGE_SHA256: "a".repeat(64),
+      HIVRA_CANARY_HERMES_IMAGE_USER_ID: "user_fixture1",
+      HIVRA_CANARY_HERMES_STANDBY_ENABLED: "1",
+    });
+    mockAuth.mockResolvedValue({ userId: "user_fixture1" });
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 3,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+    mockSelectAvailableProxmoxProvisionTarget.mockResolvedValueOnce({
+      ok: true, targetId: "fixturenode7", provisionerVersion: "2026.11.27.5",
+      env: {
+        PROXMOX_NODE: "fixturenode7", PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
+        PROXMOX_PRIVATE_GATEWAY: "10.250.21.1", PROXMOX_VMID_START: "200",
+      },
+    });
+    mockSupabaseRpc.mockImplementation((name: string, args: Record<string, unknown>) => {
+      if (name === "read_hivra_hermes_standby") return Promise.resolve({
+        data: { generation, vmid, privateIp, cpu: 2, ramMb: 4096, diskGb: 40 }, error: null,
+      });
+      if (name === "claim_hivra_hermes_standby") {
+        return Promise.resolve({ data: { status: claimStatus, vmid, privateIp }, error: null });
+      }
+      if (name === "assign_hivra_hermes_standby") return Promise.resolve({ data: true, error: null });
+      return mockDefaultRpc(name, args);
+    });
+    const standardFrom = mockSupabaseFrom.getMockImplementation()!;
+    mockSupabaseFrom.mockImplementation((table: string) => table === "proxmox_hosts"
+      ? { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { status: "active", cpu_overcommit_ratio: "8" }, error: null }) }) }) }
+      : standardFrom(table));
+    mockRunProxmoxHostScript.mockReset()
+      .mockResolvedValueOnce({ ok: true, stdout: `HIVRA_PROVISION_RESULT ${JSON.stringify({ vmid, ip: privateIp })}\\n` })
+      .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set" })
+      .mockResolvedValueOnce({ ok: true, stdout: "cpu units set" });
+    const response = await POST(makeRequest({ type: "hermes", name: "STANDBY_FIXTURE", cpu: 2, ram: 4 }) as never);
+    expect(response.status).toBe(status);
+    expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({
+      seat_funding: "paid", proxmox_host: "",
+      operation_payload: { stage: "pre_allocation_access", hermes_standby_generation: generation },
+    }));
+    const kickoff = mockRunProxmoxHostScript.mock.calls
+      .map(([script]) => String(script)).find(script => script.includes("HIVRA_PROVISION_RESULT"));
+    if (status === 201) {
+      expect(kickoff).toContain("HIVRA_HERMES_STANDBY_ACTION=claim");
+      expect(kickoff).toContain("HIVRA_HERMES_STANDBY_ENFORCE_CEILINGS=1");
+      expect(kickoff).toContain("HIVRA_HERMES_STANDBY_CPU_DENSITY_MILLI=4000");
+      expect(kickoff).not.toContain("HIVRA_ALLOCATION_SELECTED");
+      expect(kickoff?.indexOf("HIVRA_HERMES_STANDBY_ACTION=claim"))
+        .toBeLessThan(kickoff?.indexOf("install -m 0600 /dev/null \"$SECRET_ENV_FILE\"") ?? -1);
+      expect(mockBeginHivraAgentVmAllocation).toHaveBeenCalledWith(expect.objectContaining({ hermesStandbyGeneration: generation }));
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("assign_hivra_hermes_standby", expect.objectContaining({ p_generation: generation }));
+    } else {
+      expect(kickoff).toBeUndefined();
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("assign_hivra_hermes_standby", expect.anything());
+      expect(mockFailHivraAgentBeforeAllocation).toHaveBeenCalledTimes(status === 409 ? 1 : 0);
     }
   });
 

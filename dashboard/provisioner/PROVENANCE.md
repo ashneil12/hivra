@@ -1499,3 +1499,7 @@ Release `2026.11.27.4` avoids installing QEMU Guest Agent again when it is alrea
 present in the Ubuntu guest, polls for attestation and clean cloud-init sooner,
 and records operation-scoped host launch timing. The desktop and native
 workload contracts remain unchanged.
+
+Release `2026.11.27.5` seals the host-side Hermes standby helper and its
+launch integration. It adds no third-party assets and leaves the catalog image
+pins and the desktop and native workload contracts unchanged.
