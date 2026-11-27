@@ -1495,7 +1495,7 @@ export async function launchHivraAgentForUser(
       }
       preferSleepPlacement = seatFunding === "paid" && !options?.moveFromInstanceId
         && !explicitClaudeHost && supportsIdleNap(type) && sleepActs;
-      const hostFitsMaximum = async (hostEnv: NodeJS.ProcessEnv) => {
+      const hostFitsMaximum = async (hostEnv: typeof env) => {
         if (!hasExplicitEnvelope) return true;
         const maximumEvidence = await runProxmoxHostScript(`set -euo pipefail
 HOST_CPU="$(nproc)"
