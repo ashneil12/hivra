@@ -15,7 +15,7 @@ must match it.
 | What decides it | File |
 | --- | --- |
 | Agents that can be launched | `dashboard/src/lib/hivra/agent-catalog.ts` (`available`) |
-| Computers that can be launched | `dashboard/src/lib/hivra/computer-catalog.ts` (`status`, `launchMode`) and the Launch tiles in `dashboard/src/components/launch/LaunchJourney.tsx` |
+| Computers that can be launched | `dashboard/src/lib/hivra/computer-catalog.ts` (`status`, `launchMode`), the Launch tiles in `dashboard/src/components/launch/LaunchJourney.tsx`, and `dashboard/src/lib/hivra/managed-gvisor-launch-config.ts` (managed Linux Sandbox admission) |
 | Previews that are shown but not launchable (Buzz only) | `dashboard/src/lib/hivra/preview-catalog.ts` |
 | Public wording for crawlers and the homepage | `dashboard/src/lib/llms-txt.ts` and `dashboard/src/components/landing/home/content.ts` |
 
@@ -29,7 +29,7 @@ A free account alone works with a server the person connects.
 | --- | --- | --- |
 | Claude Code | Available | Hivra Cloud or a Proxmox server you connected |
 | Codex | Available | Hivra Cloud or a Proxmox server you connected |
-| Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`). The paid launch path is live on Canary; it reaches hivra.cloud with the next owner-approved production promotion |
+| Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches on Canary go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`). The paid path on that computer was verified on Canary; availability on hivra.cloud requires owner-approved promotion and separate production verification |
 | OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |
 | Agent Zero | Available | Hivra Cloud or a Proxmox server you connected |
 | Aeon | Available | Hivra Cloud or a Proxmox server you connected |
@@ -65,7 +65,7 @@ the first-run card, which stays at three choices.
 
 ### Token-holder access
 
-**Gated; not live-verified.** An admitted token holder can launch a supported
+**Gated and capacity-limited.** An admitted token holder can launch a supported
 managed Hivra computer without a paid subscription. Where holder access is
 enabled for the account, a new qualification requires holding $299 worth of
 tokens for Pro (2 vCPU and 4 GB RAM) or $599 for Power (4 vCPU and 8 GB RAM).
@@ -82,6 +82,12 @@ Managed holder launches require a runtime that can nap and save memory,
 On eligible computers, the policy naps after four idle minutes and saves
 memory after twelve more minutes in nap. Host controls, activity checks and
 wake readiness still apply.
+
+Canary evidence is limited to a separately gated, expiring standing-account QA
+seat: managed Hermes launched, napped, saved memory, woke on signed-in Files
+access with the workspace intact, and was deleted on Git build `bea43a89`.
+That does not demonstrate normal token qualification or admission, customer
+availability on hivra.cloud, or fleet capacity.
 
 New Classic Hermes holder launches are unavailable. Existing Classic computers
 with verified holder funding keep their admission and allocation. Classic
@@ -127,7 +133,7 @@ Hivra for Mac 0.3.0 is available as a signed, notarized [Mac installer](https://
 | --- | --- | --- |
 | Ubuntu Desktop | Available | Hivra Cloud or a Proxmox server you connected |
 | Linux computer | Available | Hivra Cloud on a paid plan. A headless Ubuntu computer with a terminal and files, no desktop (provisioner release 2026.11.10.4). Attaching an agent to it is not supported yet. |
-| Linux Sandbox | Available | A gVisor-ready server you connected |
+| Linux Sandbox | Available on a connected server; managed QA only | An isolated gVisor shell for one-shot commands with a persistent workspace, not a full VM. The hosted candidate is not a public offering. |
 | Omarchy | Available, with a condition | Existing claims only; new claims are paused. A retained guest cannot be assigned again until its clean reset or rebuild can be verified. |
 | Windows | Available, with a condition | On a Proxmox server you connected, from your own licensed Windows ISO. Hivra-managed Windows is not offered. |
 | macOS | Not offered | Planned only. |
@@ -139,6 +145,35 @@ See [the rollout and recovery notes](release/OMARCHY-PREPARED-REFRESH.md).
 
 Public copy says Omarchy (prepared computer) is paused for new claims.
 Windows requires your own server and your licensed image. Neither is a preview.
+
+### Managed Linux Sandbox
+
+The paid managed path is for an expiring standing-account QA window on
+canonical Git Canary only. The configured owner must match the signed-in
+account and be distinct from the registered host authority. The QA switch,
+unexpired enrollment and authoritative connection, target and revision must
+all be valid. The separate general launch switch stays off; the two launch
+switches cannot be used together. A paid plan alone does not admit an account.
+
+Automatic idle stop is a separate, default-off pilot on that same cohort, not
+KVM sleep or checkpoint resume. Exact Git Canary build `be8cf08d` verified
+three automatic-stop and explicit owner Start cycles with the workspace intact
+and controlled low-disk admission refusals. The cohort expired and the gate
+was verified off. That evidence does not show physical host RAM savings,
+production capacity or public availability. See the
+[idle-stop pilot runbook](release/MANAGED-GVISOR-IDLE-PILOT.md).
+
+### Paid KVM sleep and wake
+
+Where sleep is enabled and the paid Proxmox KVM computer, host and connection
+are eligible, the owner can opt in to sleep when idle. A nap pauses the VM in
+memory. Hibernate saves its memory to disk; supported owner access wakes it.
+Active work, schedules or channels without a supported wake path can keep it
+awake. This is not the Linux Sandbox idle-stop pilot. A paid Codex KVM
+verified automatic nap, hibernate and signed-in Files wake with its data intact
+on Git Canary build `be8cf08d`. That wake took about 16 seconds end to end;
+this is one measurement, not a fleet-wide or production timing claim.
+See the [sleep rollout runbook](release/AGENT-SLEEP-ROLLOUT.md).
 
 ## Other surfaces
 

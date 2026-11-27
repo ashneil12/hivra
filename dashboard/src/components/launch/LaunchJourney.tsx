@@ -533,7 +533,7 @@ const SERVER_ONLY_TILES: ReadonlySet<LaunchProfileId> = new Set(["linux-terminal
 
 function tileDescription(tile: ChooseTile, managedLinuxSandboxEligible: boolean): string {
   return tile.id === "linux-terminal" && managedLinuxSandboxEligible
-    ? "A locked-down Linux terminal and files."
+    ? "One-shot shell commands and a persistent workspace. Managed access is limited and requires a paid plan."
     : tile.description;
 }
 

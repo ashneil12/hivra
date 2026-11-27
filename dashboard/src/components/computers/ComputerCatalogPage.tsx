@@ -126,7 +126,10 @@ function ComputerRow({ computer, addingAgent = false, canTakeAgent = false, atta
 }
 
 export function ComputerCatalogPage(
-  { preparedProfiles = [] }: { preparedProfiles?: readonly ("omarchy" | "windows")[] },
+  { preparedProfiles = [], managedLinuxSandboxEligible = false }: {
+    preparedProfiles?: readonly ("omarchy" | "windows")[];
+    managedLinuxSandboxEligible?: boolean;
+  },
 ) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -326,7 +329,7 @@ export function ComputerCatalogPage(
             <div className={styles.empty}>
               <Monitor size={20} />
               <strong>No computers yet</strong>
-              <span>A light Linux computer is one tap away. You can browse other systems below.</span>
+              <span>Launch a headless Linux VM on a paid Hivra Cloud plan, or browse other computers below.</span>
               <Link className={styles.primaryButton} href={profileLaunchHref("ubuntu-server")}>
                 Launch a Linux computer <ArrowRight size={14} />
               </Link>
@@ -433,16 +436,18 @@ export function ComputerCatalogPage(
             </div>
             <span className={styles.availableBadge}>Available</span>
             <h3>Linux Sandbox</h3>
-            <p>A small Linux computer with a terminal and no desktop, for scripts, builds and agents that only need a shell.</p>
+            <p>Run one command at a time in an isolated shell, with a workspace that keeps your files. No desktop or long-running services.</p>
             <div className={styles.osFacts}>
               <span>From 0.5 CPU</span>
               <span>From 1 GB RAM</span>
-              <span>Terminal only</span>
+              <span>One-shot commands</span>
             </div>
-            <p>Runs on a server you&apos;ve connected. Add one first if you haven&apos;t.</p>
+            <p>{managedLinuxSandboxEligible
+              ? "Run it on a server you've connected or use limited managed access on a paid Hivra Cloud plan."
+              : "Runs on a server you've connected. Add one first if you haven't."}</p>
             <details className={styles.technical}>
               <summary>Technical details</summary>
-              <p>Runs in an isolated sandbox on a server you connect.</p>
+              <p>Uses a sandbox boundary, not a hardware virtual machine.</p>
             </details>
             <Link
               className={styles.primaryButton}

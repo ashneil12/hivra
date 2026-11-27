@@ -13,6 +13,7 @@ const COLUMNS = [
   { title: "Product", links: [
     { label: "Agents", href: "/agents" },
     { label: "Computers", href: "/#computers" },
+    { label: "Linux sandboxes", href: "/sandboxes" },
     { label: "Hosting & self-hosting", href: "/#hosting" },
     { label: "Pricing", href: "/pricing" },
     { label: "Roadmap", href: "/roadmap" },

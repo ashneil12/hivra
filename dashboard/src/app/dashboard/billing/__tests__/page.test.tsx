@@ -880,19 +880,19 @@ describe("BillingPage", () => {
       });
     });
 
-    it("tells someone with no plan that a Hivra Cloud computer needs a paid plan, and what a plan that ended did", async () => {
+    it("shows the starting paid plan price and explains what happens to computers funded by a plan that ends", async () => {
       notSubscribed();
       render(<BillingPage />);
 
       // Plans opens for someone with no plan: the intro says the same thing.
       expect(await screen.findByText(
-        /^Every computer that Hivra Cloud runs for you needs a paid plan, from \$9\.99 a month for 2 vCPU and 4 GB of RAM\. A free account works with a computer or server you connect yourself\./,
+        /^Paid Hivra Cloud plans start at \$9\.99 a month for 2 vCPU and 4 GB of RAM\. A free account works with a computer or server you connect yourself\./,
       )).toBeInTheDocument();
       expect(screen.queryByText(/Every plan runs/)).not.toBeInTheDocument();
 
       await openTab("Overview");
       expect(screen.getByText(
-        "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself. If a plan has ended, your Hivra Cloud computers are stopped and their files are kept. Choose a plan, then press Start.",
+        "Paid Hivra Cloud plans start at $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself. If a paid plan ends, the computers it funded stop and their files are kept. Choose a plan, then press Start.",
       )).toBeInTheDocument();
     });
 

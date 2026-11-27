@@ -103,8 +103,16 @@ describe("ComputerCatalogPage", () => {
       "/dashboard/launch?kind=computer&start=1&profile=linux-terminal",
     );
     expect(screen.getByText(/Runs on a server you've connected/i, { selector: "article#linux-sandbox p" })).toBeInTheDocument();
+    expect(screen.queryByText(/limited managed access/i)).not.toBeInTheDocument();
     // No gVisor or other jargon on the card.
     expect(document.querySelector("article#linux-sandbox")).not.toHaveTextContent(/gVisor/i);
+  });
+
+  it("mentions paid managed access to the Linux Sandbox only for an admitted account", async () => {
+    render(<ComputerCatalogPage managedLinuxSandboxEligible />);
+    await screen.findByText("No computers yet");
+    fireEvent.click(screen.getByText("Browse operating systems"));
+    expect(screen.getByText(/limited managed access on a paid Hivra Cloud plan/)).toBeInTheDocument();
   });
 
   it("brings an opened OS catalog below the fold to the top under its heading", async () => {

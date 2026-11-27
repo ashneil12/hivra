@@ -3,7 +3,6 @@ import { CLI_RUN_LIFETIME, SERVER_SIDE_AGENTS_KEEP_WORKING } from "@/lib/blog/ru
 import {
   ENTRY_PLAN_PRICE,
   ENTRY_PLAN_SIZE,
-  HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
   LARGER_PLAN_PRICE,
   LARGER_PLAN_SIZE,
 } from "@/lib/blog/plan-facts";
@@ -31,7 +30,7 @@ export const doc: DocPage = {
       paragraphs: [
         "These are the nouns that everything else hangs off. If you only read one section, read this one.",
         "| Term | What it means | Read more |\n| --- | --- | --- |\n| **Agent** | An AI program that can act for you: read and write files, run commands and, where it has one, use a browser. In the dashboard an agent is something you launch, name, open and manage. Each agent runs on a computer of its own. | [A tour of the dashboard](/docs/dashboard-tour) |\n| **Supported agent** | An agent Hivra can launch for you. The list is in Launch, and each has its own docs page: [Claude Code](/docs/claude-code), [Codex](/docs/codex), [Hermes](/docs/hermes), [OpenClaw](/docs/openclaw), [Agent Zero](/docs/agent-zero), [Aeon](/docs/aeon) and [DeepSeek Harness](/docs/deepseek-harness). New Hermes launches may not yet be available on every Hivra site, and Launch shows what you can start. Previews are covered under Status labels below. | [Launch your first agent](/docs/getting-started) |\n| **Computer** | A private virtual machine, isolated from your own laptop and from other people's machines. An agent lives on one and keeps its files, logins and history there. A computer can also exist without an agent, for example an Ubuntu Desktop you use yourself. | [Ubuntu Desktop](/docs/ubuntu-desktop) |\n| **A computer of its own** | Hivra's phrase for the one-agent, one-computer arrangement. The agent's tools, files and login live on its computer, not on the machine you are typing at. It is a boundary, not a promise that the agent is safe. | [Security and access](/docs/security-and-access) |\n| **Hivra Cloud** | Computers that Hivra runs for you, so you do not manage any hardware. Every one needs a paid plan. | [Plans and billing](/docs/plans-and-billing) |\n| **Connected server** | A machine you own and connect to Hivra, so a launch can run on it instead of on Hivra Cloud. Your account must be eligible to connect it. | [Connect your own server](/docs/connect-your-own-server) |\n| **Host** | The physical or virtual machine that actually runs computers. On Hivra Cloud the host is Hivra's. On a connected server the host is yours, and whoever controls it can reach what runs on it. | [Security and access](/docs/security-and-access) |\n| **Capacity** | Room to run computers. The **Servers** page asks **How would you like to add capacity?** and offers three answers: **Let Hivra host it**, **Use my cloud account** and **Connect my own machine**. | [Connect your own server](/docs/connect-your-own-server) |\n| **Runtime** | The software that makes an agent work on its computer: a command line tool for Claude Code and Codex, or a web app for agents such as OpenClaw and Hermes. Where the docs say the runtime runs on the computer, they mean the agent itself runs there, not in your browser. | [Open your agent](/docs/open-an-agent) |\n| **Provisioner** | The versioned bundle of scripts Hivra installs on a host to build computers and set an agent up inside them. Releases are dated, such as 2026.11.10.5, and some agents need a host on a minimum release. | [Connect your own server](/docs/connect-your-own-server) |\n| **Gateway** | Hivra's authenticated gateway. It is how you reach an agent's web app, Terminal, Files and desktop: you sign in to Hivra, and the gateway passes you through to the computer. Apps such as OpenClaw and Agent Zero listen on the computer's localhost only, so the gateway is the only way in. | [Security and access](/docs/security-and-access) |",
-        HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
+        "A paid plan is the standard option for Hivra Cloud. See [pricing](/pricing) for managed hosting options.",
         "![The Add capacity chooser with three options: Let Hivra host it, Use my cloud account and Connect my own machine](/images/docs/dash-infra-choose.webp \"The first-setup chooser with sample data. These are the three answers to the capacity question defined above.\")",
         "If the difference between Hivra Cloud and a connected server is the thing you are deciding, the short version is this. On Hivra Cloud, Hivra runs the host and administrators keep infrastructure access to it. On a connected server you run the host, Hivra does not become its operator, and the work counts against your own hardware instead of a Hivra plan.",
       ],
@@ -90,11 +89,11 @@ export const doc: DocPage = {
   faqs: [
     {
       q: "What is the difference between a computer, a host and a server?",
-      a: "A computer is the private virtual machine an agent lives on. A host is the machine that runs computers, which is Hivra's on Hivra Cloud and yours on a connected server. A server is usually what you call the machine you connect yourself, and the Servers page is where you add it as capacity.",
+      a: "A computer is a private virtual machine or sandbox for an agent or your own work. A host is the machine that runs computers, which is Hivra's on Hivra Cloud and yours on a connected server. A server is usually what you call the machine you connect yourself, and the Servers page is where you add it as capacity.",
     },
     {
       q: "What is the difference between Hivra Cloud and a connected server?",
-      a: "On Hivra Cloud, Hivra runs the computers and every one needs a paid plan. A connected server is a machine you own that you connect to Hivra, if your account is eligible to connect it. Some agents run on Hivra Cloud only, such as Hermes and DeepSeek Harness.",
+      a: "On Hivra Cloud, Hivra runs the computers; the standard way to launch is with a paid plan. A connected server is a machine you own that you connect to Hivra, if your account is eligible to connect it. Some agents run on Hivra Cloud only, such as Hermes and DeepSeek Harness.",
     },
     {
       q: "Is Manage the same as Settings?",

@@ -24,7 +24,6 @@ import { BANNED_PUBLIC_CLAIMS, renderedCopy, sentences } from "@/app/features/__
 import {
   ENTRY_PLAN_PRICE,
   ENTRY_PLAN_SIZE,
-  HOSTED_COMPUTE_NEEDS_PLAN,
   MONEY_BACK_GUARANTEE,
 } from "@/lib/blog/plan-facts";
 import { getTokenSurfaceView, type TokenSurfaceView } from "@/lib/compliance/token-surface-view";
@@ -295,13 +294,13 @@ describe("/pricing page", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("promises a computer that stays on only in the approved words", async () => {
+  it("describes sleep as conditional without promising uninterrupted work", async () => {
     const { container } = await renderPricing();
     const text = (container.querySelector("main") as HTMLElement).textContent ?? "";
 
-    const approved = "A paid Hivra Cloud computer stays on and is not paused for inactivity.";
-    // The Hivra Cloud card and the question about turning the computer off.
-    expect(text.split(approved).length - 1).toBe(2);
+    expect(text).toContain("On eligible paid computers, you can use idle sleep or keep the computer awake");
+    expect(text).toContain("When idle sleep is enabled on an eligible paid computer, it can nap and then hibernate.");
+    expect(text).not.toContain("not paused for inactivity");
     expect(text).not.toMatch(/isn't paused simply because|let tasks continue/i);
     expect(text).not.toMatch(/never sleeps|always on|24\/7/i);
 
@@ -332,10 +331,8 @@ describe("/pricing page", () => {
     const rows = [...container.querySelectorAll("li")].map((item) => squash(item.textContent));
 
     expect(rows).toContain("Claude Code and Codex: Support signing in with your own provider account, subject to the provider's terms.");
-    // Owner decision, 21 October 2026: Hivra runs no free computer. No agent is singled out as the paid one
-    // (the list used to say "OpenClaw and Agent Zero: Require a paid Hivra Cloud size", so the rest read as free).
     expect(rows).toContain(
-      "On Hivra Cloud: Every Hivra Cloud computer needs a paid plan, whichever agent you run on it. Hermes runs on Hivra Cloud only.",
+      "On Hivra Cloud: Paid plans cover supported agents and computers. Hermes runs on Hivra Cloud only.",
     );
     expect(rows).toContain("On your own computer or server: A free account works with a computer or server you connect yourself.");
     expect(rows.filter((row) => /paid size|Require a paid|OpenClaw and Agent Zero/.test(row))).toEqual([]);
@@ -352,8 +349,8 @@ describe("/pricing page", () => {
     expect(text).toContain(`Check the terms for the ${MONEY_BACK_GUARANTEE}.`);
     expect(text).not.toMatch(/seven-day|eligible purchases|at checkout/i);
     expect(text).not.toMatch(/annual|yearly|per year|\$79|\$149/i);
-    // The repo rule keeps "eligible" off the page: neither the refund nor the provider-account sentences use it.
-    expect(text).not.toMatch(/eligible/i);
+    const refunds = screen.getByRole("region", { name: "Refunds and billing" });
+    expect(refunds).not.toHaveTextContent(/eligible/i);
   });
 
   it("never shows the md's editor notes, placeholders or implementer directions", async () => {
@@ -447,26 +444,23 @@ describe("/pricing questions", () => {
     }
   });
 
-  // Owner decision, 21 October 2026: "I'm not giving away free computers anymore." The page says in the canonical
-  // words that every computer Hivra Cloud runs is paid and that a free account works with your own computer or server.
-  it("states the paid-computer rule in the canonical words under the headline, in the first question and in a question of its own", async () => {
+  it("states the paid plan starting price and distinguishes free accounts from managed compute", async () => {
     const { container } = await renderPricing();
     const rule =
-      "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.";
-    expect(HOSTED_COMPUTE_NEEDS_PLAN).toBe(rule);
+      "Paid Hivra Cloud plans start at $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.";
     // Under the headline, built from the plan constants.
     const masthead = container.querySelector("main header") as HTMLElement;
     expect(masthead).toHaveTextContent(rule);
     expect(PRICING_INTRO).toContain(rule);
-    expect(rule).toContain(`from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}.`);
+    expect(rule).toContain(`at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}.`);
 
     const free = PRICING_FAQ.find(({ q }) => q === "Is Hivra free?");
     expect(free?.a).toBe(
-      "The open-source platform is free to self-host, and a free Hivra account works with a computer or server you connect yourself. That doesn't make the physical or cloud server free, and your AI usage still has a cost. A computer that Hivra runs for you is paid, from $9.99 a month for 2 vCPU and 4 GB of RAM.",
+      "The open-source platform is free to self-host, and a free Hivra account works with a computer or server you connect yourself. That doesn't make the physical or cloud server free, and your AI usage still has a cost. Paid Hivra Cloud plans start at $9.99 a month for 2 vCPU and 4 GB of RAM.",
     );
     const freeComputer = PRICING_FAQ.find(({ q }) => q === "Does Hivra run a free computer for me?");
     expect(freeComputer?.a).toBe(
-      "No. Every computer that Hivra Cloud runs for you needs a paid plan. A free account works with a computer or server that you connect yourself, and you can self-host the open-source platform at no software cost.",
+      "A free account does not include managed compute. It works with a computer or server that you connect yourself, and you can self-host the open-source platform at no software cost.",
     );
     // It sits right after "Is Hivra free?" and is marked up for search with its visible answer.
     expect(PRICING_FAQ.map(({ q }) => q).slice(0, 2)).toEqual(["Is Hivra free?", "Does Hivra run a free computer for me?"]);
@@ -487,7 +481,7 @@ describe("/pricing questions", () => {
 
     const stop = PRICING_FAQ.find(({ q }) => q === "What happens if I stop paying?");
     expect(stop?.a).toBe(
-      `Except for Hermes agents, which follow an older process set out in the terms, a computer that Hivra Cloud runs for you runs only while its plan is paid. If a card payment fails, we retry the card and keep the computer running for up to ${PAYMENT_GRACE_HOURS} hours after the first failed payment. If it is still unpaid then, or when a cancelled plan ends, we stop the computer. A stopped computer keeps its files for a limited time, so you can start it again once you have a paid plan.`,
+      `Except for Hermes agents, which follow an older process set out in the terms, this policy applies only to computers funded by a paid plan. If a card payment fails, we retry the card and keep the computer running for up to ${PAYMENT_GRACE_HOURS} hours after the first failed payment. If it is still unpaid then, or when a cancelled plan ends, we stop the computer. A stopped computer keeps its files for a limited time, so you can start it again once you have a paid plan.`,
     );
     // The Hermes exception comes first, as in the terms, so a Hermes customer is not told the 48 hours is theirs.
     expect(stop?.a.startsWith("Except for Hermes agents")).toBe(true);
@@ -499,7 +493,7 @@ describe("/pricing questions", () => {
     expect(faqGraph(container).mainEntity.find((entry) => entry.name === "What happens if I stop paying?")?.acceptedAnswer.text).toBe(stop?.a);
 
     const off = PRICING_FAQ.find(({ q }) => q === "Will Hivra turn my computer off when I'm not using it?");
-    expect(off?.a).toContain("A paid Hivra Cloud computer stays on and is not paused for inactivity. It is stopped if the plan behind it stops being paid.");
+    expect(off?.a).toContain("Open it again to wake it with its files intact");
   });
 
   it("answers in the site's own words: AI usage, an automatic migration, no one-click claim", () => {

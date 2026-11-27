@@ -1,7 +1,7 @@
 import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
 import { PRODUCT_FACTS_CHECKED } from "@/lib/compare/products/checked";
 import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
-import { AGENT_PAGES_LAST_MODIFIED } from "@/lib/hivra/agent-seo-catalog";
+import { AGENT_PAGES_LAST_MODIFIED, AGENT_SEO_SLUGS } from "@/lib/hivra/agent-seo-catalog";
 import { PRICES_AS_OF } from "@/app/pricing/pricing-content";
 import { dayToDate, PAGE_LAST_MODIFIED, TOOL_PAGE_LAST_MODIFIED, type PageLastModifiedKey } from "../seo-lastmod";
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
@@ -204,6 +204,8 @@ describe("seo urls", () => {
       ["/", "home", true],
       ["/pricing", "pricing", true],
       ["/features", "featuresHub", true],
+      ["/agents", "agentsHub", true],
+      ["/sandboxes", "sandboxes", false],
       ["/features/persistent-memory", "featureDetail", true],
       ["/compare", "compareHub", true],
       ["/compare/vs-self-hosted", "compareDetail", true],
@@ -229,8 +231,9 @@ describe("seo urls", () => {
       for (const [path, key, floored] of REGISTRY_ROUTES) {
         expect([path, day(byPath.get(path)?.lastModified)]).toEqual([path, day(withFloor(PAGE_LAST_MODIFIED[key], floored))]);
       }
-      // The agent pages carry their date in the agent catalog.
-      expect(["/agents", day(byPath.get("/agents")?.lastModified)]).toEqual(["/agents", day(withFloor(AGENT_PAGES_LAST_MODIFIED, true))]);
+      for (const slug of AGENT_SEO_SLUGS) {
+        expect(day(byPath.get(`/agents/${slug}`)?.lastModified)).toBe(day(withFloor(AGENT_PAGES_LAST_MODIFIED, true)));
+      }
     });
 
     it("reads every key of the registry through some route", () => {

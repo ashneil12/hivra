@@ -17,8 +17,6 @@ import {
   ENTRY_PLAN_SIZE,
   CONNECTED_SERVER_ELIGIBILITY,
   FREE_ACCOUNT_SENTENCE,
-  HOSTED_COMPUTE_NEEDS_PLAN,
-  HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
   LARGER_PLAN_PRICE,
   MONEY_BACK_GUARANTEE,
   PLAN_DISPLAY,
@@ -49,7 +47,7 @@ function hostedSize(planKey: HostedSize["planKey"], price: string, body: string)
 }
 
 export const HOSTED_SIZES: HostedSize[] = [
-  hostedSize("operator", ENTRY_PLAN_PRICE, "Hivra runs the computer for you. It stays on and isn't paused for inactivity."),
+  hostedSize("operator", ENTRY_PLAN_PRICE, "Hivra runs the computer for you. Eligible paid computers can use idle sleep or be kept awake."),
   hostedSize("fleet", LARGER_PLAN_PRICE, "The same, with twice the CPU and memory, for bigger builds and heavier workloads."),
 ];
 
@@ -187,12 +185,13 @@ export const CARD_TRIAL_PRICING = {
 
 /** The paragraphs under the headline. */
 const SEPARATE_MODEL_COST = "Prices are per month, in US dollars. Your AI provider's charges are separate, whether you sign in with your own account (where the agent supports it, subject to the provider's terms) or use an API key.";
+const PAID_HOSTING = `Paid Hivra Cloud plans start at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}.`;
 export const PRICING_INTRO = [
   "Sign up free and connect your own server, or use Hivra's open-source platform yourself. Or pay us to run the computer for you. No requirement to buy a token.",
-  HOSTED_COMPUTE_NEEDS_PLAN,
+  `${PAID_HOSTING} ${FREE_ACCOUNT_SENTENCE}`,
   SEPARATE_MODEL_COST,
 ] as const;
-export const PRICING_INTRO_FREE_CLOSED = [HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, SEPARATE_MODEL_COST] as const;
+export const PRICING_INTRO_FREE_CLOSED = [PAID_HOSTING, SEPARATE_MODEL_COST] as const;
 
 export const PRICING_OPTIONS = {
   heading: "Choose how you want to run it",
@@ -216,7 +215,7 @@ export const PRICING_OPTIONS = {
     meta: `${ENTRY.cpu} and ${ENTRY.memory}`,
     body: [
       "A dedicated working environment for an agent or for you, without having to provision and maintain the server yourself.",
-      "Keep its files and sessions on its computer, open it through your browser and leave it running when your laptop is closed. A paid Hivra Cloud computer stays on and is not paused for inactivity.",
+      "Keep work on your remote computer and open it through your browser. On eligible paid computers, you can use idle sleep or keep the computer awake for work that needs it.",
     ],
     goodFor: "Good for getting started, everyday agent use, research, automation and smaller software projects.",
   },
@@ -247,7 +246,7 @@ export const PRICING_COMPARISON = {
     { label: "Who operates the server?", cells: ["You", "Hivra", "Hivra"] },
     { label: "Browser access", cells: ["According to your setup", "Yes", "Yes"] },
     { label: "Remains available when your laptop closes", cells: ["If your server stays on", "Yes", "Yes"] },
-    { label: "Inactivity pause on paid cloud computer", cells: ["Not applicable", "No", "No"] },
+    { label: "Idle sleep", cells: ["According to your setup", "On supported computers", "On supported computers"] },
     { label: "AI provider usage included", cells: ["No", "No", "No"] },
     { label: MONEY_BACK_GUARANTEE, cells: ["Not applicable", "Yes", "Yes"] },
   ],
@@ -266,7 +265,7 @@ export const PRICING_AGENTS = {
   heading: "Important differences between agents",
   intro: "What you can run depends on where it runs:",
   items: [
-    { name: "On Hivra Cloud:", text: "Every Hivra Cloud computer needs a paid plan, whichever agent you run on it. Hermes runs on Hivra Cloud only." },
+    { name: "On Hivra Cloud:", text: "Paid plans cover supported agents and computers. Hermes runs on Hivra Cloud only." },
     { name: "On your own computer or server:", text: FREE_ACCOUNT_SENTENCE, textFreeClosed: CONNECTED_SERVER_ELIGIBILITY },
     { name: "Claude Code and Codex:", text: "Support signing in with your own provider account, subject to the provider's terms." },
     {
@@ -321,13 +320,13 @@ export const PRICING_FAQ_HEADING = "Questions people usually ask";
 export const PRICING_FAQ: PricingFaqItem[] = [
   {
     q: "Is Hivra free?",
-    a: `The open-source platform is free to self-host, and a free Hivra account works with a computer or server you connect yourself. That doesn't make the physical or cloud server free, and your AI usage still has a cost. A computer that Hivra runs for you is paid, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}.`,
-    aFreeClosed: `The open-source platform is free to self-host. That doesn't make the physical or cloud server free, and your AI usage still has a cost. Hivra Cloud has no free plan: a computer that Hivra runs for you is paid, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}.`,
+    a: `The open-source platform is free to self-host, and a free Hivra account works with a computer or server you connect yourself. That doesn't make the physical or cloud server free, and your AI usage still has a cost. ${PAID_HOSTING}`,
+    aFreeClosed: `The open-source platform is free to self-host. That doesn't make the physical or cloud server free, and your AI usage still has a cost. ${PAID_HOSTING}`,
   },
   {
     q: "Does Hivra run a free computer for me?",
-    a: "No. Every computer that Hivra Cloud runs for you needs a paid plan. A free account works with a computer or server that you connect yourself, and you can self-host the open-source platform at no software cost.",
-    aFreeClosed: "No. Every computer that Hivra Cloud runs for you needs a paid plan. You can self-host the open-source platform at no software cost.",
+    a: "A free account does not include managed compute. It works with a computer or server that you connect yourself, and you can self-host the open-source platform at no software cost.",
+    aFreeClosed: "Hivra Cloud does not include free managed compute. You can self-host the open-source platform at no software cost.",
   },
   {
     q: "Do I have to pay for an AI model as well?",
@@ -339,13 +338,13 @@ export const PRICING_FAQ: PricingFaqItem[] = [
   },
   {
     q: "Will Hivra turn my computer off when I'm not using it?",
-    a: "A paid Hivra Cloud computer stays on and is not paused for inactivity. It is stopped if the plan behind it stops being paid. If you start a long-running process, configure it appropriately so it survives the closure of a terminal or session.",
+    a: "When idle sleep is enabled on an eligible paid computer, it can nap and then hibernate. Open it again to wake it with its files intact, or keep it awake if work needs to continue in the background.",
   },
   {
     q: "What happens if I stop paying?",
     // The same behaviour and the same Hermes exception the terms state (app/terms/page.tsx, "Failed Payments and Cancellation" and
     // "Hermes Agents"). The hours are the billing constant. The link goes on the first "terms", in the Hermes clause.
-    a: `Except for Hermes agents, which follow an older process set out in the terms, a computer that Hivra Cloud runs for you runs only while its plan is paid. If a card payment fails, we retry the card and keep the computer running for up to ${PAYMENT_GRACE_HOURS} hours after the first failed payment. If it is still unpaid then, or when a cancelled plan ends, we stop the computer. A stopped computer keeps its files for a limited time, so you can start it again once you have a paid plan.`,
+    a: `Except for Hermes agents, which follow an older process set out in the terms, this policy applies only to computers funded by a paid plan. If a card payment fails, we retry the card and keep the computer running for up to ${PAYMENT_GRACE_HOURS} hours after the first failed payment. If it is still unpaid then, or when a cancelled plan ends, we stop the computer. A stopped computer keeps its files for a limited time, so you can start it again once you have a paid plan.`,
     links: [{ text: "terms", href: "/terms" }],
   },
   {
@@ -359,7 +358,7 @@ export const PRICING_FAQ: PricingFaqItem[] = [
   },
   {
     q: "Do I need to buy $HIVRA?",
-    a: `No. Self-hosting and card-paid cloud access do not require it. Where holder access is enabled for an account, a new holder qualification is valued at $${HOLDER_TIER_TERMS.pro.usd} for Pro (${HOLDER_TIER_TERMS.pro.cpu} vCPU and ${HOLDER_TIER_TERMS.pro.ramGb} GB) or $${HOLDER_TIER_TERMS.power.usd} for Power (${HOLDER_TIER_TERMS.power.cpu} vCPU and ${HOLDER_TIER_TERMS.power.ramGb} GB), converted to token amount at the live market price. Accounts that already qualified keep the amount locked when they qualified. See the token information if you want to understand the separate token ecosystem.`,
+    a: `No. Self-hosting and card-paid cloud access do not require it. Where holder access is enabled, qualified holders can launch supported computers without a subscription, subject to capacity. A new holder qualification is valued at $${HOLDER_TIER_TERMS.pro.usd} for Pro (${HOLDER_TIER_TERMS.pro.cpu} vCPU and ${HOLDER_TIER_TERMS.pro.ramGb} GB) or $${HOLDER_TIER_TERMS.power.usd} for Power (${HOLDER_TIER_TERMS.power.cpu} vCPU and ${HOLDER_TIER_TERMS.power.ramGb} GB), converted to token amount at the live market price. Accounts that already qualified keep the amount locked when they qualified. See the token information if you want to understand the separate token ecosystem.`,
     links: [{ text: "token information", href: "/token" }],
     tokenOnly: true,
   },

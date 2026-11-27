@@ -11,6 +11,7 @@ import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import { AGENT_SEO_ENTRIES } from "@/lib/hivra/agent-seo-catalog";
 import { getAgent } from "@/lib/hivra/agent-catalog";
+import { isCatalogAppLaunchable, UNIVERSAL_CATALOG_MANIFESTS } from "@/lib/hivra/catalog-manifests";
 import { HeadingLines, Inline } from "./AgentProse";
 import { TermRows } from "./AgentBlocks";
 import { HUB_CONTENT } from "./content";
@@ -42,6 +43,7 @@ export default function AgentsIndexPage() {
     const def = getAgent(card.slug);
     return entry && def ? [{ card, entry, def }] : [];
   });
+  const certifiedApps = UNIVERSAL_CATALOG_MANIFESTS.filter((manifest) => isCatalogAppLaunchable(manifest));
 
   const schema = {
     "@context": "https://schema.org",
@@ -134,6 +136,21 @@ export default function AgentsIndexPage() {
               </li>
             ))}
           </ol>
+        </section>
+
+        <section id="verified-catalog" className={`${agentStyles.choose} ${agentStyles.hubProse}`}>
+          <h2 className={agentStyles.hubHeading}>Verified catalog preview</h2>
+          <p>
+            The catalog preview includes open-source agents and apps that passed end-to-end launch checks
+            on Canary. An entry appears in Launch only where the preview is enabled and its current version
+            still has a passing check. Registry entries without that proof are not offered for launch.
+            Canary verification does not mean an app is available in production.
+          </p>
+          {certifiedApps.length > 0 && (
+            <ul className={agentStyles.catalogEntries} aria-label="Verified catalog entries">
+              {certifiedApps.map(({ id, name }) => <li key={id}>{name}</li>)}
+            </ul>
+          )}
         </section>
 
         <section className={`${agentStyles.choose} ${agentStyles.hubProse}`}>

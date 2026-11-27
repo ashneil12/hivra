@@ -56,8 +56,7 @@ export default function DownloadPage({
             </div>
             {mac.status === "published" ? (
               <p>
-                Before installing, check that your Mac meets the supported system requirements and that the release
-                comes from an official Hivra distribution channel.
+                Hivra for Mac is a desktop client for your remote computers. It does not launch a hosted macOS computer.
               </p>
             ) : null}
             <p>If the desktop app is not available for your Mac yet, you can still use Hivra in your browser.</p>
@@ -69,8 +68,8 @@ export default function DownloadPage({
           <h2 id="download-where-heading">Keep the work where it belongs</h2>
           <div className={styles.body}>
             <p>
-              Your Hivra-hosted computers run remotely. A paid Hivra Cloud computer stays on and is not paused for
-              inactivity. Closing the desktop app doesn&rsquo;t turn it into a local process, although individual
+              Your Hivra-hosted computers run remotely. Closing the desktop app doesn&rsquo;t stop them, but an
+              eligible computer can sleep when idle if sleep is enabled. You can wake it when you return. Individual
               agent workflows can still stop, fail or reach their own usage limits.
             </p>
             <p>

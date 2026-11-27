@@ -1,5 +1,5 @@
 import type { DocPage } from "../types";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, PLAN_SUMMARY } from "@/lib/blog/plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, PLAN_SUMMARY } from "@/lib/blog/plan-facts";
 
 export const doc: DocPage = {
   slug: "ubuntu-desktop",
@@ -24,7 +24,7 @@ export const doc: DocPage = {
       heading: "Where it runs and what it needs",
       paragraphs: [
         "There are two places an Ubuntu Desktop can run.",
-        "- **Hivra Cloud.** Hivra runs the computer for you. " + HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE + "\n- **A Proxmox VE server you connected.** You connect it with SSH details, then launch onto it if your account is eligible to connect it. The computer uses your server's capacity. See [Run agents on your own server](/docs/connect-your-own-server).",
+        "- **Hivra Cloud.** Hivra runs the computer for you on a paid plan.\n- **A Proxmox VE server you connected.** You connect it with SSH details, then launch onto it if your account is eligible to connect it. The computer uses your server's capacity. See [Run agents on your own server](/docs/connect-your-own-server).",
         "The one-command Ubuntu connect is a different route. It gives you [Linux Sandbox](/docs/linux-sandbox) only and cannot run Ubuntu Desktop.",
         "The computer itself has these requirements, checked before it launches:",
         "| Requirement | Value |\n| --- | --- |\n| Operating system | Ubuntu 22.04 LTS |\n| Minimum CPU | 2 |\n| Minimum memory | 4 GB |\n| Minimum disk | 40 GB |\n| Host architecture | x86 (amd64) |\n| Host virtualization | Proxmox with KVM (hardware virtualization) |\n| Machine type | q35 with UEFI firmware and a virtio display |",
@@ -72,7 +72,7 @@ export const doc: DocPage = {
         "**Resize.** **Resources** has four pickers: **Reserved CPU**, **Maximum CPU**, **Reserved memory** and **Maximum memory**. Options below the floor of 2 CPU and 4 GB, or above your plan or host limit, are disabled. Changing a value turns the button into **Apply** with the new numbers on it. Resizing restarts the computer, so save your work first. If an agent is writing a reply on the computer, Manage asks you to confirm with a **Resize anyway** button.",
         "**Rename.** A computer can be renamed at any time. That changes the name only.",
         "**Destroy.** The danger zone at the bottom of Manage is titled **Destroy this computer**. It permanently deletes the computer and everything on it, including files and local logins. This cannot be undone, and it also removes the computer's restore points.",
-        `On a paid plan the computer stays on and is not paused for inactivity. Stopping it yourself is a deliberate action, and while a computer is stopped, Desktop, Terminal and Files are unavailable and Restart is blocked until you press Start.`,
+        "While a computer is stopped, Desktop, Terminal and Files are unavailable and Restart is blocked until you press Start. The idle-sleep controls described for eligible paid KVM agents do not appear on Ubuntu Desktop.",
       ],
     },
     {
@@ -99,7 +99,7 @@ export const doc: DocPage = {
       paragraphs: [
         "You get a stock Ubuntu 22.04 LTS desktop built from the public Ubuntu cloud image, plus Hivra's connection service that provides the Desktop, Terminal and Files views. You have the Hivra folder described above. Hivra does not publish a list of preinstalled desktop apps, so install what you need with the package manager.",
         "Ubuntu Desktop is one of several computers. The table compares the ones that are not agents.",
-        "| | Ubuntu Desktop | Linux computer | Linux Sandbox | Omarchy |\n| --- | --- | --- | --- | --- |\n| Desktop in the browser | Yes | No | No | Yes |\n| Terminal and Files | Yes | Yes | A Run a command section in Manage | Not confirmed |\n| Minimum size | 2 CPU, 4 GB | 0.5 CPU, 1 GB | 0.5 CPU, 1 GB | 4 CPU, 8 GB |\n| Where it runs | Hivra Cloud or a connected Proxmox server | Hivra Cloud | A server you connected | A prepared computer on Hivra Cloud |\n| Resize in Manage | Yes | Yes | Within sandbox limits | No, fixed size |\n| Restore points | Yes, up to 5, when the computer is on Proxmox with recorded ownership checks | Not confirmed | No | No |",
+        "| | Ubuntu Desktop | Linux computer | Linux Sandbox | Omarchy |\n| --- | --- | --- | --- | --- |\n| Desktop in the browser | Yes | No | No | Yes |\n| Terminal and Files | Yes | Yes | One-shot commands in Manage | Not confirmed |\n| Minimum size | 2 CPU, 4 GB | 0.5 CPU, 1 GB | 0.5 CPU, 1 GB | 4 CPU, 8 GB |\n| Where it runs | Hivra Cloud or a connected Proxmox server | Hivra Cloud on a paid plan | A server you connected for normal use | A prepared computer on Hivra Cloud |\n| Resize in Manage | Yes | Yes | Within sandbox limits | No, fixed size |\n| Restore points | Yes, up to 5, when the computer is on Proxmox with recorded ownership checks | Not confirmed | No | No |",
         "![The Files view of an agent page with a Files and Changes switch, shown with sample data](/images/docs/dash-agent-files.webp \"The Files and Changes switch, shown on an agent page with sample data. A computer's view list is shorter\")\n\n![The Manage page side navigation on an agent page with sample data](/images/docs/dash-agent-manage.webp \"The Manage page, shown on an agent page with sample data. A computer's Manage list differs\")\n\nMore on each: [Linux computer](/docs/linux-computer), [Linux Sandbox](/docs/linux-sandbox) and [Omarchy](/docs/omarchy).",
         "Agents such as Claude Code or Codex run on a computer of their own. An agent does not get an Ubuntu Desktop by default. Whether an agent can be placed on an Ubuntu Desktop you already have depends on whether that option is switched on for your account. Home and **Computers** will show it when it is.",
       ],

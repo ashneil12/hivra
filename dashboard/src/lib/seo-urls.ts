@@ -62,6 +62,12 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
       priority: 0.9,
     },
     {
+      url: `${SITE_URL}/sandboxes`,
+      lastModified: dayToDate(PAGE_LAST_MODIFIED.sandboxes),
+      changeFrequency: "monthly",
+      priority: 0.7,
+    },
+    {
       url: `${SITE_URL}/compare`,
       lastModified: cutoverPage(PAGE_LAST_MODIFIED.compareHub),
       changeFrequency: "weekly",
@@ -242,7 +248,7 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
 
   const agentPagesLastModified = cutoverPage(AGENT_PAGES_LAST_MODIFIED);
   const agentPages: MetadataRoute.Sitemap = [
-    { url: `${SITE_URL}/agents`, lastModified: agentPagesLastModified, changeFrequency: "weekly", priority: 0.9 },
+    { url: `${SITE_URL}/agents`, lastModified: cutoverPage(PAGE_LAST_MODIFIED.agentsHub), changeFrequency: "weekly", priority: 0.9 },
     ...AGENT_SEO_SLUGS.map((slug) => ({
       url: `${SITE_URL}/agents/${slug}`,
       lastModified: agentPagesLastModified,

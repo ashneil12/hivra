@@ -21,7 +21,7 @@ export const doc: DocPage = {
     {
       heading: "Where it runs and what it costs",
       paragraphs: [
-        "Linux Sandbox runs only on a server you connected. Hivra Cloud does not run it. Your account must be eligible to connect the server. You pay your own provider for the server. See [what you pay for](/docs/plans-and-billing).",
+        "For normal use, Linux Sandbox runs on a gVisor-ready server you connected. Your account must be eligible to connect the server, and you pay your own provider for it. The managed Hivra Cloud candidate is restricted to an expiring standing-account QA window on Canary. A paid plan alone does not give you access. See [what you pay for](/docs/plans-and-billing).",
         "| | Linux Sandbox | Linux computer | Ubuntu Desktop |\n| --- | --- | --- | --- |\n| Runs on | A server you connected with the one command | Hivra Cloud | Hivra Cloud, or a Proxmox VE server you connected |\n| Hivra requirement | Account eligible to connect a server | Plan with Hivra Cloud | Plan with Hivra Cloud or eligibility to connect a server |\n| Interface | Run a command, with output | Terminal and Files | Desktop |",
         "The one-command Ubuntu connect gives you Linux Sandbox and nothing more. Claude Code, Codex, OpenClaw, Agent Zero, Aeon and Ubuntu Desktop on your own hardware need a Proxmox VE server connected with SSH details. [Run agents on your own server](/docs/connect-your-own-server) covers both routes.",
       ],
@@ -81,7 +81,7 @@ export const doc: DocPage = {
     {
       heading: "Manage it: start, stop, resize, update, destroy",
       paragraphs: [
-        "**Overview.** Shows the state, CPU and memory, with **Stop** (or **Start** when it is stopped) and **Refresh**. The name beside it can be renamed in place. An **Agent** card says that adding an agent to a computer you already have is not available yet, and links to **Launch an agent**. Live usage and restore points are not available for Linux Sandboxes yet.",
+        "**Overview.** Shows the state, CPU and memory, with **Stop** (or **Start** when it is stopped) and **Refresh**. Stop and Start keep files saved in `/workspace`, not running processes or in-memory scratch space. Automatic idle stop is a separate Canary QA pilot, not a feature of a sandbox on your own server or a way to resume a saved session. An **Agent** card links to **Launch an agent**; you cannot attach one to Linux Sandbox. Live usage and restore points are not available.",
         "**Resources.** **CPU limit** offers 0.5, 1, 2, 4 and 8 CPU, and **Memory limit** offers 1, 2, 4, 8 and 16 GB. Press **Apply limits** to apply them. Because reserved and maximum are the same for gVisor, there is one control each, enforced as cgroup limits. A change the host refuses shows its reason right under the button.",
         "**Updates.** This section appears when Hivra has update information for the sandbox. If no update can be applied, **Update sandbox** is disabled and a short reason is shown beneath it. A sandbox runs a fixed, read-only system image. **Update sandbox** recreates it on Hivra's current image and keeps your workspace. Anything running in it stops, and Hivra asks you to confirm first. If the sandbox release on your server is older than the one Hivra now uses, Hivra says: \"Set up Linux Sandbox on this server again to use Hivra's current sandbox release. Your sandboxes keep running meanwhile.\" Reinstall the setup from the server's card, then launch or update.",
         "**Advanced.** Shows details and history, a list of what is not available, and **Destroy this sandbox**. Destroying removes the sandbox and its private workspace volume, and does not alter the connected server or your other computers. It asks you to tick the checkbox that begins \"I understand this is irreversible\", type the sandbox's name and press **Permanently destroy**. The name check is case sensitive and the button waits a moment before it accepts a press, so a stray tap does nothing.",
@@ -108,7 +108,7 @@ export const doc: DocPage = {
     {
       heading: "What Hivra does and does not do",
       paragraphs: [
-        "- Hivra inspects first and changes the server only after you approve setup.\n- Hivra does not create a computer or buy anything while it sets up the server. Launch is its own step.\n- Hivra does not run Linux Sandbox on Hivra Cloud.\n- Hivra does not filter the sandbox's outbound network traffic.\n- Hivra does not give a sandbox a desktop, public ports, host folders or administrator access.\n- Hivra does not put an agent in a Linux Sandbox yet. Adding one to an existing computer is not available.\n- Hivra does not guarantee that a server is compatible just because you connected it.\n- Hivra does not provide live usage or restore points for Linux Sandboxes yet.\n- Hivra does not become the operator of your server, and the host kernel stays under your control.",
+        "- Hivra inspects first and changes the server only after you approve setup.\n- Hivra does not create a computer or buy anything while it sets up the server. Launch is its own step.\n- Managed Linux Sandbox is not a public Hivra Cloud offering.\n- Hivra does not filter the sandbox's outbound network traffic.\n- Hivra does not give a sandbox a desktop, public ports, host folders or administrator access.\n- Hivra does not put an agent in a Linux Sandbox yet.\n- Hivra does not guarantee that a server is compatible just because you connected it.\n- Hivra does not provide live usage or restore points for Linux Sandboxes yet.\n- Hivra does not become the operator of your server, and the host kernel stays under your control.",
       ],
     },
   ],
@@ -119,7 +119,7 @@ export const doc: DocPage = {
     },
     {
       q: "Can I use it on Hivra Cloud?",
-      a: "No. Linux Sandbox runs only on a server you connected. If you want a light computer that Hivra runs for you, use a Linux computer on a paid plan.",
+      a: "Managed Linux Sandbox is not available for general launch. For a terminal and files on a headless VM Hivra runs for you, use a Linux computer on a paid plan.",
     },
     {
       q: "Is gVisor the same as a virtual machine?",
