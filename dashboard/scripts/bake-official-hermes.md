@@ -11,6 +11,9 @@ mkdir -m 0700 hermes-bake-output
 bash dashboard/scripts/bake-official-hermes.sh hermes-bake-output
 ```
 
+The appliance defaults to 4 GiB. On an isolated builder with spare RAM, set
+`HIVRA_HERMES_BAKE_MEMORY_MB` to `6144` or `8192`.
+
 The recipe starts from a fresh Ubuntu cloud disk, verifies the dated Ubuntu bytes and the upstream installer by SHA-256, and invokes the unmodified installer as `bux` at the recorded official Git commit. The installer builds Hermes's Dashboard (9119), then Hermes builds its Desktop Webapp (9120). After removing temporary profile state, the bake checks the entry pages and runs Hermes's own build receipt validator on both surfaces. A missing or stale build prevents sealing. The disk has QEMU Guest Agent and the launch tools preloaded. The builder clears image identities before sealing a standalone qcow2. It never provisions a tenant, starts a Hivra tunnel, or creates a live VM. Apt mirror state can change; the **output image SHA**, rather than the recipe or an upstream tag, selects one reviewed set of resulting bytes.
 
 The script emits `hivra-hermes-<imageSha256>.qcow2` and a same-named JSON manifest. Before staging, independently recheck the artifact SHA, format and absence of backing files. Inspect the disk read-only: it must have no SSH host keys or authorized keys, initialized machine ID, cloud-init instance data, model/tunnel keys, access tokens or pre-existing gateway service. Check that the recorded release, official Git commit, CLI and Webapp are present.
