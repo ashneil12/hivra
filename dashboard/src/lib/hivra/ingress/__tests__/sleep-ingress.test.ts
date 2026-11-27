@@ -15,7 +15,10 @@ jest.mock("@/lib/supabase", () => ({
     from: (table: string) => {
       const q: Record<string, unknown> = {};
       for (const m of ["select", "eq", "in", "limit"]) q[m] = () => q;
-      q.update = (patch: unknown) => { mockUpdate(table, patch); return q; };
+      q.update = (patch: unknown) => {
+        q.then = (resolve: (value: unknown) => unknown) => Promise.resolve(mockUpdate(table, patch)).then(resolve);
+        return q;
+      };
       q.maybeSingle = () => (table === "hivra_agents" ? mockReadRow() : mockHostRow());
       q.then = (resolve: (value: unknown) => unknown) => Promise.resolve(mockListRows(table)).then(resolve);
       return q;
@@ -150,7 +153,7 @@ describe("sleepHivraAgent with host ingress", () => {
     mockReadRow.mockResolvedValue({ data: eligibleRow({ cf_tunnel_id: "22222222-2222-4222-8222-222222222222" }), error: null });
     mockHostRow.mockResolvedValue({ data: host, error: null });
     mockListRows.mockReturnValue({ data: [], error: null });
-    mockUpdate.mockReturnValue(undefined);
+    mockUpdate.mockReturnValue({ data: [{ id: AGENT_ID }], error: null });
     mockLapsed.mockResolvedValue(false);
     mockResolveTarget.mockResolvedValue({ ok: true, target });
     mockClaim.mockResolvedValue(4);
