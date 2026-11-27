@@ -75,14 +75,16 @@ function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: str
 describe("host allocation lock lifecycle", () => {
   it.each(["hermes", "claude", "codex", "openclaw", "deepseek-harness", "agent-zero"])(
     "batches capacity and IP reads under the allocation lock for managed %s on the reviewed Canary release", (kind) => {
-      const script = renderedPhase1(false, "2026.11.27.3", kind);
-      const admission = script.indexOf("HIVRA_CAPACITY_BATCH_QEMU=1 bash ");
-      expect(admission).toBeGreaterThan(script.indexOf("flock -w"));
-      expect(admission).toBeGreaterThan(script.indexOf("OBSERVED_MANIFEST_SHA="));
-      expect(admission).toBeLessThan(script.indexOf("claimed_octets="));
-      expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
-      expect(script).toContain('configs=(/etc/pve/qemu-server/*.conf)');
-      expect(script).not.toContain("qm list");
+      for (const version of ["2026.11.27.3", "2026.11.27.4"]) {
+        const script = renderedPhase1(false, version, kind);
+        const admission = script.indexOf("HIVRA_CAPACITY_BATCH_QEMU=1 bash ");
+        expect(admission).toBeGreaterThan(script.indexOf("flock -w"));
+        expect(admission).toBeGreaterThan(script.indexOf("OBSERVED_MANIFEST_SHA="));
+        expect(admission).toBeLessThan(script.indexOf("claimed_octets="));
+        expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+        expect(script).toContain('configs=(/etc/pve/qemu-server/*.conf)');
+        expect(script).not.toContain("qm list");
+      }
       expect(renderedPhase1(false, "2026.11.27.2", kind)).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
       expect(renderedPhase1(true, undefined, kind)).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
     },
