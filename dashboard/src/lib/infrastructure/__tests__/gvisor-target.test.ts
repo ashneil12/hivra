@@ -9,10 +9,24 @@ const mockBeginPreflight = jest.fn();
 const mockCompletePreflight = jest.fn();
 const mockLoadSnapshot = jest.fn();
 const mockRpc = jest.fn();
+const mockDiscover = jest.fn();
+const mockGetTarget = jest.fn();
+const mockGetAuthority = jest.fn();
+const mockFrom = jest.fn();
 
 jest.mock("server-only", () => ({}));
-jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { rpc: (...args: unknown[]) => mockRpc(...args) } }));
+jest.mock("@/lib/supabase", () => ({ supabaseAdmin: {
+  rpc: (...args: unknown[]) => mockRpc(...args), from: (...args: unknown[]) => mockFrom(...args),
+} }));
+jest.mock("../host-discovery", () => ({ discoverInfrastructureHost: (...args: unknown[]) => mockDiscover(...args) }));
+jest.mock("@/lib/billing/instance-entitlement", () => ({
+  resolveEffectiveSubscription: async () => ({ plan: "operator", status: "active", instance_limit: 3 }),
+}));
+jest.mock("@/lib/billing/plan-ladder-entitlement", () => ({ loadLadderEntitlement: async () => null }));
+jest.mock("@/lib/subscription", () => ({ getPlan: () => ({ totalCpu: 2, totalRam: 4096 }) }));
 jest.mock("../connection-store", () => ({
+  getInfrastructureConnectionAuthority: (...args: unknown[]) => mockGetAuthority(...args),
+  getInfrastructureDeploymentTarget: (...args: unknown[]) => mockGetTarget(...args),
   loadInfrastructureConnectionSecret: (...args: unknown[]) => mockLoadConnection(...args),
   beginInfrastructureConnectionPreflight: (...args: unknown[]) => mockBeginPreflight(...args),
   completeInfrastructureConnectionPreflight: (...args: unknown[]) => mockCompletePreflight(...args),
@@ -37,7 +51,13 @@ import { join } from "node:path";
 
 import { hasHostAdministratorAuthority, hasRuntimeHostAuthority } from "../host-authority";
 import type { HostDiscoverySnapshot } from "../host-discovery-contracts";
-import { preflightGvisorTarget } from "../gvisor-target";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { checkManagedGvisorLaunchAuthority } from "@/lib/hivra/managed-gvisor-authority";
+import {
+  HIVRA_GVISOR_ADAPTER_VERSION, HIVRA_GVISOR_BUNDLE_SHA256, HIVRA_GVISOR_IMAGE, HIVRA_GVISOR_PREFLIGHT_TTL_MS,
+} from "@/lib/hivra/gvisor-computer-contract";
+import { preflightGvisorTarget, refreshManagedGvisorTarget } from "../gvisor-target";
 
 const USER = "user_test";
 const CONNECTION = "33333333-3333-4333-8333-333333333333";
@@ -194,5 +214,84 @@ describe("preflightGvisorTarget", () => {
       .rejects.toMatchObject({ code: "unsupported", message: "Linux Sandbox needs root or passwordless sudo on this server." });
     expect(mockLoadSnapshot).not.toHaveBeenCalled();
     expect(mockRunScript).not.toHaveBeenCalled();
+  });
+});
+
+describe("managed evidence renewal", () => {
+  const targetId = "44444444-4444-4444-8444-444444444444";
+  const config = { authorityUserId: USER, connectionId: CONNECTION, targetId, connectionRevision: 5 };
+  const env: NodeJS.ProcessEnv = {
+    NODE_ENV: "test",
+    HIVRA_MANAGED_GVISOR_LAUNCH_ENABLED: "true",
+    HIVRA_MANAGED_GVISOR_AUTHORITY_USER_ID: USER,
+    HIVRA_MANAGED_GVISOR_CONNECTION_ID: CONNECTION,
+    HIVRA_MANAGED_GVISOR_TARGET_ID: targetId,
+    HIVRA_MANAGED_GVISOR_CONNECTION_REVISION: "5",
+  };
+  const runtimeSha = "e".repeat(64);
+  const sha = createHash("sha256").update(readFileSync("provisioner/gvisor/hivra-gvisor-adapter.py")).digest("hex");
+  const output = (runscSha256: string) => ({
+    ok: true,
+    stdout: "HIVRA_GVISOR_PREFLIGHT_V1 " + JSON.stringify({
+      adapterVersion: HIVRA_GVISOR_ADAPTER_VERSION, adapterSha256: sha, bundleSha256: HIVRA_GVISOR_BUNDLE_SHA256,
+      runscSha256, cpu: 2, memoryMb: 4096, memoryAvailableMb: 3072,
+      storageTotalBytes: 1_000_000, storageAvailableBytes: 999_999,
+      runscVersionBase64: Buffer.from("runsc version example").toString("base64"), image: HIVRA_GVISOR_IMAGE,
+    }),
+  });
+
+  function readyFixture() {
+    const connection = { ...connectionAs("root"), status: "ready" };
+    const target = {
+      id: targetId, connectionId: CONNECTION, evidenceConnectionRevision: 5, status: "ready",
+      lastPreflightAt: new Date(Date.now() - HIVRA_GVISOR_PREFLIGHT_TTL_MS - 1).toISOString(),
+      capabilities: {
+        kind: "gvisor", hostIdentityDigest: "d".repeat(64),
+        adapter: { version: HIVRA_GVISOR_ADAPTER_VERSION, sha256: sha }, runtime: { sha256: runtimeSha },
+      },
+    };
+    mockLoadConnection.mockResolvedValue(connection);
+    mockGetAuthority.mockResolvedValue(connection);
+    mockGetTarget.mockResolvedValue(target);
+    mockDiscover.mockResolvedValue({ ok: true, snapshot: snapshot(1) });
+    mockRunScript.mockResolvedValue(output(runtimeSha));
+    return target;
+  }
+
+  it("refuses managed launch after expiry, then allows it after the exact target is refreshed", async () => {
+    const target = readyFixture();
+    const staleAt = target.lastPreflightAt;
+    let pending: { last_preflight_at: string };
+    const query = {
+      update: jest.fn(),
+      eq: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      maybeSingle: jest.fn(async () => {
+        target.lastPreflightAt = pending.last_preflight_at;
+        return { data: { id: targetId }, error: null };
+      }),
+    };
+    query.update.mockImplementation((update: { last_preflight_at: string }) => { pending = update; return query; });
+    mockFrom.mockReturnValue(query);
+    await expect(checkManagedGvisorLaunchAuthority("user_customer", env)).resolves.toMatchObject({
+      ok: false, status: 503, code: "managed_gvisor_target_mismatch",
+    });
+    await refreshManagedGvisorTarget(config);
+    expect(query.update).toHaveBeenCalledWith({ last_preflight_at: target.lastPreflightAt });
+    expect(query.eq).toHaveBeenCalledWith("last_preflight_at", staleAt);
+    expect(query.eq).toHaveBeenCalledWith("evidence_connection_revision", 5);
+    expect(query.eq).toHaveBeenCalledWith("id", targetId);
+    expect(mockBeginPreflight).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalled();
+    await expect(checkManagedGvisorLaunchAuthority("user_customer", env)).resolves.toMatchObject({ ok: true });
+  });
+
+  it("does not refresh changed runtime or a connection revision changed during the probe", async () => {
+    readyFixture();
+    mockRunScript.mockResolvedValueOnce(output("f".repeat(64)));
+    await expect(refreshManagedGvisorTarget(config)).rejects.toMatchObject({ code: "remote_failed" });
+    mockGetAuthority.mockResolvedValueOnce({ ...connectionAs("root", undefined, 6), status: "ready" });
+    await expect(refreshManagedGvisorTarget(config)).rejects.toMatchObject({ code: "not_found" });
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 });

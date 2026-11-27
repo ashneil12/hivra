@@ -99,3 +99,16 @@ after separately verified stopped evidence. Unknown outcomes remain held.
 Read off and drain existing managed bindings before updating a target's
 adapter digest; refreshing a ready target while bindings pin its prior digest
 can block their lifecycle calls.
+
+## Managed target freshness
+
+Managed Create requires target evidence no older than 15 minutes. The
+`refresh-managed-gvisor-target` cron runs every five minutes when managed
+launch is enabled (including an active, canonical Canary QA enrollment).
+It rechecks the configured owner, connection revision, host identity,
+adapter and runsc. It renews only the timestamp on that exact ready target;
+it does not change the binding or take the target offline for inspection.
+A failed check leaves the old evidence in place to expire. Check
+`ops_cron_heartbeats` and the ops events for the cron before putting the
+candidate into service. A changed host or runtime needs operator
+requalification, not a manual timestamp update.

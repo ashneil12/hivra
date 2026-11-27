@@ -7,9 +7,13 @@ import path from "node:path";
 import { supabaseAdmin } from "@/lib/supabase";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { beginInfrastructureConnectionPreflight, completeInfrastructureConnectionPreflight,
-  loadInfrastructureConnectionSecret } from "./connection-store";
+  getInfrastructureConnectionAuthority, getInfrastructureDeploymentTarget, loadInfrastructureConnectionSecret,
+  type LoadedInfrastructureConnection } from "./connection-store";
 import { buildUserProxmoxEnvironment, resolveValidatedSshDestination } from "./connection-runtime";
 import type { HostDiscoverySnapshot } from "./host-discovery-contracts";
+import { discoverInfrastructureHost } from "./host-discovery";
+import { isGvisorDeploymentTarget } from "./contracts";
+import type { ManagedGvisorAuthorityConfig } from "@/lib/hivra/managed-gvisor-launch-config";
 import {
   hasHostAdministratorAuthority,
   hasRuntimeHostAuthority,
@@ -17,7 +21,7 @@ import {
   loadCurrentHostDiscoverySnapshot,
 } from "./host-authority";
 import { resolveProxmoxHostCapacityPolicy } from "./host-capacity-policy";
-import { HIVRA_GVISOR_ADAPTER_VERSION, HIVRA_GVISOR_IMAGE } from "@/lib/hivra/gvisor-computer-contract";
+import { HIVRA_GVISOR_ADAPTER_VERSION, HIVRA_GVISOR_BUNDLE_SHA256, HIVRA_GVISOR_IMAGE } from "@/lib/hivra/gvisor-computer-contract";
 
 const MARKER = "HIVRA_GVISOR_PREFLIGHT_V1 ";
 
@@ -78,6 +82,33 @@ printf '${MARKER}{"adapterVersion":"${HIVRA_GVISOR_ADAPTER_VERSION}","adapterSha
 `;
 }
 
+async function probeGvisorTarget(userId: string, connection: LoadedInfrastructureConnection, expectedBundleSha: string) {
+  const destination = await resolveValidatedSshDestination(connection.endpoint.sshHost, { userId });
+  const env = buildUserProxmoxEnvironment({ id: connection.id, sshHost: connection.endpoint.sshHost,
+    sshPort: connection.endpoint.sshPort, sshUser: connection.endpoint.sshUser,
+    sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey,
+    sshPrivilege: connection.endpoint.sshPrivilege, sshHostKeyType: connection.endpoint.sshHostKeyType }, destination);
+  const sha = await adapterDigest();
+  const result = await runProxmoxHostScript(preflightScript(sha, expectedBundleSha), env, { timeoutMs: 60_000, maxOutputBytes: 16 * 1024 });
+  if (!result.ok) throw new GvisorTargetError("remote_failed", "The gVisor adapter did not pass its strict readiness check.");
+  const line = result.stdout.split("\n").find(value => value.startsWith(MARKER));
+  let report: { adapterVersion: string; adapterSha256: string; bundleSha256: string; runscSha256: string; cpu: number; memoryMb: number; memoryAvailableMb: number; storageTotalBytes: number;
+    storageAvailableBytes: number; runscVersionBase64: string; image: string };
+  try { report = JSON.parse(line?.slice(MARKER.length) ?? ""); } catch { throw new GvisorTargetError("remote_failed", "The gVisor readiness evidence was invalid."); }
+  if (report.adapterVersion !== HIVRA_GVISOR_ADAPTER_VERSION || report.adapterSha256 !== sha || report.bundleSha256 !== expectedBundleSha
+    || !/^[0-9a-f]{64}$/.test(report.runscSha256) || report.image !== HIVRA_GVISOR_IMAGE
+    || !Number.isSafeInteger(report.cpu) || report.cpu < 1 || !Number.isSafeInteger(report.memoryMb) || report.memoryMb < 1024
+    || !Number.isSafeInteger(report.memoryAvailableMb) || report.memoryAvailableMb < 0 || report.memoryAvailableMb > report.memoryMb
+    || !Number.isSafeInteger(report.storageTotalBytes) || !Number.isSafeInteger(report.storageAvailableBytes)
+    || report.storageAvailableBytes > report.storageTotalBytes || typeof report.runscVersionBase64 !== "string"
+    || report.runscVersionBase64.length < 4 || report.runscVersionBase64.length > 1024
+    || !/^[A-Za-z0-9+/]+={0,2}$/.test(report.runscVersionBase64)
+    || !Buffer.from(report.runscVersionBase64, "base64").toString("utf8").startsWith("runsc version")) {
+    throw new GvisorTargetError("remote_failed", "The gVisor readiness evidence was invalid.");
+  }
+  return { sha, report };
+}
+
 export async function preflightGvisorTarget(userId: string, connectionId: string, expectedBundleSha: string,
   existingLease?: { runId: string; connectionRevision: number }) {
   if (!/^[0-9a-f]{64}$/.test(expectedBundleSha)) throw new GvisorTargetError("unsupported", "This Hivra installation has not pinned a supported gVisor release.");
@@ -107,29 +138,7 @@ export async function preflightGvisorTarget(userId: string, connectionId: string
     throw new GvisorTargetError("database_failed", "Another infrastructure preparation or inspection is already running.");
   }
   try {
-  const destination = await resolveValidatedSshDestination(connection.endpoint.sshHost, { userId });
-  const env = buildUserProxmoxEnvironment({ id: connection.id, sshHost: connection.endpoint.sshHost,
-    sshPort: connection.endpoint.sshPort, sshUser: connection.endpoint.sshUser,
-    sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey,
-    sshPrivilege: connection.endpoint.sshPrivilege, sshHostKeyType: connection.endpoint.sshHostKeyType }, destination);
-  const sha = await adapterDigest();
-  const result = await runProxmoxHostScript(preflightScript(sha, expectedBundleSha), env, { timeoutMs: 60_000, maxOutputBytes: 16 * 1024 });
-  if (!result.ok) throw new GvisorTargetError("remote_failed", "The gVisor adapter did not pass its strict readiness check.");
-  const line = result.stdout.split("\n").find(value => value.startsWith(MARKER));
-  let report: { adapterVersion: string; adapterSha256: string; bundleSha256: string; runscSha256: string; cpu: number; memoryMb: number; memoryAvailableMb: number; storageTotalBytes: number;
-    storageAvailableBytes: number; runscVersionBase64: string; image: string };
-  try { report = JSON.parse(line?.slice(MARKER.length) ?? ""); } catch { throw new GvisorTargetError("remote_failed", "The gVisor readiness evidence was invalid."); }
-  if (report.adapterVersion !== HIVRA_GVISOR_ADAPTER_VERSION || report.adapterSha256 !== sha || report.bundleSha256 !== expectedBundleSha
-    || !/^[0-9a-f]{64}$/.test(report.runscSha256) || report.image !== HIVRA_GVISOR_IMAGE
-    || !Number.isSafeInteger(report.cpu) || report.cpu < 1 || !Number.isSafeInteger(report.memoryMb) || report.memoryMb < 1024
-    || !Number.isSafeInteger(report.memoryAvailableMb) || report.memoryAvailableMb < 0 || report.memoryAvailableMb > report.memoryMb
-    || !Number.isSafeInteger(report.storageTotalBytes) || !Number.isSafeInteger(report.storageAvailableBytes)
-    || report.storageAvailableBytes > report.storageTotalBytes || typeof report.runscVersionBase64 !== "string"
-    || report.runscVersionBase64.length < 4 || report.runscVersionBase64.length > 1024
-    || !/^[A-Za-z0-9+/]+={0,2}$/.test(report.runscVersionBase64)
-    || !Buffer.from(report.runscVersionBase64, "base64").toString("utf8").startsWith("runsc version")) {
-    throw new GvisorTargetError("remote_failed", "The gVisor readiness evidence was invalid.");
-  }
+  const { sha, report } = await probeGvisorTarget(userId, connection, expectedBundleSha);
   const now = new Date().toISOString();
   const reserveMb = resolveProxmoxHostCapacityPolicy(connection.configuration?.capacityPolicy).hostMemoryReserveMb;
   const target = {
@@ -161,4 +170,42 @@ export async function preflightGvisorTarget(userId: string, connectionId: string
     }).catch(() => false);
     throw error;
   }
+}
+
+export async function refreshManagedGvisorTarget(config: ManagedGvisorAuthorityConfig): Promise<void> {
+  const { authorityUserId: userId, connectionId, connectionRevision, targetId } = config;
+  const [connection, target] = await Promise.all([
+    loadInfrastructureConnectionSecret(userId, connectionId),
+    getInfrastructureDeploymentTarget(userId, targetId),
+  ]);
+  if (!hasRuntimeHostAuthority(connection) || connection.status !== "ready" || connection.revision !== connectionRevision
+    || !isGvisorDeploymentTarget(target) || target.connectionId !== connectionId || target.status !== "ready"
+    || target.evidenceConnectionRevision !== connectionRevision || !target.lastPreflightAt
+    || target.capabilities.adapter.version !== HIVRA_GVISOR_ADAPTER_VERSION) {
+    throw new GvisorTargetError("not_found", "The managed gVisor binding no longer matches its ready target.");
+  }
+
+  const discovery = await discoverInfrastructureHost(userId, connectionId);
+  if (!discovery.ok || !hasHostAdministratorAuthority(connection, discovery.snapshot)
+    || discovery.snapshot.hostIdentityDigest !== target.capabilities.hostIdentityDigest
+    || discovery.snapshot.host.os.family !== "linux" || discovery.snapshot.host.kernel.architecture !== "amd64"
+    || discovery.snapshot.host.environment.cgroupVersion !== 2) {
+    throw new GvisorTargetError("discovery_required", "The managed gVisor host identity could not be renewed.");
+  }
+  const { sha, report } = await probeGvisorTarget(userId, connection, HIVRA_GVISOR_BUNDLE_SHA256);
+  if (sha !== target.capabilities.adapter.sha256 || report.runscSha256 !== target.capabilities.runtime.sha256) {
+    throw new GvisorTargetError("remote_failed", "The managed gVisor runtime has changed.");
+  }
+  const current = await getInfrastructureConnectionAuthority(userId, connectionId);
+  if (current.status !== "ready" || current.revision !== connectionRevision) {
+    throw new GvisorTargetError("not_found", "The managed gVisor connection changed during refresh.");
+  }
+  const { data, error } = await db().from("deployment_targets")
+    .update({ last_preflight_at: new Date().toISOString() })
+    .eq("id", targetId).eq("user_id", userId).eq("connection_id", connectionId)
+    .eq("evidence_connection_revision", connectionRevision).eq("status", "ready")
+    .eq("capabilities->>hostIdentityDigest", target.capabilities.hostIdentityDigest)
+    .eq("capabilities->adapter->>sha256", sha).eq("capabilities->runtime->>sha256", report.runscSha256)
+    .eq("last_preflight_at", target.lastPreflightAt).select("id").maybeSingle();
+  if (error || !data) throw new GvisorTargetError("database_failed", "The managed gVisor evidence changed during refresh.");
 }
