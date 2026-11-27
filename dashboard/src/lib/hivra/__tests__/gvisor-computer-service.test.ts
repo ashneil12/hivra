@@ -43,7 +43,7 @@ import { readFileSync } from "node:fs";
 
 import { HIVRA_GVISOR_PREPARE_STAGES } from "../gvisor-computer-contract";
 import {
-  executeGvisorComputerCommand, findGvisorComputerByLaunchRequest, launchGvisorComputer,
+  executeGvisorComputerCommand, findGvisorComputerByLaunchRequest, launchGvisorComputer, openClaudeSandboxTerminal,
   mutateGvisorComputer, observeGvisorComputer, prepareGvisorHost, reserveAndDispatchManagedGvisor, runManagedGvisorIdlePilot,
 } from "../gvisor-computer-service";
 
@@ -55,6 +55,7 @@ const targetId = "44444444-4444-4444-8444-444444444444";
 const adapterSha = "a".repeat(64);
 const runtimeSha = "b".repeat(64);
 const launchRequestId = "55555555-5555-4555-8555-555555555555";
+const claudeImage = `sha256:${"b".repeat(64)}`;
 
 let agent: Record<string, unknown>;
 
@@ -72,6 +73,45 @@ function acknowledgeManaged<T extends { stdout: string }>(script: string, receip
   expect(marker).toBeDefined();
   return { ...receipt, stdout: `${receipt.stdout}${marker}\n` };
 }
+
+it("mints a terminal grant only for the exact running and healthy enrolled sandbox", async () => {
+  const env = jest.replaceProperty(process, "env", {
+    ...process.env,
+    VERCEL: "1",
+    VERCEL_ENV: "production",
+    VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+    VERCEL_GIT_COMMIT_REF: "canary",
+    VERCEL_GIT_REPO_OWNER: "ashneil12",
+    VERCEL_GIT_REPO_SLUG: "hivra",
+    HIVRA_CLAUDE_SANDBOX_PILOT_ENABLED: "1",
+    HIVRA_CLAUDE_SANDBOX_PILOT_OWNER: userId,
+    HIVRA_CLAUDE_SANDBOX_PILOT_TARGET: targetId,
+    HIVRA_CLAUDE_SANDBOX_PILOT_ADAPTER_SHA: adapterSha,
+    HIVRA_CLAUDE_SANDBOX_PILOT_IMAGE: claudeImage,
+    HIVRA_CLAUDE_SANDBOX_PILOT_ORIGIN: "https://terminal.example.test",
+    HIVRA_CLAUDE_SANDBOX_PILOT_GRANT_KEY: "d".repeat(64),
+  });
+  try {
+    await expect(openClaudeSandboxTerminal("user_other_example", computerId)).rejects.toMatchObject({ code: "not_found" });
+    await expect(openClaudeSandboxTerminal(userId, computerId)).rejects.toMatchObject({ code: "not_found" });
+    expect(mockRunWithStdin).not.toHaveBeenCalled();
+    agent.gvisor_claude_terminal_image = claudeImage;
+    const prior = result("running");
+    const evidence = JSON.parse(prior.stdout.trim().slice("HIVRA_GVISOR_V1 ".length));
+    const workload = { kind: "claude-terminal", image: claudeImage };
+    const receipt = (workloadReady: boolean) => ({ ...prior, stdout: `HIVRA_GVISOR_V1 ${JSON.stringify({
+      ...evidence, image: claudeImage, workload, workloadReady,
+    })}\n` });
+    mockRunWithStdin.mockResolvedValueOnce(receipt(false)).mockResolvedValueOnce(receipt(true));
+    await expect(openClaudeSandboxTerminal(userId, computerId)).rejects.toMatchObject({ code: "not_ready" });
+    const grant = await openClaudeSandboxTerminal(userId, computerId);
+    expect(grant.origin).toBe("https://terminal.example.test");
+    expect(grant.token).toMatch(/^v1\.\d+\.[a-f0-9]{32}\.[a-f0-9]{64}$/);
+    expect(JSON.parse(mockRunWithStdin.mock.calls[0][1])).toMatchObject({ operation: "status", computerId, sandboxId, workload });
+  } finally {
+    env.restore();
+  }
+});
 
 class Query {
   private patch: Record<string, unknown> | null = null;

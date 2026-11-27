@@ -19,6 +19,9 @@ from types import ModuleType
 VERSION = "2026.10.20.1"
 IMAGE = "python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285"
 OFFLINE_IMAGE_CONFIG = Path("/opt/hivra/gvisor-adapter/offline-image")
+CLAUDE_TERMINAL_IMAGE_CONFIG = Path("/opt/hivra/gvisor-adapter/claude-terminal-image")
+CLAUDE_TERMINAL_ENTRYPOINT = ["/usr/local/bin/start-claude-terminal"]
+CLAUDE_TERMINAL_HEALTHCHECK = ["CMD", "python3", "-I", "/usr/local/lib/hivra-claude-readiness.py"]
 STORAGE_ADMISSION_PROBE = Path("/opt/hivra/gvisor-adapter/storage-admission-probe")
 XFS_WORKSPACE_HELPER = Path("/opt/hivra/gvisor-adapter/hivra-gvisor-xfs-workspace.py")
 XFS_WORKSPACE_SHA256 = "9fce9c40dd57656fabf01d08b0fc7278b8d5ff89f818904e2e752b4e337cba6e"
@@ -178,16 +181,57 @@ def prepare_image(*, local_only=False):
     return ("--pull=never", "--platform", "linux/amd64")
 
 
+def claude_terminal_config_matches(config):
+    if not isinstance(config, dict):
+        return False
+    healthcheck = config.get("Healthcheck")
+    return (config.get("Entrypoint") == CLAUDE_TERMINAL_ENTRYPOINT
+            and config.get("Cmd") in (None, [])
+            and isinstance(healthcheck, dict) and healthcheck.get("Test") == CLAUDE_TERMINAL_HEALTHCHECK
+            and not config.get("Volumes") and not config.get("ExposedPorts"))
+
+
+def verify_claude_terminal_image(image_id):
+    try:
+        fd = os.open(CLAUDE_TERMINAL_IMAGE_CONFIG, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as config:
+            info = os.fstat(config.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o600
+                    or config.read(len(image_id) + 2) not in (image_id.encode(), (image_id + "\n").encode())):
+                fail("The Claude terminal workload image is not admitted on this host")
+    except OSError:
+        fail("The Claude terminal workload image is not admitted on this host")
+    result = docker("image", "inspect", image_id, check=False)
+    if result.returncode != 0:
+        fail("The pinned Claude terminal workload image is not available locally")
+    try:
+        [image] = json.loads(result.stdout)
+        verified = (image["Id"] == image_id and image["Os"] == "linux" and image["Architecture"] == "amd64"
+                    and claude_terminal_config_matches(image["Config"]))
+    except (KeyError, TypeError, ValueError):
+        verified = False
+    if not verified:
+        fail("The local Claude terminal workload image does not match the pinned image contract")
+
+
 def valid_input(document):
     if not isinstance(document, dict) or set(document) - {
         "operation", "ownerHash", "computerId", "sandboxId", "cpu", "memoryMb", "hostMemoryReserveMb", "argv",
-        "requireDiskAdmission", "tier",
+        "requireDiskAdmission", "workload", "tier",
     }:
         fail("Invalid gVisor computer request")
     operation = document.get("operation")
     if operation not in {"create", "status", "start", "stop", "resize", "exec", "delete", "update",
                          "tier-checkpoint", "tier-restore", "tier-retire"}:
         fail("Invalid gVisor computer operation")
+    if "workload" in document:
+        workload = document["workload"]
+        if (not isinstance(workload, dict) or set(workload) != {"kind", "image"}
+                or workload["kind"] != "claude-terminal" or not isinstance(workload["image"], str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", workload["image"])):
+            fail("Invalid gVisor workload")
+        if operation == "update":
+            fail("Update is not supported for the Claude terminal workload")
     if "requireDiskAdmission" in document and (document["requireDiskAdmission"] is not True
                                                or operation not in {"create", "start"}):
         fail("Invalid gVisor disk admission scope")
@@ -240,12 +284,16 @@ def names(request):
 
 
 def expected_labels(request):
-    return {
+    labels = {
         f"{LABEL}.adapter": VERSION,
         f"{LABEL}.owner": request["ownerHash"],
         f"{LABEL}.computer": request["computerId"],
         f"{LABEL}.sandbox": request["sandboxId"],
     }
+    if workload := request.get("workload"):
+        labels[f"{LABEL}.workload"] = workload["kind"]
+        labels[f"{LABEL}.workload-image"] = workload["image"]
+    return labels
 
 
 def helper_name(request):
@@ -260,6 +308,8 @@ def owned_labels(labels, request):
     """This sandbox's identity, created by any admitted adapter release."""
     expected = expected_labels(request)
     return (labels.get(f"{LABEL}.adapter") in ADMITTED_VERSIONS
+            and ("workload" in request
+                 or not {f"{LABEL}.workload", f"{LABEL}.workload-image"}.intersection(labels))
             and all(labels.get(key) == value for key, value in expected.items() if key != f"{LABEL}.adapter"))
 
 
@@ -305,13 +355,18 @@ def inspect_container(name, request, *, required=True):
         return None
     try:
         item = json.loads(result.stdout)[0]
-        labels = item["Config"]["Labels"] or {}
+        config = item["Config"]
+        labels = config["Labels"] or {}
         if not owned_labels(labels, request):
             fail("The gVisor computer identity did not match")
         host = item["HostConfig"]
         _, volume, network = names(request)
         ports = item.get("NetworkSettings", {}).get("Ports") or {}
         mounts = item.get("Mounts") or []
+        workload = request.get("workload")
+        image_matches = (config.get("Image") in ADMITTED_IMAGES if workload is None else
+                         config.get("Image") == item.get("Image") == workload["image"]
+                         and claude_terminal_config_matches(config))
         if (host.get("Runtime") != "runsc" or host.get("Privileged") is not False
                 or host.get("ReadonlyRootfs") is not True or host.get("NetworkMode") != network
                 or (host.get("Binds") or []) or (host.get("Devices") or [])
@@ -320,7 +375,7 @@ def inspect_container(name, request, *, required=True):
                 or host.get("PidMode") not in {"", None} or host.get("UsernsMode") not in {"", None}
                 or host.get("IpcMode") not in {"", "private", None} or host.get("UTSMode") not in {"", None}
                 or host.get("CgroupnsMode") not in {"", "private", None}
-                or item["Config"].get("User") != "65534:65534" or item["Config"].get("Image") not in ADMITTED_IMAGES
+                or config.get("User") != "65534:65534" or not image_matches
                 or float(host.get("NanoCpus", 0)) <= 0 or int(host.get("Memory", 0)) <= 0
                 or int(host.get("MemorySwap", 0)) != int(host.get("Memory", 0))
                 or int(host.get("PidsLimit", 0)) != 256
@@ -646,14 +701,19 @@ def create_container(request, cpu, memory, name=None, *, pull_options=()):
     default_name, volume, network = names(request)
     labels = expected_labels(request)
     label_args = [value for pair in labels.items() for value in ("--label", f"{pair[0]}={pair[1]}")]
+    workload = request.get("workload")
+    if workload is not None:
+        pull_options = ("--pull=never", "--platform", "linux/amd64")
+        command = (workload["image"],)
+    else:
+        command = (IMAGE, "/bin/sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 3600; done")
     docker("create", *pull_options, "--name", name or default_name, "--runtime=runsc", "--init", "--read-only",
            "--user", "65534:65534", "--cap-drop=ALL", "--security-opt=no-new-privileges",
            "--pids-limit", "256", "--cpus", str(cpu), "--memory", f"{memory}m",
            "--memory-swap", f"{memory}m", "--network", network,
            "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=128m",
            "--mount", f"type=volume,src={volume},dst=/workspace,volume-nocopy",
-           "--workdir", "/workspace", *label_args, IMAGE,
-           "/bin/sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 3600; done")
+           "--workdir", "/workspace", *label_args, *command)
 
 
 def recover_update(request):
@@ -724,7 +784,7 @@ def create(request, *, pull_options=None, workspace_policy=None, prepare_workspa
     created_network = False
     try:
         if pull_options is None:
-            pull_options = prepare_image()
+            pull_options = prepare_image(local_only=True) if "workload" in request else prepare_image()
         if not inspect_resource("volume", volume, request):
             docker("volume", "create", *label_args, volume)
             created_volume = True
@@ -738,6 +798,8 @@ def create(request, *, pull_options=None, workspace_policy=None, prepare_workspa
         if prepare_workspace:
             prepare_workspace()
         create_container(request, cpu, memory, pull_options=pull_options)
+        if "workload" in request:
+            inspect_container(name, request)
         if before_start:
             before_start()
         docker("start", name)
@@ -785,6 +847,10 @@ def status(request, *, emit=True):
         "image": item["Config"]["Image"], "workspace": volume, "network": network,
         "publicPorts": [], "reservationEqualsMaximum": True,
     }
+    if workload := request.get("workload"):
+        result["workload"] = workload
+        result["workloadReady"] = (state.get("Running") is True
+                                   and (state.get("Health") or {}).get("Status") == "healthy")
     if emit:
         print("HIVRA_GVISOR_V1 " + json.dumps(result, sort_keys=True, separators=(",", ":")), flush=True)
     return result
@@ -870,6 +936,8 @@ def main():
         operation = request["operation"]
         pull_options = None
         workspace_policy = None
+        if "workload" in request and operation in {"create", "start"}:
+            verify_claude_terminal_image(request["workload"]["image"])
         if request.get("requireDiskAdmission"):
             current = inspect_container(name, request, required=operation == "start")
             if current is not None and (operation == "create" or current["State"].get("Running")):
@@ -902,12 +970,19 @@ def main():
         elif operation == "start":
             require_helper_absent(request)
             item = inspect_container(name, request)
+            if "workload" in request and not request.get("requireDiskAdmission"):
+                inspect_resource("volume", volume, request, required=True)
+                inspect_resource("network", network, request, required=True)
             admit(name, float(item["HostConfig"]["NanoCpus"]) / 1_000_000_000,
                   int(item["HostConfig"]["Memory"]) // (1024 * 1024), int(request["hostMemoryReserveMb"]))
             docker("start", name); status(request)
         elif operation == "stop":
             require_helper_absent(request)
-            inspect_container(name, request); docker("stop", "--time", "20", name); status(request)
+            inspect_container(name, request)
+            if "workload" in request:
+                inspect_resource("volume", volume, request, required=True)
+                inspect_resource("network", network, request, required=True)
+            docker("stop", "--time", "20", name); status(request)
         elif operation == "resize":
             require_helper_absent(request)
             inspect_container(name, request)

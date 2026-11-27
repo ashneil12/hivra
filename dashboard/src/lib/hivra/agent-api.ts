@@ -52,6 +52,7 @@ export interface HivraAgent {
    * separately from the running gateway's public capability metadata. */
   deployment_mode?: "hivra-managed" | "self-managed";
   computer_substrate?: "proxmox-kvm" | "provider-vm" | "gvisor" | "do-managed-session";
+  gvisor_claude_terminal_image?: string | null;
   /** Last observed provider-readiness stage, not a percentage or launch grant. */
   readiness_stage?: ProviderAgentReadinessStage;
   power_stage?: ProviderAgentPowerStage;
@@ -148,6 +149,7 @@ export interface AgentLlmInput {
 
 export interface CreateAgentInput {
   type: AgentId;
+  gvisorWorkload?: "claude-terminal";
   computerProfile?: ComputerTemplateId | "linux-terminal";
   name: string;
   cpu: number;

@@ -54,6 +54,7 @@ export interface ManageCapabilitiesRow extends LifecycleSupportRow {
   vmid?: unknown;
   created_at?: unknown;
   provisioned_at?: unknown;
+  gvisor_claude_terminal_image?: unknown;
 }
 
 export interface ManageCapabilitiesContext {
@@ -257,6 +258,7 @@ function connectionServiceCap(row: ManageCapabilitiesRow, variant: ManageVariant
   // A Linux Sandbox's Update is its adapter's: the sandbox recreated on the
   // current image, running or stopped as it was, /workspace kept.
   if (variant === "linux-sandbox") {
+    if (row.gvisor_claude_terminal_image) return null;
     if (operationInProgress(row)) return blocked("operation_in_progress", WAIT);
     if (row.status !== "running" && row.status !== "stopped") return blocked("not_ready", "Wait until this sandbox is running or stopped.");
     return available;
@@ -294,7 +296,7 @@ function selfUpdateFor(row: ManageCapabilitiesRow, variant: ManageVariant): Mana
   }
   if (variant === "windows-my-server") return { lines: [WINDOWS_MY_SERVER_SELF_UPDATE], openDesktop: false };
   if (variant === "digitalocean") return { lines: [DIGITALOCEAN_UPDATE], openDesktop: false };
-  if (variant === "linux-sandbox") return { lines: [SANDBOX_UPDATE], openDesktop: false };
+  if (variant === "linux-sandbox" && !row.gvisor_claude_terminal_image) return { lines: [SANDBOX_UPDATE], openDesktop: false };
   return null;
 }
 
