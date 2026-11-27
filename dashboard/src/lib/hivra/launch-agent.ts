@@ -342,7 +342,7 @@ fi`
       : []),
   ].join(" ") + " ";
   const batchQemuAdmission = !runtime && params.agentKind === "hermes"
-    && params.canaryProvisionerVersion === "2026.11.27.3";
+    && ["2026.11.27.3", "2026.11.27.4"].some(version => version === params.canaryProvisionerVersion);
   const hostCapacityAdmission = (batchQemuAdmission ? "HIVRA_CAPACITY_BATCH_QEMU=1 " : "") + buildHostCapacityAdmissionCommand({
     provisionerDirectory: runtimePaths.provisionerDirectory,
     floorMemoryMb: params.guaranteedMemMb,
@@ -1604,7 +1604,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostE
             return apiError("The Canary Hermes image selection is not configured safely.", 503);
           }
           if (bakeHost === host && (!bakeUser || bakeUser === userId)) {
-            if (canaryProvisionerVersion !== "2026.11.27.2" && canaryProvisionerVersion !== "2026.11.27.3") {
+            if (!["2026.11.27.2", "2026.11.27.3", "2026.11.27.4"].some(version => version === canaryProvisionerVersion)) {
               return apiError("The selected Canary host does not support the pinned Hermes image.", 503);
             }
             hermesImageSha256 = bakeSha;
