@@ -46,7 +46,7 @@ import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement
 import { decideProvisionSeatFunding } from "@/lib/billing/provision-seat-funding";
 import { CANARY_QA_HOLDER_NAME, canaryQaHolderDeadline } from "@/lib/hivra/canary-qa-holder";
 import { isCanonicalGitCanaryDeployment } from "@/lib/hivra/canonical-git-canary";
-import { HERMES_STANDBY_PROVISIONER_VERSION, parseHermesStandbyIdentity, type HermesStandby } from "@/lib/hivra/hermes-standby";
+import { HERMES_STANDBY_CPU_UNITS, HERMES_STANDBY_PROVISIONER_VERSION, parseHermesStandbyIdentity, type HermesStandby } from "@/lib/hivra/hermes-standby";
 import { parseSleepMode, supportsIdleNap } from "@/lib/hivra/agent-sleep-policy";
 import type { SeatFunding } from "@/lib/hivra/seat-funding";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
@@ -1933,6 +1933,15 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
     const poolId = deployment.mode === "hivra-managed" && !qaHolderDeadline
       ? await getOrCreatePoolId(userId, "hermesos")
       : null;
+    if (hermesStandby) {
+      const { data: pool, error: poolError } = poolId
+        ? await supabaseAdmin.from("pools").select("priority").eq("id", poolId).maybeSingle()
+        : { data: null, error: null };
+      if (poolError || priorityToCpuUnits((pool as { priority?: number } | null)?.priority) !== HERMES_STANDBY_CPU_UNITS) {
+        await releaseLlmKeyOnFailure();
+        return apiError("The Canary Hermes standby requires the default pool CPU weight.", poolError ? 503 : 409);
+      }
+    }
     const deploymentBinding = deployment.mode === "self-managed"
       ? {
           infrastructure_connection_id: deployment.connectionId,
@@ -2665,11 +2674,22 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
     const allocationVerificationScript = `set -euo pipefail
 exec 8>/run/lock/hivra-allocation.lock
 flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8
-TAGS="$(qm config ${vmid} | sed -n 's/^tags:[[:space:]]*//p')"
+CONFIG="$(qm config ${vmid}${hermesStandby ? " --current 1" : ""})"
+TAGS="$(sed -n 's/^tags:[[:space:]]*//p' <<< "$CONFIG")"
 printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq ${shellQuote(infrastructureBindingTag)}
 printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq ${shellQuote(`hivra-op-${provisionOperationId.replace(/-/g, "")}`)}
-qm set ${vmid} --cores ${Math.max(1, Math.ceil(maximumCpu))} --cpulimit ${maximumCpu} --memory ${ramEnvelope.ceilingMb} --balloon ${ramEnvelope.baselineMb}
-ACTUAL_CPULIMIT="$(qm config ${vmid} | awk '$1=="cpulimit:" {print $2; exit}')"
+${hermesStandby ? `ACTUAL_CORES="$(awk '$1=="cores:" {print $2; exit}' <<< "$CONFIG")"
+ACTUAL_MEMORY="$(awk '$1=="memory:" {print $2; exit}' <<< "$CONFIG")"
+ACTUAL_BALLOON="$(awk '$1=="balloon:" {print $2; exit}' <<< "$CONFIG")"
+ACTUAL_WEIGHT="$(awk '$1=="cpuunits:" {print $2; exit}' <<< "$CONFIG")"
+[ "$ACTUAL_CORES" = ${shellQuote(String(Math.max(1, Math.ceil(maximumCpu))))} ] \\
+  && [ "$ACTUAL_MEMORY" = ${shellQuote(String(ramEnvelope.ceilingMb))} ] \\
+  && [ "$ACTUAL_BALLOON" = 0 ] \\
+  && [ "$(stat -fc %T /sys/fs/cgroup)" = cgroup2fs ] \\
+  && [ "\${ACTUAL_WEIGHT:-${HERMES_STANDBY_CPU_UNITS}}" = ${HERMES_STANDBY_CPU_UNITS} ] \\
+  || { echo "standby resource envelope or CPU weight differs from its claim" >&2; exit 1; }
+ACTUAL_CPULIMIT="$(awk '$1=="cpulimit:" {print $2; exit}' <<< "$CONFIG")"` : `qm set ${vmid} --cores ${Math.max(1, Math.ceil(maximumCpu))} --cpulimit ${maximumCpu} --memory ${ramEnvelope.ceilingMb} --balloon ${ramEnvelope.baselineMb}
+ACTUAL_CPULIMIT="$(qm config ${vmid} | awk '$1=="cpulimit:" {print $2; exit}')"`}
 [ "$ACTUAL_CPULIMIT" = ${shellQuote(String(maximumCpu))} ] \
   || { echo "allocated VM has an unexpected CPU limit" >&2; exit 1; }
 rm -f -- "/run/hivra-provision/${vmid}.allocated"
@@ -2721,7 +2741,7 @@ printf 'HIVRA_ALLOCATION_VERIFIED %s\\n' ${vmid}`;
 
     // Phase 5: set the VM's scheduling-priority weight from the pool tier at first
     // launch (the out-of-repo provisioner sizes cores/RAM but not cpuunits).
-    const { data: poolRow } = poolId
+    const { data: poolRow } = poolId && !hermesStandby
       ? await supabaseAdmin.from("pools").select("priority").eq("id", poolId).maybeSingle()
       : { data: null };
     const cpuunits = priorityToCpuUnits((poolRow as { priority?: number } | null)?.priority);
@@ -2731,7 +2751,7 @@ printf 'HIVRA_ALLOCATION_VERIFIED %s\\n' ${vmid}`;
     // it never rejects, so the previous `.catch(() => {})` was dead code that
     // hid every failure, and the `|| true; echo ok` masked the `qm set` exit
     // status too. Run it unmasked and log a degraded warning if it fails.
-    const cpuUnitsResult = await runProxmoxHostScript(
+    const cpuUnitsResult = hermesStandby ? null : await runProxmoxHostScript(
       `set -euo pipefail
 exec 8>/run/lock/hivra-allocation.lock
 flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8
@@ -2741,7 +2761,7 @@ printf '%s\n' "$TAGS" | tr ';' '\n' | grep -Fxq ${shellQuote(`hivra-op-${provisi
 qm set ${vmid} --cpuunits ${cpuunits}`,
       env
     );
-    if (!cpuUnitsResult.ok) {
+    if (cpuUnitsResult && !cpuUnitsResult.ok) {
       log.warn("hivra agent cpu priority not applied; running with host default weight", {
         source: "hivra/agents",
         failureType: "hivra_agent_cpuunits_apply_failed",

@@ -112,3 +112,10 @@ last completed stage through the readiness deadline; snapshot them again before
 normal Delete. Keep raw logs private and record only the failure boundary and
 sanitized timings. One diagnostic attempt isn't a restart of the three-sample
 acceptance series, and doesn't justify replenishing the standby.
+
+The diagnostic retry found that the launch API rewrote the running guest's
+resource configuration before the detached worker finished its ownership
+check. Proxmox reported pending changes and the worker stopped before reading
+tenant credentials. A warm claim now verifies the staged fixed envelope and
+default CPU weight without writing those fields; cold launches still apply
+their requested resource caps and scheduling weight.
