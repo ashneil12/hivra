@@ -251,14 +251,25 @@ function submittedLaunchRequestIntent(
 // Phase 1 (synchronous over SSH): pick a free VMID in range, kick the host
 // orchestrator in the background (it does VM create + provisioner + tunnel,
 // ~10 min), and print a marker so this call returns in seconds.
-type PreparedKvmImage = { kind: "deepseek-harness" | "ubuntu-qga"; digest: string };
+type PreparedKvmImage = { kind: "deepseek-harness" | "ubuntu-qga" | "agent-zero" | "bux-dependencies"; digest: string };
 const STOCK_QGA_AGENT_KINDS = ["claude", "codex", "openclaw", "deepseek-harness", "agent-zero"];
+const PREPARED_RUNTIME_BUNDLE_VERSION = "2026.11.27.6";
+
+function supportsPreparedKvmImage(kind: PreparedKvmImage["kind"], version: string | undefined, agentKind: string) {
+  if (kind === "agent-zero" || kind === "bux-dependencies") {
+    return version === PREPARED_RUNTIME_BUNDLE_VERSION
+      && (kind === "agent-zero" ? agentKind === kind : agentKind === "claude" || agentKind === "codex");
+  }
+  return ["2026.11.27.4", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(candidate => candidate === version)
+    && (kind === "ubuntu-qga" ? STOCK_QGA_AGENT_KINDS.includes(agentKind) : agentKind === kind);
+}
 
 function preparedKvmImagePath(image: PreparedKvmImage): string {
   return `/var/lib/vz/template/iso/hivra-${image.kind}-${image.digest}.qcow2`;
 }
 
 function preparedKvmImageGate(image: PreparedKvmImage): string {
+  const diskGiB = image.kind === "agent-zero" ? 24 : 8;
   return `PREPARED_IMAGE=${shellQuote(preparedKvmImagePath(image))}
 [ -f "$PREPARED_IMAGE" ] && [ ! -L "$PREPARED_IMAGE" ] \\
   && [ "$(stat -c '%u:%g:%a:%h' -- "$PREPARED_IMAGE")" = '0:0:444:1' ] \\
@@ -268,10 +279,10 @@ printf '%s  %s\\n' ${shellQuote(image.digest)} "$PREPARED_IMAGE" | sha256sum --c
 qemu-img info --output=json "$PREPARED_IMAGE" | python3 -I -B -c '
 import json, sys
 d = json.load(sys.stdin)
-sys.exit(0 if d.get("format") == "qcow2" and d.get("virtual-size") == 8 * 1024**3
+sys.exit(0 if d.get("format") == "qcow2" and d.get("virtual-size") == ${diskGiB} * 1024**3
          and not any(k in d for k in ("backing-filename", "full-backing-filename"))
          and not d.get("format-specific", {}).get("data", {}).get("data-file") else 1)
-' || { echo 'prepared KVM image is not standalone 8 GiB qcow2' >&2; exit 1; }`;
+' || { echo 'prepared KVM image is not standalone ${diskGiB} GiB qcow2' >&2; exit 1; }`;
 }
 
 export function phase1Script(params: {
@@ -318,13 +329,12 @@ export function phase1Script(params: {
   const candidate = params.preparedImage;
   const standby = params.hermesStandby;
   if (standby && (runtime || params.agentKind !== "hermes" || !params.hermesImageSha256
-      || params.canaryProvisionerVersion !== HERMES_STANDBY_PROVISIONER_VERSION)) {
+      || ![HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(version => version === params.canaryProvisionerVersion))) {
     throw new Error("Hermes standby requires a sealed managed baked-image host");
   }
-  const preparedImage = !runtime && candidate && ["2026.11.27.4", HERMES_STANDBY_PROVISIONER_VERSION].includes(params.canaryProvisionerVersion ?? "")
+  const preparedImage = !runtime && candidate && !params.wantBrowser
     && /^[a-f0-9]{64}$/.test(candidate.digest)
-    && ((candidate.kind === "deepseek-harness" && params.agentKind === "deepseek-harness")
-      || (candidate.kind === "ubuntu-qga" && STOCK_QGA_AGENT_KINDS.includes(params.agentKind)))
+    && supportsPreparedKvmImage(candidate.kind, params.canaryProvisionerVersion, params.agentKind)
     ? candidate
     : undefined;
   const operationTag = `hivra-op-${params.operationId.replace(/-/g, "")}`;
@@ -382,9 +392,11 @@ fi`
       `HIVRA_HERMES_STANDBY_CLAIM_GENERATION=${shellQuote(standby.generation)}`,
       `HIVRA_HERMES_STANDBY_HOST=${shellQuote(standby.host)}`,
     ] : []),
+    ...(preparedImage?.kind === "agent-zero" || preparedImage?.kind === "bux-dependencies"
+      ? [`HIVRA_PREPARED_RUNTIME=${shellQuote(preparedImage.kind)}`] : []),
   ].join(" ") + " ";
   const batchQemuAdmission = !runtime
-    && ["2026.11.27.3", "2026.11.27.4", HERMES_STANDBY_PROVISIONER_VERSION].includes(params.canaryProvisionerVersion ?? "")
+    && ["2026.11.27.3", "2026.11.27.4", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].includes(params.canaryProvisionerVersion ?? "")
     && ["hermes", "claude", "codex", "openclaw", "deepseek-harness", "agent-zero"].includes(params.agentKind);
   const hostCapacityAdmission = (batchQemuAdmission ? "HIVRA_CAPACITY_BATCH_QEMU=1 " : "") + buildHostCapacityAdmissionCommand({
     provisionerDirectory: runtimePaths.provisionerDirectory,
@@ -1677,7 +1689,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostE
             return apiError("The Canary Hermes image selection is not configured safely.", 503);
           }
           if (bakeHost === host && (!bakeUser || bakeUser === userId)) {
-            if (!["2026.11.27.2", "2026.11.27.3", "2026.11.27.4", HERMES_STANDBY_PROVISIONER_VERSION].includes(canaryProvisionerVersion ?? "")) {
+            if (!["2026.11.27.2", "2026.11.27.3", "2026.11.27.4", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(version => version === canaryProvisionerVersion)) {
               return apiError("The selected Canary host does not support the pinned Hermes image.", 503);
             }
             hermesImageSha256 = bakeSha;
@@ -1687,6 +1699,8 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostE
       if (managedGitCanary && STOCK_QGA_AGENT_KINDS.includes(agentKind) && !wantBrowser && !options?.moveFromInstanceId && !qaHolderDeadline) {
         const trials = [
           ...(type === "deepseek-harness" ? [["deepseek-harness", "HIVRA_CANARY_DEEPSEEK_IMAGE"]] as const : []),
+          ...(type === "agent-zero" ? [["agent-zero", "HIVRA_CANARY_AGENT_ZERO_IMAGE"]] as const : []),
+          ...(agentKind === "claude" || agentKind === "codex" ? [["bux-dependencies", "HIVRA_CANARY_BUX_DEPENDENCIES_IMAGE"]] as const : []),
           ["ubuntu-qga", "HIVRA_CANARY_UBUNTU_QGA_IMAGE"],
         ] as const;
         for (const [kind, prefix] of trials) {
@@ -1699,7 +1713,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostE
             return apiError("The Canary prepared image selection is not configured safely.", 503);
           }
           if (bakeHost !== host || bakeUser !== userId) continue;
-          if (!["2026.11.27.4", HERMES_STANDBY_PROVISIONER_VERSION].includes(canaryProvisionerVersion ?? "")) {
+          if (!supportsPreparedKvmImage(kind, canaryProvisionerVersion, agentKind)) {
             return apiError("The selected Canary host does not support the prepared image.", 503);
           }
           const candidate = { kind, digest: bakeSha };
@@ -1732,7 +1746,7 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
     const ipLastOctetStart = resolveHivraIpLastOctetStart(env);
     if (hermesImageSha256 && process.env.HIVRA_CANARY_HERMES_STANDBY_ENABLED === "1"
         && process.env.HIVRA_CANARY_HERMES_IMAGE_USER_ID === userId && seatFunding === "paid") {
-      if (canaryProvisionerVersion !== HERMES_STANDBY_PROVISIONER_VERSION
+      if (![HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(version => version === canaryProvisionerVersion)
           || !Number.isInteger(cpu) || cpu !== maximumCpu || ram !== maximumRam) {
         return apiError("The Canary Hermes standby does not match this launch.", 409);
       }

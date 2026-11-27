@@ -82,9 +82,11 @@ ${probe}
       fs.copyFileSync(path.join(source, "hivra-hermes-standby.sh"), helper);
       fs.chmodSync(helper, 0o700);
       expect(run("2026.11.27.5").status).toBe(0);
+      expect(run("2026.11.27.6").status).toBe(0);
       expect(run("2026.11.27.4")).toMatchObject({ status: 1, stderr: expect.stringContaining("atomic ownership tagging") });
       fs.chmodSync(helper, 0o600);
       expect(run("2026.11.27.5")).toMatchObject({ status: 1, stderr: expect.stringContaining("executable Hermes standby helper") });
+      expect(run("2026.11.27.6")).toMatchObject({ status: 1, stderr: expect.stringContaining("executable Hermes standby helper") });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

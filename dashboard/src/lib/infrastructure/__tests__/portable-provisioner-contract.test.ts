@@ -722,7 +722,7 @@ describe("portable provisioner source contract", () => {
     expect(provision).toContain('r"hvra_otlp_v1\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"');
     expect(provision).toContain('if values[0] not in ("claude", "codex"):');
     expect(provision).toContain("GUEST_PROVISIONER=/tmp/hivra-provisioner");
-    expect(provision).toContain('if [ "$AGENT_KIND" = "deepseek-harness" ]; then');
+    expect(provision).toContain('if [ "$AGENT_KIND" = "deepseek-harness" ] || [ -n "$PREPARED_RUNTIME" ]; then');
     expect(provision).toContain("GUEST_PROVISIONER=/opt/hivra/provider-bundle");
     expect(provision).toContain("sudo -n /usr/bin/python3 -I -B ${GUEST_PROVISIONER}/hivra-install-agent.py");
     expect(provision).toContain("native provisioner source is not root-owned");

@@ -33,7 +33,7 @@ it("revalidates the selected Canary seal while holding the allocation lock, befo
 
 function renderedPhase1(
   portableRuntime: boolean, canaryProvisionerVersion?: string, agentKind = "codex",
-  preparedImage?: Parameters<typeof phase1Script>[0]["preparedImage"],
+  preparedImage?: Parameters<typeof phase1Script>[0]["preparedImage"], wantBrowser = false,
 ) {
   return phase1Script({
     cpu: 2,
@@ -43,7 +43,7 @@ function renderedPhase1(
     agentKind,
     tunnelToken: "",
     tunnelUrl: "",
-    wantBrowser: false,
+    wantBrowser,
     subnetPrefix: "10.251.20",
     gateway: "10.251.20.1",
     vmidStart: 200,
@@ -131,7 +131,7 @@ it("keeps the prepared Ubuntu disk within the five stock-agent profiles and the 
 describe("host allocation lock lifecycle", () => {
   it.each(["hermes", "claude", "codex", "openclaw", "deepseek-harness", "agent-zero"])(
     "batches capacity and IP reads under the allocation lock for managed %s on the reviewed Canary release", (kind) => {
-      for (const version of ["2026.11.27.3", "2026.11.27.4"]) {
+      for (const version of ["2026.11.27.3", "2026.11.27.4", "2026.11.27.5", "2026.11.27.6"]) {
         const script = renderedPhase1(false, version, kind);
         const admission = script.indexOf("HIVRA_CAPACITY_BATCH_QEMU=1 bash ");
         expect(admission).toBeGreaterThan(script.indexOf("flock -w"));
@@ -257,3 +257,20 @@ ${line!.trim()}
   });
 
 });
+
+it.each([["agent-zero", "agent-zero", 24], ["bux-dependencies", "claude", 8], ["bux-dependencies", "codex", 8]] as const)(
+  "limits the prepared %s runtime for %s to .5 and its reviewed disk size", (kind, agent, size) => {
+    const image = { kind, digest: "a".repeat(64) };
+    const script = renderedPhase1(false, "2026.11.27.6", agent, image);
+    expect(script).toContain(`HIVRA_PREPARED_RUNTIME='${kind}'`);
+    expect(script).toContain(`== ${size} * 1024**3`);
+    expect(script).toContain("HIVRA_DISK_GB=40");
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+    for (const fallback of [
+      renderedPhase1(false, "2026.11.27.4", agent, image),
+      renderedPhase1(false, "2026.11.27.6", "openclaw", image),
+      renderedPhase1(false, "2026.11.27.6", agent, image, true),
+      renderedPhase1(true, "2026.11.27.6", agent, image),
+    ]) expect(fallback).not.toContain("HIVRA_PREPARED_RUNTIME=");
+  },
+);

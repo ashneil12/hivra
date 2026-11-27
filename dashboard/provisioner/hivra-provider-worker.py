@@ -31,12 +31,12 @@ ROOT = Path("/var/lib/hivra/provider-install")
 UNIT = "hivra-provider-install.service"
 CGROUP = Path("/sys/fs/cgroup/system.slice") / UNIT
 INSTALL_LOCK = Path("/run/hivra-agent-install.lock")
-NATIVE_VERSION = "2026.11.27.5"
+NATIVE_VERSION = "2026.11.27.6"
 NATIVE_PROFILE = "deepseek-owned-service-v1"
 NATIVE_FILES = ("deepseek-harness/bux-hivra-chat.service", "deepseek-harness/install-native.py", "deepseek-harness/service-owner.py")
 DESKTOP_PROFILE = "desktop-owned-services-v1"
 DESKTOP_FILES = ("remote-desktop/provider-service-owner.py",)
-DESKTOP_VERSION = "2026.11.27.5"
+DESKTOP_VERSION = "2026.11.27.6"
 ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"}
 MAX_INPUT = 128 * 1024
 MAX_BUNDLE_FILE_BYTES = 2 * 1024 * 1024
@@ -205,7 +205,7 @@ def lock(path):
 
 
 def manifest_rows(expected, manifest):
-    if not isinstance(manifest, list) or not 1 <= len(manifest) <= 75:
+    if not isinstance(manifest, list) or not 1 <= len(manifest) <= 76:
         reject()
     rows, paths = [], []
     for file in manifest:

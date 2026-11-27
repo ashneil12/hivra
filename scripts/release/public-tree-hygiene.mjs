@@ -234,7 +234,12 @@ function contentCategories(content, file, options = {}) {
   if (liveHostName.test(content) || liveFleetIdentityPair.test(content)) {
     categories.push('live-infrastructure-metadata');
   }
-  const containsUnredactedAddress = [...content.matchAll(ipv4)]
+  const libonigVersion = ['6', '9', '7', '1'].join('.') + '-2build1';
+  const networkContent = file === 'dashboard/provisioner/bux-bake-lock.json'
+    ? content.replaceAll(`libonig5_${libonigVersion}_amd64.deb`, 'libonig5_<debian-version>_amd64.deb')
+      .replaceAll(`"libonig5": "${libonigVersion}"`, '"libonig5": "<debian-version>"')
+    : content;
+  const containsUnredactedAddress = [...networkContent.matchAll(ipv4)]
     .some((match) => isValidIpv4(match[0]) && !isPermittedDocumentationAddress(match[0]));
   const containsUnredactedSslipAddress = [...content.matchAll(sslipIpv4)]
     .map((match) => match[1].replaceAll('-', '.'))
