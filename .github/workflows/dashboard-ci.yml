@@ -129,6 +129,7 @@ jobs:
         run: |
           node scripts/test-managed-gvisor-binding.cjs
           node scripts/test-managed-gvisor-reservation.cjs
+          node scripts/test-managed-gvisor-tier-handoff.cjs
 
       - name: Verify the gVisor adapter and workspace quotas
         working-directory: .
@@ -136,8 +137,19 @@ jobs:
           python3 dashboard/provisioner/gvisor/test_hivra_gvisor_adapter.py
           python3 dashboard/provisioner/gvisor/test_hivra_gvisor_xfs_workspace.py
 
+      - name: Verify the managed gVisor tier handoff
+        working-directory: .
+        run: |
+          sudo apt-get install -y python3-cryptography
+          /usr/bin/python3 -B dashboard/provisioner/gvisor/test_hivra_gvisor_generation.py
+          /usr/bin/python3 -B dashboard/provisioner/gvisor/test_hivra_gvisor_tier_handoff.py
+
       - name: Catalog certification runner tests
         run: node --test scripts/__tests__/catalog-certification.test.mjs scripts/__tests__/catalog-intake.test.mjs
+
+      - name: Verify read-only workspace measurements
+        working-directory: .
+        run: python3 -B dashboard/scripts/ops/test_workspace_measurements.py
 
       - name: Lint
         run: npm run lint

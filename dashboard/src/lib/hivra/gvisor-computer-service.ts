@@ -7,8 +7,11 @@ import { z } from "zod";
 import type { ManagedGvisorAuthority } from "./managed-gvisor-authority";
 import { claudeSandboxPilot } from "./claude-sandbox-pilot";
 import { managedGvisorDiskAdmissionEnabled, managedGvisorIdlePilotConfig } from "./managed-gvisor-launch-config";
+import { isCanonicalGitCanaryDeployment } from "./canonical-git-canary";
+import { GvisorTierArchive, GvisorTierHandoff, gvisorTierIdleHours, gvisorTierKey, gvisorTierPilot } from "./gvisor-tier-handoff";
 
 import { supabaseAdmin } from "@/lib/supabase";
+import { log } from "@/lib/logger";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE, paysForHostedCompute } from "@/lib/billing/hosted-compute";
 import { beginInfrastructureConnectionPreparation, completeInfrastructureConnectionPreflight,
@@ -32,6 +35,7 @@ import {
 const ADAPTER = "/opt/hivra/gvisor-adapter/hivra-gvisor-adapter";
 const RESULT = "HIVRA_GVISOR_V1 ";
 const EXEC_RESULT = "HIVRA_GVISOR_EXEC_V1 ";
+const TIER_RESULT = "HIVRA_GVISOR_TIER_V1 ";
 const ADMISSION_RESULT = "HIVRA_GVISOR_ADMISSION_V1 ";
 const PREPARE_FAILURE = "HIVRA_GVISOR_PREPARE_FAILED_V1 ";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -117,6 +121,7 @@ type GvisorBinding = Pick<GvisorAgent, "infrastructure_connection_id" | "infrast
   | "deployment_target_id" | "gvisor_adapter_sha256" | "gvisor_runtime_sha256"> & {
     gvisor_adapter_version?: string;
     gvisor_claude_terminal_image?: string | null;
+    hostIdentityDigest?: string;
   };
 
 /** One of Hivra's own earlier adapter releases, by its exact identity. */
@@ -133,7 +138,8 @@ async function executionAuthority(userId: string, targetId: string, binding?: Gv
     capabilities: Record<string, unknown>; supported_isolation_drivers: string[]; isolation_class: string; last_preflight_at: string | null };
   if (!target) throw new GvisorComputerError("not_found", "The connected host target was not found.");
   if (binding && (binding.deployment_target_id !== target.id || binding.infrastructure_connection_id !== target.connection_id
-    || binding.infrastructure_connection_revision !== target.evidence_connection_revision)) {
+    || binding.infrastructure_connection_revision !== target.evidence_connection_revision
+    || (binding.hostIdentityDigest && target.capabilities?.hostIdentityDigest !== binding.hostIdentityDigest))) {
     throw new GvisorComputerError("not_ready", "This Computer's immutable host binding no longer matches its target evidence.");
   }
   const capabilities = target.capabilities;
@@ -208,6 +214,18 @@ async function invoke(userId: string, targetId: string, request: GvisorComputerR
 /** invoke, also answering which adapter the host ran (Update re-pins to it). */
 type LifecycleProof = "mutation" | "delete-observation";
 
+function identityGuard(expectedAdapterSha: string, expectedRuntimeSha: string, runAdapter: string) {
+  return `set -euo pipefail
+identity_fail() { printf 'HIVRA_GVISOR_IDENTITY_MISMATCH\\n' >&2; exit 1; }
+[ "$(stat -c '%U:%G:%a' '${ADAPTER}')" = 'root:root:700' ] || identity_fail
+[ "$(sha256sum '${ADAPTER}' | awk '{print $1}')" = '${expectedAdapterSha}' ] || identity_fail
+[ "$(sha256sum /usr/local/bin/runsc | awk '{print $1}')" = '${expectedRuntimeSha}' ] || identity_fail
+[ "$(readlink -f "$(/usr/bin/docker info --format '{{(index .Runtimes "runsc").Path}}')")" = /usr/local/bin/runsc ] || identity_fail
+[ "$(stat -c '%U:%G:%a' /opt/hivra/gvisor-adapter/gvisor-bin.sha256)" = 'root:root:600' ] || identity_fail
+(cd / && sha256sum -c /opt/hivra/gvisor-adapter/gvisor-bin.sha256 >/dev/null) || identity_fail
+${runAdapter}`;
+}
+
 async function invokeOnTarget(userId: string, targetId: string, request: GvisorComputerRequest, binding?: GvisorBinding,
   exactManaged = false, proof?: LifecycleProof) {
   const authority = await executionAuthority(userId, targetId, binding, request.operation, exactManaged);
@@ -232,16 +250,8 @@ async function invokeOnTarget(userId: string, targetId: string, request: GvisorC
   const runAdapter = acknowledgement
     ? `'${ADAPTER}'${previousContainerCheck}\nprintf '%s\\n' '${acknowledgement}'`
     : `exec '${ADAPTER}'`;
-  const identityGuard = `set -euo pipefail
-identity_fail() { printf 'HIVRA_GVISOR_IDENTITY_MISMATCH\\n' >&2; exit 1; }
-[ "$(stat -c '%U:%G:%a' '${ADAPTER}')" = 'root:root:700' ] || identity_fail
-[ "$(sha256sum '${ADAPTER}' | awk '{print $1}')" = '${expectedAdapterSha}' ] || identity_fail
-[ "$(sha256sum /usr/local/bin/runsc | awk '{print $1}')" = '${expectedRuntimeSha}' ] || identity_fail
-[ "$(readlink -f "$(/usr/bin/docker info --format '{{(index .Runtimes "runsc").Path}}')")" = /usr/local/bin/runsc ] || identity_fail
-[ "$(stat -c '%U:%G:%a' /opt/hivra/gvisor-adapter/gvisor-bin.sha256)" = 'root:root:600' ] || identity_fail
-(cd / && sha256sum -c /opt/hivra/gvisor-adapter/gvisor-bin.sha256 >/dev/null) || identity_fail
-${runAdapter}`;
-  const result = await runProxmoxHostScriptWithStdin(identityGuard, JSON.stringify(parsed), authority.env,
+  const guard = identityGuard(expectedAdapterSha, expectedRuntimeSha, runAdapter);
+  const result = await runProxmoxHostScriptWithStdin(guard, JSON.stringify(parsed), authority.env,
     { timeoutMs: parsed.operation === "create" || parsed.operation === "update" ? 360_000 : 90_000, maxOutputBytes: 96 * 1024 });
   if (!result.ok) {
     const output = `${result.stdout}\n${result.stderr}`;
@@ -576,6 +586,180 @@ async function observeManagedProvision(userId: string, computerId: string, expec
   return receipt;
 }
 
+async function readTierHandoff(userId: string, computerId: string) {
+  if (!isCanonicalGitCanaryDeployment() || process.env.HIVRA_MANAGED_GVISOR_TIER_COMPUTER_ID !== computerId) return null;
+  const { data, error } = await db().rpc("read_hivra_gvisor_tier_handoff", {
+    p_customer: userId, p_computer: computerId,
+  });
+  if (error) throw new GvisorComputerError("database_failed", "The managed sandbox placement could not be verified.");
+  if (data === null) return null;
+  const row = GvisorTierHandoff.safeParse(data);
+  if (!row.success || row.data.computer_id !== computerId || row.data.customer_id !== userId) {
+    throw new GvisorComputerError("not_ready", "The managed sandbox placement did not match.");
+  }
+  return row.data;
+}
+
+function tierPilotFor(agent: GvisorAgent, row?: GvisorTierHandoff, retire = false) {
+  const pilot = gvisorTierPilot(process.env, retire && row ? Date.parse(row.created_at) : Date.now());
+  return pilot && pilot.ownerId === agent.user_id && pilot.computer === agent.id
+    && (!row || (row.operator_id === pilot.authorityUserId && row.source_connection_id === pilot.connectionId
+      && row.source_target_id === pilot.targetId && row.source_revision === pilot.connectionRevision
+      && row.source_sandbox_id === agent.gvisor_sandbox_id
+      && row.adapter_sha256 === agent.gvisor_adapter_sha256 && row.runtime_sha256 === agent.gvisor_runtime_sha256
+      && row.destination_connection_id === pilot.destinationConnection && row.destination_target_id === pilot.destinationTarget
+      && row.destination_revision === pilot.destinationRevision && (retire || Date.parse(row.expires_at) > Date.now())))
+    ? pilot : null;
+}
+
+function tierBinding(row: GvisorTierHandoff, side: "source" | "destination"): GvisorBinding {
+  return {
+    deployment_target_id: row[`${side}_target_id`],
+    infrastructure_connection_id: row[`${side}_connection_id`],
+    infrastructure_connection_revision: row[`${side}_revision`],
+    gvisor_adapter_version: HIVRA_GVISOR_ADAPTER_VERSION,
+    gvisor_adapter_sha256: row.adapter_sha256,
+    gvisor_runtime_sha256: row.runtime_sha256,
+    hostIdentityDigest: row[`${side}_host_identity_digest`],
+  };
+}
+
+async function invokeTier(agent: GvisorAgent, row: GvisorTierHandoff,
+  operation: "tier-checkpoint" | "tier-restore" | "tier-retire", side: "source" | "destination") {
+  const pilot = tierPilotFor(agent, row, operation === "tier-retire");
+  if (!pilot) throw new GvisorComputerError("not_ready", "The managed sandbox storage pilot is not active.");
+  const restore = operation === "tier-restore";
+  const binding = tierBinding(row, side);
+  const authority = await executionAuthority(row.operator_id, binding.deployment_target_id, binding, restore ? "create" : "status", true);
+  const sandboxId = row[`${side}_sandbox_id`];
+  const acknowledgement = `HIVRA_GVISOR_TIER_ACK ${randomUUID()}`;
+  const guard = identityGuard(row.adapter_sha256, row.runtime_sha256, `'${ADAPTER}'
+printf '%s\\n' '${acknowledgement}'`);
+  const response = await runProxmoxHostScriptWithStdin(guard, JSON.stringify({
+    operation, ownerHash: ownerHash(agent.user_id), computerId: agent.id, sandboxId,
+    ...(restore ? { cpu: Number(agent.cpu), memoryMb: Math.round(Number(agent.ram) * 1024),
+      hostMemoryReserveMb: resolveProxmoxHostCapacityPolicy(authority.connection.configuration?.capacityPolicy).hostMemoryReserveMb } : {}),
+    tier: { generation: row.generation, logicalSandboxId: row.source_sandbox_id, runtime: row.runtime_sha256, helperSha: pilot.helperSha,
+      ...(operation !== "tier-retire" ? { codecSha: pilot.codecSha,
+        key: gvisorTierKey(pilot.key, ownerHash(agent.user_id), agent.id, row.generation) } : {}),
+      ...(restore ? { receipt: row.checkpoint_receipt?.archive } : {}) },
+  }), authority.env, { timeoutMs: 90_000, maxOutputBytes: 16 * 1024 });
+  const lines = response.stdout.split("\n");
+  const evidence = lines.filter(line => line.startsWith(TIER_RESULT));
+  const ack = lines.filter(line => line === acknowledgement);
+  if (!response.ok || evidence.length !== 1 || ack.length !== 1 || lines.indexOf(evidence[0]) >= lines.indexOf(ack[0])) {
+    throw new GvisorComputerError("remote_failed", "The managed sandbox storage handoff is unconfirmed.");
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(evidence[0].slice(TIER_RESULT.length)); } catch { parsed = null; }
+  const receipt = z.object({ generation: z.literal(row.generation), computerId: z.literal(agent.id),
+    sandboxId: z.literal(sandboxId), hostMs: z.number().int().nonnegative().safe(), result: z.unknown() }).strict().safeParse(parsed);
+  if (!receipt.success) throw new GvisorComputerError("remote_failed", "The managed sandbox handoff evidence was invalid.");
+  const identity = { version: 1, computerId: agent.id, generation: row.generation, sandboxId,
+    connectionId: binding.infrastructure_connection_id, targetId: binding.deployment_target_id,
+    revision: binding.infrastructure_connection_revision, hostIdentityDigest: binding.hostIdentityDigest };
+  if (operation === "tier-checkpoint") {
+    const archive = GvisorTierArchive.safeParse(receipt.data.result);
+    if (!archive.success) throw new GvisorComputerError("remote_failed", "The checkpoint archive evidence was invalid.");
+    return { ...identity, state: "checkpointed", checkpointDigest: archive.data.sha256, archive: archive.data };
+  }
+  const health = GvisorComputerReceiptSchema.safeParse(receipt.data.result);
+  if (operation === "tier-retire") {
+    if (!health.success || health.data.state !== "absent" || health.data.computerId !== agent.id || health.data.sandboxId !== sandboxId) {
+      throw new GvisorComputerError("remote_failed", "The retired sandbox absence evidence was invalid.");
+    }
+    return { ...identity, state: "absent" };
+  }
+  if (!health.success || health.data.state !== "running" || health.data.computerId !== agent.id
+    || health.data.sandboxId !== sandboxId || health.data.adapterVersion !== HIVRA_GVISOR_ADAPTER_VERSION
+    || health.data.cpu !== Number(agent.cpu) || health.data.memoryMb !== Math.round(Number(agent.ram) * 1024)
+    || health.data.workspace !== `hivra-gvisor-workspace-${sandboxId}`
+    || health.data.network !== `hivra-gvisor-net-${sandboxId}` || !row.checkpoint_receipt) {
+    throw new GvisorComputerError("remote_failed", "The restored sandbox health evidence was invalid.");
+  }
+  log.info("Managed gVisor tier restore ready", { source: "gvisor-tier", hostMs: receipt.data.hostMs });
+  return { ...identity, state: "running", checkpointDigest: row.checkpoint_receipt.checkpointDigest };
+}
+
+export async function sleepManagedGvisorTier(userId: string, computerId: string, mode: "manual" | "auto" = "manual") {
+  const agent = await loadAgent(userId, computerId);
+  const pilot = tierPilotFor(agent);
+  if (!pilot || agent.deployment_mode !== "hivra-managed" || agent.status !== "running" || agent.operation_id) {
+    if (mode === "auto") return false;
+    throw new GvisorComputerError("not_ready", "This sandbox is not enrolled in the shared storage pilot.");
+  }
+  const entitlement = await resolveEffectiveSubscription(userId, { throwOnQueryError: true });
+  if (!entitlement || !paysForHostedCompute(entitlement)) {
+    if (mode === "auto") return false;
+    throw new GvisorComputerError("plan_required", HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE);
+  }
+  const idleHours = mode === "auto" ? gvisorTierIdleHours(entitlement.plan) : null;
+  if (mode === "auto" && idleHours === null) return false;
+  let row = await readTierHandoff(userId, computerId);
+  if (mode === "auto" && row) return false;
+  if (!row) {
+    const { data, error } = await db().rpc("begin_hivra_gvisor_tier_handoff", {
+      p_customer: userId, p_computer: computerId, p_operator: pilot.authorityUserId, p_source_connection: pilot.connectionId,
+      p_source_target: pilot.targetId, p_source_revision: pilot.connectionRevision, p_destination_connection: pilot.destinationConnection,
+      p_destination_target: pilot.destinationTarget, p_destination_revision: pilot.destinationRevision,
+      p_generation: randomUUID(), p_destination_sandbox: randomUUID(), p_expires_at: new Date(pilot.expiresAtMs).toISOString(),
+      ...(idleHours !== null ? { p_idle_hours: idleHours } : {}),
+    });
+    if (error) throw new GvisorComputerError("database_failed", "The managed sandbox handoff claim could not be confirmed.");
+    const candidate = GvisorTierHandoff.safeParse(data);
+    if (data === null && mode === "auto") return false;
+    if (candidate.success && candidate.data.computer_id === computerId && candidate.data.customer_id === userId) row = candidate.data;
+  }
+  if (!row || !tierPilotFor(agent, row) || row.phase === "running" || row.phase === "retiring") {
+    throw new GvisorComputerError("conflict", "The managed sandbox cannot be checkpointed in its current placement.");
+  }
+  if (row.phase === "sleeping") return true;
+  const receipt = await invokeTier(agent, row, "tier-checkpoint", "source");
+  const { data, error } = await db().rpc("commit_hivra_gvisor_tier_checkpoint", {
+    p_customer: userId, p_computer: computerId, p_generation: row.generation, p_receipt: receipt,
+  });
+  const saved = GvisorTierHandoff.safeParse(data);
+  if (error || !saved.success || saved.data.phase !== "sleeping" || saved.data.generation !== row.generation) {
+    throw new GvisorComputerError("conflict", "The source is fenced, but the checkpoint record is unconfirmed.");
+  }
+  return true;
+}
+
+async function wakeTier(agent: GvisorAgent, row: GvisorTierHandoff) {
+  if (row.phase !== "sleeping" && row.phase !== "running") {
+    throw new GvisorComputerError("conflict", "The workspace is not available to wake.");
+  }
+  if (row.phase === "running") return;
+  const receipt = await invokeTier(agent, row, "tier-restore", "destination");
+  const { data, error } = await db().rpc("commit_hivra_gvisor_tier_running", {
+    p_customer: agent.user_id, p_computer: agent.id, p_generation: row.generation, p_receipt: receipt,
+  });
+  const saved = GvisorTierHandoff.safeParse(data);
+  if (error || !saved.success || saved.data.phase !== "running" || saved.data.generation !== row.generation) {
+    throw new GvisorComputerError("conflict", "The restored sandbox placement could not be committed.");
+  }
+}
+
+async function retireTier(agent: GvisorAgent, row: GvisorTierHandoff) {
+  if (!tierPilotFor(agent, row, true)) throw new GvisorComputerError("not_ready", "The managed sandbox storage pilot is not active.");
+  const claim = { p_customer: agent.user_id, p_computer: agent.id, p_generation: row.generation, p_operator: row.operator_id };
+  const { data, error } = await db().rpc("claim_hivra_gvisor_tier_retire", claim);
+  const held = GvisorTierHandoff.safeParse(data);
+  if (error || !held.success || held.data.phase !== "retiring" || held.data.generation !== row.generation
+    || held.data.computer_id !== agent.id || held.data.customer_id !== agent.user_id) {
+    throw new GvisorComputerError("conflict", "The sandbox retirement could not be claimed.");
+  }
+  const [source, destination] = await Promise.all([
+    invokeTier(agent, held.data, "tier-retire", "source"),
+    invokeTier(agent, held.data, "tier-retire", "destination"),
+  ]);
+  const settled = await db().rpc("commit_hivra_gvisor_tier_retire", {
+    ...claim, p_source_receipt: source, p_destination_receipt: destination,
+  });
+  if (settled.error || settled.data !== true) throw new GvisorComputerError("conflict", "The sandbox retirement is unconfirmed.");
+  return loadAgent(agent.user_id, agent.id);
+}
+
 /** The server launch gate supplies paid limits and exact operator authority. */
 export async function reserveAndDispatchManagedGvisor(input: {
   userId: string; launchRequestId: string; name: string; cpu: number; ramGb: number; authority: ManagedGvisorAuthority;
@@ -664,7 +848,24 @@ export async function reserveAndDispatchManagedGvisor(input: {
 export async function observeGvisorComputer(userId: string, agentId: string) {
   const agent = await loadAgent(userId, agentId);
   if (agent.deployment_mode === "hivra-managed") {
-    return observeManagedProvision(userId, agent.id, agent.operation_kind === "provision" ? agent.operation_id ?? undefined : undefined);
+    const row = await readTierHandoff(userId, agent.id);
+    const pilot = tierPilotFor(agent, row ?? undefined);
+    if (!row) {
+      const result = await observeManagedProvision(userId, agent.id, agent.operation_kind === "provision" ? agent.operation_id ?? undefined : undefined);
+      return pilot && agent.status === "running" && !agent.operation_id ? { ...result, tierState: "eligible" as const } : result;
+    }
+    if (!pilot) throw new GvisorComputerError("not_ready", "The managed sandbox storage pilot is not active.");
+    if (row.phase !== "running") {
+      return { state: "stopped" as const, tierState: row.phase };
+    }
+    const { receipt } = await invokeOnTarget(row.operator_id, row.destination_target_id, {
+      operation: "status", ownerHash: ownerHash(userId), computerId: agent.id, sandboxId: row.destination_sandbox_id,
+    }, tierBinding(row, "destination"), true);
+    const observed = GvisorComputerReceiptSchema.parse(receipt);
+    if (observed.computerId !== agent.id || observed.sandboxId !== row.destination_sandbox_id) {
+      throw new GvisorComputerError("not_ready", "The managed sandbox placement did not match.");
+    }
+    return { ...observed, tierState: "moved" as const };
   }
   requireSelfManagedGvisorDispatch(agent);
   return invoke(userId, agent.deployment_target_id, { operation: "status", ownerHash: ownerHash(userId), computerId: agent.id, sandboxId: agent.gvisor_sandbox_id }, agent);
@@ -694,17 +895,36 @@ export async function openClaudeSandboxTerminal(userId: string, agentId: string)
 }
 
 export async function executeGvisorComputerCommand(userId: string, agentId: string, argv: string[]) {
+  const requested = performance.now();
   const agent = await loadAgent(userId, agentId);
   if (agent.deployment_mode === "hivra-managed") {
     if (agent.status !== "running" || agent.operation_id) {
       throw new GvisorComputerError("not_ready", "The managed sandbox terminal is not ready.");
+    }
+    const tier = await readTierHandoff(userId, agent.id);
+    if (tier) {
+      if (!tierPilotFor(agent, tier)) throw new GvisorComputerError("not_ready", "The managed sandbox storage pilot is not active.");
+      if (tier.phase === "sleeping") {
+        const entitlement = await resolveEffectiveSubscription(userId, { throwOnQueryError: true });
+        if (!paysForHostedCompute(entitlement)) throw new GvisorComputerError("plan_required", HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE);
+      }
+      await wakeTier(agent, tier);
+      const result = await invokeOnTarget(tier.operator_id, tier.destination_target_id, {
+        operation: "exec", ownerHash: ownerHash(userId), computerId: agent.id, sandboxId: tier.destination_sandbox_id, argv,
+      }, tierBinding(tier, "destination"), true, "mutation");
+      if (tier.phase === "sleeping") {
+        log.info("Managed gVisor tier wake command returned", {
+          source: "gvisor-tier", durationMs: Math.round(performance.now() - requested),
+        });
+      }
+      return result.receipt;
     }
     const binding = await readManagedGvisorBinding(userId, agent.id, undefined, true);
     if (binding.sandboxId !== agent.gvisor_sandbox_id || binding.adapterSha !== agent.gvisor_adapter_sha256
       || binding.runtimeSha !== agent.gvisor_runtime_sha256) {
       throw new GvisorComputerError("not_ready", "The managed sandbox terminal authority could not be confirmed.");
     }
-    const pilot = managedGvisorIdlePilotConfig();
+    const pilot = managedGvisorIdlePilotConfig() ?? tierPilotFor(agent);
     let commandClaim: string | null = null;
     if (pilot && pilot.ownerId === userId && matchesIdlePilotTarget(pilot, binding)) {
       const { data, error } = await db().rpc("claim_hivra_managed_gvisor_pilot_command", {
@@ -738,7 +958,12 @@ function matchesIdlePilotTarget(pilot: ManagedGvisorIdlePilot, binding: ManagedG
     && binding.targetId === pilot.targetId && binding.revision === pilot.connectionRevision;
 }
 
-export async function runManagedGvisorIdlePilot(): Promise<"disabled" | "idle" | "stopped"> {
+export async function runManagedGvisorIdlePilot(): Promise<"disabled" | "idle" | "stopped" | "tier-slept"> {
+  const tier = gvisorTierPilot();
+  if (tier) {
+    if (process.env.HIVRA_MANAGED_GVISOR_TIER_AUTO_ENABLED !== "true") return "disabled";
+    return await sleepManagedGvisorTier(tier.ownerId, tier.computer, "auto") ? "tier-slept" : "idle";
+  }
   const pilot = managedGvisorIdlePilotConfig();
   if (!pilot) return "disabled";
   const { data, error } = await db().rpc("claim_hivra_managed_gvisor_pilot_idle_stop", {
@@ -845,6 +1070,11 @@ async function dispatchManagedGvisorLifecycle(
 export async function mutateGvisorComputer(userId: string, agentId: string, input: { action: "start" | "stop" | "resize" | "delete" | "update"; cpu?: number; ramGb?: number }) {
   const agent = await loadAgent(userId, agentId);
   if (agent.deployment_mode === "hivra-managed") {
+    const tier = await readTierHandoff(userId, agent.id);
+    if (tier) {
+      if (input.action === "delete") return retireTier(agent, tier);
+      throw new GvisorComputerError("conflict", "Use the terminal to wake this pilot sandbox. Its lifecycle is managed separately.");
+    }
     if (input.action === "delete" && agent.status === "provisioning") return cancelUndispatchedManagedGvisor(agent);
     if ((agent.status === "running" || agent.status === "stopped" || agent.status === "deleted")
       && (input.action === "start" || input.action === "stop" || input.action === "delete")) {

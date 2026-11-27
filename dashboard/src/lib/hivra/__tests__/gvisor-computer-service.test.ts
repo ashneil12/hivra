@@ -116,13 +116,14 @@ it("mints a terminal grant only for the exact running and healthy enrolled sandb
 class Query {
   private patch: Record<string, unknown> | null = null;
   private filters = new Map<string, unknown>();
-  constructor(private table: string) {}
+  constructor(private table: string,
+    private selectedTarget: typeof target & { capabilities: typeof target.capabilities & { hostIdentityDigest?: string } } = target) {}
   select() { return this; }
   update(patch: Record<string, unknown>) { this.patch = patch; return this; }
   eq(column: string, value: unknown) { this.filters.set(column, value); return this; }
   is(column: string, value: unknown) { this.filters.set(column, value); return this; }
   private finish() {
-    if (this.table === "deployment_targets") return { data: target, error: null };
+    if (this.table === "deployment_targets") return { data: this.selectedTarget, error: null };
     if (!this.patch) return { data: { ...agent }, error: null };
     const matches = [...this.filters].every(([key, value]) => agent[key] === value);
     if (!matches) return { data: null, error: null };
@@ -485,6 +486,78 @@ describe("ready managed sandbox lifecycle", () => {
         .mockResolvedValueOnce({ data: null, error: null });
       await expect(executeGvisorComputerCommand(userId, computerId, ["true"])).rejects.toMatchObject({ code: "conflict" });
       expect(mockRunWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("fences legacy dispatch when the tier ledger exists but the pilot flag is off", async () => {
+      process.env.HIVRA_MANAGED_GVISOR_TIER_COMPUTER_ID = computerId;
+      const now = new Date().toISOString();
+      mockRpc.mockResolvedValueOnce({ error: null, data: {
+        computer_id: computerId, customer_id: userId, operator_id: operatorId, generation: launchRequestId,
+        source_connection_id: connectionId, source_target_id: targetId, source_revision: 7,
+        source_sandbox_id: sandboxId, source_host_identity_digest: "c".repeat(64),
+        destination_connection_id: "66666666-6666-4666-8666-666666666666",
+        destination_target_id: "77777777-7777-4777-8777-777777777777",
+        destination_active_target_id: "77777777-7777-4777-8777-777777777777",
+        destination_revision: 8, destination_sandbox_id: "88888888-8888-4888-8888-888888888888",
+        destination_host_identity_digest: "d".repeat(64), adapter_sha256: adapterSha, runtime_sha256: runtimeSha,
+        phase: "retiring", checkpoint_receipt: null, health_receipt: null, expires_at: now, created_at: now, updated_at: now,
+      } });
+      await expect(executeGvisorComputerCommand(userId, computerId, ["true"])).rejects
+        .toMatchObject({ code: "not_ready", message: "The managed sandbox storage pilot is not active." });
+      expect(mockRpc).toHaveBeenCalledTimes(1);
+      expect(mockRunWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("restores on the pinned different host before committing and dispatching the normal command", async () => {
+      const destinationConnection = "66666666-6666-4666-8666-666666666666";
+      const destinationTarget = "77777777-7777-4777-8777-777777777777";
+      const destinationSandbox = "88888888-8888-4888-8888-888888888888";
+      const destinationHost = "d".repeat(64);
+      const receiptFields = { version: 1, computerId, generation: launchRequestId, checkpointDigest: "e".repeat(64) };
+      const archive = { sha256: receiptFields.checkpointDigest, ciphertext_bytes: 128, entries: 2, bytes: 32 };
+      const checkpoint = { ...receiptFields, state: "checkpointed", connectionId, targetId, revision: 7,
+        sandboxId, hostIdentityDigest: "c".repeat(64), archive };
+      const health = { ...receiptFields, state: "running", connectionId: destinationConnection, targetId: destinationTarget,
+        revision: 8, sandboxId: destinationSandbox, hostIdentityDigest: destinationHost };
+      const row = { computer_id: computerId, customer_id: userId, operator_id: operatorId, generation: launchRequestId,
+        source_connection_id: connectionId, source_target_id: targetId, source_revision: 7,
+        source_sandbox_id: sandboxId, source_host_identity_digest: checkpoint.hostIdentityDigest,
+        destination_connection_id: destinationConnection, destination_target_id: destinationTarget,
+        destination_active_target_id: destinationTarget, destination_revision: 8, destination_sandbox_id: destinationSandbox,
+        destination_host_identity_digest: destinationHost, adapter_sha256: adapterSha, runtime_sha256: runtimeSha,
+        phase: "sleeping", checkpoint_receipt: checkpoint, health_receipt: null,
+        expires_at: new Date(Date.now() + 60_000).toISOString(), created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      };
+      Object.assign(process.env, { HIVRA_MANAGED_GVISOR_TIER_ENABLED: "true", HIVRA_MANAGED_GVISOR_DISK_ADMISSION_ENABLED: "true",
+        HIVRA_MANAGED_GVISOR_TIER_COMPUTER_ID: computerId, HIVRA_MANAGED_GVISOR_TIER_DESTINATION_CONNECTION_ID: destinationConnection,
+        HIVRA_MANAGED_GVISOR_TIER_DESTINATION_TARGET_ID: destinationTarget, HIVRA_MANAGED_GVISOR_TIER_DESTINATION_CONNECTION_REVISION: "8",
+        HIVRA_MANAGED_GVISOR_TIER_KEY: "9".repeat(64), HIVRA_MANAGED_GVISOR_TIER_HELPER_SHA256: "8".repeat(64),
+        HIVRA_MANAGED_GVISOR_TIER_CODEC_SHA256: "7".repeat(64),
+      });
+      mockFrom.mockImplementation((table: string) => new Query(table, { ...target,
+        id: destinationTarget, connection_id: destinationConnection, evidence_connection_revision: 8,
+        last_preflight_at: new Date().toISOString(), capabilities: { ...target.capabilities, hostIdentityDigest: destinationHost },
+      }));
+      mockLoadConnection.mockResolvedValue({ ...connectionAs("root"), id: destinationConnection, revision: 8 });
+      mockRpc.mockResolvedValueOnce({ data: row, error: null })
+        .mockResolvedValueOnce({ data: { ...row, phase: "running", health_receipt: health }, error: null });
+      const running = JSON.parse(result("running").stdout.slice("HIVRA_GVISOR_V1 ".length));
+      mockRunWithStdin.mockImplementationOnce(async (script, stdin) => {
+        expect(JSON.parse(stdin)).toMatchObject({ operation: "tier-restore", sandboxId: destinationSandbox, tier: { receipt: archive } });
+        expect(script).not.toContain(JSON.parse(stdin).tier.key);
+        const marker = script.match(/HIVRA_GVISOR_TIER_ACK [0-9a-f-]+/)?.[0];
+        return { ok: true, stdout: `HIVRA_GVISOR_TIER_V1 ${JSON.stringify({
+          generation: launchRequestId, computerId, sandboxId: destinationSandbox, hostMs: 10,
+          result: { ...running, sandboxId: destinationSandbox, workspace: `hivra-gvisor-workspace-${destinationSandbox}`,
+            network: `hivra-gvisor-net-${destinationSandbox}` },
+        })}\n${marker}\n`, stderr: "" };
+      }).mockImplementationOnce(async (script, stdin) => {
+        expect(mockRpc).toHaveBeenNthCalledWith(2, "commit_hivra_gvisor_tier_running", expect.objectContaining({ p_receipt: health }));
+        expect(JSON.parse(stdin)).toMatchObject({ operation: "exec", sandboxId: destinationSandbox, argv: ["cat", "marker"] });
+        return acknowledgeManaged(script, command);
+      });
+      await expect(executeGvisorComputerCommand(userId, computerId, ["cat", "marker"])).resolves.toMatchObject({ stdout: "ok" });
+      expect(mockRunWithStdin).toHaveBeenCalledTimes(2);
     });
   });
 

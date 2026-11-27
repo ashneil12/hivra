@@ -705,12 +705,14 @@ class ClaudeTerminalWorkloadTests(unittest.TestCase):
                 mock.patch.object(adapter, "inspect_helper", return_value=None), \
                 mock.patch.object(adapter, "inspect_resource", return_value=False), \
                 mock.patch.object(adapter, "require_helper_absent"), \
-                mock.patch.object(adapter, "status", side_effect=lambda _: print('HIVRA_GVISOR_V1 {"state":"running"}')):
+                mock.patch.object(adapter, "status", side_effect=lambda _, *, emit: (
+                    print('HIVRA_GVISOR_V1 {"state":"running"}') if emit else None)) as status:
             docker = mock.Mock()
             self.assertEqual(self.run_main(req, docker), {"state": "running"})
         verify.assert_called_once_with(self.image)
         prepare.assert_called_once_with(local_only=True)
         inspect.assert_called_with(adapter.names(req)[0], req)
+        status.assert_called_once_with(req, emit=True)
         helper, container = (call.args for call in docker.call_args_list if call.args[0] in ("run", "create"))
         self.assertEqual(helper[1:4], local)
         self.assertEqual(helper[-4:], (adapter.IMAGE, "/bin/chown", "65534:65534", "/workspace"))
