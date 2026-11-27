@@ -152,7 +152,8 @@ describe("Linux server guest profile", () => {
     expect(installer).toContain("linux-desktop|linux-server) ;;");
     expect(installer).toContain("WorkingDirectory=/home/bux/Hivra");
     // Shared base, workspace, persona strip and gateway workspace root follow both kinds.
-    expect(installer).toContain("if is_linux_computer; then\n  # A plain computer must not depend");
+    expect(installer).toContain('uses_standalone_access_base() {\n  is_linux_computer || [ "$HERMES_BAKED" = 1 ]\n}');
+    expect(installer).toContain("if uses_standalone_access_base; then\n  # A plain computer must not depend");
     expect(installer).toContain("  is_linux_computer || return 0\n  local workspace=");
     expect(installer).toContain("if is_linux_computer; then\n  sed -i \"/^Environment=HIVRA_AGENT_KIND=/a Environment=HIVRA_WORKSPACE_ROOT");
     expect(installer).toContain('! is_linux_computer; then\nsay "6/7');
