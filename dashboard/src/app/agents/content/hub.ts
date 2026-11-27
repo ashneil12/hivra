@@ -70,7 +70,7 @@ export const HUB_CONTENT: HubContent = {
         slug: "hermes",
         name: "Hermes",
         tagline: "For a personal, general-purpose agent you can build routines around.",
-        body: "Hermes, from Nous Research, brings memory, skills and scheduled tasks together. New paid launches on a Hivra computer running official Hermes are live on Canary. Existing Hermes agents keep running where they are.",
+        body: "Hermes, from Nous Research, brings memory, skills and scheduled tasks together. It runs on Hivra Cloud.",
         goodFit: "recurring research, personal workflows, tool use and a more persistent working relationship with an agent.",
         linkLabel: "Explore Hermes",
       },
@@ -120,7 +120,7 @@ export const HUB_CONTENT: HubContent = {
       },
       {
         term: "Sleep rules depend on the computer and how you access it.",
-        text: "If you need a Linux workspace instead of a preinstalled agent, [explore sandboxes](/sandboxes). Managed Light access is limited to Canary testing, with a separate idle-stop pilot. Supported paid KVM computers can nap and hibernate when sleep is enabled.",
+        text: "If you need a Linux workspace instead of a preinstalled agent, [compare sandboxes and virtual machines](/sandboxes).",
       },
       {
         term: `You can inspect [Hivra's source](${REPOSITORY_URL}).`,

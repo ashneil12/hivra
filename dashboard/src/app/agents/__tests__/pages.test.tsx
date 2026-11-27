@@ -207,18 +207,18 @@ describe("/agents hub", () => {
     expectInternalLinksResolve(main);
   });
 
-  it("describes the verified catalog without offering apps when the preview is disabled", () => {
+  it("hides verified apps when the public catalog is disabled", () => {
     jest.replaceProperty(process, "env", { ...process.env, NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG: "0" });
     const { container } = render(<AgentsIndexPage />);
-    const preview = container.querySelector<HTMLElement>("#verified-catalog")!;
-    expect(preview).toHaveTextContent("Canary verification does not mean an app is available in production.");
-    expect(within(preview).queryByRole("list")).not.toBeInTheDocument();
+    expect(container.querySelector("#verified-catalog")).not.toBeInTheDocument();
   });
 
-  it("shows exactly the currently certified manifest entries when the preview is enabled", () => {
+  it("shows exactly the currently certified manifest entries when the public catalog is enabled", () => {
     jest.replaceProperty(process, "env", { ...process.env, NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG: "1" });
     render(<AgentsIndexPage />);
     const preview = screen.getByRole("list", { name: "Verified catalog entries" });
+    expect(screen.getByRole("heading", { name: "Verified apps" })).toBeInTheDocument();
+    expect(screen.getByText("Every app here passed an end-to-end launch check. Find them in Launch.")).toBeInTheDocument();
     const certified = UNIVERSAL_CATALOG_MANIFESTS.filter(hasCurrentCatalogCertification);
     expect(certified.length).toBeGreaterThan(0);
     expect(UNIVERSAL_CATALOG_MANIFESTS.length).toBeGreaterThan(certified.length);
@@ -265,9 +265,8 @@ describe("/agents hub", () => {
     expect(text).toMatch(/the scheduled tasks execute through your GitHub Actions/);
     expect(text).toContain("The dashboard computer counts as one of your agents but uses none of your plan's shared CPU and RAM.");
     expect(text).toContain("Paid agent hosting starts at $9.99 a month for 2 vCPU and 4 GB of RAM.");
-    expect(text).toContain("Managed Light access is limited to Canary testing, with a separate idle-stop pilot.");
-    expect(text).toContain("Supported paid KVM computers can nap and hibernate when sleep is enabled.");
-    expect(text).toContain("New paid launches on a Hivra computer running official Hermes are live on Canary.");
+    expect(text).toContain("compare sandboxes and virtual machines");
+    expect(text).not.toMatch(/Canary|idle-stop pilot/);
     expect(text).not.toMatch(/\bthe box\b|Box Terminal/i);
   });
 

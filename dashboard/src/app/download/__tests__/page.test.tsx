@@ -29,23 +29,14 @@ const PUBLISHED: DesktopDownloads = {
 };
 
 describe("/download", () => {
-  it("states honestly that no installer exists while the macOS record is pending", () => {
+  it("offers browser access without a download promise when desktop sign-in is disabled", () => {
     expect(getDesktopDownloads({}).macos.status).toBe("pending");
     render(<DownloadPage />);
 
     const macos = screen.getByRole("region", { name: "macOS" });
-    expect(within(macos).getByText("Public download coming soon.")).toBeInTheDocument();
-    const button = within(macos).getByRole("button", { name: "Download for macOS" });
-    expect(button).toBeDisabled();
-    expect(button).toHaveAccessibleDescription("Public download coming soon.");
-    // The state is said once, in the line above the button, not again inside it.
-    expect(macos.textContent?.match(/coming soon/gi)).toHaveLength(1);
-    expect(within(macos).queryByRole("link", { name: /download for macos/i })).not.toBeInTheDocument();
-    // The install caution is about a release, and none exists.
-    expect(macos).not.toHaveTextContent("Before installing");
-    expect(macos).toHaveTextContent(
-      "If the desktop app is not available for your Mac yet, you can still use Hivra in your browser.",
-    );
+    expect(within(macos).queryByRole("link", { name: "Download for Mac" })).not.toBeInTheDocument();
+    expect(macos).not.toHaveTextContent(/coming soon/i);
+    expect(macos).toHaveTextContent("You can also use Hivra in your browser.");
     expect(within(macos).getByRole("link", { name: "Open Hivra" })).toHaveAttribute("href", "/dashboard");
   });
 
@@ -72,13 +63,13 @@ describe("/download", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Hivra on your computer." })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Some work is easier when you can reach your agents without keeping another browser tab open. This page is where you’ll find supported desktop downloads and installation guidance.",
+        "Some work is easier when you can reach your agents without keeping another browser tab open. Use Hivra in your browser or install the Mac app where available.",
       ),
     ).toBeInTheDocument();
 
     const where = screen.getByRole("region", { name: "Keep the work where it belongs" });
     expect(where).toHaveTextContent("Your Hivra-hosted computers run remotely.");
-    expect(where).toHaveTextContent("an eligible computer can sleep when idle if sleep is enabled. You can wake it when you return.");
+    expect(where).not.toHaveTextContent(/idle sleep/i);
     expect(where).toHaveTextContent(
       "Individual agent workflows can still stop, fail or reach their own usage limits.",
     );
@@ -95,12 +86,10 @@ describe("/download", () => {
     expect(container.querySelector("a[download]")).toBeNull();
   });
 
-  it("names a desktop app only to say it is not out, the one banned phrase this page needs", () => {
+  it("avoids unsupported availability claims", () => {
     const { container } = render(<DownloadPage />);
     const hits = findBannedClaims(container.textContent ?? "");
-    // copy-rules bans "desktop app" because desktop apps are not available. This page says exactly that
-    // (and what to do instead), so that single rule is exempted here and nothing else is.
-    expect(hits.map((hit) => hit.match.toLowerCase())).toEqual(["desktop app"]);
+    expect(hits).toEqual([]);
     expect(container.textContent).not.toMatch(/\b(?:is|are) (?:now )?(?:available|live|out)\b(?! for)/i);
   });
 

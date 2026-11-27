@@ -93,7 +93,7 @@ describe("/pricing prices and sizes", () => {
 });
 
 describe("/pricing comparison table", () => {
-  it("is a semantic table: plans as columns, the md's nine criteria as row headings", async () => {
+  it("is a semantic table and hides the sleep row without the sleep switches", async () => {
     await renderPricing();
     const table = screen.getByRole("table", { name: PRICING_COMPARISON.caption });
 
@@ -109,7 +109,6 @@ describe("/pricing comparison table", () => {
       { header: "Who operates the server?", cells: ["You", "Hivra", "Hivra"] },
       { header: "Browser access", cells: ["According to your setup", "Yes", "Yes"] },
       { header: "Remains available when your laptop closes", cells: ["If your server stays on", "Yes", "Yes"] },
-      { header: "Idle sleep", cells: ["According to your setup", "On supported computers", "On supported computers"] },
       { header: "AI provider usage included", cells: ["No", "No", "No"] },
       { header: "7-day money-back guarantee on card payments", cells: ["Not applicable", "Yes", "Yes"] },
     ]);

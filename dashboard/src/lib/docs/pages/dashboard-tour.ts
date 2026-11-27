@@ -48,7 +48,7 @@ export const doc: DocPage = {
         "![The Launch Review step for a sample Codex agent showing where it runs, size, browser toggle, model access choices and cost](/images/docs/dash-launch-review.webp \"Launch step 2 (Review and launch) with sample data: where it runs, size, model access and the Cost row. The balance shown is a sample.\")",
         "After you confirm, the page tells you what is happening: that your agent's computer is being created, that it is setting up, or, if something failed, that it could not start, with a way back to Review. If you leave and come back to Launch partway through, it asks whether to continue the launch you started or start a new one.",
         "A paid plan is the standard way to launch on Hivra Cloud. See [pricing](/pricing) for managed hosting options.",
-        "On Canary, the catalog preview can show extra agents and apps certified for the current catalog and runtime. A catalog entry or a local test is not enough for launch; its exact version needs Canary certification. This is not a promise that the app is available on hivra.cloud.",
+        "Apps listed in Launch have passed an end-to-end launch check for the version Hivra runs.",
         "The full walk through, including the model choices and what to do when a launch fails, is in [Launch your first agent](/docs/getting-started). How the model is paid for is in [how your agent gets its model](/docs/models-and-credits).",
       ],
     },

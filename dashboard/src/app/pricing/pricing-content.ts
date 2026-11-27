@@ -47,7 +47,7 @@ function hostedSize(planKey: HostedSize["planKey"], price: string, body: string)
 }
 
 export const HOSTED_SIZES: HostedSize[] = [
-  hostedSize("operator", ENTRY_PLAN_PRICE, "Hivra runs the computer for you. Eligible paid computers can use idle sleep or be kept awake."),
+  hostedSize("operator", ENTRY_PLAN_PRICE, "Hivra runs the computer for you."),
   hostedSize("fleet", LARGER_PLAN_PRICE, "The same, with twice the CPU and memory, for bigger builds and heavier workloads."),
 ];
 
@@ -215,7 +215,7 @@ export const PRICING_OPTIONS = {
     meta: `${ENTRY.cpu} and ${ENTRY.memory}`,
     body: [
       "A dedicated working environment for an agent or for you, without having to provision and maintain the server yourself.",
-      "Keep work on your remote computer and open it through your browser. On eligible paid computers, you can use idle sleep or keep the computer awake for work that needs it.",
+      "Keep work on your remote computer and open it through your browser.",
     ],
     goodFor: "Good for getting started, everyday agent use, research, automation and smaller software projects.",
   },
@@ -246,7 +246,7 @@ export const PRICING_COMPARISON = {
     { label: "Who operates the server?", cells: ["You", "Hivra", "Hivra"] },
     { label: "Browser access", cells: ["According to your setup", "Yes", "Yes"] },
     { label: "Remains available when your laptop closes", cells: ["If your server stays on", "Yes", "Yes"] },
-    { label: "Idle sleep", cells: ["According to your setup", "On supported computers", "On supported computers"] },
+    { label: "Idle sleep", cells: ["According to your setup", "On supported computers", "On supported computers"], sleepOnly: true },
     { label: "AI provider usage included", cells: ["No", "No", "No"] },
     { label: MONEY_BACK_GUARANTEE, cells: ["Not applicable", "Yes", "Yes"] },
   ],
@@ -311,6 +311,7 @@ export interface PricingFaqItem {
   links?: PricingFaqLink[];
   /** Mentions the token: shown, and put in the FAQPage JSON-LD, only while the token surfaces are visible. */
   tokenOnly?: boolean;
+  sleepOnly?: boolean;
   /** The answer once the Free plan is closed to new sign-ups (HIVRA_FREE_PLAN_CLOSED_AT). */
   aFreeClosed?: string;
 }
@@ -338,7 +339,8 @@ export const PRICING_FAQ: PricingFaqItem[] = [
   },
   {
     q: "Will Hivra turn my computer off when I'm not using it?",
-    a: "When idle sleep is enabled on an eligible paid computer, it can nap and then hibernate. Open it again to wake it with its files intact, or keep it awake if work needs to continue in the background.",
+    a: "Turn on idle sleep on a supported paid computer to let it nap and then hibernate when idle. Open it again to wake it with its files intact, or keep it awake for background work.",
+    sleepOnly: true,
   },
   {
     q: "What happens if I stop paying?",
@@ -382,8 +384,8 @@ export function withFreeClosedAnswer(item: PricingFaqItem): PricingFaqItem {
   return item.aFreeClosed ? { ...item, a: item.aFreeClosed } : item;
 }
 
-export function visiblePricingFaq(tokenSurfacesVisible: boolean, freePlanClosed = false): PricingFaqItem[] {
-  return PRICING_FAQ.filter((item) => tokenSurfacesVisible || !item.tokenOnly).map((item) =>
+export function visiblePricingFaq(tokenSurfacesVisible: boolean, freePlanClosed = false, sleep = false): PricingFaqItem[] {
+  return PRICING_FAQ.filter((item) => (tokenSurfacesVisible || !item.tokenOnly) && (sleep || !item.sleepOnly)).map((item) =>
     freePlanClosed ? withFreeClosedAnswer(item) : item
   );
 }

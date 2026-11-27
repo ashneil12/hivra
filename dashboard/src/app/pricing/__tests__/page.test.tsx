@@ -295,11 +295,12 @@ describe("/pricing page", () => {
   });
 
   it("describes sleep as conditional without promising uninterrupted work", async () => {
+    const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_SLEEP_MODE: "on", NEXT_PUBLIC_HIVRA_AGENT_SLEEP: "1" });
+    try {
     const { container } = await renderPricing();
     const text = (container.querySelector("main") as HTMLElement).textContent ?? "";
 
-    expect(text).toContain("On eligible paid computers, you can use idle sleep or keep the computer awake");
-    expect(text).toContain("When idle sleep is enabled on an eligible paid computer, it can nap and then hibernate.");
+    expect(text).toContain("Turn on idle sleep on a supported paid computer to let it nap and then hibernate when idle.");
     expect(text).not.toContain("not paused for inactivity");
     expect(text).not.toMatch(/isn't paused simply because|let tasks continue/i);
     expect(text).not.toMatch(/never sleeps|always on|24\/7/i);
@@ -309,6 +310,9 @@ describe("/pricing page", () => {
     expect(flagged).toEqual([
       "That doesn't mean every agent task will continue automatically: a command or process must itself be set up to keep running, and external services can still fail or time out.",
     ]);
+    } finally {
+      env.restore();
+    }
   });
 
   it("says the plan has no AI usage, in the approved words, and keeps provider terms on the sign-in promises", async () => {
@@ -373,11 +377,11 @@ describe("/pricing page", () => {
 });
 
 describe("/pricing questions", () => {
-  it("shows every question except the token one, and marks up exactly what it shows", async () => {
+  it("hides disabled features and marks up exactly the questions it shows", async () => {
     const { container } = await renderPricing(SWITCH_OFF);
 
-    const shown = PRICING_FAQ.filter((item) => !item.tokenOnly);
-    expect(shown.length).toBe(10);
+    const shown = PRICING_FAQ.filter((item) => !item.tokenOnly && !item.sleepOnly);
+    expect(shown.length).toBe(9);
     const details = [...container.querySelectorAll("details")];
     expect(details.map((item) => item.querySelector("summary")?.firstChild?.textContent)).toEqual(shown.map(({ q }) => q));
     for (const { q } of shown) expect(screen.getByText(q)).toBeInTheDocument();
@@ -415,10 +419,10 @@ describe("/pricing questions", () => {
     expect(tokenAnswer).toContain("live market price");
     expect(tokenAnswer).toContain("keep the amount locked when they qualified");
     const faq = faqGraph(container);
-    expect(faq.mainEntity).toHaveLength(PRICING_FAQ.length);
+    expect(faq.mainEntity).toHaveLength(PRICING_FAQ.length - 1);
     expect(faq.mainEntity.map((entry) => entry.name)).toContain("Do I need to buy $HIVRA?");
     const details = [...container.querySelectorAll("details")];
-    expect(details).toHaveLength(PRICING_FAQ.length);
+    expect(details).toHaveLength(PRICING_FAQ.length - 1);
     details.forEach((item, index) => {
       expect(squash(item.querySelector("p")?.textContent)).toBe(squash(faq.mainEntity[index].acceptedAnswer.text));
     });
@@ -431,7 +435,7 @@ describe("/pricing questions", () => {
 
     expect(screen.queryByText("Do I need to buy $HIVRA?")).not.toBeInTheDocument();
     expect(container.querySelector('a[href="/token"]')).toBeNull();
-    expect(faqGraph(container).mainEntity).toHaveLength(PRICING_FAQ.length - 1);
+    expect(faqGraph(container).mainEntity).toHaveLength(PRICING_FAQ.length - 2);
     expect(pageAndStructuredText(container)).not.toMatch(/\$HIVRA/);
   });
 

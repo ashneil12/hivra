@@ -1,10 +1,13 @@
 /** @jest-environment jsdom */
 import "@testing-library/jest-dom";
 import React from "react";
+import { TextEncoder } from "node:util";
 import { render, screen, within } from "@testing-library/react";
 
 import FeaturesPage from "../page";
 import { plainText, renderInline, staysOnOneLine } from "../_components/Inline";
+
+globalThis.TextEncoder ??= TextEncoder;
 
 jest.mock("@/components/public-site/PublicSite", () => ({
   __esModule: true,
@@ -37,7 +40,6 @@ describe("/features page", () => {
     expect(screen.getByRole("link", { name: /See supported agents/ })).toHaveAttribute("href", "/agents");
     expect(screen.getByRole("link", { name: /Explore pricing/ })).toHaveAttribute("href", "/pricing");
     expect(screen.getByRole("link", { name: /Explore sandboxes/ })).toHaveAttribute("href", "/sandboxes");
-    expect(screen.getByRole("link", { name: /verified catalog preview/ })).toHaveAttribute("href", "/agents#verified-catalog");
     // The old quick-summary grid and shared price strip are gone.
     expect(screen.queryByText("What you get on day one")).not.toBeInTheDocument();
     expect(screen.queryByText(/Start Deploying|Deploy My Agent/)).not.toBeInTheDocument();
@@ -75,10 +77,21 @@ describe("/features page", () => {
     expect(screen.getByText(/Memory isn't perfect or automatic understanding\./)).toBeInTheDocument();
     expect(screen.getByText(/A hosted browser doesn't make those restrictions disappear\./)).toBeInTheDocument();
     expect(screen.getByText(/They are independent agents, not an automatically coordinated team\. Built-in orchestration belongs to Hivra's future plans\./)).toBeInTheDocument();
-    expect(screen.getByText(/Migration isn't a one-click promise: configurations and integrations need checking\./)).toBeInTheDocument();
+    expect(screen.getByText(/Check your configurations and integrations before switching\./)).toBeInTheDocument();
     expect(screen.getByText(/Your files can outlast your session, even if the computer pauses when idle\./)).toBeInTheDocument();
-    expect(screen.getByText(/Managed Light access is limited to Canary testing, with a separate idle-stop pilot\./)).toBeInTheDocument();
-    expect(screen.getByText(/New paid launches on a Hivra computer running official Hermes are live on Canary\./)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "compare sandboxes and virtual machines" })).toHaveAttribute("href", "/sandboxes");
+  });
+
+  it.each(["0", "1"])("shows the verified apps link only when the catalog is enabled (%s)", (flag) => {
+    const env = jest.replaceProperty(process, "env", { ...process.env, NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG: flag });
+    try {
+      render(<FeaturesPage />);
+      const link = screen.queryByRole("link", { name: "verified apps" });
+      if (flag === "1") expect(link).toHaveAttribute("href", "/agents#verified-catalog");
+      else expect(link).not.toBeInTheDocument();
+    } finally {
+      env.restore();
+    }
   });
 
   it("states the hosting price from the plan facts and ends with the questions", () => {

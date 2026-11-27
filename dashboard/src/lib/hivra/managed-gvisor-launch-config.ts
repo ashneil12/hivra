@@ -78,6 +78,12 @@ export function managedGvisorLaunchConfigured(env: NodeJS.ProcessEnv = process.e
   return managedGvisorGeneralLaunchEnabled(env) && managedGvisorAuthorityConfig(env) !== null;
 }
 
+export function publicManagedSandboxAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+  return managedGvisorLaunchConfigured(env)
+    && managedGvisorDiskAdmissionEnabled(env)
+    && !managedGvisorQaEnrollmentEnabled(env);
+}
+
 export function managedGvisorLaunchAdmittedForUser(
   userId: string | null | undefined,
   env: NodeJS.ProcessEnv = process.env,

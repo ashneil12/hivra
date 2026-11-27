@@ -14,8 +14,7 @@ export const DIRECTORY_LEAD = {
   paragraphs: [
     "An AI agent becomes much more useful when it has somewhere to work. Not just a chat window, but a computer that can keep files, run tools, use a browser and come back to unfinished work tomorrow.",
     "That's what Hivra provides. Run supported agents such as OpenClaw, Claude Code and Codex on cloud computers managed from one dashboard. Hivra handles the infrastructure; you choose the model access and decide what your agent is allowed to do. Your files can outlast your session, even if the computer pauses when idle.",
-    "For a Linux workspace on its own, see the sandbox options. Managed Light access is limited to Canary testing, with a separate idle-stop pilot. Supported paid KVM computers can nap and hibernate when sleep is enabled.",
-    "Features vary by framework and plan. The [verified catalog preview](/agents#verified-catalog) covers open-source agents and apps that passed launch checks on Canary, not a list of production releases.",
+    "For a Linux workspace on its own, [compare sandboxes and virtual machines](/sandboxes). Features vary by the agent and computer you choose.",
   ],
   actions: [
     { label: "Explore pricing", href: "/pricing", kind: "secondary" },
@@ -82,7 +81,7 @@ export const DIRECTORY_ITEMS: readonly DirectoryItem[] = [
     number: "06.",
     title: "Keep OpenClaw or try Hermes",
     paragraphs: [
-      "Already use OpenClaw? You don't have to abandon it to use Hivra. Compare OpenClaw with Hermes if its approach to memory, skills and workflows suits you better. New paid launches on a Hivra computer running official Hermes are live on Canary. Migration isn't a one-click promise: configurations and integrations need checking.",
+      "Already use OpenClaw? You don't have to abandon it to use Hivra. Compare OpenClaw with Hermes if its approach to memory, skills and workflows suits you better. Check your configurations and integrations before switching.",
     ],
     link: { label: "Explore the OpenClaw option", href: "/features/openclaw-alternative" },
   },

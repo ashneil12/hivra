@@ -138,20 +138,15 @@ export default function AgentsIndexPage() {
           </ol>
         </section>
 
-        <section id="verified-catalog" className={`${agentStyles.choose} ${agentStyles.hubProse}`}>
-          <h2 className={agentStyles.hubHeading}>Verified catalog preview</h2>
-          <p>
-            The catalog preview includes open-source agents and apps that passed end-to-end launch checks
-            on Canary. An entry appears in Launch only where the preview is enabled and its current version
-            still has a passing check. Registry entries without that proof are not offered for launch.
-            Canary verification does not mean an app is available in production.
-          </p>
-          {certifiedApps.length > 0 && (
+        {certifiedApps.length > 0 && (
+          <section id="verified-catalog" className={`${agentStyles.choose} ${agentStyles.hubProse}`}>
+            <h2 className={agentStyles.hubHeading}>Verified apps</h2>
+            <p>Every app here passed an end-to-end launch check. Find them in Launch.</p>
             <ul className={agentStyles.catalogEntries} aria-label="Verified catalog entries">
               {certifiedApps.map(({ id, name }) => <li key={id}>{name}</li>)}
             </ul>
-          )}
-        </section>
+          </section>
+        )}
 
         <section className={`${agentStyles.choose} ${agentStyles.hubProse}`}>
           <h2 className={agentStyles.hubHeading}>{content.choose.heading}</h2>

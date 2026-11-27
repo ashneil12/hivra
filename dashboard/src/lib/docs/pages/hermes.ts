@@ -18,7 +18,7 @@ export const doc: DocPage = {
         "Hermes Agent is an open-source agent from Nous Research. It is built for work that continues over time: it can keep memory between sessions, build up skills for jobs you repeat, use tools, and run scheduled jobs. This page is for developers and AI power users who want that agent running on a computer that stays on, without renting and configuring a server first.",
         "On Hivra you get the official Hermes Agent. Hivra creates a computer for it, runs Hermes's own installer on that computer, points it at a model, and opens Hermes's own web UI through Hivra's authenticated gateway. Hivra does not modify Hermes, fork it or patch it, and does not pin a version of it.",
         "Hivra is an independent hosting service and is not affiliated with or endorsed by Nous Research. Hermes is their project. The computer, the sign-in in front of it, and the Settings views around it are Hivra's. The public [Hermes page](/agents/hermes) describes what people use it for.",
-        "This guide describes the new Hermes computer verified on Canary. Availability on hivra.cloud requires a separate approved production rollout. Existing Hermes agents keep running on their current setup.",
+        "This guide describes launching Hermes on a Hivra computer. Existing Hermes agents keep running on their current setup.",
         "![The Hermes page on the Hivra site with the Deploy Hermes button and a See pricing link](/images/docs/public-agent-hermes.webp \"The public Hermes page. Deploy Hermes links into sign-up and then Launch with Hermes named, not straight to the Launch screen.\")",
       ],
     },

@@ -6,7 +6,11 @@ import { Breadcrumbs, EditorialRelated } from "@/components/public-editorial/Edi
 import styles from "@/components/public-editorial/secondary-site.module.css";
 import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { buildLaunchHref } from "@/lib/hivra/launch-navigation";
+import { publicManagedSandboxAvailable } from "@/lib/hivra/managed-gvisor-launch-config";
+import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
 import local from "../features/features.module.css";
+
+export const dynamic = "force-dynamic";
 
 const title = "Linux Sandboxes | Hivra";
 const description = "Compare a lightweight gVisor sandbox with a full Ubuntu virtual machine. See what stays on disk and how sleep and wake work.";
@@ -17,26 +21,29 @@ export const metadata: Metadata = {
   ...buildWebsiteMetadata({ path: "/sandboxes", title, description }),
 };
 
-const topics = [
-  {
-    title: "A terminal, not a desktop",
-    body: "Pick a sandbox for scripts, command-line tools or working with files. The terminal runs one command at a time; a sandbox has no graphical desktop. Pick a full KVM virtual machine when you need a desktop, your own Linux kernel or long-running services.",
-  },
-  {
-    title: "Files that stay when compute stops",
-    body: "Save work in the workspace. Those files survive stop and start. In the managed idle-sleep pilot, the sandbox stops when idle and its owner can start it again. That starts a fresh session: running processes and unsaved work don’t resume. Managed sandboxes have their own storage limits.",
-  },
-  {
-    title: "An isolated place to run code",
-    body: "gVisor handles Linux system calls in a separate application kernel, reducing the code’s direct access to the host kernel. A sandbox isn’t a virtual machine or a guarantee of complete security. What your code can reach still depends on the access you give it.",
-  },
-  {
-    title: "Sleep on a full computer",
-    body: "On eligible paid KVM computers with sleep enabled, idle time can trigger a nap and then hibernation. Open the computer again to wake it with its files intact. Keep it awake if you need work to continue in the background.",
-  },
-] as const;
+function comparison(managed: boolean, paidSleep: boolean) {
+  return [
+    {
+      title: "A terminal, not a desktop",
+      body: "Pick a sandbox for scripts, command-line tools or working with files. The terminal runs one command at a time; a sandbox has no graphical desktop. Pick a full KVM virtual machine when you need a desktop, your own Linux kernel or long-running services.",
+    },
+    {
+      title: "Files that stay when compute stops",
+      body: "Files you save in the workspace survive stop and start. Start opens a fresh session: running processes and unsaved work don’t resume." + (managed ? " Each managed sandbox has its own storage limit." : ""),
+    },
+    {
+      title: "An isolated place to run code",
+      body: "gVisor handles Linux system calls in a separate application kernel, reducing the code’s direct access to the host kernel. What your code can reach depends on the permissions and credentials you give it.",
+    },
+    ...(paidSleep ? [{
+      title: "Sleep on a full computer",
+      body: "Turn on idle sleep on a supported paid KVM computer. It can nap and then hibernate when idle. Open it again to wake it with its files intact, or keep it awake for background work.",
+    }] : []),
+  ];
+}
 
 export default function SandboxesPage() {
+  const managed = publicManagedSandboxAvailable();
   return (
     <PublicSite className={styles.page} data-page="sandboxes">
       <main className={styles.main} id="main-content">
@@ -52,10 +59,10 @@ export default function SandboxesPage() {
         </header>
 
         <section className={`${local.introBand} ${local.split}`} aria-labelledby="sandbox-access">
-          <h2 id="sandbox-access">Two ways to run a sandbox</h2>
+          <h2 id="sandbox-access">{managed ? "Two ways to run a sandbox" : "Run a sandbox on your server"}</h2>
           <div className={local.prose}>
             <p><strong>Your server.</strong> Connect a compatible Linux server and choose Linux Sandbox in Launch.</p>
-            <p><strong>Hivra Cloud.</strong> Managed Light computers use the Linux Sandbox option in Launch. Managed access is limited to eligible test accounts on Canary, and automatic idle sleep is a separate pilot.</p>
+            {managed && <p><strong>Hivra Cloud.</strong> On a paid plan, pick Linux Sandbox in Launch for a Light computer that Hivra manages for you.</p>}
           </div>
         </section>
 
@@ -64,7 +71,7 @@ export default function SandboxesPage() {
             <h2 id="computer-types">Choose the computer your work needs.</h2>
           </div>
           <ol className={local.index}>
-            {topics.map(({ title, body }, index) => (
+            {comparison(managed, paidKvmSleepAvailable()).map(({ title, body }, index) => (
               <li key={title} className={`${local.item} ${local.split}`}>
                 <h3><span aria-hidden="true" className={local.itemNumber}>0{index + 1}</span>{title}</h3>
                 <div className={local.prose}><p>{body}</p></div>

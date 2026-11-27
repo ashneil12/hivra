@@ -5,10 +5,6 @@ import PublicLink, { LITEPAPER_HREF } from "../public-site/PublicLink";
 import { SHOW_FOUNDER_SECTION } from "./home/content";
 import styles from "../public-site/public-site.module.css";
 
-export function downloadLinkLabel(status: "pending" | "published"): string {
-  return status === "published" ? "Download for Mac" : "Mac app (coming soon)";
-}
-
 const COLUMNS = [
   { title: "Product", links: [
     { label: "Agents", href: "/agents" },
@@ -28,7 +24,7 @@ const COLUMNS = [
     { label: "Docs", href: "/docs" },
     { label: "Blog", href: "/blog" },
     { label: "Free tools", href: "/tools" },
-    { label: "Mac app (coming soon)", href: "/download" },
+    { label: "Download for Mac", href: "/download" },
     { label: "Ecosystem", href: "/ecosystem" },
     { label: "Token", href: "/token", tokenSurface: true },
   ] },
@@ -58,12 +54,12 @@ export default function Footer({ tokenSurfaces = false, freePlanClosed = false }
             <nav key={column.title} aria-label={column.title}>
               <h2>{column.title}</h2>
               {column.links.map(({ label, href }) => {
-                const isMacDownload = href === "/download";
-                const destination = isMacDownload ? mac.href ?? href : href;
+                const destination = href === "/download" ? mac.href : href;
+                if (!destination) return null;
                 const external = destination.startsWith("https://");
                 return (
                   <PublicLink key={href} href={destination} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}>
-                    {isMacDownload ? downloadLinkLabel(mac.status) : label}{external && <ArrowUpRight size={13} strokeWidth={1.5} aria-hidden="true" />}
+                    {label}{external && <ArrowUpRight size={13} strokeWidth={1.5} aria-hidden="true" />}
                   </PublicLink>
                 );
               })}
