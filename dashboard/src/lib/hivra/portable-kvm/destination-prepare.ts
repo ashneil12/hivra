@@ -11,6 +11,9 @@ const gib = 1024 ** 3;
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const storageName = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/);
 const privateIp = z.string().refine(value => isIPv4(value) && /^(?:10\.|172\.(?:1[6-9]|2[0-9]|3[01])\.|192\.168\.)/.test(value));
+export const portableKvmUnicastMacAddress = z.string()
+  .regex(/^[0-9A-F][02468ACE](?::[0-9A-F]{2}){5}$/)
+  .refine(value => value !== "00:00:00:00:00:00");
 const cpuFlags = ["abm", "adx", "aes", "avx", "avx2", "avx512_bf16", "avx512_bitalg", "avx512_vbmi2", "avx512_vnni",
   "avx512_vpopcntdq", "avx512bw", "avx512cd", "avx512dq", "avx512f", "avx512ifma", "avx512vbmi", "avx512vl",
   "bmi1", "bmi2", "cx16", "f16c", "fma", "gfni", "movbe", "pclmulqdq", "pni", "popcnt", "rdrand", "rdseed",
@@ -51,7 +54,7 @@ const planSchema = z.object({
     memoryMb: z.number().int().min(1024).max(16384),
     network: z.object({
       bridge: z.string().regex(/^(?:hivra0|vmbr[0-9]{1,4})$/),
-      macAddress: z.string().regex(/^[0-9A-F][26AE](?::[0-9A-F]{2}){5}$/),
+      macAddress: portableKvmUnicastMacAddress,
     }).strict(),
     attachment: z.object({ discard: z.boolean(), ssd: z.boolean(), ioThread: z.boolean() }).strict(),
     managed: portableKvmManagedDestinationProfileSchema.optional(),

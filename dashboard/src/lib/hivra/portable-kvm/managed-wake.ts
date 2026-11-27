@@ -18,7 +18,7 @@ import { serializePortableKvmDestinationReservation } from "./destination-disk";
 import { dispatchPortableKvmDestinationJob, pollPortableKvmDestinationJob } from "./destination-job";
 import {
   buildPortableKvmDestinationPrepareScript, buildPortableKvmHostCpuCompatibilityProbeScript, parsePortableKvmDestinationPrepareReceipt,
-  portableKvmManagedDestinationProfileSchema, type PortableKvmDestinationPrepareInput,
+  portableKvmManagedDestinationProfileSchema, portableKvmUnicastMacAddress, type PortableKvmDestinationPrepareInput,
 } from "./destination-prepare";
 import { advancePortableKvmIdleHandoff, requestPortableKvmOwnerWake, type PortableKvmCheckpointReceipt, type PortableKvmHandoff } from "./handoff";
 import { isPortableKvmReadyToCheckpoint, isPortableKvmWakeClaimed, type PortableKvmPlacement } from "./pilot";
@@ -32,7 +32,7 @@ const hostProfile = z.object({
 const profileSchema = z.object({
   machine: z.string().regex(/^pc-i440fx-[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\+pve[0-9]+)?$/),
   machineId: z.string().regex(/^[a-f0-9]{32}$/).refine(id => !/^0+$/.test(id)),
-  macAddress: z.string().regex(/^[0-9A-F][26AE](?::[0-9A-F]{2}){5}$/),
+  macAddress: portableKvmUnicastMacAddress,
   attachment: z.object({ discard: z.boolean(), ssd: z.boolean(), ioThread: z.boolean() }).strict(),
   managed: portableKvmManagedDestinationProfileSchema,
   hosts: z.record(z.string(), hostProfile),
