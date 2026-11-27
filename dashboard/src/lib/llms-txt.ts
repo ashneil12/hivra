@@ -15,14 +15,9 @@
 
 import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
 import { NON_AFFILIATION_LINE, SITE_DESCRIPTION } from "@/lib/brand-description";
-import {
-  ENTRY_PLAN_PRICE,
-  ENTRY_PLAN_SIZE,
-  CONNECTED_SERVER_ELIGIBILITY,
-  LARGER_PLAN_PRICE,
-  LARGER_PLAN_SIZE,
-  MONEY_BACK_GUARANTEE,
-} from "@/lib/blog/plan-facts";
+import { CONNECTED_SERVER_ELIGIBILITY, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
+import { HOSTED_AI, HOSTED_DISK, hostedSizes } from "@/app/pricing/pricing-content";
+import { HOSTED_COMPETITORS, hostedComparisonPath } from "@/lib/compare/hosted-competitors";
 import { ECOSYSTEM_STAGES } from "@/lib/ecosystem-map";
 import { getTokenPhaseCopy } from "@/lib/token-phase-copy";
 import { isAgentToolsEnabled } from "@/lib/tools/agent-tools-flag";
@@ -56,9 +51,16 @@ const ECOSYSTEM_NEXT_NAMES = joinNames(
  */
 export function llmsTxtSections(
   phase: HivraTokenPhase = getHivraTokenPhase(),
-  { restricted = false, tokenSurfaces = true, agentTools = isAgentToolsEnabled() }: { restricted?: boolean; tokenSurfaces?: boolean; agentTools?: boolean } = {}
+  { restricted = false, tokenSurfaces = true, agentTools = isAgentToolsEnabled(), entryMonthlyCents, paidSleep = false }: {
+    restricted?: boolean;
+    tokenSurfaces?: boolean;
+    agentTools?: boolean;
+    entryMonthlyCents?: number;
+    paidSleep?: boolean;
+  } = {}
 ): readonly LlmsTxtSection[] {
   const { tokenomicsNote } = getTokenPhaseCopy(phase).llmsTxt;
+  const sizes = hostedSizes(entryMonthlyCents);
   return [
     {
       heading: "Product",
@@ -67,7 +69,7 @@ export function llmsTxtSections(
         { label: "Linux sandboxes", path: "/sandboxes", note: "Compare gVisor isolation, persistent files and managed Light access with a full KVM computer" },
         { label: "Agents", path: "/agents", note: "Claude Code, Codex, Hermes, OpenClaw, Agent Zero and Aeon, each on a computer of its own, with what each one suits and how its model access works" },
         { label: "Set up from your coding agent", path: "/setup.md", note: "Step-by-step instructions for an AI coding agent (Claude Code, Codex, Cursor) to set its person up with an agent on Hivra, and to carry its current work over" },
-        { label: "Pricing", path: "/pricing", note: `Self-host the open-source platform at no software cost, or use Hivra Cloud at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE} or ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}, with a ${MONEY_BACK_GUARANTEE}. The plan does not include AI usage. ${CONNECTED_SERVER_ELIGIBILITY}` },
+        { label: "Pricing", path: "/pricing", note: `Self-host the open-source platform at no software cost, or use Hivra Cloud at ${sizes.map((size) => `${size.price} a month for ${size.cpu} vCPU and ${size.ramGb} GB of RAM`).join(" or ")}, with a ${MONEY_BACK_GUARANTEE}. The plan does not include AI usage. ${CONNECTED_SERVER_ELIGIBILITY}` },
         { label: "Free tools", path: "/tools", note: "Keep-awake commands, a tmux cheat sheet, Claude Code plan and limit-reset calculators, an agent survival check and a hosting cost calculator. Free, with no signup" },
         { label: "Keep a Mac awake (caffeinate)", path: "/tools/keep-mac-awake", note: "Builds the caffeinate (macOS) or systemd-inhibit (Linux) command that keeps a laptop awake while an agent runs, and lists what it does not cover" },
         { label: "tmux cheat sheet", path: "/tools/tmux-cheat-sheet", note: "tmux commands and keys with copy buttons, plus running AI coding agents in named sessions" },
@@ -86,7 +88,22 @@ export function llmsTxtSections(
         { label: "Features", path: "/features", note: "Persistent memory, browser automation, scheduled tasks and several agents on one account, and which agent and plan each depends on" },
         { label: "About", path: "/about", note: "How Hivra began as HermesOS, what it does today and what it is not, its open source code, what it costs, where it is going and how to contact it" },
         { label: "Why I'm building Hivra", path: "/why-hivra", note: "The founder's note on why AI agents need separate computers, meaningful limits and infrastructure people can inspect" },
-        { label: "Compare", path: "/compare", note: "Fifteen comparisons: Hivra vs Agent 37, Hostinger, xCloud, Nous Hermes Cloud, a self-hosted VPS, Railway and Render; Claude Code on the web, OpenAI Codex cloud and Cursor cloud agents; GitHub Codespaces, Fly.io Sprites and E2B sandboxes; plus OpenClaw to Hermes and broader hosting choices, with a dated price table for the hosts" },
+        { label: "Compare", path: "/compare", note: "Compare personal agent hosting, sandbox services and self-hosting" },
+      ],
+    },
+    {
+      heading: "Hosted plans and comparisons",
+      links: [
+        ...sizes.map((size) => ({
+          label: `Hivra Cloud: ${size.cpu} vCPU and ${size.ramGb} GB RAM`,
+          path: `/pricing#cloud-${size.planKey}`,
+          note: `${size.price} USD a month for ${size.cpu} vCPU and ${size.ramGb} GB of RAM in a plan-level pool. Full virtual machine hosting. ${HOSTED_DISK}. ${paidSleep ? "Stays on by default. Supported owner access wakes eligible computers with idle sleep turned on." : "Stays on when you close your browser."} ${HOSTED_AI}`,
+        })),
+        ...HOSTED_COMPETITORS.map((provider) => ({
+          label: `Hivra vs ${provider.name}`,
+          path: hostedComparisonPath(provider.slug),
+          note: `${provider.description} Source checked ${provider.checked}.`,
+        })),
       ],
     },
     ...(tokenSurfaces ? [    {
@@ -150,21 +167,26 @@ export function buildLlmsTxt({
   phase = getHivraTokenPhase(),
   restricted = false,
   tokenSurfaces = true,
+  entryMonthlyCents,
+  paidSleep,
 }: {
   siteUrl: string;
   phase?: HivraTokenPhase;
   restricted?: boolean;
   /** False while HIVRA_NEW_TOKEN_SURFACES is off: no papers section, no token sentence. */
   tokenSurfaces?: boolean;
+  entryMonthlyCents?: number;
+  paidSleep?: boolean;
 }): string {
   const lines: string[] = [];
+  const entry = hostedSizes(entryMonthlyCents)[0];
 
   lines.push("# Hivra");
   lines.push("");
   lines.push(`> ${SITE_DESCRIPTION}`);
   lines.push("");
   lines.push(
-    `Available now on Hivra Cloud: launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw, Aeon or DeepSeek Harness (alpha) on a computer of its own, or launch an Ubuntu computer and use it yourself. Paid Hivra Cloud plans start at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. Hermes runs on Hivra Cloud only. You can also self-host the platform on your own server, with no Hivra account${restricted ? "" : " and no token"}.`
+    `Available now on Hivra Cloud: launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw, Aeon or DeepSeek Harness (alpha) on a computer of its own, or launch an Ubuntu computer and use it yourself. Paid Hivra Cloud plans start at ${entry.price} a month for ${entry.cpu} vCPU and ${entry.ramGb} GB of RAM. Hermes runs on Hivra Cloud only. You can also self-host the platform on your own server, with no Hivra account${restricted ? "" : " and no token"}.`
   );
   lines.push("");
   lines.push(
@@ -174,7 +196,7 @@ export function buildLlmsTxt({
   lines.push(NON_AFFILIATION_LINE);
   lines.push("");
 
-  for (const section of llmsTxtSections(phase, { restricted, tokenSurfaces })) {
+  for (const section of llmsTxtSections(phase, { restricted, tokenSurfaces, entryMonthlyCents, paidSleep })) {
     lines.push(`## ${section.heading}`);
     lines.push("");
     for (const link of section.links) {

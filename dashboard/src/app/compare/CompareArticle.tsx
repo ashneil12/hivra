@@ -8,10 +8,13 @@ import ActionLinks from "@/components/public-editorial/ActionLinks";
 import ComparisonTable from "@/components/public-editorial/ComparisonTable";
 import { COMPETITOR_FACTS_CHECKED, PRICE_TABLE, formatCheckedMonth } from "@/lib/compare/competitor-facts";
 import { SITE_URL } from "@/lib/seo-urls";
+import { getCardTrialOffer } from "@/lib/billing/card-trial";
 import type { CompareBlock, CompareSection, CompareSources, ComparePage } from "@/lib/compare/types";
 import styles from "../../components/public-editorial/secondary-site.module.css";
 import compare from "./compare.module.css";
 import Inline from "./Inline";
+import { buildHostedProducts, hostedSizes } from "../pricing/pricing-content";
+import { HostedComparisonDirectory } from "./HostedComparison";
 
 const GLANCE_COLUMNS = [{ label: "Hivra" }, { label: "Alternative" }];
 const PRICE_COLUMNS = ["Price for the size", "Billing and what it leaves out", "Source"];
@@ -167,6 +170,7 @@ export interface CompareArticleProps {
  */
 export default function CompareArticle({ page, variant }: CompareArticleProps) {
   const detail = variant === "detail";
+  const entryMonthlyCents = detail ? undefined : getCardTrialOffer()?.monthlyCents;
   const pageUrl = detail ? `${SITE_URL}/compare/${page.slug}` : `${SITE_URL}/compare`;
 
   const schema = {
@@ -188,6 +192,7 @@ export default function CompareArticle({ page, variant }: CompareArticleProps) {
           acceptedAnswer: { "@type": "Answer", text: a },
         })),
       },
+      ...(detail ? [] : buildHostedProducts(SITE_URL, entryMonthlyCents)),
     ],
   };
 
@@ -209,6 +214,7 @@ export default function CompareArticle({ page, variant }: CompareArticleProps) {
         <header className={compare.masthead}>
           <h1>{page.h1}</h1>
         </header>
+        {detail ? null : <HostedComparisonDirectory sizes={hostedSizes(entryMonthlyCents)} />}
         <div className={styles.articleLayout}>
           <ArticleNavigation items={contents} />
           <div className={`${styles.articleBody} ${compare.body}`}>
