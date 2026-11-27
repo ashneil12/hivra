@@ -255,8 +255,8 @@ END 401
     ["an existing bind tag", { tags: [tag, `hivra-bind-${"a".repeat(32)}`] }],
     ["an existing managed operation tag", { tags: [tag, `hivra-op-${"b".repeat(32)}`] }],
     ["a restore clone", {
-      name: "hermes-12345678-1234-4abc-8abc-123456789abc",
-      tags: ["hivra-operator-test-node+401+hermes-12345678-1234-4abc-8abc-123456789abc"],
+      name: "hermes-00000000-0000-4000-8000-000000000001",
+      tags: ["hivra-operator-test-node+401+hermes-00000000-0000-4000-8000-000000000001"],
     }],
   ])("keeps alerting on %s", (_description, overrides) => {
     const candidate = { ...vm, hostId, ...overrides };
