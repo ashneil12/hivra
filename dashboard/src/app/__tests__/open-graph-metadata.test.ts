@@ -70,7 +70,7 @@ describe('route Open Graph metadata', () => {
     expect(downloadMetadata.title).toEqual({ absolute: 'Download Hivra | Desktop Availability' });
     expect(getOpenGraphValue(downloadMetadata.openGraph, 'title')).toBe('Download Hivra | Desktop Availability');
     expect(getTwitterValue(downloadMetadata.twitter, 'title')).toBe('Download Hivra | Desktop Availability');
-    expect(downloadMetadata.description).toBe('The Hivra desktop app for macOS is coming soon. Open Hivra in your browser today.');
+    expect(downloadMetadata.description).toBe('Public Hivra desktop downloads are coming soon. Open Hivra in your browser today.');
     expect(String(downloadMetadata.description)).not.toMatch(/Windows/);
   });
 
