@@ -78,9 +78,9 @@ Hivra updates); the public key goes in `HIVRA_SPARKLE_PUBLIC_KEY`, and
 
 `publish-release.sh` uploads the DMG and update archive to the GitHub release
 `mac-v<version>` and the signed `appcast.xml` to the `mac-updates` release,
-which is the feed (`SUFeedURL`) installed copies check. The website's download
-button reads `NEXT_PUBLIC_HIVRA_MAC_DOWNLOAD_URL`; until that is set it says
-"coming soon".
+which is the feed (`SUFeedURL`) installed copies check. The website links the
+versioned installer from the public desktop downloads catalog where
+`HIVRA_DESKTOP_BROWSER_SIGNIN` enables browser sign-in.
 
 ### Updates
 

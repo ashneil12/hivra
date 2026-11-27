@@ -15,6 +15,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { MessageSquareText, TerminalSquare, SquareTerminal, Settings2, ExternalLink, ArrowLeft, FolderTree, Sparkles, Send, Monitor, LayoutDashboard, GitBranch, CalendarClock, Plus, X, Globe, Computer } from "lucide-react";
 
 import { getAgent as catalogAgent } from "@/lib/hivra/agent-catalog";
+import { CATALOG_APP_GATEWAY_ENTRY } from "@/lib/hivra/catalog-manifests";
 import {
   AGENT_SURFACE_IDS,
   agentComputerPair,
@@ -230,6 +231,11 @@ function listChanged(): void {
   resourceInventory.invalidate("hivra");
   // A computer's change can end or pause the agents added to it.
   resourceInventory.invalidate("attached");
+}
+
+/** A terminal delete leaves the resource route for the inventory that owns it. */
+function deletedResourcePath(agent: HivraAgent): string {
+  return catalogAgent(agent.type)?.surface === "computer" ? "/dashboard/computers" : "/dashboard";
 }
 
 /**
@@ -1365,6 +1371,17 @@ export default function AgentPage() {
       if (a) {
         initialFailures = 0;
         const fresh = a;
+        if (fresh.status === "deleted") {
+          const previous = agentRef.current;
+          const wasOpen = previous?.id === fresh.id && previous.status !== "deleted";
+          if (previous?.id !== fresh.id || wasOpen) listChanged();
+          setAgent(wasOpen ? null : fresh);
+          setStatusObservation(null);
+          setLoaded(true);
+          schedule(null);
+          if (wasOpen) router.push(deletedResourcePath(fresh));
+          return;
+        }
         // An unchanged settled read keeps the same object so effects keyed
         // on the agent don't re-run every poll.
         setAgent((previous) => previous && JSON.stringify(previous) === JSON.stringify(fresh) ? previous : fresh);
@@ -1379,7 +1396,7 @@ export default function AgentPage() {
           ? { ...previous, unavailable: true }
           : null);
         // Transient blip: keep the stale agent rendered and keep reading.
-        schedule(nextAgentStatusPollMs(last, visible()));
+        schedule(last.status === "deleted" ? null : nextAgentStatusPollMs(last, visible()));
         return;
       }
       initialFailures += 1;
@@ -1404,7 +1421,7 @@ export default function AgentPage() {
       if (timerRef.current) window.clearTimeout(timerRef.current);
       timerRef.current = null;
     };
-  }, [id, reloadKey]);
+  }, [id, reloadKey, router]);
 
   const go = useCallback(
     (path: string) => router.push(path),
@@ -1456,7 +1473,7 @@ export default function AgentPage() {
   // While that agent's Chat is on screen, the visit is the agent's own
   // (`a-<attachment id>`), not the computer's Desktop.
   const attachedVisit = Boolean(attachedAgent && agent?.id === id && tab === "chat");
-  const visitTab: Tab | null = agent && agent.id === id
+  const visitTab: Tab | null = agent && agent.id === id && agent.status !== "deleted"
     ? attachedVisit || agent.computer_substrate === "do-managed-session" ? "chat" : shownTab(agent, tab)
     : null;
   useRecordVisit(
@@ -1518,6 +1535,27 @@ export default function AgentPage() {
   if (!agent || agent.id !== id) {
     return <LoadingState label="Opening your workspace…" />;
   }
+  const def = catalogAgent(agent.type);
+  const isComputer = def?.surface === "computer";
+  const dashboardPath = def?.dashboardPath ?? (
+    def?.id === "deepseek-harness" ? "/" :
+    def?.id === "openclaw" || def?.id === "agent-zero" || def?.id === "openbot" ||
+    def?.id === "nuphos" || def?.id === "hermes" || def?.id === "aeon" ? `/${def.id}/` :
+    CATALOG_APP_GATEWAY_ENTRY
+  );
+  if (agent.status === "deleted") {
+    return (
+      <div className={styles.statusPanel}>
+        <h3>{isComputer ? "Computer deleted" : "Agent deleted"}</h3>
+        <p>{agent.name} has been deleted and can no longer be opened.</p>
+        <div className={styles.statusActions}>
+          <button type="button" className={styles.statusPrimary} onClick={() => go(deletedResourcePath(agent))}>
+            {isComputer ? "Back to computers" : "Back to agents"}
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (agent.computer_substrate === "do-managed-session") {
     // DigitalOcean runs this agent's sandbox; Hivra is its chat and control
     // surface, with its own Chat, Files and Manage views. The computer tabs
@@ -1537,11 +1575,9 @@ export default function AgentPage() {
     );
   }
 
-  const def = catalogAgent(agent.type);
   const accent = def?.accent || "var(--gold-leaf)";
   const cliKind = def?.cliKind ?? "claude";
   const isDashboard = def?.surface === "dashboard";
-  const isComputer = def?.surface === "computer";
   const providerWorkspace = agent.computer_substrate === "provider-vm" && agent.type === "linux-desktop"
     && agent.computer_profile === "ubuntu-desktop";
   // For a computer, a running lifecycle record plus its provisioned chat_url
@@ -1622,6 +1658,7 @@ export default function AgentPage() {
   if (showManage && manageOpenedFor !== agent.id) setManageOpenedFor(agent.id);
   const manageMounted = manageOpenedFor === agent.id;
   const activity = agentActivityPresentation(agent, def?.name || "the agent");
+  const setupIssue = provisioning && activity.freshLaunch && Boolean(agent.error?.trim());
   // Every surface verifies the running gateway's auth capability, then POSTs
   // its bearer in the body for an opaque HttpOnly cookie and clean URL.
   // Provider ownership is not a proxy for the installed runtime protocol.
@@ -1749,7 +1786,7 @@ export default function AgentPage() {
         ) : null}
         {showManage ? null : !awake ? (
           <AgentWakePanel name={agent.name} failure={wake.failure} onRetry={wake.retry} resting={wake.resting} />
-        ) : provisioning && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
+        ) : provisioning && !setupIssue && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
           <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
             <div role="status" aria-live="polite">
               <div className="serif" style={{ fontSize: 24, color: "var(--ink-black)", marginBottom: 10 }}>Finish Windows setup on your Proxmox host</div>
@@ -1769,9 +1806,15 @@ export default function AgentPage() {
         ) : provisioning ? (
           <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>
             <div role="status" aria-live="polite">
-              <div style={{ display: "flex", justifyContent: "center" }}><ThinkingOrb size={32} state="connecting" /></div>
-              <div className="serif" style={{ fontSize: 24, fontWeight: 600, color: "var(--ink-black)", margin: "14px 0 6px", overflowWrap: "anywhere" }}>{activity.verb} {agent.emoji ? `${agent.emoji} ` : ""}{agent.name}…</div>
-              <div style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>{activity.body}</div>
+              {!setupIssue ? <div style={{ display: "flex", justifyContent: "center" }}><ThinkingOrb size={32} state="connecting" /></div> : null}
+              <div className="serif" style={{ fontSize: 24, fontWeight: 600, color: "var(--ink-black)", margin: "14px 0 6px", overflowWrap: "anywhere" }}>
+                {setupIssue ? "Setup hit a problem" : `${activity.verb} ${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}…`}
+              </div>
+              <div style={{ fontSize: 13, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>
+                {setupIssue
+                  ? "Hivra couldn’t confirm that setup finished. This page keeps checking. Don’t launch a replacement yet. Open Manage for details."
+                  : activity.body}
+              </div>
               {statusObservation?.agentId === id ? <div
                 aria-live="off"
                 style={{ fontSize: 12, maxWidth: 460, margin: "16px auto 0", lineHeight: 1.6 }}
@@ -1798,7 +1841,7 @@ export default function AgentPage() {
               onClick={() => selectTab("manage")}
               style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 18, padding: "10px 16px", border: "1px solid var(--etched-border)", background: "var(--bg-surface)", color: "var(--ink-black)", fontSize: 13, cursor: "pointer" }}
             ><Settings2 size={14} /> Open Manage</button>
-            {activity.freshLaunch && launchWelcome && !isDashboard && !isComputer ? <ProvisioningPersonalizationPanel agent={agent} /> : null}
+            {activity.freshLaunch && !setupIssue && launchWelcome && !isDashboard && !isComputer ? <ProvisioningPersonalizationPanel agent={agent} /> : null}
           </div>
         ) : agent.status === "error" ? (
           <Stub title={agent.provisioned_at ? "Computer isn’t ready" : "Provisioning failed"} body={agent.error || "Something went wrong bringing up the computer. Destroy it and try again."} />
@@ -1812,9 +1855,7 @@ export default function AgentPage() {
             // on the user's GitHub) → go straight to the embedded dashboard; the box's
             // own gate + auto-login handle access. ONLY Aeon (connect:"github") ever
             // sees HivraGitHubConnect, whose "your Aeon fork" copy is Aeon-specific.
-            <DashboardView url={def?.id === "deepseek-harness"
-              ? `${agent.chat_url.replace(/\/$/, "")}/`
-              : `${agent.chat_url.replace(/\/$/, "")}/${def?.id === "openclaw" ? "openclaw" : def?.id === "agent-zero" ? "agent-zero" : def?.id === "openbot" ? "openbot" : def?.id === "nuphos" ? "nuphos" : def?.id === "hermes" ? "hermes" : def?.id === "aeon" ? "aeon" : "app"}/`}
+            <DashboardView url={`${agent.chat_url.replace(/\/$/, "")}${dashboardPath}`}
               token={tok} label={`${def?.name || "Agent"} · dashboard`} surfaceId="aeon" active={effectiveTab === "aeon"} onManage={() => selectTab("manage")} connectName={def?.name} />
           ) : (
             <HivraGitHubConnect boxUrl={agent.chat_url} boxId={agent.id} onDone={() => setReloadKey(k => k + 1)} productName={def?.name} displayName={agent.name} emoji={agent.emoji} token={agent.api_token} defaultManagedCredits={Boolean(agent.managed_venice)} />
@@ -1945,7 +1986,7 @@ export default function AgentPage() {
           {({ settings, busy, suggestion }) => (
           <AgentShell
             name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`}
-            status={provisioning ? activity.label : sleepView === "asleep" ? "asleep" : sleepView === "waking" ? "waking up" : agent.status}
+            status={setupIssue ? "error" : provisioning ? activity.label : sleepView === "asleep" ? "asleep" : sleepView === "waking" ? "waking up" : agent.status}
             nameTitle={isComputer ? undefined : computerNote}
             switcher={<ResourceSwitcher variant="sidebar" showKind={false} currentUid={agent.id} name={`${agent.emoji ? `${agent.emoji} ` : ""}${agent.name}`} kind={switcherKind} />}
             titleExtras={isComputer ? null : <AgentSoftwareChip agent={agent} onOpen={openManageUpdates} />}

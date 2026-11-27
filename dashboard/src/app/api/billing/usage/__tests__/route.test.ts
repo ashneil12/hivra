@@ -506,6 +506,21 @@ describe("GET /api/billing/usage", () => {
     ).toEqual(["a-run", "h-run"]);
   });
 
+  it("reports the holder tier without advertising a plan-name Venice boost", async () => {
+    const from = supabaseAdmin!.from as jest.Mock;
+    from.mockImplementation((name: string) => name === "token_tier_qualifications"
+      ? { select: () => ({ eq: () => ({ eq: async () => ({ data: [{ tier: "power", currently_eligible: true }], error: null }) }) }) }
+      : mockSupabaseQuery);
+    mockSupabaseQuery.maybeSingle.mockResolvedValue({ data: null, error: null });
+    mockSupabaseQuery.not.mockReturnValueOnce(mockSupabaseQuery).mockResolvedValueOnce({ data: [], error: null });
+    (supabaseAdmin!.rpc as jest.Mock).mockImplementation(async name => ({
+      data: name === "holder_admission_state" ? { state: "admitted", tier: "power" } : 1, error: null,
+    }));
+    const body = await (await GET()).json();
+    expect(body.data.plan).toMatchObject({ key: "fleet", source: "token_holding", veniceBoost: { active: false } });
+    expect(from).not.toHaveBeenCalledWith("venice_compute_boost_qualifications");
+  });
+
   it("marks plan.veniceBoost active for a paid user holding enough VVV", async () => {
     // maybeSingle #1 = subscription (paid operator); #2 = venice boost row.
     mockSupabaseQuery.maybeSingle

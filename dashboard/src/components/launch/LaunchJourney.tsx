@@ -59,6 +59,7 @@ import {
 } from "@/lib/hivra/agent-api";
 import { requestManagedVeniceSummary } from "@/lib/billing/managed-venice-client";
 import { buildInfrastructureSetupHref, isPortableAgentLaunchId, parsePortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
+import { getCatalogAppManifest, isCatalogAppLaunchable } from "@/lib/hivra/catalog-manifests";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import {
   HERMES_NAME_MAX_LENGTH,
@@ -527,9 +528,14 @@ function visibleStep(stage: LaunchStage): number {
 
 // ── Choose ──────────────────────────────────────────────────────────────────
 
-/** Tiles that run only on a server the owner connected. With none ready, the
- * tile says so in one line and offers to add one. */
+/** Tiles whose server-only form says so in one line and offers to add one. */
 const SERVER_ONLY_TILES: ReadonlySet<LaunchProfileId> = new Set(["linux-terminal"]);
+
+function tileDescription(tile: ChooseTile, managedLinuxSandboxEligible: boolean): string {
+  return tile.id === "linux-terminal" && managedLinuxSandboxEligible
+    ? "A locked-down Linux terminal and files."
+    : tile.description;
+}
 
 /** The owner's Capacity page, opened for this runtime when it can use a
  * server they connect. */
@@ -728,7 +734,7 @@ function ownServerNeeds(profileId: LaunchProfileId | null): string {
 }
 
 export function LaunchJourney(
-  { preparedProfiles = [], legacyHermesLane = false }: {
+  { preparedProfiles = [], legacyHermesLane = false, managedLinuxSandboxEligible = false, catalogCertifier = false }: {
     preparedProfiles?: readonly ("omarchy" | "windows")[];
     /**
      * Tests only: launch Hermes on the old instances lane. Every real launch
@@ -736,6 +742,8 @@ export function LaunchJourney(
      * tested, until it is deleted.
      */
     legacyHermesLane?: boolean;
+    managedLinuxSandboxEligible?: boolean;
+    catalogCertifier?: boolean;
   },
 ) {
   const router = useRouter();
@@ -882,8 +890,10 @@ export function LaunchJourney(
   const destination = useLaunchDestination(profile?.placementRuntimeId ?? null, {
     handoff,
     // A self-managed-only profile opens on the owner's infrastructure even
-    // before a compatible host exists; Hivra Cloud is never its selection.
-    managedAvailable: profile?.managedCapacity !== "self-managed-only",
+    // before a compatible host exists. Linux Sandbox is the exception only
+    // when the server says this deployment's managed sandbox lane is configured.
+    managedAvailable: profile?.managedCapacity !== "self-managed-only"
+      || (profile?.placementRuntimeId === "linux-terminal" && managedLinuxSandboxEligible),
     // Hermes and DeepSeek Harness run on Hivra Cloud only, whatever was chosen for another agent.
     selfManagedAvailable: !runsOnHivraCloudOnly(draft?.profileId ?? null),
     // Hivra Cloud needs a paid plan, so a Free account opens on a ready host
@@ -1041,7 +1051,9 @@ export function LaunchJourney(
     // Read directly: this effect only ever runs on the client.
     const linkedProfile = linkedTemplate?.profileId
       ?? (requestedProfileId === "omarchy" && !preparedCanaryAvailable ? null : requestedProfileId);
-    const requestedProfile = linkedProfile === "hermes" || linkedProfile === "hermes-computer" ? hermesProfile : linkedProfile;
+    const linkedManifest = getCatalogAppManifest(linkedProfile);
+    const requestedProfile = linkedManifest && !isCatalogAppLaunchable(linkedManifest, catalogCertifier && !selfHosted)
+      ? null : linkedProfile === "hermes" || linkedProfile === "hermes-computer" ? hermesProfile : linkedProfile;
     const freshFromIntent = (): LaunchDraft => {
       const next = createLaunchDraft();
       if (!requestedProfile) return next;
@@ -1096,7 +1108,7 @@ export function LaunchJourney(
     // an unpatched replaceState would drop the router's own entry state.
     const timer = window.setTimeout(() => writeStageHistory(initial.stage, "replace"), 0);
     return () => window.clearTimeout(timer);
-  }, [legacyHermesLane, linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, inferenceParam, returningDraftId, startParam, targetValuesKey, templateParam, templateResult]);
+  }, [catalogCertifier, legacyHermesLane, linkedTemplate, ownerId, preparedCanaryAvailable, requestedProfileParam, inferenceParam, returningDraftId, selfHosted, startParam, targetValuesKey, templateParam, templateResult]);
 
   // Following a plain Launch link while already inside the journey drops the
   // stage from the URL; that is a new start, so Choose opens with nothing picked.
@@ -1446,15 +1458,16 @@ export function LaunchJourney(
   const currentProfile = draft.profileId ? PROFILE_DETAILS[draft.profileId] : null;
   const preparedCanaryProfile = draft.profileId === "omarchy";
   const managedEntitlementRequired = currentProfile?.managedCapacity === "entitlement-required";
-  const selfManagedOnly = currentProfile?.managedCapacity === "self-managed-only";
   const gvisorComputer = draft.profileId === "linux-terminal";
+  const managedGvisorAvailable = gvisorComputer && managedLinuxSandboxEligible;
+  const selfManagedOnly = currentProfile?.managedCapacity === "self-managed-only" && !managedGvisorAvailable;
   // The profile always keeps its size and never uses more (its launch sends
   // no maxima): gVisor sandboxes, and the agents whose setup never did.
   const pinnedSize = currentProfile?.sizing === "pinned";
   const hasBrowser = profileHasBrowser(draft.profileId);
   const browserOn = hasBrowser && draft.browser;
   const poolExempt = isPoolExempt(draft.profileId);
-  const fitSubject = draft.profileId ? launchProfileFitSubject(draft.profileId) : null;
+  const fitSubject = draft.profileId ? launchProfileFitSubject(draft.profileId, { managedLinuxSandboxEligible }) : null;
   const hermes = draft.profileId === "hermes";
   const resourceFloor = draft.profileId ? launchResourcePolicy(draft.profileId, { browser: draft.browser }).floor : null;
   const targetCapacity = measuredTargetCapacity(destination.selectedTarget);
@@ -1505,7 +1518,9 @@ export function LaunchJourney(
   const reservedRamLimit = sizeLimits.reservedRam;
   const maximumCpuLimit = sizeLimits.maximumCpu;
   const maximumRamLimit = sizeLimits.maximumRam;
-  const substrate = launchSubstrate(destination.mode, destination.selectedTarget);
+  const substrate = gvisorComputer && destination.mode === "hivra-managed"
+    ? "managed-gvisor" as const
+    : launchSubstrate(destination.mode, destination.selectedTarget);
   // Small / Medium / Large as they run here: a preset whose reservation fits
   // stays available with its maximum brought down to what each one may reach.
   const presetOptions = draft.profileId && currentProfile
@@ -1555,7 +1570,7 @@ export function LaunchJourney(
           : digitalOceanBalanceProblem(digitalOceanBalance.balance);
   }
   else if (destination.loading) capacityBlocker = "Checking compatible capacity…";
-  else if (gvisorComputer && (destination.mode !== "self-managed" || !destination.deployment)) capacityBlocker = "Linux Sandbox needs a server you've connected, and none is ready for it yet.";
+  else if (gvisorComputer && !managedGvisorAvailable && (destination.mode !== "self-managed" || !destination.deployment)) capacityBlocker = "Linux Sandbox needs a server you've connected, and none is ready for it yet.";
   else if (preparedCanaryProfile && destination.mode !== "hivra-managed") capacityBlocker = "Omarchy runs on Hivra Cloud only.";
   else if (destination.mode === "self-managed" && !destination.deployment) {
     const agentName = currentProfile?.name ?? "this agent";
@@ -2045,6 +2060,7 @@ export function LaunchJourney(
         savedKeys,
         balance: creditsBalance,
         onObserved: setObservation,
+        resumingUncertain,
         digitalOceanTarget,
         selfManagedTarget: destination.selectedTarget,
         onKeySaved: (vaultKeyId, saved) => {
@@ -2173,10 +2189,11 @@ export function LaunchJourney(
     selfHosted,
   };
   const renderTile = (tile: ChooseTile) => {
-    const subject = launchProfileFitSubject(tile.id);
+    const subject = launchProfileFitSubject(tile.id, { managedLinuxSandboxEligible });
     const fit = launchFit(subject, fitEvidence);
     const Icon = tile.icon;
     const needsServer = SERVER_ONLY_TILES.has(tile.id)
+      && subject.hivraCloud !== "plan"
       && !fitEvidence.targetsLoading && !fitEvidence.targetsError
       && !ownServerHolds(subject, fitEvidence.targets);
     const button = (
@@ -2190,7 +2207,7 @@ export function LaunchJourney(
         {Icon ? <Icon size={22} aria-hidden /> : <span className={styles.letterIcon} aria-hidden>O.</span>}
         <span className={styles.tileText}>
           <strong>{tile.name}</strong>
-          <small>{tile.description}</small>
+          <small>{tileDescription(tile, managedLinuxSandboxEligible)}</small>
         </span>
         {needsServer ? null : <FitBadge fit={fit} />}
       </button>
@@ -2205,7 +2222,7 @@ export function LaunchJourney(
       </div>
     );
   };
-  const offeredAgents = offeredAgentTiles({ selfHosted, hermesProfile: legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE });
+  const offeredAgents = offeredAgentTiles({ selfHosted, hermesProfile: legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE, catalogCertifier });
   const orderedByUse = catalogOn && useOrder.length > 0;
   const agentTiles = orderedByUse ? orderCatalogByUse(offeredAgents, useOrder) : offeredAgents;
   const catalogFiltered = catalogOn && isCatalogFiltered(catalogFilter);
@@ -2437,9 +2454,9 @@ export function LaunchJourney(
         <LaunchCatalogPage
           profileId={aboutTile.id}
           name={aboutTile.name}
-          description={aboutTile.description}
+          description={tileDescription(aboutTile, managedLinuxSandboxEligible)}
           icon={aboutTile.icon}
-          fit={<FitBadge fit={launchFit(launchProfileFitSubject(aboutTile.id), fitEvidence)} />}
+          fit={<FitBadge fit={launchFit(launchProfileFitSubject(aboutTile.id, { managedLinuxSandboxEligible }), fitEvidence)} />}
           selfHosted={selfHosted}
           related={relatedCatalogItems(aboutTile.id, agentTiles).map(renderTile)}
           onBack={closeAbout}

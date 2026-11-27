@@ -59,6 +59,8 @@ describe("Hivra agent operation store", () => {
       p_operation_kind: "restart",
       p_desired_state: "running",
       p_operation_payload: null,
+      p_cpu_overcommit_ratio: 5,
+      p_skip_sleep: false,
     });
   });
 
@@ -100,6 +102,8 @@ describe("Hivra agent operation store", () => {
       p_operation_kind: "resize",
       p_desired_state: "running",
       p_operation_payload: { cpu: 2.5, ram: 6 },
+      p_cpu_overcommit_ratio: 5,
+      p_skip_sleep: false,
     });
   });
 

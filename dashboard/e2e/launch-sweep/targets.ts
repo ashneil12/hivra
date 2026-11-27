@@ -8,8 +8,10 @@
  * missing from this list, so a new agent is never shipped untested.
  */
 
+import { createHash } from 'node:crypto';
+
 import { UNIVERSAL_CATALOG_MANIFESTS } from '../../src/lib/hivra/catalog-manifests/manifests/index';
-import { catalogAppHasWebSurface } from '../../src/lib/hivra/catalog-manifests/index';
+import { catalogAppHasWebSurface, catalogAppHostPort, type CatalogAppManifest } from '../../src/lib/hivra/catalog-manifests/index';
 
 export type SweepTargetKind = 'agent' | 'computer';
 
@@ -19,8 +21,20 @@ export type SweepProof =
   | 'hivra-chat'
   /** The agent's own web UI in the agent page's iframe: type in its composer, wait for a reply. */
   | 'agent-ui-chat'
+  /** A self-hosted app: its authenticated web surface renders real app content. */
+  | 'app-open'
   /** A computer: its page opens running, with a terminal or desktop surface. */
   | 'computer-open';
+
+export interface SweepCatalogEvidence {
+  /** sha256 of the exact manifest object in the checkout that launched it. */
+  manifestSha256: string;
+  runtimeKind: CatalogAppManifest['runtime']['kind'];
+  hostPort: number | null;
+  healthPath: string | null;
+  /** Container image references for docker runtimes; package/installer identity for CLIs. */
+  runtimeRefs: string[];
+}
 
 export interface SweepTarget {
   /** Launch profile id (src/lib/launch/contracts.ts). Also the test's slug. */
@@ -29,6 +43,8 @@ export interface SweepTarget {
   tile: string;
   kind: SweepTargetKind;
   proof: SweepProof;
+  /** Catalog manifest provenance, present only for universal-catalog targets. */
+  catalog?: SweepCatalogEvidence;
   /**
    * Known not to work on Canary today, with the reason. The sweep still runs it
    * and reports the result, but a failure here does not fail the run.
@@ -36,18 +52,44 @@ export interface SweepTarget {
   knownBroken?: string;
 }
 
+function catalogEvidence(manifest: CatalogAppManifest): SweepCatalogEvidence {
+  const runtime = manifest.runtime;
+  const healthPath = runtime.kind === 'docker-web'
+    ? runtime.healthPath
+    : runtime.kind === 'docker-stack'
+      ? runtime.web.healthPath
+      : runtime.webService?.healthPath ?? null;
+  const runtimeRefs = runtime.kind === 'docker-web'
+    ? [runtime.imageDigest ? `${runtime.imageRepo}@${runtime.imageDigest}` : `${runtime.imageRepo}:${runtime.imageTag}`]
+    : runtime.kind === 'docker-stack'
+      ? runtime.services.map((service) => `${service.imageRepo}:${service.imageTag}`)
+      : runtime.installer.method === 'npm-global' || runtime.installer.method === 'uv-tool'
+        ? [`${runtime.installer.method}:${runtime.installer.packageName}#${runtime.installer.binName}`]
+        : [`github-release:${runtime.installer.repo}#${runtime.installer.assetX64}${runtime.installer.assetArm64 ? `,${runtime.installer.assetArm64}` : ''}#${runtime.installer.binName}`];
+  return {
+    manifestSha256: createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),
+    runtimeKind: runtime.kind,
+    hostPort: catalogAppHostPort(manifest),
+    healthPath,
+    runtimeRefs,
+  };
+}
+
 /**
  * Universal catalog apps come from the manifest registry, so a new manifest
  * is covered here without a second per-app list. The proof follows the
- * runtime: an app with its own web UI is proven inside that UI (the same
- * check catalogAppHasWebSurface makes); a chat-only CLI is proven in Hivra's
- * own chat.
+ * runtime and category: a self-hosted app with its own web UI must render
+ * through the authenticated gateway; a catalog agent with a web UI must answer
+ * in that UI; a chat-only CLI is proven in Hivra's own chat.
  */
 const CATALOG_TARGETS: readonly SweepTarget[] = UNIVERSAL_CATALOG_MANIFESTS.map((manifest) => ({
   profileId: manifest.id,
   tile: manifest.name,
   kind: 'agent',
-  proof: catalogAppHasWebSurface(manifest) ? 'agent-ui-chat' : 'hivra-chat',
+  proof: catalogAppHasWebSurface(manifest)
+    ? (manifest.category === 'app' ? 'app-open' : 'agent-ui-chat')
+    : 'hivra-chat',
+  catalog: catalogEvidence(manifest),
 }));
 
 export const SWEEP_TARGETS: readonly SweepTarget[] = [

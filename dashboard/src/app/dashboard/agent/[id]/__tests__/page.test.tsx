@@ -12,6 +12,7 @@ import { resetAgentSoftwareForTests } from "@/components/hivra/useAgentSoftware"
 
 
 const pushMock = jest.fn();
+const routerMock = { push: pushMock };
 const mockSearchGet = jest.fn();
 const mockGetAgent = jest.fn();
 const mockListAgents = jest.fn();
@@ -30,7 +31,7 @@ jest.mock("@/components/ui/ThinkingOrb", () => ({
 }));
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: mockAgentId }),
-  useRouter: () => ({ push: pushMock }),
+  useRouter: () => routerMock,
   useSearchParams: () => ({ get: mockSearchGet }),
 }));
 
@@ -282,6 +283,63 @@ describe("AgentPage", () => {
     } finally {
       mockGetAgent.mockReset();
       jest.useRealTimers();
+    }
+  });
+
+  it("surfaces a kickoff error while provisioning is reconciled, then shows confirmed failure", async () => {
+    jest.useFakeTimers();
+    try {
+      const pending = {
+        id: "agent_123", type: "hermes", name: "Hermes fixture", status: "provisioning",
+        activity: "provision", provisioned_at: null, cpu: 2, ram: 4,
+      };
+      const error = "Remote bash exited with code 1";
+      mockGetAgent.mockResolvedValueOnce(pending)
+        .mockResolvedValueOnce({ ...pending, error })
+        .mockResolvedValue({ ...pending, status: "error", activity: null, error });
+      render(<AgentPage />);
+
+      expect(await screen.findByText(/Setting up Hermes fixture/)).toBeVisible();
+      await act(async () => { jest.advanceTimersByTime(5000); });
+      expect(screen.getByText("Setup hit a problem")).toBeVisible();
+      expect(screen.getByText(/Don’t launch a replacement yet/)).toBeVisible();
+      expect(screen.getByRole("button", { name: "Open Manage" })).toBeVisible();
+      expect(screen.queryByText(/Setting up Hermes fixture/)).not.toBeInTheDocument();
+
+      await act(async () => { jest.advanceTimersByTime(5000); });
+      expect(screen.getByText("Provisioning failed")).toBeVisible();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each([null, "https://box.example.com"])("shows deleted Hermes detail without opening its old dashboard (%s)", async (chatUrl) => {
+    mockSearchGet.mockImplementation((key: string) => key === "tab" ? "aeon" : null);
+    mockGetAgent.mockResolvedValue({
+      id: "agent_123", type: "hermes", name: "Hermes fixture", status: "deleted",
+      chat_url: chatUrl, api_token: chatUrl ? "box-token" : null, cpu: 2, ram: 4,
+    });
+    const invalidate = jest.spyOn(resourceInventory, "invalidate");
+    try {
+      render(<AgentPage />);
+
+      expect(await screen.findByRole("heading", { name: "Agent deleted" })).toBeVisible();
+      expect(pushMock).not.toHaveBeenCalled();
+      expect(invalidate.mock.calls).toEqual([["hivra"], ["attached"]]);
+
+      await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+      expect(mockGetAgent).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("heading", { name: "Agent deleted" })).toBeVisible();
+      expect(pushMock).not.toHaveBeenCalled();
+      expect(invalidate).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText(/The computer is up|Dashboard not reachable/)).not.toBeInTheDocument();
+      expect(document.querySelector("iframe")).not.toBeInTheDocument();
+      expect(global.fetch).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Back to agents" }));
+      expect(pushMock).toHaveBeenCalledTimes(1);
+      expect(pushMock).toHaveBeenCalledWith("/dashboard");
+    } finally {
+      invalidate.mockRestore();
     }
   });
 
@@ -1828,6 +1886,8 @@ describe("AgentPage", () => {
     { type: "openclaw", name: "OpenClaw", destination: "/openclaw/" },
     { type: "agent-zero", name: "Agent Zero", destination: "/agent-zero/" },
     { type: "deepseek-harness", name: "DeepSeek Harness", destination: "/" },
+    { type: "chroma", name: "Chroma", destination: "/docs/" },
+    { type: "dufs", name: "Dufs", destination: "/app/" },
   ])("uses the same secure native-dashboard bootstrap for $name", async ({ type, name, destination }) => {
     mockGetAgent.mockResolvedValue({
       id: "agent_123", type, name: "NATIVE_AGENT", status: "running",
@@ -2729,6 +2789,30 @@ describe("AgentPage", () => {
       expect(pushMock).toHaveBeenCalledWith("/dashboard");
       await waitFor(() => expect(heldNames()).toEqual([]));
       expect(listReads).toBe(2);
+    });
+
+    it("leaves a computer and reads the list again when its poll reports deletion", async () => {
+      jest.useFakeTimers();
+      try {
+        mockGetAgent.mockResolvedValueOnce(CONNECTED_UBUNTU)
+          .mockResolvedValue({ ...CONNECTED_UBUNTU, status: "deleted", chat_url: null, api_token: null });
+        render(<AgentPage />);
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(screen.getByTestId("remote-desktop")).toBeInTheDocument();
+        listed = [];
+        await act(async () => {
+          jest.advanceTimersByTime(SETTLED_AGENT_POLL_MS);
+          await Promise.resolve();
+        });
+        expect(pushMock).toHaveBeenCalledWith("/dashboard/computers");
+        await waitFor(() => expect(heldNames()).toEqual([]));
+        expect(listReads).toBe(2);
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it("reads the agents list again after a rename, stop or resize", async () => {

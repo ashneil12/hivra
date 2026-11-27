@@ -9,6 +9,8 @@ import { fetchVvvPriceUsd } from "@/lib/billing/price-feed";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 
+const request = new Request("http://localhost/api/billing/wallet/unlock", { method: "POST" });
+
 // Written for the $HermesOS-only registry: pin an empty $HIVRA launch block so the suite does not
 // change behaviour when the committed block's activatesAt passes. The launched paths have their own suites.
 jest.mock("@/lib/billing/hivra-token-launch", () => ({
@@ -45,15 +47,6 @@ jest.mock("@/lib/services/pending-resize", () => ({
   redeployPendingResizes: jest.fn().mockResolvedValue({ redeployed: 0, failed: 0, skipped: 0, results: [] }),
   PENDING_RESIZE_SELECT: "id",
 }));
-jest.mock("@/lib/services/tier-specs", () => ({
-  tierFromPlanKey: (k: string) => (["operator", "fleet", "command"].includes(k) ? k : "credit_base"),
-  isPaidTier: (t: string) => ["operator", "fleet", "command"].includes(t),
-  resolveEffectiveTierSpec: (tier: string, boost: boolean) =>
-    tier === "operator"
-      ? { cpuLimit: boost ? 3 : 2, ramLimitMb: boost ? 6144 : 4096, label: "Operator" }
-      : { cpuLimit: 0.5, ramLimitMb: 1024, label: tier },
-}));
-
 const mockAuth = auth as unknown as jest.Mock;
 const mockRefresh = refreshPrimaryHermesTokenHolding as jest.Mock;
 const mockLatest = getLatestHermesTokenHoldingSnapshot as jest.Mock;
@@ -93,14 +86,14 @@ afterEach(() => {
 describe("POST /api/billing/wallet/unlock", () => {
   it("rejects unauthenticated requests", async () => {
     mockAuth.mockResolvedValueOnce({ userId: null });
-    const res = await POST();
+    const res = await POST(request);
     expect(res.status).toBe(401);
     expect(mockRefresh).not.toHaveBeenCalled();
   });
 
   it("throttles when holdings were just refreshed", async () => {
     mockLatest.mockResolvedValueOnce({ checkedAt: new Date().toISOString(), balanceRaw: "0" });
-    const res = await POST();
+    const res = await POST(request);
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.data.throttled).toBe(true);
@@ -110,13 +103,13 @@ describe("POST /api/billing/wallet/unlock", () => {
 
   it("404s when there is no verified lock wallet", async () => {
     mockRefresh.mockResolvedValueOnce({ status: "no_verified_wallet", snapshot: null });
-    const res = await POST();
+    const res = await POST(request);
     expect(res.status).toBe(404);
     expect(mockApply).not.toHaveBeenCalled();
   });
 
   it("runs the full unlock: evaluates boost and live-applies the boosted tier", async () => {
-    const res = await POST();
+    const res = await POST(request);
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -136,9 +129,17 @@ describe("POST /api/billing/wallet/unlock", () => {
     );
   });
 
+  it("keeps an admitted Power holder at 4 vCPU and 8 GB despite qualifying for Venice", async () => {
+    mockSub.mockResolvedValue({ plan: "fleet", status: "active", source: "token_holding" });
+    const body = await (await POST(request)).json();
+    expect(body.data.veniceBoostActive).toBe(false);
+    expect(body.data.applied).toMatchObject({ cpuLimit: 4, ramLimit: 8192 });
+    expect(mockApply).toHaveBeenCalledWith(expect.objectContaining({ holderSeats: true, veniceBoost: false }));
+  });
+
   it("still unlocks the base tier when the VVV price feed is down (boost skipped)", async () => {
     mockPrice.mockRejectedValueOnce(new Error("dex down"));
-    const res = await POST();
+    const res = await POST(request);
     const body = await res.json();
 
     expect(res.status).toBe(200);

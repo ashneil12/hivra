@@ -1670,6 +1670,86 @@
     },
     {
       "family": "value-set",
+      "input": "/dashboard/launch?profile=wekan&stage=choose",
+      "expect": "/dashboard/launch?profile=wekan&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=wekan",
+      "expect": "/dashboard/infrastructure?launch=wekan"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=airtrail&stage=choose",
+      "expect": "/dashboard/launch?profile=airtrail&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=airtrail",
+      "expect": "/dashboard/infrastructure?launch=airtrail"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=adventurelog&stage=choose",
+      "expect": "/dashboard/launch?profile=adventurelog&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=adventurelog",
+      "expect": "/dashboard/infrastructure?launch=adventurelog"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=rustpad&stage=choose",
+      "expect": "/dashboard/launch?profile=rustpad&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=rustpad",
+      "expect": "/dashboard/infrastructure?launch=rustpad"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=owncast&stage=choose",
+      "expect": "/dashboard/launch?profile=owncast&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=owncast",
+      "expect": "/dashboard/infrastructure?launch=owncast"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=thelounge&stage=choose",
+      "expect": "/dashboard/launch?profile=thelounge&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=thelounge",
+      "expect": "/dashboard/infrastructure?launch=thelounge"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=profilarr&stage=choose",
+      "expect": "/dashboard/launch?profile=profilarr&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=profilarr",
+      "expect": "/dashboard/infrastructure?launch=profilarr"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=apache-solr&stage=choose",
+      "expect": "/dashboard/launch?profile=apache-solr&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=apache-solr",
+      "expect": "/dashboard/infrastructure?launch=apache-solr"
+    },
+    {
+      "family": "value-set",
       "input": "/dashboard/launch?profile=silverbullet&stage=choose",
       "expect": "/dashboard/launch?profile=silverbullet&stage=choose"
     },
@@ -1969,6 +2049,26 @@
       "family": "value-set",
       "input": "/dashboard/infrastructure?launch=adguard-home",
       "expect": "/dashboard/infrastructure?launch=adguard-home"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=zoraxy&stage=choose",
+      "expect": "/dashboard/launch?profile=zoraxy&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=zoraxy",
+      "expect": "/dashboard/infrastructure?launch=zoraxy"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/launch?profile=librespeed&stage=choose",
+      "expect": "/dashboard/launch?profile=librespeed&stage=choose"
+    },
+    {
+      "family": "value-set",
+      "input": "/dashboard/infrastructure?launch=librespeed",
+      "expect": "/dashboard/infrastructure?launch=librespeed"
     }
   ]
 }

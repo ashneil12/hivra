@@ -81,7 +81,7 @@ class ClassificationTest(unittest.TestCase):
         self.assertIn("hivra-icon-384.webp", published)
         self.assertEqual(
             {path.name for path in outputs if not exporter.is_published(path)},
-            {"icon.png", "apple-icon.png", "favicon.ico"},
+            {"icon.png", "apple-icon.png", "favicon.ico", "icon.ico", "32x32.png", "128x128.png", "hivra-icon.png"},
         )
 
 
@@ -151,6 +151,11 @@ class MainTest(TempRoot):
 
         self.assertEqual(self.run_main().count(" wrote "), len(outputs))
         fresh = {path: self.read(path) for path in outputs}
+        from PIL import Image
+        for path in outputs:
+            if path.parent in {exporter.WINDOWS_ICONS, exporter.WINDOWS_UI} and path.suffix == ".png":
+                with self.subTest(path=str(path)):
+                    self.assertEqual(Image.open(self.root / path).mode, "RGBA")
         self.assertEqual(self.run_main().count(" kept "), len(outputs))
 
         # A changed published file stops the run: it and a missing new file stay as they were.

@@ -46,6 +46,13 @@ deployment holds it, its source (Git or CLI) and its commit, and report it. A
 mismatch means a change is missing from or unmerged into `canary`, not a stale
 cache. To undo a Canary change, revert it by PR into `canary`.
 
+Project environment changes do not update a running deployment. When testing a
+Canary feature flag, finish saving its settings before the Git build starts.
+Verify the alias serves that build and check the flag through the authenticated
+workflow; a Ready deployment that started before the settings changed does not
+prove the flag took effect. Removing the settings also takes effect on a new
+Git build, so give temporary enrollment an expiry where the feature supports it.
+
 Keep experiments on feature branches. After reviewing a contributor's proposed
 code and build scripts, a maintainer can apply the selected commits to a branch
 based on `canary` and open a PR into `canary`. This allows testing before accepting
@@ -59,6 +66,16 @@ Once testing is satisfactory, open or complete the PR into `main`, verify that t
 production candidate contains the tested changes, and use the separate promotion
 steps below. Neither merging into Canary nor accepting into main releases to live.
 Do not overwrite Canary experiments with a blanket reset to main.
+
+The Git build does not apply Supabase migrations. Before merging code that
+needs a schema change on deploy (or enabling a flag that needs one), verify the
+Canary database against the exact reviewed revision. Check the ledger and
+actual object definitions for all migrations the change needs, including
+prerequisites already on `canary`. Record the version and result in the release
+record. If a migration is missing, have an authorized operator apply that
+reviewed file and recheck both schema and ledger before enabling the dependent
+code. A same-name ledger entry at a different timestamp is not proof of
+equivalence, and the drift cron is not a release gate.
 
 ## Release one exact revision
 

@@ -935,6 +935,40 @@ async function main() {
     });
     await db.exec(appSubpaths);
     assert.deepEqual(await admissionDefinitions(), admittedAppSubpaths, "re-applying the catalog-app subpath admission changes nothing");
+
+    const allocationLock = migration("20261125120000_provider_release_admission_2026_11_25_1.sql");
+    await db.exec(allocationLock);
+    const admittedAllocationLock = await admissionDefinitions();
+    admittedAllocationLock.forEach((definition, index) => {
+      for (const version of ["2026.11.23.1", "2026.11.25.1"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["f61c0c827e6c4b628c10b13fa904935a8e419fe1e5909aa1326bcb0fd7611821", "e31772cddbca5f2c0480ced6247792366e0ec4ba438dd2735979dabf75fc379a"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(allocationLock);
+    assert.deepEqual(await admissionDefinitions(), admittedAllocationLock, "re-applying the allocation-lock admission changes nothing");
+    const settledWake = migration("20261125204500_provider_release_admission_2026_11_25_2.sql");
+    await db.exec(settledWake);
+    const admittedSettledWake = await admissionDefinitions();
+    admittedSettledWake.forEach((definition, index) => {
+      for (const version of ["2026.11.25.1", "2026.11.25.2"]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["e31772cddbca5f2c0480ced6247792366e0ec4ba438dd2735979dabf75fc379a", "666c410c373d21a1f36cf96c2776cb8e31495703cb96f8e1bd5446bc4d566587"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(settledWake);
+    assert.deepEqual(await admissionDefinitions(), admittedSettledWake, "re-applying the settled wake admission changes nothing");
+    const catalogDigest = migration("20261126180500_provider_release_admission_2026_11_26_1.sql");
+    await db.exec(catalogDigest);
+    const admittedCatalogDigest = await admissionDefinitions();
+    admittedCatalogDigest.forEach((definition, index) => {
+      for (const version of ["2026.11.25.2", "2026.11.26.1"]) assert.equal(occurrences(definition, "'"+version+"'"), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        for (const digest of ["666c410c373d21a1f36cf96c2776cb8e31495703cb96f8e1bd5446bc4d566587", "85070186634722fcf9e346a1ae6630cc30b6fb8809fe3458a47f51055c282a17"]) assert.equal(occurrences(definition, digest), 1);
+      }
+    });
+    await db.exec(catalogDigest);
+    assert.deepEqual(await admissionDefinitions(), admittedCatalogDigest, "re-applying the catalog digest admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

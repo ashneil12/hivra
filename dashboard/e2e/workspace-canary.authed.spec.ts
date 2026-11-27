@@ -1,5 +1,7 @@
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { CANARY_QA_STORAGE_STATE } from "./canary-qa/auth";
+import { readCanaryQaEmail } from "./canary-qa/config";
 
 const REQUIRED_MODE = process.env.REQUIRE_WORKSPACE_CANARY === "1";
 const EXPECTED_GIT_SHA = process.env.EXPECTED_GIT_SHA ?? "";
@@ -11,7 +13,7 @@ const HANDOFF_POLL_INTERVAL_MS = 250;
 
 function authenticatedStorageExists(): boolean {
   try {
-    const state = JSON.parse(readFileSync("e2e/.auth/qa-user.json", "utf8")) as {
+    const state = JSON.parse(readFileSync(CANARY_QA_STORAGE_STATE, "utf8")) as {
       cookies?: unknown[];
     };
     return (state.cookies?.length ?? 0) > 0;
@@ -21,12 +23,7 @@ function authenticatedStorageExists(): boolean {
 }
 
 function requireReleaseInputs(): void {
-  if (!process.env.CLERK_SECRET_KEY) {
-    throw new Error("CLERK_SECRET_KEY is required for the deployed canary smoke");
-  }
-  if (!process.env.QA_USER_ID) {
-    throw new Error("QA_USER_ID is required for the deployed canary smoke");
-  }
+  readCanaryQaEmail();
   if (!FULL_SHA.test(EXPECTED_GIT_SHA)) {
     throw new Error("EXPECTED_GIT_SHA must be the exact full lowercase Git SHA");
   }

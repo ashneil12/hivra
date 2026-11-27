@@ -9,10 +9,12 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import { isOpenBotAgentEnabled } from "@/lib/hivra/openbot-flag";
-import { isUniversalCatalogEnabled } from "@/lib/hivra/universal-catalog-flag";
+import { canCertifyCatalog } from "@/lib/hivra/catalog-certifier-access";
+import { catalogAppRequiresPinnedDigest } from "@/lib/hivra/catalog-manifests/launch-seals";
 import {
   buildCatalogAppLaunchSpec,
   getCatalogAppManifest,
+  isCatalogAppLaunchable,
   UNIVERSAL_CATALOG_IDS,
   type CatalogAppLaunchSpec,
 } from "@/lib/hivra/catalog-manifests";
@@ -20,11 +22,13 @@ import { posthogClient } from "@/lib/posthog";
 import { getManagedVeniceAnthropicBaseUrl, getManagedVeniceProxyBaseUrl } from "@/lib/venice/managed-endpoints";
 import {
   buildProxmoxVmidReferenceLedger,
+  declaredProxmoxTargetIds,
   runProxmoxHostScript,
 } from "@/lib/services/proxmox-instance-service";
 import { buildVmidReferenceLedgerScript, type VmidReferenceLedger } from "@/lib/proxmox/vmid-reference-ledger";
 import { resolveRamBurst } from "@/lib/services/ram-burst";
 import { selectAvailableProxmoxProvisionTarget } from "@/lib/services/instance-service";
+import { proxmoxPlacementRpcPolicy } from "@/lib/proxmox/placement-policy";
 import { BoxTunnelProvisionError, deleteBoxTunnel, isTunnelConfigured } from "@/lib/services/cloudflare-tunnel";
 import { provisionHivraAgentTunnel } from "@/lib/hivra/agent-tunnel-provisioning";
 import { logHivraAgentEvent } from "@/lib/hivra/agent-events";
@@ -38,6 +42,11 @@ import { MAX_CONTEXT_LEN } from "@/lib/hivra/agent-limits";
 import { applyCardTrialSleep } from "@/lib/billing/card-trial";
 import { FREE_PLAN_CLOSED_CODE, FREE_PLAN_CLOSED_MESSAGE, accountNeedsPlanForFree } from "@/lib/billing/free-plan-closure";
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
+import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+import { decideProvisionSeatFunding } from "@/lib/billing/provision-seat-funding";
+import { CANARY_QA_HOLDER_NAME, canaryQaHolderDeadline } from "@/lib/hivra/canary-qa-holder";
+import { parseSleepMode, supportsIdleNap } from "@/lib/hivra/agent-sleep-policy";
+import type { SeatFunding } from "@/lib/hivra/seat-funding";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
 import { getComputerTemplate, type ComputerTemplateId } from "@/lib/hivra/computer-catalog";
 import { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, OPENCLAW_DEFAULT_MODEL, VENICE_DIRECT_BASE_URL, validateLlmInput, sanitizeHivraAgentRow, type StoredLlmConfig } from "@/lib/hivra/agent-llm";
@@ -55,7 +64,8 @@ import {
   DEFAULT_PROXMOX_HOST_CAPACITY_POLICY,
 } from "@/lib/infrastructure/host-capacity-policy";
 import { launchProviderAgent, ProviderAgentLaunchError, type ProviderAgentLaunchInput } from "@/lib/hivra/provider-agent-launch";
-import { GvisorComputerError, launchGvisorComputer } from "@/lib/hivra/gvisor-computer-service";
+import { findGvisorComputerByLaunchRequest, GvisorComputerError, launchGvisorComputer, reserveAndDispatchManagedGvisor } from "@/lib/hivra/gvisor-computer-service";
+import { checkManagedGvisorLaunchAuthority } from "@/lib/hivra/managed-gvisor-authority";
 import { createLaunchModelAdmissionService, type LaunchModelAdmission } from "@/lib/hivra/launch-model-admission";
 import { LaunchModelRequestError, LaunchPlanAgentLimitError } from "@/lib/hivra/launch-model-store";
 import { ModelKeyStoreError } from "@/lib/hivra/model-key-store";
@@ -93,7 +103,7 @@ import {
   resolveSelfManagedProxmoxExecutionContext,
   type PortableProxmoxRuntime,
 } from "@/lib/infrastructure/proxmox-execution-context";
-import { checkManagedHivraHostReadiness } from "@/lib/hivra/managed-provisioner-readiness";
+import { checkManagedHivraHostReadiness, managedCanaryLaunchSealScript } from "@/lib/hivra/managed-provisioner-readiness";
 import {
   managedHivraProvisionerChannelConfiguration,
   managedHivraProvisionerChannelForServerEnvironment,
@@ -119,7 +129,6 @@ import {
 import {
   HIVRA_AGENT_VM_DISK_GB,
   HIVRA_AGENT_VM_STORAGE_HEADROOM_GB,
-  PORTABLE_HIVRA_PROVISIONER_VERSION,
   isCompatibleProxmoxProvisionerVersion,
   provisionerVersionMeetsRuntimeMinimum,
   CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID,
@@ -237,23 +246,10 @@ function submittedLaunchRequestIntent(
   };
 }
 
-// The bundle version a Proxmox launch will execute, when admission pins it.
-// Self-managed targets carry verified evidence and the managed Canary channel
-// admits only the current release. Managed default hosts may run any
-// compatible predecessor, so it stays unknown and phase 1 probes the exact
-// bundle on the host before staging the credential.
-function launchProvisionerVersion(
-  portableRuntime: PortableProxmoxRuntime | null,
-  channel: ManagedHivraProvisionerChannel,
-): string | null {
-  if (portableRuntime) return portableRuntime.provisionerVersion;
-  return channel === "canary" ? PORTABLE_HIVRA_PROVISIONER_VERSION : null;
-}
-
 // Phase 1 (synchronous over SSH): pick a free VMID in range, kick the host
 // orchestrator in the background (it does VM create + provisioner + tunnel,
 // ~10 min), and print a marker so this call returns in seconds.
-function phase1Script(params: {
+export function phase1Script(params: {
   cpu: number;
   cpuLimit: number;
   memMb: number;
@@ -277,6 +273,7 @@ function phase1Script(params: {
   infrastructureBindingTag: string;
   managedRuntimePaths: ManagedHivraRuntimePaths;
   portableRuntime?: PortableProxmoxRuntime | null;
+  canaryProvisionerVersion?: string;
   computerId?: string;
   controlOrigin?: string;
   capacityPolicy: ProxmoxHostCapacityPolicy;
@@ -345,7 +342,9 @@ fi`
     maximumMemoryMb: params.memMb,
     maximumCpu: params.cpuLimit,
     policy: params.capacityPolicy,
-  });
+  }) + (runtime
+    ? ` ${shellQuote(runtime.storage)} ${HIVRA_AGENT_VM_DISK_GB} ${HIVRA_AGENT_VM_STORAGE_HEADROOM_GB}`
+    : "");
   const portableStorageAdmission = runtime
     ? `STORAGE_AVAILABLE_KB="$(pvesm status --content images 2>/dev/null | awk -v target=${shellQuote(runtime.storage)} 'NR>1 && $1==target && $3=="active" {print $6; exit}')"
 [[ "$STORAGE_AVAILABLE_KB" =~ ^[0-9]+$ ]] \
@@ -448,7 +447,7 @@ disown
     local cmd
     [ -r "/proc/$PROVISION_PID/cmdline" ] && [ -r "/proc/$PROVISION_PID/environ" ] || return 1
     cmd="$(tr '\\0' ' ' < "/proc/$PROVISION_PID/cmdline")"
-    printf '%s' "$cmd" | grep -Fq ${shellQuote(`hivra-provision-on-host.sh $VMID `)} || return 1
+    printf '%s' "$cmd" | grep -Fq "hivra-provision-on-host.sh $VMID " || return 1
     tr '\\0' '\\n' < "/proc/$PROVISION_PID/environ" \
       | grep -Fxq ${shellQuote(`HIVRA_OPERATION_ID=${params.operationId}`)} || return 1
     tr '\\0' '\\n' < "/proc/$PROVISION_PID/environ" \
@@ -510,6 +509,10 @@ install -d -m 0700 /var/lib/hivra/provision-operations
 # active and visible in the host inventory.
 exec 8>/run/lock/hivra-allocation.lock
 flock -w ${HIVRA_LAUNCH_ALLOCATION_LOCK_WAIT_SECONDS} 8 || { echo "timed out waiting for the Hivra allocation lock" >&2; exit 1; }
+${params.canaryProvisionerVersion
+    ? `PROVISIONER_DIR=${shellQuote(provisionerDirectory)}
+${managedCanaryLaunchSealScript([params.canaryProvisionerVersion])}`
+    : ""}
 # Inventory is intentionally captured only after FD 8 is held. A launcher that
 # waited behind another provision must observe the predecessor's committed VM
 # configuration and private IP, rather than allocate from its pre-wait snapshot.
@@ -571,11 +574,17 @@ SECRET_ENV_FILE="/run/hivra-provision/$VMID.env"
 INTENT_FILE=${shellQuote(`/var/lib/hivra/provision-operations/operation-${params.operationId}.selected`)}
 INTENT_TMP="$INTENT_FILE.tmp.$$"
 {
+  printf 'schema_version=%s\\n' 1
   printf 'operation_id=%s\\n' ${shellQuote(params.operationId)}
   printf 'vmid=%s\\n' "$VMID"
   printf 'ip=${params.subnetPrefix}.%s\\n' "$OCTET"
   printf 'binding_tag=%s\\n' ${shellQuote(params.infrastructureBindingTag)}
   printf 'binding_enforced=%s\\n' 1
+  printf 'floor_memory_mb=%s\\n' ${Math.round(params.guaranteedMemMb)}
+  printf 'maximum_memory_mb=%s\\n' ${Math.round(params.memMb)}
+  printf 'maximum_cpu_milli=%s\\n' ${Math.round(params.cpuLimit * 1000)}
+  printf 'disk_gb=%s\\n' ${HIVRA_AGENT_VM_DISK_GB}
+  printf 'storage=%s\\n' ${shellQuote(runtimePaths.storage)}
 } > "$INTENT_TMP"
 chmod 0600 "$INTENT_TMP"
 mv -f -- "$INTENT_TMP" "$INTENT_FILE"
@@ -822,6 +831,7 @@ export interface LaunchAgentOptions {
    * CPU and memory are left out of the pool usage.
    */
   moveFromInstanceId?: string;
+  canaryQaHolder?: true;
 }
 
 export async function launchHivraAgentForUser(
@@ -831,6 +841,22 @@ export async function launchHivraAgentForUser(
 ): Promise<Response> {
   try {
     if (!supabaseAdmin) return apiError("Database not configured", 500);
+    const qaHolderDeadline = options?.canaryQaHolder ? canaryQaHolderDeadline(userId) : null;
+    if (options?.canaryQaHolder && !qaHolderDeadline) {
+      return apiError("Canary holder QA launch is not available.", 403);
+    }
+    if (qaHolderDeadline && (
+      options?.moveFromInstanceId
+      || body.type !== "hermes" || body.name !== CANARY_QA_HOLDER_NAME
+      || body.cpu !== 2 || body.ram !== 4
+      || (body.browser !== undefined && body.browser !== false)
+      || (body.managedVenice !== undefined && body.managedVenice !== false)
+      || body.llm !== undefined || body.templateId !== undefined || body.templateSlug !== undefined
+      || body.computerProfile !== undefined || body.maximumCpu !== undefined || body.maximumRam !== undefined
+      || body.launchRequestId !== undefined
+    )) {
+      return apiError("Canary holder QA requires the named managed Hermes computer with 2 vCPU and 4 GB RAM and no launch overrides.", 400);
+    }
     let excludeInstanceIds: string[] | undefined;
     if (options?.moveFromInstanceId) {
       if (body.type !== "hermes") return apiError("Only a Hermes computer can replace an existing Hermes agent.", 400);
@@ -851,7 +877,9 @@ export async function launchHivraAgentForUser(
     // the replaced instance frees once the move completes.
     const slotAllowance = excludeInstanceIds ? excludeInstanceIds.length : 0;
     const deployment = parseAgentDeploymentDestination(body.deployment);
-    if (!deployment) return apiError("Invalid deployment destination", 400);
+    if (!deployment || (qaHolderDeadline && deployment.mode !== "hivra-managed")) {
+      return apiError("Invalid deployment destination", 400);
+    }
 
     // Wave 5.2 "use template" / fork: a launch may reference a saved template by
     // id or slug. Resolve it through the registry-style loader (which enforces
@@ -914,9 +942,14 @@ export async function launchHivraAgentForUser(
         undefined, { code: "invalid_request" });
     }
     const def = getAgent(type);
+    const catalogManifest = getCatalogAppManifest(type);
+    if (catalogManifest && !isCatalogAppLaunchable(catalogManifest,
+      deployment.mode === "hivra-managed" && canCertifyCatalog(userId))) {
+      return apiError("That app isn't certified for launch yet", 400);
+    }
     const name = String(pick(body.name, template?.name) || def?.name || "Agent").trim();
     if (type === "linux-terminal") {
-      if (templateRef || deployment.mode !== "self-managed") {
+      if (templateRef) {
         return apiError("Linux terminal sandboxes require an exact connected gVisor host target.", 400);
       }
       if (body.computerProfile !== undefined && body.computerProfile !== "linux-terminal") {
@@ -938,6 +971,36 @@ export async function launchHivraAgentForUser(
         || !Number.isInteger(ram) || ram < 1 || ram > 128
         || maximumCpu !== cpu || maximumRam !== ram) {
         return apiError("gVisor computers reserve their full CPU and memory limit; reserved and maximum values must match.", 400);
+      }
+      if (deployment.mode === "hivra-managed") {
+        const managedGate = await checkManagedGvisorLaunchAuthority(userId);
+        if (managedGate.ok === false) {
+          return apiError(managedGate.message, managedGate.status, undefined, { code: managedGate.code, launchRequestId });
+        }
+        try {
+          const result = await reserveAndDispatchManagedGvisor({ userId, launchRequestId, name, cpu, ramGb: ram,
+            authority: managedGate.authority });
+          if (result.state === "cleaned") {
+            return apiError("The sandbox was removed after it could not start.", 409, undefined,
+              { code: "managed_gvisor_cleaned", launchRequestId, computerId: result.computerId });
+          }
+          if (result.state === "ready") {
+            // A created Computer uses the same launch receipt shape as the
+            // self-managed path. Never return a fabricated running agent.
+            const agent = await findGvisorComputerByLaunchRequest(userId, launchRequestId).catch(() => null);
+            if (agent?.id === result.computerId && agent.deployment_mode === "hivra-managed"
+              && (agent.status === "running" || agent.status === "stopped")) {
+              return apiSuccess({ agent: sanitizeHivraAgentRow(agent), launchRequestId, computerId: result.computerId,
+                launch: { state: "accepted", phase: "accepted" } }, 201);
+            }
+          }
+          return apiSuccess({ launchRequestId, computerId: result.computerId,
+            launch: { state: "reconciling", phase: "reconciling" } }, 202);
+        } catch (error) {
+          if (!(error instanceof GvisorComputerError)) throw error;
+          return apiError(error.message, error.code === "capacity_limit" ? 403 : error.code === "conflict" ? 409 : 503,
+            undefined, { code: error.code, launchRequestId });
+        }
       }
       let target;
       try {
@@ -1069,11 +1132,14 @@ export async function launchHivraAgentForUser(
     // or not-yet-available agent can't provision a box. Hermes launches here only
     // while the Hermes computer lane is on for this deployment (Canary first);
     // otherwise it stays on its own lane, /api/instances, as it always was.
-    const catalogManifest = getCatalogAppManifest(type);
-    if (!def || !def.available || !LAUNCHABLE_BOX_TYPES.has(type)
-      || (type === "openbot" && !isOpenBotAgentEnabled())
-      || (catalogManifest && !isUniversalCatalogEnabled())) {
+    if (!def || (!catalogManifest && !def.available) || !LAUNCHABLE_BOX_TYPES.has(type)
+      || (type === "openbot" && !isOpenBotAgentEnabled())) {
       return apiError("That agent isn't launchable yet", 400);
+    }
+    const requiresPinnedCatalogDigest = catalogManifest !== undefined && catalogAppRequiresPinnedDigest(catalogManifest);
+    if (requiresPinnedCatalogDigest
+      && (deployment.mode !== "hivra-managed" || managedProvisionerChannel !== "canary")) {
+      return apiError("Digest-pinned catalog apps require the managed Canary provisioner.", 409);
     }
     // DeepSeek Harness has acceptance only on Hivra's managed Proxmox hosts, with
     // the named HTTPS access its host script requires. A connected server or a
@@ -1282,9 +1348,11 @@ export async function launchHivraAgentForUser(
     let env: Record<string, string | undefined>;
     let host: string;
     let portableRuntime: PortableProxmoxRuntime | null = null;
+    let canaryProvisionerVersion: string | undefined;
     let capacityPolicy: ProxmoxHostCapacityPolicy = DEFAULT_PROXMOX_HOST_CAPACITY_POLICY;
     let stickyHost: string | null = null;
     let explicitClaudeHost: string | null = null;
+    let seatFunding: SeatFunding | null = null;
 
     if (deployment.mode === "self-managed") {
       // Subscription checks do not apply to user-owned compute, but the agent
@@ -1361,11 +1429,35 @@ export async function launchHivraAgentForUser(
         throw error;
       }
     } else {
-      const resourceGate = await validateAgentResources({ userId, type, cpu, ram, maximumCpu, maximumRam, browser: wantBrowser, mode: "launch", poolExempt, floor, agentLabel: launchLabel, excludeInstanceIds });
-      if (!resourceGate.ok) return apiError(resourceGate.message, resourceGate.status);
+      if (qaHolderDeadline) {
+        if (cpu < floor.cpu || ram < floor.ram) {
+          return apiError("The Canary holder QA allocation no longer meets the Hermes runtime minimum.", 409);
+        }
+        seatFunding = "holder";
+      } else {
+        const resourceGate = await validateAgentResources({ userId, type, cpu, ram, maximumCpu, maximumRam, browser: wantBrowser, mode: "launch", poolExempt, floor, agentLabel: launchLabel, excludeInstanceIds });
+        if (!resourceGate.ok) return apiError(resourceGate.message, resourceGate.status);
+        seatFunding = decideProvisionSeatFunding(await resolveEffectiveSubscription(userId));
+        if (!seatFunding) {
+          return apiError("Active subscription required. Choose a plan to start deploying agents.", 403);
+        }
+      }
+
+      if (seatFunding === "holder") {
+        if (!supportsIdleNap(type)) {
+          return apiError("This runtime cannot nap and save its memory on holder terms. Choose a sleep-capable computer.", 409);
+        }
+        const mode = parseSleepMode(process.env.HIVRA_SLEEP_MODE);
+        if ((mode !== "on" && mode !== "canary") || !isTunnelConfigured()) {
+          return apiError("Holder launches need automatic sleep and a configured wake connection.", 503);
+        }
+      }
 
       explicitClaudeHost = LAUNCHABLE_BOX_TYPES.has(type) ? resolveHivraClaudeCodeProxmoxHost(process.env) : null;
-      stickyHost = explicitClaudeHost ? null : await resolveStickyHivraProxmoxHost(userId);
+      // Holder launches enter registry ranking so they can spend their admission reservation.
+      if (!explicitClaudeHost && seatFunding !== "holder") {
+        stickyHost = await resolveStickyHivraProxmoxHost(userId);
+      }
       // With HIVRA_HOST_CAPACITY_ALERTS on, a host whose latest capacity reading
       // is critical is tried only when no other host can take the launch.
       const placeOn = (forceTargetId: string | null) => selectAvoidingCriticalHosts(excludeTargetIds => selectAvailableProxmoxProvisionTarget({
@@ -1377,6 +1469,8 @@ export async function launchHivraAgentForUser(
         neededRamMb: ram * 1024,
         neededDiskGb: HIVRA_AGENT_VM_DISK_GB,
         forceTargetId,
+        rankManagedTarget: true,
+        seatFunding,
         ...(excludeTargetIds ? { excludeTargetIds } : {}),
         skipTemplateAvailabilityCheck: true,
         // Managed-model agents (def.managedVenice) get HIVRA_MODEL_* at launch,
@@ -1385,6 +1479,7 @@ export async function launchHivraAgentForUser(
         readinessCheck: candidate => checkManagedHivraHostReadiness({
           ...candidate,
           channel: managedProvisionerChannel,
+          requirePinnedCatalogDigest: requiresPinnedCatalogDigest,
           runtimeId: anthropicCredits ? CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID : compatibilityRuntimeId,
           runtimeLabel: launchLabel,
           // Claude Code takes model settings only on Hivra credits; its native
@@ -1395,10 +1490,8 @@ export async function launchHivraAgentForUser(
         }),
       }), { forced: Boolean(forceTargetId) });
       let placement = await placeOn(explicitClaudeHost ?? stickyHost);
-      // The owner's usual server is a preference, not a rule: when it cannot
-      // take this launch (full, or not ready), the launch moves to any other
-      // server in rotation instead of failing.
-      if (!placement.ok && stickyHost && !explicitClaudeHost) {
+      // A paid user's usual host may be full or unavailable. Try the rotation.
+      if (!placement.ok && stickyHost) {
         log.warn("hivra sticky host could not take the launch; trying the other servers", {
           source: "hivra/agents",
           failureType: "hivra_agent_sticky_host_spillover",
@@ -1435,6 +1528,10 @@ export async function launchHivraAgentForUser(
         });
       }
       env = placement.env;
+      if (managedProvisionerChannel === "canary") {
+        canaryProvisionerVersion = placement.provisionerVersion;
+        if (!canaryProvisionerVersion) return apiError("Could not verify the selected Canary provisioner bundle.", 503);
+      }
       host = placement.targetId ?? env.PROXMOX_NODE ?? resolveHivraProxmoxHost();
       if (hasExplicitEnvelope) {
         const maximumEvidence = await runProxmoxHostScript(`set -euo pipefail
@@ -1609,7 +1706,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     // Managed Hivra boxes keep the existing pool behavior. A self-managed box
     // belongs to the user's selected infrastructure target instead, so it must
     // never be charged against or scheduled through Hivra's managed pool.
-    const poolId = deployment.mode === "hivra-managed"
+    const poolId = deployment.mode === "hivra-managed" && !qaHolderDeadline
       ? await getOrCreatePoolId(userId, "hermesos")
       : null;
     const deploymentBinding = deployment.mode === "self-managed"
@@ -1632,7 +1729,9 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     // The database counts the plan's agent slots again under the owner's slot
     // lock before it writes a Hivra-managed row (T35), so a launch racing an
     // attach or another launch cannot pass the limit the gate above checked.
-    const slotPlan = deployment.mode === "hivra-managed" ? await resolvePlanAgentSlots(userId) : null;
+    const slotPlan = qaHolderDeadline
+      ? { agentLimit: 1, planName: CANARY_QA_HOLDER_NAME }
+      : deployment.mode === "hivra-managed" ? await resolvePlanAgentSlots(userId) : null;
     if (deployment.mode === "hivra-managed" && !slotPlan) {
       await releaseLlmKeyOnFailure();
       return apiError(`Plan access is required before launching ${def.name}.`, 403);
@@ -1655,6 +1754,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         id: randomUUID(), type: "codex", name, cpu, ram,
         ...(hasExplicitEnvelope ? { cpu_max: maximumCpu, ram_max: maximumRam } : {}),
         deployment_mode: deployment.mode,
+        seat_funding: seatFunding,
         computer_substrate: "proxmox-kvm", operation_id: provisionOperationId,
         managed_provisioner_channel: managedProvisionerChannel,
         proxmox_host: deployment.mode === "self-managed" ? SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL : host,
@@ -1681,6 +1781,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       name,
       status: "provisioning",
       deployment_mode: deployment.mode,
+      seat_funding: seatFunding,
       computer_substrate: "proxmox-kvm",
       managed_provisioner_channel: managedProvisionerChannel,
       desired_state: "running",
@@ -1721,7 +1822,13 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       }
       // A Hivra-managed row is written only by the database, after it counts
       // the owner's plan slots under the slot lock (T35).
-      const { data, error } = await supabaseAdmin!.rpc("insert_hivra_managed_agent", { p_row: agentRow, p_agent_limit: agentLimit });
+      const placementPolicy = proxmoxPlacementRpcPolicy(process.env);
+      const { data, error } = qaHolderDeadline
+        ? await supabaseAdmin!.rpc("insert_canary_qa_holder_agent", {
+          p_row: agentRow, p_expires_at: qaHolderDeadline,
+          p_target_host_ids: declaredProxmoxTargetIds(), ...placementPolicy,
+        })
+        : await supabaseAdmin!.rpc("insert_hivra_managed_agent", { p_row: agentRow, p_agent_limit: agentLimit, ...placementPolicy });
       if (error) return { data: null, error };
       const result = data as { status?: unknown; row?: unknown; activeCount?: unknown; limit?: unknown } | null;
       if (result?.status === "plan_agent_limit") {
@@ -1778,7 +1885,9 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
           authorityConflict ? "agent_insert_conflict" : "agent_insert_failed",
         ));
       }
-      return isHivraAgentAuthorityConflict(insErr)
+      return qaHolderDeadline && (insErr as { code?: string } | null)?.code === "P0057"
+        ? apiError("The Canary holder QA slot is unavailable or its admission expired.", 409)
+        : isHivraAgentAuthorityConflict(insErr)
         ? apiError("The selected infrastructure authority changed before launch. Refresh and try again.", 409)
         : apiError("Could not create agent", 500);
     }
@@ -1789,8 +1898,8 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       await launchOperations.bindAgent(launchOperationAdmission, String(agent.id));
       await launchOperations.accept(launchOperationAdmission, String(agent.id), 202);
     }
-    await logHivraAgentEvent({ userId, event: "launch_requested", agentId: agent.id, agentType: type, detail: { cpu, ram, goal } });
-    if (deployment.mode === "hivra-managed") await applyCardTrialSleep(userId, String(agent.id));
+    await logHivraAgentEvent({ userId, event: "launch_requested", agentId: agent.id, agentType: type, detail: { cpu, ram, goal, ...(qaHolderDeadline ? { canaryQaHolder: true } : {}) } });
+    if (deployment.mode === "hivra-managed" && !qaHolderDeadline) await applyCardTrialSleep(userId, String(agent.id));
 
     // box_created (server-side funnel event) for the hivra lane. The Hermes lane
     // (/api/instances) has emitted this since #353's fix, but claude-code / codex /
@@ -1802,7 +1911,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     // so the event merges onto the same person the client identifies. Best-effort:
     // telemetry must never fail a launch.
     try {
-      if (!emittedBoxCreatedAgentIds.has(agent.id)) {
+      if (!qaHolderDeadline && !emittedBoxCreatedAgentIds.has(agent.id)) {
         emittedBoxCreatedAgentIds.add(agent.id);
         posthogClient.capture({
           distinctId: userId,
@@ -1846,7 +1955,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       let t;
       try {
         t = await provisionHivraAgentTunnel({ userId, agentId: String(agent.id), operationId: provisionOperationId });
-        if (launchAdmission && !t) throw new Error("Named model-settings access was not confirmed");
+        if ((launchAdmission || seatFunding === "holder") && !t?.hostname) throw new Error("Named computer access was not confirmed");
       } catch (tunnelError) {
         let cleanupVerified = tunnelError instanceof BoxTunnelProvisionError && tunnelError.cleanupVerified;
         let message = cleanupVerified
@@ -2000,7 +2109,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     // unreported and Activity shows missing coverage. Local-auth installs have
     // no guest-reachable ingest, and a bundle known to predate the reporter
     // would silently drop the credential, so neither receives one.
-    const hostProvisionerVersion = launchProvisionerVersion(portableRuntime, managedProvisionerChannel);
+    const hostProvisionerVersion = portableRuntime?.provisionerVersion ?? canaryProvisionerVersion ?? null;
     const activityTelemetryEligible = (agentKind === "claude" || agentKind === "codex")
       && supportsNativeTracing({ type, computer_substrate: agent.computer_substrate })
       && !isLocalAuthMode()
@@ -2041,6 +2150,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       infrastructureBindingTag,
       managedRuntimePaths,
       portableRuntime,
+      canaryProvisionerVersion,
       computerId: type === "linux-desktop" ? String(agent.id) : undefined,
       controlOrigin: desktopControlOrigin ?? undefined,
       capacityPolicy,

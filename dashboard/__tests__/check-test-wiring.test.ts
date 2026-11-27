@@ -10,7 +10,7 @@ const guard = path.join(dashboardRoot, "scripts/check-test-wiring.cjs");
 
 const JEST_CONFIG = {
   roots: ["<rootDir>/src", "<rootDir>/__tests__"],
-  testMatch: ["**/__tests__/**/*.test.ts", "**/__tests__/**/*.test.tsx"],
+  testMatch: ["**/__tests__/**/*.test.ts", "**/__tests__/**/*.test.tsx", "**/__tests__/**/*.pglite.ts"],
   testPathIgnorePatterns: ["/node_modules/"],
 };
 

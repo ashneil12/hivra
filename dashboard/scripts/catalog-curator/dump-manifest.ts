@@ -9,12 +9,11 @@ const arg = process.argv[2];
 
 if (arg === "--all") {
   process.stdout.write(JSON.stringify(UNIVERSAL_CATALOG_MANIFESTS));
-  process.exit(0);
+} else {
+  const manifest = UNIVERSAL_CATALOG_MANIFESTS.find((entry) => entry.id === arg);
+  if (!manifest) {
+    console.error(`unknown catalog slug: ${arg ?? "(none)"}`);
+    process.exit(1);
+  }
+  process.stdout.write(JSON.stringify(manifest));
 }
-
-const manifest = UNIVERSAL_CATALOG_MANIFESTS.find((entry) => entry.id === arg);
-if (!manifest) {
-  console.error(`unknown catalog slug: ${arg ?? "(none)"}`);
-  process.exit(1);
-}
-process.stdout.write(JSON.stringify(manifest));

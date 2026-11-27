@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { spawn } from "child_process";
 
 // SCRIPTURE_ANCHOR: proxmox-foundation | Luke 14:28 | Verse: Which of you, desiring to build a tower, doesn't first sit down and count the cost?
@@ -123,6 +123,18 @@ export {
   buildProxmoxTenantIsolationGuard,
   resolveProxmoxBalloonFloorMb,
 } from "./proxmox/script-builders";
+export function isProxmoxResizeOutcomeIndeterminateConservative(
+  result: Parameters<typeof isProxmoxResizeOutcomeIndeterminate>[0]
+): boolean {
+  const outcome = result as { error?: unknown; stderr?: unknown; stdout?: unknown };
+  const outcomeText = [outcome.error, outcome.stderr, outcome.stdout]
+    .filter((part) => part !== undefined && part !== null)
+    .map(String)
+    .join("\n");
+  return isProxmoxResizeOutcomeIndeterminate(result)
+    || /exited with code undefined/i.test(outcomeText);
+}
+
 export {
   parseProxmoxMetricsOutput,
   parseProxmoxProvisionOutput,
@@ -575,6 +587,13 @@ export function normalizeProxmoxTargetId(value: string | null | undefined): stri
   return normalized || null;
 }
 
+export function declaredProxmoxTargetIds(env: EnvLike = process.env): string[] | null {
+  const declared = env.HERMES_PROXMOX_TARGETS?.trim() || env.PROXMOX_TARGETS?.trim() || "";
+  const ids = [...new Set(declared.split(/[,\s]+/).map(normalizeProxmoxTargetId)
+    .filter((id): id is string => Boolean(id)))];
+  return ids.length > 0 ? ids : null;
+}
+
 function resolveRequestedProxmoxTargetId(env: EnvLike, requestedTargetId?: string | null): string | null {
   const explicit = normalizeProxmoxTargetId(requestedTargetId);
   if (explicit) return explicit;
@@ -604,6 +623,24 @@ function resolveProxmoxTargetEnvPrefix(env: EnvLike, targetId: string | null | u
   return prefixes.find((prefix) =>
     Object.entries(env).some(([key, value]) => key.startsWith(prefix) && typeof value === "string" && value.trim())
   ) ?? null;
+}
+
+export function resizeOperationIdForAllocation(instanceId: string, cpu: number, ramMb: number): string {
+  const hex = createHash("sha256")
+    .update(`hermes-instance-resize:${instanceId}:${Number(cpu)}:${Number(ramMb)}`)
+    .digest("hex");
+  const variant = ((parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80)
+    .toString(16)
+    .padStart(2, "0");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(18, 20)}-${hex.slice(20, 32)}`;
+}
+
+export function isProxmoxResizeOutcomeIndeterminate(result: {
+  error?: unknown;
+  stderr?: unknown;
+}): boolean {
+  const detail = `${result.error == null ? "" : String(result.error)}\n${result.stderr == null ? "" : String(result.stderr)}`;
+  return /econnreset|epipe|etimedout|broken pipe|reset by peer|connection (?:reset|closed|aborted|lost)|socket (?:closed|hang up)|channel closed|timed? ?out|disconnect/i.test(detail);
 }
 
 export function resolveProxmoxTargetCandidateIds(env: EnvLike = process.env): string[] {
@@ -2896,6 +2933,8 @@ echo "[resize] container cgroup reapply: $updated container(s) set to \${MEM_MB}
  * Used by the tier-change service to apply a Stripe upgrade or downgrade
  * to a running VM with no chat interruption.
  */
+export const PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER = "HIVRA_RESIZE_VM_CONFIG_APPLIED";
+
 export async function resizeProxmoxVm(
   params: {
     vmid: number;
@@ -3021,6 +3060,7 @@ CUR_CORES=$(qm config "$VMID" 2>/dev/null | sed -n 's/^cores: *//p' | head -1)
 # nproc matches the tier — REQUIRED so docker's deploy.resources.limits.cpus
 # (= cpuLimit) never exceeds available CPUs on the VM.
 qm set "$VMID" --cpulimit "$CPU_LIMIT" --cores "$CORES" --memory "$MEMORY_MB" --balloon "$BALLOON_FLOOR_MB"${cpuUnitsArg}
+echo '${PROXMOX_RESIZE_VM_CONFIG_APPLIED_MARKER}'
 
 # Reapply the container ceiling BEFORE any reboot, while the guest is known-up.
 # docker update persists into hostconfig.json, so the new memory limit survives

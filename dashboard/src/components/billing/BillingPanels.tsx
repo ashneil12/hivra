@@ -261,7 +261,7 @@ export function TokenHoldingPanel({
             <dl className={styles.walletFacts}>
               <div className={styles.walletFact}>
                 <dt>{tokenCopy.balance}</dt>
-                <dd>{snapshot ? `${snapshot.balanceDisplay} ${displayTokenUnit(token?.tokenSymbol)}` : tokenCopy.noSnapshot}</dd>
+                <dd>{snapshot ? `${snapshot.balanceDisplay} ${displayTokenUnit(token?.tokenSymbol, token?.tokenAddress)}` : tokenCopy.noSnapshot}</dd>
               </div>
             </dl>
           </>

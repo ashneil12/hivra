@@ -1,0 +1,35 @@
+name: Managed Launch bridge
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/managed-launch-bridge.yml'
+      - 'dashboard/supabase/migrations/20261126192500_managed_launch_bridge.sql'
+      - 'dashboard/supabase/migrations/20261126194500_classic_placement_bridge.sql'
+      - 'dashboard/supabase/migrations/20261126202000_managed_writer_drain.sql'
+      - 'scripts/release/test-managed-launch-bridge.sh'
+      - 'scripts/release/fixtures/managed-launch-bridge-*'
+  push:
+    branches: [canary]
+    paths:
+      - '.github/workflows/managed-launch-bridge.yml'
+      - 'dashboard/supabase/migrations/20261126192500_managed_launch_bridge.sql'
+      - 'dashboard/supabase/migrations/20261126194500_classic_placement_bridge.sql'
+      - 'dashboard/supabase/migrations/20261126202000_managed_writer_drain.sql'
+      - 'scripts/release/test-managed-launch-bridge.sh'
+      - 'scripts/release/fixtures/managed-launch-bridge-*'
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    name: PostgreSQL and PostgREST rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: bash scripts/release/test-managed-launch-bridge.sh --pull-test-images

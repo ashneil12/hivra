@@ -21,7 +21,7 @@ import http from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DASHBOARD_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const REPO_ROOT = path.resolve(DASHBOARD_DIR, "..");
@@ -152,17 +152,23 @@ function parseImagePlatforms(raw) {
   return [];
 }
 
-function imageDigest(repo, tag) {
-  const res = shOut("docker", ["buildx", "imagetools", "inspect", `${repo}:${tag}`], { timeout: 60_000 });
+function imageDigest(ref) {
+  const res = shOut("docker", ["buildx", "imagetools", "inspect", ref], { timeout: 60_000 });
   if (res.status !== 0) return { ok: false, stderr: (res.stderr || res.error || "inspect failed").slice(0, 400) };
   const digest = /Digest:\s+(sha256:[a-f0-9]{64})/.exec(res.stdout)?.[1] ?? null;
   return { ok: true, digest, inspect: res.stdout.slice(0, 800) };
 }
 
-async function inspectDockerImage(repo, tag) {
-  const ref = `${repo}:${tag}`;
-  const digestInfo = imageDigest(repo, tag);
+export async function inspectDockerImage(repo, tag, expectedDigest) {
+  if (expectedDigest !== undefined && (typeof expectedDigest !== "string" || !/^sha256:[0-9a-f]{64}$/.test(expectedDigest))) {
+    return { ok: false, detail: "invalid catalog image digest" };
+  }
+  const ref = expectedDigest ? `${repo}@${expectedDigest}` : `${repo}:${tag}`;
+  const digestInfo = imageDigest(ref);
   if (!digestInfo.ok) return { ok: false, detail: `${ref}: ${digestInfo.stderr}`, evidence: { ref } };
+  if (expectedDigest && digestInfo.digest !== expectedDigest) {
+    return { ok: false, detail: `${ref}: registry digest does not match the catalog pin`, evidence: { ref, digest: digestInfo.digest } };
+  }
 
   let platforms = [];
   const raw = shOut("docker", ["buildx", "imagetools", "inspect", "--raw", ref], { timeout: 60_000 });
@@ -242,7 +248,7 @@ async function checkImage(spec) {
     return check("package", "pass", `release ${info.tag_name} has ${info.assets.length} assets`, info);
   }
 
-  const res = await inspectDockerImage(rt.imageRepo, rt.imageTag);
+  const res = await inspectDockerImage(rt.imageRepo, rt.imageTag, rt.imageDigest);
   return check("image", res.ok ? "pass" : "fail", res.detail, res.evidence);
 }
 
@@ -629,9 +635,8 @@ async function gatewayCheck(spec, hostPort, route = null) {
   }
 }
 
-async function bootDockerWeb(spec, platforms) {
+async function bootDockerWeb(spec, { ref, platforms }) {
   const rt = spec.runtime;
-  const ref = `${rt.imageRepo}:${rt.imageTag}`;
   const slug = spec.id;
   const name = `hivra-verify-${slug}-${Math.random().toString(36).slice(2, 8)}`;
   const work = mkdtempSync(path.join(tmpdir(), `hivra-verify-${slug}-`));
@@ -641,12 +646,14 @@ async function bootDockerWeb(spec, platforms) {
 
   const hostPort = Number.isInteger(rt.hostPort) ? rt.hostPort : await freeCatalogPort();
   const hasArm64 = platforms.some((p) => p.startsWith("linux/arm64"));
+  const platformArgs = rt.imageDigest || !hasArm64 ? ["--platform", "linux/amd64"] : [];
   const args = [
     "run", "-d",
+    ...(rt.imageDigest ? ["--pull=never"] : []),
     "--name", name,
     "--security-opt", "no-new-privileges",
     ...(rt.dropAllCaps ? ["--cap-drop", "ALL"] : []),
-    ...(!hasArm64 ? ["--platform", "linux/amd64"] : []),
+    ...platformArgs,
     "-p", `127.0.0.1:${hostPort}:${rt.containerPort}`,
     "--env-file", envFile,
     ...rt.volumes.flatMap((v) => ["-v", `${name}-${v.name}:${v.mountPath}`]),
@@ -661,7 +668,17 @@ async function bootDockerWeb(spec, platforms) {
   };
   let memBytes = null;
   try {
-    const runRes = shOut("docker", args, { timeout: 300_000 });
+    // Pull separately so a registry or Docker-desktop stall is evidence, not an
+    // unattended runner sitting in `docker run` for the whole curation pass.
+    const pullArgs = ["pull", ...platformArgs, ref];
+    const pull = shOut("docker", pullArgs, { timeout: 240_000 });
+    evidence.pullStdout = pull.stdout.slice(-500);
+    if (pull.status !== 0) {
+      evidence.pullStderr = (pull.stderr || pull.error || "").slice(-800);
+      const why = /timed out|ETIMEDOUT/i.test(pull.error ?? "") ? "image pull timed out after 4 minutes" : `image pull failed: ${evidence.pullStderr.slice(0, 240)}`;
+      return { checks: [check("boot", "fail", why, evidence), check("gateway", "skipped", "image did not pull")], memBytes };
+    }
+    const runRes = shOut("docker", args, { timeout: 180_000 });
     evidence.runStdout = runRes.stdout.trim().slice(0, 300);
     if (runRes.status !== 0) {
       evidence.runStderr = runRes.stderr.slice(0, 600);
@@ -733,7 +750,14 @@ async function bootDockerStack(spec, imageEvidence) {
     const composeEnv = { ...process.env, ...(allArm64 ? {} : { DOCKER_DEFAULT_PLATFORM: "linux/amd64" }) };
     evidence.defaultPlatform = allArm64 ? "host" : "linux/amd64";
 
-    const up = shOut("docker", ["compose", "-p", project, "-f", composeFile, "up", "-d"], { timeout: 600_000, env: composeEnv });
+    const pull = shOut("docker", ["compose", "-p", project, "-f", composeFile, "pull", "--quiet"], { timeout: 480_000, env: composeEnv });
+    evidence.pullStdout = pull.stdout.slice(-500);
+    if (pull.status !== 0) {
+      evidence.pullStderr = (pull.stderr || pull.error || "").slice(-800);
+      const why = /timed out|ETIMEDOUT/i.test(pull.error ?? "") ? "compose image pull timed out after 8 minutes" : `compose image pull failed: ${evidence.pullStderr.slice(0, 240)}`;
+      return { checks: [check("boot", "fail", why, evidence), check("gateway", "skipped", "stack images did not pull")], memBytes };
+    }
+    const up = shOut("docker", ["compose", "-p", project, "-f", composeFile, "up", "-d"], { timeout: 300_000, env: composeEnv });
     evidence.upStdout = up.stdout.slice(-800);
     if (up.status !== 0) {
       evidence.upStderr = up.stderr.slice(-1200);
@@ -1046,7 +1070,7 @@ function dumpAllManifests() {
 async function verifyOne(spec, { force = false } = {}) {
   const slug = spec.id;
   const evidencePath = path.join(EVIDENCE_DIR, `${slug}.json`);
-  if (!force && existsSync(evidencePath)) {
+  if (!force && spec.runtime.imageDigest === undefined && existsSync(evidencePath)) {
     try {
       const prior = JSON.parse(readFileSync(evidencePath, "utf8"));
       const age = Date.now() - new Date(prior.checkedAt).getTime();
@@ -1069,10 +1093,9 @@ async function verifyOne(spec, { force = false } = {}) {
       checks.push(check(name, "skipped", "earlier gate failed"));
     }
   } else if (spec.runtime.kind === "docker-web" || spec.runtime.kind === "docker-stack") {
-    const platforms = imageCheck.evidence?.platforms ?? imageCheck.evidence?.services?.flatMap((s) => s.platforms ?? []) ?? [];
     const bootResult = spec.runtime.kind === "docker-stack"
       ? await bootDockerStack(spec, imageCheck.evidence)
-      : await bootDockerWeb(spec, platforms);
+      : await bootDockerWeb(spec, imageCheck.evidence);
     checks.push(...bootResult.checks);
 
     // Floor check: measured idle memory must fit under 80% of the floor.
@@ -1167,4 +1190,4 @@ async function main() {
   }
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

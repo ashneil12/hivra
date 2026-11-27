@@ -1033,9 +1033,9 @@ open(path + ".next", "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\
   exit 1
 }
 run_catalog_app() {
-  local app_id kind image_repo image_tag host_port health_path unit old_image new_image new_digest
+  local app_id kind image_repo image_tag host_port health_path unit image_digest old_image new_image new_digest
   [ -f "$CATALOG_META" ] || { write_status failed not_installed; exit 1; }
-  IFS=$'\t' read -r app_id kind image_repo image_tag host_port health_path unit < <(python3 -I -c '
+  IFS=$'\t' read -r app_id kind image_repo image_tag host_port health_path unit image_digest < <(python3 -I -c '
 import json, sys
 doc = json.load(open(sys.argv[1], encoding="utf-8"))
 print("\t".join([
@@ -1046,6 +1046,7 @@ print("\t".join([
     "" if doc.get("hostPort") is None else str(doc.get("hostPort")),
     str(doc.get("healthPath") or "/"),
     str(doc.get("unit") or ""),
+    str(doc.get("imageDigest") or ""),
 ]))
 ' "$CATALOG_META")
   [ -n "$app_id" ] || { write_status failed not_installed; exit 1; }
@@ -1064,6 +1065,12 @@ except Exception: pass
     UNIT_FILE="$SYSTEMD_DIR/$UNIT"
     [ -f "$UNIT_FILE" ] || { write_status failed not_installed; exit 1; }
     old_image="$(head -n 1 "$CATALOG_ROOT/image" 2>/dev/null || true)"
+    if [ -n "$image_digest" ]; then
+      [ "$old_image" = "${image_repo}@${image_digest}" ] || { write_status failed install_failed; exit 1; }
+      write_record "$image_digest"
+      write_status done
+      exit 0
+    fi
     if [ "$(free_mb "$CATALOG_ROOT")" -lt "$NEED_FREE_MB" ]; then write_status failed no_space; exit 1; fi
     write_status downloading
     if ! bounded 3600 docker pull "${image_repo}:${image_tag}" >/dev/null 2>&1 </dev/null; then

@@ -24,6 +24,7 @@ interface ClientLayoutWrapperProps {
   userEmail: string;
   resourceOwnerKey?: string;
   showOpsLink?: boolean;
+  macDownloadHref?: string | null;
 }
 
 const AGENT_VIEW_ROUTE_PATTERN = /^\/dashboard\/agent\/[^/]+\/?$/;
@@ -59,6 +60,7 @@ export function ClientLayoutWrapper({
   userEmail,
   resourceOwnerKey,
   showOpsLink = false,
+  macDownloadHref,
 }: ClientLayoutWrapperProps) {
   const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -148,6 +150,7 @@ export function ClientLayoutWrapper({
             switcherOpen={switcherOpen}
             onSwitcherOpenChange={setSwitcherOpen}
             showOpsLink={showOpsLink}
+            macDownloadHref={macDownloadHref}
             compact={compactRail}
           />
         </div>}

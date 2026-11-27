@@ -14,6 +14,8 @@ async function stripe(key: string, method: string, path: string, form?: Record<s
   assertTestKey(key);
   const res = await fetch(`${API}${path}`, {
     method,
+    redirect: 'error',
+    signal: AbortSignal.timeout(20_000),
     headers: {
       Authorization: `Bearer ${key}`,
       ...(form ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
@@ -22,7 +24,7 @@ async function stripe(key: string, method: string, path: string, form?: Record<s
   });
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok && res.status !== 404) {
-    throw new Error(`[trial-journey] Stripe ${method} ${path} failed: HTTP ${res.status} ${JSON.stringify(body).slice(0, 300)}`);
+    throw new Error(`[trial-journey] Stripe ${method} failed: HTTP ${res.status}`);
   }
   return body;
 }
@@ -47,7 +49,23 @@ export async function endTrialNow(key: string, id: string): Promise<StripeSubscr
 /** Every subscription the customer has had, canceled ones included. */
 export async function listSubscriptions(key: string, customer: string): Promise<StripeSubscription[]> {
   const body = await stripe(key, 'GET', `/subscriptions?customer=${encodeURIComponent(customer)}&status=all&limit=100`);
-  return ((body.data as StripeSubscription[] | undefined) ?? []);
+  if (!Array.isArray(body.data) || body.has_more !== false) throw new Error('Stripe subscription inventory not confirmed');
+  return body.data as StripeSubscription[];
+}
+
+export async function readRunCheckout(key: string, id: string, userId: string, startedAt: number) {
+  if (!/^cs_test_[A-Za-z0-9]+$/.test(id)) throw new Error('Checkout must use Stripe test mode');
+  const session = await stripe(key, 'GET', `/checkout/sessions/${encodeURIComponent(id)}`);
+  if (session.id !== id || session.livemode !== false || session.mode !== 'subscription' ||
+      session.client_reference_id !== userId || typeof session.created !== 'number' ||
+      session.created < Math.floor(startedAt / 1000) || typeof session.customer !== 'string') {
+    throw new Error('An owned Stripe test checkout from this run was not confirmed');
+  }
+  return {
+    customer: session.customer,
+    subscription: typeof session.subscription === 'string' ? session.subscription : null,
+    trial: (session.metadata as Record<string, unknown> | null)?.hivra_trial === 'card_7d',
+  };
 }
 
 /** Total the customer has paid across their invoices, in cents. */

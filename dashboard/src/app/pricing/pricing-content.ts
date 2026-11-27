@@ -26,6 +26,7 @@ import {
 } from "@/lib/blog/plan-facts";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
 import { PAYMENT_GRACE_HOURS, PLANS } from "@/lib/subscription/plans";
+import { HOLDER_TIER_TERMS } from "@/lib/billing/holder-tier-terms";
 
 export const SELF_HOST_SOURCE_URL = "https://github.com/ashneil12/hivra";
 
@@ -358,7 +359,7 @@ export const PRICING_FAQ: PricingFaqItem[] = [
   },
   {
     q: "Do I need to buy $HIVRA?",
-    a: "No. Self-hosting and card-paid cloud access do not require it. See the token information if you want to understand the separate token ecosystem.",
+    a: `No. Self-hosting and card-paid cloud access do not require it. Where holder access is enabled for an account, a new holder qualification is valued at $${HOLDER_TIER_TERMS.pro.usd} for Pro (${HOLDER_TIER_TERMS.pro.cpu} vCPU and ${HOLDER_TIER_TERMS.pro.ramGb} GB) or $${HOLDER_TIER_TERMS.power.usd} for Power (${HOLDER_TIER_TERMS.power.cpu} vCPU and ${HOLDER_TIER_TERMS.power.ramGb} GB), converted to token amount at the live market price. Accounts that already qualified keep the amount locked when they qualified. See the token information if you want to understand the separate token ecosystem.`,
     links: [{ text: "token information", href: "/token" }],
     tokenOnly: true,
   },

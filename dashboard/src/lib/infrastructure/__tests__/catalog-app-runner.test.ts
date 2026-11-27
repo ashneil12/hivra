@@ -7,6 +7,7 @@ import {
   buildCatalogAppLaunchSpec,
   UNIVERSAL_CATALOG_MANIFESTS,
 } from "@/lib/hivra/catalog-manifests";
+import { DockerWebRuntimeSchema } from "@/lib/hivra/catalog-manifests/schema";
 
 const PROVISIONER_DIR = path.join(process.cwd(), "provisioner");
 const CATALOG_APP_SCRIPT = path.join(PROVISIONER_DIR, "hivra-catalog-app.py");
@@ -30,6 +31,26 @@ describe("provisioner hivra-catalog-app.py validator", () => {
     expect(parsed.runtime.kind).toBe(manifest.runtime.kind);
   });
 
+  it("keeps Nanobot WebUI first-run setup non-interactive", () => {
+    const manifest = UNIVERSAL_CATALOG_MANIFESTS.find((entry) => entry.id === "nanobot");
+    if (!manifest || manifest.runtime.kind !== "cli-web" || !manifest.runtime.webService) {
+      throw new Error("expected Nanobot cli-web manifest");
+    }
+    expect(manifest.runtime.webService.args).toEqual([
+      "webui",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "3201",
+      "--yes",
+    ]);
+
+    const spec = buildCatalogAppLaunchSpec(manifest);
+    const res = runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(spec));
+    expect(res.status).toBe(0);
+    expect(JSON.parse(res.stdout).runtime.webService.args).toContain("--yes");
+  });
+
   it("rejects forbidden container mounts, invalid ports, and shell metacharacters", () => {
     const base = buildCatalogAppLaunchSpec(UNIVERSAL_CATALOG_MANIFESTS.find((m) => m.id === "anythingllm")!);
     const cases = [
@@ -43,6 +64,95 @@ describe("provisioner hivra-catalog-app.py validator", () => {
     for (const bad of cases) {
       const res = runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(bad));
       expect(res.status).not.toBe(0);
+    }
+  });
+
+  it("preserves an opt-in digest through the TypeScript and guest validators", () => {
+    const manifest = UNIVERSAL_CATALOG_MANIFESTS.find((m) => m.id === "it-tools")!;
+    const digest = `sha256:${"a".repeat(64)}`;
+    const runtime = DockerWebRuntimeSchema.parse({ ...manifest.runtime, imageDigest: digest });
+    const res = runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify(buildCatalogAppLaunchSpec({ ...manifest, runtime })));
+    expect(res.status).toBe(0);
+    expect(JSON.parse(res.stdout).runtime.imageDigest).toBe(digest);
+    for (const bad of [null, "latest", "sha256:abc", `sha256:${"A".repeat(64)}`]) {
+      expect(DockerWebRuntimeSchema.safeParse({ ...runtime, imageDigest: bad }).success).toBe(false);
+      expect(runPython([CATALOG_APP_SCRIPT, "validate"], JSON.stringify({
+        appId: manifest.id, name: manifest.name, runtime: { ...runtime, imageDigest: bad },
+      })).status).not.toBe(0);
+    }
+  });
+
+  it("pulls the immutable reference for the local platform and fails before writing guest state on mismatch", () => {
+    const result = runPython(["-c", `
+import importlib.util, json, sys
+from types import SimpleNamespace
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location("catalog", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+pin = "sha256:" + "a" * 64
+other = "sha256:" + "b" * 64
+repo = "vendor/image"
+ref = repo + "@" + pin
+rt = {"imageRepo": repo, "imageTag": "latest", "imageDigest": pin}
+for machine, image_arch in [("x86_64", "amd64"), ("aarch64", "arm64")]:
+    output = "linux/" + image_arch + " " + json.dumps(["docker.io/" + ref])
+    with patch.object(mod.platform, "machine", return_value=machine), patch.object(mod.subprocess, "run") as run:
+        run.side_effect = [None, SimpleNamespace(stdout=output)]
+        assert mod._pull_and_resolve_digest(repo, "latest", pin) == ref
+        assert run.call_args_list[0].args[0] == ["/usr/bin/docker", "pull", "--platform", "linux/" + image_arch, ref]
+        assert run.call_args_list[1].args[0][-1] == ref
+for output, message in [
+    ("linux/arm64 " + json.dumps([ref]), "does not match linux/amd64"),
+    ("linux/amd64 " + json.dumps([repo + "@" + other]), "does not match the catalog pin"),
+    ("linux/amd64 null", "does not match the catalog pin"),
+]:
+    with patch.object(mod.platform, "machine", return_value="x86_64"), patch.object(mod.subprocess, "run") as run, \\
+        patch.object(mod, "_ensure_docker"), patch.object(mod, "_write_atomic") as write:
+        run.side_effect = [None, SimpleNamespace(stdout=output)]
+        try:
+            mod.install_docker_web({"appId": "pilot", "name": "Pilot", "runtime": rt})
+        except mod.CatalogAppError as exc:
+            assert message in str(exc), str(exc)
+        else:
+            raise AssertionError("expected rejection")
+        write.assert_not_called()
+        assert run.call_count == 2
+`, CATALOG_APP_SCRIPT], "");
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+  });
+
+  it("requires matching registry digest and AMD64 metadata in the offline verifier", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "catalog-image-pin-"));
+    try {
+      writeFileSync(path.join(dir, "docker"), `#!/bin/sh
+case "$*" in
+  "buildx imagetools inspect vendor/image@$PIN") printf 'Digest: %s\\n' "$REGISTRY_DIGEST";;
+  "buildx imagetools inspect --raw vendor/image@$PIN") printf '{"manifests":[{"platform":{"os":"linux","architecture":"%s"}}]}\\n' "$REGISTRY_ARCH";;
+  *) exit 2;;
+esac
+`, { mode: 0o700 });
+      const pin = `sha256:${"a".repeat(64)}`;
+      const cases = [
+        { digest: pin, arch: "amd64", ok: true },
+        { digest: pin, arch: "arm64", ok: false },
+        { digest: `sha256:${"b".repeat(64)}`, arch: "amd64", ok: false },
+      ];
+      for (const { digest, arch, ok } of cases) {
+        const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+import { inspectDockerImage } from "./scripts/catalog-curator/verify-candidate.mjs";
+console.log(JSON.stringify(await inspectDockerImage("vendor/image", "latest", process.env.PIN)));
+`], {
+          encoding: "utf8",
+          env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, PIN: pin, REGISTRY_DIGEST: digest, REGISTRY_ARCH: arch },
+          timeout: 10_000,
+        });
+        expect(result.status).toBe(0);
+        expect(JSON.parse(result.stdout)).toMatchObject({ ok, evidence: { ref: `vendor/image@${pin}` } });
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 

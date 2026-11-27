@@ -1,5 +1,7 @@
 /**
- * Turns a Clerk sign-in ticket into a live, authenticated browser context.
+ * Turns a Clerk test-mode email-code sign-in into a live, authenticated browser
+ * context. The account address must be a +clerk_test address; in a test-mode
+ * Clerk instance Clerk suppresses mail to it and accepts the fixed test OTP.
  *
  * TWO things must be true before posthog will capture a single event, and the
  * audit needs both or a failed run cannot tell us where it died:
@@ -14,9 +16,13 @@
  *      gate, NOT a missing analytics key, is why this harness recorded
  *      `posthog_captured: false` on canary.
  */
-import type { Browser, BrowserContext } from '@playwright/test';
+import type { Browser, BrowserContext, Page } from '@playwright/test';
 
-import { assertLiveManagedHostingAuditAllowed } from './config';
+import {
+  assertClerkTestAuditEmail,
+  assertLiveManagedHostingAuditAllowed,
+  CLERK_TEST_OTP_CODE,
+} from './config';
 import {
   applyHumanBrowserSignals,
   humanBrowserContextOptions,
@@ -28,35 +34,49 @@ import {
 import { CONSENT_STORAGE_KEY, CONSENT_VERSION } from '../../src/lib/consent/cookie-consent';
 
 /** Minimal shape of the Clerk client we touch. Types erase at runtime. */
+type ClerkSignInResource = {
+  createdSessionId: string | null;
+  status?: string;
+  supportedFirstFactors?: Array<{ strategy?: string; emailAddressId?: string }>;
+  prepareFirstFactor(o: { strategy: 'email_code'; emailAddressId: string }): Promise<unknown>;
+  attemptFirstFactor(o: { strategy: 'email_code'; code: string }): Promise<ClerkSignInResource>;
+};
+
 type ClerkWin = {
   Clerk?: {
     loaded?: boolean;
+    user?: { id?: string };
     client: {
       signIn: {
-        create(o: { strategy: 'ticket'; ticket: string }): Promise<{ createdSessionId: string }>;
+        create(o: { identifier: string }): Promise<ClerkSignInResource>;
       };
     };
     setActive(o: { session: string }): Promise<void>;
   };
 };
 
-export interface SessionOptions {
+export interface AuditContextOptions {
   baseUrl: string;
-  ticket: string;
   /** Attach network listeners etc. before the first navigation. */
   onContext?: (context: BrowserContext) => void | Promise<void>;
 }
 
+interface SessionOptions extends AuditContextOptions {
+  email: string;
+}
+
 /**
- * Creates a fresh context (no storage state — a virgin browser for a virgin
- * user), grants analytics consent, redeems the ticket, and lands on /dashboard
- * so the session cookie is fully established.
+ * Creates the virgin browser every live audit uses: no storage state, human
+ * browser signals, and analytics consent installed before any page script.
  */
-export async function establishAuditSession(
+export async function createAuditBrowserContext(
   browser: Browser,
-  { baseUrl, ticket, onContext }: SessionOptions,
+  { baseUrl, onContext }: AuditContextOptions,
 ): Promise<BrowserContext> {
   assertLiveManagedHostingAuditAllowed();
+  if (baseUrl !== 'https://canary.hermesos.cloud') {
+    throw new Error('[managed-hosting-audit] refusing to target any origin except public HTTPS Canary.');
+  }
   // NB: browser.newContext() does NOT inherit the project's `use` options, so
   // the UA here is the raw (headless) one unless we set it explicitly.
   const context = await browser.newContext({
@@ -82,26 +102,70 @@ export async function establishAuditSession(
     [CONSENT_STORAGE_KEY, CONSENT_VERSION] as const,
   );
 
-  if (onContext) await onContext(context);
+  if (onContext) {
+    try {
+      await onContext(context);
+    } catch (error) {
+      await context.close();
+      throw error;
+    }
+  }
+  return context;
+}
 
-  const page = await context.newPage();
+/**
+ * Signs in to an existing account in a fresh context, never to a sign-up flow.
+ */
+export async function establishAuditSession(
+  browser: Browser,
+  { baseUrl, email, onContext }: SessionOptions,
+): Promise<{ context: BrowserContext; page: Page; userId: string }> {
+  assertLiveManagedHostingAuditAllowed();
+  assertClerkTestAuditEmail(email);
+  const context = await createAuditBrowserContext(browser, { baseUrl, onContext });
   try {
+    const page = await context.newPage();
     await page.goto('/sign-in', { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => !!(window as unknown as ClerkWin).Clerk?.loaded, {
+    if (new URL(page.url()).origin !== baseUrl) throw new Error('Sign-in left Canary');
+    await page.waitForFunction(() => !!(window as unknown as ClerkWin).Clerk?.loaded, undefined, {
       timeout: 45_000,
     });
-    await page.evaluate(async (t) => {
+    await page.evaluate(async ({ email, code }) => {
       const clerk = (window as unknown as ClerkWin).Clerk;
       if (!clerk) throw new Error('Clerk failed to load on /sign-in');
-      const signIn = await clerk.client.signIn.create({ strategy: 'ticket', ticket: t });
-      await clerk.setActive({ session: signIn.createdSessionId });
-    }, ticket);
+      const signIn = await clerk.client.signIn.create({ identifier: email });
+      const emailFactor = signIn.supportedFirstFactors?.find((factor) => factor.strategy === 'email_code');
+      if (!emailFactor?.emailAddressId) {
+        throw new Error('Clerk did not offer email-code sign-in for the audit account');
+      }
+      await signIn.prepareFirstFactor({ strategy: 'email_code', emailAddressId: emailFactor.emailAddressId });
+      const completed = await signIn.attemptFirstFactor({ strategy: 'email_code', code });
+      if (!completed.createdSessionId) {
+        throw new Error(`Clerk email-code sign-in did not complete (status ${completed.status ?? 'unknown'})`);
+      }
+      await clerk.setActive({ session: completed.createdSessionId });
+    }, { email, code: CLERK_TEST_OTP_CODE });
 
-    // Land authed so the session cookie is written for subsequent API calls.
-    await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
-  } finally {
-    await page.close();
+    const userId = await verifyAuditSession(page, baseUrl);
+    return { context, page, userId };
+  } catch {
+    await context.close().catch(() => undefined);
+    throw new Error('[managed-hosting-audit] standing Canary account did not complete Clerk email-code sign-in.');
   }
+}
 
-  return context;
+export async function verifyAuditSession(page: Page, baseUrl: string, expectedUserId?: string): Promise<string> {
+  await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
+  if (new URL(page.url()).origin !== baseUrl) throw new Error('Dashboard left Canary');
+  const userId = await page.waitForFunction(
+    (expected) => {
+      const id = (window as unknown as ClerkWin).Clerk?.user?.id;
+      return id && (!expected || id === expected) ? id : null;
+    },
+    expectedUserId,
+    { timeout: 30_000 },
+  );
+  const id = await userId.jsonValue();
+  if (!id) throw new Error('Standing account identity was not verified.');
+  return id;
 }

@@ -31,6 +31,8 @@ import { reportOpsEvent } from "@/lib/ops-events";
  */
 export const dynamic = "force-dynamic";
 
+const CRON_WATCHDOG_TIMEOUT_MS = 5000;
+
 export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
@@ -50,6 +52,8 @@ export async function GET(req: NextRequest) {
     return apiError("Unauthorized", 401);
   }
 
+  const cronWatchdogPromise = checkCronHeartbeats();
+
   let result: MigrationDriftResult;
   try {
     result = await runMigrationDriftCheck();
@@ -62,6 +66,18 @@ export async function GET(req: NextRequest) {
     });
     const message =
       err instanceof Error ? err.message : "Migration drift check failed";
+    try {
+      await withBoundedWait(cronWatchdogPromise, CRON_WATCHDOG_TIMEOUT_MS);
+    } catch (watchdogErr) {
+      log.warn("cron dead-man watchdog did not settle before error response", {
+        source: MIGRATION_DRIFT_LOG_SOURCE,
+        failureType: "cron_heartbeat_watchdog_unsettled",
+        errorMessage:
+          watchdogErr instanceof Error
+            ? watchdogErr.message
+            : String(watchdogErr),
+      });
+    }
     return apiError(message, 500);
   }
 
@@ -74,17 +90,17 @@ export async function GET(req: NextRequest) {
       await reportOpsEvent({
         source: MIGRATION_DRIFT_LOG_SOURCE,
         severity: "fatal",
-        title: `Supabase migration missing in prod: ${entry.name}`,
+        title: `Supabase migration missing from the configured database ledger: ${entry.name}`,
         message:
-          `Local repo has ${entry.version}_${entry.name}.sql but the ` +
-          `migration has not been applied to prod. Apply via supabase CLI ` +
-          `or MCP before more code depends on this schema.`,
+          `This deployment includes ${entry.version}_${entry.name}.sql but found no ` +
+          `matching migration name in its Supabase ledger. Verify the target and actual schema ` +
+          `before applying SQL or reconciling the ledger.`,
         route: "/api/cron/migration-drift-check",
         metadata: {
-          failureType: "supabase_migration_missing_in_prod",
+          failureType: "supabase_migration_missing_from_ledger",
           migrationVersion: entry.version,
           migrationName: entry.name,
-          recoveryAction: "apply_migration",
+          recoveryAction: "verify_schema_and_ledger",
         },
       });
     } catch (err) {
@@ -99,9 +115,9 @@ export async function GET(req: NextRequest) {
 
   if (result.missing.length > 0) {
     log.error(
-      "migration drift detected — missing migrations in prod",
+      "migration drift detected — missing migrations in the configured database ledger",
       new Error(
-        `${result.missing.length} migration(s) missing in prod: ${result.missing.map((m) => m.name).join(", ")}`
+        `${result.missing.length} migration(s) absent from the ledger: ${result.missing.map((m) => m.name).join(", ")}`
       ),
       {
         source: MIGRATION_DRIFT_LOG_SOURCE,
@@ -117,23 +133,45 @@ export async function GET(req: NextRequest) {
     // are real but not actively breaking anything. We just want them
     // visible so they eventually get back-ported into the repo.
     log.warn(
-      "migration drift detected — unexpected migrations in prod",
+      "migration drift detected — unexpected migrations in the configured database ledger",
       {
         source: MIGRATION_DRIFT_LOG_SOURCE,
-        failureType: "supabase_migration_unexpected_in_prod",
+        failureType: "supabase_migration_unexpected_in_ledger",
         unexpectedCount: result.unexpected.length,
         unexpectedNames: result.unexpected.map((m) => m.name),
       }
     );
   }
 
-  // Cron dead-man watchdog. Co-located here because migration-drift-check runs
-  // every 10 min and is itself one of the most reliable crons (pure DB read,
-  // no SSH/network fan-out), so it's a stable host for the heartbeat sweep.
-  // Best-effort: a watchdog hiccup must not fail the drift check it rides on.
-  let cronWatchdog: CronHeartbeatWatchdogResult | null = null;
+  const cronWatchdog = await cronWatchdogPromise;
+  // Check the previous heartbeat before stamping this successful drift run.
+  await recordCronHeartbeat("migration-drift-check");
+
+  return apiSuccess({
+    totalLocal: result.totalLocal,
+    totalApplied: result.totalApplied,
+    missing: result.missing,
+    unexpected: result.unexpected,
+    versionMismatched: result.versionMismatched,
+    cronWatchdog,
+  });
+}
+
+function withBoundedWait<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error(`cron heartbeat watchdog timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  return Promise.race<T>([promise, timeoutPromise]).finally(() => {
+    if (timeout !== undefined) clearTimeout(timeout);
+  });
+}
+
+async function checkCronHeartbeats(): Promise<CronHeartbeatWatchdogResult | null> {
   try {
-    cronWatchdog = await runCronHeartbeatWatchdog();
+    const cronWatchdog = await runCronHeartbeatWatchdog();
     if (cronWatchdog.stale.length > 0) {
       log.error(
         "cron dead-man watchdog detected stalled crons",
@@ -147,30 +185,13 @@ export async function GET(req: NextRequest) {
         },
       );
     }
+    return cronWatchdog;
   } catch (err) {
     log.warn("cron dead-man watchdog failed", {
       source: MIGRATION_DRIFT_LOG_SOURCE,
       failureType: "cron_heartbeat_watchdog_failed",
       errorMessage: err instanceof Error ? err.message : String(err),
     });
+    return null;
   }
-
-  // Self-heartbeat. The dead-man watchdog for the WHOLE fleet is parasitically
-  // hosted in THIS route, yet migration-drift-check has no heartbeat of its own
-  // and (currently) isn't in CRON_REGISTRY — so if it ever stops being
-  // scheduled, the watchdog goes dark with no self-detection. Stamping its own
-  // heartbeat here means that once it's added to CRON_REGISTRY (a one-line
-  // change in src/lib/cron-heartbeat.ts — see note; that file is owned
-  // elsewhere) the watchdog will detect its own silence on the next run that
-  // DOES fire. Best-effort.
-  await recordCronHeartbeat("migration-drift-check");
-
-  return apiSuccess({
-    totalLocal: result.totalLocal,
-    totalApplied: result.totalApplied,
-    missing: result.missing,
-    unexpected: result.unexpected,
-    versionMismatched: result.versionMismatched,
-    cronWatchdog,
-  });
 }

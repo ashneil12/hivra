@@ -333,6 +333,34 @@ describe("attribution on the shared wallet", () => {
 });
 
 describe("batch", () => {
+  it("records the RPC status and method without logging provider details or closing an unscanned quote", async () => {
+    const world = createYearlyTokenWorld();
+    openQuote(world, { status: "expired", expires_at: world.at(-3 * MINUTE_MS) });
+    const providerDetails = jest.fn(async () => ({ message: "provider details" }));
+    const fetchImpl = jest.fn(async () => ({ ok: false, status: 429, json: providerDetails }));
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const summary = await reconcilePendingYearlyTokenQuotes({
+        db: world.memory.db,
+        fetchImpl,
+        rpcRetryConfig: { maxAttempts: 1 },
+        now: new Date(world.nowMs),
+      });
+
+      expect(summary).toMatchObject({ checked: 1, failed: 1, activated: 0, manualReview: 0 });
+      expect(mockReportOpsEvent).toHaveBeenCalledWith(expect.objectContaining({
+        message: "RpcHttpError",
+        metadata: expect.objectContaining({ rpcHttpStatus: 429, rpcMethod: "eth_blockNumber" }),
+      }));
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("rpcHttpStatus"));
+      expect(providerDetails).not.toHaveBeenCalled();
+      expect(world.quote("yq_1")).toMatchObject({ status: "expired", attribution_closed_at: null });
+      expect(world.subscriptions()).toHaveLength(0);
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
   it("reconciles newest quotes first and keeps going past a failing quote", async () => {
     const world = createYearlyTokenWorld();
     openQuote(world, { id: "yq_old", user_id: "user_old", deposit_address: "0xbad", quoted_at: world.at(-50 * MINUTE_MS), expires_at: world.at(-30 * MINUTE_MS), status: "expired" });

@@ -1,0 +1,139 @@
+{
+  "slug": "airtrail",
+  "checkedAt": "2026-11-25T17:11:29.756Z",
+  "gitSha": "b6ae08d9e45a02c569c28ff96d32c5720ac51b59",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "johanohly/AirTrail is GPL-3.0",
+      "evidence": {
+        "archived": false,
+        "full_name": "johanohly/AirTrail",
+        "spdx_id": "GPL-3.0"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "2 service images have linux/amd64",
+      "evidence": {
+        "services": [
+          {
+            "name": "db",
+            "ref": "postgres:16-alpine",
+            "digest": "sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d",
+            "platforms": [
+              "linux/amd64",
+              "unknown/unknown",
+              "linux/arm/v6",
+              "unknown/unknown",
+              "linux/arm/v7",
+              "unknown/unknown",
+              "linux/arm64/v8",
+              "unknown/unknown",
+              "linux/386",
+              "unknown/unknown",
+              "linux/ppc64le",
+              "unknown/unknown",
+              "linux/riscv64",
+              "unknown/unknown",
+              "linux/s390x",
+              "unknown/unknown"
+            ]
+          },
+          {
+            "name": "airtrail",
+            "ref": "johly/airtrail:latest",
+            "digest": "sha256:69ef0a421d6a5f99c06d04ea6b66445a5d1261dd533d6efe3bd8bc3e2dfd018f",
+            "platforms": [
+              "linux/amd64",
+              "linux/arm64",
+              "unknown/unknown",
+              "unknown/unknown"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "stack up; health / -> 200 in 24.2s across 2 container(s)",
+      "evidence": {
+        "project": "hivra-verify-airtrail-kotbvk",
+        "composeFile": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-airtrail-s1h4FD/rendered/compose.yaml",
+        "renderedDir": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-airtrail-s1h4FD/rendered",
+        "renderStdout": "{\"outDir\":\"/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-airtrail-s1h4FD/rendered\"}",
+        "defaultPlatform": "host",
+        "pullStdout": "",
+        "upStdout": "",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 24.2,
+          "attempts": 12
+        },
+        "containerCount": 2,
+        "perContainerMem": [
+          {
+            "id": "cc19cc433c56",
+            "memUsage": "498.5MiB / 7.652GiB",
+            "memBytes": 522715136
+          },
+          {
+            "id": "0b04650cddc9",
+            "memUsage": "44.12MiB / 7.652GiB",
+            "memBytes": 46263173
+          }
+        ],
+        "memBytes": 568978309
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 64016,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <title>AirTrail</title>\n    <meta\n      name=\"description\"\n      content=\"A modern, open-source personal flight tracking system\"\n    />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <link rel=\"manifest\" href=\"./manifest.webmanifest\" />\n    <link\n      rel=\"icon\"\n      href=\"./favicon.svg\"\n  ",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 405,
+          "bodyHead": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <title>AirTrail</title>\n    <meta\n      name=\"description\"\n      content=\"A modern, open-source personal flight tracking system\"\n    />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <link rel="
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 542.6MiB vs floor 1GB*0.8=0.8GiB",
+      "evidence": {
+        "memBytes": 568978309,
+        "floorRamGb": 1
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

@@ -1,0 +1,139 @@
+{
+  "slug": "wekan",
+  "checkedAt": "2026-11-25T17:09:59.173Z",
+  "gitSha": "b6ae08d9e45a02c569c28ff96d32c5720ac51b59",
+  "checks": [
+    {
+      "name": "license",
+      "status": "pass",
+      "detail": "wekan/wekan is MIT",
+      "evidence": {
+        "archived": false,
+        "full_name": "wekan/wekan",
+        "spdx_id": "MIT"
+      }
+    },
+    {
+      "name": "image",
+      "status": "pass",
+      "detail": "2 service images have linux/amd64",
+      "evidence": {
+        "services": [
+          {
+            "name": "wekandb",
+            "ref": "mongo:7",
+            "digest": "sha256:41e8195b2791692695e1dc9bd21cd51d0a3af05fff8ace9304a5c1acf94f1ae1",
+            "platforms": [
+              "linux/amd64",
+              "unknown/unknown",
+              "linux/arm64/v8",
+              "unknown/unknown",
+              "windows/amd64",
+              "windows/amd64"
+            ]
+          },
+          {
+            "name": "wekan",
+            "ref": "quay.io/wekan/wekan:latest",
+            "digest": "sha256:46e5613ed9b69cfe292b1693581e88a7153a525314036fd1b2c8311b6ece2278",
+            "platforms": [
+              "linux/amd64",
+              "linux/arm64",
+              "linux/ppc64le",
+              "linux/s390x",
+              "linux/riscv64",
+              "linux/386",
+              "linux/arm/v7",
+              "unknown/unknown",
+              "unknown/unknown",
+              "unknown/unknown",
+              "unknown/unknown",
+              "unknown/unknown",
+              "unknown/unknown",
+              "unknown/unknown"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "boot",
+      "status": "pass",
+      "detail": "stack up; health / -> 200 in 2.8s across 2 container(s)",
+      "evidence": {
+        "project": "hivra-verify-wekan-qmijuv",
+        "composeFile": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-wekan-vgZqWO/rendered/compose.yaml",
+        "renderedDir": "/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-wekan-vgZqWO/rendered",
+        "renderStdout": "{\"outDir\":\"/var/folders/b4/8qh0t36j0_g9srqzx1g5t3z40000gn/T/hivra-verify-stack-wekan-vgZqWO/rendered\"}",
+        "defaultPlatform": "host",
+        "pullStdout": "",
+        "upStdout": "",
+        "health": {
+          "ok": true,
+          "status": 200,
+          "seconds": 2.8,
+          "attempts": 2
+        },
+        "containerCount": 2,
+        "perContainerMem": [
+          {
+            "id": "f5547e604d1b",
+            "memUsage": "286.9MiB / 7.652GiB",
+            "memBytes": 300836454
+          },
+          {
+            "id": "a5d9685363f9",
+            "memUsage": "165MiB / 7.652GiB",
+            "memBytes": 173015040
+          }
+        ],
+        "memBytes": 473851494
+      }
+    },
+    {
+      "name": "gateway",
+      "status": "pass",
+      "detail": "through gateway: 303 /app/ -> 200 /",
+      "evidence": {
+        "publicHost": "box-verify.example.test",
+        "gatewayPort": 63178,
+        "proxyMode": "standard",
+        "hops": [
+          {
+            "hop": 0,
+            "path": "/app/",
+            "status": 303,
+            "location": "/"
+          },
+          {
+            "hop": 1,
+            "path": "/",
+            "status": 200,
+            "location": null
+          }
+        ],
+        "finalStatus": 200,
+        "finalPath": "/",
+        "bodyHead": "<!DOCTYPE html>\n<html>\n<head>\n  <link rel=\"stylesheet\" type=\"text/css\" class=\"__meteor-css__\" href=\"/packages/communitypackages_unstyled/lib/at_unstyled.css?hash=b997c15833dc71fc5ced9d9877cc6f2b98de7c5f\">\n  <link rel=\"stylesheet\" type=\"text/css\" class=\"__meteor-css__\" href=\"/packages/wekan-accounts-saml/saml_login_button.css?hash=b337bc47d874f2fd0bd77d49a195c08210c071a0\">\n  <link rel=\"stylesheet\" ",
+        "formPost": {
+          "found": false
+        },
+        "loginProbe": {
+          "status": 405,
+          "bodyHead": ""
+        }
+      }
+    },
+    {
+      "name": "floor",
+      "status": "pass",
+      "detail": "idle memory 451.9MiB vs floor 2GB*0.8=1.6GiB",
+      "evidence": {
+        "memBytes": 473851494,
+        "floorRamGb": 2
+      }
+    }
+  ],
+  "verdict": "pass",
+  "reasons": []
+}

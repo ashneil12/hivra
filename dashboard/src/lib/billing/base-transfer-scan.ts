@@ -211,7 +211,7 @@ async function rpcCallOnce<T>(
   }
 
   if (!response.ok) {
-    const httpError = new RpcHttpError(response.status);
+    const httpError = new RpcHttpError(response.status, undefined, method);
     // 429/5xx are retried by the shared layer; anything else is deterministic,
     // so name the provider's reason instead of only the status.
     if (isRetryableRpcError(httpError)) throw httpError;

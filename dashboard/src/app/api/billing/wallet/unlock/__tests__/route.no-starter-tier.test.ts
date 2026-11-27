@@ -9,6 +9,8 @@ import { refreshPrimaryHermesTokenHolding, getLatestHermesTokenHoldingSnapshot }
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { applyTierChange } from "@/lib/services/tier-change-service";
 
+const request = new Request("http://localhost/api/billing/wallet/unlock", { method: "POST" });
+
 jest.mock("@clerk/nextjs/server", () => ({ auth: jest.fn() }));
 jest.mock("@/lib/billing/billing-v2-availability", () => ({
   isBillingV2ServerEnabled: () => true,
@@ -80,14 +82,14 @@ beforeEach(() => {
 
 it("gives a whole-token holder Free, not a Starter tier", async () => {
   mockCurrentTier = "credit_base";
-  const body = await (await POST()).json();
+  const body = await (await POST(request)).json();
   expect(body.data.tier).toBe("credit_base");
   expect(applyTierChange).toHaveBeenCalledWith(expect.objectContaining({ newTier: "credit_base" }));
 });
 
 it("moves a computer still on token_base to Free", async () => {
   mockCurrentTier = "token_base";
-  const body = await (await POST()).json();
+  const body = await (await POST(request)).json();
   expect(body.data.tier).toBe("credit_base");
   expect(applyTierChange).toHaveBeenCalledWith(expect.objectContaining({ newTier: "credit_base" }));
 });
@@ -95,7 +97,7 @@ it("moves a computer still on token_base to Free", async () => {
 it("applies the paid plan the account resolves to", async () => {
   mockCurrentTier = "credit_base";
   (resolveEffectiveSubscription as jest.Mock).mockResolvedValue({ plan: "operator", source: "token_holding", status: "active" });
-  const body = await (await POST()).json();
+  const body = await (await POST(request)).json();
   expect(body.data.tier).toBe("operator");
   expect(applyTierChange).toHaveBeenCalledWith(expect.objectContaining({ newTier: "operator" }));
 });

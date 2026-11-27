@@ -46,6 +46,7 @@ state_for() {
 case "$1" in
   inspect)
     [ "\${FAKE_DOCKER_HANG:-}" = all ] && exec sleep 600
+    if [ "$3" = '{{.State.Pid}}' ]; then echo 123; exit 0; fi
     for name in "$@"; do :; done
     [ "\${FAKE_INSPECT_FAIL:-}" = 1 ] && exit 1
     s="$(state_for "$name")"

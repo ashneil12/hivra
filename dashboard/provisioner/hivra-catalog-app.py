@@ -204,7 +204,7 @@ def validate_catalog_app_spec(spec):
 
     if kind == "docker-web":
         allowed = {
-            "kind", "imageRepo", "imageTag", "containerPort", "hostPort",
+            "kind", "imageRepo", "imageTag", "imageDigest", "containerPort", "hostPort",
             "healthPath", "volumes", "env", "generatedSecrets", "modelEnv",
             "dropAllCaps", "stopTimeoutSeconds", "proxyMode",
         }
@@ -223,6 +223,9 @@ def validate_catalog_app_spec(spec):
             raise CatalogAppError("invalid docker image repository")
         if not isinstance(tag, str) or not IMAGE_TAG_RE.fullmatch(tag):
             raise CatalogAppError("invalid docker image tag")
+        digest = runtime.get("imageDigest")
+        if "imageDigest" in runtime and (not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest)):
+            raise CatalogAppError("invalid docker image digest")
         if type(cport) is not int or not (1 <= cport <= 65535):
             raise CatalogAppError("invalid containerPort")
         if type(hport) is not int or not (PORT_MIN <= hport <= PORT_MAX):
@@ -268,6 +271,8 @@ def validate_catalog_app_spec(spec):
         }
         if generated_secrets:
             norm_runtime["generatedSecrets"] = generated_secrets
+        if digest:
+            norm_runtime["imageDigest"] = digest
         _check_runtime_env_placeholders(norm_runtime, generated_secrets)
         return {
             "appId": app_id,
@@ -662,7 +667,25 @@ def _ensure_docker():
     subprocess.run(["/usr/bin/systemctl", "is-active", "--quiet", "docker"], check=True, timeout=15, stdin=subprocess.DEVNULL)
 
 
-def _pull_and_resolve_digest(repo: str, tag: str) -> str:
+def _pull_and_resolve_digest(repo: str, tag: str, expected_digest=None) -> str:
+    if expected_digest:
+        arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine())
+        if not arch:
+            raise CatalogAppError("unsupported platform for pinned docker image")
+        target_platform = f"linux/{arch}"
+        ref = f"{repo}@{expected_digest}"
+        subprocess.run(["/usr/bin/docker", "pull", "--platform", target_platform, ref],
+                       check=True, timeout=1800, stdin=subprocess.DEVNULL)
+        inspected = subprocess.run(
+            ["/usr/bin/docker", "image", "inspect", "--format", "{{.Os}}/{{.Architecture}} {{json .RepoDigests}}", ref],
+            check=True, timeout=30, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        )
+        actual_platform, _, digests = inspected.stdout.strip().partition(" ")
+        if actual_platform != target_platform:
+            raise CatalogAppError(f"pinned docker image does not match {target_platform}")
+        if not any(digest.endswith(f"@{expected_digest}") for digest in (json.loads(digests) or [])):
+            raise CatalogAppError("pulled docker image digest does not match the catalog pin")
+        return ref
     ref = f"{repo}:{tag}"
     subprocess.run(["/usr/bin/docker", "pull", ref], check=True, timeout=1800, stdin=subprocess.DEVNULL)
     inspected = subprocess.run(
@@ -689,7 +712,7 @@ def install_docker_web(spec, model_key="", model_base_url="", model_name="", pub
     name = spec["name"]
     rt = spec["runtime"]
     _ensure_docker()
-    pinned_image = _pull_and_resolve_digest(rt["imageRepo"], rt["imageTag"])
+    pinned_image = _pull_and_resolve_digest(rt["imageRepo"], rt["imageTag"], rt.get("imageDigest"))
     digest = pinned_image.rsplit("@", 1)[1]
 
     APP_ROOT.mkdir(parents=True, exist_ok=True)
@@ -723,6 +746,8 @@ def install_docker_web(spec, model_key="", model_base_url="", model_name="", pub
         "unit": "hivra-catalog-app.service",
         "containerName": f"hivra-app-{app_id}",
     }
+    if "imageDigest" in rt:
+        meta["imageDigest"] = rt["imageDigest"]
     _write_atomic(METADATA_PATH, (json.dumps(meta, indent=2) + "\n").encode("utf-8"), 0o644)
 
     vol_flags = []
@@ -733,8 +758,10 @@ def install_docker_web(spec, model_key="", model_base_url="", model_name="", pub
     container_name = f"hivra-app-{app_id}"
     stop_timeout = rt["stopTimeoutSeconds"]
 
+    image_pin = rt.get("imageDigest")
     runner_args = [
         "/usr/bin/docker", "run", "--rm",
+        *(["--pull=never"] if image_pin else []),
         "--name", container_name,
         "--security-opt", "no-new-privileges",
         *cap_flags,
@@ -747,7 +774,7 @@ def install_docker_web(spec, model_key="", model_base_url="", model_name="", pub
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
         f"image=\"$(head -n 1 {shlex.quote(str(APP_ROOT / 'image'))})\"\n"
-        "[[ \"$image\" == *@sha256:* ]] || { echo 'invalid catalog app image' >&2; exit 1; }\n"
+        f"[[ \"$image\" == {shlex.quote(pinned_image) if image_pin else '*@sha256:*'} ]] || {{ echo 'invalid catalog app image' >&2; exit 1; }}\n"
         f"/usr/bin/docker rm -f {shlex.quote(container_name)} >/dev/null 2>&1 || true\n"
         f"exec {runner_cmd} \"$image\"\n"
     )
@@ -1168,9 +1195,10 @@ def render_only(spec_path, out_dir):
             raw_secrets=fake,
         )
         _write_atomic(out / "env", env, 0o600)
+        image = f"{rt['imageRepo']}@{rt['imageDigest']}" if "imageDigest" in rt else f"{rt['imageRepo']}:{rt['imageTag']}"
         meta = {"schema": 1, "appId": spec["appId"], "name": spec["name"], "kind": "docker-web",
                 "hostPort": rt["hostPort"], "healthPath": rt["healthPath"], "proxyMode": rt["proxyMode"],
-                "image": f"{rt['imageRepo']}:{rt['imageTag']}"}
+                "image": image}
         _write_atomic(out / "meta.json", (json.dumps(meta, indent=2) + "\n").encode("utf-8"), 0o644)
     elif rt["kind"] == "cli-web":
         names = rt.get("generatedSecrets") or []

@@ -54,6 +54,7 @@ const OWN_TEST = "dashboard/__tests__/check-test-wiring.test.ts";
 const TEST_FILE_PATTERNS = [
   /(?:^|\/)test[-_][^/]+\.(?:py|cjs|mjs|js|ts|sh)$/,
   /\.(?:test|spec)\.(?:cjs|mjs|js|jsx|ts|tsx|py)$/,
+  /\.pglite\.ts$/,
   /_test\.py$/,
   /\.t\.sol$/,
   /(?:^|\/)Tests\/.+\.swift$/,

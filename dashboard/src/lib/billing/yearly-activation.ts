@@ -58,6 +58,7 @@ export async function applyYearlyPaymentToInstances(
     await applyTierChange({
       userId,
       newTier: tierFromPlanKey(entitlement.plan),
+      ...(entitlement.source === "token_holding" && { holderSeats: true }),
       source: "token_yearly",
       reason: `yearly $HermesOS payment ${trigger} (${entitlement.source} ${entitlement.plan})`,
     });

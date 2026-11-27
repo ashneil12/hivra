@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 
 import { PORTABLE_HIVRA_PROVISIONER_VERSION } from "@/lib/infrastructure/portable-provisioner-contract";
-import { managedHivraHostReadinessScript } from "../managed-provisioner-readiness";
+import { checkManagedHivraHostReadiness, managedCanaryLaunchSealScript, managedHivraHostReadinessScript } from "../managed-provisioner-readiness";
 
 describe("managed Hivra provisioner readiness", () => {
   it.each([["2026.08.26.10", 1], ["2026.08.28.1", 1], ["2026.08.28.2", 0], ["2026.08.28.3", 0], ["2026.08.28.4", 0], ["2026.08.28.5", 1]])(
@@ -86,17 +86,65 @@ ${probe}
     });
   });
 
-  it("requires the current bundle for new Canary provisions without tightening ordinary lifecycle", () => {
+  it("admits only the two reviewed Canary seals for unpinned provisioning", () => {
     const provision = managedHivraHostReadinessScript("canary", "provision");
+    const pinned = managedHivraHostReadinessScript("canary", "provision", false, "catalog-app", true);
+    const update = managedHivraHostReadinessScript("canary", "runtime-update");
     const lifecycle = managedHivraHostReadinessScript("canary", "lifecycle");
 
     expect(provision).toContain("PROVISIONER_DIR='/root/hivra-provisioner-canary'");
-    expect(provision).toContain(`  '${PORTABLE_HIVRA_PROVISIONER_VERSION}') ;;`);
+    expect(provision).toContain(`  '${PORTABLE_HIVRA_PROVISIONER_VERSION}') EXPECTED_MANIFEST_SHA=`);
+    expect(provision).toContain("  '2026.11.25.2') EXPECTED_MANIFEST_SHA=");
+    expect(pinned).not.toContain("'2026.11.25.2'");
+    expect(update).not.toContain("'2026.11.25.2'");
     expect(provision).not.toContain("'2026.08.26.10'");
     expect(lifecycle).toContain("PROVISIONER_DIR='/root/hivra-provisioner-canary'");
     expect(lifecycle).toContain("'2026.08.26.10'");
     expect(spawnSync("bash", ["-n"], { input: provision, encoding: "utf8" }).status).toBe(0);
     expect(spawnSync("bash", ["-n"], { input: lifecycle, encoding: "utf8" }).status).toBe(0);
+  });
+
+  it("retains the selected sealed version and refuses missing or predecessor receipts for pinned placement", async () => {
+    const candidate = { targetId: "pve-test", env: {}, channel: "canary" as const };
+    const runner = (stdout: string) => jest.fn().mockResolvedValue({ ok: true, stdout, stderr: "" });
+    await expect(checkManagedHivraHostReadiness(candidate, runner("HIVRA_HOST_READY 2026.11.25.2\n")))
+      .resolves.toEqual({ ok: true, provisionerVersion: "2026.11.25.2" });
+    await expect(checkManagedHivraHostReadiness(candidate, runner("HIVRA_HOST_READY\n")))
+      .resolves.toMatchObject({ ok: false });
+    await expect(checkManagedHivraHostReadiness({ ...candidate, requirePinnedCatalogDigest: true }, runner("HIVRA_HOST_READY 2026.11.25.2\n")))
+      .resolves.toMatchObject({ ok: false });
+  });
+
+  it("rechecks the selected seal and rejects swapped versions, changed manifests and mismatched bytes", () => {
+    const fs = jest.requireActual<typeof import("node:fs")>("node:fs");
+    const os = jest.requireActual<typeof import("node:os")>("node:os");
+    const path = jest.requireActual<typeof import("node:path")>("node:path");
+    const release = jest.requireActual<typeof import("../../../../provisioner-releases/2026.11.26.1.json")>("../../../../provisioner-releases/2026.11.26.1.json");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hivra-seal-"));
+    try {
+      for (const file of release.files) {
+        const dest = path.join(dir, file.path);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(path.join(process.cwd(), "provisioner", file.path), dest);
+      }
+      const manifest = path.join(dir, "BUNDLE.sha256");
+      const manifestLines = release.files.map(file => `${file.sha256}  ${file.path}\n`);
+      fs.writeFileSync(manifest, [...manifestLines].reverse().join(""));
+      const run = (version: string) => spawnSync("bash", ["-s"], {
+        input: `set -euo pipefail\n${managedCanaryLaunchSealScript([version])}\nprintf 'eligible\\n'`,
+        encoding: "utf8",
+        env: { PATH: `${process.env.PATH}:/sbin`, PROVISIONER_DIR: dir, NODE_ENV: "test" },
+      });
+      expect(run(release.version)).toMatchObject({ status: 0, stdout: "eligible\n" });
+      expect(run("2026.11.25.2")).toMatchObject({ status: 1, stdout: "", stderr: expect.stringContaining("version mismatch") });
+      fs.writeFileSync(manifest, manifestLines.slice(1).join(""));
+      expect(run(release.version)).toMatchObject({ status: 1, stdout: "", stderr: expect.stringContaining("seal mismatch") });
+      fs.writeFileSync(manifest, manifestLines.join(""));
+      fs.appendFileSync(path.join(dir, "hivra-catalog-app.py"), "\n");
+      expect(run(release.version)).toMatchObject({ status: 1, stdout: "", stderr: expect.stringContaining("integrity check failed") });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -206,13 +254,13 @@ describe("managed readiness per runtime", () => {
   it("lets only hosts on the release that ships linux-server take it, and keeps Linux Desktop on older hosts", () => {
     for (const purpose of ["provision", "runtime-update"] as const) {
       expect(versionsIn(managedHivraHostReadinessScript("default", purpose, false, "linux-server"))).toEqual(
-        purpose === "provision" ? ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
+        purpose === "provision" ? ["2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", "2026.11.23.1", "2026.11.25.1", "2026.11.25.2", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
       // DeepSeek Harness needs the release that seeds its launch-time model.
       expect(versionsIn(managedHivraHostReadinessScript("default", purpose, false, "deepseek-harness"))).toEqual(
-        purpose === "provision" ? ["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
+        purpose === "provision" ? ["2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", "2026.11.23.1", "2026.11.25.1", "2026.11.25.2", PORTABLE_HIVRA_PROVISIONER_VERSION] : [PORTABLE_HIVRA_PROVISIONER_VERSION]);
     }
     // Hermes is placed only from the release that lets Hivra set its own model (2026.11.12.1) on.
-    expect(versionsIn(managedHivraHostReadinessScript("default", "provision", false, "hermes"))).toEqual(["2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", PORTABLE_HIVRA_PROVISIONER_VERSION]);
+    expect(versionsIn(managedHivraHostReadinessScript("default", "provision", false, "hermes"))).toEqual(["2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.15.8", "2026.11.17.1", "2026.11.17.2", "2026.11.17.3", "2026.11.17.4", "2026.11.17.5", "2026.11.17.6", "2026.11.17.7", "2026.11.17.8", "2026.11.17.9", "2026.11.18.1", "2026.11.18.2", "2026.11.18.3", "2026.11.18.4", "2026.11.18.5", "2026.11.19.1", "2026.11.20.1", "2026.11.20.2", "2026.11.20.3", "2026.11.20.4", "2026.11.20.5", "2026.11.21.1", "2026.11.22.1", "2026.11.22.2", "2026.11.22.3", "2026.11.23.1", "2026.11.25.1", "2026.11.25.2", PORTABLE_HIVRA_PROVISIONER_VERSION]);
     const desktop = versionsIn(managedHivraHostReadinessScript("default", "provision", false, "linux-desktop"));
     expect(desktop).toContain("2026.11.10.3");
     expect(desktop).toContain(PORTABLE_HIVRA_PROVISIONER_VERSION);

@@ -65,8 +65,11 @@ import {
   releaseHivraAgentOperation,
   requestHivraAgentDelete,
 } from "@/lib/hivra/agent-operation-store";
+import { COMPUTER_BACKUP_DELETE_LOCKS, REFUSE_COMPUTER_BACKUP_SNAPSHOTS } from "@/lib/hivra/computer-backups/scripts";
 import {
+  hivraPrivateAccessAuthority,
   prepareHivraTailscaleForDelete,
+  sameHivraPrivateAccessAuthority,
   type HivraPrivateAccessAgentRow,
 } from "@/lib/hivra/tailscale-private-access";
 import {
@@ -80,6 +83,7 @@ import {
   shellQuote,
 } from "@/lib/hivra/proxmox-target";
 import { log } from "@/lib/logger";
+import { releaseExactProvisionIntentScript } from "@/lib/hivra/provision-intent-cleanup";
 import {
   abandonDesktopPrepare,
   cancelUndispatchedDesktopPrepare,
@@ -216,7 +220,6 @@ function buildCancelledProvisionCleanupScript(
     hivraAgentProvisionSecretPath(context, vmid),
     `/run/hivra-provision/${vmid}.env`,
     `/run/hivra-provision/${vmid}.allocated`,
-    `/var/lib/hivra/provision-operations/operation-${operationId}.selected`,
   ].filter((path): path is string => Boolean(path)).map((path) => shellQuote(path)).join(" ");
   return `set -euo pipefail
 VMID=${vmid}
@@ -225,6 +228,7 @@ OPERATION_TAG=${shellQuote(operationTag)}
 BINDING_TAG=${shellQuote(context.infrastructureBindingTag)}
 STORAGE=${shellQuote(context.paths.storage)}
 install -d -m 0755 /run/lock
+${COMPUTER_BACKUP_DELETE_LOCKS}
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for cancellation cleanup lock" >&2; exit 1; }
 PIDFILE="/run/hivra-provision/$VMID.pid"
@@ -253,6 +257,7 @@ if qm status "$VMID" >/dev/null 2>&1; then
     printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq "$OPERATION_TAG" \
       && printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq "$BINDING_TAG" \
       || { echo "VM ownership changed during cancellation" >&2; exit 1; }
+    ${REFUSE_COMPUTER_BACKUP_SNAPSHOTS}
     qm stop "$VMID" --timeout 30 >/dev/null 2>&1 || true
     qm destroy "$VMID" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || true
     sleep 1
@@ -263,6 +268,7 @@ VOLUMES="$(pvesm list "$STORAGE" 2>/dev/null)" \
   || { echo "could not verify storage after cancellation" >&2; exit 1; }
 printf '%s\\n' "$VOLUMES" | grep -Eq "vm-${vmid}-" \
   && { echo "VM volumes remain after cancellation" >&2; exit 1; }
+${releaseExactProvisionIntentScript(operationId, vmid, context.infrastructureBindingTag)}
 rm -f -- "$PIDFILE" ${cleanupPaths}
 printf 'HIVRA_CANCELLED_PROVISION_CLEANED %s\\n' "$VMID"`;
 }
@@ -285,9 +291,6 @@ function buildRecoveredDeleteCleanupScript(
     `/run/hivra-provision/${vmid}.env`,
     `/run/hivra-provision/${vmid}.allocated`,
     `/var/lib/hivra/provision-results/${vmid}.secret`,
-    row.operation_id
-      ? `/var/lib/hivra/provision-operations/operation-${row.operation_id}.selected`
-      : null,
   ].filter((path): path is string => Boolean(path)).map(shellQuote).join(" ");
   return `set -euo pipefail
 VMID=${vmid}
@@ -296,6 +299,7 @@ BINDING_TAG=${shellQuote(context.infrastructureBindingTag)}
 ALLOCATION_TAG=${shellQuote(allocationTag ?? "")}
 ALLOW_MANAGED_LEGACY=${allowManagedLegacy ? "1" : "0"}
 install -d -m 0755 /run/lock
+${COMPUTER_BACKUP_DELETE_LOCKS}
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for delete reconciliation lock" >&2; exit 1; }
 # Migration-window managed provisioners predate operation/binding tags and did
@@ -327,6 +331,7 @@ if qm status "$VMID" >/dev/null 2>&1; then
   for _ in 1 2 3; do
     qm status "$VMID" >/dev/null 2>&1 || break
     owned || { echo "VM ownership changed during delete reconciliation" >&2; exit 1; }
+    ${REFUSE_COMPUTER_BACKUP_SNAPSHOTS}
     qm stop "$VMID" --timeout 30 >/dev/null 2>&1 || true
     qm destroy "$VMID" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || true
     sleep 1
@@ -337,6 +342,7 @@ VOLUMES="$(pvesm list "$STORAGE" 2>/dev/null)" \
   || { echo "could not verify storage after delete reconciliation" >&2; exit 1; }
 printf '%s\\n' "$VOLUMES" | grep -Eq "vm-${vmid}-" \
   && { echo "VM volumes remain after delete reconciliation" >&2; exit 1; }
+${releaseExactProvisionIntentScript(row.allocation_operation_id, vmid, context.infrastructureBindingTagEnforced ? context.infrastructureBindingTag : null)}
 rm -f -- ${cleanupPaths}
 printf 'HIVRA_RECOVERED_DELETE_OK %s\\n' "$VMID"`;
 }
@@ -985,14 +991,32 @@ async function recoverOne(row: StuckAgentRow, now: Date): Promise<StuckRecoveryR
         });
         return { ...base, action: "skipped", reason: "owner-bound teardown context unavailable" };
       }
-      const privateAccessCleanup = await prepareHivraTailscaleForDelete({
+      const privateAccessAgent = {
         ...row,
         type: row.type ?? "",
-        computer_profile: row.computer_profile,
         desired_state: row.desired_state ?? "",
-      } as HivraPrivateAccessAgentRow, teardownContext);
-      if (!privateAccessCleanup.ok) {
-        return { ...base, action: "skipped", reason: "private-access logout could not be verified" };
+      } as HivraPrivateAccessAgentRow;
+      let needsGuestLogout = true;
+      if (prepared) {
+        // Once a prepared binding is released, guest logout can no longer
+        // prove ownership. As with interactive Delete, only try it for a
+        // recorded connection that belongs to this exact claim.
+        const { data: connection, error } = await supabaseAdmin!
+          .from("hivra_private_access_connections")
+          .select("authority")
+          .eq("agent_id", row.id)
+          .eq("user_id", row.user_id)
+          .maybeSingle();
+        if (error) return { ...base, action: "skipped", reason: "private-access authority could not be checked" };
+        needsGuestLogout = Boolean(connection && sameHivraPrivateAccessAuthority(
+          connection.authority, hivraPrivateAccessAuthority(privateAccessAgent),
+        ));
+      }
+      if (needsGuestLogout) {
+        const privateAccessCleanup = await prepareHivraTailscaleForDelete(privateAccessAgent, teardownContext);
+        if (!privateAccessCleanup.ok) {
+          return { ...base, action: "skipped", reason: "private-access logout could not be verified" };
+        }
       }
       const cleanup = prepared
         ? await releasePreparedComputerClaim(row, prepared)
