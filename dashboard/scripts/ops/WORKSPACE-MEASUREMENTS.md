@@ -73,7 +73,7 @@ and don't appear in the emitted event.
   "scope": "classic_hermes_backup_mirror_proxy",
   "agents": [
     {
-      "agent_id": "01234567-89ab-4cde-8f01-0123456789ab",
+      "agent_id": "11111111-1111-4111-8111-111111111111",
       "owner_hash": null,
       "reachable": true,
       "observed_at_unix_seconds": 1795794000,
