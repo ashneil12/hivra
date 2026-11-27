@@ -25,6 +25,7 @@ const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 
 export const YEARLY_TOKEN_TABLES = [
   "yearly_token_quotes",
+  "yearly_token_attribution_checkpoints",
   "yearly_token_subscriptions",
   "yearly_token_reconciliation_items",
   "managed_venice_token_quotes",
@@ -37,6 +38,9 @@ export const YEARLY_TOKEN_TABLES = [
 ];
 
 export const YEARLY_TOKEN_UNIQUE_INDEXES: Record<string, UniqueIndex[]> = {
+  yearly_token_attribution_checkpoints: [
+    { name: "yearly_token_attribution_checkpoints_pkey", columns: ["quote_id"], where: () => true },
+  ],
   yearly_token_quotes: [
     {
       name: "yearly_token_quotes_user_tier_active_idx",
