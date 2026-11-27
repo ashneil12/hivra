@@ -89,6 +89,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/computer-stalls",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/recover-stuck-instances",
       "schedule": "*/2 * * * *"
     },

@@ -110,6 +110,7 @@ test("each agent card launches that agent, and a computer launches on its own", 
 
   const computers = within(document.getElementById("computers") as HTMLElement);
   expect(computers.getByRole("link", { name: /Launch Ubuntu/ })).toHaveAttribute("href", "/dashboard/launch?kind=computer&start=1&profile=ubuntu-desktop");
+  expect(computers.getByRole("link", { name: "Compare Linux sandboxes and VMs" })).toHaveAttribute("href", "/sandboxes");
   expect(document.querySelector("main")).not.toHaveTextContent(/preview/i);
 });
 
@@ -163,10 +164,15 @@ test("no question mentions a token, whether or not the token surfaces are visibl
   expect(answers).toEqual(homepageFaq(false).flatMap(({ a }) => a.split("\n\n")));
 });
 
-test("app CTA has a real destination and does not manufacture installer availability", () => {
-  render(<DownloadPage />);
-  expect(screen.getByRole("heading", { level: 1, name: "Hivra on your computer." })).toBeVisible();
-  expect(screen.getByRole("button", { name: /Download for macOS/ })).toBeDisabled();
-  expect(screen.queryByRole("button", { name: /Download for Windows/ })).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open Hivra" })).toHaveAttribute("href", "/dashboard");
+test("browser access still works when the installer link is hidden", () => {
+  const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_DESKTOP_BROWSER_SIGNIN: "off" });
+  try {
+    render(<DownloadPage />);
+    expect(screen.getByRole("heading", { level: 1, name: "Hivra on your computer." })).toBeVisible();
+    expect(screen.queryByRole("link", { name: /Download for (Mac|Windows)/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Download for (Mac|Windows)/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Hivra" })).toHaveAttribute("href", "/dashboard");
+  } finally {
+    env.restore();
+  }
 });

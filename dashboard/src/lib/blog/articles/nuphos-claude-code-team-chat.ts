@@ -5,31 +5,29 @@ export const article: BlogArticle = {
   title: "Nuphos: Claude Code your team chats with, on a hosted computer",
   metaTitle: "Nuphos: Claude Code your team chats with from an app",
   metaDescription:
-    "Nuphos lets your team chat with a Claude Code agent from its app. How the hosted runtime works, why it is in preview on Hivra, and who pays for the model.",
+    "Nuphos lets your team chat with a Claude Code agent from its app. Learn how the hosted runtime connects and which accounts you need.",
   publishedDate: "2026-11-17",
-  lastModified: "2026-11-17",
+  lastModified: "2026-11-27",
   readingTimeMin: 6,
   author: "Hivra Team",
   tagline: "A Claude Code agent on a computer of its own, reached from a chat app.",
   intro:
-    "Nuphos is built around one idea: the coding agent your team uses should be something you chat with, not a terminal one person has open. Hivra can host the Nuphos runtime on a computer of its own. It is a preview there, and it is not in the Launch list yet.",
+    "Nuphos lets a team chat with Claude Code without sharing one person's terminal. If Nuphos appears in your Hivra Launch list, you can run its runtime on a separate cloud computer and connect it to the Nuphos app.",
   shortAnswer:
-    "Nuphos is Claude Code your team chats with from the Nuphos app. On Hivra it is in preview and not in the Launch list yet. Hivra provides the computer that runs Nuphos's runtime, not the model: you use your own Nuphos account and your own Claude sign-in. It needs a Hivra Cloud paid plan.",
+    "Nuphos lets your team chat with Claude Code from the Nuphos app. If it is listed in your Hivra Launch screen, a paid Hivra Cloud plan covers the computer that runs the Nuphos runtime. You bring your own Nuphos account and Claude sign-in; model access is separate.",
   sections: [
     {
       heading: "What Nuphos is",
       paragraphs: [
         "Claude Code is a coding agent that lives in a terminal. That works well for one developer at one keyboard, and less well for a team that wants to ask the same agent questions, hand it tasks and see what it did. Nuphos puts a chat app in front of it. The agent runs on a computer, and your team talks to it from the Nuphos app on Mac, iPhone or Android.",
-        "The part that runs on a computer is Nuphos's runtime. Hivra hosts its official runtime image, the Claude Code variant, which Nuphos publishes under the Apache-2.0 license. The runtime has its own console, and Nuphos's servers reach it so the app can talk to the agent.",
+        "The part that runs on a computer is Nuphos's runtime. Hivra hosts its official runtime image, the Claude Code variant, which Nuphos publishes as open source. The runtime has its own console, and Nuphos's servers reach it so the app can talk to the agent.",
         "Your agent needs computer access. It doesn't need your computer. A runtime that stays on a computer of its own means the team can reach the agent without anyone's laptop being open.",
       ],
     },
     {
-      heading: "Preview, and not in the Launch list yet",
+      heading: "Where Nuphos runs",
       paragraphs: [
-        "Nuphos on Hivra is a preview, and it is not in the Launch list yet. You cannot choose it from the Launch screen today. Hivra keeps it off by default, and it appears only on a deployment where the switch for it is turned on.",
-        "Plan around that honestly. If your team needs a hosted Claude Code agent now, the Claude Code agent in the Launch list is available. This article describes how Nuphos works on Hivra so you know what to expect.",
-        "When it is on, it runs only on Hivra Cloud, on a paid plan, with at least 1 vCPU and 3 GB of RAM. [The Nuphos docs page](/docs/nuphos) tracks its current status.",
+        "Nuphos is not available on every Hivra account. Check your Launch list before planning around it. Where it is offered, it runs only on a paid Hivra Cloud plan, with at least 1 vCPU and 3 GB of RAM.",
       ],
     },
     {
@@ -65,8 +63,8 @@ export const article: BlogArticle = {
   ],
   faqs: [
     {
-      q: "Can I launch Nuphos on Hivra today?",
-      a: "Not from the Launch list. Nuphos is in preview on Hivra and is not in the Launch list yet. It appears only on a deployment where Hivra has turned it on.",
+      q: "How do I know whether I can launch Nuphos on Hivra?",
+      a: "Check your Hivra Launch list. If Nuphos is listed, you can run it on a paid Hivra Cloud plan, not on a connected server.",
     },
     {
       q: "Does Hivra provide the model for Nuphos?",
@@ -78,7 +76,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Does it need a paid plan?",
-      a: "Yes. Every Hivra Cloud computer needs a paid plan. Nuphos needs at least 1 vCPU and 3 GB of RAM.",
+      a: "Yes. Nuphos requires a paid Hivra Cloud plan and at least 1 vCPU and 3 GB of RAM.",
     },
     {
       q: "Is Hivra affiliated with Nuphos or Anthropic?",

@@ -34,9 +34,10 @@ describe("/pricing raw server HTML", () => {
   it("contains the table with every row, the as-of date and the refund line", () => {
     expect(html).toContain("<table");
     expect(html).toContain('id="pricing-table"');
-    // A header row plus one row for each of the md's nine criteria.
-    expect((html.match(/<tr\b/g) ?? []).length).toBe(PRICING_COMPARISON.rows.length + 1);
-    for (const row of PRICING_COMPARISON.rows) expect(html).toContain(row.label);
+    const shownRows = PRICING_COMPARISON.rows.filter((row) => !("sleepOnly" in row));
+    expect((html.match(/<tr\b/g) ?? []).length).toBe(shownRows.length + 1);
+    for (const row of shownRows) expect(html).toContain(row.label);
+    expect(html).not.toContain("Idle sleep");
     for (const row of PRICING_ROWS) expect(html).toContain(row.price);
     expect(html).toContain("Prices as of");
     // HTML attribute names are case-insensitive; React writes this one as dateTime.

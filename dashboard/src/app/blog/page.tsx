@@ -5,7 +5,7 @@ import PublicSite from "@/components/public-site/PublicSite";
 import { Breadcrumbs, EditorialArt, EditorialRelated } from "@/components/public-editorial/Editorial";
 import styles from "../../components/public-editorial/secondary-site.module.css";
 import StructuredData from "@/components/StructuredData";
-import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
+import { getPublicBlogArticles } from "@/lib/blog-data";
 import { buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
@@ -31,6 +31,7 @@ function formatDate(iso: string): string {
 }
 
 export default function BlogIndexPage() {
+  const articles = getPublicBlogArticles();
   const schema = {
     "@context": "https://schema.org",
     "@graph": [
@@ -52,7 +53,7 @@ export default function BlogIndexPage() {
           name: "Hivra",
           url: SITE_URL,
         },
-        blogPost: BLOG_ARTICLES_LIST.map((a) => ({
+        blogPost: articles.map((a) => ({
           "@type": "BlogPosting",
           headline: a.title,
           url: `${SITE_URL}/blog/${a.slug}`,
@@ -63,7 +64,7 @@ export default function BlogIndexPage() {
     ],
   };
 
-  const [featured] = BLOG_ARTICLES_LIST;
+  const [featured] = articles;
   return (
     <PublicSite className={styles.page} data-page="blog">
       <StructuredData schema={schema} />
@@ -87,7 +88,7 @@ export default function BlogIndexPage() {
           {BLOG_TOPICS.map((topic) => <a key={topic.slug} href={`#${topicAnchor(topic)}`}>{topic.title}</a>)}
         </nav>
         {BLOG_TOPICS.map((topic) => {
-          const inTopic = topic.articles.map((slug) => BLOG_ARTICLES_LIST.find((article) => article.slug === slug)).filter((article): article is (typeof BLOG_ARTICLES_LIST)[number] => Boolean(article));
+          const inTopic = topic.articles.map((slug) => articles.find((article) => article.slug === slug)).filter((article) => article !== undefined);
           return <section key={topic.slug} id={topicAnchor(topic)} className={styles.topicSection} aria-labelledby={`${topicAnchor(topic)}-heading`}>
             <div className={styles.indexHead}><h2 id={`${topicAnchor(topic)}-heading`}>{topic.title}</h2><span>{inTopic.length} articles</span></div>
             <p className={styles.topicBlurb}>{topic.blurb}</p>

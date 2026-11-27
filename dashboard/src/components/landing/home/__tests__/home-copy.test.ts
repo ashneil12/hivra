@@ -98,7 +98,7 @@ describe("homepage copy", () => {
     expect(PRICING.free.tagline).toBe("No Hivra hosting charge");
     expect(PRICING.free.body).toContain("You provide and maintain the server. Hivra doesn't charge you for hosting it.");
     const isFree = HOMEPAGE_FAQ.find(({ q }) => q === "Is Hivra free?");
-    expect(isFree?.a).toContain("Every Hivra Cloud computer requires a paid plan.");
+    expect(isFree?.a).toContain("Paid Hivra Cloud plans start");
     expect(isFree?.a).toContain("You'll still be responsible for the cost and maintenance of that infrastructure.");
   });
 
@@ -132,7 +132,7 @@ describe("homepage copy", () => {
     expect(STEPS.steps.map(step => step.title)).toEqual(["Choose your agent", "Connect its AI", "Choose where it runs", "Launch and get to work"]);
   });
 
-  it("answers these questions, in this order, with no token question", () => {
+  it("answers these questions in order and explains holder access only when shown", () => {
     expect(FAQ_TITLE).toBe("Frequently asked questions");
     expect(HOMEPAGE_FAQ.map(({ q }) => q)).toEqual([
       "Is Hivra free?",
@@ -143,7 +143,8 @@ describe("homepage copy", () => {
       "Can I use my own Claude or ChatGPT subscription?",
       "Is Hivra open source?",
     ]);
-    expect(homepageFaq(true)).toEqual(homepageFaq(false));
+    expect(homepageFaq(true).find(({ q }) => q === "Is Hivra free?")?.a).toMatch(/qualified token holders.*without a subscription, subject to capacity/);
+    expect(homepageFaq(false).find(({ q }) => q === "Is Hivra free?")?.a).not.toMatch(/token holders/);
     expect(VISIBLE_COPY.filter(text => /\$HIVRA|airdrop|snapshot|litepaper|tokenomics|launchpad|bankr|\btokens?\b/i.test(text))).toEqual([]);
   });
 

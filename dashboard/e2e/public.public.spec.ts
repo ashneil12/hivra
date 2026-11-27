@@ -45,3 +45,26 @@ for (const route of PUBLIC_ROUTES) {
     });
   });
 }
+
+const BLOG_ARTICLES = [
+  ['codex-mcp', 'Codex MCP: how to add MCP servers to the Codex CLI'],
+  ['claude-code-mcp', 'Claude Code MCP: how to add and manage MCP servers'],
+  ['how-to-install-codex-cli', 'How to install the Codex CLI on Mac, Linux and Windows'],
+  ['how-to-self-host-agent-zero', 'How to self-host Agent Zero on a VPS with Docker (2026 guide)'],
+];
+
+for (const [slug, title] of BLOG_ARTICLES) {
+  test(`public blog index links to ${slug}`, async ({ page }) => {
+    const index = await page.goto('/blog', { waitUntil: 'domcontentloaded' });
+    expect(index?.status()).toBe(200);
+    await expect(page.getByRole('heading', { level: 1, name: 'Guides for people who run AI agents.' })).toBeVisible();
+
+    const path = `/blog/${slug}`;
+    const card = page.getByRole('link').filter({ has: page.getByRole('heading', { name: title, exact: true }) }).first();
+    await expect(card).toHaveAttribute('href', path);
+    await card.click();
+
+    await expect(page).toHaveURL(path);
+    await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible();
+  });
+}

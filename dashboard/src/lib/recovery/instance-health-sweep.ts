@@ -61,6 +61,7 @@ interface InstanceHealthProbeRow {
   proxmox_node?: string | null;
   product_surface?: string | null;
   lifecycle_state?: string | null;
+  last_lifecycle_transition_at?: string | null;
   deleted_at?: string | null;
   scheduled_deletion_at?: string | null;
 }
@@ -346,6 +347,7 @@ export interface InstanceHealthSweepResult {
   // dashboard shell → workspace iframe 404). The 2026-06-15 incident-shape
   // detector; each one opens a first-sighting FATAL ops event.
   backendLaneViolations: number;
+  healthObservationFailures?: number;
   results: InstanceHealthProbeResult[];
   hostTiming?: HostHealthTiming;
 }
@@ -636,17 +638,22 @@ export async function runInstanceHealthSweep(): Promise<InstanceHealthSweepResul
     throw new Error("Supabase admin client not configured");
   }
 
-  const { data, error } = await db
-    .from("hermes_instances")
-    .select("id, user_id, gateway_url, status, backend, infrastructure_provider, hetzner_server_id, ipv4_address, proxmox_vmid, proxmox_node, product_surface, lifecycle_state, deleted_at, scheduled_deletion_at")
-    .eq("status", "running")
-    .not("gateway_url", "is", null);
-
-  if (error) {
-    throw new Error(error.message || "Failed to fetch instances");
+  const rows: InstanceHealthProbeRow[] = [];
+  const pageSize = 250;
+  for (let cursor = ""; ;) {
+    const query = db
+      .from("hermes_instances")
+      .select("id, user_id, gateway_url, status, backend, infrastructure_provider, hetzner_server_id, ipv4_address, proxmox_vmid, proxmox_node, product_surface, lifecycle_state, last_lifecycle_transition_at, deleted_at, scheduled_deletion_at")
+      .eq("status", "running")
+      .not("gateway_url", "is", null)
+      .order("id")
+      .limit(pageSize);
+    const { data, error } = await (cursor ? query.gt("id", cursor) : query);
+    if (error) throw new Error(error.message || "Failed to fetch instances");
+    rows.push(...(data ?? []));
+    if (!data || data.length < pageSize) break;
+    cursor = data[data.length - 1].id;
   }
-
-  const rows = (data ?? []) as InstanceHealthProbeRow[];
 
   // Drop intentionally-paused boxes before probing. The status='running' filter
   // above is NOT enough: a paused row's `status` can drift back to 'running'
@@ -680,6 +687,7 @@ export async function runInstanceHealthSweep(): Promise<InstanceHealthSweepResul
   // invocation into self-inflicted AbortErrors. Worst-case wall time is
   // ~ceil(N / PROBE_BATCH_SIZE) * PROBE_TIMEOUT_MS, comfortably inside the
   // cron envelope for the current fleet.
+  const observedAt = new Date().toISOString();
   const results: InstanceHealthProbeResult[] = [];
   for (const batch of chunk(probable, PROBE_BATCH_SIZE)) {
     const batchResults = await Promise.all(
@@ -968,6 +976,26 @@ export async function runInstanceHealthSweep(): Promise<InstanceHealthSweepResul
   // sole reset lived in recover-stuck, which never sees active/running rows).
   await resetHealthyAutoRestartAttempts(db, [...healthyInstanceIds]);
 
+  let healthObservationFailures = 0;
+  for (const batch of chunk(probable, ARCHIVE_ID_CHUNK_SIZE)) {
+    const { error: observationError } = await db.rpc("record_computer_health_observations", {
+      p_observed_at: observedAt,
+      p_observations: batch.map((row) => ({
+        instance_id: row.id,
+        lifecycle_at: row.last_lifecycle_transition_at ?? null,
+        healthy: healthyInstanceIds.has(row.id),
+      })),
+    });
+    if (observationError) {
+      healthObservationFailures += batch.length;
+      log.warn("Computer health observations were not persisted", {
+        source: "probe-instance-health",
+        failureType: "computer_health_observation_write_failed",
+        errorCode: observationError.code,
+      });
+    }
+  }
+
   // Backend-lane guard (2026-06-15 incident durability net). A healthy, active,
   // Proxmox hermesos instance MUST be on a WEBFREE backend (post Phase-2 collapse,
   // both "webui" and "gateway" build the webfree stack — see isWebfreeBackend). A
@@ -1069,6 +1097,7 @@ export async function runInstanceHealthSweep(): Promise<InstanceHealthSweepResul
     archivedHealthy,
     archivedActionFailures,
     backendLaneViolations,
+    ...(healthObservationFailures ? { healthObservationFailures } : {}),
     results,
     ...(hostTiming ? { hostTiming } : {}),
   };

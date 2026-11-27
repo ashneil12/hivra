@@ -428,6 +428,7 @@ describe("LaunchPage", () => {
       computer_profile: "linux-terminal", computer_substrate: "gvisor", name: "MY_LINUX_SANDBOX", status: "running", cpu: 1, ram: 1 });
     await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
+    expect(screen.getByRole("button", { name: /^Linux Sandbox/ })).toHaveTextContent("on a server you've connected.");
     chooseTile("Linux Sandbox");
     await waitFor(() => expect(whereButton(/My infrastructure/i)).toBeEnabled());
     fireEvent.click(whereButton(/My infrastructure/i));
@@ -453,12 +454,13 @@ describe("LaunchPage", () => {
     createAgentMock.mockResolvedValue(created);
     const launch = await renderLaunchPage();
     await screen.findByRole("heading", { name: "What do you want to launch?" });
+    expect(screen.getByRole("button", { name: /^Linux Sandbox/ })).toHaveTextContent("Managed access is limited and requires a paid plan.");
     chooseTile("Linux Sandbox");
 
     await waitFor(() => expect(launchButton()).toBeEnabled());
     expect(screen.getByText("Hivra Cloud")).toBeInTheDocument();
     expect(screen.getByText("gVisor application-kernel sandbox on Hivra Cloud")).toBeInTheDocument();
-    expect(screen.getByText("A terminal and files, without administrator access. No desktop, public ports or host folders.")).toBeInTheDocument();
+    expect(screen.getByText("One-shot shell commands in /workspace, without administrator access. Files saved there persist through Stop and Start. No desktop, public ports or host folders.")).toBeInTheDocument();
     closeChanges();
     fireEvent.click(launchButton());
 

@@ -70,7 +70,7 @@ export const doc: DocPage = {
     {
       heading: "What Hivra does and does not do",
       paragraphs: [
-        "- Hivra does not build a fresh Omarchy computer for each customer.\n- Hivra does not run Omarchy on a server you connected. It runs on Hivra Cloud only, and every Hivra Cloud computer needs a paid plan.\n- Hivra does not resize it. The size is fixed at 4 CPU and 8 GB.\n- Hivra does not promise backups, and a separate computer is a boundary, not a guarantee that what runs on it is safe. See [security and access](/docs/security-and-access).",
+        "- Hivra does not build a fresh Omarchy computer for each customer.\n- Hivra does not run Omarchy on a server you connected. Existing claims run on Hivra Cloud only.\n- Hivra does not resize it. The size is fixed at 4 CPU and 8 GB.\n- Hivra does not promise backups, and a separate computer is a boundary, not a guarantee that what runs on it is safe. See [security and access](/docs/security-and-access).",
       ],
     },
   ],

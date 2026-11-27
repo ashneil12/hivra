@@ -5,6 +5,7 @@ import { renderOgCard } from "@/lib/og-card";
 import { OG_CONTENT_TYPE, OG_SIZE } from "@/lib/og-meta";
 import { AGENT_SEO_ENTRIES, getAgentSeoEntry } from "@/lib/hivra/agent-seo-catalog";
 import { getAgent } from "@/lib/hivra/agent-catalog";
+import { getPublicAgentProfiles } from "@/lib/hivra/public-agent-profiles";
 import { HUB_CONTENT } from "../content";
 
 export const alt = "An AI agent you can run in the cloud on Hivra";
@@ -12,7 +13,7 @@ export const size = { width: OG_SIZE.width, height: OG_SIZE.height };
 export const contentType = OG_CONTENT_TYPE;
 
 export function generateStaticParams() {
-  return AGENT_SEO_ENTRIES.map((entry) => ({ slug: entry.slug }));
+  return [...AGENT_SEO_ENTRIES, ...getPublicAgentProfiles()].map(({ slug }) => ({ slug }));
 }
 
 // The page's dynamicParams=false does not reach this route (Next's metadata
@@ -21,6 +22,12 @@ export function generateStaticParams() {
 export default async function AgentOpengraphImage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const entry = getAgentSeoEntry(slug);
+  if (!entry) {
+    const profile = getPublicAgentProfiles().find((candidate) => candidate.slug === slug);
+    return profile
+      ? renderOgCard({ eyebrow: profile.tag ?? "Agents", title: `${profile.name} on Hivra`, subtitle: profile.description })
+      : new Response("Not Found", { status: 404 });
+  }
   const agent = entry ? getAgent(entry.slug) : undefined;
   const card = entry ? HUB_CONTENT.directory.cards.find((candidate) => candidate.slug === entry.slug) : undefined;
   if (!entry || !agent || !card) {

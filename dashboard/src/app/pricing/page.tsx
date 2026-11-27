@@ -6,7 +6,6 @@ import PublicSite from "@/components/public-site/PublicSite";
 import { Breadcrumbs } from "@/components/public-editorial/Editorial";
 import ActionLinks from "@/components/public-editorial/ActionLinks";
 import ComparisonTable from "@/components/public-editorial/ComparisonTable";
-import TokenSurfaceGate from "@/components/public-editorial/TokenSurfaceGate";
 import extras from "@/components/public-editorial/editorial-extras.module.css";
 import styles from "@/components/public-editorial/secondary-site.module.css";
 import StructuredData from "@/components/StructuredData";
@@ -17,6 +16,7 @@ import { isFreePlanClosed } from "@/lib/billing/free-plan-closure";
 import { getTokenSurfaceView, tokenSurfacesVisible } from "@/lib/compliance/token-surface-view";
 import { buildAbsoluteTitleMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
+import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
 import { renderLinkedText } from "./linked-text";
 import page from "./pricing.module.css";
 import {
@@ -25,7 +25,6 @@ import {
   PRICING_AGENTS,
   PRICING_CLOSING,
   PRICING_COMPARISON,
-  PRICING_FAQ,
   CARD_TRIAL_PRICING,
   PRICING_FAQ_HEADING,
   PRICING_INTRO,
@@ -36,7 +35,6 @@ import {
   buildPricingOffers,
   formatPricesAsOf,
   visiblePricingFaq,
-  withFreeClosedAnswer,
   type PricingFaqItem,
 } from "./pricing-content";
 
@@ -102,12 +100,14 @@ export default async function PricingPage() {
   const withEntryPrice = (text: string) => text.replaceAll(ENTRY_PLAN_PRICE, entryPrice);
   // Once the Free plan is closed to new sign-ups, the page stops offering it.
   const freeClosed = isFreePlanClosed();
+  const sleep = paidKvmSleepAvailable();
+  const faq = visiblePricingFaq(showToken, freeClosed, sleep);
   const intro = freeClosed ? PRICING_INTRO_FREE_CLOSED : PRICING_INTRO;
 
   return (
     <PublicSite className={styles.page} data-page="pricing" tokenSurfaces={showToken} freePlanClosed={freeClosed}>
       <StructuredData schema={buildPricingSchema(
-        visiblePricingFaq(showToken, freeClosed).map((item) => ({ ...item, a: withEntryPrice(item.a) })),
+        faq.map((item) => ({ ...item, a: withEntryPrice(item.a) })),
         entryPrice,
       )} />
       <main className={styles.main} id="main-content">
@@ -227,7 +227,9 @@ export default async function PricingPage() {
           <ComparisonTable
             caption={PRICING_COMPARISON.caption}
             columns={PRICING_COMPARISON.columns}
-            rows={PRICING_COMPARISON.rows.map((row) => ({ label: row.label, cells: row.cells.map(withEntryPrice) }))}
+            rows={PRICING_COMPARISON.rows
+              .filter((row) => sleep || !("sleepOnly" in row))
+              .map((row) => ({ label: row.label, cells: row.cells.map(withEntryPrice) }))}
           />
           <p className={page.asOf}>
             Prices as of <time dateTime={PRICES_AS_OF}>{formatPricesAsOf()}</time>.
@@ -283,27 +285,17 @@ export default async function PricingPage() {
             {PRICING_FAQ_HEADING}
           </h2>
           <div>
-            {PRICING_FAQ.map((faqItem) => {
-              const item = freeClosed ? withFreeClosedAnswer(faqItem) : faqItem;
-              const entry = (
-                <details key={item.q} open>
-                  <summary>
-                    {item.q}
-                    <span aria-hidden="true">+</span>
-                  </summary>
-                  <div className={`${extras.answerNode} ${page.answer}`}>
-                    <p>{renderLinkedText(withEntryPrice(item.a), item.links)}</p>
-                  </div>
-                </details>
-              );
-              return item.tokenOnly ? (
-                <TokenSurfaceGate key={item.q} view={view}>
-                  {entry}
-                </TokenSurfaceGate>
-              ) : (
-                entry
-              );
-            })}
+            {faq.map((item) => (
+              <details key={item.q} open>
+                <summary>
+                  {item.q}
+                  <span aria-hidden="true">+</span>
+                </summary>
+                <div className={`${extras.answerNode} ${page.answer}`}>
+                  <p>{renderLinkedText(withEntryPrice(item.a), item.links)}</p>
+                </div>
+              </details>
+            ))}
           </div>
         </section>
 
