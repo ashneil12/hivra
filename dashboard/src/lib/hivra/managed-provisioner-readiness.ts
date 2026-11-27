@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import previousCanaryRelease from "../../../provisioner-releases/2026.11.25.2.json";
 import digestPinRelease from "../../../provisioner-releases/2026.11.26.1.json";
+import hermesDiagnosticsRelease from "../../../provisioner-releases/2026.11.27.1.json";
 import {
   PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS,
   PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS,
@@ -35,12 +36,18 @@ export type ManagedHivraHostReadinessResult =
 export type ManagedHivraHostReadinessPurpose = "provision" | "lifecycle" | "resize" | "runtime-update";
 type ManagedHivraHostEnvironment = Record<string, string | undefined>;
 
-const canaryLaunchSeals = new Map([previousCanaryRelease, digestPinRelease].map(release => [
+const canaryLaunchSeals = new Map([previousCanaryRelease, digestPinRelease, hermesDiagnosticsRelease].map(release => [
   release.version,
   createHash("sha256").update([...release.files]
     .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
     .map(file => `${file.sha256}  ${file.path}\n`).join("")).digest("hex"),
 ]));
+
+function managedCanaryProvisionerAllowsLaunch(version: string, requirePinnedCatalogDigest: boolean): boolean {
+  return canaryLaunchSeals.has(version)
+    && (canaryLaunchSealAllowed(version, requirePinnedCatalogDigest)
+      || (requirePinnedCatalogDigest && version === hermesDiagnosticsRelease.version));
+}
 
 export function managedCanaryLaunchSealScript(versions: readonly string[]): string {
   const cases = versions.map(version => {
@@ -74,7 +81,7 @@ export function managedHivraHostReadinessScript(
   const versions = purpose === "runtime-update"
     ? [PORTABLE_HIVRA_PROVISIONER_VERSION]
     : canaryProvision
-      ? compatibleVersions.filter(v => canaryLaunchSealAllowed(v, requirePinnedCatalogDigest))
+      ? compatibleVersions.filter(v => managedCanaryProvisionerAllowsLaunch(v, requirePinnedCatalogDigest))
       : compatibleVersions;
   const modelCapabilities = requireModelSettings ? `need_file "$PROVISIONER_DIR/hivra-chat/llm-application.js"
 need_file "$PROVISIONER_DIR/hivra-chat/server.js"` : "";
@@ -203,8 +210,7 @@ export async function checkManagedHivraHostReadiness(
   if (result.ok && result.stdout.includes("HIVRA_HOST_READY")) {
     if (candidate.channel !== "canary" || (candidate.purpose ?? "provision") !== "provision") return { ok: true };
     const observedVersion = /^HIVRA_HOST_READY (\S+)$/m.exec(result.stdout)?.[1];
-    if (observedVersion && canaryLaunchSeals.has(observedVersion)
-      && (!candidate.requirePinnedCatalogDigest || observedVersion === digestPinRelease.version)) {
+    if (observedVersion && managedCanaryProvisionerAllowsLaunch(observedVersion, Boolean(candidate.requirePinnedCatalogDigest))) {
       return { ok: true, provisionerVersion: observedVersion };
     }
   }

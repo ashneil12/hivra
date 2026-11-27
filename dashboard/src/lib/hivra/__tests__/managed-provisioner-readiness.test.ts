@@ -87,7 +87,7 @@ ${probe}
     });
   });
 
-  it("admits only the two reviewed Canary seals for unpinned provisioning", () => {
+  it("admits the new reviewed launch seal without dropping the preceding Canary seals", () => {
     const provision = managedHivraHostReadinessScript("canary", "provision");
     const pinned = managedHivraHostReadinessScript("canary", "provision", false, "catalog-app", true);
     const update = managedHivraHostReadinessScript("canary", "runtime-update");
@@ -96,9 +96,10 @@ ${probe}
     expect(provision).toContain("PROVISIONER_DIR='/root/hivra-provisioner-canary'");
     expect(provision).toContain("  '2026.11.26.1') EXPECTED_MANIFEST_SHA=");
     expect(provision).toContain("  '2026.11.25.2') EXPECTED_MANIFEST_SHA=");
-    expect(provision).not.toContain(`'${PORTABLE_HIVRA_PROVISIONER_VERSION}'`);
+    expect(provision).toContain(`'${PORTABLE_HIVRA_PROVISIONER_VERSION}') EXPECTED_MANIFEST_SHA=`);
     expect(pinned).not.toContain("'2026.11.25.2'");
     expect(pinned).toContain("  '2026.11.26.1') EXPECTED_MANIFEST_SHA=");
+    expect(pinned).toContain(`'${PORTABLE_HIVRA_PROVISIONER_VERSION}') EXPECTED_MANIFEST_SHA=`);
     expect(update).toContain(`'${PORTABLE_HIVRA_PROVISIONER_VERSION}'`);
     expect(update).not.toContain("'2026.11.25.2'");
     expect(update).not.toContain("'2026.11.26.1'");
@@ -109,7 +110,7 @@ ${probe}
     expect(spawnSync("bash", ["-n"], { input: lifecycle, encoding: "utf8" }).status).toBe(0);
   });
 
-  it("retains the selected sealed version and refuses missing or predecessor receipts for pinned placement", async () => {
+  it("retains the selected sealed version and refuses missing or pre-pin receipts for pinned placement", async () => {
     const candidate = { targetId: "pve-test", env: {}, channel: "canary" as const };
     const runner = (stdout: string) => jest.fn().mockResolvedValue({ ok: true, stdout, stderr: "" });
     await expect(checkManagedHivraHostReadiness(candidate, runner("HIVRA_HOST_READY 2026.11.25.2\n")))
@@ -118,6 +119,9 @@ ${probe}
       .resolves.toMatchObject({ ok: false });
     await expect(checkManagedHivraHostReadiness({ ...candidate, requirePinnedCatalogDigest: true }, runner("HIVRA_HOST_READY 2026.11.25.2\n")))
       .resolves.toMatchObject({ ok: false });
+    await expect(checkManagedHivraHostReadiness({ ...candidate, requirePinnedCatalogDigest: true },
+      runner(`HIVRA_HOST_READY ${PORTABLE_HIVRA_PROVISIONER_VERSION}\n`)))
+      .resolves.toEqual({ ok: true, provisionerVersion: PORTABLE_HIVRA_PROVISIONER_VERSION });
   });
 
   it("rechecks the selected seal and rejects swapped versions, changed manifests and mismatched bytes", () => {
