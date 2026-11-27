@@ -134,6 +134,11 @@ jobs:
       - name: Verify managed KVM portable placement claims
         run: node scripts/test-managed-kvm-portable-handoff.cjs
 
+      - name: Verify Canary Hermes standby admission and shared transaction locks
+        run: |
+          node scripts/test-canary-hermes-standby.cjs
+          python3 -B scripts/check-canary-hermes-standby-lock.py
+
       - name: Verify the gVisor adapter and workspace quotas
         working-directory: .
         run: |
