@@ -22,6 +22,11 @@ Use the filename `hivra-ubuntu-qga-<sha256>.qcow2` and set
 and `HIVRA_CANARY_UBUNTU_QGA_IMAGE_USER_ID` together on Git Canary. This
 affects only fresh stock Claude Code, Codex, OpenClaw, DeepSeek Harness and
 Agent Zero launches for the selected host and owner on sealed bundle .4.
+A launch with browser automation enabled, a move, or a designated
+Canary holder launch is not eligible. Some profiles recommend browser
+automation, so explicitly turn it off on the Review screen for both
+the stock control and the QGA trial. Verify the actual source disk for
+each launch; an eligible owner and host alone do not prove selection.
 A matching prepared DeepSeek application disk takes precedence. Stock
 launches stay unchanged when all three settings are unset.
 
