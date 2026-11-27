@@ -5,6 +5,7 @@ import previousCanaryRelease from "../../../provisioner-releases/2026.11.25.2.js
 import digestPinRelease from "../../../provisioner-releases/2026.11.26.1.json";
 import hermesDiagnosticsRelease from "../../../provisioner-releases/2026.11.27.1.json";
 import hermesBakeRelease from "../../../provisioner-releases/2026.11.27.2.json";
+import admissionReaderRelease from "../../../provisioner-releases/2026.11.27.3.json";
 import {
   PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS,
   PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS,
@@ -37,7 +38,7 @@ export type ManagedHivraHostReadinessResult =
 export type ManagedHivraHostReadinessPurpose = "provision" | "lifecycle" | "resize" | "runtime-update";
 type ManagedHivraHostEnvironment = Record<string, string | undefined>;
 
-const canaryLaunchSeals = new Map([previousCanaryRelease, digestPinRelease, hermesDiagnosticsRelease, hermesBakeRelease].map(release => [
+const canaryLaunchSeals = new Map([previousCanaryRelease, digestPinRelease, hermesDiagnosticsRelease, hermesBakeRelease, admissionReaderRelease].map(release => [
   release.version,
   createHash("sha256").update([...release.files]
     .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
@@ -47,7 +48,7 @@ const canaryLaunchSeals = new Map([previousCanaryRelease, digestPinRelease, herm
 function managedCanaryProvisionerAllowsLaunch(version: string, requirePinnedCatalogDigest: boolean): boolean {
   return canaryLaunchSeals.has(version)
     && (canaryLaunchSealAllowed(version, requirePinnedCatalogDigest)
-      || (requirePinnedCatalogDigest && [hermesDiagnosticsRelease.version, hermesBakeRelease.version].includes(version)));
+      || (requirePinnedCatalogDigest && [hermesDiagnosticsRelease.version, hermesBakeRelease.version, admissionReaderRelease.version].includes(version)));
 }
 
 export function managedCanaryLaunchSealScript(versions: readonly string[]): string {
