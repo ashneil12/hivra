@@ -105,3 +105,12 @@ removed. Keep standby off and do not replenish the slot on this result. Before
 another pilot, capture the exact continued provisioner's stage log while the
 failed fixture still exists: normal deletion removes that file. An allocation
 receipt proves custody, not that the detached runtime installer made progress.
+
+For a diagnostic retry, verify stock selection on the current Git build first
+and stage a fresh generation on a different unoccupied QA VMID. After launch,
+join the audit tag and paid owner to the exact claimed generation and operation
+before collecting host evidence. Capture the launch log, worker liveness and
+last completed stage through the readiness deadline; snapshot them again before
+normal Delete. Keep raw logs private and record only the failure boundary and
+sanitized timings. One diagnostic attempt isn't a restart of the three-sample
+acceptance series, and doesn't justify replenishing the standby.
