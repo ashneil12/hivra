@@ -1595,6 +1595,7 @@ describe("POST /api/hivra/agents", () => {
     ["claimed", 201],
     ["no_match", 409],
     ["claim_in_doubt", 502],
+    ["priority_mismatch", 409],
   ] as const)("does not cold-allocate around the exact paid Hermes standby claim (%s)", async (claimStatus, status) => {
     const generation = "11111111-1111-4111-8111-111111111111";
     const privateIp = "10.250.21.50";
@@ -1628,15 +1629,27 @@ describe("POST /api/hivra/agents", () => {
       return mockDefaultRpc(name, args);
     });
     const standardFrom = mockSupabaseFrom.getMockImplementation()!;
-    mockSupabaseFrom.mockImplementation((table: string) => table === "proxmox_hosts"
-      ? { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { status: "active", cpu_overcommit_ratio: "8" }, error: null }) }) }) }
-      : standardFrom(table));
+    mockSupabaseFrom.mockImplementation((table: string) => {
+      if (table === "proxmox_hosts") {
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { status: "active", cpu_overcommit_ratio: "8" }, error: null }) }) }) };
+      }
+      if (table === "pools") {
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { priority: claimStatus === "priority_mismatch" ? 2 : 1 }, error: null }) }) }) };
+      }
+      return standardFrom(table);
+    });
     mockRunProxmoxHostScript.mockReset()
       .mockResolvedValueOnce({ ok: true, stdout: `HIVRA_PROVISION_RESULT ${JSON.stringify({ vmid, ip: privateIp })}\\n` })
       .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set" })
       .mockResolvedValueOnce({ ok: true, stdout: "cpu units set" });
     const response = await POST(makeRequest({ type: "hermes", name: "STANDBY_FIXTURE", cpu: 2, ram: 4 }) as never);
     expect(response.status).toBe(status);
+    if (claimStatus === "priority_mismatch") {
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("claim_hivra_hermes_standby", expect.anything());
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      return;
+    }
     expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({
       seat_funding: "paid", proxmox_host: "",
       operation_payload: { stage: "pre_allocation_access", hermes_standby_generation: generation },
@@ -1652,6 +1665,10 @@ describe("POST /api/hivra/agents", () => {
         .toBeLessThan(kickoff?.indexOf("install -m 0600 /dev/null \"$SECRET_ENV_FILE\"") ?? -1);
       expect(mockBeginHivraAgentVmAllocation).toHaveBeenCalledWith(expect.objectContaining({ hermesStandbyGeneration: generation }));
       expect(mockSupabaseRpc).toHaveBeenCalledWith("assign_hivra_hermes_standby", expect.objectContaining({ p_generation: generation }));
+      const followUp = mockRunProxmoxHostScript.mock.calls.map(([script]) => String(script)).filter(script => script !== kickoff);
+      expect(followUp.join("\n")).not.toMatch(/qm set \d+ --(?:cores|cpuunits|balloon)/);
+      expect(followUp.join("\n")).toContain(`qm config ${vmid} --current 1`);
+      expect(followUp.join("\n")).toContain('ACTUAL_BALLOON');
     } else {
       expect(kickoff).toBeUndefined();
       expect(mockSupabaseRpc).not.toHaveBeenCalledWith("assign_hivra_hermes_standby", expect.anything());
