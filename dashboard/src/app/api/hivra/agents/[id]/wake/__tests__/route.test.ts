@@ -24,10 +24,13 @@ jest.mock("@/lib/supabase", () => ({
     },
   },
 }));
-jest.mock("@/lib/hivra/agent-wake", () => ({ ensureHivraAgentAwake: (...a: unknown[]) => mockEnsure(...a) }));
+jest.mock("@/lib/hivra/agent-wake", () => ({
+  ensureHivraAgentAwake: (...a: unknown[]) => mockEnsure(...a),
+  MANAGED_WAKE_WORK_BUDGET_MS: 330_000,
+}));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
-import { POST } from "../route";
+import { maxDuration, POST } from "../route";
 
 const ID = "00000000-0000-4000-8000-000000001022";
 const params = { params: Promise.resolve({ id: ID }) };
@@ -79,6 +82,7 @@ describe("POST /api/hivra/agents/[id]/wake", () => {
   });
 
   it("hands unfinished wake work to after()", async () => {
+    const started = Date.now();
     mockEnsure.mockImplementation(async (_id: string, options: { onBackground: (work: Promise<unknown>) => void }) => {
       options.onBackground(Promise.resolve());
       return { state: "waking", reason: "in_progress" };
@@ -87,6 +91,9 @@ describe("POST /api/hivra/agents/[id]/wake", () => {
     expect(response.status).toBe(202);
     expect((await response.json()).data).toEqual({ state: "waking" });
     expect(mockAfter).toHaveBeenCalledTimes(1);
+    const { workDeadlineMs } = mockEnsure.mock.calls[0][1] as { workDeadlineMs: number };
+    expect(workDeadlineMs - started).toBeGreaterThanOrEqual(330_000);
+    expect(workDeadlineMs - started).toBeLessThan(maxDuration * 1000 - 15_000);
   });
 
   it("answers 402 for a lapsed owner and 503 for a failed wake", async () => {

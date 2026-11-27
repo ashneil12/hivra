@@ -1494,3 +1494,8 @@ distribute or activate a VM image; unset selection retains the stock installer.
 Release `2026.11.27.3` seals the host capacity admission reader speedup.
 It adds no third-party assets and leaves the catalog image pins and the
 desktop and native workload contracts unchanged.
+
+Release `2026.11.27.4` avoids installing QEMU Guest Agent again when it is already
+present in the Ubuntu guest, polls for attestation and clean cloud-init sooner,
+and records operation-scoped host launch timing. The desktop and native
+workload contracts remain unchanged.

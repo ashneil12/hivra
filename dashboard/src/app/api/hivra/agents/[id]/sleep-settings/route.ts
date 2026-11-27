@@ -6,7 +6,7 @@
 
 export const runtime = "nodejs";
 // Turning a sleeping agent's settings off wakes it, and that work runs after the answer.
-export const maxDuration = 180;
+export const maxDuration = 350;
 
 import { after, type NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
@@ -14,7 +14,7 @@ import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-lim
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
-import { ensureHivraAgentAwake } from "@/lib/hivra/agent-wake";
+import { ensureHivraAgentAwake, MANAGED_WAKE_WORK_BUDGET_MS } from "@/lib/hivra/agent-wake";
 import {
   alwaysOnLimitMessage,
   countAlwaysOnAgents,
@@ -29,6 +29,7 @@ import {
 } from "@/lib/hivra/seat-funding";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const workDeadlineMs = Date.now() + MANAGED_WAKE_WORK_BUDGET_MS;
   try {
     const { id } = await params;
     const { userId } = await auth();
@@ -122,6 +123,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         await ensureHivraAgentAwake(String(data.id), {
           trigger: "action",
           waitMs: 0,
+          workDeadlineMs,
           onBackground: (work) => after(() => work),
         });
       } catch {

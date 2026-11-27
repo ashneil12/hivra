@@ -16,8 +16,9 @@ it("accepts only a matching root-owned standalone image within the disk envelope
     const image = join(work, `hivra-hermes-${digest}.qcow2`);
     writeFileSync(image, content);
     const begin = script.indexOf('if [ -n "$HERMES_IMAGE_SHA256" ]; then');
-    const end = script.indexOf("hermes_stage image_verified", begin);
+    const end = script.indexOf("launch_stage image_verified", begin);
     expect(begin).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(begin);
     expect(end).toBeLessThan(script.indexOf('qm create "$VMID"'));
     const fragment = script.slice(begin, end).replaceAll("/var/lib/vz/template/iso", work);
     const run = (args: Record<string, string> = {}) => spawnSync("bash", ["-c", `set -euo pipefail

@@ -5,9 +5,8 @@
 // (it has to be started, not woken), and an error when it cannot be woken.
 
 export const runtime = "nodejs";
-// The wake itself can take a restore (up to 120 s) plus the public health check (30 s), and
-// the work that outlives the 45 s answer runs through after(), which the limit also covers.
-export const maxDuration = 180;
+// The invocation also covers the hibernate slot wait, restore and health check in after().
+export const maxDuration = 350;
 
 import { after, type NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
@@ -15,12 +14,13 @@ import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-lim
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
-import { ensureHivraAgentAwake } from "@/lib/hivra/agent-wake";
+import { ensureHivraAgentAwake, MANAGED_WAKE_WORK_BUDGET_MS } from "@/lib/hivra/agent-wake";
 import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
 
 const WAKE_WAIT_MS = 45_000;
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const workDeadlineMs = Date.now() + MANAGED_WAKE_WORK_BUDGET_MS;
   try {
     const { id } = await params;
     const { userId } = await auth();
@@ -51,6 +51,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       trigger: "open",
       portableOwnerId: userId,
       waitMs: WAKE_WAIT_MS,
+      workDeadlineMs,
       onBackground: (work) => after(() => work),
     });
 

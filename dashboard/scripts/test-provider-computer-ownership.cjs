@@ -1020,6 +1020,24 @@ async function main() {
     });
     await db.exec(admissionReader);
     assert.deepEqual(await admissionDefinitions(), admittedAdmissionReader, "re-applying the capacity reader admission changes nothing");
+    const guestBoot = migration("20261127194000_provider_release_admission_2026_11_27_4.sql");
+    const guestBootRelease = require("../provisioner-releases/2026.11.27.4.json");
+    const guestBootRows = guestBootRelease.files.map(({ path, sha256, bytes }) => [path, sha256, bytes,
+      path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(path) ? 0o700 : 0o600])
+      .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+    const guestBootDigest = createHash("sha256").update(JSON.stringify(guestBootRows)).digest("hex");
+    await db.exec(guestBoot);
+    const admittedGuestBoot = await admissionDefinitions();
+    admittedGuestBoot.forEach((definition, index) => {
+      for (const [version, digest] of [[admissionReaderRelease.version, admissionReaderDigest], [guestBootRelease.version, guestBootDigest]]) {
+        assert.equal(occurrences(definition, `'${version}'`), 1);
+        if (admissionFunctions[index].includes("identity_valid")) {
+          assert.equal(occurrences(definition, `'bundleSha256'='${digest}' and p_identity->'bundle'->>'provisionerVersion'='${version}'`), 1);
+        }
+      }
+    });
+    await db.exec(guestBoot);
+    assert.deepEqual(await admissionDefinitions(), admittedGuestBoot, "re-applying the guest boot admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
