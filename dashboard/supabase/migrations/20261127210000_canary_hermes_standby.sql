@@ -1,6 +1,6 @@
 begin;
 
--- This ledger is for the single Canary pve11 experiment. It doesn't update
+-- This ledger is for the single Canary standby experiment. It doesn't update
 -- production's database or represent its workloads. On the shared host, the
 -- host-local memory admission must count this guest through the same actual
 -- VM inventory that includes production guests.
@@ -9,7 +9,7 @@ revoke all on schema hivra_hermes_standby_private from public, anon, authenticat
 
 create table hivra_hermes_standby_private.slot (
   generation uuid primary key,
-  host_id text not null check (host_id = 'pve11'),
+  host_id text not null check (host_id ~ '^[a-z0-9][a-z0-9-]{0,31}$'),
   vmid integer not null check (vmid between 9300 and 9399 and vmid <> 9302),
   private_ip inet not null check (family(private_ip) = 4 and masklen(private_ip) = 32),
   baked_digest text not null check (baked_digest ~ '^[0-9a-f]{64}$'),
@@ -120,7 +120,7 @@ begin
     return 'generation_conflict';
   end if;
 
-  if p_host_id is distinct from 'pve11' or p_expires_at is null or p_expires_at <= clock_timestamp() then
+  if p_host_id is null or p_host_id !~ '^[a-z0-9][a-z0-9-]{0,31}$' or p_expires_at is null or p_expires_at <= clock_timestamp() then
     raise exception 'invalid Canary Hermes standby scope or expiry' using errcode='22023';
   end if;
   if exists (select 1 from hivra_hermes_standby_private.slot

@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const { openMigratedDatabase } = require("./lib/pglite-all-migrations.cjs");
 
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
-const host = "pve11";
+const host = "fixture-standby-host";
 const owner = "test-paid-warm-owner";
 const digest = "a".repeat(64);
 const ip = "192.0.2.42";
@@ -48,12 +48,12 @@ async function main() {
 
     await db.exec(`insert into public.proxmox_hosts
       (id,total_cpu,total_ram_mb,reserved_cpu,reserved_ram_mb,wake_headroom_ram_mb,cpu_overcommit_ratio,thinpool_size_gb,thinpool_overcommit_ratio)
-      values ('pve11',10,16384,0,0,0,1,100,1)`);
+      values ('fixture-standby-host',10,16384,0,0,0,1,100,1)`);
     const empty = await avail();
     assert.deepEqual(empty, { cpu: 10, ram: 16384, disk: 100 });
 
     await db.query(`insert into public.hivra_agents(id,user_id,name,type,proxmox_host,status,cpu,ram,vmid)
-      values($1,'baseline-owner','Baseline','hermes','pve11','running',2,4,1210)`, [baselineId]);
+      values($1,'baseline-owner','Baseline','hermes','fixture-standby-host','running',2,4,1210)`, [baselineId]);
     const baseline = await avail();
     assert.deepEqual(baseline, { cpu: 8, ram: 12288, disk: 60 });
     assert.equal(await reserve({ vmid: 1210 }), "target_in_use");
@@ -66,7 +66,8 @@ async function main() {
     }
     await db.exec("set role service_role");
     await assert.rejects(db.query("select * from hivra_hermes_standby_private.slot"), { code: "42501" });
-    await assert.rejects(reserve({ host: "production" }), { code: "22023" });
+    await assert.rejects(reserve({ host: "invalid target" }), { code: "22023" });
+    await assert.rejects(reserve({ host: "unregistered-host" }), { code: "P0058" });
     assert.equal(await reserve(), "reserved");
     assert.equal(await reserve(), "reserved");
     assert.equal(await reserve({ digest: "b".repeat(64) }), "generation_conflict");
@@ -152,7 +153,7 @@ async function main() {
     // occupies the last 4 GiB; releasing standby admits the same waiter.
     await db.exec(`update public.proxmox_hosts set capacity_reading=null,total_ram_mb=20480,sleep_mode='canary';
       insert into public.hivra_agents(user_id,name,type,proxmox_host,status,cpu,ram)
-      values('fixture-filler','Filler','hermes','pve11','running',1,13);
+      values('fixture-filler','Filler','hermes','fixture-standby-host','running',1,13);
       insert into public.token_tier_qualifications
         (user_id,tier,token_key,currently_eligible,qualifying_quantity,threshold_at_qualification,qualifying_threshold_tier)
       values('fixture-holder','pro','hermesos',true,1,1,'PRO_STANDARD')`);

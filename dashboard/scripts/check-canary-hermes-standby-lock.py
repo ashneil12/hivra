@@ -59,7 +59,7 @@ def paid_insert(agent, operation, **overrides):
 def claim(agent, operation):
     return (
         f"select public.claim_hivra_hermes_standby('{OWNER}','{agent}','{operation}',"
-        f"'pve11','{GENERATION}',9354,'192.0.2.42','{DIGEST}');"
+        f"'fixture-standby-host','{GENERATION}',9354,'192.0.2.42','{DIGEST}');"
     )
 
 
@@ -74,13 +74,13 @@ def verify():
         insert into public.proxmox_hosts
           (id,total_cpu,total_ram_mb,reserved_cpu,reserved_ram_mb,wake_headroom_ram_mb,
             cpu_overcommit_ratio,thinpool_size_gb)
-        values ('pve11',10,16384,0,0,0,1,100);
-        select public.reserve_hivra_hermes_standby('{OWNER}','pve11','{GENERATION}',9354,
+        values ('fixture-standby-host',10,16384,0,0,0,1,100);
+        select public.reserve_hivra_hermes_standby('{OWNER}','fixture-standby-host','{GENERATION}',9354,
           '192.0.2.42','{DIGEST}',2,4096,40,now()+interval '10 minutes');
         select public.advance_hivra_hermes_standby('{GENERATION}','make_available');
         {paid_insert(A, OP_A)} {paid_insert(B, OP_B)}
     """)
-    oversized = paid_insert(C, OP_C, user_id="different-race-owner", proxmox_host="pve11", ram=13)
+    oversized = paid_insert(C, OP_C, user_id="different-race-owner", proxmox_host="fixture-standby-host", ram=13)
     with ThreadPoolExecutor(max_workers=3) as pool:
         first = pool.submit(sql, "begin; " + claim(A, OP_A) + " select pg_sleep(8); commit;", "first_claim")
         wait_for_sessions("application_name='first_claim' and wait_event='PgSleep'", 1)
@@ -97,7 +97,7 @@ def verify():
 
     assert json.loads(sql(claim(A, OP_A)))["status"] == "claimed"
     assert sql("""select free_ram_mb from
-      public.holder_admission_host_availability(array['pve11'],null,false,'{}',null);""") == "12288"
+      public.holder_admission_host_availability(array['fixture-standby-host'],null,false,'{}',null);""") == "12288"
     print("Competing claim and paid placement serialized; exact replay kept 12 GiB free.")
 
 
