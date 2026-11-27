@@ -9,6 +9,9 @@ beforeAll(async () => {
   const migration = readFileSync("supabase/migrations/20261127231200_canary_launch_pilots.sql", "utf8");
   await db.exec(migration);
   await db.exec(migration);
+  const agentZeroPilot = readFileSync("supabase/migrations/20261127235200_agent_zero_canary_launch_pilot.sql", "utf8");
+  await db.exec(agentZeroPilot);
+  await db.exec(agentZeroPilot);
 }, 30_000);
 
 afterAll(async () => {
@@ -33,11 +36,23 @@ it("defaults to stock and exposes saved rows only to the server", async () => {
   await db.exec("reset role; delete from public.hivra_canary_launch_pilots");
 });
 
+it("allows an owner-scoped Agent Zero row without changing the existing profiles", async () => {
+  await db.exec(`insert into public.hivra_canary_launch_pilots values
+    ('bux-dependencies', 'fixture', repeat('a', 64), 'user_fixture', false),
+    ('agent-zero', 'fixture', repeat('b', 64), 'user_fixture', false)`);
+  await db.exec("set role service_role");
+  expect((await db.query("select pilot from public.hivra_canary_launch_pilots order by pilot")).rows)
+    .toEqual([{ pilot: "agent-zero" }, { pilot: "bux-dependencies" }]);
+  await db.exec("reset role; delete from public.hivra_canary_launch_pilots");
+});
+
 it.each([
   ["hermes", "invalid", "user_fixture", false],
   ["hermes", "a".repeat(64), null, true],
   ["bux-dependencies", "a".repeat(64), null, false],
   ["bux-dependencies", "a".repeat(64), "user_fixture", true],
+  ["agent-zero", "a".repeat(64), null, false],
+  ["agent-zero", "a".repeat(64), "user_fixture", true],
 ])("rejects unsafe pilot settings (%s, %s, %s, %s)", async (kind, digest, owner, standby) => {
   await expect(db.query(
     "insert into public.hivra_canary_launch_pilots values ($1, 'fixture', $2, $3, $4)",

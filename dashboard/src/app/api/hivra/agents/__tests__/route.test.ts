@@ -3255,6 +3255,8 @@ describe("POST /api/hivra/agents", () => {
       ["Agent Zero trial on standby description release", "canary", "fixturenode7", "user_fixture1", "2026.11.27.7", true, true, 201, "agent-zero"],
       ["Agent Zero trial rejects the old consumer", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", true, false, 503, "agent-zero"],
       ["Agent Zero trial stays stock for another owner", "canary", "fixturenode7", "user_other", "2026.11.27.6", true, false, 201, "agent-zero"],
+      ["Agent Zero trial stays stock for another host", "canary", "fixturenode8", "user_fixture1", "2026.11.27.7", true, false, 201, "agent-zero"],
+      ["Agent Zero trial stays stock outside Git Canary", "main", "fixturenode7", "user_fixture1", "2026.11.27.7", true, false, 201, "agent-zero"],
       ["Claude Code dependency trial", "canary", "fixturenode7", "user_fixture1", "2026.11.27.6", true, true, 201, "bux-dependencies", "claude-code"],
       ["Codex dependency trial", "canary", "fixturenode7", "user_fixture1", "2026.11.27.6", true, true, 201, "bux-dependencies", "codex"],
       ["Codex dependency trial for another owner stays stock", "canary", "fixturenode7", "user_other", "2026.11.27.6", true, false, 201, "bux-dependencies", "codex"],
@@ -3267,6 +3269,7 @@ describe("POST /api/hivra/agents", () => {
     ) => {
       paidPlan();
       const digest = "a".repeat(64);
+      const databasePilot = kind === "agent-zero" || kind === "bux-dependencies";
       const prefix = `HIVRA_CANARY_${{
         "deepseek-harness": "DEEPSEEK", "ubuntu-qga": "UBUNTU_QGA",
         "agent-zero": "AGENT_ZERO", "bux-dependencies": "BUX_DEPENDENCIES",
@@ -3275,7 +3278,7 @@ describe("POST /api/hivra/agents", () => {
       enableManagedGvisorQaFixture({
         VERCEL_TARGET_ENV: "canary",
         VERCEL_GIT_COMMIT_REF: branch,
-        ...(kind === "bux-dependencies" ? {} : {
+        ...(databasePilot ? {} : {
           [`${prefix}_HOST`]: bakeHost,
           [`${prefix}_SHA256`]: digest,
           [`${prefix}_USER_ID`]: bakeUser,
@@ -3286,7 +3289,7 @@ describe("POST /api/hivra/agents", () => {
           HIVRA_CANARY_UBUNTU_QGA_IMAGE_USER_ID: bakeUser,
         } : {}),
       });
-      if (kind === "bux-dependencies") {
+      if (databasePilot) {
         mockCanaryLaunchPilot = {
           pilot: kind, host_id: bakeHost, image_sha256: digest, owner_id: bakeUser ?? null, standby_enabled: false,
         };
