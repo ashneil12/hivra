@@ -59,6 +59,7 @@ import {
 } from "@/lib/hivra/agent-api";
 import { requestManagedVeniceSummary } from "@/lib/billing/managed-venice-client";
 import { buildInfrastructureSetupHref, isPortableAgentLaunchId, parsePortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
+import { FIRST_RUN_AGENTS, type FirstRunAgent } from "@/lib/hivra/first-run-agents";
 import { getCatalogAppManifest, isCatalogAppLaunchable } from "@/lib/hivra/catalog-manifests";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import {
@@ -2188,9 +2189,10 @@ export function LaunchJourney(
     targetsError: Boolean(destination.error),
     selfHosted,
   };
-  const renderTile = (tile: ChooseTile) => {
+  const renderTile = (tile: ChooseTile & { starter?: FirstRunAgent }) => {
     const subject = launchProfileFitSubject(tile.id, { managedLinuxSandboxEligible });
     const fit = launchFit(subject, fitEvidence);
+    const starter = tile.starter;
     const Icon = tile.icon;
     const needsServer = SERVER_ONLY_TILES.has(tile.id)
       && subject.hivraCloud !== "plan"
@@ -2202,12 +2204,19 @@ export function LaunchJourney(
         type="button"
         className={styles.tile}
         data-selected={draft.profileId === tile.id}
-        onClick={() => (catalogOn ? openAbout(tile.id) : chooseProfile(tile.id))}
+        onClick={() => (catalogOn && !starter ? openAbout(tile.id) : chooseProfile(tile.id))}
       >
         {Icon ? <Icon size={22} aria-hidden /> : <span className={styles.letterIcon} aria-hidden>O.</span>}
         <span className={styles.tileText}>
           <strong>{tile.name}</strong>
-          <small>{tileDescription(tile, managedLinuxSandboxEligible)}</small>
+          {starter ? (
+            <>
+              <small className={styles.tileHint}>{starter.job}</small>
+              <small>{starter.description}</small>
+              {starter.hosting ? <small>{starter.hosting}</small> : null}
+              {starter.id === "hermes" && fit?.tone === "fits" ? <small className={styles.tileHint}>Recommended for general work</small> : null}
+            </>
+          ) : <small>{tileDescription(tile, managedLinuxSandboxEligible)}</small>}
         </span>
         {needsServer ? null : <FitBadge fit={fit} />}
       </button>
@@ -2227,13 +2236,28 @@ export function LaunchJourney(
   const agentTiles = orderedByUse ? orderCatalogByUse(offeredAgents, useOrder) : offeredAgents;
   const catalogFiltered = catalogOn && isCatalogFiltered(catalogFilter);
   const shownAgentTiles = catalogFiltered ? filterCatalog(agentTiles, catalogFilter) : agentTiles;
+  const starterTiles = !selfHosted && !catalogCertifier && !catalogFiltered && requestedKindParam === "agent"
+    && startParam === "1" && !requestedProfileParam && !templateParam
+    ? FIRST_RUN_AGENTS.flatMap(starter => {
+      const tile = shownAgentTiles.find(item => PROFILE_DETAILS[item.id].runtimeId === starter.id);
+      return tile ? [{ ...tile, starter }] : [];
+    })
+    : [];
+  const otherAgentTiles = shownAgentTiles.filter(tile => !starterTiles.some(starter => starter.id === tile.id));
   const agentSection = shownAgentTiles.length === 0 ? null : (
     <section key="agents" className={styles.chooseSection} aria-labelledby="launch-agents-heading">
       <div className={styles.chooseHeading}>
         <h2 id="launch-agents-heading">An agent</h2>
-        <p>An AI that works on its own computer.{orderedByUse ? " The ones more people use come first." : ""}</p>
+        <p>An AI that works on its own computer.{orderedByUse && !starterTiles.length ? " The ones more people use come first." : ""}</p>
       </div>
-      <div className={styles.tileGrid}>{shownAgentTiles.map(renderTile)}</div>
+      {starterTiles.length > 0 ? (
+        <>
+          <h3 className={styles.chooseSubheading}>Start with one of these agents</h3>
+          <div className={`${styles.tileGrid} ${styles.starterGrid}`}>{starterTiles.map(renderTile)}</div>
+          {otherAgentTiles.length > 0 ? <h3 className={styles.chooseSubheading}>More agents</h3> : null}
+        </>
+      ) : null}
+      {otherAgentTiles.length > 0 ? <div className={styles.tileGrid}>{otherAgentTiles.map(renderTile)}</div> : null}
       {selfHosted || catalogFiltered ? null : <AttachEntryLink className={styles.attachEntry} />}
     </section>
   );
