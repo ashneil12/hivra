@@ -112,7 +112,7 @@ elif name == "qm" and args[:4] == ["create", "9344", "--start", "0"]:
         "--arch": "x86_64", "--bios": "seabios", "--machine": "pc-i440fx-8.1", "--ostype": "l26",
         "--cpu": "x86-64-v2-AES", "--cores": "2", "--memory": "2048", "--agent": "1",
         "--scsihw": "virtio-scsi-single", "--boot": "order=scsi0",
-        "--net0": "virtio=02:11:22:33:44:55,bridge=vmbr0,firewall=1,link_down=1",
+        "--net0": "virtio=" + env["MOCK_MAC"] + ",bridge=vmbr0,firewall=1,link_down=1",
         "--scsi0": "local-lvm:12,replicate=0,discard=on,iothread=1",
     }
     if managed:
@@ -120,7 +120,7 @@ elif name == "qm" and args[:4] == ["create", "9344", "--start", "0"]:
             "--cpu": "host", "--cpulimit": "1.25", "--serial0": "socket", "--vga": "serial0",
             "--ide2": "local-lvm:cloudinit", "--ciuser": "ubuntu", "--citype": "nocloud", "--ciupgrade": "0",
             "--ipconfig0": "ip=10.251.10.44/24,gw=10.251.10.1", "--nameserver": "10.251.10.1 192.0.2.53",
-            "--net0": "virtio=02:11:22:33:44:55,bridge=hivra0,firewall=1,link_down=1",
+            "--net0": "virtio=" + env["MOCK_MAC"] + ",bridge=hivra0,firewall=1,link_down=1",
             "--cicustom": "meta=local:snippets/" + snippet,
         })
         assert meta.read_text() == seed["meta-data"] and meta.stat().st_mode & 0o777 == 0o600
@@ -223,7 +223,7 @@ function fixture(input = plan) {
       lock ? [join(root, "locks", lock), "bash", "-c", script] : ["-c", script], {
         encoding: "utf8", timeout: 5000, env: {
           NODE_ENV: "test", PATH: join(root, "bin") + ":/usr/bin:/bin", MOCK_ROOT: root,
-          MANAGED: current.profile.managed ? "yes" : "", ...flags,
+          MANAGED: current.profile.managed ? "yes" : "", MOCK_MAC: current.profile.network.macAddress, ...flags,
         },
       });
   };
@@ -381,6 +381,20 @@ it("recreates only the generated managed NoCloud seed and preserves the source i
   host.put(`vz/snippets/hivra-portable-meta-${managedPlan.operationId}.yaml`, `instance-id: ${"a".repeat(40)}\n`);
   expect(host.run().stderr).toContain("cloudinit_metadata_mismatch");
   expect(host.events()).toBe("create\nregenerate\n");
+});
+
+it("preserves the ordinary globally administered Proxmox unicast MAC and refuses group or empty addresses", () => {
+  const profile = { ...managedPlan.profile, network: { ...managedPlan.profile.network, macAddress: "BC:24:11:12:34:56" } };
+  const input = { ...managedPlan, profile };
+  const host = fixture(input);
+  const result = host.run();
+  expect(parsePortableKvmDestinationPrepareReceipt(result.stdout, input)).not.toBeNull();
+  expect(readFileSync(join(host.root, "qemu/9344.conf"), "utf8")).toContain("virtio=BC:24:11:12:34:56");
+  for (const macAddress of ["01:24:11:12:34:56", "00:00:00:00:00:00"]) {
+    expect(() => serializePortableKvmDestinationPreparePermit({
+      ...input, profile: { ...profile, network: { ...profile.network, macAddress } },
+    })).toThrow();
+  }
 });
 
 it.each([
