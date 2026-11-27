@@ -26,7 +26,7 @@ chmod 0644 "$WORK/hermes-install.sh"
 export LIBGUESTFS_BACKEND=direct
 qemu-img create -f qcow2 "$WORK/build.qcow2" 8G
 virt-resize --format qcow2 --output-format qcow2 --expand /dev/sda1 "$WORK/base.qcow2" "$WORK/build.qcow2"
-virt-customize --format qcow2 -a "$WORK/build.qcow2" --network --no-logfile --memsize 6144 --smp 4 \
+virt-customize --format qcow2 -a "$WORK/build.qcow2" --network --no-logfile --memsize 4096 --smp 4 \
   --mkdir /root/hermes-bake \
   --copy-in "$WORK/hermes-bake-pins.env:/root/hermes-bake" \
   --copy-in "$WORK/hermes-install.sh:/root/hermes-bake" \
