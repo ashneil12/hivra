@@ -1,0 +1,10 @@
+# Managed Canary DeepSeek image pilot
+
+This pilot changes only fresh DeepSeek Harness launches by one standing QA owner on one selected Canary host. With no pilot settings, launches use the stock path. The pilot doesn't affect existing guests, connected hosts, moves, the Hermes image, or production.
+
+1. Build with the shared image producer and run its offline acceptance. Verify exact QCOW2 bytes, an 8 GiB standalone disk, and two independent default-BIOS boots to QEMU Guest Agent with different machine IDs and SSH host keys. Both clones must verify and reuse the prepared native package. Use no tenant credentials in the bake.
+2. After approval for the exact host and digest, stage the disk at `/var/lib/vz/template/iso/hivra-deepseek-harness-<sha256>.qcow2` on that host. Keep it a regular, one-link file owned by root:root with mode 0444. Verify the digest at the destination and require the managed Canary host bundle `2026.11.27.4`.
+3. Set `HIVRA_CANARY_DEEPSEEK_IMAGE_HOST`, `HIVRA_CANARY_DEEPSEEK_IMAGE_SHA256`, and `HIVRA_CANARY_DEEPSEEK_IMAGE_USER_ID` together on the dedicated Git Canary deployment. Use the selected host, exact digest and standing QA owner. Any partial or invalid selection fails closed. Other owners and hosts use stock. The application verifies the disk before writing a launch row and again under the allocation lock before VM creation.
+4. On the served Git revision, measure click to authenticated composer and visible reply. Record the actual host, bundle, image digest and operation, confirm distinct identities across two launches, and check Files, terminal and the normal updater on owned QA fixtures. Compare with a matched stock launch, recording the base image digest and profile size. Delete only the owned fixtures and verify their absence.
+
+Remove the three settings together on the next Git Canary build to return new launches to stock. Keep the staged disk until no active launch can still reference it. Existing computers retain their already imported disks.
