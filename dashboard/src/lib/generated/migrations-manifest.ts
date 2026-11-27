@@ -529,4 +529,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261126213000", name: "canary_qa_holder_admission" },
   { version: "20261126224500", name: "managed_gvisor_reject_start" },
   { version: "20261127093245", name: "yearly_token_attribution_checkpoints" },
+  { version: "20261127154500", name: "computer_stall_monitor" },
 ];
