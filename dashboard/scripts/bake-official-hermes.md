@@ -42,14 +42,16 @@ host, standing paid QA owner, boot-proven Hermes digest and sealed provisioner.
 The owner and target must already match the three baked-image settings above.
 The standby uses a QA VMID 9300–9399 other than 9302 and a free private IP on
 the managed subnet. Use one generation UUID per attempt and never reuse a
-claimed guest.
+   claimed guest.
 
 1. Reserve the exact generation, owner, host, VMID, IP, image and resource
    envelope with the service-only standby reservation before starting a VM.
    That charge stays in admission until it transfers to a verified paid row or
    the operator proves the exact VM and disk are absent.
 2. On the approved host, verify the sealed Canary bundle and the boot-proven
-   image. Run the managed host provisioner in standby `stage` mode with only
+   image. Check the bundle manifest and file hashes against the served Git
+   revision, not just the host's version label. Run the managed host
+   provisioner in standby `stage` mode with only
    the neutral VM settings; do not send a tenant key, route, token or binding.
    Require enforced local memory and CPU ceilings, with the host's registered
    CPU policy capped at the provisioner's supported maximum, plus storage
@@ -66,3 +68,14 @@ claimed guest.
    unassigned or uncertain slot stays charged until independently reconciled.
    Restage a new generation only after this proof. Remove the experiment flag
    and the three scoped settings from the next Git build when finished.
+
+Make three serial paid launches on the standing QA account. Record the Git
+revision at both ends of each sample, the exact claimed generation and host,
+and click-to-composer and click-to-first-visible-reply times. Exclude a sample
+if the revision changed or it took the cold path. Accept the experiment only
+when all three valid launches show a native reply in under 60 seconds. Run
+Hermes's native Update on an owned fixture and verify the model, chat and
+terminal still work. Keep one redacted real-browser recording from Launch
+through the first visible reply. If the pilot stops early, verify stock
+selection on the newer Git build after removing the settings; a removed project
+setting alone doesn't change the deployment that's already serving.
