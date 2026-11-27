@@ -47,7 +47,7 @@ export function FirstRunCard() {
           const job = FIRST_RUN_JOBS[agent.id];
           return (
             <li key={agent.id}>
-              <Link href={`/dashboard/launch?profile=${agent.id}`} className={styles.firstRunChoice} aria-label={`Launch ${agent.name}`}>
+              <Link href={`/dashboard/launch?profile=${agent.id}`} className={styles.firstRunChoice} aria-label={`Launch ${agent.name}`} aria-describedby={agent.id === "hermes" ? "first-run-hermes-hosting" : undefined}>
                 <span className={styles.firstRunName}>{job?.job ?? agent.name}</span>
                 {job ? (
                   <span className={styles.firstRunAgent}>
@@ -56,6 +56,7 @@ export function FirstRunCard() {
                   </span>
                 ) : null}
                 <span className={styles.firstRunTagline}>{job?.line ?? agent.tagline}</span>
+                {agent.id === "hermes" ? <span id="first-run-hermes-hosting" className={styles.firstRunTagline}>Runs on Hivra Cloud only.</span> : null}
               </Link>
             </li>
           );

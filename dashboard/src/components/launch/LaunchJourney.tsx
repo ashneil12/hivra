@@ -688,10 +688,10 @@ function LaunchedScreen({ name, href, readiness, readyLabel, extraLink, onLeave,
       ) : (
         <>
           {checking ? (
-            <p className={styles.observed} role="status"><span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0, verticalAlign: "middle" }}><ThinkingOrb state="connecting" size={20} /></span> Waiting for it to answer</p>
+            <p className={styles.observed} role="status"><span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0, verticalAlign: "middle" }}><ThinkingOrb state="connecting" size={20} /></span> Checking whether you can open your agent</p>
           ) : (
             <p className={styles.observed} role="status">
-              It hasn&apos;t answered yet, and Hivra has stopped checking.{" "}
+              Hivra couldn&apos;t confirm that your agent was ready to open and has stopped checking.{" "}
               <button type="button" className={styles.outcomeLink} onClick={recheck}>Check again</button>
             </p>
           )}
@@ -2910,7 +2910,7 @@ export function LaunchJourney(
           <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="working" size={32} /></span>
           <span className={styles.eyebrow}>Launch in progress</span>
           <h1 id="launch-progress-heading">Confirming your launch…</h1>
-          <p>Hivra is checking the request for {draft.name.trim()}. We’ll open it as soon as the launch is confirmed.</p>
+          <p>Hivra is checking the request for {draft.name.trim()}. When the launch is confirmed, you can open it here.</p>
           <p className={styles.observed}>
             {observedLaunchText(observation, resumeMode === "resend")}
             {draft.submittedAt ? <> · Sent <SentAgo since={Date.parse(draft.submittedAt)} /> ago</> : null}

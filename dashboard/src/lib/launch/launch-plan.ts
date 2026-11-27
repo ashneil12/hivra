@@ -624,7 +624,7 @@ export function costSummary({
   if (hivraCloud && profileId === "aeon") {
     return withModel(`No extra charge. Uses one agent slot on your ${planName ?? "Hivra Cloud"} plan, not its CPU and memory.`);
   }
-  if (hivraCloud) return withModel(`No extra charge. Uses your ${planName ?? "Hivra Cloud"} plan allowance.`);
+  if (hivraCloud) return withModel(`This computer uses your ${planName ?? "Hivra Cloud"} plan allowance. No extra hosting charge.`);
   if (substrate === "provider-vm") return withModel("Nothing new is bought. Your cloud provider keeps billing this server as usual.");
   return withModel("No charge from Hivra. It uses your server's own capacity.");
 }
