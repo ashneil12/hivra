@@ -52,6 +52,7 @@ afterEach(() => {
 const hostTools = String.raw`#!/usr/bin/python3
 import hashlib
 import json
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -60,6 +61,7 @@ r = Path(os.environ["MOCK_ROOT"])
 name, *args = [Path(sys.argv[0]).name, *sys.argv[1:]]
 env = os.environ
 cfg = r / "qemu/9344.conf"
+slot = cfg.exists() and "name: hivra-slot-9344\n" in cfg.read_text()
 snippet = "hivra-portable-meta-22222222-2222-4222-8222-222222222222.yaml"
 meta = r / "vz/snippets" / snippet
 managed = env.get("MANAGED") == "yes"
@@ -93,10 +95,10 @@ elif name == "lvs" and args[0:8] == ["--reportformat", "json", "--units", "b", "
     pool = dict(vg_name="pve", lv_name="data", lv_size=str(100 * 1024**3), lv_attr="twi-aotz--",
                 data_percent=env.get("DATA_USED", "35.00"), metadata_percent=env.get("META_USED", "8.00"))
     lvs = [pool]
-    if cfg.exists() or env.get("ORPHAN"):
+    if (cfg.exists() and not slot) or env.get("ORPHAN"):
         lvs.append(dict(vg_name="pve", lv_name="vm-9344-disk-0", pool_lv="data", lv_attr="Vwi-a-tz--",
                    origin=env.get("LV_ORIGIN", ""), vg_uuid="-".join(["VVVV"] * 8), lv_uuid="-".join(["LLLL"] * 8)))
-    if (cfg.exists() and managed) or env.get("ORPHAN_SEED"):
+    if (cfg.exists() and not slot and managed) or env.get("ORPHAN_SEED"):
         lvs.append(dict(vg_name="pve", lv_name="vm-9344-cloudinit", pool_lv="data", lv_attr="Vwi-a-tz--",
                         origin="", vg_uuid="-".join(["VVVV"] * 8), lv_uuid="-".join(["SSSS"] * 8)))
     print(json.dumps({"report": [{"lv": lvs}]}))
@@ -105,8 +107,14 @@ elif name == "qm" and args == ["status", "9344"]:
 elif name == "qm" and args == ["config", "9344", "--current", "1"]:
     raw = cfg.read_text()
     print(raw.split("\n[special:cloudinit]\n")[0] if managed else raw, end="")
-elif name == "qm" and args[:4] == ["create", "9344", "--start", "0"]:
-    options = dict(zip(args[4::2], args[5::2]))
+elif name == "qm" and args[0:2] == (["set", "9344"] if managed else ["create", "9344"]):
+    if managed:
+        assert slot and args[2:5] == ["--skiplock", "1", "--digest"]
+        assert args[5] == hashlib.sha1(cfg.read_bytes()).hexdigest()
+    else:
+        assert args[2:4] == ["--start", "0"]
+    tail = args[6 if managed else 4:]
+    options = dict(zip(tail[::2], tail[1::2]))
     expected = {
         "--name": "hivra-portable-9344", "--tags": "hivra-bind-" + "a"*32, "--lock": "backup", "--onboot": "0",
         "--arch": "x86_64", "--bios": "seabios", "--machine": "pc-i440fx-8.1", "--ostype": "l26",
@@ -179,6 +187,12 @@ function fixture(input = plan) {
   const permit = `state/portable-kvm-destination-permits/${vmid}`;
   const marker = join(root, "state/portable-kvm-destinations", String(vmid));
   put(permit, serializePortableKvmDestinationPreparePermit(input));
+  if (input.profile.managed) {
+    put(`qemu/${vmid}.conf`, [
+      `ipconfig0: ip=${input.ip}/24`, "lock: backup",
+      `name: hivra-slot-${vmid}`, "onboot: 0", `tags: hivra-slot-${input.bindingTag.slice(11)}`, "",
+    ].join("\n"));
+  }
   put("pressure", "full avg10=0.50 avg60=0.50 avg300=0.50 total=1\n");
   put("meminfo", "MemAvailable: 93716480 kB\n");
   put("cpuinfo", "processor : 0\nvendor_id : AuthenticAMD\nflags : aes avx2 cx16 popcnt pni sse4_1 sse4_2 ssse3\n");
@@ -395,6 +409,25 @@ it("preserves the ordinary globally administered Proxmox unicast MAC and refuses
       ...input, profile: { ...profile, network: { ...profile.network, macAddress } },
     })).toThrow();
   }
+});
+
+it.each([
+  ["missing", ""],
+  ["different binding", "tags: hivra-slot-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+  ["network hardware", "net0: virtio=02:11:22:33:44:55,bridge=hivra0"],
+  ["bootable", "boot: order=net0"],
+])("does not convert a %s managed destination slot", (variant, extra) => {
+  const host = fixture(managedPlan);
+  const cfg = join(host.root, "qemu/9344.conf");
+  if (variant === "missing") rmSync(cfg);
+  else {
+    const raw = readFileSync(cfg, "utf8");
+    const key = extra.split(":")[0];
+    host.put("qemu/9344.conf", raw.split("\n").filter(line => !line.startsWith(key + ":")).concat(extra, "").join("\n"));
+  }
+  expect(host.run().stderr).toMatch(/destination_slot_(?:missing|binding_mismatch|not_diskless)/);
+  expect(host.events()).toBe("");
+  expect(existsSync(host.marker)).toBe(false);
 });
 
 it.each([

@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -183,6 +183,42 @@ printf '%s' "$claimed_octets"`], { encoding: "utf8" });
       expect(run()).toMatchObject({ status: 0, stdout: "50\n51\n52\n53" });
       rmSync(root, { recursive: true });
       expect(run()).toMatchObject({ status: 1, stdout: "", stderr: expect.stringContaining("inventory is unavailable") });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("skips both the VMID and private IP of a native portable slot when allocating an ordinary launch", () => {
+    const script = renderedPhase1(false, undefined, "hermes");
+    const inventoryStart = script.indexOf('cluster_resources="$(');
+    const inventoryEnd = script.indexOf('intent_vmids="$(', inventoryStart);
+    const pickStart = script.indexOf('claimed_vmids="$(', inventoryEnd);
+    const pickEnd = script.indexOf("install -d -m 0750 ", pickStart);
+    const root = mkdtempSync(path.join(tmpdir(), "hivra-slot-allocation-"));
+    try {
+      mkdirSync(path.join(root, "locks"));
+      const launch = script.slice(inventoryStart, inventoryEnd) + script.slice(pickStart, pickEnd)
+        .replaceAll("/run/lock/hivra-vmids", path.join(root, "locks"))
+        .replaceAll("/etc/pve/qemu-server", root)
+        .replaceAll("/var/lib/hivra/provision-operations", root);
+      const run = (clusterResources: object[]) => spawnSync("bash", ["-s"], {
+        input: `set -euo pipefail
+pvesh() { printf '%s' "$INVENTORY"; }
+RESERVED_VMIDS=
+intent_vmids=
+${launch}
+printf '%s:%s' "$VMID" "$OCTET"`,
+        env: { ...process.env, INVENTORY: JSON.stringify(clusterResources) },
+        encoding: "utf8",
+      });
+      expect(run([])).toMatchObject({ status: 0, stdout: "200:50" });
+      writeFileSync(path.join(root, "200.conf"), [
+        "ipconfig0: ip=10.251.20.51/24", "lock: backup", "name: hivra-slot-200", "onboot: 0",
+        `tags: hivra-slot-${"a".repeat(32)}`, "",
+      ].join("\n"));
+      expect(run([{ vmid: 200, type: "qemu", status: "stopped" }])).toMatchObject({ status: 0, stdout: "201:50" });
+      rmSync(path.join(root, "200.conf"));
+      expect(run([{ vmid: 200, type: "qemu", status: "stopped" }])).toMatchObject({ status: 0, stdout: "201:51" });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
