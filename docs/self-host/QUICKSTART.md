@@ -86,11 +86,11 @@ npm run self-host:init
 
 1. verifies Node, dependencies, the container runtime, the Supabase CLI and the
    committed database inputs;
-2. creates a private container network and scopes explicit loopback port bindings
+2. asks for one operator email, name and password before creating Docker resources;
+3. creates a private container network and scopes explicit loopback port bindings
    to this installation's Supabase commands;
-3. starts the local Supabase subset and applies every committed migration plus
+4. starts the local Supabase subset and applies every committed migration plus
    the deliberately empty seed;
-4. asks for one operator email, name and password;
 5. generates separate encryption, chat-encryption, session, API and cron keys;
 6. writes an owner-only private configuration and non-secret receipt outside
    the repository; and
