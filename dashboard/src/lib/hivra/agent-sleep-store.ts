@@ -90,9 +90,10 @@ export async function claimAgentSleep(input: {
   operationId: string;
   tier: AgentSleepTier;
   expectedGeneration: number;
+  manual?: boolean;
 }): Promise<number | null> {
   try {
-    const data = await rpc("claim_hivra_agent_sleep", {
+    const data = await rpc(input.manual ? "claim_hivra_agent_sleep" : "claim_hivra_agent_idle_sleep", {
       p_agent_id: input.agentId,
       p_operation_id: input.operationId,
       p_tier: input.tier,

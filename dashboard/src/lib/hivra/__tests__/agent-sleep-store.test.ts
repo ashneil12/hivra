@@ -62,6 +62,14 @@ describe("agent sleep store", () => {
     it("passes the exact arguments and returns the new generation", async () => {
       mockRpc.mockResolvedValue({ data: 4, error: null });
       await expect(claimAgentSleep({ agentId, operationId, tier: "nap", expectedGeneration: 3 })).resolves.toBe(4);
+      expect(mockRpc).toHaveBeenCalledWith("claim_hivra_agent_idle_sleep", {
+        p_agent_id: agentId, p_operation_id: operationId, p_tier: "nap", p_expected_generation: 3,
+      });
+    });
+
+    it("uses the separate manual lease for a direct owner action", async () => {
+      mockRpc.mockResolvedValue({ data: 4, error: null });
+      await expect(claimAgentSleep({ agentId, operationId, tier: "nap", expectedGeneration: 3, manual: true })).resolves.toBe(4);
       expect(mockRpc).toHaveBeenCalledWith("claim_hivra_agent_sleep", {
         p_agent_id: agentId, p_operation_id: operationId, p_tier: "nap", p_expected_generation: 3,
       });
