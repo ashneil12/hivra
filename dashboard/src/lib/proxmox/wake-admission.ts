@@ -24,10 +24,11 @@ import {
  *      host is the natural serialization point across serverless lambdas).
  *   2. RAM: the host must have the VM's RAM + a 512 MB margin available.
  *
- * FAIL-OPEN: if the capacity probe errors, can't run, or its output can't be
+ * Unqueued callers fail open: if the capacity probe errors, can't run, or its output can't be
  * parsed, the wake is allowed (never block a legitimate start on a flaky
  * probe). A wake is deferred ONLY when the host positively measured
  * insufficient headroom — and deferrals are retryable 429s, not failures.
+ * Queued callers require a verified host slot and free RAM.
  */
 
 type EnvLike = Record<string, string | undefined>;
@@ -44,9 +45,9 @@ export const WAKE_DEFER_RETRY_AFTER_SECONDS = 30;
 const WAKE_ADMISSION_MARKER = "HERMES_WAKE_ADMISSION";
 const WAKE_SLOT_DIR = "/run/hermes-wake-slots";
 
-type WakeAdmissionDeferReason = "concurrency" | "host_ram";
+type WakeAdmissionDeferReason = "concurrency" | "host_ram" | "unavailable";
 
-export type WakeAdmissionDecision =
+export type WakeAdmissionDecision = { waitedForConcurrency?: true } & (
   | {
       admitted: true;
       freeMb: number | null;
@@ -59,7 +60,8 @@ export type WakeAdmissionDecision =
       activeWakes: number | null;
       cap: number;
       retryAfterSeconds: number;
-    };
+    }
+);
 
 /** Per-host concurrent-wake cap. Env-tunable for ops without a deploy. */
 export function resolveMaxConcurrentWakesPerHost(env: EnvLike): number {
@@ -98,7 +100,7 @@ function sanitizeSlotKey(instanceId: string): string {
  * lock style) prunes expired slots, counts in-flight wakes, checks free RAM,
  * and either claims a slot or reports a deferral on stdout.
  *
- * Output contract (one line, parsed by `parseWakeAdmissionOutput`):
+ * Output contract (last line wins when reporting a concurrency wait):
  *   HERMES_WAKE_ADMISSION ADMIT active=<n> cap=<n> free_mb=<n|na>
  *   HERMES_WAKE_ADMISSION DEFER reason=concurrency active=<n> cap=<n> free_mb=<n|na>
  *   HERMES_WAKE_ADMISSION DEFER reason=host_ram active=<n> cap=<n> free_mb=<n> need_mb=<n>
@@ -107,10 +109,12 @@ export function buildWakeAdmissionScript(params: {
   instanceId: string;
   neededRamMb: number;
   cap: number;
+  waitForConcurrencySeconds?: number;
 }): string {
   const slotKey = sanitizeSlotKey(params.instanceId);
   const needMb = Math.max(0, Math.floor(params.neededRamMb));
   const cap = Math.max(1, Math.floor(params.cap));
+  const waitSeconds = Math.max(0, Math.floor(params.waitForConcurrencySeconds ?? 0));
 
   return `#!/usr/bin/env bash
 set -u
@@ -118,40 +122,67 @@ NEED_MB=${needMb}
 CAP=${cap}
 SLOT_KEY='${slotKey}'
 SLOT_DIR='${WAKE_SLOT_DIR}'
-mkdir -p "$SLOT_DIR"
+WAIT_SECONDS=${waitSeconds}
+DEADLINE=$((SECONDS + WAIT_SECONDS))
+unavailable() {
+  echo "${WAKE_ADMISSION_MARKER} DEFER reason=unavailable active=na cap=$CAP free_mb=na"
+  exit 0
+}
+if [ "$WAIT_SECONDS" -gt 0 ]; then
+  set -o pipefail
+  mkdir -p "$SLOT_DIR" || unavailable
+else
+  mkdir -p "$SLOT_DIR"
+fi
 
+try_slot() (
 # Best-effort mutex around the count-and-claim. mkdir (not flock) so no fd can
 # leak into child processes; a lock older than a minute is a dead holder.
 LOCK_DIR="$SLOT_DIR/.lock.d"
 find "$SLOT_DIR" -maxdepth 1 -name '.lock.d' -mmin +1 -exec rm -rf {} + 2>/dev/null || true
 HAVE_LOCK=0
 for _ in $(seq 1 50); do
+  [ "$WAIT_SECONDS" -gt 0 ] && [ "$SECONDS" -ge "$DEADLINE" ] && exit 75
   if mkdir "$LOCK_DIR" 2>/dev/null; then HAVE_LOCK=1; break; fi
   sleep 0.1
 done
 cleanup() { if [ "$HAVE_LOCK" = "1" ]; then rmdir "$LOCK_DIR" 2>/dev/null || true; fi; }
 trap cleanup EXIT
+[ "$WAIT_SECONDS" -gt 0 ] && [ "$HAVE_LOCK" = 0 ] && unavailable
 
 # Expire slots past the TTL — a wake-in-place completes in ~70-90s, so any
 # older marker is a finished (or dead) wake, not an in-flight one.
 find "$SLOT_DIR" -maxdepth 1 -name '*.slot' -mmin +${WAKE_SLOT_TTL_MINUTES} -delete 2>/dev/null || true
 
-FREE_MB="$(free -m | awk '/^Mem:/ {print $7}')"
+FREE_MB="$(free -m | awk '/^Mem:/ {print $7}')" || { [ "$WAIT_SECONDS" -gt 0 ] && unavailable; }
 # Exclude our own marker so an instance retrying its own wake is never queued
 # behind itself.
-ACTIVE="$(find "$SLOT_DIR" -maxdepth 1 -name '*.slot' ! -name "$SLOT_KEY.slot" 2>/dev/null | wc -l | tr -d ' ')"
-
-if [ "\${ACTIVE:-0}" -ge "$CAP" ] 2>/dev/null; then
-  echo "${WAKE_ADMISSION_MARKER} DEFER reason=concurrency active=$ACTIVE cap=$CAP free_mb=\${FREE_MB:-na}"
-  exit 0
+ACTIVE="$(find "$SLOT_DIR" -maxdepth 1 -name '*.slot' ! -name "$SLOT_KEY.slot" 2>/dev/null | wc -l | tr -d ' ')" || { [ "$WAIT_SECONDS" -gt 0 ] && unavailable; }
+if [ "$WAIT_SECONDS" -gt 0 ]; then
+  [[ "$FREE_MB" =~ ^[0-9]+$ && "$ACTIVE" =~ ^[0-9]+$ ]] || unavailable
 fi
-if [ -n "\${FREE_MB:-}" ] && [ "$FREE_MB" -lt "$((NEED_MB + ${WAKE_RAM_SAFETY_MARGIN_MB}))" ] 2>/dev/null; then
+
+if { [ "$WAIT_SECONDS" -gt 0 ] || [ "\${ACTIVE:-0}" -lt "$CAP" ]; } \\
+    && [ -n "\${FREE_MB:-}" ] && [ "$FREE_MB" -lt "$((NEED_MB + ${WAKE_RAM_SAFETY_MARGIN_MB}))" ] 2>/dev/null; then
   echo "${WAKE_ADMISSION_MARKER} DEFER reason=host_ram active=$ACTIVE cap=$CAP free_mb=$FREE_MB need_mb=$NEED_MB"
   exit 0
 fi
+if [ "\${ACTIVE:-0}" -ge "$CAP" ] 2>/dev/null; then
+  echo "${WAKE_ADMISSION_MARKER} DEFER reason=concurrency active=$ACTIVE cap=$CAP free_mb=\${FREE_MB:-na}" || exit 1
+  [ "$WAIT_SECONDS" -gt 0 ] && exit 75
+  exit 0
+fi
+[ "$WAIT_SECONDS" -gt 0 ] && [ "$SECONDS" -ge "$DEADLINE" ] && exit 75
 
-touch "$SLOT_DIR/$SLOT_KEY.slot"
+touch "$SLOT_DIR/$SLOT_KEY.slot" || { [ "$WAIT_SECONDS" -gt 0 ] && unavailable; }
 echo "${WAKE_ADMISSION_MARKER} ADMIT active=$ACTIVE cap=$CAP free_mb=\${FREE_MB:-na}"
+)
+while true; do
+  try_slot
+  [ "$?" -eq 75 ] && [ "$((SECONDS + 2))" -lt "$DEADLINE" ] || break
+  sleep "1.$((RANDOM % 5))"
+  [ "$SECONDS" -lt "$DEADLINE" ] || break
+done
 `;
 }
 
@@ -166,34 +197,25 @@ export interface ParsedWakeAdmission {
 /** Parse the admission script's marker line. Returns null when the output is
  *  missing/garbled — callers treat that as fail-open. */
 export function parseWakeAdmissionOutput(stdout: string): ParsedWakeAdmission | null {
-  const line = (stdout || "")
-    .split("\n")
-    .map((l) => l.trim())
-    .find((l) => l.startsWith(`${WAKE_ADMISSION_MARKER} `));
-  if (!line) return null;
-
-  const parts = line.split(/\s+/);
-  const verdictToken = parts[1];
-  if (verdictToken !== "ADMIT" && verdictToken !== "DEFER") return null;
-
-  const kv: Record<string, string> = {};
-  for (const token of parts.slice(2)) {
-    const eq = token.indexOf("=");
-    if (eq > 0) kv[token.slice(0, eq)] = token.slice(eq + 1);
+  for (const line of (stdout || "").split("\n").reverse()) {
+    const [marker, verdict, ...parts] = line.trim().split(/\s+/);
+    if (marker !== WAKE_ADMISSION_MARKER || (verdict !== "ADMIT" && verdict !== "DEFER")) continue;
+    const kv: Record<string, string> = {};
+    for (const token of parts) {
+      const eq = token.indexOf("=");
+      if (eq > 0) kv[token.slice(0, eq)] = token.slice(eq + 1);
+    }
+    const num = (key: string): number | null => {
+      const parsed = Number.parseInt(kv[key] ?? "", 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const capacity = { activeWakes: num("active"), cap: num("cap"), freeMb: num("free_mb") };
+    if (verdict === "ADMIT") return { verdict: "admit", ...capacity };
+    if (kv.reason === "host_ram" || kv.reason === "concurrency" || kv.reason === "unavailable") {
+      return { verdict: "defer", reason: kv.reason, ...capacity };
+    }
   }
-  const num = (key: string): number | null => {
-    const parsed = Number.parseInt(kv[key] ?? "", 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-
-  if (verdictToken === "ADMIT") {
-    return { verdict: "admit", activeWakes: num("active"), cap: num("cap"), freeMb: num("free_mb") };
-  }
-
-  const reason =
-    kv.reason === "host_ram" ? "host_ram" : kv.reason === "concurrency" ? "concurrency" : null;
-  if (!reason) return null; // unknown deferral shape → fail-open at the caller
-  return { verdict: "defer", reason, activeWakes: num("active"), cap: num("cap"), freeMb: num("free_mb") };
+  return null;
 }
 
 function resolveWakeAdmissionEnv(
@@ -212,7 +234,7 @@ function resolveWakeAdmissionEnv(
  * single SSH round-trip. Mirrors `startProxmoxInstance`'s host/env resolution
  * so it always lands on the same host the start will.
  *
- * FAIL-OPEN by contract (see module docs).
+ * Unqueued callers retain their existing fail-open contract.
  */
 export async function acquireHostWakeSlot(
   infrastructure: Pick<ProxmoxInfrastructure, "vmid" | "node">,
@@ -221,26 +243,37 @@ export async function acquireHostWakeSlot(
     neededRamMb: number;
     hostConfig?: ProxmoxHostRoutingConfig | null;
     env?: EnvLike;
+    waitForConcurrencySeconds?: number;
     runHostScript?: (script: string) => Promise<HostScriptResult>;
   },
 ): Promise<WakeAdmissionDecision> {
+  const strict = (params.waitForConcurrencySeconds ?? 0) > 0;
+  const noReceipt = (cap: number): WakeAdmissionDecision => strict
+    ? { admitted: false, reason: "unavailable", freeMb: null, activeWakes: null, cap, retryAfterSeconds: WAKE_DEFER_RETRY_AFTER_SECONDS }
+    : { admitted: true, freeMb: null, activeWakes: null };
+  let cap = DEFAULT_MAX_CONCURRENT_WAKES_PER_HOST;
   try {
     const env = resolveWakeAdmissionEnv(infrastructure, params);
-    const cap = resolveMaxConcurrentWakesPerHost(env);
+    cap = resolveMaxConcurrentWakesPerHost(env);
     const script = buildWakeAdmissionScript({
       instanceId: params.instanceId,
       neededRamMb: params.neededRamMb,
       cap,
+      waitForConcurrencySeconds: params.waitForConcurrencySeconds,
     });
     const runner =
       params.runHostScript ?? ((hostScript: string) => runProxmoxHostScript(hostScript, env));
     const result = await runner(script);
-    const parsed = parseWakeAdmissionOutput(result?.stdout ?? "");
+    const stdout = result?.stdout ?? "";
+    const parsed = parseWakeAdmissionOutput(stdout);
+    const waited = strict && stdout.includes(`${WAKE_ADMISSION_MARKER} DEFER reason=concurrency `)
+      ? { waitedForConcurrency: true as const } : {};
     if (!parsed) {
-      return { admitted: true, freeMb: null, activeWakes: null }; // fail-open
+      return noReceipt(cap);
     }
     if (parsed.verdict === "admit") {
-      return { admitted: true, freeMb: parsed.freeMb, activeWakes: parsed.activeWakes };
+      if (strict && (parsed.freeMb === null || parsed.activeWakes === null || parsed.cap === null)) return noReceipt(cap);
+      return { admitted: true, freeMb: parsed.freeMb, activeWakes: parsed.activeWakes, ...waited };
     }
     return {
       admitted: false,
@@ -249,9 +282,10 @@ export async function acquireHostWakeSlot(
       activeWakes: parsed.activeWakes,
       cap: parsed.cap ?? cap,
       retryAfterSeconds: WAKE_DEFER_RETRY_AFTER_SECONDS,
+      ...waited,
     };
   } catch {
-    return { admitted: true, freeMb: null, activeWakes: null }; // fail-open
+    return noReceipt(cap);
   }
 }
 

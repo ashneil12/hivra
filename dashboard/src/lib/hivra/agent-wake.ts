@@ -105,6 +105,8 @@ export interface EnsureAwakeOptions {
    * hand it to `after()` and keep the function alive until the wake finishes.
    */
   onBackground?: (work: Promise<unknown>) => void;
+  /** Absolute deadline provided by a caller that keeps work alive after its response. */
+  workDeadlineMs?: number;
 }
 
 export type AgentRow = Record<string, unknown>;
@@ -186,9 +188,12 @@ function kickStorageReturn(agentId: string): void {
   }
 }
 
-/** How long a wake waits for its turn when the server's concurrent wakes are all taken, and how often it asks again. */
-export const WAKE_TURN_WAIT_MS = 75_000;
-export const WAKE_TURN_RETRY_MS = 3_000;
+export const WAKE_TURN_WAIT_SECONDS = 75;
+const WAKE_ADMISSION_TRANSPORT_ALLOWANCE_MS = 5_000;
+export const MANAGED_WAKE_WORK_BUDGET_MS = 330_000;
+const DEFAULT_RETAINED_WAKE_BUDGET_MS = 180_000;
+const WAKE_PHASE_HEADROOM_MS = 15_000;
+const WAKE_SETTLE_HEADROOM_MS = 8_000;
 /**
  * Deep-sleep wakes a server starts at once. Measured on Canary with two: one wake every 6-7 s and no
  * strain on the server, so ten together did not all fit the wait. The memory check still guards each
@@ -236,18 +241,24 @@ async function runHostScriptForWake(
   script: string,
   env: HivraLifecycleTarget["env"],
   options?: Parameters<typeof runProxmoxHostScript>[2],
+  deadline?: number,
 ): ReturnType<typeof runProxmoxHostScript> {
   for (let attempt = 0; ; attempt += 1) {
-    const result = options === undefined ? await runProxmoxHostScript(script, env) : await runProxmoxHostScript(script, env, options);
+    const remaining = deadline === undefined ? undefined : Math.max(1, Math.floor(deadline - performance.now()));
+    const budget = remaining === undefined ? options : typeof options === "object" ? { ...options, timeoutMs: remaining } : remaining;
+    const result = budget === undefined ? await runProxmoxHostScript(script, env) : await runProxmoxHostScript(script, env, budget);
     const refused = !!result && !result.ok && !result.stdout && /^SSH connect/.test(result.error ?? "");
     if (!refused || attempt >= HOST_CONNECT_RETRIES) return result;
+    const retryDelay = HOST_CONNECT_RETRY_MS * (attempt + 1) + Math.floor(Math.random() * HOST_CONNECT_RETRY_MS);
+    if (deadline !== undefined && performance.now() + retryDelay >= deadline) return result;
     log.warn("host connection for a wake was refused; trying again", {
       source: LOG_SOURCE,
       failureType: "agent_wake_host_connect_refused",
       attempt: attempt + 1,
       reason: (result.error ?? "").slice(0, 160),
     });
-    await new Promise((resolve) => setTimeout(resolve, HOST_CONNECT_RETRY_MS * (attempt + 1) + Math.floor(Math.random() * HOST_CONNECT_RETRY_MS)));
+    await delay(retryDelay);
+    if (deadline !== undefined && performance.now() >= deadline) return result;
   }
 }
 
@@ -255,7 +266,7 @@ async function runHostScriptForWake(
 export async function runWakeHostScript(
   row: AgentRow,
   target: HivraLifecycleTarget,
-  options: { restore: boolean; killStaleSockets?: boolean; hostIngress?: boolean },
+  options: { restore: boolean; killStaleSockets?: boolean; hostIngress?: boolean; deadlineMs?: number },
 ): Promise<WakeScriptRun> {
   const startedAt = Date.now();
   // With memory drops switched on, a restore may meet a computer whose saved memory was dropped. The host's mark decides.
@@ -277,13 +288,16 @@ export async function runWakeHostScript(
     return { receipt: null, runError: "script_invalid", ms: Date.now() - startedAt };
   }
   try {
+    const timeoutMs = coldStart ? COLD_START_SCRIPT_TIMEOUT_MS : options.restore ? RESTORE_SCRIPT_TIMEOUT_MS : WAKE_SCRIPT_TIMEOUT_MS;
+    const remaining = options.deadlineMs === undefined ? timeoutMs : Math.min(timeoutMs, options.deadlineMs - Date.now());
+    if (remaining <= 0) return { receipt: null, runError: "wake_deadline", ms: Date.now() - startedAt };
     const result = await runHostScriptForWake(script, target.env, {
-      timeoutMs: coldStart ? COLD_START_SCRIPT_TIMEOUT_MS : options.restore ? RESTORE_SCRIPT_TIMEOUT_MS : WAKE_SCRIPT_TIMEOUT_MS,
+      timeoutMs,
       // The receipt is the script's last word, so the answer can come back as
       // soon as its line is complete, without waiting for the session to close.
       ...(isFastWakeEnabled("early_finish") ? { earlyFinishMarker: WAKE_RESULT_PREFIX.trim(), earlyFinishOnLine: true } : {}),
       ...(isFastWakeEnabled("timing") ? { reportTimings: true } : {}),
-    });
+    }, options.deadlineMs === undefined ? undefined : performance.now() + remaining);
     // The receipt is read even when the run reports an error: a script that
     // finished its work and then lost its connection still told us the answer.
     const receipt = parseWakeReceipt(result?.stdout ?? "", target.vmid);
@@ -307,6 +321,7 @@ export async function pollPublicHealthz(
   hostname: unknown,
   options: {
     budgetMs?: number;
+    deadlineMs?: number;
     intervalMs?: number;
     /** Poll every 150 ms for the first 3 s, then at the normal interval. */
     fastStart?: boolean;
@@ -321,13 +336,15 @@ export async function pollPublicHealthz(
   const url = `https://${hostname.toLowerCase()}/healthz`;
   let attempts = 0;
   for (;;) {
+    const remaining = options.deadlineMs === undefined ? HEALTHZ_REQUEST_TIMEOUT_MS : options.deadlineMs - Date.now();
+    if (remaining <= 0) return { up: false, ms: Date.now() - startedAt, attempts };
     attempts += 1;
     try {
       const response = await fetchImpl(url, {
         method: "GET",
         cache: "no-store",
         redirect: "manual",
-        signal: AbortSignal.timeout(HEALTHZ_REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(Math.min(remaining, HEALTHZ_REQUEST_TIMEOUT_MS)),
       });
       if (response.status >= 100 && response.status < 500) return { up: true, ms: Date.now() - startedAt, attempts };
     } catch {
@@ -335,7 +352,9 @@ export async function pollPublicHealthz(
     }
     const elapsed = Date.now() - startedAt;
     const wait = options.fastStart && elapsed < HEALTHZ_FAST_WINDOW_MS ? Math.min(intervalMs, HEALTHZ_FAST_INTERVAL_MS) : intervalMs;
-    if (elapsed + wait >= budgetMs) return { up: false, ms: Date.now() - startedAt, attempts };
+    if (elapsed + wait >= budgetMs || (options.deadlineMs !== undefined && Date.now() + wait >= options.deadlineMs)) {
+      return { up: false, ms: Date.now() - startedAt, attempts };
+    }
     await delay(wait);
   }
 }
@@ -350,9 +369,9 @@ interface WakeOutcome {
 }
 
 /** Runs the wake, and puts channel arms it took down (a Telegram webhook, say) back in line when the wake fails. */
-async function performWake(row: AgentRow, agentId: string): Promise<WakeOutcome> {
+async function performWake(row: AgentRow, agentId: string, workDeadlineMs: number): Promise<WakeOutcome> {
   const channels: { disarm: ChannelDisarms | null } = { disarm: null };
-  const outcome = await performWakeSteps(row, agentId, channels);
+  const outcome = await performWakeSteps(row, agentId, channels, workDeadlineMs);
   if (outcome.result === "wake_failed" && channels.disarm) {
     await rearmChannelsAfterFailedWake(agentId, channels.disarm).catch(() => undefined);
   } else if (outcome.result === "awake" && channels.disarm) {
@@ -365,16 +384,27 @@ async function performWakeSteps(
   row: AgentRow,
   agentId: string,
   channels: { disarm: ChannelDisarms | null },
+  workDeadlineMs: number,
 ): Promise<WakeOutcome> {
   const fromState = String(row.sleep_state);
   // Only a nap is known to be a quick resume. A hibernation, and a wake that
   // failed before (the host may hold either), get the restore protections: a host
   // slot, and the longer script limit a start from saved memory needs.
   const restore = fromState !== "napping";
+  const mayColdStart = restore && sleepMemoryDropAfterDays() !== null;
+  const restoreBudgetMs = mayColdStart ? COLD_START_SCRIPT_TIMEOUT_MS : RESTORE_SCRIPT_TIMEOUT_MS;
+  const restoreHealthBudgetMs = mayColdStart ? COLD_START_HEALTHZ_BUDGET_MS : WAKE_HEALTHZ_BUDGET_MS;
   const detail: WakeDetail = { from: fromState };
   const failed = (reason: string): WakeOutcome => ({ result: "wake_failed", reason, cold: false, detail });
 
   let slotTarget: HivraLifecycleTarget | null = null;
+  let slotRelease: Promise<void> | undefined;
+  let boundedRestore = false;
+  let waitedForConcurrency = false;
+  const releaseSlot = (target: HivraLifecycleTarget) => releaseHostWakeSlot(
+    { vmid: target.vmid },
+    { instanceId: agentId, runHostScript: (script) => runProxmoxHostScript(script, target.env, WAKE_ADMISSION_TRANSPORT_ALLOWANCE_MS) },
+  ).catch(() => undefined);
   try {
     const resolved = await resolveSleepTarget(row, LOG_SOURCE);
     if (!resolved.ok) return failed(`target_${resolved.code}`);
@@ -393,36 +423,35 @@ async function performWakeSteps(
     if (hostIngress) detail.host_ingress = true;
 
     if (restore) {
-      // A restore claims host RAM all at once. Take a slot first, so a crowd of
-      // wakes cannot start together. A host that cannot be asked admits the wake.
-      const ask = () => acquireHostWakeSlot(
-        { vmid: target.vmid },
-        {
-          instanceId: agentId,
-          neededRamMb: normalizeWakeRamMb(row.ram),
-          // Only the limit is read from this; the host call below is the target's own.
-          env: { ...process.env, HERMES_WAKE_MAX_CONCURRENT_PER_HOST: wakesAtOncePerHost() },
-          runHostScript: (script) => runHostScriptForWake(script, target.env),
-        },
-      );
+      // Reserve the existing restore and readiness budgets before waiting for a slot.
       slotTarget = target;
-      // The server's wakes are all taken: that clears as soon as one of them finishes, so wait
-      // for a turn (the agent keeps showing as waking) instead of telling its owner the wake failed.
-      const waitUntil = Date.now() + WAKE_TURN_WAIT_MS;
-      let waited = 0;
+      const waitUntil = Math.min(Date.now() + WAKE_TURN_WAIT_SECONDS * 1000,
+        workDeadlineMs - restoreBudgetMs - restoreHealthBudgetMs - WAKE_PHASE_HEADROOM_MS - WAKE_ADMISSION_TRANSPORT_ALLOWANCE_MS);
       const takeTurn = async () => {
-        let answer = await ask();
-        while (!answer.admitted && answer.reason === "concurrency" && Date.now() + WAKE_TURN_RETRY_MS <= waitUntil) {
-          await new Promise((resolve) => setTimeout(resolve, WAKE_TURN_RETRY_MS));
-          waited += 1;
-          answer = await ask();
-        }
+        const start = performance.now();
+        const waitForConcurrencySeconds = Math.max(0, Math.floor((waitUntil - Date.now()) / 1000));
+        boundedRestore ||= waitForConcurrencySeconds > 0;
+        const answer = await acquireHostWakeSlot(
+          { vmid: target.vmid },
+          {
+            instanceId: agentId,
+            neededRamMb: normalizeWakeRamMb(row.ram),
+            env: { ...process.env, HERMES_WAKE_MAX_CONCURRENT_PER_HOST: wakesAtOncePerHost() },
+            waitForConcurrencySeconds,
+            runHostScript: (script) => waitForConcurrencySeconds > 0
+              ? runHostScriptForWake(script, target.env, undefined,
+                start + waitForConcurrencySeconds * 1000 + WAKE_ADMISSION_TRANSPORT_ALLOWANCE_MS)
+              : runHostScriptForWake(script, target.env),
+          },
+        );
+        waitedForConcurrency ||= answer.waitedForConcurrency === true;
+        detail.slot_admission_ms = Number(detail.slot_admission_ms ?? 0) + Math.round(performance.now() - start);
         return answer;
       };
       let decision = await takeTurn();
       // A server short of memory does not clear by waiting. With making room switched on, its
       // longest-idle nappers go into deep sleep until this wake fits; otherwise it is refused at once.
-      if (!decision.admitted && decision.reason === "host_ram" && isWakeMakesRoomEnabled()) {
+      if (!waitedForConcurrency && !decision.admitted && decision.reason === "host_ram" && isWakeMakesRoomEnabled()) {
         const room = await makeRoomForWake({
           agentId,
           hostId: String(target.executionContext?.host ?? ""),
@@ -434,7 +463,6 @@ async function performWakeSteps(
         detail.room_deepened = room.deepened;
         detail.room_ms = room.ms;
       }
-      if (waited > 0) detail.turn_waits = waited;
       if (!decision.admitted) {
         detail.deferred = decision.reason;
         return failed(`capacity_${decision.reason}`);
@@ -484,13 +512,14 @@ async function performWakeSteps(
     // means the guest holds dead sockets: drop them, so it reconnects at once.
     const runScript = () => runWakeHostScript(row, target, {
       restore,
+      ...(boundedRestore ? { deadlineMs: workDeadlineMs - restoreHealthBudgetMs - WAKE_SETTLE_HEADROOM_MS } : {}),
       ...(channels.disarm?.killStaleSockets ? { killStaleSockets: true } : {}),
       ...(hostIngress ? { hostIngress: true } : {}),
     });
     let run = await runScript();
     // The server's own capacity check refused the start (it counts what running and napping
     // computers are promised): make room the same way, and ask the server again after each one.
-    if (restore && run.receipt && !run.receipt.ok && run.receipt.reason === "capacity" && isWakeMakesRoomEnabled()) {
+    if (!waitedForConcurrency && restore && run.receipt && !run.receipt.ok && run.receipt.reason === "capacity" && isWakeMakesRoomEnabled()) {
       const room = await makeRoomForWake({
         agentId,
         hostId: String(target.executionContext?.host ?? ""),
@@ -525,10 +554,13 @@ async function performWakeSteps(
     }
     if (!run.receipt.ok) return failed(run.receipt.reason);
 
+    if (slotTarget) slotRelease = releaseSlot(slotTarget);
+    const healthBudgetMs = run.receipt.reason === "cold_started" ? COLD_START_HEALTHZ_BUDGET_MS : WAKE_HEALTHZ_BUDGET_MS;
     const health = await pollPublicHealthz(row.cf_hostname, {
+      ...(boundedRestore ? { deadlineMs: Math.min(workDeadlineMs - WAKE_SETTLE_HEADROOM_MS, Date.now() + healthBudgetMs) } : {}),
       ...(isFastWakeEnabled("fast_healthz") ? { fastStart: true } : {}),
       // A boot from disk brings the agent's own services up from nothing.
-      ...(run.receipt.reason === "cold_started" ? { budgetMs: COLD_START_HEALTHZ_BUDGET_MS } : {}),
+      budgetMs: healthBudgetMs,
     });
     detail.healthz_ms = health.ms;
     detail.healthz_attempts = health.attempts;
@@ -543,10 +575,7 @@ async function performWakeSteps(
     return failed("wake_error");
   } finally {
     if (slotTarget) {
-      await releaseHostWakeSlot(
-        { vmid: slotTarget.vmid },
-        { instanceId: agentId, runHostScript: (script) => runProxmoxHostScript(script, slotTarget!.env) },
-      ).catch(() => undefined);
+      await (slotRelease ?? releaseSlot(slotTarget));
     }
   }
 }
@@ -586,11 +615,12 @@ async function wakeUnderLease(
   agentId: string,
   operationId: string,
   trigger: AgentSleepEventTrigger,
+  workDeadlineMs: number,
   deferWork?: DeferWork,
 ): Promise<EnsureAwakeResult> {
   const startedAt = Date.now();
   const fromState = String(row.sleep_state);
-  const outcome = await performWake(row, agentId);
+  const outcome = await performWake(row, agentId, workDeadlineMs);
   const wakeMs = Date.now() - startedAt;
 
   // The lease is always given back before the answer.
@@ -633,6 +663,10 @@ export async function ensureHivraAgentAwake(
   const startedAt = Date.now();
   const waitMs = Math.min(MAX_WAKE_WAIT_MS, Math.max(0, options.waitMs ?? DEFAULT_WAKE_WAIT_MS));
   const deadline = startedAt + waitMs;
+  const workDeadlineMs = Math.min(
+    options.workDeadlineMs ?? (options.onBackground ? startedAt + DEFAULT_RETAINED_WAKE_BUDGET_MS : deadline),
+    startedAt + MANAGED_WAKE_WORK_BUDGET_MS,
+  );
   const pollMs = options.pollIntervalMs ?? DEFAULT_POLL_MS;
 
   let row: AgentRow | null;
@@ -707,7 +741,7 @@ export async function ensureHivraAgentAwake(
         return true;
       }
     : undefined;
-  const work = wakeUnderLease(row, agentId, operationId, options.trigger, deferWork).catch((error): EnsureAwakeResult => {
+  const work = wakeUnderLease(row, agentId, operationId, options.trigger, workDeadlineMs, deferWork).catch((error): EnsureAwakeResult => {
     log.error("agent wake threw after its lease was taken", error instanceof Error ? error : new Error(String(error)), {
       source: LOG_SOURCE,
       failureType: "agent_wake_lease_error",
