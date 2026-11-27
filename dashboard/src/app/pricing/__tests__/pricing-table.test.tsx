@@ -93,7 +93,7 @@ describe("/pricing prices and sizes", () => {
 });
 
 describe("/pricing comparison table", () => {
-  it("is a semantic table: plans as columns, the md's nine criteria as row headings", async () => {
+  it("is a semantic table and hides the sleep row without the sleep switches", async () => {
     await renderPricing();
     const table = screen.getByRole("table", { name: PRICING_COMPARISON.caption });
 
@@ -109,7 +109,6 @@ describe("/pricing comparison table", () => {
       { header: "Who operates the server?", cells: ["You", "Hivra", "Hivra"] },
       { header: "Browser access", cells: ["According to your setup", "Yes", "Yes"] },
       { header: "Remains available when your laptop closes", cells: ["If your server stays on", "Yes", "Yes"] },
-      { header: "Inactivity pause on paid cloud computer", cells: ["Not applicable", "No", "No"] },
       { header: "AI provider usage included", cells: ["No", "No", "No"] },
       { header: "7-day money-back guarantee on card payments", cells: ["Not applicable", "Yes", "Yes"] },
     ]);
@@ -195,9 +194,8 @@ describe("/pricing comparison table", () => {
     expect(
       screen.getByText("Each plan is a pool of CPU and memory for your agents' computers, and each size also sets how many agents can run at once."),
     ).toBeInTheDocument();
-    // No agent is singled out as the paid one: the rule is about every computer Hivra Cloud runs (21 October 2026).
     expect(
-      screen.getByText("Every Hivra Cloud computer needs a paid plan, whichever agent you run on it. Hermes runs on Hivra Cloud only."),
+      screen.getByText("Paid plans cover supported agents and computers. Hermes runs on Hivra Cloud only."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Require a paid Hivra Cloud size/)).not.toBeInTheDocument();
   });

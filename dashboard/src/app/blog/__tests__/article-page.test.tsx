@@ -1,5 +1,6 @@
 /** @jest-environment jsdom */
 import React from "react";
+import { TextEncoder } from "node:util";
 import "@testing-library/jest-dom";
 import { cleanup, render, screen } from "@testing-library/react";
 
@@ -48,7 +49,28 @@ function structuredData(container: HTMLElement) {
 }
 
 describe("/blog/[slug] article page", () => {
-  afterEach(cleanup);
+  beforeAll(() => {
+    Object.defineProperty(globalThis, "TextEncoder", {
+      configurable: true,
+      value: class extends TextEncoder {
+        override encode(input?: string) {
+          return Uint8Array.from(super.encode(input));
+        }
+      },
+    });
+  });
+  beforeEach(() => {
+    jest.replaceProperty(process, "env", {
+      ...process.env,
+      NEXT_PUBLIC_HIVRA_OPENBOT_AGENT: "1",
+      NEXT_PUBLIC_HIVRA_NUPHOS_AGENT: "1",
+      NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG: "1",
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    jest.restoreAllMocks();
+  });
 
   it("shows a Short answer box and the updated date on the laptop post", async () => {
     const article = BLOG_ARTICLES["keep-claude-code-running-24-7"];
@@ -122,6 +144,18 @@ describe("/blog/[slug] article page", () => {
 
   it("returns a real not-found for an unknown slug instead of an empty page", async () => {
     await expect(BlogArticlePage({ params: Promise.resolve({ slug: "not-a-real-post" }) })).rejects.toThrow();
+  });
+
+  it.each([
+    ["openbot-ai-coworkers", "NEXT_PUBLIC_HIVRA_OPENBOT_AGENT"],
+    ["nuphos-claude-code-team-chat", "NEXT_PUBLIC_HIVRA_NUPHOS_AGENT"],
+    ["what-is-zeroclaw", "NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG"],
+  ])("returns not-found, omits metadata and skips prerendering %s when its gate is off", async (slug, flag) => {
+    process.env[flag] = "0";
+    const args = { params: Promise.resolve({ slug }) };
+    await expect(BlogArticlePage(args)).rejects.toThrow("NEXT_HTTP_ERROR_FALLBACK;404");
+    await expect(generateMetadata(args)).resolves.toEqual({});
+    expect(generateStaticParams()).not.toContainEqual({ slug });
   });
 
   it.each(CUTOVER_BLOG_SLUGS.map((slug) => [slug]))("gives %s a self-canonical, its own title and its own social card", async (slug) => {

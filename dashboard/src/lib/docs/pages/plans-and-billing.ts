@@ -3,7 +3,6 @@ import {
   ENTRY_PLAN_PRICE,
   ENTRY_PLAN_SIZE,
   CONNECTED_SERVER_ELIGIBILITY,
-  HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
   LARGER_PLAN_PRICE,
   LARGER_PLAN_SIZE,
   MONEY_BACK_GUARANTEE,
@@ -14,7 +13,7 @@ export const doc: DocPage = {
   section: "start",
   title: "What you pay for",
   metaTitle: "Hivra plans and billing: what you pay for",
-  metaDescription: "Computers that Hivra Cloud runs need a paid plan, and model usage is paid separately. Here is how each part works.",
+  metaDescription: "How Hivra charges for hosted computers, how plans work and what you pay separately for model usage.",
   summary: "You pay for the computer when Hivra Cloud runs it, and for model usage when you use Hivra credits.",
   lastReviewed: "2026-11-17",
   blocks: [
@@ -24,7 +23,7 @@ export const doc: DocPage = {
         "Hivra bills three different things, and they are easy to mix up. Knowing which is which makes the Plan & billing page much easier to read.",
         "| What | What it pays for | Where you manage it |\n| --- | --- | --- |\n| Your account | Signing in and using Launch. | Settings |\n| A plan | The computer itself when Hivra Cloud runs it: processor, memory and storage. | Plan & billing, Plans view |\n| Model usage | The AI model your agent thinks with, when you use Hivra credits. | Plan & billing, Credits view |",
         "A plan does not pay for model usage, and credits do not pay for a computer. If you bring your own model key, the provider bills you directly and Hivra credits are not involved at all.",
-        `${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY} This page is for developers and AI power users who want to know exactly what a launch will cost before they press the button.`,
+        `A paid plan is the standard way to use Hivra Cloud. See [pricing](/pricing) for managed hosting options. ${CONNECTED_SERVER_ELIGIBILITY}`,
       ],
     },
     {
@@ -47,7 +46,7 @@ export const doc: DocPage = {
     {
       heading: "Choose and start a plan",
       paragraphs: [
-        `Every computer that Hivra Cloud runs for you needs a paid plan, whichever agent or computer you pick. There are two sizes on sale: ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, and ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}. Both stay on without being paused for inactivity, so your agent's files and logins are there when you come back.`,
+        `Paid plans include compute. There are two sizes on sale: ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}, and ${LARGER_PLAN_PRICE} a month for ${LARGER_PLAN_SIZE}. Where sleep is enabled, an eligible paid KVM agent can [sleep when idle](/docs/open-an-agent). Paid access does not require turning it on.`,
         "1. Open **Billing** and go to the **Plans** view. With no plan yet, the heading reads \"Choose a plan\".\n2. Read the cards. Each one shows vCPU, memory, how many agents and computers it covers, and its idle behaviour. The card for your current plan is marked \"Current plan\".\n3. If a **Billing** control with **Monthly** and **Yearly** is shown, pick one. A saving chip such as \"Save up to N% yearly\" appears beside it when yearly is cheaper than twelve monthly payments. The control only appears when your choice will go through checkout.\n4. Press **Subscribe** on the card with 2 vCPU and 4 GB (the $9.99 a month one) or the card with 4 vCPU and 8 GB ($19.99 a month). The button reads \"Subscribe\" followed by the price.\n5. Complete the hosted checkout. When you return, the page shows \"Activating your subscription...\" while Hivra confirms the payment. You then land back where you started, or on Launch if you came to Plan & billing directly. Open Billing again to see Overview.",
         "If you arrived from Launch, a **Back to your launch** link at the top returns you to where you were, with your choices kept. After checkout the redirect back happens automatically.",
         "A server you connect uses your own capacity, not Hivra Cloud compute. Your account must be eligible to connect the server.",

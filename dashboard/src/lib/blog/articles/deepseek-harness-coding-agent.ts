@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "DeepSeek Harness runs DeepSeek's coding agent on its own cloud computer, in its own interface. What alpha means, which model it uses and how you pay.",
   publishedDate: "2026-11-17",
-  lastModified: "2026-11-17",
+  lastModified: "2026-11-27",
   readingTimeMin: 6,
   author: "Hivra Team",
   tagline: "A coding agent that works on a computer of its own, not yours.",
@@ -46,7 +46,7 @@ export const article: BlogArticle = {
     {
       heading: "What it needs from the computer",
       paragraphs: [
-        "DeepSeek Harness needs at least 2 vCPU and 3 GB of RAM. Every Hivra Cloud computer needs a paid plan, and the entry plan is " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + ". That covers the agent's minimum with some room left, but a heavy build or a large test suite can use all of it.",
+        "DeepSeek Harness needs at least 2 vCPU and 3 GB of RAM on a paid Hivra Cloud plan. The entry plan is " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + ". That covers the agent's minimum with some room left, but a heavy build or a large test suite can use all of it.",
         "The computer has no browser set up for the agent. DeepSeek Harness is for working on code and files in a terminal-style environment, so do not plan on it driving websites. If a task needs a browser, pick an agent that ships one. [Agent Zero](/blog/what-is-agent-zero) brings its own.",
         "Launching this agent runs a Hivra Cloud computer and requires a plan that includes it. The details are on [the DeepSeek Harness docs page](/docs/deepseek-harness).",
       ],
@@ -83,7 +83,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Does it need a paid plan?",
-      a: "Yes. Every Hivra Cloud computer needs a paid plan. The agent's minimum is 2 vCPU and 3 GB of RAM.",
+      a: "Yes. DeepSeek Harness requires a paid Hivra Cloud plan and at least 2 vCPU and 3 GB of RAM.",
     },
     {
       q: "Is Hivra affiliated with DeepSeek?",

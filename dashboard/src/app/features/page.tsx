@@ -19,6 +19,12 @@ import { FeatureFaq } from "./_components/FeatureFaq";
 import { plainText, renderInline } from "./_components/Inline";
 import styles from "../../components/public-editorial/secondary-site.module.css";
 import local from "./features.module.css";
+import Link from "next/link";
+import { isCatalogAppLaunchable, UNIVERSAL_CATALOG_MANIFESTS } from "@/lib/hivra/catalog-manifests";
+import { publicManagedSandboxAvailable } from "@/lib/hivra/managed-gvisor-launch-config";
+import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
+
+export const dynamic = "force-dynamic";
 
 const TITLE = "Hivra Features | Persistent AI Agent Hosting";
 const DESCRIPTION =
@@ -56,7 +62,8 @@ const schema = {
   ],
 };
 
-export default function FeaturesPage() {
+export default async function FeaturesPage() {
+  const paidSleep = await paidKvmSleepAvailable();
   return (
     <PublicSite className={styles.page} data-page="features">
       <StructuredData schema={schema} />
@@ -73,6 +80,15 @@ export default function FeaturesPage() {
             {DIRECTORY_LEAD.paragraphs.map((paragraph) => (
               <p key={paragraph}>{renderInline(paragraph)}</p>
             ))}
+            {publicManagedSandboxAvailable() && (
+              <p>Pick Linux Sandbox in Launch to run shell commands and keep your files in a lightweight workspace on Hivra Cloud.</p>
+            )}
+            {paidSleep && (
+              <p>Turn on idle sleep for a supported paid computer. It can nap and hibernate, then wake with its files intact when you return.</p>
+            )}
+            {UNIVERSAL_CATALOG_MANIFESTS.some((manifest) => isCatalogAppLaunchable(manifest)) && (
+              <p>Browse <Link href="/agents#verified-catalog">verified apps</Link> that passed an end-to-end launch check.</p>
+            )}
             <ActionLinks items={DIRECTORY_LEAD.actions} />
           </div>
         </section>

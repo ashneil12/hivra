@@ -8,8 +8,9 @@
 // Titles come from the same constants the pages render from, so the
 // index cannot drift from what Google actually sees.
 
-import { BLOG_ARTICLES_LIST } from "@/lib/blog-data";
+import { getPublicBlogArticles } from "@/lib/blog-data";
 import { AGENT_SEO_ENTRIES } from "@/lib/hivra/agent-seo-catalog";
+import { getPublicAgentProfiles } from "@/lib/hivra/public-agent-profiles";
 import type { SeoPageTitleRow } from "@/lib/seo/decision-engine";
 
 /**
@@ -26,7 +27,8 @@ export function buildPageTitleIndex(): SeoPageTitleRow[] {
       path: `/agents/${entry.slug}`,
       title: entry.metaTitle,
     })),
-    ...BLOG_ARTICLES_LIST.map((article) => ({
+    ...getPublicAgentProfiles().map(({ slug, title }) => ({ path: `/agents/${slug}`, title })),
+    ...getPublicBlogArticles().map((article) => ({
       path: `/blog/${article.slug}`,
       // The h1 is the richer signal; metaTitle is truncated for the SERP.
       title: article.metaTitle ? `${article.title} ${article.metaTitle}` : article.title,

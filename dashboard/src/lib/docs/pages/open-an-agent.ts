@@ -1,6 +1,5 @@
 import type { DocPage } from "../types";
 import { CLI_RUN_LIFETIME, SERVER_SIDE_AGENTS_KEEP_WORKING } from "@/lib/blog/runtime-facts";
-import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT } from "@/lib/blog/plan-facts";
 
 export const doc: DocPage = {
   slug: "open-an-agent",
@@ -112,7 +111,8 @@ export const doc: DocPage = {
         SERVER_SIDE_AGENTS_KEEP_WORKING,
         "In plain terms: the computer is not your browser. Your files, repos and logins stay on it. What differs is which work you can count on to be there when you come back.",
         "| What | What to count on |\n| --- | --- |\n| A Claude Code or Codex run you start inside tmux in the Terminal view | Carries on after you close the laptop |\n| Work you send to Claude Code through Telegram | Runs on the computer, not in your browser |\n| Hermes, OpenClaw and Agent Zero | Run on the computer itself and need no open browser |\n| Aeon | Its scheduled work runs on your own GitHub Actions. The computer hosts its dashboard |\n| A reply in Chat, or in the agent's own session | Do not rely on it to outlive your tab. If the work matters, start it in tmux |\n| Files, repos, logins and CLI session history | Stay on the computer |",
-        "Staying on depends on the plan. " + HOSTED_COMPUTE_NEEDS_PLAN_SHORT + " A paid plan is not paused for inactivity. A computer you connected yourself keeps whatever uptime the machine has. If you stop a computer from Settings, it is off until you start it, and stopping does not cancel your plan or any provider billing.",
+        "On an eligible paid KVM computer where sleep and wake are enabled, **Settings → Overview → Sleep when idle** lets the idle VM nap and then hibernate. Hibernation saves memory to disk, and supported owner access such as opening **Files** can wake it. Active work, schedules or a channel without a supported wake path can keep it awake. **Keep awake**, where offered, overrides idle sleep for a paid computer.",
+        "**Keep awake** is available only where the computer's funding and runtime support it. A computer you connected yourself also depends on the host's uptime and settings. If you explicitly **Stop** a computer in Settings, it stays stopped until you **Start** it. Stopping does not cancel your plan or provider billing.",
       ],
     },
     {

@@ -82,8 +82,9 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
   const own = saved?.agentId === agent.id ? saved : null;
   const policy = own ? own.policy : agent.sleep_policy ?? null;
   const holderSeat = agent.seat_funding === "holder";
-  const alwaysOn = holderSeat ? false : own ? own.alwaysOn : agent.always_on === true;
-  const sleepWhenIdle = holderSeat ? true : policy === "full";
+  const storedAlwaysOn = own ? own.alwaysOn : agent.always_on;
+  const alwaysOn = !holderSeat && storedAlwaysOn === true;
+  const sleepWhenIdle = holderSeat ? storedAlwaysOn === false && (policy === "full" || policy === "t1") : policy === "full";
   const asleep = view !== "awake";
 
   const save = async (which: "policy" | "always_on", patch: { sleep_policy?: "off" | "full"; always_on?: boolean }) => {
@@ -159,7 +160,7 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
           <Switch
             checked={sleepWhenIdle && !alwaysOn}
             label="Sleep when idle"
-            disabled={!idle || alwaysOn || holderSeat}
+            disabled={!idle || alwaysOn || (holderSeat && sleepWhenIdle)}
             busy={busy === "policy"}
             onToggle={() => void save("policy", { sleep_policy: sleepWhenIdle ? "off" : "full" })}
           />
@@ -170,7 +171,7 @@ export function ManageSleepSettings({ agent, onChanged }: { agent: HivraAgent; o
             </div>
             <div style={{ fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
               {holderSeat
-                ? "This computer is funded by holding tokens. It naps after 4 minutes idle and saves to disk after 16 minutes total."
+                ? "This computer is funded by holding tokens. Once enabled, it naps after 4 minutes idle and saves to disk after 16 minutes total."
                 : "Your agent naps when no one is using it and wakes when you open it."}
             </div>
           </div>

@@ -14,9 +14,11 @@ const SUPPORT_EMAIL = "info@hivra.cloud";
 export default function DownloadPage({
   downloads = getDesktopDownloads(),
   browserHref = PUBLIC_PROJECT_LINKS.browser,
+  paidSleep = false,
 }: {
   downloads?: DesktopDownloads;
   browserHref?: string;
+  paidSleep?: boolean;
 }): ReactNode {
   const mac = downloads.macos;
 
@@ -25,8 +27,8 @@ export default function DownloadPage({
       <header className={editorial.masthead}>
         <h1>Hivra on your computer.</h1>
         <p>
-          Some work is easier when you can reach your agents without keeping another browser tab open. This page is
-          where you&rsquo;ll find supported desktop downloads and installation guidance.
+          Some work is easier when you can reach your agents without keeping another browser tab open.
+          {" Use Hivra in your browser or install the Mac app where available."}
         </p>
       </header>
 
@@ -34,9 +36,9 @@ export default function DownloadPage({
         <section className={styles.section} aria-labelledby="download-macos-heading">
           <h2 id="download-macos-heading">macOS</h2>
           <div className={styles.body}>
-            <div className={styles.state} data-state={mac.status}>
-              <p id="download-macos-status">{mac.status === "published" ? mac.label : "Public download coming soon."}</p>
-              {mac.status === "published" ? (
+            {mac.status === "published" && (
+              <div className={styles.state} data-state={mac.status}>
+                <p id="download-macos-status">{mac.label}</p>
                 <a
                   className={styles.stateButton}
                   href={mac.href}
@@ -47,20 +49,14 @@ export default function DownloadPage({
                   Download for Mac
                   <Download size={17} aria-hidden="true" />
                 </a>
-              ) : (
-                <button type="button" className={styles.stateButton} disabled aria-describedby="download-macos-status">
-                  Download for macOS
-                  <Download size={17} aria-hidden="true" />
-                </button>
-              )}
-            </div>
+              </div>
+            )}
             {mac.status === "published" ? (
               <p>
-                Before installing, check that your Mac meets the supported system requirements and that the release
-                comes from an official Hivra distribution channel.
+                Hivra for Mac is a desktop client for your remote computers. It does not launch a hosted macOS computer.
               </p>
             ) : null}
-            <p>If the desktop app is not available for your Mac yet, you can still use Hivra in your browser.</p>
+            <p>You can also use Hivra in your browser.</p>
             <ActionLinks items={[{ label: "Open Hivra", href: browserHref, kind: "primary" }]} />
           </div>
         </section>
@@ -69,9 +65,9 @@ export default function DownloadPage({
           <h2 id="download-where-heading">Keep the work where it belongs</h2>
           <div className={styles.body}>
             <p>
-              Your Hivra-hosted computers run remotely. A paid Hivra Cloud computer stays on and is not paused for
-              inactivity. Closing the desktop app doesn&rsquo;t turn it into a local process, although individual
-              agent workflows can still stop, fail or reach their own usage limits.
+              Your Hivra-hosted computers run remotely. Closing the Mac app doesn&rsquo;t stop them.
+              {paidSleep && " Computers with idle sleep enabled can sleep when idle. Open one again to wake it."}
+              {" Individual agent workflows can still stop, fail or reach their own usage limits."}
             </p>
             <p>
               Need help installing or signing in? Reach us at <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.

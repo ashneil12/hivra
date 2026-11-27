@@ -250,6 +250,7 @@ const nextConfig: NextConfig = {
             "/",
             "/blog/:path*",
             "/features/:path*",
+            "/sandboxes",
             "/compare/:path*",
             "/agents/:path*",
             "/tools/:path*",

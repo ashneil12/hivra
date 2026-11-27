@@ -5,31 +5,29 @@ export const article: BlogArticle = {
   title: "OpenBot: CopilotKit's AI coworkers, hosted on a computer of their own",
   metaTitle: "OpenBot by CopilotKit: AI coworkers on a hosted computer",
   metaDescription:
-    "OpenBot is CopilotKit's open-source AI coworkers, each with its own browser and files. What it needs, why it is in preview on Hivra, and how it is set up.",
+    "Meet CopilotKit's OpenBot AI coworkers. Learn what their browser and files are for, what key you need, and how to start with one small task.",
   publishedDate: "2026-11-17",
-  lastModified: "2026-11-17",
+  lastModified: "2026-11-27",
   readingTimeMin: 6,
   author: "Hivra Team",
   tagline: "Coworkers with their own browser and files, in a workspace you open.",
   intro:
-    "OpenBot is CopilotKit's open-source take on AI coworkers: agents with their own browser and files that you work alongside in a shared workspace. Hivra can host it on a computer of its own, but it is a preview there, and it is not in the Launch list yet.",
+    "OpenBot is CopilotKit's open-source workspace for AI coworkers, agents with their own browser and files. If OpenBot appears in your Hivra Launch list, you can run the workspace on its own cloud computer.",
   shortAnswer:
-    "OpenBot is CopilotKit's open-source set of AI coworkers, each with its own browser and files, in OpenBot's own workspace. On Hivra it is in preview and not in the Launch list yet. It runs on a Hivra Cloud computer, needs a CopilotKit Intelligence key, and uses Hivra credits for models by default.",
+    "OpenBot is CopilotKit's workspace for AI coworkers with their own browser and files. If it is listed in your Hivra Launch screen, it runs on a paid Hivra Cloud computer. Bring a CopilotKit Intelligence key to open the workspace. Model usage draws from Hivra credits by default.",
   sections: [
     {
       heading: "What OpenBot is",
       paragraphs: [
         "Most AI tools are one assistant in one chat window. OpenBot is built around coworkers: several agents you can hand work to, each with a browser and a set of files of its own. You manage them from OpenBot's own workspace instead of from a terminal.",
-        "It comes from CopilotKit, the team behind the CopilotKit toolkit for building agent-powered applications. OpenBot is released under the MIT license. There are other projects that use the name OpenBot, and this article is only about the CopilotKit one.",
+        "It comes from CopilotKit, the team behind the CopilotKit toolkit for building agent-powered applications. OpenBot is open source. There are other projects that use the name OpenBot, and this article is only about the CopilotKit one.",
         "The point of a hosted setup is the same as for any agent. Your agent needs computer access. It doesn't need your computer. Coworkers that browse the web and keep files are better off on a computer that is theirs, so their downloads, logins and half-finished work stay out of your own machine.",
       ],
     },
     {
-      heading: "Preview, and not in the Launch list yet",
+      heading: "Where OpenBot runs",
       paragraphs: [
-        "OpenBot on Hivra is a preview, and it is not in the Launch list yet. That means you cannot pick it from the Launch screen today. Hivra keeps it off by default while it is checked, and it appears in the list only on a deployment where the switch for it is turned on.",
-        "Say that plainly to yourself before planning around it. If you need an agent you can launch today, the ones in the Launch list are the ones to use, and the [agents page](/agents) shows what they are. This page describes what OpenBot on Hivra is designed to do, so you know what to expect when it arrives.",
-        "When it is on, it runs only on Hivra Cloud, on a paid plan. It does not run on connected servers.",
+        "OpenBot is not available on every Hivra account. Check your Launch list before planning around it. Where it is offered, it runs on a paid Hivra Cloud plan and cannot run on a connected server.",
       ],
     },
     {
@@ -59,15 +57,15 @@ export const article: BlogArticle = {
     {
       heading: "Who it is for",
       paragraphs: [
-        "OpenBot suits developers and AI power users who like the idea of delegating to several agents at once and want a workspace for it. It is a young project, and the preview label on Hivra reflects that.",
+        "OpenBot suits people who want to delegate to several agents in one workspace. Try one coworker on a small task first so you know what a useful result looks like.",
         "If you want one general agent that takes a goal and works through it, [Agent Zero](/blog/what-is-agent-zero) is available now. Hivra is an independent hosting service and is not affiliated with or endorsed by CopilotKit.",
       ],
     },
   ],
   faqs: [
     {
-      q: "Can I launch OpenBot on Hivra today?",
-      a: "Not from the Launch list. OpenBot is in preview on Hivra and is not in the Launch list yet. It appears only on a deployment where Hivra has turned it on.",
+      q: "How do I know whether I can launch OpenBot on Hivra?",
+      a: "Check your Hivra Launch list. If OpenBot is listed, you can run it on a paid Hivra Cloud plan, not on a connected server.",
     },
     {
       q: "What do I need to run OpenBot?",

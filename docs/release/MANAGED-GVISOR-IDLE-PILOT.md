@@ -18,7 +18,17 @@ loads, foreign users and Terminal commands do not wake a stopped sandbox.
 The existing workspace volume stays attached; processes and in-memory
 `/tmp` are not preserved. No checkpoint support is proposed here.
 
-## Future acceptance on Canary
+## Canary evidence and repeat checks
+
+On canonical Git Canary build `be8cf08d`, the scoped standing-account test
+recorded three automatic stops, three explicit owner Starts and matching
+workspace markers after every Start. Controlled admission pressure denied a
+Create and a Start without filling the filesystem. The sandbox and fixture
+were removed; after the enrollment expired, both tested accounts saw the
+managed Launch path disabled. These are fixture results, not evidence of
+physical host RAM savings, production quotas or capacity, or public access.
+The exact-build run did not establish a cron sweep overlapping an active
+command. Repeat the checks below for any subsequent authorised cohort.
 
 - Have the exact additive pilot migration applied and verified by an
   authorized operator. Confirm the exact Git-sourced build, hash-pinned

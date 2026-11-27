@@ -1,4 +1,7 @@
 import { BlogArticle, BlogSection } from "./blog/types";
+import { getCatalogAppManifest, isCatalogAppLaunchable } from "./hivra/catalog-manifests";
+import { isNuphosAgentEnabled } from "./hivra/nuphos-flag";
+import { isOpenBotAgentEnabled } from "./hivra/openbot-flag";
 import { article as whatIsHermesAgent } from "./blog/articles/what-is-hermes-agent";
 import { article as costOfRunningAiAgent } from "./blog/articles/cost-of-running-ai-agent";
 import { article as aiAgentAutomationExamples } from "./blog/articles/ai-agent-automation-examples";
@@ -37,6 +40,7 @@ import { article as openbotAiCoworkers } from "./blog/articles/openbot-ai-cowork
 import { article as nuphosClaudeCodeTeamChat } from "./blog/articles/nuphos-claude-code-team-chat";
 import { article as whatIsAeonAgent } from "./blog/articles/what-is-aeon-agent";
 import { article as whatIsAgentZero } from "./blog/articles/what-is-agent-zero";
+import { article as whatIsZeroClaw } from "./blog/articles/what-is-zeroclaw";
 import { article as ubuntuDesktopInTheCloud } from "./blog/articles/ubuntu-desktop-in-the-cloud";
 import { article as openclawBrokenAfterUpdate } from "./blog/articles/openclaw-broken-after-update";
 import { article as unattendedAgentSafety } from "./blog/articles/is-it-safe-to-leave-an-ai-agent-running-unattended";
@@ -117,6 +121,7 @@ export const BLOG_ARTICLES: Record<string, BlogArticle> = {
   "nuphos-claude-code-team-chat": nuphosClaudeCodeTeamChat,
   "what-is-aeon-agent": whatIsAeonAgent,
   "what-is-agent-zero": whatIsAgentZero,
+  "what-is-zeroclaw": whatIsZeroClaw,
   "ubuntu-desktop-in-the-cloud": ubuntuDesktopInTheCloud,
   "hermes-agent-cloud": hermesAgentCloud,
   "openrouter-free-models": openrouterFreeModels,
@@ -135,5 +140,20 @@ export const BLOG_ARTICLES: Record<string, BlogArticle> = {
 export const BLOG_ARTICLES_LIST: BlogArticle[] = Object.values(BLOG_ARTICLES).sort(
   (a, b) => new Date(b.publishedDate).getTime() - new Date(a.publishedDate).getTime()
 );
+
+export function getPublicBlogArticle(slug: string): BlogArticle | undefined {
+  if (!Object.hasOwn(BLOG_ARTICLES, slug)) return undefined;
+  if (slug === openbotAiCoworkers.slug && !isOpenBotAgentEnabled()) return undefined;
+  if (slug === nuphosClaudeCodeTeamChat.slug && !isNuphosAgentEnabled()) return undefined;
+  if (slug === whatIsZeroClaw.slug) {
+    const manifest = getCatalogAppManifest("zeroclaw");
+    if (!manifest || !isCatalogAppLaunchable(manifest)) return undefined;
+  }
+  return BLOG_ARTICLES[slug];
+}
+
+export function getPublicBlogArticles(): BlogArticle[] {
+  return BLOG_ARTICLES_LIST.filter(({ slug }) => getPublicBlogArticle(slug));
+}
 
 export type { BlogArticle, BlogSection };

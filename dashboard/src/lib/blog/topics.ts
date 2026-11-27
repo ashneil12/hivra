@@ -93,11 +93,12 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
   {
     slug: "meet-the-agents",
     title: "Meet the agents",
-    blurb: "One article for each agent and computer you can run on Hivra: what it is, what it needs, and how it is set up. Previews are marked as previews.",
+    blurb: "Get to know individual agents and computers: what they do, what they need, and where to start.",
     articles: [
       "what-is-agent-zero",
       "what-is-aeon-agent",
       "deepseek-harness-coding-agent",
+      "what-is-zeroclaw",
       "openbot-ai-coworkers",
       "nuphos-claude-code-team-chat",
       "ubuntu-desktop-in-the-cloud",

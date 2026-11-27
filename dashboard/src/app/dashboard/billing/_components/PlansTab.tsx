@@ -31,7 +31,7 @@ import { TOKEN_PAYMENT_FINALITY } from "@/components/billing/TransferDetails";
 import { LadderPlans, usePlanLadder } from "./LadderPlans";
 
 export const PLANS_INTRO =
-  `Every computer that Hivra Cloud runs for you needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. A free account works with a computer or server you connect yourself. Bring your own model key and we add nothing to what you spend.`;
+  `Paid Hivra Cloud plans start at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. A free account works with a computer or server you connect yourself. Bring your own model key and we add nothing to what you spend.`;
 
 /**
  * When an in-place change is billed. The route swaps the subscription to the

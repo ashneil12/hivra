@@ -38,7 +38,7 @@ import { requireDb } from "@/lib/billing/db-utils";
 import { log } from "@/lib/logger";
 import { reportOpsEvent } from "@/lib/ops-events";
 import { supabaseAdmin } from "@/lib/supabase";
-import { RpcHttpError, normalizeRpcRetryConfig, sleep, type RpcCallOptions, type RpcRetryConfig } from "@/lib/billing/base-rpc-retry";
+import { RpcCallAbortedError, RpcHttpError, normalizeRpcRetryConfig, sleep, type RpcCallOptions, type RpcRetryConfig } from "@/lib/billing/base-rpc-retry";
 import {
   createBaseChainReader,
   paymentDustFloor,
@@ -47,7 +47,10 @@ import {
   type BaseChainReader,
   type JsonRpcFetch,
   type ScannedTransfer,
+  type TransferWindowScan,
 } from "@/lib/billing/base-transfer-scan";
+import { checkpointYearlyWindow, loadYearlyCheckpoints, type FinalizedReader } from "@/lib/billing/yearly-token-checkpoint";
+import { YearlyScanDeferredError, YearlyScanRpcError } from "@/lib/billing/yearly-finalized-transfer-reader";
 import {
   loadHermesosTransferOwnership,
   loadNextHermesosPaymentSessionMs,
@@ -131,6 +134,8 @@ export interface YearlyReconcileBatchResult {
   failed: number;
   /** Quotes left for the next run because the batch deadline passed. */
   deferred: number;
+  checkpointedBlocks?: number;
+  rpcDeferred?: number;
   results: Array<YearlyReconcileResult | (Pick<YearlyReconcileResult, "quoteId" | "userId" | "tier"> & {
     status: "failed";
     errorName: string;
@@ -413,6 +418,7 @@ async function closeQuote(db: YearlySettlementDb, quoteId: string, status: "manu
     .eq("id", quoteId)
     .in("status", ["active", "expired"])
     .is("consumed_tx_hash", null)
+    .is("attribution_closed_at", null)
     .select("id, status");
   if (error) throw new Error(`Failed to move yearly quote to ${status}: ${error.message || "unknown error"}`);
   return Array.isArray(data) && data.length > 0;
@@ -484,7 +490,7 @@ async function stampTokenConversion(db: YearlySettlementDb, userId: string, now:
 async function surfaceWrongTokenTransfers(
   db: YearlySettlementDb,
   params: {
-    chain: BaseChainReader;
+    read: (tokenAddress: string, minAmount: bigint) => Promise<TransferWindowScan>;
     quote: YearlyTokenQuote;
     fromMs: number;
     toMs: number;
@@ -496,15 +502,7 @@ async function surfaceWrongTokenTransfers(
     (token) => token.address !== params.quote.tokenAddress.toLowerCase()
   );
   for (const token of others) {
-    const scan = await scanErc20TransfersInWindow({
-      chain: params.chain,
-      tokenAddress: token.address,
-      toAddress: params.quote.depositAddress,
-      fromMs: params.fromMs,
-      toMs: params.toMs,
-      minConfirmations: params.minConfirmations,
-      minAmount: tokenDustFloor(token.decimals),
-    });
+    const scan = await params.read(token.address, tokenDustFloor(token.decimals));
     const inRange = scan.transfers.filter(
       (transfer) =>
         transfer.timestampMs >= params.fromMs &&
@@ -533,6 +531,8 @@ export async function reconcileYearlyTokenQuote(params: {
   rpcOptions?: RpcCallOptions;
   minConfirmations?: number;
   now?: Date;
+  scanFinalized?: (fromMs: number, toMs: number) => Promise<Awaited<ReturnType<typeof checkpointYearlyWindow>>>;
+  allowPartialFinalizedPayment?: boolean;
   /** Runs after a payment settles; moves the payer's instances onto the paid tier. */
   applyYearlyPayment?: (userId: string, trigger: YearlyPaymentTrigger) => Promise<void>;
 }): Promise<YearlyReconcileResult> {
@@ -571,21 +571,37 @@ export async function reconcileYearlyTokenQuote(params: {
   // A transfer at or after the next session's start belongs to that session.
   const rangeEndMs = boundaryMs === null ? graceEndMs : Math.min(graceEndMs, boundaryMs - 1);
 
+  const checkpoint = await params.scanFinalized?.(quotedAtMs, rangeEndMs);
+  if (checkpoint && !checkpoint.complete) {
+    const hasCandidate = params.allowPartialFinalizedPayment && settling && checkpoint.transfers.some(
+      (transfer) => transfer.tokenAddress === quote.tokenAddress && transfer.timestampMs <= expiresAtMs &&
+        transfer.amount >= quote.tokensRequiredRaw && transfer.amount <= quote.tokensRequiredRaw * 2n,
+    );
+    if (!hasCandidate) return { ...base, status: "watching" } satisfies YearlyReconcileResult;
+  }
+  const read = async (tokenAddress: string, minAmount: bigint): Promise<TransferWindowScan> => checkpoint
+    ? {
+        transfers: checkpoint.transfers.filter((transfer) => transfer.tokenAddress === tokenAddress),
+        confirmedHeadMs: checkpoint.complete ? checkpoint.confirmedHeadMs : Math.min(expiresAtMs, rangeEndMs) - 1,
+        dustSkipped: 0,
+      }
+    : scanErc20TransfersInWindow({
+        chain,
+        tokenAddress,
+        toAddress: quote.depositAddress,
+        fromMs: quotedAtMs,
+        toMs: rangeEndMs,
+        minConfirmations,
+        minAmount,
+      });
+
   // Only transfers of the quote's own token can pay it.
-  const scan = await scanErc20TransfersInWindow({
-    chain,
-    tokenAddress: quote.tokenAddress,
-    toAddress: quote.depositAddress,
-    fromMs: quotedAtMs,
-    toMs: rangeEndMs,
-    minConfirmations,
-    minAmount: paymentDustFloor(quote.tokensRequiredRaw),
-  });
+  const scan = await read(quote.tokenAddress, paymentDustFloor(quote.tokensRequiredRaw));
   // Any other live platform token sent into this range is the wrong token:
   // surfaced for operator recovery, never credited. With $HIVRA dormant
   // there is no other token and nothing extra is scanned.
   await surfaceWrongTokenTransfers(db, {
-    chain,
+    read,
     quote,
     fromMs: quotedAtMs,
     toMs: rangeEndMs,
@@ -613,6 +629,7 @@ export async function reconcileYearlyTokenQuote(params: {
   const isConfirmed = (transfer: ScannedTransfer) => transfer.confirmations >= minConfirmations;
   const confirmed = attributable.filter(isConfirmed);
   const rangeScanned = now.getTime() > rangeEndMs && scan.confirmedHeadMs >= rangeEndMs;
+  const quoteExpired = now.getTime() > expiresAtMs;
 
   // ── Settled or in-review quote: keep surfacing until the range closes ──
   if (watching) {
@@ -659,7 +676,7 @@ export async function reconcileYearlyTokenQuote(params: {
     if (attributable.length > 0) {
       return { ...base, status: "underconfirmed", confirmations: Math.max(...attributable.map((t) => t.confirmations)) };
     }
-    if (rangeScanned) {
+    if (quoteExpired && rangeScanned) {
       await closeQuote(db, quote.id, "cancelled", now);
       return { ...base, status: "cancelled" };
     }
@@ -742,7 +759,7 @@ export async function reconcileYearlyTokenQuote(params: {
   for (const transfer of confirmed) {
     if (classOf(transfer) === "over") await surfaceTransfer(db, quote, transfer, "overpaid");
   }
-  const windowClosed = now.getTime() > expiresAtMs && scan.confirmedHeadMs >= expiresAtMs;
+  const windowClosed = quoteExpired && scan.confirmedHeadMs >= expiresAtMs;
   const reviewTrigger = windowClosed
     ? confirmed.find((transfer) => classOf(transfer) === "over") ??
       confirmed.find((transfer) => classOf(transfer) === "late_qualifying") ??
@@ -779,7 +796,7 @@ export async function reconcileYearlyTokenQuote(params: {
 
   // 3. Retire: the whole range is scanned at full confirmations and nothing
   //    left can settle or review this quote.
-  if (rangeScanned && confirmed.length === lateOther.length) {
+  if (quoteExpired && rangeScanned && confirmed.length === lateOther.length) {
     await closeQuote(db, quote.id, "cancelled", now);
     return { ...base, status: "cancelled" };
   }
@@ -835,6 +852,7 @@ export async function reconcilePendingYearlyTokenQuotes(
     requestTimeoutMs?: number;
     /** Wall-clock ms after which no further quote is started (left for the next run). */
     deadlineMs?: number;
+    finalizedReader?: FinalizedReader;
     applyYearlyPayment?: (userId: string, trigger: YearlyPaymentTrigger) => Promise<void>;
   } = {}
 ): Promise<YearlyReconcileBatchResult> {
@@ -845,9 +863,23 @@ export async function reconcilePendingYearlyTokenQuotes(
     tier: params.tier,
     limit: params.limit,
   });
+  const historical = new Set(params.finalizedReader
+    ? quotes.filter((quote) => !(
+        quote.status === "cancelled" || (quote.status === "consumed" && !quote.consumedTxHash)
+      ) && Date.parse(quote.expiresAt) + YEARLY_LATE_PAYMENT_GRACE_MS < (params.now?.getTime() ?? Date.now()))
+      .map((quote) => quote.id)
+    : []);
+  const prior = await loadYearlyCheckpoints(db, params.finalizedReader ? quotes.map((quote) => quote.id) : []);
+  const ordered = historical.size
+    ? [...quotes.filter((quote) => !historical.has(quote.id)),
+       ...quotes.filter((quote) => historical.has(quote.id)).sort((a, b) =>
+         (prior.get(a.id)?.progressed_at ?? "").localeCompare(prior.get(b.id)?.progressed_at ?? ""))]
+    : quotes;
+  const deadlineMs = params.deadlineMs;
   const rpcOptions: RpcCallOptions = {
     retryConfig: normalizeRpcRetryConfig(params.rpcRetryConfig),
     sleepImpl: params.rpcSleepImpl,
+    shouldStop: deadlineMs === undefined ? undefined : () => Date.now() >= deadlineMs,
   };
   // One chain view per batch: the head and block timestamps are fetched once.
   const chain = createBaseChainReader({
@@ -875,10 +907,16 @@ export async function reconcilePendingYearlyTokenQuotes(
     deferred: 0,
     results: [],
   };
+  if (params.finalizedReader) {
+    summary.checkpointedBlocks = 0;
+    summary.rpcDeferred = 0;
+  }
+  let recentNeedsFallback = false;
+  let pauseFinalized = false;
 
-  for (const [index, quote] of quotes.entries()) {
+  for (const [index, quote] of ordered.entries()) {
     if (params.deadlineMs !== undefined && Date.now() >= params.deadlineMs) {
-      summary.deferred = quotes.length - index;
+      summary.deferred += ordered.length - index;
       log.warn("yearly token reconciliation hit its deadline; deferring the rest", {
         source: "yearly-token-settlement",
         failureType: "yearly_token_reconcile_deadline",
@@ -886,17 +924,52 @@ export async function reconcilePendingYearlyTokenQuotes(
       });
       break;
     }
+    const stale = historical.has(quote.id);
+    let useCheckpoint: boolean = stale || prior.has(quote.id) || recentNeedsFallback;
+    if (useCheckpoint && pauseFinalized) {
+      summary.deferred += 1;
+      continue;
+    }
     if (index > 0 && interQuoteDelayMs > 0) await sleepImpl(interQuoteDelayMs);
     summary.checked += 1;
     try {
-      const result = await reconcileYearlyTokenQuote({
+      const reconcile = () => reconcileYearlyTokenQuote({
         quote,
         db,
         chain,
         minConfirmations: params.minConfirmations,
         now: params.now,
+        allowPartialFinalizedPayment: !stale,
+        scanFinalized: params.finalizedReader && useCheckpoint ? async (fromMs, toMs) => {
+          const progress = await checkpointYearlyWindow({
+            db,
+            reader: params.finalizedReader!,
+            quote,
+            prior: prior.get(quote.id),
+            fromMs,
+            toMs,
+            now: params.now ?? new Date(),
+          });
+          summary.checkpointedBlocks = (summary.checkpointedBlocks ?? 0) + progress.blocks;
+          if (!progress.complete) summary.deferred += 1;
+          return progress;
+        } : undefined,
         applyYearlyPayment: params.applyYearlyPayment,
       });
+      let result;
+      try {
+        result = await reconcile();
+      } catch (error) {
+        if (!params.finalizedReader || useCheckpoint || pauseFinalized || !(error instanceof RpcHttpError) || error.status !== 429) throw error;
+        log.warn("Yearly attribution log query throttled; using finalized checkpoints", {
+          source: "yearly-token-settlement",
+          failureType: "yearly_token_reconcile_fallback",
+          rpcHttpStatus: error.status,
+          rpcMethod: error.rpcMethod,
+        });
+        recentNeedsFallback = useCheckpoint = true;
+        result = await reconcile();
+      }
       if (result.status === "activated") summary.activated += 1;
       else if (result.status === "renewed") summary.renewed += 1;
       else if (result.status === "underconfirmed") summary.underconfirmed += 1;
@@ -907,6 +980,20 @@ export async function reconcilePendingYearlyTokenQuotes(
       else summary.skipped += 1;
       summary.results.push(result);
     } catch (error) {
+      if (params.finalizedReader && (error instanceof YearlyScanDeferredError ||
+          error instanceof RpcCallAbortedError || (error instanceof RpcHttpError && error.status === 429))) {
+        summary.deferred += 1;
+        summary.rpcDeferred = (summary.rpcDeferred ?? 0) + 1;
+        if (useCheckpoint) pauseFinalized = true;
+        else recentNeedsFallback = true;
+        log.warn("Yearly attribution paused; the next tick can resume", {
+          source: "yearly-token-settlement",
+          failureType: "yearly_token_reconcile_deferred",
+          ...(error instanceof RpcHttpError ? { rpcHttpStatus: error.status, rpcMethod: error.rpcMethod } : {}),
+          ...(error instanceof YearlyScanDeferredError ? { rpcHttpStatus: error.rpcHttpStatus, rpcMethod: error.rpcMethod } : {}),
+        });
+        continue;
+      }
       summary.failed += 1;
       log.error("yearly token quote reconciliation failed; continuing", error, {
         source: "yearly-token-settlement",
@@ -914,6 +1001,7 @@ export async function reconcilePendingYearlyTokenQuotes(
         quoteId: quote.id,
         failureType: "yearly_token_reconcile_failed",
         ...(error instanceof RpcHttpError ? { rpcHttpStatus: error.status, rpcMethod: error.rpcMethod } : {}),
+        ...(error instanceof YearlyScanRpcError ? { rpcHttpStatus: error.rpcHttpStatus, rpcMethod: error.rpcMethod } : {}),
       });
       summary.results.push({
         quoteId: quote.id,

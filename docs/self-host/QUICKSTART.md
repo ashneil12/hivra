@@ -1,67 +1,24 @@
 # Self-host Hivra quickstart
 
-**Status:** Implemented review path. Local authentication and the production
-dashboard build have passed focused tests and a local HTTP/browser smoke test.
-A local source-checkout recovery rehearsal has also passed authenticated
-encrypted backup/restore, exact database-marker and uploaded-file byte checks, guarded uninstall,
-master-key rewrap with rejection by the retired key, and zero retained Hivra
-containers, volumes, or networks.
-A live source-checkout acceptance run also created and prepared a fresh Hetzner
-computer, launched Codex through the original agent flow, opened the native
-interfaces, captured the installed-state receipt/SBOM/notices, and removed every
-provider resource. The initial exported-source control-plane installation and
-recovery rehearsal
-has since passed; see [verification status](../release/VERIFICATION-STATUS.md).
-This does not establish provider-agent restart, model inference, or acceptance
-of every runtime from that export.
+**Status: Single-operator preview.** This path runs the dashboard and database
+under your control without a Hivra Cloud or Clerk account. Hosted payment
+endpoints are disabled. For current availability across all paths, see
+[what Hivra offers today](../STATUS.md).
 
-Release reviewers can now repeat the local control-plane half from the exact
-committed source archive rather than trusting a developer checkout:
-
-```bash
-mkdir -m 700 /absolute/private/public-source-rehearsal
-cd dashboard
-npm run test:self-host-public-source -- \
-  --work-dir /absolute/private/public-source-rehearsal
-```
-
-The command requires a clean committed tree, builds the private fail-closed
-public-source candidate, installs the candidate's exact dashboard lockfile in
-the extracted Git archive, runs the prerequisite doctor, then completes the
-authenticated encrypted backup/restore, master-key rotation, and guarded
-uninstall rehearsal from that Git-free export. On success it removes the
-candidate, extracted source, and nested local state and leaves one owner-only
-`public-source-bootstrap-e2e.json` receipt. It does not create provider capacity
-or turn a private review candidate into a public release.
-
-This is the simple single-operator path. It keeps the control plane, database,
-credentials and provider connections under the operator's control. It does not
-require a Hivra Cloud account or Clerk, and hosted payment endpoints are disabled.
+To evaluate the dashboard, [install](#install) and [start](#start-and-stop) it.
+To run a first agent, also plan for [supported compute](#connect-compute) and the
+agent's own model credentials. The dashboard's Docker stack does not supply
+agent compute or local inference. The root `docker-compose.yml` is standalone
+Hermes development wiring, not an alternative to these install steps.
 
 ## Requirements
 
-### Failed recovery and interrupted Docker operations
-
-If a restore fails and Docker cannot prove that its temporary containers,
-volumes and network were removed, the launcher retains its owner-only
-`.hivra-restore-…/state` directory and prints that exact path. Keep it and the
-original encrypted backup: `database-runtime.json` and the private control-plane
-configuration identify the resources that need reconciliation. Do not delete
-the directory or start a second restore to hide an unresolved cleanup failure.
-The incomplete directory is recovery evidence, not a ready installation.
-
-Backup/restore also reconciles the original storage container after a lost stop
-acknowledgement. It restores a previously running service only after inspecting
-that exact container; an unavailable Docker daemon remains an explicit failure.
-
-### Supported local environment
-
 - Linux or macOS. On Windows, use WSL 2 for this review path.
-- Node.js 22.22 or newer in the Node 22 line.
+- Node.js 22.22 or newer (use an active LTS release).
 - At least 4 CPU cores, 8 GB RAM and 20 GB free disk for a comfortable local
   control-plane setup. Agent computers need additional provider capacity.
-- A running Docker-compatible engine: Docker Desktop, OrbStack, Rancher Desktop,
-  Podman with Docker compatibility, or Colima.
+- A running Docker-compatible engine and permission to reach its daemon as the
+  user running the installer. Check with `docker info`.
 - `npx`, used to run the pinned Supabase CLI `2.116.0` regardless of any older
   machine-global CLI. A repository-local Supabase binary takes precedence when
   present, but it must match the pinned version before services can start.
@@ -73,7 +30,13 @@ Do not expose these ports directly to the public internet.
 
 ## Install
 
-From a clean checkout:
+Use a clean source checkout and an interactive terminal. If you don't have the
+source yet, clone it first:
+
+```bash
+git clone https://github.com/ashneil12/hivra.git
+cd hivra
+```
 
 ```bash
 cd dashboard
@@ -119,6 +82,9 @@ default installation. Keep passwords in the interactive prompt or the documented
 test environment variable, not in command-line arguments.
 
 ## Start and stop
+
+From `dashboard/`, start the control plane. The launcher builds the dashboard
+again, then keeps it running in the foreground.
 
 ```bash
 npm run self-host:start
@@ -193,6 +159,18 @@ provider connections or agent records. Do not use `supabase stop --no-backup` or
 `supabase db reset` on an installation you intend to keep.
 
 ## Encrypted backup and recovery
+
+If a restore fails and Docker cannot prove that its temporary containers,
+volumes and network were removed, the launcher retains its owner-only
+`.hivra-restore-…/state` directory and prints that exact path. Keep it and the
+original encrypted backup: `database-runtime.json` and the private control-plane
+configuration identify the resources that need reconciliation. Do not delete
+the directory or start a second restore to hide an unresolved cleanup failure.
+The incomplete directory is recovery evidence, not a ready installation.
+
+Backup/restore also reconciles the original storage container after a lost stop
+acknowledgement. It restores a previously running service only after inspecting
+that exact container; an unavailable Docker daemon remains an explicit failure.
 
 Stop the dashboard, create an owner-only directory outside the checkout and
 installation state, then write an encrypted backup:
@@ -288,7 +266,9 @@ the state directory, and never deletes provider servers, hosts or cloud accounts
 
 ## Connect compute
 
-After signing in, open **Infrastructure**.
+The dashboard can start without a compute host. To launch an agent, sign in and
+open **Infrastructure**. A remote provider computer also needs the
+[HTTPS callback origin](#start-and-stop) set before first-boot preparation.
 
 - Simple mode: add a Hetzner Cloud API token, select a location and size, create
   a server in Hivra, then prepare it. The token is encrypted at rest. The provider
@@ -304,6 +284,31 @@ After signing in, open **Infrastructure**.
 Provider credentials belong in the encrypted Infrastructure flow, not in the
 dashboard environment file. Model/API keys belong in the selected agent's
 credential flow, not in source control or a URL.
+
+## Verify the preview from source
+
+The initial public source export passed the local control-plane installation and
+recovery rehearsal. A separate source-checkout run prepared a fresh Hetzner
+computer, launched Codex, opened its native interfaces and removed every provider
+resource. Neither result proves provider-agent restart, model inference or every
+runtime combination. See [verification status](../release/VERIFICATION-STATUS.md).
+
+Release reviewers can repeat the control-plane rehearsal from a clean, committed
+tree:
+
+```bash
+mkdir -m 700 /absolute/private/public-source-rehearsal
+cd dashboard
+npm run test:self-host-public-source -- \
+  --work-dir /absolute/private/public-source-rehearsal
+```
+
+The command builds a private, fail-closed source candidate and rehearses
+installation, encrypted backup and restore, key rotation and guarded uninstall
+from the exact extracted archive. On success it removes the candidate, extracted
+source and nested state and leaves one owner-only
+`public-source-bootstrap-e2e.json` receipt. It does not create provider capacity
+or publish the candidate.
 
 ## What is not yet a completed release claim
 

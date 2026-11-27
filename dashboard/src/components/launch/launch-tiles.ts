@@ -68,9 +68,9 @@ const AGENT_TILES: readonly ChooseTile[] = [
 ];
 
 export const COMPUTER_TILES: readonly ChooseTile[] = [
-  { id: "ubuntu-server", name: "Linux computer", description: "A light Linux computer with a terminal and files. No desktop.", icon: Terminal },
+  { id: "ubuntu-server", name: "Linux computer", description: "A headless Linux VM with Terminal and Files on a paid Hivra Cloud plan.", icon: Terminal },
   { id: "ubuntu-desktop", name: "Ubuntu Desktop", description: "A desktop, terminal and files you open in your browser.", icon: Monitor },
-  { id: "linux-terminal", name: "Linux Sandbox", description: "A locked-down Linux terminal on a server you've connected.", icon: TerminalSquare },
+  { id: "linux-terminal", name: "Linux Sandbox", description: "One-shot shell commands and a persistent workspace on a server you've connected.", icon: TerminalSquare },
   { id: "omarchy", name: "Omarchy", description: "A ready-made Omarchy desktop you open in your browser.", icon: null },
   { id: "windows", name: "Windows (your ISO)", description: "Install Windows from your own ISO on a server you connected.", icon: AppWindow },
 ];

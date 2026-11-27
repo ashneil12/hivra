@@ -8,6 +8,6 @@ describe("pricing FAQ once the Free plan is closed", () => {
   });
 
   it("keeps the original answers while the Free plan is open", () => {
-    expect(visiblePricingFaq(true, false).map((item) => item.a)).toEqual(PRICING_FAQ.map((item) => item.a));
+    expect(visiblePricingFaq(true, false, true).map((item) => item.a)).toEqual(PRICING_FAQ.map((item) => item.a));
   });
 });

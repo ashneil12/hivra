@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import PublicSite from "@/components/public-site/PublicSite";
 import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
+import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
 import editorial from "../../components/public-editorial/secondary-site.module.css";
 import DownloadPage from "./DownloadPage";
 
@@ -16,10 +17,13 @@ export const metadata: Metadata = {
   ...buildWebsiteMetadata({ path: "/download", title: TITLE, description: DESCRIPTION }),
 };
 
-export default function DownloadRoute() {
+export const dynamic = "force-dynamic";
+
+export default async function DownloadRoute() {
+  const paidSleep = await paidKvmSleepAvailable();
   return (
     <PublicSite className={editorial.page} data-page="download">
-      <DownloadPage />
+      <DownloadPage paidSleep={paidSleep} />
     </PublicSite>
   );
 }

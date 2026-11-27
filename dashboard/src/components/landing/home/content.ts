@@ -7,7 +7,7 @@
 //   app/pricing/pricing-content.ts, so they move with checkout. The guarantee
 //   is always "7-day money-back guarantee on card payments".
 // - "Free" never means free compute: the free account runs on a server the
-//   person provides and pays for. Every Hivra Cloud computer needs a paid plan.
+//   person provides and pays for. Holder-funded access is separate.
 // - A promised login always carries "subject to the provider's terms".
 // - No unlimited or counted agents, no speed promises, no complete-security
 //   claim, no public open-source release until it is verified, and no starter
@@ -262,23 +262,21 @@ export const SHOW_FOUNDER_SECTION = false;
 
 export const FAQ_TITLE = "Frequently asked questions";
 
-/** Kept for callers that still pass it; no homepage question mentions a token any more. */
-export const TOKEN_FAQ_SENTENCE = "Token-related access and future plans are explained separately.";
+export const TOKEN_FAQ_SENTENCE = "Where holder access is enabled, qualified token holders can launch supported computers without a subscription, subject to capacity.";
 
 /**
  * The questions, in order. An answer's paragraphs are separated by a blank
- * line; the page shows each as its own paragraph. `showTokenSentence` is
- * accepted for compatibility and changes nothing.
+ * line; the page shows each as its own paragraph.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function homepageFaq(_showTokenSentence = false): { q: string; a: string }[] {
+export function homepageFaq(showTokenSentence = false): { q: string; a: string }[] {
   return [
     {
       q: "Is Hivra free?",
       a: [
         "Creating a Hivra account is free.",
         "You can connect supported infrastructure you own without paying Hivra for hosting. You'll still be responsible for the cost and maintenance of that infrastructure.",
-        `Hivra Cloud is our managed option, starting at ${ENTRY_PLAN_PRICE} per month. Every Hivra Cloud computer requires a paid plan.`,
+        `Paid Hivra Cloud plans start at ${ENTRY_PLAN_PRICE} per month.`,
+        ...(showTokenSentence ? [TOKEN_FAQ_SENTENCE] : []),
         "Some agents, including Hermes, currently require Hivra Cloud through the hosted service.",
       ].join("\n\n"),
     },

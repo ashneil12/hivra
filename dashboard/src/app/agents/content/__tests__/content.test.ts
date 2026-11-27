@@ -182,8 +182,13 @@ describe("what each page says about AI usage, credits and where the agent runs",
       }
       expect(copy).not.toMatch(/needs a paid size/);
     }
-    expect(hubCopy(HUB_CONTENT).join("\n")).toContain("Every Hivra Cloud computer needs a paid plan, and a paid computer stays available after you close your laptop.");
-    expect(hubCopy(HUB_CONTENT).join("\n")).toContain(`Every computer that Hivra Cloud runs for you needs a paid plan, from ${fill("{entry}")}. ${FREE_ACCOUNT_SENTENCE}`);
+  });
+
+  it("distinguishes paid agent hosting from a connected server on the hub", () => {
+    const copy = hubCopy(HUB_CONTENT).join("\n");
+    expect(copy).toContain(`Paid agent hosting starts at ${fill("{entry}")}.`);
+    expect(copy).toContain(FREE_ACCOUNT_SENTENCE);
+    expect(copy).not.toContain("Every computer that Hivra Cloud runs for you needs a paid plan");
   });
 
   it("keeps the Aeon dashboard line to what the code does: it takes an agent place and none of the shared CPU and RAM", () => {
@@ -283,12 +288,12 @@ describe("the md's own structure", () => {
     }
   });
 
-  it("links only to routes the app has: terms, the repository, and the targets above", () => {
+  it("links only to known inline destinations", () => {
     const hrefs = [
       ...hubCopyMarkup(),
       ...PAGES.flatMap(({ content }) => pageMarkup(content)),
     ].flatMap(linkHrefs);
-    expect([...new Set(hrefs)].sort()).toEqual(["/terms", "https://github.com/ashneil12/hivra"]);
+    expect([...new Set(hrefs)].sort()).toEqual(["/sandboxes", "/terms", "https://github.com/ashneil12/hivra"]);
   });
 });
 

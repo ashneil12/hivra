@@ -34,12 +34,14 @@ import { isAgentToolsEnabled } from "@/lib/tools/agent-tools-flag";
 export const PAGE_LAST_MODIFIED = {
   // New hero, sections, FAQ and identity markup in the copy overhaul, 2026-10-20
   // (before: 2026-09-30).
-  home: "2026-10-20",
+  home: "2026-11-27",
   // New text, sizes and FAQ in the copy overhaul, 2026-10-20 (before: 2026-09-30).
   // Its prices were last checked on PRICES_AS_OF (app/pricing/pricing-content.ts).
-  pricing: "2026-10-20",
+  pricing: "2026-11-27",
   // Hubs were rewritten for the copy overhaul, 2026-10-20 (before: 2026-09-30).
-  featuresHub: "2026-10-20",
+  featuresHub: "2026-11-27",
+  agentsHub: "2026-11-27",
+  sandboxes: "2026-11-27",
   // The /compare price table changed on 2026-11-17 (Hostinger, xCloud, Agent 37 and Nous
   // re-read; lib/compare/competitor-facts.ts), and the same day the directory grew to fifteen
   // pages in four groups with new FAQs. Before: 2026-10-21.

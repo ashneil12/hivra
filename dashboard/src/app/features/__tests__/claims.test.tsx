@@ -142,8 +142,8 @@ describe("feature page claims", () => {
     expect(bannedClaimsOn(route, ["Your agent remembers everything."])).not.toEqual([]);
   });
 
-  it("makes no banned claim on /features", () => {
-    const { container } = render(<FeaturesPage />);
+  it("makes no banned claim on /features", async () => {
+    const { container } = render(await FeaturesPage());
     const copy = [...renderedCopy(container), ...crawlerCopy(featuresMetadata)];
     expect(bannedClaimsOn("/features", copy)).toEqual([]);
     expect(falseCliRunClaims(visibleText(container))).toEqual([]);
@@ -231,8 +231,8 @@ describe("feature page claims", () => {
     expect(visible.length).toBeGreaterThan(0);
   });
 
-  it("writes the FAQPage JSON-LD of /features from the visible questions and answers", () => {
-    const { container } = render(<FeaturesPage />);
+  it("writes the FAQPage JSON-LD of /features from the visible questions and answers", async () => {
+    const { container } = render(await FeaturesPage());
     const graph = JSON.parse(container.querySelector('script[type="application/ld+json"]')?.textContent ?? "{}")["@graph"] as Array<{
       "@type": string;
       mainEntity?: Array<{ name: string; acceptedAnswer: { text: string } }>;
@@ -247,7 +247,7 @@ describe("feature page claims", () => {
   });
 
   it.each(["/features", ...SLUGS.map((slug) => `/features/${slug}`)])("keeps %s free of dashes, notes, brackets, retired names and token copy", async (route) => {
-    const { container } = route === "/features" ? render(<FeaturesPage />) : await renderFeature(route.split("/")[2]);
+    const { container } = route === "/features" ? render(await FeaturesPage()) : await renderFeature(route.split("/")[2]);
     const text = visibleText(container);
     expect(text).not.toMatch(/[–—]/);
     expect(text).not.toMatch(/Editorial checks|not public website copy|Implementation notes/i);
@@ -265,7 +265,7 @@ describe("feature page claims", () => {
   });
 
   it("states the two sizes in the prose form, with the size beside every price", async () => {
-    const pages = [visibleText(render(<FeaturesPage />).container)];
+    const pages = [visibleText(render(await FeaturesPage()).container)];
     cleanup();
     pages.push(visibleText((await renderFeature("multi-agent")).container));
     cleanup();
@@ -279,23 +279,24 @@ describe("feature page claims", () => {
     }
   });
 
-  it("words the refund as the card-payments guarantee and links it to the terms", () => {
-    const { container } = render(<FeaturesPage />);
+  it("words the refund as the card-payments guarantee and links it to the terms", async () => {
+    const { container } = render(await FeaturesPage());
     expect(visibleText(container)).toContain(`A ${MONEY_BACK_GUARANTEE} applies under the current terms.`);
     expect(container.querySelector('a[href="/terms"]')?.textContent).toBe("current terms");
   });
 
-  it("says a paid computer stays on only in the approved words, and never offers a free hosted plan or trial", () => {
-    const { container } = render(<FeaturesPage />);
+  it("distinguishes persistence from uptime and never offers a free hosted plan or trial", async () => {
+    const { container } = render(await FeaturesPage());
     const text = visibleText(container);
-    expect(text).toContain("A paid Hivra Cloud computer stays on and is not paused for inactivity.");
+    expect(text).toContain("Your files can outlast your session, even if the computer pauses when idle.");
+    expect(text).not.toMatch(/stays on|not paused for inactivity/i);
     expect(text).not.toContain("Hivra keeps the computer available when you're offline");
     expect(text).not.toMatch(/free trial|no card|card required|free plan|free tier/i);
   });
 
   it("keeps model access honest: the plan does not include AI usage, and signing in with your own account is the provider's call", async () => {
     const sentence = "The plan does not include AI usage. Bring your own account or key where the agent supports it, or pay with Hivra credits.";
-    const directory = visibleText(render(<FeaturesPage />).container);
+    const directory = visibleText(render(await FeaturesPage()).container);
     cleanup();
     const browser = visibleText((await renderFeature("browser-automation")).container);
     cleanup();
@@ -309,7 +310,7 @@ describe("feature page claims", () => {
 
   it("says the AI-usage sentence once on each page, with no Hosting-and-inference line beside it", async () => {
     const sentence = "The plan does not include AI usage.";
-    const directory = visibleText(render(<FeaturesPage />).container);
+    const directory = visibleText(render(await FeaturesPage()).container);
     cleanup();
     const browser = visibleText((await renderFeature("browser-automation")).container);
     cleanup();
@@ -321,8 +322,8 @@ describe("feature page claims", () => {
     expect(directory).not.toContain("The plan covers the managed computer resources");
   });
 
-  it("answers the /features FAQ on AI work without an API key directly, without repeating the approved sentence", () => {
-    const { container } = render(<FeaturesPage />);
+  it("answers the /features FAQ on AI work without an API key directly, without repeating the approved sentence", async () => {
+    const { container } = render(await FeaturesPage());
     const row = [...container.querySelectorAll("details")].find((details) => (details.querySelector("summary")?.textContent ?? "").startsWith("Will Hivra do the AI work without an API key?"));
     const answer = row?.querySelector("p")?.textContent ?? "";
     expect(answer).toMatch(/^Not as part of the plan\./);

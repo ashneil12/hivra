@@ -10,7 +10,7 @@ import { EmptyPlate, RatingPlate } from "./RatingPlate";
 import styles from "../Billing.module.css";
 
 /** Shown with no plan at all: never subscribed, or a plan that has ended. */
-const NO_PLAN_TEXT = `Every computer that Hivra Cloud runs for you needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. A free account works with a computer or server you connect yourself. If a plan has ended, your Hivra Cloud computers are stopped and their files are kept. Choose a plan, then press Start.`;
+const NO_PLAN_TEXT = `Paid Hivra Cloud plans start at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. A free account works with a computer or server you connect yourself. If a paid plan ends, the computers it funded stop and their files are kept. Choose a plan, then press Start.`;
 
 /** The card trial's line on the plan plate: what the trial has and what full Pro adds. */
 export function cardTrialText(trialEndsAt: string): string {

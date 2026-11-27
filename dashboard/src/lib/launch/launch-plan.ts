@@ -586,7 +586,7 @@ export function capabilitySummary(profileId: LaunchProfileId, { browser }: { bro
   if (profileId === "deepseek-harness") return "DeepSeek's own interface on its own computer.";
   if (profileId === "ubuntu-desktop") return "A desktop, terminal and files on this computer.";
   if (profileId === "ubuntu-server") return "A terminal and files on this computer. No desktop.";
-  if (profileId === "linux-terminal") return "A terminal and files, without administrator access. No desktop, public ports or host folders.";
+  if (profileId === "linux-terminal") return "One-shot shell commands in /workspace, without administrator access. Files saved there persist through Stop and Start. No desktop, public ports or host folders.";
   if (profileId === "omarchy") return "A ready-made Omarchy desktop you open in your browser, with a setup console.";
   return "The Windows installer in your server's console. A desktop connection comes after setup finishes.";
 }

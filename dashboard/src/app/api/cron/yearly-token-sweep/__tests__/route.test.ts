@@ -33,6 +33,7 @@ import {
 
 const mockState: { world: YearlyTokenWorld | null } = { world: null };
 const mockReportOpsEvent = jest.fn();
+const mockBeforeFinalizedScan = jest.fn();
 
 jest.mock("@/lib/supabase", () => ({
   get supabaseAdmin() {
@@ -67,8 +68,44 @@ jest.mock("@/lib/billing/yearly-activation", () => ({
   applyYearlyPaymentToInstances: jest.fn(async () => undefined),
 }));
 
+jest.mock("@/lib/billing/yearly-finalized-transfer-reader", () => ({
+  ...jest.requireActual("@/lib/billing/yearly-finalized-transfer-reader"),
+  createYearlyFinalizedTransferReader: () => {
+    const { chain } = mockState.world!;
+    const hash = (block: number) => `0x${block.toString(16).padStart(64, "0")}`;
+    const header = (number: number) => ({
+      number, timestampMs: Date.parse(chain.blockTimestamp(number)),
+      hash: hash(number), parentHash: hash(number - 1),
+    });
+    return {
+      finalized: async () => header(chain.latestBlock()),
+      block: async (number: number) => header(number),
+      scan: async ({ fromBlock, toBlock, recipient, tokenAddresses }: {
+        fromBlock: number; toBlock: number; recipient: string; tokenAddresses: string[];
+      }) => {
+        mockBeforeFinalizedScan(fromBlock, toBlock);
+        return {
+        lastHash: hash(toBlock),
+        transfers: chain.transfers.filter((transfer) =>
+          transfer.to === recipient && transfer.block >= fromBlock && transfer.block <= toBlock &&
+          tokenAddresses.includes(transfer.tokenAddress ?? HERMESOS_TOKEN_ADDRESS)
+        ).map((transfer) => ({
+          transactionHash: transfer.txHash, logIndex: transfer.logIndex ?? 0,
+          blockNumber: transfer.block, blockHash: hash(transfer.block), amount: BigInt(transfer.amountRaw),
+          confirmations: chain.latestBlock() - transfer.block + 1,
+          tokenAddress: transfer.tokenAddress ?? HERMESOS_TOKEN_ADDRESS,
+          timestampMs: Date.parse(chain.blockTimestamp(transfer.block)), observedAt: chain.blockTimestamp(transfer.block),
+        })),
+        };
+      },
+    };
+  },
+}));
+
 import { GET } from "../route";
 import { applyYearlyPaymentToInstances } from "@/lib/billing/yearly-activation";
+import { HERMESOS_TOKEN_ADDRESS } from "@/lib/billing/token-holdings";
+import { YearlyScanDeferredError } from "@/lib/billing/yearly-finalized-transfer-reader";
 import { recordCronHeartbeat } from "@/lib/cron-heartbeat";
 import * as yearlySettlement from "@/lib/billing/yearly-token-settlement";
 
@@ -88,8 +125,8 @@ async function runCron(query = "") {
   return response;
 }
 
-function setup() {
-  const world = createYearlyTokenWorld();
+function setup(options?: Parameters<typeof createYearlyTokenWorld>[0]) {
+  const world = createYearlyTokenWorld(options);
   mockState.world = world;
   global.fetch = world.chain.fetchImpl as unknown as typeof fetch;
   return world;
@@ -113,6 +150,7 @@ function liveSubscriptions(world: YearlyTokenWorld) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockBeforeFinalizedScan.mockReset();
   process.env = {
     ...originalEnv,
     CRON_SECRET: "cron-secret",
@@ -358,7 +396,7 @@ describe("YR-4: late checks, under-payments and late payments are never dropped"
   });
 
   it("retires an unpaid quote once its window and late-payment grace are fully scanned", async () => {
-    const world = setup();
+    const world = setup({ blockTimeSec: 240 });
     openQuote(world, {
       quoted_at: world.at(-3 * HOUR_MS),
       expires_at: world.at(-3 * HOUR_MS + 20 * MINUTE_MS),
@@ -366,9 +404,77 @@ describe("YR-4: late checks, under-payments and late payments are never dropped"
     });
 
     await runCron();
+    expect(world.quote("yq_1")).toMatchObject({ status: "expired", attribution_closed_at: null });
+    expect(recordCronHeartbeat).toHaveBeenLastCalledWith("yearly-token-sweep", {
+      ok: true, detail: expect.stringContaining("checkpointed_blocks=24"),
+    });
+    await runCron();
 
     expect(world.quote("yq_1")).toMatchObject({ status: "cancelled" });
     expect(world.items()).toHaveLength(0);
+  });
+
+  it("retains an earlier transfer across ticks and does not retire or advance a throttled chunk", async () => {
+    const world = setup({ blockTimeSec: 240 });
+    openQuote(world, {
+      quoted_at: world.at(-3 * HOUR_MS),
+      expires_at: world.at(-3 * HOUR_MS + 20 * MINUTE_MS),
+      status: "expired",
+    });
+    world.pay({ tx: txHash(31), amountRaw: REQUIRED, offsetMs: -3 * HOUR_MS + 8 * MINUTE_MS });
+
+    await runCron();
+    const pending = structuredClone(world.memory.tables.yearly_token_attribution_checkpoints[0]);
+    expect(pending).toMatchObject({ state: { transfers: [expect.objectContaining({ transactionHash: txHash(31) })] } });
+    expect(world.quote("yq_1")).toMatchObject({ status: "expired", attribution_closed_at: null });
+    expect(world.subscriptions()).toHaveLength(0);
+
+    mockBeforeFinalizedScan.mockImplementationOnce(() => {
+      throw new YearlyScanDeferredError("rate limit", "eth_getBlockByNumber", 429);
+    });
+    await runCron();
+    expect(recordCronHeartbeat).toHaveBeenLastCalledWith("yearly-token-sweep", {
+      ok: true, detail: expect.stringContaining("rpc_deferred=1"),
+    });
+    expect(world.memory.tables.yearly_token_attribution_checkpoints[0]).toEqual(pending);
+    expect(world.quote("yq_1")).toMatchObject({ status: "expired", attribution_closed_at: null });
+
+    await runCron();
+    expect(world.subscriptions()).toEqual([expect.objectContaining({ deposit_tx_hash: txHash(31) })]);
+    expect(mockBeforeFinalizedScan.mock.calls[2]).toEqual(mockBeforeFinalizedScan.mock.calls[1]);
+    await runCron();
+    expect(world.subscriptions()).toHaveLength(1);
+  });
+
+  it("can attribute a recent payment from a verified prefix when the indexed RPC is throttled", async () => {
+    const world = setup({ blockTimeSec: 60 });
+    openQuote(world);
+    world.pay({ tx: txHash(41), amountRaw: REQUIRED, offsetMs: -4 * MINUTE_MS });
+    world.chain.failNext({ method: "eth_getLogs", status: 429, times: 4 });
+
+    await runCron();
+
+    expect(world.subscriptions()).toEqual([expect.objectContaining({ deposit_tx_hash: txHash(41) })]);
+    expect(world.quote("yq_1")).toMatchObject({ status: "consumed", attribution_closed_at: null });
+    expect(world.memory.tables.yearly_token_attribution_checkpoints[0]).toMatchObject({ state: { endBlock: null } });
+  });
+
+  it("does not skip ahead or double-credit when two ticks read the same checkpoint", async () => {
+    const world = setup({ blockTimeSec: 240 });
+    openQuote(world, {
+      quoted_at: world.at(-3 * HOUR_MS),
+      expires_at: world.at(-3 * HOUR_MS + 20 * MINUTE_MS),
+      status: "expired",
+    });
+    world.pay({ tx: txHash(51), amountRaw: REQUIRED, offsetMs: -3 * HOUR_MS + 8 * MINUTE_MS });
+
+    await Promise.all([runCron(), runCron()]);
+
+    expect(world.memory.tables.yearly_token_attribution_checkpoints).toHaveLength(1);
+    expect(mockBeforeFinalizedScan.mock.calls[0]).toEqual(mockBeforeFinalizedScan.mock.calls[1]);
+    expect(world.subscriptions()).toHaveLength(0);
+    await Promise.all([runCron(), runCron()]);
+    expect(world.subscriptions()).toEqual([expect.objectContaining({ deposit_tx_hash: txHash(51) })]);
   });
 });
 
