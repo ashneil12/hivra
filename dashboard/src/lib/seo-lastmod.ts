@@ -45,7 +45,7 @@ export const PAGE_LAST_MODIFIED = {
   // The /compare price table changed on 2026-11-17 (Hostinger, xCloud, Agent 37 and Nous
   // re-read; lib/compare/competitor-facts.ts), and the same day the directory grew to fifteen
   // pages in four groups with new FAQs. Before: 2026-10-21.
-  compareHub: "2026-11-17",
+  compareHub: "2026-11-27",
   // The detail pages share one template and were rewritten in the copy overhaul,
   // 2026-10-20 (before: 2026-09-24, the truth pass that removed speed, backup,
   // import and price claims).

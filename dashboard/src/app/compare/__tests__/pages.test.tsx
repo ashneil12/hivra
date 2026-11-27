@@ -4,7 +4,9 @@ import React from "react";
 import { cleanup, render, within } from "@testing-library/react";
 
 import ComparePage, { metadata as compareMetadata } from "../page";
-import ComparisonPage, { generateMetadata, generateStaticParams } from "../[slug]/page";
+import ComparisonPage, { generateMetadata } from "../[slug]/page";
+import { COMPARE_PAGE_SLUGS } from "@/lib/compare/pages";
+import { HOSTED_COMPETITORS } from "@/lib/compare/hosted-competitors";
 import { COMPARE_DIRECTORY } from "@/lib/compare/directory";
 import { COMPETITOR_FACTS, COMPETITOR_FACTS_CHECKED, formatCheckedMonth } from "@/lib/compare/competitor-facts";
 import { PRODUCT_COMPARISON_SLUGS } from "@/lib/compare/product-comparisons";
@@ -42,7 +44,6 @@ jest.mock("next/link", () => {
 // Titles are the copy's own, except Nous: the copy's title is 76 characters and the rule for a finished title is 70.
 const STANDARD = ["The real choice", "What you are actually paying for", "Where Hivra fits", "When the alternative is worth choosing"];
 const TAIL = ["At a glance", "Things a comparison chart cannot tell you"];
-const DECISION = ["How to make the decision"];
 const SOURCES = "Where these numbers come from";
 const END = ["Common questions", "Ready to give your agent a computer?", "Related"];
 
@@ -160,6 +161,7 @@ const PAGES: Record<string, { title: string; h1: string; description: string; he
 };
 
 const DIRECTORY_HEADINGS = [
+  "Compare personal agent hosting by plan",
   ...STANDARD,
   "Hosts for the same agents",
   "Agent products from the model makers",
@@ -171,7 +173,7 @@ const DIRECTORY_HEADINGS = [
   "Ready to give your agent a computer?",
 ];
 
-const SLUGS = generateStaticParams().map(({ slug }) => slug);
+const SLUGS = COMPARE_PAGE_SLUGS;
 const BLOG_SLUGS = new Set(BLOG_ARTICLES_LIST.map((article) => article.slug));
 const FEATURE_SLUGS = new Set(["openclaw-alternative", "persistent-memory"]);
 const AGENT_SLUGS = new Set<string>(AGENT_SEO_SLUGS);
@@ -344,7 +346,7 @@ describe("comparison pages follow the supplied copy", () => {
       if (/^https:\/\//.test(href) || href.startsWith("#") || href === "/") continue;
       const known =
         SITE_ROUTES.has(href) ||
-        (href.startsWith("/compare/") && SLUGS.includes(href.slice("/compare/".length))) ||
+        (href.startsWith("/compare/") && [...SLUGS, ...HOSTED_COMPETITORS.map((provider) => provider.slug)].includes(href.slice("/compare/".length))) ||
         (href.startsWith("/blog/") && BLOG_SLUGS.has(href.slice("/blog/".length))) ||
         (href.startsWith("/agents/") && AGENT_SLUGS.has(href.slice("/agents/".length))) ||
         (href.startsWith("/docs/") && DOC_SLUGS.has(href.slice("/docs/".length))) ||

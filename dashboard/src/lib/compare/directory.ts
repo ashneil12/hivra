@@ -26,7 +26,7 @@ export const COMPARE_DIRECTORY: ComparePage = {
       tone: "lede",
       blocks: paragraphs(
         "Choosing where an AI agent lives should not require believing every vendor's favourite comparison chart. Start with the way you actually work: one assistant that runs every day, coding tasks that a model maker's cloud product runs for you, short-lived sandboxes started from code, a developer workspace, or a Linux server you are happy to maintain. These are different problems, and no single product wins all of them.",
-        "This page now covers fifteen comparisons in four groups: hosts that run the same agents, agent products from the model makers, sandboxes and developer environments, and the do-it-yourself routes. Each comparison states where the alternative is the better choice, quotes its sources and says in which month its figures were collected.",
+        "Start with the plan tables above for personal agent hosting. The guides below cover hosts that run the same agents, agent products from model makers, sandboxes and developer environments, and do-it-yourself routes. Each guide says where the alternative is the better choice and dates its sources.",
       ),
     },
     {

@@ -8,6 +8,7 @@ import { HOST_COMPARISON_SLUGS } from "@/lib/compare/host-comparisons";
 import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
 import { PRODUCT_COMPARISON_SLUGS } from "@/lib/compare/product-comparisons";
 import { PRODUCT_FACTS_CHECKED } from "@/lib/compare/products/checked";
+import { HOSTED_COMPETITORS, hostedComparisonPath } from "@/lib/compare/hosted-competitors";
 import { DOCS, docsLastModified } from "@/lib/docs/registry";
 
 // SCRIPTURE_ANCHOR: seo-paths | Jeremiah 6:16 | Verse: Stand in the ways and see, and ask for the old paths.
@@ -203,6 +204,12 @@ export function getSiteUrls({ tokenSurfaces = true }: { tokenSurfaces?: boolean 
   ];
 
   const comparePages: MetadataRoute.Sitemap = [
+    ...HOSTED_COMPETITORS.map((provider) => ({
+      url: `${SITE_URL}${hostedComparisonPath(provider.slug)}`,
+      lastModified: cutoverPage(provider.checked),
+      changeFrequency: "monthly" as const,
+      priority: 0.75,
+    })),
     ...compareSlugs.map((slug) => ({
       url: `${SITE_URL}/compare/${slug}`,
       lastModified: cutoverPage(PAGE_LAST_MODIFIED.compareDetail),

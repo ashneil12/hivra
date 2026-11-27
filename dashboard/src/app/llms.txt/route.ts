@@ -8,6 +8,8 @@ import { isTokenGeoPolicyActive } from "@/lib/compliance/token-geo-policy";
 import { buildLlmsTxt } from "@/lib/llms-txt";
 import { SITE_URL } from "@/lib/seo-urls";
 import { newTokenSurfacesEnabled } from "@/lib/token-surfaces";
+import { getCardTrialOffer } from "@/lib/billing/card-trial";
+import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
 
 // The link map is in-source, but the body depends on the viewer's country once
 // the token geo-policy lists one: a listed country gets the copy with no token
@@ -28,7 +30,13 @@ export async function GET(request: Request) {
   const countryListed = tokenSurfaces && isTokenGeoPolicyActive();
   // A crawler is signed out, so the request's IP country is the only signal.
   const restricted = countryListed && (await resolveTokenGeoBlock(request, null)).blocked;
-  const body = buildLlmsTxt({ siteUrl: SITE_URL, restricted, tokenSurfaces });
+  const body = buildLlmsTxt({
+    siteUrl: SITE_URL,
+    restricted,
+    tokenSurfaces,
+    entryMonthlyCents: getCardTrialOffer()?.monthlyCents,
+    paidSleep: paidKvmSleepAvailable(),
+  });
 
   return new Response(body, {
     status: 200,
