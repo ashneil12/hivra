@@ -56,6 +56,7 @@ export function FirstRunCard() {
                   </span>
                 ) : null}
                 <span className={styles.firstRunTagline}>{job?.line ?? agent.tagline}</span>
+                {agent.id === "hermes" ? <span className={styles.firstRunTagline}>Runs on Hivra Cloud only.</span> : null}
               </Link>
             </li>
           );
