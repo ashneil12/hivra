@@ -124,10 +124,15 @@ it("seals the exact Proxmox standby description fix without changing runtime ass
   expect(standbyDescriptionRelease.files.map(file => file.path)).toEqual(preparedRuntimeRelease.files.map(file => file.path));
   expect(standbyDescriptionRelease.files.filter(file => prior.get(file.path) !== file.sha256).map(file => file.path).sort())
     .toEqual(["PROVENANCE.md", "VERSION", "hivra-hermes-standby.sh", "hivra-provider-worker.py"]);
-  for (const manifest of [hermesStandbyRelease, preparedRuntimeRelease, standbyDescriptionRelease]) {
+  for (const [version, manifest] of [
+    ["2026.11.27.5", hermesStandbyRelease],
+    ["2026.11.27.6", preparedRuntimeRelease],
+    ["2026.11.27.7", standbyDescriptionRelease],
+  ] as const) {
+    expect(manifest.version).toBe(version);
     const worker = manifest.files.find(file => file.path === "hivra-provider-worker.py");
     if (!worker) throw new Error("Reviewed release has no provider worker");
-    expect(providerGuestWorkerRecipe(manifest.version)).toMatchObject({ workerSha256: worker.sha256, workerSize: worker.bytes });
+    expect(providerGuestWorkerRecipe(version)).toMatchObject({ workerSha256: worker.sha256, workerSize: worker.bytes });
   }
 });
 
