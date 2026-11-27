@@ -4,11 +4,15 @@ on:
   pull_request:
     paths:
       - 'dashboard/provisioner/gvisor/claude-terminal/**'
+      - 'dashboard/provisioner/gvisor/claude-terminal-gateway/**'
+      - 'dashboard/provisioner/gvisor/claude-terminal-relay/**'
       - '.github/workflows/claude-sandbox-image.yml'
   push:
     branches: [canary]
     paths:
       - 'dashboard/provisioner/gvisor/claude-terminal/**'
+      - 'dashboard/provisioner/gvisor/claude-terminal-gateway/**'
+      - 'dashboard/provisioner/gvisor/claude-terminal-relay/**'
       - '.github/workflows/claude-sandbox-image.yml'
 
 permissions:
@@ -22,6 +26,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Test the guest proxy protocol and owner session boundaries
+        run: |
+          sudo "$(command -v node)" --test dashboard/provisioner/gvisor/claude-terminal-gateway/server.test.cjs
+          sudo python3 -B dashboard/provisioner/gvisor/claude-terminal-relay/test_relay.py
       - name: Install the same verified runsc release as Hivra
         run: |
           set -euo pipefail
