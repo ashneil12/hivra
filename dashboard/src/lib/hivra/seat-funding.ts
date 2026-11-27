@@ -74,8 +74,6 @@ export function holderHibernateBoundaryReason(params: {
   return params.nowMs - changedAt >= waitSeconds * 1000 ? null : "hibernate_window_open";
 }
 
-/** PostgREST OR body for rows whose stored sleep controls are allowed to act: normal non-always-on seats, plus holder seats whose stale controls are ineffective. */
-export const EFFECTIVE_SLEEP_CONTROL_FILTER = "always_on.eq.false,seat_funding.eq.holder";
 /** PostgREST OR body for rows that are not in the authoritative holder cohort. */
 export const NOT_HOLDER_SEAT_FILTER = "seat_funding.is.null,seat_funding.neq.holder";
 

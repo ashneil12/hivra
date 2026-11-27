@@ -115,6 +115,11 @@ def parse_launch(raw, *, provider_desktop=False):
                            else LINUX_DESKTOP_FIELDS if version == 3
                            else FIELDS | {"activityTelemetry"} if version == 4
                            else FIELDS | {"catalogApp", "publicOrigin"})
+        if version == 1 and "hermesBaked" in value:
+            if (value["hermesBaked"] is not True or value.get("agentKind") != "hermes"
+                    or value.get("computerSubstrate") != "proxmox-kvm" or value.get("wantBrowser") is True):
+                raise ValueError()
+            expected_fields = expected_fields | {"hermesBaked"}
         if type(version) is not int or version not in (1, 2, 3, 4, 5) or set(value) != expected_fields:
             raise ValueError()
         if ((version == 1 and value["agentKind"] not in KINDS)
@@ -471,6 +476,8 @@ def install_agent(launch, source, *, provider_desktop=None):
                    "HIVRA_COMPUTER_ID": launch.get("computerId", ""),
                    "HIVRA_CONTROL_ORIGIN": launch.get("controlOrigin", ""),
                    "HIVRA_PUBLIC_ORIGIN": launch.get("publicOrigin", "")}
+    if launch.get("hermesBaked") is True:
+        environment["HIVRA_HERMES_BAKED"] = "1"
     if launch["tunnelToken"] is not None:
         check_named_tunnel(launch["tunnelToken"], 0)
         check_effective_tunnel(allow_missing=True)

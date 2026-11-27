@@ -139,17 +139,17 @@ describe("PATCH /api/hivra/agents/[id]/sleep-settings", () => {
     expect((await PATCH(request({ always_on: true }), params)).status).toBe(200);
   });
 
-  it("in on mode, switching Sleep when idle off wakes nothing (the policy does not decide who sleeps there), but Keep awake still does", async () => {
+  it("wakes for either opt-out in global on mode", async () => {
     const before = process.env.HIVRA_SLEEP_MODE;
     process.env.HIVRA_SLEEP_MODE = "on";
     try {
       mockMaybeSingle.mockReset();
       queueAgentRow({ id: ID, always_on: false, sleep_policy: "off", seat_funding: null });
       expect((await PATCH(request({ sleep_policy: "off" }), params)).status).toBe(200);
-      expect(mockEnsure).not.toHaveBeenCalled();
+      expect(mockEnsure).toHaveBeenCalledTimes(1);
       queueAgentRow({ id: ID, always_on: true, sleep_policy: "off", seat_funding: null });
       await PATCH(request({ always_on: true }), params);
-      expect(mockEnsure).toHaveBeenCalledTimes(1);
+      expect(mockEnsure).toHaveBeenCalledTimes(2);
     } finally {
       if (before === undefined) delete process.env.HIVRA_SLEEP_MODE;
       else process.env.HIVRA_SLEEP_MODE = before;
