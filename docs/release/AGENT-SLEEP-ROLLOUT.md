@@ -10,7 +10,7 @@ All of these must allow it before an agent sleeps:
 
 | Switch | Where | Values |
 |---|---|---|
-| `HIVRA_SLEEP_MODE` | server env | `off` (default), `observe` (log only), `canary` (only agents with a sleep policy), `on` |
+| `HIVRA_SLEEP_MODE` | server env | `off` (default), `observe` (log only), `canary`, `on` (both require an eligible saved sleep policy) |
 | `HIVRA_SLEEP_TRIM_MEMORY` | server env | `1`: a running computer writes out and drops its file cache just before it sleeps, so the host gets that memory back during a nap and a hibernate saves less. A failed trim never stops the sleep. Unset (default) is off |
 | `proxmox_hosts.sleep_mode` | database, per host | `off` (default), `canary`, `on` |
 | `hivra_agents.sleep_policy` | database, per agent | `off` (default), `t1`, `t3`, `full` |
@@ -20,10 +20,15 @@ All of these must allow it before an agent sleeps:
 Optional timing: `HIVRA_SLEEP_NAP_AFTER_SECONDS` (default 300) and
 `HIVRA_SLEEP_HIBERNATE_AFTER_SECONDS`.
 
-Managed holder-funded computers always use the full sleep policy: the
-per-agent sleep setting and Keep awake do not override it. Their timings are
-fixed at four idle minutes before nap and twelve more minutes before saving
-memory. Server and host gates, activity checks and wake readiness still apply.
+Automatic nap and hibernate require a saved policy that permits the tier and
+Keep awake off, in either acting server mode. The sleep lease checks those
+settings again before granting the action. An authenticated owner's separate
+Sleep now action does not require an idle sleep policy.
+
+Managed holder-funded computers also require a stored opt-in. Once enabled,
+their timings are fixed at four idle minutes before nap and twelve more minutes
+before saving memory. Server and host gates, activity checks and wake readiness
+still apply.
 See [token-holder access](../STATUS.md#token-holder-access) for launch requirements.
 
 `NEXT_PUBLIC_` values are built in, so they take effect on the next Git build
@@ -33,11 +38,12 @@ of the branch, not when they are saved.
 
 ```sql
 update public.proxmox_hosts set sleep_mode = 'canary', updated_at = now() where id = '<host id>';
-update public.hivra_agents set sleep_policy = 'full', always_on = false where id = '<agent id>';
 ```
 
-Then set `HIVRA_SLEEP_MODE=canary` and `NEXT_PUBLIC_HIVRA_AGENT_SLEEP=1` and
-let the branch rebuild. The `sleep-idle-agents` cron runs every minute.
+Set `HIVRA_SLEEP_MODE=canary` and `NEXT_PUBLIC_HIVRA_AGENT_SLEEP=1` and let the
+branch rebuild. On the scoped QA computer, sign in as its owner and enable
+**Sleep when idle** under Manage with **Keep awake** off. Do not set an owner
+policy directly in the database. The `sleep-idle-agents` cron runs every minute.
 
 ## Checking it
 
