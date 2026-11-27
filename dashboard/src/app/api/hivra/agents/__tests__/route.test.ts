@@ -509,6 +509,9 @@ describe("POST /api/hivra/agents", () => {
     "HIVRA_CANARY_HERMES_IMAGE_HOST",
     "HIVRA_CANARY_HERMES_IMAGE_SHA256",
     "HIVRA_CANARY_HERMES_IMAGE_USER_ID",
+    "HIVRA_CANARY_DEEPSEEK_IMAGE_HOST",
+    "HIVRA_CANARY_DEEPSEEK_IMAGE_SHA256",
+    "HIVRA_CANARY_DEEPSEEK_IMAGE_USER_ID",
     "VERCEL",
     "VERCEL_ENV",
     "VERCEL_PROJECT_PRODUCTION_URL",
@@ -3084,6 +3087,60 @@ describe("POST /api/hivra/agents", () => {
         token: "synthetic-tunnel", url: "https://fixture.example.test", tunnelId: "fixture-tunnel", hostname: "fixture.example.test",
       });
     };
+
+    it.each([
+      ["scope matches", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", true, true, 201],
+      ["different host", "canary", "fixturenode8", "user_fixture1", "2026.11.27.4", true, false, 201],
+      ["different owner", "canary", "fixturenode7", "user_other", "2026.11.27.4", true, false, 201],
+      ["not a Git Canary deploy", "main", "fixturenode7", "user_fixture1", "2026.11.27.4", true, false, 201],
+      ["owner omitted", "canary", "fixturenode7", undefined, "2026.11.27.4", true, false, 503],
+      ["bundle too old", "canary", "fixturenode7", "user_fixture1", "2026.11.27.3", true, false, 503],
+      ["image missing", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", false, false, 503],
+    ] as const)("limits the preinstalled DeepSeek disk to its owner and host (%s)", async (
+      _case, branch, bakeHost, bakeUser, version, verified, baked, status,
+    ) => {
+      paidPlan();
+      const digest = "a".repeat(64);
+      mockCreateManagedVeniceProxyKey.mockResolvedValue({ id: "key-ds", keyPrefix: "hven_live_TEST", plaintextKey: "hven_live_TESTKEY123" });
+      enableManagedGvisorQaFixture({
+        VERCEL_TARGET_ENV: "canary",
+        VERCEL_GIT_COMMIT_REF: branch,
+        HIVRA_CANARY_DEEPSEEK_IMAGE_HOST: bakeHost,
+        HIVRA_CANARY_DEEPSEEK_IMAGE_SHA256: digest,
+        HIVRA_CANARY_DEEPSEEK_IMAGE_USER_ID: bakeUser,
+      });
+      mockAuth.mockResolvedValue({ userId: "user_fixture1" });
+      mockSelectAvailableProxmoxProvisionTarget.mockResolvedValueOnce({
+        ok: true, targetId: "fixturenode7", provisionerVersion: version,
+        env: {
+          PROXMOX_NODE: "fixturenode7", PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
+          PROXMOX_PRIVATE_GATEWAY: "10.250.21.1", PROXMOX_VMID_START: "200",
+        },
+      });
+      if (baked || !verified) {
+        mockRunProxmoxHostScript.mockReset()
+          .mockResolvedValueOnce({ ok: verified, stdout: verified ? "HIVRA_DEEPSEEK_IMAGE_VERIFIED\n" : "", stderr: "" })
+          .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n' })
+          .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
+          .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
+      }
+      const response = await POST(makeRequest({
+        type: "deepseek-harness", name: "DEEPSEEK_BAKE_FIXTURE", cpu: 2, ram: 4, managedVenice: true,
+        deepSeekImageSha256: "b".repeat(64),
+      }) as never);
+      expect(response.status).toBe(status);
+      const scripts = mockRunProxmoxHostScript.mock.calls.map(([script]) => String(script));
+      expect(scripts.some(script => script.includes("HIVRA_DEEPSEEK_IMAGE_VERIFIED"))).toBe(baked || !verified);
+      const kickoff = scripts.find(script => script.includes("HIVRA_PROVISION_RESULT"));
+      if (status === 503) {
+        expect(kickoff).toBeUndefined();
+        expect(mockAgentInsert).not.toHaveBeenCalled();
+      } else {
+        expect(kickoff).toBeDefined();
+        expect(kickoff?.includes(`HIVRA_UBUNTU_IMG='/var/lib/vz/template/iso/hivra-deepseek-harness-${digest}.qcow2'`)).toBe(baked);
+        expect(kickoff).not.toContain("b".repeat(64));
+      }
+    });
 
     it("is accepted on Hivra Cloud on credits and provisions the deepseek-harness kind with named access and its model", async () => {
       paidPlan();
