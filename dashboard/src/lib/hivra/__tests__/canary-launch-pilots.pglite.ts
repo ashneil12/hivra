@@ -6,7 +6,9 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec("create role anon; create role authenticated; create role service_role bypassrls");
-  await db.exec(readFileSync("supabase/migrations/20261127231200_canary_launch_pilots.sql", "utf8"));
+  const migration = readFileSync("supabase/migrations/20261127231200_canary_launch_pilots.sql", "utf8");
+  await db.exec(migration);
+  await db.exec(migration);
 }, 30_000);
 
 afterAll(async () => {

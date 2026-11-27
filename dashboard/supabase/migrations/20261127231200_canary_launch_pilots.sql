@@ -1,4 +1,4 @@
-create table public.hivra_canary_launch_pilots (
+create table if not exists public.hivra_canary_launch_pilots (
   pilot text primary key check (pilot in ('hermes', 'bux-dependencies')),
   host_id text not null check (host_id ~ '^[a-z0-9][a-z0-9-]*$'),
   image_sha256 text not null check (image_sha256 ~ '^[0-9a-f]{64}$'),
