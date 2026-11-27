@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+umask 077
+
+test "$HOME" = /workspace/.agent-home
+test ! -L "$HOME"
+test ! -L /workspace/project
+mkdir -p "$HOME" /workspace/project
+chmod 0700 "$HOME" /workspace/project
+cd /workspace/project
+
+exec ttyd -i /tmp/hivra-claude-terminal.sock -b /terminal -O -W -m 1 -d 3 \
+  /usr/local/bin/claude

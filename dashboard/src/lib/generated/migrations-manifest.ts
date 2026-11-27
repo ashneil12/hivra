@@ -530,5 +530,10 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261126224500", name: "managed_gvisor_reject_start" },
   { version: "20261127093245", name: "yearly_token_attribution_checkpoints" },
   { version: "20261127154500", name: "computer_stall_monitor" },
+  { version: "20261127171000", name: "provider_release_admission_2026_11_27_1" },
   { version: "20261127172200", name: "hivra_idle_sleep_owner_policy" },
+  { version: "20261127173200", name: "provider_release_admission_2026_11_27_2" },
+  { version: "20261127174000", name: "gvisor_claude_terminal_pilot" },
+  { version: "20261127180000", name: "managed_gvisor_tier_handoff" },
+  { version: "20261127181800", name: "provider_release_admission_2026_11_27_3" },
 ];

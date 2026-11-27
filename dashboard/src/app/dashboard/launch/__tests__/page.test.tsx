@@ -730,7 +730,7 @@ describe("LaunchPage", () => {
     const model = within(review).getByRole("combobox", { name: "Model" });
     expect(model).toHaveValue("deepseek-v4-1-flash");
     expect(model).toHaveAccessibleDescription("Recommended Private");
-    expect(within(review).getByText(/^No extra charge. Uses your Operator plan allowance. Model usage is paid from your Hivra credits/)).toBeInTheDocument();
+    expect(within(review).getByText(/^This computer uses your Operator plan allowance. No extra hosting charge. Model usage is paid from your Hivra credits/)).toBeInTheDocument();
     expect(within(screen.getByRole("group", { name: "Launch settings" })).queryByText(/Proxmox|KVM|launch request|virtual machine/i)).not.toBeInTheDocument();
     expect(within(screen.getByLabelText("Launch review")).queryByText(/Proxmox|KVM|launch request/i)).not.toBeInTheDocument();
     const technical = screen.getByText("Technical details").closest("details") as HTMLElement;
@@ -850,7 +850,7 @@ describe("LaunchPage", () => {
     fireEvent.click(launchButton());
 
     expect(await screen.findByRole("heading", { name: "Confirming your launch…" })).toBeInTheDocument();
-    expect(screen.getByText("Hivra is checking the request for Codex 1. We’ll open it as soon as the launch is confirmed.")).toBeInTheDocument();
+    expect(screen.getByText("Hivra is checking the request for Codex 1. When the launch is confirmed, you can open it here.")).toBeInTheDocument();
     expect(screen.queryByText(/exact receipt|infer success/i)).not.toBeInTheDocument();
     await waitFor(() => expect(findHivraLaunchReceiptMock).toHaveBeenCalledTimes(2), { timeout: 3_000 });
     expect(createAgentMock).toHaveBeenCalledTimes(1);

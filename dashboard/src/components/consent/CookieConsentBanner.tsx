@@ -32,6 +32,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   grantAnalyticsConsent,
@@ -43,6 +44,7 @@ import {
   type GeoConsentSignal,
 } from '@/lib/consent/cookie-consent';
 import { isDesktopApp } from '@/lib/desktop-shell';
+import { useCookieConsentDock } from './CookieConsentDock';
 
 type BannerMode = 'hidden' | 'required' | 'notice';
 
@@ -52,6 +54,7 @@ type BannerMode = 'hidden' | 'required' | 'notice';
 export const OPEN_COOKIE_PREFERENCES_EVENT = 'hivra:open-cookie-preferences';
 
 export function CookieConsentBanner() {
+  const dock = useCookieConsentDock();
   const [mode, setMode] = useState<BannerMode>('hidden');
   const [showPrefs, setShowPrefs] = useState(false);
   // The single non-essential category toggle (product analytics + session
@@ -168,24 +171,30 @@ export function CookieConsentBanner() {
     borderRadius: 'var(--hg-radius-md)',
   };
 
-  return (
+  const banner = (
     <div
       role="dialog"
       aria-label="Cookie consent"
       aria-live="polite"
       className="hivra-cookie-consent"
       style={{
-        position: 'fixed',
-        left: '1rem',
-        right: '1rem',
-        // --hivra-bottom-chrome is the phone bottom bar's height when it is shown.
-        bottom: 'calc(var(--hivra-bottom-chrome, 0px) + 1rem + env(safe-area-inset-bottom, 0px))',
-        zIndex: 1000,
+        ...(dock ? {
+          flexShrink: 0,
+          width: 'calc(100% - 2rem)',
+          margin: '0.5rem auto',
+          maxHeight: 'min(18rem, calc(var(--workspace-viewport-height, 100dvh) * 0.35))',
+        } : {
+          position: 'fixed',
+          left: '1rem',
+          right: '1rem',
+          bottom: 'calc(var(--hivra-bottom-chrome, 0px) + 1rem + env(safe-area-inset-bottom, 0px))',
+          zIndex: 1000,
+          margin: '0 auto',
+          maxHeight: 'calc(100dvh - var(--hivra-bottom-chrome, 0px) - 2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+        }),
         maxWidth: 720,
-        maxHeight: 'calc(100dvh - var(--hivra-bottom-chrome, 0px) - 2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
         overflowY: 'auto',
         overscrollBehavior: 'contain',
-        margin: '0 auto',
         background: 'var(--hg-glass-strong)',
         border: '1px solid var(--hg-stroke)',
         backdropFilter: 'blur(var(--hg-glass-blur)) saturate(1.3)',
@@ -320,6 +329,7 @@ export function CookieConsentBanner() {
       </div>
     </div>
   );
+  return dock ? createPortal(banner, dock) : banner;
 }
 
 // A single category row in the preferences panel. `locked` renders an

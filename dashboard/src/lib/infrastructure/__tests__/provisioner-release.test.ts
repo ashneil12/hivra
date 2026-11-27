@@ -19,6 +19,9 @@ import snapFreeBootRelease from "../../../../provisioner-releases/2026.11.18.3.j
 import noBootUpgradeRelease from "../../../../provisioner-releases/2026.11.18.4.json";
 import directSigninRelease from "../../../../provisioner-releases/2026.11.21.1.json";
 import catalogDigestRelease from "../../../../provisioner-releases/2026.11.26.1.json";
+import hermesGuest503Release from "../../../../provisioner-releases/2026.11.27.1.json";
+import hermesBakeRelease from "../../../../provisioner-releases/2026.11.27.2.json";
+import admissionReaderRelease from "../../../../provisioner-releases/2026.11.27.3.json";
 import catalogStackRuntimeRelease from "../../../../provisioner-releases/2026.11.20.5.json";
 import cliSetupContractRelease from "../../../../provisioner-releases/2026.11.20.4.json";
 import universalCatalogHardenedRelease from "../../../../provisioner-releases/2026.11.20.3.json";
@@ -102,14 +105,21 @@ it("ships the direct sign-in gateway in 2026.11.21.1, keeping 2026.11.20.5 admit
 });
 
 it("binds every reviewed portable provisioner asset to the immutable current release", () => {
-  expect(catalogDigestRelease.schema).toBe(1);
-  expect(catalogDigestRelease.version).toBe(PORTABLE_HIVRA_PROVISIONER_VERSION);
-  expect(catalogDigestRelease.files.map(file => file.path)).toEqual([...PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES]);
-  for (const file of catalogDigestRelease.files) {
+  expect(admissionReaderRelease.schema).toBe(1);
+  expect(admissionReaderRelease.version).toBe(PORTABLE_HIVRA_PROVISIONER_VERSION);
+  expect(admissionReaderRelease.files.map(file => file.path)).toEqual([...PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES]);
+  for (const file of admissionReaderRelease.files) {
     const content = readFileSync(path.join(process.cwd(), "provisioner", file.path));
     expect({ path: file.path, bytes: content.length, sha256: createHash("sha256").update(content).digest("hex") })
       .toEqual(file);
   }
+});
+
+it("seals the Hermes 503 diagnostics without changing other provisioner assets", () => {
+  expect(hermesGuest503Release.files.map(file => file.path)).toEqual(catalogDigestRelease.files.map(file => file.path));
+  const previous = new Map(catalogDigestRelease.files.map(file => [file.path, file.sha256]));
+  expect(hermesGuest503Release.files.filter(file => file.sha256 !== previous.get(file.path)).map(file => file.path).sort())
+    .toEqual(["PROVENANCE.md", "VERSION", "hivra-chat/server.js", "hivra-provider-worker.py"]);
 });
 
 it.each(["2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.06.4", "2026.09.07.1", "2026.09.08.1", "2026.09.08.2", "2026.09.08.3", "2026.09.15.2"])("retains predecessor %s across lifecycle, desktop, provider and model-settings gates", version => {
@@ -121,8 +131,15 @@ it.each(["2026.09.05.5", "2026.09.05.6", "2026.09.05.7", "2026.09.05.8", "2026.0
 
 it("offers fresh provider desktop placement only for the current prepared bundle", () => {
   expect(providerProvisionerSupportsCatalogRuntime(PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION, "linux-desktop")).toBe(true);
-  for (const version of ["2026.09.04.2", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.07.1", "unknown"])
+  for (const version of ["2026.09.04.2", "2026.09.05.9", "2026.09.05.10", "2026.09.06.1", "2026.09.06.2", "2026.09.06.3", "2026.09.07.1", catalogDigestRelease.version, "unknown"])
     expect(providerProvisionerSupportsCatalogRuntime(version, "linux-desktop")).toBe(false);
+});
+
+it("keeps catalog app capability on both the current and previous provider releases", () => {
+  for (const version of [catalogDigestRelease.version, hermesGuest503Release.version, hermesBakeRelease.version, admissionReaderRelease.version]) {
+    expect(portableProvisionerSupportsCatalogRuntime(version, "catalog-app")).toBe(true);
+    expect(providerProvisionerSupportsCatalogRuntime(version, "catalog-app")).toBe(true);
+  }
 });
 
 it("advertises Windows installation only from the exact reviewed host releases that ship it", () => {
@@ -303,9 +320,9 @@ it("admits every retained and current provider bundle in SQL, bound to its seale
     "20260925110000_provider_release_admission_2026_09_24_4.sql", "20261007130000_provider_release_admission_2026_10_07_1.sql",
     "20261020110000_provider_release_admission_2026_10_20_1.sql", "20261020130000_provider_release_admission_2026_10_20_2.sql",
     "20261103120000_provider_release_admission_2026_11_03_1.sql", "20261110120000_provider_release_admission_2026_11_10_1.sql", "20261110180000_provider_release_admission_2026_11_10_2.sql", "20261110200000_provider_release_admission_2026_11_10_3.sql", "20261110220000_provider_release_admission_2026_11_10_4.sql", "20261111160000_provider_release_admission_2026_11_10_5.sql", "20261111180000_provider_release_admission_2026_11_11_1.sql", "20261111200000_provider_release_admission_2026_11_11_2.sql", "20261111220000_provider_release_admission_2026_11_11_3.sql", "20261111233000_provider_release_admission_2026_11_11_4.sql", "20261112100000_provider_release_admission_2026_11_11_5.sql", "20261112120000_provider_release_admission_2026_11_11_6.sql", "20261112160000_provider_release_admission_2026_11_11_7.sql", "20261112170000_provider_release_admission_2026_11_12_1.sql", "20261112180000_provider_release_admission_2026_11_12_2.sql", "20261112190000_provider_release_admission_2026_11_12_3.sql", "20261112210000_provider_release_admission_2026_11_12_4.sql", "20261113091000_provider_release_admission_2026_11_12_5.sql", "20261113103000_provider_release_admission_2026_11_13_1.sql", "20261113111000_provider_release_admission_2026_11_13_2.sql", "20261113121000_provider_release_admission_2026_11_13_3.sql", "20261113130000_provider_release_admission_2026_11_13_4.sql", "20261113140000_provider_release_admission_2026_11_13_5.sql", "20261113150000_provider_release_admission_2026_11_13_6.sql", "20261114120000_provider_release_admission_2026_11_14_1.sql", "20261115120000_provider_release_admission_2026_11_15_1.sql", "20261115130000_provider_release_admission_2026_11_15_2.sql", "20261115140000_provider_release_admission_2026_11_15_3.sql", "20261115150000_provider_release_admission_2026_11_15_5.sql", "20261116010000_provider_release_admission_2026_11_15_6.sql", "20261116020000_provider_release_admission_2026_11_15_7.sql",
-    "20261116030000_provider_release_admission_2026_11_15_7_resealed.sql", "20261116040000_provider_release_admission_2026_11_15_7_resealed_2.sql", "20261117120000_provider_release_admission_2026_11_17_1.sql", "20261117130000_provider_release_admission_2026_11_17_2.sql", "20261117140000_provider_release_admission_2026_11_17_3.sql", "20261117160000_provider_release_admission_2026_11_17_4.sql", "20261117200000_provider_release_admission_2026_11_17_5.sql", "20261117230000_provider_release_admission_2026_11_17_6.sql", "20261118060000_provider_release_admission_2026_11_17_7.sql", "20261118070000_provider_release_admission_2026_11_17_8.sql", "20261118080000_provider_release_admission_2026_11_17_9.sql", "20261118090000_provider_release_admission_2026_11_18_1.sql", "20261118150000_provider_release_admission_2026_11_18_2.sql", "20261118160000_provider_release_admission_2026_11_18_3.sql", "20261118170000_provider_release_admission_2026_11_18_4.sql", "20261118230000_provider_release_admission_2026_11_18_5.sql", "20261119151000_provider_release_admission_2026_11_19_1.sql", "20261120140000_provider_release_admission_2026_11_20_1.sql", "20261120161000_provider_release_admission_2026_11_20_2.sql", "20261120162000_provider_release_admission_2026_11_20_3.sql", "20261120163000_provider_release_admission_2026_11_20_4.sql", "20261121100000_provider_release_admission_2026_11_20_5.sql", "20261121170000_provider_release_admission_2026_11_21_1.sql", "20261122004000_provider_release_admission_2026_11_22_1.sql", "20261122162000_provider_release_admission_2026_11_22_2.sql", "20261123000000_provider_release_admission_2026_11_22_3.sql", "20261123120000_provider_release_admission_2026_11_23_1.sql", "20261125120000_provider_release_admission_2026_11_25_1.sql", "20261125204500_provider_release_admission_2026_11_25_2.sql", "20261126180500_provider_release_admission_2026_11_26_1.sql"]
+    "20261116030000_provider_release_admission_2026_11_15_7_resealed.sql", "20261116040000_provider_release_admission_2026_11_15_7_resealed_2.sql", "20261117120000_provider_release_admission_2026_11_17_1.sql", "20261117130000_provider_release_admission_2026_11_17_2.sql", "20261117140000_provider_release_admission_2026_11_17_3.sql", "20261117160000_provider_release_admission_2026_11_17_4.sql", "20261117200000_provider_release_admission_2026_11_17_5.sql", "20261117230000_provider_release_admission_2026_11_17_6.sql", "20261118060000_provider_release_admission_2026_11_17_7.sql", "20261118070000_provider_release_admission_2026_11_17_8.sql", "20261118080000_provider_release_admission_2026_11_17_9.sql", "20261118090000_provider_release_admission_2026_11_18_1.sql", "20261118150000_provider_release_admission_2026_11_18_2.sql", "20261118160000_provider_release_admission_2026_11_18_3.sql", "20261118170000_provider_release_admission_2026_11_18_4.sql", "20261118230000_provider_release_admission_2026_11_18_5.sql", "20261119151000_provider_release_admission_2026_11_19_1.sql", "20261120140000_provider_release_admission_2026_11_20_1.sql", "20261120161000_provider_release_admission_2026_11_20_2.sql", "20261120162000_provider_release_admission_2026_11_20_3.sql", "20261120163000_provider_release_admission_2026_11_20_4.sql", "20261121100000_provider_release_admission_2026_11_20_5.sql", "20261121170000_provider_release_admission_2026_11_21_1.sql", "20261122004000_provider_release_admission_2026_11_22_1.sql", "20261122162000_provider_release_admission_2026_11_22_2.sql", "20261123000000_provider_release_admission_2026_11_22_3.sql", "20261123120000_provider_release_admission_2026_11_23_1.sql", "20261125120000_provider_release_admission_2026_11_25_1.sql", "20261125204500_provider_release_admission_2026_11_25_2.sql", "20261126180500_provider_release_admission_2026_11_26_1.sql", "20261127171000_provider_release_admission_2026_11_27_1.sql", "20261127173200_provider_release_admission_2026_11_27_2.sql", "20261127181800_provider_release_admission_2026_11_27_3.sql"]
     .map(name => readFileSync(`supabase/migrations/${name}`, "utf8")).join("\n");
-  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
+  for (const version of ["2026.09.15.1", "2026.09.15.2", "2026.09.21.1", "2026.09.22.1", "2026.09.22.2", "2026.09.24.1", "2026.09.24.2", "2026.09.24.3", "2026.09.24.4", "2026.10.07.1", "2026.10.20.1", "2026.10.20.2", "2026.11.03.1", "2026.11.10.1", "2026.11.10.2", "2026.11.10.3", "2026.11.10.4", "2026.11.10.5", "2026.11.11.1", "2026.11.11.2", "2026.11.11.3", "2026.11.11.4", "2026.11.11.5", "2026.11.11.6", "2026.11.11.7", "2026.11.12.1", "2026.11.12.2", "2026.11.12.3", "2026.11.12.4", "2026.11.12.5", "2026.11.13.1", "2026.11.13.2", "2026.11.13.3", "2026.11.13.4", "2026.11.13.5", "2026.11.13.6", "2026.11.14.1", "2026.11.15.1", "2026.11.15.2", "2026.11.15.3", "2026.11.15.5", "2026.11.15.6", "2026.11.15.7", "2026.11.17.1", "2026.11.26.1", "2026.11.27.1", "2026.11.27.2", PORTABLE_HIVRA_PROVIDER_VM_PROVISIONER_VERSION]) {
     const manifest = JSON.parse(readFileSync(`provisioner-releases/${version}.json`, "utf8")) as typeof release;
     const rows = manifest.files.map(file => [file.path, file.sha256, file.bytes,
       file.path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(file.path) ? 0o700 : 0o600])

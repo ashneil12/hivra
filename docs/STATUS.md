@@ -25,6 +25,11 @@ All seven launch from Launch. Hivra Cloud requires a paid plan or, for
 supported managed computers, [token-holder admission](#token-holder-access).
 A free account alone works with a server the person connects.
 
+The generic sign-up Launch chooser groups three starting agents first: Hermes
+for research and automation, then Claude Code and Codex for coding. Hermes is
+recommended there only when it fits the account's Hivra Cloud plan. Other
+available agents and computers remain in Launch.
+
 The [public agent directory](https://hivra.cloud/agents) gives each offered
 agent a detail page. OpenBot and Nuphos appear only with their own deployment
 switches on. An agent from the universal catalog appears only when the
@@ -34,6 +39,7 @@ apps are listed separately.
 | Agent | Status | Where it runs |
 | --- | --- | --- |
 | Claude Code | Available | Hivra Cloud or a Proxmox server you connected |
+| Claude Code (sandbox) | Canary pilot only when configured; not generally available | One enrolled owner on an exact connected gVisor target. The pilot opens the official Claude Code terminal in a browser and stores project files and agent state in the sandbox workspace. This does not extend the VM's Hivra credits support to sandboxes. |
 | Codex | Available | Hivra Cloud or a Proxmox server you connected |
 | Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches on Canary go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`). The paid path on that computer was verified on Canary; availability on hivra.cloud requires owner-approved promotion and separate production verification |
 | OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |

@@ -369,9 +369,10 @@ function agentAppReport() {
 // real user path, which service it restarted and which units keep failing —
 // allow-listed fields only, never log lines or command output.
 const SURFACE_WATCHDOG_DIR = process.env.HIVRA_SURFACE_WATCHDOG_DIR || "/var/lib/hivra/surface-watchdog";
+const hermesProxyFailures = [];
 function surfaceWatchdogReport() {
   const state = readSmallJson(path.join(SURFACE_WATCHDOG_DIR, "state.json"));
-  if (!state || typeof state !== "object") return null;
+  if ((!state || typeof state !== "object") && !hermesProxyFailures.length) return null;
   const events = [];
   try {
     const fd = fs.openSync(path.join(SURFACE_WATCHDOG_DIR, "events.jsonl"), fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
@@ -399,13 +400,13 @@ function surfaceWatchdogReport() {
       }
     } finally { fs.closeSync(fd); }
   } catch {}
-  const surface = state.surface && typeof state.surface === "object" ? state.surface : {};
-  return { ok: true, agentKind: typeof state.agentKind === "string" ? state.agentKind : null,
-    updatedAt: typeof state.updatedAt === "string" ? state.updatedAt : null,
+  const surface = state?.surface && typeof state.surface === "object" ? state.surface : {};
+  return { ok: true, agentKind: typeof state?.agentKind === "string" ? state.agentKind : AGENT_KIND,
+    updatedAt: typeof state?.updatedAt === "string" ? state.updatedAt : null,
     surface: { status: typeof surface.status === "string" ? surface.status.slice(0, 32) : null,
       reason: typeof surface.reason === "string" ? surface.reason.slice(0, 200) : null,
       restarts: Number.isInteger(surface.restarts) ? surface.restarts : 0 },
-    events };
+    events, ...(hermesProxyFailures.length ? { proxyEvents: hermesProxyFailures } : {}) };
 }
 
 // While hivra-agent-app-update swaps the app it holds the app's surface (a
@@ -417,10 +418,12 @@ function agentAppUpdating() {
 function isAgentAppPort(port) {
   return Boolean(AGENT_APP && AGENT_APP.ports.includes(port));
 }
-function agentAppHoldPage(req, res) {
+function agentAppHoldPage(req, res, hermesReason = null, port = null) {
   const accept = String(req.headers.accept || "");
-  res.writeHead(503, { "Content-Type": accept.includes("text/html") ? "text/html; charset=utf-8" : "text/plain; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "15" });
-  const message = AGENT_APP.label + " is being updated. It will be back in a minute.";
+  const headers = { "Content-Type": accept.includes("text/html") ? "text/html; charset=utf-8" : "text/plain; charset=utf-8", "Cache-Control": "no-store", "Retry-After": "15" };
+  const message = hermesReason ? hermesUnavailable(req, hermesReason, port) : AGENT_APP.label + " is being updated. It will be back in a minute.";
+  if (hermesReason) headers["X-Hivra-Hermes-Unavailable"] = hermesReason;
+  res.writeHead(503, headers);
   res.end(accept.includes("text/html")
     ? "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"15\"><title>Updating</title><p style=\"font:15px system-ui;margin:2em\">" + message + "</p>"
     : message);
@@ -449,10 +452,10 @@ function surfaceWatchdogProbe(req) {
 // Counts an authenticated request to the app as use (a refused one too: the
 // updater then backs off) and answers it while the app is being swapped.
 // Returns true when it answered.
-function agentAppHold(req, res) {
+function agentAppHold(req, res, hermesReason = null) {
   if (!surfaceWatchdogProbe(req)) agentAppLastUsedAt = Date.now();
   if (!agentAppUpdating()) return false;
-  agentAppHoldPage(req, res);
+  agentAppHoldPage(req, res, hermesReason);
   return true;
 }
 
@@ -2748,12 +2751,18 @@ function proxyHttp(req, res, port, strip, preserveAuthority = false, setHeaders 
     res.writeHead(pr.statusCode || 502, h);
     pr.pipe(res);
   });
-  p.on("error", () => { try {
+  p.on("error", error => { try {
     // An agent app's own update mechanism (a built-in self-updater, a crash
     // restart) never writes the managed updater's lock, so it does not trip
     // agentAppHold. Its restart window still answers as "being updated"
     // rather than a dead 502 — the page keeps retrying until the app is back.
-    if (isAgentAppPort(target.port) && !res.destroyed && !res.writableEnded) return agentAppHoldPage(req, res);
+    if (isAgentAppPort(target.port) && !res.destroyed && !res.writableEnded) {
+      const reason = strip === HERMES_MOUNT
+        ? error.code === "ECONNREFUSED" ? "loopback_connection_refused"
+          : error.code === "ECONNRESET" ? "loopback_connection_reset" : "loopback_connection_error"
+        : null;
+      return agentAppHoldPage(req, res, reason, target.port);
+    }
     res.writeHead(502); res.end("backend unavailable");
   } catch (e) {} });
   req.pipe(p);
@@ -3236,6 +3245,27 @@ const HERMES_MOUNT = "/hermes";
 const HERMES_SIGN_IN = "/hermes-sign-in";
 const HERMES_DESKTOP_MOUNT = "/hermes-desktop";
 const HERMES_DROPPED_HEADERS = ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-port", "x-real-ip"];
+function hermesUnavailable(req, reason, port) {
+  const operation = req.headers.upgrade ? "websocket"
+    : req.method === "POST" && req.url.split("?", 1)[0] === HERMES_MOUNT + "/api/webapp/socket-ticket" ? "socket_ticket" : "http";
+  const unit = port === HERMES_WEBAPP_PORT ? "hermes-gateway.service" : port === HERMES_PORT ? "bux-hermes.service" : undefined;
+  const now = Date.now();
+  if (!surfaceWatchdogProbe(req) && !hermesProxyFailures.some(event =>
+    event.reason === reason && event.operation === operation && event.unit === unit && now - Date.parse(event.at) < 60000)) {
+    const event = { id: `e${now}-${crypto.randomInt(1000000000, 10000000000)}`, at: new Date(now).toISOString(),
+      type: "hermes_proxy_unavailable", kind: "hermes", reason, operation, ...(unit ? { unit } : {}) };
+    hermesProxyFailures.unshift(event);
+    if (hermesProxyFailures.length > 16) hermesProxyFailures.pop();
+    console.warn("hivra-chat: Hermes proxy unavailable", JSON.stringify(event));
+  }
+  const detail = {
+    update_lock: "Hermes is being updated.",
+    loopback_connection_refused: "The local Hermes service refused the connection.",
+    loopback_connection_reset: "The local Hermes service reset the connection.",
+    loopback_connection_error: "The local Hermes service could not be reached.",
+  }[reason];
+  return `${detail} (${reason}) Try again shortly.`;
+}
 function hermesHeaders(origin, port, mount = HERMES_MOUNT) {
   const set = { "x-forwarded-prefix": mount };
   for (const name of HERMES_DROPPED_HEADERS) set[name] = null;
@@ -3309,7 +3339,7 @@ function hermesSignIn(req, res) {
 }
 function hermesProxy(req, res) {
   if (!authed(req)) return denyHtml(req, res);
-  if (agentAppHold(req, res)) return;
+  if (agentAppHold(req, res, "update_lock")) return;
   const port = hermesPort();
   return proxyHttp(req, res, port, HERMES_MOUNT, false, hermesHeaders(Boolean(req.headers.origin), port));
 }
@@ -5288,8 +5318,14 @@ server.on("upgrade", (req, socket, head) => {
   if (isAgentAppPort(port) && !nuphosAcp) {
     agentAppLastUsedAt = Date.now();
     if (agentAppUpdating()) {
-      try { socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 15\r\n\r\n"); } catch (e) {}
-      socket.destroy();
+      const status = "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nRetry-After: 15\r\n";
+      if (hermesMounted(u)) {
+        const message = hermesUnavailable(req, "update_lock", port);
+        socket.end(status + "Content-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nX-Hivra-Hermes-Unavailable: update_lock\r\n\r\n" + message);
+      } else {
+        try { socket.write(status + "\r\n"); } catch (e) {}
+        socket.destroy();
+      }
       return;
     }
     agentAppOpenConnections += 1;

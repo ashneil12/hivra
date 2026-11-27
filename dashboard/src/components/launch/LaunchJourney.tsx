@@ -45,7 +45,7 @@ import { LaunchCapacitySheet } from "./LaunchCapacitySheet";
 import { AttachEntryLink } from "./AttachEntryLink";
 import { fetchCatalogOrder } from "./catalog-claims-client";
 import { LaunchCatalogPage, LaunchCatalogToolbar } from "./LaunchCatalog";
-import { COMPUTER_TILES, offeredAgentTiles, type ChooseTile } from "./launch-tiles";
+import { CLAUDE_SANDBOX_TILE, COMPUTER_TILES, offeredAgentTiles, type ChooseTile } from "./launch-tiles";
 import catalogStyles from "./LaunchCatalog.module.css";
 import { agentLaunchWatchRow } from "@/lib/agent-computers/agent-surfaces";
 import { targetSupportsLaunchModelSettings } from "@/lib/hivra/agent-placement";
@@ -59,6 +59,7 @@ import {
 } from "@/lib/hivra/agent-api";
 import { requestManagedVeniceSummary } from "@/lib/billing/managed-venice-client";
 import { buildInfrastructureSetupHref, isPortableAgentLaunchId, parsePortableLaunchResourceId } from "@/lib/hivra/launch-navigation";
+import { FIRST_RUN_AGENTS, type FirstRunAgent } from "@/lib/hivra/first-run-agents";
 import { getCatalogAppManifest, isCatalogAppLaunchable } from "@/lib/hivra/catalog-manifests";
 import { isLocalAuthMode } from "@/lib/self-host/config";
 import {
@@ -688,10 +689,10 @@ function LaunchedScreen({ name, href, readiness, readyLabel, extraLink, onLeave,
       ) : (
         <>
           {checking ? (
-            <p className={styles.observed} role="status"><span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0, verticalAlign: "middle" }}><ThinkingOrb state="connecting" size={20} /></span> Waiting for it to answer</p>
+            <p className={styles.observed} role="status"><span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0, verticalAlign: "middle" }}><ThinkingOrb state="connecting" size={20} /></span> Checking whether you can open your agent</p>
           ) : (
             <p className={styles.observed} role="status">
-              It hasn&apos;t answered yet, and Hivra has stopped checking.{" "}
+              Hivra couldn&apos;t confirm that your agent was ready to open and has stopped checking.{" "}
               <button type="button" className={styles.outcomeLink} onClick={recheck}>Check again</button>
             </p>
           )}
@@ -728,13 +729,13 @@ function AgentLaunched({ name, agentId, href, readyLabel, onLeave, onStartNew }:
 
 /** What a connected server needs before it can run this profile. */
 function ownServerNeeds(profileId: LaunchProfileId | null): string {
-  return profileId === "linux-terminal"
+  return profileId === "linux-terminal" || profileId === "claude-code-sandbox"
     ? "Linux Sandbox needs an Ubuntu server connected with the one-command setup."
     : "This needs a Proxmox VE server connected with SSH details. An Ubuntu server connected with the one-command setup only runs Linux Sandbox.";
 }
 
 export function LaunchJourney(
-  { preparedProfiles = [], legacyHermesLane = false, managedLinuxSandboxEligible = false, catalogCertifier = false }: {
+  { preparedProfiles = [], legacyHermesLane = false, managedLinuxSandboxEligible = false, catalogCertifier = false, claudeSandboxTargetId }: {
     preparedProfiles?: readonly ("omarchy" | "windows")[];
     /**
      * Tests only: launch Hermes on the old instances lane. Every real launch
@@ -744,6 +745,7 @@ export function LaunchJourney(
     legacyHermesLane?: boolean;
     managedLinuxSandboxEligible?: boolean;
     catalogCertifier?: boolean;
+    claudeSandboxTargetId?: string;
   },
 ) {
   const router = useRouter();
@@ -893,13 +895,14 @@ export function LaunchJourney(
     // before a compatible host exists. Linux Sandbox is the exception only
     // when the server says this deployment's managed sandbox lane is configured.
     managedAvailable: profile?.managedCapacity !== "self-managed-only"
-      || (profile?.placementRuntimeId === "linux-terminal" && managedLinuxSandboxEligible),
+      || (draft?.profileId === "linux-terminal" && managedLinuxSandboxEligible),
     // Hermes and DeepSeek Harness run on Hivra Cloud only, whatever was chosen for another agent.
     selfManagedAvailable: !runsOnHivraCloudOnly(draft?.profileId ?? null),
     // Hivra Cloud needs a paid plan, so a Free account opens on a ready host
     // it connected instead of on a plan blocker.
     preferSelfManaged: planChecked && Boolean(plan?.usage) && !isPaidPlan(plan),
     targetKind: profile?.placementRuntimeId === "linux-terminal" ? "gvisor" : "any",
+    lockedTargetId: draft?.profileId === "claude-code-sandbox" ? claudeSandboxTargetId : undefined,
   });
 
   // DigitalOcean Managed Agents teams the owner connected. They run a
@@ -1458,8 +1461,8 @@ export function LaunchJourney(
   const currentProfile = draft.profileId ? PROFILE_DETAILS[draft.profileId] : null;
   const preparedCanaryProfile = draft.profileId === "omarchy";
   const managedEntitlementRequired = currentProfile?.managedCapacity === "entitlement-required";
-  const gvisorComputer = draft.profileId === "linux-terminal";
-  const managedGvisorAvailable = gvisorComputer && managedLinuxSandboxEligible;
+  const gvisorComputer = draft.profileId === "linux-terminal" || draft.profileId === "claude-code-sandbox";
+  const managedGvisorAvailable = draft.profileId === "linux-terminal" && managedLinuxSandboxEligible;
   const selfManagedOnly = currentProfile?.managedCapacity === "self-managed-only" && !managedGvisorAvailable;
   // The profile always keeps its size and never uses more (its launch sends
   // no maxima): gVisor sandboxes, and the agents whose setup never did.
@@ -1570,6 +1573,7 @@ export function LaunchJourney(
           : digitalOceanBalanceProblem(digitalOceanBalance.balance);
   }
   else if (destination.loading) capacityBlocker = "Checking compatible capacity…";
+  else if (draft.profileId === "claude-code-sandbox" && (!claudeSandboxTargetId || !destination.deployment)) capacityBlocker = "The Claude Code sandbox pilot host is unavailable.";
   else if (gvisorComputer && !managedGvisorAvailable && (destination.mode !== "self-managed" || !destination.deployment)) capacityBlocker = "Linux Sandbox needs a server you've connected, and none is ready for it yet.";
   else if (preparedCanaryProfile && destination.mode !== "hivra-managed") capacityBlocker = "Omarchy runs on Hivra Cloud only.";
   else if (destination.mode === "self-managed" && !destination.deployment) {
@@ -2188,9 +2192,10 @@ export function LaunchJourney(
     targetsError: Boolean(destination.error),
     selfHosted,
   };
-  const renderTile = (tile: ChooseTile) => {
+  const renderTile = (tile: ChooseTile & { starter?: FirstRunAgent }) => {
     const subject = launchProfileFitSubject(tile.id, { managedLinuxSandboxEligible });
     const fit = launchFit(subject, fitEvidence);
+    const starter = tile.starter;
     const Icon = tile.icon;
     const needsServer = SERVER_ONLY_TILES.has(tile.id)
       && subject.hivraCloud !== "plan"
@@ -2202,12 +2207,19 @@ export function LaunchJourney(
         type="button"
         className={styles.tile}
         data-selected={draft.profileId === tile.id}
-        onClick={() => (catalogOn ? openAbout(tile.id) : chooseProfile(tile.id))}
+        onClick={() => (catalogOn && !starter ? openAbout(tile.id) : chooseProfile(tile.id))}
       >
         {Icon ? <Icon size={22} aria-hidden /> : <span className={styles.letterIcon} aria-hidden>O.</span>}
         <span className={styles.tileText}>
           <strong>{tile.name}</strong>
-          <small>{tileDescription(tile, managedLinuxSandboxEligible)}</small>
+          {starter ? (
+            <>
+              <small className={styles.tileHint}>{starter.job}</small>
+              <small>{starter.description}</small>
+              {starter.hosting ? <small>{starter.hosting}</small> : null}
+              {starter.id === "hermes" && fit?.tone === "fits" ? <small className={styles.tileHint}>Recommended for general work</small> : null}
+            </>
+          ) : <small>{tileDescription(tile, managedLinuxSandboxEligible)}</small>}
         </span>
         {needsServer ? null : <FitBadge fit={fit} />}
       </button>
@@ -2223,17 +2235,33 @@ export function LaunchJourney(
     );
   };
   const offeredAgents = offeredAgentTiles({ selfHosted, hermesProfile: legacyHermesLane ? "hermes" : HERMES_LAUNCH_PROFILE, catalogCertifier });
+  if (claudeSandboxTargetId && !selfHosted) offeredAgents.splice(1, 0, CLAUDE_SANDBOX_TILE);
   const orderedByUse = catalogOn && useOrder.length > 0;
   const agentTiles = orderedByUse ? orderCatalogByUse(offeredAgents, useOrder) : offeredAgents;
   const catalogFiltered = catalogOn && isCatalogFiltered(catalogFilter);
   const shownAgentTiles = catalogFiltered ? filterCatalog(agentTiles, catalogFilter) : agentTiles;
+  const starterTiles = !selfHosted && !catalogCertifier && !catalogFiltered && requestedKindParam === "agent"
+    && startParam === "1" && !requestedProfileParam && !templateParam
+    ? FIRST_RUN_AGENTS.flatMap(starter => {
+      const tile = shownAgentTiles.find(item => PROFILE_DETAILS[item.id].runtimeId === starter.id);
+      return tile ? [{ ...tile, starter }] : [];
+    })
+    : [];
+  const otherAgentTiles = shownAgentTiles.filter(tile => !starterTiles.some(starter => starter.id === tile.id));
   const agentSection = shownAgentTiles.length === 0 ? null : (
     <section key="agents" className={styles.chooseSection} aria-labelledby="launch-agents-heading">
       <div className={styles.chooseHeading}>
         <h2 id="launch-agents-heading">An agent</h2>
-        <p>An AI that works on its own computer.{orderedByUse ? " The ones more people use come first." : ""}</p>
+        <p>An AI that works on its own computer.{orderedByUse && !starterTiles.length ? " The ones more people use come first." : ""}</p>
       </div>
-      <div className={styles.tileGrid}>{shownAgentTiles.map(renderTile)}</div>
+      {starterTiles.length > 0 ? (
+        <>
+          <h3 className={styles.chooseSubheading}>Start with one of these agents</h3>
+          <div className={`${styles.tileGrid} ${styles.starterGrid}`}>{starterTiles.map(renderTile)}</div>
+          {otherAgentTiles.length > 0 ? <h3 className={styles.chooseSubheading}>More agents</h3> : null}
+        </>
+      ) : null}
+      {otherAgentTiles.length > 0 ? <div className={styles.tileGrid}>{otherAgentTiles.map(renderTile)}</div> : null}
       {selfHosted || catalogFiltered ? null : <AttachEntryLink className={styles.attachEntry} />}
     </section>
   );
@@ -2910,7 +2938,7 @@ export function LaunchJourney(
           <span aria-hidden="true" style={{ display: "inline-flex", flexShrink: 0 }}><ThinkingOrb state="working" size={32} /></span>
           <span className={styles.eyebrow}>Launch in progress</span>
           <h1 id="launch-progress-heading">Confirming your launch…</h1>
-          <p>Hivra is checking the request for {draft.name.trim()}. We’ll open it as soon as the launch is confirmed.</p>
+          <p>Hivra is checking the request for {draft.name.trim()}. When the launch is confirmed, you can open it here.</p>
           <p className={styles.observed}>
             {observedLaunchText(observation, resumeMode === "resend")}
             {draft.submittedAt ? <> · Sent <SentAgo since={Date.parse(draft.submittedAt)} /> ago</> : null}

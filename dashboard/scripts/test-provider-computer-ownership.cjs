@@ -969,6 +969,57 @@ async function main() {
     });
     await db.exec(catalogDigest);
     assert.deepEqual(await admissionDefinitions(), admittedCatalogDigest, "re-applying the catalog digest admission changes nothing");
+    const hermesGuest503 = migration("20261127171000_provider_release_admission_2026_11_27_1.sql");
+    const hermesRelease = require("../provisioner-releases/2026.11.27.1.json");
+    const releaseRows = hermesRelease.files.map(({ path, sha256, bytes }) => [path, sha256, bytes,
+      path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(path) ? 0o700 : 0o600])
+      .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+    const releaseDigest = createHash("sha256").update(JSON.stringify(releaseRows)).digest("hex");
+    await db.exec(hermesGuest503);
+    const admittedHermesGuest503 = await admissionDefinitions();
+    admittedHermesGuest503.forEach((definition, index) => {
+      for (const version of ["2026.11.26.1", hermesRelease.version]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, "85070186634722fcf9e346a1ae6630cc30b6fb8809fe3458a47f51055c282a17"), 1);
+        assert.equal(occurrences(definition, `'bundleSha256'='${releaseDigest}' and p_identity->'bundle'->>'provisionerVersion'='${hermesRelease.version}'`), 1);
+      }
+    });
+    await db.exec(hermesGuest503);
+    assert.deepEqual(await admissionDefinitions(), admittedHermesGuest503, "re-applying the Hermes guest 503 admission changes nothing");
+    const hermesBake = migration("20261127173200_provider_release_admission_2026_11_27_2.sql");
+    const bakedRelease = require("../provisioner-releases/2026.11.27.2.json");
+    const bakedRows = bakedRelease.files.map(({ path, sha256, bytes }) => [path, sha256, bytes,
+      path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(path) ? 0o700 : 0o600])
+      .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+    const bakedDigest = createHash("sha256").update(JSON.stringify(bakedRows)).digest("hex");
+    await db.exec(hermesBake);
+    const admittedHermesBake = await admissionDefinitions();
+    admittedHermesBake.forEach((definition, index) => {
+      for (const version of [hermesRelease.version, bakedRelease.version]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, `'bundleSha256'='${releaseDigest}' and p_identity->'bundle'->>'provisionerVersion'='${hermesRelease.version}'`), 1);
+        assert.equal(occurrences(definition, `'bundleSha256'='${bakedDigest}' and p_identity->'bundle'->>'provisionerVersion'='${bakedRelease.version}'`), 1);
+      }
+    });
+    await db.exec(hermesBake);
+    assert.deepEqual(await admissionDefinitions(), admittedHermesBake, "re-applying the Hermes bake admission changes nothing");
+    const admissionReader = migration("20261127181800_provider_release_admission_2026_11_27_3.sql");
+    const admissionReaderRelease = require("../provisioner-releases/2026.11.27.3.json");
+    const admissionReaderRows = admissionReaderRelease.files.map(({ path, sha256, bytes }) => [path, sha256, bytes,
+      path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(path) ? 0o700 : 0o600])
+      .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+    const admissionReaderDigest = createHash("sha256").update(JSON.stringify(admissionReaderRows)).digest("hex");
+    await db.exec(admissionReader);
+    const admittedAdmissionReader = await admissionDefinitions();
+    admittedAdmissionReader.forEach((definition, index) => {
+      for (const version of [bakedRelease.version, admissionReaderRelease.version]) assert.equal(occurrences(definition, `'${version}'`), 1);
+      if (admissionFunctions[index].includes("identity_valid")) {
+        assert.equal(occurrences(definition, `'bundleSha256'='${bakedDigest}' and p_identity->'bundle'->>'provisionerVersion'='${bakedRelease.version}'`), 1);
+        assert.equal(occurrences(definition, `'bundleSha256'='${admissionReaderDigest}' and p_identity->'bundle'->>'provisionerVersion'='${admissionReaderRelease.version}'`), 1);
+      }
+    });
+    await db.exec(admissionReader);
+    assert.deepEqual(await admissionDefinitions(), admittedAdmissionReader, "re-applying the capacity reader admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";

@@ -261,6 +261,14 @@ export const LAUNCH_CATALOG: Record<LaunchProfileId, CatalogEntry> = {
     firstTasks: [],
     cover: null,
   },
+  "claude-code-sandbox": {
+    jobs: [],
+    keywords: ["claude code", "coding", "sandbox"],
+    talk: null,
+    sourceUrl: null,
+    firstTasks: [],
+    cover: null,
+  },
   omarchy: {
     jobs: [],
     keywords: ["linux", "arch", "desktop", "hyprland", "gui"],
