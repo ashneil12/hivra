@@ -490,6 +490,7 @@ disown
 ) >/dev/null 2>&1 &
 LOCK_GUARDIAN_PID=$!
 disown`;
+  const managedHermesIpInventory = !runtime && params.agentKind === "hermes";
   return `#!/usr/bin/env bash
 set -euo pipefail
 umask 077
@@ -516,7 +517,7 @@ ${managedCanaryLaunchSealScript([params.canaryProvisionerVersion])}`
 # Inventory is intentionally captured only after FD 8 is held. A launcher that
 # waited behind another provision must observe the predecessor's committed VM
 # configuration and private IP, rather than allocate from its pre-wait snapshot.
-local_vmids="$(qm list | awk 'NR>1{print $1}')"
+${managedHermesIpInventory ? "" : `local_vmids="$(qm list | awk 'NR>1{print $1}')"`}
 cluster_resources="$(pvesh get /cluster/resources --type vm --output-format json 2>/dev/null)" \
   || { echo "could not read cluster-wide VMID inventory" >&2; exit 1; }
 cluster_vmids="$(printf '%s' "$cluster_resources" | grep -oE '"vmid":[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | sort -un || true)"
@@ -549,8 +550,22 @@ hivra_vmid_reference_record "$VMID"` : ""}
 # guest unreachable (host->guest ARP races) and lets later lifecycle/maintenance
 # ssh hit the wrong tenant's box.
 claimed_octets="$(
+${managedHermesIpInventory ? `  [ -d /etc/pve/qemu-server ] || { echo "local Proxmox inventory is unavailable" >&2; exit 1; }
+  shopt -s nullglob
+  configs=(/etc/pve/qemu-server/*.conf)
+  if [ "\${#configs[@]}" -gt 0 ]; then
+    awk 'FNR == 1 { snapshot = 0 }
+    substr($0, 1, 1) == "[" { snapshot = ($0 != "[PENDING]") }
+    !snapshot && /^ipconfig[0-9]+:/ {
+      if (match($0, /[ ,]ip=[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+/)) {
+        n = split(substr($0, RSTART, RLENGTH), ip, ".");
+        print ip[n];
+      }
+    }' "\${configs[@]}" || exit 1
+  fi` : `
   for v in $local_vmids; do qm config "$v" 2>/dev/null || true; done \
     | grep -oE 'ip=[0-9.]+/' | awk -F. '{print $NF}' | tr -d '/'
+`}
   for intent in /var/lib/hivra/provision-operations/operation-*.selected; do
     [ -f "$intent" ] || continue
     awk -F= '$1=="ip" {split($2, parts, "."); if (parts[4] ~ /^[0-9]+$/) print parts[4]}' "$intent"

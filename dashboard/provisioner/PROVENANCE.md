@@ -1478,3 +1478,7 @@ catalog apps. Pinned launches pull and check the selected guest platform
 and digest before the app starts; the app updater cannot replace that
 pin with a tag. Existing tag-based catalog launches and the desktop
 and native workload contracts are unchanged.
+
+Release `2026.11.27.1` seals the Hermes chat gateway change for guest API 503
+diagnostics. It adds no third-party assets and leaves the desktop and native
+workload contracts and catalog image pins unchanged.
