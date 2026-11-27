@@ -177,7 +177,7 @@ export const claudeCodeHooks: BlogArticle = {
           "json",
           String.raw`{
   "session_id": "abc123",
-  "cwd": "/Users/sarah/myproject",
+  "cwd": "/Users/example/myproject",
   "hook_event_name": "PreToolUse",
   "tool_name": "Bash",
   "tool_input": {
