@@ -191,6 +191,20 @@ host("sleep script against a stub host", () => {
     expect(calls.filter((c) => /^(qm (suspend|resume|start|set)|qmp (stop|cont)|qga )/.test(c))).toEqual([]);
 
   describe("nap", () => {
+    it.each([null, "2026-11-12T14:00:00Z"])("refuses a nap when the schedule changed after reserving the wake (%s)", (expectedNextJobAt) => {
+      const script = buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "nap", manual: false, expectedNextJobAt });
+      const run = h.run(script, withProbe(AWAKE, { nextJobAt: "2026-11-12T13:00:00Z" }));
+      expect(receipt(run)).toMatchObject({ ok: false, reason: "schedule_changed", to: "awake" });
+      expect(run.calls).not.toContain("qmp stop");
+    });
+
+    it("naps when the guest still has the scheduled job covered by the lease", () => {
+      const nextJobAt = "2026-11-12T13:00:00Z";
+      const script = buildSleepHostScript({ vmid: VMID, bindingTag: TAG, tier: "nap", manual: false, expectedNextJobAt: nextJobAt });
+      const run = h.run(script, withProbe(AWAKE, { nextJobAt }));
+      expect(receipt(run)).toMatchObject({ ok: true, to: "napping" });
+    });
+
     it("pauses an idle running computer and reports the probe", () => {
       const run = h.run(nap(), withProbe(AWAKE));
       expect(run.status).toBe(0);

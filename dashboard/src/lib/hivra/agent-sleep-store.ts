@@ -124,6 +124,29 @@ export async function finishAgentSleep(input: {
   }
 }
 
+export async function reserveAgentSleepWake(input: {
+  agentId: string;
+  operationId: string;
+  wakeAt: string | null;
+}): Promise<boolean> {
+  if (!supabaseAdmin) return false;
+  try {
+    const { data, error } = await supabaseAdmin.from("hivra_agents")
+      .update({ next_wake_at: input.wakeAt })
+      .eq("id", input.agentId)
+      .eq("operation_id", input.operationId)
+      .eq("operation_kind", "sleep")
+      .eq("status", "running")
+      .eq("desired_state", "running")
+      .select("id");
+    if (error || !Array.isArray(data) || data.length !== 1) throw new Error("wake_reservation_not_confirmed");
+    return true;
+  } catch {
+    warn("sleep wake reservation failed", input.agentId, "sleep_wake_reservation_failed");
+    return false;
+  }
+}
+
 export async function claimAgentWake(input: {
   agentId: string;
   operationId: string;

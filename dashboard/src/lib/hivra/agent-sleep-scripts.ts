@@ -527,8 +527,8 @@ type ScriptCoverage =
   | { kind: "telegram"; coverage: TelegramSleepCoverage }
   | { kind: "channels"; coverage: ChannelSleepCoverage; specs: readonly ChannelWakeSpec[] };
 
-function probeShell(manual: boolean, scriptCoverage: ScriptCoverage | null = null, profile: ProbeProfile | null = null): string {
-  if (scriptCoverage?.kind === "channels") return channelProbeShell(manual, scriptCoverage.coverage, scriptCoverage.specs, profile);
+function probeShell(manual: boolean, scriptCoverage: ScriptCoverage | null = null, profile: ProbeProfile | null = null, expectedNextJobAt?: string | null): string {
+  if (scriptCoverage?.kind === "channels") return channelProbeShell(manual, scriptCoverage.coverage, scriptCoverage.specs, profile, expectedNextJobAt);
   const coverage = scriptCoverage?.coverage ?? null;
   const program = profile
     ? idleProbeProgramFor({ telegram: coverage !== null, profile })
@@ -537,11 +537,11 @@ function probeShell(manual: boolean, scriptCoverage: ScriptCoverage | null = nul
 MANUAL=${manual ? 1 : 0}${coverage ? `
 HIVRA_COVERED_CHANNELS=${shellQuote(coverage.channels.join(","))}
 HIVRA_TG_FP=${shellQuote(coverage.fingerprint)}` : ""}
-${probeFunctionsShell(coverage ? ' HIVRA_COVERED_CHANNELS="$HIVRA_COVERED_CHANNELS" HIVRA_TG_FP="$HIVRA_TG_FP"' : "", probeCheckPerl(coverage !== null, coverage?.tag))}`;
+${probeFunctionsShell(coverage ? ' HIVRA_COVERED_CHANNELS="$HIVRA_COVERED_CHANNELS" HIVRA_TG_FP="$HIVRA_TG_FP"' : "", probeCheckPerl(coverage !== null, coverage?.tag), expectedNextJobAt)}`;
 }
 
 /** The general form: every covered channel is checked by its own predicate (see channelGatePerl). */
-function channelProbeShell(manual: boolean, coverage: ChannelSleepCoverage, specs: readonly ChannelWakeSpec[], profile: ProbeProfile | null = null): string {
+function channelProbeShell(manual: boolean, coverage: ChannelSleepCoverage, specs: readonly ChannelWakeSpec[], profile: ProbeProfile | null = null, expectedNextJobAt?: string | null): string {
   const generic = coverage.channels
     .map((tag) => specs.find((spec) => spec.probeTag === tag)?.channel)
     .filter((channel): channel is ChannelWakeChannel => Boolean(channel));
@@ -551,10 +551,20 @@ function channelProbeShell(manual: boolean, coverage: ChannelSleepCoverage, spec
 MANUAL=${manual ? 1 : 0}
 HIVRA_COVERED_CHANNELS=${shellQuote(coverage.channels.join(","))}
 HIVRA_CHANNEL_FPS=${shellQuote(channelFpsEnv(coverage.fingerprints))}
-${probeFunctionsShell(' HIVRA_COVERED_CHANNELS="$HIVRA_COVERED_CHANNELS" HIVRA_CHANNEL_FPS="$HIVRA_CHANNEL_FPS"', PROBE_CHECK_PERL_BASE.replace("__CHANNEL_CHECK__", () => channelGatePerl(specs, coverage.telegramTag)))}`;
+${probeFunctionsShell(' HIVRA_COVERED_CHANNELS="$HIVRA_COVERED_CHANNELS" HIVRA_CHANNEL_FPS="$HIVRA_CHANNEL_FPS"', PROBE_CHECK_PERL_BASE.replace("__CHANNEL_CHECK__", () => channelGatePerl(specs, coverage.telegramTag)), expectedNextJobAt)}`;
 }
 
-function probeFunctionsShell(checkEnv: string, checkPerl: string): string {
+function probeFunctionsShell(checkEnv: string, checkPerl: string, expectedNextJobAt?: string | null): string {
+  if (expectedNextJobAt !== undefined) {
+    checkEnv += ` HIVRA_EXPECTED_NEXT_JOB=${shellQuote(expectedNextJobAt ?? "")}`;
+    checkPerl = checkPerl.replace("my $busy = 0;", () => String.raw`my $scheduled = $d->{nextJobAt};
+my $expected = $ENV{HIVRA_EXPECTED_NEXT_JOB};
+unless (exists($d->{nextJobAt}) && ($expected eq "" ? !defined($scheduled) :
+    defined($scheduled) && !ref($scheduled) && $scheduled eq $expected)) {
+    print "schedule_changed\n"; exit 0;
+}
+my $busy = 0;`);
+  }
   return `run_probe() {
   local out lines line
   PROBE_JSON=null
@@ -580,7 +590,7 @@ probe_or_finish() {
   blocker="$(probe_blocker)" || finish false probe_failed "$FROM"
   case "$blocker" in
     ok) ;;
-    invalid) finish false probe_invalid "$FROM" ;;
+    invalid) finish false probe_invalid "$FROM" ;;${expectedNextJobAt !== undefined ? '\n    schedule_changed) finish false schedule_changed "$FROM" ;;' : ""}
     *) finish false active "$FROM" ;;
   esac
 }`;
@@ -1152,6 +1162,8 @@ export interface SleepHostScriptInput {
   tier: SleepScriptTier;
   /** A manual test sleep ignores the open page's own connections. */
   manual: boolean;
+  expectedNextJobAt?: string | null;
+  fromNap?: boolean;
   /** Live channels a Telegram wake covers. Off (null) by default: every live channel keeps the agent awake. */
   telegramCoverage?: TelegramSleepCoverage | null;
   /**
@@ -1274,12 +1286,12 @@ mark marker "$STEP"
 ` : ""}finish true napped napping`;
 }
 
-function hibernateBody(hostIngress = false, trimMemory = false, nappingOnly = false): string {
+function hibernateBody(hostIngress = false, trimMemory = false, nappingOnly = false, fromNap = false): string {
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
 FROM="$(tier_of)"
-case "$FROM" in ${nappingOnly ? "napping" : "awake|napping"}) ;; *) finish false not_sleepable "$FROM" ;; esac
+case "$FROM" in ${nappingOnly || fromNap ? "napping" : "awake|napping"}) ;; *) finish false not_sleepable "$FROM" ;; esac
 if [ "$FROM" = awake ]; then
   STEP="$(now_ms)"
   probe_or_finish
@@ -1397,14 +1409,14 @@ ${ctlShell()}
 ${input.fastConfigRead === true ? `${FAST_QM_SHELL}
 ` : ""}${stateShell(input.fastConfigRead === true)}
 ${nap ? "" : `${INTERRUPTED_SAVE_SHELL}
-`}${probeShell(input.manual === true, coverage, input.profile ?? null)}
+`}${probeShell(input.manual === true, coverage, input.profile ?? null, input.expectedNextJobAt)}
 ${hostIngress ? `${ingressShell()}
 ` : ""}${trimShell(trimMemory)}install -d -m 0755 /run/lock
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
 # Another script holds the computer. Whatever it does next, this one changes nothing: say what the host shows now.
 flock -x -n 9 || { require_binding; observe; finish false busy "$OBS"; }
 require_binding
-${nap ? napBody(hostIngress, hostIngress && coversTelegram(coverage), trimMemory) : hibernateBody(hostIngress, trimMemory)}
+${nap ? napBody(hostIngress, hostIngress && coversTelegram(coverage), trimMemory) : hibernateBody(hostIngress, trimMemory, false, input.fromNap === true)}
 `;
 }
 

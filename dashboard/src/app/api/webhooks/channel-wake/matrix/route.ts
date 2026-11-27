@@ -6,10 +6,11 @@
 // Checked against https://spec.matrix.org/latest/push-gateway-api/: the body
 // is {notification: {..., devices: [{app_id, pushkey, ...}]}} and the answer
 // is 200 {rejected: [pushkey...]}; a rejected pushkey makes the homeserver
-// delete that pusher. The endpoint has no authentication of its own, so each
-// pushkey carries an HMAC (adapters/matrix-pusher-program.ts). A forged one
-// gets 401 before any database read. Without HIVRA_CHANNEL_WAKE_SECRET the
-// route answers 404, as if it did not exist.
+// delete that pusher. A 503 during a sleep transition asks the homeserver to
+// retry the notification with backoff. The endpoint has no authentication
+// of its own, so each pushkey carries an HMAC (adapters/matrix-pusher-program.ts).
+// A forged one gets 401 before any database read. Without HIVRA_CHANNEL_WAKE_SECRET
+// the route answers 404, as if it did not exist.
 
 export const runtime = "nodejs";
 // The wake runs after the answer; its worst case is a hibernated agent (see the Telegram wake route).
@@ -31,6 +32,10 @@ function json(status: number, body: Record<string, unknown>): NextResponse {
 
 function unrecognized(status: 404 | 405): NextResponse {
   return json(status, { errcode: "M_UNRECOGNIZED", error: "Unrecognized request" });
+}
+
+function retryNotification(): NextResponse {
+  return json(503, { errcode: "M_UNKNOWN", error: "Try again" });
 }
 
 /** At most MAX_BODY_BYTES of the body, parsed as JSON; null for anything larger or not JSON. */
@@ -76,10 +81,10 @@ export async function POST(req: NextRequest) {
     if (outcome.status === 200) return json(200, { rejected: outcome.rejected });
     if (outcome.status === 404) return unrecognized(404);
     if (outcome.status === 400) return json(400, { errcode: "M_BAD_JSON", error: "Bad notification" });
+    if (outcome.status === 503) return retryNotification();
     return json(401, { errcode: "M_FORBIDDEN", error: "Unknown pushkey" });
   } catch {
-    // The homeserver retries an error with backoff.
-    return json(503, { errcode: "M_UNKNOWN", error: "Try again" });
+    return retryNotification();
   }
 }
 
