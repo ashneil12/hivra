@@ -22,11 +22,13 @@ The recipe starts from a fresh Ubuntu cloud disk, verifies the dated Ubuntu byte
 
 The script emits `hivra-hermes-<imageSha256>.qcow2` and a same-named JSON manifest. Before staging, independently recheck the artifact SHA, format and absence of backing files. Inspect the disk read-only: it must have no SSH host keys or authorized keys, initialized machine ID, cloud-init instance data, model/tunnel keys, access tokens or pre-existing gateway service. Check that the recorded release, official Git commit, CLI and Webapp are present.
 
+Boot two disposable copy-on-write clones of the exact sealed disk using the same default BIOS and VirtIO disk as Canary. Use a different NoCloud instance ID for each clone and keep both off the network. Require both clones to reach QEMU Guest Agent and finish cloud-init, then compare the generated machine IDs and SSH host public keys: both values must differ across clones. Check that the original sealed digest is unchanged. A valid qcow2 that can be mounted read-only can still fail in GRUB, so do not stage the disk if either boot check fails.
+
 Hermes's installer uses a detached HEAD for both a commit pin and a stock stable release. The bake checks that local `main` tracks `origin/main` on the official repository. The clone's fresh profile defaults to upstream's stable channel; its native updater resolves and moves to stable release commits without rewriting `main`.
 
 ## Activate on Canary
 
-After release review and authority for the exact Canary host, check that the host has the sealed provisioner shipped by the served Git revision. Both `2026.11.27.2` and `2026.11.27.3` support this image selection. Stage the verified image at `/var/lib/vz/template/iso/hivra-hermes-<imageSha256>.qcow2` as a root-owned regular file with mode `0444` and exactly one link. Verify the final bytes at that path before changing any settings.
+After release review and authority for the exact Canary host, check that the host has the sealed provisioner shipped by the served Git revision and that the revision supports this image selection. Stage the verified image at `/var/lib/vz/template/iso/hivra-hermes-<imageSha256>.qcow2` as a root-owned regular file with mode `0444` and exactly one link. Verify the final bytes at that path before changing any settings.
 
 Set the three server-only variables on the dedicated Git Canary project: `HIVRA_CANARY_HERMES_IMAGE_HOST` to the selected Proxmox target ID, `HIVRA_CANARY_HERMES_IMAGE_SHA256` to the digest of the qcow2 recorded in the manifest, and `HIVRA_CANARY_HERMES_IMAGE_USER_ID` to the existing standing QA owner. The host setting does not pin placement; if normal placement picks another host, that run uses stock installation and is not a baked sample. Settings apply on the next Git build, not to the current deployment. Confirm the Canary domain serves a Git build created after all three settings were saved. Do not change the stock Ubuntu image or production configuration.
 
