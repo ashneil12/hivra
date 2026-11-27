@@ -173,6 +173,12 @@ standby_exact_tags() {
   esac
 }
 
+standby_exact_description() {
+  local description
+  description="$(standby_config_field description)" || return 1
+  [ "$description" = "$STANDBY_DESCRIPTION" ] || [ "$description" = "${STANDBY_DESCRIPTION/:/%3A}" ]
+}
+
 standby_verify_config() {
   local expected="$1" config disk
   STANDBY_CONFIG="$(qm config "$VMID" --current 1)" || fail "cannot read current standby config"
@@ -181,7 +187,7 @@ standby_verify_config() {
   awk -F: '/^[a-z][a-z0-9_-]*: / && seen[$1]++ {exit 1}' <<< "$STANDBY_CONFIG" \
     || fail "standby configuration has duplicate fields"
   standby_exact_tags "$expected" || fail "standby ownership tags differ"
-  [ "$(standby_config_field description)" = "$STANDBY_DESCRIPTION" ] \
+  standby_exact_description \
     && [ "$(standby_config_field name)" = "hivra-cc-$VMID" ] \
     && [ "$(standby_config_field ipconfig0)" = "ip=$IP/24,gw=$GW" ] \
     && [ "$(standby_config_field onboot)" = 0 ] \
@@ -317,7 +323,7 @@ standby_retire() {
     esac
     standby_inventory 1
     STANDBY_CONFIG="$(qm config "$VMID" --current 1)" || fail "cannot inspect standby config before retirement"
-    standby_exact_tags standby && [ "$(standby_config_field description)" = "$STANDBY_DESCRIPTION" ] \
+    standby_exact_tags standby && standby_exact_description \
       && [ "$(standby_config_field ipconfig0)" = "ip=$IP/24,gw=$GW" ] \
       || fail "retire refused: VM does not have exact unassigned standby ownership"
     case "$(qm status "$VMID")" in
@@ -326,7 +332,7 @@ standby_retire() {
       *) fail "standby power state is ambiguous" ;;
     esac
     STANDBY_CONFIG="$(qm config "$VMID" --current 1)"
-    standby_exact_tags standby && [ "$(standby_config_field description)" = "$STANDBY_DESCRIPTION" ] \
+    standby_exact_tags standby && standby_exact_description \
       && [ "$(standby_config_field ipconfig0)" = "ip=$IP/24,gw=$GW" ] \
       || fail "standby ownership changed before destroy"
     qm destroy "$VMID" --purge 1 >/dev/null

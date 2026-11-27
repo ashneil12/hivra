@@ -64,6 +64,8 @@ if name == "qm":
             data["scsi0"] += ",size=" + args[-1]
         else:
             for key, value in zip(args[2::2], args[3::2]):
+                if key == "--description":
+                    value = value.replace(":", "%3A")
                 data[key[2:]] = "local-lvm:vm-9304-disk-0,discard=on,ssd=1" if key == "--scsi0" else value
         conf.write_text("".join(f"{key}: {value}\n" for key, value in data.items()))
     elif action == "start":
@@ -217,6 +219,7 @@ class StandbyTests(unittest.TestCase):
         stage = self.call("stage")
         self.assert_ok(stage)
         self.assertEqual(json.loads(stage.stdout.splitlines()[-1])["generation"], GENERATION)
+        self.assertIn(" sha256%3A", self.conf.read_text())
         self.assertIn("onboot: 0", self.conf.read_text())
         self.assertEqual(self.slot.stat().st_mode & 0o777, 0o600)
         self.assertEqual(self.ledger.read_text(), VMID + "\n")
@@ -266,6 +269,11 @@ class StandbyTests(unittest.TestCase):
     def test_ambiguous_or_expired_slots_never_retag_or_receive_credentials(self):
         self.assert_ok(self.call("stage"))
         original = self.conf.read_text()
+        self.conf.write_text(original.replace("sha256%3A", "sha256%253A"))
+        self.assertIn("ownership, address or resource envelope changed", self.call("claim").stderr)
+        self.assertIn("does not have exact unassigned standby ownership", self.call("retire").stderr)
+        self.assertFalse(self.receipt.exists())
+        self.conf.write_text(original)
         for override in (
             {"MOCK_BOOT": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}, {"MOCK_IP": "10.251.20.43/24"},
             {"MOCK_DIRTY": "1"}, {"MOCK_QMP": "paused"}, {"MOCK_CLOUD_INIT": "status: running"},
