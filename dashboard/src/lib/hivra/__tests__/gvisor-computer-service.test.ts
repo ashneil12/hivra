@@ -414,16 +414,15 @@ describe("ready managed sandbox lifecycle", () => {
     });
 
     it("holds the owner command claim until the confirmed result, without implicit wake", async () => {
-      mockRpc.mockResolvedValueOnce({ data: null, error: null })
-        .mockResolvedValueOnce({ data: { ...claim, status: "observe" }, error: null })
+      mockRpc.mockResolvedValueOnce({ data: { ...claim, status: "observe" }, error: null })
         .mockResolvedValueOnce({ data: operationId, error: null })
         .mockResolvedValueOnce({ data: true, error: null });
       mockRunWithStdin.mockImplementationOnce(async script => {
-        expect(mockRpc).toHaveBeenCalledTimes(3);
+        expect(mockRpc).toHaveBeenCalledTimes(2);
         return acknowledgeManaged(script, command);
       });
       await expect(executeGvisorComputerCommand(userId, computerId, ["true"])).resolves.toMatchObject({ exitCode: 0 });
-      expect(mockRpc).toHaveBeenNthCalledWith(4, "complete_hivra_managed_gvisor_pilot_command", {
+      expect(mockRpc).toHaveBeenNthCalledWith(3, "complete_hivra_managed_gvisor_pilot_command", {
         p_customer: userId, p_computer: computerId, p_claim: operationId,
       });
       agent.status = "stopped";
@@ -432,25 +431,24 @@ describe("ready managed sandbox lifecycle", () => {
     });
 
     it("does not clear a command claim after an uncertain host outcome", async () => {
-      mockRpc.mockResolvedValueOnce({ data: null, error: null })
-        .mockResolvedValueOnce({ data: { ...claim, status: "observe" }, error: null })
+      mockRpc.mockResolvedValueOnce({ data: { ...claim, status: "observe" }, error: null })
         .mockResolvedValueOnce({ data: operationId, error: null });
       mockRunWithStdin.mockResolvedValueOnce({ ok: false, stdout: "", stderr: "" });
       await expect(executeGvisorComputerCommand(userId, computerId, ["true"])).rejects.toMatchObject({ code: "remote_failed" });
-      expect(mockRpc).toHaveBeenCalledTimes(3);
+      expect(mockRpc).toHaveBeenCalledTimes(2);
     });
 
     it("does not dispatch commands without the pilot claim, or wake a foreign owner", async () => {
       await expect(mutateGvisorComputer("foreign-owner", computerId, { action: "start" })).rejects.toMatchObject({ code: "not_found" });
       expect(mockRpc).not.toHaveBeenCalled();
-      mockRpc.mockResolvedValueOnce({ data: null, error: null })
-        .mockResolvedValueOnce({ data: { ...claim, status: "observe" }, error: null })
+      mockRpc.mockResolvedValueOnce({ data: { ...claim, status: "observe" }, error: null })
         .mockResolvedValueOnce({ data: null, error: null });
       await expect(executeGvisorComputerCommand(userId, computerId, ["true"])).rejects.toMatchObject({ code: "conflict" });
       expect(mockRunWithStdin).not.toHaveBeenCalled();
     });
 
     it("fences legacy dispatch when the tier ledger exists but the pilot flag is off", async () => {
+      process.env.HIVRA_MANAGED_GVISOR_TIER_COMPUTER_ID = computerId;
       const now = new Date().toISOString();
       mockRpc.mockResolvedValueOnce({ error: null, data: {
         computer_id: computerId, customer_id: userId, operator_id: operatorId, generation: launchRequestId,

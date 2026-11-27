@@ -10,6 +10,7 @@ import { isCanonicalGitCanaryDeployment } from "./canonical-git-canary";
 import { GvisorTierArchive, GvisorTierHandoff, gvisorTierIdleHours, gvisorTierKey, gvisorTierPilot } from "./gvisor-tier-handoff";
 
 import { supabaseAdmin } from "@/lib/supabase";
+import { log } from "@/lib/logger";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE, paysForHostedCompute } from "@/lib/billing/hosted-compute";
 import { beginInfrastructureConnectionPreparation, completeInfrastructureConnectionPreflight,
@@ -563,7 +564,7 @@ async function observeManagedProvision(userId: string, computerId: string, expec
 }
 
 async function readTierHandoff(userId: string, computerId: string) {
-  if (!isCanonicalGitCanaryDeployment()) return null;
+  if (!isCanonicalGitCanaryDeployment() || process.env.HIVRA_MANAGED_GVISOR_TIER_COMPUTER_ID !== computerId) return null;
   const { data, error } = await db().rpc("read_hivra_gvisor_tier_handoff", {
     p_customer: userId, p_computer: computerId,
   });
@@ -653,7 +654,7 @@ printf '%s\\n' '${acknowledgement}'`);
     || health.data.network !== `hivra-gvisor-net-${sandboxId}` || !row.checkpoint_receipt) {
     throw new GvisorComputerError("remote_failed", "The restored sandbox health evidence was invalid.");
   }
-  console.info(JSON.stringify({ event: "gvisor_tier_restore_ready", hostMs: receipt.data.hostMs }));
+  log.info("Managed gVisor tier restore ready", { source: "gvisor-tier", hostMs: receipt.data.hostMs });
   return { ...identity, state: "running", checkpointDigest: row.checkpoint_receipt.checkpointDigest };
 }
 
@@ -866,7 +867,9 @@ export async function executeGvisorComputerCommand(userId: string, agentId: stri
         operation: "exec", ownerHash: ownerHash(userId), computerId: agent.id, sandboxId: tier.destination_sandbox_id, argv,
       }, tierBinding(tier, "destination"), true, "mutation");
       if (tier.phase === "sleeping") {
-        console.info(JSON.stringify({ event: "gvisor_tier_wake_command_result", endToEndMs: Math.round(performance.now() - requested) }));
+        log.info("Managed gVisor tier wake command returned", {
+          source: "gvisor-tier", durationMs: Math.round(performance.now() - requested),
+        });
       }
       return result.receipt;
     }

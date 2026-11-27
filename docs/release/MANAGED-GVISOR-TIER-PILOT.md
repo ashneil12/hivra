@@ -90,7 +90,8 @@ Destroy its fixture without reopening it.
 4. Record the protected identity-free browser flow as MP4 and retain exact
    Canary deployment evidence. Use a monotonic client timer to first useful
    command result; the anonymous ops fields separately measure host restore
-   and server command return. Report counts, p50/p95/p99, archive sizes,
+   and server command return when info-level application logging is enabled.
+   Report counts, p50/p95/p99, archive sizes,
    consecutive and burst behavior, failures, and the host-unavailable result.
    Five repeats or an SSH-only result are not service acceptance. The target
    is p95 ≤10 seconds for the measured typical pack, with no hot-path
