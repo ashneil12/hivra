@@ -3,20 +3,41 @@ set -euo pipefail
 umask 022
 
 cd /root/hivra-image-bake
-case "$1" in official-hermes|deepseek-harness|ubuntu-qga) ;; *) exit 64 ;; esac
+generalize_image() {
+  cloud-init clean --logs --machine-id
+  install -m 0444 /dev/null /etc/machine-id
+  rm -f /etc/ssh/ssh_host_* /var/lib/dbus/machine-id /var/lib/systemd/random-seed
+  rm -rf /root/.ssh /home/ubuntu/.ssh /var/lib/cloud/seed
+  apt-get clean
+  rm -rf /var/lib/apt/lists/*
+  find /var/log -type f -exec truncate -s 0 -- {} +
+}
+
+case "$1" in
+  generalize) generalize_image; exit 0 ;;
+  official-hermes|deepseek-harness|ubuntu-qga|agent-zero|bux-dependencies) ;;
+  *) exit 64 ;;
+esac
 source ./runtime-bake-pins.env
 export DEBIAN_FRONTEND=noninteractive
-PACKAGES=(qemu-guest-agent)
-if [ "$1" != ubuntu-qga ]; then
-  PACKAGES+=(ca-certificates curl git gnupg libatomic1 sudo tmux wget xz-utils)
+if [ "$1" = agent-zero ]; then
+  source ./bake-agent-zero-guest.sh
+  exit 0
+fi
+if [ "$1" != bux-dependencies ]; then
+  PACKAGES=(qemu-guest-agent)
+  if [ "$1" != ubuntu-qga ]; then
+    PACKAGES+=(ca-certificates curl git gnupg libatomic1 sudo tmux wget xz-utils)
+  fi
+  apt-get -o Acquire::Retries=3 -o APT::Update::Error-Mode=any update
+  apt-get -o Acquire::Retries=3 install -y --no-install-recommends "${PACKAGES[@]}"
+  systemctl enable qemu-guest-agent.service
 fi
 
-apt-get -o Acquire::Retries=3 -o APT::Update::Error-Mode=any update
-apt-get -o Acquire::Retries=3 install -y --no-install-recommends "${PACKAGES[@]}"
-systemctl enable qemu-guest-agent.service
-
 install -d /etc/hivra
-if [ "$1" = ubuntu-qga ]; then
+if [ "$1" = bux-dependencies ]; then
+  source ./bake-bux-dependencies-guest.sh
+elif [ "$1" = ubuntu-qga ]; then
   read -r status version < <(dpkg-query -W -f='${db:Status-Status} ${Version}\n' qemu-guest-agent)
   [[ "$status" = installed && "$version" =~ ^[0-9][A-Za-z0-9.+:~-]{0,127}$ ]]
   [ -x /usr/sbin/qemu-ga ]
@@ -34,10 +55,4 @@ else
   source "./bake-$1-guest.sh"
 fi
 
-cloud-init clean --logs --machine-id
-install -m 0444 /dev/null /etc/machine-id
-rm -f /etc/ssh/ssh_host_* /var/lib/dbus/machine-id /var/lib/systemd/random-seed
-rm -rf /root/.ssh /home/ubuntu/.ssh /var/lib/cloud/seed
-apt-get clean
-rm -rf /var/lib/apt/lists/*
-find /var/log -type f -exec truncate -s 0 -- {} +
+generalize_image

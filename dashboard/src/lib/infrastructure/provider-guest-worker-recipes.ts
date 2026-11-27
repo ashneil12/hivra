@@ -610,14 +610,19 @@ const recipes = Object.freeze({
     workerSha256: "af0165e37957ed653691ea5eab4d7e52060f299f04983f7d8fefbb392439793a",
     workerSize: 45216,
   }),
-  "2026.11.27.5": Object.freeze({
+  "2026.11.27.6": Object.freeze({
     protocol: "v1" as const,
-    workerSha256: "003e9bbb14b4a03fba84f1706ea4f32fd5bf48aadf5686c90a6f7e3fb2d2fb0b",
+    workerSha256: "0c4213acf5812372f865798531e5ee1d7c8edd46e5aeab1114c89dc0792282ec",
     workerSize: 45316,
   }),
   "2026.11.27.4": Object.freeze({
     protocol: "v1" as const,
     workerSha256: "61cf525c221420fa01bf087c18cb95f7bfcc3006bbb8b08893acbac564b1f695",
+    workerSize: 45216,
+  }),
+  "2026.11.27.5": Object.freeze({
+    protocol: "v1" as const,
+    workerSha256: "c49a72bbf519e7d51405f6cf56836fc357f005d0682576e22f5db860f666a373",
     workerSize: 45216,
   }),
   "2026.11.27.3": Object.freeze({

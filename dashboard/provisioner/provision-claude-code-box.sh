@@ -65,6 +65,7 @@ NODE_LINUX_X64_SHA256="${NODE_LINUX_X64_SHA256:-d60acfe00a2932254bb0ad20e01b0d74
 TTYD_VERSION="${TTYD_VERSION:-1.7.7}"
 TTYD_LINUX_X64_SHA256="${TTYD_LINUX_X64_SHA256:-8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55}"
 AGENT_ZERO_IMAGE_DIGEST="${AGENT_ZERO_IMAGE_DIGEST:-}"  # default: the image's latest tag at launch
+AGENT_ZERO_BAKED="${HIVRA_AGENT_ZERO_BAKED:-0}"
 CDP_PORT="${CDP_PORT:-9222}"                    # local Chrome remote-debugging port
 PROFILE_DIR="${PROFILE_DIR:-/home/${AGENT_USER}/.browser-profile}"  # NON-default Chrome profile (Chrome 136+ gotcha)
 HIVRA_CHAT_PORT="${HIVRA_CHAT_PORT:-8080}"      # Hivra chat HTTP port
@@ -96,6 +97,11 @@ case "$HERMES_BAKED" in
   0) ;;
   1) [ "$AGENT_KIND:$COMPUTER_SUBSTRATE" = hermes:proxmox-kvm ] || exit 1 ;;
   *) exit 1 ;;
+esac
+BUX_BAKED="${HIVRA_BUX_DEPENDENCIES_BAKED:-0}"
+case "$BUX_BAKED:$AGENT_KIND:$COMPUTER_SUBSTRATE:${HIVRA_WANT_BROWSER:-}" in
+  0:*|1:claude:proxmox-kvm:0|1:codex:proxmox-kvm:0) ;;
+  *) printf '%s\n' 'unsupported baked bux dependency profile' >&2; exit 1 ;;
 esac
 uses_standalone_access_base() {
   is_linux_computer || [ "$HERMES_BAKED" = 1 ]
@@ -257,6 +263,54 @@ fi
 [[ "$NODE_LINUX_X64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid Node.js checksum"
 [[ "$TTYD_LINUX_X64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid ttyd checksum"
 [ -z "$AGENT_ZERO_IMAGE_DIGEST" ] || [[ "$AGENT_ZERO_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "invalid Agent Zero image digest"
+case "$AGENT_ZERO_BAKED" in
+  0) ;;
+  1) [ "$AGENT_KIND:$COMPUTER_SUBSTRATE" = agent-zero:proxmox-kvm ] || die "Agent Zero bake requires an Agent Zero Proxmox guest" ;;
+  *) die "invalid Agent Zero baked image flag" ;;
+esac
+read_agent_zero_bake_digest() {
+  python3 -I -B - "$1" <<'PYTHON'
+import json
+import os
+import re
+import stat
+import sys
+
+def unique(pairs):
+    if len({key for key, _ in pairs}) != len(pairs):
+        raise ValueError()
+    return dict(pairs)
+
+try:
+    with os.fdopen(os.open(sys.argv[1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW), "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022 or not 0 < info.st_size <= 2048:
+            raise ValueError()
+        data = json.loads(source.read(2049), object_pairs_hook=unique)
+    if (set(data) != {"schema", "kind", "baseImageSha256", "imageDigest", "archiveSha256"}
+            or type(data["schema"]) is not int or data["schema"] != 1 or data["kind"] != "agent-zero"):
+        raise ValueError()
+    for key in ("baseImageSha256", "archiveSha256", "imageDigest"):
+        if not re.fullmatch(("sha256:" if key == "imageDigest" else "") + "[0-9a-f]{64}", data[key]):
+            raise ValueError()
+    print(data["imageDigest"])
+except (OSError, ValueError, TypeError, KeyError, RecursionError):
+    sys.exit(1)
+PYTHON
+}
+
+if [ "$AGENT_ZERO_BAKED" = 1 ]; then
+  BAKED_A0_DIGEST="$(read_agent_zero_bake_digest /etc/hivra/agent-zero-bake.json)" \
+    || die "Agent Zero baked image marker is missing or invalid"
+  [ -z "$AGENT_ZERO_IMAGE_DIGEST" ] || [ "$AGENT_ZERO_IMAGE_DIGEST" = "$BAKED_A0_DIGEST" ] \
+    || die "Agent Zero digest does not match the selected baked image"
+  AGENT_ZERO_IMAGE_DIGEST="$BAKED_A0_DIGEST"
+  if [ -e /etc/systemd/system/hivra-agent-zero.service ] \
+    && ! grep -Eq "^ExecStart=.* agent0ai/agent-zero@${AGENT_ZERO_IMAGE_DIGEST}$" /etc/systemd/system/hivra-agent-zero.service; then
+    die "Agent Zero has already changed version; baked provisioning will not roll it back"
+  fi
+fi
+
 [[ "$CDP_PORT" =~ ^[0-9]+$ ]] && [ "$CDP_PORT" -ge 1 ] && [ "$CDP_PORT" -le 65535 ] \
   || die "CDP_PORT must be an integer from 1 to 65535"
 if [ -n "$ACCESS_HOSTNAME" ]; then
@@ -328,6 +382,14 @@ with_retries() {
 }
 if [ "$HERMES_BAKED" = 1 ]; then
   verify_hermes_bake
+elif [ "$BUX_BAKED" = 1 ]; then
+  if [ -e "$BUX_DIR" ] || [ -L "$BUX_DIR" ] || [ -e "$AGENT_HOME" ] || [ -L "$AGENT_HOME" ] \
+    || id "$AGENT_USER" >/dev/null 2>&1 || command -v claude >/dev/null 2>&1 || command -v codex >/dev/null 2>&1; then
+    die "baked bux dependencies require a fresh tenant"
+  fi
+  python3 -I "$SRC_DIR/hivra-bux-bake.py" verify "$BUX_REF" "$GH_VERSION" \
+    || die "baked bux dependency verification failed"
+  ok "verified baked bux dependencies"
 else
   apt_get update -y || die "apt-get update failed after retries"
   apt_get install -y curl ca-certificates git wget gnupg tmux sudo xz-utils \
@@ -561,7 +623,7 @@ run_public_bootstrap() (
 )
 
 ensure_bux_installed() {
-if id "${AGENT_USER}" >/dev/null 2>&1 && [ -x /usr/bin/claude ]; then
+if [ "${BUX_BAKED:-0}" != 1 ] && id "${AGENT_USER}" >/dev/null 2>&1 && [ -x /usr/bin/claude ]; then
   ok "bux already installed (user ${AGENT_USER} + claude present); skipping installer"
 else
   # HEAD identifies the checkout, not its mutable working-tree bytes. Never
@@ -569,6 +631,10 @@ else
   # (or a dashboard runtime which stripped the coding CLIs) needs trusted repair.
   [ "$BUX_CHECKOUT_CREATED" = 1 ] \
     || die "existing bux base is incomplete; trusted base repair is required"
+  if [ "${BUX_BAKED:-0}" = 1 ]; then
+    python3 -I "$SRC_DIR/hivra-bux-bake.py" patch "${BUX_DIR}/install.sh" \
+      || die "could not apply the baked dependency bypass to the reviewed bux installer"
+  fi
   # Only the checkout created by this invocation is eligible for root execution.
   # Point its two CLI downloads at the newest releases found above, so the
   # version installed is the one Hivra records.
@@ -1358,6 +1424,7 @@ A0_REPO="agent0ai/agent-zero"
 
 # --- Docker engine (boxes are full VMs — no LXC-nesting problem here) ---
 if ! command -v docker >/dev/null 2>&1; then
+  [ "$AGENT_ZERO_BAKED" = 0 ] || die "baked Docker engine is missing"
   say "installing Docker from Ubuntu's signed package repository"
   apt_get install -y docker.io || die "docker.io package installation failed"
 fi
@@ -1372,6 +1439,12 @@ if [ -z "$AGENT_ZERO_IMAGE_DIGEST" ]; then
   [[ "$AGENT_ZERO_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "could not read the Agent Zero image digest"
 fi
 A0_IMAGE="${A0_REPO}@${AGENT_ZERO_IMAGE_DIGEST}"
+A0_PULL_POLICY=""
+if [ "$AGENT_ZERO_BAKED" = 1 ]; then
+  [ "$(docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' "$A0_IMAGE")" = "$AGENT_ZERO_IMAGE_DIGEST linux/amd64" ] \
+    || die "baked Agent Zero store is missing the pinned linux/amd64 image"
+  A0_PULL_POLICY="--pull=never "
+fi
 ok "Agent Zero image ${A0_IMAGE}"
 
 # --- Persisted state + basic-auth + (optional) managed model -> /opt/a0/.env ---
@@ -1508,10 +1581,12 @@ else
 fi
 
 # Pull the image by digest so the unit's first `docker run` starts fast.
-docker pull "${A0_IMAGE}" >/tmp/az-pull.log 2>&1 \
-  || die "Agent Zero image pull failed (see /tmp/az-pull.log)"
-docker image inspect "${A0_IMAGE}" >/dev/null 2>&1 \
-  || die "Agent Zero image digest is unavailable after pull"
+if [ "$AGENT_ZERO_BAKED" = 0 ]; then
+  docker pull "${A0_IMAGE}" >/tmp/az-pull.log 2>&1 \
+    || die "Agent Zero image pull failed (see /tmp/az-pull.log)"
+  docker image inspect "${A0_IMAGE}" >/dev/null 2>&1 \
+    || die "Agent Zero image digest is unavailable after pull"
+fi
 record_agent_app agent-zero "$AGENT_ZERO_IMAGE_DIGEST"
 
 # --- systemd unit: run the pinned image loopback-bound, env + state mounted ---
@@ -1533,7 +1608,7 @@ TimeoutStopSec=30
 Restart=always
 RestartSec=5
 ExecStartPre=-/usr/bin/docker rm -f hivra-agent-zero
-ExecStart=/usr/bin/docker run --rm --name hivra-agent-zero -v ${A0_ROOT}/.env:/a0/.env -v ${A0_ROOT}/usr:/a0/usr -p 127.0.0.1:${A0_PORT}:80 ${A0_IMAGE}
+ExecStart=/usr/bin/docker run ${A0_PULL_POLICY}--rm --name hivra-agent-zero -v ${A0_ROOT}/.env:/a0/.env -v ${A0_ROOT}/usr:/a0/usr -p 127.0.0.1:${A0_PORT}:80 ${A0_IMAGE}
 ExecStop=/usr/bin/docker stop -t 25 hivra-agent-zero
 [Install]
 WantedBy=multi-user.target

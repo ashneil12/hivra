@@ -38,6 +38,23 @@ def traced_launch(**overrides):
 
 
 class LaunchContract(unittest.TestCase):
+    def test_prepared_runtime_is_scoped_to_the_matching_kvm_profile(self):
+        for value, flag in (
+            (launch(agentKind="agent-zero", preparedRuntime="agent-zero", tunnelToken=None), "HIVRA_AGENT_ZERO_BAKED"),
+            (launch(agentKind="claude", preparedRuntime="bux-dependencies", tunnelToken=None), "HIVRA_BUX_DEPENDENCIES_BAKED"),
+            (traced_launch(agentKind="codex", preparedRuntime="bux-dependencies", tunnelToken=None), "HIVRA_BUX_DEPENDENCIES_BAKED"),
+        ):
+            with self.subTest(kind=value["agentKind"], version=value["version"]):
+                parsed = guest.parse_launch(json.dumps(value).encode())
+                with patch.object(guest, "DIE_REASON", Mock()), patch.object(guest, "configure_access"), \
+                        patch.object(guest, "install_activity_reporter"), patch.object(guest.subprocess, "run") as run:
+                    guest.install_agent(parsed, SOURCE.parent)
+                self.assertEqual(run.call_args.kwargs["env"][flag], "1")
+            for overrides in ({"agentKind": "openclaw"}, {"wantBrowser": True}, {"wantBrowser": None},
+                              {"computerSubstrate": "provider-vm"}, {"preparedRuntime": "ubuntu-qga"}):
+                with self.subTest(overrides=overrides), self.assertRaisesRegex(guest.InstallError, "invalid guest launch"):
+                    guest.parse_launch(json.dumps({**value, **overrides}).encode())
+
     def test_baked_hermes_is_opt_in_and_only_for_proxmox_hermes(self):
         stock = launch(agentKind="hermes")
         baked = {**stock, "hermesBaked": True}

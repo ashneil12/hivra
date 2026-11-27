@@ -1,0 +1,784 @@
+{
+  "assets": [
+    {
+      "name": "at_3.2.5-1ubuntu1_amd64.deb",
+      "sha256": "80f4d4968c9af8a1b844afbfb3747465850b1dbdf4b1516436a614169e44edaa",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/a/at/at_3.2.5-1ubuntu1_amd64.deb"
+    },
+    {
+      "name": "build-essential_12.9ubuntu3_amd64.deb",
+      "sha256": "1e464c41488d154b9f5ca19d2e9ac8b18913ae16e3dca713c3ba0223fae2cccc",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/b/build-essential/build-essential_12.9ubuntu3_amd64.deb"
+    },
+    {
+      "name": "bzip2_1.0.8-5ubuntu0.1_amd64.deb",
+      "sha256": "de495ecb37e8c64fc28548c81cffb4b79597b4f8ecf50c8511d8eb5a53527e65",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/b/bzip2/bzip2_1.0.8-5ubuntu0.1_amd64.deb"
+    },
+    {
+      "name": "ca-certificates_20260816ubuntu0.22.04.2_all.deb",
+      "sha256": "f99e8375d35bdde4800d4842df777be3dafe38bca4d178429fa929de200bf821",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/c/ca-certificates/ca-certificates_20260816ubuntu0.22.04.2_all.deb"
+    },
+    {
+      "name": "cpp-11_11.4.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "5243177370b810cc40341801a3b8def6cdd7477ac765862f7727a868629947a3",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-11/cpp-11_11.4.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "cpp_4%3a11.2.0-1ubuntu1_amd64.deb",
+      "sha256": "44f881cf66bfaac163a6c45b4bfb5e79a40780b96af78bec6e9c58f973b8d7bd",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-defaults/cpp_11.2.0-1ubuntu1_amd64.deb"
+    },
+    {
+      "name": "curl_7.81.0-1ubuntu1.30_amd64.deb",
+      "sha256": "5c59f709ee58e2b12ec9c294b62e2e8cce8f096aa267014e34985cf1960a892f",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/c/curl/curl_7.81.0-1ubuntu1.30_amd64.deb"
+    },
+    {
+      "name": "dpkg-dev_1.21.1ubuntu2.6_all.deb",
+      "sha256": "02d16cdbb018aad5d829f65ff2d6faac90ea1d9dece91ce0b435bd8510481c75",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/d/dpkg/dpkg-dev_1.21.1ubuntu2.6_all.deb"
+    },
+    {
+      "name": "fakeroot_1.28-1ubuntu1_amd64.deb",
+      "sha256": "6a08de63f375566d3d91b181ff01a5fb797a5ecd6720b2c28f11d8e32071933b",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/f/fakeroot/fakeroot_1.28-1ubuntu1_amd64.deb"
+    },
+    {
+      "name": "fd-find_8.3.1-1ubuntu0.1_amd64.deb",
+      "sha256": "d43ff79c309b4bd0298d2d8679dd4d6e67b792b35d6a979264e531cab702db5d",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/r/rust-fd-find/fd-find_8.3.1-1ubuntu0.1_amd64.deb"
+    },
+    {
+      "name": "fontconfig-config_2.13.1-4.2ubuntu5_all.deb",
+      "sha256": "c40405fa036d1732e269fabd4c5b40076b973a226da1df6921d4b7e7a1e2ff72",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/f/fontconfig/fontconfig-config_2.13.1-4.2ubuntu5_all.deb"
+    },
+    {
+      "name": "fonts-dejavu-core_2.37-2build1_all.deb",
+      "sha256": "c33fe8bf33b50d99d6448804a090123b1bbba37d7a8703c630695676d110a47d",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/f/fonts-dejavu/fonts-dejavu-core_2.37-2build1_all.deb"
+    },
+    {
+      "name": "g++-11_11.4.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "ddbaa04f056637caa11798750638bf4586c8b273719fd1bee70d0ecb3d872b94",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-11/g%2b%2b-11_11.4.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "g++_4%3a11.2.0-1ubuntu1_amd64.deb",
+      "sha256": "693080e6d1648f521183c1fa5fcfdd2d357a87f5872511ec12792d9dfe1effdb",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-defaults/g%2b%2b_11.2.0-1ubuntu1_amd64.deb"
+    },
+    {
+      "name": "gcc-11-base_11.4.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "a0445a3889fd4441cc3b3a125d6d1589de3d2628ca4e92a352170ed0fea4d18b",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-11/gcc-11-base_11.4.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "gcc-11_11.4.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "5422307110e695d62a2574c8b765bf38d48b2ed520206e5b7d2b9081a68008f3",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-11/gcc-11_11.4.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "gcc_4%3a11.2.0-1ubuntu1_amd64.deb",
+      "sha256": "be895c1a9611905254f818c41092f147f5f2a566f87f1817b5c36d977020bea7",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-defaults/gcc_11.2.0-1ubuntu1_amd64.deb"
+    },
+    {
+      "name": "gh_2.98.0_amd64.deb",
+      "sha256": "f65a3fa2fa0eb2e97c445ee3f5e087a40aae03b64847f45a8f13805e504535d6",
+      "url": "https://cli.github.com/packages/pool/main/g/gh/gh_2.98.0_amd64.deb"
+    },
+    {
+      "name": "git-man_1%3a2.34.1-1ubuntu1.18_all.deb",
+      "sha256": "342f24d0ef1e546afac4adfca447fb469fed2c091d436e8f6ff8f6609780bf81",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/git/git-man_2.34.1-1ubuntu1.18_all.deb"
+    },
+    {
+      "name": "git_1%3a2.34.1-1ubuntu1.18_amd64.deb",
+      "sha256": "9551f894b8acd4a748ecec4a63678e359b9f05d2bbe7227584e2b9e8bb42ef88",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/git/git_2.34.1-1ubuntu1.18_amd64.deb"
+    },
+    {
+      "name": "githubcli.gpg",
+      "sha256": "6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b",
+      "url": "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
+    },
+    {
+      "name": "javascript-common_11+nmu1_all.deb",
+      "sha256": "5e0e49d84d2e6ef1204b0925576305c011d7c70f8d2e2122a1187bced33b36ef",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/j/javascript-common/javascript-common_11%2bnmu1_all.deb"
+    },
+    {
+      "name": "jq_1.6-2.1ubuntu3.2_amd64.deb",
+      "sha256": "4e8c6cd028729579074bd17c0d8d9f03fde2bd482244ca20c22238ae726edf1b",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/j/jq/jq_1.6-2.1ubuntu3.2_amd64.deb"
+    },
+    {
+      "name": "libalgorithm-diff-perl_1.201-1_all.deb",
+      "sha256": "2920d81cf0ac368b2fc52b892bb731ce7ce624a2cf51badbd55f801ba75d076f",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/liba/libalgorithm-diff-perl/libalgorithm-diff-perl_1.201-1_all.deb"
+    },
+    {
+      "name": "libalgorithm-diff-xs-perl_0.04-6build3_amd64.deb",
+      "sha256": "930596903cf7222052ede24c676e728719e0828c1c05cadf6ac31c39d97afd86",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/liba/libalgorithm-diff-xs-perl/libalgorithm-diff-xs-perl_0.04-6build3_amd64.deb"
+    },
+    {
+      "name": "libalgorithm-merge-perl_0.08-3_all.deb",
+      "sha256": "ff7a1922d430da383cc1ee20bee8fe464fb56605297dcbb3412338a356cc7ad6",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/liba/libalgorithm-merge-perl/libalgorithm-merge-perl_0.08-3_all.deb"
+    },
+    {
+      "name": "libasan6_11.4.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "eb98f62bf6c7234132beab59113c249db40acfbd1c9965308ee612de1a6e819e",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-11/libasan6_11.4.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "libatomic1_12.3.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "56573c81b5dd84817882400cfea49fe671f5e6cfdd0f88b5d3a894c08b150462",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-12/libatomic1_12.3.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "libbz2-1.0_1.0.8-5ubuntu0.1_amd64.deb",
+      "sha256": "2fd35bb1ac601fa1bf35da2fa08dba3541766ca791927342b5efcb18ef17aecb",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/b/bzip2/libbz2-1.0_1.0.8-5ubuntu0.1_amd64.deb"
+    },
+    {
+      "name": "libc-bin_2.35-0ubuntu3.18_amd64.deb",
+      "sha256": "85373cd2c5a73ff603b115cf35b4f48bcffe61077dae062934bc846b4663959b",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/glibc/libc-bin_2.35-0ubuntu3.18_amd64.deb"
+    },
+    {
+      "name": "libc-dev-bin_2.35-0ubuntu3.18_amd64.deb",
+      "sha256": "855720b1ecc0030382b27019e561d574540aaa7575629dfb2c55aeaa9cacec0d",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/glibc/libc-dev-bin_2.35-0ubuntu3.18_amd64.deb"
+    },
+    {
+      "name": "libc-devtools_2.35-0ubuntu3.18_amd64.deb",
+      "sha256": "a8dfd0f52c0f9ecc7afb87a8df0a20442d2d2f0a1c78410bad6089555f1fe5b3",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/glibc/libc-devtools_2.35-0ubuntu3.18_amd64.deb"
+    },
+    {
+      "name": "libc6-dev_2.35-0ubuntu3.18_amd64.deb",
+      "sha256": "4f1ca098ff488496629324ffcd8a5ad2b4dc5763078f3a511a2918fca0119d74",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/glibc/libc6-dev_2.35-0ubuntu3.18_amd64.deb"
+    },
+    {
+      "name": "libc6_2.35-0ubuntu3.18_amd64.deb",
+      "sha256": "cbed4dfa159019c759edae73ece1af67817e163686ad8925a26c90849ba1660a",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/glibc/libc6_2.35-0ubuntu3.18_amd64.deb"
+    },
+    {
+      "name": "libcc1-0_12.3.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "749e0fd1732df5d79af17c472dfa8f91a36fcc8d6dd5baff3f999192f7aa4357",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-12/libcc1-0_12.3.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "libcrypt-dev_1%3a4.4.27-1_amd64.deb",
+      "sha256": "a79be2f6e45823dcc09e04d5e98c88ec88d07d5b8895d05b875a8ade8b345efa",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/libx/libxcrypt/libcrypt-dev_4.4.27-1_amd64.deb"
+    },
+    {
+      "name": "libcurl3-gnutls_7.81.0-1ubuntu1.30_amd64.deb",
+      "sha256": "e3e731484718b90118b576f8d186d20a37ef9f9eff7dcc83d6f4e1976398f923",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/c/curl/libcurl3-gnutls_7.81.0-1ubuntu1.30_amd64.deb"
+    },
+    {
+      "name": "libcurl4_7.81.0-1ubuntu1.30_amd64.deb",
+      "sha256": "2fc35b8056aebaa6cfe9a5672a8e06339c3e690657fbebc6c5d6b50d9f9626fb",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/c/curl/libcurl4_7.81.0-1ubuntu1.30_amd64.deb"
+    },
+    {
+      "name": "libdeflate0_1.10-2_amd64.deb",
+      "sha256": "a64f7f93a487e57e1a01404d378a8ef1428b1c6b0ecf24fc484c89b681a051c9",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/libd/libdeflate/libdeflate0_1.10-2_amd64.deb"
+    },
+    {
+      "name": "libdpkg-perl_1.21.1ubuntu2.6_all.deb",
+      "sha256": "5cea0fc1b24772bbda3cdcf9acfd6caefb2d03d1136616f3d5b4cd8caf71eb19",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/d/dpkg/libdpkg-perl_1.21.1ubuntu2.6_all.deb"
+    },
+    {
+      "name": "libexpat1-dev_2.4.7-1ubuntu0.10_amd64.deb",
+      "sha256": "93350e387bac0576796cf830301b7560d68f96b9acb495458b724859a4d3c0c0",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/e/expat/libexpat1-dev_2.4.7-1ubuntu0.10_amd64.deb"
+    },
+    {
+      "name": "libexpat1_2.4.7-1ubuntu0.10_amd64.deb",
+      "sha256": "65789c607e73a6932b1a6e63d162b1cd6e6795771860f57c27214a1f42089079",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/e/expat/libexpat1_2.4.7-1ubuntu0.10_amd64.deb"
+    },
+    {
+      "name": "libfakeroot_1.28-1ubuntu1_amd64.deb",
+      "sha256": "54083b86b4f74853cb5c0881e1c4273fd2071af507e90f794a56956109067b12",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/f/fakeroot/libfakeroot_1.28-1ubuntu1_amd64.deb"
+    },
+    {
+      "name": "libfile-fcntllock-perl_0.22-3build7_amd64.deb",
+      "sha256": "73fb9965828a227432ee9b34c790085b112a9066955c8e62359b4df1037a3166",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/libf/libfile-fcntllock-perl/libfile-fcntllock-perl_0.22-3build7_amd64.deb"
+    },
+    {
+      "name": "libfontconfig1_2.13.1-4.2ubuntu5_amd64.deb",
+      "sha256": "6be0c141aed23d9eb801658d248fd667bea2b8a9ccab4db7b596a69ffe3393fd",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/f/fontconfig/libfontconfig1_2.13.1-4.2ubuntu5_amd64.deb"
+    },
+    {
+      "name": "libgcc-11-dev_11.4.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "35ed68622daf796ac010f63c73abd8aff851fc6d862038461b053b55dbec93a6",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-11/libgcc-11-dev_11.4.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "libgd3_2.3.0-2ubuntu2.3_amd64.deb",
+      "sha256": "ac7b97201577e178c2c51187d011114a847a7e45e198f63a316644b5e4e5adc7",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/libg/libgd2/libgd3_2.3.0-2ubuntu2.3_amd64.deb"
+    },
+    {
+      "name": "libgomp1_12.3.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "870c27299185a5dd4accad3b15bf82a7409fd7073cccaa8025875307da4d0ce2",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-12/libgomp1_12.3.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "libisl23_0.24-2build1_amd64.deb",
+      "sha256": "4cb0faab32c896165cf4ebe3c3ebce3176bf869453636d7fe8be89dccc2ae5af",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/i/isl/libisl23_0.24-2build1_amd64.deb"
+    },
+    {
+      "name": "libitm1_12.3.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "80f42953fa98d3ef9d49c2fd8c580bea40e1ace953eb8850bc961eef59f211c2",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-12/libitm1_12.3.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "libjbig0_2.1-3.1ubuntu0.22.04.1_amd64.deb",
+      "sha256": "4666c37d8620b6d17a2d4acf2cb1459f071e74881dc490a159e90244d7a98cc6",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/j/jbigkit/libjbig0_2.1-3.1ubuntu0.22.04.1_amd64.deb"
+    },
+    {
+      "name": "libjpeg-turbo8_2.1.2-0ubuntu1_amd64.deb",
+      "sha256": "bb9538fa94f06bf6b7907105439f0a0a30e3ec27030832820a6c2cc2dc6578a8",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/libj/libjpeg-turbo/libjpeg-turbo8_2.1.2-0ubuntu1_amd64.deb"
+    },
+    {
+      "name": "libjpeg8_8c-2ubuntu10_amd64.deb",
+      "sha256": "869e3e6fbdbe7a645dffcb86b4e285957225a89b6a76840f4aab2bedaf0e4e88",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/libj/libjpeg8-empty/libjpeg8_8c-2ubuntu10_amd64.deb"
+    },
+    {
+      "name": "libjq1_1.6-2.1ubuntu3.2_amd64.deb",
+      "sha256": "060f21dd061c83b3803dcdb0f64f1c7bcf4bc16e3e13fa68e0ed63b202d18245",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/j/jq/libjq1_1.6-2.1ubuntu3.2_amd64.deb"
+    },
+    {
+      "name": "libjs-jquery_3.6.0+dfsg+~3.5.13-1_all.deb",
+      "sha256": "9b8e6deb6db82bf067badb640e56f5a672e89280dab5525feedc8d11323393ef",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/n/node-jquery/libjs-jquery_3.6.0%2bdfsg%2b%7e3.5.13-1_all.deb"
+    },
+    {
+      "name": "libjs-sphinxdoc_4.3.2-1_all.deb",
+      "sha256": "2f108dcdc083b2b11904177c9e91a06ca606bcb0ed955cd1bb3e59f0bd6c4fb9",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/s/sphinx/libjs-sphinxdoc_4.3.2-1_all.deb"
+    },
+    {
+      "name": "libjs-underscore_1.13.2~dfsg-2_all.deb",
+      "sha256": "a34e8c9203de5aa70ce36921483eb40bac56b26141d10d500dfd499cd4e6f74e",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/u/underscore/libjs-underscore_1.13.2%7edfsg-2_all.deb"
+    },
+    {
+      "name": "liblsan0_12.3.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "c308b0e39678a00b3ad3a9653119af4a29156e2c385111bdbd4890c96d376fa4",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-12/liblsan0_12.3.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "liblzma5_5.2.5-2ubuntu1.2_amd64.deb",
+      "sha256": "a88fca7506963c443c42a578db6c35424336ae28abcdaa60c89f06d30aeb625b",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/x/xz-utils/liblzma5_5.2.5-2ubuntu1.2_amd64.deb"
+    },
+    {
+      "name": "libmpc3_1.2.1-2build1_amd64.deb",
+      "sha256": "6cd43b60ac14890737a3402a35350d6696bc1521de8731cdecc9e7ef10041446",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/m/mpclib3/libmpc3_1.2.1-2build1_amd64.deb"
+    },
+    {
+      "name": "libnsl-dev_1.3.0-2build2_amd64.deb",
+      "sha256": "e93aa448fe708a4bbfcc40b2a8cab6f5f88896174a301caab2719f734e08a621",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/libn/libnsl/libnsl-dev_1.3.0-2build2_amd64.deb"
+    },
+    {
+      "name": "libonig5_6.9.7.1-2build1_amd64.deb",
+      "sha256": "b02dbaa37b4ec7ad303cc8655b03a2a158299ce56fede9849e3bda501831f413",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/libo/libonig/libonig5_6.9.7.1-2build1_amd64.deb"
+    },
+    {
+      "name": "libpython3-dev_3.10.6-1~22.04.1_amd64.deb",
+      "sha256": "7692175a21453d3cf15b66ed5a9a661b160113a99cb24eeb6a3b9acd43afa642",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/p/python3-defaults/libpython3-dev_3.10.6-1%7e22.04.1_amd64.deb"
+    },
+    {
+      "name": "libpython3.10-dev_3.10.12-1~22.04.18_amd64.deb",
+      "sha256": "c058675011ec4b64f5ad803d74b5fe7de0c720c3700683040da68d1fb5b44ed9",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/p/python3.10/libpython3.10-dev_3.10.12-1%7e22.04.18_amd64.deb"
+    },
+    {
+      "name": "libpython3.10-minimal_3.10.12-1~22.04.18_amd64.deb",
+      "sha256": "ccbd08562769e0a38b34005dc8bde200838e6c6530cc04ac34525129ed42d847",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/p/python3.10/libpython3.10-minimal_3.10.12-1%7e22.04.18_amd64.deb"
+    },
+    {
+      "name": "libpython3.10-stdlib_3.10.12-1~22.04.18_amd64.deb",
+      "sha256": "ee09afbc981a4aaa00053f019eab6b45dcc4dbeb4ca4fcc4277eff539e09f228",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/p/python3.10/libpython3.10-stdlib_3.10.12-1%7e22.04.18_amd64.deb"
+    },
+    {
+      "name": "libpython3.10_3.10.12-1~22.04.18_amd64.deb",
+      "sha256": "cd9ffe066be6207dd4fcb25fe037222e90429b0923d1a5eb6e897afcbb151833",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/p/python3.10/libpython3.10_3.10.12-1%7e22.04.18_amd64.deb"
+    },
+    {
+      "name": "libqrencode4_4.1.1-1_amd64.deb",
+      "sha256": "a97510e24a95b7f1cd90223157d6f9d20d337123551c61191cb72bf68abf6960",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/q/qrencode/libqrencode4_4.1.1-1_amd64.deb"
+    },
+    {
+      "name": "libquadmath0_12.3.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "c4c59e67e76674c8c494ce5e0415b71d770a759b48893c0d3cbabddceeb690b2",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-12/libquadmath0_12.3.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "libssl-dev_3.0.2-0ubuntu1.30_amd64.deb",
+      "sha256": "8a47dfa7f9bd4d54ac9dc9a1db14891a9133841bf44f12c3db086f2d4321bac6",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/o/openssl/libssl-dev_3.0.2-0ubuntu1.30_amd64.deb"
+    },
+    {
+      "name": "libssl3_3.0.2-0ubuntu1.30_amd64.deb",
+      "sha256": "d1b4636e32ac6d3b95d583ac05ac548b1aa248414bae1c51b14f54be0f8fd7bc",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/o/openssl/libssl3_3.0.2-0ubuntu1.30_amd64.deb"
+    },
+    {
+      "name": "libstdc++-11-dev_11.4.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "58e0cd2d1f758e75426eaa47a5e7228d1c86180500ed68d162bcbf7b0a1c5dd0",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-11/libstdc%2b%2b-11-dev_11.4.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "libtiff5_4.3.0-6ubuntu0.14_amd64.deb",
+      "sha256": "c937aa0ad8893d74218b1fe2b82cfc7299562da0ade37f614bf9ef755e4755fc",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/t/tiff/libtiff5_4.3.0-6ubuntu0.14_amd64.deb"
+    },
+    {
+      "name": "libtirpc-dev_1.3.2-2ubuntu0.1_amd64.deb",
+      "sha256": "f4254aff5a32ef3c9fca06d3f4f2eff71c93b9393cc1ecc718f7478a5d6a83da",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/libt/libtirpc/libtirpc-dev_1.3.2-2ubuntu0.1_amd64.deb"
+    },
+    {
+      "name": "libtsan0_11.4.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "2fc0cb78e86d4635c8ed17f4a2816762050c48cb928df739bbe145dfb472957a",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-11/libtsan0_11.4.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "libubsan1_12.3.0-1ubuntu1~22.04.3_amd64.deb",
+      "sha256": "9e2669c014d5df3c486bf29cd18a6ec3cbed68355c366e32757fdc98d290f593",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/gcc-12/libubsan1_12.3.0-1ubuntu1%7e22.04.3_amd64.deb"
+    },
+    {
+      "name": "liburing2_2.1-2build1_amd64.deb",
+      "sha256": "f6e9bdf50c9683cd9a74ad92d51dde085f40baf0a5fcd8a56fc68425c1bd3c5f",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/libu/liburing/liburing2_2.1-2build1_amd64.deb"
+    },
+    {
+      "name": "libwebp7_1.2.2-2ubuntu0.22.04.2_amd64.deb",
+      "sha256": "c24f4ed7a866aef76652027f07376f00e5e83f308b1f2c4faa1ee6ae8b7f2cfc",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/libw/libwebp/libwebp7_1.2.2-2ubuntu0.22.04.2_amd64.deb"
+    },
+    {
+      "name": "libxpm4_1%3a3.5.12-1ubuntu0.22.04.4_amd64.deb",
+      "sha256": "e11e67a5634be7ed437c82ac214f72dd6590c16e3043eec600dbea3ea7c7d5ac",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/libx/libxpm/libxpm4_3.5.12-1ubuntu0.22.04.4_amd64.deb"
+    },
+    {
+      "name": "linux-libc-dev_5.15.0-204.214_amd64.deb",
+      "sha256": "c0a5e8f8714df4956ad4b90d4a611ed5fb0ff5493d23469a4628c09b9740214f",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/l/linux/linux-libc-dev_5.15.0-204.214_amd64.deb"
+    },
+    {
+      "name": "locales_2.35-0ubuntu3.18_all.deb",
+      "sha256": "de4463cace76e8e34e4580416f40219980b8614d6779ad7a72c3959709a24970",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/g/glibc/locales_2.35-0ubuntu3.18_all.deb"
+    },
+    {
+      "name": "lto-disabled-list_24_all.deb",
+      "sha256": "c7fed2763b58cec1bc2749e696629ea57aac1d2aa2e231f90ccb16a8a61b16a6",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/l/lto-disabled-list/lto-disabled-list_24_all.deb"
+    },
+    {
+      "name": "make_4.3-4.1build1_amd64.deb",
+      "sha256": "080b79a1a1623a2e6c6eead37d62b15fdf2c3dbfeafe8ecf5e31c54eb09eadcc",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/m/make-dfsg/make_4.3-4.1build1_amd64.deb"
+    },
+    {
+      "name": "manpages-dev_5.10-1ubuntu1_all.deb",
+      "sha256": "0d4955fd9ea2d79a0b39c795f48ad413190b0d1d814606bf14186355e90f6e85",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/m/manpages/manpages-dev_5.10-1ubuntu1_all.deb"
+    },
+    {
+      "name": "nodejs_24.22.3-1nodesource1_amd64.deb",
+      "sha256": "583ea87b516887e93e075b06115c5b9ad74b02e1dcb94eadc8ebff5978d82dd4",
+      "url": "https://deb.nodesource.com/node_24.x/pool/main/n/nodejs/nodejs_24.22.3-1nodesource1_amd64.deb"
+    },
+    {
+      "name": "nodesource.asc",
+      "sha256": "b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d",
+      "url": "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+    },
+    {
+      "name": "openssl_3.0.2-0ubuntu1.30_amd64.deb",
+      "sha256": "a5b9484a287aba47096fa9ea9821c5c98cf95b8dd726786e7c3a3311fb8eb3b4",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/o/openssl/openssl_3.0.2-0ubuntu1.30_amd64.deb"
+    },
+    {
+      "name": "pkg-config_0.29.2-1ubuntu3_amd64.deb",
+      "sha256": "69da4190d948d0bf7444ead040791b7924bd1a08a10ec13cd7f0bb9baab09c53",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/p/pkg-config/pkg-config_0.29.2-1ubuntu3_amd64.deb"
+    },
+    {
+      "name": "python3-dev_3.10.6-1~22.04.1_amd64.deb",
+      "sha256": "f7d6f5a0eb31d36f7fcba156b16da91035128c0edd1e643f07e7bbbecf5c6c7f",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/p/python3-defaults/python3-dev_3.10.6-1%7e22.04.1_amd64.deb"
+    },
+    {
+      "name": "python3-pip-whl_22.0.2+dfsg-1ubuntu0.7_all.deb",
+      "sha256": "a7977d2ac9b4cdbc6d14e3bc6704b7d8119649474a9b833897a820d0e846a014",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/p/python-pip/python3-pip-whl_22.0.2%2bdfsg-1ubuntu0.7_all.deb"
+    },
+    {
+      "name": "python3-pip_22.0.2+dfsg-1ubuntu0.7_all.deb",
+      "sha256": "11ba334966c3626e61cffc08c4a3ef76982c5a85fe3bdc920ea0b0be37237102",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/p/python-pip/python3-pip_22.0.2%2bdfsg-1ubuntu0.7_all.deb"
+    },
+    {
+      "name": "python3-setuptools-whl_59.6.0-1.2ubuntu0.22.04.3_all.deb",
+      "sha256": "59517f5c19ee5a5177258348792e913c5cce261d6a94366f4c38774f763c5279",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/s/setuptools/python3-setuptools-whl_59.6.0-1.2ubuntu0.22.04.3_all.deb"
+    },
+    {
+      "name": "python3-venv_3.10.6-1~22.04.1_amd64.deb",
+      "sha256": "ee8d678c61b0721aff196ab1320e41cf4f5ebe3fcd22363b82e22c733b105866",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/p/python3-defaults/python3-venv_3.10.6-1%7e22.04.1_amd64.deb"
+    },
+    {
+      "name": "python3-wheel_0.37.1-2ubuntu0.22.04.1_all.deb",
+      "sha256": "ff6c017b52946026b88898483925996b584e75d598ae52c72fc3e1ab6d3412f6",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/w/wheel/python3-wheel_0.37.1-2ubuntu0.22.04.1_all.deb"
+    },
+    {
+      "name": "python3.10-dev_3.10.12-1~22.04.18_amd64.deb",
+      "sha256": "7caa163f4d83ae871f985ec4339fb4c96ae7ef8cb3568b8aec9138f86aacbeb7",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/p/python3.10/python3.10-dev_3.10.12-1%7e22.04.18_amd64.deb"
+    },
+    {
+      "name": "python3.10-minimal_3.10.12-1~22.04.18_amd64.deb",
+      "sha256": "34e4c7383fdf2562d78321acfee5aa1f7b92be371dd79410496ad35cb773f326",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/p/python3.10/python3.10-minimal_3.10.12-1%7e22.04.18_amd64.deb"
+    },
+    {
+      "name": "python3.10-venv_3.10.12-1~22.04.18_amd64.deb",
+      "sha256": "fb7d9e9e10de015da2eab2a6da33fc6672d096b9281ccac0ecf990de4f724407",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/p/python3.10/python3.10-venv_3.10.12-1%7e22.04.18_amd64.deb"
+    },
+    {
+      "name": "python3.10_3.10.12-1~22.04.18_amd64.deb",
+      "sha256": "10b62fd31bd0310a0b6391c04b67a1f6b33d180820b4a6cf7d25b55b993a15d7",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/p/python3.10/python3.10_3.10.12-1%7e22.04.18_amd64.deb"
+    },
+    {
+      "name": "qemu-guest-agent_1%3a6.2+dfsg-2ubuntu6.31_amd64.deb",
+      "sha256": "b7bebec9f3f76458c182d54fe90274480809f8bcb665106252bdff98d9aada56",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/q/qemu/qemu-guest-agent_6.2%2bdfsg-2ubuntu6.31_amd64.deb"
+    },
+    {
+      "name": "qrencode_4.1.1-1_amd64.deb",
+      "sha256": "326307199ad774146e8f0a647c8cccb54208835293732bbfc734b37d3f4bb6cf",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/q/qrencode/qrencode_4.1.1-1_amd64.deb"
+    },
+    {
+      "name": "ripgrep_13.0.0-2ubuntu0.1_amd64.deb",
+      "sha256": "cd857d6b567e53cd929d2cab8fc99239e5807d37672ddc86e9a30a81d47ec1f3",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/r/rust-ripgrep/ripgrep_13.0.0-2ubuntu0.1_amd64.deb"
+    },
+    {
+      "name": "rpcsvc-proto_1.4.2-0ubuntu6_amd64.deb",
+      "sha256": "447c6d8f7624a3d728a12232440d3f10e6e53bbf60cc202b7beb8a3bc9f7acc9",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/r/rpcsvc-proto/rpcsvc-proto_1.4.2-0ubuntu6_amd64.deb"
+    },
+    {
+      "name": "sudo_1.9.9-1ubuntu2.7_amd64.deb",
+      "sha256": "1ace2f4af73e2dc2da9d695bfb7c0127ff1bf854f294fd0eef219f2842028e93",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/s/sudo/sudo_1.9.9-1ubuntu2.7_amd64.deb"
+    },
+    {
+      "name": "tmux_3.2a-4ubuntu0.3_amd64.deb",
+      "sha256": "4a32837c256b31de0187e120b1a283e4e68ab6252518cf5d89c03fb71c66613a",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/t/tmux/tmux_3.2a-4ubuntu0.3_amd64.deb"
+    },
+    {
+      "name": "tree_2.0.2-1_amd64.deb",
+      "sha256": "08dee87871da761246a8dd9223c094e1c9bf75baf4f24028558426229ada7ab5",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/universe/t/tree/tree_2.0.2-1_amd64.deb"
+    },
+    {
+      "name": "ttyd",
+      "sha256": "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55",
+      "url": "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64"
+    },
+    {
+      "name": "unzip_6.0-26ubuntu3.2_amd64.deb",
+      "sha256": "4f274ffc6774d52878322ef1e3eb6d185003e1607448e62893849825bfae347d",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/u/unzip/unzip_6.0-26ubuntu3.2_amd64.deb"
+    },
+    {
+      "name": "uv.tgz",
+      "sha256": "6681d691eb7f9c00ac6a3af54252f7ab29ae72f0c8f95bdc7f9d1401c23ea868",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.11.7/uv-x86_64-unknown-linux-gnu.tar.gz"
+    },
+    {
+      "name": "vim-common_2%3a8.2.3995-1ubuntu2.36_all.deb",
+      "sha256": "fff81fb2030c1fba344e38e4bc1869e02aa7c722f643f1c81306ce735adac473",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/v/vim/vim-common_8.2.3995-1ubuntu2.36_all.deb"
+    },
+    {
+      "name": "vim-runtime_2%3a8.2.3995-1ubuntu2.36_all.deb",
+      "sha256": "1d0ec2c6627ee5ecca6c25ff08d305ea687af8165ec4f46e0247be1ca6e13a98",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/v/vim/vim-runtime_8.2.3995-1ubuntu2.36_all.deb"
+    },
+    {
+      "name": "vim-tiny_2%3a8.2.3995-1ubuntu2.36_amd64.deb",
+      "sha256": "6221242092d144b8dd0ce46a6bb4b5c4425bcb37c16b555a2c4a698ef208bbca",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/v/vim/vim-tiny_8.2.3995-1ubuntu2.36_amd64.deb"
+    },
+    {
+      "name": "vim_2%3a8.2.3995-1ubuntu2.36_amd64.deb",
+      "sha256": "967e244e5bbcc0a2064254992354fff7e46c047d6358ca932a4a799658a10612",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/v/vim/vim_8.2.3995-1ubuntu2.36_amd64.deb"
+    },
+    {
+      "name": "wget_1.21.2-2ubuntu1.5_amd64.deb",
+      "sha256": "03530cc4b711b262700695a545a3494671e563ced8063c6f3f5f1d4595894f2c",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/w/wget/wget_1.21.2-2ubuntu1.5_amd64.deb"
+    },
+    {
+      "name": "xxd_2%3a8.2.3995-1ubuntu2.36_amd64.deb",
+      "sha256": "604b5215094112909cebbab13ccfa34500d46b19afa2f2e885342e5f576b7597",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/v/vim/xxd_8.2.3995-1ubuntu2.36_amd64.deb"
+    },
+    {
+      "name": "xz-utils_5.2.5-2ubuntu1.2_amd64.deb",
+      "sha256": "f8c1cb748418a5be33851f8b6e218f0b82db0680dc34d4a675f9aa065f6c63fe",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/x/xz-utils/xz-utils_5.2.5-2ubuntu1.2_amd64.deb"
+    },
+    {
+      "name": "zip_3.0-12build2_amd64.deb",
+      "sha256": "f4b43f651abf5f4835792f01d97410221403f14961d363dbd2864990b97620ce",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/z/zip/zip_3.0-12build2_amd64.deb"
+    },
+    {
+      "name": "zlib1g-dev_1%3a1.2.11.dfsg-2ubuntu9.2_amd64.deb",
+      "sha256": "679f94589586a433c31fa9f705a6fd2e3bfa2407542ba06227ce14f821647764",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261127T000000Z/pool/main/z/zlib/zlib1g-dev_1.2.11.dfsg-2ubuntu9.2_amd64.deb"
+    }
+  ],
+  "autoPackages": [
+    "bzip2",
+    "cpp",
+    "cpp-11",
+    "dpkg-dev",
+    "fakeroot",
+    "fontconfig-config",
+    "fonts-dejavu-core",
+    "g++-11",
+    "gcc-11",
+    "gcc-11-base",
+    "javascript-common",
+    "libalgorithm-diff-perl",
+    "libalgorithm-diff-xs-perl",
+    "libalgorithm-merge-perl",
+    "libasan6",
+    "libatomic1",
+    "libc-dev-bin",
+    "libc-devtools",
+    "libc6-dev",
+    "libcc1-0",
+    "libcrypt-dev",
+    "libdeflate0",
+    "libdpkg-perl",
+    "libexpat1-dev",
+    "libfakeroot",
+    "libfile-fcntllock-perl",
+    "libfontconfig1",
+    "libgcc-11-dev",
+    "libgd3",
+    "libgomp1",
+    "libisl23",
+    "libitm1",
+    "libjbig0",
+    "libjpeg-turbo8",
+    "libjpeg8",
+    "libjq1",
+    "libjs-jquery",
+    "libjs-sphinxdoc",
+    "libjs-underscore",
+    "liblsan0",
+    "libmpc3",
+    "libnsl-dev",
+    "libonig5",
+    "libpython3-dev",
+    "libpython3.10-dev",
+    "libqrencode4",
+    "libquadmath0",
+    "libstdc++-11-dev",
+    "libtiff5",
+    "libtirpc-dev",
+    "libtsan0",
+    "libubsan1",
+    "liburing2",
+    "libwebp7",
+    "libxpm4",
+    "linux-libc-dev",
+    "lto-disabled-list",
+    "manpages-dev",
+    "python3-pip-whl",
+    "python3-setuptools-whl",
+    "python3-wheel",
+    "python3.10-dev",
+    "python3.10-venv",
+    "rpcsvc-proto"
+  ],
+  "baseImageSha256": "f6729b53d930d7f0c6691eb553cfa6be7109de9412125bf1bf2dc6747de8a44d",
+  "buxRef": "f17c1b31d6688dd92e745ade650e00d46b4dc4da",
+  "executables": {
+    "/usr/bin/gh": "62885b97de6a0cd85e616cdd94bcda908bf5cf1018094385892b05cea3537163",
+    "/usr/bin/node": "a7ec1b37e6ff9d187e4198c5b6df9a4eb1c74dd31804fb3bac55cc4ceca1ac01",
+    "/usr/local/bin/ttyd": "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55",
+    "/usr/local/bin/uv": "cd952ca51e2c730e848a45c4e0dfb58926d79d90550b6a5feb5543b43d3248b4",
+    "/usr/local/bin/uvx": "2c215a44f5a1c2386ebb50b2f5ec6764e835c03322de237ea0b9a760722826c1"
+  },
+  "installerSha256": "07d3df58ff51ffba1e9ad93ecb269969b5c84a9f85b787f284679d3e4cc3525a",
+  "packages": {
+    "at": "3.2.5-1ubuntu1",
+    "build-essential": "12.9ubuntu3",
+    "bzip2": "1.0.8-5ubuntu0.1",
+    "ca-certificates": "20260816ubuntu0.22.04.2",
+    "cpp": "4:11.2.0-1ubuntu1",
+    "cpp-11": "11.4.0-1ubuntu1~22.04.3",
+    "curl": "7.81.0-1ubuntu1.30",
+    "dpkg-dev": "1.21.1ubuntu2.6",
+    "fakeroot": "1.28-1ubuntu1",
+    "fd-find": "8.3.1-1ubuntu0.1",
+    "fontconfig-config": "2.13.1-4.2ubuntu5",
+    "fonts-dejavu-core": "2.37-2build1",
+    "g++": "4:11.2.0-1ubuntu1",
+    "g++-11": "11.4.0-1ubuntu1~22.04.3",
+    "gcc": "4:11.2.0-1ubuntu1",
+    "gcc-11": "11.4.0-1ubuntu1~22.04.3",
+    "gcc-11-base": "11.4.0-1ubuntu1~22.04.3",
+    "gh": "2.98.0",
+    "git": "1:2.34.1-1ubuntu1.18",
+    "git-man": "1:2.34.1-1ubuntu1.18",
+    "gnupg": "2.2.27-3ubuntu2.5",
+    "htop": "3.0.5-7build2",
+    "javascript-common": "11+nmu1",
+    "jq": "1.6-2.1ubuntu3.2",
+    "less": "590-1ubuntu0.22.04.3",
+    "libalgorithm-diff-perl": "1.201-1",
+    "libalgorithm-diff-xs-perl": "0.04-6build3",
+    "libalgorithm-merge-perl": "0.08-3",
+    "libasan6": "11.4.0-1ubuntu1~22.04.3",
+    "libatomic1": "12.3.0-1ubuntu1~22.04.3",
+    "libbz2-1.0": "1.0.8-5ubuntu0.1",
+    "libc-bin": "2.35-0ubuntu3.18",
+    "libc-dev-bin": "2.35-0ubuntu3.18",
+    "libc-devtools": "2.35-0ubuntu3.18",
+    "libc6": "2.35-0ubuntu3.18",
+    "libc6-dev": "2.35-0ubuntu3.18",
+    "libcc1-0": "12.3.0-1ubuntu1~22.04.3",
+    "libcrypt-dev": "1:4.4.27-1",
+    "libcurl3-gnutls": "7.81.0-1ubuntu1.30",
+    "libcurl4": "7.81.0-1ubuntu1.30",
+    "libdeflate0": "1.10-2",
+    "libdpkg-perl": "1.21.1ubuntu2.6",
+    "libexpat1": "2.4.7-1ubuntu0.10",
+    "libexpat1-dev": "2.4.7-1ubuntu0.10",
+    "libfakeroot": "1.28-1ubuntu1",
+    "libfile-fcntllock-perl": "0.22-3build7",
+    "libfontconfig1": "2.13.1-4.2ubuntu5",
+    "libgcc-11-dev": "11.4.0-1ubuntu1~22.04.3",
+    "libgd3": "2.3.0-2ubuntu2.3",
+    "libgomp1": "12.3.0-1ubuntu1~22.04.3",
+    "libisl23": "0.24-2build1",
+    "libitm1": "12.3.0-1ubuntu1~22.04.3",
+    "libjbig0": "2.1-3.1ubuntu0.22.04.1",
+    "libjpeg-turbo8": "2.1.2-0ubuntu1",
+    "libjpeg8": "8c-2ubuntu10",
+    "libjq1": "1.6-2.1ubuntu3.2",
+    "libjs-jquery": "3.6.0+dfsg+~3.5.13-1",
+    "libjs-sphinxdoc": "4.3.2-1",
+    "libjs-underscore": "1.13.2~dfsg-2",
+    "liblsan0": "12.3.0-1ubuntu1~22.04.3",
+    "liblzma5": "5.2.5-2ubuntu1.2",
+    "libmpc3": "1.2.1-2build1",
+    "libnsl-dev": "1.3.0-2build2",
+    "libonig5": "6.9.7.1-2build1",
+    "libpython3-dev": "3.10.6-1~22.04.1",
+    "libpython3.10": "3.10.12-1~22.04.18",
+    "libpython3.10-dev": "3.10.12-1~22.04.18",
+    "libpython3.10-minimal": "3.10.12-1~22.04.18",
+    "libpython3.10-stdlib": "3.10.12-1~22.04.18",
+    "libqrencode4": "4.1.1-1",
+    "libquadmath0": "12.3.0-1ubuntu1~22.04.3",
+    "libssl-dev": "3.0.2-0ubuntu1.30",
+    "libssl3": "3.0.2-0ubuntu1.30",
+    "libstdc++-11-dev": "11.4.0-1ubuntu1~22.04.3",
+    "libtiff5": "4.3.0-6ubuntu0.14",
+    "libtirpc-dev": "1.3.2-2ubuntu0.1",
+    "libtsan0": "11.4.0-1ubuntu1~22.04.3",
+    "libubsan1": "12.3.0-1ubuntu1~22.04.3",
+    "liburing2": "2.1-2build1",
+    "libwebp7": "1.2.2-2ubuntu0.22.04.2",
+    "libxpm4": "1:3.5.12-1ubuntu0.22.04.4",
+    "linux-libc-dev": "5.15.0-204.214",
+    "locales": "2.35-0ubuntu3.18",
+    "lto-disabled-list": "24",
+    "make": "4.3-4.1build1",
+    "manpages-dev": "5.10-1ubuntu1",
+    "nodejs": "24.22.3-1nodesource1",
+    "openssl": "3.0.2-0ubuntu1.30",
+    "pkg-config": "0.29.2-1ubuntu3",
+    "python3": "3.10.6-1~22.04.1",
+    "python3-dev": "3.10.6-1~22.04.1",
+    "python3-pip": "22.0.2+dfsg-1ubuntu0.7",
+    "python3-pip-whl": "22.0.2+dfsg-1ubuntu0.7",
+    "python3-setuptools-whl": "59.6.0-1.2ubuntu0.22.04.3",
+    "python3-venv": "3.10.6-1~22.04.1",
+    "python3-wheel": "0.37.1-2ubuntu0.22.04.1",
+    "python3.10": "3.10.12-1~22.04.18",
+    "python3.10-dev": "3.10.12-1~22.04.18",
+    "python3.10-minimal": "3.10.12-1~22.04.18",
+    "python3.10-venv": "3.10.12-1~22.04.18",
+    "qemu-guest-agent": "1:6.2+dfsg-2ubuntu6.31",
+    "qrencode": "4.1.1-1",
+    "ripgrep": "13.0.0-2ubuntu0.1",
+    "rpcsvc-proto": "1.4.2-0ubuntu6",
+    "sudo": "1.9.9-1ubuntu2.7",
+    "tmux": "3.2a-4ubuntu0.3",
+    "tree": "2.0.2-1",
+    "unzip": "6.0-26ubuntu3.2",
+    "vim": "2:8.2.3995-1ubuntu2.36",
+    "vim-common": "2:8.2.3995-1ubuntu2.36",
+    "vim-runtime": "2:8.2.3995-1ubuntu2.36",
+    "vim-tiny": "2:8.2.3995-1ubuntu2.36",
+    "wget": "1.21.2-2ubuntu1.5",
+    "xxd": "2:8.2.3995-1ubuntu2.36",
+    "xz-utils": "5.2.5-2ubuntu1.2",
+    "zip": "3.0-12build2",
+    "zlib1g-dev": "1:1.2.11.dfsg-2ubuntu9.2"
+  }
+}
