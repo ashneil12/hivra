@@ -139,6 +139,10 @@ jobs:
       - name: Catalog certification runner tests
         run: node --test scripts/__tests__/catalog-certification.test.mjs scripts/__tests__/catalog-intake.test.mjs
 
+      - name: Verify read-only workspace measurements
+        working-directory: .
+        run: python3 -B dashboard/scripts/ops/test_workspace_measurements.py
+
       - name: Lint
         run: npm run lint
 
