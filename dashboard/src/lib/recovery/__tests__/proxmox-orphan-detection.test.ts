@@ -17,6 +17,7 @@ import {
   parseOrphanLvReapOutput,
   parseOrphanLvsFromHostScript,
   parseRestoreCloneStopOutput,
+  partitionOrphanVmAlerts,
   PROXMOX_ORPHAN_DISCOVERY_SCRIPT,
   PROXMOX_ORPHAN_DISCOVERY_TIMEOUT_MS,
   TEMPLATE_VMID_THRESHOLD,
@@ -222,6 +223,48 @@ describe("computeOrphansForHost", () => {
     const orphans = computeOrphansForHost("fixturenode2", live, []);
     expect(orphans).toHaveLength(1);
     expect(orphans[0]?.hostId).toBe("fixturenode2");
+  });
+});
+
+describe("partitionOrphanVmAlerts", () => {
+  const hostId = "test-node";
+  const tag = "hivra-operator-test-node+401+operator-service";
+  const [vm] = parseLiveVmsFromHostScript(`
+BEGIN 401
+name: operator-service
+tags: keep-existing;${tag}
+END 401
+`);
+
+  it("reports an exact operator registration separately and still alerts on ordinary orphans", () => {
+    const untagged = { ...vm, vmid: 402, tags: [] };
+    const candidates = computeOrphansForHost(hostId, [vm, untagged], []);
+
+    expect(partitionOrphanVmAlerts(candidates)).toEqual({
+      orphans: [{ ...untagged, hostId }],
+      operatorVmids: [401],
+    });
+  });
+
+  it.each([
+    ["another host", { hostId: "other-node" }],
+    ["a copied tag on a clone", { vmid: 402 }],
+    ["a renamed VM", { name: "replacement" }],
+    ["missing config metadata", { name: null }],
+    ["an extended tag rather than an exact match", { tags: [`${tag}-extra`] }],
+    ["an existing bind tag", { tags: [tag, `hivra-bind-${"a".repeat(32)}`] }],
+    ["an existing managed operation tag", { tags: [tag, `hivra-op-${"b".repeat(32)}`] }],
+    ["a restore clone", {
+      name: "hermes-00000000-0000-4000-8000-000000000001",
+      tags: ["hivra-operator-test-node+401+hermes-00000000-0000-4000-8000-000000000001"],
+    }],
+  ])("keeps alerting on %s", (_description, overrides) => {
+    const candidate = { ...vm, hostId, ...overrides };
+
+    expect(partitionOrphanVmAlerts([candidate])).toEqual({
+      orphans: [candidate],
+      operatorVmids: [],
+    });
   });
 });
 
