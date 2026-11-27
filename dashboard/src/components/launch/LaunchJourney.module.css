@@ -157,6 +157,13 @@
   margin-top: 0.75rem;
 }
 
+.chooseSubheading {
+  margin: 1rem 0 0;
+  font: 600 0.85rem var(--font-sans);
+}
+
+.starterGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
 .tile {
   min-width: 0;
   min-height: 96px;

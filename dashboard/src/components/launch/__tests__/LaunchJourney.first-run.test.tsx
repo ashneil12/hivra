@@ -117,6 +117,46 @@ beforeEach(() => {
 const reviewButton = () => screen.getByTestId("launch-primary-action");
 
 describe("a new account in Launch", () => {
+  it("puts three starting choices first from generic sign-up and opens Review without creating an agent", async () => {
+    searchParams = { kind: "agent", start: "1" };
+    fetchPlanStrictMock.mockResolvedValue(PAID_PLAN);
+    render(<LaunchJourney />);
+
+    const agents = await screen.findByRole("region", { name: "An agent" });
+    const tiles = within(agents).getAllByRole("button");
+    expect(tiles.slice(0, 3).map(tile => tile.querySelector("strong")?.textContent)).toEqual(["Hermes", "Claude Code", "Codex"]);
+    expect(tiles[0]).toHaveTextContent("Research and automation");
+    expect(await within(tiles[0]).findByText("Recommended for general work")).toBeVisible();
+    expect(within(agents).getAllByRole("button", { name: /^Hermes\b/ })).toHaveLength(1);
+    expect(within(agents).getByRole("button", { name: /^OpenClaw\b/ })).toBeVisible();
+    expect(screen.getByRole("region", { name: "A computer" })).toBeVisible();
+    fireEvent.click(tiles[0]);
+    expect(await screen.findByRole("heading", { name: /Review and launch Hermes/ })).toBeVisible();
+    expect(createAgentMock).not.toHaveBeenCalled();
+  });
+
+  it.each([NO_PLAN, PRO_ON_HOLD])("doesn't recommend managed Hermes when the current plan can't launch it ($name)", async plan => {
+    searchParams = { kind: "agent", start: "1" };
+    fetchPlanStrictMock.mockResolvedValue(plan);
+    render(<LaunchJourney />);
+
+    const hermes = await screen.findByRole("button", { name: /^Hermes\b/ });
+    await within(hermes).findByText("onHold" in plan ? "Pro plan on hold" : "Needs Pro");
+    expect(hermes).toHaveTextContent("Runs on Hivra Cloud only.");
+    expect(hermes).not.toHaveTextContent("Recommended for general work");
+    expect(screen.getByRole("button", { name: /^Claude Code\b/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Codex\b/ })).toBeVisible();
+    if (!("onHold" in plan)) expect(screen.getByRole("button", { name: "Connect my own server" })).toBeVisible();
+  });
+
+  it("doesn't inject agent starters into a computer-first Launch visit", async () => {
+    searchParams = { kind: "computer", start: "1" };
+    render(<LaunchJourney />);
+
+    expect(await screen.findByRole("region", { name: "A computer" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Start with one of these agents" })).not.toBeInTheDocument();
+  });
+
   it("tells a new account the free account works with its own computer, instead of offering a free hosted one", async () => {
     render(<LaunchJourney legacyHermesLane />);
     await screen.findByRole("heading", { name: "What do you want to launch?" });

@@ -25,6 +25,11 @@ All seven launch from Launch. Hivra Cloud requires a paid plan or, for
 supported managed computers, [token-holder admission](#token-holder-access).
 A free account alone works with a server the person connects.
 
+The generic sign-up Launch chooser groups three starting agents first: Hermes
+for research and automation, then Claude Code and Codex for coding. Hermes is
+recommended there only when it fits the account's Hivra Cloud plan. Other
+available agents and computers remain in Launch.
+
 The [public agent directory](https://hivra.cloud/agents) gives each offered
 agent a detail page. OpenBot and Nuphos appear only with their own deployment
 switches on. An agent from the universal catalog appears only when the
