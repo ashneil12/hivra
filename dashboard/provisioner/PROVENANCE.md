@@ -1490,3 +1490,7 @@ before launch. Provisioning still generates per-computer identities, model
 and tunnel settings, and checks the native Webapp and authenticated terminal
 routes. Owner updates still use `hermes update`. The sealed bundle does not
 distribute or activate a VM image; unset selection retains the stock installer.
+
+Release `2026.11.27.3` seals the host capacity admission reader speedup.
+It adds no third-party assets and leaves the catalog image pins and the
+desktop and native workload contracts unchanged.

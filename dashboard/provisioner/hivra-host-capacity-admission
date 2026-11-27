@@ -104,22 +104,72 @@ OLD_ACTIVE_FLOOR_MB=0
 OLD_ACTIVE_MAX_MB=0
 OLD_ACTIVE_MAX_CPU_MILLI=0
 
-QEMU_INVENTORY="$(qm list 2>/dev/null)" || { echo "could not read QEMU inventory" >&2; exit 1; }
-QEMU_CANDIDATES="$(printf '%s\n' "$QEMU_INVENTORY" | awk '
+QEMU_BATCH="${HIVRA_CAPACITY_BATCH_QEMU:-0}"
+case "$QEMU_BATCH" in 0|1) ;; *) echo "invalid QEMU inventory mode" >&2; exit 1 ;; esac
+if [ "$QEMU_BATCH" = 1 ]; then
+  QEMU_CANDIDATES="$(perl 2>/dev/null <<'PERL'
+use strict;
+use warnings;
+use MIME::Base64 qw(encode_base64);
+use PVE::Cluster;
+use PVE::QemuConfig;
+use PVE::QemuServer;
+
+PVE::Cluster::cfs_update();
+my $dir = '/etc/pve/qemu-server';
+opendir(my $configs, $dir) or die "cannot read local VM config inventory";
+my %expected = map { /\A([1-9][0-9]*)\.conf\z/ ? ($1 => 1) : () } readdir($configs);
+closedir($configs) or die "cannot close local VM config inventory";
+my $inventory = PVE::QemuServer::vmstatus(undef, 1);
+die "invalid VM inventory" if ref($inventory) ne 'HASH' || keys(%$inventory) != keys(%expected);
+for my $vmid (sort { $a <=> $b } keys %expected) {
+    my $state = $inventory->{$vmid};
+    die "missing VM status" unless ref($state) eq 'HASH' && ($state->{vmid} // '') eq "$vmid";
+    my $status = $state->{qmpstatus} || 'unknown';
+    die "invalid QMP status" unless $status =~ /\A[a-z-]+\z/;
+    my $config = PVE::QemuConfig->load_current_config($vmid, 0);
+    die "invalid VM config" unless ref($config) eq 'HASH';
+    my $facts = "\n";
+    for my $key (qw(template tags ipconfig0 scsi0 balloon memory cpulimit cores sockets)) {
+        next unless defined(my $value = $config->{$key});
+        die "invalid VM config field" if ref($value) || $value =~ /[\x00-\x1f\x7f]/;
+        $facts .= "$key: $value\n";
+    }
+    print "$vmid\t$status\t", encode_base64($facts, ''), "\n";
+}
+PERL
+)" || { echo "could not read complete batched QEMU inventory" >&2; exit 1; }
+else
+  QEMU_INVENTORY="$(qm list 2>/dev/null)" || { echo "could not read QEMU inventory" >&2; exit 1; }
+  QEMU_CANDIDATES="$(printf '%s\n' "$QEMU_INVENTORY" | awk '
   NF > 0 && !header { header=1; if ($1 != "VMID") exit 2; next }
   NF > 0 { if ($1 !~ /^[0-9]+$/) exit 3; print $1 }
 ')" || { echo "invalid QEMU inventory" >&2; exit 1; }
-while IFS= read -r candidate; do
+fi
+QEMU_SEEN=" "
+while IFS=$'\t' read -r candidate status encoded extra; do
   [ -n "$candidate" ] || continue
-  config="$(qm config "$candidate" 2>/dev/null)" || { echo "could not inspect QEMU capacity" >&2; exit 1; }
+  if [ "$QEMU_BATCH" = 1 ]; then
+    if ! [[ "$candidate" =~ ^[1-9][0-9]*$ && "$status" =~ ^[a-z-]+$ && -n "$encoded" && -z "$extra" ]] \
+      || [[ "$QEMU_SEEN" == *" $candidate "* ]]; then
+      echo "invalid batched QEMU inventory record" >&2
+      exit 1
+    fi
+    QEMU_SEEN+="$candidate "
+    config="$(printf '%s' "$encoded" | base64 -d 2>/dev/null)" || { echo "invalid batched QEMU config" >&2; exit 1; }
+  else
+    config="$(qm config "$candidate" 2>/dev/null)" || { echo "could not inspect QEMU capacity" >&2; exit 1; }
+  fi
   template="$(printf '%s\n' "$config" | awk '$1=="template:" {print $2; exit}')"
   [ "${template:-0}" = "1" ] && continue
-  status_output="$(qm status "$candidate" 2>/dev/null)" || { echo "could not inspect QEMU status" >&2; exit 1; }
+  if [ "$QEMU_BATCH" = 0 ]; then
+    status_output="$(qm status "$candidate" 2>/dev/null)" || { echo "could not inspect QEMU status" >&2; exit 1; }
+    status="$(printf '%s\n' "$status_output" | awk 'NF==2 && $1=="status:" && $2 ~ /^[a-z-]+$/ {print $2; exit}')"
+  fi
   # Only a stopped guest frees its resources. A paused one (an agent napping
   # through Hivra's sleep, `qm suspend`; PVE prints the QMP status) and any
   # transient state (prelaunch, suspended) still hold theirs, so they count
   # as active. A status that cannot be read at all still fails closed.
-  status="$(printf '%s\n' "$status_output" | awk 'NF==2 && $1=="status:" && $2 ~ /^[a-z-]+$/ {print $2; exit}')"
   [ -n "$status" ] || { echo "invalid QEMU status" >&2; exit 1; }
   tags="$(printf '%s\n' "$config" | awk '$1=="tags:" {sub(/^tags:[[:space:]]*/, ""); print; exit}')"
   ipconfig="$(printf '%s\n' "$config" | awk '$1=="ipconfig0:" {sub(/^ipconfig0:[[:space:]]*/, ""); print; exit}')"
