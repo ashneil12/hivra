@@ -1,0 +1,23 @@
+[Unit]
+Description=Claude terminal QA fixture Unix stream
+PartOf=hivra-claude-terminal-relay.socket
+
+[Service]
+Type=exec
+User=root
+ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/hivra-claude-terminal-relay.py
+StandardInput=socket
+StandardOutput=inherit
+StandardError=journal
+RuntimeMaxSec=16min
+TimeoutStopSec=5s
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateDevices=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/lock
+RestrictAddressFamilies=AF_UNIX
