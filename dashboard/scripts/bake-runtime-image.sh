@@ -4,26 +4,31 @@ umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$#" -ne 2 ] || [ ! -d "$2" ]; then
-  printf 'usage: bash %s {official-hermes|deepseek-harness} EXISTING_OUTPUT_DIRECTORY\n' "$0" >&2
+  printf 'usage: bash %s {official-hermes|deepseek-harness|ubuntu-qga} EXISTING_OUTPUT_DIRECTORY\n' "$0" >&2
   exit 64
 fi
 KIND="$1"
 OUT="$(cd "$2" && pwd)"
 MEMORY_MB="${HIVRA_BAKE_MEMORY_MB:-4096}"
 case "$MEMORY_MB" in 4096|6144|8192) ;; *) printf 'unsupported bake memory size\n' >&2; exit 64 ;; esac
+PINS="$ROOT/runtime-bake-pins.env"
 case "$KIND" in
   official-hermes) NAME_PREFIX=hivra-hermes; MARKER=/etc/hivra/hermes-bake.json ;;
   deepseek-harness) NAME_PREFIX=hivra-deepseek-harness; MARKER=/etc/hivra/deepseek-harness-bake.json ;;
+  ubuntu-qga) NAME_PREFIX=hivra-ubuntu-qga; MARKER=/etc/hivra/ubuntu-qga-bake.json; PINS="$ROOT/ubuntu-qga-bake-pins.env" ;;
   *) printf 'unsupported bake runtime\n' >&2; exit 64 ;;
 esac
 WORK="$(mktemp -d "$OUT/.runtime-bake.XXXXXX")"
 trap 'rm -rf -- "$WORK"' EXIT
-source "$ROOT/runtime-bake-pins.env"
+source "$PINS"
 source "$ROOT/bake-fetch.sh"
 STAGE="$WORK/hivra-image-bake"
 install -d -m 0700 "$STAGE"
-install -m 0644 "$ROOT/runtime-bake-pins.env" "$ROOT/bake-fetch.sh" "$ROOT/bake-runtime-guest.sh" \
-  "$ROOT/bake-$KIND-guest.sh" "$STAGE"
+install -m 0644 "$ROOT/bake-runtime-guest.sh" "$STAGE"
+install -m 0644 "$PINS" "$STAGE/runtime-bake-pins.env"
+if [ "$KIND" != ubuntu-qga ]; then
+  install -m 0644 "$ROOT/bake-fetch.sh" "$ROOT/bake-$KIND-guest.sh" "$STAGE"
+fi
 case "$KIND" in
   official-hermes)
     source "$ROOT/hermes-bake-pins.env"
@@ -60,6 +65,12 @@ qemu-img info --output=json "$WORK/sealed.qcow2" | jq -e --argjson diskBytes "$D
 virt-cat --format=qcow2 -a "$WORK/sealed.qcow2" "$MARKER" > "$WORK/marker.json"
 jq -e --arg kind "$KIND" --arg base "$BASE_IMAGE_SHA256" \
   '.schema == 1 and .kind == $kind and .baseImageSha256 == $base' "$WORK/marker.json" >/dev/null
+if [ "$KIND" = ubuntu-qga ]; then
+  jq -e '
+    keys == ["baseImageSha256", "kind", "qemuGuestAgentVersion", "schema"]
+    and (.qemuGuestAgentVersion | test("^[0-9][A-Za-z0-9.+:~-]{0,127}$"))
+  ' "$WORK/marker.json" >/dev/null
+fi
 
 read -r IMAGE_SHA _ < <(sha256sum "$WORK/sealed.qcow2")
 NAME="$NAME_PREFIX-$IMAGE_SHA"

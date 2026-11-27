@@ -9,6 +9,7 @@ import unittest
 
 SCRIPTS = Path(__file__).resolve().parent
 BASE = dict(line.split("=", 1) for line in (SCRIPTS / "runtime-bake-pins.env").read_text().splitlines())["BASE_IMAGE_SHA256"]
+QGA_BASE = dict(line.split("=", 1) for line in (SCRIPTS / "ubuntu-qga-bake-pins.env").read_text().splitlines())["BASE_IMAGE_SHA256"]
 DISK = b"sealed fixture"
 DIGEST = hashlib.sha256(DISK).hexdigest()
 TOOLS = {
@@ -85,6 +86,27 @@ class RuntimeImageBake(unittest.TestCase):
         self.assertIn("hermes-install.sh", (self.root / "STAGE").read_text().splitlines())
         self.assertIn("--memsize\n8192\n", (self.root / "CUSTOMIZE").read_text())
         self.assertIn("/etc/hivra/hermes-bake.json", (self.root / "CAT").read_text())
+
+    def test_ubuntu_qga_stages_only_shared_guest_recipe_and_requires_package_version(self):
+        marker = {"schema": 1, "kind": "ubuntu-qga", "baseImageSha256": QGA_BASE}
+        for invalid in (
+            marker,
+            {**marker, "qemuGuestAgentVersion": 1},
+            {**marker, "qemuGuestAgentVersion": "unknown"},
+            {**marker, "qemuGuestAgentVersion": "1:6.2+dfsg-2ubuntu6.30", "nativePackage": {}},
+            {**marker, "qemuGuestAgentVersion": "1:6.2+dfsg-2ubuntu6.30", "baseImageSha256": BASE},
+        ):
+            with self.subTest(marker=invalid):
+                self.assertNotEqual(self.produce("ubuntu-qga", marker=invalid).returncode, 0)
+                self.assertEqual(list(self.output.iterdir()), [])
+        marker["qemuGuestAgentVersion"] = "1:6.2+dfsg-2ubuntu6.30"
+        result = self.produce("ubuntu-qga", marker=marker)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        stem = self.output / f"hivra-ubuntu-qga-{DIGEST}"
+        self.assertEqual(stem.with_suffix(".qcow2").read_bytes(), DISK)
+        self.assertEqual(json.loads(stem.with_suffix(".json").read_text()), {**marker, "format": "qcow2", "imageSha256": DIGEST})
+        self.assertEqual((self.root / "STAGE").read_text().splitlines(), ["bake-runtime-guest.sh", "runtime-bake-pins.env"])
+        self.assertIn("/etc/hivra/ubuntu-qga-bake.json", (self.root / "CAT").read_text())
 
     def test_refuses_invalid_inputs_and_artifacts_without_publication(self):
         for env in (
