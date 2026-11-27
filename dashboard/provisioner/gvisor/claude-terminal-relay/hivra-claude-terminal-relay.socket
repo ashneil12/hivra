@@ -1,0 +1,14 @@
+[Unit]
+Description=Host-local socket for the Claude terminal QA fixture
+
+[Socket]
+ListenStream=/run/hivra-terminal-qa/ttyd.sock
+Accept=yes
+SocketUser=hivra-terminal-gateway
+SocketMode=0600
+DirectoryMode=0755
+RemoveOnStop=yes
+MaxConnections=8
+
+[Install]
+WantedBy=sockets.target

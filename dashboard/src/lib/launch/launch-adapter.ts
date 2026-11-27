@@ -571,7 +571,7 @@ export async function submitLaunchDraft(
     }
     return payload.data.agent;
   }
-  if (profileId === "linux-terminal") {
+  if (profileId === "linux-terminal" || profileId === "claude-code-sandbox") {
     if (deployment.mode === "self-managed") {
       const host = options.selfManagedTarget?.id === deployment.targetId ? options.selfManagedTarget : null;
       if (gvisorNeedsRecheck(host, Date.now())) {
@@ -591,6 +591,7 @@ export async function submitLaunchDraft(
     return submitWithReceipt({
       type: "linux-terminal",
       computerProfile: "linux-terminal",
+      ...(profileId === "claude-code-sandbox" ? { gvisorWorkload: "claude-terminal" as const } : {}),
       name: draft.name.trim(),
       cpu: draft.resources.cpu,
       ram: draft.resources.ram,
@@ -766,7 +767,7 @@ export function launchResultHref(draft: LaunchDraft, agentId: string): string {
       welcome: true,
     });
   }
-  if (draft.profileId === "linux-terminal") return `/dashboard/agent/${id}?tab=manage`;
+  if (draft.profileId === "linux-terminal" || draft.profileId === "claude-code-sandbox") return `/dashboard/agent/${id}?tab=manage`;
   // A Linux computer has no desktop; it opens on its files.
   if (draft.profileId === "ubuntu-server") return `/dashboard/agent/${id}?tab=files`;
   if (draft.profileId && PROFILE_DETAILS[draft.profileId].resourceKind === "computer") {

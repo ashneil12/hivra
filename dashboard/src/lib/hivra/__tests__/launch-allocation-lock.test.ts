@@ -30,13 +30,13 @@ it("revalidates the selected Canary seal while holding the allocation lock, befo
   expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
 });
 
-function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: string) {
+function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: string, agentKind = "codex") {
   return phase1Script({
     cpu: 2,
     cpuLimit: 2,
     memMb: 4096,
     guaranteedMemMb: 4096,
-    agentKind: "codex",
+    agentKind,
     tunnelToken: "",
     tunnelUrl: "",
     wantBrowser: false,
@@ -73,6 +73,54 @@ function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: str
 }
 
 describe("host allocation lock lifecycle", () => {
+  it("enables batched capacity reads only for managed Hermes on the reviewed Canary release", () => {
+    const script = renderedPhase1(false, "2026.11.27.3", "hermes");
+    const admission = script.indexOf("HIVRA_CAPACITY_BATCH_QEMU=1 bash ");
+    expect(admission).toBeGreaterThan(script.indexOf("flock -w"));
+    expect(admission).toBeGreaterThan(script.indexOf("OBSERVED_MANIFEST_SHA="));
+    expect(admission).toBeLessThan(script.indexOf("claimed_octets="));
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+    expect(renderedPhase1(false, "2026.11.27.2", "hermes")).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+    expect(renderedPhase1(false, "2026.11.27.3", "codex")).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+    expect(renderedPhase1(true, undefined, "hermes")).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+  });
+
+  it("reads managed Hermes IP claims in one pmxcfs scan under the allocation lock", () => {
+    const script = renderedPhase1(false, undefined, "hermes");
+    const start = script.indexOf('claimed_octets="$(');
+    const end = script.indexOf('claimed_octets="$(printf', start);
+    expect(start).toBeGreaterThan(script.indexOf("flock -w"));
+    expect(end).toBeGreaterThan(start);
+    expect(script).not.toContain("qm list");
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+    const root = mkdtempSync(path.join(tmpdir(), "hivra-ip-claims-"));
+    try {
+      const fragment = script.slice(start, end)
+        .replaceAll("/etc/pve/qemu-server", root)
+        .replaceAll("/var/lib/hivra/provision-operations", root);
+      const run = () => spawnSync("bash", ["-c", `set -euo pipefail
+${fragment}
+printf '%s' "$claimed_octets"`], { encoding: "utf8" });
+      expect(run()).toMatchObject({ status: 0, stdout: "" });
+      writeFileSync(path.join(root, "200.conf"), [
+        "description: ip=10.251.20.99/24",
+        "ipconfig0: ip=10.251.20.50/24,gw=10.251.20.1",
+        "ipconfig1: ip6=auto,ip=10.251.20.51/24",
+        "[backup]",
+        "ipconfig0: ip=10.251.20.98/24",
+        "[PENDING]",
+        "ipconfig0: gw=10.251.20.1,ip=10.251.20.52/24",
+      ].join("\n"));
+      writeFileSync(path.join(root, "201.conf"), "ipconfig0: ip=dhcp\n");
+      writeFileSync(path.join(root, "operation-one.selected"), "ip=10.251.20.53\n");
+      expect(run()).toMatchObject({ status: 0, stdout: "50\n51\n52\n53" });
+      rmSync(root, { recursive: true });
+      expect(run()).toMatchObject({ status: 1, stdout: "", stderr: expect.stringContaining("inventory is unavailable") });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("matches the managed guardian's exact child argv with the selected VMID expanded at runtime", () => {
     const script = renderedPhase1(false);
     const line = script.split("\n").find(entry => entry.includes('grep -Fq') && entry.includes("hivra-provision-on-host.sh"));

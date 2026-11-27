@@ -562,6 +562,7 @@ type ProxmoxHostRegistryRow = {
   /** Per-host: deep-sleeping agents hold no CPU/RAM in placement. */
   placement_skip_deep_sleep?: boolean | null;
   sleep_mode?: string | null;
+  decommissioned_at?: string | null;
   /** Latest capacity sweep reading (hivra/capacity/sweep), when the host is swept. */
   capacity_reading?: unknown;
 };
@@ -1234,6 +1235,7 @@ async function buildProxmoxProvisionTargetCandidates(params: {
   holderUserId?: string;
   rankManagedTarget?: boolean;
   forceTargetId?: string | null;
+  paidSleepPlacement?: { stickyHost: string | null };
 }): Promise<ProxmoxProvisionTargetCandidateSet> {
   // Forced single-host placement (Workspace Cloud lane). Resolve the host's
   // per-host env directly and return exactly one candidate, bypassing the
@@ -1370,6 +1372,15 @@ async function buildProxmoxProvisionTargetCandidates(params: {
       onCapacityFull: (hostId) => capacityFullHostIds.push(hostId),
     });
 
+    if (params.paidSleepPlacement && !params.forceTargetId) {
+      const stickyId = normalizeProxmoxCapacityScopeId(params.paidSleepPlacement.stickyHost);
+      const sleepPreference = (host: ProxmoxHostRegistryRow) => {
+        const sleepEnabled = host.decommissioned_at == null && (host.sleep_mode === "on" || host.sleep_mode === "canary");
+        return 2 * Number(sleepEnabled) + Number(normalizeProxmoxCapacityScopeId(host.id) === stickyId);
+      };
+      ranked.sort((a, b) => sleepPreference(b.host) - sleepPreference(a.host));
+    }
+
     log.info("proxmox placement using registry path", {
       source: LOG_SOURCE,
       registryHostCount: registryForPlacement.length,
@@ -1450,6 +1461,7 @@ export async function selectAvailableProxmoxProvisionTarget(params: {
   readinessCheck?: ProxmoxProvisionTargetReadinessCheck;
   /** Funding cohort of the seat being placed. Only holder seats use the admission-assigned host preference. */
   seatFunding?: SeatFunding | null;
+  paidSleepPlacement?: { stickyHost: string | null };
 }): Promise<ProxmoxProvisionTargetSelection> {
   if (!params.supabase) {
     return {
@@ -1468,6 +1480,7 @@ export async function selectAvailableProxmoxProvisionTarget(params: {
     forceTargetId: params.forceTargetId,
     rankManagedTarget: params.rankManagedTarget,
     holderUserId: params.seatFunding === "holder" ? params.userId : undefined,
+    paidSleepPlacement: params.seatFunding === "paid" ? params.paidSleepPlacement : undefined,
   });
 
   // Hard stop: the host registry could not be read, so no host is vetted.

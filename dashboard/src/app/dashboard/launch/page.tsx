@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 
 import { LaunchJourney } from "@/components/launch/LaunchJourney";
 import { canCertifyCatalog } from "@/lib/hivra/catalog-certifier-access";
+import { claudeSandboxPilot } from "@/lib/hivra/claude-sandbox-pilot";
 import { managedGvisorLaunchAdmittedForUser } from "@/lib/hivra/managed-gvisor-launch-config";
 
 export const dynamic = "force-dynamic";
@@ -11,5 +12,6 @@ export default async function LaunchPage() {
   return <LaunchJourney
     managedLinuxSandboxEligible={managedGvisorLaunchAdmittedForUser(userId)}
     catalogCertifier={canCertifyCatalog(userId)}
+    claudeSandboxTargetId={claudeSandboxPilot(userId)?.target}
   />;
 }

@@ -342,7 +342,11 @@ async function promptHidden(prompt) {
 }
 
 async function collectOperatorIdentity(options) {
-  const email = (options.email || process.env.HIVRA_SETUP_EMAIL || await promptLine("Operator email: ")).trim().toLowerCase();
+  const configuredEmail = options.email || process.env.HIVRA_SETUP_EMAIL;
+  if (!configuredEmail && !process.stdin.isTTY) {
+    fail("Run setup in an interactive terminal or set HIVRA_SETUP_EMAIL and HIVRA_SETUP_PASSWORD for non-interactive setup.");
+  }
+  const email = (configuredEmail || await promptLine("Operator email: ")).trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail("Enter a valid operator email address.");
   const name = (options.name || process.env.HIVRA_SETUP_NAME || await promptLine("Operator name [Operator]: ", "Operator")).trim();
   if (!name || name.length > 80) fail("Operator name must contain 1 to 80 characters.");
@@ -861,9 +865,9 @@ async function initialize(options) {
   const stateDirectory = resolveStateDirectory(options["state-dir"]);
   const target = path.join(stateDirectory, "dashboard.env");
   if (existsSync(target)) fail(`An installation already exists at ${target}. Use self-host:start.`);
+  const operator = await collectOperatorIdentity(options);
   line("Starting the local database and applying committed migrations...");
   const { environment: supabase, runtime: databaseRuntime } = await startSupabase(stateDirectory, { initialize: true });
-  const operator = await collectOperatorIdentity(options);
   const environment = buildEnvironment(supabase, operator);
   const git = commandResult("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, timeout: 10_000 });
   const receipt = {

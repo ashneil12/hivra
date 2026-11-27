@@ -166,6 +166,7 @@ describe("every catalog agent launches in the Launch journey", () => {
     fireEvent.click(screen.getByRole("button", { name: "Launch Claude Code" }));
 
     await screen.findByRole("heading", { name: "Claude Code 1 is setting up." });
+    expect(screen.getByRole("status")).toHaveTextContent("Checking whether you can open your agent");
     expect(screen.getByTestId("launch-primary-action")).toHaveTextContent("Open Claude Code 1 now");
     expect(screen.queryByRole("link", { name: /Open my agent/ })).not.toBeInTheDocument();
     expect(routerPushMock).not.toHaveBeenCalled();
@@ -186,7 +187,7 @@ describe("every catalog agent launches in the Launch journey", () => {
 
     await screen.findByRole("heading", { name: "Claude Code 1 couldn't start." }, { timeout: 8000 });
     expect(screen.getByTestId("launch-primary-action")).toHaveTextContent("Open Claude Code 1");
-    expect(screen.queryByText(/Waiting for it to answer/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Checking whether you can open your agent/)).not.toBeInTheDocument();
   }, 15000);
 
   it("starts Hermes on Hivra credits at $0, asks for credit, and still lets the owner switch", async () => {

@@ -81,6 +81,7 @@ describe("the model access choices", () => {
     expect(byMode("hermes-computer").credits.unavailable).toBeNull();
     expect(byMode("hermes-computer")["api-key"].unavailable).toBeNull();
     expect(byMode("hermes-computer").native.title).toBe("Set up inside Hermes after it opens");
+    expect(byMode("hermes-computer").native.detail).toBe("You'll need to choose a model provider in Hermes before you can chat.");
     const ready = { name: "Hermes 1", pastedKey: "", savedKeys: [], options };
     expect(modelAccessProblem("hermes-computer", access({ mode: "credits" }), ready)).toBeNull();
     expect(modelAccessProblem("hermes-computer", access({ mode: "api-key" }), ready)).toBe("Paste your Venice AI API key.");

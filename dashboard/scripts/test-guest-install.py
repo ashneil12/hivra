@@ -38,6 +38,79 @@ def traced_launch(**overrides):
 
 
 class LaunchContract(unittest.TestCase):
+    def test_baked_hermes_is_opt_in_and_only_for_proxmox_hermes(self):
+        stock = launch(agentKind="hermes")
+        baked = {**stock, "hermesBaked": True}
+        for value in (stock, baked):
+            self.assertEqual(guest.parse_launch(json.dumps(value).encode()), value)
+        for overrides in ({"hermesBaked": False}, {"hermesBaked": 1}, {"hermesBaked": "true"},
+                          {"agentKind": "codex"}, {"computerSubstrate": "provider-vm"}, {"wantBrowser": True},
+                          {"version": 4}):
+            with self.subTest(overrides=overrides), self.assertRaisesRegex(guest.InstallError, "invalid guest launch"):
+                guest.parse_launch(json.dumps({**baked, **overrides}).encode())
+
+    def test_only_baked_hermes_passes_the_guest_opt_in_to_bootstrap(self):
+        for fields, expected in (({}, None), ({"hermesBaked": True}, "1")):
+            value = launch(agentKind="hermes", tunnelToken=None, **fields)
+            parsed = guest.parse_launch(json.dumps(value).encode())
+            with patch.object(guest, "DIE_REASON", Mock()), patch.object(guest, "configure_access"), \
+                    patch.object(guest.subprocess, "run") as run:
+                guest.install_agent(parsed, SOURCE.parent)
+            self.assertEqual(run.call_args.kwargs["env"].get("HIVRA_HERMES_BAKED"), expected)
+
+    def test_baked_hermes_launch_fails_closed_on_missing_or_inconsistent_artifacts(self):
+        script = SOURCE.with_name("provision-claude-code-box.sh").read_text()
+        functions = script[script.index("read_hermes_version() {"):script.index("# The pinned Google Chrome")]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "marker.json"
+            ttyd = root / "ttyd"
+            ttyd.touch(mode=0o755)
+            dist = root / ".hermes/hermes-agent/apps/desktop/dist-webapp"
+            dist.mkdir(parents=True)
+            (dist / "index.html").write_text("fixture")
+            (dist / "hermes-build.json").write_text("{}")
+            pin = {"schema": 1, "kind": "official-hermes", "baseImageSha256": "0" * 64,
+                   "hermesInstallerSha256": "1" * 64, "hermesCommit": "2" * 40, "hermesVersion": "0.23.4"}
+            functions = functions.replace("/etc/hivra/hermes-bake.json", str(marker)).replace("/usr/local/bin/ttyd", str(ttyd))
+            functions = functions.replace("file.st_uid != 0", f"file.st_uid != {os.getuid()}")
+            harness = '''set -euo pipefail
+AGENT_HOME=$1 AGENT_USER=bux NODE_VERSION=22.23.2 CLOUDFLARED_VERSION=2026.8.2
+die() { echo "$*" >&2; exit 1; }
+timeout() { shift; "$@"; }
+sudo() {
+  case "$4" in
+    git) printf '%s\\n' "$FIXTURE_HEAD" ;;
+    env) printf 'Hermes Agent v%s (fixture)\\n' "$FIXTURE_VERSION" ;;
+    *) return 1 ;;
+  esac
+}
+node() { echo v22.23.2; }
+npm() { return 0; }
+cloudflared() { echo "cloudflared version 2026.8.2"; }
+gh() { return 0; }
+'''
+
+            def check(head="2" * 40, version="0.23.4"):
+                return subprocess.run(["/bin/bash", "--noprofile", "--norc", "-s", "--", directory],
+                    input=harness + functions + "\nverify_hermes_bake\n", text=True, capture_output=True, timeout=3,
+                    env={"PATH": "/usr/bin:/bin", "FIXTURE_HEAD": head, "FIXTURE_VERSION": version})
+
+            self.assertIn("missing or invalid", check().stderr)
+            marker.write_text(json.dumps(pin))
+            self.assertEqual(check().returncode, 0)
+            self.assertIn("checkout differs", check(head="3" * 40).stderr)
+            self.assertIn("version differs", check(version="0.23.3").stderr)
+            marker.chmod(0o666)
+            self.assertIn("missing or invalid", check().stderr)
+            marker.chmod(0o644)
+            duplicate = json.dumps(pin).replace('"schema": 1', '"schema": 1, "schema": 1')
+            marker.write_text(duplicate)
+            self.assertIn("missing or invalid", check().stderr)
+            marker.write_text(json.dumps(pin))
+            (dist / "index.html").unlink()
+            self.assertIn("Webapp is missing", check().stderr)
+
     def test_linux_desktop_requires_the_complete_v3_computer_contract(self):
         value = launch(version=3, agentKind="linux-desktop", wantBrowser=None, modelKey="", modelBaseUrl="", model="",
                        publicOrigin="https://computer.example.test", computerId="11111111-1111-4111-8111-111111111111",

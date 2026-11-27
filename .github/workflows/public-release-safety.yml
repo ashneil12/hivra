@@ -77,14 +77,27 @@ jobs:
       - name: Guard the guest agent-run reporter in UTC and a non-UTC zone
         run: TZ=UTC python3 -I -B dashboard/provisioner/test_hivra_agent_trace.py && TZ=America/New_York python3 -I -B dashboard/provisioner/test_hivra_agent_trace.py
 
-      - name: Guard the host wake proxy (fake QMP, fake guest, temporary routes)
-        run: python3 -I -B dashboard/provisioner/test_hivra_wake_proxy.py
-
-      - name: Guard the host wake doorbell (fake IMAP server, fake wake helper)
-        run: python3 -I -B dashboard/provisioner/test_hivra_wake_doorbell.py
-
-      - name: Guard the host wake doorbell's Discord watch (fake Discord REST and gateway, fake wake helper)
-        run: python3 -I -B dashboard/provisioner/test_hivra_wake_doorbell_discord.py
+      - name: Guard the host wake proxy, IMAP doorbell and Discord watch
+        shell: bash
+        run: |
+          logs="$(mktemp -d)"
+          python3 -I -B dashboard/provisioner/test_hivra_wake_proxy.py >"$logs/proxy.log" 2>&1 &
+          proxy=$!
+          python3 -I -B dashboard/provisioner/test_hivra_wake_doorbell.py >"$logs/imap.log" 2>&1 &
+          imap=$!
+          python3 -I -B dashboard/provisioner/test_hivra_wake_doorbell_discord.py >"$logs/discord.log" 2>&1 &
+          discord=$!
+          status=0
+          for suite in proxy imap discord; do
+            echo "::group::$suite wake fixtures"
+            if ! wait "${!suite}"; then
+              echo "::error::$suite wake fixtures failed"
+              status=1
+            fi
+            cat "$logs/$suite.log"
+            echo "::endgroup::"
+          done
+          exit "$status"
 
       - name: Guard the box state-import unpack (traversal, deny roots, merge)
         run: node --test dashboard/provisioner/hivra-chat/import-state.test.cjs

@@ -165,7 +165,7 @@ function nativeCopy(profileId: LaunchProfileId): { title: string; detail: string
     case "hermes-computer":
       return {
         title: "Set up inside Hermes after it opens",
-        detail: "Choose a model provider in Hermes's own settings.",
+        detail: "You'll need to choose a model provider in Hermes before you can chat.",
       };
     case "openclaw":
       return {

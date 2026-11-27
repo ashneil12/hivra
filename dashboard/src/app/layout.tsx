@@ -8,6 +8,7 @@ import { PreloadHandler } from "@/components/PreloadHandler";
 import { OpsTelemetryProvider } from "./providers/OpsTelemetryProvider";
 import { PostHogProvider } from "./providers/PostHogProvider";
 import { CookieConsentBanner } from "@/components/consent/CookieConsentBanner";
+import { CookieConsentDockProvider } from "@/components/consent/CookieConsentDock";
 import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistration";
 import { HERMES_RUNTIME_CONFIG_BOOTSTRAP } from "@/lib/client/runtime-config-bootstrap";
 import { DESKTOP_SHELL_BOOTSTRAP } from "@/lib/desktop-shell";
@@ -161,10 +162,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <div className="vellum-texture" data-web-chrome></div>
           {selfHosted ? children : (
             <PostHogProvider>
-              <OpsTelemetryProvider releaseFingerprint={CLIENT_RELEASE_FINGERPRINT}>
-                {children}
-              </OpsTelemetryProvider>
-              <CookieConsentBanner />
+              <CookieConsentDockProvider>
+                <OpsTelemetryProvider releaseFingerprint={CLIENT_RELEASE_FINGERPRINT}>
+                  {children}
+                </OpsTelemetryProvider>
+                <CookieConsentBanner />
+              </CookieConsentDockProvider>
             </PostHogProvider>
           )}
         </ThemeProvider>

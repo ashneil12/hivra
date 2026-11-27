@@ -384,7 +384,7 @@ describe("plan rows", () => {
     expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Free", cloudPlanAccess: "free" }))
       .toBe("Requires a paid plan to launch on Hivra Cloud.");
     expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: "Operator", cloudPlanAccess: "paid" }))
-      .toBe("No extra charge. Uses your Operator plan allowance.");
+      .toBe("This computer uses your Operator plan allowance. No extra hosting charge.");
     expect(costSummary({ profileId: "codex", substrate: "hivra-cloud", planName: null, cloudPlanAccess: "unknown" }))
       .toBe("Checking your Hivra Cloud plan before launch.");
     // A plan on hold is never presented as Free or as costing nothing.

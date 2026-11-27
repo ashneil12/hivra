@@ -6,6 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const source = readFileSync(join(process.cwd(), "provisioner/hivra-provision-on-host.sh"), "utf8");
+const timingStart = source.indexOf("hermes_stage() {");
+const timingEnd = source.indexOf('\n}\n', timingStart) + 2;
+if (timingStart < 0 || timingEnd <= timingStart) throw new Error("Hermes stage logger not found");
+const stageLogger = source.slice(timingStart, timingEnd);
 const start = source.indexOf("wait_for_guest_cloud_init() {");
 const end = source.indexOf("# The package and generated SSH host key now live on the guest disk.", start);
 if (start < 0 || end < 0) throw new Error("Guest boot gate not found");
@@ -73,6 +77,8 @@ exec "$@"
 VM_KEY=/unused-fixture-key
 IP=192.0.2.1
 VMID=1100
+AGENT_KIND=hermes
+HERMES_STAGE_CLOCK=0
 CLOUD_INIT_KEEP_DIR="$FIXTURE_DIR"
 GSSH=(ssh)
 log() { printf '%s\\n' "$*" >&2; }
@@ -81,6 +87,7 @@ sleep() {
   clock="$(cat "$FIXTURE_DIR/clock")"
   printf '%s' "$((clock + $1))" > "$FIXTURE_DIR/clock"
 }
+${stageLogger}
 ${gate}
 printf 'INSTALL_NEXT\\n'
 `,
@@ -106,6 +113,7 @@ describe("guest boot gate", () => {
     expect(result).toMatchObject({ status: 0, attempts: 4, stdout: "INSTALL_NEXT\n" });
     expect(result.budgets).toHaveLength(4);
     expect(result.stderr).toContain("guest cloud-init completed");
+    expect(result.stderr).toMatch(/^HIVRA_HERMES_STAGE cloud_init_ready \d+$/m);
   });
 
   it.each(["disabled", "unknown", "malformed", "empty"])(

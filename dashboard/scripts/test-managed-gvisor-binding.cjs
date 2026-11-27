@@ -81,6 +81,20 @@ async function main() {
     await assert.rejects(agent("customer-a"), { code: "23503", constraint: "hivra_agents_self_managed_target_fk" });
     await agent(operator);
     await assert.rejects(agent(operator), { code: "23505", constraint: "hivra_agents_gvisor_launch_request_unique" });
+    await db.exec(migration("20261127174000_gvisor_claude_terminal_pilot.sql"));
+    const image = `sha256:${"c".repeat(64)}`;
+    const pilot = (requestedImage) => db.query(`insert into hivra_agents
+      (user_id,deployment_mode,deployment_target_id,infrastructure_connection_id,gvisor_launch_request_id,
+       computer_substrate,gvisor_sandbox_id,gvisor_adapter_version,gvisor_adapter_sha256,gvisor_runtime_sha256,
+       computer_profile,type,cpu_max,cpu,ram_max,ram,status,infrastructure_connection_revision,
+       infrastructure_binding_token_enforced,gvisor_claude_terminal_image)
+      values ($1,'self-managed',$2,$3,gen_random_uuid(),'gvisor',gen_random_uuid(),'2026.10.20.1',repeat('a',64),repeat('b',64),
+       'linux-terminal','linux-terminal',1,1,1,1,'provisioning',7,true,$4)`, [operator, target, connection, requestedImage]);
+    await assert.rejects(pilot("claude:latest"), { code: "23514", constraint: "hivra_agents_claude_terminal_scope_check" });
+    await pilot(image);
+    await assert.rejects(pilot(image), { code: "23505", constraint: "hivra_agents_one_live_claude_terminal_per_target" });
+    await assert.rejects(db.query("update hivra_agents set gvisor_claude_terminal_image = null where gvisor_claude_terminal_image = $1", [image]),
+      { code: "55006" });
 
     // Synthetic reservation only. It does not create an agent or grant a
     // lifecycle operation. A production writer would own this whole transaction.

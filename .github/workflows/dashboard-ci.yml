@@ -42,7 +42,7 @@ concurrency:
 
 # `npm run verify` (lint, typecheck, jest, build) ran as one serial job and hit
 # 20 minutes on 2026-09-24, 16 of them in `jest --runInBand`. The same work now
-# runs as parallel jobs, with jest split into eight duration-balanced shards
+# runs as parallel jobs, with jest split into duration-balanced shards
 # (dashboard/scripts/jest-duration-sequencer.cjs). "Verify Dashboard" is the
 # aggregate check and passes only when every job below passed.
 jobs:
@@ -129,6 +129,7 @@ jobs:
         run: |
           node scripts/test-managed-gvisor-binding.cjs
           node scripts/test-managed-gvisor-reservation.cjs
+          node scripts/test-managed-gvisor-tier-handoff.cjs
 
       - name: Verify the gVisor adapter and workspace quotas
         working-directory: .
@@ -136,8 +137,25 @@ jobs:
           python3 dashboard/provisioner/gvisor/test_hivra_gvisor_adapter.py
           python3 dashboard/provisioner/gvisor/test_hivra_gvisor_xfs_workspace.py
 
+      - name: Verify the managed gVisor tier handoff
+        working-directory: .
+        run: |
+          sudo apt-get install -y python3-cryptography
+          /usr/bin/python3 -B dashboard/provisioner/gvisor/test_hivra_gvisor_generation.py
+          /usr/bin/python3 -B dashboard/provisioner/gvisor/test_hivra_gvisor_tier_handoff.py
+
       - name: Catalog certification runner tests
         run: node --test scripts/__tests__/catalog-certification.test.mjs scripts/__tests__/catalog-intake.test.mjs
+
+      - name: Verify read-only workspace measurements
+        working-directory: .
+        run: python3 -B dashboard/scripts/ops/test_workspace_measurements.py
+
+      - name: Verify the portable KVM disk checkpoint contracts
+        working-directory: .
+        run: |
+          sudo apt-get install -y qemu-utils restic
+          python3 -B dashboard/scripts/ops/test_kvm_portable_disk.py
 
       - name: Lint
         run: npm run lint
@@ -149,15 +167,14 @@ jobs:
         run: npm run test:venice-promo
 
   jest:
-    name: Jest (shard ${{ matrix.shard }}/8)
+    name: Jest (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
-    # A shard takes about 2-3 minutes of jest plus 1-2 minutes of setup.
     timeout-minutes: 15
     strategy:
       # Report every failing shard, not just the first one.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: ${{ fromJSON((github.event_name == 'pull_request' && github.base_ref == 'canary') && '[1,2,3,4,5,6,7,8,9,10,11,12]' || '[1,2,3,4,5,6,7,8]') }}
     defaults:
       run:
         working-directory: dashboard
@@ -223,12 +240,12 @@ jobs:
           echo "$RESTIC_DIR" >> "$GITHUB_PATH"
 
       # The smoke-contract and hot-path suites are part of every shard's
-      # selection, so they are not run a second time here. Eight shards
-      # (2026-11-17, was four) halve the slowest job. Each shard stays serial
+      # selection, so they are not run a second time here. Canary PRs use
+      # more shards but run the same suites. Each shard stays serial
       # (--runInBand): parallel jest workers on the 4-CPU runner made the
       # PostgreSQL, Python and shell-fixture suites time out or race.
       - name: Run jest shard
-        run: NODE_OPTIONS=--experimental-vm-modules npm run test:ci -- --shard=${{ matrix.shard }}/8
+        run: NODE_OPTIONS=--experimental-vm-modules npm run test:ci -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
 
   build:
     name: Production build

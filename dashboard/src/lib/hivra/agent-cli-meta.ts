@@ -231,6 +231,9 @@ const WATCHDOG_EVENT_TYPES = new Set([
   "gateway_down", "gateway_recovered", "unit_restart", "recovered",
   "recovery_exhausted", "unit_failing", "watchdog_error",
 ]);
+const HERMES_PROXY_REASONS = new Set([
+  "update_lock", "loopback_connection_refused", "loopback_connection_reset", "loopback_connection_error",
+]);
 
 export interface SurfaceWatchdogEvent {
   id: string;
@@ -239,6 +242,7 @@ export interface SurfaceWatchdogEvent {
   unit?: string;
   kind?: string;
   reason?: string;
+  operation?: "http" | "socket_ticket" | "websocket";
   ok?: boolean;
   downForS?: number;
   nRestarts?: number;
@@ -319,6 +323,20 @@ export async function readSurfaceWatchdogFromBox(
       const event = watchdogEvent(entry);
       if (!event) return { observation: "unreachable" };
       events.push(event);
+    }
+    if (Array.isArray(report.proxyEvents)) {
+      for (const entry of report.proxyEvents.slice(0, 16)) {
+        const event = objectOf(entry);
+        if (event?.type !== "hermes_proxy_unavailable" || typeof event.id !== "string" || !/^e\d+-\d{1,12}$/.test(event.id)
+          || typeof event.reason !== "string" || !HERMES_PROXY_REASONS.has(event.reason)
+          || (event.operation !== "http" && event.operation !== "socket_ticket" && event.operation !== "websocket")) continue;
+        events.push({
+          id: event.id, at: typeof event.at === "string" ? event.at.slice(0, 40) : null,
+          type: event.type, kind: "hermes", reason: event.reason, operation: event.operation,
+          ...(event.unit === "hermes-gateway.service" || event.unit === "bux-hermes.service" ? { unit: event.unit } : {}),
+        });
+      }
+      events.sort((a, b) => (a.at ?? "").localeCompare(b.at ?? ""));
     }
     return {
       observation: "reported",
