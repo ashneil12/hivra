@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/refresh-managed-gvisor-target",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/holder-inactivity-sweep",
       "schedule": "* * * * *"
     },
