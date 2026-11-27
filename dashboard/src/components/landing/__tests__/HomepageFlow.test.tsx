@@ -165,9 +165,14 @@ test("no question mentions a token, whether or not the token surfaces are visibl
 });
 
 test("browser access still works when the installer link is hidden", () => {
-  render(<DownloadPage downloads={{ macos: { status: "pending", href: null } }} />);
-  expect(screen.getByRole("heading", { level: 1, name: "Hivra on your computer." })).toBeVisible();
-  expect(screen.queryByRole("link", { name: /Download for (Mac|Windows)/i })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Download for (Mac|Windows)/i })).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Open Hivra" })).toHaveAttribute("href", "/dashboard");
+  const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_DESKTOP_BROWSER_SIGNIN: "off" });
+  try {
+    render(<DownloadPage />);
+    expect(screen.getByRole("heading", { level: 1, name: "Hivra on your computer." })).toBeVisible();
+    expect(screen.queryByRole("link", { name: /Download for (Mac|Windows)/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Download for (Mac|Windows)/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Hivra" })).toHaveAttribute("href", "/dashboard");
+  } finally {
+    env.restore();
+  }
 });
