@@ -25,6 +25,12 @@ All seven launch from Launch. Hivra Cloud requires a paid plan or, for
 supported managed computers, [token-holder admission](#token-holder-access).
 A free account alone works with a server the person connects.
 
+The [public agent directory](https://hivra.cloud/agents) gives each offered
+agent a detail page. OpenBot and Nuphos appear only with their own deployment
+switches on. An agent from the universal catalog appears only when the
+catalog is enabled and the current manifest is certified; general-purpose
+apps are listed separately.
+
 | Agent | Status | Where it runs |
 | --- | --- | --- |
 | Claude Code | Available | Hivra Cloud or a Proxmox server you connected |
@@ -59,8 +65,8 @@ through Hivra's authenticated gateway. It launches with no browser and gets its
 model at launch, because DeepSeek's own settings refuse a key from a remote
 browser: it runs DeepSeek V4.1 Flash on Hivra credits by default, or on the
 person's own Venice API key. It is labelled alpha because the upstream version it runs is pinned
-at an alpha release. It has no public agent page yet, and a connected server or
-a computer in the owner's own cloud cannot run it. Its Launch tile is not on
+at an alpha release. It has a [public agent page](https://hivra.cloud/agents/deepseek-harness).
+A connected server or a computer in the owner's own cloud cannot run it. Its Launch tile is not on
 the first-run card, which stays at three choices.
 
 ### Token-holder access

@@ -8,7 +8,7 @@ import { notFound } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import StructuredData from "@/components/StructuredData";
-import { BLOG_ARTICLES } from "@/lib/blog-data";
+import { getPublicBlogArticle, getPublicBlogArticles } from "@/lib/blog-data";
 import { blogArticleOgImagePath, buildBlogArticleMetadata } from "@/lib/blog/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import { articleMarkdownComponents } from "@/components/public-editorial/article-markdown";
@@ -31,12 +31,12 @@ export async function generateMetadata({ params }: BlogPageParams): Promise<Meta
 }
 
 export function generateStaticParams() {
-  return Object.keys(BLOG_ARTICLES).map((slug) => ({ slug }));
+  return getPublicBlogArticles().map(({ slug }) => ({ slug }));
 }
 
 export default async function BlogArticlePage({ params }: BlogPageParams) {
   const { slug } = await params;
-  const article = BLOG_ARTICLES[slug];
+  const article = getPublicBlogArticle(slug);
   if (!article) notFound();
 
   const articleUrl = `${SITE_URL}/blog/${slug}`;
@@ -120,7 +120,7 @@ export default async function BlogArticlePage({ params }: BlogPageParams) {
         {/* The shared CTA's default headline promises a deploy time nobody has measured. */}
         <EditorialCTA title={<>Give your agent a computer <strong>that stays on.</strong></>} />
         <EditorialRelated title="Related reading" links={[
-          ...article.relatedArticles.map(({ slug, title }) => ({ label: title, href: `/blog/${slug}` })),
+          ...article.relatedArticles.filter(({ slug }) => getPublicBlogArticle(slug)).map(({ slug, title }) => ({ label: title, href: `/blog/${slug}` })),
           ...(article.relatedFeatures ?? []).map(({ slug, title }) => ({ label: `Feature: ${title}`, href: `/features/${slug}` })),
           ...(article.relatedComparisons ?? []).map(({ slug, title }) => ({ label: `Compare: ${title}`, href: `/compare/${slug}` })),
         ]} />

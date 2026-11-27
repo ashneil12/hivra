@@ -8,7 +8,7 @@ export const article: BlogArticle = {
   metaDescription:
     "Aeon is an agent framework with a dashboard and scheduled tasks that run on your own GitHub Actions. How the split works and what you need to set it up.",
   publishedDate: "2026-11-17",
-  lastModified: "2026-11-17",
+  lastModified: "2026-11-27",
   readingTimeMin: 6,
   author: "Hivra Team",
   tagline: "Set it once. Your GitHub does the running.",
@@ -37,7 +37,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "Hivra hosts the dashboard. It sets up a small computer for it, puts it behind Hivra's authenticated gateway, and gives you a connection flow for your GitHub account and your Aeon fork. You come back to that dashboard to inspect and change tasks.",
         "Hivra does not take over your fork, and it does not turn your scheduled jobs into Hivra compute. They stay in GitHub, with your repository settings and your task credentials. Hivra cannot exempt them from GitHub's Actions limits or pricing.",
-        "The dashboard computer is small, with a floor of 0.5 vCPU and 1 GB of RAM. Every Hivra Cloud computer needs a paid plan, and the entry plan is " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + ". You can use your own server if your account is eligible to connect it.",
+        "The dashboard computer is small, with a floor of 0.5 vCPU and 1 GB of RAM. On Hivra Cloud, the entry plan is " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + ". You can use your own server if your account is eligible to connect it.",
       ],
     },
     {
@@ -75,7 +75,7 @@ export const article: BlogArticle = {
     },
     {
       q: "What does Aeon cost to host?",
-      a: "Every Hivra Cloud computer needs a paid plan, even though the dashboard computer is small. GitHub Actions usage and model usage are billed separately by their own providers.",
+      a: "If you host the dashboard on a paid Hivra Cloud plan, that bill covers the computer. GitHub Actions usage and model usage are separate.",
     },
     {
       q: "Will tasks keep running when I close my laptop?",

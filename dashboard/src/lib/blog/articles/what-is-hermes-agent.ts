@@ -8,27 +8,27 @@ export const article: BlogArticle = {
   metaDescription:
     "Hermes Agent is an open-source AI agent from Nous Research. Unlike a chatbot, it runs on a server, keeps memory across sessions and takes actions.",
   publishedDate: "2026-03-10",
-  lastModified: "2026-10-21",
+  lastModified: "2026-11-27",
   readingTimeMin: 8,
   author: "Hivra team",
   tagline: "An agent that keeps running after you close the chat.",
   intro:
     "Nous Research released Hermes Agent, an open-source autonomous AI agent, in early 2026. A chatbot answers when you ask and then stops. Hermes keeps going between your messages.",
   shortAnswer:
-    "Hermes Agent is an open-source autonomous AI agent from Nous Research, released under the MIT license in February 2026. Unlike a chatbot, it runs continuously on a server and keeps searchable memory across sessions. It also takes actions, like running code, browsing websites, managing files and calling APIs, without you narrating each step.",
+    "Hermes Agent is an open-source autonomous AI agent from Nous Research, released in February 2026. Unlike a chat-only interface, it runs on a server and keeps searchable memory across sessions. It also takes actions, like running code, browsing websites, managing files and calling APIs, without you narrating each step.",
   sections: [
     {
       heading: "What isn't Hermes Agent?",
       paragraphs: [
         "Most AI products you have used (ChatGPT, Claude.ai, Gemini) are chatbots. You write a message, they generate a response, the session ends. The next time you open the app, the model has no memory of what you discussed. It does not take actions on your behalf. It does not run while you are asleep.",
-        "Hermes Agent operates differently. It runs continuously on a server. It keeps memory across sessions. Think a real, searchable store of what it knows about you, your projects, and the work it has done. And it can take actions: run code, browse websites, manage files, call APIs, send emails, and execute multi-step tasks without you narrating each step.",
+        "Hermes Agent operates differently. It runs on a server and keeps memory across sessions. Whether it keeps doing work depends on its configuration and whether its computer is awake. Think a real, searchable store of what it knows about you, your projects, and the work it has done. And it can take actions: run code, browse websites, manage files, call APIs, send emails, and execute multi-step tasks without you narrating each step.",
       ],
     },
     {
       heading: "Who makes Hermes Agent?",
       paragraphs: [
         "Nous Research is an AI research group that has been building and releasing open-weight models since 2023, known particularly for the Hermes model series: fine-tuned versions of base models (Llama, Mistral, and others) built for function calling, tool use, and instruction following. These models consistently score well on agentic benchmarks.",
-        "Hermes Agent is the framework built on top of that work, designed for long-running tasks, real tool execution, and persistent memory. Released under the MIT license in February 2026, meaning you can run it yourself, modify it, or build on top of it. The MIT license creates two classes of users: those who run Hermes on their own hardware, and those who want the capabilities without the infrastructure overhead. That second group is what Hivra exists to serve.",
+        "Hermes Agent is the framework built on top of that work, designed for long-running tasks, real tool execution, and persistent memory. It is open source: you can run it on your own hardware or use managed hosting if you do not want to run the server yourself.",
       ],
     },
     {
@@ -50,7 +50,7 @@ export const article: BlogArticle = {
       heading: "Where does it run?",
       paragraphs: [
         "On a server you look after: a VPS, a dedicated machine, a Docker container, or a cloud VM. The installation requires Linux familiarity, Docker, and some comfort configuring networking. On Hetzner's CX23 at €5.49/month (excluding VAT and IPv4), it's cheap. It also takes 4-8 hours to set up correctly the first time and requires maintenance when updates break things. That's fair for an open-source tool built for developers.",
-        "Hivra fills that gap by handling server provisioning, the container setup, networking, and SSL termination, and it restarts the agent if it crashes; backups are not guaranteed. Launch Hermes from the dashboard, add your AI provider key, and use it from chat and an admin dashboard in the browser, with nothing to install.",
+        "Hivra offers Hermes on Hivra Cloud, not on a connected server. Hivra takes care of hosting the agent and gives you a way to reach it from the browser. Check the Launch screen for the options available to your account. Backups are not guaranteed, so keep a separate copy of anything you cannot recreate.",
       ],
     },
     {
@@ -70,7 +70,7 @@ export const article: BlogArticle = {
   faqs: [
     {
       q: "Is Hermes Agent free?",
-      a: "The Hermes Agent framework is free and open-source (MIT license). You can run it yourself for the cost of the server: Hetzner's cheapest VPS that can run it, the CX23, is €5.49/month excluding VAT and IPv4, though Hetzner showed it as unavailable in October 2026, so check stock. Hosting services like Hivra charge for the managed infrastructure on top of that.",
+      a: "The Hermes Agent framework is free and open source. You can run it yourself for the cost of the server: Hetzner's cheapest VPS that can run it, the CX23, is €5.49/month excluding VAT and IPv4, though Hetzner showed it as unavailable in October 2026, so check stock. Hosting services like Hivra charge for the managed infrastructure on top of that.",
     },
     {
       q: "Do I need coding skills to use Hermes Agent?",

@@ -19,8 +19,14 @@ import {
   unqualifiedKeepRunningClaims,
 } from "@/lib/hivra/agent-seo-catalog";
 import { getAgent } from "@/lib/hivra/agent-catalog";
-import { UNIVERSAL_CATALOG_MANIFESTS } from "@/lib/hivra/catalog-manifests";
+import { getSiteUrls } from "@/lib/seo-urls";
+import { getPublicBlogArticle } from "@/lib/blog-data";
+import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
+import { AGENT_ARTICLE_SLUGS, getPublicAgentProfiles } from "@/lib/hivra/public-agent-profiles";
+import { getCatalogAppManifest, UNIVERSAL_CATALOG_MANIFESTS } from "@/lib/hivra/catalog-manifests";
 import { hasCurrentCatalogCertification } from "@/lib/hivra/catalog-manifests/certification";
+import { offeredAgentTiles } from "@/components/launch/launch-tiles";
+import { PROFILE_DETAILS } from "@/lib/launch/contracts";
 import { findBannedClaims } from "@/lib/tools/copy-rules";
 import { MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
 import { HUB_CONTENT, getAgentPageContent } from "../content";
@@ -139,7 +145,12 @@ function expectInternalLinksResolve(main: HTMLElement) {
     const pathname = href.split(/[?#]/)[0];
     const agent = pathname.match(/^\/agents\/([^/]+)$/);
     if (agent) {
-      expect(AGENT_SEO_ENTRIES.some((entry) => entry.slug === agent[1])).toBe(true);
+      expect(generateStaticParams().some(({ slug }) => slug === agent[1])).toBe(true);
+      continue;
+    }
+    const blog = pathname.match(/^\/blog\/([^/]+)$/);
+    if (blog) {
+      expect(getPublicBlogArticle(blog[1])).toBeDefined();
       continue;
     }
     const segments = pathname.split("/").filter(Boolean);
@@ -163,7 +174,7 @@ describe("/agents hub", () => {
     const graph = readJsonLd(container);
     const itemList = graph.find((node) => node["@type"] === "ItemList") as { itemListElement: { url: string; name: string }[] };
     expect(itemList.itemListElement.map((item) => item.url)).toEqual(
-      AGENT_SEO_ENTRIES.map((entry) => `https://hivra.cloud/agents/${entry.slug}`),
+      [...AGENT_SEO_ENTRIES, ...getPublicAgentProfiles()].map(({ slug }) => `https://hivra.cloud/agents/${slug}`),
     );
     expect(graph.some((node) => node["@type"] === "BreadcrumbList")).toBe(true);
   });
@@ -176,7 +187,7 @@ describe("/agents hub", () => {
     expect((hubMetadata.twitter as { title?: string }).title).toBe(title);
     expect(title.match(/\|\s*Hivra/g)).toHaveLength(1);
     expect(hubMetadata.description).toBe(
-      "Give Claude Code, Codex, Hermes, Aeon, OpenClaw or Agent Zero a cloud computer. Keep your own accounts and choose managed hosting from $9.99/mo.",
+      "Compare launchable AI agents, including Claude Code, Codex, Hermes and DeepSeek Harness. Find the right agent for your work.",
     );
     expect(String(hubMetadata.description).length).toBeLessThanOrEqual(155);
     expect((hubMetadata.openGraph as { description?: string }).description).toBe(hubMetadata.description);
@@ -270,10 +281,12 @@ describe("/agents hub", () => {
     expect(text).not.toMatch(/\bthe box\b|Box Terminal/i);
   });
 
-  it("lists the six agents in the directory with a tagline, a good fit and a link each", () => {
+  it("keeps the existing agent cards and adds a page for DeepSeek Harness", () => {
     const { container } = render(<AgentsIndexPage />);
     const rows = [...container.querySelectorAll("#choose-an-agent li")];
-    expect(rows).toHaveLength(AGENT_SEO_ENTRIES.length);
+    expect(rows).toHaveLength(AGENT_SEO_ENTRIES.length + getPublicAgentProfiles().length);
+    expect(within(rows[AGENT_SEO_ENTRIES.length] as HTMLElement).getByRole("link", { name: "Explore DeepSeek Harness" }))
+      .toHaveAttribute("href", "/agents/deepseek-harness");
     HUB_CONTENT.directory.cards.forEach((card, index) => {
       const row = rows[index];
       expect(row.querySelector("h3")).toHaveTextContent(card.name);
@@ -283,14 +296,64 @@ describe("/agents hub", () => {
       expect(row.querySelector("a")).toHaveTextContent(card.linkLabel);
     });
   });
+
+  it("covers each Launch agent and excludes catalog apps from the agent directory", () => {
+    jest.replaceProperty(process, "env", { ...process.env, NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG: "1" });
+    const { container } = render(<AgentsIndexPage />);
+    const linked = [...container.querySelectorAll<HTMLAnchorElement>("#choose-an-agent a")]
+      .map((link) => link.getAttribute("href"));
+    const offered = offeredAgentTiles({ selfHosted: false }).map(({ id }) => PROFILE_DETAILS[id].runtimeId)
+      .filter((id) => getCatalogAppManifest(id)?.category !== "app");
+    expect(linked.sort()).toEqual(offered.map((id) => `/agents/${id}`).sort());
+  });
 });
 
 describe("/agents/[slug]", () => {
   it("prerenders exactly the catalog slugs and 404s the rest", async () => {
     expect(dynamicParams).toBe(false);
-    expect(generateStaticParams()).toEqual(AGENT_SEO_ENTRIES.map((entry) => ({ slug: entry.slug })));
+    expect(generateStaticParams()).toEqual([...AGENT_SEO_ENTRIES, ...getPublicAgentProfiles()].map(({ slug }) => ({ slug })));
     await expect(generateMetadata({ params: Promise.resolve({ slug: "not-an-agent" }) })).resolves.toEqual({});
     await expect(AgentPage({ params: Promise.resolve({ slug: "not-an-agent" }) })).rejects.toThrow();
+  });
+
+  it.each([
+    ["0", false],
+    ["1", true],
+  ])("keeps the directory, details, metadata and sitemap in sync with the catalog flag (%s)", async (flag, enabled) => {
+    jest.replaceProperty(process, "env", {
+      ...process.env,
+      NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG: flag,
+      NEXT_PUBLIC_HIVRA_OPENBOT_AGENT: flag,
+      NEXT_PUBLIC_HIVRA_NUPHOS_AGENT: flag,
+    });
+    render(<AgentsIndexPage />);
+    const urls = getSiteUrls().map(({ url }) => url);
+    for (const [slug, name] of [["zeroclaw", "ZeroClaw"], ["openbot", "OpenBot"], ["nuphos", "Nuphos"], ["nanobot", "Nanobot"]]) {
+      const params = Promise.resolve({ slug });
+      const url = `https://hivra.cloud/agents/${slug}`;
+      const visible = enabled && slug !== "nanobot";
+      const link = screen.queryByRole("link", { name: `Explore ${name}` });
+      if (visible) {
+        expect(link).toHaveAttribute("href", `/agents/${slug}`);
+        expect(urls).toContain(url);
+        expect((await generateMetadata({ params })).alternates?.canonical).toBe(url);
+      } else {
+        expect(link).not.toBeInTheDocument();
+        expect(urls).not.toContain(url);
+        await expect(generateMetadata({ params })).resolves.toEqual({});
+        await expect(AgentPage({ params })).rejects.toThrow();
+      }
+    }
+  });
+
+  it("preselects DeepSeek Harness in Launch and identifies the alpha limits", async () => {
+    render(await AgentPage({ params: Promise.resolve({ slug: "deepseek-harness" }) }));
+    const link = screen.getByRole("link", { name: "Launch DeepSeek Harness" });
+    const type = new URL(link.getAttribute("href")!, "https://hivra.cloud").searchParams.get("agentType");
+    expect(buildAgentLaunchHref(type)).toBe("/dashboard/launch?kind=agent&start=1&profile=deepseek-harness");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("DeepSeek Harness on Hivra");
+    expect(screen.getByRole("link", { name: "Read the article" })).toHaveAttribute("href", "/blog/deepseek-harness-coding-agent");
+    expect(screen.getByRole("main")).toHaveTextContent(/alpha release and it does not include a browser/i);
   });
 
   it.each(AGENT_SEO_ENTRIES)("$slug: renders one H1, a self-canonical and its JSON-LD", async (entry) => {
@@ -422,6 +485,7 @@ describe("/agents/[slug]", () => {
     expect([...related.parentElement!.querySelectorAll("a")].map((a) => a.textContent)).toEqual(
       content.related.slugs.map((slug) => getAgent(slug)!.name),
     );
+    expect(screen.getByRole("link", { name: "Read the article" })).toHaveAttribute("href", `/blog/${AGENT_ARTICLE_SLUGS[entry.slug]}`);
   });
 
   it.each(AGENT_SEO_ENTRIES)("$slug: makes none of the banned claims and keeps the non-affiliation line", async (entry) => {

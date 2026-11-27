@@ -26,7 +26,7 @@ describe("/agents social card copy", () => {
     expect(title.length).toBeLessThanOrEqual(TWO_LINES);
     expect(eyebrow).toBe("Agents");
     // The card carries no sentence of its own: the subtitle is the first sentence of Ash's search description.
-    expect(subtitle).toBe("Give Claude Code, Codex, Hermes, Aeon, OpenClaw or Agent Zero a cloud computer.");
+    expect(subtitle).toBe("Compare launchable AI agents, including Claude Code, Codex, Hermes and DeepSeek Harness.");
     expect(String(hubMetadata.description).startsWith(`${subtitle} `)).toBe(true);
     expect(subtitle.length).toBeLessThanOrEqual(100);
   });
