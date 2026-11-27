@@ -8,7 +8,7 @@ jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { backupJobFiles, type BackupDisk, type BackupJobKind } from "../computer-backups/scripts";
 import { buildWakeHostScript, parseWakeReceipt } from "../agent-sleep-scripts";
@@ -103,6 +103,8 @@ host("store and unstore jobs against a fake host", () => {
     put("blockdev", BLOCKDEV);
     put("blkdiscard", BLKDISCARD);
     put("dd", DD);
+    put("stat", `#!/usr/bin/env bash
+if [ "$2" = '%u:%a:%h' ]; then printf '%s\\n' '0:600:1'; else exec /usr/bin/stat "$@"; fi`);
     for (const name of ["lvchange", "ssh", "ionice"]) put(name, name === "ionice" ? `#!/usr/bin/env bash\nshift\nexec "$@"\n` : NOOP);
     disk = path.join(h.dir, "vg0", `vm-${VMID}-disk-0`);
     mkdirSync(path.dirname(disk));
@@ -122,7 +124,10 @@ host("store and unstore jobs against a fake host", () => {
     const jobDir = path.join(h.dir, "job");
     rmSync(jobDir, { recursive: true, force: true });
     mkdirSync(jobDir);
-    const local = (text: string) => text.replaceAll("/var/lib/hivra/restic-cache", path.join(h.dir, "restic-cache"));
+    const pressure = path.join(h.dir, "io-pressure");
+    writeFileSync(pressure, "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n");
+    const local = (text: string) => text.replaceAll("/var/lib/hivra/restic-cache", path.join(h.dir, "restic-cache"))
+      .replaceAll("/proc/pressure/io", pressure);
     writeFileSync(path.join(jobDir, "run.sh"), local(files.run));
     // The reader makes its pipe under /run, which only root can write: keep it in the temp folder.
     writeFileSync(path.join(jobDir, "read-disk.sh"), files.readDisk.replaceAll("/run/", `${jobDir}/`));
@@ -160,6 +165,29 @@ host("store and unstore jobs against a fake host", () => {
     expect(at("restic dump")).toBeLessThan(at("blkdiscard"));
     expect(run.calls.some((c) => /^qm (start|stop|destroy|set|unlock|resume|suspend)/.test(c))).toBe(false);
     expect(run.state).toEqual(COLD);
+  });
+
+  it("verifies portable config and data without discarding a fenced source", () => {
+    markCold();
+    mkdirSync(path.join(markDir(), "portable-kvm-fences"));
+    const state = { ...COLD, lock: "backup", onboot: 0 };
+    const file = path.join(markDir(), "portable-kvm-fences", String(VMID));
+    writeFileSync(file, "bound fixture proof\n", { mode: 0o600 });
+    const config = h.run(`qm config ${VMID} --current 1`, state).stdout.trimEnd() + "\n";
+    const env = {
+      PORTABLE_FENCE: "bound fixture proof",
+      PORTABLE_CONFIG_SHA: createHash("sha256").update(config).digest("hex"),
+    };
+    const run = runJob("portable_checkpoint", state, { env });
+    expect(run.result).toMatchObject({ status: "succeeded", reason: "portable_checkpointed",
+      configuration: { sha256: env.PORTABLE_CONFIG_SHA, snapshotId: expect.stringMatching(/^[0-9a-f]{64}$/) } });
+    expect(run.result.disks).toHaveLength(1);
+    expect(run.calls.some(call => call.startsWith("blkdiscard"))).toBe(false);
+    expect(readFileSync(disk).equals(original)).toBe(true);
+    expect(existsSync(coldMark())).toBe(true);
+    expect(existsSync(storedMark())).toBe(false);
+    expect(runJob("portable_checkpoint", state, { env: { ...env, PORTABLE_FENCE: "different" } }).result)
+      .toMatchObject({ status: "skipped", reason: "fence_changed" });
   });
 
   it("leaves alone anything that is not an off, dropped computer", () => {
