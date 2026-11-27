@@ -964,9 +964,11 @@ export async function launchHivraAgentForUser(
     if (body.gvisorWorkload !== undefined && (!claudeTerminal || type !== "linux-terminal" || deployment.mode !== "self-managed")) {
       return apiError("This launch cannot use the requested sandbox workload.", 400);
     }
-    const measuredCanary = ["hermes", "claude-code", "codex", "openclaw", "deepseek-harness", "agent-zero"].includes(type)
-      && deployment.mode === "hivra-managed"
+    const managedGitCanary = deployment.mode === "hivra-managed"
       && managedProvisionerChannel === "canary" && isCanonicalGitCanaryDeployment();
+    const hermesCanary = managedGitCanary && type === "hermes";
+    const measuredCanary = managedGitCanary
+      && ["hermes", "claude-code", "codex", "openclaw", "deepseek-harness", "agent-zero"].includes(type);
     const launchCheckpoints: Record<string, number> = {};
     const checkpointLaunchTiming = (stage: string) => {
       if (measuredCanary) launchCheckpoints[stage] = Math.round(performance.now() - requestStartedAt);
