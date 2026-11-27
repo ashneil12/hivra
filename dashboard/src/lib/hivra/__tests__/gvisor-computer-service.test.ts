@@ -76,7 +76,8 @@ function acknowledgeManaged<T extends { stdout: string }>(script: string, receip
 class Query {
   private patch: Record<string, unknown> | null = null;
   private filters = new Map<string, unknown>();
-  constructor(private table: string, private selectedTarget = target) {}
+  constructor(private table: string,
+    private selectedTarget: typeof target & { capabilities: typeof target.capabilities & { hostIdentityDigest?: string } } = target) {}
   select() { return this; }
   update(patch: Record<string, unknown>) { this.patch = patch; return this; }
   eq(column: string, value: unknown) { this.filters.set(column, value); return this; }
