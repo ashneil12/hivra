@@ -75,7 +75,7 @@ ${probe}
     const run = (version: string) => spawnSync("bash", ["-s"], {
       input: probe,
       encoding: "utf8",
-      env: { PATH: process.env.PATH, OBSERVED_VERSION: version, PROVISIONER_DIR: dir,
+      env: { PATH: process.env.PATH, NODE_ENV: "test", OBSERVED_VERSION: version, PROVISIONER_DIR: dir,
         PROVISION_SCRIPT: path.join(source, "hivra-provision-on-host.sh") },
     });
     try {
