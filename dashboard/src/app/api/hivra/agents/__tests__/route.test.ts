@@ -506,6 +506,9 @@ describe("POST /api/hivra/agents", () => {
     "HIVRA_CANARY_QA_HOLDER_ENABLED",
     "HIVRA_CANARY_QA_HOLDER_USER_ID",
     "HIVRA_CANARY_QA_HOLDER_EXPIRES_AT",
+    "HIVRA_CANARY_HERMES_IMAGE_HOST",
+    "HIVRA_CANARY_HERMES_IMAGE_SHA256",
+    "HIVRA_CANARY_HERMES_IMAGE_USER_ID",
     "VERCEL",
     "VERCEL_ENV",
     "VERCEL_PROJECT_PRODUCTION_URL",
@@ -1467,6 +1470,54 @@ describe("POST /api/hivra/agents", () => {
     const kickoff = String(mockRunProxmoxHostScript.mock.calls[1][0]);
     expect(kickoff).toContain('hivra-provision-on-host.sh "$VMID" "$OCTET" "2" "4096" "hermes"');
     expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({ type: "hermes" }));
+  });
+
+  it.each([
+    ["configured Canary host", "canary", "fixturenode7", "2026.11.27.2", "a".repeat(64), undefined, 201, true],
+    ["other host", "canary", "fixturenode8", "2026.11.27.2", "a".repeat(64), undefined, 201, false],
+    ["other owner", "canary", "fixturenode7", "2026.11.27.2", "a".repeat(64), "user_other", 201, false],
+    ["configured owner", "canary", "fixturenode7", "2026.11.27.2", "a".repeat(64), "user_fixture1", 201, true],
+    ["production branch", "main", "fixturenode7", "2026.11.27.2", "a".repeat(64), undefined, 201, false],
+    ["incompatible host version", "canary", "fixturenode7", "2026.11.27.1", "a".repeat(64), undefined, 503, false],
+    ["malformed digest", "canary", "fixturenode7", "2026.11.27.2", "invalid", undefined, 503, false],
+  ] as const)("uses only the server-pinned Hermes image on the configured Git Canary host (%s)", async (
+    _case, branch, imageHost, version, digest, imageUser, status, baked,
+  ) => {
+    enableManagedGvisorQaFixture({
+      VERCEL_TARGET_ENV: "canary",
+      VERCEL_GIT_COMMIT_REF: branch,
+      HIVRA_CANARY_HERMES_IMAGE_HOST: imageHost,
+      HIVRA_CANARY_HERMES_IMAGE_SHA256: digest,
+      HIVRA_CANARY_HERMES_IMAGE_USER_ID: imageUser,
+    });
+    mockAuth.mockResolvedValue({ userId: "user_fixture1" });
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 3,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+    mockSelectAvailableProxmoxProvisionTarget.mockResolvedValueOnce({
+      ok: true, targetId: "fixturenode7", provisionerVersion: version,
+      env: {
+        PROXMOX_NODE: "fixturenode7", PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
+        PROXMOX_PRIVATE_GATEWAY: "10.250.21.1", PROXMOX_VMID_START: "200",
+      },
+    });
+    const response = await POST(makeRequest({
+      type: "hermes", name: "HERMES_BAKE_FIXTURE", cpu: 2, ram: 4,
+      hermesImageSha256: "b".repeat(64),
+    }) as never);
+    expect(response.status).toBe(status);
+    const kickoff = mockRunProxmoxHostScript.mock.calls
+      .map(([script]) => String(script))
+      .find(script => script.includes("HIVRA_PROVISION_RESULT"));
+    if (status === 503) {
+      expect(kickoff).toBeUndefined();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    } else {
+      expect(kickoff).toBeDefined();
+      expect(kickoff?.includes(`HIVRA_HERMES_IMAGE_SHA256='${digest}'`)).toBe(baked);
+      expect(kickoff).not.toContain("b".repeat(64));
+    }
   });
 
   it("preserves the free Claude half-core request while provisioning a one-core VM capped to 0.5 CPU", async () => {

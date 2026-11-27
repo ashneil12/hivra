@@ -45,6 +45,7 @@ SUBNET_PREFIX="${HIVRA_SUBNET_PREFIX:-10.251.20}"
 GW="${HIVRA_GW:-${SUBNET_PREFIX}.1}"
 BRIDGE="${HIVRA_BRIDGE:-hivra0}"
 IMG="${HIVRA_UBUNTU_IMG:-/var/lib/vz/template/iso/hivra-ubuntu-jammy.img}"
+HERMES_IMAGE_SHA256="${HIVRA_HERMES_IMAGE_SHA256:-}"
 PROV_DIR="${HIVRA_PROV_DIR:-/opt/hivra/provisioner}"
 STORAGE="${HIVRA_STORAGE:-local-lvm}"
 DISK_GB="${HIVRA_DISK_GB:-40}"
@@ -67,6 +68,17 @@ CLOUD_INIT_SNIPPET_DIR="${HIVRA_CLOUD_INIT_SNIPPET_DIR:-/var/lib/vz/snippets}"
 
 log() { echo "[hivra-prov] $*" >&2; }
 fail() { log "$*"; exit 1; }
+hermes_stage() {
+  [ "$AGENT_KIND" = hermes ] || return 0
+  local elapsed uptime ignored
+  IFS=' ' read -r uptime ignored < /proc/uptime || return 0
+  [[ "$uptime" =~ ^[0-9]+[.][0-9]{2}$ ]] || return 0
+  elapsed="${uptime/./}"
+  if [ -n "${HERMES_STAGE_CLOCK:-}" ]; then
+    printf 'HIVRA_HERMES_STAGE %s %d\n' "$1" "$((10#$elapsed - 10#$HERMES_STAGE_CLOCK))" >&2
+  fi
+  HERMES_STAGE_CLOCK="$elapsed"
+}
 
 [[ "$VMID" =~ ^[0-9]+$ ]] && [ "$VMID" -ge 100 ] || fail "invalid VMID"
 [[ "$OCTET" =~ ^[0-9]+$ ]] && [ "$OCTET" -ge 2 ] && [ "$OCTET" -le 254 ] || fail "invalid IP octet"
@@ -84,7 +96,6 @@ OPERATION_TAG="hivra-op-${OPERATION_ID//-/}"
 [ ! -e "/etc/pve/qemu-server/${VMID}.conf" ] || fail "refusing to overwrite existing VMID $VMID"
 qm status "$VMID" >/dev/null 2>&1 && fail "refusing to overwrite existing VMID $VMID"
 
-[ -f "$IMG" ] || { echo "ubuntu image $IMG missing" >&2; exit 1; }
 [ -d "$PROV_DIR" ] || { echo "provisioner dir $PROV_DIR missing" >&2; exit 1; }
 [ -f "$PROV_DIR/hivra-install-agent.py" ] || fail "shared guest launch entrypoint is missing"
 [ -f "$VM_KEY" ] || { echo "VM ssh key $VM_KEY missing" >&2; exit 1; }
@@ -93,6 +104,30 @@ command -v python3 >/dev/null 2>&1 || fail "python3 is required for the guest la
 [ "$CLOUD_INIT_SNIPPET_STORAGE" = "local" ] || fail "unsupported cloud-init snippet storage"
 [ "$CLOUD_INIT_SNIPPET_DIR" = "/var/lib/vz/snippets" ] || fail "unsupported cloud-init snippet directory"
 [ -r /proc/uptime ] || fail "Linux monotonic uptime is required for guest boot checks"
+hermes_stage validation_start
+
+if [ -n "$HERMES_IMAGE_SHA256" ]; then
+  [ "$PROVISION_MODE" = install ] && [ "$AGENT_KIND" = hermes ] \
+    && [ "$PROV_DIR" = /root/hivra-provisioner-canary ] \
+    && [[ "$HERMES_IMAGE_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+    || fail "invalid baked Hermes image selection"
+  IMG="/var/lib/vz/template/iso/hivra-hermes-${HERMES_IMAGE_SHA256}.qcow2"
+  [ -f "$IMG" ] && [ ! -L "$IMG" ] \
+    && [ "$(stat -c '%u:%g:%a:%h' -- "$IMG")" = "0:0:444:1" ] \
+    || fail "baked Hermes image is missing or not a read-only root-owned host file"
+  printf '%s  %s\n' "$HERMES_IMAGE_SHA256" "$IMG" | sha256sum --check --status \
+    || fail "baked Hermes image digest mismatch"
+  qemu-img info --output=json "$IMG" | python3 -I -B -c '
+import json, sys
+data = json.load(sys.stdin)
+sys.exit(0 if data.get("format") == "qcow2"
+         and not any(key in data for key in ("backing-filename", "full-backing-filename"))
+         and not data.get("format-specific", {}).get("data", {}).get("data-file")
+         and 0 < data.get("virtual-size", 0) <= int(sys.argv[1]) * 1024**3 else 1)
+' "$DISK_GB" || fail "baked Hermes image is not a standalone qcow2 within the disk envelope"
+fi
+[ -f "$IMG" ] || { echo "ubuntu image $IMG missing" >&2; exit 1; }
+hermes_stage image_verified
 
 # Cloud-init authorized keys: the VM-orchestrator pub (host->guest) plus any
 # optional operator key configured explicitly for direct access. The guest
@@ -270,7 +305,7 @@ fi
 # that module also runs `snap refresh`, so an unreachable snap store (its IPv4
 # front ends refusing connections, our guests are IPv4 only) failed cloud-init
 # and with it every launch, though nothing here needs a snap.
-if [ "$PROVISION_MODE" = install ]; then
+if [ "$PROVISION_MODE" = install ] && [ -z "$HERMES_IMAGE_SHA256" ]; then
 install -d -o root -g root -m 0700 "$CLOUD_INIT_SNIPPET_DIR"
 CLOUD_INIT_SNIPPET="$CLOUD_INIT_SNIPPET_DIR/hivra-qga-${VMID}-${OPERATION_ID}.yaml"
 ( set -o noclobber
@@ -324,7 +359,9 @@ if [ "$PROVISION_MODE" = empty ]; then
   CREATED=0
   exit 0
 fi
+hermes_stage disk_import_start
 qm set "$VMID" --scsi0 "${STORAGE}:0,import-from=${IMG},discard=on,ssd=1" >/dev/null
+hermes_stage disk_imported
 qm disk resize "$VMID" scsi0 "${DISK_GB}G" >/dev/null
 qm set "$VMID" --ide2 "${STORAGE}:cloudinit" >/dev/null
 # Proxmox's generated user-data carries `package_upgrade: true` unless
@@ -336,11 +373,14 @@ qm set "$VMID" --ide2 "${STORAGE}:cloudinit" >/dev/null
 qm set "$VMID" --ciupgrade 0 >/dev/null 2>&1 || true
 qm set "$VMID" --boot order=scsi0 --ciuser ubuntu --sshkeys "$CIKEYS" >/dev/null
 qm set "$VMID" --ipconfig0 "ip=${IP}/24,gw=${GW}" >/dev/null
-qm set "$VMID" --cicustom "vendor=${CLOUD_INIT_SNIPPET_STORAGE}:snippets/$(basename "$CLOUD_INIT_SNIPPET")" >/dev/null
+if [ -n "$CLOUD_INIT_SNIPPET" ]; then
+  qm set "$VMID" --cicustom "vendor=${CLOUD_INIT_SNIPPET_STORAGE}:snippets/$(basename "$CLOUD_INIT_SNIPPET")" >/dev/null
+fi
 qm set "$VMID" --nameserver "$NAMESERVERS" >/dev/null
 # qm forks a long-lived kvm child; without 8>&- and 9>&- it would inherit the
 # allocation-lock fds and pin the lock open for the whole VM lifetime.
 qm start "$VMID" 8>&- 9>&- >/dev/null
+hermes_stage vm_started
 # Keep capacity, VMID, and IP allocation serialized until the new guest is an
 # active member of the inventory. Guest setup continues concurrently afterward.
 release_allocation_lock
@@ -395,6 +435,7 @@ print("ssh-ed25519 " + fields[1])
 
 log "attesting guest SSH host identity through VMID $VMID"
 prepare_guest_ssh_identity
+hermes_stage ssh_attested
 GSSH=(ssh -i "$VM_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
   -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o UpdateHostKeys=no \
   -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile="$GUEST_SSH_KNOWN_HOSTS" \
@@ -469,13 +510,16 @@ log_guest_cloud_init_failure() {
 
 log "waiting for guest ssh + cloud-init"
 wait_for_guest_cloud_init
+hermes_stage cloud_init_ready
 
 # The package and generated SSH host key now live on the guest disk. Remove the
 # operation-scoped vendor-data reference and host file so no bootstrap material
 # survives or can be replayed by a later VMID reuse.
-qm set "$VMID" --delete cicustom >/dev/null
-rm -f -- "$CLOUD_INIT_SNIPPET"
-CLOUD_INIT_SNIPPET=""
+if [ -n "$CLOUD_INIT_SNIPPET" ]; then
+  qm set "$VMID" --delete cicustom >/dev/null
+  rm -f -- "$CLOUD_INIT_SNIPPET"
+  CLOUD_INIT_SNIPPET=""
+fi
 
 copy_prepared_desktop_image() {
   [ "$AGENT_KIND" = "linux-desktop" ] || return 0
@@ -528,13 +572,14 @@ else
     -r "$PROV_DIR" "ubuntu@${IP}:${GUEST_PROVISIONER}" >/dev/null \
     || fail "copying the provisioner into the guest failed or timed out"
 fi
+hermes_stage guest_bundle_transferred
 # Model and tunnel credentials travel only through stdin. The shared guest
 # entrypoint owns runtime selection, strict decoding and named-tunnel setup;
 # the host retains VM allocation, public reachability and result convergence.
 guest_launch_document() {
   printf '%s\0' "$AGENT_KIND" "${HIVRA_WANT_BROWSER:-}" "$HIVRA_MODEL_KEY" \
     "$HIVRA_MODEL_BASE_URL" "$HIVRA_HERMES_MODEL" "${HIVRA_TUNNEL_TOKEN:-}" "${HIVRA_TUNNEL_URL:-}" \
-    "$HIVRA_COMPUTER_ID" "$HIVRA_CONTROL_ORIGIN" "${HIVRA_ACTIVITY_TELEMETRY:-}" "${HIVRA_CATALOG_APP:-}" \
+    "$HIVRA_COMPUTER_ID" "$HIVRA_CONTROL_ORIGIN" "${HIVRA_ACTIVITY_TELEMETRY:-}" "${HIVRA_CATALOG_APP:-}" "${HERMES_IMAGE_SHA256:-}" \
     | python3 -I -B -c '
 import datetime, json, re, sys
 def unique_object(pairs):
@@ -570,7 +615,7 @@ try:
     if len(raw) > 32768:
         raise ValueError()
     values = raw.decode("utf-8").split("\0")
-    if len(values) != 12 or values[-1] != "" or values[1] not in ("", "0", "1"):
+    if len(values) != 13 or values[-1] != "" or values[1] not in ("", "0", "1"):
         raise ValueError()
     native = values[0] == "deepseek-harness"
     desktop = values[0] in ("linux-desktop", "linux-server")
@@ -596,6 +641,10 @@ try:
         document["controlOrigin"] = values[8]
     if catalog_app:
         document["catalogApp"] = json.loads(values[10], object_pairs_hook=unique_object)
+    if values[11]:
+        if values[0] != "hermes" or not re.fullmatch(r"[0-9a-f]{64}", values[11]):
+            raise ValueError()
+        document["hermesBaked"] = True
     if values[9]:
         # Only Claude Code and Codex write the transcripts the reporter reads.
         if values[0] not in ("claude", "codex"):
@@ -616,6 +665,7 @@ guest_launch_document | timeout --kill-after=30s 2700s "${GSSH[@]}" \
   -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "ubuntu@${IP}" \
   "sudo -n /usr/bin/python3 -I -B ${GUEST_PROVISIONER}/hivra-install-agent.py" >&2 \
   || fail "guest runtime installation failed, lost its connection, or ran past 45 minutes"
+hermes_stage guest_runtime_installed
 
 TUNNEL=""
 # The shared guest entrypoint has configured the reboot-safe named tunnel.
@@ -657,6 +707,7 @@ fi
 if [ "$READY" != true ]; then
   fail "quick tunnel did not become healthy"
 fi
+hermes_stage public_tunnel_ready
 APITOKEN="$("${GSSH[@]}" "ubuntu@${IP}" 'sudo cat /home/bux/.hivra/api-token 2>/dev/null' 2>/dev/null | tr -d '[:space:]')"
 [ "${#APITOKEN}" -eq 64 ] && [[ "$APITOKEN" =~ ^[0-9a-f]+$ ]] || fail "guest API token is missing or invalid"
 install -d -m 0700 /var/lib/hivra /var/lib/hivra/provision-results

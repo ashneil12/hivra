@@ -531,4 +531,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261127093245", name: "yearly_token_attribution_checkpoints" },
   { version: "20261127154500", name: "computer_stall_monitor" },
   { version: "20261127171000", name: "provider_release_admission_2026_11_27_1" },
+  { version: "20261127173200", name: "provider_release_admission_2026_11_27_2" },
 ];
